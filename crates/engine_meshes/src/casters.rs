@@ -1,12 +1,14 @@
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
-use engine_core::{AlphaMode, DeviceLimits, MaterialHandle, MeshHandle, Spawner};
+use engine_core::{
+    AlphaMode, AssetResidency, DeviceLimits, MaterialHandle, MeshHandle, ResidentMesh, Spawner,
+};
 use engine_places::shadows::{CasterMap, Refresh, Region, ShadowChanges, ShadowMaps};
 
 use crate::MeshesBrick;
 use crate::batches::BatchPlan;
 use crate::layouts::{BatchData, CandidateData, MOVING_MAP, MOVING_PAIRS, SKY_MAP};
-use crate::order::{MeshLevels, MeshPlan};
+use crate::order::MeshPlan;
 use crate::retained::RetainedRender;
 
 pub(crate) const MAPS: usize = SKY_MAP as usize + 1;
@@ -48,28 +50,33 @@ pub(crate) struct ShadowGroup {
 pub(crate) struct CasterDraw {
     pub index_count: u32,
     pub first_index: u32,
+    pub base_vertex: i32,
     pub lods: Vec<(u32, u32, f32)>,
 }
 
 impl CasterDraw {
-    fn of(levels: &MeshLevels, with_levels: bool) -> Self {
+    fn of(mesh: Option<&ResidentMesh>, with_levels: bool) -> Self {
+        let Some(mesh) = mesh else {
+            return Self::default();
+        };
+        let first_index = mesh.first_index();
         let lods = if with_levels {
-            levels
-                .lods
+            mesh.lods()
                 .iter()
                 .enumerate()
                 .map(|(level, &(offset, count, error))| {
-                    let (offset, count) = levels.caster_range(level + 1, (offset, count));
-                    (offset, count, error)
+                    let (offset, count) = mesh.caster_range(level + 1, (offset, count));
+                    (first_index + offset, count, error)
                 })
                 .collect()
         } else {
             Vec::new()
         };
-        let (offset, count) = levels.caster_range(0, (0, levels.index_count));
+        let (offset, count) = mesh.caster_range(0, (0, mesh.index_count()));
         Self {
             index_count: count,
-            first_index: offset,
+            first_index: first_index + offset,
+            base_vertex: mesh.base_vertex(),
             lods,
         }
     }
@@ -81,13 +88,13 @@ impl CasterDraw {
             .count() as u8
     }
 
-    fn range(&self, level: u8) -> (u32, u32) {
+    fn range(&self, level: u8) -> (u32, u32, i32) {
         match level.checked_sub(1) {
             Some(lod) => {
                 let (first_index, index_count, _) = self.lods[lod as usize];
-                (index_count, first_index)
+                (index_count, first_index, self.base_vertex)
             }
-            None => (self.index_count, self.first_index),
+            None => (self.index_count, self.first_index, self.base_vertex),
         }
     }
 }
@@ -111,7 +118,9 @@ pub(crate) struct CasterPlan {
     pub regions_in_args: bool,
     pub maps: Vec<Option<usize>>,
     pub generation: u64,
+    groups_generation: u64,
     key: Option<(u8, engine_core::Stamp, u64)>,
+    draws_key: Option<(u64, u64, bool)>,
     draws: Vec<CasterDraw>,
     levels: Vec<u8>,
 }
@@ -119,6 +128,19 @@ pub(crate) struct CasterPlan {
 impl CasterPlan {
     pub(crate) fn batch_group(&self, index: usize) -> u32 {
         self.batch_groups.get(index).copied().unwrap_or(0)
+    }
+
+    fn clear(&mut self) {
+        self.groups.clear();
+        self.masked.clear();
+        self.batch_groups.clear();
+        self.listed.clear();
+        self.records.clear();
+        self.starts.clear();
+        self.total = 0;
+        self.key = None;
+        self.draws.clear();
+        self.levels.clear();
     }
 
     fn plan(&mut self, retained: &RetainedRender, batches: &BatchPlan) -> bool {
@@ -282,13 +304,15 @@ impl CasterPlan {
         for map in 0..MAPS {
             let start = map_start(map, self.id_capacity) as u32;
             for (index, group) in self.groups.iter().enumerate() {
-                let (count, first_index) = self.draws[index].range(self.levels[map * groups + index]);
+                let (count, first_index, base_vertex) =
+                    self.draws[index].range(self.levels[map * groups + index]);
                 let first_instance = if self.regions_in_args {
                     start + map_factor(map) * group.start
                 } else {
                     0
                 };
-                self.template.extend([count, 0, first_index, 0, first_instance]);
+                self.template
+                    .extend([count, 0, first_index, base_vertex as u32, first_instance]);
             }
         }
         true
@@ -323,31 +347,38 @@ fn errors(maps: &ShadowMaps) -> [f32; MAPS] {
 #[derive(Component)]
 pub(crate) struct CasterChanges;
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the caster plan joins the draw plan, the shadow maps and the device"
-)]
 pub(crate) fn plan_casters(
     retained: Res<RetainedRender>,
     batches: Res<BatchPlan>,
     decided: Res<MeshPlan>,
-    maps: Res<ShadowMaps>,
-    limits: Res<DeviceLimits>,
+    (maps, limits, residency): (Res<ShadowMaps>, Res<DeviceLimits>, Res<AssetResidency>),
     own: Query<Entity, With<CasterChanges>>,
     mut plan: ResMut<CasterPlan>,
     mut spawner: Spawner<MeshesBrick>,
 ) {
     let plan = &mut *plan;
-    let mut changed = false;
-    if plan.plan(&retained, &batches) {
-        let snapshot = retained.snapshot();
+    if !maps.on {
+        if !plan.groups.is_empty() {
+            plan.groups_generation += 1;
+            plan.generation += 1;
+        }
+        plan.clear();
+        plan.maps.clear();
+        engine_core::profile::counter("render.shadow_groups", 0.0);
+        return;
+    }
+    let groups_changed = plan.plan(&retained, &batches);
+    if groups_changed {
+        plan.groups_generation += 1;
+    }
+    let mut changed = groups_changed;
+    let draws_key = (plan.groups_generation, residency.layout(), decided.lod_levels);
+    if plan.draws_key != Some(draws_key) {
+        plan.draws_key = Some(draws_key);
         plan.draws = plan
             .groups
             .iter()
-            .map(|group| {
-                let levels = MeshLevels::of(&snapshot.meshes[group.source_index]);
-                CasterDraw::of(&levels, decided.lod_levels)
-            })
+            .map(|group| CasterDraw::of(residency.mesh(group.mesh), decided.lod_levels))
             .collect();
         plan.levels.clear();
         changed = true;
@@ -364,7 +395,7 @@ pub(crate) fn plan_casters(
     if changed {
         plan.generation += 1;
     }
-    if grown {
+    if groups_changed || grown {
         let change = ShadowChanges {
             boxes: Vec::new(),
             all: true,
@@ -376,4 +407,5 @@ pub(crate) fn plan_casters(
             }
         }
     }
+    engine_core::profile::counter("render.shadow_groups", plan.groups.len() as f64);
 }

@@ -43,7 +43,14 @@ impl Brick for PhysicsBrick {
             .resource::<world::PhysicsWorld>()
             .resource::<solids::Solids>()
             .fill::<WaterObstacles>(None)
-            .join::<SceneComponents>(ComponentKind::of::<RigidBody>("rigid_body"), None)
+            .join::<SceneComponents>(
+                ComponentKind::of::<RigidBody>("rigid_body")
+                    .check(body::check_body)
+                    .check_placed(body::placed_body)
+                    .schema(body::body_schema)
+                    .example(body::body_example),
+                None,
+            )
             .systems(
                 Schedule::FixedPreSimulation,
                 (solids::sync_sources, solids::sync_colliders),
@@ -53,7 +60,7 @@ impl Brick for PhysicsBrick {
                 (world::step, obstacles::obstruct),
             )
             .systems(Schedule::FixedPostSimulation, solids::sync_colliders)
-            .observation::<views::PhysicsBodies>();
+            .observation::<views::PhysicsBody>();
     }
 }
 

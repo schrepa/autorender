@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Detail, DeviceLimits, Error, FrameTime, GlobalTransforms, MAX_HIERARCHY_DEPTH,
-    PresentedTransforms, View,
+    Detail, DeviceLimits, Error, FrameTime, GlobalTransforms, ImpostorRecords,
+    MAX_HIERARCHY_DEPTH, PresentedTransforms, View,
 };
 use engine_places::probes::{ProbeCaptures, ProbeViews};
 use engine_places::shadows::{ShadowCasters, ShadowMaps};
@@ -11,13 +11,15 @@ use engine_render::{
     ViewTarget, wgpu,
 };
 
+use crate::assets::MeshAssets;
 use crate::batches::BatchPlan;
 use crate::casters::CasterPlan;
 use crate::order::{BatchLook, DrawOrder, MeshPlan};
 use crate::presentation::FrameState;
 use crate::retained::RetainedRender;
 use crate::settings::Impostors;
-use crate::shaders::meshes::{casters, forward, presentation, pyramid, vertex};
+use crate::debug::RECORD_STREAM;
+use crate::shaders::meshes::{cards, casters, debug, forward, presentation, pyramid, vertex};
 
 pub(crate) const FACES: usize = 6;
 pub(crate) const PYRAMID_LEVELS: usize = 16;
@@ -30,7 +32,35 @@ const SLOT_STREAM: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout 
     step_mode: wgpu::VertexStepMode::Instance,
     attributes: &SLOT_ATTRIBUTES,
 };
-const MESH_STREAMS: &[VertexLayout] = &[VertexLayout::Mesh, VertexLayout::Buffer(SLOT_STREAM)];
+const MESH_STREAMS: &[VertexLayout] = &[
+    VertexLayout::Mesh,
+    VertexLayout::Buffer(SLOT_STREAM),
+    VertexLayout::Buffer(RECORD_STREAM),
+];
+const EXTENDED_STREAMS: &[VertexLayout] = &[
+    VertexLayout::Mesh,
+    VertexLayout::Mesh,
+    VertexLayout::Buffer(SLOT_STREAM),
+    VertexLayout::Buffer(RECORD_STREAM),
+];
+const VIEW_STREAMS: &[VertexLayout] = &[VertexLayout::Mesh, VertexLayout::Buffer(SLOT_STREAM)];
+const EXTENDED_VIEW_STREAMS: &[VertexLayout] = &[
+    VertexLayout::Mesh,
+    VertexLayout::Mesh,
+    VertexLayout::Buffer(SLOT_STREAM),
+];
+const CASTER_STREAMS: &[VertexLayout] = &[VertexLayout::Mesh, VertexLayout::Buffer(SLOT_STREAM)];
+const CARD_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+    wgpu::vertex_attr_array![2 => Uint32, 3 => Uint32];
+const CARD_STREAM: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+    array_stride: 8,
+    step_mode: wgpu::VertexStepMode::Instance,
+    attributes: &CARD_ATTRIBUTES,
+};
+const CARD_STREAMS: &[VertexLayout] = &[
+    VertexLayout::Buffer(CARD_STREAM),
+    VertexLayout::Buffer(RECORD_STREAM),
+];
 const CASTER_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
     constant: 1,
     slope_scale: 0.0,
@@ -55,6 +85,7 @@ pub(crate) struct Passes {
 }
 
 pub(crate) struct Instances {
+    pub records: Buffer<MeshesGpu>,
     pub poses: Buffer<MeshesGpu>,
     pub previous_poses: Buffer<MeshesGpu>,
     pub colors: Buffer<MeshesGpu>,
@@ -142,12 +173,16 @@ impl<P> Looked<P> {
 pub(crate) struct Pipelines {
     pub prepass: Looked<Pipeline<MeshesGpu, MainView>>,
     pub opaque: Looked<Pipeline<MeshesGpu, MainView>>,
+    pub card: Pipeline<MeshesGpu, MainView>,
     pub probe: Looked<Pipeline<MeshesGpu, ProbeViews>>,
     pub casters: [Pipeline<MeshesGpu, ShadowCasters>; 2],
     pub moving: [Pipeline<MeshesGpu, ShadowCasters>; 2],
 }
 
 pub(crate) struct Inputs {
+    pub records: DrawInput<MeshesGpu, MainView>,
+    pub card_ids: [DrawInput<MeshesGpu, MainView>; 2],
+    pub fade_cards: DrawInput<MeshesGpu, MainView>,
     pub slots: DrawInput<MeshesGpu, MainView>,
     pub ids: [DrawInput<MeshesGpu, MainView>; 2],
     pub args: [DrawInput<MeshesGpu, MainView>; 2],
@@ -169,6 +204,11 @@ pub(crate) struct MeshesGpu {
 }
 
 pub(crate) type MeshReads = (
+    FrameReads,
+    (Query<'static, 'static, &'static ImpostorRecords, With<MeshAssets>>,),
+);
+
+pub(crate) type FrameReads = (
     Res<'static, RetainedRender>,
     Res<'static, BatchPlan>,
     Res<'static, DrawOrder>,
@@ -197,6 +237,9 @@ impl GpuPart for MeshesGpu {
         let computes = install_computes(cx, &passes, &instances, &presented, &casters)?;
         let pipelines = install_pipelines(cx)?;
         let inputs = Inputs {
+            records: cx.draw_input(MainView, instances.records),
+            card_ids: presented.impostor_ids.map(|ids| cx.draw_input(MainView, ids)),
+            fade_cards: cx.draw_input(MainView, presented.fade_cards),
             slots: cx.draw_input(MainView, instances.slots),
             ids: presented.visible.map(|ids| cx.draw_input(MainView, ids)),
             args: presented.draws.map(|args| cx.draw_input(MainView, args)),
@@ -241,6 +284,7 @@ impl GpuPart for MeshesGpu {
 fn install_instances(cx: &mut Install<'_, MeshesGpu>) -> Result<Instances, Error> {
     use crate::shaders::meshes::faces::instances as face;
     let instances = Instances {
+        records: cx.buffer("debug_view_records", Lifetime::Kept),
         poses: cx.buffer("poses", Lifetime::Kept),
         previous_poses: cx.buffer("previous_poses", Lifetime::Previous),
         colors: cx.buffer("colors", Lifetime::Kept),
@@ -676,17 +720,16 @@ fn install_computes(
 }
 
 fn mesh_pipeline(
-    vertex: engine_core::Entry,
-    fragment: engine_core::Entry,
-    (double_sided, mirrored): (bool, bool),
+    (vertex, fragment, debug): (engine_core::Entry, engine_core::Entry, Option<engine_core::Entry>),
+    (vertices, double_sided, mirrored): (&'static [VertexLayout], bool, bool),
     depth: DepthUse,
     writes: wgpu::ColorWrites,
 ) -> RenderPipeline<'static> {
     RenderPipeline {
         vertex,
         fragment: Some(fragment),
-        debug: None,
-        vertices: MESH_STREAMS,
+        debug,
+        vertices,
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
             front_face: if mirrored {
@@ -712,7 +755,16 @@ fn install_pipelines(cx: &mut Install<'_, MeshesGpu>) -> Result<Pipelines, Error
     let mut probe = Vec::with_capacity(8);
     for index in 0..8_usize {
         let (masked, double_sided, extended) = (index & 4 != 0, index & 2 != 0, index & 1 != 0);
-        let vertex = if extended { vertex::VS_MESH_EXTENDED } else { vertex::VS_MESH };
+        let (vertex, view_vertex, streams, view_streams) = if extended {
+            (
+                vertex::VS_MESH_EXTENDED,
+                vertex::VS_VIEW_EXTENDED,
+                EXTENDED_STREAMS,
+                EXTENDED_VIEW_STREAMS,
+            )
+        } else {
+            (vertex::VS_MESH, vertex::VS_VIEW, MESH_STREAMS, VIEW_STREAMS)
+        };
         let masked_depth = if extended {
             forward::FS_MASKED_DEPTH_EXTENDED
         } else {
@@ -720,28 +772,76 @@ fn install_pipelines(cx: &mut Install<'_, MeshesGpu>) -> Result<Pipelines, Error
         };
         prepass.push(cx.render_pipeline(
             MainView,
-            &mesh_pipeline(vertex, masked_depth, (double_sided, false), write, wgpu::ColorWrites::empty()),
+            &mesh_pipeline(
+                (vertex, masked_depth, Some(masked_depth)),
+                (streams, double_sided, false),
+                write,
+                wgpu::ColorWrites::empty(),
+            ),
             &[],
         )?);
-        let lit = match (extended, masked) {
-            (false, false) => forward::FS_MESH,
-            (false, true) => forward::FS_MESH_PRETESTED,
-            (true, false) => forward::FS_MESH_EXTENDED,
-            (true, true) => forward::FS_MESH_EXTENDED_PRETESTED,
+        let (lit, shown) = match (extended, masked) {
+            (false, false) => (forward::FS_MESH, debug::FS_DEBUG_MESH),
+            (false, true) => (forward::FS_MESH_PRETESTED, debug::FS_DEBUG_MESH_PRETESTED),
+            (true, false) => (forward::FS_MESH_EXTENDED, debug::FS_DEBUG_MESH_EXTENDED),
+            (true, true) => (
+                forward::FS_MESH_EXTENDED_PRETESTED,
+                debug::FS_DEBUG_MESH_EXTENDED_PRETESTED,
+            ),
         };
-        let depth = if masked { DepthUse::Test } else { write };
+        let depth = if masked {
+            DepthUse::Compare {
+                compare: wgpu::CompareFunction::Equal,
+                write: false,
+                bias: wgpu::DepthBiasState::default(),
+            }
+        } else {
+            write
+        };
         opaque.push(cx.render_pipeline(
             MainView,
-            &mesh_pipeline(vertex, lit, (double_sided, false), depth, wgpu::ColorWrites::ALL),
+            &mesh_pipeline(
+                (vertex, lit, Some(shown)),
+                (streams, double_sided, false),
+                depth,
+                wgpu::ColorWrites::ALL,
+            ),
             &[],
         )?);
-        let view = if extended { forward::FS_PROBE_EXTENDED } else { forward::FS_PROBE };
+        let view = if extended {
+            forward::FS_PROBE_EXTENDED
+        } else {
+            forward::FS_PROBE
+        };
         probe.push(cx.render_pipeline(
             ProbeViews,
-            &mesh_pipeline(vertex, view, (double_sided, true), write, wgpu::ColorWrites::ALL),
+            &mesh_pipeline(
+                (view_vertex, view, None),
+                (view_streams, double_sided, true),
+                write,
+                wgpu::ColorWrites::ALL,
+            ),
             &[],
         )?);
     }
+    let card = cx.render_pipeline(
+        MainView,
+        &RenderPipeline {
+            vertex: cards::VS_CARD,
+            fragment: Some(cards::FS_CARD),
+            debug: Some(cards::FS_DEBUG_CARD),
+            vertices: CARD_STREAMS,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth: write,
+            blend: None,
+            writes: wgpu::ColorWrites::ALL,
+        },
+        &[],
+    )?;
     let caster = |cx: &mut Install<'_, MeshesGpu>, vertex, fragment| {
         cx.render_pipeline(
             ShadowCasters,
@@ -749,7 +849,7 @@ fn install_pipelines(cx: &mut Install<'_, MeshesGpu>) -> Result<Pipelines, Error
                 vertex,
                 fragment,
                 debug: None,
-                vertices: MESH_STREAMS,
+                vertices: CASTER_STREAMS,
                 primitive: wgpu::PrimitiveState::default(),
                 depth: DepthUse::Write { bias: CASTER_BIAS },
                 blend: None,
@@ -764,11 +864,16 @@ fn install_pipelines(cx: &mut Install<'_, MeshesGpu>) -> Result<Pipelines, Error
     ];
     let moving = [
         caster(cx, casters::VS_CASTER_MOVING, Some(casters::FS_CASTER_MOVING))?,
-        caster(cx, casters::VS_CASTER_MOVING_MASKED, Some(casters::FS_CASTER_MOVING_MASKED))?,
+        caster(
+            cx,
+            casters::VS_CASTER_MOVING_MASKED,
+            Some(casters::FS_CASTER_MOVING_MASKED),
+        )?,
     ];
     Ok(Pipelines {
         prepass: Looked { looks: prepass },
         opaque: Looked { looks: opaque },
+        card,
         probe: Looked { looks: probe },
         casters: casters_pipelines,
         moving,

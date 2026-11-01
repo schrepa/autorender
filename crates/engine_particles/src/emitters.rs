@@ -1,15 +1,15 @@
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
-use engine_core::{Cut, FrameTime, Poses, View, gpu_struct, settings, stats};
+use engine_core::{
+    Allowed, Cut, DeviceLimits, Expected, FrameTime, InvalidSetting, Poses, Rule, Setting, View,
+    fields, gpu_struct, settings, stats,
+};
 use engine_places::particles::{
     MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleEmitter,
 };
-use engine_render::DebugShown;
 use glam::{Mat4, Vec3};
 
 use crate::nearest::Nearest;
-
-pub(crate) const STORAGE_ROOM: u64 = 134_217_728;
 
 settings! {
     #[section("particles")]
@@ -17,7 +17,8 @@ settings! {
     #[schemars(rename = "SceneParticles")]
     pub struct ParticleSettings {
         pub enabled: bool = true => any,
-        pub max_particles: Option<u32> = None => at_least(1),
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub max_particles: Option<u32> = None => budget,
     }
 }
 
@@ -90,27 +91,58 @@ impl Emitter {
     }
 }
 
+pub(crate) fn emitter_rule(field: &str) -> Option<Rule> {
+    match field {
+        "rate" => Some(fields::above_to(0.0, 100_000.0)),
+        "lifetime" => Some(fields::above_to(0.0, 60.0)),
+        "speed" => Some(fields::range(-10_000.0, 10_000.0)),
+        "direction" | "acceleration" | "offset" => Some(fields::range(-1.0e6, 1.0e6)),
+        "spread" => Some(fields::range(0.0, MAX_SPREAD_DEGREES.to_radians())),
+        "size" | "radius" => Some(fields::range(0.0, 10_000.0)),
+        "color" => Some(fields::range(0.0, 1.0)),
+        "emission" => Some(fields::range(0.0, 64.0)),
+        "stretch" => Some(fields::range(0.0, 10.0)),
+        _ => None,
+    }
+}
+
+pub(crate) fn emitter_extra(
+    direction: Vec3,
+    rate: f32,
+    lifetime: f32,
+) -> Result<(), InvalidSetting> {
+    if direction.length_squared() == 0.0 {
+        return Err(InvalidSetting::new("direction", Expected::Nonzero).got(direction.to_array()));
+    }
+    let particles = f64::from(rate) * f64::from(lifetime);
+    if particles > f64::from(MAX_EMITTER_PARTICLES) {
+        return Err(InvalidSetting::broken("rate", Rule::Any)
+            .allowed(Allowed::AtMost {
+                max: u64::from(MAX_EMITTER_PARTICLES),
+            })
+            .got(particles));
+    }
+    Ok(())
+}
+
+fn ruled<T: Setting>(value: &T, field: &'static str) -> bool {
+    Setting::check(value, field, fields::same(emitter_rule(field))).is_ok()
+}
+
 fn valid(emitter: &ParticleEmitter) -> bool {
-    let within = |value: f32, low: f32, high: f32| (low..=high).contains(&value);
-    let above_to = |value: f32, low: f32, high: f32| value > low && value <= high;
-    let all = |values: &[f32], low: f32, high: f32| {
-        values.iter().all(|value| within(*value, low, high))
-    };
-    above_to(emitter.rate, 0.0, 100_000.0)
-        && above_to(emitter.lifetime, 0.0, 60.0)
-        && within(emitter.speed, -10_000.0, 10_000.0)
-        && all(&emitter.direction.to_array(), -1.0e6, 1.0e6)
-        && within(emitter.spread, 0.0, MAX_SPREAD_DEGREES.to_radians())
-        && all(&emitter.acceleration.to_array(), -1.0e6, 1.0e6)
-        && all(&emitter.size, 0.0, 10_000.0)
-        && emitter.color.iter().all(|color| all(color, 0.0, 1.0))
-        && within(emitter.emission, 0.0, 64.0)
-        && within(emitter.stretch, 0.0, 10.0)
-        && all(&emitter.offset.to_array(), -1.0e6, 1.0e6)
-        && within(emitter.radius, 0.0, 10_000.0)
-        && emitter.direction.length_squared() != 0.0
-        && f64::from(emitter.rate) * f64::from(emitter.lifetime)
-            <= f64::from(MAX_EMITTER_PARTICLES)
+    ruled(&emitter.rate, "rate")
+        && ruled(&emitter.lifetime, "lifetime")
+        && ruled(&emitter.speed, "speed")
+        && ruled(&emitter.direction, "direction")
+        && ruled(&emitter.spread, "spread")
+        && ruled(&emitter.acceleration, "acceleration")
+        && ruled(&emitter.size, "size")
+        && ruled(&emitter.color, "color")
+        && ruled(&emitter.emission, "emission")
+        && ruled(&emitter.stretch, "stretch")
+        && ruled(&emitter.offset, "offset")
+        && ruled(&emitter.radius, "radius")
+        && emitter_extra(emitter.direction, emitter.rate, emitter.lifetime).is_ok()
 }
 
 #[derive(Resource, Default)]
@@ -132,7 +164,11 @@ pub(crate) struct Packed {
     pub(crate) alpha: u32,
     pub(crate) mist: u32,
     pub(crate) total: u32,
+    pub(crate) emits: bool,
+    pub(crate) revision: u64,
+    pub(crate) epoch: u64,
     cut: u64,
+    room: u64,
 }
 
 #[derive(Resource, Default)]
@@ -233,7 +269,7 @@ impl Gather {
 pub(crate) fn gather_emitters(
     settings: Res<ParticleSettings>,
     emitters: Query<(Entity, &'static ParticleEmitter)>,
-    (poses, view, time): (Res<Poses>, Res<View>, Res<FrameTime>),
+    (poses, view, time, limits): (Res<Poses>, Res<View>, Res<FrameTime>, Res<DeviceLimits>),
     mut gather: ResMut<Gather>,
     mut packed: ResMut<Packed>,
     mut owners: ResMut<Owners>,
@@ -246,28 +282,30 @@ pub(crate) fn gather_emitters(
         view.detail_eye(),
         time.elapsed_seconds as f32,
     );
-    if gather.list == gather.previous {
+    let room = limits.storage_room / 16 * 16;
+    if gather.list == gather.previous && packed.room == room {
         return;
     }
     gather.previous.clone_from(&gather.list);
-    let (alpha, mist, total, cut) =
-        pack_emitters(&gather.list, &mut gather.records, STORAGE_ROOM / 4);
+    let (alpha, mist, total, cut) = pack_emitters(&gather.list, &mut gather.records, room / 4);
     if !same_instances(&gather.records, &packed.records) {
         pack_owners(&gather.records, &mut owners.owners);
     }
     let packed = &mut *packed;
     packed.records.clone_from(&gather.records);
     (packed.alpha, packed.mist, packed.total, packed.cut) = (alpha, mist, total, cut);
+    packed.emits = !gather.list.is_empty();
+    packed.revision = packed.revision.wrapping_add(1);
+    packed.room = room;
 }
 
 pub(crate) fn particle_stats(
     gather: Res<Gather>,
     packed: Res<Packed>,
-    shown: Res<DebugShown>,
+    view: Res<View>,
     mut stats: ResMut<ParticleStats>,
 ) {
-    let frame = (shown.owner.is_none() && !gather.list.is_empty() && packed.total > 0)
-        .then_some(&*packed);
+    let frame = (!view.debug() && packed.emits && packed.total > 0).then_some(&*packed);
     let drawn = frame.map_or(0, |frame| frame.total);
     let cut = (gather.cut as u64 + frame.map_or(0, |frame| frame.cut))
         .min(u64::from(u32::MAX)) as u32;
@@ -284,8 +322,12 @@ pub(crate) fn forget(
     mut owners: ResMut<Owners>,
     mut stats: ResMut<ParticleStats>,
 ) {
+    let epoch = packed.epoch.wrapping_add(1);
     *gather = Gather::default();
-    *packed = Packed::default();
+    *packed = Packed {
+        epoch,
+        ..Packed::default()
+    };
     *owners = Owners::default();
     stats.set_if_neq(ParticleStats::default());
 }
@@ -331,7 +373,7 @@ fn pack_owners(records: &[Emitter], owners: &mut Vec<u32>) {
     }
 }
 
-fn same_instances(a: &[Emitter], b: &[Emitter]) -> bool {
+pub(crate) fn same_instances(a: &[Emitter], b: &[Emitter]) -> bool {
     a.len() == b.len()
         && a.iter()
             .zip(b)

@@ -15,11 +15,14 @@ pub struct SceneEnvironment {
 
 impl SceneEnvironment {
     pub fn current(world: &World) -> Self {
-        let mut sections = BTreeMap::new();
-        for section in registered(world) {
-            sections.insert(section.key.to_owned(), section.current(world));
-        }
-        Self { sections }
+        let context = crate::loading::kept(world);
+        crate::loading::within(context.as_ref(), || {
+            let mut sections = BTreeMap::new();
+            for section in registered(world) {
+                sections.insert(section.key.to_owned(), section.current(world));
+            }
+            Self { sections }
+        })
     }
 
     pub fn keys(&self) -> impl Iterator<Item = &str> {

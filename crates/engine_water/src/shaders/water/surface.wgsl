@@ -1,19 +1,19 @@
 import package::engine::color::luminance;
+import package::engine::math::GRAVITY;
 import package::engine::shading::{BODY_WATER, Shaded, SurfacePoint, ViewPixel};
 import package::engine::view::{PI, camera, detail_across, detail_level, eye_world,
     stable_normalize};
 import package::face::dither::stored;
-import package::face::heightfield::{SURFACE_LEAF_INDICES, TerrainSubdivision, surface_leaf,
-    surface_leaf_count, surface_vertex,
-    terrain_level_height, terrain_uniform, terrain_view_uniform};
+import package::face::heightfield::{SURFACE_LEAF_INDICES, surface_leaf, surface_leaf_count,
+    surface_vertex, terrain_level_height, terrain_uniform, terrain_view_uniform, use_terrain};
 import package::face::lighting::{distribution, environment_brdf, finish, fresnel, highlights,
     specular, sun_visibility, visibility};
 import package::face::sky::{ambient, atmospheric_cover, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::generated::targets::{ViewTargets, view_targets};
-import package::generated::water::{BREAK_THINNEST, NO_WATER_SURFACE, SIM_LIVE_LOOKS, SIM_RIM,
-    WATER_GRAVITY, WaterUniform};
-import package::place::water::{NO_WATER_BLOCK, WATER_HELD, WATER_LIVE_BLOCK, WaterAt};
+import package::generated::water::{BREAK_THINNEST, NO_WATER_BLOCK, NO_WATER_SURFACE, SIM_LIVE_LOOKS,
+    SIM_RIM, WATER_LIVE_BLOCK, WaterUniform};
+import package::place::water::{WATER_HELD, WaterAt};
 import package::water::faces::water::{water_at_level, water_cell, water_info_at, water_read,
     water_smooth, water_texel, water_words, water_words_add};
 import package::water::flow::{water_detail, water_stirring};
@@ -22,9 +22,8 @@ import package::water::foam::{water_blocking, water_contact, water_foam, water_f
 import package::water::footprint::{water_footprint, water_roughness, water_turning};
 import package::water::refraction::refraction_sampler;
 
-@group(1) @binding(60) var<uniform> water_tree: TerrainSubdivision;
-
 @group(1) @binding(52) var<uniform> water: WaterUniform;
+@group(1) @binding(57) var<storage, read> water_leaf_spans: array<u32>;
 @group(1) @binding(56) var<storage, read> water_live: array<vec4<f32>>;
 @group(2) @binding(22) var water_depth: texture_depth_2d;
 @group(2) @binding(23) var water_scene: texture_2d<f32>;
@@ -55,6 +54,21 @@ const WATER_RACING: vec2<f32> = vec2<f32>(0.8, 1.6);
 struct WaterOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) relative: vec3<f32>,
+    @location(1) @interpolate(flat) terrain: u32,
+}
+
+const WATER_LEAF_FIRST: u32 = 5u;
+
+fn water_leaf_terrain(instance: u32) -> vec2<u32> {
+    var terrain = 0u;
+    loop {
+        let span = WATER_LEAF_FIRST + 2u * terrain;
+        if terrain + 1u >= water.terrains.x
+            || instance < water_leaf_spans[span] + water_leaf_spans[span + 1u] {
+            return vec2<u32>(terrain, instance - water_leaf_spans[span]);
+        }
+        terrain += 1u;
+    }
 }
 
 fn water_corner(corner: u32, upper: bool) -> vec2<u32> {
@@ -255,13 +269,16 @@ fn water_lift(world: vec3<f32>) -> f32 {
 }
 
 fn water_output(vertex: u32, instance: u32) -> WaterOutput {
-    let local = surface_vertex(surface_leaf(water_tree.tree.z + instance), vertex);
+    let leaf = water_leaf_terrain(instance);
+    use_terrain(leaf.x);
+    let local = surface_vertex(surface_leaf(leaf.y), vertex);
     var relative = water_relative(local, water_field(local));
     relative.y += water_lift(eye_world(relative));
     var output: WaterOutput;
     output.clip_position = terrain_view_uniform().relative_view_projection
         * vec4<f32>(relative, 1.0);
     output.relative = relative;
+    output.terrain = leaf.x;
     return output;
 }
 
@@ -645,6 +662,7 @@ fn shade_mesh(mesh: vec3<f32>, pixel: vec2<f32>) -> WaterShade {
 
 @fragment
 fn fs_water(input: WaterOutput) -> ViewTargets {
+    use_terrain(input.terrain);
     let shade = shade_mesh(input.relative, input.clip_position.xy);
     var targets = view_targets(shade.shaded, ViewPixel(input.clip_position,
         water_previous(input.relative, shade.flow, saturate(shade.coverage))));
@@ -654,19 +672,30 @@ fn fs_water(input: WaterOutput) -> ViewTargets {
 
 
 fn water_eddies(speed: f32, slope: f32, depth: f32) -> f32 {
-    let stirring = WATER_GRAVITY * speed * slope * max(depth, BREAK_THINNEST);
+    let stirring = GRAVITY * speed * slope * max(depth, BREAK_THINNEST);
     return select(0.0, pow(stirring, 1.0 / 3.0), stirring > 0.0);
 }
 
 fn water_eddy_froude(speed: f32, slope: f32, depth: f32) -> f32 {
     return water_eddies(speed, slope, depth)
-        / sqrt(WATER_GRAVITY * max(depth, BREAK_THINNEST));
+        / sqrt(GRAVITY * max(depth, BREAK_THINNEST));
 }
 
-@group(1) @binding(0) var<storage, read_write> water_leaf_args: array<u32, 5>;
+@group(1) @binding(0) var<storage, read_write> water_leaf_args: array<u32>;
 
 @compute @workgroup_size(1)
 fn cs_water_leaf_args() {
+    var total = 0u;
+    for (var terrain = 0u; terrain < water.terrains.x; terrain++) {
+        use_terrain(terrain);
+        let count = surface_leaf_count();
+        water_leaf_args[WATER_LEAF_FIRST + 2u * terrain] = total;
+        water_leaf_args[WATER_LEAF_FIRST + 2u * terrain + 1u] = count;
+        total += count;
+    }
     water_leaf_args[0] = SURFACE_LEAF_INDICES;
-    water_leaf_args[1] = surface_leaf_count();
+    water_leaf_args[1] = total;
+    water_leaf_args[2] = 0u;
+    water_leaf_args[3] = 0u;
+    water_leaf_args[4] = 0u;
 }

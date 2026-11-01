@@ -7,7 +7,7 @@ use engine_dev::{
     Context, Control, DevTools, Envelope, InspectorDescriptor, MAX_INSPECTORS, MAX_REQUEST_BYTES,
     MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
 };
-use engine_scene::{SceneDocument, SceneInstance};
+use engine_scene::{SceneDocument, SceneInstance, SceneKinds};
 use serde_json::{Value, json};
 
 use super::Observations;
@@ -25,8 +25,11 @@ const LINKER: &str = "the shader linker answers it at install, which the no-op i
 const APP_BUILD: &str = "building the App refuses it, and the no-op install builds every listed brick (crates/engine_registry, crates/engine_render)";
 const SPAWNER: &str = "a spawner reports it when a command reaches another brick's entity (crates/engine_core)";
 const IMPORT: &str = "the glTF importer answers it (tools/assetc)";
-const RECORDS: &str = "records that do not decode answer it (crates/engine_terrain/src/codec.rs)";
+const RECORDS: &str = "records that do not decode answer it (crates/engine_codec/src/lib.rs)";
+const LAYERS: &str = "terrain layer stacks answer it (crates/engine_heightfield/src/layers.rs)";
 const PACKS: &str = "packs that do not read answer it (crates/engine_worker/src/pack.rs)";
+const COLLISION: &str = "engine_collision's own check, after the development tools' and scenes' bounds, \
+                         or its budgets, which overflow only with more colliders than the corpora load";
 
 const UNREACHED: &[(&str, &str)] = &[
     ("activation_committed", WATCH),
@@ -50,10 +53,24 @@ const UNREACHED: &[(&str, &str)] = &[
     ("build_worker_unavailable", WATCH),
     ("capture_failed", BRIDGE),
     ("capture_requires_pause", BRIDGE),
+    ("collision_candidate_budget", COLLISION),
+    ("collision_incomplete_world", COLLISION),
+    ("collision_invalid_cast", COLLISION),
+    ("collision_invalid_config", COLLISION),
+    ("collision_invalid_ray", COLLISION),
+    ("collision_invalid_shape", COLLISION),
+    ("collision_invalid_transform", COLLISION),
+    ("collision_numerical_failure", COLLISION),
+    ("collision_pair_budget", COLLISION),
+    ("collision_result_budget", COLLISION),
     ("command_busy", PAGE),
     ("command_timeout", BRIDGE),
     ("comment", CHECKS),
     ("content_type", BRIDGE),
+    (
+        "duplicate_brick",
+        "the no-op install refuses two bricks that bind one name in a group (crates/engine_render/src/bindings/groups.rs)",
+    ),
     ("duplicate_request", BRIDGE),
     ("error_type", CHECKS),
     ("exception_unused", CHECKS),
@@ -90,11 +107,12 @@ const UNREACHED: &[(&str, &str)] = &[
     ("iteration_stopped", WATCH),
     (
         "job_unsupported",
-        "core's mesh LOD kind answers it on wasm (crates/engine_core/src/mesh_lods.rs)",
+        "a job of a kind the list lacks answers it, and so does core's impostor kind, which only the GPU makes (crates/engine_core/src/jobs.rs, crates/engine_core/src/assets.rs)",
     ),
     ("lint_allowed", CHECKS),
     ("lint_missing", CHECKS),
     ("marker", CHECKS),
+    ("missing_layer", LAYERS),
     ("missing_runtime_identity", BRIDGE),
     ("module_outside_brick", APP_BUILD),
     ("name_twice", APP_BUILD),
@@ -127,10 +145,7 @@ const UNREACHED: &[(&str, &str)] = &[
     ("runtime_replaced", BRIDGE),
     ("runtime_unavailable", BRIDGE),
     ("safety_missing", CHECKS),
-    (
-        "section_unlisted",
-        "scene load skips and reports a section whose brick is not listed, and the standard list lists every brick the corpora name",
-    ),
+    ("schedule_ambiguity", APP_BUILD),
     ("session_cancelled", BRIDGE),
     ("session_closed", BRIDGE),
     ("session_mismatch", BRIDGE),
@@ -149,6 +164,10 @@ const UNREACHED: &[(&str, &str)] = &[
     ("struct_too_wide", CHECKS),
     ("unknown_binding", LINKER),
     ("unknown_module", LINKER),
+    (
+        "unknown_value",
+        "the registry answers it for a settings key no listed brick declares, and the worker for a step of a job it never started (crates/engine_registry/src/registry.rs, crates/engine_worker/src/lib.rs)",
+    ),
     ("unknown_variable", APP_BUILD),
     ("unowned_system", APP_BUILD),
     ("unsafe_output_path", WATCH),
@@ -272,7 +291,10 @@ fn engine_with_features() -> Result<Engine, String> {
 
 fn instantiate(engine: &mut Engine, document: &str) -> Result<SceneInstance, String> {
     SceneDocument::from_json(document)
-        .and_then(|document| document.instantiate(engine.app.world_mut()))
+        .and_then(|document| {
+            document.validate(&SceneKinds::of(engine.app.world()))?;
+            document.instantiate(engine.app.world_mut())
+        })
         .map_err(|error| format!("a corpus scene: {error}"))
 }
 
@@ -409,7 +431,9 @@ fn authoring(root: &Path, refusal: &Value) -> Result<Option<Error>, String> {
                 Value::String(max) if max == "max" => u64::MAX,
                 expected => expected.as_u64().unwrap_or_default(),
             };
-            engine_dev::authoring::save_scene(&target, &candidate.to_string(), expected).err()
+            let kinds = crate::bricks::standard_kinds().map_err(|error| error.to_string())?;
+            engine_dev::authoring::save_scene(&target, &candidate.to_string(), expected, &kinds)
+                .err()
         }
     };
     Ok(error.map(|mut error| {

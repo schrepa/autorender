@@ -49,9 +49,15 @@ fn grid() -> Value {
     })
 }
 
-fn previewed(session: &mut dyn SmokeSession) -> Checked<Value> {
-    ask(session, "capture", json!({ "alpha": 0.5 }))?;
-    inspect(session, "meshes_stats")
+fn previewed(session: &mut dyn SmokeSession) -> Checked<(Value, Value)> {
+    let captured = ask(session, "capture", json!({ "alpha": 0.5 }))?;
+    Ok((captured["rendering"].clone(), inspect(session, "meshes_stats")?))
+}
+
+fn passes(rendering: &Value, pass: &str) -> bool {
+    rendering["render_passes"]
+        .as_array()
+        .is_some_and(|passes| passes.iter().any(|name| name == pass))
 }
 
 pub(crate) fn culling_settings(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
@@ -63,22 +69,45 @@ pub(crate) fn culling_settings(session: &mut dyn SmokeSession) -> Result<(), Smo
     let off = json!({ "enabled": false });
     smoke_eq!(inspect(session, "occlusion_culling")?, on, "occlusion_on_by_default");
     smoke_eq!(inspect(session, "subpixel_culling")?, on, "subpixel_on_by_default");
-    let stats = previewed(session)?;
-    smoke_eq!(stats["occlusion_active"], json!(true), "gpu_frames_cull_occluded");
-    smoke_eq!(stats["subpixel_active"], json!(true), "gpu_frames_cull_subpixel");
+    let (rendering, stats) = previewed(session)?;
+    smoke_eq!(
+        stats["occlusion_culling"]["active"],
+        json!(true),
+        "gpu_frames_cull_occluded"
+    );
+    smoke_eq!(
+        stats["subpixel_culling"]["active"],
+        json!(true),
+        "gpu_frames_cull_subpixel"
+    );
+    smoke_eq!(
+        passes(&rendering, "occlusion_test"),
+        true,
+        "occlusion_test_runs"
+    );
     let both = json!({ "occlusion_culling": off, "subpixel_culling": off });
-    environment(session, both)?;
+    let reply = environment(session, both)?;
+    smoke_eq!(
+        reply["environment_changed"],
+        json!(["occlusion_culling", "subpixel_culling"]),
+        "culling_settings_controlled"
+    );
     smoke_eq!(inspect(session, "occlusion_culling")?, off, "culling_settings_inspected");
-    let stats = previewed(session)?;
+    let (rendering, stats) = previewed(session)?;
     smoke_eq!(
         json!([
-            stats["occlusion_active"],
-            stats["subpixel_active"],
-            stats["occluded"],
-            stats["subpixel"],
+            stats["occlusion_culling"]["active"],
+            stats["subpixel_culling"]["active"],
+            stats["occlusion_culling"]["instances"],
+            stats["subpixel_culling"]["instances"],
         ]),
         json!([false, false, null, null]),
         "culling_settings_observed"
+    );
+    smoke_eq!(
+        passes(&rendering, "occlusion_test"),
+        false,
+        "no_occlusion_test_while_off"
     );
     let phases = json!({ "occlusion_culling": { "enabled": true, "phases": 2 } });
     let refused = session.request("control", json!({ "name": "environment", "args": phases }));
@@ -88,8 +117,12 @@ pub(crate) fn culling_settings(session: &mut dyn SmokeSession) -> Result<(), Smo
         "culling_settings_validated"
     );
     environment(session, json!({ "occlusion_culling": on, "subpixel_culling": on }))?;
-    let stats = previewed(session)?;
-    smoke_eq!(stats["occlusion_active"], json!(true), "culling_runs_again");
+    let (_, stats) = previewed(session)?;
+    smoke_eq!(
+        stats["occlusion_culling"]["active"],
+        json!(true),
+        "culling_runs_again"
+    );
     Ok(())
 }
 

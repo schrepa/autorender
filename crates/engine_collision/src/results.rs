@@ -1,7 +1,7 @@
 use engine_core::Error;
 use serde::Serialize;
 
-use crate::views::CollisionWorldView;
+use crate::types::CollisionStats;
 
 #[derive(Serialize)]
 pub(crate) struct HitEntity {
@@ -20,7 +20,7 @@ pub(crate) struct PlacedHit {
 
 #[derive(Serialize)]
 pub(crate) struct RaycastResult {
-    pub snapshot: CollisionWorldView,
+    pub snapshot: CollisionStats,
     pub complete: bool,
     pub hit: Option<RayHit>,
 }
@@ -37,7 +37,7 @@ pub(crate) struct RayHit {
 
 #[derive(Serialize)]
 pub(crate) struct OverlapResult {
-    pub snapshot: CollisionWorldView,
+    pub snapshot: CollisionStats,
     pub complete: bool,
     pub total: usize,
     pub hits: Vec<HitEntity>,
@@ -45,7 +45,7 @@ pub(crate) struct OverlapResult {
 
 #[derive(Serialize)]
 pub(crate) struct ShapeCastResult {
-    pub snapshot: CollisionWorldView,
+    pub snapshot: CollisionStats,
     pub complete: bool,
     pub hit: Option<CastHit>,
 }

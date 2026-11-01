@@ -1,5 +1,5 @@
-import package::terrain_shading::faces::heightfield::{TERRAIN_GRID, terrain};
-import package::generated::terrain_shading::{SURFACE_MESHLET_LEVEL, TERRAIN_GRID_VERTICES};
+import package::terrain_shading::faces::heightfield::terrain;
+import package::generated::terrain_shading::{SURFACE_MESHLET_LEVEL, PATCH_GRID, PATCH_GRID_VERTICES};
 
 @group(0) @binding(17) var terrain_heights: texture_2d_array<f32>;
 
@@ -19,13 +19,13 @@ fn terrain_load(layer: u32, texel: vec2<u32>) -> f32 {
 fn terrain_vertex(input: PatchInput) -> vec3<f32> {
     var grid: vec2<u32>;
     var skirt = false;
-    if input.vertex < TERRAIN_GRID_VERTICES {
-        grid = vec2<u32>(input.vertex % TERRAIN_GRID, input.vertex / TERRAIN_GRID);
+    if input.vertex < PATCH_GRID_VERTICES {
+        grid = vec2<u32>(input.vertex % PATCH_GRID, input.vertex / PATCH_GRID);
     } else {
-        let index = input.vertex - TERRAIN_GRID_VERTICES;
-        let edge = index / TERRAIN_GRID;
-        let along = index % TERRAIN_GRID;
-        let last = TERRAIN_GRID - 1u;
+        let index = input.vertex - PATCH_GRID_VERTICES;
+        let edge = index / PATCH_GRID;
+        let along = index % PATCH_GRID;
+        let last = PATCH_GRID - 1u;
         let across_z = vec2<u32>(along, select(last, 0u, edge == 0u));
         let across_x = vec2<u32>(select(last, 0u, edge == 2u), along);
         grid = select(across_z, across_x, edge >= 2u);

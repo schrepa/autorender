@@ -377,16 +377,30 @@ fn switch(body: &mut String, id: u32) -> String {
 }
 
 fn switched(imports: &mut String, body: &mut String, place: &str, filler: &Fed, contract: &Contract) {
+    let own = |answer: &&Answer| !answer.constant || filler.implements.contains(&answer.name);
     let Some(id) = filler.switch else {
-        let names: Vec<&str> = contract.answers.iter().map(|answer| answer.name.as_str()).collect();
+        let names: Vec<&str> = contract.answers.iter().filter(own).map(|answer| answer.name.as_str()).collect();
         if !names.is_empty() {
             let _ = writeln!(imports, "import package::{}::{{{}}};", filler.module, names.join(", "));
+        }
+        let taken: Vec<&str> = contract
+            .answers
+            .iter()
+            .filter(|answer| !own(answer))
+            .map(|answer| answer.name.as_str())
+            .collect();
+        if !taken.is_empty() {
+            let _ = writeln!(imports, "import package::{}::{{{}}};", place_module(place), taken.join(", "));
         }
         return;
     };
     let on = switch(body, id);
     for answer in &contract.answers {
         let name = &answer.name;
+        if !own(&answer) {
+            let _ = writeln!(imports, "import package::{}::{name};", place_module(place));
+            continue;
+        }
         let _ = writeln!(imports, "import package::{}::{name} as answer_{name};", filler.module);
         if answer.constant {
             let ty = answer.returns.as_deref().unwrap_or_default();

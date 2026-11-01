@@ -10,7 +10,7 @@ import package::engine::screen_points::{depth_normal, world_at};
 import package::engine::shading::{BODY_SOLID, BODY_THIN, BODY_WATER};
 import package::engine::view::{camera, stable_normalize};
 import package::face::bounce::bounce_light;
-import package::face::cover::{cover_growth, cover_seen, cover_tint};
+import package::face::cover::{cover_growth, cover_seen, cover_tint, material_canopy};
 import package::face::ground_tiles::{
     LevelTile, NOT_RESIDENT, PEAK_CELLS, PEAK_MIPS, TILE_QUADS, ground_colors,
     ground_colors_mip, ground_extent, ground_of, ground_sky, ground_tile, level_tiles,
@@ -755,14 +755,14 @@ fn ground_albedo(terrain: TraceTerrain, local: vec2<f32>, normal: vec3<f32>, tow
     var vegetated = 0.0;
     for (var slot = 0u; slot < 2u; slot++) {
         let weight = select(share, 1.0 - share, slot == 0u);
-        let entry = material_look(info.levels.z,
-            select(material.first, material.second, slot == 1u));
+        let index = select(material.first, material.second, slot == 1u);
+        let entry = material_look(info.levels.z, index);
+        let canopy = material_canopy(terrain.maps.x, index);
         var color = entry.far.rgb;
-        if entry.canopy.w > 0.0 {
-            let depth = 0.5 * entry.canopy.w * growth.height * growth.density * terrain.reach.y
-                / sine;
+        if canopy.w > 0.0 {
+            let depth = 0.5 * canopy.w * growth.height * growth.density * terrain.reach.y / sine;
             if depth > 0.0 {
-                let look = mix(color, entry.canopy.rgb, cover_seen(depth).tip);
+                let look = mix(color, canopy.rgb, cover_seen(depth).tip);
                 color = mix(color, look, 1.0 - exp(-depth));
             }
             vegetated += weight;
@@ -841,13 +841,6 @@ fn world_light(hit: WorldHit, p: vec3<f32>, direction: vec3<f32>, footprint: f32
 
 fn reach_fade(travelled: f32, reach: f32) -> f32 {
     return saturate((1.0 - min(travelled / max(reach, 1.0e-6), 1.0)) / REFLECTION_END);
-}
-
-@vertex
-fn vs_trace(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
-    let x = f32((index << 1u) & 2u) * 2.0 - 1.0;
-    let y = f32(index & 2u) * 2.0 - 1.0;
-    return vec4<f32>(x, y, 0.0, 1.0);
 }
 
 @fragment

@@ -1,241 +1,73 @@
-use std::cell::Cell;
 use std::sync::Arc;
 
+use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
-use engine_core::Cut;
-use engine_core::glam::{Mat3, Vec2, Vec3};
-use engine_faces::heightfield::HeightfieldFace;
-use engine_places::WaterObstacle;
-use engine_render::bindings::EMPTY;
-use engine_render::pipelines::GroupLayout;
-use engine_terrain::shallow_water::step_seconds;
-use engine_terrain::{
-    BLOCK_SIDE, Footprint, NO_BLOCK, SIM_TOUCHES, StoredBlocks, WaterRead, WaterWindow, live_steps,
+use engine_core::{Camera, Cut, DeviceLimits, Error, FrameTime};
+use engine_places::ground::GroundTiles;
+use engine_places::water::{WaterObstacle, WaterObstacles};
+use engine_render::{
+    ComputePipeline, Count, Encode, Install, Pass, Prepare,
 };
+use glam::{Mat3, Vec2, Vec3};
 
-use crate::bindings::WATER_SETUP;
-use crate::gpu_layouts::constants::{
-    LIVE_CELL, LIVE_HEAD, LIVE_HELD, LIVE_NONE, NO_WATER_SURFACE, SETUP_RISEN, SETUP_SOLID_ENTRIES,
-    SETUP_STANDS, SETUP_WHOLE, SIM_BURSTING, SIM_LIVE, SIM_STANDING, SIM_STEPPING,
-    WATER_SETUP_RING_GROUP,
+use crate::gpu::{
+    LIVE_CELL, LIVE_HEAD, LIVE_HELD, LIVE_NONE, NO_WATER_SURFACE, SETUP_RISEN,
+    SETUP_SOLID_ENTRIES, SETUP_STANDS, SETUP_WHOLE, SIM_BURSTING, SIM_LIVE, SIM_STANDING,
+    SIM_STEPPING, SIM_TOUCHES, SimSetup, SimSlot, SimTouch, SimTouches, WATER_SETUP_RING_GROUP,
 };
-use crate::gpu_layouts::water::{SimSetup, SimSlot, SimTouch, SimTouches};
-use crate::shaders::entry::meshes;
+use crate::shallow_water::step_seconds;
+use crate::state::WaterState;
+use crate::water::WaterGpu;
 use crate::water_kernels::{
-    Capacity, Kernels, SlotBuffers, encode_drawn, encode_steps, grid, live_largest_bytes,
+    Capacity, Kernels, Layout, SetupHandles, SlotHandles, grid, live_largest_bytes, squares,
 };
-
-pub(crate) use engine_terrain::LONGEST_FRAME;
+use crate::windows::WaterRead;
+use crate::{BLOCK_SIDE, Footprint, NO_BLOCK, StoredBlocks, Water, WaterWindow, live_steps};
 
 const RISEN: usize = 256;
+const SETUP_SOLID: usize = SETUP_SOLID_ENTRIES as usize;
 
-pub(crate) struct Live<'a> {
-    pub(crate) window: &'a Arc<WaterWindow>,
-    pub(crate) touches: &'a [WaterObstacle],
-    pub(crate) beyond: u32,
-    pub(crate) ground: Option<LiveGround<'a>>,
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Held {
+    place: [i64; 2],
+    runs: bool,
 }
 
-pub(crate) struct LiveGround<'a> {
-    pub(crate) group: &'a wgpu::BindGroup,
-    pub(crate) uniform: u32,
-    pub(crate) terrain: u64,
-    pub(crate) held: &'a dyn HeightfieldFace,
+pub(crate) struct Listed {
+    pub(crate) entries: Vec<[u32; 4]>,
+    pub(crate) offset: u64,
+    pub(crate) frame: SimSetup,
+    pub(crate) blocks: u32,
+    pub(crate) ghosts: u32,
 }
 
-impl LiveGround<'_> {
-    fn resident(&self, read: &WaterRead) -> bool {
-        read.ready
-            && read.tile.as_ref().is_some_and(|tile| {
-                self.held
-                    .holds(self.terrain, read.key, Arc::as_ptr(tile).cast())
-            })
-    }
+pub(crate) struct Square {
+    pub(crate) words: Vec<u32>,
+    pub(crate) sources: Vec<[f32; 4]>,
+    pub(crate) solids: Vec<[f32; 4]>,
 }
 
-pub(crate) struct Setup {
-    empty: wgpu::BindGroup,
-    pub(crate) layout: GroupLayout,
-    grounded: bool,
-    pipelines: Option<[wgpu::ComputePipeline; 3]>,
-    ground: Option<(wgpu::BindGroup, u32)>,
+pub(crate) struct SimDrawn {
+    pub(crate) window: Arc<WaterWindow>,
+    pub(crate) wrap: [u32; 2],
+    pub(crate) pool: u32,
 }
 
-impl Setup {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let empty_layout = engine_render::pipelines::layout(device, &EMPTY);
-        let empty = engine_render::pipelines::group(
-            device,
-            "engine/water-setup-empty",
-            &EMPTY,
-            &empty_layout,
-            &[],
-        );
-        Self {
-            empty,
-            layout: engine_render::pipelines::layout(device, &WATER_SETUP),
-            grounded: false,
-            pipelines: None,
-            ground: None,
-        }
-    }
-
-    pub(crate) fn hold(&mut self, ground: Option<&LiveGround<'_>>) {
-        self.ground = ground.map(|ground| {
-            self.grounded = true;
-            (ground.group.clone(), ground.uniform)
-        });
-    }
-
-    pub(crate) fn ensure(&mut self, device: &wgpu::Device) {
-        if self.pipelines.is_some() || !self.grounded {
-            return;
-        }
-        let layout = engine_render::pipelines::layout_of(
-            device,
-            &crate::pipeline_layouts::WATER_SETUP_PIPELINES,
-        );
-        let entry = |entry| engine_render::pipelines::compute_entry(device, &layout, entry);
-        self.pipelines = Some([
-            entry(meshes::setup_blocks),
-            entry(meshes::setup_ring),
-            entry(meshes::setup_raise),
-        ]);
-    }
-
-    pub(crate) fn sets_up(&self) -> bool {
-        self.pipelines.is_some() && self.ground.is_some()
-    }
-
-    fn release(&mut self) {
-        self.pipelines = None;
-    }
-
-    fn bind<'a>(
-        &'a self,
-        pass: &mut wgpu::ComputePass<'_>,
-        group: &wgpu::BindGroup,
-    ) -> Option<&'a [wgpu::ComputePipeline; 3]> {
-        let (Some(pipelines), Some((terrain, uniform))) = (&self.pipelines, &self.ground) else {
-            return None;
-        };
-        pass.set_bind_group(0, &self.empty, &[]);
-        pass.set_bind_group(1, terrain, &[0, *uniform]);
-        pass.set_bind_group(2, group, &[]);
-        Some(pipelines)
-    }
-
-    pub(crate) fn encode_raise(
-        &self,
-        pass: &mut wgpu::ComputePass<'_>,
-        group: &wgpu::BindGroup,
-        blocks: u32,
-    ) -> bool {
-        let Some([_, _, raise]) = self.bind(pass, group) else {
-            return false;
-        };
-        let [groups_x, groups_z] = grid(blocks);
-        pass.set_pipeline(raise);
-        pass.dispatch_workgroups(groups_x, groups_z, 1);
-        true
-    }
-
-    fn encode(
-        &self,
-        pass: &mut wgpu::ComputePass<'_>,
-        group: &wgpu::BindGroup,
-        (blocks, ghosts): (u32, u32),
-    ) -> bool {
-        let Some([set_blocks, set_ring, _]) = self.bind(pass, group) else {
-            return false;
-        };
-        if blocks > 0 {
-            let [groups_x, groups_z] = grid(blocks);
-            pass.set_pipeline(set_blocks);
-            pass.dispatch_workgroups(groups_x, groups_z, 1);
-        }
-        if ghosts > 0 {
-            pass.set_pipeline(set_ring);
-            pass.dispatch_workgroups(ghosts.div_ceil(WATER_SETUP_RING_GROUP), 1, 1);
-        }
-        true
-    }
-}
-
-pub(crate) struct SetupBuffers {
-    pub(crate) frame: wgpu::Buffer,
-    pub(crate) list: wgpu::Buffer,
-    pub(crate) room: usize,
-    pub(crate) live: wgpu::Buffer,
-    pub(crate) live_room: usize,
-    pub(crate) group: wgpu::BindGroup,
-}
-
-impl SetupBuffers {
-    pub(crate) fn new(
-        device: &wgpu::Device,
-        layout: &GroupLayout,
-        buffers: &SlotBuffers,
-        (entries, words): (usize, usize),
-    ) -> Self {
-        let room = entries.max(1).next_power_of_two();
-        let live_room = words.max(4).next_power_of_two();
-        let frame = engine_render::buffers::uniform(
-            device,
-            "engine/water-setup",
-            size_of::<SimSetup>() as u64,
-        );
-        let list = engine_render::buffers::storage(
-            device,
-            "engine/water-setup-list",
-            room as u64 * 16,
-            wgpu::BufferUsages::empty(),
-        );
-        let live = engine_render::buffers::storage(
-            device,
-            "engine/water-setup-live",
-            live_room as u64 * 4,
-            wgpu::BufferUsages::empty(),
-        );
-        let group = engine_render::pipelines::group(
-            device,
-            "engine/water-setup",
-            &WATER_SETUP,
-            layout,
-            &[
-                engine_render::buffers::entry("setup_frame", &frame),
-                engine_render::buffers::entry("setup_list", &list),
-                engine_render::buffers::entry("setup_ground", &buffers.ground),
-                engine_render::buffers::entry("setup_cells", &buffers.cells),
-                engine_render::buffers::entry("setup_looks", &buffers.averages),
-                engine_render::buffers::entry("setup_edges", &buffers.inputs),
-                engine_render::buffers::entry("setup_live", &live),
-            ],
-        );
-        Self {
-            frame,
-            list,
-            room,
-            live,
-            live_room,
-            group,
-        }
-    }
-
-    pub(crate) fn bytes(&self) -> u64 {
-        self.frame.size() + self.list.size() + self.live.size()
-    }
-}
-
-pub(crate) struct WaterSim {
-    kernels: Kernels,
-    setup: Setup,
-    window: Option<SimWindow>,
-    steps: u32,
-    behind: u32,
-    tick: Option<i64>,
-    generation: u64,
-    touches: [u32; 2],
+#[derive(Default)]
+pub(crate) struct SimWork {
+    pub(crate) layout: Option<(Layout, u64)>,
+    pub(crate) setup: Option<((usize, usize), u64)>,
+    pub(crate) square: Option<Square>,
+    pub(crate) table: Option<StoredBlocks>,
+    pub(crate) listed: Option<Listed>,
+    pub(crate) slot: SimSlot,
+    pub(crate) touches: Option<SimTouches>,
+    pub(crate) steps: u32,
+    pub(crate) sourced: u32,
+    pub(crate) blocks: u32,
+    pub(crate) terrain: u32,
+    pub(crate) ready: bool,
+    pub(crate) drawn: Option<SimDrawn>,
 }
 
 struct SimWindow {
@@ -244,8 +76,11 @@ struct SimWindow {
     pool: u32,
     stored: StoredBlocks,
     wrap: [u32; 2],
-    buffers: SlotBuffers,
-    setup: SetupBuffers,
+    layout: Layout,
+    layout_generation: u64,
+    room: usize,
+    live_room: usize,
+    setup_generation: u64,
     sourced: u32,
     solids: u32,
     tiles: [u32; 4],
@@ -257,47 +92,37 @@ struct SimWindow {
     table: bool,
     ready: bool,
     waiting: u32,
-    listed: Option<Listed>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Held {
-    place: [i64; 2],
-    runs: bool,
-}
-
-struct Listed {
-    slots: Vec<u32>,
     whole: u32,
-    blocks: u32,
-    ghosts: u32,
-    recorded: Cell<bool>,
 }
 
-impl WaterSim {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
-        Self {
-            kernels: Kernels::new(device),
-            setup: Setup::new(device),
-            window: None,
-            steps: 0,
-            behind: 0,
-            tick: None,
-            generation: 0,
-            touches: [0; 2],
-        }
-    }
+#[derive(Default)]
+pub(crate) struct LiveSim {
+    window: Option<SimWindow>,
+    steps: u32,
+    behind: u32,
+    tick: Option<i64>,
+    generation: u64,
+    touches: [u32; 2],
+    grounded: bool,
+    made: bool,
+    pub(crate) work: SimWork,
+}
 
-    pub(crate) fn prepare(
+pub(crate) struct Live<'a> {
+    window: &'a Arc<WaterWindow>,
+    touches: &'a [WaterObstacle],
+    beyond: u32,
+    ground: Option<u32>,
+}
+
+impl LiveSim {
+    fn prepare(
         &mut self,
-        device: &wgpu::Device,
-        queue: &engine_render::gpu_calls::Queue,
         live: Option<Live<'_>>,
-        seconds: f64,
+        resident: &dyn Fn(&WaterRead) -> bool,
+        (seconds, binding): (f64, u64),
     ) {
-        if let Some(current) = self.window.as_mut() {
-            current.settle();
-        }
+        self.work = SimWork::default();
         let came = live.and_then(|live| {
             let changed = self
                 .window
@@ -306,49 +131,47 @@ impl WaterSim {
             if !changed {
                 return Some((live, None));
             }
-            fit(device, live.window).map(|square| (live, Some(square)))
+            fit(live.window, binding).map(|square| (live, Some(square)))
         });
         let Some((live, fitted)) = came else {
             if self.window.take().is_some() {
                 self.generation += 1;
             }
-            self.setup.hold(None);
             (self.steps, self.behind, self.tick, self.touches) = (0, 0, None, [0; 2]);
             return;
         };
-        self.setup.hold(live.ground.as_ref());
-        let sets_up = self.setup.sets_up();
-        self.kernels.pipelines(device);
-        let layouts = (&self.kernels.layout, &self.setup.layout);
+        if live.ground.is_some() {
+            self.grounded = true;
+        }
+        let sets_up = self.made && live.ground.is_some();
         if let Some(fitted) = fitted {
             let same_size = self.window.as_ref().is_some_and(|current| {
                 current.fitted.cells == fitted.cells
                     && current.fitted.cell == fitted.cell
                     && current.pool == pool_of(&fitted)
             });
-            if same_size {
-                if let Some(current) = self.window.as_mut() {
-                    current.follow((device, queue, layouts), live.window, fitted);
-                }
+            let square = if same_size {
+                self.window
+                    .as_mut()
+                    .map(|current| current.follow(live.window, fitted))
             } else {
-                self.window = Some(SimWindow::new(
-                    (device, queue, layouts),
-                    live.window,
-                    fitted,
-                ));
                 self.generation += 1;
-            }
+                let (window, square) = SimWindow::new(live.window, fitted, self.generation);
+                self.window = Some(window);
+                Some(square)
+            };
+            self.work.square = square;
         }
         let Some(current) = self.window.as_mut() else {
             return;
         };
         let ready = current.ready;
-        let resident = |read: &WaterRead| {
-            live.ground
-                .as_ref()
-                .is_some_and(|ground| ground.resident(read))
-        };
-        current.set_up(queue, sets_up, &resident);
+        let (table, listed) = current.set_up(sets_up, resident);
+        self.work.table = table;
+        self.work.listed = listed.map(|mut listed| {
+            listed.frame.terrain = [live.ground.unwrap_or(0), 0, 0, 0];
+            listed
+        });
         if current.ready != ready {
             self.generation += 1;
         }
@@ -372,72 +195,37 @@ impl WaterSim {
         let [columns, rows] = current.stored.blocks;
         let pooled = current.stored.stored() as u32;
         let [x, z] = current.fitted.first;
-        current.buffers.write_frames(queue);
-        current.buffers.write_squares(
-            queue,
-            &[SimSlot {
-                shape: [
-                    cells,
-                    cells,
-                    SIM_STEPPING | SIM_LIVE | SIM_BURSTING,
-                    current.sourced,
-                ],
-                step: [cell, step, 0.0, 0.0],
-                blocks: [columns, rows, pooled, 0],
-                place: [x as u32, z as u32, starting as u32, 0],
-            }],
-        );
-        current.buffers.write_touches(queue, pushing.as_ref());
-    }
-
-    pub(crate) fn encode(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        profiler: &engine_render::profiling::GpuProfiler,
-    ) {
-        let (Some(pipelines), Some(window)) = (self.kernels.created(), &self.window) else {
-            return;
+        self.work.layout = Some((current.layout, current.layout_generation));
+        self.work.setup = Some(((current.room, current.live_room), current.setup_generation));
+        self.work.slot = SimSlot {
+            shape: [
+                cells,
+                cells,
+                SIM_STEPPING | SIM_LIVE | SIM_BURSTING,
+                current.sourced,
+            ],
+            step: [cell, step, 0.0, 0.0],
+            blocks: [columns, rows, pooled, 0],
+            place: [x as u32, z as u32, starting as u32, 0],
         };
-        if !window.ready {
-            return;
-        }
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("engine/water-sim"),
-            timestamp_writes: profiler.span("water_sim").map(|span| span.compute()),
+        self.work.touches = pushing;
+        self.work.steps = self.steps;
+        self.work.sourced = current.sourced;
+        self.work.blocks = pooled;
+        self.work.terrain = live.ground.unwrap_or(0);
+        self.work.ready = current.ready;
+        self.work.drawn = current.ready.then(|| SimDrawn {
+            window: Arc::clone(&current.fitted),
+            wrap: current.wrap,
+            pool: current.pool,
         });
-        if let Some(listed) = window.listed.as_ref() {
-            let recorded = self.setup.encode(
-                &mut pass,
-                &window.setup.group,
-                (listed.blocks, listed.ghosts),
-            );
-            listed.recorded.set(recorded);
-        }
-        let blocks = window.stored.stored() as u32;
-        if self.steps > 0 {
-            encode_steps(
-                &mut pass,
-                pipelines,
-                &window.buffers,
-                (self.steps, window.sourced, false, true),
-                blocks,
-            );
-        }
-        encode_drawn(&mut pass, pipelines, &window.buffers, blocks);
     }
 
-    pub(crate) fn drawn(&self) -> (Option<SimDrawn<'_>>, u64) {
-        let drawn = self
-            .window
-            .as_ref()
-            .filter(|window| window.ready)
-            .map(|window| SimDrawn {
-                window: window.fitted.as_ref(),
-                wrap: window.wrap,
-                pool: window.pool,
-                looks: &window.buffers.averages,
-            });
-        (drawn, self.generation)
+    fn rest(&mut self, enabled: bool) {
+        self.prepare(None, &|_| false, (0.0, 0));
+        if !enabled {
+            self.made = false;
+        }
     }
 
     pub(crate) fn cells(&self) -> (Cut, [u32; 5]) {
@@ -450,7 +238,7 @@ impl WaterSim {
                         window.source.cells - window.fitted.cells,
                         self.steps,
                         self.behind,
-                        window.listed.as_ref().map_or(0, |listed| listed.whole),
+                        window.whole,
                         window.waiting,
                     ],
                 )
@@ -461,51 +249,30 @@ impl WaterSim {
     pub(crate) fn touches(&self) -> [u32; 2] {
         self.touches
     }
-
-    pub(crate) fn ensure_setup(&mut self, device: &wgpu::Device) {
-        self.setup.ensure(device);
-    }
-
-    pub(crate) fn release_pipelines(&mut self) {
-        self.kernels.release();
-        self.setup.release();
-    }
-
-    pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.window
-            .as_ref()
-            .map_or(0, |window| window.buffers.bytes() + window.setup.bytes())
-    }
 }
 
 impl SimWindow {
-    fn new(
-        (device, queue, layouts): (
-            &wgpu::Device,
-            &engine_render::gpu_calls::Queue,
-            (&GroupLayout, &GroupLayout),
-        ),
-        source: &Arc<WaterWindow>,
-        fitted: Arc<WaterWindow>,
-    ) -> Self {
+    fn new(source: &Arc<WaterWindow>, fitted: Arc<WaterWindow>, generation: u64) -> (Self, Square) {
         let pool = pool_of(&fitted);
         let (stored, wrap) = wrapped(&fitted, pool);
         let slots = stored.stored();
-        let buffers = SlotBuffers::new(
-            device,
-            layouts.0,
-            (Capacity::of(&stored, fitted.sources.len().max(1)), 1),
-            true,
-        );
-        let setup = SetupBuffers::new(device, layouts.1, &buffers, (entries(&fitted, slots), 0));
+        let layout = Layout {
+            capacity: Capacity::of(&stored, fitted.sources.len().max(1)),
+            slots: 1,
+            live: true,
+        };
+        let entries = entries(&fitted, slots);
         let mut window = Self {
             source: source.clone(),
             fitted,
             pool,
             stored,
             wrap,
-            buffers,
-            setup,
+            layout,
+            layout_generation: generation,
+            room: entries.max(1).next_power_of_two(),
+            live_room: 4,
+            setup_generation: 0,
             sourced: 0,
             solids: 0,
             tiles: [0; 4],
@@ -517,22 +284,13 @@ impl SimWindow {
             table: true,
             ready: false,
             waiting: 0,
-            listed: None,
+            whole: 0,
         };
-        window.write_square((device, queue, layouts));
-        window
+        let square = window.write_square();
+        (window, square)
     }
 
-    fn follow(
-        &mut self,
-        gpu: (
-            &wgpu::Device,
-            &engine_render::gpu_calls::Queue,
-            (&GroupLayout, &GroupLayout),
-        ),
-        source: &Arc<WaterWindow>,
-        fitted: Arc<WaterWindow>,
-    ) {
+    fn follow(&mut self, source: &Arc<WaterWindow>, fitted: Arc<WaterWindow>) -> Square {
         self.changed = changed(&self.source.reads, &source.reads);
         if (fitted.datum, fitted.split) != (self.fitted.datum, self.fitted.split) {
             self.held.fill(None);
@@ -540,59 +298,40 @@ impl SimWindow {
         (self.stored, self.wrap) = wrapped(&fitted, self.pool);
         self.source = source.clone();
         self.fitted = fitted;
-        self.write_square(gpu);
+        self.write_square()
     }
 
-    fn write_square(
-        &mut self,
-        (device, queue, (layout, setup)): (
-            &wgpu::Device,
-            &engine_render::gpu_calls::Queue,
-            (&GroupLayout, &GroupLayout),
-        ),
-    ) {
-        let grown = self
-            .buffers
-            .hold_sources(device, layout, self.fitted.sources.len());
+    fn write_square(&mut self) -> Square {
+        let sources = self.fitted.sources.len() as u32;
+        let grown = sources > self.layout.capacity.sources;
+        if grown {
+            self.layout.capacity.sources = sources.next_power_of_two();
+        }
         let entries = entries(&self.fitted, self.held.len());
         let (tiles, words) = live_words(&self.fitted);
-        if grown || entries > self.setup.room || words.len() > self.setup.live_room {
-            let room = (
-                entries.max(self.setup.room),
-                words.len().max(self.setup.live_room),
-            );
-            self.setup = SetupBuffers::new(device, setup, &self.buffers, room);
-        }
-        if !words.is_empty() {
-            queue.write_buffer(&self.setup.live, 0, bytemuck::cast_slice(&words));
+        if grown || entries > self.room || words.len() > self.live_room {
+            self.room = entries.max(self.room).max(1).next_power_of_two();
+            self.live_room = words.len().max(self.live_room).max(4).next_power_of_two();
+            self.setup_generation += 1;
         }
         self.tiles = tiles;
-        self.sourced = write_sources(queue, &self.buffers, &self.fitted, &self.stored);
-        self.solids = write_solids(queue, &self.setup.list, &self.fitted.solids);
+        let sources = sources_of(&self.layout, &self.fitted, &self.stored);
+        self.sourced = sources.len() as u32;
+        let solids = solids_of(&self.fitted.solids);
+        self.solids = (solids.len() / SETUP_SOLID) as u32;
         (self.restand, self.ring, self.table) = (true, true, true);
-    }
-
-    fn settle(&mut self) {
-        let Some(listed) = self.listed.take() else {
-            return;
-        };
-        if listed.recorded.get() {
-            return;
-        }
-        for &slot in &listed.slots {
-            self.held[slot as usize] = None;
-        }
-        if listed.ghosts > 0 {
-            self.ring = true;
+        Square {
+            words,
+            sources,
+            solids,
         }
     }
 
     fn set_up(
         &mut self,
-        queue: &engine_render::gpu_calls::Queue,
         sets_up: bool,
         resident: &dyn Fn(&WaterRead) -> bool,
-    ) {
+    ) -> (Option<StoredBlocks>, Option<Listed>) {
         let side = self.fitted.blocks();
         let corner = self
             .fitted
@@ -653,11 +392,9 @@ impl SimWindow {
         self.ready = !deferred;
         self.waiting = waiting;
         if !sets_up {
-            return;
+            return (None, None);
         }
-        if std::mem::take(&mut self.table) {
-            self.write_table(queue);
-        }
+        let table = std::mem::take(&mut self.table).then(|| self.table_words());
         let set = slots.len();
         slots.sort_unstable();
         let pooled = self.held.len();
@@ -683,11 +420,10 @@ impl SimWindow {
             0
         };
         self.ring = false;
+        self.whole = whole;
         if listed.is_empty() && ghosts == 0 {
-            return;
+            return (table, None);
         }
-        let solids = u64::from(self.solids) * SETUP_SOLID_ENTRIES as u64 * 16;
-        queue.write_buffer(&self.setup.list, solids, bytemuck::cast_slice(&listed));
         let [first_x, first_z] = self.fitted.first;
         let frame = SimSetup {
             counts: [listed.len() as u32, 0, ghosts, self.solids],
@@ -698,20 +434,24 @@ impl SimWindow {
                 self.fitted.split,
             ],
             meters: [cell, self.fitted.datum, 0.0, 0.0],
-            ring: [self.buffers.ring_at(0) as u32, 0, 0, 0],
+            ring: [self.layout.ring_at(0) as u32, 0, 0, 0],
             tiles: self.tiles,
+            terrain: [0; 4],
         };
-        queue.write_buffer(&self.setup.frame, 0, bytemuck::bytes_of(&frame));
-        self.listed = Some(Listed {
-            slots,
-            whole,
-            blocks: listed.len() as u32,
-            ghosts,
-            recorded: Cell::new(false),
-        });
+        let blocks = listed.len() as u32;
+        (
+            table,
+            Some(Listed {
+                entries: listed,
+                offset: u64::from(self.solids) * SETUP_SOLID as u64 * 16,
+                frame,
+                blocks,
+                ghosts,
+            }),
+        )
     }
 
-    fn write_table(&self, queue: &engine_render::gpu_calls::Queue) {
+    fn table_words(&self) -> StoredBlocks {
         let side = self.fitted.blocks();
         let corner = self
             .fitted
@@ -730,7 +470,7 @@ impl SimWindow {
                 }
             }
         }
-        self.buffers.write_table(queue, 0, &stored);
+        stored
     }
 }
 
@@ -805,7 +545,7 @@ fn live_words(window: &WaterWindow) -> ([u32; 4], Vec<u32>) {
 }
 
 fn entries(window: &WaterWindow, slots: usize) -> usize {
-    SETUP_SOLID_ENTRIES * window.solids.len() + slots
+    SETUP_SOLID * window.solids.len() + slots
 }
 
 fn changed(before: &[WaterRead], reads: &[WaterRead]) -> Vec<[Vec2; 2]> {
@@ -853,11 +593,7 @@ fn wrapped(window: &WaterWindow, pool: u32) -> (StoredBlocks, [u32; 2]) {
     (stored, wrap)
 }
 
-fn fit(device: &wgpu::Device, window: &Arc<WaterWindow>) -> Option<Arc<WaterWindow>> {
-    let limits = device.limits();
-    let binding = limits
-        .max_storage_buffer_binding_size
-        .min(limits.max_buffer_size);
+fn fit(window: &Arc<WaterWindow>, binding: u64) -> Option<Arc<WaterWindow>> {
     let held = (window.sources.len(), window.solids.len());
     let fits = |blocks: u32| largest_bytes(blocks, held) <= binding;
     let side = window.blocks();
@@ -885,20 +621,15 @@ fn largest_bytes(blocks: u32, (sources, solids): (usize, usize)) -> u64 {
         sources: sources.max(1) as u32,
     };
     let inputs = (u64::from(capacity.sources) + 8 * u64::from(cells)) * 16;
-    let list = (SETUP_SOLID_ENTRIES * solids) as u64 + u64::from(capacity.blocks);
+    let list = (SETUP_SOLID * solids) as u64 + u64::from(capacity.blocks);
     live_largest_bytes(capacity)
         .max(inputs)
         .max((list * 16).next_power_of_two())
 }
 
-fn write_sources(
-    queue: &engine_render::gpu_calls::Queue,
-    buffers: &SlotBuffers,
-    window: &WaterWindow,
-    stored: &StoredBlocks,
-) -> u32 {
+fn sources_of(layout: &Layout, window: &WaterWindow, stored: &StoredBlocks) -> Vec<[f32; 4]> {
     let n = window.cells;
-    let sources: Vec<[f32; 4]> = window
+    window
         .sources
         .iter()
         .filter_map(|source| {
@@ -910,20 +641,12 @@ fn write_sources(
                 source.way[1],
             ])
         })
-        .take(buffers.capacity.sources as usize)
-        .collect();
-    if !sources.is_empty() {
-        queue.write_buffer(&buffers.inputs, 0, bytemuck::cast_slice(&sources));
-    }
-    sources.len() as u32
+        .take(layout.capacity.sources as usize)
+        .collect()
 }
 
-fn write_solids(
-    queue: &engine_render::gpu_calls::Queue,
-    list: &wgpu::Buffer,
-    solids: &[Footprint],
-) -> u32 {
-    let mut entries: Vec<[f32; 4]> = Vec::with_capacity(SETUP_SOLID_ENTRIES * solids.len());
+fn solids_of(solids: &[Footprint]) -> Vec<[f32; 4]> {
+    let mut entries: Vec<[f32; 4]> = Vec::with_capacity(SETUP_SOLID * solids.len());
     for solid in solids {
         let axes = Mat3::from_cols_array(&solid.axes);
         if axes.determinant() == 0.0 {
@@ -939,10 +662,7 @@ fn write_solids(
             inverse.z_axis.extend(0.0).to_array(),
         ]);
     }
-    if !entries.is_empty() {
-        queue.write_buffer(list, 0, bytemuck::cast_slice(&entries));
-    }
-    (entries.len() / SETUP_SOLID_ENTRIES) as u32
+    entries
 }
 
 fn touching(window: &WaterWindow, touches: &[WaterObstacle]) -> Option<SimTouches> {
@@ -952,7 +672,7 @@ fn touching(window: &WaterWindow, touches: &[WaterObstacle]) -> Option<SimTouche
     let mut pushing = SimTouches::zeroed();
     let (mut least, mut most) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
     let mut count = 0;
-    for touch in touches.iter().take(SIM_TOUCHES) {
+    for touch in touches.iter().take(SIM_TOUCHES as usize) {
         let reach = touch.reach();
         let center = touch.center - corner;
         let (middle, half) = (Vec2::new(center.x, center.z), Vec2::new(reach.x, reach.z));
@@ -995,9 +715,208 @@ fn touching(window: &WaterWindow, touches: &[WaterObstacle]) -> Option<SimTouche
     Some(pushing)
 }
 
-pub(crate) struct SimDrawn<'a> {
-    pub(crate) window: &'a WaterWindow,
-    pub(crate) wrap: [u32; 2],
-    pub(crate) pool: u32,
-    pub(crate) looks: &'a wgpu::Buffer,
+pub(crate) fn plan_sim(
+    water: Res<Water>,
+    obstacles: Res<WaterObstacles>,
+    (ground, limits, time, camera): (
+        Res<GroundTiles>,
+        Res<DeviceLimits>,
+        Res<FrameTime>,
+        Res<Camera>,
+    ),
+    mut state: ResMut<WaterState>,
+) {
+    let state = &mut *state;
+    let seconds = time.presented_seconds;
+    if !water.enabled || state.watered.is_empty() {
+        state.live.rest(water.enabled);
+        return;
+    }
+    let eye = camera.position;
+    let index_of = |entity: Entity| {
+        ground
+            .tables
+            .iter()
+            .find(|(terrain, _)| *terrain == entity)
+            .map(|&(_, index)| index)
+    };
+    let mut touching = Vec::new();
+    let found = state.terrains.iter().find_map(|terrain| {
+        let window = terrain.window.as_ref()?;
+        let beyond = window.touching(&obstacles.obstacles, eye, &mut touching);
+        let ground = index_of(terrain.entity).filter(|_| state.watered.contains(&terrain.entity));
+        Some((terrain.entity, window, beyond, ground))
+    });
+    let blocks = &state.blocks;
+    let resident = |read: &WaterRead| {
+        let Some((entity, _, _, _)) = found else {
+            return false;
+        };
+        read.ready
+            && read.tile.as_ref().is_some_and(|tile| {
+                ground
+                    .held
+                    .iter()
+                    .any(|held| held.terrain == entity && held.key == read.key && held.stamp == tile.stamp)
+                    && blocks.current(entity, read.key, read.water.as_ref())
+            })
+    };
+    let live = found.map(|(_, window, beyond, ground)| Live {
+        window,
+        touches: &touching,
+        beyond,
+        ground,
+    });
+    let mut sim = std::mem::take(&mut state.live);
+    sim.prepare(live, &resident, (seconds, limits.storage_room));
+    if sim.grounded {
+        sim.made = true;
+    }
+    state.live = sim;
+}
+
+pub(crate) struct SimGpu {
+    slots: SlotHandles,
+    setup: SetupHandles,
+    kernels: Kernels,
+    set_blocks: ComputePipeline<WaterGpu>,
+    set_ring: ComputePipeline<WaterGpu>,
+    pass: Pass<WaterGpu>,
+    layout: Option<(Layout, u64)>,
+    setup_held: Option<((usize, usize), u64)>,
+    listed: Option<(u32, u32)>,
+    run: Option<(u32, u32, u32, Option<[u32; 2]>)>,
+}
+
+impl SimGpu {
+    pub(crate) fn install(cx: &mut Install<'_, WaterGpu>) -> Result<Self, Error> {
+        use crate::shaders::water::setup;
+        let slots = SlotHandles::install(
+            cx,
+            [
+                "water_sim_ground",
+                "water_sim_cells",
+                "water_sim_depths",
+                "water_sim_fluxes",
+                "water_sim_inputs",
+                "water_sim_blocks",
+                "water_sim_steps",
+                "water_sim_averages",
+                "water_sim_slots",
+                "water_sim_first",
+                "water_sim_second",
+                "water_sim_touches",
+            ],
+        );
+        let setup_handles = SetupHandles::install(
+            cx,
+            ["water_setup", "water_setup_list", "water_setup_live"],
+        );
+        let pass = cx.pass("water_sim").id();
+        let kernels = Kernels::install(cx, pass, &slots)?;
+        let bound = crate::water::reached(cx, &[setup::SETUP_BLOCKS], setup_handles.bound(&slots));
+        let set_blocks = cx.compute_pipeline(pass, setup::SETUP_BLOCKS, &bound)?;
+        let bound = crate::water::reached(cx, &[setup::SETUP_RING], setup_handles.bound(&slots));
+        let set_ring = cx.compute_pipeline(pass, setup::SETUP_RING, &bound)?;
+        Ok(Self {
+            slots,
+            setup: setup_handles,
+            kernels,
+            set_blocks,
+            set_ring,
+            pass,
+            layout: None,
+            setup_held: None,
+            listed: None,
+            run: None,
+        })
+    }
+
+    pub(crate) fn after(&self) -> Pass<WaterGpu> {
+        self.pass
+    }
+
+    pub(crate) fn looks(&self) -> engine_render::Buffer<WaterGpu> {
+        self.slots.averages
+    }
+
+    pub(crate) fn prepare(&mut self, work: &SimWork, cx: &mut Prepare<'_, WaterGpu>) {
+        self.listed = None;
+        self.run = None;
+        let (Some((layout, generation)), Some((rooms, setup_generation))) = (work.layout, work.setup)
+        else {
+            self.layout = None;
+            self.setup_held = None;
+            self.slots.release(cx);
+            self.setup.release(cx);
+            return;
+        };
+        let fresh = self.layout.is_none_or(|(_, held)| held != generation);
+        self.slots.hold(layout, fresh, cx);
+        self.layout = Some((layout, generation));
+        let setup_fresh = fresh || self.setup_held.is_none_or(|held| held != (rooms, setup_generation));
+        self.setup.hold(rooms, setup_fresh, cx);
+        self.setup_held = Some((rooms, setup_generation));
+        if let Some(square) = &work.square {
+            if !square.words.is_empty() {
+                cx.write(self.setup.live, 0, &square.words);
+            }
+            if !square.sources.is_empty() {
+                cx.write(self.slots.inputs, 0, &square.sources);
+            }
+            if !square.solids.is_empty() {
+                cx.write(self.setup.list, 0, &square.solids);
+            }
+        }
+        if let Some(table) = &work.table {
+            self.slots.write_table(&layout, 0, table, cx);
+        }
+        if let Some(listed) = &work.listed {
+            cx.write(self.setup.list, listed.offset, &listed.entries);
+            cx.write(self.setup.frame, 0, &[listed.frame]);
+            self.listed = Some((listed.blocks, listed.ghosts));
+        }
+        self.slots.write_frames(&layout, cx);
+        cx.write(self.slots.squares, 0, &[squares(&[work.slot])]);
+        let none = SimTouches::zeroed();
+        cx.write(self.slots.touches, 0, &[*work.touches.as_ref().unwrap_or(&none)]);
+        if !work.ready {
+            return;
+        }
+        let touched = work
+            .touches
+            .as_ref()
+            .map(|touches| [touches.blocks[2], touches.blocks[3]]);
+        self.run = Some((work.steps, work.sourced, work.blocks, touched));
+        cx.run(self.pass);
+    }
+
+    pub(crate) fn encode(&mut self, pass: Pass<WaterGpu>, cx: &mut Encode<'_, WaterGpu>) -> Option<u32> {
+        if pass != self.pass {
+            return None;
+        }
+        let Some((steps, sourced, blocks, touched)) = self.run else {
+            return Some(0);
+        };
+        let mut dispatched = 0;
+        if let Some((listed, ghosts)) = self.listed {
+            if listed > 0 {
+                let [groups_x, groups_z] = grid(listed);
+                dispatched += cx.dispatch(&self.set_blocks, Count::Groups([groups_x, groups_z, 1]));
+            }
+            if ghosts > 0 {
+                let groups = [ghosts.div_ceil(WATER_SETUP_RING_GROUP), 1, 1];
+                dispatched += cx.dispatch(&self.set_ring, Count::Groups(groups));
+            }
+        }
+        if steps > 0 {
+            dispatched += self.kernels.encode_steps(
+                cx,
+                (steps, sourced, false, true),
+                (blocks, 1, touched),
+            );
+        }
+        dispatched += self.kernels.encode_drawn(cx, blocks);
+        Some(dispatched)
+    }
 }

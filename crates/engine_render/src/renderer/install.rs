@@ -19,12 +19,97 @@ struct Listed {
     fills: Vec<TypeId>,
 }
 
-pub(crate) struct Installation {
+pub(crate) struct Built {
     pub(crate) run_parts: Vec<Option<Box<dyn Installed>>>,
     pub(crate) gates: Vec<Option<GateId>>,
     pub(crate) machine: Machine,
     pub(crate) pieces: Vec<(usize, crate::pieces::PieceAt)>,
     pub(crate) passes: Vec<&'static str>,
+    pub(crate) linked: engine_core::LinkedStats,
+    pub(crate) placed: Placed,
+}
+
+#[derive(Default)]
+pub(crate) struct Placed {
+    pieces: Vec<InstalledPiece>,
+    arena: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledPart {
+    pub brick: &'static str,
+    pub part: &'static str,
+    pub passes: Vec<&'static str>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledPiece {
+    pub brick: &'static str,
+    pub name: &'static str,
+    pub offset: u64,
+    pub size: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Installation {
+    pub parts: Vec<InstalledPart>,
+    pub modules: Vec<String>,
+    pub layouts: usize,
+    pub frame_variants: usize,
+    pub pieces: Vec<InstalledPiece>,
+    pub arena: u64,
+}
+
+fn listing(built: &Built) -> Installation {
+    let machine = &built.machine;
+    let parts = machine
+        .declared
+        .parts
+        .iter()
+        .enumerate()
+        .map(|(index, part)| InstalledPart {
+            brick: part.owner,
+            part: part.name,
+            passes: machine
+                .declared
+                .passes
+                .iter()
+                .filter(|pass| pass.part as usize == index)
+                .map(|pass| pass.name)
+                .collect(),
+        })
+        .collect();
+    let mut layouts: Vec<String> = machine.pipelines.iter().map(crate::machine::layout_key).collect();
+    layouts.sort_unstable();
+    layouts.dedup();
+    Installation {
+        parts,
+        modules: machine.linker.paths(),
+        layouts: layouts.len(),
+        frame_variants: machine.variants.len(),
+        pieces: built.placed.pieces.clone(),
+        arena: built.placed.arena,
+    }
+}
+
+#[derive(Default)]
+struct Links {
+    faces: Vec<(&'static str, &'static str)>,
+    nobody: Vec<&'static str>,
+    lists: Vec<(&'static str, &'static [&'static str])>,
+}
+
+impl Links {
+    fn stats(mut self) -> engine_core::LinkedStats {
+        self.faces.sort_unstable();
+        self.nobody.sort_unstable();
+        self.lists.sort_unstable_by_key(|&(place, _)| place);
+        engine_core::LinkedStats {
+            faces: Box::leak(self.faces.into_boxed_slice()),
+            nobody: Box::leak(self.nobody.into_boxed_slice()),
+            lists: Box::leak(self.lists.into_boxed_slice()),
+        }
+    }
 }
 
 fn module_path(module: &Module) -> Option<String> {
@@ -45,8 +130,9 @@ fn faces(
     linker: &mut Linker,
     roots: &mut Vec<(String, String)>,
     problems: &mut Vec<Error>,
-) -> Vec<(u32, GateId)> {
+) -> (Vec<(u32, GateId)>, Links) {
     let mut switches = Vec::new();
+    let mut links = Links::default();
     let mut catalog: Vec<_> = registry.catalog().iter().filter(|decl| decl.wgsl().is_some()).collect();
     catalog.sort_by_key(|decl| decl.name());
     for (_, record) in registry.iter() {
@@ -82,7 +168,13 @@ fn faces(
             let implements: Vec<String> = contract
                 .answers
                 .iter()
-                .filter(|answer| linker.defines(&module, &answer.name) || answer.constant)
+                .filter(|answer| {
+                    if answer.constant {
+                        linker.provides(&module, &answer.name)
+                    } else {
+                        linker.defines(&module, &answer.name)
+                    }
+                })
                 .map(|answer| answer.name.clone())
                 .collect();
             for answer in &implements {
@@ -100,26 +192,37 @@ fn faces(
                     let filled = record.fills().iter().find(|filled| filled.slot == decl.type_id())?;
                     Some((brick, filled.scope, wgsl_of(filled.wgsl.as_deref())))
                 });
-                match filler.and_then(|(brick, scope, wgsl)| fed(brick, scope, wgsl)) {
-                    Some(filler) => Answered::Filler(filler),
-                    None => Answered::Nobody,
+                match filler.and_then(|(brick, scope, wgsl)| Some((brick, fed(brick, scope, wgsl)?))) {
+                    Some((brick, filler)) => {
+                        if let Some(record) = registry.record(brick) {
+                            links.faces.push((name, record.package));
+                        }
+                        Answered::Filler(filler)
+                    }
+                    None => {
+                        links.nobody.push(name);
+                        Answered::Nobody
+                    }
                 }
             }
             PlaceKind::List => {
                 let mut members = Vec::new();
+                let mut bricks: Vec<&'static str> = Vec::new();
                 for (brick, record) in registry.iter() {
                     for joined in record.joins().iter().filter(|joined| joined.list == decl.type_id()) {
                         if let Some(member) = fed(brick, joined.scope, wgsl_of(joined.wgsl.as_deref())) {
                             members.push(member);
+                            bricks.push(record.package);
                         }
                     }
                 }
+                links.lists.push((name, Box::leak(bricks.into_boxed_slice())));
                 Answered::Members(members)
             }
         };
         linker.add_generated(face_module(name), CORE_PACKAGE, face_source(name, &contract, &answered));
     }
-    switches
+    (switches, links)
 }
 
 fn outputs(registry: &Registry, world: &World, roots: &mut Vec<(String, String)>) -> Vec<OutputDecl> {
@@ -157,17 +260,43 @@ fn prefix_of(registry: &Registry, linker: &Linker, brick: engine_registry::Brick
     })
 }
 
-fn pieces(registry: &Registry, linker: &mut Linker, problems: &mut Vec<Error>) -> Vec<(usize, crate::pieces::PieceAt)> {
+fn handed(linker: &mut Linker, prefix: &str, package: &'static str, texts: &[(Option<&str>, &'static str)]) {
+    let path = format!("generated::{prefix}");
+    let known = linker.text(&path).map(str::to_owned);
+    let mut text = known.clone().unwrap_or_default();
+    for &(name, part) in texts {
+        let declared = match name {
+            Some(name) => crate::linker::declares_struct(&text, name),
+            None => known.is_some() || text.contains(part),
+        };
+        if !declared {
+            text.push_str(part);
+            if !part.ends_with('\n') {
+                text.push('\n');
+            }
+        }
+    }
+    if known.as_ref() != Some(&text) {
+        linker.add_generated(path, package, text);
+    }
+}
+
+fn pieces(
+    registry: &Registry,
+    linker: &mut Linker,
+    problems: &mut Vec<Error>,
+) -> (Vec<(usize, crate::pieces::PieceAt)>, Placed) {
     let mut listed = Vec::new();
     let mut indices = Vec::new();
-    let mut generated: Vec<(&'static str, Vec<&'static str>)> = Vec::new();
+    let mut handed_over: Vec<(&'static str, &'static str, Vec<(Option<&'static str>, &'static str)>)> = Vec::new();
     for (brick, record) in registry.iter() {
-        let texts: Vec<&'static str> = record.render_entries::<Generated>().flat_map(|entry| entry.0.iter().copied()).collect();
+        let texts: Vec<(Option<&'static str>, &'static str)> =
+            record.render_entries::<Generated>().flat_map(|entry| entry.0.iter().map(|text| (None, *text))).collect();
         if texts.is_empty() {
             continue;
         }
         let Some(prefix) = prefix_of(registry, linker, brick) else { continue };
-        generated.push((prefix, texts));
+        handed_over.push((prefix, record.package, texts));
     }
     for (index, (brick, entry)) in registry.pieces().enumerate() {
         let Some(package) = registry.record(brick).map(|record| record.package) else { continue };
@@ -179,39 +308,39 @@ fn pieces(registry: &Registry, linker: &mut Linker, problems: &mut Vec<Error>) -
             size: entry.size as u64,
         });
         indices.push(index);
-        match generated.iter_mut().find(|(known, _)| *known == prefix) {
-            Some((_, texts)) => {
-                if !texts.contains(&entry.wgsl) {
-                    texts.insert(0, entry.wgsl);
-                }
-            }
-            None => generated.push((prefix, vec![entry.wgsl])),
+        match handed_over.iter_mut().find(|(known, _, _)| *known == prefix) {
+            Some((_, _, texts)) => texts.insert(0, (Some(entry.wgsl_name), entry.wgsl)),
+            None => handed_over.push((prefix, package, vec![(Some(entry.wgsl_name), entry.wgsl)])),
         }
     }
-    for (prefix, texts) in &generated {
-        let mut text = String::new();
-        for part in texts {
-            if !text.contains(part) {
-                text.push_str(part);
-                if !part.ends_with('\n') {
-                    text.push('\n');
-                }
-            }
-        }
-        linker.add_generated(format!("generated::{prefix}"), CORE_PACKAGE, text);
+    for (prefix, package, texts) in &handed_over {
+        handed(linker, prefix, *package, texts);
     }
-    let (placed, _) = match crate::pieces::place(&listed, crate::pieces::PIECES_BYTES) {
+    let (placed, arena) = match crate::pieces::place(&listed, crate::pieces::PIECES_BYTES) {
         Ok(placed) => placed,
         Err(error) => {
             problems.push(error);
-            return Vec::new();
+            return (Vec::new(), Placed::default());
         }
+    };
+    let named = Placed {
+        pieces: listed
+            .iter()
+            .zip(&placed)
+            .map(|(piece, at)| InstalledPiece {
+                brick: piece.brick,
+                name: piece.ty,
+                offset: at.offset,
+                size: at.size,
+            })
+            .collect(),
+        arena,
     };
     linker.add_generated(crate::pieces::PIECES_MODULE.to_owned(), CORE_PACKAGE, crate::pieces::pieces_source(&listed));
     for piece in &listed {
         linker.add_generated(crate::pieces::piece_path(piece), CORE_PACKAGE, crate::pieces::piece_source(piece));
     }
-    indices.into_iter().zip(placed).collect()
+    (indices.into_iter().zip(placed).collect(), named)
 }
 
 fn names_twice(world: &World, problems: &mut Vec<Error>) {
@@ -223,12 +352,12 @@ fn names_twice(world: &World, problems: &mut Vec<Error>) {
     }
 }
 
-pub(crate) fn install(device: &wgpu::Device, world: &mut World) -> Result<Installation, Vec<Error>> {
+pub(crate) fn install(device: &wgpu::Device, world: &mut World) -> Result<Built, Vec<Error>> {
     world.resource_scope::<Registry, _>(|world, registry| install_with(device, world, &registry))
 }
 
 #[expect(clippy::too_many_lines, reason = "longer than the line ceiling; it may only shrink")]
-fn install_with(device: &wgpu::Device, world: &mut World, registry: &Registry) -> Result<Installation, Vec<Error>> {
+fn install_with(device: &wgpu::Device, world: &mut World, registry: &Registry) -> Result<Built, Vec<Error>> {
     let mut problems = Vec::new();
     names_twice(world, &mut problems);
     let mut roots = Vec::new();
@@ -236,7 +365,7 @@ fn install_with(device: &wgpu::Device, world: &mut World, registry: &Registry) -
     for (path, text) in crate::shaders::generated_core() {
         linker.add_generated(path.to_owned(), CORE_PACKAGE, text);
     }
-    let switches = faces(registry, &mut linker, &mut roots, &mut problems);
+    let (switches, links) = faces(registry, &mut linker, &mut roots, &mut problems);
     let outputs = outputs(registry, world, &mut roots);
     linker.add_generated(crate::shared::TARGETS_MODULE.to_owned(), CORE_PACKAGE, crate::shared::targets_source(&outputs));
     linker.add_generated(crate::shared::COMPOSITE_MODULE.to_owned(), CORE_PACKAGE, crate::shared::composite_source());
@@ -272,6 +401,8 @@ fn install_with(device: &wgpu::Device, world: &mut World, registry: &Registry) -
             name: entry.record.name,
             brick: entry.brick.map_or(u32::MAX, |brick| brick.index() as u32),
             registered: index as u32,
+            owner: entry.brick.map_or(engine_registry::CORE_ROW, |_| entry.package),
+            profile: entry.brick.map_or(0, engine_registry::BrickId::profile_index),
         });
     }
     for (part, package, draw) in &draws {
@@ -285,7 +416,7 @@ fn install_with(device: &wgpu::Device, world: &mut World, registry: &Registry) -
         core.part = index as u32;
         core.package = entry.package;
         core.fills.clone_from(&entry.fills);
-        let _owner = crate::memory::owned(entry.package);
+        let _owner = core.declared.parts[index].owned();
         match (entry.record.install)(world, &mut core) {
             Ok(held) => parts.push(Some(held)),
             Err(error) => {
@@ -297,7 +428,7 @@ fn install_with(device: &wgpu::Device, world: &mut World, registry: &Registry) -
     }
     let InstallCore { declared, mut linker, problems: mut declared_problems, .. } = core;
     problems.append(&mut declared_problems);
-    let pieces = pieces(registry, &mut linker, &mut problems);
+    let (pieces, placed) = pieces(registry, &mut linker, &mut problems);
     let fills = |package: &'static str, place: &str| {
         registry.brick(package).is_some_and(|record| record.places().any(|decl| decl.name() == place))
     };
@@ -319,7 +450,7 @@ fn install_with(device: &wgpu::Device, world: &mut World, registry: &Registry) -
         .collect();
     problems.extend(machine.linker.unused(&composed, &roots));
     if problems.is_empty() {
-        Ok(Installation { run_parts: parts, gates, machine, pieces, passes })
+        Ok(Built { run_parts: parts, gates, machine, pieces, passes, linked: links.stats(), placed })
     } else {
         Err(problems)
     }
@@ -348,11 +479,16 @@ impl Renderer {
 
     pub fn install(&mut self, world: &mut World) -> Result<(), Vec<Error>> {
         let installed = install(&self.core.device, world)?;
-        let assets = match (self.run.take(), self.assets.take()) {
+        let mut assets = match (self.run.take(), self.assets.take()) {
             (Some(run), _) => run.assets,
             (None, Some(assets)) => assets,
             (None, None) => new_assets(&self.core.device, &self.core.queue),
         };
+        crate::mesh_arena::configure(
+            &self.core.device,
+            world,
+            (&mut assets.meshes, &mut assets.materials, &mut assets.impostors),
+        );
         let mut run = Run::new(
             self.core.device.clone(),
             wgpu::Queue::clone(&self.core.queue),
@@ -372,26 +508,36 @@ impl Renderer {
             .iter()
             .map(|pass| -> &'static str { Box::leak(format!("stage_{pass}").into_boxed_str()) })
             .collect();
-        self.passes = installed.passes;
+        self.passes = Box::leak(installed.passes.into_boxed_slice());
+        self.linked = installed.linked;
+        let names: Vec<&'static str> = run.machine.declared.parts.iter().map(|part| part.name).collect();
+        self.part_names = Box::leak(names.into_boxed_slice());
+        self.ran.clear();
         self.plans.clear();
         self.run = Some(run);
         Ok(())
     }
 
     pub fn check(world: &mut World) -> Result<(), Vec<Error>> {
-        let (device, queue) = noop_device().map_err(|error| vec![error])?;
-        let installed = install(&device, world)?;
-        let queue = crate::gpu_calls::Queue::new(queue);
-        let assets = new_assets(&device, &queue);
-        let scope = crate::gpu_calls::validation_scope(&device);
-        let mut run = Run::new(device.clone(), wgpu::Queue::clone(&queue), installed.machine, installed.run_parts, assets);
-        run.gates = installed.gates;
-        run.switches = switches_of(&run.machine, world);
-        run.warm();
-        match crate::platform::ready(scope.pop()) {
-            Some(Some(error)) => Err(vec![failed_with("$.pipelines", error)]),
-            Some(None) | None => Ok(()),
-        }
+        install_noop(world).map(drop)
+    }
+}
+
+#[doc(hidden)]
+pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
+    let (device, queue) = noop_device().map_err(|error| vec![error])?;
+    let installed = install(&device, world)?;
+    let listed = listing(&installed);
+    let queue = crate::gpu_calls::Queue::new(queue);
+    let assets = new_assets(&device, &queue);
+    let scope = crate::gpu_calls::validation_scope(&device);
+    let mut run = Run::new(device.clone(), wgpu::Queue::clone(&queue), installed.machine, installed.run_parts, assets);
+    run.gates = installed.gates;
+    run.switches = switches_of(&run.machine, world);
+    run.warm();
+    match crate::platform::ready(scope.pop()) {
+        Some(Some(error)) => Err(vec![failed_with("$.pipelines", error)]),
+        Some(None) | None => Ok(listed),
     }
 }
 

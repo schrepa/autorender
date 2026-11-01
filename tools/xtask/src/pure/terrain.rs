@@ -2,26 +2,35 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use engine_codec as codec;
+use engine_core::{JobRef, RecordKey};
+use engine_heightfield::Layers;
+use engine_heightfield::layer::LayerKind;
 use engine_navigation::{
-    Gait, NavOptions, NavPath, PortalsJob, TilePortals, WalkData, WalkGround, WalkSearch,
+    Gait, NavOptions, NavPath, PORTALS, PortalsJob, TilePortals, WalkData, WalkGround, WalkSearch,
 };
-use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
-use engine_terrain::bounce;
+use engine_places::ground::{GroundBridge, GroundGrid, GroundObstacle};
+use engine_places::terrain::TerrainLayers;
+use engine_scene::{SceneDocument, SceneKinds};
 use engine_terrain::jobs::{
-    self, BakeJob, BounceJob, LightingJob, MacroJob, StackView, TerrainRecipe, TileJob, WaterJob,
+    self, BAKE, BakeJob, GROUND_GRID, GroundIdentity, StackView, TILE_BUILD, TerrainRecipe,
+    TileJob,
 };
-use engine_terrain::lighting::{self, Ground};
-use engine_terrain::macro_colors;
 use engine_terrain::{
-    BiomeRules, Generator, Layers, PATCH_QUADS, PATCHES_PER_TILE, Pyramid, SettleRegion,
-    SettleStart, Stamp, StampOp, TILE_QUADS, Terrain, Tile, TileKey, TileShading, WaterPart, codec,
+    BiomeRules, Generator, PATCH_QUADS, PATCHES_PER_TILE, Pyramid, Stamp, StampOp, TILE_QUADS,
+    Terrain, TerrainScene, Tile, TileKey,
 };
-use engine_core::{JobKind, JobRef, RecordKey};
+use engine_terrain_shading::jobs::{
+    BOUNCE, BounceJob, LIGHTING, LightingJob, MACRO_COLORS, MacroJob,
+};
+use engine_terrain_shading::lighting::{self, Ground};
+use engine_terrain_shading::{TileShading, bounce, macro_colors};
+use engine_water::jobs::{PARTS, WaterJob};
+use engine_water::{SettleRegion, SettleStart, WaterPart};
 use glam::Vec2;
 use serde_json::json;
 
-use super::{Observations, hash};
+use super::{JobLog, Observations, hash};
 
 const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const ENTITY: &str = "ground";
@@ -42,15 +51,20 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let terrain = load(root)?;
     let authored = &terrain.layers;
     let pyramid = terrain.pyramid;
-    let mut worker = Worker::new()?;
+    let mut worker = JobLog::new()?;
+    let kinds: Vec<&'static LayerKind> = worker
+        .list()
+        .members::<TerrainLayers>()
+        .copied()
+        .collect();
 
-    let baked = authored.bake_all(&pyramid);
-    let bytes = codec::encode(&baked);
+    let baked = engine_terrain::bake::bake_all(authored, &pyramid);
+    let bytes = jobs::share_stack(&baked).to_vec();
     observed.hash("bakes", &bytes);
-    let mut records = vec![(BakeJob::KIND.name(), bytes.clone())];
+    let mut records = vec![(BAKE.name(), bytes.clone())];
     observed.check(
         worker.run(
-            BakeJob::KIND.name(),
+            &BAKE,
             &BakeJob {
                 layers: Layers::clone(authored),
                 pyramid,
@@ -63,19 +77,17 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
 
     let baked = Arc::new(baked);
     let rules = terrain.surface.rules.clone();
-    worker.share("stack", &jobs::share_stack(&baked))?;
-    worker.share(
-        "recipe",
-        &jobs::share_recipe(&TerrainRecipe {
-            stack: "stack".into(),
-            view: None,
-            pyramid,
-            surface: rules.authored().clone(),
-            materials: true,
-        }),
-    )?;
+    let stack = worker.share(&jobs::share_stack(&baked));
+    let shared = worker.share(&jobs::share_recipe(&TerrainRecipe {
+        stack: stack.hash(),
+        view: None,
+        pyramid,
+        surface: rules.authored().clone(),
+        materials: true,
+    }));
     let recipe = Recipe {
-        key: "recipe",
+        name: "recipe",
+        key: shared,
         layers: baked.clone(),
         pyramid,
         rules: rules.clone(),
@@ -85,9 +97,9 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let mut tiles = BTreeMap::new();
     for level in (0..pyramid.levels()).rev() {
         for key in pyramid.level_tiles(level) {
-            let (tile, bytes) = recipe.tile(&mut worker, key, &[], observed)?;
+            let (tile, bytes) = recipe.tile(&mut worker, key, (&[], &kinds), observed)?;
             observed.hash(format!("tile {}", name(key)), &bytes);
-            records.push((TileJob::KIND.name(), bytes));
+            records.push((TILE_BUILD.name(), bytes));
             tiles.insert(key, tile);
         }
     }
@@ -104,9 +116,9 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     observed.record("tile objects", objects);
     observed.check(objects > 0, || "no tile holds objects".into());
 
-    let job = lighting_job(&pyramid);
-    let input = job.input();
-    let bytes = worker.run(LightingJob::KIND.name(), &input)?;
+    let job = lighting_job(&pyramid, shared);
+    let input = codec::encode(&job);
+    let bytes = worker.run(&LIGHTING, &input)?;
     let (samples, spacing, heights) = level_heights(&pyramid, &tiles);
     let ground = Ground {
         samples,
@@ -118,10 +130,9 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     observed.check(codec::encode(&made) == bytes, || {
         "the lighting job differs from the lighting made in place".into()
     });
-    observed.check(
-        worker.sliced(LightingJob::KIND.name(), &input)? == bytes,
-        || "the lighting job run a slice at a time differs from the job run whole".into(),
-    );
+    observed.check(worker.sliced(&LIGHTING, &input, SLICE)? == bytes, || {
+        "the lighting job run a slice at a time differs from the job run whole".into()
+    });
     observed.hash("lighting", &bytes);
     let sky = made.sky_layers();
     let area = (SKY_TEXELS * SKY_TEXELS) as usize;
@@ -138,17 +149,17 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             "lowest": made.lowest,
         }),
     );
-    records.push((LightingJob::KIND.name(), bytes));
+    records.push((LIGHTING.name(), bytes));
 
     let surface = (baked.as_ref(), rules.as_ref());
     let transfer = bounce_transfer(&mut worker, (&job, &ground, extent), surface, observed)?;
-    records.push((BounceJob::KIND.name(), transfer));
+    records.push((BOUNCE.name(), transfer));
     let colors = MacroJob {
-        recipe: "recipe".into(),
+        recipe: shared.hash(),
         level: pyramid.levels().saturating_sub(PINNED),
         size: MACRO_TEXELS,
     };
-    let bytes = worker.run(MacroJob::KIND.name(), &colors.identity())?;
+    let bytes = worker.run(&MACRO_COLORS, &codec::encode(&colors))?;
     let made = macro_colors::macro_colors(
         &baked,
         &pyramid,
@@ -161,7 +172,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         "the macro colors job differs from the colors made in place".into()
     });
     observed.check(
-        worker.sliced(MacroJob::KIND.name(), &colors.identity())? == bytes,
+        worker.sliced(&MACRO_COLORS, &codec::encode(&colors), SLICE)? == bytes,
         || "the macro colors job run a slice at a time differs from the job run whole".into(),
     );
     observed.hash("macro colors", &bytes);
@@ -195,12 +206,12 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         },
     ];
     let edited = TileKey::new(0, 2, 2);
-    let (tile, bytes) = recipe.tile(&mut worker, edited, &edits, observed)?;
+    let (tile, bytes) = recipe.tile(&mut worker, edited, (&edits, &kinds), observed)?;
     observed.hash(format!("edited tile {}", name(edited)), &bytes);
     observed.check(tile.heights() != tiles[&edited].heights(), || {
         format!("the edits leave tile {} as it was", name(edited))
     });
-    records.push((TileJob::KIND.name(), bytes));
+    records.push((TILE_BUILD.name(), bytes));
 
     let surroundings = terrain
         .surroundings
@@ -215,18 +226,16 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         blend: surroundings.blend,
     };
     let around_rules = Arc::new(rules.without_placements());
-    worker.share(
-        "around",
-        &jobs::share_recipe(&TerrainRecipe {
-            stack: "stack".into(),
-            view: Some(view),
-            pyramid: around,
-            surface: around_rules.authored().clone(),
-            materials: true,
-        }),
-    )?;
+    let around_shared = worker.share(&jobs::share_recipe(&TerrainRecipe {
+        stack: stack.hash(),
+        view: Some(view),
+        pyramid: around,
+        surface: around_rules.authored().clone(),
+        materials: true,
+    }));
     let around_recipe = Recipe {
-        key: "around",
+        name: "around",
+        key: around_shared,
         layers: Arc::new(baked.surroundings(view.offset, (view.low, view.high), view.blend)),
         pyramid: around,
         rules: around_rules,
@@ -235,9 +244,9 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     observed.record("surroundings tiles", around.tiles(0)[0]);
     for level in (around.levels().saturating_sub(2)..around.levels()).rev() {
         for key in around.level_tiles(level) {
-            let (_, bytes) = around_recipe.tile(&mut worker, key, &[], observed)?;
+            let (_, bytes) = around_recipe.tile(&mut worker, key, (&[], &kinds), observed)?;
             observed.hash(format!("surroundings {}", name(key)), &bytes);
-            records.push((TileJob::KIND.name(), bytes));
+            records.push((TILE_BUILD.name(), bytes));
         }
     }
 
@@ -247,7 +256,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     for key in pyramid.level_tiles(gait.level) {
         let (ground, bytes) = portals(
             &mut worker,
-            (&tiles[&key], &baked),
+            (&tiles[&key], &baked, stack),
             (&pyramid, &gait),
             (&[], observed),
         )?;
@@ -256,16 +265,16 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         graph.portals.insert(key, Arc::new(held));
         graph.grounds.insert(key, Arc::new(ground));
         bytes_held += bytes.len();
-        records.push((PortalsJob::KIND, bytes));
+        records.push((PORTALS.name(), bytes));
     }
     let edited_layers = Arc::new(
         baked
-            .with_stamps(&edits)
+            .with_stamps(&edits, &kinds)
             .map_err(|error| error.to_string())?,
     );
     let (_, bytes) = portals(
         &mut worker,
-        (&tile, &edited_layers),
+        (&tile, &edited_layers, stack),
         (&pyramid, &gait),
         (&edits, observed),
     )?;
@@ -282,7 +291,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     observed.check(count > 0, || "no tile has portals".into());
 
     let route = (Vec2::new(212.0, 262.0), Vec2::new(412.0, 262.0));
-    let obstacles = [engine_places::GroundObstacle {
+    let obstacles = [GroundObstacle {
         center: Vec2::new(312.0, 262.0),
         radius: 12.0,
     }];
@@ -308,7 +317,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         json!({"points": found.points.len(), "length": found.length, "level": found.level}),
     );
 
-    let watered = engine_terrain::watered_tiles(&baked, &pyramid);
+    let watered = engine_water::watered_tiles(&baked, &pyramid);
     let key = *watered
         .first()
         .ok_or("the fixture's bake waters no finest tile")?;
@@ -316,25 +325,22 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let mut parts = Vec::new();
     for tile in region.reached(&pyramid) {
         let input = WaterJob {
-            recipe: "recipe".into(),
+            recipe: shared.hash(),
             key: tile,
             stamps: Vec::new(),
             solids: Vec::new(),
             cell: WATER_CELL,
         }
         .input();
-        let bytes = worker.run(WaterJob::KIND.name(), &input)?;
-        observed.check(
-            worker.sliced(WaterJob::KIND.name(), &input)? == bytes,
-            || {
-                format!(
-                    "the water's part of {} run a slice at a time differs",
-                    name(tile)
-                )
-            },
-        );
+        let bytes = worker.run(&PARTS, &input)?;
+        observed.check(worker.sliced(&PARTS, &input, SLICE)? == bytes, || {
+            format!(
+                "the water's part of {} run a slice at a time differs",
+                name(tile)
+            )
+        });
         observed.hash(format!("water part {}", name(tile)), &bytes);
-        parts.push(jobs::water_output(&bytes).map_err(|error| error.to_string())?);
+        parts.push(engine_water::jobs::water_output(&bytes).map_err(|error| error.to_string())?);
     }
     let parts: Vec<&WaterPart> = parts.iter().collect();
     let start = SettleStart::assemble(&baked, &pyramid, &region, &parts, None)
@@ -349,54 +355,45 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             "stored blocks": start.stored.stored(),
             "sources": start.sources.len(),
             "datum": start.datum,
-            "cook regions": engine_terrain::settle_regions(&baked, &pyramid, WATER_CELL).len(),
+            "cook regions": engine_water::settle_regions(&baked, &pyramid, WATER_CELL).len(),
         }),
     );
 
     let pack = pack(&records, observed)?;
     observed.hash("pack", &pack);
 
-    worker.write(root)
+    worker.write(root, JOBS)
 }
 
 fn load(root: &Path) -> Result<Terrain, String> {
     let path = root.join(FIXTURE);
     let source = std::fs::read_to_string(&path)
         .map_err(|error| format!("cannot read {FIXTURE}: {error}"))?;
+    let mut engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
+    let kinds = SceneKinds::of(engine.app.world());
     let document = SceneDocument::from_json(&source).map_err(|error| error.to_string())?;
-    let folder = path.parent().ok_or("the fixture has no folder")?;
-    let mut files = SceneFiles::new();
-    for file in document.files() {
-        if file.kind == SceneFileKind::Buffer {
-            let bytes = std::fs::read(folder.join(&file.uri))
-                .map_err(|error| format!("cannot read {}: {error}", file.uri))?;
-            files.add_buffer(&file.uri, bytes);
-        }
+    document
+        .validate(&kinds)
+        .map_err(|error| error.to_string())?;
+    if !document.entities.iter().any(|object| object.id == ENTITY) {
+        return Err(format!("{FIXTURE} has no entity {ENTITY}"));
     }
-    let (index, object) = document
-        .entities
-        .iter()
-        .enumerate()
-        .find(|(_, object)| object.id == ENTITY)
-        .ok_or_else(|| format!("{FIXTURE} has no entity {ENTITY}"))?;
-    let path = format!("$.entities[{index}].terrain");
-    let terrain: engine_terrain::scene::SceneTerrain = engine_core::parse_value_at(
-        object
-            .component("terrain")
-            .ok_or_else(|| format!("{FIXTURE}'s {ENTITY} has no terrain"))?
-            .clone(),
-        &path,
-    )
-    .map_err(|error| error.to_string())?;
-    terrain
-        .prepare_component(&path, Some(&files), (&document.materials, &document.meshes))
-        .map_err(|error| error.to_string())
+    let files = engine_native::files::scene_files(&path, &source, &kinds)
+        .map_err(|error| error.to_string())?;
+    let scene = document
+        .instantiate_with(engine.app.world_mut(), &files)
+        .map_err(|error| error.to_string())?;
+    scene
+        .entity(ENTITY)
+        .and_then(|entity| engine.app.world().get::<TerrainScene>(entity))
+        .and_then(|terrain| terrain.built.clone())
+        .ok_or_else(|| format!("{FIXTURE}'s {ENTITY} has no terrain"))
 }
 
-fn lighting_job(pyramid: &Pyramid) -> LightingJob {
+fn lighting_job(pyramid: &Pyramid, recipe: RecordKey) -> LightingJob {
     let level = pyramid.levels().saturating_sub(PINNED);
     LightingJob {
-        recipe: "recipe".into(),
+        recipe: recipe.hash(),
         level,
         tiles: pyramid
             .level_tiles(level)
@@ -431,27 +428,26 @@ fn level_heights(pyramid: &Pyramid, tiles: &BTreeMap<TileKey, Tile>) -> ([u32; 2
 }
 
 fn bounce_transfer(
-    worker: &mut Worker,
+    worker: &mut JobLog,
     (job, ground, extent): (&LightingJob, &Ground<'_>, [f32; 2]),
     (baked, rules): (&Layers, &BiomeRules),
     observed: &mut Observations,
 ) -> Result<Vec<u8>, String> {
     let transfer = BounceJob {
-        recipe: "recipe".into(),
+        recipe: job.recipe,
         level: job.level,
         tiles: job.tiles.clone(),
         probes: BOUNCE_PROBES,
     };
-    let input = transfer.input();
-    let bytes = worker.run(BounceJob::KIND.name(), &input)?;
+    let input = codec::encode(&transfer);
+    let bytes = worker.run(&BOUNCE, &input)?;
     let made = bounce::bounce(ground, extent, (baked, rules), BOUNCE_PROBES);
     observed.check(codec::encode(&made) == bytes, || {
         "the bounce job differs from the transfer made in place".into()
     });
-    observed.check(
-        worker.sliced(BounceJob::KIND.name(), &input)? == bytes,
-        || "the bounce job run a slice at a time differs from the job run whole".into(),
-    );
+    observed.check(worker.sliced(&BOUNCE, &input, SLICE)? == bytes, || {
+        "the bounce job run a slice at a time differs from the job run whole".into()
+    });
     observed.hash("bounce", &bytes);
     let blocks = (BOUNCE_PROBES / 2) as usize * (BOUNCE_PROBES / 2) as usize;
     observed.record(
@@ -515,7 +511,7 @@ fn pack(records: &[(&str, Vec<u8>)], observed: &mut Observations) -> Result<Vec<
     let keyed: Vec<([u8; 32], &[u8], Vec<u8>)> = records
         .iter()
         .map(|(kind, bytes)| {
-            let key = record_key(kind, bytes);
+            let key = RecordKey::new(&[0; 32], kind, &codec_identity(bytes)).hash();
             let stored =
                 zstd::bulk::compress(bytes, PACK_LEVEL).map_err(|error| error.to_string())?;
             Ok((key, bytes.as_slice(), stored))
@@ -552,29 +548,30 @@ fn pack(records: &[(&str, Vec<u8>)], observed: &mut Observations) -> Result<Vec<
 
 const PACK_LEVEL: i32 = 19;
 
-fn record_key(kind: &str, bytes: &[u8]) -> [u8; 32] {
+fn codec_identity(bytes: &[u8]) -> Vec<u8> {
     use sha2::Digest;
-    let mut hash = sha2::Sha256::new();
-    hash.update(kind.as_bytes());
-    hash.update([0]);
-    hash.update(sha2::Sha256::digest(bytes));
-    hash.finalize().into()
+    sha2::Sha256::digest(bytes).to_vec()
 }
 
 fn portals(
-    worker: &mut Worker,
-    (tile, layers): (&Tile, &Arc<Layers>),
+    worker: &mut JobLog,
+    (tile, layers, stack): (&Tile, &Arc<Layers>, RecordKey),
     (pyramid, gait): (&Pyramid, &Gait),
     (stamps, observed): (&[Stamp], &mut Observations),
 ) -> Result<(WalkGround, Vec<u8>), String> {
     let key = tile.key();
     let job = PortalsJob {
-        source: codec::encode(&(String::from("stack"), (*pyramid, stamps.to_vec()))),
+        grid: JobRef::from(&GROUND_GRID),
+        source: codec::encode(&GroundIdentity {
+            stack: stack.hash(),
+            pyramid: *pyramid,
+            edits: stamps.to_vec(),
+        }),
         pyramid: *pyramid,
         key,
         gait: *gait,
     };
-    let bytes = worker.run(PortalsJob::KIND, &job.identity())?;
+    let bytes = worker.run(&PORTALS, &job.input())?;
     let ground = WalkGround::new(&walk_grid(tile, layers, pyramid), walk_water(tile), pyramid);
     observed.check(
         codec::encode(&TilePortals::new(&ground, pyramid, gait)) == bytes,
@@ -589,7 +586,7 @@ fn portals(
     Ok((ground, bytes))
 }
 
-fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> engine_places::GroundGrid {
+fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> GroundGrid {
     let side = engine_terrain::TILE_SAMPLES as usize;
     let stride = engine_terrain::TILE_STRIDE as usize;
     let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
@@ -621,7 +618,7 @@ fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> engine_places::
         }
         holes = any.then(|| bits.into_boxed_slice());
     }
-    engine_places::GroundGrid {
+    GroundGrid {
         key,
         spacing,
         heights,
@@ -629,12 +626,13 @@ fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> engine_places::
         bridges: layers
             .bridges()
             .into_iter()
-            .map(|bridge| engine_places::GroundBridge {
+            .map(|bridge| GroundBridge {
                 deck: bridge.deck,
                 width: bridge.width,
                 tunnel: bridge.tunnel,
             })
             .collect(),
+        water: None,
     }
 }
 
@@ -642,7 +640,7 @@ fn walk_water(tile: &Tile) -> Option<Box<[f32]>> {
     let side = engine_terrain::TILE_SAMPLES as usize;
     let stride = engine_terrain::TILE_STRIDE as usize;
     let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
-    let surfaces = tile.water().map(engine_terrain::TileWater::surfaces)?;
+    let surfaces = tile.water_surfaces()?;
     let mut water = vec![f32::NAN; side * side].into_boxed_slice();
     for z in 0..side {
         for x in 0..side {
@@ -673,7 +671,7 @@ impl Graph {
         &self,
         pyramid: &Pyramid,
         route: (Vec2, Vec2),
-        obstacles: &[engine_places::GroundObstacle],
+        obstacles: &[GroundObstacle],
         slice: u64,
     ) -> Result<Option<NavPath>, String> {
         let mut search =
@@ -733,7 +731,8 @@ fn record_bakes(layers: &Layers, observed: &mut Observations) {
 }
 
 struct Recipe {
-    key: &'static str,
+    name: &'static str,
+    key: RecordKey,
     layers: Arc<Layers>,
     pyramid: Pyramid,
     rules: Arc<BiomeRules>,
@@ -743,21 +742,21 @@ struct Recipe {
 impl Recipe {
     fn tile(
         &self,
-        worker: &mut Worker,
+        worker: &mut JobLog,
         key: TileKey,
-        stamps: &[Stamp],
+        (stamps, kinds): (&[Stamp], &[&'static LayerKind]),
         observed: &mut Observations,
     ) -> Result<(Tile, Vec<u8>), String> {
         let job = TileJob {
-            recipe: self.key.into(),
+            recipe: self.key.hash(),
             key,
             stamps: stamps.to_vec(),
         };
         let input = job.identity();
-        let whole = worker.run(TileJob::KIND.name(), &input)?;
+        let whole = worker.run(&TILE_BUILD, &input)?;
         let what = format!(
             "{} tile {} under {} edits",
-            self.key,
+            self.name,
             name(key),
             stamps.len()
         );
@@ -766,7 +765,7 @@ impl Recipe {
         } else {
             Arc::new(
                 self.layers
-                    .with_stamps(stamps)
+                    .with_stamps(stamps, kinds)
                     .map_err(|error| error.to_string())?,
             )
         };
@@ -781,88 +780,10 @@ impl Recipe {
         observed.check(codec::encode(&in_place) == whole, || {
             format!("{what}: the job differs from the tile generated in place")
         });
-        observed.check(
-            worker.sliced(TileJob::KIND.name(), &input)? == whole,
-            || format!("{what}: the job run a slice at a time differs from the job run whole"),
-        );
+        observed.check(worker.sliced(&TILE_BUILD, &input, SLICE)? == whole, || {
+            format!("{what}: the job run a slice at a time differs from the job run whole")
+        });
         let tile: Tile = codec::decode(&whole).map_err(|error| error.to_string())?;
         Ok((tile, whole))
-    }
-}
-
-struct Worker {
-    worker: engine_worker::Worker,
-    next: u64,
-    log: Vec<serde_json::Value>,
-}
-
-impl Worker {
-    fn new() -> Result<Self, String> {
-        let list = engine_worker::job_list(engine_standard::standard::<engine_core::BrickList>)
-            .map_err(|error| error.to_string())?;
-        Ok(Self {
-            worker: engine_worker::Worker::new(Arc::new(list), engine_worker::now_ms),
-            next: 0,
-            log: Vec::new(),
-        })
-    }
-
-    fn share(&mut self, bytes: &[u8]) -> RecordKey {
-        use sha2::Digest;
-        let key = RecordKey::from_hash(sha2::Sha256::digest(bytes).into());
-        self.log
-            .push(json!({"share": key.hex(), "bytes": STANDARD.encode(bytes)}));
-        self.worker.share(key, bytes.to_vec());
-        key
-    }
-
-    fn run(&mut self, kind: &'static JobKind, input: &[u8]) -> Result<Vec<u8>, String> {
-        let output = self
-            .worker
-            .run(&JobRef::from(kind), input)
-            .map_err(|error| error.to_string())?;
-        self.log.push(json!({
-            "job": kind.name(),
-            "source": RecordKey::from_hash(kind.source().hash()).hex(),
-            "input": STANDARD.encode(input),
-            "output": hash(&output),
-        }));
-        Ok(output)
-    }
-
-    fn sliced(&mut self, kind: &'static JobKind, input: &[u8]) -> Result<Vec<u8>, String> {
-        self.next += 1;
-        self.worker
-            .start(self.next, &JobRef::from(kind), input)
-            .map_err(|error| error.to_string())?;
-        loop {
-            let stepped = self
-                .worker
-                .step(self.next, SLICE)
-                .map_err(|error| error.to_string())?;
-            if let Some(output) = stepped {
-                self.log.push(json!({
-                    "job": kind.name(),
-                    "source": RecordKey::from_hash(kind.source().hash()).hex(),
-                    "input": STANDARD.encode(input),
-                    "slice": SLICE,
-                    "output": hash(&output),
-                }));
-                return Ok(output);
-            }
-        }
-    }
-
-    fn write(&self, root: &Path) -> Result<(), String> {
-        let path = root.join(JOBS);
-        if let Some(folder) = path.parent() {
-            std::fs::create_dir_all(folder)
-                .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
-        }
-        std::fs::write(
-            &path,
-            serde_json::Value::Array(self.log.clone()).to_string(),
-        )
-        .map_err(|error| format!("cannot write {JOBS}: {error}"))
     }
 }

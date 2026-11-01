@@ -346,10 +346,6 @@ impl<G: Game> GameHost<G> {
         self.app.renderer.lose_device();
     }
 
-    pub(crate) fn read_back(&self, slot: u32) -> Option<(Option<u32>, u64)> {
-        self.app.renderer.slot_read_back(slot)
-    }
-
     pub(crate) fn job_workers(&self) -> u32 {
         self.jobs.working()
     }
@@ -451,7 +447,7 @@ pub(crate) fn reload_checked<G: Game>(
     files: &SceneFiles,
 ) -> crate::Result<()> {
     use engine_core::{Error, ErrorCode};
-    use engine_scene::SceneDocument;
+    use engine_scene::{SceneDocument, SceneKinds};
     use engine_settings::Expected;
     let Some(scene) = game.scene() else {
         return Err(Error::new(ErrorCode::UnsupportedCommand, "$.name").got("reload"));
@@ -470,6 +466,7 @@ pub(crate) fn reload_checked<G: Game>(
         );
     }
     let document = SceneDocument::from_json(source)?;
+    document.validate(&SceneKinds::of(engine.app.world()))?;
     if document.id != scene.id() || document.revision != target {
         return Err(Error::new(ErrorCode::RevisionConflict, "$.args.revision")
             .expected(Expected::Matching)

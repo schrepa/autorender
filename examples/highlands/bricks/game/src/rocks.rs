@@ -1,21 +1,14 @@
-use engine::collections::HashMap;
-
-use engine::prelude::*;
+use engine_core::collections::HashMap;
+use engine_core::{Error, Mesh, MeshVertex, math};
+use glam::Vec3;
 
 use crate::random::{golden_hash, noise, unit};
-use crate::records;
-
-pub(crate) fn boulder_record(world: &mut World, seed: u32) -> engine::Result<MeshHandle> {
-    records::mesh(world, "highlands_boulder", &seed.to_le_bytes(), move || {
-        boulder(seed)
-    })
-}
 
 const LEVELS: u32 = 4;
 
 const TILING: f32 = 3.0;
 
-fn boulder(seed: u32) -> engine::Result<Mesh> {
+pub(crate) fn boulder(seed: u32) -> Result<Mesh, Error> {
     let random = |index: u32| unit(golden_hash(seed.wrapping_mul(0x9e37_79b9) ^ index));
     let stretch = Vec3::new(
         0.9 + 0.6 * random(1),

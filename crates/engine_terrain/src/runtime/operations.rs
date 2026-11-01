@@ -1,5 +1,5 @@
 use super::*;
-use engine_core::bounds;
+use engine_core::{SceneIds, bounds};
 
 #[derive(Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
@@ -8,8 +8,11 @@ pub enum TerrainKey {
     Entity(u64),
 }
 
-pub fn terrain_key(entity: Entity) -> TerrainKey {
-    TerrainKey::Entity(entity.to_bits())
+pub fn terrain_key(ids: &SceneIds<'_, '_>, entity: Entity) -> TerrainKey {
+    ids.id(entity).map_or_else(
+        || TerrainKey::Entity(entity.to_bits()),
+        |id| TerrainKey::Authored(id.to_owned()),
+    )
 }
 
 pub(super) fn out_of_range(invalid: InvalidSetting, path: impl Into<String>) -> Error {
@@ -27,10 +30,26 @@ pub(super) fn coordinate(value: f64, path: &str) -> Result<f32, Error> {
     }
 }
 
-pub(super) fn named_terrain(name: Option<&str>) -> Result<(), Error> {
+pub(super) fn terrain_entity(
+    scenes: &Query<'_, '_, (Entity, &mut TerrainScene)>,
+    ids: &SceneIds<'_, '_>,
+    name: Option<&str>,
+) -> Result<Entity, Error> {
+    let built = |entity: Entity| {
+        scenes
+            .get(entity)
+            .is_ok_and(|(_, scene)| scene.built.is_some())
+    };
     match name {
-        Some(name) => Err(Error::new(ErrorCode::UnknownValue, "$.terrain").got(name)),
-        None => Ok(()),
+        Some(name) => ids
+            .entity(name)
+            .filter(|&entity| built(entity))
+            .ok_or_else(|| Error::new(ErrorCode::UnknownTerrain, "$.terrain").got(name)),
+        None => scenes
+            .iter()
+            .find(|(_, scene)| scene.built.is_some())
+            .map(|(entity, _)| entity)
+            .ok_or_else(|| Error::new(ErrorCode::UnknownTerrain, "$.terrain")),
     }
 }
 

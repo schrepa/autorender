@@ -12,15 +12,13 @@ use std::any::Any;
 use std::sync::Arc;
 
 use engine_codec::{Reader, Writer};
-use engine_core::{
-    Brick, Bricks, Error, ErrorCode, Job, JobCx, JobKind, JobRef, Source, parse_value,
-};
+use engine_core::{Brick, Bricks, ErrorCode, Source, parse_value};
 use engine_heightfield::layer::{
     Below, ChangeMap, LayerBake, LayerFiles, LayerKind, Made, Row, TerrainLayer, maps, no_files,
     no_points, same_as,
 };
 use engine_heightfield::{Pyramid, StartTile};
-use engine_places::terrain::{self, TerrainLayers};
+use engine_places::terrain::TerrainLayers;
 use serde_json::Value;
 
 use crate::bake::ErosionWork;
@@ -30,20 +28,11 @@ pub struct LayerErosionBrick;
 
 impl Brick for LayerErosionBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const JOBS: &'static [&'static JobKind] = &[&EROSION_JOB];
 
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.join::<TerrainLayers>(
-            terrain::LayerKind {
-                layer: &EROSION,
-                job: JobRef::from(&EROSION_JOB),
-            },
-            None,
-        );
+        bricks.join::<TerrainLayers>(&EROSION, None);
     }
 }
-
-pub static EROSION_JOB: JobKind = JobKind::new("layer_erosion::erosion", &SOURCE, refused);
 
 pub static EROSION: LayerKind = LayerKind {
     name: "erosion",
@@ -54,10 +43,6 @@ pub static EROSION: LayerKind = LayerKind {
     schema: engine_heightfield::schema::<ErosionLayer>,
     points: no_points,
 };
-
-fn refused(_input: &[u8], _cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    Err(Error::new(ErrorCode::JobUnsupported, "$.jobs"))
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ErosionStage {
@@ -71,7 +56,7 @@ fn made(stage: ErosionStage) -> Made {
     stage
         .layer
         .validate()
-        .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, "$"))?;
+        .map_err(|invalid| invalid.error(ErrorCode::InvalidTerrain, "$"))?;
     Ok(Arc::new(stage))
 }
 

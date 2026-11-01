@@ -154,6 +154,14 @@ pub(crate) struct PartInfo {
     pub(crate) name: &'static str,
     pub(crate) brick: u32,
     pub(crate) registered: u32,
+    pub(crate) owner: &'static str,
+    pub(crate) profile: u16,
+}
+
+impl PartInfo {
+    pub(crate) fn owned(&self) -> crate::memory::Owned {
+        crate::memory::owned(self.owner, self.profile)
+    }
 }
 
 #[derive(Default)]

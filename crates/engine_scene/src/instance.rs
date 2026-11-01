@@ -166,6 +166,15 @@ impl SceneInstance {
         self.entities.get(authored_id).copied()
     }
 
+    pub fn authored_entity(&self, world: &World, id: &str) -> Option<Entity> {
+        self.entity(id).or_else(|| {
+            world
+                .get_resource::<OperationScene>()
+                .filter(|scene| Arc::ptr_eq(&scene.entities, &self.entities))?
+                .entity(world, id)
+        })
+    }
+
     pub fn entity_count(&self) -> usize {
         self.entities.len()
     }

@@ -1,6 +1,5 @@
 use serde_json::{Value, json};
 
-use engine_core::smoke::{Checked, ask, control, environment};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 
 const SIDE: usize = 12;
@@ -11,6 +10,46 @@ const PAINTS: [[f32; 4]; 4] = [
     [0.4, 0.75, 0.3, 1.0],
     [0.9, 0.75, 0.25, 1.0],
 ];
+
+type Asked = Result<Value, SmokeFailure>;
+
+fn accepted(session: &mut dyn SmokeSession, verb: &str, body: Value, check: &'static str) -> Asked {
+    let reply = session.request(verb, body);
+    smoke_eq!(
+        reply.as_ref().err().map(|refused| &refused["error"]),
+        None,
+        check
+    );
+    Ok(reply.unwrap_or_default())
+}
+
+fn control(session: &mut dyn SmokeSession, name: &str, args: Value, check: &'static str) -> Asked {
+    accepted(
+        session,
+        "control",
+        json!({ "name": name, "args": args }),
+        check,
+    )
+}
+
+fn inspected(session: &mut dyn SmokeSession, component: &str, check: &'static str) -> Asked {
+    let reply = accepted(session, "inspect", json!({ "component": component }), check)?;
+    Ok(reply["result"]["value"].clone())
+}
+
+fn frames(session: &mut dyn SmokeSession, count: u32, check: &'static str) -> Asked {
+    let reply = control(
+        session,
+        "frames",
+        json!({ "count": count, "interval_ms": FRAME_MS }),
+        check,
+    )?;
+    Ok(reply["result"]["rendering"].clone())
+}
+
+fn changed(reply: &Value) -> Value {
+    reply["result"]["environment_changed"].clone()
+}
 
 fn grid() -> Value {
     let mut entities = vec![json!({
@@ -53,16 +92,29 @@ fn grid() -> Value {
     })
 }
 
-fn inspected(session: &mut dyn SmokeSession) -> Checked<Value> {
-    let mut inspected = ask(session, "inspect", json!({ "key": "foliage" }))?;
-    Ok(inspected["value"].take())
+fn placed(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
+    session.source(&grid().to_string());
+    let eye = SIDE as f64 * 2.6;
+    control(
+        session,
+        "camera",
+        json!({
+            "position": [0.0, 30.0, eye],
+            "target": [0.0, 0.0, 0.0],
+            "vertical_fov_radians": 60.0_f64.to_radians(),
+            "near": 0.1,
+            "far": 1000.0,
+        }),
+        "camera_placed",
+    )?;
+    control(session, "pause", json!({}), "pauses")?;
+    control(session, "render", json!({}), "renders")?;
+    control(session, "step", json!({ "ticks": 3 }), "steps")?;
+    Ok(())
 }
 
 pub(crate) fn foliage_settings(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
-    session.source(&grid().to_string());
-    control(session, "pause", json!({}))?;
-    control(session, "render", json!({}))?;
-    session.step(3);
+    placed(session)?;
     let defaults = json!({
         "transmission": 1.0,
         "variation": 1.0,
@@ -70,26 +122,32 @@ pub(crate) fn foliage_settings(session: &mut dyn SmokeSession) -> Result<(), Smo
         "ground_blend": 0.4_f32,
         "crown_depth": 2.0,
     });
-    smoke_eq!(inspected(session)?, defaults, "foliage_defaults");
-    let hashed = json!({ "foliage": { "hashed_cutoff": true } });
-    let reply = environment(session, hashed)?;
+    let inspect = "inspects_foliage";
     smoke_eq!(
-        reply["environment_changed"],
-        json!(["foliage"]),
-        "foliage_controlled"
+        inspected(session, "foliage", inspect)?,
+        defaults.clone(),
+        "foliage_defaults"
     );
+    let hashed = json!({ "foliage": { "hashed_cutoff": true } });
+    let reply = control(session, "environment", hashed, "sets_hashed_cutoff")?;
+    smoke_eq!(changed(&reply), json!(["foliage"]), "foliage_controlled");
     smoke_eq!(
-        inspected(session)?["hashed_cutoff"],
+        inspected(session, "foliage", inspect)?["hashed_cutoff"].clone(),
         json!(true),
         "hashed_cutoff_inspected"
     );
-    control(
-        session,
-        "frames",
-        json!({ "count": 60, "interval_ms": FRAME_MS }),
-    )?;
-    smoke_eq!(session.frame(), true, "foliage_frames_drawn");
-    environment(session, json!({ "foliage": {} }))?;
-    smoke_eq!(inspected(session)?, defaults, "foliage_reset");
+    frames(session, 60, "runs_foliage_frames")?;
+    let reset = json!({ "foliage": {} });
+    control(session, "environment", reset, "resets_foliage")?;
+    smoke_eq!(
+        inspected(session, "foliage", inspect)?,
+        defaults,
+        "foliage_reset"
+    );
+    Ok(())
+}
+
+pub(crate) fn scatter_covers(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
+    smoke_eq!(session.frame(), true, "frame_drawn");
     Ok(())
 }

@@ -1,6 +1,5 @@
 use engine_core::{settings, stats};
-
-const GRAVITY: f32 = 9.81;
+use engine_heightfield::hydraulics::GRAVITY;
 
 settings! {
     #[section("physics")]
@@ -27,6 +26,5 @@ stats! {
         pub solids: u32,
         pub contacts: u32,
         pub water_samples: u32,
-        pub invalid: u32,
     }
 }

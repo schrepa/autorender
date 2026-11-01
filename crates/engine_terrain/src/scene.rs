@@ -1,17 +1,19 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use bevy_ecs::prelude::*;
 use engine_core::{
-    Error, ErrorCode, Expected, Joined, MaterialHandle, MeshHandle, Setting, parse_value_at,
+    ComponentKind, ComponentKindOf, Error, ErrorCode, Expected, MaterialHandle, MeshHandle, Rule,
+    SceneCx, ScenePath, Setting, parse_value_at,
 };
+use engine_heightfield::layer::{LayerFiles, LayerKind};
 use engine_places::ground::{SurfaceMaterial, SurfaceProjection};
-use engine_places::terrain::{LayerKind, TerrainLayers};
+use engine_places::terrain::TerrainLayers;
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
-use serde_json::{Number, Value};
+use serde_json::{Number, Value, json};
 
 use crate::layer::{self, TerrainLayer};
-use crate::runtime::{TerrainBuilt, TerrainScene, Terrains, check_material};
+use crate::runtime::{MATERIAL_RULES, TerrainPrefetch, TerrainScene, check_material};
 use crate::{
     Biome, Biomes, Layers, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer, Pyramid,
     Surroundings, Terrain, TerrainSurface,
@@ -19,13 +21,15 @@ use crate::{
 
 pub const GROUND_HEIGHT: &str = "ground_height";
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrain {
     pub origin: [f32; 3],
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(inner(range(min = 1, max = crate::Pyramid::MAX_TILES)))]
     pub tiles: Option<[u32; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = crate::Pyramid::MIN_SPACING, max = crate::Pyramid::MAX_SPACING))]
     pub spacing: Option<f32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<Value>,
@@ -37,7 +41,8 @@ pub struct SceneTerrain {
     pub surroundings: Option<SceneSurroundings>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(transform = Surroundings::state_rules)]
 #[serde(deny_unknown_fields)]
 pub struct SceneSurroundings {
     pub reach: f32,
@@ -61,7 +66,7 @@ fn is_true(value: &bool) -> bool {
     *value
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrainSurface {
     pub materials: Vec<SceneTerrainMaterial>,
@@ -69,7 +74,7 @@ pub struct SceneTerrainSurface {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steep: Option<crate::SteepLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bridge: Option<MaterialHandle>,
+    pub bridge: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assets: Vec<SceneTerrainAsset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -84,24 +89,33 @@ fn is_default_causes(causes: &crate::MacroCauses) -> bool {
     *causes == crate::MacroCauses::default()
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrainAsset {
     pub id: String,
-    pub mesh: MeshHandle,
-    pub material: MaterialHandle,
+    pub mesh: String,
+    pub material: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collider: Option<SceneTerrainCollider>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SceneColliderShape {
-    Cuboid { half_extents: [f32; 3] },
-    Sphere { radius: f32 },
+    Cuboid {
+        #[schemars(inner(range(
+            min = crate::MIN_COLLIDER_EXTENT,
+            max = crate::MAX_COLLIDER_EXTENT
+        )))]
+        half_extents: [f32; 3],
+    },
+    Sphere {
+        #[schemars(range(min = crate::MIN_COLLIDER_EXTENT, max = crate::MAX_COLLIDER_EXTENT))]
+        radius: f32,
+    },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrainCollider {
     pub shape: SceneColliderShape,
@@ -139,12 +153,13 @@ impl SceneTerrainCollider {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(transform = material_rules)]
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrainMaterial {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub material: Option<MaterialHandle>,
+    pub material: Option<String>,
     #[serde(default = "gray")]
     pub color: [f32; 3],
     #[serde(default = "rough")]
@@ -157,6 +172,12 @@ pub struct SceneTerrainMaterial {
     pub projection: SurfaceProjection,
     #[serde(default, skip_serializing_if = "is_flat")]
     pub depth: f32,
+}
+
+fn material_rules(schema: &mut schemars::Schema) {
+    for (field, rule) in MATERIAL_RULES {
+        engine_core::fields::state(schema, field, rule);
+    }
 }
 
 fn is_flat(meters: &f32) -> bool {
@@ -177,6 +198,141 @@ fn four_meters() -> f32 {
 
 fn half() -> f32 {
     SurfaceMaterial::default().height_contrast
+}
+
+pub struct TerrainAssets<'a> {
+    pub materials: &'a BTreeMap<String, MaterialHandle>,
+    pub meshes: &'a BTreeMap<String, MeshHandle>,
+}
+
+const LAYER_DEFINITION: &str = "SceneTerrainLayer";
+
+fn layer_list_schema(
+    kinds: &[&'static LayerKind],
+    definitions: &mut serde_json::Map<String, Value>,
+) -> Value {
+    let mut kinds = kinds.to_vec();
+    kinds.sort_by_key(|kind| kind.name);
+    let variants: Vec<Value> = kinds
+        .into_iter()
+        .map(|kind| {
+            let definition = kind_definition(kind, definitions);
+            json!({
+                "allOf": [{ "$ref": format!("#/$defs/{definition}") }],
+                "properties": {
+                    (layer::TYPE_KEY): { "const": kind.name },
+                    (layer::ID_KEY): { "type": "string" },
+                },
+                "required": [layer::TYPE_KEY],
+                "unevaluatedProperties": false,
+            })
+        })
+        .collect();
+    definitions.insert(LAYER_DEFINITION.to_owned(), json!({ "oneOf": variants }));
+    json!({
+        "type": "array",
+        "items": { "$ref": format!("#/$defs/{LAYER_DEFINITION}") },
+    })
+}
+
+fn kind_definition(kind: &LayerKind, definitions: &mut serde_json::Map<String, Value>) -> String {
+    let mut schema = (kind.schema)();
+    let Some(fields) = schema.as_object_mut() else {
+        definitions.insert(kind.name.to_owned(), schema);
+        return kind.name.to_owned();
+    };
+    fields.remove("$schema");
+    if let Some(Value::Object(nested)) = fields.remove("$defs") {
+        for (name, definition) in nested {
+            definitions.entry(name).or_insert(definition);
+        }
+    }
+    fields.remove("additionalProperties");
+    let title = fields
+        .remove("title")
+        .and_then(|title| title.as_str().map(str::to_owned))
+        .unwrap_or_else(|| kind.name.to_owned());
+    definitions.insert(title.clone(), schema);
+    title
+}
+
+struct LayerBuffers<'a, 'c>(&'a SceneCx<'c>);
+
+impl LayerFiles for LayerBuffers<'_, '_> {
+    fn buffer(&self, uri: &str, path: &str) -> Result<Option<Arc<[u8]>>, Error> {
+        self.0.buffer(uri, path)
+    }
+}
+
+fn listed(cx: &SceneCx<'_>) -> Vec<&'static LayerKind> {
+    cx.members::<TerrainLayers>().copied().collect()
+}
+
+fn kind_settings(
+    item: &Value,
+    kinds: &[&'static LayerKind],
+) -> Option<(&'static LayerKind, Value)> {
+    let object = item.as_object()?;
+    let name = object.get(layer::TYPE_KEY).and_then(Value::as_str)?;
+    let kind = *kinds.iter().find(|kind| kind.name == name)?;
+    let mut settings = object.clone();
+    settings.remove(layer::TYPE_KEY);
+    settings.remove(layer::ID_KEY);
+    Some((kind, Value::Object(settings)))
+}
+
+fn layer_files(item: &Value, kinds: &[&'static LayerKind]) -> Vec<String> {
+    kind_settings(item, kinds).map_or_else(Vec::new, |(kind, settings)| (kind.files)(&settings))
+}
+
+fn layer_points(item: &Value, kinds: &[&'static LayerKind]) -> Option<Vec<[f32; 2]>> {
+    kind_settings(item, kinds).and_then(|(kind, settings)| (kind.points)(&settings))
+}
+
+fn file_field(item: &Value, uri: &str, at: &str) -> String {
+    item.as_object()
+        .and_then(|object| object.iter().find(|(_, value)| value.as_str() == Some(uri)))
+        .map_or_else(|| at.to_owned(), |(field, _)| format!("{at}.{field}"))
+}
+
+fn check_layers(
+    terrain: &SceneTerrain,
+    kinds: &[&'static LayerKind],
+    path: &str,
+) -> Result<(), Error> {
+    for (index, item) in terrain.layers.iter().enumerate() {
+        let Some(name) = item.get(layer::TYPE_KEY).and_then(Value::as_str) else {
+            continue;
+        };
+        if !kinds.iter().any(|kind| kind.name == name) {
+            return Err(Error::new(
+                ErrorCode::MissingPlugin,
+                format!("{path}.layers[{index}].{}", layer::TYPE_KEY),
+            )
+            .expected(Expected::Present)
+            .got(name));
+        }
+    }
+    Ok(())
+}
+
+fn unknown<S: Into<String>>(error: Error, id: &str, known: impl IntoIterator<Item = S>) -> Error {
+    let known: Vec<String> = known.into_iter().map(Into::into).collect();
+    let error = error.got(id);
+    match engine_codec::closest(id, &known) {
+        Some(nearest) => error.nearest(nearest),
+        None => error,
+    }
+}
+
+fn identifier(id: &str, path: &str) -> Result<(), Error> {
+    if engine_core::is_id(id) {
+        return Ok(());
+    }
+    Err(Error::new(ErrorCode::InvalidId, path)
+        .expected(Expected::Id)
+        .at_most(engine_core::MAX_ID_BYTES as u64)
+        .got(id))
 }
 
 #[derive(Deserialize)]
@@ -254,25 +410,34 @@ fn ground_height(
             );
         }
     }
-    let height = crate::tile::height_at(layers, pyramid, Vec2::from(at));
+    let height = layers.height_at(pyramid, Vec2::from(at));
     Number::from_f64(f64::from(height))
         .map(Value::Number)
         .ok_or_else(|| Error::new(ErrorCode::InvalidNumber, path).expected(Expected::Finite))
 }
 
 impl SceneTerrain {
-    fn surface(&self, path: &str) -> Result<TerrainSurface, Error> {
+    fn surface(&self, path: &str, assets: &TerrainAssets<'_>) -> Result<TerrainSurface, Error> {
+        let invalid = |field: String| {
+            Error::new(ErrorCode::InvalidTerrain, format!("{path}.surface.{field}"))
+        };
         let broken = |error: engine_core::InvalidSetting, at: &str| {
-            error.error(ErrorCode::InvalidValue, &format!("{path}.surface.{at}"))
+            error.error(ErrorCode::InvalidTerrain, &format!("{path}.surface.{at}"))
         };
         let Some(surface) = &self.surface else {
             return Ok(TerrainSurface::default());
         };
+        let material_index = |id: &str, field: String| {
+            assets.materials.get(id).copied().ok_or_else(|| {
+                unknown(invalid(field), id, assets.materials.keys().map(String::as_str))
+            })
+        };
         let mut looks = Vec::with_capacity(surface.materials.len());
         for (index, material) in surface.materials.iter().enumerate() {
             let at = format!("materials[{index}]");
-            let look = SurfaceMaterial {
-                material: material.material,
+            let mut look = SurfaceMaterial {
+                name: Arc::from(material.id.as_str()),
+                material: None,
                 color: material.color,
                 roughness: material.roughness,
                 tiling: material.tiling,
@@ -283,20 +448,32 @@ impl SceneTerrain {
             if let Err(error) = check_material(&look) {
                 return Err(broken(error, &at));
             }
+            look.material = material
+                .material
+                .as_ref()
+                .map(|id| material_index(id, format!("{at}.material")))
+                .transpose()?;
             looks.push(look);
         }
-        let mut assets = Vec::with_capacity(surface.assets.len());
+        let mut placed = Vec::with_capacity(surface.assets.len());
         for (index, asset) in surface.assets.iter().enumerate() {
             let at = format!("assets[{index}]");
+            let mesh = assets.meshes.get(&asset.mesh).copied().ok_or_else(|| {
+                unknown(
+                    invalid(format!("{at}.mesh")),
+                    &asset.mesh,
+                    assets.meshes.keys().map(String::as_str),
+                )
+            })?;
+            let material = material_index(&asset.material, format!("{at}.material"))?;
             let collider = asset.collider.map(SceneTerrainCollider::runtime);
-            if let Some(Err(error)) =
-                collider.map(|collider| collider.check("collider", engine_core::Rule::Any))
+            if let Some(Err(error)) = collider.map(|collider| collider.check("collider", Rule::Any))
             {
                 return Err(broken(error, &at));
             }
-            assets.push(PlacementAsset {
-                mesh: asset.mesh,
-                material: asset.material,
+            placed.push(PlacementAsset {
+                mesh,
+                material,
                 collider,
             });
         }
@@ -318,25 +495,49 @@ impl SceneTerrain {
             macro_colors: surface.macro_colors,
         };
         let mut built = TerrainSurface::new(&biomes, looks).map_err(|error| {
-            let error = if matches!(error.code, ErrorCode::UnknownReference) {
+            let error = if matches!(error.code, ErrorCode::UnknownMap | ErrorCode::UnreadableMap) {
                 error
             } else {
-                error.coded(ErrorCode::InvalidValue)
+                error.coded(ErrorCode::InvalidTerrain)
             };
             error.within(&format!("{path}.surface"))
         })?;
-        built.assets = assets;
-        built.bridge = surface.bridge;
+        built.assets = placed;
+        built.bridge = surface
+            .bridge
+            .as_ref()
+            .map(|id| {
+                assets.materials.get(id).copied().ok_or_else(|| {
+                    unknown(
+                        Error::new(ErrorCode::InvalidTerrain, format!("{path}.surface.bridge")),
+                        id,
+                        assets.materials.keys().map(String::as_str),
+                    )
+                })
+            })
+            .transpose()?;
         Ok(built)
     }
 
-    pub(crate) fn runtime<'k>(
+    pub fn prepare(
         &self,
         path: &str,
-        kinds: &dyn Fn(&str) -> Option<&'k LayerKind>,
+        (files, kinds): (&dyn LayerFiles, &[&'static LayerKind]),
+        assets: &TerrainAssets<'_>,
     ) -> Result<Terrain, Error> {
-        let surface = self.surface(path)?;
-        let invalid = |field: &str| Error::new(ErrorCode::InvalidValue, format!("{path}.{field}"));
+        check_layers(self, kinds, path)?;
+        let surface = self.surface(path, assets)?;
+        self.terrain(path, (files, kinds), surface)
+    }
+
+    fn terrain(
+        &self,
+        path: &str,
+        (files, kinds): (&dyn LayerFiles, &[&'static LayerKind]),
+        surface: TerrainSurface,
+    ) -> Result<Terrain, Error> {
+        let invalid =
+            |field: &str| Error::new(ErrorCode::InvalidTerrain, format!("{path}.{field}"));
         if !self.origin.iter().all(|value| value.is_finite()) {
             return Err(invalid("origin")
                 .expected(Expected::Finite)
@@ -348,7 +549,7 @@ impl SceneTerrain {
             blend: surroundings.blend,
         });
         if let Some(Err(error)) = surroundings.map(|surroundings| surroundings.validate()) {
-            return Err(error.error(ErrorCode::InvalidValue, &format!("{path}.surroundings")));
+            return Err(error.error(ErrorCode::InvalidTerrain, &format!("{path}.surroundings")));
         }
         if self.layers.is_empty() {
             return Err(invalid("layers").expected(Expected::NonEmpty));
@@ -362,8 +563,8 @@ impl SceneTerrain {
             return Err(invalid(field).expected(Expected::Present));
         };
         let pyramid = Pyramid::new(tiles, spacing)
-            .map_err(|error| error.coded(ErrorCode::InvalidValue).within(path))?;
-        let source = self.layers(path, kinds, &pyramid)?;
+            .map_err(|error| error.coded(ErrorCode::InvalidTerrain).within(path))?;
+        let source = self.layers(path, (files, kinds), &pyramid)?;
         surface
             .rules
             .check_maps(&source)
@@ -380,10 +581,10 @@ impl SceneTerrain {
         })
     }
 
-    fn layers<'k>(
+    fn layers(
         &self,
         path: &str,
-        kinds: &dyn Fn(&str) -> Option<&'k LayerKind>,
+        (files, kinds): (&dyn LayerFiles, &[&'static LayerKind]),
         pyramid: &Pyramid,
     ) -> Result<Layers, Error> {
         let mut layers: Vec<Arc<dyn TerrainLayer>> = Vec::with_capacity(self.layers.len());
@@ -393,24 +594,10 @@ impl SceneTerrain {
             let at = format!("{path}.layers[{index}]");
             let mut item = authored.clone();
             resolve_values(&mut item, &named, pyramid, &at)?;
-            let name = item
-                .get(layer::TYPE_KEY)
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    Error::new(ErrorCode::MissingField, format!("{at}.{}", layer::TYPE_KEY))
-                        .expected(Expected::Present)
-                })?;
-            let kind = kinds(name).ok_or_else(|| {
-                Error::new(ErrorCode::UnknownValue, format!("{at}.{}", layer::TYPE_KEY))
-                    .expected(Expected::Present)
-                    .got(name)
-            })?;
-            let mut settings = item.clone();
-            if let Some(fields) = settings.as_object_mut() {
-                fields.remove(layer::TYPE_KEY);
-                fields.remove(layer::ID_KEY);
+            for uri in layer_files(&item, kinds) {
+                engine_core::valid_uri(&uri, &file_field(&item, &uri, &at))?;
             }
-            layers.push((kind.from_json)(&settings).map_err(|error| error.within(&at))?);
+            layers.push(layer::layer_from_json(&item, files, &at, kinds)?);
             let Some(id) = authored.get(layer::ID_KEY) else {
                 continue;
             };
@@ -418,12 +605,7 @@ impl SceneTerrain {
             let id = id.as_str().ok_or_else(|| {
                 Error::new(ErrorCode::InvalidType, &id_path).expected(Expected::String)
             })?;
-            if !engine_core::is_id(id) {
-                return Err(Error::new(ErrorCode::InvalidId, id_path)
-                    .expected(Expected::Id)
-                    .at_most(engine_core::MAX_ID_BYTES as u64)
-                    .got(id));
-            }
+            identifier(id, &id_path)?;
             if ids.contains(&id) {
                 return Err(Error::new(ErrorCode::DuplicateId, id_path)
                     .expected(Expected::Unique)
@@ -434,27 +616,138 @@ impl SceneTerrain {
                 named.push((id.to_owned(), Arc::new(through)));
             }
         }
-        Layers::new(layers).map_err(|error| error.coded(ErrorCode::InvalidValue).within(path))
+        Layers::new(layers).map_err(|error| error.coded(ErrorCode::InvalidTerrain).within(path))
+    }
+
+    pub(crate) fn scene_paths(&self, kinds: &[&'static LayerKind], path: &str) -> Vec<ScenePath> {
+        self.layers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                let id = item.get(layer::ID_KEY).and_then(Value::as_str)?;
+                Some(ScenePath {
+                    id: id.to_owned(),
+                    origin: self.origin,
+                    points: layer_points(item, kinds)?,
+                    at: format!("{path}.layers[{index}].points"),
+                })
+            })
+            .collect()
     }
 }
 
-pub(crate) fn build_terrains(
-    kinds: Joined<TerrainLayers>,
-    mut built: Query<(Entity, Ref<TerrainScene>, &mut TerrainBuilt)>,
-    mut terrains: ResMut<Terrains>,
-) {
-    let found = |name: &str| kinds.iter().find(|kind| kind.name == name);
-    for (entity, scene, mut terrain) in &mut built {
-        if !scene.is_changed() {
-            continue;
-        }
-        terrains.refused.retain(|(refused, _)| *refused != entity);
-        match scene.0.runtime("$.terrain", &found) {
-            Ok(made) => terrain.0 = Some(made),
-            Err(error) => {
-                terrain.0 = None;
-                terrains.refused.push((entity, error));
-            }
-        }
+pub(crate) fn terrain_kind() -> ComponentKindOf<TerrainScene> {
+    ComponentKind::of::<TerrainScene>("terrain")
+        .check_placed(placed_terrain)
+        .prepare(prepare_terrain)
+        .files_in(terrain_files)
+        .paths_in(terrain_paths)
+        .schema_in(terrain_schema)
+        .example(terrain_example)
+}
+
+pub(crate) fn prefetch_kind() -> ComponentKindOf<TerrainPrefetch> {
+    ComponentKind::of::<TerrainPrefetch>("prefetch")
+        .check(check_prefetch)
+        .schema(prefetch_schema)
+        .example(object_example)
+}
+
+fn placed_terrain(_: &TerrainScene, placed: engine_core::Placed, path: &str) -> Result<(), Error> {
+    if placed.streamed {
+        return Err(Error::new(ErrorCode::InvalidStreamed, path).expected(Expected::Absent));
     }
+    Ok(())
+}
+
+fn prepare_terrain(
+    scene: TerrainScene,
+    cx: &SceneCx<'_>,
+    path: &str,
+) -> Result<TerrainScene, Error> {
+    let kinds = listed(cx);
+    let empty = (BTreeMap::new(), BTreeMap::new());
+    let assets = match cx.scene() {
+        Some(scene) => TerrainAssets {
+            materials: &scene.assets.materials,
+            meshes: &scene.assets.meshes,
+        },
+        None => TerrainAssets {
+            materials: &empty.0,
+            meshes: &empty.1,
+        },
+    };
+    let built = scene
+        .authored
+        .prepare(path, (&LayerBuffers(cx), &kinds), &assets)?;
+    Ok(TerrainScene {
+        authored: scene.authored,
+        built: Some(built),
+    })
+}
+
+fn terrain_files(scene: &TerrainScene, cx: &SceneCx<'_>) -> Vec<String> {
+    let kinds = listed(cx);
+    scene
+        .authored
+        .layers
+        .iter()
+        .flat_map(|item| layer_files(item, &kinds))
+        .collect()
+}
+
+fn terrain_paths(
+    scene: &TerrainScene,
+    cx: &SceneCx<'_>,
+    path: &str,
+) -> Result<Vec<ScenePath>, Error> {
+    Ok(scene.authored.scene_paths(&listed(cx), path))
+}
+
+fn terrain_schema(cx: &SceneCx<'_>) -> Value {
+    let mut schema =
+        serde_json::to_value(schemars::schema_for!(SceneTerrain)).unwrap_or(Value::Null);
+    let Some(fields) = schema.as_object_mut() else {
+        return schema;
+    };
+    let mut definitions = match fields.remove("$defs") {
+        Some(Value::Object(definitions)) => definitions,
+        Some(_) | None => serde_json::Map::new(),
+    };
+    let layers = layer_list_schema(&listed(cx), &mut definitions);
+    if let Some(Value::Object(properties)) = fields.get_mut("properties") {
+        properties.insert("layers".to_owned(), layers);
+    }
+    fields.insert("$defs".to_owned(), Value::Object(definitions));
+    schema
+}
+
+fn terrain_example() -> Value {
+    json!({
+        "origin": [-128.0, 0.0, -128.0],
+        "tiles": [2, 2],
+        "spacing": 1.0,
+        "layers": [{ "type": "noise", "seed": 3, "height": 8.0, "wavelength": 120.0 }]
+    })
+}
+
+const PREFETCH: &str = "prefetch";
+
+fn check_prefetch(prefetch: &TerrainPrefetch, path: &str) -> Result<(), Error> {
+    Setting::check(prefetch, PREFETCH, Rule::Any).map_err(|invalid| Error {
+        code: ErrorCode::InvalidValue,
+        path: format!(
+            "{path}{}",
+            invalid.field.strip_prefix(PREFETCH).unwrap_or_default()
+        ),
+        detail: Box::new(invalid.detail),
+    })
+}
+
+fn prefetch_schema() -> Value {
+    serde_json::to_value(schemars::schema_for!(TerrainPrefetch)).unwrap_or(Value::Null)
+}
+
+fn object_example() -> Value {
+    json!({})
 }

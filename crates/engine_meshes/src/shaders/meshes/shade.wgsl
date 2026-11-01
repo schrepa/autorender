@@ -9,23 +9,13 @@ import package::engine::materials::{ALPHA_MASK, DOUBLE_SIDED, EMISSIVE_MAP, FADE
 import package::engine::mesh::declarations::{TemporalOutput, VertexOutput, fade_hidden};
 import package::engine::mesh::vertex::output_color;
 import package::engine::noise::variety_noise;
-import package::engine::shading::{BODY_THIN, Shaded, SurfacePoint};
+import package::engine::shading::{BODY_THIN, Shaded, SurfacePoint, world_plane};
 import package::engine::view::{camera, fade_noise, material_bias, material_detail,
     stable_normalize};
 import package::face::lighting::{finish, local_light, widened};
-import package::face::occupancy::foliage;
+import package::face::foliage::foliage;
 import package::meshes::faces::instances::{instance_grounds, instance_poses};
 import package::meshes::vertex::{ExtendedOutput, ExtendedTemporalOutput};
-
-fn world_plane(p: vec3<f32>, axis: u32) -> vec2<f32> {
-    if axis == 0u {
-        return vec2<f32>(p.z, -p.y);
-    }
-    if axis == 2u {
-        return vec2<f32>(p.x, -p.y);
-    }
-    return p.xz;
-}
 
 fn rippled(normal: vec3<f32>, world: vec3<f32>, strength: f32) -> vec3<f32> {
     let time = camera.position.w;

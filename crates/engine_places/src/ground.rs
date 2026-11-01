@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 pub use engine_heightfield::grid::{MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
 
+pub const PALETTE_ENTRIES: u32 = 113;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GroundPoint {
     pub height: f32,
@@ -366,7 +368,11 @@ pub struct GroundTiles {
 
 impl Slot for GroundTiles {
     const NAME: &'static str = "ground_tiles";
-    const WGSL: Option<&'static str> = Some(contract!("places/ground_tiles.wgsl", TILE_QUADS));
+    const WGSL: Option<&'static str> = Some(contract!(
+        "places/ground_tiles.wgsl",
+        TILE_QUADS,
+        PALETTE_ENTRIES,
+    ));
     const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::GROUND_TILES];
 }
 

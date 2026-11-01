@@ -1,11 +1,11 @@
+import package::engine::math::GRAVITY;
 import package::generated::water::{BLOCK_GROUND, BREAK_FULL, BREAK_ONSET, BREAK_THINNEST,
     CELL_MEANS, COURANT, DEEPEST, DENSITY, DRY, FASTEST, FERGUSON_A1, FERGUSON_A2, LOCAL_SHARE,
     NO_BLOCK, NO_WATER_SURFACE, SHALLOWEST, SIM_BLOCK_LOOKS, SIM_BURSTING, SIM_CELL_SUMS,
     SIM_KEEPING, SIM_LIVE, SIM_LIVE_LOOKS, SIM_LOCAL, SIM_LOOKING, SIM_OPEN, SIM_RIM, SIM_SLOTS,
     SIM_SPARSE, SIM_STANDING, SIM_STEPPING, SIM_SUMMING, SIM_TOUCHES, SLOWEST, SOURCE_SPEED,
     STRICKLER, SimFrame, SimSlot, SimTouch, THETA, THIN, TURBULENT_SPEED, TURBULENT_SWIRL, UNHELD,
-    WATER_FLOW_RANGE, WATER_GRAVITY, WATER_SHEAR_RANGE, WATER_SIM_GROUP, WATER_SIM_SOURCE_GROUP,
-    WET_MOST};
+    WATER_FLOW_RANGE, WATER_SHEAR_RANGE, WATER_SIM_GROUP, WATER_SIM_SOURCE_GROUP, WET_MOST};
 import package::water::bursts::water_burst;
 import package::water::sim_shared::sim_minmod;
 
@@ -328,7 +328,7 @@ fn sim_gravity_x(q: Square, west: u32, east: u32) -> f32 {
             across = (sim_ground_x(q, east).y - ground.x) / (2.0 * q.dx);
         }
     }
-    return WATER_GRAVITY / (1.0 + across * across + along * along);
+    return GRAVITY / (1.0 + across * across + along * along);
 }
 
 fn sim_gravity_z(q: Square, south: u32, north: u32) -> f32 {
@@ -349,7 +349,7 @@ fn sim_gravity_z(q: Square, south: u32, north: u32) -> f32 {
             across = (sim_ground_z(q, north).y - ground.x) / (2.0 * q.dx);
         }
     }
-    return WATER_GRAVITY / (1.0 + across * across + along * along);
+    return GRAVITY / (1.0 + across * across + along * along);
 }
 
 fn sim_cell(q: Square, state: u32, at: u32) -> vec4<f32> {
@@ -480,8 +480,8 @@ fn sim_flux(l: vec4<f32>, r: vec4<f32>, g: f32) -> vec4<f32> {
 }
 
 fn sim_lost(l: vec4<f32>, r: vec4<f32>, mass: f32) -> f32 {
-    let near = l.x + 0.5 * (l.z * l.z + l.w * l.w) / WATER_GRAVITY;
-    let far = r.x + 0.5 * (r.z * r.z + r.w * r.w) / WATER_GRAVITY;
+    let near = l.x + 0.5 * (l.z * l.z + l.w * l.w) / GRAVITY;
+    let far = r.x + 0.5 * (r.z * r.z + r.w * r.w) / GRAVITY;
     return max(select(near - far, far - near, mass < 0.0), 0.0);
 }
 
@@ -795,7 +795,7 @@ fn sim_resistance(q: Square, at: u32, h: f32) -> f32 {
             + 1.0 / (FERGUSON_A1 * FERGUSON_A1 * pow(relative, 1.0 / 3.0))) / (h * h);
     } else {
         let n = pow(h / relative, 1.0 / 6.0) / STRICKLER;
-        k = WATER_GRAVITY * n * n / (h * h * pow(h, 1.0 / 3.0));
+        k = GRAVITY * n * n / (h * h * pow(h, 1.0 / 3.0));
     }
     return k * sim_lean(q, at);
 }
@@ -1110,7 +1110,7 @@ fn sim_dissipation(q: Square, cell: SimCell) -> f32 {
                 own);
         }
     }
-    return DENSITY * (friction + 0.5 * WATER_GRAVITY * lost / q.dx);
+    return DENSITY * (friction + 0.5 * GRAVITY * lost / q.dx);
 }
 
 const SIM_WET_CELLS: u32 = 1u;
@@ -1294,7 +1294,7 @@ fn sim_tally(
     let north = sim_flow_at(q, i, j + 1, velocity);
     let wet = h > DRY;
     let swirl = select(0.0, ((east.y - west.y) - (north.x - south.x)) / (2.0 * q.dx), wet);
-    let leaves = wet && WATER_GRAVITY + sim_bend(q, cell, velocity) <= 0.0;
+    let leaves = wet && GRAVITY + sim_bend(q, cell, velocity) <= 0.0;
     let moving = vec4<f32>(sim_dissipation(q, cell), h * h, swirl * swirl,
         dot(velocity, velocity));
     let sums = SimSums(select(vec4<f32>(0.0), vec4<f32>(h, water.yz, 0.0), wet),
@@ -1551,8 +1551,8 @@ fn sim_drawn(
             / max(length(mean), TURBULENT_SPEED) + swirl / TURBULENT_SWIRL);
         let depth = max(here.y, BREAK_THINNEST);
         let eddies = sim_eddy_speed(sim_dissipation(q, cell), depth, depth);
-        let breaks = eddies / sqrt(WATER_GRAVITY * depth);
-        let leaves = WATER_GRAVITY + sim_bend(q, cell, velocity) <= 0.0;
+        let breaks = eddies / sqrt(GRAVITY * depth);
+        let leaves = GRAVITY + sim_bend(q, cell, velocity) <= 0.0;
         let born = saturate(smoothstep(BREAK_ONSET, BREAK_FULL, breaks)
             + select(0.0, 1.0, leaves));
         state = vec3<f32>(turbulence, born,

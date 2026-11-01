@@ -238,7 +238,10 @@ fn scene_command(arguments: &[String]) -> Result<Value, Error> {
     match arguments {
         [command, file, path] if command == "validate" && file == "--file" => {
             let source = authoring::read_scene_source(Path::new(path))?;
-            Ok(json!(authoring::validate_scene(&source)?))
+            Ok(json!(authoring::validate_scene(
+                &source,
+                &crate::bricks::standard_kinds()?
+            )?))
         }
         [command, file, path] if command == "format" && file == "--file" => format_scene(path),
         [
@@ -263,7 +266,8 @@ fn scene_command(arguments: &[String]) -> Result<Value, Error> {
             Ok(json!(authoring::save_scene(
                 Path::new(path),
                 &source,
-                revision
+                revision,
+                &crate::bricks::standard_kinds()?
             )?))
         }
         [command] if command == "schema" => {
@@ -282,6 +286,7 @@ fn format_scene(path: &str) -> Result<Value, Error> {
         .map_err(|_| Error::new(ErrorCode::InvalidJson, "$.schema"))?;
     let source = authoring::read_scene_source(Path::new(path))?;
     let document = engine_scene::SceneDocument::from_json(&source)?;
+    document.validate(&engine_scene::SceneKinds::of(engine.app.world()))?;
     let canonical = document.to_canonical_json(&schema)?;
     let changed = canonical != source;
     if changed {

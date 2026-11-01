@@ -5,8 +5,9 @@ use std::sync::Arc;
 use bevy_ecs::system::SystemState;
 use bevy_ecs::world::World;
 use engine_core::{DrawPoint, Error, ErrorCode};
-use engine_registry::{DrawMember, RawDraw, Scope};
+use engine_registry::Scope;
 
+use crate::draws::{DrawMember, RawDraw};
 use crate::encode::{EncodeCore, FrameCore};
 use crate::install::InstallCore;
 use crate::{Draw, Encode, GpuPart, Install, Pass, Prepare};

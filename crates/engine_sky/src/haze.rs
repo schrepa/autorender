@@ -1,7 +1,7 @@
 use engine_core::Error;
 use engine_render::{
-    Access, Attach, Bind, Buffer, DepthUse, Encode, Install, Lifetime, Own, Pass, Pipeline,
-    Prepare, RenderPipeline, Shape, Texture, ViewTarget, wgpu,
+    Access, Attach, Bind, Buffer, DepthUse, Encode, FULLSCREEN, Install, Lifetime, Own, Pass,
+    Pipeline, Prepare, RenderPipeline, Shape, Texture, ViewTarget, wgpu,
 };
 use glam::{Mat4, UVec2, Vec3};
 
@@ -25,6 +25,79 @@ pub(crate) struct HazeFrame {
     pub(crate) displayed: bool,
 }
 
+#[derive(Default)]
+pub(crate) struct HazePlan {
+    runs: bool,
+    size: Option<UVec2>,
+    drawn: (u32, u32),
+    history: Option<History>,
+    kept: Option<History>,
+    frames: u32,
+    uniform: HazeView,
+}
+
+impl HazePlan {
+    pub(crate) fn runs(&self) -> bool {
+        self.runs
+    }
+
+    pub(crate) fn submitted(&mut self) {
+        self.history = self.kept.take();
+        if self.history.is_some() {
+            self.frames = self.frames.wrapping_add(1);
+        }
+    }
+
+    pub(crate) fn prepare(&mut self, runs: bool, frame: &HazeFrame) -> [f32; 4] {
+        self.runs = false;
+        if !runs {
+            self.release();
+            return [0.0; 4];
+        }
+        let size = frame.display;
+        if self.size != Some(size) {
+            self.size = Some(size);
+            self.history = None;
+        }
+        self.drawn = (frame.render.x, frame.render.y);
+        self.kept = frame.displayed.then_some(History {
+            view_projection: frame.view_projection,
+            eye: frame.eye,
+            drawn: self.drawn,
+        });
+        let (history, turn) = if self.kept.is_none() {
+            (None, 0.0)
+        } else {
+            let turn = (self.frames % 1024) as f32 * 0.618_034;
+            (self.history, turn - turn.floor())
+        };
+        let (width, height) = (frame.render.x as f32, frame.render.y as f32);
+        let view_projection = frame.view_projection;
+        let focal = view_projection.row(1).truncate().length();
+        self.uniform = HazeView {
+            inverse_view_projection: inverse_or_identity(view_projection).to_cols_array_2d(),
+            eye: frame.eye.extend(focal * height * 0.5).to_array(),
+            size: [width, height, 1.0 / width, 1.0 / height],
+            previous_view_projection: history
+                .map_or(view_projection, |last| last.view_projection)
+                .to_cols_array_2d(),
+            previous_eye: history
+                .map_or(frame.eye, |last| last.eye)
+                .extend(0.0)
+                .to_array(),
+        };
+        self.runs = true;
+        history.map_or([turn, 0.0, 0.0, 1.0], |last| {
+            [turn, last.drawn.0 as f32, last.drawn.1 as f32, 1.0]
+        })
+    }
+
+    fn release(&mut self) {
+        self.size = None;
+        self.history = None;
+    }
+}
+
 pub(crate) struct Haze {
     marched: Texture<SkyGpu>,
     hazed: Texture<SkyGpu>,
@@ -34,11 +107,7 @@ pub(crate) struct Haze {
     filter_pass: Pass<SkyGpu>,
     marching: Pipeline<SkyGpu, Own>,
     filtering: Pipeline<SkyGpu, Own>,
-    size: Option<UVec2>,
     drawn: (u32, u32),
-    history: Option<History>,
-    kept: Option<History>,
-    frames: u32,
     written: Option<HazeView>,
 }
 
@@ -58,7 +127,7 @@ impl Haze {
             .color(history_texture, Access::Load)
             .id();
         let fullscreen = |fragment| RenderPipeline {
-            vertex: haze_view::VS_FULLSCREEN,
+            vertex: FULLSCREEN,
             fragment: Some(fragment),
             debug: None,
             vertices: &[],
@@ -91,88 +160,32 @@ impl Haze {
             filter_pass,
             marching,
             filtering,
-            size: None,
             drawn: (0, 0),
-            history: None,
-            kept: None,
-            frames: 0,
             written: None,
         })
     }
 
-    pub(crate) fn submitted(&mut self) {
-        self.history = self.kept.take();
-        if self.history.is_some() {
-            self.frames = self.frames.wrapping_add(1);
-        }
-    }
-
-    pub(crate) fn prepare(
-        &mut self,
-        cx: &mut Prepare<'_, SkyGpu>,
-        runs: bool,
-        frame: &HazeFrame,
-    ) -> [f32; 4] {
-        if !runs {
-            self.release();
-            return [0.0; 4];
-        }
-        let size = frame.display;
-        if self.size != Some(size) {
-            let extent = wgpu::Extent3d {
-                width: size.x,
-                height: size.y,
-                depth_or_array_layers: 1,
-            };
-            for texture in [self.marched, self.hazed, self.history_texture] {
-                cx.allocate(texture, extent, 1);
-            }
-            self.size = Some(size);
-            self.history = None;
+    pub(crate) fn prepare(&mut self, cx: &mut Prepare<'_, SkyGpu>, plan: &HazePlan) {
+        let Some(size) = plan.size.filter(|_| plan.runs) else {
+            self.written = None;
+            return;
+        };
+        let extent = wgpu::Extent3d {
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: 1,
+        };
+        for texture in [self.marched, self.hazed, self.history_texture] {
+            cx.allocate(texture, extent, 1);
         }
         cx.allocate_buffer(self.uniform, size_of::<HazeView>() as u64);
-        self.drawn = (frame.render.x, frame.render.y);
-        self.kept = frame.displayed.then_some(History {
-            view_projection: frame.view_projection,
-            eye: frame.eye,
-            drawn: self.drawn,
-        });
-        let (history, turn) = if self.kept.is_none() {
-            (None, 0.0)
-        } else {
-            let turn = (self.frames % 1024) as f32 * 0.618_034;
-            (self.history, turn - turn.floor())
-        };
-        let (width, height) = (frame.render.x as f32, frame.render.y as f32);
-        let view_projection = frame.view_projection;
-        let focal = view_projection.row(1).truncate().length();
-        let uniform = HazeView {
-            inverse_view_projection: inverse_or_identity(view_projection).to_cols_array_2d(),
-            eye: frame.eye.extend(focal * height * 0.5).to_array(),
-            size: [width, height, 1.0 / width, 1.0 / height],
-            previous_view_projection: history
-                .map_or(view_projection, |last| last.view_projection)
-                .to_cols_array_2d(),
-            previous_eye: history
-                .map_or(frame.eye, |last| last.eye)
-                .extend(0.0)
-                .to_array(),
-        };
-        if self.written != Some(uniform) {
-            cx.write(self.uniform, 0, &[uniform]);
-            self.written = Some(uniform);
+        self.drawn = plan.drawn;
+        if self.written != Some(plan.uniform) {
+            cx.write(self.uniform, 0, &[plan.uniform]);
+            self.written = Some(plan.uniform);
         }
         cx.run(self.march_pass);
         cx.run(self.filter_pass);
-        history.map_or([turn, 0.0, 0.0, 1.0], |last| {
-            [turn, last.drawn.0 as f32, last.drawn.1 as f32, 1.0]
-        })
-    }
-
-    fn release(&mut self) {
-        self.size = None;
-        self.history = None;
-        self.written = None;
     }
 
     pub(crate) fn owns(&self, pass: Pass<SkyGpu>) -> bool {
@@ -186,7 +199,7 @@ impl Haze {
             &self.filtering
         };
         let mut draw = cx.render(Attach::Declared, None);
-        draw.scissor([0, 0, self.drawn.0, self.drawn.1]);
+        draw.within(self.drawn);
         draw.draw(
             pipeline,
             Shape::Pulled {

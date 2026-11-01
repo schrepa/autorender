@@ -137,7 +137,10 @@ pub fn generated(world: &World) -> Result<Generated, String> {
     if let Some(all) = schemas.as_object_mut() {
         all.extend(sections);
     }
-    let scene_schema = engine_scene::SceneDocument::schema_json(registry);
+    let scene_schema = engine_scene::SceneDocument::schema_json(
+        registry,
+        &engine_scene::SceneKinds::of(world),
+    );
     let queries = names(&schemas[Verb::Query.name()], &mut problems);
     let controls = names(&schemas[Verb::Control.name()], &mut problems);
     core_names(

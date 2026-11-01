@@ -3,8 +3,8 @@ use engine_core::{gpu_consts, gpu_struct};
 
 gpu_consts! {
     pub const NOT_RESIDENT: u32 = 0xffffffff;
-    pub const TERRAIN_GRID: u32 = 17;
-    pub const TERRAIN_GRID_VERTICES: u32 = TERRAIN_GRID * TERRAIN_GRID;
+    pub const PATCH_GRID: u32 = 17;
+    pub const PATCH_GRID_VERTICES: u32 = PATCH_GRID * PATCH_GRID;
     pub const SURFACE_MESHLET_LEVEL: u32 = 2;
     pub const SURFACE_MESHLET_VERTICES: u32 = 15;
     pub const SURFACE_MESHLET_INDICES: u32 = 48;
@@ -17,6 +17,8 @@ gpu_consts! {
     pub const SUBDIVISION_RESERVED: u32 = 9;
     pub const SUBDIVISION_REFUSED: u32 = 10;
     pub const SUBDIVISION_COUNTED: u32 = 8;
+    pub const SUBDIVISION_MEASURE: u32 = 11;
+    pub const SUBDIVISION_EPOCH: u32 = 12;
     pub const HORIZON_DIRECTIONS: u32 = 16;
     pub const HORIZON_LAYERS: u32 = 9;
     pub const HORIZON_RECORD_VECTORS: u32 = 6;
@@ -29,8 +31,6 @@ gpu_consts! {
     pub const BOUNCE_WINDOW_ROW: u32 = 4096;
     pub const BOUNCE_NEAREST: f32 = 0.5;
     pub const BOUNCE_STEPS: f32 = 16.0;
-    pub const PALETTE_ENTRIES: u32 = 113;
-    pub const TERRAIN_PALETTE_ENTRIES: u32 = PALETTE_ENTRIES;
     pub const TILE_STRIDE: u32 = 259;
     pub const CONTROL_GROUP: u32 = 8;
     pub const BOUNCE_GROUP: u32 = 8;
@@ -42,11 +42,20 @@ gpu_consts! {
 
 pub const HEIGHT_FORMAT: engine_render::wgpu::TextureFormat = engine_render::wgpu::TextureFormat::R32Float;
 
-pub const PALETTE_BYTES: usize = PALETTE_ENTRIES as usize * size_of::<PaletteEntry>();
+pub const PALETTE_BYTES: usize = engine_places::ground::PALETTE_ENTRIES as usize * size_of::<PaletteEntry>();
 
 const _: () = assert!(
-    PALETTE_ENTRIES as usize == 16_384 / size_of::<PaletteEntry>(),
-    "palette_fills_a_uniform_binding"
+    engine_places::ground::PALETTE_ENTRIES as usize * size_of::<PaletteEntry>() <= 16_384,
+    "palette_fits_a_uniform_binding"
+);
+
+const _: () = assert!(
+    SUBDIVISION_MEASURE > SUBDIVISION_DRAW + 4
+        && SUBDIVISION_MEASURE != SUBDIVISION_RESERVED
+        && SUBDIVISION_MEASURE != SUBDIVISION_REFUSED
+        && SUBDIVISION_EPOCH > SUBDIVISION_MEASURE
+        && SUBDIVISION_EPOCH < SUBDIVISION_ARGS,
+    "subdivision_counters_keep_their_words"
 );
 
 const _: () = assert!(
@@ -68,7 +77,7 @@ const _: () = assert!(
 const _: () = assert!(
     TILE_STRIDE == engine_heightfield::TILE_SAMPLES + 2
         && SURFACE_ERROR_MIPS == engine_heightfield::TILE_QUADS.trailing_zeros()
-        && TERRAIN_GRID_VERTICES == TERRAIN_GRID * TERRAIN_GRID
+        && PATCH_GRID_VERTICES == PATCH_GRID * PATCH_GRID
         && SURFACE_MESHLET_VERTICES
             == ((1 << SURFACE_MESHLET_LEVEL) + 1) * ((1 << SURFACE_MESHLET_LEVEL) + 2) / 2
         && SURFACE_MESHLET_INDICES == 3 << (2 * SURFACE_MESHLET_LEVEL)
@@ -118,17 +127,7 @@ gpu_struct! {
         pub maps: [f32; 4],
         pub far: [f32; 4],
         pub relief: [f32; 4],
-        pub canopy: [f32; 4],
-        pub placed: [f32; 4],
-        pub placed_size: [f32; 4],
         pub heights: [f32; 4],
-    }
-}
-
-gpu_struct! {
-    pub struct TerrainInfo {
-        pub origin: [f32; 4],
-        pub levels: [u32; 4],
     }
 }
 
@@ -178,7 +177,7 @@ gpu_struct! {
 gpu_struct! {
     pub struct ControlJob {
         pub layer: u32,
-        pub level: u32,
+        pub rivers: u32,
         pub first: [i32; 2],
         pub spacing: f32,
         pub terrain: u32,

@@ -13,6 +13,12 @@ struct FaceOutput {
     @location(1) @interpolate(flat) item: u32,
 }
 
+struct Faces {
+    @location(0) first: vec4<f32>,
+    @location(1) second: vec4<f32>,
+    @location(2) third: vec4<f32>,
+}
+
 @vertex
 fn vs_face(@builtin(vertex_index) index: u32, @builtin(instance_index) item: u32)
         -> FaceOutput {
@@ -45,8 +51,9 @@ fn down(face: u32, ndc: vec2<f32>) -> vec4<f32> {
 }
 
 @fragment
-fn fs_down(input: FaceOutput) -> @location(0) vec4<f32> {
-    return down(input.item % 6u, input.ndc);
+fn fs_down(input: FaceOutput) -> Faces {
+    let face = input.item % 6u;
+    return Faces(down(face, input.ndc), down(face + 1u, input.ndc), down(face + 2u, input.ndc));
 }
 
 fn hammersley(index: u32, count: u32) -> vec2<f32> {
@@ -93,6 +100,12 @@ fn prefiltered(face: u32, level: u32, ndc: vec2<f32>) -> vec4<f32> {
 }
 
 @fragment
-fn fs_prefilter(input: FaceOutput) -> @location(0) vec4<f32> {
-    return prefiltered(input.item % 6u, input.item / 6u, input.ndc);
+fn fs_prefilter(input: FaceOutput) -> Faces {
+    let face = input.item % 6u;
+    let level = input.item / 6u;
+    return Faces(
+        prefiltered(face, level, input.ndc),
+        prefiltered(face + 1u, level, input.ndc),
+        prefiltered(face + 2u, level, input.ndc),
+    );
 }

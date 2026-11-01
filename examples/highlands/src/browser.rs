@@ -23,8 +23,8 @@ impl HighlandsRocks {
         if format != Some("ktx2-rgba8") {
             return Err(js_error(invalid().got(format).variants(["ktx2-rgba8"])));
         }
-        let image =
-            engine::host::decode_image(name, bytes).map_err(|reason| js_error(invalid().got(reason)))?;
+        let image = engine::host::decode_image(name, bytes)
+            .map_err(|reason| js_error(invalid().got(reason)))?;
         self.maps.insert(name.to_owned(), image);
         Ok(())
     }
@@ -63,9 +63,7 @@ impl HighlandsGame {
 
     pub fn control(&mut self, name: &str, value: &str) -> Result<(), JsValue> {
         let (engine, highlands) = self.host_mut().parts_mut();
-        highlands
-            .control(engine, name, value)
-            .map_err(js_error)
+        highlands.control(engine, name, value).map_err(js_error)
     }
 }
 
@@ -84,7 +82,7 @@ engine::__if_dev! {
             };
             let bricks = highlands_bricks::bricks(engine::BrickList::default());
             let mut smokes = engine::smokes::registered(&bricks).map_err(js_error)?;
-            smokes.extend(crate::smokes());
+            smokes.extend(crate::smokes().map_err(js_error)?);
             engine::smokes::page::run::<Highlands>(
                 canvas,
                 &names,

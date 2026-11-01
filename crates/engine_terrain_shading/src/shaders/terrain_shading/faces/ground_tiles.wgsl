@@ -1,11 +1,8 @@
 import package::place::ground_tiles::{GroundHeight, GroundMaterial, GroundTerrain, GroundTile,
-    LevelTile, MaterialLook, TerrainInfo};
-import package::generated::terrain_shading::{PALETTE_ENTRIES, PaletteEntry};
-
-const NOT_RESIDENT: u32 = 0xffffffffu;
-const TILE_QUADS: u32 = 256u;
-const PEAK_MIPS: u32 = 8u;
-const PEAK_CELLS: u32 = 128u;
+    LevelTile, MaterialLook, NOT_RESIDENT, PALETTE_ENTRIES, PEAK_CELLS, PEAK_MIPS, TILE_QUADS,
+    TerrainInfo};
+import package::place::heightfield::TerrainUniform;
+import package::generated::terrain_shading::PaletteEntry;
 
 @group(0) @binding(0) var heights: texture_2d_array<f32>;
 @group(0) @binding(1) var<storage, read> directory: array<u32>;
@@ -13,6 +10,26 @@ const PEAK_CELLS: u32 = 128u;
 @group(0) @binding(3) var normals: texture_2d_array<u32>;
 @group(0) @binding(4) var macro_maps: texture_2d_array<f32>;
 @group(0) @binding(5) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;
+@group(0) @binding(6) var<storage, read> ground_terrains: array<TerrainUniform>;
+@group(0) @binding(7) var ground_sky_map: texture_2d_array<f32>;
+@group(0) @binding(8) var ground_sky_sampler: sampler;
+
+fn terrain_info(terrain: u32) -> TerrainInfo {
+    let held = ground_terrains[terrain];
+    var info: TerrainInfo;
+    info.origin = vec4<f32>(held.origin.xyz, held.anchor.w);
+    info.levels = vec4<u32>(held.directory.x, held.directory.y, held.directory.z, held.macro_map.x);
+    return info;
+}
+
+fn ground_sky(terrain: u32, local: vec2<f32>) -> vec4<f32> {
+    let layer = ground_terrains[terrain].directory.w;
+    if layer == 0u {
+        return vec4<f32>(1.0, 0.5, 0.5, 0.5);
+    }
+    let extent = ground_extent(ground_of(terrain_info(terrain)));
+    return textureSampleLevel(ground_sky_map, ground_sky_sampler, local / extent, layer - 1u, 0.0);
+}
 
 fn ground_of(info: TerrainInfo) -> GroundTerrain {
     return GroundTerrain(info.levels.x, info.levels.y, info.origin.w);
@@ -142,5 +159,5 @@ fn macro_color(colors: vec4<f32>) -> vec3<f32> {
 
 fn material_look(base: u32, material: u32) -> MaterialLook {
     let entry = palette[min(base + material, PALETTE_ENTRIES - 1u)];
-    return MaterialLook(entry.far, entry.canopy);
+    return MaterialLook(entry.far);
 }

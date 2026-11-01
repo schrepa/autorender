@@ -1,14 +1,25 @@
-use engine_core::math::clamp;
+use engine_core::{Error, ErrorCode, Expected, InvalidSetting, Placed, Rule, Setting};
 use engine_places::physics::RigidBody;
 use engine_places::water::WaterKind;
 use glam::Vec3;
 use serde::Serialize;
+use serde_json::{Value, json};
 
-const DENSITY: (f32, f32) = (1.0, 100_000.0);
-const FRICTION: (f32, f32) = (0.0, 10.0);
-const RESTITUTION: (f32, f32) = (0.0, 1.0);
-const DRAG: (f32, f32) = (0.0, 10.0);
-const MOTION: (f32, f32) = (-1000.0, 1000.0);
+const DENSITY: Rule = Rule::range(1.0, 100_000.0);
+const FRICTION: Rule = Rule::range(0.0, 10.0);
+const RESTITUTION: Rule = Rule::range(0.0, 1.0);
+const DRAG: Rule = Rule::range(0.0, 10.0);
+const MOTION: Rule = Rule::range(-1000.0, 1000.0);
+const RULES: [(&str, Rule); 8] = [
+    ("motion", Rule::any()),
+    ("density", DENSITY),
+    ("friction", FRICTION),
+    ("restitution", RESTITUTION),
+    ("drag", DRAG),
+    ("velocity", MOTION),
+    ("spin", MOTION),
+    ("fast", Rule::any()),
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -38,40 +49,48 @@ pub(crate) struct BodyStatus {
     pub water: Option<BodyWater>,
 }
 
-fn within(value: f32, (low, high): (f32, f32)) -> bool {
-    (low..=high).contains(&value)
+fn ruled(body: &RigidBody) -> Result<(), InvalidSetting> {
+    body.density.check("density", DENSITY)?;
+    body.friction.check("friction", FRICTION)?;
+    body.restitution.check("restitution", RESTITUTION)?;
+    body.drag.check("drag", DRAG)?;
+    body.velocity.check("velocity", MOTION)?;
+    body.spin.check("spin", MOTION)
 }
 
-fn kept(value: f32, (low, high): (f32, f32), default: f32) -> f32 {
-    if value.is_finite() {
-        clamp(value, low, high)
-    } else {
-        default
+pub(crate) fn check_body(body: &RigidBody, path: &str) -> Result<(), Error> {
+    ruled(body).map_err(|invalid| invalid.error(ErrorCode::InvalidValue, path))
+}
+
+pub(crate) fn placed_body(_: &RigidBody, placed: Placed, path: &str) -> Result<(), Error> {
+    if placed.root {
+        return Ok(());
     }
+    Err(Error::new(ErrorCode::InvalidRigidBody, path).expected(Expected::Absent))
 }
 
-pub(crate) fn valid(body: &RigidBody) -> bool {
-    within(body.density, DENSITY)
-        && within(body.friction, FRICTION)
-        && within(body.restitution, RESTITUTION)
-        && within(body.drag, DRAG)
-        && body.velocity.iter().all(|&value| within(value, MOTION))
-        && body.spin.iter().all(|&value| within(value, MOTION))
+pub(crate) fn body_schema() -> Value {
+    let mut schema = schemars::schema_for!(RigidBody);
+    for (field, rule) in RULES {
+        engine_core::state(&mut schema, field, rule);
+    }
+    serde_json::to_value(schema).unwrap_or(Value::Null)
+}
+
+pub(crate) fn body_example() -> Value {
+    json!({})
 }
 
 pub(crate) fn sanitized(body: RigidBody) -> RigidBody {
     let defaults = RigidBody::default();
-    let each = |values: [f32; 3], defaults: [f32; 3]| {
-        [0, 1, 2].map(|axis| kept(values[axis], MOTION, defaults[axis]))
-    };
     RigidBody {
         motion: body.motion,
-        density: kept(body.density, DENSITY, defaults.density),
-        friction: kept(body.friction, FRICTION, defaults.friction),
-        restitution: kept(body.restitution, RESTITUTION, defaults.restitution),
-        drag: kept(body.drag, DRAG, defaults.drag),
-        velocity: each(body.velocity, defaults.velocity),
-        spin: each(body.spin, defaults.spin),
+        density: body.density.kept(DENSITY, defaults.density),
+        friction: body.friction.kept(FRICTION, defaults.friction),
+        restitution: body.restitution.kept(RESTITUTION, defaults.restitution),
+        drag: body.drag.kept(DRAG, defaults.drag),
+        velocity: body.velocity.kept(MOTION, defaults.velocity),
+        spin: body.spin.kept(MOTION, defaults.spin),
         fast: body.fast,
     }
 }

@@ -5,9 +5,10 @@
 
 use std::sync::Arc;
 
+use engine_heightfield::TileHeights;
+
 use crate::layer::{LayerBake, TerrainLayer};
-use crate::Layers;
-use crate::{Generator, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey};
+use crate::{Generator, Layers, Pyramid, TileKey};
 
 pub struct TerrainBake {
     index: usize,
@@ -17,7 +18,7 @@ pub struct TerrainBake {
 
 impl TerrainBake {
     pub fn new(layers: &Layers, index: usize, pyramid: &Pyramid) -> Option<Self> {
-        let work = layers.layers().get(index)?.bake(pyramid)?;
+        let work = layers.layers().get(index)?.bake(pyramid, start_tile)?;
         Some(Self {
             index,
             below: Arc::new(layers.below(index)),
@@ -38,60 +39,16 @@ impl TerrainBake {
     }
 }
 
-pub struct Gather {
-    pub level: u32,
-    pending: Vec<TileKey>,
-    job: Option<(TileKey, Generator)>,
-    pub width: usize,
-    pub heights: Vec<f32>,
+struct Heights(Generator);
+
+impl TileHeights for Heights {
+    fn advance(&mut self, budget: &mut u64) -> Option<Box<[f32]>> {
+        self.0.advance(budget).map(|tile| Box::from(tile.heights()))
+    }
 }
 
-impl Gather {
-    pub fn new(level: u32, pyramid: &Pyramid) -> Self {
-        let level = level.min(pyramid.levels() - 1);
-        let [x, z] = pyramid.tiles(level);
-        let width = x as usize * TILE_QUADS as usize + 1;
-        let height = z as usize * TILE_QUADS as usize + 1;
-        Self {
-            level,
-            pending: pyramid.level_tiles(level).collect(),
-            job: None,
-            width,
-            heights: vec![0.0; width * height],
-        }
-    }
-
-    pub fn advance(&mut self, below: &Arc<Layers>, pyramid: &Pyramid, budget: &mut u64) -> bool {
-        while *budget > 0 {
-            let Some((key, job)) = (match &mut self.job {
-                Some(job) => Some(job),
-                None => match self.pending.pop() {
-                    Some(key) => Some(
-                        &mut *self
-                            .job
-                            .insert((key, Generator::new(below.clone(), pyramid, key))),
-                    ),
-                    None => None,
-                },
-            }) else {
-                return true;
-            };
-            let key = *key;
-            if let Some(tile) = job.advance(budget) {
-                self.job = None;
-                let (stride, samples) = (TILE_STRIDE as usize, TILE_SAMPLES as usize);
-                let quads = TILE_QUADS as usize;
-                let first = [usize::from(key.x) * quads, usize::from(key.z) * quads];
-                for row in 0..samples {
-                    let from = (row + 1) * stride + 1;
-                    let to = (first[1] + row) * self.width + first[0];
-                    self.heights[to..to + samples]
-                        .copy_from_slice(&tile.heights()[from..from + samples]);
-                }
-            }
-        }
-        false
-    }
+pub fn start_tile(below: Arc<Layers>, pyramid: &Pyramid, key: TileKey) -> Box<dyn TileHeights> {
+    Box::new(Heights(Generator::new(below, pyramid, key)))
 }
 
 #[must_use]

@@ -15,7 +15,11 @@ fn described(session: &mut dyn SmokeSession) -> Checked<()> {
     let listed = listing["types"]
         .as_array()
         .is_some_and(|types| types.iter().any(|kind| kind["name"] == "detail"));
-    smoke_eq!(listed, true, "the_level_of_detail_settings_are_discoverable");
+    smoke_eq!(
+        listed,
+        true,
+        "the_level_of_detail_settings_are_discoverable"
+    );
     let detail = inspect(session, "detail")?;
     let impostors = inspect(session, "impostors")?;
     smoke_eq!(

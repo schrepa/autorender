@@ -332,16 +332,11 @@ macro_rules! __export_worker {
                 self.worker.cancel(id as u64);
             }
 
-            pub fn unpack(
-                &self,
-                stored: &[u8],
-                raw: u32,
-            ) -> Result<Vec<u8>, $crate::__private::JsValue> {
+            pub fn unpack(stored: &[u8], raw: u32) -> Result<Vec<u8>, $crate::__private::JsValue> {
                 $crate::unpack_bytes(stored, raw).map_err($crate::__private::js_error)
             }
 
             pub fn decode_image(
-                &self,
                 uri: &str,
                 bytes: &[u8],
             ) -> Result<$crate::__private::JsValue, $crate::__private::JsValue> {

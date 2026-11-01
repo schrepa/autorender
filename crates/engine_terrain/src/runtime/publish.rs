@@ -1,29 +1,52 @@
 use super::*;
+use engine_core::Joined;
 use engine_places::ground::{PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles};
+use engine_places::streaming::{StreamingPath, StreamingPaths};
+use engine_places::terrain::TerrainLayers;
 use engine_places::water::Hydrology;
 
 #[derive(Default, PartialEq)]
 pub(crate) struct Published {
     epoch: u64,
     revision: u64,
-    drawn: Vec<(Entity, bool)>,
+    drawn: Vec<(Entity, bool, Option<[u8; 32]>, bool, bool)>,
     reach: Vec<f32>,
-    assets: ((u64, u64), u64),
+    detail: (u32, u32),
+    assets: (u64, u64),
 }
 
 impl Published {
-    fn of(terrains: &Terrains, assets: &AssetLibrary, into: &mut Self) {
+    fn of(
+        (terrains, settings): (&Terrains, &TerrainSettings),
+        assets: &AssetLibrary,
+        into: &mut Self,
+    ) {
         into.epoch = terrains.epoch;
         into.revision = terrains.revision();
         into.drawn.clear();
         into.reach.clear();
         for state in terrains.entries.iter().filter(|state| state.drawn) {
-            into.drawn.push((state.entity, state.around.is_some()));
+            into.drawn.push((
+                state.entity,
+                state.around.is_some(),
+                state.recipe.as_ref().map(|recipe| recipe.key.hash()),
+                surface_program(state),
+                terrains.bake_asked(state.entity),
+            ));
             into.reach
                 .extend(state.ranges.iter().map(|range| range * LOAD_REACH));
         }
+        into.detail = (settings.pixel_error.to_bits(), settings.pinned_levels);
         into.assets = (assets.revision(), assets.material_revision());
     }
+}
+
+fn surface_program(state: &TerrainState) -> bool {
+    !state.materials
+        && state
+            .surface
+            .as_ref()
+            .is_some_and(|(_, data)| data.is_some())
 }
 
 fn maps_of(look: &SurfaceMaterial, assets: &AssetLibrary) -> Option<SurfaceMaps> {
@@ -78,7 +101,11 @@ fn placed_layers(rules: &Biomes) -> Vec<PlacedLayer> {
         .collect()
 }
 
-fn entry_of(state: &TerrainState, assets: &AssetLibrary) -> TerrainEntry {
+fn entry_of(
+    (terrains, state): (&Terrains, &TerrainState),
+    (settings, kinds): (&TerrainSettings, &[&'static LayerKind]),
+    assets: &AssetLibrary,
+) -> TerrainEntry {
     let surface = &state.terrain.surface;
     TerrainEntry {
         terrain: state.entity,
@@ -89,6 +116,14 @@ fn entry_of(state: &TerrainState, assets: &AssetLibrary) -> TerrainEntry {
         steep: surface.rules.steep(),
         may_hole: state.terrain.layers.may_hole(),
         reach: state.ranges.iter().map(|range| range * LOAD_REACH).collect(),
+        recipe: state.recipe.as_ref().map(|recipe| recipe.key.hash()),
+        pinned_levels: settings.pinned_levels,
+        pixel_error: settings.pixel_error,
+        level_errors: Arc::from(state.store.errors()),
+        surface_program: surface_program(state),
+        baked: (state.around.is_none() && terrains.bake_asked(state.entity))
+            .then(|| terrains.layers(state.entity, kinds))
+            .flatten(),
         macro_map: None,
         materials: Arc::from(surface.materials.as_slice()),
         maps: surface
@@ -110,25 +145,47 @@ fn entry_of(state: &TerrainState, assets: &AssetLibrary) -> TerrainEntry {
 }
 
 pub(crate) fn publish_tiles(
-    terrains: Res<Terrains>,
+    (terrains, settings): (Res<Terrains>, Res<TerrainSettings>),
     assets: Res<AssetLibrary>,
+    kinds: Joined<TerrainLayers>,
     mut tiles: ResMut<TerrainTiles>,
     mut published: Local<(Published, Published)>,
 ) {
     let (last, seen) = &mut *published;
-    Published::of(&terrains, &assets, seen);
+    Published::of((&terrains, &settings), &assets, seen);
     if *seen == *last && !tiles.is_changed() {
         return;
     }
+    let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
     *tiles = TerrainTiles {
         terrains: terrains
             .entries
             .iter()
             .filter(|state| state.drawn)
-            .map(|state| entry_of(state, &assets))
+            .map(|state| entry_of((&terrains, state), (&settings, &kinds), &assets))
             .collect(),
     };
     std::mem::swap(last, seen);
+}
+
+pub(crate) fn publish_paths(
+    scenes: Query<&TerrainScene>,
+    kinds: Joined<TerrainLayers>,
+    mut paths: ResMut<StreamingPaths>,
+) {
+    let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
+    let found: Vec<StreamingPath> = scenes
+        .iter()
+        .flat_map(|scene| scene.authored.scene_paths(&kinds, ""))
+        .map(|path| StreamingPath {
+            layer: path.id,
+            origin: Vec3::from_array(path.origin),
+            points: path.points,
+        })
+        .collect();
+    if paths.paths != found {
+        paths.paths = found;
+    }
 }
 
 pub(crate) fn publish_hydrology(

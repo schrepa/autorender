@@ -1,6 +1,4 @@
 mod ground;
-mod rocks;
-mod trees;
 
 use engine::collections::HashMap;
 use engine::host::Image;
@@ -12,9 +10,6 @@ use engine_core::RecordExchange;
 use serde_json::{Value, json};
 
 use crate::records;
-use crate::scene::set;
-
-pub(crate) const SEED: u32 = 1337;
 
 pub type RockMaps = HashMap<String, Image>;
 
@@ -57,12 +52,6 @@ const ROAD: &str = "road";
 
 const CAVE_MOUTH: &str = "cave_mouth";
 
-const HIKER: &str = "hiker";
-const BANK_BOULDER: &str = "highlands_bank_boulder";
-const LOG: &str = "highlands_log";
-const BARK: &str = "highlands_bark";
-const PALE: &str = "highlands_pale";
-const STONE: &str = "highlands_stone";
 const WALL_ROCK: &str = "highlands_wall_rock";
 const CAVE_WALL: &str = "highlands_cave_wall";
 
@@ -79,29 +68,9 @@ const LICHEN: TopLayer = TopLayer {
 
 const SOIL: Grounding = Grounding { height: 0.12 };
 
-const BOULDERS: usize = 5;
-const SPRUCES: usize = 3;
-
 pub(crate) fn provide(world: &mut World, files: &RockMaps) -> engine::Result<()> {
-    let mut provided = ProvidedAssets::default();
-    let boulders = (0..BOULDERS as u32)
-        .map(|seed| rocks::boulder_record(world, seed))
-        .collect::<engine::Result<Vec<_>>>()?;
-    for (seed, &mesh) in boulders.iter().enumerate() {
-        provided.provide_mesh(format!("boulder{seed}"), mesh);
-    }
-    provided.provide_texture("bark_atlas", trees::atlas_record(world)?);
-    for seed in 0..SPRUCES as u32 {
-        let (levels, shadow) = trees::spruce(world, seed)?;
-        for (detail, mesh) in levels.into_iter().enumerate() {
-            let name = match detail {
-                0 => format!("spruce{seed}"),
-                _ => format!("spruce{seed}_lod{detail}"),
-            };
-            provided.provide_mesh(name, mesh);
-        }
-        provided.provide_mesh(format!("spruce{seed}_shadow"), shadow);
-    }
+    world.insert_resource(ProvidedAssets::default());
+    control(world, json!("land"))?;
     let grounds = world.resource_scope(|world, mut records: Mut<RecordExchange>| {
         let mut assets = world.resource_mut::<AssetLibrary>();
         GROUNDS
@@ -109,6 +78,7 @@ pub(crate) fn provide(world: &mut World, files: &RockMaps) -> engine::Result<()>
             .map(|&name| ground_textures((&mut records, &mut assets), name))
             .collect::<engine::Result<Vec<_>>>()
     })?;
+    let mut provided = world.resource::<ProvidedAssets>().clone();
     let mut rock = Vec::new();
     for (&name, textures) in GROUNDS.iter().zip(grounds) {
         for (&(map, _), &texture) in GROUND_MAPS.iter().zip(&textures) {
@@ -163,77 +133,24 @@ pub(crate) fn populate(
     let center = parse_value_at::<[f32; 2]>(mouth["center"].clone(), &format!("{at}.center"))?;
     let radius = parse_value_at::<f32>(mouth["radius"].clone(), &format!("{at}.radius"))?;
     let mouth = Vec2::from(center) + origin;
-    set(world, "highlands.cave", json!([mouth.x, mouth.y, radius]))?;
-    hiker(world, &road, origin)?;
-    request_bodies(world, bodies)?;
-    Ok(())
-}
-
-fn hiker(world: &mut World, road: &[[f32; 2]], origin: Vec2) -> engine::Result<()> {
-    let world_point = |[x, z]: [f32; 2]| [x + origin.x, z + origin.y];
-    let start = world_point(road[0]);
-    let far = road
-        .iter()
-        .map(|&point| world_point(point))
-        .find(|point| Vec2::from(*point).distance(Vec2::from(start)) > 350.0)
-        .unwrap_or(world_point(road[road.len() - 1]));
-    let mut assets = world.resource_mut::<AssetLibrary>();
-    let mesh = assets.insert_mesh(Mesh::cube())?;
-    let material = assets.insert_material(Material::new([0.62, 0.1, 0.07, 1.0])?)?;
-    let offset = 0.875_f32;
-    let hiker = world
-        .spawn((
-            Transform {
-                translation: Vec3::new(start[0], 0.0, start[1]),
-                scale: Vec3::new(0.45, 1.75, 0.3),
-                ..Transform::default()
-            },
-            Mesh3d { mesh, material },
-            InterpolateTransform::default(),
-        ))
-        .id();
-    attach(world, hiker, "grounded", json!({ "offset": offset }))?;
-    attach(
+    control(
         world,
-        hiker,
-        "nav_agent",
-        json!({ "destination": far, "speed": 1.6_f32, "offset": offset }),
+        json!({"cave": {
+            "mouth": [mouth.x, mouth.y],
+            "radius": radius,
+            "rock": WALL_ROCK,
+            "wall": CAVE_WALL,
+        }}),
     )?;
-    attach(
+    control(
         world,
-        hiker,
-        HIKER,
-        json!({ "ends": [start, far], "toward": 1, "rest": 0.0_f32 }),
-    )
+        json!({"hiker": {"road": road, "origin": [origin.x, origin.y]}}),
+    )?;
+    control(world, json!({"bodies": {"count": bodies}}))
 }
 
-fn attach(world: &mut World, entity: Entity, key: &str, value: Value) -> engine::Result<()> {
-    let kind = engine_core::scene_component(world, key).ok_or_else(|| {
-        Error::new(ErrorCode::GameRule, format!("$.{key}"))
-            .expected(Expected::Present)
-            .got(key)
-    })?;
-    kind.read(world, entity, &value)
-}
-
-fn request_bodies(world: &mut World, count: u32) -> engine::Result<()> {
-    if count == 0 {
-        return Ok(());
-    }
-    let boulder = rocks::boulder_record(world, SEED ^ 0x5eed)?;
-    let mut assets = world.resource_mut::<AssetLibrary>();
-    let cube = assets.insert_mesh(Mesh::cube())?;
-    let bark = assets.insert_material(Material::new([0.2, 0.13, 0.08, 1.0])?)?;
-    let pale = assets.insert_material(Material::new([0.42, 0.3, 0.19, 1.0])?)?;
-    let stone = assets.insert_material(Material::new([0.38, 0.37, 0.35, 1.0])?)?;
-    world
-        .resource_mut::<ProvidedAssets>()
-        .provide_mesh(BANK_BOULDER, boulder)
-        .provide_mesh(LOG, cube)
-        .provide_material(BARK, bark)
-        .provide_material(PALE, pale)
-        .provide_material(STONE, stone);
-    set(world, "highlands.bodies", json!(count))
+pub(crate) fn control(world: &mut World, request: Value) -> engine::Result<()> {
+    engine::host::run_operation(world, "highlands", request).map(drop)
 }
 
 fn scene_terrain(document: &SceneDocument) -> engine::Result<(String, Value)> {
@@ -243,12 +160,18 @@ fn scene_terrain(document: &SceneDocument) -> engine::Result<(String, Value)> {
         .enumerate()
         .find_map(|(index, entity)| {
             let path = format!("$.entities[{index}].terrain");
-            entity.component("terrain").map(|terrain| (path, terrain.clone()))
+            entity
+                .component("terrain")
+                .map(|terrain| (path, terrain.clone()))
         })
         .ok_or_else(|| Error::new(ErrorCode::GameRule, "$.entities").expected(Expected::Present))
 }
 
-fn scene_layer<'a>(terrain: &'a Value, path: &str, id: &str) -> engine::Result<(String, &'a Value)> {
+fn scene_layer<'a>(
+    terrain: &'a Value,
+    path: &str,
+    id: &str,
+) -> engine::Result<(String, &'a Value)> {
     terrain["layers"]
         .as_array()
         .into_iter()

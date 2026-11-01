@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::FixedTime;
-use engine_places::water::{WaterBody, WaterFlow, WaterObstacles};
+use engine_places::water::WaterObstacles;
 use glam::Vec2;
 
-use crate::state::{RiverBody, WaterState};
+use crate::state::WaterState;
 use crate::{Block, RiverFlow};
 
 const NEAR: f32 = 16.0;
@@ -15,23 +15,7 @@ pub(crate) fn step(
     mut state: ResMut<WaterState>,
     obstacles: Res<WaterObstacles>,
     time: Res<FixedTime>,
-    bodies: Query<&WaterBody, With<RiverBody>>,
-    mut flow: ResMut<WaterFlow>,
 ) {
-    let samples = &mut flow.bypass_change_detection().samples;
-    let before = samples.len();
-    samples.clear();
-    if let Ok(body) = bodies.single() {
-        samples.extend(
-            obstacles
-                .obstacles
-                .iter()
-                .filter_map(|obstacle| body.shape.water(obstacle.center)),
-        );
-    }
-    if before != 0 || !samples.is_empty() {
-        flow.set_changed();
-    }
     let obstacles = &obstacles.obstacles[..];
     let still = |state: &WaterState| {
         state
@@ -42,9 +26,16 @@ pub(crate) fn step(
     if obstacles.is_empty() && still(&state) || !time.tick.is_multiple_of(EVERY) {
         return;
     }
+    let _profile = engine_core::profile::span("terrain", "river_flow");
     let state = state.bypass_change_detection();
     for terrain in &mut state.terrains {
-        let rivers = &terrain.bake.rivers;
+        if terrain.surroundings {
+            continue;
+        }
+        let Some(rivers) = terrain.rivers().cloned() else {
+            terrain.flow = None;
+            continue;
+        };
         if rivers.is_empty() {
             terrain.flow = None;
             continue;
@@ -52,7 +43,7 @@ pub(crate) fn step(
         if terrain
             .flow
             .as_ref()
-            .is_some_and(|flow| !Arc::ptr_eq(flow.base(), rivers))
+            .is_some_and(|flow| !Arc::ptr_eq(flow.base(), &rivers))
         {
             terrain.flow = None;
         }
@@ -70,7 +61,7 @@ pub(crate) fn step(
         }
         let flow = terrain
             .flow
-            .get_or_insert_with(|| RiverFlow::new(Arc::clone(rivers)));
+            .get_or_insert_with(|| RiverFlow::new(Arc::clone(&rivers)));
         let blocks: Vec<Block> = near
             .iter()
             .filter_map(|obstacle| {

@@ -12,9 +12,13 @@ pub struct SceneLoading {
 }
 
 impl SceneLoading {
-    pub fn new(source: &str) -> Result<Self, JsValue> {
+    pub fn new(source: &str, bricks: Option<fn(BrickList) -> BrickList>) -> Result<Self, JsValue> {
+        let kinds = match bricks {
+            Some(bricks) => crate::scene_kinds(bricks).map_err(js)?,
+            None => engine_scene::SceneKinds::default(),
+        };
         Ok(Self {
-            load: Some(crate::host::SceneLoad::new(source).map_err(js)?),
+            load: Some(crate::host::SceneLoad::new(source, &kinds).map_err(js)?),
         })
     }
 
@@ -237,6 +241,10 @@ impl<G: Game> PageHost<G> {
             crate::host::show_view(world, &view, "?view").map_err(js)?;
         }
         settings.apply(&mut self.host).map_err(js)
+    }
+
+    pub fn job_hash(&self) -> Vec<u8> {
+        self.host.job_list().hash().to_vec()
     }
 
     pub fn distribution(&self, values: Vec<f64>) -> String {

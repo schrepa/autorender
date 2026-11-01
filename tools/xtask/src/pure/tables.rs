@@ -1,17 +1,16 @@
 use std::path::Path;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-use engine_core::Sky;
-use engine_core::table_data::{TableKind, TableWorker, clouds, f16_value, sky};
-use serde_json::json;
+use engine_core::JobKind;
+use engine_sky::Sky;
+use engine_sky::tables::{CLOUD_TABLES, SKY_TABLES, clouds, f16_value, sky};
 
-use super::{Observations, hash};
+use super::{JobLog, Observations};
 
 pub const JOBS: &str = "target/pure/tables-jobs.json";
 const SLICE: u64 = 4096;
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
-    let mut worker = Worker::default();
+    let mut worker = JobLog::new()?;
 
     let settings = Sky::default();
     let air = sky::Air {
@@ -25,7 +24,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         bottom: settings.planet_radius,
         top: settings.planet_radius + settings.atmosphere_height,
     };
-    let tables = worker.both(TableKind::SkyTables, &air.identity(), observed)?;
+    let tables = both(&mut worker, &SKY_TABLES, &air.identity(), observed)?;
     observed.hash("sky tables", &tables);
     let passing = sky::decode(&tables)?
         .transmittance
@@ -38,9 +37,9 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let mut noise = clouds::CloudNoise::empty();
     for part in clouds::parts().iter().filter(|part| part.first == 0) {
         let record = if part.volume == clouds::Volume::Shape {
-            worker.both(TableKind::CloudNoise, &part.identity(), observed)?
+            both(&mut worker, &CLOUD_TABLES, &part.identity(), observed)?
         } else {
-            worker.run(TableKind::CloudNoise, &part.identity())?
+            worker.run(&CLOUD_TABLES, &part.identity())?
         };
         observed.hash(format!("cloud noise {:?} slab", part.volume), &record);
         noise.insert(&record)?;
@@ -53,7 +52,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         "cloud noise Detail slab texels",
         &noise.detail[..slab(clouds::Volume::Detail)],
     );
-    worker.write(root)
+    worker.write(root, JOBS)
 }
 
 fn slab(volume: clouds::Volume) -> usize {
@@ -61,68 +60,19 @@ fn slab(volume: clouds::Volume) -> usize {
     side * side * volume.layers() as usize
 }
 
-#[derive(Default)]
-struct Worker {
-    worker: TableWorker,
-    next: u64,
-    log: Vec<serde_json::Value>,
-}
-
-impl Worker {
-    fn both(
-        &mut self,
-        kind: TableKind,
-        input: &[u8],
-        observed: &mut Observations,
-    ) -> Result<Vec<u8>, String> {
-        let whole = self.run(kind, input)?;
-        let sliced = self.sliced(kind, input)?;
-        observed.check(sliced == whole, || {
-            format!(
-                "{}: the job run a slice at a time differs from the job run in place",
-                kind.name()
-            )
-        });
-        Ok(whole)
-    }
-
-    fn run(&mut self, kind: TableKind, input: &[u8]) -> Result<Vec<u8>, String> {
-        let output = engine_core::table_data::run(kind.name(), input)
-            .ok_or("a table job's kind names no table")??;
-        self.log.push(json!({
-            "job": kind.name(),
-            "input": STANDARD.encode(input),
-            "output": hash(&output),
-        }));
-        Ok(output)
-    }
-
-    fn sliced(&mut self, kind: TableKind, input: &[u8]) -> Result<Vec<u8>, String> {
-        self.next += 1;
-        self.worker.start(self.next, kind.name(), input)?;
-        loop {
-            if let Some(output) = self.worker.step(self.next, SLICE)? {
-                self.log.push(json!({
-                    "job": kind.name(),
-                    "input": STANDARD.encode(input),
-                    "slice": SLICE,
-                    "output": hash(&output),
-                }));
-                return Ok(output);
-            }
-        }
-    }
-
-    fn write(&self, root: &Path) -> Result<(), String> {
-        let path = root.join(JOBS);
-        if let Some(folder) = path.parent() {
-            std::fs::create_dir_all(folder)
-                .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
-        }
-        std::fs::write(
-            &path,
-            serde_json::Value::Array(self.log.clone()).to_string(),
+fn both(
+    worker: &mut JobLog,
+    kind: &'static JobKind,
+    input: &[u8],
+    observed: &mut Observations,
+) -> Result<Vec<u8>, String> {
+    let whole = worker.run(kind, input)?;
+    let sliced = worker.sliced(kind, input, SLICE)?;
+    observed.check(sliced == whole, || {
+        format!(
+            "{}: the job run a slice at a time differs from the job run in place",
+            kind.name()
         )
-        .map_err(|error| format!("cannot write {JOBS}: {error}"))
-    }
+    });
+    Ok(whole)
 }

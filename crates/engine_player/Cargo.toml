@@ -23,9 +23,13 @@ default = []
 dev = ["engine/dev", "engine_native/dev"]
 profiling = ["engine/profiling", "engine_native/profiling"]
 
+[build-dependencies]
+engine_sources.workspace = true
+
 [dependencies]
 engine.workspace = true
 engine_core.workspace = true
+engine_standard.workspace = true
 engine_player_bricks.workspace = true
 serde_json.workspace = true
 

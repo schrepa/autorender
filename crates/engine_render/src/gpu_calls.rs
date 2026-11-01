@@ -55,8 +55,7 @@ impl Queue {
     }
 
     pub fn write_buffer(&self, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
-        crate::memory::uploaded_buffer(buffer, offset, data);
-        write_buffer(&self.queue, buffer, offset, data);
+        upload_buffer(&self.queue, buffer, offset, data);
     }
 
     pub fn write_texture(
@@ -66,9 +65,24 @@ impl Queue {
         layout: wgpu::TexelCopyBufferLayout,
         size: wgpu::Extent3d,
     ) {
-        crate::memory::uploaded_texture(&texture, data);
-        write_texture(&self.queue, texture, data, layout, size);
+        upload_texture(&self.queue, texture, data, layout, size);
     }
+}
+
+pub(crate) fn upload_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
+    crate::memory::uploaded_buffer(buffer, offset, data);
+    write_buffer(queue, buffer, offset, data);
+}
+
+pub(crate) fn upload_texture(
+    queue: &wgpu::Queue,
+    texture: wgpu::TexelCopyTextureInfo<'_>,
+    data: &[u8],
+    layout: wgpu::TexelCopyBufferLayout,
+    size: wgpu::Extent3d,
+) {
+    crate::memory::uploaded_texture(&texture, data);
+    write_texture(queue, texture, data, layout, size);
 }
 
 #[expect(

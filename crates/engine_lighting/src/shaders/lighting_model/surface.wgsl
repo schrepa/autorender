@@ -3,7 +3,8 @@ import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::view::{PI, camera};
 import package::face::bloom::glow_weight;
 import package::face::bounce::bounce_light;
-import package::face::occupancy::{foliage, occupancy_visibility};
+import package::face::foliage::foliage;
+import package::face::occupancy::occupancy_visibility;
 import package::face::probe_light::environment_light;
 import package::face::reflections::{max_roughness, reflects};
 import package::face::sky::{ambient as sky_ambient, atmospheric, environment_levels,

@@ -1,9 +1,3 @@
-const DEBUG_SUN_NONE: u32 = 0u;
-const DEBUG_SUN_LEVEL: u32 = 1u;
-const DEBUG_SUN_HORIZON: u32 = 21u;
-const DEBUG_SUN_BEYOND: u32 = 22u;
-const DEBUG_SHADOWED: u32 = 0x80u;
-
 struct KeptTexels {
     first: u32,
     count: u32,

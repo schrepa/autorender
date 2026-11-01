@@ -1,11 +1,11 @@
 use std::path::Path;
 
 use engine_core::glam::Vec3;
-use engine_core::{BrickList, Camera, Engine, Projection, RenderSnapshot};
-use engine_places::ground::{GroundTiles, TerrainTiles};
+use engine_core::{BrickList, Camera, Engine, Projection};
 use engine_registry::Registry;
-use engine_scene::SceneDocument;
-use serde_json::{Value, json};
+use engine_scene::{SceneDocument, SceneKinds};
+use engine_terrain::{TerrainSettings, Terrains};
+use serde_json::{Map, Value, json};
 
 use crate::{Report, hash};
 
@@ -13,44 +13,61 @@ const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const ASPECT: f32 = 16.0 / 9.0;
 const FRAMES: u32 = 400;
 const SAMPLES_PER_FRAME: u32 = 1 << 18;
-const STATS: &str = "terrain_stats";
+const SECTIONS: [&str; 3] = ["terrain_stats", "water_stats", "terrain_shading_stats"];
+const FIELDS: [&str; 30] = [
+    "terrains",
+    "resident_tiles",
+    "loading_tiles",
+    "missing_tiles",
+    "waiting_tiles",
+    "cached_tiles",
+    "cached_bytes",
+    "restored_tiles",
+    "prefetching_tiles",
+    "rewatered_tiles",
+    "stale_water_tiles",
+    "settled_records",
+    "settling_records",
+    "shaded_tiles",
+    "shading_records",
+    "tile_cut",
+    "fallback_tiles",
+    "baking",
+    "lit",
+    "lighting",
+    "bounced",
+    "bouncing",
+    "colored",
+    "coloring",
+    "bridges",
+    "tunnels",
+    "falls",
+    "white_water",
+    "surroundings_tiles",
+    "loading",
+];
 
 pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
     let mut engine = load()?;
-    let mut snapshot = RenderSnapshot::default();
     let mut lines = Vec::with_capacity(FRAMES as usize);
     for frame in 0..FRAMES {
         *engine.app.world_mut().resource_mut::<Camera>() = camera(frame);
         engine.advance(1.0 / 60.0);
-        engine.extract(ASPECT, &mut snapshot);
-        let world = engine.app.world();
-        let stats = world
-            .get_resource::<Registry>()
-            .and_then(|registry| registry.stats_section(STATS))
-            .map_or(Value::Null, |entry| entry.read(world));
-        let mut line = format!("{frame}: {stats}");
-        let held = world.get_resource::<GroundTiles>();
-        let terrains = world
-            .get_resource::<TerrainTiles>()
-            .map(|tiles| tiles.terrains.clone())
-            .unwrap_or_default();
-        for terrain in terrains.iter() {
-            let mut keys: Vec<_> = terrain.tiles.iter().map(|tile| tile.key).collect();
+        let world = engine.extract_frame(ASPECT).world();
+        let mut line = format!("{frame}: {}", stats(world)?);
+        let enabled = world.resource::<TerrainSettings>().enabled;
+        let listing = world.get_resource::<Terrains>().map(Terrains::listing);
+        for (surroundings, mut keys, drawn) in listing.into_iter().flatten() {
             keys.sort_unstable();
-            let drawn = held.map_or(0, |held| {
-                held.held
-                    .iter()
-                    .filter(|tile| tile.terrain == terrain.terrain)
-                    .count()
-            });
             line.push_str(&format!(
-                " | {} tiles {} drawn {drawn}",
-                if terrain.surroundings {
+                " | {} tiles {} drawn {}",
+                if surroundings {
                     "surroundings"
                 } else {
                     "terrain"
                 },
                 hash(format!("{keys:?}").as_bytes()),
+                enabled && drawn,
             ));
         }
         lines.push(line);
@@ -71,6 +88,30 @@ pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
         lines.last().cloned().unwrap_or_default(),
     );
     Ok(())
+}
+
+fn stats(world: &bevy_ecs::world::World) -> Result<Value, String> {
+    let registry = world
+        .get_resource::<Registry>()
+        .ok_or("the engine holds no brick registry")?;
+    let sections: Vec<Value> = SECTIONS
+        .iter()
+        .map(|key| {
+            registry
+                .stats_section(key)
+                .map(|entry| entry.read(world))
+                .ok_or_else(|| format!("no listed brick keeps the stats section {key}"))
+        })
+        .collect::<Result<_, _>>()?;
+    let mut fields = Map::new();
+    for field in FIELDS {
+        let value = sections
+            .iter()
+            .find_map(|section| section.get(field))
+            .ok_or_else(|| format!("no terrain stats section holds {field}"))?;
+        fields.insert(field.to_owned(), value.clone());
+    }
+    Ok(Value::Object(fields))
 }
 
 fn camera(frame: u32) -> Camera {
@@ -110,9 +151,13 @@ fn load() -> Result<Engine, String> {
         .map_err(|error| format!("cannot read {FIXTURE}: {error}"))?;
     let mut engine = engine::engine(engine_standard::standard::<BrickList>)
         .map_err(|error| error.to_string())?;
+    let kinds = SceneKinds::of(engine.app.world());
     let document = SceneDocument::from_json(&source).map_err(|error| error.to_string())?;
-    let files =
-        engine_native::files::scene_files(&path, &source).map_err(|error| error.to_string())?;
+    document
+        .validate(&kinds)
+        .map_err(|error| error.to_string())?;
+    let files = engine_native::files::scene_files(&path, &source, &kinds)
+        .map_err(|error| error.to_string())?;
     let _scene = document
         .instantiate_with(engine.app.world_mut(), &files)
         .map_err(|error| format!("{FIXTURE}: {error}"))?;

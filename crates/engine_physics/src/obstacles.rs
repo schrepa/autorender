@@ -41,23 +41,25 @@ pub(crate) fn obstruct(
         }
         return;
     }
-    let revision = Some(solids.revision());
+    let revision = solids.collides().then_some(solids.revision());
     if revision != standing.revision || *reaches != standing.reaches {
         standing.revision = revision;
         standing.colliders.clear();
-        let mut seen = Vec::new();
-        for &(low, high) in reaches {
-            for found in solids.colliders_in(low, high) {
-                if physics.holds(found.entity) || seen.contains(&found.entity) {
-                    continue;
+        if solids.collides() {
+            let mut seen = Vec::new();
+            for &(low, high) in reaches {
+                for found in solids.colliders_in(low, high) {
+                    if physics.holds(found.entity) || seen.contains(&found.entity) {
+                        continue;
+                    }
+                    seen.push(found.entity);
+                    standing.colliders.push(WaterObstacle {
+                        center: found.solid.center,
+                        axes: found.solid.axes,
+                        round: matches!(found.solid.shape, ColliderShape::Sphere { .. }),
+                        velocity: Vec3::ZERO,
+                    });
                 }
-                seen.push(found.entity);
-                standing.colliders.push(WaterObstacle {
-                    center: found.solid.center,
-                    axes: found.solid.axes,
-                    round: matches!(found.solid.shape, ColliderShape::Sphere { .. }),
-                    velocity: Vec3::ZERO,
-                });
             }
         }
         standing.reaches.clone_from(reaches);

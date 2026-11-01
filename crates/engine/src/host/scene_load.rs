@@ -1,5 +1,5 @@
 use engine_core::ErrorCode;
-use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
+use engine_scene::{SceneDocument, SceneFileKind, SceneFiles, SceneKinds};
 use engine_settings::Expected;
 pub use engine_worker::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 
@@ -25,10 +25,11 @@ pub struct SceneLoad {
 }
 
 impl SceneLoad {
-    pub fn new(source: &str) -> Result<Self> {
+    pub fn new(source: &str, kinds: &SceneKinds) -> Result<Self> {
         let document = SceneDocument::from_json(source)?;
+        document.validate(kinds)?;
         let entries: Vec<(String, SceneFileKind, Stage)> = document
-            .files()
+            .files(kinds)
             .into_iter()
             .map(|file| (file.uri, file.kind, Stage::Asked))
             .collect();

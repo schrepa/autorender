@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 
 use super::requests::seen;
 use super::scene_kit::{ask, component, control, load, query, reload, render};
+use super::stats::terrain;
 
 fn fixture() -> Value {
     let cube = json!({"shape": {"kind": "cuboid", "half_extents": [0.5, 0.5, 0.5]}});
@@ -11,10 +12,6 @@ fn fixture() -> Value {
         "camera": {"position": [0, 60, 40], "target": [20, 20, 0], "fov_degrees": 60, "near": 0.5, "far": 20000},
         "materials": [{"id": "plain", "color": [0.8, 0.3, 0.2, 1]}],
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
-        "prefabs": [{"id": "lamp", "entities": [
-            {"id": "post", "mesh": "box", "material": "plain", "transform": {"translation": [0, 1, 0], "scale": [0.2, 2, 0.2]}},
-            {"id": "light", "light": {"color": [1, 0.7, 0.4], "intensity": 10, "range": 10}, "transform": {"translation": [0, 2.2, 0]}},
-        ]}],
         "entities": [
             {"id": "player", "mesh": "box", "material": "plain", "tags": ["player"],
              "collider": {"shape": cube["shape"], "memberships": 2, "filter": 1, "sensor": false},
@@ -22,15 +19,25 @@ fn fixture() -> Value {
             {"id": "ground", "terrain": {"origin": [-1024, 0, -1024], "tiles": [8, 8], "spacing": 1,
              "layers": [{"type": "noise", "seed": 5, "height": 40, "wavelength": 400}]}},
         ],
-        "streamed": [
-            {"id": "crate-near", "mesh": "box", "material": "plain", "collider": cube, "grounded": {"offset": 0.5}, "transform": {"translation": [20, 0, 0]}},
-            {"id": "crate-mid", "mesh": "box", "material": "plain", "grounded": {"offset": 0.5}, "transform": {"translation": [900, 0, 0]}},
-            {"id": "spinner", "transform": {"translation": [-30, 30, 10]}},
-            {"id": "spinner-blade", "parent": "spinner", "mesh": "box", "material": "plain", "transform": {"scale": [3, 0.2, 0.4]}},
-            {"id": "lamp-far", "prefab": "lamp", "transform": {"translation": [1500, 0, 300]}},
-            {"id": "tower", "mesh": "box", "material": "plain", "transform": {"translation": [5000, 30, 0], "scale": [10, 60, 10]}},
-        ],
+        "environment": {"streamed": {
+            "objects": [
+                {"id": "crate-near", "mesh": "box", "material": "plain", "collider": cube, "grounded": {"offset": 0.5}, "transform": {"translation": [20, 0, 0]}},
+                {"id": "crate-mid", "mesh": "box", "material": "plain", "grounded": {"offset": 0.5}, "transform": {"translation": [900, 0, 0]}},
+                {"id": "spinner", "transform": {"translation": [-30, 30, 10]}},
+                {"id": "spinner-blade", "parent": "spinner", "mesh": "box", "material": "plain", "transform": {"scale": [3, 0.2, 0.4]}},
+                {"id": "lamp-far", "prefab": "lamp", "transform": {"translation": [1500, 0, 300]}},
+                {"id": "tower", "mesh": "box", "material": "plain", "transform": {"translation": [5000, 30, 0], "scale": [10, 60, 10]}},
+            ],
+            "prefabs": [{"id": "lamp", "entities": [
+                {"id": "post", "mesh": "box", "material": "plain", "transform": {"translation": [0, 1, 0], "scale": [0.2, 2, 0.2]}},
+                {"id": "light", "light": {"color": [1, 0.7, 0.4], "intensity": 10, "range": 10}, "transform": {"translation": [0, 2.2, 0]}},
+            ]}],
+        }},
     })
+}
+
+fn objects(document: &mut Value) -> &mut Value {
+    &mut document["environment"]["streamed"]["objects"]
 }
 
 pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
@@ -44,13 +51,13 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     )?;
     let mut rendering = look(session, 0.0, 0.0)?;
     for _ in 0..400 {
-        if rendering["terrain"]["loading_tiles"] == 0 && rendering["terrain"]["fallback_tiles"] == 0
-        {
+        let drawn = terrain(&rendering);
+        if drawn["loading_tiles"] == 0 && drawn["fallback_tiles"] == 0 {
             break;
         }
         rendering = render(session)?;
     }
-    let cells = ask(session, "inspect", json!({"component": "WorldCells"}))?["value"].clone();
+    let cells = query(session, "world_cells", json!({}))?;
     let grids: Vec<Value> = cells["grids"]
         .as_array()
         .into_iter()
@@ -62,7 +69,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         json!({"items": 5, "grids": [[3, 2], [1, 1], [1, 1]]}),
         "binning"
     );
-    let streamed = &rendering["world_streaming"];
+    let streamed = &rendering["world_streaming_stats"];
     smoke_eq!(
         json!([
             streamed["cells"],
@@ -105,7 +112,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         "unloaded_crate_no_longer_collides"
     );
     let mut fewer = source.clone();
-    if let Some(items) = fewer["streamed"].as_array_mut() {
+    if let Some(items) = objects(&mut fewer).as_array_mut() {
         items.truncate(1);
     }
     let reloaded = reload(session, &fewer);
@@ -115,7 +122,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         wanted,
         "reload_accepted"
     );
-    let cells = ask(session, "inspect", json!({"component": "WorldCells"}))?["value"].clone();
+    let cells = query(session, "world_cells", json!({}))?;
     smoke_eq!(json!(cells["items"]), json!(1), "reload");
     refusals(session, &source)
 }
@@ -137,7 +144,7 @@ fn grounded(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         wanted,
         "grounded"
     );
-    let held = component(session, "crate-near", "Grounded")?;
+    let held = component(session, "crate-near", "grounded")?;
     let level = if ground["level"].is_null() {
         json!(0)
     } else {
@@ -159,30 +166,39 @@ fn grounded(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
 
 fn refusals(session: &mut dyn SmokeSession, source: &Value) -> Result<(), SmokeFailure> {
     for (case, code, path) in [
-        ("terrain", "invalid_streamed", "$.streamed[6].terrain"),
+        (
+            "terrain",
+            "invalid_streamed",
+            "$.environment.streamed.objects[6].terrain",
+        ),
         (
             "parent_across_lists",
             "unknown_parent",
-            "$.streamed[5].parent",
+            "$.environment.streamed.objects[5].parent",
         ),
         (
             "grounded_child",
             "invalid_grounded",
-            "$.streamed[3].grounded",
+            "$.environment.streamed.objects[3].grounded",
         ),
-        ("duplicate_id", "duplicate_id", "$.streamed[0].id"),
+        (
+            "duplicate_id",
+            "duplicate_id",
+            "$.environment.streamed.objects[0].id",
+        ),
     ] {
         let mut broken = source.clone();
+        let items = objects(&mut broken);
         match case {
             "terrain" => {
                 let land = json!({"id": "land", "terrain": source["entities"][1]["terrain"]});
-                if let Some(items) = broken["streamed"].as_array_mut() {
+                if let Some(items) = items.as_array_mut() {
                     items.push(land);
                 }
             }
-            "parent_across_lists" => broken["streamed"][5]["parent"] = json!("player"),
-            "grounded_child" => broken["streamed"][3]["grounded"] = json!({}),
-            _ => broken["streamed"][0]["id"] = json!("player"),
+            "parent_across_lists" => items[5]["parent"] = json!("player"),
+            "grounded_child" => items[3]["grounded"] = json!({}),
+            _ => items[0]["id"] = json!("player"),
         }
         let refused = reload(session, &broken).err().unwrap_or_default();
         smoke_eq!(

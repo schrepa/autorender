@@ -493,7 +493,7 @@ fn firefox_profile(
     profile
 }
 
-fn heap_by_brick(samples: &[HeapSample], symbols: &Symbols, names: &[&'static str]) -> Value {
+fn heap_by_brick(samples: &[HeapSample], symbols: &Symbols, profiled: &[&'static str]) -> Value {
     type Stacks = HashMap<Vec<String>, (u64, u64)>;
     let mut bricks: BTreeMap<&'static str, (u64, u64, Stacks)> = BTreeMap::new();
     for sample in samples {
@@ -506,9 +506,9 @@ fn heap_by_brick(samples: &[HeapSample], symbols: &Symbols, names: &[&'static st
             names.pop();
         }
         let callers = names.split_off(names.len().saturating_sub(HEAP_STACKS));
-        let brick = names
+        let brick = profiled
             .get(usize::from(sample.brick))
-            .or(names.first())
+            .or(profiled.first())
             .copied()
             .unwrap_or_default();
         let (count, bytes, stacks) = bricks.entry(brick).or_default();

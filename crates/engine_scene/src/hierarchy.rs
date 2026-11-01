@@ -102,7 +102,7 @@ impl SceneDocument {
                     .enumerate()
                     .map(|(index, entity)| (entity, format!("{path}[{index}]"))),
                 &transforms,
-                (kinds, false),
+                (kinds, true),
             )?;
         }
 
@@ -192,7 +192,7 @@ fn expand_list(
             .iter()
             .map(|entity| (&entity.source, entity.path.clone())),
         &transforms,
-        (kinds, true),
+        (kinds, false),
     )?;
     Ok(ExpandedScene {
         entities,
@@ -258,7 +258,7 @@ fn validate_object(
 fn validate_graph<'a>(
     entries: impl Iterator<Item = (&'a SceneObject, String)>,
     transforms: &[Transform],
-    (kinds, roots): (&SceneKinds, bool),
+    (kinds, local): (&SceneKinds, bool),
 ) -> Result<(), Error> {
     let entries: Vec<_> = entries.collect();
     let ids: BTreeMap<_, _> = entries
@@ -349,7 +349,7 @@ fn validate_graph<'a>(
             kinds.check_placed(
                 entries[index].0,
                 Placed {
-                    root: roots && entries[index].0.parent.is_none(),
+                    root: entries[index].0.parent.is_none(),
                     streamed: false,
                     world: matrix,
                 },

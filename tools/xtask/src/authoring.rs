@@ -14,10 +14,11 @@ pub fn validate_sources(root: &Path) -> Result<(), String> {
     if local.is_dir() {
         paths.extend(scene_paths(&local)?);
     }
+    let kinds = crate::bricks::standard_kinds().map_err(|error| error.to_string())?;
     for path in &paths {
         let display = path.strip_prefix(root).unwrap_or(path).display();
         let report = read_scene_source(path)
-            .and_then(|source| validate_scene(&source))
+            .and_then(|source| validate_scene(&source, &kinds))
             .map_err(|error| format!("{display}: {error}"))?;
         let record = serde_json::json!({
             "event": "scene_validated",

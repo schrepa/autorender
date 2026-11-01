@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::*;
-use engine_codec::Expected;
 use engine_core::{
-    AssetLibrary, Error, ErrorCode, Mesh, Mesh3d, MeshHandle, MeshVertex, Parent, Spawner,
+    AssetLibrary, Error, ErrorCode, Expected, Mesh, Mesh3d, MeshHandle, MeshVertex, Spawner,
     Transform,
 };
 use engine_math::collections::HashMap;
@@ -14,7 +13,6 @@ use crate::SplinesBrick;
 pub const CHUNK_LENGTH: f32 = 256.0;
 pub const MAX_SPLINE_POINTS: usize = 4096;
 const STEP: f32 = 0.5;
-const MAX_COORDINATE: f32 = 1.0e7;
 
 #[derive(Resource, Default)]
 pub(crate) struct SplineBuilds {
@@ -38,20 +36,32 @@ pub(crate) struct SplineChunks {
     built: Option<SplineMesh>,
 }
 
+pub(crate) fn release(
+    In(entity): In<Entity>,
+    alive: Query<Entity>,
+    mut builds: ResMut<SplineBuilds>,
+    mut assets: ResMut<AssetLibrary>,
+    mut spawner: Spawner<SplinesBrick>,
+) {
+    let Some(chunks) = builds.built.get(&entity) else {
+        return;
+    };
+    discard(chunks, &alive, &mut assets, &mut spawner);
+    if !alive.contains(entity) {
+        builds.built.remove(&entity);
+    }
+}
+
 fn discard(
-    entity: Entity,
     chunks: &SplineChunks,
-    drawn: &mut Query<&mut Mesh3d>,
-    assets: &mut AssetLibrary,
+    alive: &Query<Entity>,
+    assets: &mut ResMut<AssetLibrary>,
     spawner: &mut Spawner<SplinesBrick>,
 ) {
-    for &child in &chunks.entities {
-        spawner.despawn(child);
-    }
-    if let (Some(&first), Ok(mut shown)) = (chunks.meshes.first(), drawn.get_mut(entity))
-        && shown.mesh == first
-    {
-        *shown = Mesh3d::default();
+    for &entity in &chunks.entities {
+        if alive.contains(entity) {
+            spawner.despawn(entity);
+        }
     }
     for &mesh in &chunks.meshes {
         assets.remove_mesh(mesh);
@@ -60,23 +70,12 @@ fn discard(
 
 pub(crate) fn build(
     splines: Query<(Entity, &SplineMesh, Has<Transform>)>,
-    mut drawn: Query<&mut Mesh3d>,
+    alive: Query<Entity>,
     mut assets: ResMut<AssetLibrary>,
     mut builds: ResMut<SplineBuilds>,
     mut spawner: Spawner<SplinesBrick>,
 ) {
     let built = &mut builds.built;
-    let mut gone: Vec<Entity> = built
-        .keys()
-        .copied()
-        .filter(|&entity| !splines.contains(entity))
-        .collect();
-    gone.sort_unstable();
-    for entity in gone {
-        if let Some(old) = built.remove(&entity) {
-            discard(entity, &old, &mut drawn, &mut assets, &mut spawner);
-        }
-    }
     let stale: Vec<(Entity, SplineMesh, bool)> = splines
         .iter()
         .filter(|(entity, spline, _)| {
@@ -87,8 +86,8 @@ pub(crate) fn build(
         .map(|(entity, spline, parented)| (entity, spline.clone(), parented))
         .collect();
     for (entity, spline, parented) in stale {
-        if let Some(old) = built.remove(&entity) {
-            discard(entity, &old, &mut drawn, &mut assets, &mut spawner);
+        if let Some(old) = built.get(&entity) {
+            discard(old, &alive, &mut assets, &mut spawner);
         }
         let bent = match bend(&assets, &spline) {
             Ok(bent) => bent,
@@ -123,22 +122,27 @@ pub(crate) fn build(
                     break;
                 }
             };
-            let first = chunks.meshes.is_empty();
             chunks.meshes.push(handle);
-            let shown = Mesh3d {
-                mesh: handle,
-                material: spline.material,
-            };
-            if first && parented && let Ok(mut own) = drawn.get_mut(entity) {
-                *own = shown;
-                continue;
-            }
-            let child = if parented {
-                spawner.spawn((Transform::default(), shown, Parent::of(entity)))
-            } else {
-                spawner.spawn((Transform::default(), shown))
-            };
+            let child = spawner.spawn((
+                Transform::default(),
+                Mesh3d {
+                    mesh: handle,
+                    material: spline.material,
+                },
+            ));
             chunks.entities.push(child);
+        }
+        if parented {
+            let changes: Vec<_> = chunks
+                .entities
+                .iter()
+                .map(|&child| (child, Some(entity)))
+                .collect();
+            spawner.set_parents_then(changes, move |builds: &mut SplineBuilds, parented| {
+                if let (Err(error), Some(chunks)) = (parented, builds.built.get_mut(&entity)) {
+                    chunks.error = Some(error);
+                }
+            });
         }
         built.insert(entity, chunks);
     }
@@ -211,22 +215,16 @@ fn point_at(samples: &[Vec3], along: &[f32], distance: f32) -> (Vec3, Vec3) {
 }
 
 fn bend(assets: &AssetLibrary, spline: &SplineMesh) -> Result<Bent, Error> {
-    let invalid = |path: &str| Error::new(ErrorCode::InvalidValue, path);
+    let invalid = |path: &str| Error::new(ErrorCode::InvalidSpline, path);
     if !(2..=MAX_SPLINE_POINTS).contains(&spline.points.len()) {
         return Err(invalid("$.points")
             .expected(Expected::Array)
             .range(2.0, MAX_SPLINE_POINTS as f64)
             .got(spline.points.len()));
     }
-    if let Some(index) = spline.points.iter().position(|point| {
-        !point
-            .to_array()
-            .iter()
-            .all(|value| value.is_finite() && value.abs() <= MAX_COORDINATE)
-    }) {
+    if let Some(index) = spline.points.iter().position(|point| !point.is_finite()) {
         return Err(invalid(&format!("$.points[{index}]"))
             .expected(Expected::Finite)
-            .range(-f64::from(MAX_COORDINATE), f64::from(MAX_COORDINATE))
             .got(spline.points[index].to_array()));
     }
     let mesh = assets

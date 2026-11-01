@@ -136,12 +136,12 @@ pub struct Biomes {
 }
 
 pub(crate) fn terrain_error(path: impl Into<String>) -> Error {
-    Error::new(ErrorCode::InvalidValue, path)
+    Error::new(ErrorCode::InvalidTerrain, path)
 }
 
 pub(crate) fn setting_error(invalid: InvalidSetting, at: &str) -> Error {
     Error {
-        code: ErrorCode::InvalidValue,
+        code: ErrorCode::InvalidTerrain,
         ..Error::from(invalid).within(at)
     }
 }
@@ -153,7 +153,7 @@ pub(crate) fn unknown(path: impl Into<String>, got: &str, names: &[String]) -> E
 }
 
 pub(crate) fn unknown_map(path: &str, got: &str, published: Vec<String>) -> Error {
-    Error::new(ErrorCode::UnknownReference, path).got(got).variants(
+    Error::new(ErrorCode::UnknownMap, path).got(got).variants(
         maps::GPU
             .iter()
             .map(|name| (*name).to_owned())
@@ -394,7 +394,7 @@ impl Scope {
 
     fn user(&mut self, name: &str, path: String) -> Result<usize, Error> {
         if self.gpu {
-            return Err(Error::new(ErrorCode::InvalidValue, path)
+            return Err(Error::new(ErrorCode::UnreadableMap, path)
                 .got(name)
                 .variants(maps::GPU));
         }

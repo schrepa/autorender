@@ -1,15 +1,18 @@
+use std::any::TypeId;
+
 use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{DeviceLimits, FrameTime, Readback, View};
+use engine_core::{DeviceLimits, FrameTime, PartDraws, Readback, View};
 use engine_places::ground::Foliage;
 use engine_places::shadows::{GROUND_TEXELS, Region as MapView, ShadowChanges, ShadowMaps};
 use engine_places::sun::Sun;
 use engine_places::wind::Wind;
-use engine_render::CameraUniform;
+use engine_render::{CameraUniform, DebugShown, pixel_angle};
 
 use crate::atlas::MapsKey;
 use crate::gpu_layouts::{CasterCull, ComposeData, Routes, ShadowPiece};
+use crate::part::ShadowsGpu;
 use crate::regions::FrameRegions;
 use crate::shadow_fit::{ClipPlan, ClipSettings, Clipmap, LightBasis, region_tiles};
 use crate::sky::{SkyDraw, SkyMaps};
@@ -68,10 +71,12 @@ pub(crate) struct ShadowPlan {
     clipmap: Clipmap,
     plan: ClipPlan,
     pub(crate) key: Option<MapsKey>,
+    pub(crate) made: u64,
     since: u64,
     masks: Masks,
     pub(crate) sky: SkyMaps,
     pub(crate) sky_draw: Option<SkyDraw>,
+    sky_view: Option<(Mat4, [f32; 4])>,
     pub(crate) views: Vec<MapView>,
     pub(crate) cameras: Vec<CameraUniform>,
     pub(crate) routes: Box<Routes>,
@@ -89,10 +94,12 @@ impl Default for ShadowPlan {
             clipmap: Clipmap::default(),
             plan: ClipPlan::default(),
             key: None,
+            made: 0,
             since: 0,
             masks: Masks::default(),
             sky: SkyMaps::default(),
             sky_draw: None,
+            sky_view: None,
             views: Vec::new(),
             cameras: Vec::new(),
             routes: Box::new(Routes::zeroed()),
@@ -129,6 +136,7 @@ impl ShadowPlan {
         let key = MapsKey::new(settings, limit);
         let made = self.key != Some(key);
         self.key = Some(key);
+        self.made += u64::from(made);
         let basis = LightBasis::toward(sun);
         let restarted = self.clipmap.place(
             basis,
@@ -190,19 +198,15 @@ impl ShadowPlan {
         self.since = u64::MAX;
         self.sky.release();
         self.sky_draw = None;
+        self.sky_view = None;
         self.views.clear();
     }
-}
-
-fn pixel_angle(view_projection: Mat4, height: u32) -> f32 {
-    let row = view_projection.row(1).truncate().length() * height.max(1) as f32;
-    2.0 / engine_core::math::max(row, 1.0e-12)
 }
 
 pub(crate) fn plan_shadows(
     (settings, sky): (Res<ShadowSettings>, Res<SkyOcclusion>),
     (sun, view, limits, time): (Res<Sun>, Res<View>, Res<DeviceLimits>, Res<FrameTime>),
-    (foliage, wind): (Res<Foliage>, Res<Wind>),
+    (foliage, wind, shown): (Res<Foliage>, Res<Wind>, Res<DebugShown>),
     mut feedback: ResMut<ShadowFeedback>,
     changes: Query<&ShadowChanges, Changed<ShadowChanges>>,
     (mut plan, mut piece): (ResMut<ShadowPlan>, ResMut<ShadowPiece>),
@@ -218,9 +222,9 @@ pub(crate) fn plan_shadows(
     };
     let basis = plan.place(&settings, limits.max_texture_dimension_2d, (sun, eye), time.frame);
     let still_changed = plan.merge(&mut feedback);
-    let mut groups_changed = false;
+    let mut casters_changed = false;
     for change in &changes {
-        groups_changed |= change.all;
+        casters_changed |= change.casters;
         plan.change(change);
     }
     let Some(key) = plan.key else {
@@ -231,21 +235,29 @@ pub(crate) fn plan_shadows(
         key.atlas.moving,
         &mut plan.plan,
     );
-    plan.sky_draw = plan.sky.prepare(&sky, eye, still_changed || groups_changed);
+    plan.sky_draw = plan.sky.prepare(&sky, eye, still_changed || casters_changed);
+    let gusting = [wind.velocity[0], wind.velocity[1], wind.gusts, time.elapsed_seconds as f32];
+    if let Some(draw) = plan.sky_draw
+        && plan.sky_view.is_none_or(|(clip, _)| clip != draw.clip)
+    {
+        plan.sky_view = Some((draw.clip, gusting));
+    }
     let regions = FrameRegions {
         basis,
         clipmap: &plan.clipmap,
         plan: &plan.plan,
         layout: key.atlas,
     };
-    let gusting = [wind.velocity[0], wind.velocity[1], wind.gusts, time.elapsed_seconds as f32];
     let viewer = eye.extend(1.0 / pixel_angle(view.view_projection(), view.display_size().y));
     regions.views(plan.sky_draw.as_ref(), &mut plan.views);
-    regions.cameras((wind.velocity, gusting), (viewer, plan.sky.last_clip), &mut plan.cameras);
+    regions.cameras((wind.velocity, gusting), (viewer, plan.sky_view), &mut plan.cameras);
     regions.routes(&mut plan.routes);
     regions.composes(settings.tile_texels, &mut plan.composes);
     plan.cull = regions.cull(plan.sky_draw.as_ref());
-    piece.set_if_neq(regions.lookup_piece(settings.tile_texels, foliage.crown_depth));
+    piece.set_if_neq(regions.lookup_piece(
+        (settings.tile_texels, foliage.crown_depth),
+        crate::debug::shown(*shown),
+    ));
     plan.moving = plan.plan.moving.len() as u32;
     plan.table();
     let darkens = sky.darkens();
@@ -261,11 +273,16 @@ pub(crate) fn plan_shadows(
     }
 }
 
-pub(crate) fn shadow_stats(plan: Res<ShadowPlan>, mut stats: ResMut<ShadowStats>) {
+pub(crate) fn shadow_stats(
+    plan: Res<ShadowPlan>,
+    draws: Res<PartDraws>,
+    mut stats: ResMut<ShadowStats>,
+) {
     let tiles = plan.clipmap.stats();
     let (sky_maps, sky_drawn) = plan.sky.counts();
     stats.set_if_neq(ShadowStats {
         active: true,
+        draws: draws.of(TypeId::of::<ShadowsGpu>()),
         tiles_marked: tiles.marked,
         tiles_resident: tiles.resident,
         tiles_drawn: tiles.drawn,

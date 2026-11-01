@@ -2,9 +2,10 @@ use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
 use super::requests::{
-    FRAME_MS, accepted, control, frames, named, names, number, query, refused_with, reply, serve,
-    seen, status,
+    FRAME_MS, accepted, control, frames, named, names, number, query, refused_with, reply, seen,
+    serve, status,
 };
+use super::scene_kit::reload;
 
 fn boxed(id: &str) -> Value {
     json!({
@@ -348,14 +349,14 @@ pub(crate) fn host_images(session: &mut dyn SmokeSession) -> Result<(), SmokeFai
         json!([
             result["temporary"],
             result["entities"],
-            result["rendering"]["missing_assets"]
+            result["rendering"]["meshes_stats"]["missing_assets"]
         ]),
         json!([true, 1, 1]),
         "missing_asset_counted"
     );
     let after = status(session, "status_after_removal")?;
     smoke_eq!(
-        after["result"]["rendering"]["missing_assets"].clone(),
+        after["result"]["rendering"]["meshes_stats"]["missing_assets"].clone(),
         json!(1),
         "status_counts_missing_asset"
     );
@@ -386,6 +387,94 @@ pub(crate) fn host_images(session: &mut dyn SmokeSession) -> Result<(), SmokeFai
         refused["error"]["path"].clone(),
         json!("$.args.entity"),
         "unknown_entity_located"
+    );
+    textured(session)
+}
+
+const ALPHA_PIXELS: [u8; 16] = [
+    201, 77, 13, 3, 10, 250, 128, 128, 255, 255, 255, 0, 33, 66, 99, 254,
+];
+const ALPHA_URI: &str = "host-parity/alpha.png";
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = !0_u32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = if crc & 1 == 1 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
+
+fn adler32(bytes: &[u8]) -> u32 {
+    let (mut low, mut high) = (1_u32, 0_u32);
+    for &byte in bytes {
+        low = (low + u32::from(byte)) % 65_521;
+        high = (high + low) % 65_521;
+    }
+    (high << 16) | low
+}
+
+fn chunk(png: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+    png.extend((data.len() as u32).to_be_bytes());
+    let start = png.len();
+    png.extend(kind);
+    png.extend(data);
+    let crc = crc32(&png[start..]);
+    png.extend(crc.to_be_bytes());
+}
+
+fn png(width: u32, pixels: &[u8]) -> Vec<u8> {
+    let height = pixels.len() as u32 / 4 / width;
+    let mut rows = Vec::with_capacity(pixels.len() + height as usize);
+    for row in pixels.chunks(width as usize * 4) {
+        rows.push(0);
+        rows.extend_from_slice(row);
+    }
+    let stored = rows.len() as u16;
+    let mut deflated = vec![0x78, 0x01, 0x01];
+    deflated.extend(stored.to_le_bytes());
+    deflated.extend((!stored).to_le_bytes());
+    deflated.extend(&rows);
+    deflated.extend(adler32(&rows).to_be_bytes());
+    let mut header = Vec::with_capacity(13);
+    header.extend(width.to_be_bytes());
+    header.extend(height.to_be_bytes());
+    header.extend([8, 6, 0, 0, 0]);
+    let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    chunk(&mut png, b"IHDR", &header);
+    chunk(&mut png, b"IDAT", &deflated);
+    chunk(&mut png, b"IEND", &[]);
+    png
+}
+
+fn textured(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
+    session.file(ALPHA_URI, &png(2, &ALPHA_PIXELS));
+    let source = json!({
+        "id": "host-parity-texture", "revision": 1,
+        "camera": { "position": [0, 2, 4], "target": [0, 0, 0], "fov_degrees": 60, "near": 0.1, "far": 100 },
+        "textures": [{ "id": "alpha", "uri": ALPHA_URI }],
+        "materials": [{ "id": "alpha", "color": [1, 1, 1, 1], "texture": "alpha" }],
+        "meshes": [{ "id": "panel", "source": { "kind": "cube" } }],
+        "entities": [{ "id": "panel", "mesh": "panel", "material": "alpha", "transform": { "translation": [2, 0, 0] } }],
+    });
+    let spawned = reload(session, &source);
+    let wanted = json!(null);
+    smoke_eq!(
+        seen(spawned.is_ok(), json!(spawned.as_ref().err()), &wanted),
+        wanted,
+        "textured_scene_instantiates"
+    );
+    let digest = query(session, "digest", json!({}), "digests")?;
+    smoke_eq!(
+        digest["result"]["assets"]["textures"]["count"].clone(),
+        json!(1),
+        "png_texture_resident"
     );
     Ok(())
 }

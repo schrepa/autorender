@@ -2,8 +2,8 @@ import package::cover::laws::{COVER_CLUMP_BRIGHT, COVER_CLUMP_DRY, COVER_CLUMP_H
     COVER_CLUMP_HUE, COVER_CLUMP_LATTICES, COVER_LUSH_REFLECTANCE, COVER_ROOT_OCCLUSION,
     cover_clump_hash, cover_widening};
 import package::engine::view::seen_share;
-import package::generated::cover::{COVER_ENTRIES, COVER_LUSH_RATIO, CoverMaterial,
-    CoverTerrain};
+import package::face::ground_tiles::PALETTE_ENTRIES;
+import package::generated::cover::{COVER_LUSH_RATIO, CoverMaterial, CoverTerrain};
 import package::place::cover::{CoverClumped, CoverGrowth, CoverLaw, CoverSeen};
 
 const COVER_FAR_SIDE: f32 = 0.8;
@@ -76,7 +76,7 @@ fn cover_seen(depth: f32) -> CoverSeen {
 }
 
 fn material_cover(base: u32, material: u32) -> CoverMaterial {
-    return cover_materials[min(base + material, COVER_ENTRIES - 1u)];
+    return cover_materials[min(base + material, PALETTE_ENTRIES - 1u)];
 }
 
 fn material_canopy(terrain: u32, material: u32) -> vec4<f32> {

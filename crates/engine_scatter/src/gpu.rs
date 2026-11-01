@@ -1,24 +1,20 @@
 use bevy_ecs::prelude::*;
-use engine_core::{AssetResidency, Detail, Error, MaterialHandle, MeshHandle, Var, View};
+use engine_core::{AssetResidency, Error, MaterialHandle, MeshHandle, Var, View};
 use engine_places::ground::{GroundTiles, TerrainTiles};
-use engine_places::shadows::{CasterMap, CasterView, Refresh, ShadowCasters, ShadowMaps};
+use engine_places::shadows::{CasterMap, CasterView, ShadowCasters};
 use engine_render::{
-    Access, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput, Encode,
-    GpuPart, Install, Lifetime, MainView, Own, Pass, Pipeline, Prepare, RenderPipeline,
+    Access, AfterRead, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput,
+    Encode, GpuPart, Install, Lifetime, MainView, Own, Pass, Pipeline, Prepare, RenderPipeline,
     SamplerDesc, Shape, Texture, VertexLayout, wgpu,
 };
 
 use crate::far_cover::FarCoverTable;
 use crate::layouts::{
-    CELLS, CullFrame, CullGroup, CullView, DrawArgs, LEVELS, MAX_OCCUPANCY_LEVELS, QUAD,
-    SCATTER_GROUP, Snap, draw_args, planes,
+    CELLS, DrawArgs, DrawKind, DrawRecord, LEVELS, ListedDraw, MAX_OCCUPANCY_LEVELS, PlacedGroup,
+    QUAD, SCATTER_GROUP, Snap, Splat, placed_group, record_words,
 };
 use crate::occupancy::{LISTED_RESET, OccupancyWindows};
-use crate::systems::ScatterState;
-
-const FADE_MARGIN: f32 = 0.1;
-
-const CARD_VERTICES: u32 = 6;
+use crate::systems::{ScatterFeedback, ScatterState};
 
 const CASTER_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
     constant: 1,
@@ -36,94 +32,132 @@ const IDS: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
     }],
 };
 
+const RECORD: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+    array_stride: 0,
+    step_mode: wgpu::VertexStepMode::Instance,
+    attributes: &[wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Uint32x4,
+        offset: 0,
+        shader_location: 14,
+    }],
+};
+
+const CARDS: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+    array_stride: 8,
+    step_mode: wgpu::VertexStepMode::Instance,
+    attributes: &[
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Uint32,
+            offset: 0,
+            shader_location: 2,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Uint32,
+            offset: 4,
+            shader_location: 3,
+        },
+    ],
+};
+
+const PLAIN_STREAMS: &[VertexLayout] = &[
+    VertexLayout::Mesh,
+    VertexLayout::Buffer(IDS),
+    VertexLayout::Buffer(RECORD),
+];
+
+const EXTENDED_STREAMS: &[VertexLayout] = &[
+    VertexLayout::Mesh,
+    VertexLayout::Mesh,
+    VertexLayout::Buffer(IDS),
+    VertexLayout::Buffer(RECORD),
+];
+
+const CASTER_STREAMS: &[VertexLayout] = &[VertexLayout::Mesh, VertexLayout::Buffer(IDS)];
+
+const CARD_STREAMS: &[VertexLayout] = &[VertexLayout::Buffer(CARDS), VertexLayout::Buffer(RECORD)];
+
+const SHADOW_CARD_STREAMS: &[VertexLayout] = &[VertexLayout::Buffer(CARDS)];
+
 const COVERAGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 
 const HEIGHTS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 
-const SELECTS: [&str; MAX_OCCUPANCY_LEVELS] = [
-    "occupancy_select_0",
-    "occupancy_select_1",
-    "occupancy_select_2",
-    "occupancy_select_3",
-    "occupancy_select_4",
-    "occupancy_select_5",
-    "occupancy_select_6",
-    "occupancy_select_7",
-];
-
-const MAPS: [&str; MAX_OCCUPANCY_LEVELS] = [
-    "occupancy_0",
-    "occupancy_1",
-    "occupancy_2",
-    "occupancy_3",
-    "occupancy_4",
-    "occupancy_5",
-    "occupancy_6",
-    "occupancy_7",
-];
+const LEFT_OUT: u32 = 0;
 
 struct MapPipelines {
-    clear: [Pipeline<ScatterGpu, Own>; 2],
-    splat: [Pipeline<ScatterGpu, Own>; 2],
-    means: [Pipeline<ScatterGpu, Own>; 2],
+    select: ComputePipeline<ScatterGpu>,
+    clear: Pipeline<ScatterGpu, Own>,
+    splat: Pipeline<ScatterGpu, Own>,
+    means: Pipeline<ScatterGpu, Own>,
+    listed: DrawInput<ScatterGpu, Own>,
 }
 
 struct HeldGroup {
     meshes: Vec<(MeshHandle, bool)>,
     casters: Vec<(MeshHandle, bool)>,
     material: MaterialHandle,
+    material_resident: bool,
     count: u32,
     casts: Option<bool>,
+    look: usize,
     masked: bool,
 }
 
-#[derive(Clone, Copy, Default)]
-struct GroupLists {
-    ids: u32,
-    count: u32,
-}
-
 #[derive(Default)]
-struct Sizes {
-    groups: u64,
-    views: u64,
-    ids: u64,
-    draws: u64,
-    cards: u64,
-    card_args: u64,
-    listed: u64,
+struct Snapped {
+    generation: u64,
+    eye: [f32; 4],
 }
 
 #[derive(Default)]
 struct Held {
     groups: Vec<HeldGroup>,
-    lists: Vec<GroupLists>,
+    lists: Vec<(u32, u32)>,
     ids_per_view: u32,
-    fading_view: usize,
     group_count: u32,
-    template: Vec<DrawArgs>,
-    casters: Vec<DrawArgs>,
-    args: Vec<DrawArgs>,
-    views: Vec<CullView>,
     maps: Vec<u32>,
-    card_args: Vec<[u32; 4]>,
+    fading_view: usize,
     objects: u32,
-    resident: u32,
-    sizes: Sizes,
+    ids_room: u64,
+    cards_room: u64,
     uploaded: Option<u64>,
     groups_revision: Option<u64>,
+    impostors_revision: Option<u64>,
     covers_revision: Option<u64>,
+    snapped: Option<Snapped>,
     slots_written: bool,
+    snapping: bool,
     prepared: bool,
+    casts: bool,
+    cards: bool,
+    atlas: bool,
     occupancy: [(bool, bool); MAX_OCCUPANCY_LEVELS],
     workgroups: u32,
+    covers: u64,
+    listed: u64,
+}
+
+struct Lit {
+    lit: Vec<[Pipeline<ScatterGpu, MainView>; 2]>,
+    prepass: Vec<[Pipeline<ScatterGpu, MainView>; 2]>,
+    card: Pipeline<ScatterGpu, MainView>,
+}
+
+struct Inputs {
+    ids: DrawInput<ScatterGpu, MainView>,
+    args: DrawInput<ScatterGpu, MainView>,
+    records: DrawInput<ScatterGpu, MainView>,
+    cards: DrawInput<ScatterGpu, MainView>,
+    card_args: DrawInput<ScatterGpu, MainView>,
+    caster_ids: DrawInput<ScatterGpu, ShadowCasters>,
+    caster_args: DrawInput<ScatterGpu, ShadowCasters>,
+    caster_cards: DrawInput<ScatterGpu, ShadowCasters>,
+    caster_card_args: DrawInput<ScatterGpu, ShadowCasters>,
 }
 
 pub(crate) struct ScatterGpu {
-    snap: Pass<Self>,
-    cull: Pass<Self>,
-    selects: Vec<Pass<Self>>,
-    maps: Vec<Pass<Self>>,
+    scatter: Pass<Self>,
+    occupancy: Pass<Self>,
     snap_uniform: Buffer<Self>,
     frame: Buffer<Self>,
     views: Buffer<Self>,
@@ -136,6 +170,8 @@ pub(crate) struct ScatterGpu {
     grounds: Buffer<Self>,
     cards: Buffer<Self>,
     card_args: Buffer<Self>,
+    placed_groups: Buffer<Self>,
+    debug_records: Buffer<Self>,
     covers: Buffer<Self>,
     listed: Buffer<Self>,
     splats: Vec<Buffer<Self>>,
@@ -147,21 +183,17 @@ pub(crate) struct ScatterGpu {
     unfiner: [Texture<Self>; 2],
     snapping: ComputePipeline<Self>,
     culling: ComputePipeline<Self>,
-    selecting: Vec<ComputePipeline<Self>>,
-    occupancy: Vec<MapPipelines>,
-    listed_inputs: Vec<DrawInput<Self, Own>>,
-    lit: [Pipeline<Self, MainView>; 2],
-    prepass: [[Pipeline<Self, MainView>; 2]; 2],
+    maps: Vec<MapPipelines>,
+    lit: Lit,
     casting: [Pipeline<Self, ShadowCasters>; 2],
-    main_ids: DrawInput<Self, MainView>,
-    main_args: DrawInput<Self, MainView>,
-    caster_ids: DrawInput<Self, ShadowCasters>,
-    caster_args: DrawInput<Self, ShadowCasters>,
+    shadow_card: Pipeline<Self, ShadowCasters>,
+    inputs: Inputs,
+    records_written: bool,
     held: Held,
 }
 
-fn grow(held: &mut u64, bytes: u64) {
-    let size = bytes.next_power_of_two();
+fn grow(held: &mut u64, bytes: u64, room: u64) {
+    let size = bytes.next_power_of_two().min(room);
     if bytes > *held && size > *held {
         *held = size;
     }
@@ -187,9 +219,26 @@ fn layer(texels: u32, layers: u32) -> wgpu::Extent3d {
     }
 }
 
+fn look(masked: bool, double_sided: bool, extended: bool) -> usize {
+    usize::from(masked) << 2 | usize::from(double_sided) << 1 | usize::from(extended)
+}
+
+fn primitive(double_sided: bool) -> wgpu::PrimitiveState {
+    wgpu::PrimitiveState {
+        topology: wgpu::PrimitiveTopology::TriangleList,
+        front_face: wgpu::FrontFace::Ccw,
+        cull_mode: (!double_sided).then_some(wgpu::Face::Back),
+        ..Default::default()
+    }
+}
+
 fn objects(
     (poses, colors, grounds): (Var, Var, Var),
-    (pose_buffer, color_buffer, ground_buffer): (Buffer<ScatterGpu>, Buffer<ScatterGpu>, Buffer<ScatterGpu>),
+    (pose_buffer, color_buffer, ground_buffer): (
+        Buffer<ScatterGpu>,
+        Buffer<ScatterGpu>,
+        Buffer<ScatterGpu>,
+    ),
 ) -> [(Var, Bind<ScatterGpu>); 3] {
     [
         (poses, Bind::Buffer(pose_buffer)),
@@ -202,20 +251,21 @@ impl ScatterGpu {
     fn map_pipelines(
         cx: &mut Install<'_, Self>,
         map: usize,
-        (drawn, splat): (Pass<Self>, Buffer<Self>),
+        pass: Pass<Self>,
+        (splat, listed_draw): (Buffer<Self>, Buffer<Self>),
         (records, poses, covers, listed): (Buffer<Self>, Buffer<Self>, Buffer<Self>, Buffer<Self>),
         (coverage, heights, unfiner): (Texture<Self>, Texture<Self>, [Texture<Self>; 2]),
     ) -> Result<MapPipelines, Error> {
         use crate::shaders::scatter::occupancy_maps as maps;
-        let target = |vertex, fragment, blend, writes| RenderPipeline {
+        let target = |vertex, fragment| RenderPipeline {
             vertex,
             fragment: Some(fragment),
             debug: None,
             vertices: &[],
             primitive: wgpu::PrimitiveState::default(),
             depth: DepthUse::None,
-            blend,
-            writes,
+            blend: None,
+            writes: wgpu::ColorWrites::ALL,
         };
         let finer = |texture: Texture<Self>, held: Texture<Self>| match map.checked_sub(1) {
             Some(finer) => Bind::Slice {
@@ -225,112 +275,190 @@ impl ScatterGpu {
             },
             None => Bind::Texture(held),
         };
-        let splatted = || {
-            [
+        let red = wgpu::ColorWrites::RED;
+        let red_green = wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN;
+        let over = Some(blend(wgpu::BlendFactor::OneMinusSrc, wgpu::BlendOperation::Add));
+        let max = Some(blend(wgpu::BlendFactor::One, wgpu::BlendOperation::Max));
+        let select = cx.compute_pipeline(
+            pass,
+            maps::SELECT_COVERS,
+            &[
+                (maps::SPLAT, Bind::Buffer(splat)),
+                (maps::RECORDS, Bind::Buffer(records)),
+                (maps::POSES, Bind::Buffer(poses)),
+                (maps::COVERS, Bind::Buffer(covers)),
+                (maps::LISTING, Bind::Buffer(listed)),
+                (maps::LISTED_DRAW, Bind::Buffer(listed_draw)),
+            ],
+        )?;
+        let clear = cx.render_pipeline_targets(
+            pass,
+            &target(maps::VS_CLEAR, maps::FS_CLEAR),
+            &[(None, red), (None, red_green)],
+            &[(maps::SPLAT, Bind::Buffer(splat))],
+        )?;
+        let splat_pipeline = cx.render_pipeline_targets(
+            pass,
+            &target(maps::VS_SPLAT, maps::FS_SPLAT),
+            &[(over, red), (max, red_green)],
+            &[
                 (maps::SPLAT, Bind::Buffer(splat)),
                 (maps::RECORDS, Bind::Buffer(records)),
                 (maps::POSES, Bind::Buffer(poses)),
                 (maps::COVERS, Bind::Buffer(covers)),
                 (maps::LISTED, Bind::Buffer(listed)),
-            ]
-        };
-        let red = wgpu::ColorWrites::RED;
-        let red_green = wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN;
-        let over = Some(blend(wgpu::BlendFactor::OneMinusSrc, wgpu::BlendOperation::Add));
-        let max = Some(blend(wgpu::BlendFactor::One, wgpu::BlendOperation::Max));
+            ],
+        )?;
+        let means = cx.render_pipeline_targets(
+            pass,
+            &target(maps::VS_MEANS, maps::FS_MEANS),
+            &[(None, red), (None, red_green)],
+            &[
+                (maps::SPLAT, Bind::Buffer(splat)),
+                (maps::FINER_COVERAGE, finer(coverage, unfiner[0])),
+                (maps::FINER_HEIGHTS, finer(heights, unfiner[1])),
+            ],
+        )?;
+        let listed = cx.draw_input(pass, listed_draw);
         Ok(MapPipelines {
-            clear: [
-                cx.render_pipeline(
-                    drawn,
-                    &target(maps::VS_CLEAR, maps::FS_CLEAR_COVERAGE, None, red),
-                    &[(maps::SPLAT, Bind::Buffer(splat))],
-                )?,
-                cx.render_pipeline(
-                    drawn,
-                    &target(maps::VS_CLEAR, maps::FS_CLEAR_HEIGHTS, None, red_green),
-                    &[(maps::SPLAT, Bind::Buffer(splat))],
-                )?,
-            ],
-            splat: [
-                cx.render_pipeline(
-                    drawn,
-                    &target(maps::VS_SPLAT, maps::FS_SPLAT_COVERAGE, over, red),
-                    &splatted(),
-                )?,
-                cx.render_pipeline(
-                    drawn,
-                    &target(maps::VS_SPLAT, maps::FS_SPLAT_HEIGHTS, max, red_green),
-                    &splatted(),
-                )?,
-            ],
-            means: [
-                cx.render_pipeline(
-                    drawn,
-                    &target(maps::VS_MEANS, maps::FS_MEANS_COVERAGE, None, red),
-                    &[
-                        (maps::SPLAT, Bind::Buffer(splat)),
-                        (maps::FINER_COVERAGE, finer(coverage, unfiner[0])),
-                    ],
-                )?,
-                cx.render_pipeline(
-                    drawn,
-                    &target(maps::VS_MEANS, maps::FS_MEANS_HEIGHTS, None, red_green),
-                    &[
-                        (maps::SPLAT, Bind::Buffer(splat)),
-                        (maps::FINER_HEIGHTS, finer(heights, unfiner[1])),
-                    ],
-                )?,
-            ],
+            select,
+            clear,
+            splat: splat_pipeline,
+            means,
+            listed,
         })
     }
 
-    fn set_groups(&mut self, cx: &mut Prepare<'_, Self>, state: &ScatterState) {
-        let held = &mut self.held;
-        let layouts = &state.groups.layouts;
-        let mut data = Vec::with_capacity(layouts.len());
-        held.template.clear();
-        held.casters.clear();
-        held.lists.clear();
-        let mut ids = 0;
-        for (index, (layout, group)) in layouts.iter().zip(&state.groups.groups).enumerate() {
-            let count = group.count;
-            data.push(CullGroup {
-                ids,
-                count,
-                levels: layout.levels.len() as u32,
-                camera: layout.camera,
-                errors: layout.errors,
-                impostor: 0.0,
-                record: index as u32,
-                casters: layout.casters.len() as u32,
-                parts: layout.parts,
-            });
-            held.lists.push(GroupLists { ids, count });
-            for level in 0..LEVELS as usize {
-                held.template.push(draw_args(
-                    layout.levels.get(level).copied().unwrap_or((0, 0, 0)),
-                ));
-                held.casters.push(draw_args(
-                    layout.casters.get(level).copied().unwrap_or((0, 0, 0)),
-                ));
+    fn lit_pipelines(
+        cx: &mut Install<'_, Self>,
+        (poses, colors, grounds): (Buffer<Self>, Buffer<Self>, Buffer<Self>),
+    ) -> Result<Lit, Error> {
+        use crate::shaders::scatter::{cards, draw};
+        let vars = (draw::POSES, draw::COLORS, draw::GROUNDS);
+        let buffers = (poses, colors, grounds);
+        let mut lit = Vec::with_capacity(8);
+        let mut prepass = Vec::with_capacity(4);
+        for index in 0..8_usize {
+            let (masked, double_sided, extended) = (index & 4 != 0, index & 2 != 0, index & 1 != 0);
+            let (vertices, vertex, fading) = if extended {
+                (
+                    EXTENDED_STREAMS,
+                    draw::VS_OBJECT_EXTENDED,
+                    draw::VS_OBJECT_EXTENDED_FADING,
+                )
+            } else {
+                (PLAIN_STREAMS, draw::VS_OBJECT, draw::VS_OBJECT_FADING)
+            };
+            let (fragment, debug, masked_depth) = match (extended, masked) {
+                (false, false) => (draw::FS_OBJECT, draw::FS_DEBUG_OBJECT, draw::FS_MASKED_DEPTH),
+                (false, true) => (
+                    draw::FS_OBJECT_PRETESTED,
+                    draw::FS_DEBUG_OBJECT,
+                    draw::FS_MASKED_DEPTH,
+                ),
+                (true, false) => (
+                    draw::FS_OBJECT_EXTENDED,
+                    draw::FS_DEBUG_OBJECT_EXTENDED,
+                    draw::FS_MASKED_DEPTH_EXTENDED,
+                ),
+                (true, true) => (
+                    draw::FS_OBJECT_EXTENDED_PRETESTED,
+                    draw::FS_DEBUG_OBJECT_EXTENDED,
+                    draw::FS_MASKED_DEPTH_EXTENDED,
+                ),
+            };
+            let depth = if masked {
+                DepthUse::Compare {
+                    compare: wgpu::CompareFunction::Equal,
+                    write: false,
+                    bias: wgpu::DepthBiasState::default(),
+                }
+            } else {
+                DepthUse::Write {
+                    bias: wgpu::DepthBiasState::default(),
+                }
+            };
+            let lit_desc = |vertex| RenderPipeline {
+                vertex,
+                fragment: Some(fragment),
+                debug: Some(debug),
+                vertices,
+                primitive: primitive(double_sided),
+                depth,
+                blend: None,
+                writes: wgpu::ColorWrites::ALL,
+            };
+            lit.push([
+                cx.render_pipeline(MainView, &lit_desc(vertex), &objects(vars, buffers))?,
+                cx.render_pipeline(MainView, &lit_desc(fading), &objects(vars, buffers))?,
+            ]);
+            if !masked {
+                continue;
             }
-            ids += count * LEVELS;
+            let depth_desc = |vertex| RenderPipeline {
+                vertex,
+                fragment: Some(masked_depth),
+                debug: Some(masked_depth),
+                vertices,
+                primitive: primitive(double_sided),
+                depth: DepthUse::Write {
+                    bias: wgpu::DepthBiasState::default(),
+                },
+                blend: None,
+                writes: wgpu::ColorWrites::empty(),
+            };
+            prepass.push([
+                cx.render_pipeline(MainView, &depth_desc(vertex), &objects(vars, buffers))?,
+                cx.render_pipeline(MainView, &depth_desc(fading), &objects(vars, buffers))?,
+            ]);
         }
-        grow(&mut held.sizes.groups, (data.len() * size_of::<CullGroup>()) as u64);
-        cx.allocate_buffer(self.groups, held.sizes.groups.max(32));
-        if !data.is_empty() {
-            cx.write(self.groups, 0, &data);
-        }
-        held.group_count = layouts.len() as u32;
-        held.ids_per_view = ids;
-        held.resident = state.resident;
+        let card = cx.render_pipeline(
+            MainView,
+            &RenderPipeline {
+                vertex: cards::VS_PLACED_CARD,
+                fragment: Some(cards::FS_PLACED_CARD),
+                debug: Some(cards::FS_DEBUG_PLACED_CARD),
+                vertices: CARD_STREAMS,
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth: DepthUse::Write {
+                    bias: wgpu::DepthBiasState::default(),
+                },
+                blend: None,
+                writes: wgpu::ColorWrites::ALL,
+            },
+            &[
+                (cards::POSES, Bind::Buffer(poses)),
+                (cards::COLORS, Bind::Buffer(colors)),
+            ],
+        )?;
+        Ok(Lit { lit, prepass, card })
+    }
+
+    fn set_groups(&mut self, state: &ScatterState) {
+        let held = &mut self.held;
+        let data = &state.group_data;
+        held.lists.clear();
+        held.lists
+            .extend(data.lists.iter().map(|lists| (lists.ids, lists.count)));
+        held.group_count = state.groups.layouts.len() as u32;
+        held.ids_per_view = data.ids_per_view;
         held.groups.clear();
         held.groups.extend(state.groups.groups.iter().map(|group| HeldGroup {
             meshes: group.meshes.iter().map(|&mesh| (mesh, false)).collect(),
             casters: group.casters.iter().map(|&mesh| (mesh, false)).collect(),
             material: group.material,
+            material_resident: false,
             count: group.count,
             casts: group.casts,
+            look: look(
+                group.masked(),
+                group.source.is_double_sided(),
+                group.extended,
+            ),
             masked: group.masked(),
         }));
     }
@@ -338,15 +466,21 @@ impl ScatterGpu {
     fn write_slots(&mut self, cx: &mut Prepare<'_, Self>, state: &ScatterState) {
         let held = &mut self.held;
         let buffers = [self.poses, self.colors, self.records, self.grounds];
-        for (buffer, bytes) in buffers.into_iter().zip(state.slot_bytes) {
-            cx.allocate_buffer(buffer, bytes);
+        let strides = [
+            size_of::<crate::layouts::PoseData>(),
+            size_of::<crate::layouts::SlotColor>(),
+            size_of::<crate::layouts::PlacedRecord>(),
+            size_of::<crate::layouts::GroundData>(),
+        ];
+        for ((buffer, bytes), stride) in buffers.into_iter().zip(state.slot_bytes).zip(strides) {
+            cx.allocate_buffer(buffer, bytes.max(stride as u64));
         }
         let pool = &state.pool;
-        let records = pool.records.len() as u32;
+        let objects = state.objects;
         let range = match held.uploaded {
             Some(seen) if seen == state.slots_revision => None,
             Some(seen) if seen + 1 == state.slots_revision => state.dirty.clone(),
-            Some(_) | None => Some(0..records),
+            Some(_) | None => Some(0..objects),
         }
         .filter(|range| !range.is_empty());
         if let Some(range) = range {
@@ -374,111 +508,118 @@ impl ScatterGpu {
             );
         }
         held.uploaded = Some(state.slots_revision);
-        held.objects = records;
+        held.objects = objects;
     }
 
-    fn prepare_cull(
-        &mut self,
-        cx: &mut Prepare<'_, Self>,
-        (view, detail, maps): (&View, &Detail, &ShadowMaps),
-        fade: f32,
-    ) {
-        let held = &mut self.held;
-        held.maps.clear();
-        held.prepared = false;
-        if held.resident == 0 {
+    fn write_placed_groups(&mut self, cx: &mut Prepare<'_, Self>, state: &ScatterState) {
+        if self.held.impostors_revision == Some(state.impostors_revision) {
             return;
         }
-        let view_projection = view.view_projection();
-        let eye = view.detail_eye();
-        let height = view.render_size().y as f32;
-        let pixel_error = detail.enabled.then_some(detail.pixel_error);
-        let impostors: Option<f32> = None;
-        let y_row = view_projection.row(1).truncate().length();
-        let spanned = y_row * height * 0.5;
-        let pixels = pixel_error.map_or(0.0, |error| spanned / error);
-        let cards = impostors.map_or(0.0, |size| y_row * height / size);
-        held.views.clear();
-        held.views.push(CullView {
-            planes: planes(view_projection),
-            limits: [0.0; 4],
-        });
-        for (index, region) in maps.regions.iter().enumerate() {
-            if region.map != CasterMap::Region {
-                continue;
-            }
-            let (region_planes, texel) = match region.refresh {
-                Refresh::Kept(kept) => (kept.planes, kept.texel),
-                Refresh::Redraw => (planes(region.view), 0.0),
-            };
-            held.views.push(CullView {
-                planes: region_planes,
-                limits: [0.5 * texel, texel, 0.0, 0.0],
-            });
-            held.maps.push(index as u32);
+        let groups: Vec<PlacedGroup> = state
+            .impostors
+            .iter()
+            .zip(&state.groups.colors)
+            .map(|(&impostor, &color)| placed_group(impostor, color))
+            .collect();
+        let bytes = (groups.len().max(1) * size_of::<PlacedGroup>()) as u64;
+        cx.allocate_buffer(self.placed_groups, bytes);
+        if !groups.is_empty() {
+            cx.write(self.placed_groups, 0, &groups);
         }
-        let view_count = held.views.len() as u32;
-        let draws_per_view = held.group_count * LEVELS;
-        held.fading_view = held.views.len();
-        let lists = view_count + 1;
-        let list_count = u64::from(lists);
-        grow(
-            &mut held.sizes.views,
-            u64::from(view_count) * size_of::<CullView>() as u64,
-        );
-        grow(
-            &mut held.sizes.ids,
-            u64::from(held.ids_per_view) * list_count * 4,
-        );
-        grow(
-            &mut held.sizes.draws,
-            u64::from(draws_per_view) * list_count * size_of::<DrawArgs>() as u64,
-        );
-        grow(
-            &mut held.sizes.cards,
-            u64::from(held.objects) * u64::from(view_count) * 8,
-        );
-        grow(&mut held.sizes.card_args, list_count * 16);
-        cx.allocate_buffer(self.views, held.sizes.views.max(size_of::<CullView>() as u64));
-        cx.allocate_buffer(self.ids, held.sizes.ids.max(16));
-        cx.allocate_buffer(self.draws, held.sizes.draws.max(20));
-        cx.allocate_buffer(self.cards, held.sizes.cards.max(8));
-        cx.allocate_buffer(self.card_args, held.sizes.card_args.max(16));
-        cx.allocate_buffer(self.frame, size_of::<CullFrame>() as u64);
-        let frame = CullFrame {
-            eye: eye.extend(pixels).to_array(),
-            counts: [held.objects, held.group_count, LEVELS, view_count],
-            strides: [
-                held.ids_per_view,
-                draws_per_view,
-                u32::from(impostors.is_some()),
-                held.objects,
-            ],
-            fade: [fade, FADE_MARGIN, cards, spanned],
+        self.held.impostors_revision = Some(state.impostors_revision);
+    }
+
+    fn prepare_snap(
+        &mut self,
+        cx: &mut Prepare<'_, Self>,
+        (state, view): (&ScatterState, &View),
+        (tiles, ground): (&Res<'_, TerrainTiles>, &Res<'_, GroundTiles>),
+    ) {
+        let held = &mut self.held;
+        held.snapping = false;
+        let terrains = tiles.terrains.len() as u32;
+        cx.allocate_buffer(self.snap_uniform, size_of::<Snap>() as u64);
+        if ground.layers == 0 || terrains == 0 || state.resident == 0 {
+            return;
+        }
+        let eye = view.detail_eye().extend(0.0).to_array();
+        let snap = Snap {
+            counts: [held.objects, terrains, 0, 0],
+            eye,
         };
-        cx.write(self.frame, 0, &[frame]);
-        held.card_args.clear();
-        held.card_args
-            .resize(view_count as usize, [CARD_VERTICES, 0, 0, 0]);
-        held.card_args.push([0; 4]);
-        cx.write(self.card_args, 0, &held.card_args);
-        cx.write(self.views, 0, &held.views);
-        held.args.clear();
-        for list in 0..lists {
-            let shadow = list > 0 && list < view_count;
-            held.args.extend_from_slice(if shadow {
-                &held.casters
-            } else {
-                &held.template
+        cx.write(self.snap_uniform, 0, &[snap]);
+        let unchanged = !tiles.is_changed()
+            && !ground.is_changed()
+            && held
+                .snapped
+                .as_ref()
+                .is_some_and(|snapped| snapped.generation == state.generation);
+        if unchanged && !held.slots_written {
+            match &mut held.snapped {
+                Some(snapped) if snapped.eye != eye => snapped.eye = eye,
+                Some(_) | None => return,
+            }
+        } else {
+            held.snapped = Some(Snapped {
+                generation: state.generation,
+                eye,
             });
+            held.slots_written = false;
         }
-        if !held.args.is_empty() {
-            cx.write(self.draws, 0, &held.args);
+        held.snapping = true;
+    }
+
+    fn prepare_cull(&mut self, cx: &mut Prepare<'_, Self>, state: &ScatterState) {
+        let held = &mut self.held;
+        let plan = &state.plan;
+        held.maps.clear();
+        held.prepared = false;
+        held.casts = plan.casts;
+        held.cards = plan.cards;
+        held.atlas = plan.atlas;
+        let sizes = state.sizes;
+        cx.allocate_buffer(
+            self.groups,
+            sizes.groups.max(size_of::<crate::layouts::CullGroup>() as u64),
+        );
+        cx.allocate_buffer(self.views, sizes.views);
+        cx.allocate_buffer(self.ids, sizes.ids);
+        cx.allocate_buffer(self.draws, sizes.draws);
+        cx.allocate_buffer(self.cards, sizes.cards);
+        cx.allocate_buffer(self.card_args, sizes.card_args);
+        cx.allocate_buffer(self.frame, size_of::<crate::layouts::CullFrame>() as u64);
+        held.ids_room = sizes.ids;
+        held.cards_room = sizes.cards;
+        if held.groups_revision != Some(state.groups_revision) {
+            if !state.group_data.data.is_empty() {
+                cx.write(self.groups, 0, &state.group_data.data);
+            }
+            held.groups_revision = Some(state.groups_revision);
+        }
+        let Some(frame) = plan.frame.filter(|_| plan.prepared) else {
+            return;
+        };
+        held.maps.extend_from_slice(&plan.maps);
+        held.fading_view = plan.fading_view;
+        cx.write(self.frame, 0, &[frame]);
+        cx.write(self.card_args, 0, &plan.card_args);
+        cx.write(self.views, 0, &plan.views);
+        if !plan.args.is_empty() {
+            cx.write(self.draws, 0, &plan.args);
+        }
+        if plan.lists_left {
+            let at = plan.fading_view as u64 * 16;
+            cx.read_back::<ScatterFeedback>(LEFT_OUT, self.card_args, at..at + 16, AfterRead::Keep);
         }
         held.prepared = true;
     }
 
-    fn prepare_occupancy(&mut self, cx: &mut Prepare<'_, Self>, windows: &OccupancyWindows) {
+    fn prepare_occupancy(
+        &mut self,
+        cx: &mut Prepare<'_, Self>,
+        windows: &OccupancyWindows,
+        room: u64,
+    ) {
         let held = &mut self.held;
         let (texels, layers) = if windows.runs && windows.maps > 0 {
             (windows.resolution.max(1), windows.maps as u32)
@@ -490,21 +631,34 @@ impl ScatterGpu {
         for unfiner in self.unfiner {
             cx.allocate(unfiner, layer(1, 1), 1);
         }
+        let cover = size_of::<crate::layouts::Cover>() as u64;
+        let word = size_of::<u32>() as u64;
+        if !windows.runs {
+            held.covers = cover;
+            held.listed = word;
+        }
+        held.covers = held.covers.max(cover);
+        held.listed = held.listed.max(word);
         if held.covers_revision != Some(windows.covers_revision) {
             let bytes = std::mem::size_of_val(windows.covers.as_slice()) as u64;
-            cx.allocate_buffer(self.covers, bytes.max(16));
+            grow(&mut held.covers, bytes, room);
+            cx.allocate_buffer(self.covers, held.covers);
             if !windows.covers.is_empty() {
                 cx.write(self.covers, 0, &windows.covers);
             }
             held.covers_revision = Some(windows.covers_revision);
         }
-        grow(
-            &mut held.sizes.listed,
-            2 * u64::from(windows.slots) * size_of::<u32>() as u64,
-        );
-        cx.allocate_buffer(self.listed, held.sizes.listed.max(4));
+        if windows.runs && windows.slots > 0 && !windows.covers.is_empty() {
+            grow(&mut held.listed, 2 * u64::from(windows.slots) * word, room);
+        }
+        cx.allocate_buffer(self.covers, held.covers);
+        cx.allocate_buffer(self.listed, held.listed);
         held.workgroups = windows.workgroups;
         held.occupancy = [(false, false); MAX_OCCUPANCY_LEVELS];
+        for (&splat, &listed) in self.splats.iter().zip(&self.listed_draws) {
+            cx.allocate_buffer(splat, size_of::<Splat>() as u64);
+            cx.allocate_buffer(listed, size_of::<ListedDraw>() as u64);
+        }
         if !windows.drawn() {
             return;
         }
@@ -512,30 +666,28 @@ impl ScatterGpu {
             if !frame.redraw && !frame.average {
                 continue;
             }
-            cx.allocate_buffer(self.splats[map], size_of::<crate::layouts::Splat>() as u64);
             cx.write(self.splats[map], 0, &[frame.splat]);
             if frame.redraw {
-                cx.allocate_buffer(
-                    self.listed_draws[map],
-                    size_of::<crate::layouts::ListedDraw>() as u64,
-                );
                 cx.write(self.listed_draws[map], 0, &[LISTED_RESET]);
-                cx.run(self.selects[map]);
             }
-            cx.run(self.maps[map]);
             held.occupancy[map] = (frame.redraw, frame.average);
         }
+        cx.run(self.occupancy);
     }
 
     fn draw_source(&self, view: usize, group: usize, level: usize) -> Option<(u64, u64)> {
         let held = &self.held;
-        let lists = held.lists.get(group)?;
+        let &(ids, count) = held.lists.get(group)?;
         let start = (view as u64 * u64::from(held.ids_per_view)
-            + u64::from(lists.ids + level as u32 * lists.count))
+            + u64::from(ids + level as u32 * count))
             * 4;
         let draw = (view * held.group_count as usize + group) * LEVELS as usize + level;
-        (start < held.sizes.ids.max(16))
-            .then(|| (start, (draw * size_of::<DrawArgs>()) as u64))
+        (start < held.ids_room).then(|| (start, (draw * size_of::<DrawArgs>()) as u64))
+    }
+
+    fn card_source(&self, view: usize) -> Option<(u64, u64)> {
+        let start = view as u64 * u64::from(self.held.objects) * 8;
+        (start < self.held.cards_room).then_some((start, view as u64 * 16))
     }
 
     fn map_view(&self, region: u32) -> Option<usize> {
@@ -551,6 +703,7 @@ impl ScatterGpu {
         if !held.prepared {
             return 0;
         }
+        let inputs = &self.inputs;
         let mut draws = 0;
         for (view, fades) in [(0, false), (held.fading_view, true)] {
             for (index, group) in held.groups.iter().enumerate() {
@@ -558,10 +711,14 @@ impl ScatterGpu {
                     continue;
                 }
                 let pipeline = if prepass {
-                    &self.prepass[usize::from(group.masked)][usize::from(fades)]
+                    if !group.masked {
+                        continue;
+                    }
+                    &self.lit.prepass[group.look & 3][usize::from(fades)]
                 } else {
-                    &self.lit[usize::from(fades)]
+                    &self.lit.lit[group.look][usize::from(fades)]
                 };
+                let casts = held.casts && group.casts.is_some();
                 for (level, &(mesh, resident)) in group.meshes.iter().enumerate() {
                     if !resident {
                         continue;
@@ -569,19 +726,35 @@ impl ScatterGpu {
                     let Some((ids, offset)) = self.draw_source(view, index, level) else {
                         continue;
                     };
+                    let record = DrawRecord::of(DrawKind::Placed, level, casts);
                     draw.draw(
                         pipeline,
                         Shape::MeshIndirect {
                             mesh,
                             material: Some(group.material),
-                            args: self.main_args,
+                            args: inputs.args,
                             offset,
-                            instances: Some((self.main_ids, ids)),
+                            streams: &[(inputs.ids, ids), (inputs.records, record.offset())],
                         },
                     );
                     draws += 1;
                 }
             }
+        }
+        if prepass || !held.cards {
+            return draws;
+        }
+        if let Some((cards, offset)) = self.card_source(0) {
+            let record = DrawRecord::of(DrawKind::PlacedCard, 0, held.casts);
+            draw.draw(
+                &self.lit.card,
+                Shape::IndirectStreams {
+                    streams: &[(inputs.cards, cards), (inputs.records, record.offset())],
+                    args: inputs.card_args,
+                    offset,
+                },
+            );
+            draws += 1;
         }
         draws
     }
@@ -599,17 +772,21 @@ impl ScatterGpu {
         at: &CasterView,
         draw: &mut Draw<'_, Self, ShadowCasters>,
     ) -> u32 {
-        if !self.held.prepared {
+        if !self.held.prepared || at.map != CasterMap::Region {
             return 0;
         }
         let Some(view) = self.map_view(at.region) else {
             return 0;
         };
+        let inputs = &self.inputs;
         let mut draws = 0;
         for (index, group) in self.held.groups.iter().enumerate() {
             let Some(masked) = group.casts.filter(|_| group.count > 0) else {
                 continue;
             };
+            if masked && !group.material_resident {
+                continue;
+            }
             let pipeline = &self.casting[usize::from(masked)];
             let material = masked.then_some(group.material);
             for (level, &(mesh, resident)) in group.casters.iter().enumerate() {
@@ -624,55 +801,77 @@ impl ScatterGpu {
                     Shape::MeshIndirect {
                         mesh,
                         material,
-                        args: self.caster_args,
+                        args: inputs.caster_args,
                         offset,
-                        instances: Some((self.caster_ids, ids)),
+                        streams: &[(inputs.caster_ids, ids)],
                     },
                 );
                 draws += 1;
             }
         }
+        if !self.held.atlas {
+            return draws;
+        }
+        if let Some((cards, offset)) = self.card_source(view) {
+            draw.draw(
+                &self.shadow_card,
+                Shape::IndirectStreams {
+                    streams: &[(inputs.caster_cards, cards)],
+                    args: inputs.caster_card_args,
+                    offset,
+                },
+            );
+            draws += 1;
+        }
         draws
     }
 
-    fn encode_map(&self, map: usize, cx: &mut Encode<'_, Self>) -> u32 {
-        let (redraw, average) = self.held.occupancy[map];
-        let pipelines = &self.occupancy[map];
+    fn encode_maps(&self, cx: &mut Encode<'_, Self>) {
         let cells = 0..CELLS * CELLS;
-        let mut drawn = 0;
-        for (index, target) in [self.coverage, self.heights].into_iter().enumerate() {
-            let mut draw = cx.render(Attach::Color(target, Some(map as u32)), None);
+        for (map, pipelines) in self.maps.iter().enumerate() {
+            let (redraw, average) = self.held.occupancy[map];
+            if !redraw && !average {
+                continue;
+            }
+            if redraw {
+                cx.dispatch(
+                    &pipelines.select,
+                    Count::Groups([self.held.workgroups, 1, 1]),
+                );
+            }
+            let layer = map as u32;
+            let mut draw = cx.render(
+                Attach::Colors(vec![(self.coverage, layer), (self.heights, layer)]),
+                None,
+            );
             if redraw {
                 draw.draw(
-                    &pipelines.clear[index],
+                    &pipelines.clear,
                     Shape::Pulled {
                         vertices: 0..QUAD,
                         instances: cells.clone(),
                     },
                 );
                 draw.draw(
-                    &pipelines.splat[index],
+                    &pipelines.splat,
                     Shape::Indirect {
                         vertices: &[],
                         indices: None,
-                        args: self.listed_inputs[map],
+                        args: pipelines.listed,
                         offset: 0,
                     },
                 );
-                drawn += 2;
             }
             if average {
                 draw.draw(
-                    &pipelines.means[index],
+                    &pipelines.means,
                     Shape::Pulled {
                         vertices: 0..QUAD,
                         instances: cells.clone(),
                     },
                 );
-                drawn += 1;
             }
         }
-        drawn
     }
 }
 
@@ -682,8 +881,6 @@ impl GpuPart for ScatterGpu {
         Res<'static, OccupancyWindows>,
         Res<'static, FarCoverTable>,
         Res<'static, View>,
-        Res<'static, Detail>,
-        Res<'static, ShadowMaps>,
         Res<'static, TerrainTiles>,
         Res<'static, GroundTiles>,
         Res<'static, AssetResidency>,
@@ -694,7 +891,7 @@ impl GpuPart for ScatterGpu {
         reason = "longer than the line ceiling; it may only shrink"
     )]
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        use crate::shaders::scatter::{casters, cull, draw, faces, occupancy_maps, snap};
+        use crate::shaders::scatter::{casters, cull, faces, snap};
         let snap_uniform = cx.buffer("snap", Lifetime::Kept);
         let frame = cx.buffer("frame", Lifetime::Kept);
         let views = cx.buffer("views", Lifetime::Kept);
@@ -707,6 +904,8 @@ impl GpuPart for ScatterGpu {
         let grounds = cx.buffer("grounds", Lifetime::Kept);
         let cards = cx.buffer("cards", Lifetime::Kept);
         let card_args = cx.buffer("card_args", Lifetime::Kept);
+        let placed_groups = cx.buffer("placed_groups", Lifetime::Kept);
+        let debug_records = cx.buffer("debug_records", Lifetime::Kept);
         let covers = cx.buffer("occupancy_covers", Lifetime::Kept);
         let listed = cx.buffer("occupancy_listed", Lifetime::Kept);
         let far_bases = cx.buffer("placed_far_bases", Lifetime::Kept);
@@ -720,15 +919,22 @@ impl GpuPart for ScatterGpu {
         let linear = cx.sampler(SamplerDesc::LINEAR_CLAMP);
         cx.frame(faces::placed_tiles::PLACED_RECORDS, Bind::Buffer(records))?;
         cx.frame(faces::placed_tiles::PLACED_POSES, Bind::Buffer(poses))?;
+        cx.frame(faces::placed_tiles::PLACED_GROUPS, Bind::Buffer(placed_groups))?;
+        cx.frame(faces::placed_tiles::PLACED_FRAMES_SAMPLER, Bind::Sampler(linear))?;
         cx.frame(faces::occupancy::OCCUPANCY_COVERAGE, Bind::Texture(coverage))?;
         cx.frame(faces::occupancy::OCCUPANCY_HEIGHTS, Bind::Texture(heights))?;
         cx.frame(faces::occupancy::OCCUPANCY_SAMPLER, Bind::Sampler(linear))?;
         cx.frame(faces::far_cover::PLACED_FAR_BASES, Bind::Buffer(far_bases))?;
         cx.frame(faces::far_cover::PLACED_FAR, Bind::Buffer(far_entries))?;
-        let snap_pass = cx.pass("snap").id();
-        let cull_pass = cx.pass("cull").after(snap_pass).id();
+        let scatter = cx.pass("scatter").id();
+        let occupancy = cx
+            .pass("occupancy")
+            .after(scatter)
+            .color(coverage, Access::Load)
+            .color(heights, Access::Load)
+            .id();
         let snapping = cx.compute_pipeline(
-            snap_pass,
+            scatter,
             snap::SNAP_SCATTER,
             &[
                 (snap::SNAP, Bind::Buffer(snap_uniform)),
@@ -738,7 +944,7 @@ impl GpuPart for ScatterGpu {
             ],
         )?;
         let culling = cx.compute_pipeline(
-            cull_pass,
+            scatter,
             cull::CULL_SCATTER,
             &[
                 (cull::FRAME, Bind::Buffer(frame)),
@@ -751,120 +957,29 @@ impl GpuPart for ScatterGpu {
                 (cull::CARD_ARGS, Bind::Buffer(card_args)),
             ],
         )?;
-        let mut selects = Vec::with_capacity(MAX_OCCUPANCY_LEVELS);
-        let mut maps = Vec::with_capacity(MAX_OCCUPANCY_LEVELS);
         let mut splats = Vec::with_capacity(MAX_OCCUPANCY_LEVELS);
         let mut listed_draws = Vec::with_capacity(MAX_OCCUPANCY_LEVELS);
-        let mut selecting = Vec::with_capacity(MAX_OCCUPANCY_LEVELS);
-        let mut occupancy = Vec::with_capacity(MAX_OCCUPANCY_LEVELS);
-        let mut listed_inputs = Vec::with_capacity(MAX_OCCUPANCY_LEVELS);
-        let mut previous = cull_pass;
+        let mut maps = Vec::with_capacity(MAX_OCCUPANCY_LEVELS);
         for map in 0..MAX_OCCUPANCY_LEVELS {
             let splat = cx.buffer("occupancy_splat", Lifetime::Kept);
             let listed_draw = cx.buffer("occupancy_draw", Lifetime::Kept);
-            let select = cx.pass(SELECTS[map]).after(previous).id();
-            let drawn = cx
-                .pass(MAPS[map])
-                .after(select)
-                .color(coverage, Access::Load)
-                .color(heights, Access::Load)
-                .id();
-            previous = drawn;
-            selecting.push(cx.compute_pipeline(
-                select,
-                occupancy_maps::SELECT_COVERS,
-                &[
-                    (occupancy_maps::SPLAT, Bind::Buffer(splat)),
-                    (occupancy_maps::RECORDS, Bind::Buffer(records)),
-                    (occupancy_maps::POSES, Bind::Buffer(poses)),
-                    (occupancy_maps::COVERS, Bind::Buffer(covers)),
-                    (occupancy_maps::LISTING, Bind::Buffer(listed)),
-                    (occupancy_maps::LISTED_DRAW, Bind::Buffer(listed_draw)),
-                ],
-            )?);
-            occupancy.push(Self::map_pipelines(
+            maps.push(Self::map_pipelines(
                 cx,
                 map,
-                (drawn, splat),
+                occupancy,
+                (splat, listed_draw),
                 (records, poses, covers, listed),
                 (coverage, heights, unfiner),
             )?);
-            listed_inputs.push(cx.draw_input(drawn, listed_draw));
-            selects.push(select);
-            maps.push(drawn);
             splats.push(splat);
             listed_draws.push(listed_draw);
         }
-        let with_ids = [VertexLayout::Mesh, VertexLayout::Buffer(IDS)];
-        let object_vars = (draw::POSES, draw::COLORS, draw::GROUNDS);
-        let object_buffers = (poses, colors, grounds);
-        let lit_desc = |vertex| RenderPipeline {
-            vertex,
-            fragment: Some(draw::FS_OBJECT),
-            debug: None,
-            vertices: &with_ids,
-            primitive: wgpu::PrimitiveState::default(),
-            depth: DepthUse::Write {
-                bias: wgpu::DepthBiasState::default(),
-            },
-            blend: None,
-            writes: wgpu::ColorWrites::ALL,
-        };
-        let depth_desc = |vertex, fragment| RenderPipeline {
-            vertex,
-            fragment,
-            debug: None,
-            vertices: &with_ids,
-            primitive: wgpu::PrimitiveState::default(),
-            depth: DepthUse::Write {
-                bias: wgpu::DepthBiasState::default(),
-            },
-            blend: None,
-            writes: wgpu::ColorWrites::empty(),
-        };
-        let lit = [
-            cx.render_pipeline(
-                MainView,
-                &lit_desc(draw::VS_OBJECT),
-                &objects(object_vars, object_buffers),
-            )?,
-            cx.render_pipeline(
-                MainView,
-                &lit_desc(draw::VS_OBJECT_FADING),
-                &objects(object_vars, object_buffers),
-            )?,
-        ];
-        let prepass = [
-            [
-                cx.render_pipeline(
-                    MainView,
-                    &depth_desc(draw::VS_OBJECT, None),
-                    &objects(object_vars, object_buffers),
-                )?,
-                cx.render_pipeline(
-                    MainView,
-                    &depth_desc(draw::VS_OBJECT_FADING, None),
-                    &objects(object_vars, object_buffers),
-                )?,
-            ],
-            [
-                cx.render_pipeline(
-                    MainView,
-                    &depth_desc(draw::VS_OBJECT, Some(draw::FS_MASKED_DEPTH)),
-                    &objects(object_vars, object_buffers),
-                )?,
-                cx.render_pipeline(
-                    MainView,
-                    &depth_desc(draw::VS_OBJECT_FADING, Some(draw::FS_MASKED_DEPTH)),
-                    &objects(object_vars, object_buffers),
-                )?,
-            ],
-        ];
+        let lit = Self::lit_pipelines(cx, (poses, colors, grounds))?;
         let caster_desc = |vertex, fragment| RenderPipeline {
             vertex,
             fragment,
             debug: None,
-            vertices: &with_ids,
+            vertices: CASTER_STREAMS,
             primitive: wgpu::PrimitiveState::default(),
             depth: DepthUse::Write { bias: CASTER_BIAS },
             blend: None,
@@ -888,15 +1003,34 @@ impl GpuPart for ScatterGpu {
                 &caster_bound(),
             )?,
         ];
-        let main_ids = cx.draw_input(MainView, ids);
-        let main_args = cx.draw_input(MainView, draws);
-        let caster_ids = cx.draw_input(ShadowCasters, ids);
-        let caster_args = cx.draw_input(ShadowCasters, draws);
+        let shadow_card = cx.render_pipeline(
+            ShadowCasters,
+            &RenderPipeline {
+                vertex: casters::VS_IMPOSTOR_CARD,
+                fragment: Some(casters::FS_IMPOSTOR_CARD),
+                debug: None,
+                vertices: SHADOW_CARD_STREAMS,
+                primitive: wgpu::PrimitiveState::default(),
+                depth: DepthUse::Write { bias: CASTER_BIAS },
+                blend: None,
+                writes: wgpu::ColorWrites::empty(),
+            },
+            &[(casters::POSES, Bind::Buffer(poses))],
+        )?;
+        let inputs = Inputs {
+            ids: cx.draw_input(MainView, ids),
+            args: cx.draw_input(MainView, draws),
+            records: cx.draw_input(MainView, debug_records),
+            cards: cx.draw_input(MainView, cards),
+            card_args: cx.draw_input(MainView, card_args),
+            caster_ids: cx.draw_input(ShadowCasters, ids),
+            caster_args: cx.draw_input(ShadowCasters, draws),
+            caster_cards: cx.draw_input(ShadowCasters, cards),
+            caster_card_args: cx.draw_input(ShadowCasters, card_args),
+        };
         Ok(Self {
-            snap: snap_pass,
-            cull: cull_pass,
-            selects,
-            maps,
+            scatter,
+            occupancy,
             snap_uniform,
             frame,
             views,
@@ -909,6 +1043,8 @@ impl GpuPart for ScatterGpu {
             grounds,
             cards,
             card_args,
+            placed_groups,
+            debug_records,
             covers,
             listed,
             splats,
@@ -920,23 +1056,19 @@ impl GpuPart for ScatterGpu {
             unfiner,
             snapping,
             culling,
-            selecting,
-            occupancy,
-            listed_inputs,
+            maps,
             lit,
-            prepass,
             casting,
-            main_ids,
-            main_args,
-            caster_ids,
-            caster_args,
+            shadow_card,
+            inputs,
+            records_written: false,
             held: Held::default(),
         })
     }
 
     fn prepare(
         &mut self,
-        (state, windows, far, view, detail, maps, tiles, ground, residency): SystemParamItem<
+        (state, windows, far, view, tiles, ground, residency): SystemParamItem<
             '_,
             '_,
             Self::Reads,
@@ -944,20 +1076,28 @@ impl GpuPart for ScatterGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         if state.is_added() {
-            self.held.uploaded = None;
-            self.held.groups_revision = None;
-            self.held.covers_revision = None;
+            self.held = Held::default();
+        }
+        let words = record_words();
+        cx.allocate_buffer(
+            self.debug_records,
+            std::mem::size_of_val(words.as_slice()) as u64,
+        );
+        if !self.records_written {
+            cx.write(self.debug_records, 0, &words);
+            self.records_written = true;
         }
         self.write_slots(cx, &state);
         if self.held.groups_revision != Some(state.groups_revision) {
-            self.set_groups(cx, &state);
-            self.held.groups_revision = Some(state.groups_revision);
+            self.set_groups(&state);
         }
         for group in &mut self.held.groups {
             for (mesh, resident) in group.meshes.iter_mut().chain(&mut group.casters) {
                 *resident = residency.resident(*mesh);
             }
+            group.material_resident = residency.material_resident(group.material);
         }
+        self.write_placed_groups(cx, &state);
         if far.is_changed() {
             let bases = std::mem::size_of_val(far.bases.as_slice()) as u64;
             let entries = std::mem::size_of_val(far.entries.as_slice()) as u64;
@@ -970,47 +1110,25 @@ impl GpuPart for ScatterGpu {
                 cx.write(self.far_entries, 0, &far.entries);
             }
         }
-        let terrains = tiles.terrains.len() as u32;
-        let snapping = terrains > 0
-            && self.held.resident > 0
-            && (self.held.slots_written || tiles.is_changed() || ground.is_changed());
-        cx.allocate_buffer(self.snap_uniform, size_of::<Snap>() as u64);
-        if snapping {
-            let snap = Snap {
-                counts: [self.held.objects, terrains, 0, 0],
-                eye: view.detail_eye().extend(0.0).to_array(),
-            };
-            cx.write(self.snap_uniform, 0, &[snap]);
-            self.held.slots_written = false;
-        }
-        self.prepare_cull(cx, (&*view, &*detail, &*maps), state.fade);
+        self.prepare_snap(cx, (&*state, &*view), (&tiles, &ground));
+        self.prepare_cull(cx, &state);
         if self.held.prepared && self.held.objects > 0 {
-            if snapping {
-                cx.run(self.snap);
-            }
-            cx.run(self.cull);
+            cx.run(self.scatter);
         }
-        self.prepare_occupancy(cx, &windows);
+        self.prepare_occupancy(cx, &windows, state.room);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        let groups = [self.held.objects.div_ceil(SCATTER_GROUP), 1, 1];
-        if pass == self.snap {
-            return cx.dispatch(&self.snapping, Count::Groups(groups));
-        }
-        if pass == self.cull {
-            return cx.dispatch(&self.culling, Count::Groups(groups));
-        }
-        for map in 0..MAX_OCCUPANCY_LEVELS {
-            if pass == self.selects[map] {
-                return cx.dispatch(
-                    &self.selecting[map],
-                    Count::Groups([self.held.workgroups, 1, 1]),
-                );
+        if pass == self.scatter {
+            let groups = [self.held.objects.div_ceil(SCATTER_GROUP), 1, 1];
+            if self.held.snapping {
+                cx.dispatch(&self.snapping, Count::Groups(groups));
             }
-            if pass == self.maps[map] {
-                return self.encode_map(map, cx);
-            }
+            cx.dispatch(&self.culling, Count::Groups(groups));
+            return 0;
+        }
+        if pass == self.occupancy {
+            self.encode_maps(cx);
         }
         0
     }

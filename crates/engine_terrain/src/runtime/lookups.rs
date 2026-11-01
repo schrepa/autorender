@@ -1,8 +1,9 @@
 use super::operations::{coordinate, reply};
 use super::*;
 use crate::{HydrologySample, PATH_FAR};
-use engine_core::Operation;
 use engine_core::bounds::MAX_POINTS;
+use engine_core::{Joined, Operation, SceneIds};
+use engine_places::terrain::TerrainLayers;
 use engine_places::water::{WaterBody, WaterKind, WaterSample};
 use serde_json::Value;
 
@@ -17,16 +18,18 @@ impl Operation for TerrainHeightQuery {
     const NAME: &'static str = "terrain_height";
     type Params = (
         Res<'static, Terrains>,
-        Res<'static, TerrainStats>,
+        SceneIds<'static, 'static>,
+        Joined<'static, TerrainLayers>,
         Query<'static, 'static, &'static WaterBody>,
     );
     type Request = Self;
 
     fn run(
-        (terrains, stats, bodies): SystemParamItem<'_, '_, Self::Params>,
+        (terrains, ids, kinds, bodies): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
-        heights((&terrains, &stats, &bodies), &request.points)
+        let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
+        heights((&terrains, &ids, &kinds), &bodies, &request.points)
     }
 }
 
@@ -36,23 +39,43 @@ pub struct TerrainRouteQuery {
     pub from: [f64; 2],
     pub to: [f64; 2],
     #[serde(default)]
+    #[schemars(transform = route_rule("level"))]
     pub level: Option<u32>,
     #[serde(default)]
+    #[schemars(transform = route_rule("max_grade"))]
     pub max_grade: Option<f64>,
     #[serde(default)]
+    #[schemars(transform = route_rule("grade_cost"))]
     pub grade_cost: Option<f64>,
     #[serde(default)]
+    #[schemars(transform = route_rule("water_cost"))]
     pub water_cost: Option<f64>,
     #[serde(default)]
+    #[schemars(transform = route_rule("turn_cost"))]
     pub turn_cost: Option<f64>,
+}
+
+fn route_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
+    let state =
+        engine_core::fields::stated(RouteOptions::rule_of(field).expect("route_rule_declared"));
+    let default = serde_json::to_value(RouteOptions::default()).expect("route_options_serialize")
+        [field]
+        .clone();
+    move |schema| {
+        state(schema);
+        schema.insert("default".into(), default.clone());
+    }
 }
 
 impl Operation for TerrainRouteQuery {
     const NAME: &'static str = "terrain_route";
-    type Params = Res<'static, Terrains>;
+    type Params = (Res<'static, Terrains>, SceneIds<'static, 'static>);
     type Request = Self;
 
-    fn run(terrains: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<Value, Error> {
+    fn run(
+        (terrains, ids): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Value, Error> {
         let Self {
             from,
             to,
@@ -88,7 +111,7 @@ impl Operation for TerrainRouteQuery {
         let origin = Vec2::new(terrain.origin.x, terrain.origin.z);
         let route = terrains.route(sample.terrain, from, to, &options);
         Ok(reply(TerrainRouteResult {
-            terrain: terrain_key(sample.terrain),
+            terrain: terrain_key(&ids, sample.terrain),
             options,
             origin: origin.to_array(),
             route: route.map(|route| RouteFound {
@@ -112,7 +135,8 @@ fn water_at(bodies: &Query<'_, '_, &WaterBody>, point: Vec3) -> Option<WaterSamp
 }
 
 fn heights(
-    (terrains, stats, bodies): (&Terrains, &TerrainStats, &Query<'_, '_, &WaterBody>),
+    (terrains, ids, kinds): (&Terrains, &SceneIds<'_, '_>, &[&'static LayerKind]),
+    bodies: &Query<'_, '_, &WaterBody>,
     points: &[[f64; 2]],
 ) -> Result<Value, Error> {
     if points.is_empty() || points.len() > MAX_POINTS {
@@ -127,7 +151,7 @@ fn heights(
             let x = coordinate(point[0], &format!("$.points[{index}][0]"))?;
             let z = coordinate(point[1], &format!("$.points[{index}][1]"))?;
             Ok(terrains.sample(x, z).map(|sample| {
-                let found = terrains.layers(sample.terrain).and_then(|layers| {
+                let found = terrains.layers(sample.terrain, kinds).and_then(|layers| {
                     let terrain = terrains.terrain(sample.terrain)?;
                     let water = layers.hydrology()?;
                     let local = (x - terrain.origin.x, z - terrain.origin.z);
@@ -139,13 +163,13 @@ fn heights(
                         surface: water.surface,
                         depth: water.depth,
                     });
-                let path = terrains.layers(sample.terrain).and_then(|layers| {
+                let path = terrains.layers(sample.terrain, kinds).and_then(|layers| {
                     let terrain = terrains.terrain(sample.terrain)?;
                     let road = layers.path_at(x - terrain.origin.x, z - terrain.origin.z);
                     (road.distance < PATH_FAR).then_some(road.edge())
                 });
                 HeightSample {
-                    terrain: terrain_key(sample.terrain),
+                    terrain: terrain_key(ids, sample.terrain),
                     height: sample.height,
                     normal: sample.normal.to_array(),
                     hole: sample.hole,
@@ -159,7 +183,7 @@ fn heights(
         .collect::<Result<Vec<_>, Error>>()?;
     Ok(reply(TerrainHeightResult {
         samples,
-        stats: stats.clone(),
+        stats: terrains.stats(),
     }))
 }
 

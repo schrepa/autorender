@@ -1,81 +1,18 @@
 use bytemuck::Zeroable;
-use engine_terrain::shallow_water::CELL_MEANS;
-use engine_terrain::{BLOCK_CELLS, BLOCK_GROUND, StoredBlocks};
-
-use crate::bindings::WATER_SIM;
-use crate::gpu_layouts::constants::{
-    SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_LIVE_LOOKS, SIM_SLOTS, WATER_SIM_SOURCE_GROUP,
+use engine_core::Error;
+use engine_render::{
+    Bind, Buffer, ComputePipeline, Count, Encode, Install, Lifetime, Pass, Prepare,
 };
-use crate::gpu_layouts::water::{SimFrame, SimSlot, SimSlots, SimTouches};
-use crate::shaders::entry::water_sim;
+
+use crate::gpu::{
+    SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_LIVE_LOOKS, SIM_SLOTS, WATER_SIM_SOURCE_GROUP, SimFrame,
+    SimSlot, SimSlots, SimTouches,
+};
+use crate::shallow_water::CELL_MEANS;
+use crate::water::WaterGpu;
+use crate::{BLOCK_CELLS, BLOCK_GROUND, StoredBlocks};
 
 const DISPATCH_ROW: u32 = 65_535;
-
-pub(crate) struct Kernels {
-    pub(crate) layout: engine_render::pipelines::GroupLayout,
-    pipelines: Option<Pipelines>,
-}
-
-pub(crate) struct Pipelines {
-    exchange: wgpu::ComputePipeline,
-    waves: wgpu::ComputePipeline,
-    seconds: wgpu::ComputePipeline,
-    drain: wgpu::ComputePipeline,
-    update: wgpu::ComputePipeline,
-    source: wgpu::ComputePipeline,
-    touch: wgpu::ComputePipeline,
-    burst: wgpu::ComputePipeline,
-    push: wgpu::ComputePipeline,
-    ended: wgpu::ComputePipeline,
-    tally: wgpu::ComputePipeline,
-    activity: wgpu::ComputePipeline,
-    look: wgpu::ComputePipeline,
-    drawn: wgpu::ComputePipeline,
-}
-
-impl Kernels {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
-        Self {
-            layout: engine_render::pipelines::layout(device, &WATER_SIM),
-            pipelines: None,
-        }
-    }
-
-    pub(crate) fn pipelines(&mut self, device: &wgpu::Device) -> &Pipelines {
-        self.pipelines.get_or_insert_with(|| {
-            let pipeline_layout = engine_render::pipelines::layout_of(
-                device,
-                &crate::pipeline_layouts::WATER_SIM_PIPELINES,
-            );
-            let entry =
-                |entry| engine_render::pipelines::compute_entry(device, &pipeline_layout, entry);
-            Pipelines {
-                exchange: entry(water_sim::sim_exchange),
-                waves: entry(water_sim::sim_waves),
-                seconds: entry(water_sim::sim_seconds),
-                drain: entry(water_sim::sim_drain),
-                update: entry(water_sim::sim_update),
-                source: entry(water_sim::sim_source),
-                touch: entry(water_sim::sim_touch),
-                burst: entry(water_sim::sim_burst),
-                push: entry(water_sim::sim_push),
-                ended: entry(water_sim::sim_ended),
-                tally: entry(water_sim::sim_tally),
-                activity: entry(water_sim::sim_activity),
-                look: entry(water_sim::sim_look),
-                drawn: entry(water_sim::sim_drawn),
-            }
-        })
-    }
-
-    pub(crate) fn created(&self) -> Option<&Pipelines> {
-        self.pipelines.as_ref()
-    }
-
-    pub(crate) fn release(&mut self) {
-        self.pipelines = None;
-    }
-}
 
 pub(crate) fn grid(groups: u32) -> [u32; 2] {
     [groups.min(DISPATCH_ROW), groups.div_ceil(DISPATCH_ROW)]
@@ -133,9 +70,10 @@ fn entries(capacity: Capacity, live: bool) -> Entries {
         table: u64::from(capacity.mapped) + blocks,
         steps: cells + 2 * blocks + 1,
         averages: if live {
-            SIM_LIVE_LOOKS * cells
+            u64::from(SIM_LIVE_LOOKS) * cells
         } else {
-            (SIM_CELL_SUMS + CELL_MEANS as u64) * cells + SIM_BLOCK_LOOKS * blocks
+            (u64::from(SIM_CELL_SUMS) + CELL_MEANS as u64) * cells
+                + u64::from(SIM_BLOCK_LOOKS) * blocks
         },
         ring: 4 * u64::from(capacity.edges),
     }
@@ -180,67 +118,112 @@ pub(crate) fn live_largest_bytes(capacity: Capacity) -> u64 {
     largest(capacity, true)
 }
 
-pub(crate) struct SlotBuffers {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Layout {
     pub(crate) capacity: Capacity,
     pub(crate) slots: u32,
-    live: bool,
-    pub(crate) ground: wgpu::Buffer,
-    pub(crate) cells: wgpu::Buffer,
-    pub(crate) depths: wgpu::Buffer,
-    pub(crate) fluxes: wgpu::Buffer,
-    pub(crate) inputs: wgpu::Buffer,
-    pub(crate) blocks: wgpu::Buffer,
-    pub(crate) steps: wgpu::Buffer,
-    pub(crate) averages: wgpu::Buffer,
-    pub(crate) squares: wgpu::Buffer,
-    frames: [wgpu::Buffer; 2],
-    touches: wgpu::Buffer,
-    groups: Vec<wgpu::BindGroup>,
-    touched: Option<[u32; 2]>,
+    pub(crate) live: bool,
 }
 
-impl SlotBuffers {
-    pub(crate) fn new(
-        device: &wgpu::Device,
-        layout: &engine_render::pipelines::GroupLayout,
-        (capacity, slots): (Capacity, u32),
-        live: bool,
-    ) -> Self {
-        let entries = entries(capacity, live);
-        let all = u64::from(slots);
-        let storage = |label: &str, bytes: u64, extra: wgpu::BufferUsages| {
-            engine_render::buffers::storage(device, label, bytes, extra)
-        };
-        let none = wgpu::BufferUsages::empty();
-        let ground = storage(
-            "engine/water-sim-ground",
-            all * entries.ground * 4,
-            wgpu::BufferUsages::COPY_SRC,
-        );
-        let cells = storage("engine/water-sim-cells", all * 2 * entries.cells * 16, none);
-        let depths = storage("engine/water-sim-depths", all * entries.cells * 8, none);
-        let fluxes = storage("engine/water-sim-fluxes", all * entries.faces * 16, none);
-        let inputs = inputs(device, (capacity, slots), live);
-        let blocks = storage("engine/water-sim-blocks", all * entries.table * 4, none);
-        let steps = storage("engine/water-sim-steps", all * entries.steps * 8, none);
-        let averages = storage(
-            "engine/water-sim-averages",
-            all * entries.averages * 16,
-            wgpu::BufferUsages::COPY_SRC,
-        );
-        let uniform = |label: &str, bytes: usize| {
-            engine_render::buffers::uniform(device, label, bytes as u64)
-        };
-        let squares = uniform("engine/water-sim-slots", size_of::<SimSlots>());
-        let frames = [
-            uniform("engine/water-sim-first", size_of::<SimFrame>()),
-            uniform("engine/water-sim-second", size_of::<SimFrame>()),
-        ];
-        let touches = uniform("engine/water-sim-touches", size_of::<SimTouches>());
-        let mut buffers = Self {
-            capacity,
-            slots,
-            live,
+impl Layout {
+    fn entries(&self) -> Entries {
+        entries(self.capacity, self.live)
+    }
+
+    pub(crate) fn cells_at(&self, slot: u32) -> u64 {
+        u64::from(slot) * 2 * self.held()
+    }
+
+    pub(crate) fn ground_at(&self, slot: u32) -> u64 {
+        u64::from(slot) * self.entries().ground
+    }
+
+    pub(crate) fn sources_at(&self, slot: u32) -> u64 {
+        u64::from(slot) * u64::from(self.capacity.sources)
+    }
+
+    pub(crate) fn ring_at(&self, slot: u32) -> u64 {
+        u64::from(self.slots) * u64::from(self.capacity.sources)
+            + u64::from(slot) * self.entries().ring
+    }
+
+    pub(crate) fn table_at(&self, slot: u32) -> u64 {
+        u64::from(slot) * self.entries().table
+    }
+
+    pub(crate) fn steps_at(&self, slot: u32) -> u64 {
+        u64::from(slot) * self.entries().steps
+    }
+
+    pub(crate) fn averages_at(&self, slot: u32) -> u64 {
+        u64::from(slot) * self.entries().averages
+    }
+
+    pub(crate) fn held(&self) -> u64 {
+        self.entries().cells
+    }
+
+    pub(crate) fn frames(&self) -> [SimFrame; 2] {
+        let capacity = self.capacity;
+        [0, 1].map(|stage| SimFrame {
+            stage: [stage, self.slots, capacity.blocks, capacity.mapped],
+            inputs: [capacity.sources, capacity.edges, 0, 0],
+        })
+    }
+
+    pub(crate) fn step_tails(&self) -> Vec<u64> {
+        let counted = self.held() + 2 * u64::from(self.capacity.blocks);
+        (0..self.slots)
+            .map(|slot| (self.steps_at(slot) + counted) * 8)
+            .collect()
+    }
+}
+
+pub(crate) fn squares(written: &[SimSlot]) -> SimSlots {
+    let mut all = SimSlots {
+        slot: [SimSlot::zeroed(); SIM_SLOTS as usize],
+    };
+    for (slot, square) in all.slot.iter_mut().zip(written) {
+        *slot = *square;
+    }
+    all
+}
+
+pub(crate) struct SlotHandles {
+    pub(crate) ground: Buffer<WaterGpu>,
+    pub(crate) cells: Buffer<WaterGpu>,
+    pub(crate) depths: Buffer<WaterGpu>,
+    pub(crate) fluxes: Buffer<WaterGpu>,
+    pub(crate) inputs: Buffer<WaterGpu>,
+    pub(crate) blocks: Buffer<WaterGpu>,
+    pub(crate) steps: Buffer<WaterGpu>,
+    pub(crate) averages: Buffer<WaterGpu>,
+    pub(crate) squares: Buffer<WaterGpu>,
+    pub(crate) frames: [Buffer<WaterGpu>; 2],
+    pub(crate) touches: Buffer<WaterGpu>,
+    layout: Option<Layout>,
+}
+
+fn zeroed(buffer: Buffer<WaterGpu>, bytes: u64, cx: &mut Prepare<'_, WaterGpu>) {
+    let words = (bytes.max(16).next_multiple_of(4) / 4) as usize;
+    cx.write(buffer, 0, &vec![0_u32; words]);
+}
+
+impl SlotHandles {
+    pub(crate) fn install(cx: &mut Install<'_, WaterGpu>, labels: [&'static str; 12]) -> Self {
+        let kept = |cx: &mut Install<'_, WaterGpu>, label| cx.buffer(label, Lifetime::Kept);
+        let ground = kept(cx, labels[0]);
+        let cells = kept(cx, labels[1]);
+        let depths = kept(cx, labels[2]);
+        let fluxes = kept(cx, labels[3]);
+        let inputs = kept(cx, labels[4]);
+        let blocks = kept(cx, labels[5]);
+        let steps = kept(cx, labels[6]);
+        let averages = kept(cx, labels[7]);
+        let squares = kept(cx, labels[8]);
+        let frames = [kept(cx, labels[9]), kept(cx, labels[10])];
+        let touches = kept(cx, labels[11]);
+        Self {
             ground,
             cells,
             depths,
@@ -252,257 +235,246 @@ impl SlotBuffers {
             squares,
             frames,
             touches,
-            groups: Vec::new(),
-            touched: None,
-        };
-        buffers.bind(device, layout);
-        buffers
-    }
-
-    fn bind(&mut self, device: &wgpu::Device, layout: &engine_render::pipelines::GroupLayout) {
-        self.groups = self
-            .frames
-            .iter()
-            .map(|frame| {
-                engine_render::pipelines::group(
-                    device,
-                    "engine/water-sim",
-                    &WATER_SIM,
-                    layout,
-                    &[
-                        engine_render::buffers::entry("frame", frame),
-                        engine_render::buffers::entry("sim_ground", &self.ground),
-                        engine_render::buffers::entry("sim_cells", &self.cells),
-                        engine_render::buffers::entry("sim_depths", &self.depths),
-                        engine_render::buffers::entry("sim_fluxes", &self.fluxes),
-                        engine_render::buffers::entry("sim_inputs", &self.inputs),
-                        engine_render::buffers::entry("sim_blocks", &self.blocks),
-                        engine_render::buffers::entry("sim_steps", &self.steps),
-                        engine_render::buffers::entry("sim_slots", &self.squares),
-                        engine_render::buffers::entry("sim_averages", &self.averages),
-                        engine_render::buffers::entry("sim_touches", &self.touches),
-                    ],
-                )
-            })
-            .collect();
-    }
-
-    pub(crate) fn hold_sources(
-        &mut self,
-        device: &wgpu::Device,
-        layout: &engine_render::pipelines::GroupLayout,
-        sources: usize,
-    ) -> bool {
-        if sources as u32 <= self.capacity.sources {
-            return false;
-        }
-        self.capacity.sources = (sources as u32).next_power_of_two();
-        self.inputs = inputs(device, (self.capacity, self.slots), self.live);
-        self.bind(device, layout);
-        true
-    }
-
-    pub(crate) fn write_frames(&self, queue: &engine_render::gpu_calls::Queue) {
-        let capacity = self.capacity;
-        for (stage, buffer) in self.frames.iter().enumerate() {
-            let frame = SimFrame {
-                stage: [stage as u32, self.slots, capacity.blocks, capacity.mapped],
-                inputs: [capacity.sources, capacity.edges, 0, 0],
-            };
-            queue.write_buffer(buffer, 0, bytemuck::bytes_of(&frame));
-        }
-        let counted = self.held() + 2 * u64::from(capacity.blocks);
-        for slot in 0..self.slots {
-            let at = (self.steps_at(slot) + counted) * 8;
-            queue.write_buffer(&self.steps, at, bytemuck::cast_slice(&[0.0_f32; 2]));
+            layout: None,
         }
     }
 
-    pub(crate) fn write_squares(
-        &self,
-        queue: &engine_render::gpu_calls::Queue,
-        squares: &[SimSlot],
-    ) {
-        let mut all = SimSlots {
-            slot: [SimSlot::zeroed(); SIM_SLOTS],
-        };
-        for (slot, square) in all.slot.iter_mut().zip(squares) {
-            *slot = *square;
+    pub(crate) fn hold(&mut self, layout: Layout, fresh: bool, cx: &mut Prepare<'_, WaterGpu>) {
+        let entries = layout.entries();
+        let all = u64::from(layout.slots);
+        let rings = if layout.live { all * entries.ring } else { 0 };
+        let sizes = [
+            (self.ground, all * entries.ground * 4),
+            (self.cells, all * 2 * entries.cells * 16),
+            (self.depths, all * entries.cells * 8),
+            (self.fluxes, all * entries.faces * 16),
+            (
+                self.inputs,
+                (all * u64::from(layout.capacity.sources) + rings) * 16,
+            ),
+            (self.blocks, all * entries.table * 4),
+            (self.steps, all * entries.steps * 8),
+            (self.averages, all * entries.averages * 16),
+        ];
+        let inputs_grew = self
+            .layout
+            .is_some_and(|held| held.capacity.sources != layout.capacity.sources);
+        for (at, (buffer, bytes)) in sizes.into_iter().enumerate() {
+            cx.allocate_buffer(buffer, bytes);
+            if fresh || (at == 4 && inputs_grew) {
+                zeroed(buffer, bytes, cx);
+            }
         }
-        queue.write_buffer(&self.squares, 0, bytemuck::bytes_of(&all));
+        cx.allocate_buffer(self.squares, size_of::<SimSlots>() as u64);
+        for frame in self.frames {
+            cx.allocate_buffer(frame, size_of::<SimFrame>() as u64);
+        }
+        cx.allocate_buffer(self.touches, size_of::<SimTouches>() as u64);
+        self.layout = Some(layout);
     }
 
-    pub(crate) fn write_touches(
-        &mut self,
-        queue: &engine_render::gpu_calls::Queue,
-        touches: Option<&SimTouches>,
-    ) {
-        self.touched = touches.map(|touches| [touches.blocks[2], touches.blocks[3]]);
-        let none = SimTouches::zeroed();
-        queue.write_buffer(
-            &self.touches,
-            0,
-            bytemuck::bytes_of(touches.unwrap_or(&none)),
-        );
+    pub(crate) fn release(&mut self, cx: &mut Prepare<'_, WaterGpu>) {
+        for buffer in [
+            self.ground,
+            self.cells,
+            self.depths,
+            self.fluxes,
+            self.inputs,
+            self.blocks,
+            self.steps,
+            self.averages,
+        ] {
+            cx.allocate_buffer(buffer, 16);
+        }
+        cx.allocate_buffer(self.squares, size_of::<SimSlots>() as u64);
+        for frame in self.frames {
+            cx.allocate_buffer(frame, size_of::<SimFrame>() as u64);
+        }
+        cx.allocate_buffer(self.touches, size_of::<SimTouches>() as u64);
+        self.layout = None;
+    }
+
+    pub(crate) fn write_frames(&self, layout: &Layout, cx: &mut Prepare<'_, WaterGpu>) {
+        for (buffer, frame) in self.frames.iter().zip(layout.frames()) {
+            cx.write(*buffer, 0, &[frame]);
+        }
+        for at in layout.step_tails() {
+            cx.write(self.steps, at, &[0.0_f32; 2]);
+        }
     }
 
     pub(crate) fn write_table(
         &self,
-        queue: &engine_render::gpu_calls::Queue,
+        layout: &Layout,
         slot: u32,
         stored: &StoredBlocks,
+        cx: &mut Prepare<'_, WaterGpu>,
     ) {
-        let at = self.table_at(slot);
-        let places = at + u64::from(self.capacity.mapped);
-        queue.write_buffer(&self.blocks, at * 4, bytemuck::cast_slice(&stored.table));
-        queue.write_buffer(
-            &self.blocks,
-            places * 4,
-            bytemuck::cast_slice(&stored.places),
-        );
+        let at = layout.table_at(slot);
+        let places = at + u64::from(layout.capacity.mapped);
+        cx.write(self.blocks, at * 4, &stored.table);
+        cx.write(self.blocks, places * 4, &stored.places);
     }
 
-    pub(crate) fn cells_at(&self, slot: u32) -> u64 {
-        u64::from(slot) * 2 * self.held()
-    }
-
-    pub(crate) fn ground_at(&self, slot: u32) -> u64 {
-        u64::from(slot) * entries(self.capacity, self.live).ground
-    }
-
-    pub(crate) fn sources_at(&self, slot: u32) -> u64 {
-        u64::from(slot) * u64::from(self.capacity.sources)
-    }
-
-    pub(crate) fn ring_at(&self, slot: u32) -> u64 {
-        let ring = entries(self.capacity, self.live).ring;
-        u64::from(self.slots) * u64::from(self.capacity.sources) + u64::from(slot) * ring
-    }
-
-    pub(crate) fn table_at(&self, slot: u32) -> u64 {
-        u64::from(slot) * entries(self.capacity, self.live).table
-    }
-
-    pub(crate) fn steps_at(&self, slot: u32) -> u64 {
-        u64::from(slot) * entries(self.capacity, self.live).steps
-    }
-
-    pub(crate) fn averages_at(&self, slot: u32) -> u64 {
-        u64::from(slot) * entries(self.capacity, self.live).averages
-    }
-
-    pub(crate) fn held(&self) -> u64 {
-        entries(self.capacity, self.live).cells
-    }
-
-    pub(crate) fn bytes(&self) -> u64 {
-        [
-            &self.ground,
-            &self.cells,
-            &self.depths,
-            &self.fluxes,
-            &self.inputs,
-            &self.blocks,
-            &self.steps,
-            &self.averages,
+    fn bound(&self, stage: usize) -> Vec<(engine_core::Var, Bind<WaterGpu>)> {
+        use crate::shaders::water::sim;
+        vec![
+            (sim::FRAME, Bind::Buffer(self.frames[stage])),
+            (sim::SIM_GROUND, Bind::Buffer(self.ground)),
+            (sim::SIM_CELLS, Bind::Buffer(self.cells)),
+            (sim::SIM_DEPTHS, Bind::Buffer(self.depths)),
+            (sim::SIM_FLUXES, Bind::Buffer(self.fluxes)),
+            (sim::SIM_INPUTS, Bind::Buffer(self.inputs)),
+            (sim::SIM_BLOCKS, Bind::Buffer(self.blocks)),
+            (sim::SIM_STEPS, Bind::Buffer(self.steps)),
+            (sim::SIM_SLOTS, Bind::Buffer(self.squares)),
+            (sim::SIM_AVERAGES, Bind::Buffer(self.averages)),
+            (sim::SIM_TOUCHES, Bind::Buffer(self.touches)),
         ]
-        .iter()
-        .map(|buffer| buffer.size())
-        .sum()
     }
 }
 
-fn inputs(device: &wgpu::Device, (capacity, slots): (Capacity, u32), live: bool) -> wgpu::Buffer {
-    let all = u64::from(slots);
-    let rings = if live {
-        all * entries(capacity, live).ring
-    } else {
-        0
-    };
-    engine_render::buffers::storage(
-        device,
-        "engine/water-sim-inputs",
-        (all * u64::from(capacity.sources) + rings) * 16,
-        wgpu::BufferUsages::empty(),
-    )
+pub(crate) struct Kernels {
+    exchange: [ComputePipeline<WaterGpu>; 2],
+    drain: [ComputePipeline<WaterGpu>; 2],
+    update: [ComputePipeline<WaterGpu>; 2],
+    waves: ComputePipeline<WaterGpu>,
+    seconds: ComputePipeline<WaterGpu>,
+    source: ComputePipeline<WaterGpu>,
+    touch: ComputePipeline<WaterGpu>,
+    burst: ComputePipeline<WaterGpu>,
+    push: ComputePipeline<WaterGpu>,
+    ended: ComputePipeline<WaterGpu>,
+    tally: ComputePipeline<WaterGpu>,
+    activity: ComputePipeline<WaterGpu>,
+    look: ComputePipeline<WaterGpu>,
+    drawn: ComputePipeline<WaterGpu>,
 }
 
-pub(crate) fn encode_steps(
-    pass: &mut wgpu::ComputePass<'_>,
-    pipelines: &Pipelines,
-    buffers: &SlotBuffers,
-    (steps, sourced, settling, bursting): (u32, u32, bool, bool),
-    blocks: u32,
-) {
-    let [cells_x, cells_z] = grid(blocks);
-    let [blocks_x, blocks_z] = grid(blocks.div_ceil(BLOCK_CELLS as u32));
-    let slots = buffers.slots;
-    for _ in 0..steps {
-        if bursting {
-            pass.set_bind_group(0, &buffers.groups[0], &[]);
-            pass.set_pipeline(&pipelines.burst);
-            pass.dispatch_workgroups(cells_x, cells_z, slots);
-            pass.set_pipeline(&pipelines.push);
-            pass.dispatch_workgroups(cells_x, cells_z, slots);
-        }
-        if let Some([touched_x, touched_z]) = buffers.touched {
-            pass.set_bind_group(0, &buffers.groups[0], &[]);
-            pass.set_pipeline(&pipelines.touch);
-            pass.dispatch_workgroups(touched_x, touched_z, 1);
-        }
-        if settling {
-            pass.set_bind_group(0, &buffers.groups[0], &[]);
-            pass.set_pipeline(&pipelines.activity);
-            pass.dispatch_workgroups(blocks_x, blocks_z, slots);
-        }
-        for (stage, group) in buffers.groups.iter().enumerate() {
-            pass.set_bind_group(0, group, &[]);
-            pass.set_pipeline(&pipelines.exchange);
-            pass.dispatch_workgroups(cells_x, cells_z, slots);
-            if stage == 0 && settling {
-                pass.set_pipeline(&pipelines.waves);
-                pass.dispatch_workgroups(cells_x, cells_z, slots);
-                pass.set_pipeline(&pipelines.seconds);
-                pass.dispatch_workgroups(cells_x, cells_z, slots);
+impl Kernels {
+    pub(crate) fn install(
+        cx: &mut Install<'_, WaterGpu>,
+        pass: Pass<WaterGpu>,
+        handles: &SlotHandles,
+    ) -> Result<Self, Error> {
+        use crate::shaders::water::sim;
+        let mut entry = |entry, stage: usize| {
+            let bound = crate::water::reached(cx, &[entry], handles.bound(stage));
+            cx.compute_pipeline(pass, entry, &bound)
+        };
+        Ok(Self {
+            exchange: [entry(sim::SIM_EXCHANGE, 0)?, entry(sim::SIM_EXCHANGE, 1)?],
+            drain: [entry(sim::SIM_DRAIN, 0)?, entry(sim::SIM_DRAIN, 1)?],
+            update: [entry(sim::SIM_UPDATE, 0)?, entry(sim::SIM_UPDATE, 1)?],
+            waves: entry(sim::SIM_WAVES, 0)?,
+            seconds: entry(sim::SIM_SECONDS, 0)?,
+            source: entry(sim::SIM_SOURCE, 1)?,
+            touch: entry(sim::SIM_TOUCH, 0)?,
+            burst: entry(sim::SIM_BURST, 0)?,
+            push: entry(sim::SIM_PUSH, 0)?,
+            ended: entry(sim::SIM_ENDED, 1)?,
+            tally: entry(sim::SIM_TALLY, 1)?,
+            activity: entry(sim::SIM_ACTIVITY, 0)?,
+            look: entry(sim::SIM_LOOK, 0)?,
+            drawn: entry(sim::SIM_DRAWN, 0)?,
+        })
+    }
+
+    pub(crate) fn encode_steps(
+        &self,
+        cx: &mut Encode<'_, WaterGpu>,
+        (steps, sourced, settling, bursting): (u32, u32, bool, bool),
+        (blocks, slots, touched): (u32, u32, Option<[u32; 2]>),
+    ) -> u32 {
+        let [cells_x, cells_z] = grid(blocks);
+        let [blocks_x, blocks_z] = grid(blocks.div_ceil(BLOCK_CELLS as u32));
+        let run = |cx: &mut Encode<'_, WaterGpu>, pipeline: &ComputePipeline<WaterGpu>, groups| {
+            cx.dispatch(pipeline, Count::Groups(groups))
+        };
+        let mut dispatched = 0;
+        for _ in 0..steps {
+            if bursting {
+                dispatched += run(cx, &self.burst, [cells_x, cells_z, slots]);
+                dispatched += run(cx, &self.push, [cells_x, cells_z, slots]);
             }
-            pass.set_pipeline(&pipelines.drain);
-            pass.dispatch_workgroups(cells_x, cells_z, slots);
-            pass.set_pipeline(&pipelines.update);
-            pass.dispatch_workgroups(cells_x, cells_z, slots);
+            if let Some([touched_x, touched_z]) = touched {
+                dispatched += run(cx, &self.touch, [touched_x, touched_z, 1]);
+            }
+            if settling {
+                dispatched += run(cx, &self.activity, [blocks_x, blocks_z, slots]);
+            }
+            for stage in 0..2 {
+                dispatched += run(cx, &self.exchange[stage], [cells_x, cells_z, slots]);
+                if stage == 0 && settling {
+                    dispatched += run(cx, &self.waves, [cells_x, cells_z, slots]);
+                    dispatched += run(cx, &self.seconds, [cells_x, cells_z, slots]);
+                }
+                dispatched += run(cx, &self.drain[stage], [cells_x, cells_z, slots]);
+                dispatched += run(cx, &self.update[stage], [cells_x, cells_z, slots]);
+            }
+            if sourced > 0 {
+                let groups = [sourced.div_ceil(WATER_SIM_SOURCE_GROUP), 1, slots];
+                dispatched += run(cx, &self.source, groups);
+            }
+            dispatched += run(cx, &self.ended, [cells_x, cells_z, slots]);
+            if settling {
+                dispatched += run(cx, &self.tally, [cells_x, cells_z, slots]);
+            }
         }
-        if sourced > 0 {
-            pass.set_pipeline(&pipelines.source);
-            pass.dispatch_workgroups(sourced.div_ceil(WATER_SIM_SOURCE_GROUP), 1, slots);
-        }
-        pass.set_pipeline(&pipelines.ended);
-        pass.dispatch_workgroups(cells_x, cells_z, slots);
-        if settling {
-            pass.set_pipeline(&pipelines.tally);
-            pass.dispatch_workgroups(cells_x, cells_z, slots);
-        }
+        dispatched
+    }
+
+    pub(crate) fn encode_look(&self, cx: &mut Encode<'_, WaterGpu>, (blocks, slots): (u32, u32)) -> u32 {
+        let [groups_x, groups_z] = grid(blocks);
+        cx.dispatch(&self.look, Count::Groups([groups_x, groups_z, slots]))
+    }
+
+    pub(crate) fn encode_drawn(&self, cx: &mut Encode<'_, WaterGpu>, blocks: u32) -> u32 {
+        let [groups_x, groups_z] = grid(blocks);
+        cx.dispatch(&self.drawn, Count::Groups([groups_x, groups_z, 1]))
     }
 }
 
-pub(crate) fn encode_look(
-    pass: &mut wgpu::ComputePass<'_>,
-    pipelines: &Pipelines,
-    buffers: &SlotBuffers,
-    blocks: u32,
-) {
-    let [groups_x, groups_z] = grid(blocks);
-    pass.set_bind_group(0, &buffers.groups[0], &[]);
-    pass.set_pipeline(&pipelines.look);
-    pass.dispatch_workgroups(groups_x, groups_z, buffers.slots);
+pub(crate) struct SetupHandles {
+    pub(crate) frame: Buffer<WaterGpu>,
+    pub(crate) list: Buffer<WaterGpu>,
+    pub(crate) live: Buffer<WaterGpu>,
 }
 
-pub(crate) fn encode_drawn(
-    pass: &mut wgpu::ComputePass<'_>,
-    pipelines: &Pipelines,
-    buffers: &SlotBuffers,
-    blocks: u32,
-) {
-    let [groups_x, groups_z] = grid(blocks);
-    pass.set_bind_group(0, &buffers.groups[0], &[]);
-    pass.set_pipeline(&pipelines.drawn);
-    pass.dispatch_workgroups(groups_x, groups_z, 1);
+impl SetupHandles {
+    pub(crate) fn install(cx: &mut Install<'_, WaterGpu>, labels: [&'static str; 3]) -> Self {
+        let frame = cx.buffer(labels[0], Lifetime::Kept);
+        let list = cx.buffer(labels[1], Lifetime::Kept);
+        let live = cx.buffer(labels[2], Lifetime::Kept);
+        Self { frame, list, live }
+    }
+
+    pub(crate) fn hold(&self, (room, live_room): (usize, usize), fresh: bool, cx: &mut Prepare<'_, WaterGpu>) {
+        cx.allocate_buffer(self.frame, size_of::<crate::gpu::SimSetup>() as u64);
+        cx.allocate_buffer(self.list, room as u64 * 16);
+        cx.allocate_buffer(self.live, live_room as u64 * 4);
+        if fresh {
+            zeroed(self.list, room as u64 * 16, cx);
+            zeroed(self.live, live_room as u64 * 4, cx);
+        }
+    }
+
+    pub(crate) fn release(&self, cx: &mut Prepare<'_, WaterGpu>) {
+        cx.allocate_buffer(self.frame, size_of::<crate::gpu::SimSetup>() as u64);
+        cx.allocate_buffer(self.list, 16);
+        cx.allocate_buffer(self.live, 16);
+    }
+
+    pub(crate) fn bound(&self, slots: &SlotHandles) -> Vec<(engine_core::Var, Bind<WaterGpu>)> {
+        use crate::shaders::water::setup;
+        vec![
+            (setup::SETUP_FRAME, Bind::Buffer(self.frame)),
+            (setup::SETUP_LIST, Bind::Buffer(self.list)),
+            (setup::SETUP_GROUND, Bind::Buffer(slots.ground)),
+            (setup::SETUP_CELLS, Bind::Buffer(slots.cells)),
+            (setup::SETUP_LOOKS, Bind::Buffer(slots.averages)),
+            (setup::SETUP_EDGES, Bind::Buffer(slots.inputs)),
+            (setup::SETUP_LIVE, Bind::Buffer(self.live)),
+        ]
+    }
 }

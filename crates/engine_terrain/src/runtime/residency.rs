@@ -27,19 +27,6 @@ impl HydrologyState {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct JobFailures {
-    pub count: u64,
-    pub last: Option<(u64, String)>,
-}
-
-impl JobFailures {
-    pub fn record(&mut self, frame: u64, error: String) {
-        self.count += 1;
-        self.last = Some((frame, error));
-    }
-}
-
 pub(super) struct TerrainState {
     pub(super) entity: Entity,
     pub(super) terrain: Terrain,
@@ -74,6 +61,7 @@ pub(super) struct TerrainState {
 pub(super) struct BakeRecord {
     pub(super) job: Option<Ticket>,
     pub(super) failed: Option<u64>,
+    pub(super) asked: bool,
     pub(super) drawn: Option<Arc<[TerrainRiver]>>,
 }
 
@@ -118,13 +106,13 @@ impl TerrainState {
         }
     }
 
-    pub(super) fn update_materials(&mut self, gpu: bool) {
+    pub(super) fn update_materials(&mut self, gpu: bool, kinds: &[&'static LayerKind]) {
         let layers = self
             .baked
             .clone()
             .unwrap_or_else(|| self.terrain.layers.clone());
         let materials = if gpu && layers.unbaked().is_none() {
-            let layers = self.generation(layers);
+            let layers = self.generation(layers, kinds);
             let current = self
                 .surface
                 .as_ref()
@@ -158,6 +146,9 @@ impl TerrainState {
         retired
             .jobs
             .extend(self.cook.into_iter().flat_map(CookTiles::asked));
+        retired
+            .shares
+            .extend(self.recipe.as_ref().map(|recipe| recipe.key));
     }
 
     fn cut_out(&self, local: Vec2) -> bool {
@@ -224,22 +215,32 @@ impl TerrainState {
         self.store.invalidate(generation, under);
     }
 
-    pub(super) fn tile_job(&self, recipe: [u8; 32], key: TileKey) -> TileJob {
+    fn reaching_stamps(&self, key: TileKey) -> impl Iterator<Item = Stamp> + '_ {
         let pyramid = self.terrain.pyramid;
+        self.terrain
+            .edits
+            .iter()
+            .map(|edit| edit.stamp)
+            .filter(move |stamp| reaches(stamp, &pyramid, key))
+    }
+
+    pub(super) fn reaching(&self, key: TileKey) -> Arc<[Stamp]> {
+        self.reaching_stamps(key).collect()
+    }
+
+    pub(super) fn tile_job(&self, recipe: [u8; 32], key: TileKey) -> TileJob {
         TileJob {
             recipe,
             key,
-            stamps: self
-                .terrain
-                .edits
-                .iter()
-                .map(|edit| edit.stamp)
-                .filter(|stamp| reaches(stamp, &pyramid, key))
-                .collect(),
+            stamps: self.reaching_stamps(key).collect(),
         }
     }
 
-    pub(super) fn generation(&mut self, base: Arc<Layers>) -> Arc<Layers> {
+    pub(super) fn generation(
+        &mut self,
+        base: Arc<Layers>,
+        kinds: &[&'static LayerKind],
+    ) -> Arc<Layers> {
         if self.terrain.edits.is_empty() {
             return base;
         }
@@ -249,7 +250,7 @@ impl TerrainState {
             return edited.clone();
         }
         let stamps: Vec<Stamp> = self.terrain.edits.iter().map(|edit| edit.stamp).collect();
-        match crate::layers::with_stamps(&base, &stamps) {
+        match base.with_stamps(&stamps, kinds) {
             Ok(edited) => {
                 let edited = Arc::new(edited);
                 self.edited = Some((base, edited.clone()));
@@ -267,7 +268,7 @@ impl TerrainState {
         if let Some(left) = self.store.leave(key)
             && left.current
         {
-            self.store.keep_in_memory(left.tile, frame);
+            self.store.keep_in_memory(left.tile, left.stamps, frame);
         }
     }
 
@@ -307,18 +308,18 @@ pub struct Terrains {
     pub(super) seconds: f32,
     pub(super) fast_ago: Option<f32>,
     pub(super) loaded: bool,
-    pub(super) stacks: Vec<(Arc<Layers>, [u8; 32])>,
+    pub(super) stacks: Vec<(Arc<Layers>, engine_core::RecordKey)>,
     pub(super) retired: Retired,
     pub(super) restored: u64,
     pub(super) upload_left: u64,
     pub(super) between: u64,
-    pub(crate) refused: Vec<(Entity, Error)>,
     pub(super) epoch: u64,
 }
 
 #[derive(Default)]
 pub(super) struct Retired {
     pub(super) jobs: Vec<Ticket>,
+    pub(super) shares: Vec<engine_core::RecordKey>,
 }
 
 pub(crate) fn reaches(stamp: &Stamp, pyramid: &Pyramid, key: TileKey) -> bool {

@@ -4,14 +4,15 @@ use bevy_ecs::prelude::*;
 use engine_core::math::{max, min, sin_cos};
 use engine_core::{Camera, Projection, View};
 use engine_heightfield::TileKey;
-use engine_places::ground::{Ground, TerrainTiles, TileFace};
+use engine_heightfield::tile::{TILE_STRIDE, on_triangle, tile_cell};
+use engine_places::ground::{TerrainTiles, TileFace};
 use engine_places::water::WaterObstacle;
 use glam::{Vec2, Vec3};
 
 use crate::gpu::SIM_TOUCHES;
 use crate::shallow_water::{live_split, step_seconds};
 use crate::state::{WaterState, WaterTerrain};
-use crate::{BLOCK_SIDE, Footprint, SteadyWater, Water};
+use crate::{BLOCK_SIDE, Footprint, SteadyWater, TileWater, Water};
 
 pub const LIVE_PIXELS: f32 = 4.0;
 pub const LONGEST_FRAME: f64 = 1.0 / 30.0;
@@ -41,6 +42,7 @@ pub struct WaterRead {
     pub key: TileKey,
     pub square: [Vec2; 2],
     pub tile: Option<TileFace>,
+    pub water: Option<Arc<TileWater>>,
     pub settled: Option<Arc<SteadyWater>>,
     pub ready: bool,
 }
@@ -53,6 +55,7 @@ impl WaterRead {
                 (None, None) => true,
                 _ => false,
             }
+            && alike(self.water.as_ref(), other.water.as_ref())
     }
 
     fn same(&self, other: &Self) -> bool {
@@ -168,40 +171,37 @@ pub(crate) fn place_water_windows(
     camera: Res<Camera>,
     view: Res<View>,
     water: Res<Water>,
-    ground: Res<Ground>,
     tiles: Res<TerrainTiles>,
 ) {
     let state = state.bypass_change_detection();
     let budget = water.live_budget;
-    let wanted = (!state.terrains.is_empty()).then_some(0);
-    let height = view.render_size().y;
-    let fov = match camera.projection {
+    let wanted = tiles
+        .terrains
+        .iter()
+        .find(|entry| !entry.surroundings && entry.baked.is_some())
+        .map(|entry| entry.terrain);
+    let height = view.display_size().y;
+    let fov = match camera.sanitized().projection {
         Projection::Perspective {
             vertical_fov_radians,
         } => vertical_fov_radians,
         Projection::Orthographic { .. } => 0.0,
     };
     let eye = view.detail_eye();
-    for (index, terrain) in state.terrains.iter_mut().enumerate() {
+    for terrain in &mut state.terrains {
         let settled = terrain.settled.cell();
-        if Some(index) != wanted || !(settled.is_finite() && settled > 0.0) {
+        if Some(terrain.entity) != wanted || !(settled.is_finite() && settled > 0.0) {
             terrain.window = None;
             continue;
         }
         let cell = live_cell(settled, terrain.pyramid.spacing(0));
         let reach = live_reach(cell, height, fov);
-        let faces = tiles
-            .terrains
-            .iter()
-            .find(|entry| entry.terrain == terrain.entity)
-            .map_or(&[][..], |entry| &entry.tiles[..]);
-        follow(terrain, (&ground, faces), (reach, cell, budget), eye);
+        follow(terrain, (reach, cell, budget), eye);
     }
 }
 
 fn follow(
     state: &mut WaterTerrain,
-    (ground, faces): (&Ground, &[TileFace]),
     (reach, cell, budget): (f32, f32, u32),
     eye: Vec3,
 ) {
@@ -232,7 +232,7 @@ fn follow(
         let at = ((eye - flat - Vec2::splat(0.5 * size)) / snap).round();
         let step = snap_blocks as i64 * i64::from(BLOCK_SIDE);
         let first = [at.x as i64 * step, at.y as i64 * step];
-        let Some(lowest) = lowest(state, ground, first, (cells, cell)) else {
+        let Some(lowest) = lowest(state, first, (cells, cell)) else {
             return;
         };
         let lowest = lowest.floor();
@@ -245,7 +245,7 @@ fn follow(
         });
         (first, datum)
     };
-    let reads = reads(state, faces, first, (cells, cell));
+    let reads = reads(state, first, (cells, cell));
     if let Some(window) = staying {
         let read = window.reads.len() == reads.len()
             && window
@@ -274,9 +274,26 @@ fn follow(
     }));
 }
 
+fn sample_height(state: &WaterTerrain, local: Vec2) -> Option<f32> {
+    let pyramid = &state.pyramid;
+    (0..pyramid.levels()).find_map(|level| {
+        let key = pyramid.tile_at(level, local)?;
+        let face = state.faces.iter().find(|face| face.key == key)?;
+        let (i, j, fu, fv) = tile_cell(face.spacing, local - pyramid.tile_origin(key))?;
+        let stride = TILE_STRIDE as i32;
+        let height = |x: i32, z: i32| face.heights[((z + 1) * stride + x + 1) as usize];
+        let corners = [
+            height(i, j),
+            height(i + 1, j),
+            height(i, j + 1),
+            height(i + 1, j + 1),
+        ];
+        Some(on_triangle(corners, fu, fv))
+    })
+}
+
 fn lowest(
     state: &WaterTerrain,
-    ground: &Ground,
     first: [i64; 2],
     (cells, cell): (u32, f32),
 ) -> Option<f32> {
@@ -288,8 +305,8 @@ fn lowest(
     for j in 0..=steps {
         for i in 0..=steps {
             let local = low + Vec2::new(i as f32, j as f32) * apart;
-            let sample = ground.sample(Vec2::new(state.origin.x, state.origin.z) + local)?;
-            lowest = min(lowest, sample.height - state.origin.y);
+            let height = sample_height(state, local)?;
+            lowest = min(lowest, height);
         }
     }
     Some(state.origin.y + lowest)
@@ -297,7 +314,6 @@ fn lowest(
 
 fn reads(
     state: &WaterTerrain,
-    faces: &[TileFace],
     first: [i64; 2],
     (cells, cell): (u32, f32),
 ) -> Vec<WaterRead> {
@@ -324,16 +340,21 @@ fn reads(
             let middle = corner + Vec2::splat(0.5 * size);
             let tile = (0..pyramid.levels()).find_map(|level| {
                 let held = pyramid.tile_at(level, middle)?;
-                faces.iter().find(|face| face.key == held).cloned()
+                state.faces.iter().find(|face| face.key == held).cloned()
             });
             let held_back = state.rewatered(key);
-            let ready = tile
+            let ready = tile.as_ref().is_some_and(|tile| {
+                tile.key == key && state.settled.ready(key, tile.stamp, held_back)
+            });
+            let water = tile
                 .as_ref()
-                .is_some_and(|tile| tile.key == key && state.settled.ready(key, tile, held_back));
+                .and_then(|tile| state.resident(&tile.key))
+                .and_then(|held| held.water.clone());
             reads.push(WaterRead {
                 key,
                 square: [corner, corner + Vec2::splat(size)],
                 tile,
+                water,
                 settled: state
                     .settled
                     .held

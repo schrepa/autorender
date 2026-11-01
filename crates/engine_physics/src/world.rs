@@ -42,7 +42,7 @@ pub(crate) struct Wanted {
 struct Surroundings<'a> {
     settings: &'a Physics,
     time: &'a FixedTime,
-    wind: &'a Wind,
+    wind: Option<&'a Wind>,
     ground: &'a Ground,
     solids: &'a Solids,
     waters: &'a [&'a WaterBody],
@@ -261,19 +261,24 @@ impl PhysicsWorld {
             }
         }
         let reach = reach(&self.bodies, solver);
-        let bodies = &self.bodies;
-        self.statics.sync(solver, around.solids, reach, |entity| {
-            bodies
-                .binary_search_by_key(&entity, |body| body.entity)
-                .is_ok()
-        });
+        if around.solids.collides() {
+            let bodies = &self.bodies;
+            self.statics.sync(solver, around.solids, reach, |entity| {
+                bodies
+                    .binary_search_by_key(&entity, |body| body.entity)
+                    .is_ok()
+            });
+        }
         hold(&mut self.bodies, &self.statics, solver, around.ground);
         let samples = push(&mut self.bodies, solver, around);
-        solver.step(
-            time.delta_seconds,
-            Vec3::from_array(settings.gravity),
-            settings.iterations,
-        );
+        {
+            let _profile = engine_core::profile::span("physics", "solve");
+            solver.step(
+                time.delta_seconds,
+                Vec3::from_array(settings.gravity),
+                settings.iterations,
+            );
+        }
         write(&mut self.bodies, solver, poses);
         let count =
             |keep: fn(&Body) -> bool| self.bodies.iter().filter(|body| keep(body)).count() as u32;
@@ -289,7 +294,6 @@ impl PhysicsWorld {
             solids: self.statics.len() as u32,
             contacts: solver.contacts() as u32,
             water_samples: samples,
-            invalid: 0,
         };
     }
 }
@@ -376,6 +380,7 @@ fn hold(bodies: &mut [Body], statics: &Statics, solver: &mut Solver, ground: &Gr
 }
 
 fn push(bodies: &mut [Body], solver: &mut Solver, around: &Surroundings<'_>) -> u32 {
+    let _profile = engine_core::profile::span("physics", "push");
     let mut samples = 0;
     for body in bodies {
         let Some(rigid) = solver.bodies.get_mut(body.handle) else {
@@ -463,18 +468,15 @@ pub(crate) fn step(
     mut physics: ResMut<PhysicsWorld>,
     mut stats: ResMut<PhysicsStats>,
 ) {
-    let mut invalid = 0;
+    let _profile = engine_core::profile::span("physics", "step");
     let wanted: Vec<Wanted> = poses
         .iter()
-        .map(|(entity, rigid, collider, pose, parented)| {
-            invalid += u32::from(!body::valid(rigid));
-            Wanted {
-                entity,
-                settings: body::sanitized(*rigid),
-                collider: collider.copied(),
-                pose: pose.copied(),
-                root: !parented,
-            }
+        .map(|(entity, rigid, collider, pose, parented)| Wanted {
+            entity,
+            settings: body::sanitized(*rigid),
+            collider: collider.copied(),
+            pose: pose.copied(),
+            root: !parented,
         })
         .collect();
     if wanted.is_empty() && physics.idle() {
@@ -484,14 +486,11 @@ pub(crate) fn step(
     let around = Surroundings {
         settings: &settings,
         time: &time,
-        wind: &wind,
+        wind: wind.filled.then_some(&*wind),
         ground: &ground,
         solids: &solids,
         waters: &waters,
     };
     physics.tick(wanted, &around, &mut poses, &mut markers);
-    stats.set_if_neq(PhysicsStats {
-        invalid,
-        ..physics.stats()
-    });
+    stats.set_if_neq(physics.stats());
 }

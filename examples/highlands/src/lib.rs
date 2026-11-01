@@ -5,7 +5,6 @@ mod land;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
 mod options;
-mod random;
 mod records;
 mod scene;
 

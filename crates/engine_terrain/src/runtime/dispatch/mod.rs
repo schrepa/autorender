@@ -1,111 +1,27 @@
 use super::*;
-
-pub(super) const URGENT_JOBS: u8 = 0;
-pub(super) const VIEW_JOBS: u8 = 2;
-pub(super) const IDLE_JOBS: u8 = 3;
-
-pub(super) const fn job_priority(class: u8, place: u32) -> u32 {
-    ((class as u32) << 24) | if place > 0xff_ffff { 0xff_ffff } else { place }
-}
-
-pub(super) fn content_hash(bytes: &[u8]) -> u128 {
-    const C1: u64 = 0x87c3_7b91_1142_53d5;
-    const C2: u64 = 0x4cf5_ad43_2745_937f;
-    let mix = |mut k: u64| {
-        k ^= k >> 33;
-        k = k.wrapping_mul(0xff51_afd7_ed55_8ccd);
-        k ^= k >> 33;
-        k = k.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
-        k ^ (k >> 33)
-    };
-    let word = |bytes: &[u8]| {
-        let mut word = [0_u8; 8];
-        word[..bytes.len()].copy_from_slice(bytes);
-        u64::from_le_bytes(word)
-    };
-    let (mut h1, mut h2) = (0_u64, 0_u64);
-    let (blocks, tail) = bytes.as_chunks::<16>();
-    for block in blocks {
-        let (k1, k2) = (word(&block[..8]), word(&block[8..]));
-        h1 ^= k1.wrapping_mul(C1).rotate_left(31).wrapping_mul(C2);
-        h1 = h1
-            .rotate_left(27)
-            .wrapping_add(h2)
-            .wrapping_mul(5)
-            .wrapping_add(0x52dc_e729);
-        h2 ^= k2.wrapping_mul(C2).rotate_left(33).wrapping_mul(C1);
-        h2 = h2
-            .rotate_left(31)
-            .wrapping_add(h1)
-            .wrapping_mul(5)
-            .wrapping_add(0x3849_5ab5);
-    }
-    if tail.len() > 8 {
-        h2 ^= word(&tail[8..])
-            .wrapping_mul(C2)
-            .rotate_left(33)
-            .wrapping_mul(C1);
-    }
-    if !tail.is_empty() {
-        h1 ^= word(&tail[..tail.len().min(8)])
-            .wrapping_mul(C1)
-            .rotate_left(31)
-            .wrapping_mul(C2);
-    }
-    let len = bytes.len() as u64;
-    h1 ^= len;
-    h2 ^= len;
-    h1 = h1.wrapping_add(h2);
-    h2 = h2.wrapping_add(h1);
-    h1 = mix(h1);
-    h2 = mix(h2);
-    h1 = h1.wrapping_add(h2);
-    h2 = h2.wrapping_add(h1);
-    (u128::from(h2) << 64) | u128::from(h1)
-}
-
-pub(super) fn job_output<T>(
-    kind: &str,
-    output: Result<Arc<[u8]>, Error>,
-    decode: impl FnOnce(&[u8]) -> Result<T, Error>,
-) -> Result<T, String> {
-    let bytes = output.map_err(|error| format!("{kind}: {error}"))?;
-    decode(&bytes).map_err(|error| format!("{kind}: its output does not decode: {error}"))
-}
+use engine_core::RecordKey;
+use engine_heightfield::layer::DrawRivers;
 
 pub(super) struct Asking<'a, 'w, 's> {
     pub(super) jobs: &'a mut Jobs<'w, 's>,
     pub(super) records: &'a Records,
-    pub(super) drawn: Option<engine_places::terrain::DrawRivers>,
+    pub(super) drawn: Option<DrawRivers>,
+    pub(super) kinds: &'a [&'static LayerKind],
 }
 
 impl Asking<'_, '_, '_> {
-    pub(super) fn take(&mut self, ticket: &Ticket) -> Option<Result<Arc<[u8]>, Error>> {
+    pub(super) fn take(&self, ticket: &Ticket) -> Option<Result<Arc<[u8]>, Error>> {
         self.records.get(ticket)
     }
 }
 
 pub(super) struct Work {
-    pub(super) slice: u64,
     pub(super) clock: Option<fn() -> f64>,
     pub(super) end: f64,
     pub(super) upload: std::cell::Cell<u64>,
 }
 
 impl Work {
-    pub(super) fn refill(&self, budget: &mut u64) -> bool {
-        if *budget > 0 {
-            return false;
-        }
-        match self.clock {
-            Some(clock) if clock() < self.end => {
-                *budget = self.slice;
-                true
-            }
-            _ => false,
-        }
-    }
-
     pub(super) fn expired(&self) -> bool {
         self.clock.is_some_and(|clock| clock() >= self.end)
     }
@@ -184,11 +100,12 @@ fn load_records(
         if let Some((ticket, _, _)) = state.dispatched.remove(&key) {
             asking.jobs.cancel(ticket);
         }
-        match job_output("terrain::tile", output, crate::jobs::tile_output) {
+        match job_output(TILE_BUILD.name(), output, crate::jobs::tile_output) {
             Ok(tile) if made == generation && target.contains(&key) && tile.key() == key => {
                 work.upload(2 * TILE_ARRAY_BYTES);
                 state.failed.remove(&key);
-                state.store.arrive(Arc::new(tile));
+                let stamps = state.reaching(key);
+                state.store.arrive(Arc::new(tile), stamps);
                 inserted = true;
             }
             Ok(_) => {}
@@ -208,7 +125,7 @@ fn load_records(
         {
             continue;
         }
-        let job = state.tile_job(recipe, key);
+        let job = state.tile_job(recipe.hash(), key);
         let ticket = asking.jobs.fetch(&TILE_BUILD, &job.identity(), priority);
         state.dispatched.insert(key, (ticket, generation, priority));
     }
@@ -218,7 +135,7 @@ fn load_records(
 fn prefetch(
     state: &mut TerrainState,
     (missing, named): (&[(TileKey, u32)], &[TileKey]),
-    (recipe, generation): ([u8; 32], Generation),
+    (recipe, generation): (RecordKey, Generation),
     asking: &mut Asking<'_, '_, '_>,
     frame: u64,
 ) {
@@ -236,12 +153,13 @@ fn prefetch(
             if let Some((ticket, _)) = state.prefetched.remove(&key) {
                 asking.jobs.cancel(ticket);
             }
-            if let Ok(tile) = job_output("terrain::tile", output, crate::jobs::tile_output)
+            if let Ok(tile) = job_output(TILE_BUILD.name(), output, crate::jobs::tile_output)
                 && made == generation
                 && tile.key() == key
                 && !state.store.contains(&key)
             {
-                state.store.keep_in_memory(Arc::new(tile), frame);
+                let stamps = state.reaching(key);
+                state.store.keep_in_memory(Arc::new(tile), stamps, frame);
             }
         } else if (made != generation || !named.contains(&key))
             && let Some((ticket, _)) = state.prefetched.remove(&key)
@@ -260,14 +178,14 @@ fn prefetch(
             continue;
         }
         let priority = job_priority(IDLE_JOBS, place as u32);
-        let job = state.tile_job(recipe, key);
+        let job = state.tile_job(recipe.hash(), key);
         let ticket = asking.jobs.fetch(&TILE_BUILD, &job.identity(), priority);
         state.prefetched.insert(key, (ticket, generation));
     }
 }
 
 pub(crate) struct SharedRecipe {
-    pub(crate) key: [u8; 32],
+    pub(crate) key: RecordKey,
     pub(crate) stack: Arc<Layers>,
     materials: bool,
 }
@@ -275,7 +193,8 @@ pub(crate) struct SharedRecipe {
 pub(crate) fn share_recipe(
     state: &mut TerrainState,
     jobs: &mut Jobs<'_, '_>,
-    stacks: &mut Vec<(Arc<Layers>, [u8; 32])>,
+    stacks: &mut Vec<(Arc<Layers>, RecordKey)>,
+    released: &mut Vec<RecordKey>,
 ) {
     let layers = state
         .baked
@@ -308,22 +227,57 @@ pub(crate) fn share_recipe(
     let stack_key = match shared {
         Some(key) => key,
         None => {
-            let key = jobs.share(crate::jobs::share_stack(&stack)).hash();
+            let key = jobs.share(crate::jobs::share_stack(&stack));
             stacks.push((stack.clone(), key));
             key
         }
     };
     let recipe = TerrainRecipe {
-        stack: stack_key,
+        stack: stack_key.hash(),
         view,
         pyramid: state.terrain.pyramid,
         surface: state.terrain.surface.rules.authored().clone(),
         materials: state.materials,
     };
-    let key = jobs.share(crate::jobs::share_recipe(&recipe)).hash();
-    state.recipe = Some(SharedRecipe {
+    let key = jobs.share(crate::jobs::share_recipe(&recipe));
+    let shared = SharedRecipe {
         key,
         stack,
         materials: state.materials,
+    };
+    if let Some(old) = state.recipe.replace(shared) {
+        released.push(old.key);
+    }
+}
+
+pub(super) fn release(
+    entries: &[TerrainState],
+    stacks: &mut Vec<(Arc<Layers>, RecordKey)>,
+    mut released: Vec<RecordKey>,
+    jobs: &mut Jobs<'_, '_>,
+) {
+    stacks.retain(|(stack, key)| {
+        let held = entries.iter().any(|state| {
+            state
+                .recipe
+                .as_ref()
+                .is_some_and(|recipe| Arc::ptr_eq(&recipe.stack, stack))
+        });
+        if !held {
+            released.push(*key);
+        }
+        held
     });
+    for key in released {
+        let held = stacks.iter().any(|(_, shared)| *shared == key)
+            || entries.iter().any(|state| {
+                state
+                    .recipe
+                    .as_ref()
+                    .is_some_and(|recipe| recipe.key == key)
+            });
+        if !held {
+            jobs.unshare(key);
+        }
+    }
 }

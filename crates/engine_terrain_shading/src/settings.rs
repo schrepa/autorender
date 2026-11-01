@@ -17,7 +17,7 @@ settings! {
         pub sky_resolution: u32 = 1024 => range(64, 4096),
         pub bounce: bool = true => any,
         pub bounce_spacing: f32 = 16.0 => range(1.0, 1024.0),
-        pub bounce_columns: u32 = 64 => range(8, 1024),
+        pub bounce_columns: u32 = 64 => multiple(2, 8, 1024),
         pub bounce_levels: u32 = MAX_BOUNCE_LEVELS => range(1, MAX_BOUNCE_LEVELS),
         pub macro_resolution: u32 = 2048 => range(64, 4096),
     }
@@ -62,5 +62,7 @@ stats! {
         pub colored: u32,
         pub coloring: u32,
         pub surface_slots: Cut,
+        pub failed_jobs: u64,
+        pub latest_job_failure: Option<String>,
     }
 }

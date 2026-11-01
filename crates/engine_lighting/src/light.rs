@@ -29,8 +29,11 @@ settings! {
     #[schemars(rename = "SceneSurfaceLight")]
     pub struct SurfaceLight {
         pub preset: LightPreset = LightPreset::GoldenHour => any,
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub rim: Option<f32> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub specular: Option<f32> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub emission: Option<f32> = None => at_least(0.0),
     }
 }

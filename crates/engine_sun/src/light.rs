@@ -1,6 +1,4 @@
-use bevy_ecs::prelude::Resource;
-use engine_codec::Expected;
-use engine_core::{Error, ErrorCode, Section};
+use engine_core::{Expected, InvalidSetting, settings};
 use engine_places::lighting::LightPreset;
 use glam::Vec3;
 
@@ -27,66 +25,27 @@ fn vec3_or(authored: Option<[f32; 3]>, preset: Vec3) -> Vec3 {
     authored.map_or(preset, Vec3::from_array)
 }
 
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Resource,
-    engine_core::__private::serde::Serialize,
-    engine_core::__private::serde::Deserialize,
-    engine_core::__private::schemars::JsonSchema,
-)]
-#[component(immutable)]
-#[serde(crate = "engine_core::__private::serde", default, deny_unknown_fields)]
-#[schemars(crate = "engine_core::__private::schemars", rename = "SceneSun")]
-pub struct Sunlight {
-    pub preset: LightPreset,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sun_direction: Option<[f32; 3]>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sun_color: Option<[f32; 3]>,
-}
-
-impl Default for Sunlight {
-    fn default() -> Self {
-        Self {
-            preset: LightPreset::GoldenHour,
-            sun_direction: None,
-            sun_color: None,
-        }
+settings! {
+    #[section("sun")]
+    #[check(check_direction)]
+    #[derive(Copy)]
+    #[serde(deny_unknown_fields)]
+    #[schemars(rename = "SceneSun")]
+    pub struct Sunlight {
+        pub preset: LightPreset = LightPreset::GoldenHour => any,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub sun_direction: Option<[f32; 3]> = None => finite,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub sun_color: Option<[f32; 3]> = None => at_least(0.0),
     }
 }
 
-impl Section for Sunlight {
-    const KEY: &'static str = "sun";
-
-    fn check(&self) -> Result<(), Error> {
-        match self.sun_direction {
-            Some(direction) if !direction.iter().all(|value| value.is_finite()) => {
-                return Err(Error::new(ErrorCode::InvalidValue, "sun.sun_direction")
-                    .expected(Expected::Finite)
-                    .got(direction));
-            }
-            Some(_) | None => {}
+fn check_direction(sun: &Sunlight) -> Result<(), InvalidSetting> {
+    match sun.sun_direction {
+        Some(direction) if Vec3::from_array(direction).length_squared() == 0.0 => {
+            Err(InvalidSetting::new("sun_direction", Expected::Nonzero).got(direction))
         }
-        match self.sun_color {
-            Some(color) if !color.iter().all(|value| value.is_finite() && *value >= 0.0) => {
-                return Err(Error::new(ErrorCode::InvalidValue, "sun.sun_color")
-                    .expected(Expected::Finite)
-                    .at_least(0)
-                    .got(color));
-            }
-            Some(_) | None => {}
-        }
-        match self.sun_direction {
-            Some(direction) if Vec3::from_array(direction).length_squared() == 0.0 => {
-                Err(Error::new(ErrorCode::InvalidValue, "sun.sun_direction")
-                    .expected(Expected::Nonzero)
-                    .got(direction))
-            }
-            Some(_) | None => Ok(()),
-        }
+        Some(_) | None => Ok(()),
     }
 }
 

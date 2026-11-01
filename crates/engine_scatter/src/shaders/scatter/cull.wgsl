@@ -1,10 +1,10 @@
 import package::engine::view::seen_share;
 import package::generated::scatter::{
-    CullFrame, CullGroup, CullView, FADED, LAYER_SHIFT, NO_LAYER, RANK_SHIFT, SCATTER_GROUP,
-    SHOWN_CARD, SHOWN_NONE, STATE_ADOPT
+    CullFrame, CullGroup, CullView, DEAD, FADED, HIDDEN, LAYER_SHIFT, NO_LAYER, RANK_SHIFT,
+    SCATTER_GROUP, SHOWN_CARD, SHOWN_NONE, STATE_ADOPT
 };
 import package::place::instances::FADE_SLOT;
-import package::place::placed_tiles::{DEAD, HIDDEN, Record};
+import package::place::placed_tiles::Record;
 
 const FADE_OUT: u32 = 0x80000000u;
 

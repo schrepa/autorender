@@ -9,9 +9,9 @@ mod part;
 mod settings;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Schedule, Source, gpu_struct};
+use engine_core::{Brick, Bricks, Schedule, Source, View, gpu_struct};
 use engine_places::bloom::Glow;
-use engine_render::{DebugShown, PostLight, RenderBricks};
+use engine_render::{PostLight, RenderBricks};
 
 pub use settings::{Bloom, BloomStats};
 
@@ -44,11 +44,11 @@ impl Brick for BloomBrick {
 
 fn publish_bloom(
     bloom: Res<Bloom>,
-    shown: Res<DebugShown>,
+    view: Res<View>,
     mut piece: ResMut<BloomPiece>,
     mut stats: ResMut<BloomStats>,
 ) {
-    let active = shown.owner.is_none();
+    let active = !view.debug();
     piece.set_if_neq(BloomPiece {
         threshold: [bloom.threshold, 0.0, 0.0, 0.0],
         applied: [bloom.intensity, f32::from(active), 0.0, 0.0],

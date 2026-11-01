@@ -1,4 +1,4 @@
-use crate::gpu_layouts::impostors::{ImpostorBakeUniform, ImpostorRecord};
+use crate::impostors::bake::ImpostorBake;
 use crate::gpu_layouts::scene::MaterialUniform;
 
 mod groups;
@@ -12,7 +12,7 @@ pub use table::{
 
 use Sample::{Depth, Float};
 use Sampling::Filtering;
-use View::{D2, D2Array};
+use View::D2;
 
 const F: Stages = Stages::FRAGMENT;
 const VF: Stages = Stages::VERTEX_FRAGMENT;
@@ -60,22 +60,10 @@ tables! {
         ],
     };
 
-    const IMPOSTOR_DRAW: Table = Table {
-        label: "engine/impostor-layout",
-        bindings: &[
-            read_of("impostor_records", size_of::<ImpostorRecord>(), VF),
-            texture("impostor_albedo", Float, D2Array, F),
-            texture("impostor_emissive", Float, D2Array, F),
-            texture("impostor_geometry", Float, D2Array, F),
-            texture("impostor_surface", Float, D2Array, F),
-            sampler("impostor_sampler", Filtering, F),
-        ],
-    };
-
     const IMPOSTOR_BAKE: Table = Table {
         label: "engine/impostor-bake-layout",
         bindings: &[
-            uniform_of("impostor_bake", size_of::<ImpostorBakeUniform>(), VF),
+            uniform_of("impostor_bake", size_of::<ImpostorBake>(), VF),
             texture("impostor_shade", Depth, D2, F),
         ],
     };

@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 use engine_codec::{Allowed, Error, Expected};
-use engine_core::{InvalidSetting, Rule, Setting};
+use engine_core::{InvalidSetting, Rule, Setting, fields};
 use engine_heightfield::bed::{NARROWEST, bankfull};
 use engine_heightfield::given::{GivenRiver, MAX_CREDIT, MAX_GIVEN_RIVERS, MAX_PRECISION};
 use engine_heightfield::hydrology::{Grid, WaterGrid};
@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::rivers::{MEASURED, smooth_line};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(transform = state_rivers_rules)]
 #[serde(deny_unknown_fields)]
 pub struct RiversLayer {
     #[schemars(length(min = 1, max = MAX_GIVEN_RIVERS))]
@@ -30,14 +31,21 @@ pub struct RiversLayer {
     pub attribution: Option<String>,
 }
 
+fn precision_rule() -> Rule {
+    fields::range(0.0, MAX_PRECISION)
+}
+
+fn state_rivers_rules(schema: &mut schemars::Schema) {
+    fields::state(schema, "precision", precision_rule());
+}
+
 impl RiversLayer {
     pub fn validate(&self) -> Result<(), Error> {
         for (index, line) in self.lines.iter().enumerate() {
             line.validate()
                 .map_err(|error| error.within(&format!("$.lines[{index}]")))?;
         }
-        self.precision
-            .check("precision", Rule::Range(0.0, f64::from(MAX_PRECISION)))?;
+        self.precision.check("precision", precision_rule())?;
         if !(1..=MAX_GIVEN_RIVERS).contains(&self.lines.len()) {
             return Err(InvalidSetting::new("lines", Expected::Array)
                 .allowed(Allowed::Range {

@@ -63,7 +63,6 @@ pub(crate) struct SkyMaps {
     since_stale: u32,
     pub(crate) uniform: Box<SkyViews>,
     pub(crate) live: bool,
-    pub(crate) last_clip: Option<Mat4>,
     ready: u32,
     drawn: u32,
 }
@@ -77,7 +76,6 @@ impl Default for SkyMaps {
             since_stale: 0,
             uniform: Box::new(SkyViews::zeroed()),
             live: false,
-            last_clip: None,
             ready: 0,
             drawn: 0,
         }
@@ -142,9 +140,6 @@ impl SkyMaps {
             .filter(|layer| layer.drawn.is_some())
             .count() as u32;
         self.write(count, reaches, settings);
-        if let Some(draw) = draw {
-            self.last_clip = Some(draw.clip);
-        }
         draw
     }
 

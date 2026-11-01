@@ -86,3 +86,7 @@ fn ambient() -> f32 {
 fn sunlight(authored: vec3<f32>) -> vec3<f32> {
     return select(authored, sky_piece.sun_light.rgb, sky_piece.state.y != 0.0);
 }
+
+fn adapted_exposure(authored: f32) -> f32 {
+    return select(authored, sky_piece.horizon.w, sky_piece.state.y != 0.0);
+}

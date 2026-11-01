@@ -8,6 +8,7 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod captures;
+mod component;
 mod gather;
 mod probes;
 
@@ -19,6 +20,8 @@ use engine_core::{
 use engine_places::probes::{ProbeCaptures, ProbeLight, ProbeViews, ReflectionProbe};
 use engine_render::RenderBricks;
 
+pub use component::{SceneInterior, SceneReflectionProbe};
+
 gpu_consts! {
     pub const PROBE_ENTRY_WORDS: u32 = 3;
 }
@@ -29,8 +32,9 @@ settings! {
     #[schemars(rename = "SceneReflectionProbes")]
     pub struct ReflectionProbeSettings {
         pub enabled: bool = true => any,
-        pub resolution: u32 = 128 => range(16, 1024),
-        pub max_probes: Option<u32> = None => at_least(1),
+        pub resolution: u32 = 128 => power_of_two(16, 1024),
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub max_probes: Option<u32> = None => budget,
         pub faces_per_frame: u32 = 1 => at_least(1),
     }
 }
@@ -43,6 +47,8 @@ stats! {
         pub probe_cut: Cut,
     }
 }
+
+const GENERATED: &[&str] = &[WGSL];
 
 pub struct ReflectionProbesBrick;
 
@@ -58,7 +64,11 @@ impl Brick for ReflectionProbesBrick {
             .resource::<probes::ProbeState>()
             .resource::<probes::ProbeWords>()
             .join::<SceneComponents>(
-                ComponentKind::of::<ReflectionProbe>("reflection_probe"),
+                ComponentKind::of::<ReflectionProbe>("reflection_probe")
+                    .check(component::check)
+                    .reach(component::reach)
+                    .schema(component::schema)
+                    .example(component::example),
                 None,
             )
             .fill::<ProbeLight>(Some(shaders::probes::faces::probe_light::MODULE))
@@ -73,6 +83,7 @@ impl Brick for ReflectionProbesBrick {
                 ),
             )
             .off(probes::forget_probes)
+            .generated(GENERATED)
             .part::<captures::ProbesGpu>();
     }
 }

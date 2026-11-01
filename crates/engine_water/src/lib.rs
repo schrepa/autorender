@@ -32,25 +32,28 @@ mod water_source;
 mod waterfalls;
 mod white_water;
 mod windows;
+mod work;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Cut, JobKind, Schedule, Source, Spawner, stats};
-use engine_places::water::{WaterFlow, Waterline};
-use engine_render::{DebugModes, RenderBricks};
+use engine_core::{Brick, Bricks, Cut, JobKind, Jobs, Schedule, Source, Spawner, stats};
+use engine_places::ground::Heightfield;
+use engine_places::water::Waterline;
+use engine_render::{DebugModes, DebugShown, RenderBricks};
 
 pub(crate) use engine_codec as codec;
-pub(crate) use engine_heightfield::{Fall, Layers, Pyramid, Rivers, TileKey};
-pub(crate) use engine_heightfield::tile::{Footprint, Solid, StampOp as Stamp, Tile, TileJob};
+pub(crate) use engine_heightfield::tile::Footprint;
+pub(crate) use engine_heightfield::{Layers, NARROWEST, Rivers, TileKey};
 
 pub use flow::{Block, Pool, RiverFlow, WEIR};
 pub use settings::Water;
-pub use state::SettleFeedback;
 pub use steady_water::*;
 pub use tile_water::*;
 pub use views::PoolView;
-pub use windows::{LIVE_PIXELS, LONGEST_FRAME, WaterSourceCell, WaterWindow, live_steps};
+pub use water_settle::SettleFeedback;
+pub use windows::{LIVE_PIXELS, LONGEST_FRAME, WaterRead, WaterSourceCell, WaterWindow, live_steps};
 
-use state::{FallSet, ParticleTallies, RiverBody, WaterState};
+use state::{RiverBody, WaterState};
+use water_particles::ParticleTallies;
 use waterfalls::TerrainFalls;
 use white_water::TerrainWhiteWater;
 
@@ -58,6 +61,7 @@ stats! {
     #[section("water_stats")]
     pub struct WaterStats {
         #[pending] pub looks_left: u32,
+        #[pending] pub settles_left: u32,
         pub blocks: u32,
         pub dropped_blocks: u32,
         pub live_cut: u32,
@@ -83,6 +87,7 @@ stats! {
         pub settling_records: u32,
         pub falls: u32,
         pub white_water: u32,
+        pub failed_jobs: u64,
     }
 }
 
@@ -90,7 +95,12 @@ pub struct WaterBrick;
 
 impl Brick for WaterBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const JOBS: &'static [&'static JobKind] = &[&jobs::TILE_WATER, &jobs::STEADIED, &jobs::SETTLED];
+    const JOBS: &'static [&'static JobKind] = &[
+        &jobs::TILE_WATER,
+        &jobs::PARTS,
+        &jobs::STEADIED,
+        &jobs::SETTLED,
+    ];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
@@ -102,21 +112,28 @@ impl Brick for WaterBrick {
             .resource::<ParticleTallies>()
             .resource::<TerrainFalls>()
             .resource::<TerrainWhiteWater>()
-            .fill::<WaterFlow>(None)
-            .fill::<Waterline>(Some(shaders::water::faces::water::MODULE));
+            .piece::<gpu::WaterPiece>()
+            .fill::<Waterline>(Some(shaders::water::faces::water::MODULE))
+            .observation::<views::WaterFlowQuery>();
         for mode in debug::modes() {
-            bricks.join::<DebugModes>(mode, Some(shaders::water::debug::MODULE));
+            bricks.join::<DebugModes>(mode, Some(shaders::water::modes::MODULE));
         }
         bricks
             .systems(
                 Schedule::ViewSync,
                 (
-                    state::rewater,
+                    state::follow,
+                    water_settle::hand_settles,
                     settled::request_settle,
-                    settled::take_settled,
+                    rewater::rewater,
+                    water_settle::plan_settles,
+                    water_blocks::place_blocks,
+                    water_sim::plan_sim,
+                    water_particles::plan_particles,
                     state::publish_waterline,
                     state::publish_bodies,
-                    state::water_stats,
+                    publish_piece,
+                    water_stats,
                 ),
             )
             .systems(
@@ -127,18 +144,99 @@ impl Brick for WaterBrick {
                     windows::place_water_windows,
                 ),
             )
-            .systems(Schedule::FixedPostSimulation, flow_step::step)
+            .systems(Schedule::FixedSimulation, flow_step::step)
             .off(despawn_water)
+            .generated(gpu::GENERATED)
             .part::<water::WaterGpu>();
     }
 }
 
+fn water_stats(
+    water: Res<Water>,
+    state: Res<WaterState>,
+    tallies: Res<ParticleTallies>,
+    heightfield: Res<Heightfield>,
+    mut stats: ResMut<WaterStats>,
+) {
+    use gpu::{
+        PARTICLE_FOAM_BORN, PARTICLE_FOAM_DROPPED, PARTICLE_FOAM_LIVE, PARTICLE_WAVES_BORN,
+        PARTICLE_WAVES_DROPPED, PARTICLE_WAVES_LIVE,
+    };
+    let frame = water.enabled && !state.watered.is_empty();
+    let (cell_cut, [live_cut, live_steps, live_behind, live_setup, live_waiting]) = if frame {
+        state.live.cells()
+    } else {
+        (Cut::default(), [0; 5])
+    };
+    let [touches, dropped_touches] = if frame { state.live.touches() } else { [0; 2] };
+    let [leaves, refused] = if frame {
+        heightfield.water_leaves
+    } else {
+        [0; 2]
+    };
+    let ((texels, points, foam_cut, reach), counts) = if frame {
+        (state.particles.stats(), tallies.counts)
+    } else {
+        ((0, 0, Cut::default(), 0), Default::default())
+    };
+    let tally = |word: u32| {
+        if state.particles.grid.is_some() {
+            counts.get(word as usize).copied().unwrap_or(0)
+        } else {
+            0
+        }
+    };
+    let next = WaterStats {
+        looks_left: state.looks_left.min(u64::from(u32::MAX)) as u32,
+        settles_left: state.settles_left.min(u64::from(u32::MAX)) as u32,
+        blocks: if frame { state.blocks.resident() } else { 0 },
+        dropped_blocks: if frame { state.blocks.dropped } else { 0 },
+        live_cut,
+        live_steps,
+        live_behind,
+        live_setup,
+        live_waiting,
+        touches,
+        dropped_touches,
+        particle_texels: texels,
+        foam_points: points,
+        foam_reach: reach,
+        foam_particles: tally(PARTICLE_FOAM_LIVE),
+        wave_particles: tally(PARTICLE_WAVES_LIVE),
+        particles_born: tally(PARTICLE_FOAM_BORN) + tally(PARTICLE_WAVES_BORN),
+        dropped_particles: tally(PARTICLE_FOAM_DROPPED) + tally(PARTICLE_WAVES_DROPPED),
+        cell_cut,
+        foam_cut,
+        leaf_cut: Cut::of(leaves.saturating_add(refused), leaves),
+        rewatered_tiles: state.rewatered_tiles,
+        stale_water_tiles: state.stale_water_tiles,
+        settled_records: state.settled_records,
+        settling_records: state.settling_records,
+        falls: state
+            .terrains
+            .iter()
+            .map(|terrain| terrain.falls.len() as u32)
+            .sum(),
+        white_water: stats.white_water,
+        failed_jobs: state.failures.count,
+    };
+    stats.set_if_neq(next);
+}
+
+fn publish_piece(shown: Res<DebugShown>, mut piece: ResMut<gpu::WaterPiece>) {
+    let mine = shown.owner == Some(std::any::TypeId::of::<WaterBrick>());
+    piece.set_if_neq(gpu::WaterPiece {
+        debug: [u32::from(mine), shown.local, 0, 0],
+    });
+}
+
 fn despawn_water(
-    owned: Query<Entity, Or<(With<RiverBody>, With<FallSet>)>>,
-    mut falls: ResMut<TerrainFalls>,
-    mut white: ResMut<TerrainWhiteWater>,
+    owned: Query<Entity, With<RiverBody>>,
+    (mut falls, mut white): (ResMut<TerrainFalls>, ResMut<TerrainWhiteWater>),
     mut state: ResMut<WaterState>,
     mut stats: ResMut<WaterStats>,
+    mut line: ResMut<Waterline>,
+    mut jobs: Jobs,
     mut spawner: Spawner<WaterBrick>,
 ) {
     for entity in &owned {
@@ -147,6 +245,8 @@ fn despawn_water(
     for entity in falls.take().into_iter().chain(white.take()) {
         spawner.despawn(entity);
     }
-    state.clear();
+    state.clear(&mut jobs);
     *stats = WaterStats::default();
+    line.watered.clear();
+    line.errors.clear();
 }

@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
-use engine_codec::Expected;
-use engine_core::{Error, ErrorCode, Operation, SceneIds};
+use engine_core::bounds::{self, MAX_SCAN_ENTITIES, default_limit};
+use engine_core::rule::range;
+use engine_core::{Error, ErrorCode, Expected, Operation, Rule, SceneIds, Setting, stated};
 use engine_places::physics::{
     Collide, ColliderShape, Collision, CollisionLayers, CollisionRay, MAX_COLLIDER_EXTENT,
     MIN_COLLIDER_EXTENT, PlacedPart, QueryFilter, SensorEvent, SensorEventKind, SensorFilter,
@@ -14,29 +15,21 @@ use crate::results::{
     CastHit, CollisionEventsResult, HitEntity, OverlapResult, PlacedHit, RayHit, RaycastResult,
     SensorEventKindView, SensorEventRow, ShapeCastResult,
 };
-use crate::types::{
-    bound, validate_collider_transform, validate_ray, validate_shape, validate_shape_cast,
-};
-use crate::views::CollisionWorldView;
-use crate::world::{CollisionWorld, world_of};
-
-const MAX_SCAN_ENTITIES: usize = 10_000;
-const PAGE: (u64, u64) = (1, 100);
-const EVENT_OFFSET: (u64, u64) = (0, 131_072);
-pub(crate) const COORDINATE: (f64, f64) = (-1.0e6, 1.0e6);
-const DISTANCE: (f64, f64) = (0.0, 2.0e6);
+use crate::types::{validate_collider_transform, validate_ray, validate_shape, validate_shape_cast};
+use crate::world::{CollisionWorld, SensorEvents, world_of};
 
 type Seen = (
     Res<'static, Collision>,
-    Res<'static, SceneIds>,
+    SceneIds<'static, 'static>,
     Query<'static, 'static, Entity>,
 );
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RaycastQuery {
     pub origin: [f64; 3],
     pub direction: [f64; 3],
+    #[schemars(transform = stated(bounds::DISTANCE))]
     pub max_distance: f64,
     #[serde(default)]
     pub filter: CollisionFilterRequest,
@@ -63,7 +56,7 @@ impl Operation for RaycastQuery {
         let world = filled(&collision)?;
         let hit = world.raycast(ray, filter)?;
         Ok(reply(RaycastResult {
-            snapshot: CollisionWorldView::of(world),
+            snapshot: world.stats(),
             complete: true,
             hit: hit.map(|hit| RayHit {
                 entity: hit_entity(&ids, &entities, hit.entity),
@@ -75,9 +68,13 @@ impl Operation for RaycastQuery {
             }),
         }))
     }
+
+    fn schema() -> Value {
+        schema_of::<Self>()
+    }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OverlapQuery {
     pub shape: CollisionShapeRequest,
@@ -87,6 +84,7 @@ pub(crate) struct OverlapQuery {
     #[serde(default)]
     pub filter: CollisionFilterRequest,
     #[serde(default = "default_limit")]
+    #[schemars(transform = stated(bounds::PAGE))]
     pub limit: usize,
 }
 
@@ -123,15 +121,19 @@ impl Operation for OverlapQuery {
             (a.scene.as_deref(), a.id.as_deref()).cmp(&(b.scene.as_deref(), b.id.as_deref()))
         });
         Ok(reply(OverlapResult {
-            snapshot: CollisionWorldView::of(world),
+            snapshot: world.stats(),
             complete: true,
             total: hits.len(),
             hits,
         }))
     }
+
+    fn schema() -> Value {
+        schema_of::<Self>()
+    }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ShapeCastQuery {
     pub shape: CollisionShapeRequest,
@@ -139,6 +141,7 @@ pub(crate) struct ShapeCastQuery {
     #[serde(default = "identity_rotation")]
     pub rotation: [f64; 4],
     pub direction: [f64; 3],
+    #[schemars(transform = stated(bounds::DISTANCE))]
     pub max_distance: f64,
     #[serde(default)]
     pub filter: CollisionFilterRequest,
@@ -172,7 +175,7 @@ impl Operation for ShapeCastQuery {
         let world = filled(&collision)?;
         let hit = world.cast_shape(shape, matrix, displacement, filter, options)?;
         Ok(reply(ShapeCastResult {
-            snapshot: CollisionWorldView::of(world),
+            snapshot: world.stats(),
             complete: true,
             hit: hit.map(|hit| CastHit {
                 entity: hit_entity(&ids, &entities, hit.entity),
@@ -185,16 +188,22 @@ impl Operation for ShapeCastQuery {
             }),
         }))
     }
+
+    fn schema() -> Value {
+        schema_of::<Self>()
+    }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CollisionEventsQuery {
     #[serde(default)]
     pub entity: Option<String>,
     #[serde(default)]
+    #[schemars(transform = stated(bounds::EVENT_OFFSET))]
     pub offset: usize,
     #[serde(default = "default_limit")]
+    #[schemars(transform = stated(bounds::PAGE))]
     pub limit: usize,
 }
 
@@ -214,12 +223,18 @@ impl Operation for CollisionEventsQuery {
             limit,
         } = request;
         page(limit)?;
-        whole(offset as u64, EVENT_OFFSET, ErrorCode::InvalidPage, "$.offset")?;
+        bounded(
+            offset,
+            bounds::EVENT_OFFSET,
+            ErrorCode::InvalidPage,
+            "$.offset",
+        )?;
         let entity = entity
             .as_deref()
             .map(|id| resolve_entity(&ids, &entities, id, false, "$.entity"))
             .transpose()?;
-        let events = &filled(&collision)?.sensors;
+        let unsynced = SensorEvents::default();
+        let events = world_of(&collision).map_or(&unsynced, |world| &world.sensors);
         let matches = |event: &&SensorEvent| {
             entity.is_none_or(|entity| event.pair.first == entity || event.pair.second == entity)
         };
@@ -254,16 +269,26 @@ impl Operation for CollisionEventsQuery {
             next_offset: (next < total).then_some(next),
         }))
     }
+
+    fn schema() -> Value {
+        schema_of::<Self>()
+    }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum CollisionShapeRequest {
-    Cuboid { half_extents: [f64; 3] },
-    Sphere { radius: f64 },
+    Cuboid {
+        #[schemars(transform = stated(range(MIN_COLLIDER_EXTENT, MAX_COLLIDER_EXTENT)))]
+        half_extents: [f64; 3],
+    },
+    Sphere {
+        #[schemars(transform = stated(range(MIN_COLLIDER_EXTENT, MAX_COLLIDER_EXTENT)))]
+        radius: f64,
+    },
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct CollisionFilterRequest {
     pub memberships: u32,
@@ -283,7 +308,7 @@ impl Default for CollisionFilterRequest {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CollisionSensorFilter {
     #[default]
@@ -296,40 +321,27 @@ fn identity_rotation() -> [f64; 4] {
     [0.0, 0.0, 0.0, 1.0]
 }
 
-fn default_limit() -> usize {
-    20
+pub(crate) fn schema_of<T: schemars::JsonSchema>() -> Value {
+    serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null)
 }
 
 pub(crate) fn reply(result: impl Serialize) -> Value {
     serde_json::to_value(result).expect("results_serialize")
 }
 
-pub(crate) fn bounded(
-    value: f64,
-    (min, max): (f64, f64),
+pub(crate) fn bounded<T: Setting>(
+    value: T,
+    rule: Rule,
     code: ErrorCode,
     path: &str,
-) -> Result<f64, Error> {
-    if (min..=max).contains(&value) {
-        Ok(value)
-    } else {
-        Err(Error::new(code, path).range(min, max).got(value))
-    }
-}
-
-pub(crate) fn whole(
-    value: u64,
-    (min, max): (u64, u64),
-    code: ErrorCode,
-    path: &str,
-) -> Result<u64, Error> {
-    if (min..=max).contains(&value) {
-        Ok(value)
-    } else {
-        Err(Error::new(code, path)
-            .range(min as f64, max as f64)
-            .got(value)
-            .nearest(value.clamp(min, max)))
+) -> Result<T, Error> {
+    match value.check("value", rule) {
+        Ok(()) => Ok(value),
+        Err(invalid) => Err(Error {
+            code,
+            path: path.to_owned(),
+            ..Error::from(invalid)
+        }),
     }
 }
 
@@ -362,12 +374,12 @@ fn hit_entity(ids: &SceneIds, entities: &Query<Entity>, entity: Entity) -> HitEn
 }
 
 fn page(limit: usize) -> Result<(), Error> {
-    whole(limit as u64, PAGE, ErrorCode::InvalidPage, "$.limit").map(|_| ())
+    bounded(limit, bounds::PAGE, ErrorCode::InvalidPage, "$.limit").map(|_| ())
 }
 
 fn shape(source: &CollisionShapeRequest) -> Result<ColliderShape, Error> {
     let dimension = |value: f64| -> Result<f32, Error> {
-        let extents = (bound(MIN_COLLIDER_EXTENT), bound(MAX_COLLIDER_EXTENT));
+        let extents = range(MIN_COLLIDER_EXTENT, MAX_COLLIDER_EXTENT);
         bounded(value, extents, ErrorCode::InvalidShape, "$.shape").map(|value| value as f32)
     };
     let shape = match *source {
@@ -386,7 +398,7 @@ fn shape(source: &CollisionShapeRequest) -> Result<ColliderShape, Error> {
 
 fn position(values: [f64; 3], path: &str) -> Result<Vec3, Error> {
     for value in values {
-        bounded(value, COORDINATE, ErrorCode::InvalidPosition, path)?;
+        bounded(value, bounds::COORDINATE, ErrorCode::InvalidPosition, path)?;
     }
     Ok(Vec3::from_array(values.map(|value| value as f32)))
 }
@@ -408,7 +420,12 @@ fn pose(translation: [f64; 3], rotation: [f64; 4]) -> Result<Mat4, Error> {
 
 fn ray(origin: [f64; 3], direction: [f64; 3], max_distance: f64) -> Result<CollisionRay, Error> {
     let position = position(origin, "$.origin")?;
-    bounded(max_distance, DISTANCE, ErrorCode::InvalidRay, "$.max_distance")?;
+    bounded(
+        max_distance,
+        bounds::DISTANCE,
+        ErrorCode::InvalidRay,
+        "$.max_distance",
+    )?;
     let scale = direction
         .iter()
         .fold(0.0_f64, |maximum, value| maximum.max(value.abs()));
@@ -482,6 +499,9 @@ pub(crate) fn resolve_entity(
         return Err(Error::new(ErrorCode::InvalidSelector, path)
             .expected(Expected::Id)
             .got(id));
+    }
+    if !ids.loaded() {
+        return Err(Error::new(ErrorCode::NoScene, path));
     }
     let entity = ids
         .entity(id)

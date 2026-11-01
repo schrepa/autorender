@@ -1,12 +1,12 @@
 use std::path::Path;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use engine_assets::Texture;
+use engine_core::TEXTURE_COOK;
 use engine_core::math::sin;
-use engine_textures::{COOK_JOB, Family, Source, TextureWorker, Usage};
+use engine_textures::{Family, Source, Usage};
 use serde_json::{Map, json};
 
-use super::Observations;
+use super::{JobLog, Observations};
 
 const SIDE: u32 = 64;
 pub const JOBS: &str = "target/pure/textures-jobs.json";
@@ -149,7 +149,7 @@ fn reference(texture: &Texture, level: usize) -> Result<Vec<u8>, String> {
 }
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
-    let mut worker = Worker::default();
+    let mut worker = JobLog::new()?;
     for image in images() {
         let levels = engine_textures::levels(&image.source);
         let mut observation = Map::new();
@@ -169,7 +169,8 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
                 },
             );
             let input = engine_textures::cook_input(&image.source, family);
-            let (whole, sliced) = worker.both(&input)?;
+            let whole = worker.run(&TEXTURE_COOK, &input)?;
+            let sliced = worker.sliced(&TEXTURE_COOK, &input, SLICE)?;
             observed.check(whole == record && sliced == record, || {
                 format!(
                     "{} {}: its cooking job makes another record",
@@ -212,51 +213,5 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         }
         observed.record(format!("textures {}", image.name), observation);
     }
-    worker.write(root)
-}
-
-#[derive(Default)]
-struct Worker {
-    worker: TextureWorker,
-    next: u64,
-    log: Vec<serde_json::Value>,
-}
-
-impl Worker {
-    fn both(&mut self, input: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
-        let whole =
-            engine_textures::run(COOK_JOB, input).ok_or("the cooking job is no texture job")??;
-        self.log.push(json!({
-            "job": COOK_JOB,
-            "input": STANDARD.encode(input),
-            "output": super::hash(&whole),
-        }));
-        self.next += 1;
-        self.worker.start(self.next, COOK_JOB, input)?;
-        let sliced = loop {
-            if let Some(output) = self.worker.step(self.next, SLICE)? {
-                break output;
-            }
-        };
-        self.log.push(json!({
-            "job": COOK_JOB,
-            "input": STANDARD.encode(input),
-            "slice": SLICE,
-            "output": super::hash(&sliced),
-        }));
-        Ok((whole, sliced))
-    }
-
-    fn write(&self, root: &Path) -> Result<(), String> {
-        let path = root.join(JOBS);
-        if let Some(folder) = path.parent() {
-            std::fs::create_dir_all(folder)
-                .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
-        }
-        std::fs::write(
-            &path,
-            serde_json::Value::Array(self.log.clone()).to_string(),
-        )
-        .map_err(|error| format!("cannot write {JOBS}: {error}"))
-    }
+    worker.write(root, JOBS)
 }

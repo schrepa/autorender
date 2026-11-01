@@ -16,7 +16,7 @@ pub(crate) fn find_surface_under_eye(
     mut under: ResMut<SurfaceUnderEye>,
 ) {
     under.set_if_neq(SurfaceUnderEye {
-        height: surface_under(&ground, &bodies, camera.position),
+        height: surface_under(&ground, &bodies, camera.eye()),
     });
 }
 

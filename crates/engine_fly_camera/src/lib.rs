@@ -8,9 +8,13 @@ use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source, settings};
 
 settings! {
     #[section("fly_camera")]
+    #[derive(Copy)]
+    #[serde(deny_unknown_fields)]
+    #[schemars(rename = "SceneFlyCamera")]
     pub struct FlyCamera {
         pub enabled: bool = true => any,
         pub speed: f32 = 22.0 => range(0.0, 1000.0),
+        pub steered_only: bool = false => any,
     }
 }
 

@@ -21,6 +21,7 @@ mod queries;
 mod startup;
 
 pub use attribution::GpuPassTimes;
+pub use install::{Installation, InstalledPart, InstalledPiece, install_noop};
 pub(crate) use display::{Display, DisplayFrame};
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::GpuMark;
@@ -30,6 +31,7 @@ pub(crate) fn new_assets(device: &wgpu::Device, queue: &crate::gpu_calls::Queue)
     Assets {
         meshes: GpuMeshes::new(device),
         materials: MaterialStore::new(device, queue),
+        impostors: crate::impostors::Impostors::new(device),
     }
 }
 
@@ -53,6 +55,7 @@ pub(crate) struct Core {
     pub(crate) display: Display,
     pub(crate) health: Arc<Mutex<health::Reports>>,
     pub(crate) profiler: GpuProfiler,
+    pub(crate) pipeline_counts: crate::pipelines::PipelineCounts,
 }
 
 pub struct Renderer {
@@ -60,18 +63,21 @@ pub struct Renderer {
     run: Option<Run>,
     assets: Option<Assets>,
     plans: PlanCache,
-    passes: Vec<&'static str>,
+    passes: &'static [&'static str],
     spans: Vec<&'static str>,
     #[cfg(feature = "profiling")]
     prelude_owners: Vec<(&'static str, &'static str)>,
     installing: Option<Validation>,
-    previous: Option<(Mat4, (u32, u32))>,
+    previous: Option<(Mat4, (u32, u32), u64)>,
     seconds: Option<f32>,
+    ran: Vec<&'static [&'static str]>,
+    part_names: &'static [&'static str],
+    linked: engine_core::LinkedStats,
 }
 
 impl Renderer {
     pub fn installed_passes(&self) -> &[&'static str] {
-        &self.passes
+        self.passes
     }
 
     pub fn pass_owner(&self, pass: &str) -> Option<&'static str> {
@@ -88,7 +94,4 @@ impl Renderer {
         self.core.display.resize(width, height);
     }
 
-    pub fn set_render_size(&mut self, width: u32, height: u32) {
-        self.core.display.ask_render_size(width, height);
-    }
 }

@@ -11,10 +11,10 @@ mod settings;
 mod world_trace;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Schedule, Source};
-use engine_places::ground::{GroundTiles, TerrainTiles};
+use engine_core::{Brick, Bricks, Filled, Schedule, Source, View};
+use engine_places::ground::{GroundTiles, Heightfield, TerrainTiles};
 use engine_places::reflections::Reflected;
-use engine_render::{DebugShown, Layer, Output, PostScene, RenderBricks, ViewOutputs, wgpu};
+use engine_render::{Layer, Output, PostScene, RenderBricks, ViewOutputs, wgpu};
 
 pub use settings::{Reflections, ReflectionsStats};
 
@@ -37,13 +37,17 @@ impl Brick for ReflectionsBrick {
             .settings::<Reflections>()
             .stats::<ReflectionsStats>()
             .piece::<ReflectionsPiece>()
+            .generated(gpu::GENERATED)
             .join::<ViewOutputs>(SURFACE, Some(surface::MODULE))
             .systems(Schedule::ViewSync, publish_piece)
             .within(reflecting, |bricks| {
                 bricks
                     .fill::<Reflected>(Some(faces::reflections::MODULE))
-                    .join::<PostScene>((), Some(apply::MODULE))
-                    .part::<part::TraceGpu>();
+                    .within(tracing, |bricks| {
+                        bricks
+                            .join::<PostScene>((), Some(apply::MODULE))
+                            .part::<part::TraceGpu>();
+                    });
             });
     }
 }
@@ -52,15 +56,20 @@ fn reflecting(reflections: Res<Reflections>) -> bool {
     reflections.reflects()
 }
 
+fn tracing(heightfield: Filled<Heightfield>) -> bool {
+    heightfield.on()
+}
+
 fn publish_piece(
     reflections: Res<Reflections>,
+    heightfield: Filled<Heightfield>,
+    view: Res<View>,
     tiles: Res<TerrainTiles>,
     ground: Res<GroundTiles>,
-    shown: Res<DebugShown>,
     mut piece: ResMut<ReflectionsPiece>,
     mut stats: ResMut<ReflectionsStats>,
 ) {
-    let active = reflections.reflects() && shown.owner.is_none();
+    let active = reflections.reflects() && heightfield.on() && !view.debug();
     let walked = world_trace::traced(&tiles, &ground).count() as f32;
     piece.set_if_neq(ReflectionsPiece {
         surface: [

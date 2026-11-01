@@ -1,7 +1,7 @@
 use bevy_ecs::resource::Resource;
 use engine_core::{BrickList, DeviceLimits, Engine, Error, ErrorCode};
 use engine_render::{Renderer, wgpu};
-use engine_scene::{SceneFiles, SceneInstance};
+use engine_scene::{SceneFiles, SceneInstance, SceneLookControl, SceneViewControl};
 
 pub fn engine(bricks: impl FnOnce(BrickList) -> BrickList) -> crate::Result<Engine> {
     listed(bricks(BrickList::default()))
@@ -11,19 +11,16 @@ pub(crate) fn listed(list: BrickList) -> crate::Result<Engine> {
     let mut engine = Engine::listed(list.with_core(Renderer::register_places))?;
     crate::resolution::register(&mut engine);
     engine
-        .operation::<engine_scene::SceneViewControl>()
-        .operation::<engine_scene::SceneLookControl>();
-    let limits = device_limits(&wgpu::Limits::default(), wgpu::Features::empty(), 0);
-    engine.app.world_mut().insert_resource(limits);
+        .operation::<SceneViewControl>()
+        .operation::<SceneLookControl>();
+    limit(&mut engine, &wgpu::Limits::default(), wgpu::Features::empty());
     Ok(engine)
 }
 
-pub(crate) fn device_limits(
-    limits: &wgpu::Limits,
-    features: wgpu::Features,
-    cores: u32,
-) -> DeviceLimits {
-    DeviceLimits {
+pub(crate) fn limit(engine: &mut Engine, limits: &wgpu::Limits, features: wgpu::Features) {
+    let world = engine.app.world_mut();
+    let held = *world.resource::<DeviceLimits>();
+    world.insert_resource(DeviceLimits {
         storage_room: limits
             .max_storage_buffer_binding_size
             .min(limits.max_buffer_size),
@@ -31,8 +28,8 @@ pub(crate) fn device_limits(
         max_texture_dimension_2d: limits.max_texture_dimension_2d,
         max_compute_workgroups_per_dimension: limits.max_compute_workgroups_per_dimension,
         indirect_first_instance: features.contains(wgpu::Features::INDIRECT_FIRST_INSTANCE),
-        ..DeviceLimits::without_device(cores)
-    }
+        ..held
+    });
 }
 
 pub trait Game: 'static {

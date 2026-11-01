@@ -30,7 +30,5 @@ engine_core::gpu_consts! {
     pub(crate) const GROUP_LIGHTS: u32 = 8;
     pub(crate) const SHAPED_LIGHTS: u32 = 1;
     pub(crate) const KEPT_REGIONS: u32 = 2;
-    pub(crate) const REGION_INTERIOR: u32 = 1;
-    pub(crate) const REGION_EXTERIOR: u32 = 2;
     pub(crate) const LIT_VIEWS: u32 = 7;
 }

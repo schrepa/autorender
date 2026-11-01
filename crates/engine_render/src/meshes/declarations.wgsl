@@ -1,80 +1,17 @@
+import package::engine::materials::{FADE_LIST, MASK_MIP_SCALE};
 import package::engine::view::fade_noise;
-
-@group(1) @binding(0) var base_color_texture: texture_2d<f32>;
-@group(1) @binding(1) var base_color_sampler: sampler;
-@group(1) @binding(2) var metallic_roughness_texture: texture_2d<f32>;
-@group(1) @binding(3) var metallic_roughness_sampler: sampler;
-@group(1) @binding(4) var normal_texture: texture_2d<f32>;
-@group(1) @binding(5) var normal_sampler: sampler;
-@group(1) @binding(6) var occlusion_texture: texture_2d<f32>;
-@group(1) @binding(7) var occlusion_sampler: sampler;
-@group(1) @binding(8) var emissive_texture: texture_2d<f32>;
-@group(1) @binding(9) var emissive_sampler: sampler;
-struct MaterialMaps {
-    transforms: array<vec4<f32>, 10>,
-    emissive: vec4<f32>,
-    params: vec4<f32>,
-    variant: vec4<f32>,
-    top: vec4<f32>,
-    layer: vec4<f32>,
-}
-@group(1) @binding(10) var<uniform> material_maps: MaterialMaps;
-
-override MATERIAL_MAPS: bool = false;
-override NORMAL_MAP: bool = false;
-override ALPHA_MASK: bool = false;
-override DOUBLE_SIDED: bool = false;
-override METALLIC_ROUGHNESS_MAP: bool = true;
-override OCCLUSION_MAP: bool = true;
-override EMISSIVE_MAP: bool = true;
-override PACKED_OCCLUSION: bool = false;
-override WORLD_MAPPING: bool = false;
-override TOP_LAYER: bool = false;
-override GROUNDING: bool = false;
-override FADE_LIST: bool = false;
-override UBER_MATERIALS: bool = false;
-override FOLIAGE: bool = false;
-override PRETESTED: bool = false;
-
-const VARIANT_MAPS: u32 = 1u;
-const VARIANT_NORMAL_MAP: u32 = 2u;
-const VARIANT_DOUBLE_SIDED: u32 = 8u;
-const VARIANT_METALLIC_ROUGHNESS_MAP: u32 = 128u;
-const VARIANT_OCCLUSION_MAP: u32 = 256u;
-const VARIANT_EMISSIVE_MAP: u32 = 512u;
-const VARIANT_PACKED_OCCLUSION: u32 = 1024u;
-const VARIANT_WORLD_MAPPING: u32 = 4096u;
-const VARIANT_TOP_LAYER: u32 = 8192u;
-const VARIANT_FOLIAGE: u32 = 65536u;
-
-fn material_flag(bit: u32, specialized: bool) -> bool {
-    if UBER_MATERIALS {
-        return (bitcast<u32>(material_maps.variant.x) & bit) != 0u;
-    }
-    return specialized;
-}
 
 struct AffinePose {
     row_0: vec4<f32>,
     row_1: vec4<f32>,
     row_2: vec4<f32>,
 }
-struct SlotColor {
-    color: vec2<u32>,
-    surface: u32,
-    flags: u32,
-}
-@group(2) @binding(0) var<storage, read> poses: array<AffinePose>;
-@group(2) @binding(1) var<storage, read> colors: array<SlotColor>;
-@group(2) @binding(2) var<storage, read> previous_poses: array<AffinePose>;
-@group(2) @binding(5) var<storage, read> grounds: array<vec4<u32>>;
+
 const MOVED_SLOT: u32 = 0x80000000u;
 
 const FADE_SLOT: u32 = 0x00ffffffu;
 const FADE_WORD_ON: u32 = 0x100u;
 const FADE_WORD_OUT: u32 = 0x80u;
-
-const MASK_MIP_SCALE: f32 = 0.25;
 
 fn slot_index(entry: u32) -> u32 {
     if FADE_LIST {

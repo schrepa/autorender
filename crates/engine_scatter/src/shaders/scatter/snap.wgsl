@@ -1,10 +1,12 @@
-import package::face::cover::cover_tint;
+import package::face::cover::{cover_tint, material_canopy};
 import package::face::ground_tiles::{
     GroundTerrain, LevelTile, TerrainInfo, ground_colors, ground_extent, ground_of, ground_tile,
     macro_color, material_look, terrain_info, tile_height, tile_material, true_height
 };
-import package::generated::scatter::{NEAR_LEVEL_SHIFT, SCATTER_GROUP, Snap, TERRAIN_INDEX};
-import package::place::placed_tiles::{DEAD, HIDDEN, Pose, Record};
+import package::generated::scatter::{
+    DEAD, HIDDEN, NEAR_LEVEL_SHIFT, SCATTER_GROUP, Snap, TERRAIN_INDEX
+};
+import package::place::placed_tiles::{Pose, Record};
 
 @group(1) @binding(0) var<uniform> snap: Snap;
 @group(1) @binding(1) var<storage, read_write> records: array<Record>;
@@ -45,7 +47,7 @@ fn finest_ground(info: TerrainInfo, terrain: GroundTerrain, local: vec2<f32>) ->
     return ground;
 }
 
-fn ground_color(info: TerrainInfo, terrain: GroundTerrain, local: vec2<f32>,
+fn ground_color(index: u32, info: TerrainInfo, terrain: GroundTerrain, local: vec2<f32>,
         ground: FinestGround) -> u32 {
     let samples = local / (info.origin.w * f32(1u << ground.level));
     let material = tile_material(ground.tile, vec2<u32>(round(samples)));
@@ -53,7 +55,8 @@ fn ground_color(info: TerrainInfo, terrain: GroundTerrain, local: vec2<f32>,
     let first = material_look(info.levels.z, material.first);
     let second = material_look(info.levels.z, material.second);
     let far = mix(first.far, second.far, share);
-    let vegetated = mix(step(1.0e-6, first.canopy.w), step(1.0e-6, second.canopy.w), share);
+    let vegetated = mix(step(1.0e-6, material_canopy(index, material.first).w),
+        step(1.0e-6, material_canopy(index, material.second).w), share);
     let colors = ground_colors(terrain, info.levels.w, local, 0u);
     let tint = macro_color(colors) * cover_tint(colors.a, vegetated);
     return pack4x8unorm(vec4<f32>(sqrt(saturate(far.rgb * tint)),
@@ -86,6 +89,6 @@ fn snap_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     poses[id.x].r1.w = base;
     records[id.x].center.y = record.center.y + (base - pose.r1.w);
     if grounds[id.x].z != 0u {
-        grounds[id.x].w = ground_color(info, ground_terrain, local, ground);
+        grounds[id.x].w = ground_color(terrain, info, ground_terrain, local, ground);
     }
 }

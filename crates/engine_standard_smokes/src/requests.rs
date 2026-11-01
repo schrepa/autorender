@@ -41,7 +41,11 @@ pub(crate) fn refused_with(
     let reply = reply(session, verb, body);
     let wanted = json!({ "code": code });
     smoke_eq!(
-        seen(reply["error"]["code"] == code, reply["error"].clone(), &wanted),
+        seen(
+            reply["error"]["code"] == code,
+            reply["error"].clone(),
+            &wanted
+        ),
         wanted,
         check
     );
@@ -105,18 +109,6 @@ pub(crate) fn names(value: &Value) -> Vec<String> {
         .map(str::to_owned)
         .collect()
 }
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn idle(milliseconds: f64) {
-    let until =
-        std::time::Instant::now() + std::time::Duration::from_secs_f64(milliseconds / 1000.0);
-    while std::time::Instant::now() < until {
-        std::hint::spin_loop();
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn idle(_: f64) {}
 
 pub(crate) fn serve(session: &mut dyn SmokeSession, document: &Value) -> Result<(), SmokeFailure> {
     session.source(&document.to_string());

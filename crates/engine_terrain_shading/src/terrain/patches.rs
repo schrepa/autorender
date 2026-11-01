@@ -9,7 +9,7 @@ use super::surface::SurfaceTrees;
 use super::tables::TerrainTables;
 use super::{FrameTerrain, NO_HOLES, TerrainFrame, changed_run};
 use crate::gpu::{
-    PatchRecord, TERRAIN_GRID as GRID, TERRAIN_GRID_VERTICES as GRID_VERTICES, TerrainUniform,
+    PatchRecord, PATCH_GRID as GRID, PATCH_GRID_VERTICES as GRID_VERTICES, TerrainUniform,
     ViewUniform,
 };
 use crate::state::Atlas;

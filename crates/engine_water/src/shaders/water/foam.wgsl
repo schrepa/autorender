@@ -1,5 +1,6 @@
+import package::engine::math::GRAVITY;
 import package::engine::view::{detail_across, detail_level, material_detail};
-import package::generated::water::{BREAK_THINNEST, WATER_GRADIENT_RANGE, WATER_GRAVITY};
+import package::generated::water::{BREAK_THINNEST, WATER_GRADIENT_RANGE};
 import package::water::footprint::{WaterFootprint, water_spread};
 import package::water::particles::PARTICLE_SMALLEST;
 import package::water::surface::water;
@@ -19,7 +20,7 @@ fn water_climbing(under: f32, change: f32, speed: f32, facing: f32) -> f32 {
     if tearing <= 0.0 {
         return 0.0;
     }
-    let climbs = speed * speed / (2.0 * WATER_GRAVITY) * facing;
+    let climbs = speed * speed / (2.0 * GRAVITY) * facing;
     let band = max(max(climbs, change * material_detail()), 1.0e-9);
     return tearing * saturate(1.0 - under / band) * (climbs / band); // filter: a band narrower than a pixel spreading its share over it
 }

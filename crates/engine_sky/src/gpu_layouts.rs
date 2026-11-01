@@ -1,4 +1,4 @@
-use engine_core::{gpu_consts, gpu_struct};
+use engine_core::{GpuStruct, gpu_consts, gpu_struct};
 
 pub(crate) const CLOUD_SHADOW_BYTES: usize =
     (CLOUD_SHADOW_CELLS * CLOUD_SHADOW_CELLS * 2) as usize;
@@ -56,6 +56,7 @@ gpu_struct! {
         pub domes_view: [f32; 4],
         pub domes_layers: [u32; 4],
         pub haze: [f32; 4],
+        pub wind: [f32; 4],
     }
 }
 
@@ -94,6 +95,8 @@ gpu_consts! {
     pub(crate) const ADAPTATION_MOST: f32 = 16.0;
     pub(crate) const CLOUD_GROUP: u32 = 8;
     pub(crate) const SKY_TABLE_GROUP: u32 = 8;
+    pub(crate) const SKY_VIEW_WIDTH: u32 = 192;
+    pub(crate) const SKY_VIEW_HEIGHT: u32 = 108;
     pub(crate) const CLOUD_HORIZON: f32 = 0.05;
     pub(crate) const CLOUD_REACH: f32 = 60000.0;
     pub(crate) const SKY_MULTIPLE_SIZE: f32 = 32.0;
@@ -105,3 +108,12 @@ const _: () = assert!(
         && ADAPTATION_MOST == engine_places::sky::ADAPTATION_MOST,
     "the sky's adaptation constants are the sky place's"
 );
+
+pub(crate) const GENERATED: &[&str] = &[
+    WGSL,
+    <CloudUniform as GpuStruct>::WGSL,
+    <CloudView as GpuStruct>::WGSL,
+    <SkyPiece as GpuStruct>::WGSL,
+    <SkyAir as GpuStruct>::WGSL,
+    <HazeView as GpuStruct>::WGSL,
+];

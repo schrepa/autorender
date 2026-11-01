@@ -1,8 +1,7 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Readback, stats};
-use engine_render::DebugShown;
+use engine_core::stats;
 
-use crate::settings::{Haze, Sky, SkyLighting, haze_runs};
+use crate::sky::SkyPlan;
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct StaticTableRow {
@@ -34,43 +33,26 @@ stats! {
     #[section("sky_stats")]
     pub struct SkyStats {
         pub tables: u32,
-        pub haze: bool,
     }
 }
 
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SkyCounts {
-    rows: u32,
-    view_pixels: u32,
-    tables: u32,
-}
-
-impl Readback for SkyCounts {
-    fn arrived(&mut self, _: u64, _: u32, bytes: &[u8]) {
-        let word = |at: usize| {
-            bytes
-                .get(at * 4..at * 4 + 4)
-                .map_or(0, |word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
-        };
-        *self = Self {
-            rows: word(0),
-            view_pixels: word(1),
-            tables: word(2),
-        };
+stats! {
+    #[section("haze_stats")]
+    pub struct HazeStats {
+        pub active: bool,
     }
 }
 
 pub(crate) fn sky_stats(
-    (counts, sky, haze, light, shown): (Res<SkyCounts>, Res<Sky>, Res<Haze>, Res<SkyLighting>, Res<DebugShown>),
-    mut clouds: ResMut<CloudStats>,
-    mut stats: ResMut<SkyStats>,
+    plan: Res<SkyPlan>,
+    (mut clouds, mut sky, mut haze): (ResMut<CloudStats>, ResMut<SkyStats>, ResMut<HazeStats>),
 ) {
-    clouds.set_if_neq(CloudStats {
-        rows: counts.rows,
-        view_pixels: counts.view_pixels,
+    let (rows, view_pixels) = plan.cloud_rows();
+    clouds.set_if_neq(CloudStats { rows, view_pixels });
+    sky.set_if_neq(SkyStats {
+        tables: plan.tables_built(),
     });
-    stats.set_if_neq(SkyStats {
-        tables: counts.tables,
-        haze: shown.owner.is_none() && haze_runs(&haze, &sky, &light.values()),
+    haze.set_if_neq(HazeStats {
+        active: plan.hazes(),
     });
 }

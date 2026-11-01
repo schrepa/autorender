@@ -1,7 +1,7 @@
 import package::engine::shading::{BODY_WATER, Shaded, SurfacePoint, ViewPixel};
 import package::engine::view::{camera, stable_normalize};
 import package::face::dither::stored;
-import package::face::ground_tiles::{GroundTerrain, ground_height};
+import package::face::ground_tiles::{GroundTerrain, ground_height, terrain_info};
 import package::face::lighting::finish;
 import package::generated::pond::{POND_MOST, PondShape};
 import package::generated::targets::{ViewTargets, view_targets};
@@ -35,7 +35,11 @@ fn vs_pond(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
 }
 
 fn pond_ground(shape: PondShape, world: vec3<f32>) -> f32 {
-    let terrain = GroundTerrain(shape.ground.x, shape.ground.y, shape.terrain.w);
+    var directory = 0u;
+    if shape.ground.z != 0u {
+        directory = terrain_info(shape.ground.x).levels.x;
+    }
+    let terrain = GroundTerrain(directory, shape.ground.y, shape.terrain.w);
     let local = world.xz - shape.terrain.xz;
     let ground = ground_height(terrain, local);
     if ground.found {

@@ -1,3 +1,8 @@
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
+
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod part;

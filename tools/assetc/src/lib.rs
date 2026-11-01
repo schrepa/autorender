@@ -68,8 +68,6 @@ pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, Error> {
         meshes: Vec::new(),
         prefabs: Vec::new(),
         entities: Vec::new(),
-        streamed: Vec::new(),
-        along: Vec::new(),
         views: Vec::new(),
         looks: Vec::new(),
     };

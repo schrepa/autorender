@@ -155,28 +155,27 @@ fn vs_splat(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instanc
     return output;
 }
 
-fn splat_cut(input: SplatOutput) -> bool {
-    let texels = f32(splat.counts.w);
-    return any(input.window < vec2<f32>(0.0)) || any(input.window >= vec2<f32>(texels))
-        || !redrawn(vec2<u32>(input.clip.xy) / splat.place.z) || length(input.corner) > 1.0;
+struct SplatTargets {
+    @location(0) coverage: vec4<f32>,
+    @location(1) heights: vec4<f32>,
 }
 
 @fragment
-fn fs_splat_coverage(input: SplatOutput) -> @location(0) vec4<f32> {
-    if splat_cut(input) {
+fn fs_splat(input: SplatOutput) -> SplatTargets {
+    let texels = f32(splat.counts.w);
+    if any(input.window < vec2<f32>(0.0)) || any(input.window >= vec2<f32>(texels))
+        || !redrawn(vec2<u32>(input.clip.xy) / splat.place.z) {
         discard;
     }
     let away = length(input.corner);
-    let one = min(input.cover.x * (1.0 - smoothstep(0.55, 1.0, away)), 1.0);
-    return vec4<f32>(one, 0.0, 0.0, 0.0);
-}
-
-@fragment
-fn fs_splat_heights(input: SplatOutput) -> @location(0) vec4<f32> {
-    if splat_cut(input) {
+    if away > 1.0 {
         discard;
     }
-    return vec4<f32>(input.cover.z, -input.cover.y, 0.0, 0.0);
+    let one = min(input.cover.x * (1.0 - smoothstep(0.55, 1.0, away)), 1.0);
+    var targets: SplatTargets;
+    targets.coverage = vec4<f32>(one, 0.0, 0.0, 0.0);
+    targets.heights = vec4<f32>(input.cover.z, -input.cover.y, 0.0, 0.0);
+    return targets;
 }
 
 @vertex
@@ -191,13 +190,11 @@ fn vs_clear(@builtin(vertex_index) vertex: u32, @builtin(instance_index) cell: u
 }
 
 @fragment
-fn fs_clear_coverage() -> @location(0) vec4<f32> {
-    return vec4<f32>(0.0);
-}
-
-@fragment
-fn fs_clear_heights() -> @location(0) vec4<f32> {
-    return vec4<f32>(NOTHING, NOTHING, 0.0, 0.0);
+fn fs_clear() -> SplatTargets {
+    var targets: SplatTargets;
+    targets.coverage = vec4<f32>(0.0);
+    targets.heights = vec4<f32>(NOTHING, NOTHING, 0.0, 0.0);
+    return targets;
 }
 
 struct MeansOutput {
@@ -227,26 +224,19 @@ fn vs_means(@builtin(vertex_index) vertex: u32, @builtin(instance_index) cell: u
     return output;
 }
 
-fn finer_texel(input: MeansOutput, corner: u32) -> vec2<i32> {
+@fragment
+fn fs_means(input: MeansOutput) -> SplatTargets {
     let local = vec2<u32>(input.clip.xy) - input.first;
     let finer = vec2<i32>(input.finer + local * 2u);
-    return finer + vec2<i32>(i32(corner & 1u), i32(corner >> 1u));
-}
-
-@fragment
-fn fs_means_coverage(input: MeansOutput) -> @location(0) vec4<f32> {
     var coverage = 0.0;
-    for (var corner = 0u; corner < 4u; corner++) {
-        coverage += textureLoad(finer_coverage, finer_texel(input, corner), 0).r;
-    }
-    return vec4<f32>(0.25 * coverage, 0.0, 0.0, 0.0);
-}
-
-@fragment
-fn fs_means_heights(input: MeansOutput) -> @location(0) vec4<f32> {
     var heights = vec2<f32>(NOTHING);
     for (var corner = 0u; corner < 4u; corner++) {
-        heights = max(heights, textureLoad(finer_heights, finer_texel(input, corner), 0).rg);
+        let at = finer + vec2<i32>(i32(corner & 1u), i32(corner >> 1u));
+        coverage += textureLoad(finer_coverage, at, 0).r;
+        heights = max(heights, textureLoad(finer_heights, at, 0).rg);
     }
-    return vec4<f32>(heights, 0.0, 0.0);
+    var targets: SplatTargets;
+    targets.coverage = vec4<f32>(0.25 * coverage, 0.0, 0.0, 0.0);
+    targets.heights = vec4<f32>(heights, 0.0, 0.0);
+    return targets;
 }

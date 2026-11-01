@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::surface::{Facing, NoiseMask};
 
-pub use crate::expr_layer::{EXPRESSION, ExpressionLayer, ExpressionSettings, expression_kind};
+pub use crate::expr_layer::{EXPRESSION, ExpressionLayer, ExpressionSettings};
 
 pub const MAX_EXPR_DEPTH: usize = 8;
 pub const MAX_EXPR_LIST: usize = 16;

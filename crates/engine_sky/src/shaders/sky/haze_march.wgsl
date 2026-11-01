@@ -41,7 +41,7 @@ fn haze_density(world: vec3<f32>) -> f32 {
     if spread <= 0.0 {
         return 1.0;
     }
-    let drift = vec3<f32>(camera.wind.x, 0.0, camera.wind.y) * camera.position.w;
+    let drift = vec3<f32>(sky_piece.wind.x, 0.0, sky_piece.wind.y) * camera.position.w;
     var p = (world - drift) * sky_piece.haze_march.w;
     var sum = 0.0;
     var strength = 1.0;

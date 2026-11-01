@@ -2,8 +2,8 @@ use bevy_ecs::prelude::*;
 use engine_core::{Error, gpu_consts, gpu_struct};
 use engine_places::ground::{GroundTiles, TerrainEntry, TerrainTiles};
 use engine_render::{
-    Attach, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Layer, Lifetime, Own, Pass,
-    Pipeline, Prepare, RenderPipeline, Shape, wgpu,
+    Attach, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Layer, Lifetime, Own, Pass, Pipeline,
+    Prepare, RenderPipeline, Shape, wgpu,
 };
 use glam::Vec2;
 
@@ -87,7 +87,7 @@ impl GpuPart for PondGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         self.drawn = 0;
-        if ponds.is_empty() || ground.tables.is_empty() {
+        if ponds.is_empty() || ground.layers == 0 {
             return;
         }
         let (shapes, count) = shapes(ponds.iter(), &tiles.terrains, &ground);
@@ -121,15 +121,15 @@ fn shapes<'p>(
         let (low, high) = (pond.low(), pond.high());
         shape.area = [low.x, low.y, high.x, high.y];
         shape.surface = [pond.surface, 0.0, 0.0, 0.0];
-        if let Some(terrain) = under(terrains, pond) {
-            let origin = terrain.origin;
-            shape.terrain = [origin.x, origin.y, origin.z, terrain.pyramid.spacing(0)];
-            let directory = ground
+        if let Some(terrain) = under(terrains, pond)
+            && let Some(&(_, index)) = ground
                 .tables
                 .iter()
                 .find(|(entity, _)| *entity == terrain.terrain)
-                .map_or(0, |(_, directory)| *directory);
-            shape.ground = [directory, terrain.pyramid.levels(), 0, 0];
+        {
+            let origin = terrain.origin;
+            shape.terrain = [origin.x, origin.y, origin.z, terrain.pyramid.spacing(0)];
+            shape.ground = [index, terrain.pyramid.levels(), 1, 0];
         }
         count += 1;
     }

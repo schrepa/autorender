@@ -54,6 +54,7 @@ pub struct BatchPlan {
     previous_order: Vec<usize>,
     previous_batches: Vec<DrawBatch>,
     generation: u64,
+    rebuilds: u64,
     source_indices: Vec<usize>,
     material_source_indices: Vec<usize>,
     texture_source_indices: Vec<usize>,
@@ -70,6 +71,7 @@ pub struct BatchPlan {
     used_material_sources: Vec<bool>,
     used_texture_sources: Vec<bool>,
     pub instance_limit: Option<usize>,
+    pub refused: Option<Error>,
     valid: bool,
     order_reused: bool,
     retained_structure: Option<(Stamp, u64)>,
@@ -106,11 +108,75 @@ impl BatchPlan {
             self.retained_structure = Some(key);
             self.retained_sources = Some(source_key);
         }
+        self.record_stats();
         Ok(())
+    }
+
+    fn record_stats(&self) {
+        if engine_core::profile::active() {
+            engine_core::profile::counter(
+                "render.batch_order_reused",
+                if self.order_reused { 1.0 } else { 0.0 },
+            );
+            engine_core::profile::counter(
+                "render.batch_order_rebuilt",
+                if self.order_reused { 0.0 } else { 1.0 },
+            );
+            engine_core::profile::counter(
+                "render.batch_slot_mapping_reused",
+                f64::from(self.slot_mapping_reused),
+            );
+            engine_core::profile::counter(
+                "render.batch_key_resolutions",
+                self.key_resolutions as f64,
+            );
+            let group_scratch_bytes = (self.instance_buckets.capacity()
+                + self.slot_buckets.capacity()
+                + self.group_order.capacity())
+                * size_of::<u32>()
+                + self.group_keys.capacity() * size_of::<u64>()
+                + self.bucket_cursors.capacity() * size_of::<usize>();
+            let capacity_bytes = (self.ordered_instances.capacity()
+                + self.source_indices.capacity()
+                + self.material_source_indices.capacity()
+                + self.texture_source_indices.capacity()
+                + self.material_sources.capacity()
+                + self.texture_sources.capacity())
+                * size_of::<usize>()
+                + self.batches.capacity() * size_of::<DrawBatch>()
+                + self.mesh_handles.capacity() * size_of::<MeshHandle>()
+                + self.material_handles.capacity() * size_of::<MaterialHandle>()
+                + self.texture_handles.capacity() * size_of::<TextureHandle>()
+                + group_scratch_bytes;
+            engine_core::profile::counter(
+                "memory.batch_plan_capacity_bytes",
+                capacity_bytes as f64,
+            );
+            engine_core::profile::counter(
+                "memory.batch_group_scratch_bytes",
+                group_scratch_bytes as f64,
+            );
+        }
     }
 
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    pub(crate) fn rebuilds(&self) -> u64 {
+        self.rebuilds
+    }
+
+    pub(crate) fn mesh_handles(&self) -> &[MeshHandle] {
+        &self.mesh_handles
+    }
+
+    pub(crate) fn material_handles(&self) -> &[MaterialHandle] {
+        &self.material_handles
+    }
+
+    pub(crate) fn texture_handles(&self) -> &[TextureHandle] {
+        &self.texture_handles
     }
 
     fn invalidate(&mut self) {
@@ -144,7 +210,9 @@ impl BatchPlan {
         selected: &[usize],
         reuse_slot_mapping: bool,
     ) -> Result<(), Error> {
+        self.rebuilds += 1;
         let instance_count = selected.len();
+        let profile_validation = engine_core::profile::span("render", "batch_source_validation");
         self.source_indices.clear();
         self.material_source_indices.clear();
         self.texture_source_indices.clear();
@@ -163,6 +231,8 @@ impl BatchPlan {
         if !snapshot.view_projection.is_finite() {
             return Err(snapshot_camera());
         }
+        drop(profile_validation);
+        let profile_sources = engine_core::profile::span("render", "batch_source_index");
         index_by_handle(
             &mut self.source_indices,
             snapshot.meshes.len(),
@@ -201,6 +271,7 @@ impl BatchPlan {
                 }
             }
         }
+        drop(profile_sources);
         if !reuse_slot_mapping {
             self.group_ids.clear();
             self.group_keys.clear();
@@ -252,6 +323,7 @@ impl BatchPlan {
         snapshot: &Snapshot,
         selected: &[usize],
     ) -> Result<(), Error> {
+        let _profile = engine_core::profile::span("render", "batch_instance_group");
         self.instance_buckets.clear();
         self.instance_buckets.reserve_exact(selected.len());
         for &slot in selected {
@@ -296,6 +368,7 @@ impl BatchPlan {
         self.batches.reserve_exact(self.group_order.len());
         let mut start = 0;
         {
+            let _profile_ranges = engine_core::profile::span("render", "batch_draw_ranges");
             for &group in &self.group_order {
                 let count = &mut self.bucket_cursors[group as usize];
                 let end = start + *count;

@@ -3,7 +3,7 @@ import package::place::heightfield::{SurfaceTriangle, TerrainGroundRise, Terrain
 import package::engine::view::camera;
 import package::terrain_shading::draw::{TerrainBlend, TerrainShadingLevel, terrain_band_rise, terrain_border_blend, terrain_control, terrain_control_sampler, terrain_controls_blend, terrain_gradient_between, terrain_layer_fades, terrain_material, terrain_material_rises, terrain_normals, terrain_steep_blend};
 import package::terrain_shading::field::{surface_along, terrain_directory, terrain_load};
-import package::generated::terrain_shading::{SUBDIVISION_ARGS, SUBDIVISION_LEAVES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES};
+import package::generated::terrain_shading::{PATCH_GRID, SUBDIVISION_ARGS, SUBDIVISION_LEAVES, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES};
 
 @group(0) @binding(0) var<storage, read> terrain_views: array<TerrainView>;
 
@@ -13,13 +13,18 @@ import package::generated::terrain_shading::{SUBDIVISION_ARGS, SUBDIVISION_LEAVE
 
 @group(0) @binding(0) var<storage, read> terrain_surface_args: array<u32>;
 
-const TERRAIN_GRID: u32 = 17u;
+const TERRAIN_GRID: u32 = PATCH_GRID;
+
+const SURFACE_LEAF_INDICES: u32 = SURFACE_MESHLET_INDICES;
 
 var<private> terrain: TerrainUniform;
 
 var<private> terrain_view: TerrainView;
 
+var<private> terrain_index: u32;
+
 fn use_terrain(index: u32) {
+    terrain_index = index;
     terrain = terrains[index];
     terrain_view = terrain_views[camera.view.x];
 }

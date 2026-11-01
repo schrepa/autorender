@@ -79,8 +79,8 @@ pub(crate) fn plan_cover(
 ) {
     let plan = &mut *plan;
     plan.shown = cover.enabled && cover.density > 0.0;
-    plan.room = limits.storage_room;
-    plan.drawn = !ground.held.is_empty();
+    plan.room = limits.storage_room / 16 * 16;
+    plan.drawn = !ground.tables.is_empty();
     if !plan.drawn {
         return;
     }
@@ -94,7 +94,7 @@ pub(crate) fn plan_cover(
     let sight = Sight {
         culling: view.view_projection(),
         eye: view.detail_eye(),
-        height: view.render_size().y as f32,
+        height: view.display_size().y as f32,
     };
     if !plan.grow(&cover, &table, (&tiles, &ground), sight, grounded) {
         counts.latest = Some(Cut::default());
@@ -143,16 +143,12 @@ impl CoverPlan {
             let terms = table.terms(index);
             let density = terms.densest * cover.density * lushest();
             let law = CoverLaw::of(terms, common.pixels_per_meter);
-            let drawn = ground
-                .held
-                .iter()
-                .any(|held| held.terrain == terrain.terrain);
-            let at = ground
+            let Some(at) = ground
                 .tables
                 .iter()
                 .find(|(entity, _)| *entity == terrain.terrain)
-                .map(|&(_, at)| at);
-            let Some(at) = at.filter(|_| drawn) else {
+                .map(|&(_, at)| at)
+            else {
                 continue;
             };
             if density <= 0.0 || law.span <= 0.0 || terrain.surroundings {

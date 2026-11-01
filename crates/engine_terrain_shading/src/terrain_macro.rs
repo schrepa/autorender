@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
-use engine_core::{Texture, TextureFormat};
-use engine_terrain::RenderTerrains;
+use engine_core::{AssetLibrary, Error, Texture, TextureFormat};
+use engine_places::ground::TerrainTiles;
+use engine_render::{Install, Lifetime, Prepare, wgpu};
+
+use crate::state::Bakes;
+use crate::terrain::TerrainGpu;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Shape {
@@ -20,59 +24,21 @@ impl Shape {
     }
 }
 
-struct Maps {
-    texture: wgpu::Texture,
-    view: wgpu::TextureView,
-    shape: Shape,
-    terrains: usize,
-}
-
 pub(crate) struct MacroMaps {
-    maps: Option<Maps>,
-    empty: wgpu::TextureView,
+    pub(crate) texture: engine_render::Texture<TerrainGpu>,
+    shape: Option<(Shape, usize)>,
+    empty: bool,
     held: Vec<Option<Arc<Texture>>>,
-    generation: u64,
 }
 
 impl MacroMaps {
-    pub(crate) fn new(device: &wgpu::Device, queue: &engine_render::gpu_calls::Queue) -> Self {
-        let empty = engine_render::targets::texture_2d(
-            device,
-            "engine/terrain-macro-empty",
-            (1, 1),
-            1,
-            1,
-            wgpu::TextureFormat::Rgba8Unorm,
-            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        );
-        queue.write_texture(
-            empty.as_image_copy(),
-            &[128, 128, 128, 128],
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-        Self {
-            maps: None,
-            empty: array_view(&empty),
+    pub(crate) fn install(cx: &mut Install<'_, TerrainGpu>) -> Result<Self, Error> {
+        Ok(Self {
+            texture: cx.texture("macro_colors", wgpu::TextureFormat::Rgba8Unorm, Lifetime::Kept),
+            shape: None,
+            empty: false,
             held: Vec::new(),
-            generation: 0,
-        }
-    }
-
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    pub(crate) fn view(&self) -> &wgpu::TextureView {
-        self.maps.as_ref().map_or(&self.empty, |maps| &maps.view)
+        })
     }
 
     pub(crate) fn layer(&self, index: usize) -> u32 {
@@ -86,73 +52,67 @@ impl MacroMaps {
         self.held.iter().flatten().count() as u32
     }
 
-    pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.maps.as_ref().map_or(0, |maps| {
-            let shape = maps.shape;
-            let layer: u64 = (0..shape.levels as u32)
-                .map(|level| {
-                    let side = (shape.size >> level).max(1);
-                    shape.format.level_bytes(side, side) as u64
-                })
-                .sum();
-            layer * maps.terrains as u64
-        })
-    }
-
     pub(crate) fn prepare(
         &mut self,
-        device: &wgpu::Device,
-        queue: &engine_render::gpu_calls::Queue,
-        terrains: &RenderTerrains,
+        cx: &mut Prepare<'_, TerrainGpu>,
+        (tiles, bakes, assets, max_layers): (&TerrainTiles, &Bakes, &AssetLibrary, u32),
     ) {
-        let first = terrains
-            .terrains
-            .iter()
-            .find_map(|terrain| terrain.macro_map.as_ref());
-        let Some(shape) = first.map(|map| Shape::of(&map.texture)) else {
-            if self.maps.take().is_some() {
-                self.generation += 1;
-            }
+        let map = |index: usize| {
+            let terrain = tiles.terrains.get(index)?;
+            assets.texture(bakes.macro_map(terrain.terrain)?)
+        };
+        let first = (0..tiles.terrains.len()).find_map(map);
+        let Some(shape) = first.map(|texture| Shape::of(texture)) else {
+            self.shape = None;
             self.held.clear();
+            if !self.empty {
+                self.empty = true;
+                cx.allocate_as(
+                    self.texture,
+                    wgpu::TextureFormat::Rgba8Unorm,
+                    wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    1,
+                );
+                cx.write_level(self.texture, (0, 0), (1, 1), TextureFormat::Rgba8, &[128, 128, 128, 128]);
+            }
             return;
         };
-        let count = terrains
-            .terrains
-            .len()
-            .min(device.limits().max_texture_array_layers as usize);
-        if self
-            .maps
-            .as_ref()
-            .is_none_or(|maps| maps.shape != shape || maps.terrains != count)
-        {
-            self.maps = Some(maps(device, shape, count));
+        let count = tiles.terrains.len().min(max_layers as usize);
+        if self.shape != Some((shape, count)) {
+            self.shape = Some((shape, count));
+            self.empty = false;
             self.held = vec![None; count];
-            self.generation += 1;
+            cx.allocate_as(
+                self.texture,
+                engine_render::texture_format(shape.format, false).0,
+                wgpu::Extent3d {
+                    width: shape.size,
+                    height: shape.size,
+                    depth_or_array_layers: count as u32,
+                },
+                shape.levels as u32,
+            );
         }
-        let Some(maps) = &self.maps else {
-            return;
-        };
-        for (index, terrain) in terrains.terrains.iter().take(count).enumerate() {
-            let map = terrain
-                .macro_map
-                .as_ref()
-                .map(|map| &map.texture)
-                .filter(|texture| Shape::of(texture) == shape);
+        for index in 0..count {
+            let wanted = map(index).filter(|texture| Shape::of(texture) == shape);
             let held = &mut self.held[index];
-            match (map, &*held) {
+            match (wanted, &*held) {
                 (Some(map), Some(current)) if Arc::ptr_eq(map, current) => {}
                 (Some(map), _) => {
                     for (level, bytes) in map.levels().iter().enumerate() {
-                        engine_render::materials::write_level(
-                            queue,
-                            &maps.texture,
+                        cx.write_level(
+                            self.texture,
                             (level as u32, index as u32),
                             (shape.size, shape.size),
                             shape.format,
                             bytes,
                         );
                     }
-                    *held = Some(map.clone());
+                    *held = Some(Arc::clone(map));
                 }
                 (None, Some(_)) => {
                     *held = None;
@@ -161,30 +121,4 @@ impl MacroMaps {
             }
         }
     }
-}
-
-fn maps(device: &wgpu::Device, shape: Shape, terrains: usize) -> Maps {
-    let texture = engine_render::targets::texture_2d(
-        device,
-        "engine/terrain-macro",
-        (shape.size, shape.size),
-        terrains as u32,
-        shape.levels as u32,
-        engine_render::materials::gpu_format(shape.format, false).0,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-    );
-    Maps {
-        view: array_view(&texture),
-        texture,
-        shape,
-        terrains,
-    }
-}
-
-fn array_view(texture: &wgpu::Texture) -> wgpu::TextureView {
-    texture.create_view(&wgpu::TextureViewDescriptor {
-        label: Some("engine/terrain-macro"),
-        dimension: Some(wgpu::TextureViewDimension::D2Array),
-        ..Default::default()
-    })
 }

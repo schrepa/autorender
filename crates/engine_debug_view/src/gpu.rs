@@ -9,18 +9,11 @@ gpu_consts! {
     pub const DEBUG_VIEW_NORMALS: u32 = 7;
 }
 
+pub(crate) const GENERATED: &[&str] = &[WGSL];
+
 gpu_struct! {
     #[derive(Resource)]
     pub(crate) struct DebugViewPiece {
         pub view: [u32; 4],
-    }
-}
-
-gpu_struct! {
-    pub(crate) struct ProbedTargets {
-        pub ids: [u32; 4],
-        pub terrain: [u32; 2],
-        pub count: f32,
-        pub depth: f32,
     }
 }

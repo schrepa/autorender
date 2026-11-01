@@ -45,12 +45,6 @@ pub(crate) enum Pending {
         waits: u32,
     },
     Profile(Box<ProfileRun>),
-    Explain {
-        id: String,
-        entity: Entity,
-        slot: u32,
-        waits: u32,
-    },
     ExplainScene,
     Watch(Box<WatchRun>),
 }
@@ -58,10 +52,6 @@ pub(crate) enum Pending {
 const LOSS_WAITS: u32 = 120;
 
 const PROBE_WAITS: u32 = 120;
-
-const READ_BACK_WAITS: u32 = 120;
-
-const EXPLAIN_FRAMES: u32 = 2;
 
 pub(crate) struct ProfileRun {
     request: ProfileRequest,
@@ -381,17 +371,6 @@ impl<G: Game> GameHost<G> {
             }
             Pending::DeviceLoss { waits } => self.dev_device_lost(waits, context),
             Pending::Profile(run) => self.dev_profile(run, &outcome, context),
-            Pending::Explain {
-                id,
-                entity,
-                slot,
-                waits,
-            } => {
-                if let Some(failed) = outcome.failed {
-                    return self.dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(failed));
-                }
-                self.dev_explain_wait((id, entity), slot, waits, context)
-            }
             Pending::ExplainScene => {
                 if outcome.missing.is_some() {
                     return self.dev_refused(
@@ -753,55 +732,8 @@ impl<G: Game> GameHost<G> {
                     Ok(entity) => entity,
                     Err(error) => return self.dev_refused(error),
                 };
-                let readable = self
-                    .engine()
-                    .app
-                    .world()
-                    .get_resource::<engine_core::Detail>()
-                    .is_some_and(|detail| detail.enabled && detail.fade_seconds > 0.0);
-                let Some(slot) = self.engine().render_slot(entity).filter(|_| readable) else {
-                    let slot = self.engine().render_slot(entity);
-                    return self.dev_explained((id, entity), slot, DrawState::Unread, context);
-                };
-                self.read_back(slot);
-                self.suspend();
-                self.dev_effect(
-                    Pending::Explain {
-                        id,
-                        entity,
-                        slot,
-                        waits: 1,
-                    },
-                    Effect::Frame { timestamp: 0.0 },
-                )
+                self.dev_explained((id, entity), None, DrawState::Unread, context)
             }
-        }
-    }
-
-    fn dev_explain_wait(
-        &mut self,
-        (id, entity): (String, Entity),
-        slot: u32,
-        waits: u32,
-        context: &HostContext,
-    ) -> Step {
-        match self.read_back(slot) {
-            Some((level, 0)) if waits >= EXPLAIN_FRAMES => {
-                let drawn = level.map_or(DrawState::Culled, DrawState::Level);
-                self.dev_explained((id, entity), Some(slot), drawn, context)
-            }
-            Some(_) | None if waits >= READ_BACK_WAITS => {
-                self.dev_explained((id, entity), Some(slot), DrawState::Unread, context)
-            }
-            Some(_) | None => self.dev_effect(
-                Pending::Explain {
-                    id,
-                    entity,
-                    slot,
-                    waits: waits + 1,
-                },
-                Effect::Frame { timestamp: 0.0 },
-            ),
         }
     }
 

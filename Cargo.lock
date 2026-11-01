@@ -682,11 +682,13 @@ dependencies = [
  "bevy_ecs",
  "engine",
  "engine_core",
+ "engine_meshes",
  "engine_native",
  "engine_places",
  "engine_registry",
  "engine_scene",
  "engine_standard",
+ "engine_terrain",
  "serde_json",
 ]
 
@@ -986,6 +988,7 @@ dependencies = [
  "engine",
  "engine_core",
  "engine_dev",
+ "engine_fly_camera",
  "engine_place",
  "engine_registry",
  "engine_render",
@@ -1008,7 +1011,6 @@ dependencies = [
 name = "engine_collision"
 version = "0.1.0"
 dependencies = [
- "engine_codec",
  "engine_core",
  "engine_ecs",
  "engine_math",
@@ -1016,6 +1018,7 @@ dependencies = [
  "engine_sources",
  "glam 0.30.9",
  "parry3d",
+ "schemars",
  "serde",
  "serde_json",
 ]
@@ -1049,7 +1052,6 @@ dependencies = [
 name = "engine_debug_view"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
  "engine_core",
  "engine_ecs",
  "engine_render",
@@ -1127,6 +1129,9 @@ dependencies = [
  "engine_places",
  "engine_sources",
  "glam 0.30.9",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1289,6 +1294,9 @@ dependencies = [
  "engine_render",
  "engine_sources",
  "glam 0.30.9",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1320,6 +1328,7 @@ dependencies = [
  "engine_render",
  "engine_sources",
  "glam 0.30.9",
+ "schemars",
  "serde_json",
 ]
 
@@ -1349,6 +1358,7 @@ dependencies = [
  "engine_places",
  "engine_sources",
  "glam 0.30.9",
+ "schemars",
  "serde",
  "serde_json",
 ]
@@ -1372,6 +1382,9 @@ dependencies = [
  "engine_render",
  "engine_sources",
  "glam 0.30.9",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1380,12 +1393,14 @@ version = "0.1.0"
 dependencies = [
  "engine_core",
  "engine_ecs",
+ "engine_heightfield",
  "engine_places",
  "engine_sources",
  "glam 0.30.9",
  "hashbrown 0.16.1",
  "parry3d",
  "rapier3d",
+ "schemars",
  "serde",
  "serde_json",
 ]
@@ -1425,6 +1440,8 @@ dependencies = [
  "engine_core",
  "engine_native",
  "engine_player_bricks",
+ "engine_sources",
+ "engine_standard",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -1435,47 +1452,11 @@ dependencies = [
 name = "engine_player_bricks"
 version = "0.1.0"
 dependencies = [
- "engine_ambient_occlusion",
- "engine_auto_exposure",
- "engine_bloom",
- "engine_collision",
  "engine_core",
- "engine_debug_view",
- "engine_dither",
  "engine_fly_camera",
- "engine_ground_cover",
- "engine_grounding",
- "engine_layer_erosion",
- "engine_layer_heightmap",
- "engine_layer_hydrology",
- "engine_layer_noise",
- "engine_layer_paths",
- "engine_layer_relief",
- "engine_layer_stamps",
- "engine_lighting",
- "engine_lights",
- "engine_meshes",
- "engine_navigation",
- "engine_particles",
- "engine_physics",
- "engine_places",
  "engine_player_walk",
- "engine_probes",
- "engine_reflections",
- "engine_scatter",
- "engine_shadows",
- "engine_sky",
- "engine_splines",
+ "engine_standard",
  "engine_standard_smokes",
- "engine_sun",
- "engine_taa",
- "engine_terrain",
- "engine_terrain_shading",
- "engine_time_of_day",
- "engine_tonemap",
- "engine_water",
- "engine_wind",
- "engine_world_streaming",
 ]
 
 [[package]]
@@ -1509,6 +1490,9 @@ dependencies = [
  "engine_render",
  "engine_sources",
  "glam 0.30.9",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1675,13 +1659,13 @@ dependencies = [
 name = "engine_splines"
 version = "0.1.0"
 dependencies = [
- "engine_codec",
  "engine_core",
  "engine_ecs",
  "engine_math",
  "engine_places",
  "engine_sources",
  "glam 0.30.9",
+ "schemars",
  "serde",
  "serde_json",
 ]
@@ -1694,7 +1678,9 @@ dependencies = [
  "engine_ecs",
  "engine_render",
  "engine_sources",
+ "schemars",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1756,7 +1742,6 @@ dependencies = [
 name = "engine_sun"
 version = "0.1.0"
 dependencies = [
- "engine_codec",
  "engine_core",
  "engine_ecs",
  "engine_places",
@@ -1808,6 +1793,7 @@ dependencies = [
  "engine_render",
  "engine_sources",
  "glam 0.30.9",
+ "libm",
  "serde_json",
 ]
 
@@ -1859,6 +1845,7 @@ dependencies = [
  "engine_render",
  "engine_sources",
  "glam 0.30.9",
+ "libm",
  "serde",
  "serde_json",
 ]
@@ -1870,6 +1857,7 @@ dependencies = [
  "engine_core",
  "engine_ecs",
  "engine_places",
+ "engine_render",
  "engine_sources",
 ]
 
@@ -2415,6 +2403,7 @@ dependencies = [
  "engine_render",
  "engine_sources",
  "glam 0.30.9",
+ "schemars",
  "serde",
  "serde_json",
 ]
@@ -5174,8 +5163,10 @@ dependencies = [
  "engine_assetc",
  "engine_assets",
  "engine_checks",
+ "engine_codec",
  "engine_core",
  "engine_dev",
+ "engine_heightfield",
  "engine_lodbuild",
  "engine_native",
  "engine_navigation",
@@ -5184,10 +5175,14 @@ dependencies = [
  "engine_profiler",
  "engine_registry",
  "engine_scene",
+ "engine_sky",
  "engine_standard",
  "engine_terrain",
+ "engine_terrain_shading",
  "engine_textures",
+ "engine_water",
  "engine_worker",
+ "engine_world_streaming",
  "glam 0.30.9",
  "gltf",
  "naga",

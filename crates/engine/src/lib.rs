@@ -85,7 +85,7 @@ pub fn shader_modules(bricks: impl FnOnce(BrickList) -> BrickList) -> Result<Vec
     let list = bricks(BrickList::default());
     let mut modules: Vec<ShaderModule> = Vec::new();
     for (path, source) in engine_render::core_modules() {
-        add_module(&mut modules, path, source);
+        add_module(&mut modules, path, Box::leak(source.into_boxed_str()));
     }
     for listed in list.listed() {
         for module in listed.source().modules() {
@@ -107,6 +107,13 @@ pub fn shader_modules(bricks: impl FnOnce(BrickList) -> BrickList) -> Result<Vec
         }
     }
     Ok(modules)
+}
+
+pub fn scene_kinds(
+    bricks: impl FnOnce(BrickList) -> BrickList,
+) -> Result<engine_scene::SceneKinds> {
+    let engine = game::engine(bricks)?;
+    Ok(engine_scene::SceneKinds::of(engine.app.world()))
 }
 
 fn add_module(modules: &mut Vec<ShaderModule>, path: &'static str, source: &'static str) {

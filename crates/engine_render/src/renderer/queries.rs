@@ -1,16 +1,40 @@
+use bevy_ecs::world::World;
+use engine_core::{AtlasRole, IMPOSTOR_MIN_TRIANGLES, ImpostorBooks, MaterialHandle, MeshHandle};
+
 use super::*;
+
+const MOTION_OUTPUTS: [&str; 2] = ["motion", "previous_poses"];
 
 impl Renderer {
     pub fn adapter(&self) -> &crate::AdapterInfo {
         &self.core.adapter
     }
 
-    pub fn device_limits(&self) -> wgpu::Limits {
+    pub fn limits(&self) -> wgpu::Limits {
         self.core.device.limits()
     }
 
-    pub fn device_features(&self) -> wgpu::Features {
+    pub fn features(&self) -> wgpu::Features {
         self.core.device.features()
+    }
+
+    pub fn post(&self, _world: &World) -> bool {
+        let Some(run) = self.run.as_ref() else {
+            return false;
+        };
+        let composite = std::any::type_name::<crate::shared::Composite>();
+        run.machine
+            .declared
+            .parts
+            .iter()
+            .position(|part| part.name == composite)
+            .is_some_and(|part| run.drawable(part as u32))
+    }
+
+    pub fn motion(&self, world: &World) -> bool {
+        world
+            .get_resource::<engine_registry::MembersOf<crate::ViewOutputs>>()
+            .is_some_and(|members| members.live().any(|output| MOTION_OUTPUTS.contains(&output.name)))
     }
 
     pub fn texture_sampling(&self) -> engine_core::TextureSampling {
@@ -62,7 +86,78 @@ impl Renderer {
     }
 
     pub fn is_texture_resident(&self, handle: engine_core::TextureHandle) -> bool {
-        let assets = self.run.as_ref().map(|run| &run.assets).or(self.assets.as_ref());
-        assets.is_some_and(|assets| assets.materials.is_texture_resident(handle))
+        self.held_assets()
+            .is_some_and(|assets| assets.materials.is_texture_resident(handle))
+    }
+
+    pub fn mesh_levels(&self, world: &World, handle: MeshHandle) -> Option<Vec<(u32, f32)>> {
+        if !self.held_assets()?.meshes.contains(handle) {
+            return None;
+        }
+        let mesh = world.get_resource::<engine_core::AssetResidency>()?.mesh(handle)?;
+        Some(mesh.lods().iter().map(|&(_, count, error)| (count, error)).collect())
+    }
+
+    pub fn impostor_resident(&self, world: &World, mesh: MeshHandle, material: MaterialHandle) -> Option<bool> {
+        let gpu = self.held_assets()?.meshes.get(mesh)?;
+        if (gpu.index_count as usize) / 3 < IMPOSTOR_MIN_TRIANGLES {
+            return None;
+        }
+        let books = world.get_resource::<ImpostorBooks>()?;
+        Some(books.contains(AtlasRole::Scene, mesh, Some(material)))
+    }
+
+    pub fn pipelines_compiling(&self) -> bool {
+        crate::platform::poll(&self.core.device);
+        self.core.pipeline_counts.compiling()
+    }
+
+    pub fn pipeline_list(&self) -> Vec<u8> {
+        let fixed = self.core.pipeline_counts.list();
+        let mut record = (fixed.len() as u32).to_le_bytes().to_vec();
+        record.extend(fixed);
+        if let Some(run) = self.run.as_ref() {
+            record.extend(run.listing());
+        }
+        record
+    }
+
+    pub fn create_listed_pipelines(&mut self, record: &[u8]) -> Result<u32, Error> {
+        let broken = |expected: Expected| failed("$.pipelines").expected(expected);
+        let (length, rest) = record
+            .split_first_chunk::<4>()
+            .ok_or_else(|| broken(Expected::Present))?;
+        let length = u32::from_le_bytes(*length) as usize;
+        let fixed = rest.get(..length).ok_or_else(|| broken(Expected::Present))?;
+        let machine = &rest[length..];
+        let mut created = self.core.pipeline_counts.create_listed(fixed)?;
+        if let Some(run) = self.run.as_mut() {
+            created += run.create_listed(machine)?;
+        }
+        Ok(created)
+    }
+
+    pub fn pipelines_listed(&self) -> (u32, u32) {
+        let (up_front, unlisted) = self.core.pipeline_counts.listed();
+        let (made, missed) = self.run.as_ref().map_or((0, 0), |run| (run.up_front, run.unlisted));
+        (up_front + made, unlisted + missed)
+    }
+
+    pub fn disabled_features(&self) -> engine_core::Names {
+        let bits = self.run.as_ref().map_or(0, |run| {
+            run.faulted
+                .iter()
+                .enumerate()
+                .filter(|(_, fault)| fault.is_some())
+                .fold(0_u64, |bits, (at, _)| bits | 1_u64.checked_shl(at as u32).unwrap_or(0))
+        });
+        engine_core::Names {
+            bits,
+            names: self.part_names,
+        }
+    }
+
+    fn held_assets(&self) -> Option<&crate::encode::Assets> {
+        self.run.as_ref().map(|run| &run.assets).or(self.assets.as_ref())
     }
 }

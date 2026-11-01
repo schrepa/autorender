@@ -2,14 +2,17 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use engine::command_line::CommandOption;
+use engine::scene::SceneKinds;
 use engine::{Engine, Error, ErrorCode, Expected};
 use engine_native::{Arguments, HostOptions, file_error, files};
-use engine_player_bricks::bricks;
 
-use crate::ScenePlayer;
+use crate::{ScenePlayer, bricks};
 
-fn player_options() -> [CommandOption; 1] {
-    [CommandOption::taking("--source", "PATH").required()]
+fn player_options() -> [CommandOption; 2] {
+    [
+        CommandOption::taking("--source", "PATH").required(),
+        CommandOption::taking("--without", "BRICK,..."),
+    ]
 }
 
 fn options() -> Vec<CommandOption> {
@@ -31,6 +34,7 @@ fn parameters() -> Vec<(String, String)> {
 
 struct Options {
     source: Option<PathBuf>,
+    without: String,
     host: HostOptions,
 }
 
@@ -54,6 +58,7 @@ impl Options {
     fn parse(arguments: Vec<String>) -> Result<Self, Error> {
         let mut options = Self {
             source: None,
+            without: String::new(),
             host: HostOptions::default(),
         };
         let mut arguments = Arguments::new(arguments);
@@ -63,6 +68,7 @@ impl Options {
             }
             match argument.name.as_str() {
                 "--source" => options.source = Some(arguments.value(&argument)?.into()),
+                "--without" => options.without = arguments.value(&argument)?,
                 _ => return Err(argument.unknown()),
             }
         }
@@ -73,7 +79,7 @@ impl Options {
     fn start(&self) -> ExitCode {
         #[cfg(feature = "dev")]
         if let Some(names) = &self.host.smoke {
-            let list = bricks(engine::BrickList::default());
+            let list = engine_player_bricks::bricks(engine::BrickList::default());
             let entries = match engine::smokes::registered(&list) {
                 Ok(entries) => entries,
                 Err(error) => return engine_native::exit(Err(error)),
@@ -91,6 +97,7 @@ impl Options {
     }
 
     fn run(&self) -> engine::Result<()> {
+        let bricks = bricks(&self.without, "--without")?;
         #[cfg(feature = "dev")]
         if self.host.dev {
             let mut session = self
@@ -111,7 +118,8 @@ impl Options {
         })?;
         let source =
             std::fs::read_to_string(path).map_err(|error| file_error("--source", path, &error))?;
-        let files = files::scene_files(path, &source)?;
+        let kinds = SceneKinds::of(engine.app.world());
+        let files = files::scene_files(path, &source, &kinds)?;
         ScenePlayer::new(&source, &files, engine)
     }
 }

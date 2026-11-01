@@ -1,6 +1,8 @@
 import package::face::cover::{COVER_FAR_SIDE, COVER_ROUGHNESS, CoverLaw, cover_clump_layer,
     cover_clump_spacing, cover_clumped, cover_growth, cover_seen, cover_share, cover_shown,
-    cover_tint};
+    cover_tint, material_canopy};
+import package::face::far_cover::far_color;
+import package::place::far_cover::GroundAt;
 import package::face::dither::stored;
 import package::face::ground_tiles::macro_color;
 import package::face::bounce::bounce_light;
@@ -13,11 +15,12 @@ import package::engine::shading::{BODY_GROUND, Shaded, SurfacePoint, ViewPixel, 
 import package::face::water::{WATER_HELD, WaterCell, water_cell, water_level};
 import package::generated::targets::{DepthViewTargets, depth_view_targets};
 import package::terrain_shading::draw_shared::{terrain_hash2, terrain_value, terrain_value2};
-import package::terrain_shading::faces::heightfield::{surface_vertex, terrain, terrain_level_height, terrain_view, use_terrain};
+import package::terrain_shading::faces::heightfield::{surface_vertex, terrain, terrain_index, terrain_level_height, terrain_view, use_terrain};
 import package::terrain_shading::field::{spread_slopes, terrain_directory};
 import package::terrain_shading::sky::terrain_sky_map;
 import package::terrain_shading::surface::{surface_leaf, surface_relative, terrain_true_height};
-import package::generated::terrain_shading::{PaletteEntry, SURFACE_MESHLET_LEVEL, SURFACE_VERTEX_STRIDE, TERRAIN_PALETTE_ENTRIES};
+import package::generated::terrain_shading::{PaletteEntry, SURFACE_MESHLET_LEVEL, SURFACE_VERTEX_STRIDE};
+import package::place::ground_tiles::PALETTE_ENTRIES;
 
 @group(0) @binding(20) var<storage, read> terrain_holes: array<u32>;
 
@@ -25,7 +28,7 @@ import package::generated::terrain_shading::{PaletteEntry, SURFACE_MESHLET_LEVEL
 @group(0) @binding(24) var terrain_control: texture_2d_array<u32>;
 @group(0) @binding(32) var terrain_control_sampler: sampler;
 
-@group(0) @binding(25) var<uniform> terrain_palette: array<PaletteEntry, TERRAIN_PALETTE_ENTRIES>;
+@group(0) @binding(25) var<uniform> terrain_palette: array<PaletteEntry, PALETTE_ENTRIES>;
 @group(0) @binding(26) var terrain_albedo: texture_2d_array<f32>;
 @group(0) @binding(27) var terrain_material_data: texture_2d_array<f32>;
 @group(0) @binding(29) var terrain_material_sampler: sampler;
@@ -243,7 +246,7 @@ fn terrain_surface_normal(local: vec2<f32>, shading: TerrainShadingLevel) -> vec
 }
 
 fn terrain_material(material: u32) -> PaletteEntry {
-    return terrain_palette[min(terrain.directory.z + material, TERRAIN_PALETTE_ENTRIES - 1u)];
+    return terrain_palette[min(terrain.directory.z + material, PALETTE_ENTRIES - 1u)];
 }
 
 struct TerrainBlend {
@@ -764,21 +767,6 @@ fn terrain_canopy_look(root: vec3<f32>, tip: vec3<f32>, leaves: f32, site: Terra
     return look;
 }
 
-fn terrain_placed_share(entry: PaletteEntry, site: TerrainSite) -> f32 {
-    let covered = entry.placed.w;
-    if covered <= 0.0 || site.across <= 0.0 {
-        return 0.0;
-    }
-    let first = entry.placed_size.x;
-    let octaves = max(first - entry.placed_size.y, 0.0);
-    let kept = saturate((1.0 + first - log2(site.across)) / (1.0 + octaves));
-    var shown = kept;
-    if octaves > 1.0e-3 {
-        shown = (1.0 - exp2(-2.0 * octaves * kept)) / (1.0 - exp2(-2.0 * octaves));
-    }
-    return covered * (1.0 - shown);
-}
-
 struct TerrainSlot {
     mapped: bool,
     texel: vec4<f32>,
@@ -873,10 +861,11 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
     if entry.params.w > 0.0 {
         (*ground).mapped += weight;
     }
-    if entry.canopy.w > 0.0 {
+    let cover = material_canopy(terrain_index, material);
+    if cover.w > 0.0 {
         let clumped = cover_clumped(site.clump);
-        let tip = entry.canopy.rgb * clumped.tint;
-        let leaves = entry.canopy.w * site.grown * clumped.height;
+        let tip = cover.rgb * clumped.tint;
+        let leaves = cover.w * site.grown * clumped.height;
         let canopy = terrain_canopy(leaves, site);
         if canopy > 0.0 {
             let look = terrain_canopy_look(color, tip, leaves, site);
@@ -888,10 +877,7 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         (*ground).vegetated += weight;
         (*ground).canopy += weight * canopy;
     }
-    let placed = terrain_placed_share(entry, site);
-    if placed > 0.0 {
-        color = mix(color, entry.placed.rgb, placed);
-    }
+    color = far_color(color, GroundAt(site.world, 0.0, 0.0, terrain_index, material, site.across));
     (*ground).albedo += weight * color;
     (*ground).roughness += weight * roughness;
     (*ground).occlusion += weight * occlusion;
@@ -1436,7 +1422,8 @@ fn terrain_resolve_targets(input: TerrainResolveInput, dither: f32) -> DepthView
     let position = input.position;
     let resolved = terrain_resolved(position, dither);
     let point = resolved.point;
-    let shaded = finish_ground(point, local_light(point, position.xy));
+    var shaded = finish_ground(point, local_light(point, position.xy));
+    shaded.color = stored(shaded.color, position.xy);
     let previous = vec4<f32>(resolved.previous.xy, 0.0, resolved.previous.z);
     return depth_view_targets(shaded, ViewPixel(position, previous), resolved.depth);
 }

@@ -6,7 +6,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use engine_scene::{MAX_SOURCE_BYTES, SceneDocument};
+use engine_scene::{MAX_SOURCE_BYTES, SceneDocument, SceneKinds};
 use serde::Serialize;
 
 static NEXT_SAVE: AtomicU64 = AtomicU64::new(1);
@@ -30,8 +30,9 @@ pub struct SaveReport {
     pub persisted: bool,
 }
 
-pub fn validate_scene(source: &str) -> Result<ValidationReport, Error> {
+pub fn validate_scene(source: &str, kinds: &SceneKinds) -> Result<ValidationReport, Error> {
     let scene = SceneDocument::from_json(source)?;
+    scene.validate(kinds)?;
     let expanded_entities = scene.expanded_entities()?.len();
     Ok(ValidationReport {
         id: scene.id,
@@ -75,8 +76,10 @@ pub fn save_scene(
     path: &Path,
     candidate: &str,
     expected_revision: u64,
+    kinds: &SceneKinds,
 ) -> Result<SaveReport, Error> {
     let candidate_scene = SceneDocument::from_json(candidate)?;
+    candidate_scene.validate(kinds)?;
     let next = expected_revision.checked_add(1).ok_or_else(|| {
         Error::new(ErrorCode::RevisionExhausted, "$.revision").got(expected_revision.to_string())
     })?;
@@ -111,6 +114,7 @@ pub fn save_scene(
     };
     let original = read_scene_source(&path)?;
     let current = SceneDocument::from_json(&original)?;
+    current.validate(kinds)?;
     if current.revision != expected_revision {
         return Err(Error::new(ErrorCode::RevisionConflict, "$.revision")
             .got(expected_revision.to_string())

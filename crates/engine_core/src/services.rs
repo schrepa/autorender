@@ -55,8 +55,9 @@ impl Reach<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ScenePath {
+    pub terrain: String,
     pub id: String,
     pub origin: [f32; 3],
     pub points: Vec<[f32; 2]>,
@@ -75,6 +76,7 @@ pub struct ComponentKind {
     register: fn(&mut World) -> ComponentId,
     scene: engine_registry::SceneRead,
     parse: fn(&Value, &str) -> Result<(), Error>,
+    value: fn(&World, Entity) -> Option<Value>,
     check: Option<CheckHook>,
     placed: Option<PlacedHook>,
     files: Option<FilesHook>,
@@ -100,6 +102,7 @@ impl ComponentKind {
                 register: World::register_component::<C>,
                 scene: engine_registry::SceneRead(read_component::<C>),
                 parse: parse_component::<C>,
+                value: component_value::<C>,
                 check: None,
                 placed: None,
                 files: None,
@@ -130,6 +133,11 @@ impl ComponentKind {
     #[doc(hidden)]
     pub fn read(&self, world: &mut World, entity: Entity, value: &Value) -> Result<(), Error> {
         (self.scene.0)(world, entity, value)
+    }
+
+    #[doc(hidden)]
+    pub fn value(&self, world: &World, entity: Entity) -> Option<Value> {
+        (self.value)(world, entity)
     }
 
     #[doc(hidden)]
@@ -240,6 +248,15 @@ fn parsed<C: DeserializeOwned>(value: &Value, path: &str) -> Result<C, Error> {
 
 fn parse_component<C: DeserializeOwned>(value: &Value, path: &str) -> Result<(), Error> {
     parsed::<C>(value, path).map(drop)
+}
+
+fn component_value<C: Component + Serialize>(world: &World, entity: Entity) -> Option<Value> {
+    let component = world.get::<C>(entity)?;
+    let write = || serde_json::to_value(component).ok();
+    match world.get_resource::<SceneContext>() {
+        Some(context) => context.scope(write),
+        None => write(),
+    }
 }
 
 fn read_component<C: Component + DeserializeOwned>(
@@ -498,7 +515,6 @@ impl Poses {
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 #[component(immutable)]
 pub struct DeviceLimits {
-    pub memory_budget: u64,
     pub cores: u32,
     pub storage_room: u64,
     pub texture_layers: u32,
@@ -511,7 +527,6 @@ impl DeviceLimits {
     #[doc(hidden)]
     pub fn without_device(cores: u32) -> Self {
         Self {
-            memory_budget: u64::MAX,
             cores,
             storage_room: 0,
             texture_layers: 0,

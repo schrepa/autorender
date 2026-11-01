@@ -2,7 +2,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use engine_codec::{Reader, Writer};
-use engine_core::{Error, ErrorCode, InvalidSetting, Rule, Setting, parse_value};
+use engine_core::{Error, ErrorCode, InvalidSetting, Rule, Setting, fields, parse_value};
 use engine_heightfield::Blend;
 use engine_heightfield::layer::{
     Below, LayerFiles, LayerKind, LayerTile, Made, SamplePoint, TerrainLayer, TileFrame, same_as,
@@ -17,6 +17,7 @@ use crate::tile::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(transform = state_noise_rules)]
 #[serde(default, deny_unknown_fields)]
 pub struct NoiseLayer {
     pub seed: u32,
@@ -51,23 +52,31 @@ impl Default for NoiseLayer {
 }
 
 impl NoiseLayer {
+    fn rules(&self) -> [(&'static str, f32, Rule); 9] {
+        [
+            ("height", self.height, fields::range(0.0, MAX_HEIGHT)),
+            ("offset", self.offset, fields::range(-MAX_HEIGHT, MAX_HEIGHT)),
+            ("wavelength", self.wavelength, fields::range(16.0, 1.0e6)),
+            ("ridges", self.ridges, fields::range(0.0, 1.0)),
+            ("warp", self.warp, fields::range(0.0, 1.0)),
+            ("erosion", self.erosion, fields::range(0.0, 1.0)),
+            ("smoothing", self.smoothing, fields::range(0.0, 1.0)),
+            ("valleys", self.valleys, fields::range(0.0, 1.0)),
+            ("roughness", self.roughness, fields::range(0.0, 1.0)),
+        ]
+    }
+
     pub fn validate(&self) -> Result<(), InvalidSetting> {
-        let highest = f64::from(MAX_HEIGHT);
-        self.height.check("height", Rule::Range(0.0, highest))?;
-        self.offset.check("offset", Rule::Range(-highest, highest))?;
-        self.wavelength
-            .check("wavelength", Rule::Range(16.0, 1.0e6))?;
-        for (field, value) in [
-            ("ridges", self.ridges),
-            ("warp", self.warp),
-            ("erosion", self.erosion),
-            ("smoothing", self.smoothing),
-            ("valleys", self.valleys),
-            ("roughness", self.roughness),
-        ] {
-            value.check(field, Rule::Range(0.0, 1.0))?;
+        for (field, value, rule) in self.rules() {
+            value.check(field, rule)?;
         }
         Ok(())
+    }
+}
+
+fn state_noise_rules(schema: &mut schemars::Schema) {
+    for (field, _, rule) in NoiseLayer::default().rules() {
+        fields::state(schema, field, rule);
     }
 }
 
@@ -105,7 +114,7 @@ impl Noise {
 fn made(params: NoiseLayer) -> Made {
     params
         .validate()
-        .map_err(|invalid| Error::from(invalid).coded(ErrorCode::InvalidValue))?;
+        .map_err(|invalid| Error::from(invalid).coded(ErrorCode::InvalidTerrain))?;
     Ok(Arc::new(Noise::new(params)))
 }
 

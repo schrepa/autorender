@@ -6,7 +6,6 @@ gpu_consts! {
     pub const PHASE2: u32 = 16;
     pub const PROBE: u32 = 128;
     pub const LOD_LEVELS: u32 = 3;
-    pub const IMPOSTOR_VERTICES: u32 = 6;
     pub const CULL_GROUP: u32 = 256;
     pub const GROUP: u32 = 64;
     pub const PARENT_GROUP: u32 = 64;

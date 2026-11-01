@@ -12,6 +12,7 @@ use engine_assets::{
     AlphaMode, AssetLibrary, Filter, Material, MaterialHandle, Mesh, MeshHandle, MeshLods, Texture,
     TextureFormat, TextureHandle, TextureRef, Wrap,
 };
+pub use engine_textures::solid_block;
 use glam::Vec3;
 
 use crate::collections::{HashMap, HashSet};
@@ -348,12 +349,17 @@ impl Table {
                     .then(|| (handle, library.material_version(handle).unwrap_or(0)))
             })
             .collect();
-        let textures: BTreeSet<TextureHandle> = named
+        let mut textures: BTreeSet<TextureHandle> = named
             .textures
             .iter()
             .copied()
             .filter(|&texture| library.texture(texture).is_some())
             .collect();
+        for &handle in materials.keys() {
+            if let Some(material) = library.material(handle) {
+                textures.extend(material.textures());
+            }
+        }
         if materials != self.materials || textures != self.textures {
             self.materials = materials;
             self.textures = textures;
@@ -490,16 +496,17 @@ fn settle_residency(world: &mut World) {
 
 pub const IMPOSTOR_MIN_TRIANGLES: usize = 64;
 
-pub const IMPOSTOR_KINDS: u32 = 4;
-
 pub mod impostor_flags {
     crate::gpu_consts! {
         pub const IMPOSTOR_HEMISPHERE: u32 = 0x10000;
         pub const IMPOSTOR_MASKED: u32 = 0x20000;
         pub const IMPOSTOR_FRAMES_SHIFT: u32 = 19;
         pub const IMPOSTOR_FOLIAGE: u32 = 0x1000000;
+        pub const IMPOSTOR_KINDS: u32 = 4;
     }
 }
+
+pub use impostor_flags::IMPOSTOR_KINDS;
 
 use impostor_flags::{
     IMPOSTOR_FOLIAGE, IMPOSTOR_FRAMES_SHIFT, IMPOSTOR_HEMISPHERE, IMPOSTOR_MASKED,

@@ -1,5 +1,11 @@
 use bevy_ecs::prelude::*;
-use engine_core::{gpu_consts, gpu_struct};
+use engine_core::{GpuStruct, gpu_consts, gpu_struct};
+
+pub(crate) const GENERATED: &[&str] = &[
+    WGSL,
+    <TraceTerrain as GpuStruct>::WGSL,
+    <PyramidExtent as GpuStruct>::WGSL,
+];
 
 gpu_struct! {
     #[derive(Resource)]
@@ -26,6 +32,6 @@ gpu_struct! {
 }
 
 gpu_consts! {
-    pub(crate) const NO_PLACED: u32 = 4294967295;
+    pub(crate) const NO_PLACED: u32 = u32::MAX;
     pub(crate) const PYRAMID_GROUP: u32 = 8;
 }

@@ -3,8 +3,9 @@ use engine_core::{
     glam::{Mat4, Vec3, Vec4},
     math,
 };
+use engine_places::shadows::SHADOW_REGIONS;
 
-use crate::constants::{SHADOW_APRON, SHADOW_REGIONS};
+use crate::constants::SHADOW_APRON;
 
 const LOW_SUN: f32 = 0.1;
 

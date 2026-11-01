@@ -1,12 +1,15 @@
 import type { JobWorker } from "../../pkg/engine_worker";
+
+type Bindings = typeof import("../../pkg/engine_worker");
 import { fatal, panicReport } from "./panic";
 
 type Request =
   | { type: "init"; bindings?: string; module?: WebAssembly.Module }
+  | { type: "list"; hash: Uint8Array }
   | { type: "clear" }
   | { type: "share"; key: string; blob: Blob }
   | { type: "unshare"; key: string }
-  | { type: "run"; id: number; kind: string; input: Uint8Array; priority: number }
+  | { type: "run"; id: number; kind: string; source: string; input: Uint8Array; priority: number }
   | { type: "cancel"; id: number }
   | { type: "image"; task: number; uri: string; bytes: Uint8Array }
   | { type: "unpack"; task: number; bytes: Uint8Array; raw: number };
@@ -18,6 +21,7 @@ const scope = self as unknown as {
   onmessage: ((event: MessageEvent<Request>) => void) | null;
 };
 
+let bindings: Bindings | undefined;
 let worker: JobWorker | undefined;
 let broken = false;
 let queue: Promise<void> = Promise.resolve();
@@ -68,18 +72,28 @@ async function work() {
   }
 }
 
-async function start(bindings?: string, compiled?: WebAssembly.Module) {
-  const module = (bindings
-    ? await import(/* @vite-ignore */ bindings)
-    : await import("../../pkg/engine_worker")) as typeof import("../../pkg/engine_worker");
+async function start(pinned?: string, compiled?: WebAssembly.Module) {
+  const module = (pinned
+    ? await import(/* @vite-ignore */ pinned)
+    : await import("../../pkg/engine_worker")) as Bindings;
   await module.default(compiled ? { module_or_path: compiled } : undefined);
-  worker = new module.JobWorker();
+  bindings = module;
+}
+
+function loaded(): Bindings {
+  if (!bindings) throw new Error("worker unavailable");
+  return bindings;
 }
 
 async function handle(request: Request) {
   switch (request.type) {
     case "init":
       await start(request.bindings, request.module);
+      return;
+    case "list":
+      worker?.free();
+      worker = undefined;
+      worker = new (loaded().JobWorker)(request.hash);
       return;
     case "clear":
       worker?.clear();
@@ -97,7 +111,13 @@ async function handle(request: Request) {
         scope.postMessage({ type: "failed", id: request.id, error: "worker unavailable" });
         return;
       }
-      worker.hold(request.id, request.kind, request.input, request.priority);
+      try {
+        worker.hold(request.id, request.kind, request.source, request.input, request.priority);
+      } catch (error) {
+        if (fatal(error)) throw error;
+        scope.postMessage({ type: "failed", id: request.id, error: String(error) });
+        return;
+      }
       void work();
       return;
     case "cancel":
@@ -105,8 +125,7 @@ async function handle(request: Request) {
       return;
     case "unpack":
       try {
-        if (!worker) throw new Error("worker unavailable");
-        const record = worker.unpack(request.bytes, request.raw);
+        const record = loaded().JobWorker.unpack(request.bytes, request.raw);
         scope.postMessage({ type: "task", task: request.task, result: record }, [record.buffer as ArrayBuffer]);
       } catch (error) {
         scope.postMessage({ type: "task_failed", task: request.task, error: String(error) });
@@ -114,8 +133,7 @@ async function handle(request: Request) {
       return;
     case "image":
       try {
-        if (!worker) throw new Error("worker unavailable");
-        const image = worker.decode_image(request.uri, request.bytes) as { width: number; height: number; pixels: Uint8Array };
+        const image = loaded().JobWorker.decode_image(request.uri, request.bytes) as { width: number; height: number; pixels: Uint8Array };
         scope.postMessage({ type: "task", task: request.task, result: image }, [image.pixels.buffer as ArrayBuffer]);
       } catch (error) {
         scope.postMessage({ type: "task_failed", task: request.task, error: String(error) });

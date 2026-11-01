@@ -79,53 +79,9 @@ macro_rules! gpu_structs {
                 };
             }
         )*
-
-        pub const LAYOUTS: &[$crate::gpu_layouts::Layout] = &[$($name::LAYOUT),*];
-    };
-}
-
-#[derive(Debug)]
-pub struct Constant {
-    pub rust: &'static str,
-    pub value: f64,
-    pub mirrors: &'static [Mirror],
-}
-
-macro_rules! gpu_consts {
-    ($(
-        $(#[$meta:meta])*
-        $vis:vis const $name:ident: $ty:ty = $value:expr => [$($mirror:literal $(in $module:literal)?),+ $(,)?];
-    )*) => {
-        $($(#[$meta])* $vis const $name: $ty = $value;)*
-
-        pub const DECLARED: &[$crate::gpu_layouts::Constant] = &[$(
-            $crate::gpu_layouts::Constant {
-                rust: stringify!($name),
-                value: $name as f64,
-                mirrors: &[$($crate::gpu_layouts::Mirror {
-                    name: $mirror,
-                    module: gpu_structs!(@module $($module)?),
-                }),+],
-            },
-        )*];
     };
 }
 
 pub mod constants;
 
-macro_rules! layout_modules {
-    ($($module:ident),* $(,)?) => {
-        $(pub mod $module;)*
-
-        pub fn layouts() -> Vec<&'static Layout> {
-            let mut layouts = Vec::new();
-            $(layouts.extend($module::LAYOUTS);)*
-            layouts
-        }
-    };
-}
-
-layout_modules! {
-    scene,
-    impostors,
-}
+pub mod scene;

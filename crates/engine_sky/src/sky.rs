@@ -1,34 +1,33 @@
 use bevy_ecs::prelude::*;
+use bevy_ecs::system::SystemParamItem;
 use engine_core::math::{max, min};
 use engine_core::{Camera, Error, FrameTime, View};
 use engine_places::probes::{ProbeView, ProbeViews};
 use engine_places::sun::{Sun, SunPath};
 use engine_places::tonemap::Display;
+use engine_places::wind::Wind;
 use engine_render::{
-    AfterRead, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DebugShown, DepthUse,
-    Draw, Encode, GpuPart, Install, Lifetime, MainView, Pass, Pipeline, Prepare, RenderPipeline,
-    Sampler, SamplerDesc, Shape, Texture, wgpu,
+    Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse, Draw, Encode, GpuPart,
+    Install, Lifetime, MainView, Pass, Pipeline, Prepare, RenderPipeline, Sampler, SamplerDesc,
+    Shape, Texture, wgpu,
 };
 use glam::{Mat4, Vec3};
 
-use crate::clouds::{CloudFrame, CloudPass, shadow_lighting};
-use crate::environment::{Environment, SkyLight};
-use crate::gpu_layouts::{SKY_TABLE_GROUP, SkyAir, SkyPiece};
-use crate::haze::{Haze, HazeFrame};
+use crate::clouds::{CloudFrame, CloudPass, CloudPlan, cloud_regions, shadow_lighting};
+use crate::environment::{Environment, EnvironmentLight, EnvironmentPlan};
+use crate::gpu_layouts::{SKY_TABLE_GROUP, SKY_VIEW_HEIGHT, SKY_VIEW_WIDTH, SkyAir, SkyPiece};
+use crate::haze::{Haze, HazeFrame, HazePlan};
 use crate::settings::{
     Clouds, Haze as HazeSettings, NightSky, Sky, SkyLighting, SkyLightingValues, haze_runs,
 };
 use crate::tables::sky::{MULTIPLE_SIZE, SkyTables, TRANSMITTANCE_SIZE};
 use crate::tables::{StaticTable, StaticTables};
 use crate::under_eye::SurfaceUnderEye;
-use crate::views::SkyCounts;
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const VIEW_SIZE: (u32, u32) = (192, 108);
+const VIEW_SIZE: (u32, u32) = (SKY_VIEW_WIDTH, SKY_VIEW_HEIGHT);
 const ENVIRONMENT_HEIGHT_STEP: f32 = 200.0;
 const DERIVED_BYTES: u64 = 7 * 16;
-const COUNTS: u32 = 0;
-const COUNT_BYTES: u64 = 16;
 
 pub(crate) const DERIVED_SUN: u64 = 0;
 pub(crate) const DERIVED_ZENITH: u64 = 1;
@@ -74,92 +73,19 @@ fn piece_regions() -> [CopyRegion; 6] {
 
 type AirInputs = (Vec3, Vec3, f32, f64, [f32; 4]);
 
-pub(crate) struct AirTables {
-    transmittance: Texture<SkyGpu>,
-    multiple: Texture<SkyGpu>,
-    view: Texture<SkyGpu>,
-    derived: Buffer<SkyGpu>,
-    sampler: Sampler<SkyGpu>,
-    view_pass: Pass<SkyGpu>,
-    derive_pass: Pass<SkyGpu>,
-    building: ComputePipeline<SkyGpu>,
-    deriving: ComputePipeline<SkyGpu>,
-    copies: Vec<Pass<SkyGpu>>,
+#[derive(Default)]
+pub(crate) struct AirPlan {
     tables: Option<u64>,
     view_key: Option<(u64, [u32; 20], [u32; 3], u32)>,
     last_seconds: Option<f64>,
     generation: u64,
     environment_height: i32,
     active: bool,
+    build_view: bool,
     pub(crate) built: u32,
 }
 
-impl AirTables {
-    fn install(cx: &mut Install<'_, SkyGpu>) -> Result<Self, Error> {
-        use crate::shaders::sky::{light, tables};
-        let transmittance = cx.texture("sky_transmittance", FORMAT, Lifetime::Kept);
-        let multiple = cx.texture("sky_multiple", FORMAT, Lifetime::Kept);
-        let view = cx.texture("sky_view", FORMAT, Lifetime::Kept);
-        let derived = cx.buffer("sky_derived", Lifetime::Kept);
-        let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
-        cx.frame(light::SKY_VIEW_TABLE, Bind::Texture(view))?;
-        cx.frame(light::SKY_TABLE_SAMPLER, Bind::Sampler(sampler))?;
-        let view_pass = cx.pass("sky_view").id();
-        let derive_pass = cx.pass("sky_derive").after(view_pass).id();
-        let building = cx.compute_pipeline(
-            view_pass,
-            tables::BUILD_SKY_VIEW,
-            &[
-                (tables::TRANSMITTANCE_TABLE, Bind::Texture(transmittance)),
-                (tables::MULTIPLE_TABLE, Bind::Texture(multiple)),
-                (tables::TABLE_SAMPLER, Bind::Sampler(sampler)),
-                (tables::TABLE_OUT, Bind::Texture(view)),
-            ],
-        )?;
-        let deriving = cx.compute_pipeline(
-            derive_pass,
-            tables::DERIVE_LIGHT,
-            &[
-                (tables::TRANSMITTANCE_TABLE, Bind::Texture(transmittance)),
-                (tables::VIEW_TABLE, Bind::Texture(view)),
-                (tables::TABLE_SAMPLER, Bind::Sampler(sampler)),
-                (tables::DERIVED, Bind::Buffer(derived)),
-            ],
-        )?;
-        Ok(Self {
-            transmittance,
-            multiple,
-            view,
-            derived,
-            sampler,
-            view_pass,
-            derive_pass,
-            building,
-            deriving,
-            copies: Vec::new(),
-            tables: None,
-            view_key: None,
-            last_seconds: None,
-            generation: 0,
-            environment_height: 0,
-            active: false,
-            built: 0,
-        })
-    }
-
-    fn connect(&mut self, cx: &mut Install<'_, SkyGpu>, piece: Buffer<SkyGpu>, clouds: [Buffer<SkyGpu>; 2]) {
-        let [march, view] = clouds;
-        self.copies = vec![
-            cx.copy("sky_derived_piece", Copied::Buffer(self.derived), Copied::Buffer(piece)),
-            cx.copy("sky_derived_clouds", Copied::Buffer(self.derived), Copied::Buffer(march)),
-            cx.copy("sky_derived_view_clouds", Copied::Buffer(self.derived), Copied::Buffer(view)),
-        ];
-    }
-
-    fn bindings(&self) -> (Texture<SkyGpu>, Sampler<SkyGpu>) {
-        (self.transmittance, self.sampler)
-    }
-
+impl AirPlan {
     fn environment_key(&self) -> [f32; 4] {
         if self.active {
             [
@@ -173,45 +99,16 @@ impl AirTables {
         }
     }
 
-    fn upload(&self, cx: &mut Prepare<'_, SkyGpu>, tables: &SkyTables) {
-        for (texture, texels, (width, height)) in [
-            (self.transmittance, &tables.transmittance, TRANSMITTANCE_SIZE),
-            (self.multiple, &tables.multiple, MULTIPLE_SIZE),
-        ] {
-            cx.write_texture(
-                texture,
-                wgpu::Origin3d::ZERO,
-                bytemuck::cast_slice(texels),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(width * 8),
-                    rows_per_image: Some(height),
-                },
-                extent((width, height)),
-            );
-        }
-    }
-
-    fn allocate(&self, cx: &mut Prepare<'_, SkyGpu>) {
-        cx.allocate(self.transmittance, extent(TRANSMITTANCE_SIZE), 1);
-        cx.allocate(self.multiple, extent(MULTIPLE_SIZE), 1);
-        cx.allocate(self.view, extent(VIEW_SIZE), 1);
-        cx.allocate_buffer(self.derived, DERIVED_BYTES);
-    }
-
     fn prepare(
         &mut self,
-        cx: &mut Prepare<'_, SkyGpu>,
         (settings, tables): (&Sky, Option<&StaticTable<SkyTables>>),
         (sun, eye, exposure, seconds, moon): AirInputs,
         air: &mut SkyAir,
-        cloud_regions: impl Fn() -> [CopyRegion; 3],
     ) -> bool {
         self.built = 0;
-        self.allocate(cx);
+        self.build_view = false;
         let uploaded = match tables {
             Some(tables) if settings.enabled && self.tables != Some(tables.id) => {
-                self.upload(cx, &tables.table);
                 self.tables = Some(tables.id);
                 self.built += 2;
                 true
@@ -243,18 +140,9 @@ impl AirTables {
             sun.to_array().map(f32::to_bits),
             height.to_bits(),
         );
-        let build_view = uploaded || self.view_key != Some(view_key);
-        if build_view {
-            cx.run(self.view_pass);
+        self.build_view = uploaded || self.view_key != Some(view_key);
+        if self.build_view {
             self.built += 1;
-        }
-        cx.run(self.derive_pass);
-        let regions = [Vec::from(piece_regions()), Vec::from(cloud_regions()), Vec::from(cloud_regions())];
-        for (&pass, regions) in self.copies.iter().zip(regions) {
-            cx.copy(pass, &regions);
-            cx.run(pass);
-        }
-        if build_view {
             let environment_height = (height / ENVIRONMENT_HEIGHT_STEP).floor() as i32;
             let sun_moved = self.view_key.is_none_or(|key| key.2 != view_key.2);
             if uploaded || sun_moved || environment_height != self.environment_height {
@@ -265,29 +153,13 @@ impl AirTables {
         }
         true
     }
-
-    fn owns(&self, pass: Pass<SkyGpu>) -> bool {
-        pass == self.view_pass || pass == self.derive_pass
-    }
-
-    fn encode(&self, pass: Pass<SkyGpu>, cx: &mut Encode<'_, SkyGpu>) -> u32 {
-        if pass == self.view_pass {
-            let groups = |(width, height): (u32, u32)| {
-                [
-                    width.div_ceil(SKY_TABLE_GROUP),
-                    height.div_ceil(SKY_TABLE_GROUP),
-                    1,
-                ]
-            };
-            cx.dispatch(&self.building, Count::Groups(groups(VIEW_SIZE)));
-        } else {
-            cx.dispatch(&self.deriving, Count::Groups([1, 1, 1]));
-        }
-        0
-    }
 }
 
-fn write_air(air: &mut SkyAir, settings: &Sky, (sun, exposure, height, elapsed, moon): (Vec3, f32, f32, f32, [f32; 4])) {
+fn write_air(
+    air: &mut SkyAir,
+    settings: &Sky,
+    (sun, exposure, height, elapsed, moon): (Vec3, f32, f32, f32, [f32; 4]),
+) {
     air.rayleigh = [
         settings.rayleigh[0],
         settings.rayleigh[1],
@@ -429,6 +301,291 @@ fn apply_haze(
     }
 }
 
+#[derive(Resource, Default)]
+pub(crate) struct SkyPlan {
+    piece: SkyPiece,
+    air: SkyAir,
+    tables: AirPlan,
+    clouds: CloudPlan,
+    environment: EnvironmentPlan,
+    haze: HazePlan,
+    frame: Option<CloudFrame>,
+}
+
+impl SkyPlan {
+    pub(crate) fn environment(&self) -> u64 {
+        self.environment.beyond()
+    }
+
+    pub(crate) fn tables_built(&self) -> u32 {
+        self.tables.built
+    }
+
+    pub(crate) fn cloud_rows(&self) -> (u32, u32) {
+        (self.clouds.rows, self.clouds.view_pixels)
+    }
+
+    pub(crate) fn hazes(&self) -> bool {
+        self.haze.runs()
+    }
+}
+
+type SkySections<'w> = (
+    Res<'w, Sky>,
+    Res<'w, Clouds>,
+    Res<'w, HazeSettings>,
+    Res<'w, NightSky>,
+    Res<'w, SkyLighting>,
+);
+
+type SkyLights<'w> = (Res<'w, Sun>, Res<'w, SunPath>, Res<'w, Display>, Res<'w, Wind>);
+
+type SkyFrame<'w> = (
+    Res<'w, StaticTables>,
+    Res<'w, SurfaceUnderEye>,
+    Res<'w, View>,
+    Res<'w, Camera>,
+    Res<'w, FrameTime>,
+);
+
+pub(crate) fn plan_sky(
+    (sky, clouds, haze, night, light): SkySections<'_>,
+    (sun, path, display, wind): SkyLights<'_>,
+    (tables, under, view, camera, time): SkyFrame<'_>,
+    mut plan: ResMut<SkyPlan>,
+) {
+    let plan = &mut *plan;
+    plan.clouds.submitted(plan.frame.take());
+    plan.haze.submitted();
+    let debug = view.debug();
+    let eye = camera.eye();
+    let view_projection = view.view_projection();
+    let seconds = time.presented_seconds;
+    let sun_direction = Vec3::from_slice(&sun.direction[..3]);
+    let values = light.values();
+    let exposure = display.exposure[0];
+    let hazes = !debug && haze_runs(&haze, &sky, &values);
+    plan.piece = sky_piece(&sky, &values, exposure, &plan.piece);
+    apply_night(&mut plan.piece, &night, &path, sun_direction);
+    apply_haze(&mut plan.piece, &haze, view_projection, eye, hazes);
+    (plan.piece.cloud_shadow, plan.piece.cloud_layer) = shadow_lighting(&clouds, eye);
+    plan.piece.wind = [wind.velocity[0], wind.velocity[1], 0.0, 0.0];
+    plan.clouds.prepare(
+        (&*clouds, tables.cloud_noise(), (eye, under.height), seconds),
+        (&*sun, &plan.piece),
+        view.exact(),
+    );
+    plan.clouds.prepare_view(
+        (&*clouds, eye, seconds),
+        (view_projection, view.display_size(), view.render_size()),
+        (&*sun, &plan.piece),
+    );
+    [
+        plan.piece.domes_older,
+        plan.piece.domes_newer,
+        plan.piece.domes_older_mirror,
+        plan.piece.domes_newer_mirror,
+        plan.piece.domes_eye,
+        plan.piece.domes_view,
+    ] = plan.clouds.dome_piece();
+    plan.piece.domes_layers = plan.clouds.dome_layers();
+    let [night_light, _, moon] = night_lighting(&night, &path, sun_direction);
+    let derived = plan.tables.prepare(
+        (&*sky, tables.sky()),
+        (
+            sun_direction,
+            eye,
+            exposure,
+            seconds,
+            [moon[0], moon[1], moon[2], night_light[1] * night_light[3]],
+        ),
+        &mut plan.air,
+    );
+    plan.piece.state[1] = f32::from(u8::from(derived));
+    let light: EnvironmentLight = [
+        sun.direction,
+        sun.color,
+        plan.piece.zenith,
+        plan.piece.horizon,
+        plan.piece.ground,
+    ];
+    let keys = (plan.clouds.environment_key(), plan.tables.environment_key());
+    plan.environment.prepare(&light, keys);
+    let haze_frame = HazeFrame {
+        view_projection,
+        eye,
+        display: view.display_size(),
+        render: view.render_size(),
+        displayed: view.display(),
+    };
+    plan.piece.haze = plan.haze.prepare(hazes, &haze_frame);
+    plan.frame = if debug { None } else { plan.clouds.frame() };
+}
+
+pub(crate) struct AirTables {
+    transmittance: Texture<SkyGpu>,
+    multiple: Texture<SkyGpu>,
+    view: Texture<SkyGpu>,
+    derived: Buffer<SkyGpu>,
+    sampler: Sampler<SkyGpu>,
+    pass: Pass<SkyGpu>,
+    building: ComputePipeline<SkyGpu>,
+    deriving: ComputePipeline<SkyGpu>,
+    copies: Vec<Pass<SkyGpu>>,
+    uploaded: Option<u64>,
+    builds: bool,
+}
+
+impl AirTables {
+    fn install(cx: &mut Install<'_, SkyGpu>) -> Result<Self, Error> {
+        use crate::shaders::sky::{light, tables};
+        let transmittance = cx.texture("sky_transmittance", FORMAT, Lifetime::Kept);
+        let multiple = cx.texture("sky_multiple", FORMAT, Lifetime::Kept);
+        let view = cx.texture("sky_view", FORMAT, Lifetime::Kept);
+        let derived = cx.buffer("sky_derived", Lifetime::Kept);
+        let sampler = cx.sampler(SamplerDesc {
+            filter: wgpu::FilterMode::Linear,
+            mipmap: wgpu::MipmapFilterMode::Nearest,
+            address: [wgpu::AddressMode::ClampToEdge; 3],
+            compare: None,
+            anisotropy: 1,
+        });
+        cx.frame(light::SKY_VIEW_TABLE, Bind::Texture(view))?;
+        cx.frame(light::SKY_TABLE_SAMPLER, Bind::Sampler(sampler))?;
+        let pass = cx.pass("sky").id();
+        let building = cx.compute_pipeline(
+            pass,
+            tables::BUILD_SKY_VIEW,
+            &[
+                (tables::TRANSMITTANCE_TABLE, Bind::Texture(transmittance)),
+                (tables::MULTIPLE_TABLE, Bind::Texture(multiple)),
+                (tables::TABLE_SAMPLER, Bind::Sampler(sampler)),
+                (tables::TABLE_OUT, Bind::Texture(view)),
+            ],
+        )?;
+        let deriving = cx.compute_pipeline(
+            pass,
+            tables::DERIVE_LIGHT,
+            &[
+                (tables::TRANSMITTANCE_TABLE, Bind::Texture(transmittance)),
+                (tables::VIEW_TABLE, Bind::Texture(view)),
+                (tables::TABLE_SAMPLER, Bind::Sampler(sampler)),
+                (tables::DERIVED, Bind::Buffer(derived)),
+            ],
+        )?;
+        Ok(Self {
+            transmittance,
+            multiple,
+            view,
+            derived,
+            sampler,
+            pass,
+            building,
+            deriving,
+            copies: Vec::new(),
+            uploaded: None,
+            builds: false,
+        })
+    }
+
+    fn connect(
+        &mut self,
+        cx: &mut Install<'_, SkyGpu>,
+        piece: Buffer<SkyGpu>,
+        clouds: [Buffer<SkyGpu>; 2],
+    ) {
+        let [march, view] = clouds;
+        self.copies = vec![
+            cx.copy(
+                "sky_derived_piece",
+                Copied::Buffer(self.derived),
+                Copied::Buffer(piece),
+            ),
+            cx.copy(
+                "sky_derived_clouds",
+                Copied::Buffer(self.derived),
+                Copied::Buffer(march),
+            ),
+            cx.copy(
+                "sky_derived_view_clouds",
+                Copied::Buffer(self.derived),
+                Copied::Buffer(view),
+            ),
+        ];
+    }
+
+    fn bindings(&self) -> (Texture<SkyGpu>, Sampler<SkyGpu>) {
+        (self.transmittance, self.sampler)
+    }
+
+    fn upload(&self, cx: &mut Prepare<'_, SkyGpu>, tables: &SkyTables) {
+        for (texture, texels, (width, height)) in [
+            (self.transmittance, &tables.transmittance, TRANSMITTANCE_SIZE),
+            (self.multiple, &tables.multiple, MULTIPLE_SIZE),
+        ] {
+            cx.write_texture(
+                texture,
+                wgpu::Origin3d::ZERO,
+                bytemuck::cast_slice(texels),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(width * 8),
+                    rows_per_image: Some(height),
+                },
+                extent((width, height)),
+            );
+        }
+    }
+
+    fn prepare(
+        &mut self,
+        cx: &mut Prepare<'_, SkyGpu>,
+        (plan, tables): (&AirPlan, Option<&StaticTable<SkyTables>>),
+    ) {
+        self.builds = false;
+        cx.allocate(self.transmittance, extent(TRANSMITTANCE_SIZE), 1);
+        cx.allocate(self.multiple, extent(MULTIPLE_SIZE), 1);
+        cx.allocate(self.view, extent(VIEW_SIZE), 1);
+        cx.allocate_buffer(self.derived, DERIVED_BYTES);
+        if !plan.active {
+            return;
+        }
+        let mut uploaded = false;
+        if let Some(tables) = tables.filter(|tables| Some(tables.id) == plan.tables)
+            && self.uploaded != plan.tables
+        {
+            self.upload(cx, &tables.table);
+            self.uploaded = plan.tables;
+            uploaded = true;
+        }
+        self.builds = plan.build_view || uploaded;
+        cx.run(self.pass);
+        let regions = [
+            Vec::from(piece_regions()),
+            Vec::from(cloud_regions()),
+            Vec::from(cloud_regions()),
+        ];
+        for (&pass, regions) in self.copies.iter().zip(regions) {
+            cx.copy(pass, &regions);
+        }
+    }
+
+    fn encode(&self, cx: &mut Encode<'_, SkyGpu>) -> u32 {
+        if self.builds {
+            let groups = |(width, height): (u32, u32)| {
+                [
+                    width.div_ceil(SKY_TABLE_GROUP),
+                    height.div_ceil(SKY_TABLE_GROUP),
+                    1,
+                ]
+            };
+            cx.dispatch(&self.building, Count::Groups(groups(VIEW_SIZE)));
+        }
+        cx.dispatch(&self.deriving, Count::Groups([1, 1, 1]));
+        0
+    }
+}
+
 pub(crate) struct SkyGpu {
     tables: AirTables,
     clouds: CloudPass,
@@ -438,10 +595,6 @@ pub(crate) struct SkyGpu {
     probe_dome: Pipeline<Self, ProbeViews>,
     piece_buffer: Buffer<Self>,
     air_buffer: Buffer<Self>,
-    counts: Buffer<Self>,
-    piece: SkyPiece,
-    air: SkyAir,
-    frame: Option<CloudFrame>,
 }
 
 impl SkyGpu {
@@ -456,7 +609,11 @@ impl SkyGpu {
         0
     }
 
-    pub(crate) fn draw_probe_face(&self, _: &ProbeView, draw: &mut Draw<'_, Self, ProbeViews>) -> u32 {
+    pub(crate) fn draw_probe_face(
+        &self,
+        _: &ProbeView,
+        draw: &mut Draw<'_, Self, ProbeViews>,
+    ) -> u32 {
         draw.draw(
             &self.probe_dome,
             Shape::Pulled {
@@ -466,55 +623,21 @@ impl SkyGpu {
         );
         0
     }
-
-    fn write(&self, cx: &mut Prepare<'_, Self>) {
-        cx.allocate_buffer(self.piece_buffer, size_of::<SkyPiece>() as u64);
-        cx.write(self.piece_buffer, 0, &[self.piece]);
-        cx.allocate_buffer(self.air_buffer, size_of::<SkyAir>() as u64);
-        cx.write(self.air_buffer, 0, &[self.air]);
-        cx.allocate_buffer(self.counts, COUNT_BYTES);
-        let counts = [
-            self.clouds.rows,
-            self.clouds.view_pixels,
-            self.tables.built,
-            0,
-        ];
-        cx.write(self.counts, 0, &counts);
-        cx.read_back::<SkyCounts>(COUNTS, self.counts, 0..COUNT_BYTES, AfterRead::Keep);
-    }
 }
 
-pub(crate) type SkyReads = (
-    Res<'static, Sky>,
-    Res<'static, Clouds>,
-    Res<'static, HazeSettings>,
-    Res<'static, NightSky>,
-    Res<'static, SkyLighting>,
-    Res<'static, Sun>,
-    Res<'static, SunPath>,
-    Res<'static, Display>,
-    Res<'static, StaticTables>,
-    Res<'static, SurfaceUnderEye>,
-    Res<'static, View>,
-    Res<'static, Camera>,
-    Res<'static, FrameTime>,
-    Res<'static, DebugShown>,
-);
-
 impl GpuPart for SkyGpu {
-    type Reads = SkyReads;
+    type Reads = (Res<'static, SkyPlan>, Res<'static, StaticTables>);
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::sky::{debug, draw, piece};
         let piece_buffer = cx.buffer("sky_piece", Lifetime::Kept);
         let air_buffer = cx.buffer("sky_air", Lifetime::Kept);
-        let counts = cx.buffer("sky_counts", Lifetime::Kept);
         cx.frame(piece::SKY_PIECE, Bind::Buffer(piece_buffer))?;
         cx.frame(piece::SKY_AIR, Bind::Buffer(air_buffer))?;
         let mut tables = AirTables::install(cx)?;
-        let clouds = CloudPass::install(cx, tables.bindings())?;
-        tables.connect(cx, piece_buffer, clouds.uniforms());
         let environment = Environment::install(cx)?;
+        let clouds = CloudPass::install(cx, tables.bindings(), environment.pass())?;
+        tables.connect(cx, piece_buffer, clouds.uniforms());
         let haze = Haze::install(cx)?;
         let sky = |fragment, debug| RenderPipeline {
             vertex: draw::VS_SKY,
@@ -522,7 +645,11 @@ impl GpuPart for SkyGpu {
             debug,
             vertices: &[],
             primitive: wgpu::PrimitiveState::default(),
-            depth: DepthUse::Test,
+            depth: DepthUse::Compare {
+                compare: wgpu::CompareFunction::GreaterEqual,
+                write: false,
+                bias: wgpu::DepthBiasState::default(),
+            },
             blend: None,
             writes: wgpu::ColorWrites::ALL,
         };
@@ -544,92 +671,24 @@ impl GpuPart for SkyGpu {
             probe_dome,
             piece_buffer,
             air_buffer,
-            counts,
-            piece: SkyPiece::default(),
-            air: SkyAir::default(),
-            frame: None,
         })
     }
 
-    fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
-        let (sky, clouds, haze, night, light, sun, path, display, tables, under, view, camera, time, shown) =
-            reads;
-        self.clouds.submitted(self.frame.take());
-        self.haze.submitted();
-        let debug = shown.owner.is_some();
-        let eye = camera.position;
-        let view_projection = view.view_projection();
-        let seconds = time.presented_seconds;
-        let sun_direction = Vec3::from_slice(&sun.direction[..3]);
-        let values = light.values();
-        let exposure = display.grade[3];
-        let hazes = !debug && haze_runs(&haze, &sky, &values);
-        self.piece = sky_piece(&sky, &values, exposure, &self.piece);
-        apply_night(&mut self.piece, &night, &path, sun_direction);
-        apply_haze(&mut self.piece, &haze, view_projection, eye, hazes);
-        (self.piece.cloud_shadow, self.piece.cloud_layer) = shadow_lighting(&clouds, eye);
-        let (display_size, render_size) = (view.display_size(), view.render_size());
-        let (exact, displayed) = (cx.exact(), cx.displayed());
-        self.clouds.prepare(
-            cx,
-            (&*clouds, tables.cloud_noise(), (eye, under.height), seconds),
-            (&*sun, &self.piece),
-            exact,
-        );
-        self.clouds.prepare_view(
-            cx,
-            (&*clouds, eye, seconds),
-            (view_projection, display_size, render_size),
-            (&*sun, &self.piece),
-        );
-        [
-            self.piece.domes_older,
-            self.piece.domes_newer,
-            self.piece.domes_older_mirror,
-            self.piece.domes_newer_mirror,
-            self.piece.domes_eye,
-            self.piece.domes_view,
-        ] = self.clouds.dome_piece();
-        self.piece.domes_layers = self.clouds.dome_layers();
-        let [night_light, _, moon] = night_lighting(&night, &path, sun_direction);
-        let derived = self.tables.prepare(
-            cx,
-            (&*sky, tables.sky()),
-            (
-                sun_direction,
-                eye,
-                exposure,
-                seconds,
-                [moon[0], moon[1], moon[2], night_light[1] * night_light[3]],
-            ),
-            &mut self.air,
-            || self.clouds.copy_regions(),
-        );
-        self.piece.state[1] = f32::from(u8::from(derived));
-        let sky_light: SkyLight = [
-            sun.direction,
-            sun.color,
-            self.piece.zenith,
-            self.piece.horizon,
-            self.piece.ground,
-        ];
-        let keys = (self.clouds.environment_key(), self.tables.environment_key());
-        self.environment.prepare(cx, &sky_light, keys);
-        let haze_frame = HazeFrame {
-            view_projection,
-            eye,
-            display: display_size,
-            render: render_size,
-            displayed,
-        };
-        self.piece.haze = self.haze.prepare(cx, hazes, &haze_frame);
-        if !debug {
-            self.frame = self.clouds.frame();
-            if let Some(frame) = self.frame {
-                self.clouds.run(cx, frame);
-            }
-        }
-        self.write(cx);
+    fn prepare(
+        &mut self,
+        reads: SystemParamItem<'_, '_, Self::Reads>,
+        cx: &mut Prepare<'_, Self>,
+    ) {
+        let (plan, tables) = reads;
+        self.tables.prepare(cx, (&plan.tables, tables.sky()));
+        self.clouds
+            .prepare(cx, (&plan.clouds, tables.cloud_noise()), plan.frame);
+        self.environment.prepare(cx, &plan.environment);
+        self.haze.prepare(cx, &plan.haze);
+        cx.allocate_buffer(self.piece_buffer, size_of::<SkyPiece>() as u64);
+        cx.write(self.piece_buffer, 0, &[plan.piece]);
+        cx.allocate_buffer(self.air_buffer, size_of::<SkyAir>() as u64);
+        cx.write(self.air_buffer, 0, &[plan.air]);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
@@ -642,8 +701,8 @@ impl GpuPart for SkyGpu {
         if pass == self.environment.pass() {
             return self.environment.encode(cx);
         }
-        if self.tables.owns(pass) {
-            return self.tables.encode(pass, cx);
+        if pass == self.tables.pass {
+            return self.tables.encode(cx);
         }
         0
     }

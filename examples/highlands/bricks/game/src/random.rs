@@ -1,6 +1,6 @@
 use glam::Vec3;
 
-fn hash(mut value: u32) -> u32 {
+pub(crate) fn hash(mut value: u32) -> u32 {
     value ^= value >> 16;
     value = value.wrapping_mul(0x7feb_352d);
     value ^= value >> 15;
@@ -8,14 +8,14 @@ fn hash(mut value: u32) -> u32 {
     value ^ (value >> 16)
 }
 
-fn golden_hash(value: u32) -> u32 {
+pub(crate) fn golden_hash(value: u32) -> u32 {
     let mut h = value.wrapping_mul(0x9e37_79b1);
     h = (h ^ (h >> 16)).wrapping_mul(0x7feb_352d);
     h = (h ^ (h >> 15)).wrapping_mul(0x846c_a68b);
     h ^ (h >> 16)
 }
 
-fn unit(value: u32) -> f32 {
+pub(crate) fn unit(value: u32) -> f32 {
     (value >> 8) as f32 / 16_777_216.0
 }
 

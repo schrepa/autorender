@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec4};
-use engine_core::math::max;
+use engine_core::math::{half, max};
 use engine_core::{Error, ErrorCode, Joined, Operation, Readback, View};
 use engine_render::debug::{
     DEBUG_CASTS, DEBUG_FADING, DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS,
@@ -8,22 +8,24 @@ use engine_render::debug::{
     DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT,
 };
 use engine_render::{
-    AfterRead, Bind, Buffer, ComputePipeline, Count, DebugModes, Encode, GpuPart, Install,
-    Lifetime, Pass, Prepare, ViewTarget,
+    AfterRead, Buffer, Copied, CopyRegion, DebugModes, DebugShown, GpuPart, Install, Lifetime,
+    Pass, Prepare, ViewTarget, wgpu,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::DebugView;
-use crate::gpu::ProbedTargets;
-
-const TARGETS: u32 = 0;
-const SCENE: u32 = 1;
-const PIXEL_BYTES: u64 = 16;
-const SCENE_BYTES: u64 = 16;
-const TARGET_BYTES: u64 = size_of::<ProbedTargets>() as u64;
-
-type Decode = fn([u32; 4], [f32; 4]) -> Value;
+const IDS: u64 = 0;
+const COUNT: u64 = 256;
+const SCENE: u64 = 512;
+const CANVAS: u64 = 768;
+const TERRAIN: u64 = 1024;
+const DEPTH: u64 = 1280;
+const ARMED: u64 = 1284;
+const CANVAS_ORDER: u64 = 1288;
+const PROBED_BYTES: u64 = 1292;
+const IN_ORDER: u32 = 1;
+const BLUE_FIRST: u32 = 2;
+const ROW_ALIGNMENT: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Stage {
@@ -38,21 +40,16 @@ enum Stage {
 #[derive(Resource, Default)]
 pub(crate) struct Probe {
     stage: Stage,
+    armed: u32,
     pixel: (u32, u32),
     armed_size: (u32, u32),
+    depth_row: u32,
     size: (u32, u32),
     view_projection: Mat4,
-    mode: Option<(&'static str, Decode)>,
-    targets: Option<ProbedTargets>,
-    scene: Option<u32>,
-    result: Option<Value>,
+    bytes: Option<Vec<u8>>,
 }
 
 impl Probe {
-    pub(crate) fn armed(&self) -> bool {
-        self.stage != Stage::Idle
-    }
-
     pub(crate) fn forces(&self) -> Option<bool> {
         match self.stage {
             Stage::Debug => Some(true),
@@ -61,33 +58,49 @@ impl Probe {
         }
     }
 
-    fn probed(&self, targets: ProbedTargets, scene: u32) -> PixelProbe {
-        let [record, object, detail, normal] = targets.ids;
+    pub(crate) fn coming(&self) -> Option<bool> {
+        match self.stage {
+            Stage::Armed => Some(true),
+            Stage::Debug => Some(false),
+            Stage::Idle | Stage::Shaded | Stage::Waiting => None,
+        }
+    }
+
+    fn probing(&self) -> bool {
+        self.stage != Stage::Idle && self.bytes.is_none()
+    }
+
+    fn result(&self, bytes: &[u8], modes: &Joined<'_, DebugModes>) -> Value {
+        let record = word(bytes, IDS);
         let kind = drawn_kind(record & 0xf);
-        let (x, y) = self.pixel;
-        let depth = if self.size == self.armed_size {
-            targets.depth
-        } else {
-            0.0
-        };
-        let fragments = targets.count;
+        let object = word(bytes, IDS + 4);
+        let detail = word(bytes, IDS + 8);
+        let depth = f32::from_bits(word(bytes, DEPTH));
+        let fragments = half(word(bytes, COUNT) as u16);
         let (width, height) = (self.size.0.max(1) as f32, self.size.1.max(1) as f32);
         let clip = Vec4::new(
-            (x as f32 + 0.5) / width * 2.0 - 1.0,
-            1.0 - (y as f32 + 0.5) / height * 2.0,
+            (self.pixel.0 as f32 + 0.5) / width * 2.0 - 1.0,
+            1.0 - (self.pixel.1 as f32 + 0.5) / height * 2.0,
             depth,
             1.0,
         );
         let point = self.view_projection.inverse() * clip;
-        let texel = scene.to_le_bytes();
+        let color = |offset: u64, blue_first: bool| {
+            let texel = word(bytes, offset).to_le_bytes();
+            if blue_first {
+                [texel[2], texel[1], texel[0]]
+            } else {
+                [texel[0], texel[1], texel[2]]
+            }
+        };
+        let canvas = word(bytes, CANVAS_ORDER);
         let with_object = matches!(
             kind,
             Some(DrawnKind::Mesh | DrawnKind::Placed | DrawnKind::Card | DrawnKind::PlacedCard)
         );
         let with_detail = matches!(kind, Some(DrawnKind::Card | DrawnKind::PlacedCard));
-        let [first, second] = targets.terrain;
-        PixelProbe {
-            pixel: [x, y],
+        let probe = PixelProbe {
+            pixel: [self.pixel.0, self.pixel.1],
             kind,
             level: (record >> DEBUG_LEVEL_SHIFT) & 0xf,
             fading: record & DEBUG_FADING != 0,
@@ -95,38 +108,38 @@ impl Probe {
             object: with_object.then_some(object),
             detail: with_detail.then_some(detail),
             normal: (kind.is_some() && kind != Some(DrawnKind::Sky))
-                .then(|| unpacked_normal(normal)),
+                .then(|| unpacked_normal(word(bytes, IDS + 12))),
             fragments: max(fragments.round(), 0.0) as u32,
             depth,
             world: (depth > 0.0 && point.w != 0.0).then(|| (point.truncate() / point.w).to_array()),
-            shaded: [texel[0], texel[1], texel[2]],
-            mode: self.mode.map(|(name, _)| name),
-            decoded: self.mode.map_or(Value::Null, |(_, decode)| {
-                decode(
-                    [record, object, detail, first],
-                    [f32::from_bits(second), fragments, depth, 0.0],
-                )
-            }),
+            shaded: Some(color(SCENE, false)),
+            displayed: (canvas != 0).then(|| color(CANVAS, canvas == BLUE_FIRST)),
+        };
+        let Ok(Value::Object(mut fields)) = serde_json::to_value(probe) else {
+            return Value::Null;
+        };
+        let ids = [record, object, detail, word(bytes, TERRAIN)];
+        let words = [
+            f32::from_bits(word(bytes, TERRAIN + 4)),
+            fragments,
+            depth,
+            0.0,
+        ];
+        for mode in modes.all() {
+            if let Value::Object(decoded) = (mode.decode)(ids, words) {
+                for (name, value) in decoded {
+                    fields.entry(name).or_insert(value);
+                }
+            }
         }
+        Value::Object(fields)
     }
 }
 
 impl Readback for Probe {
-    fn arrived(&mut self, _: u64, tag: u32, bytes: &[u8]) {
-        if matches!(self.stage, Stage::Idle | Stage::Armed) {
-            return;
-        }
-        match tag {
-            TARGETS => {
-                self.targets = bytes
-                    .get(..TARGET_BYTES as usize)
-                    .map(bytemuck::pod_read_unaligned);
-            }
-            _ => {
-                self.scene = bytes
-                    .get(..4)
-                    .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]));
-            }
+    fn arrived(&mut self, _: u64, _: u32, bytes: &[u8]) {
+        if self.stage != Stage::Idle && word(bytes, ARMED) == self.armed {
+            self.bytes = Some(bytes.to_vec());
         }
     }
 }
@@ -148,7 +161,7 @@ enum DrawnKind {
     Sky,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Debug, Serialize)]
 struct PixelProbe {
     pixel: [u32; 2],
     kind: Option<DrawnKind>,
@@ -161,9 +174,15 @@ struct PixelProbe {
     fragments: u32,
     depth: f32,
     world: Option<[f32; 3]>,
-    shaded: [u8; 3],
-    mode: Option<&'static str>,
-    decoded: Value,
+    shaded: Option<[u8; 3]>,
+    displayed: Option<[u8; 3]>,
+}
+
+fn word(bytes: &[u8], offset: u64) -> u32 {
+    let start = offset as usize;
+    bytes.get(start..start + 4).map_or(0, |word| {
+        u32::from_le_bytes([word[0], word[1], word[2], word[3]])
+    })
 }
 
 fn unpacked_normal(packed: u32) -> [f32; 3] {
@@ -192,41 +211,21 @@ fn drawn_kind(kind: u32) -> Option<DrawnKind> {
     })
 }
 
-pub(crate) fn advance(
-    view: Res<View>,
-    settings: Res<DebugView>,
-    modes: Joined<DebugModes>,
-    mut probe: ResMut<Probe>,
-) {
+pub(crate) fn advance(view: Res<View>, mut probe: ResMut<Probe>) {
     let stage = probe.stage;
     match stage {
         Stage::Idle => {}
         Stage::Armed => {
-            let size = view.render_size();
-            let mode = if settings.showing() {
-                modes
-                    .iter()
-                    .find(|mode| mode.name == settings.view.as_str())
-                    .map(|mode| (mode.name, mode.decode))
-            } else {
-                None
-            };
+            let size = view.display_size();
             let probe = &mut *probe;
             probe.stage = Stage::Debug;
             probe.size = (size.x, size.y);
             probe.view_projection = view.view_projection();
-            probe.mode = mode;
         }
         Stage::Debug => probe.stage = Stage::Shaded,
-        Stage::Shaded => probe.stage = Stage::Waiting,
-        Stage::Waiting => {
-            let (Some(targets), Some(scene)) = (probe.targets, probe.scene) else {
-                return;
-            };
-            let result = serde_json::to_value(probe.probed(targets, scene)).unwrap_or(Value::Null);
-            let probe = &mut *probe;
-            probe.stage = Stage::Idle;
-            probe.result = Some(result);
+        Stage::Shaded | Stage::Waiting => {
+            let arrived = probe.bytes.is_some();
+            probe.stage = if arrived { Stage::Idle } else { Stage::Waiting };
         }
     }
 }
@@ -242,14 +241,14 @@ pub(crate) struct ProbePixel;
 
 impl Operation for ProbePixel {
     const NAME: &'static str = "probe_pixel";
-    type Params = (Res<'static, View>, ResMut<'static, Probe>);
+    type Params = (Res<'static, View>, ResMut<'static, Probe>, ResMut<'static, DebugShown>);
     type Request = PixelRequest;
 
     fn run(
-        (view, mut probe): SystemParamItem<'_, '_, Self::Params>,
+        (view, mut probe, mut shown): SystemParamItem<'_, '_, Self::Params>,
         request: PixelRequest,
     ) -> Result<Value, Error> {
-        let size = view.render_size();
+        let size = view.display_size();
         for (path, value, size) in [("$.x", request.x, size.x), ("$.y", request.y, size.y)] {
             if value >= size {
                 return Err(Error::new(ErrorCode::OutOfRange, path)
@@ -257,12 +256,17 @@ impl Operation for ProbePixel {
                     .got(value));
             }
         }
+        let armed = probe.armed.wrapping_add(1);
         *probe = Probe {
             stage: Stage::Armed,
+            armed,
             pixel: (request.x, request.y),
             armed_size: (size.x, size.y),
+            depth_row: (size.x * 4).next_multiple_of(ROW_ALIGNMENT),
             ..Probe::default()
         };
+        shown.next_debug = true;
+        shown.next_whole = true;
         Ok(json!({ "pixel": [request.x, request.y] }))
     }
 }
@@ -275,85 +279,179 @@ pub(crate) struct ProbedPixel;
 
 impl Operation for ProbedPixel {
     const NAME: &'static str = "probed_pixel";
-    type Params = Res<'static, Probe>;
+    type Params = (Res<'static, Probe>, Joined<'static, DebugModes>);
     type Request = ProbedRequest;
 
-    fn run(probe: SystemParamItem<'_, '_, Self::Params>, _: ProbedRequest) -> Result<Value, Error> {
-        Ok(json!({ "probing": probe.armed(), "probe": probe.result }))
+    fn run(
+        (probe, modes): SystemParamItem<'_, '_, Self::Params>,
+        _: ProbedRequest,
+    ) -> Result<Value, Error> {
+        let result = probe
+            .bytes
+            .as_deref()
+            .map(|bytes| probe.result(bytes, &modes));
+        Ok(json!({ "probing": probe.probing(), "probe": result }))
+    }
+}
+
+fn texel(at: wgpu::Origin3d, offset: u64) -> CopyRegion {
+    CopyRegion::ToBuffer {
+        from: at,
+        to: wgpu::TexelCopyBufferLayout {
+            offset,
+            bytes_per_row: None,
+            rows_per_image: None,
+        },
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
     }
 }
 
 pub(crate) struct ProbeGpu {
-    pixel: Buffer<Self>,
-    targets: Buffer<Self>,
-    scene: Buffer<Self>,
-    read_targets: Pass<Self>,
-    read_scene: Pass<Self>,
-    reading_targets: ComputePipeline<Self>,
-    reading_scene: ComputePipeline<Self>,
+    probed: Buffer<Self>,
+    rows: Buffer<Self>,
+    ids: Pass<Self>,
+    count: Pass<Self>,
+    terrain: Pass<Self>,
+    depth: Pass<Self>,
+    depth_texel: Pass<Self>,
+    scene: Pass<Self>,
+    canvas: Pass<Self>,
 }
 
 impl GpuPart for ProbeGpu {
-    type Reads = Res<'static, Probe>;
+    type Reads = (Res<'static, Probe>, Res<'static, View>);
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        use crate::shaders::debug_view::{probe_scene, probe_targets};
-        let pixel = cx.buffer("debug_view_probe_pixel", Lifetime::Kept);
-        let targets = cx.buffer("debug_view_probe_targets", Lifetime::Kept);
-        let scene = cx.buffer("debug_view_probe_scene", Lifetime::Kept);
-        let read_targets = cx.pass("debug_view_probe_targets").id();
-        let read_scene = cx.pass("debug_view_probe_scene").id();
-        let reading_targets = cx.compute_pipeline(
-            read_targets,
-            probe_targets::CS_PROBE_TARGETS,
-            &[
-                (probe_targets::PROBE_PIXEL, Bind::Buffer(pixel)),
-                (probe_targets::PROBED, Bind::Buffer(targets)),
-                (probe_targets::PROBE_IDS, Bind::Target(ViewTarget::Debug(0))),
-                (probe_targets::PROBE_COUNT, Bind::Target(ViewTarget::Debug(1))),
-                (probe_targets::PROBE_TERRAIN, Bind::Target(ViewTarget::Debug(2))),
-                (probe_targets::PROBE_DEPTH, Bind::Target(ViewTarget::Depth)),
-            ],
-        )?;
-        let reading_scene = cx.compute_pipeline(
-            read_scene,
-            probe_scene::CS_PROBE_SCENE,
-            &[
-                (probe_scene::PROBE_PIXEL, Bind::Buffer(pixel)),
-                (probe_scene::SHADED, Bind::Buffer(scene)),
-                (probe_scene::PROBE_SCENE, Bind::Target(ViewTarget::Scene)),
-            ],
-        )?;
+        let probed = cx.buffer("debug_view_probe", Lifetime::Kept);
+        let rows = cx.buffer("debug_view_probe_depth", Lifetime::Kept);
+        let ids = cx.copy(
+            "debug_view_probe_ids",
+            Copied::Target(ViewTarget::Debug(0)),
+            Copied::Buffer(probed),
+        );
+        let count = cx.copy(
+            "debug_view_probe_count",
+            Copied::Target(ViewTarget::Debug(1)),
+            Copied::Buffer(probed),
+        );
+        let terrain = cx.copy(
+            "debug_view_probe_terrain",
+            Copied::Target(ViewTarget::Debug(2)),
+            Copied::Buffer(probed),
+        );
+        let depth = cx.copy(
+            "debug_view_probe_depth",
+            Copied::Target(ViewTarget::Depth),
+            Copied::Buffer(rows),
+        );
+        let depth_texel = cx.copy(
+            "debug_view_probe_depth_texel",
+            Copied::Buffer(rows),
+            Copied::Buffer(probed),
+        );
+        let scene = cx.copy(
+            "debug_view_probe_scene",
+            Copied::Target(ViewTarget::Scene),
+            Copied::Buffer(probed),
+        );
+        let canvas = cx.copy(
+            "debug_view_probe_canvas",
+            Copied::Canvas,
+            Copied::Buffer(probed),
+        );
+        cx.after(count, ids);
+        cx.after(terrain, count);
+        cx.after(depth_texel, terrain);
+        cx.after(scene, depth_texel);
+        cx.after(canvas, scene);
         Ok(Self {
-            pixel,
-            targets,
+            probed,
+            rows,
+            ids,
+            count,
+            terrain,
+            depth,
+            depth_texel,
             scene,
-            read_targets,
-            read_scene,
-            reading_targets,
-            reading_scene,
+            canvas,
         })
     }
 
-    fn prepare(&mut self, probe: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
-        let (pass, buffer, tag, bytes) = match probe.stage {
-            Stage::Debug => (self.read_targets, self.targets, TARGETS, TARGET_BYTES),
-            Stage::Shaded => (self.read_scene, self.scene, SCENE, SCENE_BYTES),
-            Stage::Idle | Stage::Armed | Stage::Waiting => return,
+    fn prepare(
+        &mut self,
+        (probe, view): SystemParamItem<'_, '_, Self::Reads>,
+        cx: &mut Prepare<'_, Self>,
+    ) {
+        let size = view.display_size();
+        let at = wgpu::Origin3d {
+            x: probe.pixel.0.min(size.x.saturating_sub(1)),
+            y: probe.pixel.1.min(size.y.saturating_sub(1)),
+            z: 0,
         };
-        cx.allocate_buffer(self.pixel, PIXEL_BYTES);
-        cx.allocate_buffer(buffer, bytes);
-        cx.write(self.pixel, 0, &[probe.pixel.0, probe.pixel.1, 0, 0]);
-        cx.run(pass);
-        let _ = cx.read_back::<Probe>(tag, buffer, 0..bytes, AfterRead::Keep);
-    }
-
-    fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        let pipeline = if pass == self.read_targets {
-            &self.reading_targets
-        } else {
-            &self.reading_scene
-        };
-        cx.dispatch(pipeline, Count::Groups([1, 1, 1]))
+        match probe.stage {
+            Stage::Debug => {
+                cx.allocate_buffer(self.probed, PROBED_BYTES);
+                cx.write(self.probed, ARMED, &[probe.armed]);
+                cx.copy(self.ids, &[texel(at, IDS)]);
+                cx.copy(self.count, &[texel(at, COUNT)]);
+                cx.copy(self.terrain, &[texel(at, TERRAIN)]);
+                if (size.x, size.y) == probe.armed_size {
+                    let (width, height) = probe.armed_size;
+                    let row = u64::from(probe.depth_row);
+                    cx.allocate_buffer(self.rows, row * u64::from(height));
+                    cx.copy(
+                        self.depth,
+                        &[CopyRegion::ToBuffer {
+                            from: wgpu::Origin3d::ZERO,
+                            to: wgpu::TexelCopyBufferLayout {
+                                offset: 0,
+                                bytes_per_row: Some(probe.depth_row),
+                                rows_per_image: Some(height),
+                            },
+                            size: wgpu::Extent3d {
+                                width,
+                                height,
+                                depth_or_array_layers: 1,
+                            },
+                        }],
+                    );
+                    cx.copy(
+                        self.depth_texel,
+                        &[CopyRegion::Bytes {
+                            from: u64::from(at.y) * row + u64::from(at.x) * 4,
+                            to: DEPTH,
+                            size: 4,
+                        }],
+                    );
+                } else {
+                    cx.write(self.probed, DEPTH, &[0_u32]);
+                }
+            }
+            Stage::Shaded => {
+                cx.allocate_buffer(self.probed, PROBED_BYTES);
+                cx.allocate_buffer(self.rows, 0);
+                cx.copy(self.scene, &[texel(at, SCENE)]);
+                let order = cx.canvas().map_or(0, |format| {
+                    if matches!(
+                        format,
+                        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+                    ) {
+                        BLUE_FIRST
+                    } else {
+                        IN_ORDER
+                    }
+                });
+                if order != 0 {
+                    cx.copy(self.canvas, &[texel(at, CANVAS)]);
+                }
+                cx.write(self.probed, CANVAS_ORDER, &[order]);
+                let _ = cx.read_back::<Probe>(0, self.probed, 0..PROBED_BYTES, AfterRead::Keep);
+            }
+            Stage::Idle | Stage::Armed | Stage::Waiting => {}
+        }
     }
 }

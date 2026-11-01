@@ -1,14 +1,17 @@
 use bevy_ecs::prelude::Resource;
 use bytemuck::{Pod, Zeroable};
-use engine_core::gpu_struct;
+use engine_core::{GpuStruct, gpu_struct};
+use engine_places::shadows::SHADOW_REGIONS;
 
-use crate::constants::{MAX_MOVING_TILES, MAX_SHADOW_LEVELS, SHADOW_REGIONS, SKY_LAYERS};
+use crate::constants::{MAX_MOVING_TILES, MAX_SHADOW_LEVELS, SKY_LAYERS};
 
 const MOVING_TILES: usize = MAX_MOVING_TILES as usize;
 const LAYERS: usize = SKY_LAYERS as usize;
 
 const _: () = assert!(MAX_SHADOW_LEVELS == 20, "piece_and_cull_hold_every_level");
 const _: () = assert!(SHADOW_REGIONS == 7, "cull_holds_every_region");
+
+pub(crate) const GENERATED: &[&str] = &[crate::constants::WGSL, CasterCull::WGSL];
 
 gpu_struct! {
     #[derive(Resource)]

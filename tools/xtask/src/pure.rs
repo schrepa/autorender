@@ -11,9 +11,13 @@ mod textures;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
-use serde_json::{Map, Value};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use engine_core::{BrickList, JobKind, JobRef, RecordKey};
+use engine_registry::JobList;
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::Failure;
@@ -89,6 +93,92 @@ impl Observations {
         if !holds {
             self.broken.push(what());
         }
+    }
+}
+
+pub(crate) struct JobLog {
+    list: Arc<JobList>,
+    worker: engine_worker::Worker,
+    next: u64,
+    log: Vec<Value>,
+}
+
+impl JobLog {
+    pub fn new() -> Result<Self, String> {
+        let list = Arc::new(
+            engine_worker::job_list(engine_standard::standard::<BrickList>)
+                .map_err(|error| error.to_string())?,
+        );
+        Ok(Self {
+            worker: engine_worker::Worker::new(Arc::clone(&list), engine_worker::now_ms),
+            list,
+            next: 0,
+            log: Vec::new(),
+        })
+    }
+
+    pub fn list(&self) -> &JobList {
+        &self.list
+    }
+
+    pub fn share(&mut self, bytes: &[u8]) -> RecordKey {
+        let key = RecordKey::shared(bytes);
+        self.log
+            .push(json!({"share": key.hex(), "bytes": STANDARD.encode(bytes)}));
+        self.worker.share(key, bytes.to_vec());
+        key
+    }
+
+    pub fn run(&mut self, kind: &'static JobKind, input: &[u8]) -> Result<Vec<u8>, String> {
+        let output = self
+            .worker
+            .run(&JobRef::from(kind), input)
+            .map_err(|error| error.to_string())?;
+        self.log.push(json!({
+            "job": kind.name(),
+            "source": RecordKey::from_hash(kind.source().hash()).hex(),
+            "input": STANDARD.encode(input),
+            "output": hash(&output),
+        }));
+        Ok(output)
+    }
+
+    pub fn sliced(
+        &mut self,
+        kind: &'static JobKind,
+        input: &[u8],
+        slice: u64,
+    ) -> Result<Vec<u8>, String> {
+        self.next += 1;
+        self.worker
+            .start(self.next, &JobRef::from(kind), input)
+            .map_err(|error| error.to_string())?;
+        loop {
+            let stepped = self
+                .worker
+                .step(self.next, slice)
+                .map_err(|error| error.to_string())?;
+            if let Some(output) = stepped {
+                self.log.push(json!({
+                    "job": kind.name(),
+                    "source": RecordKey::from_hash(kind.source().hash()).hex(),
+                    "input": STANDARD.encode(input),
+                    "slice": slice,
+                    "output": hash(&output),
+                }));
+                return Ok(output);
+            }
+        }
+    }
+
+    pub fn write(&self, root: &Path, jobs: &str) -> Result<(), String> {
+        let path = root.join(jobs);
+        if let Some(folder) = path.parent() {
+            fs::create_dir_all(folder)
+                .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
+        }
+        fs::write(&path, Value::Array(self.log.clone()).to_string())
+            .map_err(|error| format!("cannot write {jobs}: {error}"))
     }
 }
 

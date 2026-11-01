@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Cut, Error, Readback, View};
+use engine_core::{Cut, DeviceLimits, Error, Readback, View};
 use engine_places::lighting::Lighting;
-use engine_places::lights::LightRegion;
+use engine_places::lights::{LIGHT_EXTERIOR, LIGHT_INTERIOR, LightRegion};
 use engine_places::probes::ProbeCaptures;
 use engine_render::{
     AfterRead, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime, Pass,
@@ -10,8 +10,7 @@ use engine_render::{
 use glam::Mat4;
 
 use crate::gpu::{
-    Clusters, GROUP_LIGHTS, KEPT_REGIONS, LIT_VIEWS, LightInput, NO_SLOT, REGION_EXTERIOR,
-    REGION_INTERIOR, SHAPED_LIGHTS,
+    Clusters, GROUP_LIGHTS, KEPT_REGIONS, LIT_VIEWS, LightInput, NO_SLOT, SHAPED_LIGHTS,
 };
 use crate::lights::{LightList, LocalLightSettings, RenderLight};
 use crate::shaders;
@@ -27,8 +26,6 @@ const TOTALS_BYTES: u64 = 16;
 const NO_BUDGET: u32 = u32::MAX;
 const LIGHT_BYTES: u64 = 64;
 const CLUSTER_BYTES: u64 = size_of::<Clusters>() as u64;
-const STORAGE_ROOM: u64 = 134_217_728;
-const TOTALS: u32 = 0;
 
 impl Clusters {
     fn new(
@@ -102,8 +99,8 @@ impl From<&RenderLight> for LightInput {
             length: light.shape[1],
             region: match light.region {
                 LightRegion::Both => 0,
-                LightRegion::Interior => REGION_INTERIOR,
-                LightRegion::Exterior => REGION_EXTERIOR,
+                LightRegion::Interior => LIGHT_INTERIOR,
+                LightRegion::Exterior => LIGHT_EXTERIOR,
             },
         }
     }
@@ -134,7 +131,10 @@ impl LightTotals {
 }
 
 impl Readback for LightTotals {
-    fn arrived(&mut self, _: u64, _: u32, bytes: &[u8]) {
+    fn arrived(&mut self, _: u64, epoch: u32, bytes: &[u8]) {
+        if epoch != self.epoch {
+            return;
+        }
         let mut words = [0; 4];
         for (word, read) in words.iter_mut().zip(bytes.chunks_exact(4)) {
             *word = u32::from_le_bytes([read[0], read[1], read[2], read[3]]);
@@ -143,17 +143,17 @@ impl Readback for LightTotals {
     }
 }
 
-fn index_room(capacity: usize, views: u32) -> u64 {
-    (STORAGE_ROOM.saturating_sub(capacity as u64 * LIGHT_BYTES) / u64::from(views.max(1)))
+fn index_room(room: u64, capacity: usize, views: u32) -> u64 {
+    (room.saturating_sub(capacity as u64 * LIGHT_BYTES) / u64::from(views.max(1)))
         .saturating_sub(INDEX_START)
         / SECTION_ALIGN
         * SECTION_ALIGN
 }
 
-fn first_index_bytes() -> u64 {
+fn first_index_bytes(room: u64) -> u64 {
     (CLUSTERS * 4)
         .next_multiple_of(SECTION_ALIGN)
-        .min(index_room(1, 1))
+        .min(index_room(room, 1, 1))
 }
 
 pub(crate) struct LightsGpu {
@@ -171,22 +171,26 @@ pub(crate) struct LightsGpu {
     staged: Vec<LightInput>,
     headers: Vec<Clusters>,
     written: Vec<Clusters>,
+    room: u64,
     capacity: usize,
     index_bytes: u64,
     arena: u32,
     regions: bool,
+    stale: bool,
     count: u32,
     views: u32,
     epoch: u32,
 }
 
 impl LightsGpu {
-    fn reset(&mut self, epoch: u32) {
+    fn reset(&mut self, epoch: u32, room: u64) {
         self.epoch = epoch;
+        self.room = room;
         self.capacity = 1;
         self.arena = 1;
-        self.index_bytes = first_index_bytes();
+        self.index_bytes = first_index_bytes(room);
         self.regions = false;
+        self.stale = true;
         self.written.clear();
     }
 
@@ -219,7 +223,7 @@ impl LightsGpu {
     fn grow_indices(&mut self, bytes: u64) {
         let size = bytes
             .next_power_of_two()
-            .min(index_room(self.capacity, self.arena));
+            .min(index_room(self.room, self.capacity, self.arena));
         if bytes <= self.index_bytes || size <= self.index_bytes {
             return;
         }
@@ -275,6 +279,7 @@ impl GpuPart for LightsGpu {
         Res<'static, Lighting>,
         Res<'static, View>,
         Res<'static, ProbeCaptures>,
+        Res<'static, DeviceLimits>,
     );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
@@ -327,10 +332,12 @@ impl GpuPart for LightsGpu {
             staged: Vec::new(),
             headers: vec![Clusters::default(); LIT_VIEWS as usize],
             written: Vec::new(),
+            room: 0,
             capacity: 1,
-            index_bytes: first_index_bytes(),
+            index_bytes: first_index_bytes(0),
             arena: 1,
             regions: false,
+            stale: false,
             count: 0,
             views: 1,
             epoch: 0,
@@ -339,16 +346,20 @@ impl GpuPart for LightsGpu {
 
     fn prepare(
         &mut self,
-        (settings, list, totals, lighting, view, captures): SystemParamItem<
+        (settings, list, totals, lighting, view, captures, limits): SystemParamItem<
             '_,
             '_,
             Self::Reads,
         >,
         cx: &mut Prepare<'_, Self>,
     ) {
-        let fresh = settings.is_changed();
-        if totals.epoch != self.epoch || list.lights.is_empty() {
-            self.reset(totals.epoch);
+        if view.debug() {
+            self.stale |= list.is_changed();
+            return;
+        }
+        let room = limits.storage_room / 16 * 16;
+        if totals.epoch != self.epoch || list.lights.is_empty() || room != self.room {
+            self.reset(totals.epoch, room);
         }
         let count = list.lights.len();
         let mut grown = false;
@@ -361,14 +372,15 @@ impl GpuPart for LightsGpu {
             self.arena = self.views;
             self.index_bytes = self
                 .index_bytes
-                .min(index_room(self.capacity, self.arena));
+                .min(index_room(self.room, self.capacity, self.arena));
         }
-        let upload = fresh || grown || list.is_changed();
+        let upload = grown || self.stale || list.is_changed();
         if upload {
             self.staged.clear();
             self.staged
                 .extend(list.lights.iter().map(LightInput::from));
             self.regions = self.staged.iter().any(|light| light.region != 0);
+            self.stale = false;
         }
         let needed = totals.needed().max(count as u64 * 32);
         self.grow_indices(needed * 4);
@@ -382,14 +394,17 @@ impl GpuPart for LightsGpu {
         }
         self.count = count as u32;
         self.place_headers(&settings, &view, &captures, lighting.highlights);
-        if fresh || self.written != self.headers {
+        if self.written != self.headers {
             cx.write(self.clusters, 0, &self.headers);
             self.written.clone_from(&self.headers);
+        }
+        if count == 0 {
+            return;
         }
         cx.run(self.clear_counts);
         cx.run(self.clear_totals);
         cx.run(self.binning);
-        cx.read_back::<LightTotals>(TOTALS, self.totals, 0..TOTALS_BYTES, AfterRead::Keep);
+        cx.read_back::<LightTotals>(self.epoch, self.totals, 0..TOTALS_BYTES, AfterRead::Keep);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
@@ -398,14 +413,9 @@ impl GpuPart for LightsGpu {
         }
         let workgroups = self.count.div_ceil(GROUP_LIGHTS);
         let (columns, rows) = (workgroups.min(65_535), workgroups.div_ceil(65_535));
-        let mut dispatched = 0;
-        if workgroups > 0 {
-            dispatched += cx.dispatch(&self.counting, Count::Groups([columns, rows, self.views]));
-        }
-        dispatched += cx.dispatch(&self.scanning, Count::Groups([1, 1, self.views]));
-        if workgroups > 0 {
-            dispatched += cx.dispatch(&self.filling, Count::Groups([columns, rows, self.views]));
-        }
-        dispatched
+        cx.dispatch(&self.counting, Count::Groups([columns, rows, self.views]));
+        cx.dispatch(&self.scanning, Count::Groups([1, 1, self.views]));
+        cx.dispatch(&self.filling, Count::Groups([columns, rows, self.views]));
+        0
     }
 }

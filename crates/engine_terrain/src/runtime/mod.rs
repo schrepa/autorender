@@ -56,6 +56,7 @@ use engine_core::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
+use engine_heightfield::layer::LayerKind;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
@@ -66,8 +67,8 @@ use crate::{
     Stamp, TILE_QUADS, TILE_STRIDE, Tile, TileKey, TileSample, WantedTile, WantedView,
 };
 use engine_core::{
-    AssetLibrary, Camera, Cut, Error, ErrorCode, Expected, ExtraRules, InvalidSetting, Jobs,
-    MaterialHandle, MeshHandle, Records, Rule, Setting, TextureHandle, Ticket, fields, settings,
-    stats,
+    AssetLibrary, Camera, Cut, Error, ErrorCode, Expected, ExtraRules, IDLE_JOBS, InvalidSetting,
+    JobFailures, Jobs, MaterialHandle, MeshHandle, Records, Rule, Setting, TextureHandle, Ticket,
+    URGENT_JOBS, VIEW_JOBS, content_hash, fields, job_output, job_priority, settings, stats,
 };
 use engine_places::ground::{SurfaceMaterial, SurfaceProjection};

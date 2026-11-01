@@ -1,5 +1,6 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
+mod scene;
 mod smokes;
 mod spline_mesh;
 mod views;
@@ -20,8 +21,16 @@ impl Brick for SplinesBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .resource::<spline_mesh::SplineBuilds>()
-            .join::<SceneComponents>(ComponentKind::of::<SplineMesh>("spline"), None)
+            .join::<SceneComponents>(
+                ComponentKind::of::<SplineMesh>("spline")
+                    .check(scene::check_spline)
+                    .reach(scene::spline_reach)
+                    .schema(scene::spline_schema)
+                    .example(scene::spline_example),
+                None,
+            )
             .systems(Schedule::WorldSync, spline_mesh::build)
-            .observation::<views::InspectSplines>();
+            .on_remove::<SplineMesh, _>(spline_mesh::release)
+            .observation::<views::InspectSplineMesh>();
     }
 }

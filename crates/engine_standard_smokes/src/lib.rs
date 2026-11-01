@@ -3,11 +3,14 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod debug_view_smoke;
 mod hierarchy;
 mod host_parity;
+mod navigation;
 mod requests;
 mod scene_kit;
 mod scene_views;
+mod stats;
 mod streamed_scene;
 mod surfaces;
+mod terrain;
 mod terrain_views;
 mod texture;
 
@@ -67,6 +70,31 @@ impl Brick for StandardSmokesBrick {
             name: "debug_view",
             runs: Runs::Gpu,
             run: debug_view_smoke::run,
+        },
+        Smoke {
+            name: "terrain_draws",
+            runs: Runs::Gpu,
+            run: terrain::draws,
+        },
+        Smoke {
+            name: "terrain_shapes",
+            runs: Runs::Gpu,
+            run: terrain::shapes,
+        },
+        Smoke {
+            name: "terrain_surface",
+            runs: Runs::Gpu,
+            run: terrain::surface,
+        },
+        Smoke {
+            name: "terrain_water_sky",
+            runs: Runs::Gpu,
+            run: terrain::water_sky,
+        },
+        Smoke {
+            name: "navigation_walks",
+            runs: Runs::Gpu,
+            run: navigation::walks,
         },
     ];
 

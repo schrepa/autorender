@@ -1,13 +1,17 @@
 use bevy_ecs::prelude::*;
-use engine_core::{AlphaMode, AssetLibrary, Detail, MaterialHandle, Mesh, View};
+use engine_core::{
+    AlphaMode, AssetLibrary, AssetResidency, Detail, DeviceLimits, MaterialHandle, Mesh,
+    ResidentMesh, View,
+};
 use engine_places::meshes::MOVED_SLOT;
 use glam::Vec3;
 
 use crate::batches::{BatchPlan, DrawBatch};
 use crate::layouts::LOD_LEVELS;
 use crate::presentation::frustum_uniform;
-use crate::retained::{RetainedRender, SourceMesh};
+use crate::retained::RetainedRender;
 use crate::settings::{Culling, OcclusionCulling, SubpixelCulling};
+use crate::uploads::PoseData;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct BatchLook {
@@ -19,50 +23,36 @@ pub(crate) struct BatchLook {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct MeshLevels {
     pub index_count: u32,
-    pub lods: Vec<(u32, u32, f32)>,
+    pub first_index: u32,
+    pub base_vertex: i32,
     pub plan: Vec<(u32, u32, f32)>,
-    pub casters: Vec<(u32, u32)>,
 }
 
 impl MeshLevels {
-    pub(crate) fn of(source: &SourceMesh) -> Self {
-        let index_count = source.mesh.indices().len() as u32;
-        let Some(lods) = source.lods.as_deref() else {
-            return Self {
-                index_count,
-                ..Self::default()
-            };
+    pub(crate) fn of(mesh: Option<&ResidentMesh>) -> Self {
+        let Some(mesh) = mesh else {
+            return Self::default();
         };
-        let levels: Vec<(u32, u32, f32)> = lods
-            .levels
-            .iter()
-            .map(|level| (level.first_index, level.index_count, level.error))
-            .collect();
-        let first = levels.first().copied().filter(|&(_, count, _)| count > 0);
-        let empty = levels.last().copied().filter(|&(_, count, _)| count == 0);
         Self {
-            index_count,
-            plan: first.into_iter().chain(empty).collect(),
-            lods: levels,
-            casters: lods.casters.clone(),
+            index_count: mesh.index_count(),
+            first_index: mesh.first_index(),
+            base_vertex: mesh.base_vertex(),
+            plan: mesh.plan().to_vec(),
         }
     }
 
     pub(crate) fn levels(&self) -> usize {
         1 + self.plan.len().min(LOD_LEVELS as usize - 1)
     }
-
-    pub(crate) fn caster_range(&self, level: usize, own: (u32, u32)) -> (u32, u32) {
-        self.casters.get(level).copied().unwrap_or(own)
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct BatchMeta {
     pub index_count: u32,
+    pub first_index: u32,
+    pub base_vertex: i32,
     pub bounds: (Vec3, Vec3),
     pub lods: Vec<(u32, u32, f32)>,
-    pub impostor: f32,
     pub levels: MeshLevels,
 }
 
@@ -74,7 +64,7 @@ pub(crate) struct DrawOrder {
     pub metas: Vec<BatchMeta>,
     pub generation: u64,
     keys: Vec<(u8, u32, Option<MaterialHandle>, u8, u32)>,
-    planned: Option<(u64, u64)>,
+    planned: Option<(u64, u64, u64, u64)>,
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
@@ -83,6 +73,7 @@ pub(crate) struct MeshPlan {
     pub culling: bool,
     pub occlusion_enabled: bool,
     pub occlusion: bool,
+    pub subpixel_enabled: bool,
     pub subpixel: bool,
     pub budget: u32,
     pub lod_levels: bool,
@@ -90,6 +81,12 @@ pub(crate) struct MeshPlan {
 
 pub(crate) fn extended(mesh: &Mesh) -> bool {
     mesh.colors().is_some() || mesh.uv1().is_some()
+}
+
+fn instance_limit(limits: &DeviceLimits) -> Option<usize> {
+    let record = size_of::<PoseData>().max(6 * size_of::<u32>()) as u64;
+    (limits.storage_room != 0)
+        .then(|| (limits.storage_room / record).min(u64::from(MOVED_SLOT)) as usize)
 }
 
 fn look(retained: &RetainedRender, assets: &AssetLibrary, batch: &DrawBatch) -> BatchLook {
@@ -103,28 +100,35 @@ fn look(retained: &RetainedRender, assets: &AssetLibrary, batch: &DrawBatch) -> 
     }
 }
 
-fn meta(retained: &RetainedRender, batch: &DrawBatch) -> BatchMeta {
+fn meta(retained: &RetainedRender, residency: &AssetResidency, batch: &DrawBatch) -> BatchMeta {
     let source = &retained.snapshot().meshes[batch.source_index];
-    let levels = MeshLevels::of(source);
+    let levels = MeshLevels::of(residency.mesh(batch.mesh));
     let bounds = source.mesh.bounds();
+    let first_index = levels.first_index;
     BatchMeta {
         index_count: levels.index_count,
+        first_index,
+        base_vertex: levels.base_vertex,
         bounds: (bounds.min(), bounds.max()),
-        lods: levels.plan[..levels.levels() - 1].to_vec(),
-        impostor: 0.0,
+        lods: levels.plan[..levels.levels() - 1]
+            .iter()
+            .map(|&(offset, count, error)| (first_index + offset, count, error))
+            .collect(),
         levels,
     }
 }
 
 fn flat_batch(retained: &RetainedRender, plan: &BatchPlan, batch: &DrawBatch) -> bool {
+    let snapshot = retained.snapshot();
     if plan
         .ordered_instances
         .get(batch.instances.start as usize)
+        .and_then(|&slot| snapshot.instances.get(slot))
         .is_none()
     {
         return false;
     }
-    let bounds = retained.snapshot().meshes[batch.source_index].mesh.bounds();
+    let bounds = snapshot.meshes[batch.source_index].mesh.bounds();
     let size = bounds.max() - bounds.min();
     let model = glam::Mat4::IDENTITY;
     let extent = |row: usize| {
@@ -141,9 +145,8 @@ fn flat_batch(retained: &RetainedRender, plan: &BatchPlan, batch: &DrawBatch) ->
 )]
 pub(crate) fn plan_draws(
     retained: Res<RetainedRender>,
-    assets: Res<AssetLibrary>,
-    view: Res<View>,
-    detail: Res<Detail>,
+    (assets, residency): (Res<AssetLibrary>, Res<AssetResidency>),
+    (view, detail, limits): (Res<View>, Res<Detail>, Res<DeviceLimits>),
     culling: Res<Culling>,
     occlusion: Res<OcclusionCulling>,
     subpixel: Res<SubpixelCulling>,
@@ -152,15 +155,20 @@ pub(crate) fn plan_draws(
     mut decided: ResMut<MeshPlan>,
 ) {
     let plan = &mut *plan;
-    plan.instance_limit = Some(MOVED_SLOT as usize);
-    if plan.prepare_frame(&retained).is_err() {
-        plan.batches.clear();
-        plan.ordered_instances.clear();
+    plan.instance_limit = instance_limit(&limits);
+    {
+        let _profile = engine_core::profile::span("render", "batch_plan");
+        plan.refused = plan.prepare_frame(&retained).err();
     }
-    let key = (plan.generation(), assets.material_revision());
+    let key = (
+        plan.generation(),
+        assets.material_revision(),
+        residency.generation(),
+        residency.layout(),
+    );
     if order.planned != Some(key) {
         order.planned = Some(key);
-        order_draws(&retained, &assets, plan, &mut order);
+        order_draws(&retained, (&assets, &residency), plan, &mut order);
     }
     let (planes, absolute) = frustum_uniform(view.view_projection());
     let bounded = absolute.iter().flatten().all(|value| {
@@ -172,9 +180,10 @@ pub(crate) fn plan_draws(
     let unbudgeted = frustum && culling.budget() >= candidates;
     decided.set_if_neq(MeshPlan {
         gpu,
-        culling: frustum,
+        culling: culling.frustum,
         occlusion_enabled: occlusion.enabled,
         occlusion: gpu && occlusion.enabled && unbudgeted && candidates != 0,
+        subpixel_enabled: subpixel.enabled,
         subpixel: subpixel.enabled && unbudgeted && candidates != 0,
         budget: culling.budget().min(u32::MAX as usize) as u32,
         lod_levels: detail.enabled,
@@ -183,7 +192,7 @@ pub(crate) fn plan_draws(
 
 fn order_draws(
     retained: &RetainedRender,
-    assets: &AssetLibrary,
+    (assets, residency): (&AssetLibrary, &AssetResidency),
     plan: &BatchPlan,
     order: &mut DrawOrder,
 ) {
@@ -194,15 +203,19 @@ fn order_draws(
     for (index, batch) in plan.batches.iter().enumerate() {
         let look = look(retained, assets, batch);
         order.looks.push(look);
-        order.metas.push(meta(retained, batch));
+        order.metas.push(meta(retained, residency, batch));
         let material = batch.material.and_then(|handle| assets.material(handle));
         let variant = engine_render::material_variant(material, look.extended);
+        let buffers = residency
+            .mesh(batch.mesh)
+            .and_then(ResidentMesh::placement)
+            .map_or(u8::MAX, |placement| placement.streams as u8);
         let flat = flat_batch(retained, plan, batch);
         keys.push((
             u8::from(flat),
             variant,
             batch.material,
-            u8::from(look.extended),
+            buffers,
             index as u32,
         ));
     }

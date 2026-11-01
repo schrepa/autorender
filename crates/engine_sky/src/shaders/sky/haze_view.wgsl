@@ -3,13 +3,6 @@ import package::generated::sky::HazeView;
 @group(1) @binding(0) var<uniform> post: HazeView;
 @group(1) @binding(1) var depth_texture: texture_depth_2d;
 
-@vertex
-fn vs_fullscreen(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
-    let x = f32((index << 1u) & 2u) * 2.0 - 1.0;
-    let y = f32(index & 2u) * 2.0 - 1.0;
-    return vec4<f32>(x, y, 0.0, 1.0);
-}
-
 fn inverse_distance_at(depth: texture_depth_2d, pixel: vec2<i32>, settings: HazeView) -> f32 {
     let value = textureLoad(depth, pixel, 0);
     if value <= 0.0 {

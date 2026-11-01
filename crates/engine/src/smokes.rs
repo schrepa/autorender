@@ -7,7 +7,7 @@ use engine_core::{
 };
 pub use engine_core::{Runs, Smoke, SmokeFailure, SmokeSession};
 use engine_registry::Registry;
-use engine_scene::{SceneFiles, SceneInstance};
+use engine_scene::{SceneFiles, SceneInstance, SceneKinds};
 use serde_json::{Map, Value, json};
 
 use crate::{Error, Game, Inspectors, Result};
@@ -331,8 +331,12 @@ fn json(value: &impl serde::Serialize) -> Value {
     serde_json::to_value(value).unwrap_or(Value::Null)
 }
 
-pub fn scene_files(document: &str, files: &BTreeMap<String, Vec<u8>>) -> Result<SceneFiles> {
-    let mut load = crate::host::SceneLoad::new(document)?;
+pub fn scene_files(
+    document: &str,
+    files: &BTreeMap<String, Vec<u8>>,
+    kinds: &SceneKinds,
+) -> Result<SceneFiles> {
+    let mut load = crate::host::SceneLoad::new(document, kinds)?;
     for read in load.take_reads() {
         let Some(bytes) = files.get(&read.uri) else {
             continue;
@@ -371,7 +375,8 @@ impl<G: Game> Headless<G> {
 
     pub fn source(&mut self, document: &str) -> Result<()> {
         self.source = Some(document.to_owned());
-        let files = scene_files(document, &self.files)?;
+        let kinds = SceneKinds::of(self.engine.app.world());
+        let files = scene_files(document, &self.files, &kinds)?;
         self.game.reload_scene(&mut self.engine, document, &files)?;
         self.engine.reset_clock();
         Ok(())
@@ -387,7 +392,8 @@ impl<G: Game> Headless<G> {
                 &Error::new(ErrorCode::UnsupportedCommand, "$.name").got("reload"),
             ));
         };
-        let files = scene_files(&source, &self.files).map_err(|error| json(&error))?;
+        let kinds = SceneKinds::of(self.engine.app.world());
+        let files = scene_files(&source, &self.files, &kinds).map_err(|error| json(&error))?;
         crate::game_host::reload_checked(
             &mut self.game,
             &mut self.engine,
@@ -537,6 +543,7 @@ pub mod page {
 
     use engine_core::{BrickList, SmokeFailure, SmokeSession};
     use engine_dev::{Effect, HostContext, Outcome, Step};
+    use engine_scene::SceneKinds;
     use serde_json::Value;
     use wasm_bindgen::JsValue;
     use web_sys::HtmlCanvasElement;
@@ -712,7 +719,8 @@ pub mod page {
                             Step::Effect(effect) => {
                                 step = match (effect, self.source.as_deref()) {
                                     (Effect::Source, Some(document)) => {
-                                        match scene_files(document, &self.files) {
+                                        let kinds = SceneKinds::of(host.engine().app.world());
+                                        match scene_files(document, &self.files, &kinds) {
                                             Ok(files) => {
                                                 host.dev_reloaded(document, Some(&files), &context)
                                             }
@@ -784,8 +792,11 @@ pub mod page {
             self.source = Some(document.to_owned());
             let loaded = match &mut self.backend {
                 Backend::Headless(headless) => headless.source(document),
-                Backend::Gpu(host) => scene_files(document, &self.files)
-                    .and_then(|files| host.reload_scene(document, &files)),
+                Backend::Gpu(host) => {
+                    let kinds = SceneKinds::of(host.engine().app.world());
+                    scene_files(document, &self.files, &kinds)
+                        .and_then(|files| host.reload_scene(document, &files))
+                }
             };
             if let Err(error) = loaded {
                 self.faults.push(fault("source", &error));

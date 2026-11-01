@@ -1,4 +1,4 @@
-use engine_core::smoke::{Checked, ask, capture, render};
+use engine_core::smoke::{Checked, ask, capture};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
@@ -8,12 +8,23 @@ const VIEW: &str = "close";
 
 const FRAMES: u32 = 8;
 
-const UNLINKED: [&str; 3] = ["shader_link", "face_missing", "import_foreign"];
+const UNLINKED: [&str; 3] = ["shader_link", "unknown_module", "place_not_filled"];
 
-pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
+pub(super) fn standard(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
+    open(session, false)?;
+    looked(session)
+}
+
+pub(super) fn toon(session: &mut dyn SmokeSession, standard: Value) -> Result<(), SmokeFailure> {
     open(session, false)?;
     filled(session)?;
-    looked(session).map(drop)
+    let toon = looked(session)?;
+    smoke_eq!(
+        toon != standard,
+        true,
+        "the_toon_lighting_changes_the_frame"
+    );
+    Ok(())
 }
 
 fn filled(session: &mut dyn SmokeSession) -> Checked<()> {

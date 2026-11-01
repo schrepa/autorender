@@ -1,7 +1,9 @@
 use std::cmp::Reverse;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Camera, Error, MaterialHandle, Mesh3d, MeshHandle, ProvidedAssets, Spawner, Transform};
+use engine_core::{
+    AssetLibrary, Camera, Error, Material, Mesh, Mesh3d, MeshHandle, Spawner, Transform, math,
+};
 use engine_heightfield::RIVER_STEP;
 use engine_places::ground::TerrainTiles;
 use engine_places::physics::{Collider, RigidBody};
@@ -9,10 +11,10 @@ use engine_places::streaming::StreamingFocus;
 use engine_places::water::{Hydrology, WaterBody, WaterSample};
 use glam::{Quat, Vec2, Vec3};
 
+use crate::HighlandsBrick;
+use crate::content::SEED;
 use crate::random::Rng;
-use crate::{BANK_BOULDER, BARK, HighlandsBrick, HighlandsSettings, LOG, PALE, STONE};
 
-const SEED: u32 = 1337;
 const FARTHEST: f32 = 2500.0;
 const NEAR: f32 = 800.0;
 const STEEP: f32 = 0.004;
@@ -24,33 +26,18 @@ const DAM_LOG: f32 = 0.5;
 const CREST: f32 = 1.0;
 const BOULDERS: u32 = 3;
 
+#[derive(Resource, Default)]
+pub(crate) struct Bodies {
+    pub(crate) bank: Option<(MeshHandle, u32)>,
+    dammed: bool,
+}
+
 struct Site {
     origin: Vec3,
     points: Vec<[f32; 2]>,
     half: Vec<f32>,
     bed: Vec<f32>,
     point: usize,
-}
-
-#[derive(Clone, Copy)]
-struct Kit {
-    boulder: MeshHandle,
-    cube: MeshHandle,
-    bark: MaterialHandle,
-    pale: MaterialHandle,
-    stone: MaterialHandle,
-}
-
-impl Kit {
-    fn of(provided: &ProvidedAssets) -> Option<Self> {
-        Some(Self {
-            boulder: provided.mesh(BANK_BOULDER)?,
-            cube: provided.mesh(LOG)?,
-            bark: provided.material(BARK)?,
-            pale: provided.material(PALE)?,
-            stone: provided.material(STONE)?,
-        })
-    }
 }
 
 fn run(points: &[[f32; 2]], index: usize) -> Vec2 {
@@ -93,7 +80,7 @@ fn site(hydrology: &Hydrology, tiles: &TerrainTiles, eye: Vec3) -> Option<Site> 
                     continue;
                 }
                 let held = 2.0 * course.half(index) * (CREST / slope) * CREST * 0.5;
-                let filling = held / engine_core::math::max(course.discharge(index), 1.0e-3);
+                let filling = held / math::max(course.discharge(index), 1.0e-3);
                 let pull = 1.0 / (filling * (1.0 + (distance / NEAR) * (distance / NEAR)));
                 if best.as_ref().is_some_and(|(best, _)| *best >= pull) {
                     continue;
@@ -121,15 +108,16 @@ fn water_in(waters: &Query<&WaterBody>, point: Vec3) -> Option<WaterSample> {
 }
 
 pub(crate) fn place(
-    (settings, camera, provided): (Res<HighlandsSettings>, Res<Camera>, Res<ProvidedAssets>),
-    (hydrology, tiles, waters): (Res<Hydrology>, Res<TerrainTiles>, Query<&WaterBody>),
-    mut dammed: Local<bool>,
+    (camera, hydrology, tiles): (Res<Camera>, Res<Hydrology>, Res<TerrainTiles>),
+    waters: Query<&WaterBody>,
+    mut bodies: ResMut<Bodies>,
+    mut assets: ResMut<AssetLibrary>,
     mut spawner: Spawner<HighlandsBrick>,
 ) {
-    if *dammed || settings.bodies == 0 {
+    if bodies.dammed {
         return;
     }
-    let Some(kit) = Kit::of(&provided) else {
+    let Some((boulder, count)) = bodies.bank else {
         return;
     };
     let Some(site) = site(&hydrology, &tiles, camera.position) else {
@@ -142,26 +130,29 @@ pub(crate) fn place(
         return;
     };
     let water = sample.surface - site.origin.y;
-    *dammed = true;
-    if let Err(error) = build(&mut spawner, &site, water, (settings.bodies, SEED), &kit) {
+    bodies.dammed = true;
+    if let Err(error) = build(
+        (&mut spawner, &mut *assets),
+        &site,
+        water,
+        (count, SEED),
+        boulder,
+    ) {
         crate::report_failure("highlands_bodies_failed", &error);
     }
 }
 
 fn build(
-    spawner: &mut Spawner<HighlandsBrick>,
+    (spawner, assets): (&mut Spawner<HighlandsBrick>, &mut AssetLibrary),
     site: &Site,
     water: f32,
     (count, seed): (u32, u32),
-    kit: &Kit,
+    boulder: MeshHandle,
 ) -> Result<(), Error> {
-    let Kit {
-        boulder,
-        cube,
-        bark,
-        pale,
-        stone,
-    } = *kit;
+    let cube = assets.insert_mesh(Mesh::cube())?;
+    let bark = assets.insert_material(Material::new([0.2, 0.13, 0.08, 1.0])?)?;
+    let pale = assets.insert_material(Material::new([0.42, 0.3, 0.19, 1.0])?)?;
+    let stone = assets.insert_material(Material::new([0.38, 0.37, 0.35, 1.0])?)?;
     let origin = site.origin;
     let at = site.point;
     let world_point = |point: [f32; 2], height: f32| {
@@ -176,7 +167,7 @@ fn build(
     for log in 0..DAM_LOGS {
         let height = bed + DAM_LOG * (log as f32 + 0.5);
         let top = water + CREST;
-        let height = engine_core::math::min(height, top - DAM_LOG * 0.5);
+        let height = math::min(height, top - DAM_LOG * 0.5);
         spawner.spawn((
             Transform {
                 translation: world_point(site.points[at], height),

@@ -15,6 +15,10 @@ fn vertex_wind(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>, sway: 
         root, world.y - root.y, position, sway);
 }
 
+fn slot_wind(model: mat4x4<f32>, world: vec3<f32>, sway: f32, time: f32) -> vec3<f32> {
+    return vertex_wind(model, vec3<f32>(0.0), world, sway, time);
+}
+
 fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
     let slot = slot_index(input.slot);
     let model = pose_matrix(instance_poses[slot]);
@@ -51,8 +55,34 @@ fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
     return output;
 }
 
+struct MeshOutput {
+    @invariant @builtin(position) clip_position: vec4<f32>,
+    @location(0) normal_u: vec4<f32>,
+    @location(1) world_v: vec4<f32>,
+    @location(2) @interpolate(flat) material: vec4<u32>,
+    @location(3) previous: vec3<f32>,
+    @location(6) @interpolate(flat) object: vec4<u32>,
+}
+
+fn drawn_object(input: AffineVertexInput, draw: vec4<u32>) -> vec4<u32> {
+    return vec4<u32>(draw.x, slot_index(input.slot), 0u, 0u);
+}
+
 @vertex
-fn vs_mesh(input: AffineVertexInput) -> TemporalOutput {
+fn vs_mesh(input: AffineVertexInput, @location(14) draw: vec4<u32>) -> MeshOutput {
+    let vertex = vertex_affine_temporal(input);
+    var output: MeshOutput;
+    output.clip_position = vertex.clip_position;
+    output.normal_u = vertex.normal_u;
+    output.world_v = vertex.world_v;
+    output.material = vertex.material;
+    output.previous = vertex.previous;
+    output.object = drawn_object(input, draw);
+    return output;
+}
+
+@vertex
+fn vs_view(input: AffineVertexInput) -> TemporalOutput {
     return vertex_affine_temporal(input);
 }
 
@@ -75,9 +105,19 @@ struct ExtendedTemporalOutput {
     @location(5) uv1: vec2<f32>,
 }
 
-@vertex
-fn vs_mesh_extended(input: AffineVertexInput, @location(9) color: vec4<f32>,
-        @location(10) uv1: vec2<f32>) -> ExtendedTemporalOutput {
+struct ExtendedMeshOutput {
+    @invariant @builtin(position) clip_position: vec4<f32>,
+    @location(0) normal_u: vec4<f32>,
+    @location(1) world_v: vec4<f32>,
+    @location(2) @interpolate(flat) material: vec4<u32>,
+    @location(3) previous: vec3<f32>,
+    @location(4) color: vec4<f32>,
+    @location(5) uv1: vec2<f32>,
+    @location(6) @interpolate(flat) object: vec4<u32>,
+}
+
+fn extended_temporal(input: AffineVertexInput, color: vec4<f32>, uv1: vec2<f32>)
+        -> ExtendedTemporalOutput {
     let vertex = vertex_affine_temporal(input);
     var output: ExtendedTemporalOutput;
     output.clip_position = vertex.clip_position;
@@ -88,4 +128,26 @@ fn vs_mesh_extended(input: AffineVertexInput, @location(9) color: vec4<f32>,
     output.color = color;
     output.uv1 = uv1;
     return output;
+}
+
+@vertex
+fn vs_mesh_extended(input: AffineVertexInput, @location(9) color: vec4<f32>,
+        @location(10) uv1: vec2<f32>, @location(14) draw: vec4<u32>) -> ExtendedMeshOutput {
+    let vertex = extended_temporal(input, color, uv1);
+    var output: ExtendedMeshOutput;
+    output.clip_position = vertex.clip_position;
+    output.normal_u = vertex.normal_u;
+    output.world_v = vertex.world_v;
+    output.material = vertex.material;
+    output.previous = vertex.previous;
+    output.color = vertex.color;
+    output.uv1 = vertex.uv1;
+    output.object = drawn_object(input, draw);
+    return output;
+}
+
+@vertex
+fn vs_view_extended(input: AffineVertexInput, @location(9) color: vec4<f32>,
+        @location(10) uv1: vec2<f32>) -> ExtendedTemporalOutput {
+    return extended_temporal(input, color, uv1);
 }

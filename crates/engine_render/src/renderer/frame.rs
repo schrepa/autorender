@@ -1,10 +1,5 @@
-use std::collections::BTreeSet;
-
 use bevy_ecs::world::World;
-use engine_core::{
-    AssetLibrary, AssetResidency, FrameTime, MaterialHandle, Mesh3d, MeshHandle, RenderFrame,
-    RenderStats, View,
-};
+use engine_core::{AssetResidency, FrameTime, RenderFrame, RenderStats, View};
 
 use super::*;
 use crate::CameraUniform;
@@ -15,12 +10,14 @@ use crate::machine::Target;
 use crate::profiling::Span;
 
 const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
+const RAN_ORDERS: usize = 256;
 
 struct Viewed {
     view_projection: Mat4,
     eye: glam::Vec3,
     detail: glam::Vec3,
     seconds: f32,
+    scene: u64,
 }
 
 fn mark_between(encoder: &mut wgpu::CommandEncoder, end: Option<Span<'_>>, begin: Option<Span<'_>>) {
@@ -71,18 +68,6 @@ fn camera_of(
     camera
 }
 
-fn wanted(world: &World) -> (BTreeSet<MeshHandle>, BTreeSet<MaterialHandle>) {
-    let mut meshes = BTreeSet::new();
-    let mut materials = BTreeSet::new();
-    if let Some(mut query) = world.try_query::<&Mesh3d>() {
-        for drawn in query.iter(world) {
-            meshes.insert(drawn.mesh);
-            materials.insert(drawn.material);
-        }
-    }
-    (meshes, materials)
-}
-
 impl Renderer {
     pub fn render_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, Error> {
         self.render(frame, false)
@@ -97,6 +82,7 @@ impl Renderer {
             return;
         };
         run.deliver(world);
+        run.assets.impostors.deliver(world);
         let gates = world.get_resource::<engine_registry::Gates>();
         let live: Vec<bool> = run
             .gates
@@ -112,14 +98,6 @@ impl Renderer {
             }
         }
         run.live = live;
-        let resident = run.assets.meshes.residency();
-        let published = world
-            .get_resource::<AssetResidency>()
-            .is_some_and(|known| known.generation() == resident.generation());
-        if !published {
-            let resident = resident.clone();
-            let _ = world.modify_resource(|known: &mut AssetResidency| *known.table_mut() = resident);
-        }
     }
 
     fn mark(&self, encoder: Option<&mut wgpu::CommandEncoder>, end: Option<&'static str>, begin: Option<&'static str>) {
@@ -150,10 +128,12 @@ impl Renderer {
         self.check_health()?;
         let gpu_mode = frame.gpu().is_some();
         let world = frame.world();
+        let view = world.get_resource::<View>();
         let debug = world
             .get_resource::<crate::DebugShown>()
             .is_some_and(|shown| shown.owner.is_some());
-        let region = self.core.display.plan_region(display && !debug);
+        let temporal_frame = display && gpu_mode && !debug && view.is_some_and(View::temporal);
+        let region = self.core.display.plan_region(view.map(View::render_size));
         if self.core.display.suspended {
             return Ok(RenderStats::default());
         }
@@ -165,37 +145,18 @@ impl Renderer {
         };
         let device = self.core.device.clone();
         let profile_upload = engine_profile::span("render", "asset_uploads");
-        let (meshes, materials) = wanted(world);
-        let mut mesh_bytes = 0;
-        let mut texture_bytes = 0;
+        let mesh_bytes = run.assets.meshes.sync(&device, &self.core.queue, world);
         let mut mips = None;
-        if let Some(library) = world.get_resource::<AssetLibrary>() {
-            run.assets.meshes.retain(|handle| library.mesh(handle).is_some());
-            run.assets
-                .materials
-                .retain(|handle| library.material(handle).is_some(), |handle| library.texture(handle).is_some());
-            for &handle in &meshes {
-                let (Some(mesh), Some(lods)) = (library.mesh(handle), library.mesh_lods(handle)) else {
-                    continue;
-                };
-                mesh_bytes += run.assets.meshes.upload(&device, &self.core.queue, handle, mesh, lods.map(|lods| &**lods));
-            }
-            let sources = materials
-                .iter()
-                .filter_map(|&handle| Some((handle, library.material(handle)?, library.material_version(handle)?)));
-            let (bytes, _) = run.assets.materials.upload(
-                &device,
-                &self.core.queue,
-                sources,
-                |handle| library.texture(handle).map(|texture| &**texture),
-                &mut mips,
-            );
-            texture_bytes += bytes;
+        let (mut texture_bytes, _) = run.assets.materials.sync(&device, &self.core.queue, world, &mut mips);
+        run.assets.impostors.run(&device, &self.core.queue, world, (&run.assets.meshes, &run.assets.materials), &mut mips);
+        if let Some(encoder) = mips.take() {
+            self.core.queue.hand(Handover::from(encoder));
         }
         drop(profile_upload);
         run.frame += 1;
         run.parity = (run.frame % 2) as usize;
         run.debug = debug;
+        run.temporal = temporal_frame;
         run.drawn = 0;
         run.region = region.upscales().then(|| region.render.pixels());
         run.asked_frame = world.get_resource::<FrameTime>().map_or(run.frame, |time| time.frame);
@@ -204,35 +165,34 @@ impl Renderer {
         run.readback_slot_bytes = settings.readback_slot_bytes;
         run.switches = super::install::switches_of(&run.machine, world);
         run.drop_unfilled();
-        let viewed = match world.get_resource::<View>() {
+        let viewed = match view {
             Some(view) => Viewed {
                 view_projection: view.view_projection(),
                 eye: view.state().eye(),
                 detail: view.detail_eye(),
                 seconds: world.get_resource::<FrameTime>().map_or(0.0, |time| time.elapsed_seconds as f32),
+                scene: view.scene(),
             },
             None => Viewed {
                 view_projection: Mat4::IDENTITY,
                 eye: glam::Vec3::ZERO,
                 detail: glam::Vec3::ZERO,
                 seconds: 0.0,
+                scene: 0,
             },
         };
         let previous_seconds = self.seconds.replace(viewed.seconds).unwrap_or(viewed.seconds);
-        let resolve = world
-            .get_resource::<crate::Resolve>()
-            .copied()
-            .filter(|resolve| *resolve != crate::Resolve::default());
+        let resolve = world.get_resource::<crate::Resolve>().copied().unwrap_or_default();
         let size = region.display.pixels();
-        let temporal = resolve.filter(|_| display && gpu_mode && !debug).map(|resolve| {
+        let temporal = temporal_frame.then(|| {
             let previous = self
                 .previous
-                .filter(|(_, known)| *known == size)
-                .map_or(viewed.view_projection, |(previous, _)| previous);
+                .filter(|(_, known, scene)| *known == size && *scene == viewed.scene)
+                .map_or(viewed.view_projection, |(previous, _, _)| previous);
             (resolve, previous)
         });
         run.cameras[0] = camera_of(&viewed, temporal, region, previous_seconds);
-        self.previous = temporal.map(|_| (viewed.view_projection, size));
+        self.previous = temporal.map(|_| (viewed.view_projection, size, viewed.scene));
         run.post = crate::shared::post_uniform(
             viewed.view_projection,
             viewed.eye,
@@ -263,14 +223,13 @@ impl Renderer {
                 continue;
             };
             run.part = index as u32;
-            let package = run.machine.declared.parts.get(index).map_or(crate::linker::CORE_PACKAGE, |part| part.package);
-            let _owner = crate::memory::owned(package);
+            let _owner = run.machine.declared.parts.get(index).map(crate::install::PartInfo::owned);
             if let Err(error) = held.prepare(world, run) {
                 run.fault(error);
             }
             run.parts[index] = Some(held);
         }
-        if let Some(library) = world.get_resource::<AssetLibrary>() {
+        if let Some(library) = world.get_resource::<engine_core::AssetLibrary>() {
             for texture in std::mem::take(&mut run.wanted_textures) {
                 if let Some(source) = library.texture(texture) {
                     let (bytes, _) = run.assets.materials.upload_texture(&device, &self.core.queue, (texture, true), source, &mut mips);
@@ -309,6 +268,7 @@ impl Renderer {
         run.encoder = Some(encoder);
         let mut batch = 0;
         let mut timed: Option<&'static str> = None;
+        let mut ran: Vec<&'static str> = Vec::new();
         let declared = run.machine.declared.passes.len();
         for planned in &plan.passes {
             if planned.batch != batch {
@@ -334,10 +294,11 @@ impl Renderer {
                 continue;
             }
             let pass = &run.machine.declared.passes[index];
-            let (part, work) = (pass.part, pass.work);
+            let (part, work, name) = (pass.part, pass.work, pass.name);
             if !run.drawable(part) {
                 continue;
             }
+            ran.push(name);
             run.part = part;
             run.pass = index as u32;
             run.planned = Some(planned.clone());
@@ -352,8 +313,7 @@ impl Renderer {
                 run.group(index as u32);
             }
             let Some(run) = self.run.as_mut() else { break };
-            let package = run.machine.declared.parts.get(part as usize).map_or(crate::linker::CORE_PACKAGE, |part| part.package);
-            let _owner = crate::memory::owned(package);
+            let _owner = run.machine.declared.parts.get(part as usize).map(crate::install::PartInfo::owned);
             match work {
                 Work::Copy { .. } => run.copy(index as u32),
                 Work::Clear(buffer) => run.clear_buffer(buffer),
@@ -395,22 +355,68 @@ impl Renderer {
         self.core.queue.settle();
         self.core.profiler.submitted();
         surface.present(&self.core.queue);
+        let pipelines_created = self.core.pipeline_counts.frame_submitted(&self.core.queue);
+        let render_passes = self.ran_passes(ran);
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
         };
+        run.assets.impostors.after_submit();
         run.map_readbacks();
         crate::platform::poll(&device);
         drop(profile_submit);
+        let (resident_textures, resident_texture_bytes, _) = run.assets.materials.texture_totals();
+        let resident_mesh_bytes = world
+            .get_resource::<AssetResidency>()
+            .map_or(0, |residency| {
+                residency
+                    .meshes()
+                    .filter(|(handle, _)| run.assets.meshes.contains(*handle))
+                    .map(|(_, mesh)| mesh.byte_len())
+                    .sum()
+            });
         Ok(RenderStats {
             draw_calls: run.drawn,
             upload_bytes: mesh_bytes + texture_bytes,
-            mesh_upload_bytes: mesh_bytes,
-            texture_upload_bytes: texture_bytes,
             resident_meshes: run.assets.meshes.len() as u32,
+            mesh_upload_bytes: mesh_bytes,
+            resident_mesh_bytes,
+            resident_textures,
+            texture_upload_bytes: texture_bytes,
+            resident_texture_bytes,
             submitted: true,
-            pipelines: run.machine.pipelines.iter().map(|pipeline| pipeline.made.len() as u32).sum(),
+            pipelines: self.core.pipeline_counts.created(),
+            pipelines_created,
+            render_passes,
+            linked: self.linked,
+            readback_overflows: run.overflows,
             ..RenderStats::default()
         })
+    }
+
+    fn ran_passes(&mut self, ran: Vec<&'static str>) -> engine_core::Names {
+        let names = match self.ran.iter().find(|&&known| known == ran.as_slice()) {
+            Some(&known) => known,
+            None if self.ran.len() < RAN_ORDERS => {
+                let leaked: &'static [&'static str] = Box::leak(ran.into_boxed_slice());
+                self.ran.push(leaked);
+                leaked
+            }
+            None => {
+                let names = self.passes;
+                let bits = names
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, name)| ran.contains(name))
+                    .fold(0_u64, |bits, (at, _)| bits | 1_u64.checked_shl(at as u32).unwrap_or(0));
+                return engine_core::Names { bits, names };
+            }
+        };
+        engine_core::Names {
+            bits: 1_u64
+                .checked_shl(names.len() as u32)
+                .map_or(u64::MAX, |bit| bit - 1),
+            names,
+        }
     }
 }
 

@@ -4,7 +4,7 @@ import package::terrain_shading::draw::terrain_displacement;
 import package::terrain_shading::faces::heightfield::{terrain, terrain_level_height, use_terrain};
 
 import package::terrain_shading::surface::{SurfaceWater, surface_ground_error, surface_half, surface_water};
-import package::generated::terrain_shading::{SUBDIVISION_ARGS, SUBDIVISION_COUNTED, SUBDIVISION_DRAW, SUBDIVISION_GROUP, SUBDIVISION_LEAVES, SUBDIVISION_REFUSED, SUBDIVISION_RESERVED, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_VERTEX_STRIDE};
+import package::generated::terrain_shading::{SUBDIVISION_ARGS, SUBDIVISION_COUNTED, SUBDIVISION_DRAW, SUBDIVISION_EPOCH, SUBDIVISION_GROUP, SUBDIVISION_LEAVES, SUBDIVISION_MEASURE, SUBDIVISION_REFUSED, SUBDIVISION_RESERVED, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_VERTEX_STRIDE};
 
 @group(1) @binding(0) var<uniform> subdivision: TerrainSubdivision;
 @group(1) @binding(1) var<storage, read_write> subdivision_tree: array<atomic<u32>>;
@@ -292,6 +292,8 @@ fn subdivide_begin() {
     atomicStore(&subdivision_args[draw + 4u], 0u);
     atomicStore(&subdivision_args[args + SUBDIVISION_RESERVED], 0u);
     atomicStore(&subdivision_args[args + SUBDIVISION_REFUSED], 0u);
+    atomicStore(&subdivision_args[args + SUBDIVISION_MEASURE], u32(subdivision.square.z));
+    atomicStore(&subdivision_args[args + SUBDIVISION_EPOCH], subdivision.frame.w);
 }
 
 @compute @workgroup_size(SUBDIVISION_GROUP)

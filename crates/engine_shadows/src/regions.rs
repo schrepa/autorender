@@ -1,10 +1,10 @@
 use bytemuck::Zeroable;
 use engine_core::glam::{Mat4, Vec3, Vec4};
-use engine_places::shadows::{CasterMap, KeptRefresh, Refresh, Region as MapView};
+use engine_places::shadows::{CasterMap, KeptRefresh, Refresh, Region as MapView, SHADOW_REGIONS};
 use engine_render::CameraUniform;
 
 use crate::atlas::AtlasLayout;
-use crate::constants::{MAX_SHADOW_LEVELS, SHADOW_REGIONS, SKY_REFRESH};
+use crate::constants::{MAX_SHADOW_LEVELS, SKY_REFRESH};
 use crate::gpu_layouts::{CasterCull, ComposeData, Routes, ShadowPiece};
 use crate::shadow_fit::{ClipPlan, Clipmap, LightBasis, MapRegion, Region, region_tiles};
 use crate::sky::SkyDraw;
@@ -42,8 +42,8 @@ fn planes(rows: [Vec3; 3], rect: [f32; 4], depth: f32) -> [[f32; 4]; 6] {
 fn view(clip: Mat4, wind: [f32; 4], eye: [f32; 4]) -> CameraUniform {
     CameraUniform {
         view_projection: clip.to_cols_array_2d(),
+        position: eye,
         wind,
-        detail: eye,
         ..CameraUniform::default()
     }
 }
@@ -104,7 +104,7 @@ impl FrameRegions<'_> {
     pub(crate) fn cameras(
         &self,
         (wind, gusting): ([f32; 2], [f32; 4]),
-        (viewer, sky): (Vec4, Option<Mat4>),
+        (viewer, sky): (Vec4, Option<(Mat4, [f32; 4])>),
         out: &mut Vec<CameraUniform>,
     ) {
         out.clear();
@@ -113,8 +113,8 @@ impl FrameRegions<'_> {
             out[index] = view(self.region_clip(region), [wind[0], wind[1], 0.0, 0.0], [0.0; 4]);
         }
         out[MOVING_VIEW as usize] = view(Mat4::IDENTITY, gusting, viewer.to_array());
-        if let Some(clip) = sky {
-            out[SKY_VIEW as usize] = view(clip, gusting, [0.0; 4]);
+        if let Some((clip, written)) = sky {
+            out[SKY_VIEW as usize] = view(clip, written, [0.0; 4]);
         }
     }
 
@@ -210,7 +210,11 @@ impl FrameRegions<'_> {
         cull
     }
 
-    pub(crate) fn lookup_piece(&self, tile_texels: u32, crown_depth: f32) -> ShadowPiece {
+    pub(crate) fn lookup_piece(
+        &self,
+        (tile_texels, crown_depth): (u32, f32),
+        shown: u32,
+    ) -> ShadowPiece {
         let (width, height) = self.layout.size();
         let levels = self.clipmap.len();
         let mut windows = [[0.0; 4]; LEVELS];
@@ -229,7 +233,7 @@ impl FrameRegions<'_> {
         }
         ShadowPiece {
             light: self.basis.rows.map(|row| row.extend(0.0).to_array()),
-            state: [1.0, crown_depth, 0.0, 0.0],
+            state: [1.0, crown_depth, shown as f32, 0.0],
             level_state: [
                 levels as f32,
                 self.clipmap.texel(0),

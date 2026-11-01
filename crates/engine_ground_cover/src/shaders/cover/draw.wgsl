@@ -5,7 +5,7 @@ import package::engine::shading::{BODY_THIN, SurfacePoint, ViewPixel};
 import package::engine::view::{PI, camera, stable_normalize};
 import package::face::dither::stored;
 import package::face::lighting::{finish, local_light, widened};
-import package::face::occupancy::foliage;
+import package::face::foliage::foliage;
 import package::face::sun::sun_direction;
 import package::generated::cover::{CoverBlade, CoverFrame};
 import package::generated::targets::{ViewTargets, view_targets};

@@ -29,8 +29,8 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let listing = ask(session, "describe", json!({}))?;
     let listed = listing["types"]
         .as_array()
-        .is_some_and(|types| types.iter().any(|kind| kind["name"] == "DebugView"));
-    let wanted = json!("DebugView");
+        .is_some_and(|types| types.iter().any(|kind| kind["name"] == "debug_view"));
+    let wanted = json!("debug_view");
     smoke_eq!(
         seen(listed, json!(listing["types"]), &wanted),
         wanted,
@@ -318,7 +318,7 @@ fn settle(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
             return Ok(rendering);
         }
         rendering = present(session)?;
-        let detail = &rendering["level_of_detail"];
+        let detail = &rendering["meshes_stats"]["level_of_detail"];
         let counts = json!([
             detail["lod0_instances"],
             detail["lod1_instances"],
@@ -334,7 +334,7 @@ fn settle(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
             0
         };
         previous = if current { counts } else { Value::Null };
-        calm = if quiet(&rendering["shadows"]) {
+        calm = if quiet(&rendering["shadow_stats"]) {
             calm + 1
         } else {
             0
@@ -348,7 +348,11 @@ fn settle(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
     );
     let wanted = json!({"quiet_frames": QUIET_FRAMES});
     smoke_eq!(
-        seen(calm >= QUIET_FRAMES, json!(rendering["shadows"]), &wanted),
+        seen(
+            calm >= QUIET_FRAMES,
+            json!(rendering["shadow_stats"]),
+            &wanted
+        ),
         wanted,
         "shadows_settle"
     );
@@ -409,7 +413,7 @@ fn passes(rendering: &Value) -> Vec<String> {
 }
 
 fn shown_view(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
-    Ok(ask(session, "inspect", json!({"component": "DebugView"}))?["value"]["view"].clone())
+    Ok(ask(session, "inspect", json!({"component": "debug_view"}))?["value"]["view"].clone())
 }
 
 fn environment(session: &mut dyn SmokeSession, sections: Value) -> Result<Value, SmokeFailure> {

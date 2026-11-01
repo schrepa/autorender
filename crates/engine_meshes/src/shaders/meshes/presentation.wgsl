@@ -1,13 +1,15 @@
 import package::engine::math::maximum_abs;
 import package::engine::mesh::impostor_frames::{IMPOSTOR_FADING as CARD_FADING,
     IMPOSTOR_FADING_OUT as CARD_FADING_OUT, IMPOSTOR_OVER as CARD_OVER};
+import package::engine::presentation::{COEFFICIENT_LIMIT, COMMON_DETERMINANT_MARGIN,
+    IMPOSTOR_VERTICES, LINEAR_ROTATION_DOT, MAX_COEFFICIENT, MAX_PRODUCT_BOUND, MIN_LINEAR_SCALE,
+    NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID, NO_PARENT, POSE_FLOATS,
+    ROUNDING_MARGIN};
 import package::generated::meshes::{ARGS_GROUP, BatchData as Batch, CULL_GROUP,
-    CandidateData as Candidate, GROUP, IMPOSTOR_VERTICES, LOD_LEVELS, PARENT_GROUP, PHASE1, PHASE2,
-    PROBE, PresentationFrame as Frame, VISIBLE};
+    CandidateData as Candidate, GROUP, LOD_LEVELS, PARENT_GROUP, PHASE1, PHASE2, PROBE,
+    PresentationFrame as Frame, VISIBLE};
 import package::meshes::screen_cull::{F32_MAX, covers_no_pixel, hidden};
 import package::place::instances::{MOVED_SLOT, STILL_FRAMES};
-
-const POSE_FLOATS: u32 = 10u;
 
 struct Rows {
     r0: vec4<f32>,
@@ -62,11 +64,6 @@ struct Level {
 @group(1) @binding(29) var<storage, read> node_ranges: array<vec4<u32>>;
 @group(2) @binding(0) var<uniform> level: Level;
 
-const NO_PARENT: u32 = 0xffffffffu;
-const NODE_VALID: u32 = 1u;
-const NODE_BLEND: u32 = 2u;
-const NODE_ACTIVE: u32 = 4u;
-const NODE_PARENT_ACTIVE: u32 = 8u;
 const MOVING: u32 = 2u;
 const VALID: u32 = 4u;
 const OCCLUDED: u32 = 32u;
@@ -75,13 +72,6 @@ const LOD_SHIFT: u32 = 8u;
 const IMPOSTOR: u32 = LOD_LEVELS;
 const LOD_STATE: u32 = 0x80000000u;
 const LOD_FADED: u32 = 65535u;
-const LINEAR_ROTATION_DOT: f32 = 0.9995;
-const ROUNDING_MARGIN: f32 = 0.000003814697265625f;
-const MAX_COEFFICIENT: f32 = 1.0e15;
-const MAX_PRODUCT_BOUND: f32 = 4.2535293e37f;
-const MIN_LINEAR_SCALE: f32 = 0.0009765625f;
-const COEFFICIENT_LIMIT: f32 = 1048576.0f;
-const COMMON_DETERMINANT_MARGIN: f32 = 0.001953125f;
 
 var<workgroup> shared_values: array<u32, GROUP>;
 var<workgroup> shared_counts: array<vec4<u32>, GROUP>;

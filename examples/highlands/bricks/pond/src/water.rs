@@ -46,7 +46,8 @@ pub(crate) fn publish_ponds(
     mut spawner: Spawner<PondBrick>,
 ) {
     let count = ponds.iter().count();
-    let changed = ground.is_changed() || count != *held || ponds.iter().any(|pond| pond.is_changed());
+    let changed =
+        ground.is_changed() || count != *held || ponds.iter().any(|pond| pond.is_changed());
     if !changed {
         return;
     }

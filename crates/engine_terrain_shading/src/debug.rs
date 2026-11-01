@@ -1,23 +1,26 @@
+use engine_render::debug::DEBUG_NO_MATERIAL;
 use serde_json::{Value, json};
 
-use crate::gpu::{DEBUG_PATCH_EDGE, DEBUG_PATCH_SHIFT, DEBUG_TILE_EDGE};
+use crate::gpu::DEBUG_PATCH_SHIFT;
 
-const LEVEL_SHIFT: u32 = 4;
-const LEVEL_MASK: u32 = 0xf;
-
-pub(crate) fn terrain([record, object, detail, tiles]: [u32; 4], _: [f32; 4]) -> Value {
+pub(crate) fn terrain([record, object, detail, _]: [u32; 4], [tiles, ids]: [u32; 2], _: [f32; 4]) -> Value {
     let share = |word: u32, byte: u32| f32::from(((word >> (byte * 8)) & 0xff) as u8) / 255.0;
+    let mut materials: Vec<(u32, f32)> = (0..4)
+        .map(|slot| ((ids >> (slot * 8)) & 0xff, share(detail, slot)))
+        .filter(|&(material, share)| material != DEBUG_NO_MATERIAL && share > 0.0)
+        .collect();
+    materials.sort_by(|a, b| b.1.total_cmp(&a.1));
     let within = record >> DEBUG_PATCH_SHIFT;
     json!({
-        "level": (record >> LEVEL_SHIFT) & LEVEL_MASK,
-        "tile_edge": record & DEBUG_TILE_EDGE != 0,
-        "patch_edge": record & DEBUG_PATCH_EDGE != 0,
         "tile": [
             i32::from((tiles & 0xffff) as u16 as i16),
             i32::from((tiles >> 16) as u16 as i16),
         ],
         "patch": [within & 0xf, (within >> 4) & 0xf],
-        "weights": [share(detail, 0), share(detail, 1), share(detail, 2), share(detail, 3)],
+        "materials": materials
+            .iter()
+            .map(|&(material, share)| json!({"material": material, "share": share}))
+            .collect::<Vec<Value>>(),
         "sky": share(object, 0),
         "detail": {
             "detailed": share(object, 1),

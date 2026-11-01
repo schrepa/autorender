@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{SystemBuffer, SystemMeta};
-use bevy_ecs::world::DeferredWorld;
+use bevy_ecs::world::{DeferredWorld, FromWorld, World};
 use engine_math::collections::HashMap;
 use engine_place::{Error, ErrorCode, JobRef, List};
 use sha2::{Digest, Sha256};
@@ -165,9 +165,21 @@ pub enum JobOrder {
     },
 }
 
-#[derive(Default)]
 pub struct JobOrders {
     pub orders: Vec<JobOrder>,
+    owner: u32,
+}
+
+impl FromWorld for JobOrders {
+    fn from_world(world: &mut World) -> Self {
+        let owner = world
+            .get_resource_mut::<JobQueue>()
+            .map_or(0, |mut queue| queue.owner());
+        Self {
+            orders: Vec::new(),
+            owner,
+        }
+    }
 }
 
 impl SystemBuffer for JobOrders {
@@ -176,14 +188,36 @@ impl SystemBuffer for JobOrders {
             return;
         }
         if let Some(mut queue) = world.get_resource_mut::<JobQueue>() {
-            queue.orders.append(&mut self.orders);
+            queue.runs = queue.runs.wrapping_add(1);
+            let batch = JobBatch {
+                owner: self.owner,
+                run: queue.runs,
+            };
+            queue
+                .orders
+                .extend(self.orders.drain(..).map(|order| (batch, order)));
         }
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JobBatch {
+    pub owner: u32,
+    pub run: u64,
+}
+
 #[derive(Resource, Default)]
 pub struct JobQueue {
-    pub orders: Vec<JobOrder>,
+    pub orders: Vec<(JobBatch, JobOrder)>,
+    owners: u32,
+    runs: u64,
+}
+
+impl JobQueue {
+    fn owner(&mut self) -> u32 {
+        self.owners = self.owners.wrapping_add(1);
+        self.owners
+    }
 }
 
 struct Held {

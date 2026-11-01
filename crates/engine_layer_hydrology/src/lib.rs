@@ -13,18 +13,14 @@ mod rivers;
 use std::any::Any;
 use std::sync::Arc;
 
-use bevy_ecs::prelude::ResMut;
 use engine_codec::{Codec, Reader, Writer};
-use engine_core::{
-    Brick, Bricks, Error, ErrorCode, InvalidSetting, Job, JobCx, JobKind, JobRef, Schedule,
-    Source, parse_value,
-};
+use engine_core::{Brick, Bricks, Error, ErrorCode, InvalidSetting, Source, parse_value};
 use engine_heightfield::layer::{
     LayerBake, LayerFiles, LayerKind, Made, Place, TerrainLayer, maps, no_files, no_points,
     same_as,
 };
 use engine_heightfield::{GivenRiver, HydrologyBake, Pyramid, StartTile};
-use engine_places::terrain::{self, DrawnRivers, TerrainLayers};
+use engine_places::terrain::TerrainLayers;
 use glam::Vec2;
 use serde::Serialize;
 use serde_json::Value;
@@ -37,32 +33,13 @@ pub struct LayerHydrologyBrick;
 
 impl Brick for LayerHydrologyBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const JOBS: &'static [&'static JobKind] = &[&HYDROLOGY_JOB, &RIVERS_JOB];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .join::<TerrainLayers>(
-                terrain::LayerKind {
-                    layer: &HYDROLOGY,
-                    job: JobRef::from(&HYDROLOGY_JOB),
-                },
-                None,
-            )
-            .join::<TerrainLayers>(
-                terrain::LayerKind {
-                    layer: &RIVERS,
-                    job: JobRef::from(&RIVERS_JOB),
-                },
-                None,
-            )
-            .fill::<DrawnRivers>(None)
-            .systems(Schedule::Presentation, offer_drawn_rivers);
+            .join::<TerrainLayers>(&HYDROLOGY, None)
+            .join::<TerrainLayers>(&RIVERS, None);
     }
 }
-
-pub static HYDROLOGY_JOB: JobKind = JobKind::new("layer_hydrology::hydrology", &SOURCE, refused);
-
-pub static RIVERS_JOB: JobKind = JobKind::new("layer_hydrology::rivers", &SOURCE, refused);
 
 pub static HYDROLOGY: LayerKind = LayerKind {
     name: "hydrology",
@@ -83,16 +60,6 @@ pub static RIVERS: LayerKind = LayerKind {
     schema: engine_heightfield::schema::<RiversLayer>,
     points: no_points,
 };
-
-fn refused(_input: &[u8], _cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    Err(Error::new(ErrorCode::JobUnsupported, "$.jobs"))
-}
-
-fn offer_drawn_rivers(mut drawn: ResMut<DrawnRivers>) {
-    if drawn.make.is_none() {
-        drawn.make = Some(drawn_rivers);
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HydrologyStage {
@@ -200,7 +167,7 @@ impl TerrainLayer for RiversLayer {
         if place.above().iter().any(|layer| layer.makes_water()) {
             Ok(())
         } else {
-            Err(Error::new(ErrorCode::InvalidValue, "$").variants([HYDROLOGY.name]))
+            Err(Error::new(ErrorCode::MissingLayer, "$").variants([HYDROLOGY.name]))
         }
     }
 
@@ -214,13 +181,13 @@ fn settings_json(settings: &impl Serialize) -> Value {
 }
 
 fn valid(checked: Result<(), InvalidSetting>) -> Result<(), Error> {
-    checked.map_err(|invalid| Error::from(invalid).coded(ErrorCode::InvalidValue))
+    checked.map_err(|invalid| Error::from(invalid).coded(ErrorCode::InvalidTerrain))
 }
 
 fn rivers_valid(layer: &RiversLayer) -> Result<(), Error> {
     layer
         .validate()
-        .map_err(|error| error.coded(ErrorCode::InvalidValue))
+        .map_err(|error| error.coded(ErrorCode::InvalidTerrain))
 }
 
 fn hydrology_from_json(value: &Value, _files: &dyn LayerFiles) -> Made {
@@ -243,15 +210,6 @@ fn rivers_from_json(value: &Value, _files: &dyn LayerFiles) -> Made {
 
 fn rivers_read(input: &mut Reader<'_>) -> Made {
     let layer: RiversLayer = input.get()?;
-    rivers_valid(&layer)?;
-    Ok(Arc::new(layer))
-}
-
-fn drawn_rivers(lines: &[GivenRiver]) -> Made {
-    let layer = RiversLayer {
-        lines: lines.to_vec(),
-        ..RiversLayer::default()
-    };
     rivers_valid(&layer)?;
     Ok(Arc::new(layer))
 }

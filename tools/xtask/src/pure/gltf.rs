@@ -45,7 +45,9 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         });
         observed.hash(format!("gltf {name} document"), text.as_bytes());
         let mut files = SceneFiles::default();
-        let kinds: Vec<_> = reparsed.files();
+        let components = crate::bricks::standard_kinds()
+            .map_err(|error| format!("gltf {name}: the standard engine does not build: {error}"))?;
+        let kinds: Vec<_> = reparsed.files(&components);
         for file in &imported.files {
             let hash = format!("{:x}", Sha256::digest(&file.bytes));
             observed.check(file.uri.contains(&format!(".{}.", &hash[..12])), || {

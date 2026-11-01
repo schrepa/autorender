@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
+use bevy_ecs::system::SystemChangeTick;
 use engine_core::collections::HashMap;
 use engine_core::{
     AlphaMode, AssetLibrary, GlobalTransforms, MAX_TRANSFORM_NODES, Material, MaterialBinding,
-    MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshLods, PresentationState, PresentedTransforms,
-    Stamp, Surface, Texture, TextureHandle, Transform, TransformIndex,
+    MaterialHandle, Mesh, Mesh3d, MeshHandle, PresentationState, PresentedTransforms,
+    ScanClock, Stamp, Surface, Texture, TextureHandle, Transform, TransformIndex,
 };
 use engine_places::meshes::{Cube, Instances, Tint};
+use engine_places::splines::SplineMesh;
 use glam::Mat4;
 
 use crate::settings::Culling;
@@ -47,9 +49,20 @@ type RenderQuery<'w, 's> = Query<
         Option<Ref<'static, Cube>>,
         Option<Ref<'static, Mesh3d>>,
         Option<Ref<'static, Tint>>,
+        Has<SplineMesh>,
     ),
     Or<(With<Cube>, With<Mesh3d>)>,
 >;
+
+type UnbuiltSplines<'w, 's> = Query<'w, 's, &'static Mesh3d, (With<SplineMesh>, Without<Cube>)>;
+
+fn unbuilt(mesh3d: &Mesh3d) -> bool {
+    mesh3d.mesh == MeshHandle::default()
+}
+
+fn skipped(cube: bool, mesh3d: Option<&Mesh3d>, spline: bool) -> bool {
+    spline && !cube && mesh3d.is_some_and(unbuilt)
+}
 
 type SourceChanges<'w, 's> =
     Query<'w, 's, (), Or<(Changed<Mesh3d>, Changed<Cube>, Changed<Tint>)>>;
@@ -73,17 +86,15 @@ pub(crate) struct Instance {
 pub(crate) struct SourceMesh {
     pub handle: MeshHandle,
     pub mesh: Arc<Mesh>,
-    pub lods: Option<Arc<MeshLods>>,
 }
 
 impl SourceMesh {
     fn of(assets: &AssetLibrary, handle: MeshHandle) -> Option<Self> {
         let mesh = assets.mesh(handle)?;
-        let lods = assets.mesh_lods(handle)?;
+        assets.mesh_lods(handle)?;
         Some(Self {
             handle,
             mesh: Arc::clone(mesh),
-            lods: lods.cloned(),
         })
     }
 }
@@ -463,7 +474,7 @@ pub(crate) struct RetainedRender {
     asset_revision: Option<(u64, u64)>,
     material_revision: Option<u64>,
     sources: Sources,
-    scanned: bool,
+    scans: ScanClock,
     missing_sources: usize,
     gpu: bool,
     gpu_topology: Option<u64>,
@@ -495,7 +506,7 @@ impl Default for RetainedRender {
             asset_revision: None,
             material_revision: None,
             sources: Sources::default(),
-            scanned: false,
+            scans: ScanClock::default(),
             missing_sources: 0,
             gpu: false,
             gpu_topology: None,
@@ -524,6 +535,7 @@ struct Inputs<'a, 'w, 's> {
     assets: &'a AssetLibrary,
     cube_mesh: MeshHandle,
     budget: usize,
+    unbuilt: usize,
 }
 
 #[expect(
@@ -531,9 +543,9 @@ struct Inputs<'a, 'w, 's> {
     reason = "the retained pass reads the scene's drawable entities and the presentation"
 )]
 pub(crate) fn retain_instances(
-    query: RenderQuery,
+    (query, splines): (RenderQuery, UnbuiltSplines),
     changes: SourceChanges,
-    tints: Query<(), With<Tint>>,
+    (tints, ticks): (Query<(), With<Tint>>, SystemChangeTick),
     globals: Res<GlobalTransforms>,
     presented: Res<PresentedTransforms>,
     presentation: Res<PresentationState>,
@@ -557,8 +569,14 @@ pub(crate) fn retain_instances(
         assets: &assets,
         cube_mesh: assets.cube_mesh(),
         budget: culling.budget(),
+        unbuilt: splines.iter().filter(|mesh3d| unbuilt(mesh3d)).count(),
     };
-    retained.prepare(&inputs, view.view_projection(), gpu, stamps_changed);
+    retained.prepare(
+        &inputs,
+        view.view_projection(),
+        (gpu, stamps_changed),
+        ticks,
+    );
     let key = (
         retained.identity,
         retained.snapshot.source_revision,
@@ -656,7 +674,8 @@ impl RetainedRender {
             .reserve_exact(self.owners.len().saturating_sub(self.free.len()));
         for (index, owner) in self.owners.iter_mut().enumerate() {
             if let Some(old) = *owner
-                && (!matches!(inputs.query.get(old), Ok((_, true, ..)))
+                && (!matches!(inputs.query.get(old), Ok((_, true, cube, mesh3d, _, spline))
+                    if !skipped(cube.is_some(), mesh3d.as_deref(), spline))
                     || inputs.globals.get(old).is_none())
             {
                 self.snapshot.entities.remove(&old);
@@ -753,17 +772,19 @@ impl RetainedRender {
         &mut self,
         inputs: &Inputs<'_, '_, '_>,
         view_projection: Mat4,
-        gpu: bool,
-        stamps_changed: bool,
+        (gpu, stamps_changed): (bool, bool),
+        ticks: SystemChangeTick,
     ) {
+        let _profile = engine_core::profile::span("cpu", "extraction_retained_updates_culling");
         self.sequence = self.sequence.saturating_add(1);
         if self.gpu && !gpu {
             for frame in &mut self.frames {
                 frame.pose_revision = 0;
             }
         }
-        let aged = !self.scanned;
-        self.scanned = true;
+        let scan_tick = ticks.this_run();
+        let aged = self.scans.aged(scan_tick);
+        self.scans.scanned(scan_tick);
         let assets = inputs.assets;
         let revision = assets.revision();
         let assets_changed = self.asset_revision != Some(revision) || revision.1 == u64::MAX;
@@ -779,7 +800,7 @@ impl RetainedRender {
         }
         self.material_revision = Some(material_revision);
         self.snapshot.view_projection = view_projection;
-        let total = inputs.query.iter().len();
+        let total = inputs.query.iter().len() - inputs.unbuilt;
         if gpu
             && self.gpu
             && self.gpu_topology == Some(inputs.globals.topology_revision())
@@ -790,15 +811,23 @@ impl RetainedRender {
             && (replaced.is_empty() || self.refresh_replaced(inputs, &replaced))
         {
             self.snapshot.missing_assets = self.missing_sources;
+            engine_core::profile::counter("extraction.gpu_structure_reused", 1.0);
             return;
         }
+        engine_core::profile::counter("extraction.gpu_structure_reused", 0.0);
         self.begin_pass(total, gpu, inputs.budget);
         let mut pass = Pass {
             structure_changed: assets_changed,
             sources_changed: assets_changed,
             ..Pass::default()
         };
-        for (row, (entity, has_transform, cube, mesh3d, tint)) in inputs.query.iter().enumerate() {
+        let rows = inputs
+            .query
+            .iter()
+            .filter(|(_, _, cube, mesh3d, _, spline)| {
+                !skipped(cube.is_some(), mesh3d.as_deref(), *spline)
+            });
+        for (row, (entity, has_transform, cube, mesh3d, tint, _)) in rows.enumerate() {
             if !has_transform {
                 self.snapshot.invalid_transforms += 1;
                 continue;
@@ -843,10 +872,13 @@ impl RetainedRender {
     fn refresh_replaced(&mut self, inputs: &Inputs<'_, '_, '_>, replaced: &[MaterialHandle]) -> bool {
         let mut pass = Pass::default();
         let mut moved = false;
-        for (entity, _, cube, mesh3d, tint) in inputs.query.iter() {
+        for (entity, _, cube, mesh3d, tint, spline) in inputs.query.iter() {
             let Some(mesh3d) = mesh3d.as_deref() else {
                 continue;
             };
+            if skipped(cube.is_some(), Some(mesh3d), spline) {
+                continue;
+            }
             if !replaced.contains(&mesh3d.material) {
                 continue;
             }
@@ -885,6 +917,7 @@ impl RetainedRender {
         if pass.colors != 0 {
             self.color_revision = sequence;
         }
+        engine_core::profile::counter("extraction.retained_resolved", pass.resolved as f64);
         true
     }
 

@@ -101,7 +101,7 @@
       "direction": "lower"
     },
     {
-      "name": "ambient_occlusion.active",
+      "name": "ambient_occlusion_stats.active",
       "kind": "work",
       "rule": "equal",
       "statistic": "last_frame",
@@ -112,7 +112,7 @@
       "direction": null
     },
     {
-      "name": "bloom.active",
+      "name": "bloom_stats.active",
       "kind": "work",
       "rule": "equal",
       "statistic": "last_frame",
@@ -123,7 +123,7 @@
       "direction": null
     },
     {
-      "name": "clouds.rows",
+      "name": "bricks_cost.frame",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -134,7 +134,7 @@
       "direction": null
     },
     {
-      "name": "clouds.view_pixels",
+      "name": "bricks_cost.rows",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -145,7 +145,7 @@
       "direction": null
     },
     {
-      "name": "culled_instances",
+      "name": "cloud_stats.rows",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -156,14 +156,168 @@
       "direction": null
     },
     {
-      "name": "culling_enabled",
+      "name": "cloud_stats.view_pixels",
       "kind": "work",
-      "rule": "equal",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "collision_stats.active_colliders",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "collision_stats.bvh_nodes",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "collision_stats.cache_bytes",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "bytes",
+      "direction": null
+    },
+    {
+      "name": "collision_stats.colliders",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "collision_stats.complete",
+      "kind": "work",
+      "rule": "shown",
       "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
       "unit": "boolean",
+      "direction": null
+    },
+    {
+      "name": "collision_stats.invalid_colliders",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "collision_stats.limits.max_candidate_pairs",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "collision_stats.limits.max_colliders",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "collision_stats.limits.max_query_candidates",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "collision_stats.limits.max_query_hits",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "collision_stats.limits.max_sensor_pairs",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "collision_stats.overflow_colliders",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "collision_stats.placed_colliders",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "collision_stats.revision",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
       "direction": null
     },
     {
@@ -187,17 +341,6 @@
       ],
       "unit": "count",
       "direction": null
-    },
-    {
-      "name": "dropped_instances",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
     },
     {
       "name": "dropped_seconds",
@@ -244,6 +387,50 @@
       "direction": null
     },
     {
+      "name": "exposure_stats.active",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "boolean",
+      "direction": null
+    },
+    {
+      "name": "exposure_stats.metered",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame_late",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "centistops",
+      "direction": null
+    },
+    {
+      "name": "exposure_stats.stops",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame_late",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "centistops",
+      "direction": null
+    },
+    {
+      "name": "exposure_stats.view",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame_late",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "centistops",
+      "direction": null
+    },
+    {
       "name": "fixed_steps",
       "kind": "work",
       "rule": "shown",
@@ -255,7 +442,7 @@
       "direction": null
     },
     {
-      "name": "ground_cover.blade_cut.asked",
+      "name": "ground_cover_stats.blade_cut.asked",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -266,18 +453,7 @@
       "direction": null
     },
     {
-      "name": "ground_cover.blade_cut.kept",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "ground_cover.blade_cut.cut",
+      "name": "ground_cover_stats.blade_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -288,7 +464,7 @@
       "direction": "lower"
     },
     {
-      "name": "ground_cover.reach",
+      "name": "ground_cover_stats.blade_cut.kept",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -299,7 +475,7 @@
       "direction": null
     },
     {
-      "name": "ground_cover.tiers",
+      "name": "ground_cover_stats.reach",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -310,7 +486,18 @@
       "direction": null
     },
     {
-      "name": "haze.active",
+      "name": "ground_cover_stats.tiers",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "haze_stats.active",
       "kind": "work",
       "rule": "equal",
       "statistic": "last_frame",
@@ -330,17 +517,6 @@
       ],
       "unit": "count",
       "direction": null
-    },
-    {
-      "name": "invalid_transforms",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
     },
     {
       "name": "jobs.cache_bytes",
@@ -387,17 +563,6 @@
       "direction": null
     },
     {
-      "name": "jobs.held",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "jobs.cancelled",
       "kind": "work",
       "rule": "shown",
@@ -429,6 +594,17 @@
       ],
       "unit": "count",
       "direction": "lower"
+    },
+    {
+      "name": "jobs.held",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
     },
     {
       "name": "jobs.in_place",
@@ -497,116 +673,6 @@
       "direction": null
     },
     {
-      "name": "level_of_detail.impostor_cut.asked",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "level_of_detail.impostor_cut.kept",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "level_of_detail.impostor_cut.cut",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "level_of_detail.meshes_without_levels",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "level_of_detail.impostor_instances",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame_or_absent",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "level_of_detail.impostors",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "level_of_detail.lod0_instances",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame_or_absent",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "level_of_detail.lod1_instances",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame_or_absent",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "level_of_detail.lod2_instances",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame_or_absent",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "loading",
-      "kind": "work",
-      "rule": "false",
-      "statistic": "any_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "boolean",
-      "direction": null
-    },
-    {
       "name": "linked.faces",
       "kind": "work",
       "rule": "equal",
@@ -640,7 +706,18 @@
       "direction": null
     },
     {
-      "name": "local_lights.cluster_cut.asked",
+      "name": "loading",
+      "kind": "work",
+      "rule": "false",
+      "statistic": "any_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "boolean",
+      "direction": null
+    },
+    {
+      "name": "local_light_stats.cluster_cut.asked",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -651,18 +728,7 @@
       "direction": null
     },
     {
-      "name": "local_lights.cluster_cut.kept",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "local_lights.cluster_cut.cut",
+      "name": "local_light_stats.cluster_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -673,7 +739,18 @@
       "direction": "lower"
     },
     {
-      "name": "local_lights.invalid",
+      "name": "local_light_stats.cluster_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_light_stats.invalid",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -684,7 +761,7 @@
       "direction": "lower"
     },
     {
-      "name": "local_lights.light_cut.asked",
+      "name": "local_light_stats.light_cut.asked",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -695,18 +772,7 @@
       "direction": null
     },
     {
-      "name": "local_lights.light_cut.kept",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "local_lights.light_cut.cut",
+      "name": "local_light_stats.light_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -717,7 +783,7 @@
       "direction": "lower"
     },
     {
-      "name": "local_lights.shaded",
+      "name": "local_light_stats.light_cut.kept",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -728,7 +794,18 @@
       "direction": null
     },
     {
-      "name": "local_lights.visible",
+      "name": "local_light_stats.shaded",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_light_stats.visible",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame_or_absent",
@@ -750,128 +827,7 @@
       "direction": null
     },
     {
-      "name": "missing_assets",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "navigation.agents",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "navigation.arrived",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "navigation.grounds",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "navigation.portals",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "navigation.searching",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "navigation.unreachable",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "navigation.waiting",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "navigation.walking",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "navigation.work",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "occlusion_culling.active",
-      "kind": "work",
-      "rule": "equal",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "boolean",
-      "direction": null
-    },
-    {
-      "name": "occlusion_culling.instances",
+      "name": "meshes_stats.casters",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame_or_absent",
@@ -882,7 +838,7 @@
       "direction": null
     },
     {
-      "name": "occupancy.averages",
+      "name": "meshes_stats.culled_instances",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -893,29 +849,18 @@
       "direction": null
     },
     {
-      "name": "occupancy.redraws",
+      "name": "meshes_stats.culling_enabled",
       "kind": "work",
-      "rule": "shown",
+      "rule": "equal",
       "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
-      "unit": "count",
+      "unit": "boolean",
       "direction": null
     },
     {
-      "name": "particles.drawn",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "particles.invalid",
+      "name": "meshes_stats.dropped_instances",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -926,7 +871,7 @@
       "direction": "lower"
     },
     {
-      "name": "particles.particle_cut.asked",
+      "name": "meshes_stats.gpu_visible",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -937,7 +882,7 @@
       "direction": null
     },
     {
-      "name": "particles.particle_cut.kept",
+      "name": "meshes_stats.instances",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -948,7 +893,7 @@
       "direction": null
     },
     {
-      "name": "particles.particle_cut.cut",
+      "name": "meshes_stats.invalid_transforms",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -959,7 +904,7 @@
       "direction": "lower"
     },
     {
-      "name": "physics.awake",
+      "name": "meshes_stats.level_of_detail.impostor_cut.asked",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -970,7 +915,18 @@
       "direction": null
     },
     {
-      "name": "physics.bodies",
+      "name": "meshes_stats.level_of_detail.impostor_cut.cut",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "meshes_stats.level_of_detail.impostor_cut.kept",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -981,7 +937,18 @@
       "direction": null
     },
     {
-      "name": "physics.contacts",
+      "name": "meshes_stats.level_of_detail.impostor_instances",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame_or_absent",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "meshes_stats.level_of_detail.impostors",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -992,7 +959,128 @@
       "direction": null
     },
     {
-      "name": "physics.held",
+      "name": "meshes_stats.level_of_detail.lod0_instances",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame_or_absent",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "meshes_stats.level_of_detail.lod1_instances",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame_or_absent",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "meshes_stats.level_of_detail.lod2_instances",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame_or_absent",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "meshes_stats.level_of_detail.meshes_without_levels",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "meshes_stats.missing_assets",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "meshes_stats.moving_casters",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame_or_absent",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "meshes_stats.occlusion_culling.active",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "boolean",
+      "direction": null
+    },
+    {
+      "name": "meshes_stats.occlusion_culling.instances",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame_or_absent",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "meshes_stats.render_candidates",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "meshes_stats.subpixel_culling.active",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "boolean",
+      "direction": null
+    },
+    {
+      "name": "meshes_stats.subpixel_culling.instances",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame_or_absent",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "meshes_stats.triangles",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1003,7 +1091,7 @@
       "direction": null
     },
     {
-      "name": "physics.solids",
+      "name": "meshes_stats.visible_instances",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1014,7 +1102,7 @@
       "direction": null
     },
     {
-      "name": "physics.water_samples",
+      "name": "navigation_stats.agents",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1025,7 +1113,227 @@
       "direction": null
     },
     {
-      "name": "physics.wet",
+      "name": "navigation_stats.arrived",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "navigation_stats.cooking",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "navigation_stats.grounds",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "navigation_stats.portals",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "navigation_stats.searching",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "navigation_stats.unreachable",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "navigation_stats.waiting",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "navigation_stats.walking",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "navigation_stats.work",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "particle_stats.drawn",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "particle_stats.invalid",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "particle_stats.particle_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "particle_stats.particle_cut.cut",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "particle_stats.particle_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "physics_stats.awake",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "physics_stats.bodies",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "physics_stats.contacts",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "physics_stats.held",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "physics_stats.solids",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "physics_stats.water_samples",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "physics_stats.wet",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1091,7 +1399,7 @@
       "direction": "lower"
     },
     {
-      "name": "reflection_probes.faces",
+      "name": "reflection_probes_stats.faces",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1102,7 +1410,7 @@
       "direction": null
     },
     {
-      "name": "reflection_probes.probe_cut.asked",
+      "name": "reflection_probes_stats.probe_cut.asked",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1113,18 +1421,7 @@
       "direction": null
     },
     {
-      "name": "reflection_probes.probe_cut.kept",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "reflection_probes.probe_cut.cut",
+      "name": "reflection_probes_stats.probe_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -1135,7 +1432,7 @@
       "direction": "lower"
     },
     {
-      "name": "reflection_probes.ready",
+      "name": "reflection_probes_stats.probe_cut.kept",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1146,7 +1443,18 @@
       "direction": null
     },
     {
-      "name": "reflections.active",
+      "name": "reflection_probes_stats.ready",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "reflections_stats.active",
       "kind": "work",
       "rule": "equal",
       "statistic": "last_frame",
@@ -1154,17 +1462,6 @@
         "native"
       ],
       "unit": "boolean",
-      "direction": null
-    },
-    {
-      "name": "render_candidates",
-      "kind": "work",
-      "rule": "equal",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
       "direction": null
     },
     {
@@ -1278,7 +1575,172 @@
       "direction": null
     },
     {
-      "name": "shadows.active",
+      "name": "scatter_stats.dropped_objects",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "scatter_stats.impostors.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "scatter_stats.impostors.cut",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "scatter_stats.impostors.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "scatter_stats.lods.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "scatter_stats.lods.cut",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "scatter_stats.lods.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "scatter_stats.occupancy_averages",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "scatter_stats.occupancy_redraws",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "scatter_stats.parts.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "scatter_stats.parts.cut",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "scatter_stats.parts.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "scatter_stats.placed_far_objects",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "scatter_stats.placed_impostors",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "scatter_stats.placed_objects",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadow_stats.active",
       "kind": "work",
       "rule": "equal",
       "statistic": "last_frame",
@@ -1289,18 +1751,7 @@
       "direction": null
     },
     {
-      "name": "shadows.casters",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame_or_absent",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "shadows.draws",
+      "name": "shadow_stats.draws",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1311,18 +1762,7 @@
       "direction": null
     },
     {
-      "name": "shadows.moving_casters",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame_or_absent",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "shadows.moving_cut.asked",
+      "name": "shadow_stats.moving_cut.asked",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1333,7 +1773,7 @@
       "direction": null
     },
     {
-      "name": "shadows.moving_cut.kept",
+      "name": "shadow_stats.moving_cut.cut",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1344,7 +1784,7 @@
       "direction": null
     },
     {
-      "name": "shadows.moving_cut.cut",
+      "name": "shadow_stats.moving_cut.kept",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1355,7 +1795,7 @@
       "direction": null
     },
     {
-      "name": "shadows.sky_drawn",
+      "name": "shadow_stats.sky_drawn",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1366,7 +1806,7 @@
       "direction": null
     },
     {
-      "name": "shadows.sky_maps",
+      "name": "shadow_stats.sky_maps",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1377,7 +1817,7 @@
       "direction": null
     },
     {
-      "name": "shadows.tiles_drawn",
+      "name": "shadow_stats.tile_cut.asked",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1388,7 +1828,7 @@
       "direction": null
     },
     {
-      "name": "shadows.tiles_marked",
+      "name": "shadow_stats.tile_cut.cut",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1399,7 +1839,7 @@
       "direction": null
     },
     {
-      "name": "shadows.tile_cut.asked",
+      "name": "shadow_stats.tile_cut.kept",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1410,7 +1850,7 @@
       "direction": null
     },
     {
-      "name": "shadows.tile_cut.kept",
+      "name": "shadow_stats.tiles_drawn",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1421,7 +1861,7 @@
       "direction": null
     },
     {
-      "name": "shadows.tile_cut.cut",
+      "name": "shadow_stats.tiles_marked",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1432,7 +1872,7 @@
       "direction": null
     },
     {
-      "name": "shadows.tiles_reclaimed",
+      "name": "shadow_stats.tiles_reclaimed",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1443,7 +1883,7 @@
       "direction": null
     },
     {
-      "name": "shadows.tiles_resident",
+      "name": "shadow_stats.tiles_resident",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1454,7 +1894,51 @@
       "direction": null
     },
     {
-      "name": "sky.exposure.active",
+      "name": "sky_stats.tables",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "static_tables.failed_jobs",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "static_tables.loading",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "boolean",
+      "direction": null
+    },
+    {
+      "name": "static_tables.tables",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "temporal_antialiasing_stats.active",
       "kind": "work",
       "rule": "equal",
       "statistic": "last_frame",
@@ -1465,40 +1949,18 @@
       "direction": null
     },
     {
-      "name": "sky.exposure.metered",
+      "name": "terrain_shading_stats.bounce_dropped",
       "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame_late",
+      "rule": "not-above",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
-      "unit": "centistops",
-      "direction": null
+      "unit": "count",
+      "direction": "lower"
     },
     {
-      "name": "sky.exposure.stops",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame_late",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "centistops",
-      "direction": null
-    },
-    {
-      "name": "sky.exposure.view",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame_late",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "centistops",
-      "direction": null
-    },
-    {
-      "name": "sky.tables",
+      "name": "terrain_shading_stats.bounce_levels",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1509,9 +1971,427 @@
       "direction": null
     },
     {
-      "name": "subpixel_culling.active",
+      "name": "terrain_shading_stats.bounce_probes",
       "kind": "work",
-      "rule": "equal",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.bounce_relit",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.bounced",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.bouncing",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.colored",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.coloring",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.dropped_materials",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "terrain_shading_stats.failed_jobs",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.gpu_controls",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.horizons",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.leaves.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.leaves.cut",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "terrain_shading_stats.leaves.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.lighting",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.lighting_uploads",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.lit",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.macro_maps",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.pending",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.shaded_tiles",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.shading_records",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.shadow_patches",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.shallow_subdivisions",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "terrain_shading_stats.sky_maps",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.surface_slots.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.surface_slots.cut",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.surface_slots.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.tiles",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.tiles_dropped.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.tiles_dropped.cut",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.tiles_dropped.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.triangles",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_stats.baking",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_stats.bridges",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_stats.cached_bytes",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "bytes",
+      "direction": null
+    },
+    {
+      "name": "terrain_stats.cached_tiles",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_stats.dropped_tiles",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "terrain_stats.failed_jobs",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_stats.fallback_tiles",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "terrain_stats.loading",
+      "kind": "work",
+      "rule": "shown",
       "statistic": "last_frame",
       "runtimes": [
         "native"
@@ -1520,29 +2400,7 @@
       "direction": null
     },
     {
-      "name": "subpixel_culling.instances",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame_or_absent",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "temporal_antialiasing.active",
-      "kind": "work",
-      "rule": "equal",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "boolean",
-      "direction": null
-    },
-    {
-      "name": "terrain.bounce.levels",
+      "name": "terrain_stats.loading_tiles",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1553,7 +2411,7 @@
       "direction": null
     },
     {
-      "name": "terrain.bounce.probes",
+      "name": "terrain_stats.missing_tiles",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1564,7 +2422,7 @@
       "direction": null
     },
     {
-      "name": "terrain.bounce.relit",
+      "name": "terrain_stats.pending",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1575,7 +2433,73 @@
       "direction": null
     },
     {
-      "name": "terrain.bounce.dropped",
+      "name": "terrain_stats.prefetching_tiles",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_stats.resident_tiles",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_stats.restored_tiles",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_stats.surroundings_tiles",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_stats.terrains",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_stats.tile_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_stats.tile_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -1586,40 +2510,7 @@
       "direction": "lower"
     },
     {
-      "name": "terrain.dropped_materials",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "terrain.dropped_placed_objects",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "terrain.dropped_tiles",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "terrain.tile_cut.asked",
+      "name": "terrain_stats.tile_cut.kept",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1630,7 +2521,7 @@
       "direction": null
     },
     {
-      "name": "terrain.tile_cut.kept",
+      "name": "terrain_stats.tunnels",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1641,205 +2532,7 @@
       "direction": null
     },
     {
-      "name": "terrain.tile_cut.cut",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "terrain.fallback_tiles",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "terrain.gpu_controls",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.horizons",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.lighting_uploads",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.loading_tiles",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.macro_maps",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.placed_far_objects",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.placed_impostors",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.placed_objects",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.leaf_cut.asked",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.leaf_cut.kept",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.leaf_cut.cut",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "terrain.shadow_patches",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.shallow_subdivisions",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "terrain.sky_maps",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.tiles",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.triangles",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.white_water",
+      "name": "terrain_stats.waiting_tiles",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1883,7 +2576,7 @@
       "direction": null
     },
     {
-      "name": "visible_instances",
+      "name": "water_stats.blocks",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1894,7 +2587,7 @@
       "direction": null
     },
     {
-      "name": "water.blocks",
+      "name": "water_stats.cell_cut.asked",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1905,7 +2598,7 @@
       "direction": null
     },
     {
-      "name": "water.dropped_blocks",
+      "name": "water_stats.cell_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -1916,7 +2609,18 @@
       "direction": "lower"
     },
     {
-      "name": "water.dropped_touches",
+      "name": "water_stats.cell_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water_stats.dropped_blocks",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -1927,51 +2631,7 @@
       "direction": "lower"
     },
     {
-      "name": "water.foam_particles",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "water.foam_points",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "water.foam_cut.asked",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "water.foam_cut.kept",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "water.foam_cut.cut",
+      "name": "water_stats.dropped_particles",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -1982,7 +2642,95 @@
       "direction": "lower"
     },
     {
-      "name": "water.foam_reach",
+      "name": "water_stats.dropped_touches",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "water_stats.failed_jobs",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water_stats.falls",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water_stats.foam_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water_stats.foam_cut.cut",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "water_stats.foam_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water_stats.foam_particles",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water_stats.foam_points",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water_stats.foam_reach",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1993,7 +2741,18 @@
       "direction": null
     },
     {
-      "name": "water.live_behind",
+      "name": "water_stats.leaf_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water_stats.leaf_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -2004,7 +2763,7 @@
       "direction": "lower"
     },
     {
-      "name": "water.cell_cut.asked",
+      "name": "water_stats.leaf_cut.kept",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2015,18 +2774,7 @@
       "direction": null
     },
     {
-      "name": "water.cell_cut.kept",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "water.cell_cut.cut",
+      "name": "water_stats.live_behind",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -2037,7 +2785,7 @@
       "direction": "lower"
     },
     {
-      "name": "water.live_cut",
+      "name": "water_stats.live_cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -2048,7 +2796,7 @@
       "direction": "lower"
     },
     {
-      "name": "water.live_setup",
+      "name": "water_stats.live_setup",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2059,7 +2807,7 @@
       "direction": null
     },
     {
-      "name": "water.live_steps",
+      "name": "water_stats.live_steps",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2070,7 +2818,7 @@
       "direction": null
     },
     {
-      "name": "water.live_waiting",
+      "name": "water_stats.live_waiting",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -2081,7 +2829,7 @@
       "direction": "lower"
     },
     {
-      "name": "water.particle_texels",
+      "name": "water_stats.looks_left",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2092,7 +2840,7 @@
       "direction": null
     },
     {
-      "name": "water.particles_born",
+      "name": "water_stats.particle_texels",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2103,18 +2851,7 @@
       "direction": null
     },
     {
-      "name": "water.dropped_particles",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "water.leaf_cut.asked",
+      "name": "water_stats.particles_born",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2125,7 +2862,7 @@
       "direction": null
     },
     {
-      "name": "water.leaf_cut.kept",
+      "name": "water_stats.rewatered_tiles",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2136,18 +2873,7 @@
       "direction": null
     },
     {
-      "name": "water.leaf_cut.cut",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "water.touches",
+      "name": "water_stats.settled_records",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2158,7 +2884,7 @@
       "direction": null
     },
     {
-      "name": "water.wave_particles",
+      "name": "water_stats.settles_left",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2169,7 +2895,7 @@
       "direction": null
     },
     {
-      "name": "world_streaming.cells",
+      "name": "water_stats.settling_records",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2180,7 +2906,7 @@
       "direction": null
     },
     {
-      "name": "world_streaming.despawned",
+      "name": "water_stats.stale_water_tiles",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2191,7 +2917,7 @@
       "direction": null
     },
     {
-      "name": "world_streaming.entities",
+      "name": "water_stats.touches",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2202,7 +2928,7 @@
       "direction": null
     },
     {
-      "name": "world_streaming.items",
+      "name": "water_stats.wave_particles",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2213,7 +2939,7 @@
       "direction": null
     },
     {
-      "name": "world_streaming.loaded",
+      "name": "water_stats.white_water",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2224,7 +2950,7 @@
       "direction": null
     },
     {
-      "name": "world_streaming.pending",
+      "name": "world_streaming_stats.cells",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2235,7 +2961,7 @@
       "direction": null
     },
     {
-      "name": "world_streaming.spawned",
+      "name": "world_streaming_stats.despawned",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2246,7 +2972,7 @@
       "direction": null
     },
     {
-      "name": "bricks_cost.frame",
+      "name": "world_streaming_stats.entities",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2257,7 +2983,40 @@
       "direction": null
     },
     {
-      "name": "bricks_cost.rows",
+      "name": "world_streaming_stats.items",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "world_streaming_stats.loaded",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "world_streaming_stats.pending",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "world_streaming_stats.spawned",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",

@@ -1,5 +1,12 @@
 use super::*;
-use crate::gpu_layouts::impostors::ImpostorBakeUniform;
+
+engine_core::gpu_struct! {
+    pub struct ImpostorBake {
+        pub sphere: [f32; 4],
+        pub flags: [u32; 4],
+        pub tile: [u32; 4],
+    }
+}
 
 const BAKE_SAMPLES: u32 = 4;
 const BAKE_DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -282,7 +289,7 @@ fn bake_group(
         device,
         &wgpu::util::BufferInitDescriptor {
             label: Some("engine/impostor-bake"),
-            contents: bytemuck::bytes_of(&ImpostorBakeUniform {
+            contents: bytemuck::bytes_of(&ImpostorBake {
                 sphere: baking.sphere,
                 flags: [baking.flags, 0, 0, 0],
                 tile,

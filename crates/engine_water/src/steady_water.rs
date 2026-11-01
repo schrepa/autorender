@@ -9,27 +9,28 @@ use engine_math::{clamp, max, min};
 use engine_codec::{self as codec, Error, Reader, Writer, record};
 use crate::shallow_water::{self, CELL_MEANS, DRY, UNHELD, WET_MOST, resistance, velocity};
 use crate::tile_water::{
-    NONE, TileWater, WATER_SPAN_LEAST, PointState, breaking, nearest, pack, pack_state, shears,
-    turbulence, unpack,
+    NONE, PointState, TileWater, WATER_SPAN_LEAST, breaking, kept, nearest, pack, pack_state,
+    shears, tile_origin, tile_point, tile_rows, tile_water_of, turbulence, unpack,
 };
 use engine_heightfield::tile::{
-    BiomeRules, Footprint, Generator, Solid, StampOp as Stamp, TILE_STRIDE, Tile, gradient_word,
-    on_triangle, smooth_gradient,
+    BiomeRules, Footprint, Generator, Solid, TILE_STRIDE, Tile, gradient_word, on_triangle,
+    smooth_gradient,
 };
-use engine_heightfield::{Bed, Layers, Pyramid, Reach, TILE_QUADS, TILE_SAMPLES, TileKey};
+use engine_heightfield::{Bed, Layers, Pyramid, Reach, Stamp, TILE_QUADS, TILE_SAMPLES, TileKey};
+
+pub use crate::gpu::{BLOCK_SIDE, COVER_POINTS, NO_BLOCK};
 
 pub const MARGIN: f32 = 64.0;
 pub const REGION_CELLS: u64 = 1 << 22;
-pub const BLOCK_SIDE: u32 = 8;
 pub const BLOCK_CELLS: usize = (BLOCK_SIDE * BLOCK_SIDE) as usize;
 const BLOCK_CORNERS: usize = ((BLOCK_SIDE + 1) * (BLOCK_SIDE + 1)) as usize;
-pub const BLOCK_GROUND: usize = BLOCK_CORNERS + 4 * BLOCK_CELLS;
-pub const NO_BLOCK: u32 = u32::MAX;
+pub const BLOCK_GROUND: usize = crate::gpu::BLOCK_GROUND as usize;
 const SPREAD: u32 = 2;
 const SAMPLES: usize = TILE_SAMPLES as usize;
 const ENTRY: f32 = 2.0;
 const SOURCE_LEAST: f32 = 0.01;
-pub const COVER_POINTS: u32 = 4;
+
+const _: () = assert!(BLOCK_GROUND == BLOCK_CORNERS + 4 * BLOCK_CELLS);
 
 pub(crate) const REACHES: usize = Reach::Falls as usize + 1;
 
@@ -281,7 +282,7 @@ impl SteadyWater {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SettledKey {
-    pub recipe: String,
+    pub recipe: [u8; 32],
     pub key: TileKey,
     pub stamps: Vec<Stamp>,
     pub solids: Vec<Option<Solid>>,
@@ -534,7 +535,11 @@ fn reach_code(bed: Option<&Bed>) -> u8 {
 }
 
 impl WaterPart {
-    fn of(pyramid: &Pyramid, tile: &Tile, (cell, solids): (f32, &[Option<Solid>])) -> Self {
+    fn of(
+        pyramid: &Pyramid,
+        (tile, own): (&Tile, Option<&TileWater>),
+        (cell, solids): (f32, &[Option<Solid>]),
+    ) -> Self {
         let key = tile.key();
         let origin = pyramid.tile_origin(key);
         let size = pyramid.tile_size(0);
@@ -567,9 +572,7 @@ impl WaterPart {
             for i in 0..i64::from(columns) {
                 let middle = (Vec2::new((first_x + i) as f32, (first_z + j) as f32) + 0.5) * cell;
                 let local = middle - origin;
-                let found = tile
-                    .sample(local)
-                    .and_then(|sample| (!sample.hole).then(|| tile.water_at(local)).flatten());
+                let found = tile_point(tile, own, local);
                 water.push(found.map_or([f32::NAN, 0.0, 0.0, 0.0], |point| {
                     let lake = if point.lake { 1.0 } else { 0.0 };
                     [point.surface, point.flow.x, point.flow.y, lake]
@@ -624,7 +627,9 @@ impl WaterPart {
 }
 
 pub(crate) struct PartMaking {
+    layers: Arc<Layers>,
     pyramid: Pyramid,
+    key: TileKey,
     cell: f32,
     solids: Vec<Option<Solid>>,
     generator: Generator,
@@ -638,10 +643,12 @@ impl PartMaking {
         (cell, solids): (f32, Vec<Option<Solid>>),
     ) -> Self {
         Self {
+            generator: Generator::new(Arc::clone(&layers), &pyramid, key).with_surface(rules),
+            layers,
             pyramid,
+            key,
             cell,
             solids,
-            generator: Generator::new(layers, &pyramid, key).with_surface(rules),
         }
     }
 
@@ -652,10 +659,14 @@ impl PartMaking {
             }
             return Ok(None);
         };
+        let own = kept(tile_water_of(
+            tile_rows(&self.layers, &self.pyramid, self.key),
+            &made,
+        ))?;
         let tile: Tile = codec::decode(&codec::encode(&made))?;
         Ok(Some(WaterPart::of(
             &self.pyramid,
-            &tile,
+            (&tile, own.as_ref()),
             (self.cell, &self.solids),
         )))
     }
@@ -2080,192 +2091,189 @@ impl Planes {
     }
 }
 
-impl Tile {
-    #[must_use]
-    pub fn steadied(
-        &self,
-        pyramid: &Pyramid,
-        (cell, cells): (f32, &dyn Fn(i64, i64) -> Option<SteadyCell>),
-        solids: &[Footprint],
-    ) -> Option<TileWater> {
-        let stride = TILE_STRIDE as usize;
-        let spacing = self.spacing();
-        let origin = pyramid.tile_origin(self.key());
-        let own = self.water();
-        let place =
-            |x: usize, z: usize| origin + Vec2::new(x as f32 - 1.0, z as f32 - 1.0) * spacing;
-        let ground = |point: Vec2| self.ground_at(point - origin);
-        let planes = Planes::of(
-            place(0, 0),
-            place(stride - 1, stride - 1),
-            cell,
-            cells,
-            &ground,
-        );
-        let count = stride * stride;
-        let mut surface = vec![f32::NAN; count];
-        let mut info = vec![[0_u32; 2]; count];
-        let mut flows = vec![Vec2::ZERO; count];
-        let mut stirred = vec![None; count];
-        let spans = spans(own);
-        for z in 0..stride {
-            for x in 0..stride {
-                let at = z * stride + x;
-                let (own_surface, own_info) = own.map_or((f32::NAN, [0; 2]), |water| {
-                    (water.surfaces()[at], water.info()[at])
-                });
-                let point = place(x, z);
-                let mut blend = Blend::NONE;
-                for (i, j, share) in around(point, cell) {
-                    let plane = planes.at(i, j);
-                    if !plane.known {
-                        continue;
-                    }
-                    blend.known = true;
-                    if !plane.wet {
-                        continue;
-                    }
-                    let middle = (Vec2::new(i as f32, j as f32) + 0.5) * cell;
-                    blend.weight += share;
-                    blend.level += (plane.level + plane.slope.dot(point - middle)) * share;
-                    if plane.held {
-                        blend.held += share;
-                    } else {
-                        blend.moving += share;
-                        blend.flow += plane.velocity * share;
-                        blend.turbulence += plane.turbulence * share;
-                        blend.white += plane.white * share;
-                    }
-                }
-                if !blend.known {
-                    surface[at] = own_surface;
-                    info[at] = own_info;
-                    flows[at] = unpack(own_info[0]).0;
+#[must_use]
+pub(crate) fn steadied(
+    (tile, own): (&Tile, Option<&TileWater>),
+    pyramid: &Pyramid,
+    (cell, cells): (f32, &dyn Fn(i64, i64) -> Option<SteadyCell>),
+    solids: &[Footprint],
+) -> Option<TileWater> {
+    let stride = TILE_STRIDE as usize;
+    let spacing = tile.spacing();
+    let origin = pyramid.tile_origin(tile.key());
+    let place =
+        |x: usize, z: usize| origin + Vec2::new(x as f32 - 1.0, z as f32 - 1.0) * spacing;
+    let ground = |point: Vec2| ground_at(tile, point - origin);
+    let planes = Planes::of(
+        place(0, 0),
+        place(stride - 1, stride - 1),
+        cell,
+        cells,
+        &ground,
+    );
+    let count = stride * stride;
+    let mut surface = vec![f32::NAN; count];
+    let mut info = vec![[0_u32; 2]; count];
+    let mut flows = vec![Vec2::ZERO; count];
+    let mut stirred = vec![None; count];
+    let spans = spans(own);
+    for z in 0..stride {
+        for x in 0..stride {
+            let at = z * stride + x;
+            let (own_surface, own_info) = own.map_or((f32::NAN, [0; 2]), |water| {
+                (water.surfaces()[at], water.info()[at])
+            });
+            let point = place(x, z);
+            let mut blend = Blend::NONE;
+            for (i, j, share) in around(point, cell) {
+                let plane = planes.at(i, j);
+                if !plane.known {
                     continue;
                 }
-                if blend.weight <= 0.0 {
+                blend.known = true;
+                if !plane.wet {
                     continue;
                 }
-                let sheeted = own_surface.is_finite() && own_info[0] & (1 << 23) != 0;
-                let flow = blend.flow();
-                surface[at] = codec::on_grid(blend.level / blend.weight);
-                info[at][0] = pack(flow, sheeted, blend.held * 2.0 > blend.weight, spans[at]);
-                flows[at] = flow;
-                stirred[at] = Some([blend.turbulence / blend.weight, blend.white / blend.weight]);
-            }
-        }
-        self.stir(&surface, &mut info, &flows, &stirred);
-        TileWater::new(
-            surface.into_boxed_slice(),
-            info.into_boxed_slice(),
-            (self.heights(), spacing, self.origin()),
-            solids,
-        )
-    }
-
-    #[must_use]
-    pub fn flowing(
-        &self,
-        pyramid: &Pyramid,
-        squares: &dyn Fn(i64, i64) -> Option<SteadySquare>,
-    ) -> Option<TileWater> {
-        let own = self.water()?;
-        let stride = TILE_STRIDE as usize;
-        let spacing = self.spacing();
-        let origin = pyramid.tile_origin(self.key());
-        let square = pyramid.tile_size(0) / SUMMARY_SIDE as f32;
-        let surface: Box<[f32]> = own.surfaces().into();
-        let heights = self.heights();
-        let mut info: Box<[[u32; 2]]> = own.info().into();
-        let mut flows: Vec<Vec2> = info.iter().map(|words| unpack(words[0]).0).collect();
-        let mut stirred = vec![None; info.len()];
-        for z in 0..stride {
-            for x in 0..stride {
-                let at = z * stride + x;
-                let wet = surface[at] > heights[at];
-                if !wet {
-                    continue;
-                }
-                let point = origin + Vec2::new(x as f32 - 1.0, z as f32 - 1.0) * spacing;
-                let mut blend = Blend::NONE;
-                for (i, j, share) in tent(point, spacing, square) {
-                    let Some(found) = squares(i, j) else {
-                        continue;
-                    };
-                    blend.known = true;
-                    if let Some(velocity) = found.velocity {
-                        let velocity = Vec2::from(velocity);
-                        let swirl = found.swirl.unwrap_or(0.0);
-                        blend.moving += share;
-                        blend.flow += velocity * share;
-                        blend.turbulence += turbulence(0.0, velocity.length(), swirl) * share;
-                        blend.white += found.white.unwrap_or(0.0) * share;
-                    }
-                }
-                if !blend.known {
-                    continue;
-                }
-                let (_, lake, span) = unpack(info[at][0]);
-                let sheeted = info[at][0] & (1 << 23) != 0;
-                let flowing = !lake && blend.moving > 0.0;
-                let flow = if flowing {
-                    blend.flow / blend.moving
+                let middle = (Vec2::new(i as f32, j as f32) + 0.5) * cell;
+                blend.weight += share;
+                blend.level += (plane.level + plane.slope.dot(point - middle)) * share;
+                if plane.held {
+                    blend.held += share;
                 } else {
-                    Vec2::ZERO
-                };
-                info[at][0] = pack(flow, sheeted, lake, span);
-                flows[at] = flow;
-                stirred[at] = Some(if flowing {
-                    [blend.turbulence / blend.moving, blend.white / blend.moving]
-                } else {
-                    [0.0; 2]
-                });
+                    blend.moving += share;
+                    blend.flow += plane.velocity * share;
+                    blend.turbulence += plane.turbulence * share;
+                    blend.white += plane.white * share;
+                }
             }
-        }
-        self.stir(&surface, &mut info, &flows, &stirred);
-        let tile = (self.heights(), spacing, self.origin());
-        TileWater::new(surface, info, tile, own.solids())
-    }
-
-    fn stir(
-        &self,
-        surface: &[f32],
-        info: &mut [[u32; 2]],
-        flows: &[Vec2],
-        stirred: &[Option<[f32; 2]>],
-    ) {
-        let stride = TILE_STRIDE as usize;
-        let spacing = self.spacing();
-        let heights = self.heights();
-        let shears = shears(flows, &|at| surface[at] > heights[at], spacing);
-        for (at, stirred) in stirred.iter().enumerate() {
-            let Some([churning, white]) = *stirred else {
+            if !blend.known {
+                surface[at] = own_surface;
+                info[at] = own_info;
+                flows[at] = unpack(own_info[0]).0;
                 continue;
+            }
+            if blend.weight <= 0.0 {
+                continue;
+            }
+            let sheeted = own_surface.is_finite() && own_info[0] & (1 << 23) != 0;
+            let flow = blend.flow();
+            surface[at] = codec::on_grid(blend.level / blend.weight);
+            info[at][0] = pack(flow, sheeted, blend.held * 2.0 > blend.weight, spans[at]);
+            flows[at] = flow;
+            stirred[at] = Some([blend.turbulence / blend.weight, blend.white / blend.weight]);
+        }
+    }
+    stir(tile, &surface, &mut info, &flows, &stirred);
+    TileWater::new(
+        surface.into_boxed_slice(),
+        info.into_boxed_slice(),
+        (tile.heights(), spacing, tile_origin(tile.key(), tile.spacing())),
+        solids,
+    )
+}
+
+#[must_use]
+pub(crate) fn flowing(
+    (tile, own): (&Tile, Option<&TileWater>),
+    pyramid: &Pyramid,
+    squares: &dyn Fn(i64, i64) -> Option<SteadySquare>,
+) -> Option<TileWater> {
+    let own = own?;
+    let stride = TILE_STRIDE as usize;
+    let spacing = tile.spacing();
+    let origin = pyramid.tile_origin(tile.key());
+    let square = pyramid.tile_size(0) / SUMMARY_SIDE as f32;
+    let surface: Box<[f32]> = own.surfaces().into();
+    let heights = tile.heights();
+    let mut info: Box<[[u32; 2]]> = own.info().into();
+    let mut flows: Vec<Vec2> = info.iter().map(|words| unpack(words[0]).0).collect();
+    let mut stirred = vec![None; info.len()];
+    for z in 0..stride {
+        for x in 0..stride {
+            let at = z * stride + x;
+            let wet = surface[at] > heights[at];
+            if !wet {
+                continue;
+            }
+            let point = origin + Vec2::new(x as f32 - 1.0, z as f32 - 1.0) * spacing;
+            let mut blend = Blend::NONE;
+            for (i, j, share) in tent(point, spacing, square) {
+                let Some(found) = squares(i, j) else {
+                    continue;
+                };
+                blend.known = true;
+                if let Some(velocity) = found.velocity {
+                    let velocity = Vec2::from(velocity);
+                    let swirl = found.swirl.unwrap_or(0.0);
+                    blend.moving += share;
+                    blend.flow += velocity * share;
+                    blend.turbulence += turbulence(0.0, velocity.length(), swirl) * share;
+                    blend.white += found.white.unwrap_or(0.0) * share;
+                }
+            }
+            if !blend.known {
+                continue;
+            }
+            let (_, lake, span) = unpack(info[at][0]);
+            let sheeted = info[at][0] & (1 << 23) != 0;
+            let flowing = !lake && blend.moving > 0.0;
+            let flow = if flowing {
+                blend.flow / blend.moving
+            } else {
+                Vec2::ZERO
             };
-            let local = Vec2::new((at % stride) as f32 - 1.0, (at / stride) as f32 - 1.0) * spacing;
-            info[at][1] = pack_state(PointState {
-                turbulence: churning,
-                breaking: white,
-                shear: shears[at],
-                reach: self.bed(local).map(|bed| bed.reach),
+            info[at][0] = pack(flow, sheeted, lake, span);
+            flows[at] = flow;
+            stirred[at] = Some(if flowing {
+                [blend.turbulence / blend.moving, blend.white / blend.moving]
+            } else {
+                [0.0; 2]
             });
         }
     }
+    stir(tile, &surface, &mut info, &flows, &stirred);
+    let tile = (tile.heights(), spacing, tile_origin(tile.key(), tile.spacing()));
+    TileWater::new(surface, info, tile, own.solids())
+}
 
-    fn ground_at(&self, local: Vec2) -> f32 {
-        let last = (TILE_STRIDE - 2) as f32;
-        let u = clamp(local.x / self.spacing(), -1.0, last);
-        let v = clamp(local.y / self.spacing(), -1.0, last);
-        let (i, j) = (min(u.floor(), last - 1.0), min(v.floor(), last - 1.0));
-        let (x, z) = (i as i32, j as i32);
-        let corners = [
-            self.height(x, z),
-            self.height(x + 1, z),
-            self.height(x, z + 1),
-            self.height(x + 1, z + 1),
-        ];
-        on_triangle(corners, u - i, v - j)
+fn stir(
+    tile: &Tile,
+    surface: &[f32],
+    info: &mut [[u32; 2]],
+    flows: &[Vec2],
+    stirred: &[Option<[f32; 2]>],
+) {
+    let stride = TILE_STRIDE as usize;
+    let spacing = tile.spacing();
+    let heights = tile.heights();
+    let shears = shears(flows, &|at| surface[at] > heights[at], spacing);
+    for (at, stirred) in stirred.iter().enumerate() {
+        let Some([churning, white]) = *stirred else {
+            continue;
+        };
+        let local = Vec2::new((at % stride) as f32 - 1.0, (at / stride) as f32 - 1.0) * spacing;
+        info[at][1] = pack_state(PointState {
+            turbulence: churning,
+            breaking: white,
+            shear: shears[at],
+            reach: tile.bed(local).map(|bed| bed.reach),
+        });
     }
+}
+
+fn ground_at(tile: &Tile, local: Vec2) -> f32 {
+    let last = (TILE_STRIDE - 2) as f32;
+    let u = clamp(local.x / tile.spacing(), -1.0, last);
+    let v = clamp(local.y / tile.spacing(), -1.0, last);
+    let (i, j) = (min(u.floor(), last - 1.0), min(v.floor(), last - 1.0));
+    let (x, z) = (i as i32, j as i32);
+    let corners = [
+        tile.height(x, z),
+        tile.height(x + 1, z),
+        tile.height(x, z + 1),
+        tile.height(x + 1, z + 1),
+    ];
+    on_triangle(corners, u - i, v - j)
 }
 
 pub(crate) enum SettledReads {
@@ -2274,7 +2282,9 @@ pub(crate) enum SettledReads {
 }
 
 pub(crate) struct Steadying {
+    layers: Arc<Layers>,
     pyramid: Pyramid,
+    key: TileKey,
     cell: f32,
     generator: Generator,
     reads: SettledReads,
@@ -2288,9 +2298,11 @@ impl Steadying {
         (cell, reads): (f32, SettledReads),
     ) -> Self {
         Self {
+            generator: Generator::new(Arc::clone(&layers), &pyramid, key),
+            layers,
             pyramid,
+            key,
             cell,
-            generator: Generator::new(layers, &pyramid, key),
             reads,
         }
     }
@@ -2302,7 +2314,12 @@ impl Steadying {
             }
             return Ok(None);
         };
+        let own = kept(tile_water_of(
+            tile_rows(&self.layers, &self.pyramid, self.key),
+            &made,
+        ))?;
         let tile: Tile = codec::decode(&codec::encode(&made))?;
+        let held = (&tile, own.as_ref());
         let pyramid = &self.pyramid;
         let water = match &self.reads {
             SettledReads::Records(records) => {
@@ -2317,9 +2334,9 @@ impl Steadying {
                     .iter()
                     .flat_map(|(_, water)| water.solids.iter().copied())
                     .collect();
-                tile.steadied(pyramid, (cell, &cells), &solids)
+                steadied(held, pyramid, (cell, &cells), &solids)
             }
-            SettledReads::Summaries(summaries) => tile.flowing(pyramid, &|i, j| {
+            SettledReads::Summaries(summaries) => flowing(held, pyramid, &|i, j| {
                 let side = i64::from(SUMMARY_SIDE);
                 if i < 0 || j < 0 {
                     return None;

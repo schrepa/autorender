@@ -7,13 +7,13 @@ import { JobStore, jobCacheSettings, type Unpacker } from "./job-cache";
 import { fatal, type PanicReport } from "./panic";
 
 export type JobRuntime = Pick<Runtime, "set_job_workers" | "set_job_cache" | "take_jobs" | "complete_job" | "fail_job"
-  | "job_kept" | "lose_job_worker" | "job_task" | "job_task_done" | "report_job_cache">;
+  | "job_kept" | "lose_job_worker" | "job_task" | "job_task_done" | "report_job_cache" | "job_hash">;
 
 export type JobOrder =
   | { clear: true }
   | { share: string; bytes: Uint8Array }
   | { unshare: string }
-  | { run: number; worker: number; kind: string; input: Uint8Array; priority: number }
+  | { run: number; worker: number; kind: string; source: string; input: Uint8Array; priority: number }
   | { cancel: number; worker: number }
   | { lookup: number; key: string }
   | { keep: string; output: Uint8Array }
@@ -46,6 +46,7 @@ export class JobPool {
   private readonly shares = new Map<string, Blob>();
   private readonly tasks = new Map<number, Task>();
   private runtime: JobRuntime | undefined;
+  private hash: Uint8Array | undefined;
   private failed: ((error: unknown) => void) | undefined;
   private ready = false;
   private timer = 0;
@@ -70,6 +71,8 @@ export class JobPool {
     this.runtime = runtime;
     this.failed = failed;
     this.ready = false;
+    this.hash = this.call(runtime => runtime.job_hash());
+    if (this.hash) this.broadcast({ type: "list", hash: this.hash });
     this.call(runtime => runtime.set_job_workers(this.size));
     void this.store.then(store => {
       if (this.runtime !== runtime) return;
@@ -137,8 +140,8 @@ export class JobPool {
       this.shares.delete(order.unshare);
       this.broadcast({ type: "unshare", key: order.unshare });
     } else if ("run" in order) {
-      this.post(this.slots[order.worker], { type: "run", id: order.run, kind: order.kind, input: order.input, priority: order.priority },
-        [order.input.buffer as ArrayBuffer]);
+      this.post(this.slots[order.worker], { type: "run", id: order.run, kind: order.kind, source: order.source, input: order.input,
+        priority: order.priority }, [order.input.buffer as ArrayBuffer]);
     } else if ("cancel" in order) {
       this.post(this.slots[order.worker], { type: "cancel", id: order.cancel });
     } else if ("lookup" in order) {
@@ -207,6 +210,7 @@ export class JobPool {
       for (const [message, transfer] of slot.held ?? []) worker.postMessage(message, transfer);
       slot.held = undefined;
     });
+    if (this.hash) this.post(slot, { type: "list", hash: this.hash });
     for (const [key, blob] of this.shares) this.post(slot, { type: "share", key, blob });
     return slot;
   }

@@ -1,4 +1,4 @@
-import package::place::ground_surface::GroundMaterial;
+import package::place::ground_surface::{SurfaceGround, SurfaceInputs};
 import package::generated::terrain::{
     BIOME_WORDS, H_BIOMES, H_EROSION, H_FADE, H_HYDROLOGY, H_PATHS, H_PROGRAM, H_READS,
     H_WET_BIOMES, MAX_MATERIALS, MAX_STACK, NONE, OP_ADD, OP_CONSTANT, OP_CURVATURE, OP_DEPOSIT,
@@ -115,26 +115,6 @@ fn noise_mask(x: f32, z: f32, spacing: f32, frequency: f32, seed: u32, octaves: 
     return clamp_rule(0.5 + 0.5 * sum / weight, 0.0, 1.0);
 }
 
-
-struct SurfaceInputs {
-    x: f32,
-    z: f32,
-    height: f32,
-    gradient: vec2<f32>,
-    curvature: f32,
-    spacing: f32,
-    flow: f32,
-    wetness: f32,
-    lake: f32,
-    erosion: f32,
-    river: f32,
-    grain: f32,
-    power: f32,
-    flood: f32,
-    path_distance: f32,
-    path_half: f32,
-}
-
 fn image_weights(t: f32) -> vec4<f32> {
     let s = 1.0 - t;
     let t2 = t * t;
@@ -217,7 +197,6 @@ fn erosion_change(point: vec2<f32>, spacing: f32) -> f32 {
     }
     return change;
 }
-
 
 fn path_at(point: vec2<f32>) -> vec2<f32> {
     let section = word(H_PATHS);
@@ -307,20 +286,6 @@ fn shown(point: vec2<f32>) -> f32 {
     }
     let t = pmin(outside / blend, 1.0);
     return 1.0 - t * t * (3.0 - 2.0 * t);
-}
-
-
-struct SurfaceGround {
-    x: f32,
-    z: f32,
-    height: f32,
-    gradient: vec2<f32>,
-    curvature: f32,
-    spacing: f32,
-}
-
-fn surface_gpu(terrain: u32) -> bool {
-    return surface_materials[terrain].gpu != 0u;
 }
 
 fn surface_level(terrain: u32, spacing: f32) -> u32 {
@@ -503,7 +468,6 @@ fn evaluate(start: u32, inputs: SurfaceInputs) -> f32 {
     return stack[0];
 }
 
-
 fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
     surface_base = surface_materials[terrain].base;
     let program = word(H_PROGRAM);
@@ -595,23 +559,5 @@ fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
     let packed = (first & 0xffu) | ((second & 0xffu) << 8u)
         | (min(u32(blend * 255.0 + 0.5), 255u) << 16u)
         | (min(u32(soaked * 255.0 + 0.5), 255u) << 24u);
-}
-
-fn material_at(terrain: u32, at: vec2<f32>, height: f32, slope: f32) -> GroundMaterial {
-    var material: GroundMaterial;
-    if !surface_gpu(terrain) {
-        return material;
-    }
-    var ground: SurfaceGround;
-    ground.x = at.x;
-    ground.z = at.y;
-    ground.height = height;
-    ground.gradient = vec2<f32>(slope, 0.0);
-    ground.spacing = 1.0;
-    let packed = surface_control(terrain, surface_inputs(terrain, ground, 0u,
-        vec4<f32>(SURFACE_RIVER_FAR, 0.0, 0.0, SURFACE_RIVER_FAR)));
-    material.first = packed & 0xffu;
-    material.second = (packed >> 8u) & 0xffu;
-    material.share = (packed >> 16u) & 0xffu;
-    return material;
+    return packed;
 }

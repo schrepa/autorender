@@ -20,29 +20,40 @@ pub(crate) const OWN: [(&str, u32); 5] = [
     ("normals", DEBUG_VIEW_NORMALS),
 ];
 
+type Drawn = (TypeId, u32);
+
 pub(crate) fn member(name: &'static str) -> DebugMode {
     DebugMode {
         name,
-        decode: drawn,
+        decode: no_fields,
     }
 }
 
-fn drawn(_: [u32; 4], _: [f32; 4]) -> Value {
+pub(crate) fn name(mode: &DebugMode) -> &'static str {
+    mode.name
+}
+
+fn no_fields(_: [u32; 4], _: [f32; 4]) -> Value {
     Value::Null
 }
 
-fn kinds() -> DebugShown {
-    DebugShown {
-        owner: Some(TypeId::of::<DebugViewBrick>()),
-        local: 0,
+fn named_mode(view: &DebugView, modes: &Joined<'_, DebugModes>) -> Option<Drawn> {
+    if !view.showing() {
+        return None;
     }
+    modes
+        .owned()
+        .find(|(_, _, mode)| mode.name == view.view)
+        .map(|(owner, local, _)| (owner, local))
 }
 
-fn code(shown: DebugShown) -> u32 {
-    if shown.owner != Some(TypeId::of::<DebugViewBrick>()) {
-        return 0;
+fn code(drawn: Option<Drawn>) -> u32 {
+    match drawn {
+        Some((owner, local)) if owner == TypeId::of::<DebugViewBrick>() => {
+            OWN.get(local as usize).map_or(0, |(_, code)| *code)
+        }
+        Some(_) | None => 0,
     }
-    OWN.get(shown.local as usize).map_or(0, |(_, code)| *code)
 }
 
 pub(crate) fn publish(
@@ -52,24 +63,20 @@ pub(crate) fn publish(
     mut shown: ResMut<DebugShown>,
     mut piece: ResMut<DebugViewPiece>,
 ) {
-    let selected = if view.showing() {
-        modes
-            .owned()
-            .find(|(_, _, mode)| mode.name == view.view.as_str())
-            .map(|(owner, local, _)| DebugShown {
-                owner: Some(owner),
-                local,
-            })
-    } else {
-        None
+    let chosen = named_mode(&view, &modes);
+    let drawn = match probe.forces() {
+        Some(false) => None,
+        Some(true) => Some(chosen.unwrap_or((TypeId::of::<DebugViewBrick>(), 0))),
+        None => chosen,
     };
-    let next = match probe.forces() {
-        Some(false) => DebugShown::default(),
-        Some(true) => selected.unwrap_or_else(kinds),
-        None => selected.unwrap_or_default(),
-    };
-    shown.set_if_neq(next);
+    let coming = probe.coming();
+    shown.set_if_neq(DebugShown {
+        owner: drawn.map(|(owner, _)| owner),
+        local: drawn.map_or(0, |(_, local)| local),
+        next_debug: coming.unwrap_or(chosen.is_some()),
+        next_whole: coming.is_some(),
+    });
     piece.set_if_neq(DebugViewPiece {
-        view: [code(next), u32::from(view.shade), 0, 0],
+        view: [code(drawn), u32::from(view.shade), 0, 0],
     });
 }

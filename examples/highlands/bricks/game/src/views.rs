@@ -4,16 +4,13 @@ use engine_places::ground::Ground;
 use engine_places::physics::RigidBody;
 use glam::{Vec2, Vec3};
 
-use crate::HighlandsSettings;
-
 const EYE_HEIGHT: f32 = 1.7;
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct BodiesView(Option<Camera>);
 
-#[derive(Default)]
+#[derive(Resource, Default)]
 pub(crate) struct Views {
-    seen: Option<HighlandsSettings>,
     standing: Option<StandingEye>,
     awaiting: bool,
 }
@@ -27,11 +24,11 @@ struct StandingEye {
 }
 
 impl StandingEye {
-    fn new(ground: &Ground, [x, z, yaw, pitch]: [f32; 4]) -> Self {
+    fn new(ground: Option<&Ground>, [x, z, yaw, pitch]: [f32; 4]) -> Self {
         let (yaw_sin, yaw_cos) = math::sin_cos(yaw.to_radians());
         let (pitch_sin, pitch_cos) = math::sin_cos(pitch.to_radians());
         let ground = ground
-            .sample(Vec2::new(x, z))
+            .and_then(|ground| ground.sample(Vec2::new(x, z)))
             .map_or(0.0, |ground| ground.height);
         Self {
             x,
@@ -54,53 +51,60 @@ impl StandingEye {
     }
 }
 
+impl Views {
+    pub(crate) fn stand(&mut self, ground: Option<&Ground>, place: [f32; 4], camera: &mut Camera) {
+        let standing = StandingEye::new(ground, place);
+        self.standing = Some(standing);
+        *camera = standing.camera();
+    }
+
+    pub(crate) fn watch_bodies(&mut self, on: bool, bodies: Option<Camera>) -> Option<Camera> {
+        if !on {
+            self.awaiting = false;
+            return None;
+        }
+        match bodies {
+            Some(view) => {
+                self.awaiting = false;
+                self.standing = None;
+                Some(view)
+            }
+            None => {
+                self.awaiting = true;
+                None
+            }
+        }
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.standing = None;
+        self.awaiting = false;
+    }
+}
+
 pub(crate) fn watch(bodies: Query<&Transform, With<RigidBody>>, mut view: ResMut<BodiesView>) {
     view.set_if_neq(BodiesView(bodies_view(&bodies)));
 }
 
 pub(crate) fn look(
-    (settings, ground, input): (Res<HighlandsSettings>, Res<Ground>, Res<MoveInput>),
-    bodies: Res<BodiesView>,
+    (ground, input, bodies): (Option<Res<Ground>>, Option<Res<MoveInput>>, Res<BodiesView>),
     mut camera: ResMut<Camera>,
-    mut views: Local<Views>,
+    mut views: ResMut<Views>,
 ) {
     let views = &mut *views;
-    if settings.is_changed() {
-        let seen = views.seen.replace(settings.clone());
-        if seen.as_ref().map(|seen| seen.stand) != Some(settings.stand) {
-            views.standing = settings.stand.map(|place| StandingEye::new(&ground, place));
-            if let Some(standing) = views.standing {
-                *camera = standing.camera();
-            }
-        }
-        if seen.as_ref().map(|seen| seen.watch_bodies) != Some(settings.watch_bodies) {
-            watch_bodies(views, settings.watch_bodies, bodies.0, &mut camera);
-        }
+    if views.awaiting
+        && bodies.0.is_some()
+        && let Some(view) = views.watch_bodies(true, bodies.0)
+    {
+        *camera = view;
     }
-    hold_standing_eye(views, (&ground, &input), &mut camera);
-    if views.awaiting && bodies.0.is_some() {
-        watch_bodies(views, true, bodies.0, &mut camera);
-    }
-}
-
-fn watch_bodies(views: &mut Views, on: bool, bodies: Option<Camera>, camera: &mut ResMut<Camera>) {
-    if !on {
-        views.awaiting = false;
-        return;
-    }
-    match bodies {
-        Some(view) => {
-            views.awaiting = false;
-            views.standing = None;
-            **camera = view;
-        }
-        None => views.awaiting = true,
-    }
+    let input = input.as_deref().copied().unwrap_or_default();
+    hold_standing_eye(views, (ground.as_deref(), &input), &mut camera);
 }
 
 fn hold_standing_eye(
     views: &mut Views,
-    (ground, input): (&Ground, &MoveInput),
+    (ground, input): (Option<&Ground>, &MoveInput),
     camera: &mut ResMut<Camera>,
 ) {
     let Some(standing) = views.standing else {
@@ -119,7 +123,8 @@ fn hold_standing_eye(
         views.standing = None;
         return;
     }
-    let Some(found) = ground.sample(Vec2::new(standing.x, standing.z)) else {
+    let Some(found) = ground.and_then(|ground| ground.sample(Vec2::new(standing.x, standing.z)))
+    else {
         return;
     };
     let held = StandingEye {
@@ -130,8 +135,11 @@ fn hold_standing_eye(
     views.standing = Some(held);
 }
 
-fn bodies_view(bodies: &Query<&Transform, With<RigidBody>>) -> Option<Camera> {
-    let at: Vec<Vec3> = bodies.iter().map(|transform| transform.translation).collect();
+pub(crate) fn bodies_view(bodies: &Query<&Transform, With<RigidBody>>) -> Option<Camera> {
+    let at: Vec<Vec3> = bodies
+        .iter()
+        .map(|transform| transform.translation)
+        .collect();
     if at.is_empty() {
         return None;
     }

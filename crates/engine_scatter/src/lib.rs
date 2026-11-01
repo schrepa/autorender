@@ -15,7 +15,6 @@ mod settings;
 mod smokes;
 mod systems;
 
-use bevy_ecs::prelude::Res;
 use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source};
 use engine_places::ground::{FarCover, Foliage, Occupancy, PlacedTiles};
 use engine_places::shadows::ShadowCasters;
@@ -30,11 +29,18 @@ pub struct ScatterBrick;
 
 impl Brick for ScatterBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "foliage_settings",
-        runs: Runs::Gpu,
-        run: smokes::foliage_settings,
-    }];
+    const SMOKES: &'static [Smoke] = &[
+        Smoke {
+            name: "foliage_settings",
+            runs: Runs::Gpu,
+            run: smokes::foliage_settings,
+        },
+        Smoke {
+            name: "slot_scatter_covers",
+            runs: Runs::Gpu,
+            run: smokes::scatter_covers,
+        },
+    ];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
@@ -43,24 +49,24 @@ impl Brick for ScatterBrick {
             .settings::<OccupancySettings>()
             .stats::<ScatterStats>()
             .resource::<systems::ScatterState>()
+            .resource::<systems::ScatterFeedback>()
             .resource::<occupancy::OccupancyWindows>()
             .resource::<far_cover::FarCoverTable>()
             .piece::<layouts::CanopyPiece>()
+            .generated(layouts::GENERATED)
             .fill::<Foliage>(Some(shaders::scatter::faces::foliage::MODULE))
             .fill::<PlacedTiles>(Some(shaders::scatter::faces::placed_tiles::MODULE))
-            .within(
-                |occupancy: Res<OccupancySettings>| occupancy.runs(),
-                |bricks| {
-                    bricks.fill::<Occupancy>(Some(shaders::scatter::faces::occupancy::MODULE));
-                },
-            )
+            .fill::<Occupancy>(Some(shaders::scatter::faces::occupancy::MODULE))
             .join::<FarCover>((), Some(shaders::scatter::faces::far_cover::MODULE))
             .systems(
                 Schedule::ViewSync,
                 (
                     systems::publish_foliage,
+                    systems::take_impostors,
                     systems::place_windows,
                     systems::place_pool,
+                    systems::publish_assets,
+                    systems::plan_cull,
                     systems::mark_moved,
                     systems::publish_tiles,
                     systems::publish_changes,

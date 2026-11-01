@@ -9,8 +9,8 @@ use std::{collections::BTreeMap, io::Write};
 use bevy_ecs::prelude::{Component, Entity, Resource, World};
 use engine_core::{
     ActionId, ActionInput, AssetLibrary, Camera, Engine, FixedTime, FrameTime, GlobalTransforms,
-    InterpolateTransform, JobExchange, MaterialHandle, Mesh3d, MeshHandle, MoveInput, Parent,
-    PresentationMode, PresentationState, Projection, TextureHandle, Transform,
+    InterpolateTransform, JobExchange, Mesh3d, MoveInput, Parent, PresentationMode,
+    PresentationState, Projection, TextureHandle, Transform,
 };
 use engine_registry::{BrickRecord, OperationScene, Registry};
 use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
@@ -99,21 +99,12 @@ type ReadInspector =
 
 pub trait RendererFacts {
     fn texture_resident(&self, texture: TextureHandle) -> bool;
-    fn mesh(&self, mesh: MeshHandle) -> Option<RenderedMesh>;
-    fn impostor(&self, mesh: MeshHandle, material: MaterialHandle) -> Option<bool>;
-    fn drawn_level(&self, slot: u32) -> Option<u32>;
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct RenderedMesh {
-    pub levels: Vec<(u32, f32)>,
 }
 
 #[derive(Clone, Copy, Default)]
 pub struct Context<'a> {
     pub scene: Option<&'a SceneInstance>,
     pub renderer: Option<&'a dyn RendererFacts>,
-    pub render_slot: Option<&'a dyn Fn(Entity) -> Option<u32>>,
 }
 type HasInspector = Box<dyn Fn(&World, Option<Entity>) -> bool + Send + Sync>;
 
@@ -404,23 +395,12 @@ impl DevTools {
         let world = engine.app.world();
         match query {
             Query::Status {} => Ok(result::status(self.status(engine, scene))),
-            Query::Assets {} => {
-                let slot = |entity| engine.render_slot(entity);
-                assets(
-                    world,
-                    Context {
-                        render_slot: Some(&slot),
-                        ..context
-                    },
-                )
-                .map(result::assets)
-            }
+            Query::Assets {} => assets(world, context).map(result::assets),
             Query::Digest {} => Ok(result::digest(self.digest(
                 world,
                 Context {
                     scene,
                     renderer: None,
-                    render_slot: None,
                 },
             ))),
             Query::Distribution { values } => {
@@ -451,12 +431,6 @@ impl DevTools {
             limit: request.limit,
         };
         engine.refresh_transforms();
-        let engine = &*engine;
-        let slot = |entity| engine.render_slot(entity);
-        let context = Context {
-            render_slot: Some(&slot),
-            ..context
-        };
         self.inspect(engine.app.world(), context, selector)
     }
 

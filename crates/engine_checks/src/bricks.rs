@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::query::ComponentAccessKind;
 use bevy_ecs::schedule::graph::Direction;
-use bevy_ecs::schedule::{NodeId, Schedules, SystemSet};
+use bevy_ecs::schedule::{NodeId, ScheduleGraph, Schedules, SystemKey, SystemSet, SystemSetKey};
 use bevy_ecs::system::System;
 use bevy_ecs::world::World;
 use engine::Engine;
@@ -74,16 +74,7 @@ fn uses(
             let Some(set) = graph.system_sets.get_key(BrickSet(package).intern()) else {
                 continue;
             };
-            let systems: Vec<_> = graph
-                .hierarchy()
-                .graph()
-                .neighbors_directed(NodeId::Set(set), Direction::Outgoing)
-                .filter_map(|node| match node {
-                    NodeId::System(key) => Some(key),
-                    NodeId::Set(_) => None,
-                })
-                .collect();
-            for key in systems {
+            for key in systems_under(graph, set) {
                 let Some(system) = graph.systems.get_mut(key) else {
                     continue;
                 };
@@ -119,6 +110,26 @@ fn uses(
         world.resource_mut::<Schedules>().insert(schedule);
     }
     uses
+}
+
+fn systems_under(graph: &ScheduleGraph, set: SystemSetKey) -> Vec<SystemKey> {
+    let hierarchy = graph.hierarchy();
+    let mut stack = vec![NodeId::Set(set)];
+    let mut seen: Vec<NodeId> = Vec::new();
+    let mut systems: Vec<SystemKey> = Vec::new();
+    while let Some(node) = stack.pop() {
+        for child in hierarchy.neighbors_directed(node, Direction::Outgoing) {
+            if seen.contains(&child) {
+                continue;
+            }
+            seen.push(child);
+            match child {
+                NodeId::System(system) => systems.push(system),
+                NodeId::Set(_) => stack.push(child),
+            }
+        }
+    }
+    systems
 }
 
 fn smokes(smokes: &[Smoke]) -> Vec<Value> {

@@ -7,8 +7,8 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Deferred, Res, SystemParam};
 use bevy_ecs::world::World;
 use engine_registry::{
-    JobKindRef, JobList, JobListed, JobMember, JobOrder, JobOrders, RecordParity, RecordStore,
-    Shares,
+    JobBatch, JobKindRef, JobList, JobListed, JobMember, JobOrder, JobOrders, RecordParity,
+    RecordStore, Shares,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -109,7 +109,7 @@ impl JobCx<'_> {
 
 #[doc(hidden)]
 pub fn job_list(kinds: &[&'static JobKind]) -> Result<JobList, Error> {
-    let core: [&'static JobKind; 2] = [&TEXTURE_COOK, &MESH_LODS];
+    let core: [&'static JobKind; 3] = [&TEXTURE_COOK, &MESH_LODS, &crate::assets::IMPOSTOR];
     JobList::new(
         core.into_iter()
             .chain(kinds.iter().copied())
@@ -323,16 +323,10 @@ impl Job for Whole {
     }
 }
 
-fn cook_texture(input: &[u8]) -> Result<Vec<u8>, Error> {
-    engine_textures::cook_job(input).map_err(|message| {
-        Error::new(ErrorCode::InvalidValue, format!("$.jobs.{TEXTURE_COOK_NAME}")).got(message)
-    })
-}
-
 fn start_texture_cook(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
     Ok(Box::new(Whole {
         input: input.to_vec(),
-        run: cook_texture,
+        run: engine_textures::cook_job,
     }))
 }
 
@@ -475,6 +469,7 @@ struct Flight {
 }
 
 struct Asked {
+    batch: JobBatch,
     key: RecordKey,
     kind: JobRef,
     input: Vec<u8>,
@@ -767,8 +762,17 @@ impl JobExchange {
         }
     }
 
-    fn settle(&mut self, orders: Vec<JobOrder>, store: &mut RecordStore, keep_frames: u32) {
-        for order in orders {
+    fn settle(
+        &mut self,
+        orders: Vec<(JobBatch, JobOrder)>,
+        store: &mut RecordStore,
+        keep_frames: Option<u32>,
+    ) {
+        let mut firsts: Vec<JobBatch> = Vec::new();
+        for (batch, order) in orders {
+            if !firsts.iter().any(|first| first.owner == batch.owner) {
+                firsts.push(batch);
+            }
             match order {
                 JobOrder::Start {
                     key,
@@ -779,6 +783,7 @@ impl JobExchange {
                 } => {
                     store.want(key);
                     self.asked.push(Asked {
+                        batch,
                         key: RecordKey(key),
                         kind: JobRef::named(kind, source),
                         input,
@@ -795,6 +800,7 @@ impl JobExchange {
                 } => {
                     store.want(key);
                     self.asked.push(Asked {
+                        batch,
                         key: RecordKey(key),
                         kind: JobRef::named(kind, source),
                         input,
@@ -822,18 +828,35 @@ impl JobExchange {
                 }
             }
         }
-        self.admit(store);
+        self.admit(store, &firsts);
         self.land(store);
-        store.evict(keep_frames);
+        if let Some(keep_frames) = keep_frames {
+            store.evict(keep_frames);
+        }
     }
 
-    fn admit(&mut self, store: &RecordStore) {
-        let mut budget = JobBudget::of(self.workers, self.running());
-        for asked in std::mem::take(&mut self.asked) {
+    fn admit(&mut self, store: &RecordStore, firsts: &[JobBatch]) {
+        let mut budgets: Vec<(JobBatch, JobBudget)> = Vec::new();
+        for mut asked in std::mem::take(&mut self.asked) {
             if !self.wanted(asked.key, store) {
                 continue;
             }
-            if !budget.take(asked.priority) {
+            if asked.batch.run == LEFT_OVER {
+                asked.batch = firsts
+                    .iter()
+                    .copied()
+                    .find(|first| first.owner == asked.batch.owner)
+                    .unwrap_or(asked.batch);
+            }
+            let at = match budgets.iter().position(|(batch, _)| *batch == asked.batch) {
+                Some(at) => at,
+                None => {
+                    budgets.push((asked.batch, JobBudget::of(self.workers, self.running())));
+                    budgets.len() - 1
+                }
+            };
+            if !budgets[at].1.take(asked.priority) {
+                asked.batch.run = LEFT_OVER;
                 self.asked.push(asked);
                 continue;
             }
@@ -843,6 +866,7 @@ impl JobExchange {
                 input,
                 priority,
                 fetching,
+                ..
             } = asked;
             self.begin(key, kind, input, priority, fetching);
         }
@@ -917,6 +941,17 @@ impl JobExchange {
 }
 
 pub(crate) fn exchange_orders(world: &mut World) {
+    let keep_frames = world
+        .get_resource::<JobSettings>()
+        .map_or_else(|| JobSettings::default().keep_frames, |jobs| jobs.keep_frames);
+    settle_orders(world, Some(keep_frames));
+}
+
+pub(crate) fn admit_orders(world: &mut World) {
+    settle_orders(world, None);
+}
+
+fn settle_orders(world: &mut World, keep_frames: Option<u32>) {
     let orders = match world.get_resource_mut::<engine_registry::JobQueue>() {
         Some(mut queue) if !queue.orders.is_empty() => std::mem::take(&mut queue.orders),
         Some(_) | None => Vec::new(),
@@ -931,9 +966,6 @@ pub(crate) fn exchange_orders(world: &mut World) {
     if idle {
         return;
     }
-    let keep_frames = world
-        .get_resource::<JobSettings>()
-        .map_or_else(|| JobSettings::default().keep_frames, |jobs| jobs.keep_frames);
     world.resource_scope(|world, mut exchange: Mut<JobExchange>| {
         crate::modify(world, |records: &mut Records| {
             exchange.settle(orders, &mut records.store, keep_frames);
@@ -966,6 +998,8 @@ impl JobFailures {
         self.last = Some((frame, error));
     }
 }
+
+const LEFT_OVER: u64 = u64::MAX;
 
 struct JobBudget {
     slots: usize,

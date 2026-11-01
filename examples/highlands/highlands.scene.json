@@ -1,18 +1,4 @@
 {
-  "along": [
-    {
-      "every": 40.0,
-      "first": 20.0,
-      "id": "lantern",
-      "layer": "road",
-      "offset": 5.0,
-      "prefab": "lantern",
-      "streamed": {
-        "reach": 12.0
-      },
-      "terrain": "terrain"
-    }
-  ],
   "camera": {
     "far": 20000.0,
     "near": 0.5,
@@ -1250,24 +1236,8 @@
                 }
               },
               "id": "spruce0",
-              "lods": [
-                {
-                  "error": 0.04,
-                  "mesh": "spruce0_lod1"
-                },
-                {
-                  "error": 0.09,
-                  "mesh": "spruce0_lod2"
-                },
-                {
-                  "error": 0.16,
-                  "mesh": "spruce0_lod3"
-                }
-              ],
               "material": "needles",
-              "mesh": "spruce0",
-              "shadow": "spruce0_shadow",
-              "sway": 0.35
+              "mesh": "spruce0"
             },
             {
               "collider": {
@@ -1286,24 +1256,8 @@
                 }
               },
               "id": "spruce1",
-              "lods": [
-                {
-                  "error": 0.04,
-                  "mesh": "spruce1_lod1"
-                },
-                {
-                  "error": 0.09,
-                  "mesh": "spruce1_lod2"
-                },
-                {
-                  "error": 0.16,
-                  "mesh": "spruce1_lod3"
-                }
-              ],
               "material": "needles",
-              "mesh": "spruce1",
-              "shadow": "spruce1_shadow",
-              "sway": 0.35
+              "mesh": "spruce1"
             },
             {
               "collider": {
@@ -1322,24 +1276,8 @@
                 }
               },
               "id": "spruce2",
-              "lods": [
-                {
-                  "error": 0.04,
-                  "mesh": "spruce2_lod1"
-                },
-                {
-                  "error": 0.09,
-                  "mesh": "spruce2_lod2"
-                },
-                {
-                  "error": 0.16,
-                  "mesh": "spruce2_lod3"
-                }
-              ],
               "material": "needles",
-              "mesh": "spruce2",
-              "shadow": "spruce2_shadow",
-              "sway": 0.35
+              "mesh": "spruce2"
             }
           ],
           "biomes": [
@@ -1968,19 +1906,6 @@
                 0.135,
                 0.045
               ],
-              "cover": {
-                "color": [
-                  0.16,
-                  0.23,
-                  0.06
-                ],
-                "density": 140.0,
-                "height": [
-                  0.1,
-                  0.34
-                ],
-                "width": 0.035
-              },
               "depth": 0.03,
               "height_contrast": 0.35,
               "id": "grass",
@@ -1994,19 +1919,6 @@
                 0.16,
                 0.08
               ],
-              "cover": {
-                "color": [
-                  0.34,
-                  0.27,
-                  0.12
-                ],
-                "density": 70.0,
-                "height": [
-                  0.14,
-                  0.46
-                ],
-                "sway": 0.7
-              },
               "depth": 0.03,
               "height_contrast": 0.35,
               "id": "dry_grass",
@@ -2071,19 +1983,6 @@
                 0.13,
                 0.04
               ],
-              "cover": {
-                "color": [
-                  0.1,
-                  0.2,
-                  0.05
-                ],
-                "density": 170.0,
-                "height": [
-                  0.16,
-                  0.5
-                ],
-                "width": 0.035
-              },
               "depth": 0.03,
               "height_contrast": 0.35,
               "id": "wet_grass",
@@ -3678,6 +3577,49 @@
         4.0
       ]
     },
+    "ground_cover": {
+      "looks": {
+        "dry_grass": {
+          "color": [
+            0.34,
+            0.27,
+            0.12
+          ],
+          "density": 70.0,
+          "height": [
+            0.14,
+            0.46
+          ],
+          "sway": 0.7
+        },
+        "grass": {
+          "color": [
+            0.16,
+            0.23,
+            0.06
+          ],
+          "density": 140.0,
+          "height": [
+            0.1,
+            0.34
+          ],
+          "width": 0.035
+        },
+        "wet_grass": {
+          "color": [
+            0.1,
+            0.2,
+            0.05
+          ],
+          "density": 170.0,
+          "height": [
+            0.16,
+            0.5
+          ],
+          "width": 0.035
+        }
+      }
+    },
     "local_lights": {
       "distance": 220.0,
       "intensity": 0.35
@@ -3685,6 +3627,83 @@
     "reflections": {
       "distance": 4000.0,
       "enabled": true
+    },
+    "scatter": {
+      "looks": [
+        {
+          "lods": [
+            {
+              "error": 0.04,
+              "mesh": "spruce0_lod1"
+            },
+            {
+              "error": 0.09,
+              "mesh": "spruce0_lod2"
+            },
+            {
+              "error": 0.16,
+              "mesh": "spruce0_lod3"
+            }
+          ],
+          "mesh": "spruce0",
+          "shadow": "spruce0_shadow",
+          "sway": 0.35
+        },
+        {
+          "lods": [
+            {
+              "error": 0.04,
+              "mesh": "spruce1_lod1"
+            },
+            {
+              "error": 0.09,
+              "mesh": "spruce1_lod2"
+            },
+            {
+              "error": 0.16,
+              "mesh": "spruce1_lod3"
+            }
+          ],
+          "mesh": "spruce1",
+          "shadow": "spruce1_shadow",
+          "sway": 0.35
+        },
+        {
+          "lods": [
+            {
+              "error": 0.04,
+              "mesh": "spruce2_lod1"
+            },
+            {
+              "error": 0.09,
+              "mesh": "spruce2_lod2"
+            },
+            {
+              "error": 0.16,
+              "mesh": "spruce2_lod3"
+            }
+          ],
+          "mesh": "spruce2",
+          "shadow": "spruce2_shadow",
+          "sway": 0.35
+        }
+      ]
+    },
+    "streamed": {
+      "along": [
+        {
+          "every": 40.0,
+          "first": 20.0,
+          "id": "lantern",
+          "layer": "road",
+          "offset": 5.0,
+          "prefab": "lantern",
+          "streamed": {
+            "reach": 12.0
+          },
+          "terrain": "terrain"
+        }
+      ]
     },
     "temporal_antialiasing": {
       "enabled": true

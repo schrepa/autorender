@@ -1,3 +1,5 @@
+use engine_core::GpuStruct;
+
 engine_core::gpu_struct! {
     pub(crate) struct Grow {
         pub(crate) origin: [f32; 4],
@@ -51,5 +53,13 @@ engine_core::gpu_struct! {
 engine_core::gpu_consts! {
     pub(crate) const COVER_LEAVES: u32 = 5;
     pub(crate) const COVER_LUSH_RATIO: f32 = 2.0;
-    pub(crate) const COVER_ENTRIES: u32 = 113;
 }
+
+pub(crate) const GENERATED: &[&str] = &[
+    Grow::WGSL,
+    CoverFrame::WGSL,
+    CoverBlade::WGSL,
+    CoverMaterial::WGSL,
+    CoverTerrain::WGSL,
+    WGSL,
+];

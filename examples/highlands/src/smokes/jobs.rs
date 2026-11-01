@@ -1,4 +1,4 @@
-use engine_core::smoke::{Checked, camera, inspect, number, render};
+use engine_core::smoke::{Checked, camera, inspect, number, query, render};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
@@ -18,7 +18,21 @@ struct Looked {
     jobs: Value,
 }
 
-pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
+impl Looked {
+    fn value(self) -> Value {
+        json!({ "samples": self.samples, "drawn": self.drawn, "jobs": self.jobs })
+    }
+
+    fn of(mut value: Value) -> Self {
+        Self {
+            samples: value["samples"].as_array().cloned().unwrap_or_default(),
+            drawn: value["drawn"].take(),
+            jobs: value["jobs"].take(),
+        }
+    }
+}
+
+pub(super) fn workers(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
     let workers = look(session, false)?;
     let jobs = &workers.jobs;
     smoke_eq!(number(&jobs["workers"]) > 0.0, true, "workers_run_jobs");
@@ -37,6 +51,11 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         &json!(0),
         "with_workers_no_job_runs_in_place"
     );
+    Ok(workers.value())
+}
+
+pub(super) fn page(session: &mut dyn SmokeSession, workers: Value) -> Result<(), SmokeFailure> {
+    let workers = Looked::of(workers);
     let page = look(session, true)?;
     smoke_eq!(&page.jobs["workers"], &json!(0), "in_place_runs_no_workers");
     smoke_eq!(
@@ -104,11 +123,13 @@ fn look(session: &mut dyn SmokeSession, in_place: bool) -> Checked<Looked> {
         })
         .collect();
     let samples = heights(session, &points)?;
-    let rendering = render(session)?;
+    render(session)?;
+    let drawn = drawn(session)?;
+    let jobs = inspect(session, "Jobs")?;
     Ok(Looked {
         samples,
-        drawn: drawn(session)?,
-        jobs: rendering["jobs"].clone(),
+        drawn,
+        jobs,
     })
 }
 
@@ -116,7 +137,7 @@ fn walks(session: &mut dyn SmokeSession) -> Checked<()> {
     let mut agents = Value::Null;
     for _ in 0..WALK_STEPS {
         session.step(1);
-        agents = inspect(session, "navigation_stats")?;
+        agents = query(session, "nav_agents", json!({}))?;
         if number(&agents["walking"]) > 0.0 {
             break;
         }
@@ -127,9 +148,8 @@ fn walks(session: &mut dyn SmokeSession) -> Checked<()> {
         true,
         "the_walk_read_its_tiles_portals_and_grounds"
     );
-    let rendering = render(session)?;
     smoke_eq!(
-        &rendering["jobs"]["failed"],
+        &agents["failed_jobs"],
         &json!(0),
         "no_record_a_walk_read_failed"
     );
@@ -139,7 +159,6 @@ fn walks(session: &mut dyn SmokeSession) -> Checked<()> {
 fn drawn(session: &mut dyn SmokeSession) -> Checked<Value> {
     let shading = inspect(session, "terrain_shading_stats")?;
     let scatter = inspect(session, "scatter_stats")?;
-    let water = inspect(session, "water_stats")?;
     Ok(json!({
         "tiles": shading["tiles"],
         "leaves": shading["leaves"]["kept"],
@@ -147,24 +166,22 @@ fn drawn(session: &mut dyn SmokeSession) -> Checked<Value> {
         "shadow_patches": shading["shadow_patches"],
         "placed_objects": scatter["placed_objects"],
         "placed_far_objects": scatter["placed_far_objects"],
-        "water_leaves": water["leaf_cut"],
     }))
 }
 
 fn settle(session: &mut dyn SmokeSession) -> Checked<Value> {
     let (mut previous, mut quiet) = (Value::Null, 0);
-    let mut terrain = Value::Null;
-    let mut jobs = Value::Null;
+    let mut terrains = Value::Null;
     for _ in 0..SETTLE_FRAMES {
-        let rendering = render(session)?;
+        render(session)?;
         let frame = drawn(session)?;
-        terrain = inspect(session, "terrain_stats")?;
-        jobs = rendering["jobs"].clone();
-        let settled = number(&terrain["resident_tiles"]) > 0.0
-            && terrain["baking"] == 0
-            && terrain["loading_tiles"] == 0
-            && terrain["fallback_tiles"] == 0
-            && jobs["running"] == 0
+        terrains = inspect(session, "terrain_stats")?;
+        let running = inspect(session, "Jobs")?["running"].clone();
+        let settled = number(&terrains["resident_tiles"]) > 0.0
+            && terrains["baking"] == 0
+            && terrains["loading_tiles"] == 0
+            && terrains["fallback_tiles"] == 0
+            && running == 0
             && frame == previous;
         previous = frame;
         quiet = if settled { quiet + 1 } else { 0 };
@@ -173,8 +190,8 @@ fn settle(session: &mut dyn SmokeSession) -> Checked<Value> {
         }
     }
     smoke_eq!(quiet >= 3, true, "the_terrain_settles");
-    smoke_eq!(&jobs["failed"], &json!(0), "no_terrain_job_failed");
-    Ok(terrain)
+    smoke_eq!(&terrains["failed_jobs"], &json!(0), "no_terrain_job_failed");
+    Ok(terrains)
 }
 
 fn without_standing(samples: &[Value]) -> Vec<Value> {

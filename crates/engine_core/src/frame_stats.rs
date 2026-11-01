@@ -52,6 +52,13 @@ pub struct RenderStats {
     pub pipelines_created: u32,
     pub render_passes: Names,
     pub linked: LinkedStats,
+    #[serde(skip_serializing_if = "none_overflowed")]
+    #[cfg_attr(feature = "schema", schemars(skip))]
+    pub readback_overflows: u64,
+}
+
+fn none_overflowed(overflows: &u64) -> bool {
+    *overflows == 0
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

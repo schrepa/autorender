@@ -3,7 +3,7 @@ use std::panic::Location;
 use bevy_ecs::prelude::{Entity, World};
 use engine_core::{AssetLibrary, Mesh3d};
 use engine_registry::{BrickCost, BrickCosts, Registry};
-use engine_scene::{SceneDocument, SceneFiles, SceneInstance};
+use engine_scene::{SceneDocument, SceneFiles, SceneInstance, SceneKinds};
 use engine_settings::{Error, ErrorCode, Expected};
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -257,8 +257,12 @@ fn refusal(world: &World, source: &str, files: Option<&SceneFiles>) -> Option<Er
         Ok(document) => document,
         Err(error) => return Some(error),
     };
+    let kinds = SceneKinds::of(world);
+    if let Err(error) = document.validate(&kinds) {
+        return Some(error);
+    }
     if let Some(files) = files
-        && let Err(error) = document.validate_with(files)
+        && let Err(error) = document.validate_with(&kinds, files)
     {
         return Some(error);
     }

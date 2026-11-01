@@ -29,8 +29,11 @@ pub(crate) struct ViewSync;
 #[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct BetweenFrames;
 
+#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Waiting;
+
 impl Schedule {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 9] = [
         Self::FixedPreSimulation,
         Self::FixedMove,
         Self::FixedSimulation,
@@ -39,6 +42,7 @@ impl Schedule {
         Self::WorldSync,
         Self::ViewSync,
         Self::BetweenFrames,
+        Self::Waiting,
     ];
 
     #[doc(hidden)]
@@ -52,6 +56,7 @@ impl Schedule {
             Self::WorldSync => WorldSync.intern(),
             Self::ViewSync => ViewSync.intern(),
             Self::BetweenFrames => BetweenFrames.intern(),
+            Self::Waiting => Waiting.intern(),
         }
     }
 }

@@ -7,11 +7,9 @@ use crate::FlyCamera;
 
 const SENSITIVITY: f32 = 0.003;
 
-#[derive(Default)]
 pub(crate) struct Flight {
     yaw: f32,
     pitch: f32,
-    written: Option<Camera>,
 }
 
 impl Flight {
@@ -26,11 +24,7 @@ impl Flight {
         } else {
             0.0
         };
-        Self {
-            yaw,
-            pitch,
-            written: None,
-        }
+        Self { yaw, pitch }
     }
 
     fn from_camera(camera: &Camera) -> Self {
@@ -39,15 +33,32 @@ impl Flight {
     }
 }
 
+fn steered(input: &MoveInput) -> bool {
+    [
+        input.move_forward,
+        input.move_right,
+        input.move_up,
+        input.look_yaw,
+        input.look_pitch,
+    ]
+    .iter()
+    .any(|&value| value != 0.0)
+}
+
 pub(crate) fn fly(
     time: Res<FrameTime>,
     input: Res<MoveInput>,
     settings: Res<FlyCamera>,
-    mut flight: Local<Flight>,
+    mut flight: Local<Option<Flight>>,
     mut camera: ResMut<Camera>,
 ) {
-    if flight.written != Some(*camera) {
-        *flight = Flight::from_camera(&camera);
+    let flight = if camera.is_changed() {
+        flight.insert(Flight::from_camera(&camera))
+    } else {
+        flight.get_or_insert_with(|| Flight::from_camera(&camera))
+    };
+    if settings.steered_only && !steered(&input) {
+        return;
     }
     flight.yaw = (flight.yaw - input.look_yaw * SENSITIVITY) % std::f32::consts::TAU;
     flight.pitch = clamp(flight.pitch - input.look_pitch * SENSITIVITY, -1.48, 1.48);
@@ -58,5 +69,4 @@ pub(crate) fn fly(
         forward * input.move_forward + right * input.move_right + Vec3::Y * input.move_up;
     camera.position += movement.normalize_or_zero() * time.delta_seconds * settings.speed;
     camera.target = camera.position + forward;
-    flight.written = Some(*camera);
 }

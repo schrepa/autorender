@@ -1,6 +1,8 @@
 use engine_codec::{Error, ErrorCode};
 use glam::Vec2;
 
+use crate::layers::Stamp;
+
 pub const TILE_QUADS: u32 = 256;
 pub const TILE_SAMPLES: u32 = TILE_QUADS + 1;
 pub const TILE_STRIDE: u32 = TILE_SAMPLES + 2;
@@ -140,6 +142,20 @@ impl Pyramid {
             })
             .sum()
     }
+}
+
+pub fn reaches(stamp: &Stamp, pyramid: &Pyramid, key: TileKey) -> bool {
+    let center = Vec2::from(stamp.center);
+    let radius = Vec2::splat(stamp.radius + stamp.falloff);
+    covers((center - radius, center + radius), pyramid, key)
+}
+
+pub fn covers((low, high): (Vec2, Vec2), pyramid: &Pyramid, key: TileKey) -> bool {
+    let spacing = pyramid.spacing(u32::from(key.level));
+    let size = TILE_QUADS as f32 * spacing;
+    let first = Vec2::new(f32::from(key.x), f32::from(key.z)) * size - Vec2::splat(2.0 * spacing);
+    let last = first + Vec2::splat(size + 4.0 * spacing);
+    first.x <= high.x && first.y <= high.y && last.x >= low.x && last.y >= low.y
 }
 
 engine_codec::record!(TileKey { level, x, z });

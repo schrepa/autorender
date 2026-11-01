@@ -3,13 +3,6 @@ import package::engine::post::levels::halved;
 
 @group(1) @binding(0) var source: texture_2d<f32>;
 
-@vertex
-fn vs_levels(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
-    let x = f32((index << 1u) & 2u) * 2.0 - 1.0;
-    let y = f32(index & 2u) * 2.0 - 1.0;
-    return vec4<f32>(x, y, 0.0, 1.0);
-}
-
 @fragment
 fn fs_levels_first(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let center = position.xy * 2.0;

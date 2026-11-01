@@ -5,15 +5,19 @@ use serde_json::json;
 
 const WALKER: &str = "walker";
 
-const FLIES: &str = "fly_camera.enabled";
+const COLLISION: &str = "collision";
 
-const COLLISION: [(&str, u32); 5] = [
+const COLLISION_LIMITS: [(&str, u32); 5] = [
     ("collision.max_colliders", 10_000),
     ("collision.max_candidate_pairs", 100_000),
     ("collision.max_sensor_pairs", 16_384),
     ("collision.max_query_candidates", 10_000),
     ("collision.max_query_hits", 1024),
 ];
+
+const FLIES: &str = "fly_camera.enabled";
+
+const STEERED: &str = "fly_camera.steered_only";
 
 #[derive(Clone, Copy)]
 struct Player {
@@ -74,10 +78,13 @@ impl ScenePlayer {
         };
         self.instance = Some(instance);
         self.view = *world.resource::<Camera>();
-        for (key, limit) in COLLISION {
-            engine::host::apply_setting(world, key, &json!(limit))?;
+        if engine::host::has_setting(world, COLLISION) {
+            for (key, limit) in COLLISION_LIMITS {
+                engine::host::apply_setting(world, key, &json!(limit))?;
+            }
         }
         engine::host::apply_setting(world, FLIES, &json!(self.player.is_none()))?;
+        engine::host::apply_setting(world, STEERED, &json!(true))?;
         engine.reset_clock();
         Ok(())
     }
@@ -118,8 +125,7 @@ impl Game for ScenePlayer {
     }
 
     fn content(&self, _engine: &Engine) -> Option<Vec<u8>> {
-        let mut content = env!("CARGO_PKG_NAME").as_bytes().to_vec();
-        content.push(0);
+        let mut content = crate::SOURCE.to_vec();
         if let Some(scene) = self.scene() {
             content.extend(scene.id().as_bytes());
             content.extend(scene.revision().to_le_bytes());
@@ -135,6 +141,40 @@ impl Game for ScenePlayer {
     ) -> Result<(), Error> {
         self.load(engine, source, files)
     }
+}
+
+pub fn bricks(
+    without: &str,
+    path: &str,
+) -> Result<impl FnOnce(BrickList) -> BrickList + use<>, Error> {
+    let standard = engine_standard::standard(BrickList::default());
+    let names: Vec<&'static str> = standard
+        .listed()
+        .iter()
+        .map(|listed| listed.package())
+        .collect();
+    let left_out = without
+        .split(',')
+        .filter(|name| !name.is_empty())
+        .map(|name| {
+            names
+                .iter()
+                .copied()
+                .find(|&listed| listed == name)
+                .ok_or_else(|| {
+                    Error::new(ErrorCode::InvalidArguments, path)
+                        .got(name)
+                        .variants(names.iter().copied())
+                })
+        })
+        .collect::<Result<Vec<&'static str>, Error>>()?;
+    Ok(move |list: BrickList| {
+        let mut list = engine_player_bricks::bricks(list);
+        for package in left_out {
+            list = list.without_package(package);
+        }
+        list
+    })
 }
 
 fn attach_player(world: &mut World, entity: Entity) -> Result<Player, Error> {

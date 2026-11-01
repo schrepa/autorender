@@ -40,11 +40,17 @@ pub const NOT_WORK: &[&str] = &[
     "frame",
     "tick",
     "read_back_age",
+    "meshes_stats.read_back_age",
     "simulation_ms",
     "extraction_ms",
     "render_ms",
     "resolution.gpu_ms",
     "bricks_cost.measuring_ms",
+    "collision_stats.frame",
+    "collision_stats.tick",
+    "static_tables.latest_job_failure",
+    "terrain_shading_stats.latest_job_failure",
+    "terrain_stats.latest_job_failure",
 ];
 
 const SCENE_FIELDS: &[&str] = &["project", "options"];

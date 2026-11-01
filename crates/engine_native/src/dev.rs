@@ -5,7 +5,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::{Duration, Instant};
 
 use engine::dev::{Artifact, Effect, HostContext, Outcome, Step};
-use engine::scene::SceneFiles;
+use engine::scene::{SceneFiles, SceneKinds};
 use engine::{Error, ErrorCode, Expected, Game, GameHost};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -114,7 +114,7 @@ impl<G: Game> DevSession<G> {
 
     pub(crate) fn play(&mut self, document: &str) -> engine::Result<()> {
         self.source = Some(Source::Document(document.to_owned()));
-        let files = engine::smokes::scene_files(document, &self.files)?;
+        let files = engine::smokes::scene_files(document, &self.files, &self.kinds())?;
         self.game.host_mut().reload_scene(document, &files)
     }
 
@@ -293,18 +293,22 @@ impl<G: Game> DevSession<G> {
         }
     }
 
+    fn kinds(&self) -> SceneKinds {
+        SceneKinds::of(self.game.host().engine().app.world())
+    }
+
     fn read_source(&self) -> Result<Option<(String, SceneFiles)>, Error> {
         let path = match &self.source {
             None => return Ok(None),
             Some(Source::Document(document)) => {
-                let files = engine::smokes::scene_files(document, &self.files)?;
+                let files = engine::smokes::scene_files(document, &self.files, &self.kinds())?;
                 return Ok(Some((document.clone(), files)));
             }
             Some(Source::File(path)) => path,
         };
         let source =
             std::fs::read_to_string(path).map_err(|error| file_error("$.source", path, &error))?;
-        let files = files::scene_files(path, &source)?;
+        let files = files::scene_files(path, &source, &self.kinds())?;
         Ok(Some((source, files)))
     }
 

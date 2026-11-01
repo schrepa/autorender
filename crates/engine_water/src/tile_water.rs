@@ -1,28 +1,26 @@
 use std::ops::Range;
+use std::sync::Arc;
 
+use engine_codec::Error;
 use engine_core::math::GRAVITY;
-use engine_places::ground::TileFace;
-use glam::Vec2;
-
 use engine_heightfield::hydrology::WaterGrid;
 use engine_heightfield::noise::smooth;
 use engine_heightfield::rivers::{RiverRaster, RiverWater, Rivers};
-use crate::shallow_water::DENSITY;
 use engine_heightfield::tile::{
-    Footprint, PATCH_QUADS, PATCHES_PER_TILE, TILE_STRIDE, Tile, on_triangle,
+    Footprint, Generator, PATCH_QUADS, PATCHES_PER_TILE, TILE_STRIDE, Tile, hole_at, on_triangle,
+    tile_cell,
 };
-use engine_heightfield::{Layers, Pyramid, Reach, TILE_QUADS, TILE_SAMPLES};
+use engine_heightfield::{Layers, Pyramid, Reach, TILE_QUADS, TILE_SAMPLES, TileKey};
+use engine_places::ground::TileFace;
+use glam::Vec2;
 
-pub const WATER_FLOW_RANGE: f32 = 8.0;
-pub const WATER_SPAN_LEAST: f32 = 0.25;
-pub const WATER_SPAN_MOST: f32 = 4096.0;
+pub use crate::gpu::{
+    BREAK_FULL, BREAK_ONSET, BREAK_THINNEST, TURBULENT_SPEED, TURBULENT_SWIRL, WATER_FLOW_RANGE,
+    WATER_SHEAR_RANGE, WATER_SPAN_LEAST, WATER_SPAN_MOST,
+};
+use crate::shallow_water::DENSITY;
+
 const SPAN_STEPS: f32 = 126.0;
-pub const WATER_SHEAR_RANGE: f32 = 8.0;
-pub const TURBULENT_SPEED: f32 = 0.5;
-pub const TURBULENT_SWIRL: f32 = 4.0;
-pub const BREAK_ONSET: f32 = 0.6;
-pub const BREAK_FULL: f32 = 1.2;
-pub const BREAK_THINNEST: f32 = 0.02;
 pub(crate) const NONE: u32 = u32::MAX;
 pub const WATER_REACH: u32 = 4;
 const NO_RING: u8 = u8::MAX;
@@ -624,142 +622,196 @@ pub(crate) fn water_rows(
     }
 }
 
-impl Tile {
-    #[must_use]
-    pub fn rewatered(
-        &self,
-        layers: &Layers,
-        pyramid: &Pyramid,
-        rivers: &Rivers,
-        regions: &[(Vec2, Vec2)],
-    ) -> Option<Self> {
-        let (_, hydrology) = layers.hydrology_layer()?;
-        let spacing = self.spacing();
-        let [x, z] = pyramid.first_sample(self.key());
-        let [dx, dz] = layers.offset_samples(spacing);
-        let positions = |first: i64| -> Vec<f32> {
-            (-1..=i64::from(TILE_SAMPLES))
-                .map(|index| (first + index) as f32 * spacing)
-                .collect()
-        };
-        let (xs, zs) = (positions(x + dx), positions(z + dz));
-        let within = |values: &[f32], low: f32, high: f32| {
-            values.partition_point(|&at| at < low)..values.partition_point(|&at| at <= high)
-        };
-        let stride = TILE_STRIDE as usize;
-        let mut columns: Vec<Range<usize>> = vec![0..0; stride];
-        for (low, high) in regions {
-            let reached = within(&xs, low.x, high.x);
-            if reached.is_empty() {
-                continue;
-            }
-            for row in within(&zs, low.y, high.y) {
-                let held = &mut columns[row];
-                *held = if Range::is_empty(held) {
-                    reached.clone()
-                } else {
-                    held.start.min(reached.start)..held.end.max(reached.end)
-                };
-            }
-        }
-        let (Some(first), Some(last)) = (
-            columns.iter().position(|row| !row.is_empty()),
-            columns.iter().rposition(|row| !row.is_empty()),
-        ) else {
-            return None;
-        };
-        let (mut surface, mut info) = self.water().map_or_else(
-            || {
-                (
-                    vec![f32::NAN; stride * stride],
-                    vec![[0; 2]; stride * stride],
-                )
-            },
-            |water| (water.surfaces().to_vec(), water.info().to_vec()),
-        );
-        for (row, reached) in columns.iter().enumerate() {
-            let at = row * stride + reached.start..row * stride + reached.end;
-            surface[at.clone()].fill(f32::NAN);
-            info[at].fill([0; 2]);
-        }
-        let raster = RiverRaster::whole(rivers, &xs, &zs[first..=last], spacing);
-        let at = first * stride..(last + 1) * stride;
-        water_rows(
-            &hydrology.water,
-            &|row, column| raster.as_ref()?.water(rivers, row - first, column),
-            (first..last + 1, &|row| columns[row].clone()),
-            (&xs, &zs),
-            &|x, z| layers.shown(x, z),
-            (&mut surface[at.clone()], &mut info[at]),
-        );
-        let solids = self.water().map_or(&[][..], TileWater::solids);
-        Some(
-            self.clone()
-                .with_water(surface.into_boxed_slice(), info.into_boxed_slice(), solids),
-        )
-    }
-
-    pub(crate) fn origin(&self) -> Vec2 {
-        let key = self.key();
-        Vec2::new(f32::from(key.x), f32::from(key.z)) * (TILE_QUADS as f32 * self.spacing())
-    }
-}
-
-fn cell(spacing: f32, local: Vec2) -> Option<(i32, i32, f32, f32)> {
-    let size = TILE_QUADS as f32;
-    let u = local.x / spacing;
-    let v = local.y / spacing;
-    if !(u.is_finite() && v.is_finite()) || u < 0.0 || v < 0.0 || u > size || v > size {
-        return None;
-    }
-    let i = (u.floor() as i32).min(TILE_QUADS as i32 - 1);
-    let j = (v.floor() as i32).min(TILE_QUADS as i32 - 1);
-    Some((i, j, u - i as f32, v - j as f32))
-}
-
-fn face_height(face: &TileFace, x: i32, z: i32) -> f32 {
-    let stride = TILE_STRIDE as i32;
-    face.heights[((z + 1) * stride + x + 1) as usize]
-}
-
-fn face_hole(face: &TileFace, x: u32, z: u32) -> bool {
-    let Some(bits) = &face.holes else {
-        return false;
+pub(crate) fn positions(layers: &Layers, pyramid: &Pyramid, key: TileKey) -> [Vec<f32>; 2] {
+    let spacing = pyramid.spacing(u32::from(key.level));
+    let [x, z] = pyramid.first_sample(key);
+    let [dx, dz] = layers.offset_samples(spacing);
+    let positions = |first: i64| -> Vec<f32> {
+        (-1..=i64::from(TILE_SAMPLES))
+            .map(|index| (first + index) as f32 * spacing)
+            .collect()
     };
-    let cells = TILE_SAMPLES as usize;
-    if x as usize >= cells || z as usize >= cells {
-        return false;
-    }
-    let index = z as usize * cells + x as usize;
-    bits[index / 64] & (1 << (index % 64)) != 0
+    [positions(x + dx), positions(z + dz)]
 }
 
-pub(crate) fn point(
+type Rows = (Vec<f32>, Vec<[u32; 2]>);
+
+pub(crate) fn tile_rows(layers: &Layers, pyramid: &Pyramid, key: TileKey) -> Option<Rows> {
+    let stride = TILE_STRIDE as usize;
+    let (_, hydrology) = layers.hydrology_layer()?;
+    let spacing = pyramid.spacing(u32::from(key.level));
+    let [xs, zs] = positions(layers, pyramid, key);
+    let raster = RiverRaster::whole(&hydrology.rivers, &xs, &zs, spacing);
+    let count = stride * stride;
+    let (mut surface, mut info) = (vec![f32::NAN; count], vec![[0_u32; 2]; count]);
+    water_rows(
+        &hydrology.water,
+        &|row, column| raster.as_ref()?.water(&hydrology.rivers, row, column),
+        (0..stride, &|_| 0..stride),
+        (&xs, &zs),
+        &|x, z| layers.shown(x, z),
+        (&mut surface, &mut info),
+    );
+    Some((surface, info))
+}
+
+pub(crate) fn tile_origin(key: TileKey, spacing: f32) -> Vec2 {
+    Vec2::new(f32::from(key.x), f32::from(key.z)) * (TILE_QUADS as f32 * spacing)
+}
+
+pub(crate) fn tile_water_of(rows: Option<Rows>, tile: &Tile) -> Option<TileWater> {
+    let (surface, info) = rows?;
+    let spacing = tile.spacing();
+    TileWater::new(
+        surface.into_boxed_slice(),
+        info.into_boxed_slice(),
+        (tile.heights(), spacing, tile_origin(tile.key(), spacing)),
+        &[],
+    )
+}
+
+pub(crate) fn kept(water: Option<TileWater>) -> Result<Option<TileWater>, Error> {
+    engine_codec::decode(&engine_codec::encode(&water))
+}
+
+pub(crate) struct BaseWater {
+    layers: Arc<Layers>,
+    pyramid: Pyramid,
+    key: TileKey,
+    rows: Option<Option<Rows>>,
+    generator: Option<Generator>,
+}
+
+impl BaseWater {
+    pub(crate) fn new(layers: Arc<Layers>, pyramid: Pyramid, key: TileKey) -> Self {
+        Self {
+            layers,
+            pyramid,
+            key,
+            rows: None,
+            generator: None,
+        }
+    }
+
+    pub(crate) fn advance(&mut self, budget: &mut u64) -> Result<Option<Option<TileWater>>, Error> {
+        if self.rows.is_none() {
+            let stride = u64::from(TILE_STRIDE);
+            *budget = budget.saturating_sub(stride * stride);
+            self.rows = Some(tile_rows(&self.layers, &self.pyramid, self.key));
+        }
+        let wet = self.rows.as_ref().is_some_and(|rows| {
+            rows.as_ref()
+                .is_some_and(|(surface, _)| surface.iter().any(|level| level.is_finite()))
+        });
+        if !wet {
+            return Ok(Some(None));
+        }
+        let (layers, pyramid, key) = (&self.layers, &self.pyramid, self.key);
+        let generator = self
+            .generator
+            .get_or_insert_with(|| Generator::new(Arc::clone(layers), pyramid, key));
+        let Some(made) = generator.advance(budget) else {
+            if generator.failed() {
+                return Err(crate::jobs::invalid_heights());
+            }
+            return Ok(None);
+        };
+        Ok(Some(tile_water_of(self.rows.take().flatten(), &made)))
+    }
+}
+
+pub(crate) fn rewatered(
     face: &TileFace,
     water: Option<&TileWater>,
-    local: Vec2,
-) -> Option<Option<WaterPoint>> {
-    let (i, j, fu, fv) = cell(face.spacing, local)?;
-    if face_hole(face, i as u32, j as u32) {
-        return Some(None);
-    }
-    let Some(water) = water else {
-        return Some(None);
+    (layers, pyramid): (&Layers, &Pyramid),
+    rivers: &Rivers,
+    regions: &[(Vec2, Vec2)],
+) -> Option<TileWater> {
+    let (_, hydrology) = layers.hydrology_layer()?;
+    let key = face.key;
+    let spacing = face.spacing;
+    let [xs, zs] = positions(layers, pyramid, key);
+    let within = |values: &[f32], low: f32, high: f32| {
+        values.partition_point(|&at| at < low)..values.partition_point(|&at| at <= high)
     };
+    let stride = TILE_STRIDE as usize;
+    let mut columns: Vec<Range<usize>> = vec![0..0; stride];
+    for (low, high) in regions {
+        let reached = within(&xs, low.x, high.x);
+        if reached.is_empty() {
+            continue;
+        }
+        for row in within(&zs, low.y, high.y) {
+            let held = &mut columns[row];
+            *held = if Range::is_empty(held) {
+                reached.clone()
+            } else {
+                held.start.min(reached.start)..held.end.max(reached.end)
+            };
+        }
+    }
+    let (Some(first), Some(last)) = (
+        columns.iter().position(|row| !row.is_empty()),
+        columns.iter().rposition(|row| !row.is_empty()),
+    ) else {
+        return None;
+    };
+    let (mut surface, mut info) = water.map_or_else(
+        || {
+            (
+                vec![f32::NAN; stride * stride],
+                vec![[0; 2]; stride * stride],
+            )
+        },
+        |water| (water.surfaces().to_vec(), water.info().to_vec()),
+    );
+    for (row, reached) in columns.iter().enumerate() {
+        let at = row * stride + reached.start..row * stride + reached.end;
+        surface[at.clone()].fill(f32::NAN);
+        info[at].fill([0; 2]);
+    }
+    let raster = RiverRaster::whole(rivers, &xs, &zs[first..=last], spacing);
+    let at = first * stride..(last + 1) * stride;
+    water_rows(
+        &hydrology.water,
+        &|row, column| raster.as_ref()?.water(rivers, row - first, column),
+        (first..last + 1, &|row| columns[row].clone()),
+        (&xs, &zs),
+        &|x, z| layers.shown(x, z),
+        (&mut surface[at.clone()], &mut info[at]),
+    );
+    let solids = water.map_or(&[][..], TileWater::solids);
+    TileWater::new(
+        surface.into_boxed_slice(),
+        info.into_boxed_slice(),
+        (&face.heights, spacing, tile_origin(key, spacing)),
+        solids,
+    )
+}
+
+fn stored(heights: &[f32], x: i32, z: i32) -> f32 {
+    let stride = TILE_STRIDE as i32;
+    heights[((z + 1) * stride + x + 1) as usize]
+}
+
+fn point_on(
+    (heights, water): (&[f32], &TileWater),
+    (i, j, fu, fv): (i32, i32, f32, f32),
+) -> Option<WaterPoint> {
     let at = [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)];
     let surfaces = at.map(|(x, z)| water.surface(x, z));
     let corners = if fu + fv <= 1.0 { [0, 1, 2] } else { [3, 2, 1] };
     if corners.iter().any(|&corner| !surfaces[corner].is_finite()) {
-        return Some(None);
+        return None;
     }
     let surface = on_triangle(surfaces, fu, fv);
-    let depth = surface - on_triangle(at.map(|(x, z)| face_height(face, x, z)), fu, fv);
+    let depth = surface - on_triangle(at.map(|(x, z)| stored(heights, x, z)), fu, fv);
     if depth <= 0.0 {
-        return Some(None);
+        return None;
     }
     let info = at.map(|(x, z)| water.sample_info(x, z));
     let states = at.map(|(x, z)| water.sample_state(x, z));
-    Some(Some(WaterPoint {
+    Some(WaterPoint {
         surface,
         depth,
         flow: Vec2::new(
@@ -774,5 +826,30 @@ pub(crate) fn point(
             shear: on_triangle(states.map(|state| state.shear), fu, fv),
             reach: states[corners[0]].reach,
         },
-    }))
+    })
+}
+
+pub(crate) fn point(
+    face: &TileFace,
+    water: Option<&TileWater>,
+    local: Vec2,
+) -> Option<Option<WaterPoint>> {
+    let (i, j, fu, fv) = tile_cell(face.spacing, local)?;
+    let hole = face
+        .holes
+        .as_deref()
+        .is_some_and(|holes| hole_at(holes, i as u32, j as u32));
+    if hole {
+        return Some(None);
+    }
+    Some(water.and_then(|water| point_on((&face.heights, water), (i, j, fu, fv))))
+}
+
+pub(crate) fn tile_point(tile: &Tile, water: Option<&TileWater>, local: Vec2) -> Option<WaterPoint> {
+    let sample = tile.sample(local)?;
+    if sample.hole {
+        return None;
+    }
+    let cell = tile_cell(tile.spacing(), local)?;
+    point_on((tile.heights(), water?), cell)
 }

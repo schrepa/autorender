@@ -1,9 +1,9 @@
 use wasm_bindgen::prelude::*;
 
-use crate::ScenePlayer;
+use crate::{ScenePlayer, bricks};
 
 engine::export_game!(
-    pub struct PlayerGame(ScenePlayer);
+    pub struct PlayerGame(ScenePlayer) with engine_player_bricks::bricks;
 );
 
 #[wasm_bindgen]
@@ -12,8 +12,10 @@ impl PlayerGame {
         canvas: web_sys::HtmlCanvasElement,
         source: &str,
         files: SceneFileSet,
+        without: &str,
     ) -> Result<PlayerGame, JsValue> {
-        Self::launch(canvas, engine_player_bricks::bricks, move |engine| {
+        let bricks = bricks(without, "?without").map_err(engine::settings::js_error)?;
+        Self::launch(canvas, bricks, move |engine| {
             ScenePlayer::new(source, files.files(), engine)
         })
         .await

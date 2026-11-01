@@ -67,6 +67,7 @@ stats! {
     #[section("shadow_stats")]
     pub struct ShadowStats {
         pub active: bool,
+        pub draws: u32,
         pub tiles_marked: u32,
         pub tiles_resident: u32,
         pub tiles_drawn: u32,

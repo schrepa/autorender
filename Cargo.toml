@@ -80,6 +80,7 @@ highlands_pond = { path = "examples/highlands/bricks/pond" }
 highlands_toon_lighting = { path = "examples/highlands/bricks/toon_lighting" }
 highlands_game = { path = "examples/highlands/bricks/game" }
 highlands_bricks = { path = "examples/highlands/list" }
+engine_player = { path = "crates/engine_player" }
 engine_player_walk = { path = "crates/engine_player_walk" }
 engine_player_bricks = { path = "crates/engine_player_bricks" }
 base64 = "=0.22.1"

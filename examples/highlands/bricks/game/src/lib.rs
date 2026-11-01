@@ -8,29 +8,22 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod bodies;
 mod cave;
 mod caves;
+mod content;
+mod control;
 mod hiker;
 mod random;
+mod rocks;
+mod trees;
 mod views;
 
-use engine_core::{Brick, Bricks, ComponentKind, SceneComponents, Schedule, Source, settings};
+use engine_core::{Brick, Bricks, JobKind, Schedule, Source, stats};
 
-const HIKER: &str = "hiker";
-const BANK_BOULDER: &str = "highlands_bank_boulder";
-const LOG: &str = "highlands_log";
-const BARK: &str = "highlands_bark";
-const PALE: &str = "highlands_pale";
-const STONE: &str = "highlands_stone";
-const WALL_ROCK: &str = "highlands_wall_rock";
-const CAVE_WALL: &str = "highlands_cave_wall";
-
-settings! {
-    #[section("highlands")]
-    #[serde(deny_unknown_fields)]
-    pub struct HighlandsSettings {
-        pub cave: Option<[f32; 3]> = None => any,
-        pub bodies: u32 = 0 => any,
-        pub stand: Option<[f32; 4]> = None => any,
-        pub watch_bodies: bool = false => any,
+stats! {
+    #[section("highlands_stats")]
+    pub struct HighlandsStats {
+        #[pending] pub content: u32,
+        pub failed_jobs: u64,
+        pub latest_job_failure: Option<String>,
     }
 }
 
@@ -38,15 +31,34 @@ pub struct HighlandsBrick;
 
 impl Brick for HighlandsBrick {
     const SOURCE: &'static Source = &SOURCE;
+    const JOBS: &'static [&'static JobKind] = &[
+        &content::BOULDER,
+        &content::CONIFER,
+        &content::CONIFER_SHADOW,
+        &content::CAVE,
+    ];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .settings::<HighlandsSettings>()
+            .stats::<HighlandsStats>()
+            .resource::<content::Content>()
+            .resource::<cave::Cave>()
+            .resource::<bodies::Bodies>()
+            .resource::<views::Views>()
             .resource::<views::BodiesView>()
-            .join::<SceneComponents>(ComponentKind::of::<hiker::Hiker>(HIKER), None)
+            .operation::<control::HighlandsControl>()
             .systems(Schedule::FixedSimulation, hiker::hike)
-            .systems(Schedule::FixedPostSimulation, (views::watch, cave::open))
-            .systems(Schedule::WorldSync, (views::look, bodies::place));
+            .systems(
+                Schedule::Presentation,
+                (
+                    content::arrive,
+                    views::watch,
+                    cave::open,
+                    bodies::place,
+                    content::publish,
+                ),
+            )
+            .systems(Schedule::WorldSync, views::look);
     }
 }
 

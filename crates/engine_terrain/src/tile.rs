@@ -6,7 +6,7 @@ use glam::{Vec2, Vec3};
 use engine_math::{clamp, max, min};
 
 use crate::hydrology::RIVER_FAR;
-use crate::layer::{Below, LayerTile, Row, SamplePoint, TileFrame};
+use crate::layer::{Below, LayerTile, Row, TileFrame};
 use crate::Layers;
 use crate::rivers::RiverRaster;
 use crate::surface::{
@@ -253,6 +253,10 @@ impl Tile {
         self
     }
 
+    pub(crate) fn water_surfaces(&self) -> Option<&[f32]> {
+        self.lake.as_deref()
+    }
+
     pub(crate) fn lake_depth(&self, local: Vec2) -> f32 {
         let (Some(surface), Some((i, j, fu, fv))) = (self.lake.as_deref(), self.cell(local)) else {
             return 0.0;
@@ -380,6 +384,10 @@ impl Tile {
 
     pub fn hole_bits(&self) -> Option<&[u64]> {
         self.holes.as_deref()
+    }
+
+    pub fn patch_holes(&self) -> &[u64; 4] {
+        &self.patch_holes
     }
 
     pub fn is_hole(&self, x: u32, z: u32) -> bool {
@@ -991,53 +999,6 @@ impl Generator {
     }
 }
 
-pub fn height_cost(layers: &Layers) -> u64 {
-    layers.layers().iter().map(|layer| layer.point_cost()).sum()
-}
-
-pub fn sample_height(layers: &Layers, pyramid: &Pyramid, level: u32, sample: [i64; 2]) -> f32 {
-    let spacing = pyramid.spacing(level);
-    let [dx, dz] = layers.offset_samples(spacing);
-    let sample = [sample[0] + dx, sample[1] + dz];
-    let x = sample[0] as f32 * spacing;
-    let z = sample[1] as f32 * spacing;
-    let point = SamplePoint {
-        sample,
-        x,
-        z,
-        spacing,
-    };
-    let mut height = 0.0_f32;
-    for (index, layer) in layers.layers().iter().enumerate() {
-        if layer.makes_water() {
-            if let Some(rivers) = layers.rivers_of(index) {
-                let cut = rivers.cut(x, z, height, spacing);
-                height = layers.faded(height, cut, x, z);
-            }
-        } else {
-            layer.apply_point(Below::new(layers, index), &point, &mut height);
-        }
-    }
-    height
-}
-
-pub fn height_at(layers: &Layers, pyramid: &Pyramid, point: Vec2) -> f32 {
-    let spacing = pyramid.spacing(0);
-    let u = point.x / spacing;
-    let v = point.y / spacing;
-    let (i, j) = (u.floor(), v.floor());
-    let (fu, fv) = (u - i, v - j);
-    let (i, j) = (i as i64, j as i64);
-    let h = |di: i64, dj: i64| sample_height(layers, pyramid, 0, [i + di, j + dj]);
-    if fu + fv <= 1.0 {
-        let h00 = h(0, 0);
-        h00 + fu * (h(1, 0) - h00) + fv * (h(0, 1) - h00)
-    } else {
-        let h11 = h(1, 1);
-        h11 + (1.0 - fu) * (h(0, 1) - h11) + (1.0 - fv) * (h(1, 0) - h11)
-    }
-}
-
 impl crate::codec::Codec for Tile {
     fn write(&self, out: &mut crate::codec::Writer) {
         let stride = TILE_STRIDE as usize;
@@ -1058,6 +1019,15 @@ impl crate::codec::Codec for Tile {
             };
         }
         out.put(&self.placed).put(&self.placing);
+        match &self.lake {
+            Some(surface) => {
+                out.put(&true);
+                crate::codec::put_grid(out, surface, stride);
+            }
+            None => {
+                out.put(&false);
+            }
+        }
     }
 
     fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::Error> {
@@ -1079,6 +1049,16 @@ impl crate::codec::Codec for Tile {
         let [river_edges, river_beds] = rivers;
         let placed: Option<Arc<[Placed]>> = input.get()?;
         let placing = input.get()?;
+        let watered: bool = input.get()?;
+        let lake = if watered {
+            let surface = crate::codec::get_grid(input, stride)?;
+            if surface.len() != stride * stride {
+                return Err(crate::codec::invalid("$.tile_water"));
+            }
+            Some(Arc::from(surface))
+        } else {
+            None
+        };
         let mut tile = Self::shaped(key, spacing, heights, holes).ok_or_else(invalid)?;
         if culling.len() != tile.patch_bounds.len() {
             return Err(invalid());
@@ -1092,6 +1072,7 @@ impl crate::codec::Codec for Tile {
             .ok_or_else(invalid)?;
         tile.placed = placed;
         tile.placing = placing;
+        tile.lake = lake;
         Ok(tile)
     }
 }

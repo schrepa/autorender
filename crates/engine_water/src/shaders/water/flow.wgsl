@@ -1,6 +1,6 @@
-import package::engine::math::{pcg, unit};
+import package::engine::math::{GRAVITY, pcg, unit};
 import package::engine::view::PI;
-import package::generated::water::{BREAK_THINNEST, TURBULENT_SPEED, WATER_GRAVITY};
+import package::generated::water::{BREAK_THINNEST, TURBULENT_SPEED};
 
 const WATER_STEEPEST: f32 = 0.44879895;
 
@@ -9,7 +9,7 @@ fn water_stirring(speed: f32, eddy: f32, turbulence: f32) -> f32 {
 }
 
 fn water_turbulent_slopes(depth: f32, stirring: f32) -> f32 {
-    let lifted = stirring * stirring / WATER_GRAVITY;
+    let lifted = stirring * stirring / GRAVITY;
     let sloped = PI * lifted / max(depth, BREAK_THINNEST);
     return min(sloped * sloped, 0.5 * WATER_STEEPEST * WATER_STEEPEST);
 }

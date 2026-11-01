@@ -1,4 +1,4 @@
-import package::face::cover::{COVER_FAR_SIDE, cover_seen, cover_tint};
+import package::face::cover::{COVER_FAR_SIDE, cover_seen, cover_tint, material_canopy};
 import package::face::ground_tiles::macro_color;
 import package::face::horizons::terrain_visibility;
 import package::face::sky::{ambient, cloud_passing, sky_average};
@@ -6,7 +6,8 @@ import package::face::sun::{sun_color, sun_direction};
 import package::engine::view::PI;
 import package::generated::pieces::terrain_shading::piece;
 import package::terrain_shading::horizons::{terrain_horizon_sampler, terrain_horizons};
-import package::generated::terrain_shading::{BOUNCE_BINS, BOUNCE_GROUP, BOUNCE_NEAREST, BOUNCE_PROBE_LAYERS, BOUNCE_RECORD_WORDS, BOUNCE_STEPS, BounceFrame, BounceTerrain, HORIZON_LAYERS, HORIZON_RECORD_VECTORS, PALETTE_ENTRIES, PaletteEntry};
+import package::generated::terrain_shading::{BOUNCE_BINS, BOUNCE_GROUP, BOUNCE_NEAREST, BOUNCE_PROBE_LAYERS, BOUNCE_RECORD_WORDS, BOUNCE_STEPS, BounceFrame, BounceTerrain, HORIZON_LAYERS, HORIZON_RECORD_VECTORS, PaletteEntry};
+import package::place::ground_tiles::PALETTE_ENTRIES;
 
 struct BounceProbe {
     mean: vec4<f32>,
@@ -29,21 +30,22 @@ struct BounceProbe {
 @group(1) @binding(11) var bounce_macro: texture_2d_array<f32>;
 @group(1) @binding(12) var<storage, read_write> bounce_scratch: array<vec4<f32>>;
 
-fn bounce_albedo(first: u32, material: u32) -> vec3<f32> {
-    let entry = bounce_palette[min(first + material, PALETTE_ENTRIES - 1u)];
+fn bounce_albedo(terrain: BounceTerrain, material: u32) -> vec3<f32> {
+    let entry = bounce_palette[min(terrain.grid.z + material, PALETTE_ENTRIES - 1u)];
+    let cover = material_canopy(terrain.sources.w, material);
     var color = entry.far.rgb;
-    if entry.canopy.w > 0.0 {
-        let seen = cover_seen(0.5 * entry.canopy.w);
-        let canopy = mix(color, entry.canopy.rgb, seen.tip) * mix(1.0, COVER_FAR_SIDE, 0.5)
+    if cover.w > 0.0 {
+        let seen = cover_seen(0.5 * cover.w);
+        let canopy = mix(color, cover.rgb, seen.tip) * mix(1.0, COVER_FAR_SIDE, 0.5)
             * seen.occlusion;
-        color = mix(color, canopy, 1.0 - exp(-entry.canopy.w));
+        color = mix(color, canopy, 1.0 - exp(-cover.w));
     }
     return color;
 }
 
-fn bounce_vegetated(first: u32, material: u32) -> f32 {
-    let entry = bounce_palette[min(first + material, PALETTE_ENTRIES - 1u)];
-    return select(0.0, 1.0 - exp(-entry.canopy.w), entry.canopy.w > 0.0);
+fn bounce_vegetated(terrain: BounceTerrain, material: u32) -> f32 {
+    let cover = material_canopy(terrain.sources.w, material);
+    return select(0.0, 1.0 - exp(-cover.w), cover.w > 0.0);
 }
 
 @compute @workgroup_size(BOUNCE_GROUP, BOUNCE_GROUP, 1)
@@ -63,12 +65,11 @@ fn bounce_ground(@builtin(global_invocation_id) id: vec3<u32>) {
     let tilt = vec2<f32>(textureLoad(bounce_surface, id.xy, terrain.layers.x + 1u, 0).xy)
         * (2.0 / 255.0) - 1.0;
     let normal = vec3<f32>(tilt.x, sqrt(max(1.0 - dot(tilt, tilt), 0.0)), tilt.y);
-    let first = terrain.grid.z;
     let blend = f32(surface.z) / 255.0;
-    var albedo = mix(bounce_albedo(first, surface.x), bounce_albedo(first, surface.y), blend);
+    var albedo = mix(bounce_albedo(terrain, surface.x), bounce_albedo(terrain, surface.y), blend);
     if terrain.grid.w > 0u {
-        let vegetated = mix(bounce_vegetated(first, surface.x),
-            bounce_vegetated(first, surface.y), blend);
+        let vegetated = mix(bounce_vegetated(terrain, surface.x),
+            bounce_vegetated(terrain, surface.y), blend);
         let lod = max(log2(f32(textureDimensions(bounce_macro).x) / f32(side)), 0.0);
         let colors = textureSampleLevel(bounce_macro, bounce_sampler, uv,
             terrain.grid.w - 1u, lod);

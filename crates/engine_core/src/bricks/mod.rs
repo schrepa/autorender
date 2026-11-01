@@ -19,8 +19,8 @@ use engine_registry::{
 use serde_json::Value;
 
 use crate::{
-    Authored, Error, ErrorCode, GpuStruct, JobKind, List, Module, Operation, PlaceDecl, SceneIds,
-    Section, Slot, Smoke, Source,
+    Authored, Error, ErrorCode, GpuStruct, JobKind, List, Module, Operation, PlaceDecl,
+    SceneContext, SceneIds, Section, Slot, Smoke, Source,
 };
 
 pub trait Brick: 'static {
@@ -508,12 +508,13 @@ fn authored_by<B: Brick>(world: &mut World, entity: Entity, authored: Authored) 
         foreign::<B>(world, entity);
         return;
     }
-    let scene_id = match world.get_resource_mut::<OperationScene>() {
-        Some(mut scene) => {
-            scene.streamed = true;
-            scene.id.clone()
-        }
-        None => String::new(),
+    let scene_id = if let Some(mut scene) = world.get_resource_mut::<OperationScene>() {
+        scene.streamed = true;
+        scene.id.clone()
+    } else {
+        world
+            .get_resource::<SceneContext>()
+            .map_or_else(String::new, |context| context.id.clone())
     };
     if let Ok(mut owned) = world.get_entity_mut(entity) {
         owned.insert(SceneEntity {
@@ -536,9 +537,15 @@ fn scene_inserted<B: Brick>(world: &mut World, entity: Entity, key: &str, value:
     }
     let path = format!("$.bricks.{}.spawner.{key}", B::SOURCE.package());
     let read = match crate::scene_component(world, key) {
-        Some(kind) => kind
-            .read(world, entity, value)
-            .map_err(|error| error.within(&path)),
+        Some(kind) => {
+            let context = world.get_resource::<SceneContext>().cloned();
+            let mut insert = || kind.read(world, entity, value);
+            match context {
+                Some(context) => context.scope(insert),
+                None => insert(),
+            }
+            .map_err(|error| error.within(&path))
+        }
         None => Err(Error::new(ErrorCode::SectionUnlisted, path).got(key)),
     };
     if let Err(error) = read {
@@ -547,9 +554,9 @@ fn scene_inserted<B: Brick>(world: &mut World, entity: Entity, key: &str, value:
 }
 
 fn parented<B: Brick>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
-    let stranger = changes.iter().find(|&&(child, parent)| {
-        !owned::<B>(world, child) || parent.is_some_and(|parent| !owned::<B>(world, parent))
-    });
+    let stranger = changes
+        .iter()
+        .find(|&&(child, _)| !owned::<B>(world, child));
     if let Some(&(child, _)) = stranger {
         foreign::<B>(world, child);
         return;
@@ -598,4 +605,5 @@ pub enum Schedule {
     WorldSync,
     ViewSync,
     BetweenFrames,
+    Waiting,
 }

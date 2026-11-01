@@ -90,6 +90,11 @@ pub(crate) struct BuiltPipeline {
     pub(crate) writes: Vec<Bound>,
     pub(crate) made: Vec<(u64, wgpu::RenderPipeline)>,
     pub(crate) compute: Option<wgpu::ComputePipeline>,
+    pub(crate) layout_key: String,
+}
+
+pub(crate) fn layout_key(pipeline: &BuiltPipeline) -> String {
+    pipeline.layout_key.clone()
 }
 
 pub(crate) struct FrameVariant {
@@ -314,6 +319,7 @@ fn attachments(
 
 impl Machine {
     #[expect(clippy::too_many_lines, reason = "longer than the line ceiling; it may only shrink")]
+    #[expect(clippy::disallowed_methods, reason = "the machine lays out and keys every pipeline it builds")]
     pub(crate) fn build(
         device: &wgpu::Device,
         mut linker: Linker,
@@ -566,6 +572,7 @@ impl Machine {
                 }
             }
             groups.sort_by_key(|group| group.index);
+            let mut layout_key = String::new();
             for group in &mut groups {
                 let entries: Vec<wgpu::BindGroupLayoutEntry> = group
                     .entries
@@ -583,12 +590,14 @@ impl Machine {
                         }
                     })
                     .collect();
+                layout_key.push_str(&format!("{}:{entries:?};", group.index));
                 group.layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("engine/part-group"),
                     entries: &entries,
                 });
             }
             let variant = plan.of_pipeline.get(index).copied().unwrap_or(0);
+            layout_key.push_str(&format!("frame {variant} material {material}"));
             let top = groups.last().map_or(0, |group| group.index).max(u32::from(material));
             let mut layouts: Vec<&wgpu::BindGroupLayout> = Vec::new();
             let frame_layout = variants.get(variant as usize).map_or(&empty, |found| &found.layout);
@@ -627,6 +636,7 @@ impl Machine {
                 writes,
                 made: Vec::new(),
                 compute: None,
+                layout_key,
             });
         }
         let view_copies = copies(&declared, &pipelines, &depth_writes);
@@ -641,6 +651,7 @@ impl Machine {
             if let Program::Compute(_) = pipeline.decl.program
                 && let (Some(module), Some(stage)) = (pipeline.modules.first(), pipeline.stages.first())
             {
+                crate::pipelines::count(1);
                 pipeline.compute = Some(device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(stage.entry.name()),
                     layout: Some(&pipeline.layout),

@@ -10,13 +10,11 @@ pub mod expr;
 pub mod expr_layer;
 pub mod gpu;
 pub mod jobs;
-pub mod layers;
 pub mod path;
 mod placement;
 mod runtime;
 pub mod scene;
 mod select;
-mod sights;
 mod surface;
 mod tile;
 mod tile_errors;
@@ -33,9 +31,11 @@ use engine_heightfield::{hydraulics, hydrology, layer, noise, rivers};
 use engine_places::ground::Placed;
 
 pub use bake::TerrainBake;
-pub use engine_heightfield::grid::{Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
+pub use engine_heightfield::grid::{
+    MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey,
+};
+pub use engine_heightfield::{Stamp, StampOp};
 pub use expr::Expr;
-pub use layers::{Stamp, StampOp};
 pub use path::{HeightGrid, Route, RouteOptions, height_grid, route};
 pub use placement::{
     AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Footprint, Obstacle, PlacementChoice,
@@ -43,11 +43,10 @@ pub use placement::{
 };
 pub use runtime::LayerStats;
 pub use runtime::{
-    BRIDGE_SOLIDS, DECK_DEPTH, DECK_MARGIN, DECK_RISE, LakeView, MAX_COLLIDER_EXTENT,
-    MIN_COLLIDER_EXTENT, MotionDetail, PlacedCollider, PlacedShape, PlacementAsset, Surroundings,
-    SurroundingsStatus, Terrain, TerrainBakes, TerrainBrick, TerrainEdit, TerrainKey,
-    TerrainPrefetch, TerrainRiver, TerrainSample, TerrainScene, TerrainSettings, TerrainStats,
-    TerrainSurface, Terrains,
+    BRIDGE_SOLIDS, DECK_DEPTH, DECK_MARGIN, DECK_RISE, MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT,
+    MotionDetail, PlacedCollider, PlacedShape, PlacementAsset, Surroundings, SurroundingsStatus,
+    Terrain, TerrainBakes, TerrainBrick, TerrainEdit, TerrainKey, TerrainPrefetch, TerrainRiver,
+    TerrainSample, TerrainScene, TerrainSettings, TerrainStats, TerrainSurface, Terrains,
 };
 pub use runtime::{
     HeightSample, RouteFound, StandingWater, TerrainEditControl, TerrainEdited, TerrainHeightQuery,
@@ -55,7 +54,6 @@ pub use runtime::{
     TerrainRouteResult, TerrainUndoControl,
 };
 pub use select::{LodRanges, WantedTile, WantedView, wanted_tiles};
-pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverListing, RiverSight};
 pub use surface::{
     Biome, BiomeLayer, BiomeRules, Biomes, Control, Facing, MAX_BIOMES, MAX_SURFACE_MATERIALS,
     MacroCauses, NoiseMask, SampleInputs, SampleShape, SteepLayer,
@@ -63,8 +61,5 @@ pub use surface::{
 pub use tile::{Generator, RIVER_EDGE_FAR, RIVER_EDGE_STEP, RIVER_EDGE_ZERO, Tile, TileSample};
 pub use tile_errors::{ERROR_CELLS, ERROR_MIPS, ERROR_TEXELS, ErrorPyramid};
 
-pub const MAX_LEVEL: u32 = 15;
-
-pub const TILE_STRIDE: u32 = TILE_SAMPLES + 2;
 pub const PATCH_QUADS: u32 = 16;
 pub const PATCHES_PER_TILE: u32 = TILE_QUADS / PATCH_QUADS;

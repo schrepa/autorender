@@ -1,4 +1,4 @@
-use engine_core::Error;
+use engine_core::{Error, View};
 use engine_render::{
     Bind, DepthUse, Draw, Install, Lifetime, MainView, Pipeline, Prepare, RenderPipeline,
     SamplerDesc, Shape, Texture, wgpu,
@@ -23,6 +23,7 @@ pub(crate) struct Flat {
     checker: Texture<SpritesGpu>,
     pipeline: Pipeline<SpritesGpu, MainView>,
     written: bool,
+    drawn: bool,
 }
 
 impl Flat {
@@ -56,10 +57,12 @@ impl Flat {
             checker,
             pipeline,
             written: false,
+            drawn: false,
         })
     }
 
-    pub(crate) fn prepare(&mut self, cx: &mut Prepare<'_, SpritesGpu>) {
+    pub(crate) fn prepare(&mut self, view: &View, cx: &mut Prepare<'_, SpritesGpu>) {
+        self.drawn = !view.debug() && !view.temporal();
         cx.allocate(self.checker, CHECKER_SIZE, 1);
         if self.written {
             return;
@@ -79,6 +82,9 @@ impl Flat {
     }
 
     pub(crate) fn draw(&self, draw: &mut Draw<'_, SpritesGpu, MainView>) -> u32 {
+        if !self.drawn {
+            return 0;
+        }
         draw.draw(
             &self.pipeline,
             Shape::Pulled {

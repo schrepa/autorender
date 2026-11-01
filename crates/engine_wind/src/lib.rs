@@ -8,8 +8,9 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 pub mod constants;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, FrameTime, Schedule, Source, gpu_struct, settings};
+use engine_core::{Brick, Bricks, FrameTime, Schedule, Source, ViewWind, settings};
 use engine_places::wind::{GustWaves, Wind};
+use engine_render::RenderBricks;
 
 use constants::{
     GUST_QUICK_ACROSS, GUST_QUICK_RATE, GUST_QUICK_SHARE, GUST_QUICK_TRAVEL, GUST_SLOW_RATE,
@@ -26,6 +27,8 @@ const WAVES: GustWaves = GustWaves {
     quick_across: GUST_QUICK_ACROSS,
 };
 
+const GENERATED: &[&str] = &[constants::WGSL];
+
 settings! {
     #[section("wind")]
     #[derive(Copy)]
@@ -37,13 +40,6 @@ settings! {
     }
 }
 
-gpu_struct! {
-    #[derive(Resource)]
-    pub struct WindPiece {
-        pub wind: [f32; 4],
-    }
-}
-
 pub struct WindBrick;
 
 impl Brick for WindBrick {
@@ -52,10 +48,11 @@ impl Brick for WindBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<WindSettings>()
-            .piece::<WindPiece>()
             .fill::<Wind>(Some(shaders::wind::faces::wind::MODULE))
+            .fill::<ViewWind>(None)
+            .generated(GENERATED)
             .systems(Schedule::FixedSimulation, publish_wind)
-            .systems(Schedule::ViewSync, (publish_wind, publish_piece));
+            .systems(Schedule::ViewSync, (publish_wind, publish_view_wind));
     }
 }
 
@@ -68,8 +65,9 @@ fn publish_wind(settings: Res<WindSettings>, time: Res<FrameTime>, mut wind: Res
     });
 }
 
-fn publish_piece(settings: Res<WindSettings>, mut piece: ResMut<WindPiece>) {
-    piece.set_if_neq(WindPiece {
-        wind: [settings.velocity[0], settings.velocity[1], settings.gusts, 0.0],
+fn publish_view_wind(settings: Res<WindSettings>, mut view: ResMut<ViewWind>) {
+    view.set_if_neq(ViewWind {
+        velocity: settings.velocity,
+        gusts: settings.gusts,
     });
 }

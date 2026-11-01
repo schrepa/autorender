@@ -12,15 +12,13 @@ use std::any::Any;
 use std::sync::Arc;
 
 use engine_codec::{Reader, Writer};
-use engine_core::{
-    Brick, Bricks, Error, ErrorCode, Job, JobCx, JobKind, JobRef, Source, parse_value,
-};
+use engine_core::{Brick, Bricks, ErrorCode, Source, parse_value};
 use engine_heightfield::layer::{
     self, Below, LayerBake, LayerFiles, LayerKind, Made, Row, TerrainLayer, maps,
 };
 use engine_heightfield::path::{Bridge, PathSample};
 use engine_heightfield::{Pyramid, StartTile};
-use engine_places::terrain::{self, TerrainLayers};
+use engine_places::terrain::TerrainLayers;
 use glam::Vec2;
 use serde_json::Value;
 
@@ -33,20 +31,11 @@ pub struct LayerPathsBrick;
 
 impl Brick for LayerPathsBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const JOBS: &'static [&'static JobKind] = &[&PATH_JOB];
 
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.join::<TerrainLayers>(
-            terrain::LayerKind {
-                layer: &PATH_KIND,
-                job: JobRef::from(&PATH_JOB),
-            },
-            None,
-        );
+        bricks.join::<TerrainLayers>(&PATH_KIND, None);
     }
 }
-
-pub static PATH_JOB: JobKind = JobKind::new("layer_paths::path", &SOURCE, refused);
 
 pub static PATH_KIND: LayerKind = LayerKind {
     name: "path",
@@ -57,10 +46,6 @@ pub static PATH_KIND: LayerKind = LayerKind {
     schema: engine_heightfield::schema::<PathLayer>,
     points,
 };
-
-fn refused(_input: &[u8], _cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    Err(Error::new(ErrorCode::JobUnsupported, "$.jobs"))
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainPath {
@@ -88,7 +73,7 @@ fn points(settings: &Value) -> Option<Vec<[f32; 2]>> {
 fn made(settings: Arc<PathLayer>, profile: Option<Arc<PathProfile>>) -> Made {
     settings
         .validate()
-        .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, "$"))?;
+        .map_err(|invalid| invalid.error(ErrorCode::InvalidTerrain, "$"))?;
     Ok(Arc::new(TerrainPath { settings, profile }))
 }
 

@@ -3,7 +3,7 @@
     reason = "the atlas arrays grow before they are read"
 )]
 
-mod bake;
+pub(crate) mod bake;
 mod records;
 
 use std::collections::BTreeMap;
@@ -54,6 +54,15 @@ const ASTC_FORMATS: [wgpu::TextureFormat; 4] = [
 ];
 
 const BAKE_MODULE: &str = "engine::impostor_bake";
+
+pub(crate) fn layout_source() -> String {
+    [
+        engine_core::impostor_flags::WGSL,
+        <ImpostorRecord as engine_core::GpuStruct>::WGSL,
+        <bake::ImpostorBake as engine_core::GpuStruct>::WGSL,
+    ]
+    .concat()
+}
 
 fn format_of(device: &wgpu::Device) -> AtlasFormat {
     let features = device.features();
@@ -373,6 +382,7 @@ pub(crate) enum FrameResource<'a> {
 pub(crate) struct Impostors {
     pipelines: ImpostorPipelines,
     atlases: BTreeMap<AtlasRole, Atlas>,
+    unbaked: Vec<(AtlasRole, ImpostorIdentity)>,
     done: u64,
     generation: u64,
 }
@@ -382,6 +392,7 @@ impl Impostors {
         Self {
             pipelines: ImpostorPipelines::new(device),
             atlases: BTreeMap::new(),
+            unbaked: Vec::new(),
             done: 0,
             generation: 0,
         }
@@ -393,6 +404,7 @@ impl Impostors {
 
     pub(crate) fn forget(&mut self) {
         self.atlases.clear();
+        self.unbaked.clear();
         self.generation += 1;
     }
 
@@ -452,6 +464,9 @@ impl Impostors {
                 continue;
             }
             let Some(atlas) = self.atlases.get_mut(&role) else {
+                if let AtlasWork::Bake { identity, .. } = work {
+                    self.unbaked.push((role, *identity));
+                }
                 continue;
             };
             match work {
@@ -475,6 +490,7 @@ impl Impostors {
                     let Some(source) =
                         bake_source((meshes, materials), (*mesh, *material), parts, *bounds)
                     else {
+                        self.unbaked.push((role, *identity));
                         continue;
                     };
                     let gpu = BakeGpu {
@@ -506,6 +522,11 @@ impl Impostors {
         for (&role, atlas) in &mut self.atlases {
             atlas.take_made(role, &mut made);
         }
+        made.extend(
+            self.unbaked
+                .drain(..)
+                .map(|(role, identity)| (role, identity, None)),
+        );
         engine_core::deliver_impostors(world, self.done, made);
     }
 }

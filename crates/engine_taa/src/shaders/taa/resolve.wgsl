@@ -1,10 +1,10 @@
 import package::engine::post::frame::{depth_texture, linear, post, scene};
 import package::engine::post::pixel::{PostPixel, SceneLight};
+import package::face::dither::dithering;
 import package::face::post_scene::apply as scene_light;
 import package::face::transparency::revealed;
 import package::generated::pieces::taa::piece;
 import package::generated::targets::{output_history, output_motion};
-import package::taa::history::turn;
 
 const STILL_PIXELS: f32 = 0.015625f;
 
@@ -69,14 +69,18 @@ fn nearest_motion(pixel: vec2<i32>, last: vec2<i32>) -> vec2<f32> {
     return textureLoad(output_motion, nearest, 0).xy;
 }
 
+fn turn() -> f32 {
+    return select(0.0, piece().options.x, dithering());
+}
+
 fn taa_at(position: vec2<f32>, pixel: vec2<i32>) -> PostPixel {
     return PostPixel(position, position / post.size.xy, pixel, turn(), 2u);
 }
 
-fn neighbor(pixel: vec2<i32>, offset: vec2<i32>, last: vec2<i32>) -> vec3<f32> {
+fn neighbor(pixel: vec2<i32>, offset: vec2<i32>, last: vec2<i32>, ambient: f32) -> vec3<f32> {
     let at = clamp(pixel + offset, vec2<i32>(0), last);
     let texel = textureLoad(scene, at, 0);
-    let light = SceneLight(texel.rgb, texel.a);
+    let light = SceneLight(texel.rgb, ambient);
     return ycocg(scene_light(light, taa_at(vec2<f32>(at) + 0.5, pixel)).color);
 }
 
@@ -108,7 +112,8 @@ fn resolve(at: PostPixel, light: SceneLight) -> SceneLight {
     let last = tap.last;
     let pixel = tap.pixel;
     let texel = textureLoad(scene, pixel, 0);
-    let current = light.color;
+    let current = scene_light(SceneLight(texel.rgb, texel.a),
+        taa_at(vec2<f32>(pixel) + 0.5, pixel)).color;
     let away = (vec2<f32>(pixel) + 0.5 - piece().offset - rendered)
         / (post.size.xy * post.extent.zw);
     let near = saturate(2.0 - 2.0 * max(abs(away.x), abs(away.y)));
@@ -124,17 +129,17 @@ fn resolve(at: PostPixel, light: SceneLight) -> SceneLight {
     let uv = screen + offset;
     if piece().history_valid != 0u && all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0)) {
         let center = ycocg(current);
-        let left = neighbor(pixel, vec2<i32>(-1, 0), last);
-        let right = neighbor(pixel, vec2<i32>(1, 0), last);
-        let up = neighbor(pixel, vec2<i32>(0, -1), last);
-        let down = neighbor(pixel, vec2<i32>(0, 1), last);
+        let left = neighbor(pixel, vec2<i32>(-1, 0), last, texel.a);
+        let right = neighbor(pixel, vec2<i32>(1, 0), last, texel.a);
+        let up = neighbor(pixel, vec2<i32>(0, -1), last, texel.a);
+        let down = neighbor(pixel, vec2<i32>(0, 1), last, texel.a);
         var low = min(center, min(min(left, right), min(up, down)));
         var high = max(center, max(max(left, right), max(up, down)));
         if piece().options.z != 0.0 {
-            let a = neighbor(pixel, vec2<i32>(-1, -1), last);
-            let b = neighbor(pixel, vec2<i32>(1, -1), last);
-            let c = neighbor(pixel, vec2<i32>(-1, 1), last);
-            let d = neighbor(pixel, vec2<i32>(1, 1), last);
+            let a = neighbor(pixel, vec2<i32>(-1, -1), last, texel.a);
+            let b = neighbor(pixel, vec2<i32>(1, -1), last, texel.a);
+            let c = neighbor(pixel, vec2<i32>(-1, 1), last, texel.a);
+            let d = neighbor(pixel, vec2<i32>(1, 1), last, texel.a);
             low = 0.5 * (low + min(low, min(min(a, b), min(c, d))));
             high = 0.5 * (high + max(high, max(max(a, b), max(c, d))));
         }

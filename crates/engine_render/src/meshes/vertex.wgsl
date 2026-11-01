@@ -1,8 +1,6 @@
 import package::engine::math::maximum_abs;
-import package::engine::wind::{slot_sway, wind_sway};
-import package::engine::view::{camera, detail_across, stable_normalize};
-import package::engine::mesh::declarations::{AffinePose, AffineVertexInput, GROUNDING, TemporalOutput,
-    VertexOutput, colors, poses, previous_poses, slot_fade, slot_index, slot_moved};
+import package::engine::view::{camera, stable_normalize};
+import package::engine::mesh::declarations::{AffinePose, VertexOutput};
 
 fn pose_matrix(pose: AffinePose) -> mat4x4<f32> {
     return transpose(mat4x4<f32>(pose.row_0, pose.row_1, pose.row_2,
@@ -29,75 +27,8 @@ fn octahedral_normal(encoded: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(encoded - shift, z);
 }
 
-fn vertex_affine(input: AffineVertexInput) -> VertexOutput {
-    let index = slot_index(input.slot);
-    let model = pose_matrix(poses[index]);
-    let slot = colors[index];
-    var output = transform_vertex(input.position, input.normal, slot.color, slot.surface,
-        input.uv, model);
-    output.material.w = slot_fade(input.slot) | origin_key(model[3].xyz);
-    let sway = slot_sway(slot.flags);
-    if sway > 0.0 {
-        let world = output.world_v.xyz
-            + vertex_wind(model, input.position, output.world_v.xyz, sway, camera.position.w);
-        output.world_v = vec4<f32>(world, output.world_v.w);
-        output.clip_position = camera.view_projection * vec4<f32>(world, 1.0);
-    }
-    if GROUNDING {
-        output.material = placed_material(output.material, index);
-    }
-    return output;
-}
-
 fn placed_material(material: vec4<u32>, slot: u32) -> vec4<u32> {
     return vec4<u32>(pack4x8unorm(output_color(material)), slot, material.zw);
-}
-
-fn vertex_wind(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>, sway: f32,
-        time: f32) -> vec3<f32> {
-    let root = model[3].xyz;
-    return wind_sway(vec4<f32>(camera.wind.xyz, time), 1.0 / max(detail_across(root), 1.0e-6),
-        root, world.y - root.y, position, sway);
-}
-
-fn slot_wind(model: mat4x4<f32>, world: vec3<f32>, sway: f32, time: f32) -> vec3<f32> {
-    return vertex_wind(model, vec3<f32>(0.0), world, sway, time);
-}
-
-fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
-    let slot = slot_index(input.slot);
-    let model = pose_matrix(poses[slot]);
-    let material = colors[slot];
-    var vertex = transform_vertex(input.position, input.normal, material.color,
-        material.surface, input.uv, model);
-    vertex.material.w = slot_fade(input.slot) | origin_key(model[3].xyz);
-    let point = vec4<f32>(input.position, 1.0);
-    var world = model * point;
-    if slot_moved(input.slot) {
-        let pose = previous_poses[slot];
-        world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
-            dot(pose.row_2, point), 1.0);
-    }
-    let sway = slot_sway(material.flags);
-    if sway > 0.0 {
-        let current = vertex.world_v.xyz
-            + vertex_wind(model, input.position, vertex.world_v.xyz, sway, camera.position.w);
-        vertex.world_v = vec4<f32>(current, vertex.world_v.w);
-        vertex.clip_position = camera.view_projection * vec4<f32>(current, 1.0);
-        world = vec4<f32>(world.xyz
-            + vertex_wind(model, input.position, world.xyz, sway, camera.wind.w), 1.0);
-    }
-    if GROUNDING {
-        vertex.material = placed_material(vertex.material, slot);
-    }
-    let previous = camera.previous_view_projection * world;
-    var output: TemporalOutput;
-    output.clip_position = vertex.clip_position;
-    output.normal_u = vertex.normal_u;
-    output.world_v = vertex.world_v;
-    output.material = vertex.material;
-    output.previous = previous.xyw;
-    return output;
 }
 
 fn transform_vertex(position: vec3<f32>, encoded_normal: vec2<f32>, color: vec2<u32>,

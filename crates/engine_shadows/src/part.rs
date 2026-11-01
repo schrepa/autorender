@@ -1,18 +1,18 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Error, View};
-use engine_places::shadows::{CasterMap, CasterView, ShadowCasters, ShadowMaps};
+use engine_places::shadows::{CasterMap, CasterView, SHADOW_REGIONS, ShadowCasters, ShadowMaps};
 use engine_render::{
     Access, AfterRead, Attach, Bind, Buffer, CameraUniform, ComputePipeline, Count, DepthUse,
     DrawInput, Draws, Encode, GpuPart, Install, Layer, Lifetime, Own, Pass, Pipeline, Prepare,
     RenderPipeline, SamplerDesc, Shape, Texture, VertexLayout, ViewTarget, wgpu,
 };
 
-use crate::constants::{MARK_GROUP, SHADOW_REGIONS, SKY_LAYERS};
+use crate::constants::{MARK_GROUP, SKY_LAYERS};
 use crate::gpu_layouts::{CasterCull, ComposeData, Routes, SkyViews};
 use crate::plan::{DEPTH_MARKS, MAP_MARKS, MASKS, ShadowFeedback, ShadowPlan};
 use crate::regions::{MOVING_VIEW, SKY_VIEW};
+use crate::shaders;
 use crate::sky::RESOLUTION;
-use crate::{ShadowSettings, shaders};
 
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 const TABLE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
@@ -69,6 +69,7 @@ pub(crate) struct ShadowsGpu {
     composed: u32,
     moving: u32,
     marked: Option<[u32; 3]>,
+    made: Option<u64>,
     written: Written,
 }
 
@@ -127,10 +128,9 @@ impl ShadowsGpu {
         }
         let side = plan.side();
         let cells = (side * side) as usize;
-        let fresh = self.written.table.len() != plan.revisions.len();
         self.written.table.resize(plan.revisions.len(), u64::MAX);
         for (level, &revision) in plan.revisions.iter().enumerate() {
-            if !fresh && self.written.table[level] == revision {
+            if self.written.table[level] == revision {
                 continue;
             }
             let Some(block) = plan.table.get(level * cells..(level + 1) * cells) else {
@@ -159,6 +159,12 @@ impl ShadowsGpu {
         let Some(key) = plan.key else {
             return;
         };
+        if self.made != Some(plan.made) {
+            self.made = Some(plan.made);
+            for texture in [self.atlas, self.regions, self.tiles] {
+                cx.release(texture);
+            }
+        }
         let (width, height) = key.atlas.size();
         let side = key.region_side();
         cx.allocate(self.atlas, extent(width, height, 1), 1);
@@ -166,6 +172,8 @@ impl ShadowsGpu {
         cx.allocate(self.tiles, extent(key.side, key.side * key.levels, 1), 1);
         if plan.sky.live {
             cx.allocate(self.sky, extent(RESOLUTION, RESOLUTION, SKY_LAYERS), 1);
+        } else {
+            cx.release(self.sky);
         }
         let mask_bytes = plan.mark_bytes().max(4);
         for marks in [self.map_marks, self.depth_marks, self.masks] {
@@ -178,12 +186,7 @@ impl ShadowsGpu {
 }
 
 impl GpuPart for ShadowsGpu {
-    type Reads = (
-        Res<'static, ShadowSettings>,
-        Res<'static, ShadowMaps>,
-        Res<'static, ShadowPlan>,
-        Res<'static, View>,
-    );
+    type Reads = (Res<'static, ShadowMaps>, Res<'static, ShadowPlan>, Res<'static, View>);
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use shaders::shadows::faces::routes as face_routes;
@@ -216,9 +219,9 @@ impl GpuPart for ShadowsGpu {
         cx.frame(face_routes::CASTER_MASKS, Bind::Buffer(masks))?;
         let maps = cx
             .pass("shadow_maps")
-            .depth(regions, Access::Clear)
+            .depth_cleared(regions, 1.0)
             .depth(atlas, Access::Load)
-            .depth(sky, Access::Clear)
+            .depth_cleared(sky, 1.0)
             .id();
         let marks = cx.pass("shadow_marks").at(Layer::Backdrop).id();
         let compose_vertices = cx.draw_input(maps, composes);
@@ -269,18 +272,16 @@ impl GpuPart for ShadowsGpu {
             composed: 0,
             moving: 0,
             marked: None,
+            made: None,
             written: Written::default(),
         })
     }
 
     fn prepare(
         &mut self,
-        (settings, maps, plan, view): SystemParamItem<'_, '_, Self::Reads>,
+        (maps, plan, view): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        if settings.is_changed() {
-            self.written = Written::default();
-        }
         self.allocate(&plan, cx);
         self.upload(&plan, cx);
         self.at.clear();
@@ -325,11 +326,13 @@ impl GpuPart for ShadowsGpu {
             return 0;
         }
         let mut drawn = 0;
+        cx.span("shadow_regions");
         for at in self.at.iter().filter(|at| at.map == CasterMap::Region) {
             let mut draw = cx.render(Attach::Depth(self.regions, Some(at.region)), Some(at.region));
             drawn += self.casters.draw(&mut draw, (), at);
         }
         if self.composed > 0 || self.moving > 0 {
+            cx.span("shadow_atlas");
             let vertices = [self.compose_vertices];
             let mut atlas = cx.render(Attach::Depth(self.atlas, None), Some(MOVING_VIEW));
             if self.composed > 0 {
@@ -357,6 +360,7 @@ impl GpuPart for ShadowsGpu {
             }
         }
         if let Some(layer) = self.sky_layer {
+            cx.span("shadow_sky");
             for at in self.at.iter().filter(|at| at.map == CasterMap::Sky) {
                 let mut draw = cx.render(Attach::Depth(self.sky, Some(layer)), Some(SKY_VIEW));
                 drawn += self.casters.draw(&mut draw, (), at);

@@ -4,16 +4,11 @@ import package::engine::materials::{
     material_maps, material_texels, top_layer_amount
 };
 import package::engine::mesh::impostor_frames::{
-    IMPOSTOR_HEMISPHERE, impostor_basis, impostor_frame_direction, impostor_frames
+    IMPOSTOR_HEMISPHERE, ImpostorBake, impostor_basis, impostor_frame_direction, impostor_frames
 };
 import package::engine::mesh::vertex::octahedral_normal;
 import package::engine::view::stable_normalize;
 
-struct ImpostorBake {
-    sphere: vec4<f32>,
-    flags: vec4<u32>,
-    tile: vec4<u32>,
-}
 @group(2) @binding(15) var<uniform> impostor_bake: ImpostorBake;
 @group(2) @binding(16) var impostor_shade: texture_depth_2d;
 

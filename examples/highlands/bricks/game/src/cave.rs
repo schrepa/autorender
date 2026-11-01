@@ -1,16 +1,51 @@
 use bevy_ecs::prelude::*;
-use engine_core::{AssetLibrary, MaterialHandle, Mesh, Mesh3d, MeshHandle, ProvidedAssets, Spawner, Transform, math};
+use engine_core::{
+    AssetLibrary, Jobs, MaterialHandle, Mesh, Mesh3d, MeshHandle, Records, Spawner, Ticket,
+    Transform, math,
+};
 use engine_places::ground::TerrainTiles;
 use engine_places::lights::{LightRegion, LocalLight};
 use engine_places::probes::{Interior, ReflectionProbe};
 use glam::{Quat, Vec2, Vec3};
 
-use crate::{CAVE_WALL, HighlandsBrick, HighlandsSettings, WALL_ROCK, caves};
+use crate::HighlandsBrick;
+use crate::content::{CAVE, CAVE_POINTS, Content, cave_input};
 
-const CAVE_RADIUS: [f32; 2] = [6.0, 4.5];
+pub(crate) const CAVE_RADIUS: [f32; 2] = [6.0, 4.5];
 
 const CAVE_MARGIN: f32 = 1.5;
 
+#[derive(Clone, Copy)]
+pub(crate) struct CaveMouth {
+    pub(crate) center: Vec2,
+    pub(crate) radius: f32,
+    pub(crate) material: MaterialHandle,
+    pub(crate) wall: MaterialHandle,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct Cave {
+    pub(crate) mouth: Option<CaveMouth>,
+    opened: bool,
+    asked: Option<Asked>,
+}
+
+impl Cave {
+    pub(crate) fn asking(&self) -> bool {
+        self.asked.is_some()
+    }
+}
+
+struct Asked {
+    ticket: Ticket,
+    mesh: MeshHandle,
+    points: [Vec3; CAVE_POINTS],
+    inward: Vec3,
+    rock: CaveRock,
+    framing: Vec<(Transform, MeshHandle)>,
+}
+
+#[derive(Clone)]
 struct CaveRock {
     boulders: Vec<MeshHandle>,
     material: MaterialHandle,
@@ -18,34 +53,42 @@ struct CaveRock {
 }
 
 impl CaveRock {
-    fn of(provided: &ProvidedAssets) -> Option<Self> {
-        let boulders: Vec<MeshHandle> = (0_u32..)
-            .map_while(|seed| provided.mesh(&format!("boulder{seed}")))
-            .collect();
-        Some(Self {
-            boulders,
-            material: provided.material(WALL_ROCK)?,
-            wall: provided.material(CAVE_WALL)?,
-        })
+    fn of(content: &Content, mouth: &CaveMouth) -> Self {
+        Self {
+            boulders: content.boulders.clone(),
+            material: mouth.material,
+            wall: mouth.wall,
+        }
     }
 }
 
 pub(crate) fn open(
-    settings: Res<HighlandsSettings>,
-    tiles: Res<TerrainTiles>,
-    provided: Res<ProvidedAssets>,
+    (tiles, records): (Res<TerrainTiles>, Res<Records>),
+    (mut cave, mut content): (ResMut<Cave>, ResMut<Content>),
     mut assets: ResMut<AssetLibrary>,
-    mut opened: Local<bool>,
+    mut jobs: Jobs,
     mut spawner: Spawner<HighlandsBrick>,
 ) {
-    if *opened {
+    let (cave, content) = (&mut *cave, &mut *content);
+    arrive(
+        cave,
+        content,
+        (&*records, &mut jobs),
+        &mut assets,
+        &mut spawner,
+    );
+    if cave.opened {
         return;
     }
-    let (Some([mouth_x, mouth_z, radius]), Some(rock)) = (settings.cave, CaveRock::of(&provided))
-    else {
+    let Some(opening) = cave.mouth else {
         return;
     };
-    let mouth = Vec2::new(mouth_x, mouth_z);
+    let rock = CaveRock::of(content, &opening);
+    let CaveMouth {
+        center: mouth,
+        radius,
+        ..
+    } = opening;
     let Some((terrain, layers)) = tiles.terrains.iter().find_map(|terrain| {
         let layers = terrain.baked.as_ref().filter(|_| !terrain.surroundings)?;
         Some((terrain, layers))
@@ -110,29 +153,66 @@ pub(crate) fn open(
     )
     .collect();
     let inward = Vec3::new(uphill.x, 0.0, uphill.y);
-    *opened = true;
-    let built = match caves::cave(&points, CAVE_RADIUS, 79) {
-        Ok(built) => built,
-        Err(error) => {
-            crate::report_failure("highlands_cave_failed", &error);
-            return;
-        }
-    };
-    let (low, high) = cave_interior(&built, &points, inward);
-    let mesh = match assets.insert_mesh(built) {
+    cave.opened = true;
+    let mesh = match assets.reserve_mesh() {
         Ok(mesh) => mesh,
         Err(error) => {
             crate::report_failure("highlands_cave_failed", &error);
             return;
         }
     };
-    spawn_cave(&mut spawner, mesh, (&points, inward, low, high), (&rock, framing));
+    let ticket = jobs.fetch(&CAVE, &cave_input(&points), content.priority());
+    cave.asked = Some(Asked {
+        ticket,
+        mesh,
+        points,
+        inward,
+        rock,
+        framing,
+    });
+}
+
+fn arrive(
+    cave: &mut Cave,
+    content: &mut Content,
+    (records, jobs): (&Records, &mut Jobs<'_, '_>),
+    assets: &mut AssetLibrary,
+    spawner: &mut Spawner<HighlandsBrick>,
+) {
+    let Some(record) = cave
+        .asked
+        .as_ref()
+        .and_then(|asked| records.get(&asked.ticket))
+    else {
+        return;
+    };
+    let Some(asked) = cave.asked.take() else {
+        return;
+    };
+    jobs.cancel(asked.ticket);
+    let built = match record.and_then(|bytes| Mesh::from_record(&bytes)) {
+        Ok(built) => built,
+        Err(error) => {
+            content.failed(&CAVE, &error);
+            return;
+        }
+    };
+    let (low, high) = cave_interior(&built, &asked.points, asked.inward);
+    spawn_cave(
+        spawner,
+        asked.mesh,
+        (&asked.points, asked.inward, low, high),
+        (&asked.rock, asked.framing),
+    );
+    if let Err(error) = assets.fill_mesh(asked.mesh, built) {
+        content.failed(&CAVE, &error);
+    }
 }
 
 fn spawn_cave(
     spawner: &mut Spawner<HighlandsBrick>,
     mesh: MeshHandle,
-    (points, inward, low, high): (&[Vec3; 5], Vec3, Vec3, Vec3),
+    (points, inward, low, high): (&[Vec3; CAVE_POINTS], Vec3, Vec3, Vec3),
     (rock, framing): (&CaveRock, Vec<(Transform, MeshHandle)>),
 ) {
     spawner.spawn((

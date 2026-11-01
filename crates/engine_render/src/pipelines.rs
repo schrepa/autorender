@@ -30,7 +30,7 @@ thread_local! {
     static REGISTRIES: RefCell<Vec<Registry>> = const { RefCell::new(Vec::new()) };
 }
 
-fn count(created: u32) {
+pub(crate) fn count(created: u32) {
     CREATED.with(|counted| counted.set(counted.get().saturating_add(created)));
 }
 
@@ -282,7 +282,7 @@ impl Registry {
         Self {
             device: device.clone(),
             canvas: None,
-            linker: Linker::new(crate::shaders::MODULES),
+            linker: crate::shaders::fixed_linker(),
             layouts_listed: vec![PIPELINE_LAYOUTS],
             declared: BTreeMap::new(),
             resolved: BTreeMap::new(),

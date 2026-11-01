@@ -4,18 +4,29 @@ use std::path::Path;
 
 use bevy_ecs::world::World;
 use engine::{AssetBudget, AssetLibrary, Engine, EngineConfig, Error, ErrorCode};
-use engine_scene::{MAX_SOURCE_BYTES, SceneDocument, SceneFiles};
+use engine_core::Section;
+use engine_scene::{MAX_SOURCE_BYTES, SceneDocument, SceneFiles, SceneKinds};
+use engine_world_streaming::StreamedScene;
 use serde_json::{Value, json};
 
 use super::Observations;
 
 const FIXTURES: &str = "tools/xtask/pure/scenes.json";
 
+const SCENE_SOURCES: &[&str] = &[
+    "crates/engine_scene/src",
+    "crates/engine_grounding/src/lib.rs",
+    "crates/engine_splines/src/scene.rs",
+    "crates/engine_splines/src/spline_mesh.rs",
+    "crates/engine_world_streaming/src/scene.rs",
+];
+
 const UNREACHED: &[(&str, &str)] = &[];
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let fixtures: Value = serde_json::from_str(&read(root, FIXTURES)?)
         .map_err(|error| format!("{FIXTURES} is not JSON: {error}"))?;
+    let kinds = crate::bricks::standard_kinds().map_err(|error| error.to_string())?;
     for (name, document) in fixtures["documents"]
         .as_object()
         .ok_or_else(|| format!("{FIXTURES} has no documents"))?
@@ -24,7 +35,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             Some(path) => read(root, path)?,
             None => document.to_string(),
         };
-        round_trip(name, &source, observed);
+        round_trip(name, &source, &kinds, observed);
     }
     let mut refused = BTreeSet::new();
     for refusal in fixtures["refusals"]
@@ -43,17 +54,22 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             _ => refusal["document"].to_string(),
         };
         let stage = refusal["stage"].as_str().unwrap_or("parse");
-        let error = match refuse(&source, stage, refusal["world"].as_str()) {
-            Ok(()) => {
-                observed.check(false, || format!("{name}: the document was accepted"));
-                continue;
-            }
-            Err(error) => error,
+        let skips = refusal["skipped"] == true;
+        let (error, skipped) = match refuse(&source, stage, refusal["world"].as_str(), &kinds) {
+            Ok(skipped) => match skipped.into_iter().next() {
+                Some(skip) => (skip, true),
+                None => {
+                    observed.check(false, || format!("{name}: the document was accepted"));
+                    continue;
+                }
+            },
+            Err(error) => (error, false),
         };
         let code = error.code.as_str();
-        observed.check(code == rule && error.path == path, || {
+        observed.check(code == rule && error.path == path && skipped == skips, || {
+            let answer = if skipped { "skipped" } else { "refused" };
             format!(
-                "{name}: expected {rule} at {path}, found {code} at {}",
+                "{name}: expected {rule} at {path}, found {code} at {} {answer}",
                 error.path
             )
         });
@@ -67,14 +83,14 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             if unreached {
                 format!("{rule} is in UNREACHED, but a refusal reaches it")
             } else {
-                format!("no refusal in {FIXTURES} answers {rule}, which engine_scene names")
+                format!("no refusal in {FIXTURES} answers {rule}, which the scene loader names")
             }
         });
     }
     observed.check(
         UNREACHED.windows(2).all(|pair| pair[0].0 < pair[1].0)
             && UNREACHED.iter().all(|(code, _)| rules.contains(*code)),
-        || "UNREACHED must be sorted and name only codes engine_scene names".into(),
+        || "UNREACHED must be sorted and name only codes the scene loader names".into(),
     );
     Ok(())
 }
@@ -109,10 +125,13 @@ fn read(root: &Path, path: &str) -> Result<String, String> {
     fs::read_to_string(root.join(path)).map_err(|error| format!("cannot read {path}: {error}"))
 }
 
-fn round_trip(name: &str, source: &str, observed: &mut Observations) {
+fn round_trip(name: &str, source: &str, kinds: &SceneKinds, observed: &mut Observations) {
     let written = SceneDocument::from_json(source).and_then(|document| {
+        document.validate(kinds)?;
         let first = document.to_json()?;
-        let second = SceneDocument::from_json(&first)?.to_json()?;
+        let again = SceneDocument::from_json(&first)?;
+        again.validate(kinds)?;
+        let second = again.to_json()?;
         Ok((document, first, second))
     });
     match written {
@@ -125,7 +144,7 @@ fn round_trip(name: &str, source: &str, observed: &mut Observations) {
                 format!("document {name} counts"),
                 json!({
                     "entities": document.entities.len(),
-                    "streamed": document.streamed.len(),
+                    "streamed": streamed(&document),
                     "prefabs": document.prefabs.len(),
                     "materials": document.materials.len(),
                     "meshes": document.meshes.len(),
@@ -144,10 +163,27 @@ fn round_trip(name: &str, source: &str, observed: &mut Observations) {
     }
 }
 
-fn refuse(source: &str, stage: &str, world: Option<&str>) -> Result<(), Error> {
+fn streamed(document: &SceneDocument) -> usize {
+    document
+        .environment
+        .as_ref()
+        .and_then(|environment| environment.sections.get(StreamedScene::KEY))
+        .and_then(|section| section["streamed"].as_array())
+        .map_or(0, Vec::len)
+}
+
+fn refuse(
+    source: &str,
+    stage: &str,
+    world: Option<&str>,
+    kinds: &SceneKinds,
+) -> Result<Vec<Error>, Error> {
     let document = SceneDocument::from_json(source)?;
+    document.validate(kinds)?;
     match stage {
-        "files" => document.validate_with(&SceneFiles::new()),
+        "files" => document
+            .validate_with(kinds, &SceneFiles::new())
+            .map(|()| Vec::new()),
         "instantiate" => {
             let mut engine;
             let mut bare;
@@ -180,20 +216,32 @@ fn refuse(source: &str, stage: &str, world: Option<&str>) -> Result<(), Error> {
                     engine.app.world_mut()
                 }
             };
-            document.instantiate(world).map(drop)
+            document
+                .instantiate(world)
+                .map(|scene| scene.skipped().to_vec())
         }
-        _ => Ok(()),
+        _ => Ok(Vec::new()),
     }
 }
 
 fn scene_rules(root: &Path) -> Result<BTreeSet<String>, String> {
-    let source = root.join("crates/engine_scene/src");
+    let mut paths = Vec::new();
+    for listed in SCENE_SOURCES {
+        let path = root.join(listed);
+        if !path.is_dir() {
+            paths.push(path);
+            continue;
+        }
+        let entries =
+            fs::read_dir(&path).map_err(|error| format!("cannot read {listed}: {error}"))?;
+        for entry in entries {
+            paths.push(entry.map_err(|error| error.to_string())?.path());
+        }
+    }
     let mut named = BTreeSet::new();
-    for entry in
-        fs::read_dir(&source).map_err(|error| format!("cannot read engine_scene: {error}"))?
-    {
-        let path = entry.map_err(|error| error.to_string())?.path();
-        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    for path in paths {
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
         for (at, _) in text.match_indices("ErrorCode::") {
             let rest = &text[at + "ErrorCode::".len()..];
             let end = rest
@@ -208,7 +256,9 @@ fn scene_rules(root: &Path) -> Result<BTreeSet<String>, String> {
             .iter()
             .find(|(code, _)| format!("{code:?}") == variant)
             .map(|(_, name)| (*name).to_owned())
-            .ok_or_else(|| format!("engine_scene names ErrorCode::{variant}, which is no code"))?;
+            .ok_or_else(|| {
+                format!("the scene loader names ErrorCode::{variant}, which is no code")
+            })?;
         rules.insert(code);
     }
     Ok(rules)

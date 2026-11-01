@@ -224,7 +224,7 @@ pub trait SmokeSession {
     fn step(&mut self, ticks: u32);
     fn frame(&mut self) -> bool;
     fn source(&mut self, document: &str);
-    fn file(&mut self, name: &str, bytes: Vec<u8>);
+    fn file(&mut self, name: &str, bytes: &[u8]);
 }
 
 #[macro_export]
@@ -338,15 +338,209 @@ macro_rules! gpu_struct {
 
 #[macro_export]
 macro_rules! gpu_consts {
-    ($($vis:vis const $name:ident: $ty:ident = $value:expr;)*) => {
-        $($vis const $name: $ty = $value;)*
-        pub const WGSL: &str = ::core::concat!($(
-            "const ", ::core::stringify!($name), ": ", ::core::stringify!($ty), " = ", ::core::stringify!($value), ";\n",
-        )*);
+    (@munch [$($pieces:tt)*]) => {
+        pub const WGSL: &str = {
+            const __GPU_CONSTS_PIECES: &[$crate::__private::wgsl::Piece] = &[$($pieces)*];
+            const __GPU_CONSTS_LEN: usize =
+                $crate::__private::wgsl::write::<0>(__GPU_CONSTS_PIECES).len;
+            const __GPU_CONSTS_BYTES: [u8; __GPU_CONSTS_LEN] =
+                $crate::__private::wgsl::write::<__GPU_CONSTS_LEN>(__GPU_CONSTS_PIECES).bytes;
+            $crate::__private::wgsl::text(&__GPU_CONSTS_BYTES)
+        };
+    };
+    (@munch [$($pieces:tt)*] $vis:vis const $name:ident: $ty:ident = $value:literal; $($rest:tt)*) => {
+        $vis const $name: $ty = $value;
+        $crate::gpu_consts! {
+            @munch [
+                $($pieces)*
+                $crate::__private::wgsl::Piece::Text(::core::concat!(
+                    "const ", ::core::stringify!($name), ": ", ::core::stringify!($ty), " = ",
+                    ::core::stringify!($value), ";\n",
+                )),
+            ]
+            $($rest)*
+        }
+    };
+    (@munch [$($pieces:tt)*] $vis:vis const $name:ident: $ty:ident = $value:expr; $($rest:tt)*) => {
+        $vis const $name: $ty = $value;
+        $crate::gpu_consts! {
+            @munch [
+                $($pieces)*
+                $crate::__private::wgsl::Piece::Text(::core::concat!(
+                    "const ", ::core::stringify!($name), ": ", ::core::stringify!($ty), " = ",
+                )),
+                $crate::gpu_consts!(@value $ty $name),
+                $crate::__private::wgsl::Piece::Text(";\n"),
+            ]
+            $($rest)*
+        }
+    };
+    (@value u32 $name:ident) => { $crate::__private::wgsl::Piece::U32($name) };
+    (@value i32 $name:ident) => { $crate::__private::wgsl::Piece::I32($name) };
+    (@value f32 $name:ident) => { $crate::__private::wgsl::Piece::F32($name) };
+    (@value $ty:ident $name:ident) => {
+        ::core::compile_error!(::core::concat!(
+            "gpu_consts! writes WGSL for u32, i32 and f32, not ",
+            ::core::stringify!($ty)
+        ))
+    };
+    ($($body:tt)*) => {
+        $crate::gpu_consts! { @munch [] $($body)* }
     };
 }
 
 #[doc(hidden)]
 pub mod __private {
     pub use ::bytemuck;
+
+    pub mod wgsl {
+        #[derive(Clone, Copy)]
+        pub enum Piece {
+            Text(&'static str),
+            U32(u32),
+            I32(i32),
+            F32(f32),
+        }
+
+        pub struct Written<const N: usize> {
+            pub bytes: [u8; N],
+            pub len: usize,
+        }
+
+        pub const fn write<const N: usize>(pieces: &[Piece]) -> Written<N> {
+            let mut out = Written {
+                bytes: [0; N],
+                len: 0,
+            };
+            let mut at = 0;
+            while at < pieces.len() {
+                match pieces[at] {
+                    Piece::Text(text) => out.text(text),
+                    Piece::U32(value) => out.whole(value as u128),
+                    Piece::I32(value) => {
+                        if value < 0 {
+                            out.push(b'-');
+                        }
+                        out.whole(value.unsigned_abs() as u128);
+                    }
+                    Piece::F32(value) => out.float(value),
+                }
+                at += 1;
+            }
+            out
+        }
+
+        pub const fn text(bytes: &'static [u8]) -> &'static str {
+            match core::str::from_utf8(bytes) {
+                Ok(text) => text,
+                Err(_) => panic!("gpu_consts WGSL is UTF-8"),
+            }
+        }
+
+        const LIMBS: usize = 6;
+
+        impl<const N: usize> Written<N> {
+            const fn push(&mut self, byte: u8) {
+                if self.len < N {
+                    self.bytes[self.len] = byte;
+                }
+                self.len += 1;
+            }
+
+            const fn text(&mut self, text: &str) {
+                let bytes = text.as_bytes();
+                let mut at = 0;
+                while at < bytes.len() {
+                    self.push(bytes[at]);
+                    at += 1;
+                }
+            }
+
+            const fn whole(&mut self, value: u128) {
+                let mut digits = [0_u8; 39];
+                let mut count = 0;
+                let mut rest = value;
+                loop {
+                    digits[count] = b'0' + (rest % 10) as u8;
+                    count += 1;
+                    rest /= 10;
+                    if rest == 0 {
+                        break;
+                    }
+                }
+                while count > 0 {
+                    count -= 1;
+                    self.push(digits[count]);
+                }
+            }
+
+            const fn float(&mut self, value: f32) {
+                let bits = value.to_bits();
+                let exponent = (bits >> 23) & 0xff;
+                assert!(exponent != 0xff, "a gpu_consts f32 is finite");
+                if bits >> 31 != 0 {
+                    self.push(b'-');
+                }
+                let fraction = bits & 0x7f_ffff;
+                let (mantissa, shift) = if exponent == 0 {
+                    (fraction, -149_i32)
+                } else {
+                    (fraction | 0x80_0000, exponent as i32 - 150)
+                };
+                if shift >= 0 {
+                    self.whole((mantissa as u128) << shift as u32);
+                    self.text(".0");
+                    return;
+                }
+                let below = shift.unsigned_abs();
+                let (whole, rest) = if below < 24 {
+                    (mantissa >> below, mantissa & ((1 << below) - 1))
+                } else {
+                    (0, mantissa)
+                };
+                self.whole(whole as u128);
+                self.push(b'.');
+                if rest == 0 {
+                    self.push(b'0');
+                    return;
+                }
+                let mut limbs = [0_u32; LIMBS];
+                limbs[0] = rest;
+                let word = (below / 32) as usize;
+                let bit = below % 32;
+                while !zero(&limbs) {
+                    let mut carry = 0_u64;
+                    let mut at = 0;
+                    while at < LIMBS {
+                        let wide = limbs[at] as u64 * 10 + carry;
+                        limbs[at] = wide as u32;
+                        carry = wide >> 32;
+                        at += 1;
+                    }
+                    let mut digit = limbs[word] >> bit;
+                    if bit > 28 {
+                        digit |= limbs[word + 1] << (32 - bit);
+                    }
+                    limbs[word] &= if bit == 0 { 0 } else { (1 << bit) - 1 };
+                    let mut above = word + 1;
+                    while above < LIMBS {
+                        limbs[above] = 0;
+                        above += 1;
+                    }
+                    self.push(b'0' + (digit & 0xf) as u8);
+                }
+            }
+        }
+
+        const fn zero(limbs: &[u32; LIMBS]) -> bool {
+            let mut at = 0;
+            while at < LIMBS {
+                if limbs[at] != 0 {
+                    return false;
+                }
+                at += 1;
+            }
+            true
+        }
+    }
 }

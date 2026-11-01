@@ -7,7 +7,7 @@ use engine_places::ground::{TILE_QUADS, TILE_SAMPLES, TileKey};
 use engine_places::physics::{
     CollisionLayers, CollisionRay, QueryFilter, RayHit, SensorFilter, ShapeCastOptions, ShapeHit,
 };
-use engine_places::solids::{FieldSamples, SolidSource};
+use engine_places::solids::FieldSamples;
 use glam::Vec3;
 use parry3d::{
     bounding_volume::Aabb,
@@ -23,6 +23,7 @@ use parry3d::{
 
 use crate::geometry::{AffineShape, Bounds, Support};
 use crate::types::Fault;
+use crate::world::Sources;
 
 struct Field {
     entity: Entity,
@@ -45,20 +46,16 @@ fn accepts(filter: QueryFilter, entity: Entity) -> bool {
 }
 
 impl TerrainFields {
-    pub(crate) fn len(&self) -> usize {
-        self.fields.len()
-    }
-
     pub(crate) fn owners(&self) -> impl Iterator<Item = Entity> + '_ {
         self.fields.iter().map(|field| field.entity)
     }
 
-    pub(crate) fn sync(&mut self, sources: &Query<'_, '_, &SolidSource>, changed: bool) -> bool {
-        if !changed {
-            return false;
-        }
+    pub(crate) fn sync(&mut self, sources: &Query<'_, '_, Sources>) {
         let mut kept = std::mem::take(&mut self.fields);
-        for patch in sources.iter().flat_map(|source| source.field.fields()) {
+        for patch in sources
+            .iter()
+            .flat_map(|(_, source)| source.into_inner().field.fields())
+        {
             let (entity, key, origin) = (patch.owner, patch.key, patch.origin);
             if let Some(position) = kept.iter().position(|field| {
                 field.entity == entity
@@ -113,7 +110,6 @@ impl TerrainFields {
                 },
             });
         }
-        true
     }
 
     pub(crate) fn ray(&self, ray: CollisionRay, filter: QueryFilter) -> Option<RayHit> {

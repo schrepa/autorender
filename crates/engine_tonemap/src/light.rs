@@ -60,11 +60,17 @@ settings! {
     #[schemars(rename = "SceneGrading")]
     pub struct Grading {
         pub preset: LightPreset = LightPreset::GoldenHour => any,
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub exposure: Option<f32> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub saturation: Option<f32> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub contrast: Option<f32> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub vibrance: Option<f32> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub shadow_tint: Option<[f32; 3]> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub highlight_tint: Option<[f32; 3]> = None => at_least(0.0),
     }
 }

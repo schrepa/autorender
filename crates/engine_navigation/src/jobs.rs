@@ -60,15 +60,7 @@ fn grid_input(source: &[u8], key: TileKey) -> Vec<u8> {
 
 fn start_ground(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
     let GroundJob { grid, source, key } = codec::decode(input)?;
-    Ok(Box::new(Gridding(cx.start(&grid, &grid_input(&source, key))?)))
-}
-
-struct Gridding(Box<dyn Job>);
-
-impl Job for Gridding {
-    fn step(&mut self, budget: u64, cx: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
-        self.0.step(budget, cx)
-    }
+    cx.start(&grid, &grid_input(&source, key))
 }
 
 fn start_portals(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {

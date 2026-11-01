@@ -49,8 +49,17 @@ impl Terrains {
         self.stats.clone()
     }
 
-    pub fn refused(&self) -> &[(Entity, Error)] {
-        &self.refused
+    pub fn bake_asked(&self, entity: Entity) -> bool {
+        self.entries
+            .iter()
+            .find(|state| state.entity == entity && state.around.is_none())
+            .filter(|state| {
+                state
+                    .baked
+                    .as_ref()
+                    .is_some_and(|baked| baked.unbaked().is_none())
+            })
+            .is_some_and(|state| state.bake.asked)
     }
 
     pub fn job_failures(&self) -> (u64, Option<&str>) {
@@ -70,7 +79,7 @@ impl Terrains {
             .map(|state| &state.terrain)
     }
 
-    pub fn layers(&self, entity: Entity) -> Option<Arc<Layers>> {
+    pub fn layers(&self, entity: Entity, kinds: &[&'static LayerKind]) -> Option<Arc<Layers>> {
         let state = self
             .entries
             .iter()
@@ -88,7 +97,7 @@ impl Terrains {
             return Some(edited.clone());
         }
         let stamps: Vec<Stamp> = state.terrain.edits.iter().map(|edit| edit.stamp).collect();
-        Some(crate::layers::with_stamps(&base, &stamps).map_or(base, Arc::new))
+        Some(base.with_stamps(&stamps, kinds).map_or(base, Arc::new))
     }
 
     pub fn route(

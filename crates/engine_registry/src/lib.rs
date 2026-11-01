@@ -23,8 +23,8 @@ pub use entries::{
 };
 pub use gates::{GateDriver, GateFn, GateId, Gates, Scope, gate_on};
 pub use jobs::{
-    JobKindRef, JobList, JobListed, JobMember, JobOrder, JobOrders, JobQueue, RecordParity,
-    RecordStore, Shares,
+    JobBatch, JobKindRef, JobList, JobListed, JobMember, JobOrder, JobOrders, JobQueue,
+    RecordParity, RecordStore, Shares,
 };
 pub use members::MembersOf;
 pub use record::{BrickRecord, RecordExt};
@@ -32,4 +32,4 @@ pub use registry::{BrickId, BrickSet, Registry, settings};
 pub use scene::{
     AuthoredId, OperationScene, SceneEntity, SceneRead, SpawnedBy, authored_entity, authored_id,
 };
-pub use services::{FrameFacts, InputState, PoseTable, Residency, ViewState};
+pub use services::{FrameFacts, InputState, PoseTable, ViewState};

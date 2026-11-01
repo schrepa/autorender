@@ -1,17 +1,21 @@
 use super::ground_face::publish_ground;
-use super::programs::{SurfaceProgramGpu, publish_programs};
-use super::publish::{publish_hydrology, publish_tiles};
+use super::programs::{SurfaceEntry, SurfaceProgramGpu, publish_programs};
+use super::publish::{publish_hydrology, publish_paths, publish_tiles};
 use super::solids::sync_solids;
 use super::*;
+use crate::expr::EXPRESSION;
 use crate::jobs::GROUND_GRID;
-use crate::scene::build_terrains;
-use engine_core::{Brick, Bricks, ComponentKind, JobKind, SceneComponents, Schedule, Source};
+use crate::scene::{prefetch_kind, terrain_kind};
+use engine_core::{Brick, Bricks, GpuStruct, JobKind, SceneComponents, Schedule, Source};
 use engine_places::ground::{Ground, GroundSurface, TerrainTiles};
+use engine_places::streaming::StreamingPaths;
 use engine_places::terrain::TerrainLayers;
 use engine_places::water::Hydrology;
 use engine_render::RenderBricks;
 
 pub struct TerrainBrick;
+
+const GENERATED: &[&str] = &[crate::gpu::WGSL, <SurfaceEntry as GpuStruct>::WGSL];
 
 impl Brick for TerrainBrick {
     const SOURCE: &'static Source = &crate::SOURCE;
@@ -19,7 +23,6 @@ impl Brick for TerrainBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|terrain: Res<TerrainSettings>| terrain.enabled)
             .settings::<TerrainSettings>()
             .stats::<TerrainStats>()
             .resource::<Terrains>()
@@ -29,23 +32,26 @@ impl Brick for TerrainBrick {
             .fill::<Ground>(None)
             .fill::<TerrainTiles>(None)
             .fill::<Hydrology>(None)
+            .fill::<StreamingPaths>(None)
             .fill::<GroundSurface>(Some(crate::shaders::terrain::faces::surface::MODULE))
-            .join::<SceneComponents>(ComponentKind::of::<TerrainScene>("terrain"), None)
-            .join::<SceneComponents>(ComponentKind::of::<TerrainPrefetch>("prefetch"), None)
-            .join::<TerrainLayers>(crate::expr_layer::expression_kind(), None)
-            .systems(Schedule::Presentation, bridges::sync)
+            .join::<SceneComponents>(terrain_kind(), None)
+            .join::<SceneComponents>(prefetch_kind(), None)
+            .join::<TerrainLayers>(&EXPRESSION, None)
+            .generated(GENERATED)
             .systems(
                 Schedule::ViewSync,
                 (
-                    build_terrains,
                     stream_terrains,
+                    sync_solids,
                     publish_ground,
                     publish_tiles,
                     publish_hydrology,
+                    publish_paths,
                     publish_programs,
                 ),
             )
-            .systems(Schedule::WorldSync, sync_solids)
+            .systems(Schedule::WorldSync, bridges::sync)
+            .systems(Schedule::Waiting, stream_terrains)
             .systems(Schedule::BetweenFrames, work_between_frames)
             .operation::<TerrainEditControl>()
             .operation::<TerrainUndoControl>()

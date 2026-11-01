@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 
 use bevy_ecs::prelude::*;
-use engine_core::glam::Vec3;
 use engine_places::ground::{
     Cover, GroundTiles, PlacedTiles, PooledTile, TerrainEntry, TerrainTiles, TileKey,
 };
@@ -18,6 +17,7 @@ pub(crate) struct TraceFrame<'a> {
     pub ground: &'a GroundTiles,
     pub placed: &'a PlacedTiles,
     pub cover: &'a Cover,
+    pub room: u64,
     pub ground_changed: bool,
     pub placed_changed: bool,
 }
@@ -26,7 +26,6 @@ struct Grid {
     words: Range<u32>,
     slots: Range<u32>,
     identity: u64,
-    boxes: Vec<(Vec3, Vec3)>,
     level: u8,
     apron: f32,
     top: f32,
@@ -48,6 +47,7 @@ pub(crate) struct WorldTrace {
     grids: BTreeMap<TileId, Grid>,
     free: Vec<Range<u32>>,
     layers: u32,
+    boxes: Vec<([f32; 4], [f32; 3])>,
     held: BTreeMap<TileId, u32>,
     tops: BTreeMap<Entity, f32>,
     known: bool,
@@ -66,6 +66,7 @@ impl Default for WorldTrace {
             grids: BTreeMap::new(),
             free: Vec::new(),
             layers: 0,
+            boxes: Vec::new(),
             held: BTreeMap::new(),
             tops: BTreeMap::new(),
             known: false,
@@ -103,9 +104,13 @@ impl WorldTrace {
             self.hold(frame.ground);
             self.known = true;
         }
-        let rebuilt = frame.placed_changed && self.restyled(frame.placed);
+        let groups = &frame.placed.groups;
+        let rebuilt = *groups != self.boxes;
         if !self.pooled || frame.ground.layers != self.layers || rebuilt {
             self.lay_out(frame.ground.layers, rebuilt);
+            if rebuilt {
+                self.boxes.clone_from(groups);
+            }
         }
         if !self.pooled || frame.placed_changed {
             self.sync_grids(frame);
@@ -115,7 +120,7 @@ impl WorldTrace {
         }
         self.pooled = true;
         self.tabled = true;
-        self.upload(cx, placed);
+        self.upload(cx, placed, frame.room);
         self.write_terrains(cx, terrains, frame);
     }
 
@@ -129,18 +134,6 @@ impl WorldTrace {
                 .and_modify(|top| *top = engine_core::math::max(*top, tile.top))
                 .or_insert(tile.top);
         }
-    }
-
-    fn restyled(&self, placed: &PlacedTiles) -> bool {
-        placed.tiles.iter().any(|tile| {
-            self.grids
-                .get(&(tile.terrain, tile.key))
-                .is_some_and(|grid| {
-                    grid.slots == tile.slots
-                        && grid.identity == tile.identity
-                        && grid.boxes != tile.impostors
-                })
-        })
     }
 
     fn lay_out(&mut self, layers: u32, rebuilt: bool) {
@@ -208,7 +201,6 @@ impl WorldTrace {
                     words,
                     slots: tile.slots.clone(),
                     identity: tile.identity,
-                    boxes: tile.impostors.clone(),
                     level: key.1.level,
                     apron,
                     top,
@@ -283,15 +275,15 @@ impl WorldTrace {
         self.dirty.push(words);
     }
 
-    fn upload(&mut self, cx: &mut Prepare<'_, TraceGpu>, buffer: Buffer<TraceGpu>) {
+    fn upload(&mut self, cx: &mut Prepare<'_, TraceGpu>, buffer: Buffer<TraceGpu>, room: u64) {
         let bytes = (self.words.len() * 4) as u64;
         let mut dirty = std::mem::take(&mut self.dirty);
-        if bytes > self.placed {
-            self.placed = bytes.next_power_of_two();
+        if let Some(size) = grown(self.placed, bytes, room) {
+            self.placed = size;
             dirty = std::iter::once(0..self.words.len()).collect();
         }
         cx.allocate_buffer(buffer, self.placed);
-        let held = self.words.len();
+        let held = ((self.placed / 4) as usize).min(self.words.len());
         for run in dirty {
             let run = run.start.min(held)..run.end.min(held);
             if !run.is_empty() {
@@ -343,8 +335,8 @@ impl WorldTrace {
             });
         }
         let bytes = (records.len() * size_of::<TraceTerrain>()) as u64;
-        if bytes > self.terrains {
-            self.terrains = bytes.next_power_of_two();
+        if let Some(size) = grown(self.terrains, bytes, frame.room) {
+            self.terrains = size;
         }
         cx.allocate_buffer(buffer, self.terrains);
         if records == self.written {
@@ -355,6 +347,11 @@ impl WorldTrace {
         }
         self.written = records;
     }
+}
+
+fn grown(held: u64, bytes: u64, room: u64) -> Option<u64> {
+    let size = bytes.next_power_of_two().min(room);
+    (bytes > held && size > held).then_some(size)
 }
 
 fn reaches(terrain: &TerrainEntry, key: TileKey, tile: &PooledTile) -> Vec<Reach> {

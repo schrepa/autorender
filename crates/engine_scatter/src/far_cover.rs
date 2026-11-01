@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::{Entity, Resource};
 use engine_core::AssetLibrary;
-use engine_places::ground::{PlacedLayer, TerrainEntry};
+use engine_places::ground::{PALETTE_ENTRIES, PlacedLayer, TerrainEntry};
 
 use crate::groups::Resolved;
 use crate::layouts::PlacedFar;
@@ -37,11 +37,17 @@ impl FarCoverTable {
         resolved: &[(Entity, Vec<Option<Resolved<'_>>>)],
         library: &AssetLibrary,
     ) {
-        self.bases.clear();
-        self.entries.clear();
+        let mut bases = Vec::with_capacity(terrains.len());
+        let mut entries = Vec::with_capacity(PALETTE_ENTRIES as usize);
         let mut sums = Vec::new();
         for (terrain, (_, assets)) in terrains.iter().zip(resolved) {
-            self.bases.push(self.entries.len() as u32);
+            let room = PALETTE_ENTRIES as usize - entries.len();
+            let kept = terrain.materials.len().min(room);
+            bases.push(if kept == terrain.materials.len() {
+                entries.len() as u32
+            } else {
+                0
+            });
             sums.clear();
             sums.extend(
                 terrain
@@ -49,12 +55,23 @@ impl FarCoverTable {
                     .iter()
                     .map(|layer| placed_sums(assets, library, layer)),
             );
-            self.entries
-                .extend((0..terrain.materials.len()).map(|material| {
-                    let (placed, size) = placed_terms(&terrain.layers, &sums, material);
-                    PlacedFar { placed, size }
-                }));
+            entries.extend((0..kept).map(|material| {
+                let (placed, size) = placed_terms(&terrain.layers, &sums, material);
+                PlacedFar { placed, size }
+            }));
         }
+        self.bases = bases;
+        if entries.is_empty() {
+            return;
+        }
+        self.entries.resize(
+            PALETTE_ENTRIES as usize,
+            PlacedFar {
+                placed: [0.0; 4],
+                size: [0.0; 4],
+            },
+        );
+        self.entries[..entries.len()].copy_from_slice(&entries);
     }
 }
 
@@ -119,6 +136,7 @@ fn placed_color(asset: &Resolved<'_>, library: &AssetLibrary) -> [f32; 3] {
     let factor = material.color();
     let mean = material
         .base_color_texture()
+        .filter(|map| asset.textures.contains(&map.texture))
         .and_then(|map| library.texture(map.texture))
         .and_then(|texture| texture.summary())
         .map_or([1.0; 3], |summary| summary.color);

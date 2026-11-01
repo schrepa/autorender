@@ -49,6 +49,7 @@ impl Brick for TerrainShadingBrick {
             .resource::<state::Bakes>()
             .resource::<state::Atlas>()
             .resource::<state::SurfaceTotals>()
+            .resource::<state::PartStats>()
             .piece::<HorizonsPiece>()
             .fill::<Heightfield>(Some(faces::heightfield::MODULE))
             .fill::<GroundTiles>(Some(faces::ground_tiles::MODULE))
@@ -70,9 +71,11 @@ impl Brick for TerrainShadingBrick {
                 Schedule::ViewSync,
                 (
                     state::bake,
+                    state::color,
                     state::place_tiles,
                     state::publish_changes,
                     state::publish_piece,
+                    state::rest_surface,
                     state::count,
                 ),
             )

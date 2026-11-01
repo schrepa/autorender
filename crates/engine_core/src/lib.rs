@@ -58,10 +58,8 @@ pub use engine_place::{
 pub use engine_registry::{AuthoredId, FrameFacts, RecordParity};
 pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting,
-    fields, is_id, parse_value, parse_value_at, settings, stats,
+    fields, is_id, parse_value, parse_value_at, settings, state, stated, stats,
 };
-#[cfg(feature = "schema")]
-pub use engine_settings::{state, stated};
 pub use frame_stats::*;
 pub use glam;
 pub use hierarchy::*;
@@ -116,12 +114,15 @@ use engine_registry::{GateDriver, JobList, JobListed, MembersOf, OperationEntry,
 use interpolation::{InterpolationState, ResetWatch};
 use schedules::{
     BetweenFrames, FixedMove, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
-    Presentation, TransformPropagation, ViewSync, WorldSync,
+    Presentation, TransformPropagation, ViewSync, Waiting, WorldSync,
 };
 
 pub const MAX_DEV_TICKS: u32 = 120;
 
-static CORE_PLACES: &[PlaceDecl] = &[PlaceDecl::list::<SceneComponents>()];
+static CORE_PLACES: &[PlaceDecl] = &[
+    PlaceDecl::list::<SceneComponents>(),
+    PlaceDecl::slot::<ImpostorPolicy>(),
+];
 
 #[cfg(feature = "dev")]
 pub fn check_dev_ticks(ticks: u32) -> Result<(), Error> {
@@ -274,7 +275,7 @@ impl Engine {
         let clock = FixedClock::new(config);
         let mut assets = AssetLibrary::default();
         assets
-            .insert_mesh(Mesh::cube())
+            .insert_cube()
             .expect("unlimited_library_holds_cube");
         assets.set_budget(config.asset_budget);
         let exchange = JobExchange::default();
@@ -365,7 +366,7 @@ impl Engine {
         let world = self.app.world_mut();
         world.insert_resource(JobListed::of(&jobs));
         world.resource_mut::<JobExchange>().set_list(jobs);
-        let labels: [InternedScheduleLabel; 8] = Schedule::ALL.map(Schedule::label);
+        let labels: [InternedScheduleLabel; 9] = Schedule::ALL.map(Schedule::label);
         self.gates = Some(registry.install(world, &labels));
         let twice = world
             .get_resource::<MembersOf<SceneComponents>>()
@@ -385,6 +386,15 @@ impl Engine {
         entry.owned().init(world);
         if let Some(mut registry) = world.get_resource_mut::<Registry>() {
             registry.core_settings(entry);
+        }
+        self
+    }
+
+    #[track_caller]
+    pub fn operation<O: Operation>(&mut self) -> &mut Self {
+        let entry = OperationEntry::of::<O::Params>(O::NAME, true, bricks::run_operation::<O>);
+        if let Some(mut registry) = self.app.world_mut().get_resource_mut::<Registry>() {
+            registry.core_operation(entry);
         }
         self
     }
@@ -424,7 +434,11 @@ impl Engine {
         let levels = world
             .get_resource::<mesh_lods::MeshLevels>()
             .map_or(0, mesh_lods::MeshLevels::waiting);
-        bricks.saturating_add(u32::try_from(records + levels).unwrap_or(u32::MAX))
+        let impostors = assets::assets_pending(world);
+        let core = u64::try_from(records + levels)
+            .unwrap_or(u64::MAX)
+            .saturating_add(impostors);
+        bricks.saturating_add(u32::try_from(core).unwrap_or(u32::MAX))
     }
 
     pub fn advance(&mut self, delta_seconds: f64) -> FrameReport {
@@ -457,9 +471,25 @@ impl Engine {
             frame.between_frames_micros = micros;
         });
         if has_systems(world, BetweenFrames) {
-            let _profile = engine_profile::span("ecs", "BetweenFrames");
-            world.run_schedule(BetweenFrames);
+            {
+                let _profile = engine_profile::span("ecs", "BetweenFrames");
+                world.run_schedule(BetweenFrames);
+            }
+            jobs::admit_orders(world);
         }
+    }
+
+    pub fn stream_now(&mut self) {
+        self.finalize();
+        let world = self.app.world_mut();
+        if !has_systems(world, Waiting) {
+            return;
+        }
+        {
+            let _profile = engine_profile::span("ecs", "Waiting");
+            world.run_schedule(Waiting);
+        }
+        jobs::admit_orders(world);
     }
 
     fn run_gates(&mut self) {
@@ -720,6 +750,7 @@ impl Engine {
         publish_poses(world);
         publish_view(world, aspect, facts);
         world.run_schedule(ViewSync);
+        assets::settle_assets(world);
     }
 
     fn viewport_facts(&self) -> FrameFacts {

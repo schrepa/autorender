@@ -15,12 +15,15 @@ use engine_core::{
     Bricks, DrawPoint, Entry, Error, List, MaterialHandle, MeshHandle, Read, Readback, Slot,
     TextureHandle, Var, gpu_struct,
 };
-use engine_registry::{RawDraw, RecordExt};
+use engine_registry::RecordExt;
+
+use crate::draws::{DrawMember, RawDraw};
 
 pub use wgpu;
 
 mod bindings;
 mod cached;
+mod draws;
 mod encode;
 mod fixed_linker;
 mod frame_group;
@@ -50,8 +53,7 @@ mod profiling;
 mod renderer;
 mod targets;
 
-#[doc(hidden)]
-pub use impostors::IMPOSTOR;
+pub use materials::material_variant;
 #[doc(hidden)]
 pub use memory::GpuMemory;
 #[doc(hidden)]
@@ -63,11 +65,13 @@ pub use platform::{GpuPreference, NativeWindow, start_native_instances_with};
 #[doc(hidden)]
 pub use renderer::GpuMark;
 #[doc(hidden)]
-pub use renderer::{GpuPassTimes, Renderer, StartingRenderer};
+pub use renderer::{
+    GpuPassTimes, Installation, InstalledPart, InstalledPiece, Renderer, StartingRenderer,
+    install_noop,
+};
 #[doc(hidden)]
 pub use shaders::core_modules;
 pub use shaders::FULLSCREEN;
-use shaders::CORE as SOURCE;
 
 pub const IMPOSTOR_VERTICES: u32 = 6;
 
@@ -837,50 +841,40 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
             },
         };
         let part = self.raw.part();
-        if let Some(run) = self.raw.encoding::<encode::Run>() {
-            let point = run.point;
-            run.draw(part, point, pipeline.0, shape);
-        }
+        let run = self.raw.run();
+        let point = run.point;
+        run.draw(part, point, pipeline.0, shape);
     }
 }
 
 impl<P: GpuPart> Draw<'_, P, Own> {
     pub fn scissor(&mut self, rect: [u32; 4]) {
-        if let Some(run) = self.raw.encoding::<encode::Run>() {
-            run.scissor(rect);
-        }
+        self.raw.run().scissor(rect);
     }
 
     pub fn within(&mut self, size: (u32, u32)) {
-        if let Some(run) = self.raw.encoding::<encode::Run>() {
-            run.within(size);
-        }
+        self.raw.run().within(size);
     }
 }
 
 pub struct Draws<D: DrawPoint> {
-    members: Box<[engine_registry::DrawMember<D>]>,
+    members: Box<[DrawMember<D>]>,
 }
 
 impl<D: DrawPoint> Draws<D> {
     pub fn draw<P: GpuPart>(&self, owner: &mut Draw<'_, P, Own>, layer: D::Layer, args: &D::Args) -> u32 {
-        if let Some(run) = owner.raw.encoding::<encode::Run>() {
-            run.reset_scissor();
-        }
+        owner.raw.run().reset_scissor();
         let mut drawn = 0;
         for member in self.members.iter().filter(|member| member.layer == layer) {
-            let Some(run) = owner.raw.encoding::<encode::Run>() else {
-                return drawn;
-            };
+            let run = owner.raw.run();
             let Some(held) = run.take_member(member.part) else {
                 continue;
             };
             run.point = Some(TypeId::of::<D>());
             drawn += (member.call)(held.part(), args, &mut owner.raw.member(member.part));
-            if let Some(run) = owner.raw.encoding::<encode::Run>() {
-                run.point = None;
-                run.give_member(member.part, held);
-            }
+            let run = owner.raw.run();
+            run.point = None;
+            run.give_member(member.part, held);
         }
         drawn
     }

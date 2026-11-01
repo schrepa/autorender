@@ -11,12 +11,12 @@ mod scene;
 mod smoke;
 
 pub use dev::{
-    MAX_CHANGES, StreamedCellView, StreamingGridView, WorldCellsQuery, WorldCellsView,
-    WorldChangesControl, WorldChangesQuery, WorldChangesResult, WorldChangesView,
+    MAX_CHANGES, StreamedCellView, StreamedIdQuery, StreamedIdView, StreamingGridView,
+    WorldCellsQuery, WorldCellsView, WorldChangesControl, WorldChangesQuery, WorldChangesResult,
+    WorldChangesView,
 };
 pub use scene::{
-    AlongStreamed, MAX_ALONG, StreamedAlong, StreamedObject, StreamedPrefab, StreamedScene,
-    StreamedTransform,
+    AlongStreamed, MAX_ALONG, StreamedAlong, StreamedObject, StreamedScene, StreamedTransform,
 };
 
 use engine_core::collections::HashMap;
@@ -29,13 +29,12 @@ use serde::Serialize;
 
 use engine_core::math::{max, min};
 use engine_core::{
-    Brick, Bricks, FrameTime, Poses, Runs, Schedule, Smoke, Source, Spawner, View, settings,
-    stats,
+    Brick, Bricks, Camera, FrameTime, GlobalTransforms, Runs, SceneContext, Schedule, Smoke,
+    Source, Spawner, settings, stats,
 };
 use engine_places::streaming::StreamingFocus;
 
 use instance::{Content, Tree};
-use scene::Placed;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct StreamingGrid {
@@ -93,6 +92,9 @@ stats! {
     }
 }
 
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub struct StreamedId(pub Arc<str>);
+
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct WorldChanges {
     removed: BTreeSet<String>,
@@ -140,14 +142,14 @@ struct Item {
 }
 
 struct Acting<'a, 'w, 's> {
-    live: &'a Query<'w, 's, Entity>,
+    live: &'a dyn Fn(Entity) -> bool,
     spawner: &'a mut Spawner<'w, 's, WorldStreamingBrick>,
     pass: u64,
 }
 
 impl Acting<'_, '_, '_> {
     fn despawn(&mut self, entity: Entity, fresh: bool) -> bool {
-        let present = fresh || self.live.contains(entity);
+        let present = fresh || (self.live)(entity);
         if present {
             self.spawner.despawn(entity);
         }
@@ -158,6 +160,9 @@ impl Acting<'_, '_, '_> {
 impl Item {
     fn spawn(&mut self, tree: &Tree, act: &mut Acting<'_, '_, '_>) -> u32 {
         tree.spawn(self.index, act.spawner, &mut self.spawned);
+        if let Some(&root) = self.spawned.first() {
+            act.spawner.insert(root, StreamedId(self.id.clone()));
+        }
         self.spawned_in = act.pass;
         self.spawned.len() as u32
     }
@@ -194,12 +199,7 @@ impl Cell {
         count
     }
 
-    fn load(
-        &mut self,
-        tree: &Tree,
-        changes: &WorldChanges,
-        act: &mut Acting<'_, '_, '_>,
-    ) -> u32 {
+    fn load(&mut self, tree: &Tree, changes: &WorldChanges, act: &mut Acting<'_, '_, '_>) -> u32 {
         let mut count = 0;
         for item in &mut self.items {
             if !item.removed(changes) {
@@ -221,10 +221,7 @@ impl Cell {
         let mut counts = [0, 0];
         for item in &mut self.items {
             let gone = item.spawned_in != act.pass
-                && item
-                    .spawned
-                    .first()
-                    .is_some_and(|&root| !act.live.contains(root));
+                && item.spawned.first().is_some_and(|&root| !(act.live)(root));
             if gone {
                 counts[0] += item.despawn(act);
                 let added = changes.remove(&item.id);
@@ -266,10 +263,8 @@ pub struct WorldCells {
     index: HashMap<(u8, [i32; 2]), usize>,
     content: Arc<Content>,
     kept: Vec<Vec<Entity>>,
-    incoming: Option<Arc<Content>>,
+    from_scene: bool,
     pass: u64,
-    placed: Vec<Placed>,
-    waiting: bool,
     motion: Motion,
     stats: CellStats,
     sources: Vec<Vec2>,
@@ -396,14 +391,19 @@ impl WorldCells {
 
 type StreamReads<'w> = (
     Res<'w, WorldStreaming>,
-    Res<'w, View>,
+    Res<'w, Camera>,
     Res<'w, FrameTime>,
-    Res<'w, Poses>,
+    Res<'w, GlobalTransforms>,
 );
 
+type SceneReads<'w> = (Res<'w, StreamedScene>, Option<Res<'w, SceneContext>>);
+
+type FocusQuery<'w, 's> = Query<'w, 's, Entity, With<StreamingFocus>>;
+
 pub(crate) fn stream_cells(
-    (settings, view, frame, poses): StreamReads<'_>,
-    (focus, live): (Query<Entity, With<StreamingFocus>>, Query<Entity>),
+    (settings, camera, frame, globals): StreamReads<'_>,
+    (scene, context): SceneReads<'_>,
+    (focus, live): (FocusQuery<'_, '_>, Query<Entity>),
     mut cells: ResMut<WorldCells>,
     mut tracked: ResMut<WorldChanges>,
     mut published: ResMut<CellStats>,
@@ -412,19 +412,28 @@ pub(crate) fn stream_cells(
     let settings = *settings;
     let cells = &mut *cells;
     cells.pass += 1;
+    let alive = |entity: Entity| live.contains(entity);
     let mut act = Acting {
-        live: &live,
+        live: &alive,
         spawner: &mut spawner,
         pass: cells.pass,
     };
-    if let Some(content) = cells.incoming.take() {
-        cells.replace(content, &mut act);
+    let context_changed = context
+        .as_ref()
+        .map_or(cells.from_scene, |context| context.is_changed());
+    if scene.is_changed() || context_changed {
+        let content = context.as_deref().map_or_else(Content::default, |context| {
+            instance::content(&scene, context)
+        });
+        cells.from_scene = context.is_some();
+        cells.replace(Arc::new(content), &mut act);
     }
+    let _profile = engine_core::profile::span("cpu", "world_streaming");
     cells.stats.spawned = 0;
     cells.stats.despawned = 0;
     cells.stats.pending = 0;
     if !cells.cells.is_empty() {
-        sources(view.detail_eye(), &frame, (&*poses, &focus), cells, settings);
+        sources(camera.eye(), &frame, (&*globals, &focus), cells, settings);
         let mut revised = tracked.is_changed();
         let mut removed = false;
         let changes = tracked.bypass_change_detection();
@@ -454,7 +463,7 @@ pub(crate) fn stream_cells(
 fn sources(
     eye: Vec3,
     frame: &FrameTime,
-    (poses, focus): (&Poses, &Query<Entity, With<StreamingFocus>>),
+    (globals, focus): (&GlobalTransforms, &FocusQuery<'_, '_>),
     cells: &mut WorldCells,
     settings: WorldStreaming,
 ) {
@@ -489,9 +498,9 @@ fn sources(
         cells.sources.push(flat(ahead));
     }
     for entity in focus {
-        if let Some(position) = poses
-            .of(entity)
-            .map(|pose| Vec3::from(pose.translation))
+        if let Some(position) = globals
+            .get(entity)
+            .and_then(|global| global.translation())
             .filter(|position| position.is_finite())
         {
             cells.sources.push(flat(position));
@@ -558,10 +567,10 @@ impl Brick for WorldStreamingBrick {
             .stats::<CellStats>()
             .resource::<WorldCells>()
             .resource::<WorldChanges>()
-            .systems(Schedule::Presentation, stream_cells)
-            .systems(Schedule::ViewSync, instance::prepare_streamed)
+            .systems(Schedule::Stream, stream_cells)
             .operation::<WorldChangesControl>()
             .observation::<WorldCellsQuery>()
-            .observation::<WorldChangesQuery>();
+            .observation::<WorldChangesQuery>()
+            .observation::<StreamedIdQuery>();
     }
 }

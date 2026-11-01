@@ -2,11 +2,12 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use engine_core::{Error, ErrorCode, Expected, Job, JobCx, JobKind, RecordKey};
+use engine_heightfield::layer::LayerKind;
 use engine_places::ground::{GroundBridge, GroundGrid};
+use engine_places::terrain::TerrainLayers;
 use glam::Vec2;
 
 use crate::codec::{self, Reader, Writer, record};
-use crate::layers::with_stamps;
 use crate::runtime::reaches;
 use crate::{
     BiomeRules, Biomes, Generator, Layers, Placing, Pyramid, SOURCE, Stamp, TILE_QUADS,
@@ -57,7 +58,7 @@ record!(TerrainRecipe {
 
 pub fn share_stack(layers: &Layers) -> Arc<[u8]> {
     let mut writer = Writer::new();
-    writer.put(layers);
+    layers.write(&mut writer);
     Arc::from(writer.into_bytes())
 }
 
@@ -96,16 +97,34 @@ pub struct BakeJob {
     pub pyramid: Pyramid,
 }
 
-record!(BakeJob { layers, pyramid });
-
 impl BakeJob {
     pub fn input(&self) -> Vec<u8> {
-        codec::encode(self)
+        let mut writer = Writer::new();
+        self.layers.write(&mut writer);
+        writer.put(&self.pyramid);
+        writer.into_bytes()
+    }
+
+    fn read(input: &[u8], kinds: &[&'static LayerKind]) -> Result<Self, Error> {
+        let mut reader = Reader::new(input);
+        let layers = Layers::read(&mut reader, kinds)?;
+        let pyramid = reader.get()?;
+        reader.finish()?;
+        Ok(Self { layers, pyramid })
     }
 }
 
-pub fn bake_output(bytes: &[u8]) -> Result<Layers, Error> {
-    codec::decode(bytes)
+pub fn bake_output(bytes: &[u8], kinds: &[&'static LayerKind]) -> Result<Layers, Error> {
+    let mut reader = Reader::new(bytes);
+    let layers = Layers::read(&mut reader, kinds)?;
+    reader.finish()?;
+    Ok(layers)
+}
+
+fn baked_bytes(layers: &Layers) -> Vec<u8> {
+    let mut writer = Writer::new();
+    layers.write(&mut writer);
+    writer.into_bytes()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -138,8 +157,12 @@ struct Recipe {
 }
 
 impl Recipe {
-    fn stamped(&self, stamps: &[Stamp]) -> Result<Arc<Layers>, Error> {
-        stamped(&self.layers, stamps)
+    fn stamped(
+        &self,
+        stamps: &[Stamp],
+        kinds: &[&'static LayerKind],
+    ) -> Result<Arc<Layers>, Error> {
+        stamped(&self.layers, stamps, kinds)
     }
 }
 
@@ -172,20 +195,37 @@ fn held<T>(
     Ok(made)
 }
 
+fn kinds(cx: &JobCx<'_>) -> Vec<&'static LayerKind> {
+    cx.members::<TerrainLayers>().copied().collect()
+}
+
 fn shared<'c>(cx: &'c JobCx<'_>, key: [u8; 32], path: &str) -> Result<&'c [u8], Error> {
     cx.share(RecordKey::from_hash(key)).ok_or_else(|| {
         Error::new(ErrorCode::UnknownReference, path).got(RecordKey::from_hash(key).hex())
     })
 }
 
-fn stack(cx: &JobCx<'_>, key: [u8; 32]) -> Result<Arc<Layers>, Error> {
-    held(&STACKS, key, || codec::decode(shared(cx, key, "$.stack")?))
+fn stack(
+    cx: &JobCx<'_>,
+    key: [u8; 32],
+    kinds: &[&'static LayerKind],
+) -> Result<Arc<Layers>, Error> {
+    held(&STACKS, key, || {
+        let mut reader = Reader::new(shared(cx, key, "$.stack")?);
+        let layers = Layers::read(&mut reader, kinds)?;
+        reader.finish()?;
+        Ok(layers)
+    })
 }
 
-fn recipe(cx: &JobCx<'_>, key: [u8; 32]) -> Result<Arc<Recipe>, Error> {
+fn recipe(
+    cx: &JobCx<'_>,
+    key: [u8; 32],
+    kinds: &[&'static LayerKind],
+) -> Result<Arc<Recipe>, Error> {
     held(&RECIPES, key, || {
         let recipe: TerrainRecipe = codec::decode(shared(cx, key, "$.recipe")?)?;
-        let stack = stack(cx, recipe.stack)?;
+        let stack = stack(cx, recipe.stack, kinds)?;
         let layers = match recipe.view {
             Some(view) => {
                 Arc::new(stack.surroundings(view.offset, (view.low, view.high), view.blend))
@@ -203,11 +243,15 @@ fn recipe(cx: &JobCx<'_>, key: [u8; 32]) -> Result<Arc<Recipe>, Error> {
     })
 }
 
-pub fn stamped(layers: &Arc<Layers>, stamps: &[Stamp]) -> Result<Arc<Layers>, Error> {
+pub fn stamped(
+    layers: &Arc<Layers>,
+    stamps: &[Stamp],
+    kinds: &[&'static LayerKind],
+) -> Result<Arc<Layers>, Error> {
     if stamps.is_empty() {
         return Ok(layers.clone());
     }
-    with_stamps(layers, stamps).map(Arc::new)
+    layers.with_stamps(stamps, kinds).map(Arc::new)
 }
 
 pub(crate) fn shaded_elsewhere(level: u8, around: bool) -> bool {
@@ -222,13 +266,14 @@ fn start_tile(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
         stamps,
     } = reader.get()?;
     reader.finish()?;
-    let recipe = recipe(cx, key)?;
+    let kinds = kinds(cx);
+    let recipe = recipe(cx, key, &kinds)?;
     if !recipe.pyramid.contains(tile) {
         return Err(outside(tile));
     }
     let materials = recipe.materials && !shaded_elsewhere(tile.level, recipe.around);
     Ok(Box::new(TileBuild(Box::new(
-        Generator::new(recipe.stamped(&stamps)?, &recipe.pyramid, tile)
+        Generator::new(recipe.stamped(&stamps, &kinds)?, &recipe.pyramid, tile)
             .with_surface(recipe.rules.clone())
             .with_materials(materials),
     ))))
@@ -247,10 +292,8 @@ impl Job for TileBuild {
     }
 }
 
-fn start_bake(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    let mut reader = Reader::new(input);
-    let BakeJob { layers, pyramid } = reader.get()?;
-    reader.finish()?;
+fn start_bake(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    let BakeJob { layers, pyramid } = BakeJob::read(input, &kinds(cx))?;
     Ok(Box::new(Baking(Box::new((layers, pyramid)))))
 }
 
@@ -259,7 +302,7 @@ struct Baking(Box<(Layers, Pyramid)>);
 impl Job for Baking {
     fn step(&mut self, _: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
         let (layers, pyramid) = &*self.0;
-        Ok(Some(codec::encode(&crate::bake::bake_all(layers, pyramid))))
+        Ok(Some(baked_bytes(&crate::bake::bake_all(layers, pyramid))))
     }
 }
 
@@ -270,14 +313,15 @@ fn start_grid(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
     if !identity.pyramid.contains(key) {
         return Err(outside(key));
     }
-    let layers = stack(cx, identity.stack)?;
+    let kinds = kinds(cx);
+    let layers = stack(cx, identity.stack, &kinds)?;
     let reaching: Vec<Stamp> = identity
         .edits
         .iter()
         .copied()
         .filter(|stamp| reaches(stamp, &identity.pyramid, key))
         .collect();
-    let layers = stamped(&layers, &reaching)?;
+    let layers = stamped(&layers, &reaching, &kinds)?;
     Ok(Box::new(Gridding(Some(Box::new((layers, identity.pyramid, key))))))
 }
 
@@ -337,7 +381,22 @@ fn ground_grid(
         heights,
         holes: holes(layers, first, spacing),
         bridges,
+        water: tile_surfaces(tile),
     }
+}
+
+fn tile_surfaces(tile: &Tile) -> Option<Box<[f32]>> {
+    let side = TILE_SAMPLES as usize;
+    let stride = TILE_STRIDE as usize;
+    let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
+    let surfaces = tile.water_surfaces()?;
+    let mut water = vec![f32::NAN; side * side].into_boxed_slice();
+    for z in 0..side {
+        for x in 0..side {
+            water[z * side + x] = surfaces[stored(x, z)];
+        }
+    }
+    Some(water)
 }
 
 fn position(sample: [i64; 2], spacing: f32) -> Vec2 {
@@ -367,7 +426,7 @@ fn holes(layers: &Layers, first: [i64; 2], spacing: f32) -> Option<Box<[u64]>> {
 }
 
 pub(crate) fn invalid_heights() -> Error {
-    Error::new(ErrorCode::InvalidValue, "$.heights").expected(Expected::Finite)
+    Error::new(ErrorCode::InvalidTerrain, "$.heights").expected(Expected::Finite)
 }
 
 pub(crate) fn outside(key: TileKey) -> Error {

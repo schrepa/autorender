@@ -15,13 +15,6 @@ const SPIRAL: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
 );
 const MAX_PIXELS: f32 = 96.0;
 
-@vertex
-fn vs_fullscreen(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
-    let x = f32((index << 1u) & 2u) * 2.0 - 1.0;
-    let y = f32(index & 2u) * 2.0 - 1.0;
-    return vec4<f32>(x, y, 0.0, 1.0);
-}
-
 fn occlusion_radius() -> f32 {
     return piece().occlusion.x;
 }

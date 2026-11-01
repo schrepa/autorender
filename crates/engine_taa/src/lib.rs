@@ -14,7 +14,7 @@ mod temporal;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source};
-use engine_render::{Resolve, ViewOutputs};
+use engine_render::{RenderBricks, Resolve, ViewOutputs};
 
 pub use antialiasing::{TemporalAntialiasing, TemporalAntialiasingStats};
 
@@ -38,10 +38,8 @@ impl Brick for TaaBrick {
             .fill::<Resolve>(Some(shaders::taa::resolve::MODULE))
             .join::<ViewOutputs>(previous::MOTION, Some(shaders::taa::motion::MODULE))
             .join::<ViewOutputs>(temporal::HISTORY, Some(shaders::taa::history::MODULE))
-            .systems(
-                Schedule::ViewSync,
-                (previous::publish_jitter, temporal::publish_resolve),
-            )
-            .off(previous::forget);
+            .systems(Schedule::ViewSync, temporal::publish)
+            .off(previous::forget)
+            .resolve_pass(temporal::PASS);
     }
 }

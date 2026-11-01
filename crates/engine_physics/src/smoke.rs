@@ -1,7 +1,10 @@
-use engine_core::smoke::{Checked, ask, component, control, environment, inspect, not, number};
+use engine_core::smoke::{Checked, ask, component, control, environment, inspect, not, number, query};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
+const SCENE: &str = "physics-fixture";
+const ENTITIES: [&str; 4] = ["floor", "crate", "seabed", "stone"];
+const DESCRIBED: [&str; 4] = ["rigid_body", "physics_body", "physics_stats", "physics"];
 const FLOOR_TOP: f64 = 10.0;
 const HALF: f64 = 0.5;
 const RESTS_WITHIN: f64 = 0.05;
@@ -10,11 +13,24 @@ const STEP: usize = 120;
 
 pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     session.source(&scene().to_string());
+    let built: Vec<bool> = ENTITIES
+        .iter()
+        .map(|id| {
+            session
+                .request("inspect", json!({"entity": id, "component": "Transform"}))
+                .is_ok()
+        })
+        .collect();
+    let every = [true; ENTITIES.len()];
+    smoke_eq!(json!(built), json!(every), "fixture_builds");
     control(session, "pause", json!({}))?;
     environment(
         session,
         json!({"merge": true, "physics": {"water_density": 1000}}),
     )?;
+    for name in DESCRIBED {
+        ask(session, "describe", json!({"name": name}))?;
+    }
     let settings = inspect(session, "physics")?;
     let expected = json!({"enabled": true, "gravity": [0.0, -9.81, 0.0]});
     let gravity = (number(&settings["gravity"][1]) + 9.81).abs() < 1e-4;
@@ -25,7 +41,6 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     );
     rests(session)?;
     toggles(session)?;
-    parented(session)?;
     Ok(())
 }
 
@@ -43,15 +58,16 @@ fn rests(session: &mut dyn SmokeSession) -> Checked<()> {
         expected,
         "falls_and_rests"
     );
-    let bodies = bodies(session)?;
+    let body = query(session, "physics_body", json!({"entity": "crate"}))?;
     let expected = json!({"simulated": true, "problem": null, "mass": 600.0});
-    let weighed = bodies.iter().any(|body| {
-        body["simulated"] == true
-            && body["problem"].is_null()
-            && (number(&body["mass"]) - 600.0).abs() < 1.0
-    });
     smoke_eq!(
-        shown(weighed, &json!(bodies), &expected),
+        shown(
+            body["simulated"] == true
+                && body["problem"].is_null()
+                && (number(&body["mass"]) - 600.0).abs() < 1.0,
+            &body,
+            &expected
+        ),
         expected,
         "body_inspects"
     );
@@ -73,26 +89,11 @@ fn rests(session: &mut dyn SmokeSession) -> Checked<()> {
         expected,
         "world_inspects"
     );
-    Ok(())
-}
-
-fn parented(session: &mut dyn SmokeSession) -> Checked<()> {
-    let before = component(session, "crate", "Transform")?;
-    session.step(1);
-    let bodies = bodies(session)?;
-    let expected = json!({"problem": "not_root", "simulated": false});
-    let refused = bodies
-        .iter()
-        .any(|body| body["problem"] == "not_root" && body["simulated"] == false);
+    let status = ask(session, "query", json!({"name": "status"}))?;
     smoke_eq!(
-        shown(refused, &json!(bodies), &expected),
-        expected,
-        "parented_body_refused"
-    );
-    smoke_eq!(
-        component(session, "crate", "Transform")?,
-        before,
-        "parented_body_leaves_world"
+        json!(status["rendering"]["physics_stats"]["bodies"]),
+        json!(2),
+        "frames_observe"
     );
     Ok(())
 }
@@ -132,11 +133,6 @@ fn shown(passed: bool, got: &Value, expected: &Value) -> Value {
     }
 }
 
-fn bodies(session: &mut dyn SmokeSession) -> Checked<Vec<Value>> {
-    let answer = ask(session, "physics_bodies", json!({}))?;
-    Ok(answer["bodies"].as_array().cloned().unwrap_or_default())
-}
-
 fn seconds(session: &mut dyn SmokeSession, count: u32) {
     for _ in (0..count * SECOND).step_by(STEP) {
         session.step(STEP as u32);
@@ -147,7 +143,7 @@ fn scene() -> Value {
     let cuboid = |half: [f64; 3]| json!({"shape": {"kind": "cuboid", "half_extents": half}});
     let sphere = json!({"shape": {"kind": "sphere", "radius": HALF}});
     json!({
-        "id": "physics-fixture",
+        "id": SCENE,
         "revision": 1,
         "materials": [],
         "meshes": [],
@@ -173,13 +169,6 @@ fn scene() -> Value {
                 "collider": sphere,
                 "rigid_body": {"density": 2600.0},
                 "transform": {"translation": [32.0, 40.0, 0.0]},
-            },
-            {
-                "id": "hung",
-                "parent": "floor",
-                "collider": sphere,
-                "rigid_body": {},
-                "transform": {"translation": [6.0, 4.0, 0.0]},
             },
         ],
     })

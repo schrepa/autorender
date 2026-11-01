@@ -20,6 +20,36 @@ use crate::{AfterRead, CameraUniform, DepthUse, VertexLayout, ViewTarget};
 pub(crate) type FrameCore = Run;
 pub(crate) type EncodeCore = Run;
 
+type Specialized = (u32, [(&'static str, f64); 15]);
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Compiled {
+    pipeline: u32,
+    formats: Vec<Option<wgpu::TextureFormat>>,
+    depth: Option<(wgpu::TextureFormat, bool)>,
+    debug: bool,
+    main: bool,
+    variant: Option<u32>,
+    constants: Vec<(String, f64)>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Listing {
+    canvas: wgpu::TextureFormat,
+    compiled: Vec<Compiled>,
+}
+
+fn specialized(compiled: &Compiled) -> Option<Specialized> {
+    let bits = compiled.variant?;
+    let mut constants = crate::materials::Variant::BASIC.constants();
+    for (name, value) in &mut constants {
+        if let Some((_, listed)) = compiled.constants.iter().find(|(known, _)| known.as_str() == *name) {
+            *value = *listed;
+        }
+    }
+    Some((bits, constants))
+}
+
 const GROUPED: bool = cfg!(any(not(target_arch = "wasm32"), feature = "profiling"));
 
 pub(crate) struct Allocated {
@@ -160,6 +190,7 @@ pub(crate) struct Open {
 pub(crate) struct Assets {
     pub(crate) meshes: crate::mesh_arena::GpuMeshes,
     pub(crate) materials: crate::materials::MaterialStore,
+    pub(crate) impostors: crate::impostors::Impostors,
 }
 
 pub(crate) struct Run {
@@ -176,6 +207,7 @@ pub(crate) struct Run {
     pub(crate) asked_frame: u64,
     pub(crate) parity: usize,
     pub(crate) generation: u64,
+    pub(crate) atlas_generation: Option<u64>,
     pub(crate) textures: Vec<[Option<Allocated>; 2]>,
     pub(crate) dimensions: Vec<wgpu::TextureDimension>,
     pub(crate) sizes: Vec<Option<(wgpu::Extent3d, u32)>>,
@@ -209,6 +241,7 @@ pub(crate) struct Run {
     pub(crate) merge: bool,
     pub(crate) planned: Option<Planned>,
     pub(crate) debug: bool,
+    pub(crate) temporal: bool,
     pub(crate) region: Option<(u32, u32)>,
     pub(crate) assets: Assets,
     pub(crate) surface: wgpu::TextureFormat,
@@ -219,6 +252,10 @@ pub(crate) struct Run {
     pub(crate) post_written: Option<crate::shared::PostUniform>,
     pub(crate) linear: wgpu::Sampler,
     pub(crate) drawn: u32,
+    pub(crate) compiled: Vec<Compiled>,
+    pub(crate) listed: Option<Vec<Compiled>>,
+    pub(crate) up_front: u32,
+    pub(crate) unlisted: u32,
 }
 
 pub(crate) enum Placeholder {
@@ -379,6 +416,7 @@ impl Run {
             asked_frame: 0,
             parity: 0,
             generation: 1,
+            atlas_generation: None,
             textures,
             dimensions,
             sizes,
@@ -412,6 +450,7 @@ impl Run {
             merge: true,
             planned: None,
             debug: false,
+            temporal: false,
             region: None,
             assets,
             surface: wgpu::TextureFormat::Bgra8Unorm,
@@ -422,7 +461,52 @@ impl Run {
             post_written: None,
             linear,
             drawn: 0,
+            compiled: Vec::new(),
+            listed: None,
+            up_front: 0,
+            unlisted: 0,
         }
+    }
+
+    pub(crate) fn listing(&self) -> Vec<u8> {
+        let listing = Listing {
+            canvas: self.surface,
+            compiled: self.compiled.clone(),
+        };
+        serde_json::to_vec(&listing).unwrap_or_default()
+    }
+
+    pub(crate) fn create_listed(&mut self, record: &[u8]) -> Result<u32, Error> {
+        if record.is_empty() {
+            return Ok(0);
+        }
+        let listing: Listing = serde_json::from_slice(record).map_err(|_| {
+            crate::platform::failed("$.pipelines").expected(engine_core::Expected::Json)
+        })?;
+        let canvas = self.surface;
+        let mut keys = listing.compiled;
+        for key in &mut keys {
+            for format in key.formats.iter_mut().flatten() {
+                if *format == listing.canvas {
+                    *format = canvas;
+                }
+            }
+        }
+        self.listed = Some(keys.clone());
+        self.unlisted = 0;
+        let mut created = 0;
+        for key in keys {
+            if key.pipeline as usize >= self.machine.pipelines.len() {
+                continue;
+            }
+            let before = self.compiled.len();
+            let _ = self.compile(key.pipeline, (&key.formats, key.depth), (key.debug, key.main), specialized(&key));
+            if self.compiled.len() > before {
+                created += 1;
+            }
+        }
+        self.up_front += created;
+        Ok(created)
     }
 
     pub(crate) fn path(&self, what: &str) -> String {
@@ -534,7 +618,7 @@ impl Run {
             self.fault(error);
             return;
         }
-        self.queue.write_buffer(made, offset, bytes);
+        crate::gpu_calls::upload_buffer(&self.queue, made, offset, bytes);
     }
 
     fn written_texture(&self, texture: u32) -> Option<&Allocated> {
@@ -561,7 +645,8 @@ impl Run {
             self.fault(error);
             return;
         }
-        self.queue.write_texture(
+        crate::gpu_calls::upload_texture(
+            &self.queue,
             wgpu::TexelCopyTextureInfo {
                 texture: &made.texture,
                 mip_level: level,
@@ -635,14 +720,14 @@ impl Run {
             let raw = bytemuck::bytes_of(camera);
             staged[at..at + raw.len()].copy_from_slice(raw);
         }
-        self.queue.write_buffer(&self.camera, 0, &staged);
+        crate::gpu_calls::upload_buffer(&self.queue, &self.camera, 0, &staged);
     }
 
     pub(crate) fn write_post(&mut self) {
         if self.post_written == Some(self.post) {
             return;
         }
-        self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&self.post));
+        crate::gpu_calls::upload_buffer(&self.queue, &self.post_buffer, 0, bytemuck::bytes_of(&self.post));
         self.post_written = Some(self.post);
     }
 
@@ -665,7 +750,7 @@ impl Run {
         }
         let mut staged = bytes.clone();
         staged.resize(size as usize, 0);
-        self.queue.write_buffer(&self.pieces, 0, &staged);
+        crate::gpu_calls::upload_buffer(&self.queue, &self.pieces, 0, &staged);
         self.pieces_written = bytes;
     }
 
@@ -800,6 +885,7 @@ impl Run {
         }
     }
 
+    #[expect(clippy::disallowed_methods, reason = "the machine binds groups by the linked declarations")]
     fn bind_group(&mut self, layout: &wgpu::BindGroupLayout, entries: Vec<(u32, Resolved)>) -> wgpu::BindGroup {
         for (_, resolved) in &entries {
             if let Resolved::Placeholder(ty) = resolved {
@@ -836,6 +922,11 @@ impl Run {
     }
 
     pub(crate) fn refresh_groups(&mut self) {
+        let atlas = self.assets.impostors.generation();
+        if self.atlas_generation != Some(atlas) {
+            self.atlas_generation = Some(atlas);
+            self.generation += 1;
+        }
         let generation = self.generation;
         let saved_pass = self.pass;
         self.pass = u32::MAX;
@@ -921,13 +1012,21 @@ impl Run {
     }
 
     fn core_frame(&mut self, binding: u32, ty: Ty) -> Resolved {
-        let named = self
+        let found = self
             .machine
             .frame
             .iter()
             .find(|(path, name, _)| self.machine.linker.binding_of(path, name) == Some(binding))
-            .filter(|(path, _, _)| self.machine.linker.is_core(path))
-            .map(|(_, name, _)| name.clone());
+            .filter(|(path, _, _)| self.machine.linker.is_core(path));
+        if let Some((_, name, _)) = found.filter(|(path, _, _)| path == crate::shaders::IMPOSTORS_MODULE) {
+            return match self.assets.impostors.frame_resource(name) {
+                Some(crate::impostors::FrameResource::Buffer(buffer)) => Resolved::Buffer(buffer.clone()),
+                Some(crate::impostors::FrameResource::View(view)) => Resolved::View(view.clone()),
+                Some(crate::impostors::FrameResource::Sampler(sampler)) => Resolved::Sampler(sampler.clone()),
+                None => Resolved::Placeholder(ty),
+            };
+        }
+        let named = found.map(|(_, name, _)| name.clone());
         let target = match named.as_deref() {
             Some(crate::shared::POST) => return Resolved::Buffer(self.post_buffer.clone()),
             Some(crate::shared::LINEAR) => return Resolved::Sampler(self.linear.clone()),
@@ -1297,20 +1396,20 @@ impl Run {
         Some((self.filled.get(filled)?.base, Some(filled)))
     }
 
-    fn render_pipeline(&mut self, pipeline: u32) -> Option<(u64, wgpu::RenderPipeline)> {
+    fn render_pipeline(&mut self, pipeline: u32, variant: Option<Specialized>) -> Option<(u64, wgpu::RenderPipeline)> {
         let open = self.open.as_ref()?;
         let (formats, depth, debug, main) = (open.formats.clone(), open.depth, open.debug, open.main);
-        self.compile(pipeline, &formats, depth, debug, main)
+        self.compile(pipeline, (&formats, depth), (debug, main), variant)
     }
 
     #[expect(clippy::too_many_lines, reason = "longer than the line ceiling; it may only shrink")]
+    #[expect(clippy::disallowed_methods, reason = "the machine keys every pipeline, which the pipeline list records")]
     pub(crate) fn compile(
         &mut self,
         pipeline: u32,
-        formats: &[Option<wgpu::TextureFormat>],
-        depth: Option<(wgpu::TextureFormat, bool)>,
-        debug: bool,
-        main: bool,
+        (formats, depth): (&[Option<wgpu::TextureFormat>], Option<(wgpu::TextureFormat, bool)>),
+        (debug, main): (bool, bool),
+        variant: Option<Specialized>,
     ) -> Option<(u64, wgpu::RenderPipeline)> {
         let built = self.machine.pipelines.get(pipeline as usize)?;
         let Program::Render(desc) = &built.decl.program else {
@@ -1325,20 +1424,39 @@ impl Run {
             .filter(|(id, _)| built.stages.iter().any(|stage| stage.composed.switches.contains(id)))
             .copied()
             .collect();
+        let material: Vec<(&str, f64)> = variant.map_or_else(Vec::new, |(_, constants)| constants.to_vec());
+        let specialized = built.stages.iter().any(|stage| !stage.composed.constants(&material).is_empty());
+        let bits = variant.filter(|_| specialized).map(|(bits, _)| bits);
         let mut hasher = DefaultHasher::new();
         formats.hash(&mut hasher);
         depth.hash(&mut hasher);
         debug.hash(&mut hasher);
         main.hash(&mut hasher);
         switches.hash(&mut hasher);
+        bits.hash(&mut hasher);
         let key = hasher.finish();
         if let Some((_, made)) = built.made.iter().find(|(known, _)| *known == key) {
             return Some((key, made.clone()));
         }
-        let constants: Vec<(String, f64)> = switches.iter().map(|(id, on)| (id.to_string(), f64::from(u8::from(*on)))).collect();
-        let named: Vec<(&str, f64)> = constants.iter().map(|(name, value)| (name.as_str(), *value)).collect();
+        let constants: Vec<Vec<(String, f64)>> = built
+            .stages
+            .iter()
+            .map(|stage| {
+                let mut values: Vec<(String, f64)> = switches
+                    .iter()
+                    .filter(|(id, _)| stage.composed.switches.contains(id))
+                    .map(|(id, on)| (id.to_string(), f64::from(u8::from(*on))))
+                    .collect();
+                values.extend(stage.composed.constants(&material).into_iter().map(|(name, value)| (name.to_owned(), value)));
+                values
+            })
+            .collect();
+        let named: Vec<Vec<(&str, f64)>> = constants
+            .iter()
+            .map(|values| values.iter().map(|(name, value)| (name.as_str(), *value)).collect())
+            .collect();
         let options = |stage: usize| wgpu::PipelineCompilationOptions {
-            constants: if built.stages.get(stage).is_some_and(|stage| !stage.composed.switches.is_empty()) { &named } else { &[] },
+            constants: named.get(stage).map_or(&[][..], Vec::as_slice),
             zero_initialize_workgroup_memory: true,
         };
         let fragment_at = if debug { 1 + usize::from(desc.fragment.is_some()) } else { 1 };
@@ -1428,6 +1546,24 @@ impl Run {
         if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize) {
             built.made.push((key, made.clone()));
         }
+        crate::pipelines::count(1);
+        let compiled = Compiled {
+            pipeline,
+            formats: formats.to_vec(),
+            depth,
+            debug,
+            main,
+            variant: bits,
+            constants: if bits.is_some() {
+                material.iter().map(|&(name, value)| (name.to_owned(), value)).collect()
+            } else {
+                Vec::new()
+            },
+        };
+        if self.listed.as_ref().is_some_and(|listed| !listed.contains(&compiled)) {
+            self.unlisted += 1;
+        }
+        self.compiled.push(compiled);
         Some((key, made))
     }
 
@@ -1475,7 +1611,7 @@ impl Run {
             }
             for pass in self.scope_passes(pipeline) {
                 let (formats, depth, main) = self.pass_formats(pass);
-                let _ = self.compile(pipeline as u32, &formats, depth, false, main);
+                let _ = self.compile(pipeline as u32, (&formats, depth), (false, main), None);
             }
         }
     }
@@ -1525,7 +1661,18 @@ impl Run {
         if filled.is_some_and(|filled| self.filled[filled].groups.is_empty()) {
             self.fill_groups(pipeline, filled);
         }
-        let Some((key, made)) = self.render_pipeline(pipeline) else {
+        let variant = match &shape {
+            RawShape::Mesh { mesh, material, .. } | RawShape::MeshIndirect { mesh, material, .. } => {
+                let extended = self.assets.meshes.get(*mesh).is_some_and(|gpu| gpu.extended);
+                let known = material.is_none_or(|handle| self.assets.materials.group(handle).is_some());
+                known.then(|| {
+                    let variant = self.assets.materials.binding(*material).1.with_extended(extended);
+                    (variant.bits(), variant.constants())
+                })
+            }
+            RawShape::Pulled { .. } | RawShape::Buffers { .. } | RawShape::Indirect { .. } => None,
+        };
+        let Some((key, made)) = self.render_pipeline(pipeline, variant) else {
             return;
         };
         let parity = self.parity;
@@ -1956,8 +2103,9 @@ impl Run {
                 if slot.state.load(Ordering::Acquire) != 3 {
                     continue;
                 }
-                if let Some((frame, deliver)) = slot.asked.take() {
-                    let view = slot.buffer.slice(..slot.bytes).get_mapped_range();
+                if let Some((frame, deliver)) = slot.asked.take()
+                    && let Ok(view) = slot.buffer.slice(..slot.bytes).get_mapped_range()
+                {
                     deliver(world, frame, ring.tag, &view);
                 }
                 slot.buffer.unmap();

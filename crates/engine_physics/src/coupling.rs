@@ -172,7 +172,7 @@ fn water_at(waters: &[&WaterBody], point: Vec3) -> Option<WaterSample> {
 pub(crate) fn push(
     waters: &[&WaterBody],
     settings: &Physics,
-    wind: &Wind,
+    wind: Option<&Wind>,
     time: f32,
     seconds: f32,
     form: &Form,
@@ -215,7 +215,10 @@ pub(crate) fn push(
     }
     let share = clamp(submerged / form.volume, 0.0, 1.0);
     push.damping = AIR_SPIN + WATER_SPIN * share;
-    if settings.air_density > 0.0 && share < 1.0 {
+    if let Some(wind) = wind
+        && settings.air_density > 0.0
+        && share < 1.0
+    {
         let blowing = wind.at(motion.center.x, motion.center.z, time);
         let relative = Vec3::new(blowing.x, 0.0, blowing.y) - motion.velocity;
         let speed = relative.length();

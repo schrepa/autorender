@@ -112,6 +112,7 @@ impl Renderer {
         let assets = new_assets(&device, &queue);
         let validation = Box::pin(scope.pop());
         let profiler = GpuProfiler::new(required_features, f64::from(queue.get_timestamp_period()));
+        let pipeline_counts = crate::pipelines::PipelineCounts::new(&device, display.format());
         let core = Core {
             device,
             queue,
@@ -121,19 +122,23 @@ impl Renderer {
             display,
             health,
             profiler,
+            pipeline_counts,
         };
         let renderer = Self {
             core,
             run: None,
             assets: Some(assets),
             plans: PlanCache::default(),
-            passes: Vec::new(),
+            passes: &[],
             spans: Vec::new(),
             #[cfg(feature = "profiling")]
             prelude_owners: Vec::new(),
             installing: None,
             previous: None,
             seconds: None,
+            ran: Vec::new(),
+            part_names: &[],
+            linked: engine_core::LinkedStats::default(),
         };
         crate::platform::yield_now().await;
         Ok(StartingRenderer {

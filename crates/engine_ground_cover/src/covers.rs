@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
-use engine_places::ground::{Cover, TerrainEntry, TerrainTiles};
+use engine_places::ground::{Cover, PALETTE_ENTRIES, TerrainEntry, TerrainTiles};
 
-use crate::layouts::{COVER_ENTRIES, CoverMaterial, CoverTerrain};
+use crate::layouts::{CoverMaterial, CoverTerrain};
 use crate::settings::{CoverLook, GroundCover};
 
 const COVER_RISEN: f32 = 0.875;
@@ -47,7 +47,7 @@ impl CoverTable {
         self.terrains.clear();
         self.materials.clear();
         for terrain in terrains {
-            let room = COVER_ENTRIES as usize - self.materials.len();
+            let room = PALETTE_ENTRIES as usize - self.materials.len();
             let surface = &terrain.materials;
             let kept = &surface[..surface.len().min(room)];
             let whole = kept.len() == surface.len();

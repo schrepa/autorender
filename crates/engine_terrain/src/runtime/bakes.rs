@@ -28,6 +28,7 @@ pub(super) fn bake(
             pyramid: state.terrain.pyramid,
         }
         .input();
+        state.bake.asked = true;
         state.bake.drawn = Some(state.terrain.rivers.clone());
         state.bake.job = Some(asking.jobs.fetch(&BAKE, &input, priority));
         return true;
@@ -43,7 +44,10 @@ pub(super) fn bake(
         .drawn
         .take()
         .unwrap_or_else(|| state.terrain.rivers.clone());
-    let baked = match job_output("terrain::bake", output, crate::jobs::bake_output) {
+    let kinds = asking.kinds;
+    let baked = match job_output(BAKE.name(), output, |bytes| {
+        crate::jobs::bake_output(bytes, kinds)
+    }) {
         Ok(baked) => baked,
         Err(error) => {
             state.failures.record(frame, error);

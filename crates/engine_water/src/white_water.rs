@@ -69,7 +69,7 @@ fn held(state: &WaterState) -> Vec<Held> {
                 terrain: terrain.entity,
                 origin: terrain.origin,
                 falls: terrain.falls.clone(),
-                key,
+                key: *key,
                 record: *record,
                 water: Arc::clone(water),
             });
@@ -191,6 +191,7 @@ fn emitters(site: &Site, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
             offset: Vec3::ZERO,
             radius: site.reach,
             seed: seed ^ 0x27d4_eb2f,
+            authored_degrees: None,
         },
     )];
     if site.power >= MIST_POWER {
@@ -212,6 +213,7 @@ fn emitters(site: &Site, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
                 offset: Vec3::ZERO,
                 radius: site.reach,
                 seed: seed ^ 0x1656_67b1,
+                authored_degrees: None,
             },
         ));
     }

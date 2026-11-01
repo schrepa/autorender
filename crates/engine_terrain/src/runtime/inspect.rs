@@ -1,14 +1,13 @@
-use super::operations::{named_terrain, reply};
+use super::operations::reply;
 use super::*;
 use crate::layer::maps;
-use crate::sights::{flow_summary, lake_sights, river_listing, river_sights};
 use crate::{HydrologyBake, TerrainLayer};
-use engine_core::Operation;
+use engine_core::{Joined, Operation, SceneIds};
+use engine_places::terrain::TerrainLayers;
 use serde_json::Value;
 
 pub const FALLS_SHOWN: usize = 16;
 pub const RIVERS_SHOWN: usize = 16;
-const LAKES_SHOWN: usize = 8;
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -31,9 +30,7 @@ pub struct TerrainView {
     pub edits: Vec<TerrainEditView>,
     pub rivers: Vec<TerrainRiverView>,
     pub surroundings: Option<SurroundingsStatus>,
-    pub failed_jobs: u64,
-    pub latest_job_failure: Option<String>,
-    pub refused: Option<String>,
+    pub baking: bool,
 }
 
 #[derive(Serialize)]
@@ -84,8 +81,6 @@ pub struct HydrologyView {
     pub uncut: Option<usize>,
     pub flow: Option<RiverFlowView>,
     pub fall_list: Vec<FallView>,
-    pub lakes: Vec<LakeView>,
-    pub sights: Vec<RiverSightView>,
     pub rivers: Vec<RiverView>,
 }
 
@@ -104,24 +99,6 @@ pub struct FallView {
     pub top: [f32; 3],
     pub bottom: [f32; 3],
     pub width: f32,
-    pub speed: f32,
-    pub discharge: f32,
-}
-
-#[derive(Serialize)]
-pub struct LakeView {
-    pub level: f32,
-    pub area: f32,
-    pub middle: [f32; 3],
-    pub shore: [f32; 3],
-}
-
-#[derive(Serialize)]
-pub struct RiverSightView {
-    pub kind: &'static str,
-    pub point: [f32; 3],
-    pub direction: [f32; 2],
-    pub half: f32,
     pub speed: f32,
     pub discharge: f32,
 }
@@ -147,65 +124,60 @@ impl Operation for TerrainInspect {
     const NAME: &'static str = "terrain_view";
     type Params = (
         Res<'static, Terrains>,
-        Query<'static, 'static, (Entity, &'static TerrainScene, &'static TerrainBuilt)>,
+        Query<'static, 'static, (Entity, &'static TerrainScene)>,
+        SceneIds<'static, 'static>,
+        Joined<'static, TerrainLayers>,
     );
     type Request = Self;
 
     fn run(
-        (terrains, scenes): SystemParamItem<'_, '_, Self::Params>,
+        (terrains, scenes, ids, kinds): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
-        named_terrain(request.terrain.as_deref())?;
-        let mut found: Vec<(Entity, &TerrainScene, &TerrainBuilt)> = scenes.iter().collect();
-        found.sort_unstable_by_key(|(entity, _, _)| *entity);
-        let Some(&(entity, scene, built)) = found.first() else {
-            return Err(Error::new(ErrorCode::UnknownValue, "$.terrain"));
+        let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
+        let built = |entity: Entity| {
+            scenes
+                .get(entity)
+                .ok()
+                .and_then(|(_, scene)| Some((scene, scene.built.as_ref()?)))
         };
-        Ok(reply(terrain_view(&terrains, entity, scene, built)))
+        let found = match request.terrain.as_deref() {
+            Some(name) => ids.entity(name).and_then(|entity| Some((entity, built(entity)?))),
+            None => scenes
+                .iter()
+                .find_map(|(entity, _)| Some((entity, built(entity)?))),
+        };
+        let Some((entity, (scene, terrain))) = found else {
+            let error = Error::new(ErrorCode::UnknownTerrain, "$.terrain");
+            return Err(match request.terrain {
+                Some(name) => error.got(name),
+                None => error,
+            });
+        };
+        Ok(reply(terrain_view(
+            (&terrains, &kinds),
+            entity,
+            scene,
+            terrain,
+        )))
     }
 }
 
 fn terrain_view(
-    terrains: &Terrains,
+    (terrains, kinds): (&Terrains, &[&'static LayerKind]),
     entity: Entity,
     scene: &TerrainScene,
-    built: &TerrainBuilt,
+    terrain: &Terrain,
 ) -> TerrainView {
-    let (failed_jobs, latest) = terrains.job_failures();
-    let refused = terrains
-        .refused()
-        .iter()
-        .find(|(refused, _)| *refused == entity)
-        .map(|(_, error)| error.to_string());
-    let mut view = TerrainView {
-        terrain: scene.0.clone(),
-        levels: 0,
-        extent: [0.0; 2],
-        resident_tiles_by_level: Vec::new(),
-        level_errors: Vec::new(),
-        level_ranges: Vec::new(),
-        hydrology: None,
-        erosion: None,
-        paths: Vec::new(),
-        edits: Vec::new(),
-        rivers: Vec::new(),
-        surroundings: terrains.surroundings(entity),
-        failed_jobs,
-        latest_job_failure: latest.map(str::to_owned),
-        refused,
-    };
-    let Some(terrain) = built.0.as_ref() else {
-        return view;
-    };
-    view.levels = terrain.pyramid.levels();
-    view.extent = terrain.pyramid.extent().to_array();
-    view.resident_tiles_by_level = vec![0_u32; terrain.pyramid.levels() as usize];
+    let mut levels = vec![0_u32; terrain.pyramid.levels() as usize];
+    let (mut level_errors, mut level_ranges) = (Vec::new(), Vec::new());
+    let (mut hydrology, mut erosion, mut paths) = (None, None, Vec::new());
     for tile in terrains.tiles(entity) {
-        view.resident_tiles_by_level[usize::from(tile.key().level)] += 1;
+        levels[usize::from(tile.key().level)] += 1;
     }
     if let Some((errors, ranges)) = terrains.level_detail(entity) {
-        view.level_errors = errors.to_vec();
-        view.level_ranges = ranges.to_vec();
+        level_errors = errors.to_vec();
+        level_ranges = ranges.to_vec();
     }
     let holds = |wanted: fn(&dyn TerrainLayer) -> bool| {
         terrain
@@ -216,14 +188,14 @@ fn terrain_view(
     };
     let bakes = terrains.bakes(entity);
     if holds(|layer| layer.makes_water()) {
-        view.hydrology = Some(hydrology_view(terrains, entity, terrain.origin));
+        hydrology = Some(hydrology_view((terrains, kinds), entity));
     }
-    if let Some(layers) = terrains.layers(entity) {
+    if let Some(layers) = terrains.layers(entity, kinds) {
         for (index, layer) in layers.layers().iter().enumerate() {
             if publishes(layer.as_ref(), maps::PATH) {
                 let stats = layer.stats();
                 let stats = stats.as_ref();
-                view.paths.push(PathView {
+                paths.push(PathView {
                     layer: index,
                     baked: stats.is_some(),
                     length: field(stats, "length"),
@@ -240,7 +212,7 @@ fn terrain_view(
         }
     }
     if holds(|layer| publishes(layer, maps::WORN)) {
-        let stats = terrains.layers(entity).and_then(|layers| {
+        let stats = terrains.layers(entity, kinds).and_then(|layers| {
             layers
                 .layers()
                 .iter()
@@ -248,7 +220,7 @@ fn terrain_view(
                 .stats()
         });
         let stats = stats.as_ref();
-        view.erosion = Some(ErosionView {
+        erosion = Some(ErosionView {
             baking: bakes.baking,
             samples: field(stats, "samples"),
             rounds: field(stats, "rounds"),
@@ -256,23 +228,35 @@ fn terrain_view(
             highest: field(stats, "highest"),
         });
     }
-    view.edits = terrain
-        .edits
-        .iter()
-        .map(|edit| TerrainEditView {
-            id: edit.id.to_string(),
-            stamp: edit.stamp,
-        })
-        .collect();
-    view.rivers = terrain
-        .rivers
-        .iter()
-        .map(|drawn| TerrainRiverView {
-            id: drawn.id.to_string(),
-            river: drawn.river.clone(),
-        })
-        .collect();
-    view
+    TerrainView {
+        terrain: scene.authored.clone(),
+        levels: terrain.pyramid.levels(),
+        extent: terrain.pyramid.extent().to_array(),
+        resident_tiles_by_level: levels,
+        level_errors,
+        level_ranges,
+        hydrology,
+        erosion,
+        paths,
+        edits: terrain
+            .edits
+            .iter()
+            .map(|edit| TerrainEditView {
+                id: edit.id.to_string(),
+                stamp: edit.stamp,
+            })
+            .collect(),
+        rivers: terrain
+            .rivers
+            .iter()
+            .map(|drawn| TerrainRiverView {
+                id: drawn.id.to_string(),
+                river: drawn.river.clone(),
+            })
+            .collect(),
+        surroundings: terrains.surroundings(entity),
+        baking: bakes.baking,
+    }
 }
 
 fn publishes(layer: &dyn TerrainLayer, name: &str) -> bool {
@@ -284,7 +268,7 @@ fn field<T: serde::de::DeserializeOwned>(stats: Option<&Value>, name: &str) -> O
 }
 
 fn flow_view(found: &HydrologyBake) -> RiverFlowView {
-    let flow = flow_summary(found);
+    let flow = found.flow_summary();
     RiverFlowView {
         rivers: flow.rivers,
         lakes: flow.lakes,
@@ -295,12 +279,14 @@ fn flow_view(found: &HydrologyBake) -> RiverFlowView {
     }
 }
 
-fn hydrology_view(terrains: &Terrains, entity: Entity, origin: Vec3) -> HydrologyView {
+fn hydrology_view(
+    (terrains, kinds): (&Terrains, &[&'static LayerKind]),
+    entity: Entity,
+) -> HydrologyView {
     let bakes = terrains.bakes(entity);
     let stats = bakes.hydrology;
-    let baked = terrains.layers(entity);
+    let baked = terrains.layers(entity, kinds);
     let found = baked.as_deref().and_then(Layers::hydrology);
-    let world = |point: [f32; 3]| [point[0] + origin.x, point[1] + origin.y, point[2] + origin.z];
     HydrologyView {
         baking: bakes.baking,
         samples: stats.map(|stats| stats.samples),
@@ -312,7 +298,7 @@ fn hydrology_view(terrains: &Terrains, entity: Entity, origin: Vec3) -> Hydrolog
         uncut: stats.map(|stats| stats.uncut),
         rivers: baked
             .as_deref()
-            .map(|layers| river_listing(layers, RIVERS_SHOWN))
+            .map(|layers| layers.river_listing(RIVERS_SHOWN))
             .unwrap_or_default()
             .into_iter()
             .map(|river| RiverView {
@@ -344,38 +330,6 @@ fn hydrology_view(terrains: &Terrains, entity: Entity, origin: Vec3) -> Hydrolog
                         width: fall.width,
                         speed: fall.speed,
                         discharge: fall.discharge,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
-        lakes: found
-            .map(|found| {
-                lake_sights(found, LAKES_SHOWN)
-                    .into_iter()
-                    .map(|lake| {
-                        let at =
-                            |[x, z]: [f32; 2]| [x + origin.x, lake.level + origin.y, z + origin.z];
-                        LakeView {
-                            level: lake.level + origin.y,
-                            area: lake.area,
-                            middle: at(lake.middle),
-                            shore: at(lake.shore),
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
-        sights: found
-            .map(|found| {
-                river_sights(found)
-                    .into_iter()
-                    .map(|sight| RiverSightView {
-                        kind: sight.kind,
-                        point: world(sight.point),
-                        direction: sight.direction,
-                        half: sight.half,
-                        speed: sight.speed,
-                        discharge: sight.discharge,
                     })
                     .collect()
             })

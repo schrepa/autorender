@@ -28,13 +28,6 @@ fn output(drawn: Weighted, encoded: vec3<f32>, shown: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(color, 1.0 - drawn.reveal);
 }
 
-@vertex
-fn vs_composite(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
-    let x = f32((index << 1u) & 2u) * 2.0 - 1.0;
-    let y = f32(index & 2u) * 2.0 - 1.0;
-    return vec4<f32>(x, y, 0.0, 1.0);
-}
-
 @fragment
 fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let drawn = weighted(position);

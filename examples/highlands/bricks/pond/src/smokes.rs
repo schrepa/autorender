@@ -130,12 +130,10 @@ fn draws(session: &mut dyn SmokeSession) -> Checked<()> {
 }
 
 fn drawn(rendering: &Value) -> bool {
-    rendering["render_passes"]
-        .as_array()
-        .is_some_and(|passes| {
-            passes
-                .iter()
-                .filter_map(Value::as_str)
-                .any(|pass| pass == "pond" || pass.ends_with("::pond"))
-        })
+    rendering["render_passes"].as_array().is_some_and(|passes| {
+        passes
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|pass| pass == "pond" || pass.ends_with("::pond"))
+    })
 }

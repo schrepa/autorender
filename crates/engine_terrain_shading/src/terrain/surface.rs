@@ -89,11 +89,8 @@ impl SurfaceTrees {
         self.frame.iter().any(Option::is_some)
     }
 
-    pub(super) fn water_mask(&self) -> u32 {
-        self.frame[self.grounds..]
-            .iter()
-            .flatten()
-            .fold(0, |mask, subdivided| mask | (1 << subdivided.slot))
+    pub(super) fn dropped(&self) -> u32 {
+        self.dropped
     }
 
     pub(super) fn counter_bytes(&self) -> Range<u64> {
@@ -124,6 +121,7 @@ impl SurfaceTrees {
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
         (tiles, views, room, drawn): (&TerrainTiles, &TerrainViews<'_>, u64, &[bool]),
+        epoch: u32,
     ) {
         if !self.indexed {
             let indices = meshlet_indices();
@@ -145,7 +143,7 @@ impl SurfaceTrees {
             .collect();
         let count = tiles.terrains.len();
         let slots = (count + watered.len()) as u64;
-        let share = room / LEAF_BYTES / slots.max(1);
+        let share = room / 16 * 16 / LEAF_BYTES / slots.max(1);
         let rooms = [
             share.min(u64::from(settings.subdivision_leaves)) as u32,
             share.min(u64::from(water.subdivision_leaves)) as u32,
@@ -166,14 +164,14 @@ impl SurfaceTrees {
             }
             let leaves = (index as u32 * rooms[0], rooms[0]);
             let tree = (terrain, index, Measure::Ground);
-            self.lay_out(cx, handles, (tree, room), (depth, leaves), planes);
+            self.lay_out(cx, handles, (tree, room), (depth, leaves), (planes, epoch));
         }
         self.grounds = count;
         let after_ground = count as u32 * rooms[0];
         for (place, &index) in watered.iter().enumerate() {
             let leaves = (after_ground + place as u32 * rooms[1], rooms[1]);
             let tree = (&tiles.terrains[index], index, Measure::Water);
-            self.lay_out(cx, handles, (tree, room), (depth, leaves), planes);
+            self.lay_out(cx, handles, (tree, room), (depth, leaves), (planes, epoch));
         }
         let held: Vec<(Entity, Measure)> = self.frame.iter().flatten().filter_map(|subdivided| {
             self.trees[subdivided.slot].map(|tree| tree.owner)
@@ -201,7 +199,7 @@ impl SurfaceTrees {
         handles: &Handles,
         ((terrain, index, measure), room): ((&TerrainEntry, usize, Measure), u64),
         (depth, (first, capacity)): (u32, (u32, u32)),
-        planes: [[f32; 4]; 6],
+        (planes, epoch): ([[f32; 4]; 6], u32),
     ) {
         let Some(slot) = self.slot_of((terrain.terrain, measure)) else {
             self.dropped += 1;
@@ -216,7 +214,7 @@ impl SurfaceTrees {
         let uniform = SubdivisionUniform {
             square: [side, target, measure.code(), 0.0],
             tree: [depth, counts_words(depth), first, capacity],
-            frame: [(self.frames % 2) as u32, slot as u32, index as u32, 0],
+            frame: [(self.frames % 2) as u32, slot as u32, index as u32, epoch],
             extent: {
                 let extent = terrain.pyramid.extent();
                 [0.0, 0.0, extent.x, extent.y]

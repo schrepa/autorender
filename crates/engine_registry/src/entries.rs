@@ -321,7 +321,7 @@ pub fn parse_section<T: DeserializeOwned>(
     check: fn(&T) -> Result<(), Error>,
 ) -> Result<T, Error> {
     let section: T = engine_settings::parse_value_at(value.clone(), path)?;
-    check(&section)?;
+    check(&section).map_err(|error| error.within(path))?;
     Ok(section)
 }
 

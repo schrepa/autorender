@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Entry, Error, View};
 use engine_render::{
-    Access, Attach, Bind, DebugShown, DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass,
-    Pipeline, Prepare, RenderPipeline, Shape, Texture, wgpu,
+    Access, Attach, Bind, DebugShown, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
+    Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, wgpu,
 };
 
 use crate::shaders::ambient_occlusion::{apply, occlusion as shading};
@@ -17,11 +17,12 @@ pub(crate) struct AmbientGpu {
     occlusion: Texture<Self>,
     occlusion_pipeline: Pipeline<Self, Own>,
     filter_pipeline: Pipeline<Self, Own>,
+    drawn: (u32, u32),
 }
 
 fn fullscreen(fragment: Entry) -> RenderPipeline<'static> {
     RenderPipeline {
-        vertex: shading::VS_FULLSCREEN,
+        vertex: FULLSCREEN,
         fragment: Some(fragment),
         debug: None,
         vertices: &[],
@@ -36,11 +37,14 @@ impl GpuPart for AmbientGpu {
     type Reads = (Res<'static, View>, Res<'static, DebugShown>);
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let raw = cx.texture("raw_occlusion", RAW_OCCLUSION_FORMAT, Lifetime::Frame);
+        let raw = cx.texture("raw_occlusion", RAW_OCCLUSION_FORMAT, Lifetime::Kept);
         let occlusion = cx.texture("occlusion", OCCLUSION_FORMAT, Lifetime::Frame);
         cx.frame(apply::OCCLUSION, Bind::Texture(occlusion))?;
-        let occluding = cx.pass("ambient_occlusion").color(raw, Access::Clear).id();
-        let filtering = cx.pass("effects_filter").color(occlusion, Access::Clear).id();
+        let occluding = cx.pass("ambient_occlusion").color(raw, Access::Load).id();
+        let filtering = cx
+            .pass("effects_filter")
+            .color_cleared(occlusion, wgpu::Color::WHITE)
+            .id();
         let occlusion_pipeline =
             cx.render_pipeline(occluding, &fullscreen(shading::FS_OCCLUSION), &[])?;
         let filter_pipeline = cx.render_pipeline(
@@ -55,6 +59,7 @@ impl GpuPart for AmbientGpu {
             occlusion,
             occlusion_pipeline,
             filter_pipeline,
+            drawn: (0, 0),
         })
     }
 
@@ -66,14 +71,17 @@ impl GpuPart for AmbientGpu {
         if shown.owner.is_some() {
             return;
         }
-        let size = view.render_size();
+        let display = view.display_size();
+        let render = view.render_size();
         let extent = wgpu::Extent3d {
-            width: size.x.max(1),
-            height: size.y.max(1),
+            width: display.x.max(1),
+            height: display.y.max(1),
             depth_or_array_layers: 1,
         };
         cx.allocate(self.raw, extent, 1);
         cx.allocate(self.occlusion, extent, 1);
+        let within = |size: u32, whole: u32| size.clamp(1, whole.max(1));
+        self.drawn = (within(render.x, display.x), within(render.y, display.y));
         cx.run(self.occluding);
         cx.run(self.filtering);
     }
@@ -84,7 +92,9 @@ impl GpuPart for AmbientGpu {
         } else {
             &self.filter_pipeline
         };
-        cx.render(Attach::Declared, None).draw(
+        let mut draw = cx.render(Attach::Declared, None);
+        draw.within(self.drawn);
+        draw.draw(
             pipeline,
             Shape::Pulled {
                 vertices: 0..3,

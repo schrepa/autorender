@@ -54,18 +54,19 @@ impl Terrains {
         self.frame += 1;
         let frame = self.frame;
         self.sync_surroundings();
+        let mut released = Vec::new();
         let mut left = 0;
         for state in &mut self.entries {
             let authored = state.terrain.layers.clone();
             if state.terrain.validate().is_err() {
                 continue;
             }
-            state.update_materials(settings.gpu_materials);
+            state.update_materials(settings.gpu_materials, asking.kinds);
             if bake(state, &authored, asking, frame) {
                 left += 1;
                 continue;
             }
-            share_recipe(state, asking.jobs, &mut self.stacks);
+            share_recipe(state, asking.jobs, &mut self.stacks, &mut released);
             let Some(recipe) = state.recipe.as_ref().map(|recipe| recipe.key) else {
                 continue;
             };
@@ -73,10 +74,10 @@ impl Terrains {
                 .cook
                 .take()
                 .unwrap_or_else(|| CookTiles::of(cooked_tiles(state, settings)));
-            cook.take("terrain::tile", asking, (&mut state.failures, frame));
+            cook.take(TILE_BUILD.name(), asking, (&mut state.failures, frame));
             while let Some(&key) = cook.keys.get(cook.next) {
                 let priority = job_priority(VIEW_JOBS, cook.next as u32);
-                let job = state.tile_job(recipe, key);
+                let job = state.tile_job(recipe.hash(), key);
                 let ticket = asking.jobs.fetch(&TILE_BUILD, &job.identity(), priority);
                 cook.flight.insert(key, ticket);
                 cook.next += 1;

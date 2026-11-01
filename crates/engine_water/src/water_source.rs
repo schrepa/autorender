@@ -39,14 +39,9 @@ fn water_point(terrain: &SurfaceTerrain, local: Vec2) -> Option<WaterPoint> {
     (0..pyramid.levels())
         .find_map(|level| {
             let key = pyramid.tile_at(level, local)?;
-            let face = terrain.faces.iter().find(|face| face.key == key)?;
+            let (face, water) = terrain.held.iter().find(|(face, _)| face.key == key)?;
             let local = local - pyramid.tile_origin(key);
-            let water = terrain
-                .held
-                .iter()
-                .find(|(held, _)| *held == key)
-                .map(|(_, water)| water);
-            crate::tile_water::point(face, water.map(|water| &**water), local)
+            crate::tile_water::point(face, water.as_deref(), local)
         })
         .flatten()
 }

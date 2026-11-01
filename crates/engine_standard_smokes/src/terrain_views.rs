@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 
 use super::requests::seen;
 use super::scene_kit::{ask, capture, control, load, render};
+use super::stats::terrain;
 
 const VIEWS: [&str; 14] = [
     "water_depth",
@@ -207,10 +208,10 @@ fn settle(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let mut rendering = Value::Null;
     for _ in 0..600 {
         rendering = render(session)?;
-        let terrain = &rendering["terrain"];
-        let ready = terrain["tiles"].as_u64().unwrap_or(0) > 0
-            && terrain["loading_tiles"] == 0
-            && terrain["fallback_tiles"] == 0;
+        let drawn = terrain(&rendering);
+        let ready = drawn["tiles"].as_u64().unwrap_or(0) > 0
+            && drawn["loading_tiles"] == 0
+            && drawn["fallback_tiles"] == 0;
         resident = if ready { resident + 1 } else { 0 };
         if resident > 1 {
             return Ok(());
@@ -218,7 +219,7 @@ fn settle(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     }
     let wanted = json!({"loading_tiles": 0});
     smoke_eq!(
-        seen(false, json!(rendering["terrain"]), &wanted),
+        seen(false, terrain(&rendering), &wanted),
         wanted,
         "terrain_settles"
     );

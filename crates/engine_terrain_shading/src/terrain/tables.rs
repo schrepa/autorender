@@ -1,19 +1,19 @@
 use std::ops::Range;
 
 use bevy_ecs::prelude::Entity;
+use engine_core::AssetLibrary;
 use engine_core::collections::HashMap;
 use engine_places::ground::{
-    Pyramid, SurfaceMaps, SurfaceMaterial, SurfaceProjection, TerrainEntry, TerrainTiles, TileKey,
+    PALETTE_ENTRIES, Pyramid, SurfaceMaps, SurfaceMaterial, SurfaceProjection, TerrainEntry,
+    TerrainTiles, TileKey,
 };
 use engine_render::Prepare;
 
 use super::part::{Handles, TerrainGpu};
 use super::{HOLE_WORDS, NO_HOLES, widen};
-use crate::gpu::{NOT_RESIDENT, PALETTE_ENTRIES, PaletteEntry};
+use crate::gpu::{NOT_RESIDENT, PaletteEntry};
 use crate::state::{Atlas, TileId};
-use crate::terrain_macro::MacroMaps;
 use crate::terrain_maps::TerrainMaps;
-use crate::terrain_sky::SkyMaps;
 
 #[derive(Default)]
 pub(crate) struct TerrainTables {
@@ -22,7 +22,6 @@ pub(crate) struct TerrainTables {
     holes_bytes: u64,
     fades_stale: bool,
     pub(super) fade_words: u32,
-    fades: Vec<u32>,
     pub(super) directory_written: Vec<u32>,
     directory_layout: Vec<(Entity, Pyramid)>,
     directory_spare: Vec<u32>,
@@ -35,22 +34,13 @@ pub(crate) struct TerrainTables {
 }
 
 impl TerrainTables {
-    pub(super) fn write(
-        &mut self,
-        cx: &mut Prepare<'_, TerrainGpu>,
-        handles: &Handles,
-        (tiles, atlas, maps, macro_maps, sky): (&TerrainTiles, &Atlas, &TerrainMaps, &MacroMaps, &SkyMaps),
-    ) {
-        let _ = (macro_maps, sky);
-        self.write_holes(cx, handles, atlas);
-        self.write_fades(cx, handles, atlas);
-        self.write_directory(cx, handles, tiles, atlas);
-        self.write_palette(cx, handles, tiles, maps);
+    pub(super) fn fade_words(atlas: &Atlas) -> u32 {
+        atlas.capacity.div_ceil(2).max(1)
     }
 
-    fn write_holes(&mut self, cx: &mut Prepare<'_, TerrainGpu>, handles: &Handles, atlas: &Atlas) {
+    pub(super) fn write_holes(&mut self, cx: &mut Prepare<'_, TerrainGpu>, handles: &Handles, atlas: &Atlas) {
         let max_layers = atlas.capacity;
-        let fade_words = max_layers.div_ceil(2).max(1);
+        let fade_words = Self::fade_words(atlas);
         let edited = atlas.uploads.iter().any(|(id, _, _)| atlas.holed.contains(id));
         let unchanged = !edited
             && fade_words == self.fade_words
@@ -95,8 +85,12 @@ impl TerrainTables {
         }
     }
 
-    fn write_fades(&mut self, cx: &mut Prepare<'_, TerrainGpu>, handles: &Handles, atlas: &Atlas) {
-        let (words, dirty) = super::atlas::fades(atlas, &mut self.fades, self.fade_words);
+    pub(super) fn write_fades(
+        &mut self,
+        cx: &mut Prepare<'_, TerrainGpu>,
+        handles: &Handles,
+        (words, dirty): (&[u32], Range<usize>),
+    ) {
         if words.is_empty() {
             return;
         }
@@ -107,7 +101,7 @@ impl TerrainTables {
         }
     }
 
-    fn write_directory(
+    pub(super) fn write_directory(
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
@@ -213,12 +207,11 @@ impl TerrainTables {
         self.directory_spare = std::mem::replace(&mut self.directory_written, words);
     }
 
-    fn write_palette(
+    pub(super) fn write_palette(
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
-        tiles: &TerrainTiles,
-        maps: &TerrainMaps,
+        (tiles, maps, assets): (&TerrainTiles, &TerrainMaps, &AssetLibrary),
     ) {
         let mut entries = std::mem::take(&mut self.palette_spare);
         entries.clear();
@@ -238,7 +231,7 @@ impl TerrainTables {
                 terrain.materials[..kept]
                     .iter()
                     .zip(terrain_maps)
-                    .map(|(look, terrain_maps)| palette_entry(look, terrain_maps, maps)),
+                    .map(|(look, terrain_maps)| palette_entry(look, terrain_maps, (maps, assets))),
             );
         }
         cx.allocate_buffer(handles.palette, crate::gpu::PALETTE_BYTES as u64);
@@ -277,23 +270,27 @@ fn set_word(words: &mut [u32], at: usize, value: u32, dirty: &mut Range<usize>) 
     }
 }
 
-fn palette_entry(look: &SurfaceMaterial, terrain_maps: &Option<SurfaceMaps>, maps: &TerrainMaps) -> PaletteEntry {
+fn palette_entry(
+    look: &SurfaceMaterial,
+    terrain_maps: &Option<SurfaceMaps>,
+    (maps, assets): (&TerrainMaps, &AssetLibrary),
+) -> PaletteEntry {
     let projection = match look.projection {
         SurfaceProjection::Top => 0.0,
         SurfaceProjection::Biplanar => 1.0,
     };
-    let (color, roughness, layer, scale, occlusion, metalness) = match terrain_maps {
-        Some(terrain_maps) => {
-            let material = maps.material(terrain_maps);
-            (
-                material.color,
-                material.roughness,
-                maps.layer(terrain_maps),
-                material.normal_scale,
-                if material.packed { material.occlusion_strength } else { 0.0 },
-                material.metalness,
-            )
-        }
+    let material = terrain_maps
+        .as_ref()
+        .and_then(|terrain_maps| Some((terrain_maps, TerrainMaps::material(terrain_maps, assets)?)));
+    let (color, roughness, layer, scale, occlusion, metalness) = match material {
+        Some((terrain_maps, material)) => (
+            material.color,
+            material.roughness,
+            maps.layer(terrain_maps, assets),
+            material.normal_scale,
+            if material.packed { material.occlusion_strength } else { 0.0 },
+            material.metalness,
+        ),
         None => (look.color, look.roughness, None, 1.0, 0.0, 0.0),
     };
     let means = layer.map(|layer| maps.means(layer));
@@ -319,9 +316,6 @@ fn palette_entry(look: &SurfaceMaterial, terrain_maps: &Option<SurfaceMaps>, map
         maps: [scale, occlusion, metalness, far_occlusion],
         far,
         relief: [look.depth, 0.0, slopes, 0.0],
-        canopy: [0.0; 4],
-        placed: [0.0; 4],
-        placed_size: [0.0; 4],
         heights,
     }
 }

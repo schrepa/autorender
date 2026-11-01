@@ -2,10 +2,12 @@ use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::glam::{Quat, Vec3};
 use engine_core::{
-    Cube, Engine, EngineConfig, GlobalTransforms, InterpolateTransform, Material, MaterialHandle,
-    Mesh, Mesh3d, MeshHandle, Parent, PresentedTransforms, RenderSnapshot, Schedule, Tint,
-    Transform, reset_interpolation, set_parent, set_parents,
+    Engine, GlobalTransforms, InterpolateTransform, Listing, Material, MaterialHandle, Mesh,
+    Mesh3d, MeshHandle, Parent, PresentedTransforms, Schedule, Transform, reset_interpolation,
+    set_parent, set_parents,
 };
+use engine_meshes::MeshesBrick;
+use engine_places::meshes::{Cube, Tint};
 
 use serde_json::{Value, json};
 
@@ -91,10 +93,13 @@ enum Edit {
 }
 
 fn engine() -> Result<(Engine, Assets), String> {
-    let mut engine = Engine::new(EngineConfig::default());
-    engine
-        .app
-        .add_systems(Schedule::FixedSimulation.label(), drift);
+    let mut engine =
+        engine::engine(|list| list.with::<MeshesBrick>().places(engine_places::PLACES))
+            .map_err(|error| error.to_string())?;
+    engine.app.add_systems(
+        Schedule::FixedSimulation.label(),
+        drift.ambiguous_with_all(),
+    );
     let assets = Assets::add(&mut engine)?;
     Ok((engine, assets))
 }
@@ -401,9 +406,8 @@ fn bits(matrix: engine_core::glam::Mat4) -> [u32; 16] {
     matrix.to_cols_array().map(f32::to_bits)
 }
 
-fn frame(engine: &mut Engine, snapshot: &mut RenderSnapshot) -> Frame {
-    engine.extract(ASPECT, snapshot);
-    let world = engine.app.world();
+fn frame(engine: &mut Engine) -> Frame {
+    let world = engine.extract_frame(ASPECT).world();
     let globals = world
         .resource::<GlobalTransforms>()
         .iter()
@@ -414,8 +418,8 @@ fn frame(engine: &mut Engine, snapshot: &mut RenderSnapshot) -> Frame {
         .iter()
         .map(|(entity, pose)| (entity, pose.matrix().map(bits)))
         .collect();
-    let mut instances: Vec<String> = snapshot
-        .instances
+    let (listed, counts) = engine_meshes::retained_instances(world).unwrap_or_default();
+    let mut instances: Vec<String> = listed
         .iter()
         .map(|instance| {
             format!(
@@ -433,11 +437,7 @@ fn frame(engine: &mut Engine, snapshot: &mut RenderSnapshot) -> Frame {
         globals,
         presented,
         instances,
-        counts: [
-            snapshot.instances.len(),
-            snapshot.dropped_instances,
-            snapshot.missing_assets,
-        ],
+        counts,
     }
 }
 
@@ -547,8 +547,6 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
             spawned.push(entity);
         }
     }
-    let mut snapshot = RenderSnapshot::default();
-    let mut fresh_snapshot = RenderSnapshot::default();
     let mut log = Vec::new();
     let mut checks = 0;
     let mut mismatches = 0;
@@ -582,12 +580,12 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
             ("after", tick),
         );
         let Some((mut engine, _, map)) = fresh else {
-            frame(&mut living, &mut snapshot);
+            frame(&mut living);
             continue;
         };
         checks += 1;
-        let living_frame = frame(&mut living, &mut snapshot);
-        let fresh_frame = frame(&mut engine, &mut fresh_snapshot);
+        let living_frame = frame(&mut living);
+        let fresh_frame = frame(&mut engine);
         let found = differences(&living_frame, &fresh_frame, &map);
         if !found.is_empty() {
             mismatches += 1;

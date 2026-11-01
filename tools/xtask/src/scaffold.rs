@@ -15,18 +15,18 @@ const APP_NATIVE: &str = "crates/engine_native/examples/app_native.rs";
 
 const APP_XTASK: &str = "crates/engine_checks/examples/app_xtask.rs";
 
-const STANDARD_LIST: &str = "crates/engine_standard/src/lib.rs";
-
-const STANDARD_MANIFEST: &str = "crates/engine_standard/Cargo.toml";
-
 const TEMPLATE_GAME: &str = "#[path = \"../../engine/examples/app_template.rs\"]\nmod app;";
 
-const TEMPLATE_LIST: &str =
-    "pub fn bricks<L: Listing>(list: L) -> L {\n    engine_standard::standard(list)\n}\n";
+const TEMPLATE_LIST: &str = "pub fn bricks<L: Listing>(list: L) -> L {\n    \
+                             engine_standard::standard(list).with::<FlyCameraBrick>()\n}\n";
 
-const STANDARD_FN: &str = "pub fn standard<L: Listing>(list: L) -> L {";
+const TEMPLATE_USE: &str = "use engine_fly_camera::FlyCameraBrick;\n";
 
-const LIST_FN: &str = "pub fn bricks<L: Listing>(list: L) -> L {";
+const LIST_USES: &str = "use engine_core::Listing;\nuse engine_fly_camera::FlyCameraBrick;\n\n";
+
+const LIST_DEPENDENCIES: &str = "engine_core.workspace = true\n\
+                                 engine_fly_camera.workspace = true\n\
+                                 engine_standard.workspace = true\n";
 
 const RESERVED: [&str; 4] = ["engine", "generated", "face", "place"];
 
@@ -80,14 +80,6 @@ fn template(root: &Path, path: &str) -> Result<String, String> {
         .map_err(|error| format!("cannot read {path}: {error}"))
 }
 
-fn dependencies_table(manifest: &str) -> Option<&str> {
-    let start = manifest.find("[dependencies]\n")? + "[dependencies]\n".len();
-    let end = manifest[start..]
-        .find("\n[")
-        .map_or(manifest.len(), |end| start + end);
-    Some(&manifest[start..end])
-}
-
 fn app(root: &Path, options: &[String]) -> Result<(), String> {
     let (project, rest) = project_option(options)?;
     let (Some(project), true) = (project, rest.is_empty()) else {
@@ -124,13 +116,16 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
         return Err(format!("a client named {name} already exists"));
     }
     let source = template(root, APP_TEMPLATE)?;
-    if !source.contains(TEMPLATE_LIST) {
-        return Err(format!(
-            "{APP_TEMPLATE} no longer lists its bricks as `{}`",
-            TEMPLATE_LIST.trim_end()
-        ));
+    for (marker, what) in [(TEMPLATE_LIST, "lists its bricks"), (TEMPLATE_USE, "names them")] {
+        if !source.contains(marker) {
+            return Err(format!(
+                "{APP_TEMPLATE} no longer {what} as `{}`",
+                marker.trim_end()
+            ));
+        }
     }
     let source = source
+        .replace(TEMPLATE_USE, "")
         .replace(TEMPLATE_LIST, &format!("pub use {wasm}_bricks::bricks;\n"))
         .replace("Template", &pascal);
     let native = template(root, APP_NATIVE)?;
@@ -142,16 +137,6 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
             ));
         }
     }
-    let list = template(root, STANDARD_LIST)?;
-    if !list.contains(STANDARD_FN) {
-        return Err(format!(
-            "{STANDARD_LIST} no longer lists the standard bricks as `{STANDARD_FN}`"
-        ));
-    }
-    let list = list.replace(STANDARD_FN, LIST_FN);
-    let standard = template(root, STANDARD_MANIFEST)?;
-    let listed = dependencies_table(&standard)
-        .ok_or_else(|| format!("{STANDARD_MANIFEST} has no [dependencies]"))?;
     let game = format!("use {wasm} as app;");
     let files = [
         (crate_dir.join("Cargo.toml"), app_manifest(&name, &page)),
@@ -164,9 +149,12 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
         ),
         (
             crate_dir.join("bricks/Cargo.toml"),
-            list_manifest(&name, listed),
+            list_manifest(&name, LIST_DEPENDENCIES),
         ),
-        (crate_dir.join("bricks/src/lib.rs"), list),
+        (
+            crate_dir.join("bricks/src/lib.rs"),
+            format!("{LIST_USES}{TEMPLATE_LIST}"),
+        ),
         (crate_dir.join("worker/Cargo.toml"), worker_manifest(&name)),
         (
             crate_dir.join("worker/src/lib.rs"),

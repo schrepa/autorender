@@ -1,7 +1,9 @@
 use super::*;
-use engine_core::{CookMode, FrameTime, Poses, Projection, View, WorkClock};
+use engine_core::{
+    CookMode, DeviceLimits, FrameTime, GlobalTransforms, Joined, Projection, View, WorkClock,
+};
 use engine_places::streaming::StreamingFocus;
-use engine_places::terrain::DrawnRivers;
+use engine_places::terrain::{DrawnRivers, TerrainLayers};
 use glam::UVec2;
 
 pub(super) fn vertical_fov(camera: &Camera) -> f32 {
@@ -11,6 +13,10 @@ pub(super) fn vertical_fov(camera: &Camera) -> f32 {
         } => vertical_fov_radians,
         Projection::Orthographic { .. } => f32::NAN,
     }
+}
+
+fn device_tiles(limits: &DeviceLimits) -> Option<u32> {
+    (limits.texture_layers > 0).then_some(limits.texture_layers)
 }
 
 impl Terrains {
@@ -36,7 +42,6 @@ impl Terrains {
             return false;
         };
         let work = Work {
-            slice: u64::from(settings.samples_per_frame / 4).max(1),
             clock: Some(clock),
             end: clock() + milliseconds,
             upload: std::cell::Cell::new(self.upload_left),
@@ -117,7 +122,7 @@ impl Terrains {
         settings: &TerrainSettings,
         (camera, clock): (&Camera, Option<fn() -> f64>),
         (eye, ahead): (Vec3, Vec3),
-        size: UVec2,
+        (size, device_tiles): (UVec2, Option<u32>),
         (focus, places): (&[Vec3], &[(Vec3, f32)]),
         asking: &mut Asking<'_, '_, '_>,
     ) {
@@ -127,6 +132,7 @@ impl Terrains {
         for ticket in retired.jobs {
             asking.jobs.cancel(ticket);
         }
+        let mut released = retired.shares;
         let mut stats = TerrainStats {
             terrains: self
                 .entries
@@ -157,7 +163,6 @@ impl Terrains {
             vertical_fov(&Camera::default())
         };
         let work = Work {
-            slice: u64::from(settings.samples_per_frame),
             clock,
             end: clock.map_or(0.0, |clock| {
                 clock()
@@ -189,7 +194,10 @@ impl Terrains {
                 (0, false)
             }
         };
-        let limit = settings.max_tiles;
+        let limit = match (settings.max_tiles, device_tiles) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
         let mut remaining = limit.map_or(usize::MAX, |limit| limit as usize);
         let frame = self.frame;
         for state in &mut self.entries {
@@ -268,8 +276,8 @@ impl Terrains {
             state.missing.clone_from(&missing);
             state.target.clone_from(&target);
             state.keep.clone_from(&keep);
-            state.update_materials(settings.gpu_materials);
-            share_recipe(state, asking.jobs, &mut self.stacks);
+            state.update_materials(settings.gpu_materials, asking.kinds);
+            share_recipe(state, asking.jobs, &mut self.stacks, &mut released);
             if load_tiles(
                 state,
                 &missing,
@@ -339,15 +347,7 @@ impl Terrains {
             .map(|state| state.store.kept_tiles() as u32)
             .sum();
         self.upload_left = work.upload.get();
-        let entries = &self.entries;
-        self.stacks.retain(|(stack, _)| {
-            entries.iter().any(|state| {
-                state
-                    .recipe
-                    .as_ref()
-                    .is_some_and(|recipe| Arc::ptr_eq(&recipe.stack, stack))
-            })
-        });
+        release(&self.entries, &mut self.stacks, released, asking.jobs);
         if !self.loaded
             && stats.terrains > 0
             && stats.baking == 0
@@ -357,6 +357,10 @@ impl Terrains {
             self.loaded = true;
         }
         stats.loading = self.loading();
+        stats.dropped_tiles = stats.tile_cut.cut;
+        let (failed_jobs, latest) = self.job_failures();
+        stats.failed_jobs = failed_jobs;
+        stats.latest_job_failure = latest.map(str::to_owned);
         self.stats = stats;
         #[cfg(debug_assertions)]
         for state in &self.entries {
@@ -424,7 +428,8 @@ pub(crate) type StreamReads<'w> = (
     Res<'w, FrameTime>,
     Res<'w, WorkClock>,
     Res<'w, CookMode>,
-    Res<'w, Poses>,
+    Res<'w, DeviceLimits>,
+    Res<'w, GlobalTransforms>,
     Res<'w, AssetLibrary>,
     Res<'w, Records>,
 );
@@ -435,40 +440,43 @@ pub(crate) type StreamReads<'w> = (
 )]
 pub(crate) fn stream_terrains(
     settings: Res<TerrainSettings>,
-    (drawn, camera, view, time, clock, cooking, poses, assets, records): StreamReads<'_>,
+    (drawn, camera, view, time, clock, cooking, limits, globals, assets, records): StreamReads<'_>,
+    kinds: Joined<TerrainLayers>,
     focus: Query<Entity, With<StreamingFocus>>,
     prefetch: Query<(Entity, &TerrainPrefetch)>,
-    built: Query<(Entity, &TerrainBuilt)>,
+    scenes: Query<(Entity, &TerrainScene)>,
     mut jobs: Jobs,
     mut terrains: ResMut<Terrains>,
     mut stats: ResMut<TerrainStats>,
     mut streaming: Local<TerrainStreaming>,
 ) {
+    let _profile = engine_core::profile::span("cpu", "terrain_stream");
     let streaming = &mut *streaming;
+    let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
     let eye = view.detail_eye();
     let seconds = time.delta_seconds;
     streaming.points.clear();
     streaming.points.push(eye);
     streaming.places.clear();
     for entity in &focus {
-        if let Some(pose) = poses.of(entity) {
-            streaming.points.push(Vec3::from(pose.translation));
+        if let Some(point) = globals.get(entity).and_then(|global| global.translation()) {
+            streaming.points.push(point);
         }
     }
     for (entity, prefetch) in &prefetch {
         let reach = prefetch.reach;
         if reach.is_finite()
             && reach > 0.0
-            && let Some(pose) = poses.of(entity)
+            && let Some(point) = globals.get(entity).and_then(|global| global.translation())
         {
             streaming
                 .places
-                .push((Vec3::from(pose.translation), engine_math::min(reach, 8.0)));
+                .push((point, engine_math::min(reach, 8.0)));
         }
     }
-    let present: Vec<(Entity, Terrain)> = built
+    let present: Vec<(Entity, Terrain)> = scenes
         .iter()
-        .filter_map(|(entity, built)| Some((entity, built.0.clone()?)))
+        .filter_map(|(entity, scene)| Some((entity, scene.built.clone()?)))
         .collect();
     let solids: Vec<(Entity, Vec<Option<Solid>>)> = present
         .iter()
@@ -495,12 +503,13 @@ pub(crate) fn stream_terrains(
         jobs: &mut jobs,
         records: &records,
         drawn: drawn.make,
+        kinds: &kinds,
     };
     terrains.stream(
         &settings,
         (&*camera, clock.reading),
         (eye, ahead),
-        view.render_size(),
+        (view.display_size(), device_tiles(&limits)),
         (&streaming.points, &streaming.places),
         &mut asking,
     );
@@ -511,20 +520,28 @@ pub(crate) fn stream_terrains(
     };
     stats.set_if_neq(TerrainStats {
         pending,
-        ..terrains.stats
+        ..terrains.stats.clone()
     });
 }
 
 pub(crate) fn work_between_frames(
     settings: Res<TerrainSettings>,
-    (drawn, time, clock, records): (Res<DrawnRivers>, Res<FrameTime>, Res<WorkClock>, Res<Records>),
+    (drawn, time, clock, records): (
+        Res<DrawnRivers>,
+        Res<FrameTime>,
+        Res<WorkClock>,
+        Res<Records>,
+    ),
+    kinds: Joined<TerrainLayers>,
     mut jobs: Jobs,
     mut terrains: ResMut<Terrains>,
 ) {
+    let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
     let mut asking = Asking {
         jobs: &mut jobs,
         records: &records,
         drawn: drawn.make,
+        kinds: &kinds,
     };
     let milliseconds = f64::from(time.between_frames_micros) / 1000.0;
     terrains.work_between_frames(&settings, (clock.reading, milliseconds), &mut asking);

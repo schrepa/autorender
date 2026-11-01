@@ -1,20 +1,26 @@
 use super::*;
-use crate::jobs::GROUND_GRID;
+use crate::codec;
+use crate::jobs::{GROUND_GRID, GroundIdentity};
 use engine_core::JobRef;
-use engine_places::ground::{Ground, GroundObstacle, GroundPoint, GroundQuery};
+use engine_places::ground::{
+    Ground, GroundObstacle, GroundPoint, GroundQuery, GroundRead, GroundSource,
+};
 
 struct GroundTerrain {
+    entity: Entity,
     origin: Vec3,
     pyramid: Pyramid,
     cutout: Option<(Vec2, Vec2)>,
     around: bool,
-    tiles: HashMap<TileKey, Arc<Tile>>,
+    tiles: Vec<(TileKey, Arc<Tile>)>,
     colliders: Vec<Option<PlacedCollider>>,
+    walked: Option<Arc<[u8]>>,
 }
 
 impl GroundTerrain {
-    fn of(state: &TerrainState) -> Self {
+    fn of(state: &TerrainState, stacks: &[(Arc<Layers>, engine_core::RecordKey)]) -> Self {
         Self {
+            entity: state.entity,
             origin: state.terrain.origin,
             pyramid: state.terrain.pyramid,
             cutout: state.around.as_ref().map(|around| around.cutout),
@@ -31,7 +37,15 @@ impl GroundTerrain {
                 .iter()
                 .map(|asset| asset.collider)
                 .collect(),
+            walked: walked_identity(state, stacks),
         }
+    }
+
+    fn tile(&self, key: TileKey) -> Option<&Arc<Tile>> {
+        self.tiles
+            .binary_search_by_key(&key, |(held, _)| *held)
+            .ok()
+            .map(|at| &self.tiles[at].1)
     }
 
     fn cut_out(&self, local: Vec2) -> bool {
@@ -47,7 +61,7 @@ impl GroundTerrain {
         let pyramid = &self.pyramid;
         (0..pyramid.levels()).find_map(|level| {
             let key = pyramid.tile_at(level, local)?;
-            let tile = self.tiles.get(&key)?;
+            let tile = self.tile(key)?;
             let sample = tile.sample(local - pyramid.tile_origin(key))?;
             Some((level, sample))
         })
@@ -55,7 +69,7 @@ impl GroundTerrain {
 
     fn nearest(&self, level: u32, local: Vec2) -> Option<(&Arc<Tile>, [i32; 2])> {
         let key = self.pyramid.tile_at(level, local)?;
-        let tile = self.tiles.get(&key)?;
+        let tile = self.tile(key)?;
         let at = local - self.pyramid.tile_origin(key);
         let spacing = tile.spacing();
         Some((
@@ -66,6 +80,34 @@ impl GroundTerrain {
             ],
         ))
     }
+
+    fn holds(&self, from: Vec2, to: Vec2) -> bool {
+        let pyramid = &self.pyramid;
+        let [x, z] = pyramid.tiles(0);
+        let size = Vec2::new(x as f32, z as f32) * TILE_QUADS as f32 * pyramid.spacing(0);
+        let corner = Vec2::new(self.origin.x, self.origin.z);
+        [from, to].iter().all(|&point| {
+            let local = point - corner;
+            local.cmpge(Vec2::ZERO).all() && local.cmple(size).all()
+        })
+    }
+}
+
+fn walked_identity(
+    state: &TerrainState,
+    stacks: &[(Arc<Layers>, engine_core::RecordKey)],
+) -> Option<Arc<[u8]>> {
+    let recipe = state.recipe.as_ref()?;
+    let stack = stacks
+        .iter()
+        .find(|(stack, _)| Arc::ptr_eq(stack, &recipe.stack))
+        .map(|(_, key)| key.hash())?;
+    let edits: Vec<Stamp> = state.terrain.edits.iter().map(|edit| edit.stamp).collect();
+    Some(Arc::from(codec::encode(&GroundIdentity {
+        stack,
+        pyramid: state.terrain.pyramid,
+        edits,
+    })))
 }
 
 pub(crate) struct TerrainGround {
@@ -75,7 +117,11 @@ pub(crate) struct TerrainGround {
 impl TerrainGround {
     pub(crate) fn of(terrains: &Terrains) -> Self {
         Self {
-            terrains: terrains.entries.iter().map(GroundTerrain::of).collect(),
+            terrains: terrains
+                .entries
+                .iter()
+                .map(|state| GroundTerrain::of(state, &terrains.stacks))
+                .collect(),
         }
     }
 }
@@ -100,40 +146,55 @@ impl GroundQuery for TerrainGround {
         })
     }
 
-    fn obstacles(&self, low: Vec2, high: Vec2, found: &mut Vec<GroundObstacle>) {
-        for terrain in self.terrains.iter().filter(|terrain| !terrain.around) {
-            let origin = Vec2::new(terrain.origin.x, terrain.origin.z);
-            let mut keys: Vec<&TileKey> = terrain.tiles.keys().collect();
-            keys.sort_unstable();
-            for key in keys {
-                for placed in terrain.tiles[key].placed() {
-                    let Some(collider) = terrain
-                        .colliders
-                        .get(usize::from(placed.asset))
-                        .copied()
-                        .flatten()
-                    else {
-                        continue;
-                    };
-                    let reach = match collider.shape {
-                        PlacedShape::Sphere { radius } => radius,
-                        PlacedShape::Cuboid { half_extents } => {
-                            engine_math::max(half_extents[0], half_extents[2])
-                        }
-                    };
-                    let center = origin + Vec2::new(placed.position[0], placed.position[2]);
-                    let radius = reach * placed.scale;
-                    if center.x + radius < low.x
-                        || center.y + radius < low.y
-                        || center.x - radius > high.x
-                        || center.y - radius > high.y
-                    {
-                        continue;
+    fn obstacles(&self, ground: Entity) -> Vec<GroundObstacle> {
+        let Some(terrain) = self
+            .terrains
+            .iter()
+            .find(|terrain| terrain.entity == ground && !terrain.around)
+        else {
+            return Vec::new();
+        };
+        terrain
+            .tiles
+            .iter()
+            .flat_map(|(_, tile)| tile.placed().iter())
+            .filter_map(|placed| {
+                let collider = terrain
+                    .colliders
+                    .get(usize::from(placed.asset))
+                    .copied()
+                    .flatten()?;
+                let reach = match collider.shape {
+                    PlacedShape::Sphere { radius } => radius,
+                    PlacedShape::Cuboid { half_extents } => {
+                        engine_math::max(half_extents[0], half_extents[2])
                     }
-                    found.push(GroundObstacle { center, radius });
-                }
-            }
-        }
+                };
+                Some(GroundObstacle {
+                    center: Vec2::new(placed.position[0], placed.position[2]),
+                    radius: reach * placed.scale,
+                })
+            })
+            .collect()
+    }
+
+    fn source(&self, from: Vec2, to: Vec2) -> GroundRead<GroundSource> {
+        let Some(terrain) = self
+            .terrains
+            .iter()
+            .find(|terrain| !terrain.around && terrain.holds(from, to))
+        else {
+            return GroundRead::Off;
+        };
+        let Some(identity) = terrain.walked.clone() else {
+            return GroundRead::Waiting;
+        };
+        GroundRead::Ready(GroundSource {
+            ground: terrain.entity,
+            origin: terrain.origin,
+            pyramid: terrain.pyramid,
+            identity,
+        })
     }
 
     fn grid(&self) -> Option<JobRef> {
@@ -144,13 +205,20 @@ impl GroundQuery for TerrainGround {
     }
 }
 
+type GroundSeen = (u64, u64, Vec<Option<engine_core::RecordKey>>);
+
 pub(crate) fn publish_ground(
     terrains: Res<Terrains>,
     mut ground: ResMut<Ground>,
-    mut published: Local<Option<(u64, u64)>>,
+    mut published: Local<Option<GroundSeen>>,
 ) {
-    let seen = (terrains.epoch, terrains.revision());
-    if *published == Some(seen) && !ground.is_changed() {
+    let recipes = terrains
+        .entries
+        .iter()
+        .map(|state| state.recipe.as_ref().map(|recipe| recipe.key))
+        .collect();
+    let seen = (terrains.epoch, terrains.revision(), recipes);
+    if published.as_ref() == Some(&seen) && !ground.is_changed() {
         return;
     }
     *ground = Ground(Arc::new(TerrainGround::of(&terrains)));

@@ -1,16 +1,32 @@
-use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
+use engine_core::{SmokeFailure, SmokeSession};
 use serde_json::{Value, json};
 
 type Asked = Result<Value, SmokeFailure>;
 
+macro_rules! check {
+    ($condition:expr, $check:expr, $got:expr, $expected:expr $(,)?) => {
+        if !$condition {
+            return Err(SmokeFailure::new(
+                $check,
+                &$got,
+                &$expected,
+                concat!(file!(), ":", line!()),
+            ));
+        }
+    };
+}
+
 fn accepted(session: &mut dyn SmokeSession, verb: &str, body: Value, check: &'static str) -> Asked {
-    let reply = session.request(verb, body);
-    smoke_eq!(
-        reply.as_ref().err().map(|refused| &refused["error"]),
-        None,
-        check
+    let reply = match session.request(verb, body) {
+        Ok(reply) | Err(reply) => reply,
+    };
+    check!(
+        reply["ok"] == true,
+        check,
+        reply["error"].clone(),
+        json!({ "ok": true })
     );
-    Ok(reply.unwrap_or_default())
+    Ok(reply)
 }
 
 fn control(session: &mut dyn SmokeSession, name: &str, args: Value, check: &'static str) -> Asked {
@@ -147,20 +163,27 @@ fn steps(session: &mut dyn SmokeSession, input: Value, ticks: u32) -> Result<(),
 pub(crate) fn input_camera(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     session.source(&grid(8).to_string());
     control(session, "pause", json!({}), "pauses")?;
+    let flies = inspected(session, "fly_camera", "fly_camera_added")?["enabled"] == true;
+    check!(flies, "fly_camera_added", json!(flies), json!(true));
     let start = camera(session)?;
     steps(session, json!({ "forward": 1 }), 20)?;
     let forward = camera(session)?;
     let along = dot(moved(&start, &forward), direction(&start));
-    smoke_eq!(along > 0.5, true, "key_moves");
+    check!(
+        along > 0.5,
+        "key_moves",
+        json!({ "start": start, "forward": forward }),
+        json!({ "along": "> 0.5" })
+    );
     steps(session, json!({}), 10)?;
     let still = camera(session)?;
     let drift = dot(moved(&forward, &still), moved(&forward, &still)).sqrt();
-    smoke_eq!(drift < 1e-3, true, "release_stops");
+    check!(drift < 1e-3, "release_stops", json!(drift), json!(1e-3));
     steps(session, json!({ "yaw": 120, "pitch": 40 }), 10)?;
     let turned = camera(session)?;
     let cosine = dot(direction(&still), direction(&turned));
     let turn = if cosine < 1.0 { cosine.acos() } else { 0.0 };
-    smoke_eq!(turn > 0.05, true, "drag_turns");
+    check!(turn > 0.05, "drag_turns", json!(turn), json!(0.05));
     steps(session, json!({}), 1)?;
     Ok(())
 }

@@ -5,8 +5,8 @@ use engine_core::math::max;
 use engine_core::{GlobalTransforms, Transform, TransformIndex, valid_global_matrix};
 use engine_places::ground::{TILE_QUADS, TILE_SAMPLES, TileKey};
 use engine_places::physics::{
-    Collider, ColliderShape, CollisionLayers, MAX_COLLIDER_EXTENT, MAX_COLLISION_COORDINATE,
-    MIN_COLLIDER_EXTENT, PlacedPart,
+    Collider, ColliderShape, Collision, CollisionLayers, MAX_COLLIDER_EXTENT,
+    MAX_COLLISION_COORDINATE, MIN_COLLIDER_EXTENT, PlacedPart,
 };
 use engine_places::solids::{FieldSamples, FieldTile, SolidShape, SolidSource, WorldSolid};
 use glam::{Mat3, Mat4, Vec3};
@@ -14,8 +14,6 @@ use parry3d::shape::{HeightField, HeightFieldCellStatus};
 use parry3d::utils::Array2;
 
 use crate::bounds::{Bounds, Bvh};
-
-const MAX_COLLIDERS: usize = 100_000;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Solid {
@@ -147,10 +145,15 @@ pub(crate) struct Solids {
     bounds: Vec<Bounds>,
     bvh: Bvh,
     count: usize,
+    limit: Option<usize>,
     revision: u64,
 }
 
 impl Solids {
+    pub fn collides(&self) -> bool {
+        self.limit.is_some()
+    }
+
     pub fn ground(&self) -> &[Field] {
         &self.ground
     }
@@ -311,16 +314,22 @@ pub(crate) fn sync_sources(
 }
 
 pub(crate) fn sync_colliders(
+    collision: Res<Collision>,
     colliders: Query<(Entity, &Collider, Option<&Transform>)>,
     globals: Res<GlobalTransforms>,
     mut solids: ResMut<Solids>,
 ) {
+    let Some(limit) = collision.0.colliders() else {
+        solids.limit = None;
+        return;
+    };
     let count = colliders.iter().len();
-    let admitted = count.min(MAX_COLLIDERS);
+    let admitted = count.min(limit);
     let unchanged = solids.revision != 0
+        && solids.limit == Some(limit)
         && count == solids.count
         && solids.inputs.len() == admitted
-        && colliders.iter().take(MAX_COLLIDERS).zip(&mut solids.inputs).all(
+        && colliders.iter().take(limit).zip(&mut solids.inputs).all(
             |((entity, collider, local), old)| {
                 old.entity == entity
                     && old.collider == *collider
@@ -334,12 +343,13 @@ pub(crate) fn sync_colliders(
     }
     let solids = &mut *solids;
     solids.revision = solids.revision.saturating_add(1);
+    solids.limit = Some(limit);
     solids.count = count;
     solids.entries.clear();
     solids.bounds.clear();
     let mut statuses_changed = solids.inputs.len() != admitted;
     solids.inputs.truncate(admitted);
-    for (index, (entity, collider, local)) in colliders.iter().take(MAX_COLLIDERS).enumerate() {
+    for (index, (entity, collider, local)) in colliders.iter().take(limit).enumerate() {
         let previous = solids
             .inputs
             .get(index)

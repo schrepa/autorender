@@ -303,7 +303,7 @@ pub(crate) struct DrawGroups {
     pub count: u32,
     pub batch_count: u32,
     pub kept: Kept,
-    pub key: Option<(Stamp, u64, u64, u64, u64)>,
+    pub key: Option<(Stamp, u64, u64, u64, u64, u64, u64)>,
     pub first_instance: bool,
     pub candidate_staging: Vec<CandidateData>,
     pub slot_staging: Vec<CandidateData>,
@@ -326,7 +326,7 @@ impl DrawGroups {
         ordered: &[usize],
         slot_nodes: &[u32],
         metas: &[BatchMeta],
-        groups: impl Fn(usize) -> u32,
+        (groups, impostor): (impl Fn(usize) -> u32, impl Fn(usize) -> f32),
     ) {
         let candidates = ordered.len();
         self.candidate_staging.clear();
@@ -338,7 +338,7 @@ impl DrawGroups {
             self.batch_staging.push(batch_record(
                 batch,
                 meta,
-                groups(index),
+                (groups(index), impostor(index)),
                 (self.first_instance, self.capacity),
             ));
             let range = batch.instances.start as usize..batch.instances.end as usize;
@@ -392,7 +392,7 @@ impl DrawGroups {
 fn batch_record(
     batch: &DrawBatch,
     meta: &BatchMeta,
-    group: u32,
+    (group, impostor): (u32, f32),
     (first_instance, capacity): (bool, usize),
 ) -> BatchData {
     let lod = |level: usize| meta.lods.get(level).copied().unwrap_or((0, 0, 0.0));
@@ -400,8 +400,8 @@ fn batch_record(
         start: batch.instances.start,
         count: batch.instances.end - batch.instances.start,
         index_count: meta.index_count,
-        first_index: 0,
-        base_vertex: 0,
+        first_index: meta.first_index,
+        base_vertex: meta.base_vertex,
         first_instance: if first_instance {
             batch.instances.start
         } else {
@@ -413,7 +413,7 @@ fn batch_record(
             lod(0).2,
             lod(1).2,
             (1 + meta.lods.len()) as f32,
-            meta.impostor,
+            impostor,
         ],
         group,
         bounds_min: meta.bounds.0.extend(0.0).to_array(),
@@ -467,7 +467,12 @@ pub(crate) struct FrameState {
     pub gpu_frame: bool,
     pub temporal: bool,
     pub motion_key: Option<(Stamp, u64, u64, glam::UVec2)>,
-    pub presented_seconds: Option<f32>,
+    pub presented_seconds: f32,
+    pub impostor_errors: Vec<f32>,
+    pub impostor_generation: u64,
+    pub cards: bool,
+    pub casts: bool,
+    pub records_written: bool,
     pub draws: Draws,
     pub nodes: NodeInputs,
     pub groups: DrawGroups,

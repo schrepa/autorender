@@ -41,14 +41,14 @@ fn modules() -> Result<Vec<Checked>, String> {
     let installed = engine_checks::install::noop(&mut engine)?;
     let mut checked = Vec::new();
     let mut failures = Vec::new();
-    for composed in installed.modules {
-        match validated(&composed.text) {
+    for (path, text) in installed.modules.into_iter().zip(installed.texts) {
+        match validated(&text) {
             Ok((module, info)) => checked.push(Checked {
-                name: composed.path,
+                name: path,
                 module,
                 info,
             }),
-            Err(error) => failures.push(format!("{}: {error}", composed.path)),
+            Err(error) => failures.push(format!("{path}: {error}")),
         }
     }
     if failures.is_empty() {

@@ -356,7 +356,7 @@ async function start() {
   const created = await options.create(canvas, lifecycle.signal);
   if (disposed) { created.free(); return; }
   game = created;
-  created.set_dynamic_resolution(true);
+  created.set_setting("dynamic_resolution.enabled", "true");
   created.apply_host_settings(location.search);
   created.set_preparation(preparing);
   connectInput();
@@ -385,7 +385,7 @@ async function start() {
       if (!Number.isFinite(scale) || scale < 0.25 || scale > 2) {
         throw engineFailure({ code: "out_of_range", path: "$.scale", allowed: { kind: "range", min: 0.25, max: 2 }, got: scale });
       }
-      if (!failed) game?.set_resolution_scale(scale);
+      if (!failed) game?.set_setting("resolution.scale", JSON.stringify(scale));
     },
     setInputEnabled(enabled) {
       inputEnabled = enabled; clearInput();

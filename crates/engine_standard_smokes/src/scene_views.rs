@@ -36,12 +36,12 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         "shows_look",
     )?;
     smoke_eq!(
-        field(session, "Bloom", "intensity")?,
+        field(session, "bloom", "intensity")?,
         json!(1.5),
         "look_sets_its_sections"
     );
     smoke_eq!(
-        field(session, "Haze", "spread")?,
+        field(session, "haze", "spread")?,
         json!(0.25),
         "look_keeps_other_sections"
     );
@@ -52,7 +52,7 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         "shows_scene_look",
     )?;
     smoke_eq!(
-        field(session, "Bloom", "intensity")?,
+        field(session, "bloom", "intensity")?,
         json!(0.30000001192092896),
         "scene_look_restores"
     );

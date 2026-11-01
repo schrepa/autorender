@@ -792,6 +792,12 @@ pub(crate) fn default_top() -> usize {
     8
 }
 
+fn deserialize_optional_alpha<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<f64>, D::Error> {
+    f64::deserialize(deserializer).map(Some)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn camera_fov() -> engine_settings::Rule {
     engine_settings::Rule::range(

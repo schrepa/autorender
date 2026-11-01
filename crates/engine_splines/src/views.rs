@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, Operation};
+use engine_core::{Error, ErrorCode, Expected, Operation, SceneContext, SceneIds};
 use engine_places::splines::SplineMesh;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -8,8 +8,9 @@ use crate::spline_mesh::SplineBuilds;
 
 #[derive(Serialize)]
 struct SplineMeshView {
-    entity: u64,
     points: Vec<[f32; 3]>,
+    mesh: Option<String>,
+    material: Option<String>,
     length: Option<f32>,
     copies: Option<u32>,
     chunks: Option<usize>,
@@ -19,38 +20,66 @@ struct SplineMeshView {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SplinesRequest {}
+pub(crate) struct SplineMeshRequest {
+    entity: String,
+}
 
-pub(crate) struct InspectSplines;
+pub(crate) struct InspectSplineMesh;
 
-impl Operation for InspectSplines {
-    const NAME: &'static str = "splines";
+impl Operation for InspectSplineMesh {
+    const NAME: &'static str = "spline_mesh";
     type Params = (
-        Query<'static, 'static, (Entity, &'static SplineMesh)>,
+        SceneIds<'static, 'static>,
+        Query<'static, 'static, Entity>,
+        Query<'static, 'static, &'static SplineMesh>,
         Res<'static, SplineBuilds>,
+        Option<Res<'static, SceneContext>>,
     );
-    type Request = SplinesRequest;
+    type Request = SplineMeshRequest;
 
     fn run(
-        (splines, builds): SystemParamItem<'_, '_, Self::Params>,
-        _: SplinesRequest,
+        (ids, alive, splines, builds, context): SystemParamItem<'_, '_, Self::Params>,
+        request: SplineMeshRequest,
     ) -> Result<Value, Error> {
-        let mut views: Vec<SplineMeshView> = splines
-            .iter()
-            .map(|(entity, spline)| {
-                let chunks = builds.of(entity);
-                SplineMeshView {
-                    entity: entity.to_bits(),
-                    points: spline.points.iter().map(|point| point.to_array()).collect(),
-                    length: chunks.map(|chunks| chunks.length),
-                    copies: chunks.map(|chunks| chunks.copies),
-                    chunks: chunks.map(|chunks| chunks.meshes.len()),
-                    vertices: chunks.map(|chunks| chunks.vertices),
-                    error: chunks.and_then(|chunks| chunks.error.clone()),
-                }
-            })
-            .collect();
-        views.sort_by_key(|view| view.entity);
-        Ok(json!({ "splines": views }))
+        let id = request.entity;
+        let entity = ids.entity(&id).ok_or_else(|| {
+            Error::new(ErrorCode::UnknownEntity, "$.entity")
+                .expected(Expected::Entity)
+                .got(&id)
+        })?;
+        if !alive.contains(entity) {
+            return Err(Error::new(ErrorCode::EntityRemoved, "$.entity")
+                .expected(Expected::Live)
+                .got(&id));
+        }
+        let Ok(spline) = splines.get(entity) else {
+            return Ok(Value::Null);
+        };
+        let assets = context.as_deref().map(|context| &*context.assets);
+        let mesh = assets.and_then(|assets| {
+            assets
+                .meshes
+                .iter()
+                .find(|(_, handle)| **handle == spline.mesh)
+                .map(|(id, _)| id.clone())
+        });
+        let material = assets.and_then(|assets| {
+            assets
+                .materials
+                .iter()
+                .find(|(_, handle)| **handle == spline.material)
+                .map(|(id, _)| id.clone())
+        });
+        let chunks = builds.of(entity);
+        Ok(json!(SplineMeshView {
+            points: spline.points.iter().map(|point| point.to_array()).collect(),
+            mesh,
+            material,
+            length: chunks.map(|chunks| chunks.length),
+            copies: chunks.map(|chunks| chunks.copies),
+            chunks: chunks.map(|chunks| chunks.entities.len()),
+            vertices: chunks.map(|chunks| chunks.vertices),
+            error: chunks.and_then(|chunks| chunks.error.clone()),
+        }))
     }
 }

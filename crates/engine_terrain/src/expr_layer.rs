@@ -7,13 +7,12 @@ use engine_math::clamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::bake::Gather;
+use engine_heightfield::{Gather, StartTile};
+
 use crate::codec::{Codec, Reader, Writer, get_grid, invalid, on_grid, put_grid};
 use crate::expr::Expr;
-use crate::jobs::TILE_BUILD;
 use crate::layer::{
-    Below, LayerBake, LayerFiles, LayerKind, Made, NoFiles, Place, Row, TerrainLayer, no_files,
-    same_as,
+    Below, LayerBake, LayerFiles, LayerKind, Made, Place, Row, TerrainLayer, no_files, same_as,
 };
 use crate::surface::{
     Compiled, Input, Reads, RowInputs, RowScratch, SampleShape, Scope, terrain_error, unknown_map,
@@ -23,7 +22,7 @@ use crate::{Blend, HydrologySample, Layers, MAX_LEVEL, PathSample, Pyramid};
 
 pub static EXPRESSION: LayerKind = LayerKind {
     name: "expression",
-    source: crate::SOURCE,
+    source: crate::SOURCE.hash(),
     from_json,
     read,
     files: no_files,
@@ -282,11 +281,11 @@ impl TerrainLayer for ExpressionLayer {
         self.shaped && self.shapes.is_none()
     }
 
-    fn bake(&self, pyramid: &Pyramid) -> Option<Box<dyn LayerBake>> {
+    fn bake(&self, pyramid: &Pyramid, tiles: StartTile) -> Option<Box<dyn LayerBake>> {
         let level = self.settings.level.filter(|_| self.needs_bake())?;
         Some(Box::new(ShapeBake {
             layer: self.clone(),
-            gather: Gather::new(level, pyramid),
+            gather: Gather::new(level, pyramid, tiles),
         }))
     }
 
@@ -455,19 +454,6 @@ pub(crate) fn read_map(
 fn from_json(value: &Value, _files: &dyn LayerFiles) -> Made {
     let settings: ExpressionSettings = engine_core::parse_value(value.clone())?;
     Ok(Arc::new(ExpressionLayer::new(settings)?))
-}
-
-fn authored(value: &Value) -> Made {
-    from_json(value, &NoFiles)
-}
-
-pub fn expression_kind() -> engine_places::terrain::LayerKind {
-    engine_places::terrain::LayerKind {
-        name: EXPRESSION.name,
-        schema,
-        from_json: authored,
-        job: engine_core::JobRef::from(&TILE_BUILD),
-    }
 }
 
 fn read(input: &mut Reader<'_>) -> Made {

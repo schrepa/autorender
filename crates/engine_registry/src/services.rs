@@ -1,6 +1,4 @@
 use bevy_ecs::entity::Entity;
-use engine_math::collections::HashSet;
-use engine_place::MeshHandle;
 use glam::{Affine3A, Mat4, UVec2, Vec3};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -234,56 +232,5 @@ impl PoseTable {
             .iter()
             .copied()
             .zip(self.poses.iter().copied())
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct Residency {
-    meshes: HashSet<MeshHandle>,
-    generation: u64,
-}
-
-impl Residency {
-    pub fn resident(&self, mesh: MeshHandle) -> bool {
-        self.meshes.contains(&mesh)
-    }
-
-    pub fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    pub fn insert(&mut self, mesh: MeshHandle) -> bool {
-        let added = self.meshes.insert(mesh);
-        if added {
-            self.bump();
-        }
-        added
-    }
-
-    pub fn remove(&mut self, mesh: MeshHandle) -> bool {
-        let removed = self.meshes.remove(&mesh);
-        if removed {
-            self.bump();
-        }
-        removed
-    }
-
-    pub fn clear(&mut self) {
-        if !self.meshes.is_empty() {
-            self.meshes.clear();
-            self.bump();
-        }
-    }
-
-    pub fn bump(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
-    }
-
-    pub fn len(&self) -> usize {
-        self.meshes.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.meshes.is_empty()
     }
 }

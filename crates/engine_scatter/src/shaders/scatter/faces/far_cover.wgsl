@@ -1,5 +1,5 @@
 import package::generated::scatter::PlacedFar;
-import package::place::far_cover::GroundAt;
+import package::place::far_cover::{GroundAt, PALETTE_ENTRIES};
 
 @group(0) @binding(0) var<storage, read> placed_far_bases: array<u32>;
 @group(0) @binding(0) var<storage, read> placed_far: array<PlacedFar>;
@@ -23,7 +23,7 @@ fn far_color(color: vec3<f32>, at: GroundAt) -> vec3<f32> {
     if at.terrain >= arrayLength(&placed_far_bases) {
         return color;
     }
-    let index = placed_far_bases[at.terrain] + at.material;
+    let index = min(placed_far_bases[at.terrain] + at.material, PALETTE_ENTRIES - 1u);
     if index >= arrayLength(&placed_far) {
         return color;
     }

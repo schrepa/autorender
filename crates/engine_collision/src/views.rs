@@ -4,7 +4,7 @@ use engine_places::physics::{Collider, ColliderShape, Collision};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::queries::{reply, resolve_entity};
+use crate::queries::{reply, resolve_entity, schema_of};
 use crate::types::{ColliderStatus, Fault, check_collider_transform};
 use crate::world::{CollisionWorld, world_of};
 
@@ -26,59 +26,7 @@ pub(crate) struct ColliderView {
     pub cache_status: String,
 }
 
-#[derive(Serialize)]
-pub(crate) struct CollisionLimitsView {
-    pub max_colliders: usize,
-    pub max_candidate_pairs: usize,
-    pub max_sensor_pairs: usize,
-    pub max_query_candidates: usize,
-    pub max_query_hits: usize,
-}
-
-#[derive(Serialize)]
-pub(crate) struct CollisionWorldView {
-    pub revision: String,
-    pub frame: String,
-    pub tick: String,
-    pub colliders: usize,
-    pub active_colliders: usize,
-    pub invalid_colliders: usize,
-    pub overflow_colliders: usize,
-    pub bvh_nodes: usize,
-    pub cache_bytes: usize,
-    pub complete: bool,
-    pub placed_colliders: usize,
-    pub limits: CollisionLimitsView,
-}
-
-impl CollisionWorldView {
-    pub(crate) fn of(value: &CollisionWorld) -> Self {
-        let report = value.report();
-        let config = value.config();
-        Self {
-            revision: report.revision.to_string(),
-            frame: report.frame.to_string(),
-            tick: report.tick.to_string(),
-            colliders: report.colliders,
-            active_colliders: report.active_colliders,
-            invalid_colliders: report.invalid_colliders,
-            overflow_colliders: report.overflow_colliders,
-            bvh_nodes: report.bvh_nodes,
-            cache_bytes: report.cache_bytes,
-            complete: report.complete,
-            placed_colliders: report.placed_colliders,
-            limits: CollisionLimitsView {
-                max_colliders: config.colliders(),
-                max_candidate_pairs: config.candidate_pairs(),
-                max_sensor_pairs: config.sensor_pairs(),
-                max_query_candidates: config.query_candidates(),
-                max_query_hits: config.query_hits(),
-            },
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ColliderQuery {
     pub entity: String,
@@ -87,7 +35,7 @@ pub(crate) struct ColliderQuery {
 impl Operation for ColliderQuery {
     const NAME: &'static str = "collider";
     type Params = (
-        Res<'static, SceneIds>,
+        SceneIds<'static, 'static>,
         Query<'static, 'static, Entity>,
         Query<'static, 'static, &'static Collider>,
         Res<'static, GlobalTransforms>,
@@ -101,8 +49,14 @@ impl Operation for ColliderQuery {
     ) -> Result<Value, Error> {
         let entity = resolve_entity(&ids, &entities, &request.entity, false, "$.entity")?;
         let view = collider_view(&colliders, &globals, world_of(&collision), entity)
-            .ok_or_else(|| Error::new(ErrorCode::MissingComponent, "$.entity").got(&request.entity))?;
+            .ok_or_else(|| {
+                Error::new(ErrorCode::MissingComponent, "$.entity").got(&request.entity)
+            })?;
         Ok(reply(view))
+    }
+
+    fn schema() -> Value {
+        schema_of::<Self>()
     }
 }
 

@@ -3,9 +3,12 @@ use engine_places::shadows::{CasterView, ShadowCasters};
 use engine_render::{Draw, MainView, Shape};
 
 use crate::casters::{map_factor, map_start};
+use crate::debug::{DrawKind, DrawRecord};
 use crate::gpu::MeshesGpu;
-use crate::layouts::{DRAW_ARGS_BYTES, MOVING_MAP};
+use crate::layouts::{DRAW_ARGS_BYTES, LOD_LEVELS, MOVING_MAP};
 use crate::presentation::{PHASE_ONE, PHASE_TWO};
+
+const FADE_CARDS_START: u64 = 16;
 
 impl MeshesGpu {
     pub(crate) fn draw_prepass(&self, _: &(), draw: &mut Draw<'_, Self, MainView>) -> u32 {
@@ -19,7 +22,7 @@ impl MeshesGpu {
         if self.state.instance_count == 0 {
             return 0;
         }
-        self.draw_meshes(draw, PHASE_ONE, false)
+        self.draw_meshes(draw, PHASE_ONE, false) + self.draw_cards(draw, PHASE_ONE)
     }
 
     pub(crate) fn draw_second(&self, _: &(), draw: &mut Draw<'_, Self, MainView>) -> u32 {
@@ -30,13 +33,18 @@ impl MeshesGpu {
         if !self.state.draws.masked.is_empty() {
             drawn += self.draw_meshes(draw, PHASE_TWO, true);
         }
-        drawn + self.draw_meshes(draw, PHASE_TWO, false)
+        drawn + self.draw_meshes(draw, PHASE_TWO, false) + self.draw_cards(draw, PHASE_TWO)
+    }
+
+    fn record(&self, kind: DrawKind, level: usize) -> u64 {
+        DrawRecord::of(kind, level, self.state.casts).offset()
     }
 
     fn draw_meshes(&self, draw: &mut Draw<'_, Self, MainView>, phase: usize, prepass: bool) -> u32 {
         let draws = &self.state.draws;
         let order = if prepass { &draws.masked } else { &draws.order };
         let gpu = self.state.frame.is_some();
+        let records = self.inputs.records;
         let mut drawn = 0;
         for &index in order {
             let index = index as usize;
@@ -55,7 +63,10 @@ impl MeshesGpu {
                         mesh: batch.mesh,
                         material: batch.material,
                         instances: batch.instances.clone(),
-                        streams: &[(self.inputs.slots, 0)],
+                        streams: &[
+                            (self.inputs.slots, 0),
+                            (records, self.record(DrawKind::Mesh, 0)),
+                        ],
                     },
                 );
                 drawn += 1;
@@ -76,13 +87,49 @@ impl MeshesGpu {
                         material: batch.material,
                         args: self.inputs.args[phase],
                         offset: args,
-                        streams: &[(self.inputs.ids[phase], ids)],
+                        streams: &[
+                            (self.inputs.ids[phase], ids),
+                            (records, self.record(DrawKind::Mesh, level)),
+                        ],
                     },
                 );
                 drawn += 1;
             }
         }
         drawn
+    }
+
+    fn draw_cards(&self, draw: &mut Draw<'_, Self, MainView>, phase: usize) -> u32 {
+        if !self.state.cards || self.state.frame.is_none() {
+            return 0;
+        }
+        let records = (
+            self.inputs.records,
+            self.record(DrawKind::Card, LOD_LEVELS as usize),
+        );
+        let args = u64::from(LOD_LEVELS) * u64::from(self.state.groups.batch_count);
+        draw.draw(
+            &self.pipelines.card,
+            Shape::IndirectAt {
+                vertices: &[(self.inputs.card_ids[phase], 0), records],
+                indices: None,
+                args: self.inputs.args[phase],
+                offset: args * DRAW_ARGS_BYTES,
+            },
+        );
+        if phase != PHASE_ONE {
+            return 1;
+        }
+        draw.draw(
+            &self.pipelines.card,
+            Shape::IndirectAt {
+                vertices: &[(self.inputs.fade_cards, FADE_CARDS_START), records],
+                indices: None,
+                args: self.inputs.fade_cards,
+                offset: 0,
+            },
+        );
+        2
     }
 
     pub(crate) fn draw_probe_face(

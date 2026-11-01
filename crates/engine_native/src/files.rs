@@ -2,10 +2,10 @@ use std::path::Path;
 
 use engine::host::SceneLoad;
 pub use engine::host::{Image, decode_image, image_format};
-use engine::scene::SceneFiles;
+use engine::scene::{SceneFiles, SceneKinds};
 
-pub fn scene_files(path: &Path, source: &str) -> engine::Result<SceneFiles> {
-    let mut load = SceneLoad::new(source)?;
+pub fn scene_files(path: &Path, source: &str, kinds: &SceneKinds) -> engine::Result<SceneFiles> {
+    let mut load = SceneLoad::new(source, kinds)?;
     let folder = path.parent().unwrap_or(Path::new("."));
     loop {
         let reads = load.take_reads();

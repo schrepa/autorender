@@ -46,7 +46,7 @@ impl WalkRecords {
         records: &Records,
         jobs: &mut Jobs,
         tick: u64,
-        failures: &mut Failures,
+        failures: &mut JobFailures,
     ) {
         let mut grounds = 0;
         for asked in std::mem::take(&mut self.asked) {
@@ -67,7 +67,9 @@ impl WalkRecords {
             match ground {
                 Some(ground) => {
                     grounds += 1;
-                    let made = made(WALK_GROUND_NAME, output, |bytes| walk_ground(&ground, bytes));
+                    let made = made(WALK_GROUND_NAME, output, |bytes| {
+                        walk_ground(&ground, bytes)
+                    });
                     let kept = kept(made, (tick, &mut self.reads), failures);
                     self.grounds.insert(input, kept);
                 }
@@ -82,7 +84,12 @@ impl WalkRecords {
         forget(&mut self.portals, PORTALS_KEPT, tick);
     }
 
-    pub(super) fn resolve(&mut self, running: &mut Running, jobs: &mut Jobs, tick: u64) -> Resolved {
+    pub(super) fn resolve(
+        &mut self,
+        running: &mut Running,
+        jobs: &mut Jobs,
+        tick: u64,
+    ) -> Resolved {
         let gait = running.search.gait();
         let priority = job_priority(GAMEPLAY_JOBS, 0);
         let mut progress = false;
@@ -141,7 +148,7 @@ impl WalkRecords {
         priority: u32,
         ground: Option<AskedGround>,
     ) {
-        let ticket = jobs.fetch(kind, &input, priority);
+        let ticket = jobs.start(kind, input.clone(), priority);
         if ground.is_some() {
             self.grounds.insert(input.clone(), Kept::Asked);
         } else {
@@ -223,7 +230,7 @@ fn read<T>(
 fn kept<T>(
     made: Result<T, String>,
     (tick, reads): (u64, &mut u64),
-    failures: &mut Failures,
+    failures: &mut JobFailures,
 ) -> Kept<T> {
     match made {
         Ok(value) => {

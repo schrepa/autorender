@@ -12,6 +12,7 @@ pub const CAMERA: &str = "camera";
 pub const PIECES: &str = "pieces";
 const CORE_BINDINGS: [&str; 2] = [CAMERA, PIECES];
 const RESERVED: [&str; 4] = ["engine", "generated", "face", "place"];
+const GENERATED_ROOT: &str = "generated::";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Sample {
@@ -108,6 +109,21 @@ pub(crate) struct Composed {
     pub(crate) text: String,
     pub(crate) hash: u64,
     pub(crate) switches: Vec<u32>,
+    pub(crate) overrides: Vec<(String, String)>,
+}
+
+impl Composed {
+    pub(crate) fn constants<'a>(&'a self, values: &[(&str, f64)]) -> Vec<(&'a str, f64)> {
+        values
+            .iter()
+            .filter_map(|&(name, value)| {
+                self.overrides
+                    .iter()
+                    .find(|(plain, _)| plain == name)
+                    .map(|(_, mangled)| (mangled.as_str(), value))
+            })
+            .collect()
+    }
 }
 
 #[derive(Default)]
@@ -146,7 +162,8 @@ impl Linker {
         }
         self.sources.push(source);
         for module in source.modules() {
-            self.add(module.path().to_owned(), source.package(), Cow::Borrowed(module.text()), false);
+            let generated = module.path().starts_with(GENERATED_ROOT);
+            self.add(module.path().to_owned(), source.package(), Cow::Borrowed(module.text()), generated);
         }
         self.numbered = false;
         self.composed.clear();
@@ -180,6 +197,10 @@ impl Linker {
 
     pub(crate) fn sources(&self) -> &[&'static Source] {
         &self.sources
+    }
+
+    pub(crate) fn paths(&self) -> Vec<String> {
+        self.modules.iter().map(|module| module.path.clone()).collect()
     }
 
     pub(crate) fn declared(&self, var: Var) -> Option<&Declaration> {
@@ -372,6 +393,20 @@ impl Linker {
         result.modules.sort_by_key(|module| order(&module.path));
         let text = wesl::pass::link(&result.modules, Some(&result.used_items)).to_string();
         let switches = switch_ids(&text);
+        let mut overrides = Vec::new();
+        for source in &self.modules {
+            for name in declared_overrides(&source.text) {
+                let mangled = if source.path == module {
+                    name.clone()
+                } else {
+                    let path = module_path(&source.path).map_err(|error| failed(&error))?;
+                    wesl::mangler::EscapeMangler.mangle(&path, &name)
+                };
+                if declares_override(&text, &mangled) {
+                    overrides.push((name, mangled));
+                }
+            }
+        }
         let mut hasher = DefaultHasher::new();
         text.hash(&mut hasher);
         let composed = Arc::new(Composed {
@@ -380,6 +415,7 @@ impl Linker {
             hash: hasher.finish(),
             text,
             switches,
+            overrides,
         });
         self.composed.insert(key, Arc::clone(&composed));
         Ok(composed)
@@ -439,6 +475,20 @@ impl Linker {
             .is_some_and(|module| defines_function(&module.text, function))
     }
 
+    pub(crate) fn provides(&self, path: &str, name: &str) -> bool {
+        use wesl::syntax::{GlobalDeclaration, TranslationUnit};
+        let Some(module) = self.module(path) else {
+            return false;
+        };
+        let Ok(unit) = module.text.parse::<TranslationUnit>() else {
+            return false;
+        };
+        let declared = unit.global_declarations.iter().any(|declaration| {
+            matches!(declaration.node(), GlobalDeclaration::Declaration(item) if item.ident.to_string() == name)
+        });
+        declared || unit.imports.iter().any(|import| imports_name(&import.content, name))
+    }
+
     pub(crate) fn unused(&mut self, composed: &[Arc<Composed>], roots: &[(String, String)]) -> Vec<Error> {
         let mut texts: Vec<(String, String)> = composed
             .iter()
@@ -468,6 +518,32 @@ impl Linker {
         }
         problems
     }
+}
+
+fn imports_name(content: &wesl::syntax::ImportContent, name: &str) -> bool {
+    match content {
+        wesl::syntax::ImportContent::Item(item) => {
+            item.rename.as_ref().unwrap_or(&item.ident).to_string() == name
+        }
+        wesl::syntax::ImportContent::Collection(imports) => {
+            imports.iter().any(|import| imports_name(&import.content, name))
+        }
+    }
+}
+
+pub(crate) fn declares_struct(text: &str, name: &str) -> bool {
+    let declaration = format!("struct {name}");
+    text.match_indices(&declaration).any(|(at, _)| {
+        let before = text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|character| !(character.is_ascii_alphanumeric() || character == '_'));
+        let after = text[at + declaration.len()..]
+            .chars()
+            .next()
+            .is_none_or(|character| !(character.is_ascii_alphanumeric() || character == '_'));
+        before && after
+    })
 }
 
 fn mentioned(texts: &[(String, String)], path: &str, name: &str) -> bool {
@@ -523,6 +599,27 @@ fn defines_function(text: &str, name: &str) -> bool {
 fn declares_var(text: &str, name: &str) -> bool {
     text.lines().any(|line| {
         declared_binding(line).is_some_and(|(_, _, declared, _)| declared == name)
+    })
+}
+
+fn declared_overrides(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|line| line.trim_start().strip_prefix("override "))
+        .filter_map(|rest| {
+            let name: String = rest
+                .chars()
+                .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+                .collect();
+            (!name.is_empty()).then_some(name)
+        })
+        .collect()
+}
+
+fn declares_override(text: &str, name: &str) -> bool {
+    let declaration = format!("override {name}");
+    text.match_indices(&declaration).any(|(at, _)| {
+        !text[at + declaration.len()..]
+            .starts_with(|character: char| character.is_ascii_alphanumeric() || character == '_')
     })
 }
 

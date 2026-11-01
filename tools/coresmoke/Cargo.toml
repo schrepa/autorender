@@ -10,11 +10,13 @@ description = "The engine's incremental caches and terrain streaming, checked wi
 bevy_ecs.workspace = true
 engine = { workspace = true, features = ["dev"] }
 engine_core = { workspace = true, features = ["dev"] }
+engine_meshes.workspace = true
 engine_native.workspace = true
 engine_places.workspace = true
 engine_registry.workspace = true
 engine_scene.workspace = true
 engine_standard.workspace = true
+engine_terrain.workspace = true
 serde_json.workspace = true
 
 [lints]

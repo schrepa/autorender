@@ -124,10 +124,14 @@ impl DayTime {
     }
 }
 
-fn advance_time_of_day(time: Res<FrameTime>, settings: Res<TimeOfDay>, mut day: ResMut<DayTime>) {
-    if settings.is_changed() {
+fn restart(settings: &Res<TimeOfDay>, day: &mut ResMut<DayTime>) {
+    if day.hours.is_none() || settings.is_changed_after(day.last_changed()) {
         day.hours = Some(settings.hours);
     }
+}
+
+fn advance_time_of_day(time: Res<FrameTime>, settings: Res<TimeOfDay>, mut day: ResMut<DayTime>) {
+    restart(&settings, &mut day);
     if settings.speed <= 0.0 || time.delta_seconds <= 0.0 {
         return;
     }
@@ -136,9 +140,7 @@ fn advance_time_of_day(time: Res<FrameTime>, settings: Res<TimeOfDay>, mut day: 
 }
 
 fn publish_path(settings: Res<TimeOfDay>, mut day: ResMut<DayTime>, mut path: ResMut<SunPath>) {
-    if day.hours.is_none() || (settings.is_changed() && !day.is_changed()) {
-        day.hours = Some(settings.hours);
-    }
+    restart(&settings, &mut day);
     let clock = day.clock(&settings);
     path.set_if_neq(SunPath {
         direction: Some(clock.sun_direction()),

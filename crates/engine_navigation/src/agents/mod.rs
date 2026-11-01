@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    CookMode, Error, FixedTime, GAMEPLAY_JOBS, IDLE_JOBS, JobKind, JobRef, Jobs, Parent, Records,
-    Ticket, Transform, job_priority, settings, stats,
+    CookMode, Error, FixedTime, GAMEPLAY_JOBS, IDLE_JOBS, JobFailures, JobKind, JobRef, Jobs,
+    Parent, Records, Ticket, Transform, fields, job_output, job_priority, settings, stats,
 };
 use engine_math::{clamp, max};
 use engine_places::ground::{
@@ -15,11 +15,11 @@ use engine_places::ground::{
 };
 use engine_places::navigation::{NavAgent, NavStatus, NavWalk};
 use glam::{Quat, Vec2, Vec3};
+use serde::{Deserialize, Serialize};
 
 use crate::jobs::{
     GroundJob, PORTALS, PORTALS_NAME, PortalsJob, WALK_GROUND, WALK_GROUND_NAME, portals_output,
 };
-use crate::nav::{LEVELS, MAX_SLOPE, MAX_WATER, RADIUS, kept};
 use crate::{Gait, NavOptions, NavPath, TilePortals, WalkData, WalkGround, WalkSearch, Want};
 use cook::CookGraph;
 use records::{Resolved, WalkRecords};
@@ -31,6 +31,88 @@ settings! {
     pub struct Navigation {
         pub enabled: bool = true => any,
         pub samples_per_tick: u32 = 32_768 => at_least(1024),
+    }
+}
+
+fields! {
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+    #[serde(default, deny_unknown_fields)]
+    #[schemars(rename = "NavAgent")]
+    pub struct SceneNavAgent {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub destination: Option<[f32; 2]> = NavAgent::default().destination => finite,
+        pub speed: f32 = NavAgent::default().speed => range(0.01, 100.0),
+        pub turn: f32 = NavAgent::default().turn => range(1.0, 10_000.0),
+        pub offset: f32 = NavAgent::default().offset => range(-10_000.0, 10_000.0),
+        pub radius: f32 = NavAgent::default().radius => same(NavOptions::rule_of("radius")),
+        pub max_slope: f32 = NavAgent::default().max_slope
+            => same(NavOptions::rule_of("max_slope")),
+        pub max_water: f32 = NavAgent::default().max_water
+            => same(NavOptions::rule_of("max_water")),
+        pub level: u32 = NavAgent::default().level => same(NavOptions::rule_of("level")),
+    }
+}
+
+impl From<NavAgent> for SceneNavAgent {
+    fn from(agent: NavAgent) -> Self {
+        let NavAgent {
+            destination,
+            speed,
+            turn,
+            offset,
+            radius,
+            max_slope,
+            max_water,
+            level,
+        } = agent;
+        Self {
+            destination,
+            speed,
+            turn,
+            offset,
+            radius,
+            max_slope,
+            max_water,
+            level,
+        }
+    }
+}
+
+impl From<SceneNavAgent> for NavAgent {
+    fn from(agent: SceneNavAgent) -> Self {
+        let SceneNavAgent {
+            destination,
+            speed,
+            turn,
+            offset,
+            radius,
+            max_slope,
+            max_water,
+            level,
+        } = agent;
+        Self {
+            destination,
+            speed,
+            turn,
+            offset,
+            radius,
+            max_slope,
+            max_water,
+            level,
+        }
+    }
+}
+
+fn sanitized(agent: &NavAgent) -> NavAgent {
+    SceneNavAgent::from(*agent).sanitized().into()
+}
+
+fn options(agent: &NavAgent) -> NavOptions {
+    NavOptions {
+        level: agent.level,
+        max_slope: agent.max_slope,
+        radius: agent.radius,
+        max_water: agent.max_water,
     }
 }
 
@@ -50,48 +132,6 @@ stats! {
     }
 }
 
-const SPEED: (f64, f64) = (0.01, 100.0);
-const TURN: (f64, f64) = (1.0, 10_000.0);
-const OFFSET: (f64, f64) = (-10_000.0, 10_000.0);
-
-fn sanitized(agent: &NavAgent) -> NavAgent {
-    let default = NavAgent::default();
-    NavAgent {
-        destination: agent
-            .destination
-            .filter(|to| to.iter().all(|value| value.is_finite())),
-        speed: kept(agent.speed, SPEED, default.speed),
-        turn: kept(agent.turn, TURN, default.turn),
-        offset: kept(agent.offset, OFFSET, default.offset),
-        radius: kept(agent.radius, RADIUS, default.radius),
-        max_slope: kept(agent.max_slope, MAX_SLOPE, default.max_slope),
-        max_water: kept(agent.max_water, MAX_WATER, default.max_water),
-        level: agent.level.clamp(LEVELS.0 as u32, LEVELS.1 as u32),
-    }
-}
-
-fn options(agent: &NavAgent) -> NavOptions {
-    NavOptions {
-        level: agent.level,
-        max_slope: agent.max_slope,
-        radius: agent.radius,
-        max_water: agent.max_water,
-    }
-}
-
-#[derive(Default)]
-struct Failures {
-    count: u64,
-    last: Option<(u64, String)>,
-}
-
-impl Failures {
-    fn record(&mut self, tick: u64, error: String) {
-        self.count += 1;
-        self.last = Some((tick, error));
-    }
-}
-
 #[derive(Resource, Default)]
 pub struct NavAgents {
     searches: Vec<(Entity, Search)>,
@@ -100,7 +140,7 @@ pub struct NavAgents {
     cook: Vec<CookGraph>,
     turn: usize,
     tick: u64,
-    failures: Failures,
+    failures: JobFailures,
 }
 
 struct Walked {
@@ -171,7 +211,7 @@ impl Search {
             let search = WalkSearch::new(
                 &walked.source.pyramid,
                 (*from - corner, *to - corner),
-                ground_obstacles(ground, &walked.source),
+                ground_obstacles(ground, walked.source.ground),
                 options,
             );
             *self = Self::Running(Box::new(Running {
@@ -299,25 +339,16 @@ type Agents<'w, 's> = Query<
 
 fn ground_source(ground: &Ground, from: Vec2, to: Vec2) -> GroundRead<Walked> {
     match ground.0.source(from, to) {
-        GroundRead::Ready(source) => ground
-            .0
-            .grid()
-            .map_or(GroundRead::Off, |grid| GroundRead::Ready(Walked { source, grid })),
+        GroundRead::Ready(source) => ground.0.grid().map_or(GroundRead::Off, |grid| {
+            GroundRead::Ready(Walked { source, grid })
+        }),
         GroundRead::Waiting => GroundRead::Waiting,
         GroundRead::Off => GroundRead::Off,
     }
 }
 
-fn ground_obstacles(ground: &Ground, source: &GroundSource) -> Vec<GroundObstacle> {
-    let corner = Vec2::new(source.origin.x, source.origin.z);
-    let mut found = Vec::new();
-    ground
-        .0
-        .obstacles(Vec2::NEG_INFINITY, Vec2::INFINITY, &mut found);
-    for obstacle in &mut found {
-        obstacle.center -= corner;
-    }
-    found
+fn ground_obstacles(ground: &Ground, entity: Entity) -> Vec<GroundObstacle> {
+    ground.0.obstacles(entity)
 }
 
 fn ground_input(walked: &Walked, key: TileKey) -> Vec<u8> {
@@ -345,8 +376,10 @@ fn made<T>(
     output: Result<Arc<[u8]>, Error>,
     decode: impl FnOnce(&[u8]) -> Result<T, Error>,
 ) -> Result<T, String> {
-    let bytes = output.map_err(|error| format!("{kind}: {error}"))?;
-    decode(&bytes).map_err(|error| format!("{kind}: its output does not decode: {error}"))
+    let output = output
+        .map(|bytes| bytes.to_vec())
+        .map_err(|error| error.to_string());
+    job_output(kind, output, decode)
 }
 
 pub(crate) fn walk_agents(

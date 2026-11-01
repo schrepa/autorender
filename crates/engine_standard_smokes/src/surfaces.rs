@@ -36,7 +36,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         wanted,
         "stats_name_frame_and_tick"
     );
-    let tint = component(session, "tinted", "Tint")?;
+    let tint = component(session, "tinted", "tint")?;
     let wanted = json!([0.2, 0.9, 0.3, 1]);
     smoke_eq!(
         seen(
@@ -47,7 +47,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         wanted,
         "tint_inspects"
     );
-    let probe = component(session, "probe", "ReflectionProbe")?;
+    let probe = component(session, "probe", "reflection_probe")?;
     let wanted = json!({"extent": [12, 6, 12]});
     smoke_eq!(
         seen(

@@ -3,6 +3,8 @@ import package::generated::pieces::terrain_shading::piece;
 import package::terrain_shading::horizons::{horizon_bounces, horizon_records, terrain_horizon_sampler, terrain_horizons};
 import package::generated::terrain_shading::{BOUNCE_HIGH, BOUNCE_LOW, BOUNCE_WINDOW_ROW, HORIZON_LAYERS, HORIZON_RECORDS, HORIZON_RECORD_VECTORS};
 
+@group(0) @binding(0) var terrain_bounce_probes: texture_2d_array<f32>;
+
 struct BounceAt {
     first: u32,
     texel: vec2<f32>,
@@ -12,12 +14,12 @@ struct BounceAt {
 }
 
 fn bounce_layer(texel: vec2<f32>, first: u32, normal: vec3<f32>) -> vec4<f32> {
-    let mean = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, texel, first, 0.0);
-    let x = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, texel, first + 1u,
+    let mean = textureSampleLevel(terrain_bounce_probes, terrain_horizon_sampler, texel, first, 0.0);
+    let x = textureSampleLevel(terrain_bounce_probes, terrain_horizon_sampler, texel, first + 1u,
         0.0);
-    let y = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, texel, first + 2u,
+    let y = textureSampleLevel(terrain_bounce_probes, terrain_horizon_sampler, texel, first + 2u,
         0.0);
-    let z = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, texel, first + 3u,
+    let z = textureSampleLevel(terrain_bounce_probes, terrain_horizon_sampler, texel, first + 3u,
         0.0);
     return mean + x * normal.x + y * normal.y + z * normal.z;
 }
@@ -96,14 +98,14 @@ fn bounce_at(world: vec3<f32>, on_terrain: bool) -> BounceAt {
 }
 
 fn bounce_seen(at: BounceAt) -> f32 {
-    var lower = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, at.texel,
+    var lower = textureSampleLevel(terrain_bounce_probes, terrain_horizon_sampler, at.texel,
         at.first, 0.0).a;
-    var upper = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, at.texel,
+    var upper = textureSampleLevel(terrain_bounce_probes, terrain_horizon_sampler, at.texel,
         at.first + 4u, 0.0).a;
     if at.blend > 0.0 {
-        lower = mix(lower, textureSampleLevel(terrain_horizons, terrain_horizon_sampler,
+        lower = mix(lower, textureSampleLevel(terrain_bounce_probes, terrain_horizon_sampler,
             at.next, at.first, 0.0).a, at.blend);
-        upper = mix(upper, textureSampleLevel(terrain_horizons, terrain_horizon_sampler,
+        upper = mix(upper, textureSampleLevel(terrain_bounce_probes, terrain_horizon_sampler,
             at.next, at.first + 4u, 0.0).a, at.blend);
     }
     return mix(lower, upper, saturate(at.layer));

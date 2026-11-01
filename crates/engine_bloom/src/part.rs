@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Entry, Error, View};
 use engine_render::{
-    Access, Attach, Bind, DebugShown, DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass,
-    Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, wgpu,
+    Access, Attach, Bind, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass,
+    Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, level_region, mip_levels, wgpu,
 };
 
 use crate::shaders::bloom::{apply, chain};
@@ -25,11 +25,11 @@ pub(crate) struct BloomGpu {
     down: Vec<Pipeline<Self, Own>>,
     up: Vec<Pipeline<Self, Own>>,
     count: u32,
-    region: Region,
+    drawn: [(u32, u32); BLOOM_LEVELS as usize],
 }
 
 impl GpuPart for BloomGpu {
-    type Reads = (Res<'static, View>, Res<'static, DebugShown>);
+    type Reads = Res<'static, View>;
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let format = if cx.features().contains(wgpu::Features::RG11B10UFLOAT_RENDERABLE) {
@@ -64,20 +64,15 @@ impl GpuPart for BloomGpu {
             down,
             up,
             count: 0,
-            region: Region::default(),
+            drawn: [(0, 0); BLOOM_LEVELS as usize],
         })
     }
 
-    fn prepare(
-        &mut self,
-        (view, shown): SystemParamItem<'_, '_, Self::Reads>,
-        cx: &mut Prepare<'_, Self>,
-    ) {
-        if shown.owner.is_some() {
+    fn prepare(&mut self, view: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
+        if view.debug() {
             return;
         }
         let display = view.display_size();
-        let render = view.render_size();
         let half = ((display.x / 2).max(1), (display.y / 2).max(1));
         self.count = BLOOM_LEVELS.min(mip_levels(half.0, half.1));
         cx.allocate(
@@ -89,7 +84,9 @@ impl GpuPart for BloomGpu {
             },
             self.count,
         );
-        self.region = Region::new((display.x, display.y), (render.x, render.y));
+        for (level, drawn) in (0..).zip(&mut self.drawn) {
+            *drawn = level_region(&view, level);
+        }
         cx.run(self.pass);
     }
 
@@ -109,7 +106,7 @@ impl GpuPart for BloomGpu {
 impl BloomGpu {
     fn draw(&self, cx: &mut Encode<'_, Self>, level: u32, pipeline: &Pipeline<Self, Own>) {
         let mut draw = cx.render(Attach::ColorMip(self.levels, level, 0), None);
-        draw.scissor(self.region.level(level));
+        draw.within(self.drawn[level as usize]);
         draw.draw(
             pipeline,
             Shape::Pulled {
@@ -130,7 +127,7 @@ fn mip(levels: Texture<BloomGpu>, at: u32) -> Bind<BloomGpu> {
 
 fn fullscreen(fragment: Entry, blend: Option<wgpu::BlendState>) -> RenderPipeline<'static> {
     RenderPipeline {
-        vertex: chain::VS_BLOOM,
+        vertex: FULLSCREEN,
         fragment: Some(fragment),
         debug: None,
         vertices: &[],
@@ -138,38 +135,5 @@ fn fullscreen(fragment: Entry, blend: Option<wgpu::BlendState>) -> RenderPipelin
         depth: DepthUse::None,
         blend,
         writes: wgpu::ColorWrites::ALL,
-    }
-}
-
-fn mip_levels(width: u32, height: u32) -> u32 {
-    u32::BITS - width.max(height).max(1).leading_zeros()
-}
-
-#[derive(Clone, Copy, Default)]
-struct Region {
-    display: (u32, u32),
-    render: (u32, u32),
-}
-
-impl Region {
-    fn new(display: (u32, u32), render: (u32, u32)) -> Self {
-        let within = |size: u32, whole: u32| size.clamp(1, whole.max(1));
-        Self {
-            display,
-            render: (within(render.0, display.0), within(render.1, display.1)),
-        }
-    }
-
-    fn level(self, level: u32) -> [u32; 4] {
-        let part = |drawn: u32, whole: u32| {
-            let whole = (whole >> (level + 1)).max(1);
-            ((drawn >> (level + 1)).max(1) + 1).min(whole)
-        };
-        [
-            0,
-            0,
-            part(self.render.0, self.display.0),
-            part(self.render.1, self.display.1),
-        ]
     }
 }

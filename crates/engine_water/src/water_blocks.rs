@@ -1,42 +1,34 @@
-#![expect(
-    clippy::expect_used,
-    reason = "the arrays are allocated before blocks upload"
-)]
+use std::collections::BTreeMap;
+use std::ops::Range;
+use std::sync::Arc;
 
-use std::collections::BTreeSet;
+use bevy_ecs::prelude::*;
+use engine_core::DeviceLimits;
+use engine_heightfield::TileKey;
+use engine_heightfield::tile::{PATCH_QUADS, PATCHES_PER_TILE, TILE_STRIDE, bed_at};
+use engine_places::ground::{GroundTiles, TileFace};
+use engine_render::{Buffer, Prepare, Texture, wgpu};
+use glam::Vec2;
 
-use super::atlas::TileAtlas;
-use super::*;
-use crate::gpu_layouts::constants::{
+use crate::gpu::{
     NO_WATER_BLOCK, NO_WATER_SURFACE, WATER_BLOCK as BLOCK, WATER_BLOCKS_SIDE as SIDE,
     WATER_TILE_WORDS as TILE_WORDS,
 };
-use engine_core::glam::Vec2;
-use engine_terrain::shallow_water::roughness;
-use engine_terrain::{PATCH_QUADS, PATCHES_PER_TILE, Tile, TileWater, WaterMesh};
+use crate::shallow_water::roughness;
+use crate::state::WaterState;
+use crate::water::WaterGpu;
+use crate::{TileWater, WaterMesh};
 
 const PER_LAYER: u32 = SIDE * SIDE;
 const LAYER_TEXELS: u32 = BLOCK * SIDE;
-const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Float;
-const INFO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
+pub(crate) const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Float;
+pub(crate) const INFO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
 const SURFACE_BYTES: u32 = 8;
 const INFO_BYTES: u32 = 16;
 const BLOCK_TEXELS: usize = (BLOCK * BLOCK) as usize;
 
-struct Arrays {
-    surface: wgpu::Texture,
-    surface_view: wgpu::TextureView,
-    info: wgpu::Texture,
-    info_view: wgpu::TextureView,
-    layers: u32,
-}
-
-struct TileBlocks {
-    tile: Arc<Tile>,
-    blocks: Box<[u32]>,
-}
-
-struct Texels {
+#[derive(Clone)]
+pub(crate) struct Texels {
     surfaces: Vec<[f32; 2]>,
     info: Vec<[u32; 4]>,
 }
@@ -56,209 +48,107 @@ impl Texels {
     }
 }
 
-pub(crate) struct WaterBlocks {
-    arrays: Option<Arrays>,
-    pub(crate) generation: u64,
-    tiles: HashMap<(u64, TileKey), TileBlocks>,
-    free: Vec<u32>,
-    next: u32,
-    pub(crate) uploads: u32,
-    pub(crate) dropped: u32,
-    directory_written: Vec<u32>,
-    directory_spare: Vec<u32>,
-    directory_layers: Option<u32>,
-    directory_at: Option<(u32, u64)>,
-    directory_stale: bool,
-    holding: BTreeSet<u64>,
-    stand_in: [wgpu::TextureView; 2],
+#[derive(Clone)]
+struct Held {
+    face: TileFace,
+    water: Option<Arc<TileWater>>,
+    mesh: Option<Arc<WaterMesh>>,
 }
 
-impl WaterBlocks {
-    pub(super) fn new(device: &wgpu::Device) -> Self {
-        let stand_in = |label: &'static str, format| {
-            let texture = engine_render::memory::texture(
-                device,
-                &wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d {
-                        width: 1,
-                        height: 1,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                },
-            );
-            texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            })
+impl Held {
+    fn same(&self, other: &Self) -> bool {
+        let alike = |a: Option<&Arc<TileWater>>, b: Option<&Arc<TileWater>>| match (a, b) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
         };
-        Self {
-            arrays: None,
-            generation: 0,
-            tiles: HashMap::default(),
-            free: Vec::new(),
-            next: 0,
-            uploads: 0,
-            dropped: 0,
-            directory_written: Vec::new(),
-            directory_spare: Vec::new(),
-            directory_layers: None,
-            directory_at: None,
-            directory_stale: true,
-            holding: BTreeSet::new(),
-            stand_in: [
-                stand_in("engine/water-surfaces-stand-in", SURFACE_FORMAT),
-                stand_in("engine/water-info-stand-in", INFO_FORMAT),
-            ],
-        }
+        self.face.stamp == other.face.stamp && alike(self.water.as_ref(), other.water.as_ref())
     }
+}
 
-    pub(crate) fn views(&self) -> Option<(&wgpu::TextureView, &wgpu::TextureView)> {
-        self.arrays
-            .as_ref()
-            .map(|arrays| (&arrays.surface_view, &arrays.info_view))
-    }
+struct TileBlocks {
+    held: Held,
+    blocks: Box<[u32]>,
+}
 
-    pub(super) fn surface_view(&self) -> &wgpu::TextureView {
-        self.arrays
-            .as_ref()
-            .map_or(&self.stand_in[0], |arrays| &arrays.surface_view)
-    }
+#[derive(Default)]
+pub(crate) struct Blocks {
+    tiles: BTreeMap<(Entity, TileKey), TileBlocks>,
+    free: Vec<u32>,
+    next: u32,
+    pub(crate) layers: u32,
+    pub(crate) generation: u64,
+    pub(crate) writes: Vec<(u32, Texels)>,
+    pub(crate) uploads: u32,
+    pub(crate) dropped: u32,
+    pub(crate) directory: Vec<u32>,
+    pub(crate) written: Range<usize>,
+    pub(crate) directory_generation: u64,
+    directory_layers: Option<u32>,
+    stale: bool,
+}
 
-    pub(super) fn info_view(&self) -> &wgpu::TextureView {
-        self.arrays
-            .as_ref()
-            .map_or(&self.stand_in[1], |arrays| &arrays.info_view)
-    }
-
+impl Blocks {
     pub(crate) fn resident(&self) -> u32 {
         self.next - self.free.len() as u32
     }
 
-    pub(super) fn holds(&self, id: u64) -> bool {
-        self.holding.contains(&id)
-    }
-
-    pub(super) fn capacity_bytes(&self) -> u64 {
-        self.arrays.as_ref().map_or(0, |arrays| {
-            u64::from(arrays.layers)
-                * u64::from(LAYER_TEXELS * LAYER_TEXELS)
-                * u64::from(SURFACE_BYTES + INFO_BYTES)
+    pub(crate) fn current(&self, terrain: Entity, key: TileKey, water: Option<&Arc<TileWater>>) -> bool {
+        self.tiles.get(&(terrain, key)).is_some_and(|tile| {
+            match (tile.held.water.as_ref(), water) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
         })
     }
 
-    pub(super) fn draws<'a>(
-        &'a self,
-        pass: &'a TerrainPass,
-        terrains: &RenderTerrains,
-    ) -> Option<WaterDraws<'a>> {
-        let (heights, _, _) = pass.atlas.views()?;
-        let (surfaces, info) = self.views()?;
-        let (leaves, leaves_generation) = pass.surface_leaves()?;
-        let trees = pass.surface.uniforms();
-        let terrains = (terrains.terrains.iter().enumerate())
-            .filter_map(|(index, terrain)| {
-                let uniform = pass.tables.uniform_of(terrain.id)?;
-                let (tree, leaves) = pass.surface.water(index)?;
-                Some((terrain.id, uniform, tree, leaves))
-            })
-            .collect();
-        Some(WaterDraws {
-            heights,
-            views: &pass.patches.views,
-            uniforms: &pass.tables.uniforms,
-            directory: &pass.tables.directory,
-            leaves,
-            trees,
-            surfaces,
-            info,
-            generation: [
-                pass.atlas.generation,
-                pass.tables.uniform_generation,
-                self.generation,
-                pass.tables.directory_generation,
-                leaves_generation,
-                trees.generation(),
-            ],
-            terrains,
-            targets: pass.surface.targets(),
-            blocks: [self.resident(), self.dropped],
-            subdivided: pass.surface.water_stats(),
-        })
-    }
-
-    pub(super) fn sync(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &Queue,
-        atlas: &TileAtlas,
-        max_layers: u32,
-    ) {
-        let (held, changes) = (&atlas.held, &atlas.held_changes[..]);
+    fn sync(&mut self, held: Vec<((Entity, TileKey), Held)>, max_layers: u32) {
         self.uploads = 0;
         self.dropped = 0;
+        self.writes.clear();
         let mut replaced = Vec::new();
         let mut arrived = Vec::new();
-        for &slot in changes {
-            let had = self.tiles.get(&slot).map(|blocks| Arc::clone(&blocks.tile));
-            match (had, held.get(&slot)) {
-                (Some(had), Some(tile)) if Arc::ptr_eq(&had, tile) => {}
-                (Some(_), Some(tile)) => {
-                    if let Some(blocks) = self.tiles.remove(&slot) {
-                        replaced.push((slot, blocks, Arc::clone(tile)));
-                    }
+        let mut changed = false;
+        let mut kept = BTreeMap::new();
+        for (slot, tile) in held {
+            match self.tiles.remove(&slot) {
+                Some(had) if had.held.same(&tile) => {
+                    kept.insert(slot, had);
                 }
-                (Some(_), None) => {
-                    if let Some(blocks) = self.tiles.remove(&slot) {
-                        let used = blocks.blocks.iter().copied();
-                        self.free
-                            .extend(used.filter(|&block| block != NO_WATER_BLOCK));
-                    }
+                Some(had) => {
+                    changed = true;
+                    replaced.push((slot, had, tile));
                 }
-                (None, Some(tile)) => arrived.push((slot, Arc::clone(tile))),
-                (None, None) => {}
+                None => {
+                    changed = true;
+                    arrived.push((slot, tile));
+                }
             }
+        }
+        for (_, gone) in std::mem::replace(&mut self.tiles, kept) {
+            changed = true;
+            self.free
+                .extend(gone.blocks.iter().copied().filter(|&block| block != NO_WATER_BLOCK));
         }
         self.free.sort_unstable_by(|a, b| b.cmp(a));
         for (slot, before, tile) in replaced {
-            let blocks = self.upload(device, queue, tile, Some(before), max_layers);
+            let blocks = self.upload(tile, Some(before), max_layers);
             self.tiles.insert(slot, blocks);
         }
         for (slot, tile) in arrived {
-            let blocks = self.upload(device, queue, tile, None, max_layers);
+            let blocks = self.upload(tile, None, max_layers);
             self.tiles.insert(slot, blocks);
         }
-        if !changes.is_empty() {
-            self.directory_stale = true;
+        if changed {
+            self.stale = true;
         }
     }
 
-    #[cfg(debug_assertions)]
-    pub(super) fn follows(&self, held: &HashMap<(u64, TileKey), Arc<Tile>>) -> bool {
-        self.tiles.len() == held.len()
-            && self.tiles.iter().all(|(slot, blocks)| {
-                held.get(slot)
-                    .is_some_and(|tile| Arc::ptr_eq(tile, &blocks.tile))
-            })
-    }
-
-    fn upload(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &Queue,
-        tile: Arc<Tile>,
-        before: Option<TileBlocks>,
-        max_layers: u32,
-    ) -> TileBlocks {
+    fn upload(&mut self, tile: Held, before: Option<TileBlocks>, max_layers: u32) -> TileBlocks {
         let patches = PATCHES_PER_TILE as usize;
         let (mut blocks, held) = match before {
-            Some(before) => (before.blocks, Some(before.tile)),
+            Some(before) => (before.blocks, Some(before.held)),
             None => (
                 vec![NO_WATER_BLOCK; patches * patches].into_boxed_slice(),
                 None,
@@ -270,12 +160,13 @@ impl WaterBlocks {
             for px in 0..patches {
                 let index = pz * patches + px;
                 let holds = tile
-                    .water()
-                    .zip(tile.water_mesh())
+                    .water
+                    .as_deref()
+                    .zip(tile.mesh.as_deref())
                     .is_some_and(|(water, mesh)| {
                         let holds = water.patch_holds_water(px as u32, pz as u32);
                         if holds {
-                            block_texels(&tile, water, mesh, (px, pz), &mut texels);
+                            block_texels(&tile.face, water, mesh, (px, pz), &mut texels);
                         }
                         holds
                     });
@@ -288,10 +179,11 @@ impl WaterBlocks {
                 }
                 let same = blocks[index] != NO_WATER_BLOCK
                     && held.as_ref().is_some_and(|held| {
-                        held.water()
-                            .zip(held.water_mesh())
+                        held.water
+                            .as_deref()
+                            .zip(held.mesh.as_deref())
                             .is_some_and(|(before, mesh)| {
-                                block_texels(held, before, mesh, (px, pz), &mut kept);
+                                block_texels(&held.face, before, mesh, (px, pz), &mut kept);
                                 kept.same(&texels)
                             })
                     });
@@ -299,7 +191,7 @@ impl WaterBlocks {
                     continue;
                 }
                 let block = match blocks[index] {
-                    NO_WATER_BLOCK => match self.allocate(device, queue, max_layers) {
+                    NO_WATER_BLOCK => match self.allocate(max_layers) {
                         Some(block) => block,
                         None => {
                             self.dropped += 1;
@@ -308,15 +200,15 @@ impl WaterBlocks {
                     },
                     block => block,
                 };
-                self.write(queue, block, &texels);
+                self.writes.push((block, texels.clone()));
                 blocks[index] = block;
                 self.uploads += 1;
             }
         }
-        TileBlocks { tile, blocks }
+        TileBlocks { held: tile, blocks }
     }
 
-    fn allocate(&mut self, device: &wgpu::Device, queue: &Queue, max_layers: u32) -> Option<u32> {
+    fn allocate(&mut self, max_layers: u32) -> Option<u32> {
         if let Some(block) = self.free.pop() {
             return Some(block);
         }
@@ -325,179 +217,101 @@ impl WaterBlocks {
         if needed > max_layers {
             return None;
         }
-        self.ensure_arrays(device, queue, needed, max_layers);
+        if needed > self.layers {
+            self.layers = needed.next_power_of_two().min(max_layers.max(1));
+            self.generation += 1;
+        }
         self.next += 1;
         Some(block)
     }
 
-    fn ensure_arrays(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &Queue,
-        needed: u32,
-        max_layers: u32,
-    ) {
-        let current = self.arrays.as_ref().map_or(0, |arrays| arrays.layers);
-        if needed <= current {
-            return;
-        }
-        let layers = needed.next_power_of_two().min(max_layers.max(1));
-        let array = |label: &'static str, format| {
-            engine_render::memory::texture(
-                device,
-                &wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d {
-                        width: LAYER_TEXELS,
-                        height: LAYER_TEXELS,
-                        depth_or_array_layers: layers,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::COPY_DST
-                        | wgpu::TextureUsages::COPY_SRC,
-                    view_formats: &[],
-                },
-            )
-        };
-        let surface = array("engine/water-surfaces", SURFACE_FORMAT);
-        let info = array("engine/water-info", INFO_FORMAT);
-        if let Some(old) = &self.arrays {
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("engine/water-grow"),
-            });
-            let extent = wgpu::Extent3d {
-                width: LAYER_TEXELS,
-                height: LAYER_TEXELS,
-                depth_or_array_layers: old.layers,
+    fn rewrite(&mut self) {
+        let mut texels = Texels::new();
+        let patches = PATCHES_PER_TILE as usize;
+        let written: Vec<u32> = self.writes.iter().map(|(block, _)| *block).collect();
+        for tile in self.tiles.values() {
+            let (Some(water), Some(mesh)) = (tile.held.water.as_deref(), tile.held.mesh.as_deref())
+            else {
+                continue;
             };
-            encoder.copy_texture_to_texture(
-                old.surface.as_image_copy(),
-                surface.as_image_copy(),
-                extent,
-            );
-            encoder.copy_texture_to_texture(old.info.as_image_copy(), info.as_image_copy(), extent);
-            queue.submit_now([encoder.finish()]);
-        }
-        let view = |texture: &wgpu::Texture| {
-            texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            })
-        };
-        self.arrays = Some(Arrays {
-            surface_view: view(&surface),
-            info_view: view(&info),
-            surface,
-            info,
-            layers,
-        });
-        self.generation += 1;
-    }
-
-    fn write(&self, queue: &Queue, block: u32, texels: &Texels) {
-        let arrays = self.arrays.as_ref().expect("block_arrays_allocated");
-        let index = block % PER_LAYER;
-        let origin = wgpu::Origin3d {
-            x: index % SIDE * BLOCK,
-            y: index / SIDE * BLOCK,
-            z: block / PER_LAYER,
-        };
-        let extent = wgpu::Extent3d {
-            width: BLOCK,
-            height: BLOCK,
-            depth_or_array_layers: 1,
-        };
-        for (texture, bytes, texel) in [
-            (
-                &arrays.surface,
-                bytemuck::cast_slice(&texels.surfaces),
-                SURFACE_BYTES,
-            ),
-            (&arrays.info, bytemuck::cast_slice(&texels.info), INFO_BYTES),
-        ] {
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture,
-                    mip_level: 0,
-                    origin,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                bytes,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(BLOCK * texel),
-                    rows_per_image: Some(BLOCK),
-                },
-                extent,
-            );
+            for (index, &block) in tile.blocks.iter().enumerate() {
+                if block == NO_WATER_BLOCK || written.contains(&block) {
+                    continue;
+                }
+                block_texels(&tile.held.face, water, mesh, (index % patches, index / patches), &mut texels);
+                self.writes.push((block, texels.clone()));
+            }
         }
     }
 
-    #[expect(
-        clippy::iter_over_hash_type,
-        reason = "terrains gather and words land by tile and layer, in any order"
-    )]
-    pub(super) fn write_directory(
-        &mut self,
-        queue: &Queue,
-        atlas: &TileAtlas,
-        (directory, base, generation): (&wgpu::Buffer, u32, u64),
-    ) {
-        let layers = atlas.layers();
-        let whole = self.directory_at != Some((base, generation));
-        if !whole && !self.directory_stale && self.directory_layers == Some(layers) {
+    fn write_directory(&mut self, ground: &GroundTiles) {
+        let layers = ground.layers;
+        if !self.stale && self.directory_layers == Some(layers) {
+            self.written = 0..0;
             return;
         }
-        self.directory_stale = false;
-        self.directory_at = Some((base, generation));
-        self.holding.clear();
-        for (&(id, _), tile) in &self.tiles {
-            if tile.blocks.iter().any(|&block| block != NO_WATER_BLOCK) {
-                self.holding.insert(id);
-            }
-        }
+        self.stale = false;
         let entry = TILE_WORDS as usize;
-        let mut words = std::mem::take(&mut self.directory_spare);
-        words.clear();
-        words.resize(layers as usize * entry, NO_WATER_BLOCK);
-        for (slot, &layer) in &atlas.slots {
-            let at = layer as usize * entry;
-            if let (Some(held), Some(tile)) = (words.get_mut(at..at + entry), self.tiles.get(slot))
-            {
-                held.copy_from_slice(&tile.blocks);
+        let mut words = vec![NO_WATER_BLOCK; layers as usize * entry];
+        for held in &ground.held {
+            let at = held.layer as usize * entry;
+            if let (Some(slot), Some(tile)) = (
+                words.get_mut(at..at + entry),
+                self.tiles.get(&(held.terrain, held.key)),
+            ) {
+                slot.copy_from_slice(&tile.blocks);
             }
         }
+        let whole = self.directory_layers != Some(layers);
         self.directory_layers = Some(layers);
-        let run = if whole {
+        self.written = if whole {
+            self.directory_generation += 1;
             0..words.len()
         } else {
-            changed_run(&self.directory_written, &words)
+            changed_run(&self.directory, &words)
         };
-        let room = (directory.size() / 4) as usize;
-        let run = run.start..run.end.min(room.saturating_sub(base as usize));
-        if !run.is_empty() {
-            let offset = ((base as usize + run.start) * 4) as u64;
-            queue.write_buffer(directory, offset, bytemuck::cast_slice(&words[run]));
-        }
-        self.directory_spare = std::mem::replace(&mut self.directory_written, words);
+        self.directory = words;
+    }
+
+    pub(crate) fn holding(&self) -> Vec<Entity> {
+        let mut holding: Vec<Entity> = self
+            .tiles
+            .iter()
+            .filter(|(_, tile)| tile.blocks.iter().any(|&block| block != NO_WATER_BLOCK))
+            .map(|(&(terrain, _), _)| terrain)
+            .collect();
+        holding.dedup();
+        holding
     }
 }
 
+fn changed_run(was: &[u32], now: &[u32]) -> Range<usize> {
+    let shared = now.len().min(was.len());
+    let Some(first) = (0..now.len()).find(|&at| at >= shared || now[at] != was[at]) else {
+        return 0..0;
+    };
+    let end = if now.len() > was.len() {
+        now.len()
+    } else {
+        (first..now.len())
+            .rev()
+            .find(|&at| now[at] != was[at])
+            .map_or(first + 1, |at| at + 1)
+    };
+    first..end
+}
+
 fn block_texels(
-    tile: &Tile,
+    face: &TileFace,
     water: &TileWater,
     mesh: &WaterMesh,
     (px, pz): (usize, usize),
     texels: &mut Texels,
 ) {
-    let stride = LAYER_SIZE as usize;
+    let stride = TILE_STRIDE as usize;
     let side = BLOCK as usize;
     let quads = PATCH_QUADS as usize;
-    let (heights, words, spacing) = (tile.heights(), water.info(), tile.spacing());
+    let (heights, words, spacing) = (&face.heights[..], water.info(), face.spacing);
     for z in 0..side {
         for x in 0..side {
             let (column, row) = (px * quads + x, pz * quads + z);
@@ -514,8 +328,130 @@ fn block_texels(
                 heights[at],
             ];
             let [packed, state] = words[at];
-            let rough = roughness(tile.bed(local).as_ref());
+            let bed = face
+                .river_beds
+                .as_deref()
+                .and_then(|beds| bed_at(beds, heights, spacing, local));
+            let rough = roughness(bed.as_ref());
             texels.info[texel] = [packed, state, level.to_bits(), rough.to_bits()];
+        }
+    }
+}
+
+pub(crate) fn place_blocks(
+    ground: Res<GroundTiles>,
+    limits: Res<DeviceLimits>,
+    mut state: ResMut<WaterState>,
+) {
+    let state = &mut *state;
+    let mut held = Vec::with_capacity(ground.held.len());
+    for tile in &ground.held {
+        let Some(terrain) = state.terrains.iter().find(|terrain| terrain.entity == tile.terrain)
+        else {
+            continue;
+        };
+        let Some(water) = terrain
+            .held
+            .get(&tile.key)
+            .filter(|water| water.resident() && water.face.stamp == tile.stamp)
+        else {
+            continue;
+        };
+        held.push((
+            (tile.terrain, tile.key),
+            Held {
+                face: water.face.clone(),
+                water: water.water.clone(),
+                mesh: water.mesh.clone(),
+            },
+        ));
+    }
+    held.sort_unstable_by_key(|(slot, _)| *slot);
+    let generation = state.blocks.generation;
+    state.blocks.sync(held, limits.texture_layers);
+    if state.blocks.generation != generation {
+        state.blocks.rewrite();
+    }
+    state.blocks.write_directory(&ground);
+    state.watered = state.blocks.holding();
+}
+
+pub(crate) struct BlocksGpu {
+    pub(crate) surface: Texture<WaterGpu>,
+    pub(crate) info: Texture<WaterGpu>,
+    pub(crate) directory: Buffer<WaterGpu>,
+    directory_generation: Option<u64>,
+}
+
+impl BlocksGpu {
+    pub(crate) fn new(
+        surface: Texture<WaterGpu>,
+        info: Texture<WaterGpu>,
+        directory: Buffer<WaterGpu>,
+    ) -> Self {
+        Self {
+            surface,
+            info,
+            directory,
+            directory_generation: None,
+        }
+    }
+
+    pub(crate) fn prepare(&mut self, blocks: &Blocks, cx: &mut Prepare<'_, WaterGpu>) {
+        let (size, layers) = if blocks.layers == 0 {
+            (1, 1)
+        } else {
+            (LAYER_TEXELS, blocks.layers)
+        };
+        let extent = wgpu::Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: layers,
+        };
+        cx.allocate(self.surface, extent, 1);
+        cx.allocate(self.info, extent, 1);
+        let block = wgpu::Extent3d {
+            width: BLOCK,
+            height: BLOCK,
+            depth_or_array_layers: 1,
+        };
+        for (at, texels) in &blocks.writes {
+            let index = at % PER_LAYER;
+            let origin = wgpu::Origin3d {
+                x: index % SIDE * BLOCK,
+                y: index / SIDE * BLOCK,
+                z: at / PER_LAYER,
+            };
+            let rows = |texel: u32| wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(BLOCK * texel),
+                rows_per_image: Some(BLOCK),
+            };
+            cx.write_texture(
+                self.surface,
+                origin,
+                bytemuck::cast_slice(&texels.surfaces),
+                rows(SURFACE_BYTES),
+                block,
+            );
+            cx.write_texture(
+                self.info,
+                origin,
+                bytemuck::cast_slice(&texels.info),
+                rows(INFO_BYTES),
+                block,
+            );
+        }
+        let whole = self.directory_generation != Some(blocks.directory_generation);
+        cx.allocate_buffer(self.directory, (blocks.directory.len() * 4) as u64);
+        let run = if whole {
+            0..blocks.directory.len()
+        } else {
+            blocks.written.clone()
+        };
+        self.directory_generation = Some(blocks.directory_generation);
+        if !run.is_empty() {
+            cx.write(self.directory, (run.start * 4) as u64, &blocks.directory[run]);
         }
     }
 }

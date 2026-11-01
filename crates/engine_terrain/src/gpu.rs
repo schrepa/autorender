@@ -201,7 +201,7 @@ pub fn sample_control(
     )
 }
 
-pub(crate) fn control_at(
+pub fn control_at(
     (layers, rules): (&Layers, &BiomeRules),
     [x, z]: [f32; 2],
     (height, shape): (f32, SampleShape),

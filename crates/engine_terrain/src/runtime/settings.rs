@@ -2,27 +2,30 @@ use super::*;
 
 settings! {
     #[section("terrain")]
+    #[check(nested_rules)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneTerrainSettings")]
     pub struct TerrainSettings {
         pub enabled: bool = true => any,
-        pub subdivision_error: f32 = 2.0 => range(0.25, 64.0),
-        pub subdivision_depth: u32 = 27 => range(10, 29),
-        pub subdivision_leaves: u32 = 131_072 => range(1024, 4_000_000),
         pub pixel_error: f32 = 6.0 => range(1.0, 64.0),
         pub pinned_levels: u32 = 2 => range(1, 8),
-        pub max_tiles: Option<u32> = None => at_least(1),
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub max_tiles: Option<u32> = None => budget,
         pub samples_per_frame: u32 = 24_576 => at_least(1),
         pub loading_work_ms: f32 = 50.0 => range(0.1, 1000.0),
         pub work_ms: f32 = 4.0 => range(0.1, 1000.0),
         pub collision_radius: f32 = 192.0 => range(0.0, 4096.0),
-        pub relief_steps: u32 = 8 => range(2, 64),
         pub surroundings: bool = true => any,
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub motion_detail: Option<MotionDetail> = None => any,
         pub cache_bytes: u64 = 256 << 20 => any,
         pub upload_bytes: u32 = 8 << 20 => at_least(1),
         pub gpu_materials: bool = true => any,
     }
+}
+
+fn nested_rules(settings: &TerrainSettings) -> Result<(), InvalidSetting> {
+    Setting::check(&settings.motion_detail, "motion_detail", Rule::Any)
 }
 
 fields! {

@@ -107,11 +107,14 @@ impl Native {
             Highlands::played(self.options.clone(), source, engine)
         };
         let bricks = highlands_bricks::bricks(engine::BrickList::default());
-        let mut smokes = match engine::smokes::registered(&bricks) {
+        let listed = engine::smokes::registered(&bricks).and_then(|mut smokes| {
+            smokes.extend(crate::smokes()?);
+            Ok(smokes)
+        });
+        let smokes = match listed {
             Ok(smokes) => smokes,
             Err(error) => return engine_native::exit(Err(error)),
         };
-        smokes.extend(crate::smokes());
         engine_native::smoke::run::<Highlands>(
             &self.host,
             names,

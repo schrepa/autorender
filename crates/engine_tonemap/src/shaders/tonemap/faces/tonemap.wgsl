@@ -1,6 +1,7 @@
 import package::engine::color::{filmic, luminance};
 import package::engine::post::pixel::PostPixel;
 import package::face::exposure::adapted;
+import package::face::sky::adapted_exposure;
 import package::generated::pieces::tonemap::piece;
 
 fn tonemap(color: vec3<f32>) -> vec3<f32> {
@@ -25,7 +26,7 @@ fn apply(color: vec3<f32>, at: PostPixel) -> vec3<f32> {
 }
 
 fn exposure() -> f32 {
-    return adapted(piece().exposure.x);
+    return adapted(adapted_exposure(piece().exposure.x));
 }
 
 fn unfilmic(shown: f32) -> f32 {

@@ -23,7 +23,10 @@ pub(super) fn load(
 
 pub(super) fn reload(session: &mut dyn SmokeSession, document: &Value) -> Result<Value, Value> {
     session.source(&document.to_string());
-    let revision = document["revision"].as_u64().unwrap_or_default().to_string();
+    let revision = document["revision"]
+        .as_u64()
+        .unwrap_or_default()
+        .to_string();
     let args = json!({"expected_revision": revision, "revision": revision});
     session
         .request("control", json!({"name": "reload", "args": args}))

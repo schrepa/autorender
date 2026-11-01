@@ -1,25 +1,25 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode, Operation};
+use engine_core::{Error, ErrorCode, Operation, bounds, stated};
 use engine_places::ground::Ground;
 use engine_places::physics::{Collide, Collision, CollisionRay, QueryFilter};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::queries::{COORDINATE, bounded, reply, whole};
+use crate::queries::{bounded, reply, schema_of};
 use crate::world::{CollisionWorld, world_of};
 
 const PLACED_RAY_HITS: usize = 16;
-const SWEEP_EXTENT: (f64, f64) = (0.0, 4096.0);
-const SWEEP_SAMPLES: (u64, u64) = (2, 64);
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TerrainSweepQuery {
     pub center: [f64; 2],
     #[serde(default = "default_half_extent")]
+    #[schemars(transform = stated(bounds::SWEEP_EXTENT))]
     pub half_extent: f64,
     #[serde(default = "default_sweep_samples")]
+    #[schemars(transform = stated(bounds::SWEEP_SAMPLES))]
     pub samples: u32,
 }
 
@@ -41,13 +41,13 @@ impl Operation for TerrainSweepQuery {
         let cz = coordinate(center[1], "$.center[1]")?;
         bounded(
             half_extent,
-            SWEEP_EXTENT,
+            bounds::SWEEP_EXTENT,
             ErrorCode::OutOfRange,
             "$.half_extent",
         )?;
-        whole(
-            u64::from(samples),
-            SWEEP_SAMPLES,
+        bounded(
+            samples,
+            bounds::SWEEP_SAMPLES,
             ErrorCode::OutOfRange,
             "$.samples",
         )?;
@@ -58,6 +58,14 @@ impl Operation for TerrainSweepQuery {
             half_extent as f32,
             samples,
         )
+    }
+
+    fn schema() -> Value {
+        schema_of::<Self>()
+    }
+
+    fn result_schema() -> Option<Value> {
+        Some(schema_of::<TerrainSweepResult>())
     }
 }
 
@@ -70,7 +78,7 @@ fn default_sweep_samples() -> u32 {
 }
 
 fn coordinate(value: f64, path: &str) -> Result<f32, Error> {
-    bounded(value, COORDINATE, ErrorCode::OutOfRange, path).map(|value| value as f32)
+    bounded(value, bounds::COORDINATE, ErrorCode::OutOfRange, path).map(|value| value as f32)
 }
 
 fn sweep(
@@ -151,7 +159,7 @@ fn sweep(
     }))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct TerrainSweepResult {
     points: u32,
     resident: usize,
@@ -161,7 +169,7 @@ struct TerrainSweepResult {
     examples: Vec<SweepExample>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct SweepRays {
     compared: usize,
     missed: usize,
@@ -169,7 +177,7 @@ struct SweepRays {
     worst: Worst,
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, schemars::JsonSchema)]
 struct Worst {
     #[serde(rename = "max_difference")]
     difference: f32,
@@ -185,7 +193,7 @@ impl Worst {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct SweepExample {
     at: [f32; 2],
     height: f32,

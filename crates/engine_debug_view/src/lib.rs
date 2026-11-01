@@ -12,7 +12,6 @@ mod modes;
 mod probe;
 mod settings;
 
-use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Schedule, Source};
 use engine_render::{DebugModes, DebugShown, RenderBricks};
 
@@ -28,10 +27,11 @@ impl Brick for DebugViewBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(shows)
             .settings::<DebugView>()
+            .named::<DebugView, DebugModes>("view", &[settings::OFF], modes::name)
             .resource::<Probe>()
             .piece::<DebugViewPiece>()
+            .generated(gpu::GENERATED)
             .fill::<DebugShown>(Some(shaders::debug_view::shown::MODULE));
         for (index, (name, _)) in modes::OWN.into_iter().enumerate() {
             let wgsl = (index == 0).then_some(shaders::debug_view::modes::MODULE);
@@ -43,8 +43,4 @@ impl Brick for DebugViewBrick {
             .observation::<ProbedPixel>()
             .part::<ProbeGpu>();
     }
-}
-
-fn shows(view: Res<DebugView>, probe: Res<Probe>) -> bool {
-    view.showing() || probe.armed()
 }

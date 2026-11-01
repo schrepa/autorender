@@ -87,6 +87,7 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
                 offset: Vec3::ZERO,
                 radius: 0.45 * width,
                 seed: seed.wrapping_mul(97).wrapping_add(number as u32),
+                authored_degrees: None,
             },
         ));
         landings.push((bottom, drop, landing_speed, sky(landing)));
@@ -127,6 +128,7 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
                 offset: Vec3::ZERO,
                 radius: 0.35 * width,
                 seed: key.wrapping_mul(31) ^ 0x5bd1_e995,
+                authored_degrees: None,
             },
         ));
         spawned.push((
@@ -146,6 +148,7 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
                 offset: Vec3::ZERO,
                 radius: 0.3 * width,
                 seed: key.wrapping_mul(7) ^ 0x2c1b_3c6d,
+                authored_degrees: None,
             },
         ));
         spawned.push((
@@ -165,6 +168,7 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
                 offset: Vec3::ZERO,
                 radius: 0.5 * width,
                 seed: key ^ 0x9e37_79b9,
+                authored_degrees: None,
             },
         ));
     }

@@ -1,6 +1,6 @@
 import package::generated::pieces::shadows::piece;
-import package::generated::shadows::{DEBUG_SUN_LEVEL, KEPT_GROUND_TEXELS};
-import package::place::shadows::{KeptLift, KeptTexels};
+import package::generated::shadows::KEPT_GROUND_TEXELS;
+import package::place::shadows::{DEBUG_SUN_LEVEL, KeptLift, KeptTexels};
 import package::shadows::sample::{air_visibility, crown_light, kept_lift, map_lookup,
     map_visibility, shadow_level};
 import package::shadows::sky::sky_occlusion;

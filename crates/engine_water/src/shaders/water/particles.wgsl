@@ -1,11 +1,12 @@
+import package::engine::math::GRAVITY;
 import package::engine::view::{PI, detail_across, eye_world};
-import package::face::heightfield::{terrain_uniform, terrain_view_uniform};
+import package::face::heightfield::{terrain_uniform, terrain_view_uniform, use_terrain};
 import package::generated::water::{BREAK_FULL, BREAK_ONSET, BREAK_THINNEST, DENSITY, FOAM_LIFE,
     FOAM_LOSS, FOAM_POWER, FOAM_WET, PARTICLE_ARGS, PARTICLE_DRAW, PARTICLE_FOAM_BEFORE,
     PARTICLE_FOAM_BORN, PARTICLE_FOAM_DROPPED, PARTICLE_FOAM_LIVE, PARTICLE_GROUP, PARTICLE_ITEMS,
     PARTICLE_LATTICE, PARTICLE_MARGIN, PARTICLE_SIDE, PARTICLE_WAVES_BEFORE, PARTICLE_WAVES_BORN,
     PARTICLE_WAVES_DROPPED, PARTICLE_WAVES_LIVE, ParticleFrame, SURFACE_BEND, SURFACE_BEND_MOST,
-    SURFACE_WIND_DRIFT, WATER_GRAVITY};
+    SURFACE_WIND_DRIFT};
 import package::place::water::WATER_HELD;
 import package::water::bursts::{water_burst_bits, water_burst_life, water_burst_slot,
     water_burst_weight};
@@ -406,7 +407,7 @@ fn particle_births(point: vec2<i32>) -> ParticleBirths {
                     / particle_draining(here.depth) * lasting, particle_quantum(seen), draws.w);
                 births.laid = u32(white.x);
                 births.each = white.y;
-                let boil = here.stirring * here.stirring / (2.0 * WATER_GRAVITY);
+                let boil = here.stirring * here.stirring / (2.0 * GRAVITY);
                 if boil * number >= flattest && particle_site_in(births.site, particle_window()) {
                     births.boils = 1u;
                     births.boil = boil;
@@ -638,7 +639,7 @@ fn particle_splat_wave(particle: Particle) {
     let reach = i32(ceil(long / texel));
     let holding = vec2<i32>(floor(particle.at / texel));
     let fall = PARTICLE_FIXED * 0.5 * particle.amplitude * PI;
-    let spreads = PARTICLE_FIXED * sqrt(2.0 * WATER_GRAVITY * max(particle.amplitude, 0.0));
+    let spreads = PARTICLE_FIXED * sqrt(2.0 * GRAVITY * max(particle.amplitude, 0.0));
     for (var row = -reach; row <= reach; row++) {
         for (var column = -reach; column <= reach; column++) {
             let cell = holding + vec2<i32>(column, row);
@@ -674,6 +675,7 @@ fn particle_splat_wave(particle: Particle) {
 
 @compute @workgroup_size(1)
 fn particles_begin() {
+    use_terrain(particle_frame.terrain.x);
     var foam = atomicLoad(&particle_counts[PARTICLE_FOAM_LIVE]);
     var waves = atomicLoad(&particle_counts[PARTICLE_WAVES_LIVE]);
     if particle_frame.flags.x != 0u {
@@ -699,6 +701,7 @@ fn particles_begin() {
 
 @compute @workgroup_size(PARTICLE_SIDE, PARTICLE_SIDE)
 fn particles_gather(@builtin(global_invocation_id) id: vec3<u32>) {
+    use_terrain(particle_frame.terrain.x);
     let point = vec2<i32>(id.xy);
     if any(point >= vec2<i32>(particle_frame.lattice.z)) {
         return;
@@ -717,6 +720,7 @@ fn particles_gather(@builtin(global_invocation_id) id: vec3<u32>) {
 
 @compute @workgroup_size(PARTICLE_SIDE, PARTICLE_SIDE)
 fn particles_currents(@builtin(global_invocation_id) id: vec3<u32>) {
+    use_terrain(particle_frame.terrain.x);
     let point = vec2<i32>(id.xy);
     if any(point >= vec2<i32>(particle_frame.lattice.z)) {
         return;
@@ -736,11 +740,11 @@ fn particles_currents(@builtin(global_invocation_id) id: vec3<u32>) {
             - dot(west.velocity, west.velocity), dot(north.velocity, north.velocity)
             - dot(south.velocity, south.velocity)) / span;
         let power = DENSITY * here.depth
-            * (WATER_GRAVITY * dot(u, here.slope) - dot(u, rising));
+            * (GRAVITY * dot(u, here.slope) - dot(u, rising));
         let breaking = smoothstep(BREAK_ONSET, BREAK_FULL,
             water_eddy_froude(length(u), length(here.slope), here.depth));
         var churn = max(power, 0.0) * breaking / FOAM_POWER;
-        if WATER_GRAVITY * length(here.slope) * length(u) < FOAM_LOSS {
+        if GRAVITY * length(here.slope) * length(u) < FOAM_LOSS {
             churn = 0.0;
         }
         let speed = length(u);
@@ -755,6 +759,7 @@ fn particles_currents(@builtin(global_invocation_id) id: vec3<u32>) {
 
 @compute @workgroup_size(PARTICLE_GROUP)
 fn particles_age(@builtin(global_invocation_id) id: vec3<u32>) {
+    use_terrain(particle_frame.terrain.x);
     let foam = atomicLoad(&particle_counts[PARTICLE_FOAM_BEFORE]);
     let pooled = foam + atomicLoad(&particle_counts[PARTICLE_WAVES_BEFORE]);
     if id.x >= pooled {
@@ -770,6 +775,7 @@ fn particles_age(@builtin(global_invocation_id) id: vec3<u32>) {
 
 @compute @workgroup_size(PARTICLE_SIDE, PARTICLE_SIDE)
 fn particles_births(@builtin(global_invocation_id) id: vec3<u32>) {
+    use_terrain(particle_frame.terrain.x);
     let points = particle_frame.lattice.z;
     let point = vec2<i32>(id.xy);
     if any(point >= vec2<i32>(points)) {
@@ -790,6 +796,7 @@ fn particles_births(@builtin(global_invocation_id) id: vec3<u32>) {
 fn particles_sum(@builtin(global_invocation_id) id: vec3<u32>,
         @builtin(local_invocation_id) local: vec3<u32>,
         @builtin(workgroup_id) group: vec3<u32>) {
+    use_terrain(particle_frame.terrain.x);
     let count = particle_item(id.x);
     let before = particle_scan_group(count, local.x);
     if local.x == PARTICLE_GROUP - 1u {
@@ -799,6 +806,7 @@ fn particles_sum(@builtin(global_invocation_id) id: vec3<u32>,
 
 @compute @workgroup_size(PARTICLE_GROUP)
 fn particles_scan(@builtin(local_invocation_id) local: vec3<u32>) {
+    use_terrain(particle_frame.terrain.x);
     let pool = particle_frame.pool;
     let most = (pool.x + pool.y + pool.w + PARTICLE_GROUP - 1u) / PARTICLE_GROUP;
     let share = (most + PARTICLE_GROUP - 1u) / PARTICLE_GROUP;
@@ -841,6 +849,7 @@ fn particles_scan(@builtin(local_invocation_id) local: vec3<u32>) {
 fn particles_place(@builtin(global_invocation_id) id: vec3<u32>,
         @builtin(local_invocation_id) local: vec3<u32>,
         @builtin(workgroup_id) group: vec3<u32>) {
+    use_terrain(particle_frame.terrain.x);
     let count = particle_item(id.x);
     let within = particle_scan_group(count, local.x);
     let foam = atomicLoad(&particle_counts[PARTICLE_FOAM_BEFORE]);
@@ -877,6 +886,7 @@ fn particles_place(@builtin(global_invocation_id) id: vec3<u32>,
 
 @compute @workgroup_size(PARTICLE_GROUP)
 fn particles_splat(@builtin(global_invocation_id) id: vec3<u32>) {
+    use_terrain(particle_frame.terrain.x);
     let foam = atomicLoad(&particle_counts[PARTICLE_FOAM_LIVE]);
     if id.x < foam || id.x >= foam + atomicLoad(&particle_counts[PARTICLE_WAVES_LIVE]) {
         return;
@@ -887,6 +897,7 @@ fn particles_splat(@builtin(global_invocation_id) id: vec3<u32>) {
 
 @compute @workgroup_size(PARTICLE_SIDE, PARTICLE_SIDE)
 fn particles_look(@builtin(global_invocation_id) id: vec3<u32>) {
+    use_terrain(particle_frame.terrain.x);
     let texels = particle_frame.lattice.w;
     let texel = vec2<i32>(id.xy);
     if any(texel >= vec2<i32>(texels)) {
@@ -908,6 +919,7 @@ fn particles_look(@builtin(global_invocation_id) id: vec3<u32>) {
 
 @compute @workgroup_size(PARTICLE_SIDE, PARTICLE_SIDE)
 fn particles_down(@builtin(global_invocation_id) id: vec3<u32>) {
+    use_terrain(particle_frame.terrain.x);
     if any(id.xy >= textureDimensions(particle_target)) {
         return;
     }
@@ -967,6 +979,7 @@ const FOAM_FLAT: f32 = 0.85;
 @vertex
 fn vs_foam(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32)
         -> FoamOutput {
+    use_terrain(particle_frame.terrain.x);
     let pools = particle_frame.pool.xy;
     let index = (1u - particle_frame.pool.z) * (pools.x + pools.y) + instance;
     let raft = particle_read(foam_pool[2u * index], foam_pool[2u * index + 1u], false);

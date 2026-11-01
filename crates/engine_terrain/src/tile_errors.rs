@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use engine_math::max;
 
 use crate::{TILE_QUADS, TILE_STRIDE};
@@ -16,6 +18,17 @@ pub struct ErrorPyramid {
 impl ErrorPyramid {
     pub(crate) fn ground(heights: &[f32]) -> Self {
         Self::over(heights, None)
+    }
+
+    pub fn dry() -> &'static Self {
+        static DRY: OnceLock<ErrorPyramid> = OnceLock::new();
+        DRY.get_or_init(|| ErrorPyramid {
+            halves: vec![half_up(DRY_CELL); ERROR_TEXELS].into_boxed_slice(),
+        })
+    }
+
+    pub fn halves(&self) -> &[u16] {
+        &self.halves
     }
 
     pub fn mip(&self, mip: u32) -> &[u16] {

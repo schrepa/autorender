@@ -1,57 +1,34 @@
 use std::f32::consts::{FRAC_PI_2, TAU};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
-use engine::prelude::*;
-use engine_core::RecordExchange;
+use engine_core::{
+    AlphaImage, AssetLibrary, Error, MakeSources, Mesh, MeshVertex, RecordExchange, TextureHandle,
+    TextureSet, TextureSource, TextureUsage, math, trim_cards,
+};
+use glam::{Vec2, Vec3};
 
 use crate::random::{golden_hash, unit};
-use crate::records;
 
-pub(crate) fn spruce(
-    world: &mut World,
-    seed: u32,
-) -> engine::Result<(Vec<MeshHandle>, MeshHandle)> {
-    let levels = (0..DETAILS.len())
-        .map(|detail| conifer_record(world, seed, detail))
-        .collect::<engine::Result<Vec<_>>>()?;
-    let shadow = shadow_record(world, seed)?;
-    Ok((levels, shadow))
-}
+pub(crate) const DETAIL_LEVELS: usize = DETAILS.len();
 
-fn conifer_record(world: &mut World, seed: u32, detail: usize) -> engine::Result<MeshHandle> {
-    let mut identity = seed.to_le_bytes().to_vec();
-    identity.extend_from_slice(&(detail as u32).to_le_bytes());
-    records::mesh(world, "highlands_conifer", &identity, move || {
-        conifer(seed, detail)
-    })
-}
-
-fn shadow_record(world: &mut World, seed: u32) -> engine::Result<MeshHandle> {
-    records::mesh(
-        world,
-        "highlands_conifer_shadow",
-        &seed.to_le_bytes(),
-        move || shadow_proxy(seed),
-    )
-}
-
-pub(crate) fn atlas_record(world: &mut World) -> engine::Result<TextureHandle> {
-    let handles = world.resource_scope(|world, mut stored: Mut<RecordExchange>| {
-        let mut assets = world.resource_mut::<AssetLibrary>();
-        records::textures(
-            (&mut stored, &mut assets),
-            "highlands/bark_atlas".into(),
-            &[("atlas", TextureUsage::Color)],
-            || {
-                Ok(vec![TextureSource {
-                    width: ATLAS,
-                    height: ATLAS,
-                    pixels: texels().to_vec(),
-                    usage: TextureUsage::Color,
-                }])
-            },
-        )
-    })?;
+pub(crate) fn bark_atlas(
+    records: &mut RecordExchange,
+    assets: &mut AssetLibrary,
+) -> Result<TextureHandle, Error> {
+    let set = TextureSet {
+        source: crate::SOURCE.hash(),
+        name: "highlands/bark_atlas".into(),
+        textures: vec![("atlas".to_owned(), TextureUsage::Color)],
+        make: MakeSources::Here(Arc::new(|| {
+            Ok::<_, String>(vec![TextureSource {
+                width: ATLAS,
+                height: ATLAS,
+                pixels: texels().to_vec(),
+                usage: TextureUsage::Color,
+            }])
+        })),
+    };
+    let handles = records.textures(assets, set)?;
     Ok(handles[0])
 }
 
@@ -116,7 +93,7 @@ const DETAILS: [Detail; 4] = [
     },
 ];
 
-fn conifer(seed: u32, detail: usize) -> engine::Result<Mesh> {
+pub(crate) fn conifer(seed: u32, detail: usize) -> Result<Mesh, Error> {
     let build = &DETAILS[detail];
     let shape = Shape::of(seed);
     let mut builder = Builder::default();
@@ -141,7 +118,7 @@ fn conifer(seed: u32, detail: usize) -> engine::Result<Mesh> {
         .map_err(|error| error.within(&format!("$.conifers[{seed}].details[{detail}]")))
 }
 
-fn shadow_proxy(seed: u32) -> engine::Result<Mesh> {
+pub(crate) fn shadow_proxy(seed: u32) -> Result<Mesh, Error> {
     let shape = Shape::of(seed);
     let mut builder = Builder::default();
     let foot = SPIKE * shape.radius(-0.5);
@@ -308,7 +285,7 @@ impl Builder {
         self.vertices.len() as u32 - 1
     }
 
-    fn mesh(self) -> engine::Result<Mesh> {
+    fn mesh(self) -> Result<Mesh, Error> {
         let Self {
             vertices,
             colors,

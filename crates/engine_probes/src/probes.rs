@@ -1,16 +1,17 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Cut, DeviceLimits, FrameTime};
+use engine_core::{Cut, DeviceLimits, FrameTime, View};
 use engine_math as math;
-use engine_places::meshes::STILL_FRAMES;
+use engine_places::meshes::{Instances, STILL_FRAMES};
 use engine_places::probes::{ProbeCaptures, ProbeFace, ProbeView};
 use engine_places::sky::SkyLight;
-use engine_render::{CameraUniform, DebugShown};
+use engine_render::CameraUniform;
 use glam::{Mat4, Vec3, Vec4};
 
 use crate::gather::{ProbeList, RenderReflectionProbe};
 use crate::{PROBE_ENTRY_WORDS, ReflectionProbeSettings, ReflectionProbeStats};
 
 pub(crate) const FACES: usize = 6;
+pub(crate) const SETS: u32 = 2;
 const CAPTURE_NEAR: f32 = 0.05;
 const CAPTURE_FAR: f32 = 4_000.0;
 const GRID_CELLS: f32 = 64.0;
@@ -189,18 +190,51 @@ impl ProbeSlots {
     }
 }
 
+#[derive(Default)]
+struct Stillness {
+    slots: u64,
+    counting: bool,
+    counted: u32,
+}
+
+impl Stillness {
+    fn ensure(&mut self, stillness: Option<bool>, capacity: u64) {
+        let slots = if stillness.is_some() { capacity } else { 0 };
+        if slots > self.slots || (slots == 0 && self.slots != 0) {
+            self.slots = slots;
+            self.counted = 0;
+        }
+        let counting = stillness == Some(true);
+        if counting && !self.counting {
+            self.counted = 0;
+        }
+        self.counting = counting;
+        if counting {
+            self.counted = (self.counted + 1).min(STILL_FRAMES);
+        }
+    }
+
+    fn settled(&self) -> bool {
+        self.counting && self.counted >= STILL_FRAMES
+    }
+}
+
 #[derive(Resource)]
 pub(crate) struct ProbeState {
     slots: ProbeSlots,
+    stillness: Stillness,
     pub(crate) size: u32,
-    cubes: u32,
-    counting: bool,
-    counted: u32,
+    pub(crate) cubes: u32,
+    sky: u64,
+    set: u32,
+    pub(crate) listed: bool,
+    views: bool,
     still: bool,
+    pub(crate) timed: bool,
     pub(crate) faces: Vec<ProbeFace>,
-    pub(crate) views: Vec<ProbeView>,
+    pub(crate) drawn: Vec<(ProbeView, u32)>,
     pub(crate) cameras: Vec<CameraUniform>,
-    pub(crate) finished: Option<u32>,
+    pub(crate) finished: Option<(u32, u32)>,
     words: Vec<[u32; 4]>,
     words_changed: bool,
     stats: ReflectionProbeStats,
@@ -213,13 +247,17 @@ impl Default for ProbeState {
                 changed: true,
                 ..ProbeSlots::default()
             },
+            stillness: Stillness::default(),
             size: ReflectionProbeSettings::default().resolution,
             cubes: 1,
-            counting: false,
-            counted: 0,
+            sky: 0,
+            set: 0,
+            listed: false,
+            views: false,
             still: false,
+            timed: false,
             faces: Vec::new(),
-            views: Vec::new(),
+            drawn: Vec::new(),
             cameras: Vec::new(),
             finished: None,
             words: Vec::new(),
@@ -243,24 +281,20 @@ impl ProbeState {
         } else {
             self.cubes
         };
-        let lost = size != self.size || cubes != self.cubes;
-        (self.size, self.cubes) = (size, cubes);
-        lost
-    }
-
-    fn settle(&mut self, listed: bool) -> bool {
-        self.still = listed && self.slots.waiting();
-        if self.still {
-            if !self.counting {
-                self.counted = 0;
-            }
-            self.counted = (self.counted + 1).min(STILL_FRAMES);
+        if self.size == size && self.cubes == cubes {
+            return false;
         }
-        self.counting = self.still;
-        self.counting && self.counted >= STILL_FRAMES
+        let kept = self.size == size && cubes > self.cubes;
+        (self.size, self.cubes) = (size, cubes);
+        !kept
     }
 
-    fn capture(&mut self, probes: &[RenderReflectionProbe], faces: u32, seconds: f32) -> u32 {
+    fn capture(
+        &mut self,
+        probes: &[RenderReflectionProbe],
+        (faces, culls): (u32, bool),
+        seconds: f32,
+    ) -> u32 {
         let mut used = [false; FACES];
         let mut drawn = 0;
         while drawn < faces {
@@ -271,18 +305,26 @@ impl ProbeState {
                 break;
             }
             used[face] = true;
+            self.timed = true;
+            if !culls {
+                break;
+            }
             let view = face_view_projection(probe.center, face);
             let index = self.faces.len() as u32;
             self.faces.push(ProbeFace {
                 face: face as u32,
+                center: probe.center,
                 view,
                 cube,
             });
-            self.views.push(ProbeView {
-                face: face as u32,
-                center: probe.center,
-                still: self.still,
-            });
+            self.drawn.push((
+                ProbeView {
+                    face: face as u32,
+                    center: probe.center,
+                    still: self.still,
+                },
+                self.set * FACES as u32 + face as u32,
+            ));
             self.cameras.push(probe_camera(
                 view,
                 probe.center,
@@ -291,59 +333,82 @@ impl ProbeState {
             ));
             drawn += 1;
             if self.slots.face_drawn() {
-                self.finished = Some(cube);
-                break;
+                self.finished = Some((cube, self.set));
+                self.set = (self.set + 1) % SETS;
             }
         }
         drawn
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the plan joins the probes, the sky, the meshes' culling and the view"
+)]
 pub(crate) fn plan_captures(
     settings: Res<ReflectionProbeSettings>,
     limits: Res<DeviceLimits>,
+    view: Res<View>,
     sky: Res<SkyLight>,
-    shown: Res<DebugShown>,
+    instances: Res<Instances>,
     time: Res<FrameTime>,
     gathered: Res<ProbeList>,
     mut state: ResMut<ProbeState>,
 ) {
     let state = &mut *state;
     let probes = gathered.list.as_slice();
-    let most_cubes = (limits.texture_layers / FACES as u32).max(1);
-    let lost = state.place(probes, settings.resolution, most_cubes);
+    let present = sky.environment != 0;
+    let gpu = !view.exact();
+    state.listed = !probes.is_empty();
+    state.views = state.listed && present;
+    state.still = state.views && state.slots.waiting();
+    if gpu {
+        state.stillness.ensure(
+            state.views.then_some(state.still),
+            u64::from(instances.capacity),
+        );
+    }
+    let (cubes, most_cubes, lost, sky_changed) = if present {
+        let most_cubes = (limits.texture_layers / FACES as u32).max(1);
+        let lost = state.place(probes, settings.resolution, most_cubes);
+        let sky_changed = sky.environment != state.sky;
+        state.sky = sky.environment;
+        (state.cubes, most_cubes, lost, sky_changed)
+    } else {
+        (1, 1, false, false)
+    };
     state
         .slots
-        .plan(probes, (state.cubes - 1) as usize, lost, sky.is_changed());
+        .plan(probes, (cubes - 1) as usize, lost, sky_changed);
     if let Some(ready) = state.slots.changed_ready() {
         grid_words(&ready, &mut state.words);
         state.words_changed = true;
     }
     state.faces.clear();
-    state.views.clear();
+    state.drawn.clear();
     state.cameras.clear();
     state.finished = None;
-    let listed = !probes.is_empty();
-    let settled = state.settle(listed);
-    let mut drawn = 0;
-    if shown.owner.is_none() && listed {
-        state.slots.tick();
-        if settled {
-            drawn = state.capture(
-                probes,
-                settings.faces_per_frame,
-                time.elapsed_seconds as f32,
-            );
-        }
-    }
+    state.timed = false;
     let count = probes.len() as u64;
     let kept = count.min(u64::from(most_cubes - 1));
     let asked = gathered.cut as u64 + count;
     let counted = |count: u64| count.min(u64::from(u32::MAX)) as u32;
+    let probe_cut = Cut::of(counted(asked), counted(kept));
+    let mut drawn = 0;
+    if gpu && !view.debug() && state.listed {
+        state.slots.tick();
+        if state.stillness.settled() && present {
+            drawn = state.capture(
+                probes,
+                (settings.faces_per_frame, instances.candidates != 0),
+                time.elapsed_seconds as f32,
+            );
+        }
+    }
     state.stats = ReflectionProbeStats {
         ready: state.slots.ready(),
         faces: drawn,
-        probe_cut: Cut::of(counted(asked), counted(kept)),
+        probe_cut,
     };
 }
 
@@ -358,13 +423,15 @@ pub(crate) fn publish_captures(
         std::mem::swap(&mut words.words, &mut state.words);
     }
     if captures.faces != state.faces
-        || captures.still != state.still
         || captures.size != state.size
+        || captures.views != state.views
+        || captures.still != state.still
     {
         let captures = &mut *captures;
         captures.faces.clone_from(&state.faces);
-        captures.still = state.still;
         captures.size = state.size;
+        captures.views = state.views;
+        captures.still = state.still;
     }
     stats.set_if_neq(state.stats.clone());
 }

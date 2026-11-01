@@ -2,8 +2,8 @@ use engine_core::Error;
 use engine_core::math::min;
 use engine_places::sun::Sun;
 use engine_render::{
-    Attach, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse, Draw,
-    DrawInput, Encode, Install, Layer, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
+    Attach, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse, Draw, DrawInput,
+    Encode, Install, Layer, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Sampler,
     SamplerDesc, Shape, Texture, ViewTarget, wgpu,
 };
 
@@ -147,65 +147,28 @@ fn upload_noise(
     upload_volume(cx, detail, DETAIL_SIZE, &detail_levels);
 }
 
-fn composite_pipeline(
-    cx: &mut Install<'_, SkyGpu>,
-    pass: Pass<SkyGpu>,
-    view_texture: Texture<SkyGpu>,
-) -> Result<Pipeline<SkyGpu, Own>, Error> {
-    use crate::shaders::sky::draw;
-    cx.render_pipeline(
-        pass,
-        &RenderPipeline {
-            vertex: draw::VS_SKY,
-            fragment: Some(draw::FS_VIEW_CLOUDS_POST),
-            debug: None,
-            vertices: &[],
-            primitive: wgpu::PrimitiveState::default(),
-            depth: DepthUse::None,
-            blend: Some(wgpu::BlendState {
-                color: wgpu::BlendComponent {
-                    src_factor: wgpu::BlendFactor::One,
-                    dst_factor: wgpu::BlendFactor::SrcAlpha,
-                    operation: wgpu::BlendOperation::Add,
-                },
-                alpha: wgpu::BlendComponent {
-                    src_factor: wgpu::BlendFactor::Zero,
-                    dst_factor: wgpu::BlendFactor::One,
-                    operation: wgpu::BlendOperation::Add,
-                },
-            }),
-            writes: wgpu::ColorWrites::ALL,
+pub(crate) fn cloud_regions() -> [CopyRegion; 3] {
+    let at = |offset: usize| offset as u64;
+    [
+        CopyRegion::Bytes {
+            from: crate::sky::DERIVED_SUN * 16,
+            to: at(std::mem::offset_of!(CloudUniform, sun_color)),
+            size: 12,
         },
-        &[(draw::VIEW_CLOUDS, Bind::Texture(view_texture))],
-    )
+        CopyRegion::Bytes {
+            from: crate::sky::DERIVED_ZENITH * 16,
+            to: at(std::mem::offset_of!(CloudUniform, zenith)),
+            size: 12,
+        },
+        CopyRegion::Bytes {
+            from: crate::sky::DERIVED_HORIZON * 16,
+            to: at(std::mem::offset_of!(CloudUniform, horizon)),
+            size: 12,
+        },
+    ]
 }
 
-struct CloudGpu {
-    noise_shape: Texture<SkyGpu>,
-    noise_detail: Texture<SkyGpu>,
-    domes: Texture<SkyGpu>,
-    view_texture: Texture<SkyGpu>,
-    shadows: Buffer<SkyGpu>,
-    shadow_cells: Buffer<SkyGpu>,
-    light_cells: Buffer<SkyGpu>,
-    uniform: Buffer<SkyGpu>,
-    view_clouds: Buffer<SkyGpu>,
-    view_uniform: Buffer<SkyGpu>,
-    composite_args: Buffer<SkyGpu>,
-    dome_pass: Pass<SkyGpu>,
-    shadow_copy: Pass<SkyGpu>,
-    view_pass: Pass<SkyGpu>,
-    composite_pass: Pass<SkyGpu>,
-    marching: ComputePipeline<SkyGpu>,
-    shading: ComputePipeline<SkyGpu>,
-    lighting: ComputePipeline<SkyGpu>,
-    viewing: ComputePipeline<SkyGpu>,
-    compositing: Pipeline<SkyGpu, Own>,
-    composite_draws: DrawInput<SkyGpu, Own>,
-}
-
-pub(crate) struct CloudPass {
-    gpu: CloudGpu,
+pub(crate) struct CloudPlan {
     light: LightMap,
     noise: Option<u64>,
     dome_size: Option<[u32; 2]>,
@@ -226,131 +189,19 @@ pub(crate) struct CloudPass {
     frame: u64,
     active: bool,
     shadowing: bool,
-    shadows_filled: bool,
     pub(crate) rows: u32,
-    view_size: Option<[u32; 2]>,
+    view_size: [u32; 2],
     view_job: Option<[u32; 2]>,
     view_sky: bool,
     pub(crate) view_pixels: u32,
+    uniform: CloudUniform,
+    view_clouds: CloudUniform,
+    view: CloudView,
 }
 
-impl CloudGpu {
-    fn install(
-        cx: &mut Install<'_, SkyGpu>,
-        (transmittance, table_sampler): (Texture<SkyGpu>, engine_render::Sampler<SkyGpu>),
-    ) -> Result<Self, Error> {
-        use crate::shaders::sky::{clouds, faces::cloud_shadows, light};
-        let noise_shape = cx.texture("cloud_noise_shape", wgpu::TextureFormat::R8Unorm, Lifetime::Kept);
-        let noise_detail =
-            cx.texture("cloud_noise_detail", wgpu::TextureFormat::R8Unorm, Lifetime::Kept);
-        let domes = cx.texture("cloud_domes", DOME_FORMAT, Lifetime::Kept);
-        let view_texture = cx.texture("cloud_view", wgpu::TextureFormat::Rgba16Float, Lifetime::Kept);
-        let shadows = cx.buffer("cloud_shadows", Lifetime::Kept);
-        let shadow_cells = cx.buffer("cloud_shadow_cells", Lifetime::Kept);
-        let light_cells = cx.buffer("cloud_light", Lifetime::Kept);
-        let uniform = cx.buffer("cloud_uniform", Lifetime::Kept);
-        let view_clouds = cx.buffer("cloud_view_march", Lifetime::Kept);
-        let view_uniform = cx.buffer("cloud_view_uniform", Lifetime::Kept);
-        let composite_args = cx.buffer("cloud_composite_draw", Lifetime::Kept);
-        let dome_sampler = cx.sampler(SamplerDesc {
-            filter: wgpu::FilterMode::Linear,
-            address: wgpu::AddressMode::Repeat,
-            compare: None,
-        });
-        let noise_sampler = cx.sampler(SamplerDesc {
-            filter: wgpu::FilterMode::Linear,
-            address: wgpu::AddressMode::Repeat,
-            compare: None,
-        });
-        cx.frame(light::SKY_DOMES, Bind::Texture(domes))?;
-        cx.frame(light::SKY_CLOUD_SAMPLER, Bind::Sampler(dome_sampler))?;
-        cx.frame(cloud_shadows::CLOUD_SHADOWS, Bind::Buffer(shadows))?;
-        let dome_pass = cx.pass("cloud_dome").id();
-        let shadow_copy = cx.copy(
-            "cloud_shadow_copy",
-            Copied::Buffer(shadow_cells),
-            Copied::Buffer(shadows),
-        );
-        let view_pass = cx.pass("cloud_view").at(Layer::Over).id();
-        let composite_pass = cx
-            .pass("cloud_composite")
-            .at(Layer::Over)
-            .after(view_pass)
-            .id();
-        let noise = || {
-            [
-                (clouds::CLOUDS, Bind::Buffer(uniform)),
-                (clouds::NOISE_SHAPE, Bind::Texture(noise_shape)),
-                (clouds::NOISE_SAMPLER, Bind::Sampler(noise_sampler)),
-            ]
-        };
-        let lit = || {
-            [
-                (clouds::CLOUD_TRANSMITTANCE, Bind::Texture(transmittance)),
-                (clouds::CLOUD_TABLE_SAMPLER, Bind::Sampler(table_sampler)),
-                (clouds::LIGHT_CELLS, Bind::Buffer(light_cells)),
-            ]
-        };
-        let mut marched = Vec::from(noise());
-        marched.extend([
-            (clouds::NOISE_DETAIL, Bind::Texture(noise_detail)),
-            (clouds::DOME, Bind::Texture(domes)),
-        ]);
-        marched.extend(lit());
-        let marching = cx.compute_pipeline(dome_pass, clouds::MARCH_CLOUDS, &marched)?;
-        let mut shaded = Vec::from(noise());
-        shaded.push((clouds::SHADOW_CELLS, Bind::Buffer(shadow_cells)));
-        let shading = cx.compute_pipeline(dome_pass, clouds::SHADOW_CLOUDS, &shaded)?;
-        let mut lighted = Vec::from(noise());
-        lighted.push((clouds::LIGHT_CELLS, Bind::Buffer(light_cells)));
-        let lighting = cx.compute_pipeline(dome_pass, clouds::LIGHT_CLOUDS, &lighted)?;
-        let mut viewed = vec![
-            (clouds::CLOUDS, Bind::Buffer(view_clouds)),
-            (clouds::NOISE_SHAPE, Bind::Texture(noise_shape)),
-            (clouds::NOISE_SAMPLER, Bind::Sampler(noise_sampler)),
-            (clouds::NOISE_DETAIL, Bind::Texture(noise_detail)),
-            (clouds::CLOUD_VIEW, Bind::Buffer(view_uniform)),
-            (clouds::VIEW_DEPTH, Bind::Target(ViewTarget::Depth)),
-            (clouds::VIEW_OUT, Bind::Texture(view_texture)),
-            (clouds::COMPOSITE_DRAW, Bind::Buffer(composite_args)),
-        ];
-        viewed.extend(lit());
-        let viewing = cx.compute_pipeline(view_pass, clouds::MARCH_VIEW, &viewed)?;
-        let compositing = composite_pipeline(cx, composite_pass, view_texture)?;
-        let composite_draws = cx.draw_input(composite_pass, composite_args);
-        Ok(Self {
-            noise_shape,
-            noise_detail,
-            domes,
-            view_texture,
-            shadows,
-            shadow_cells,
-            light_cells,
-            uniform,
-            view_clouds,
-            view_uniform,
-            composite_args,
-            dome_pass,
-            shadow_copy,
-            view_pass,
-            composite_pass,
-            marching,
-            shading,
-            lighting,
-            viewing,
-            compositing,
-            composite_draws,
-        })
-    }
-}
-
-impl CloudPass {
-    pub(crate) fn install(
-        cx: &mut Install<'_, SkyGpu>,
-        tables: (Texture<SkyGpu>, engine_render::Sampler<SkyGpu>),
-    ) -> Result<Self, Error> {
-        Ok(Self {
-            gpu: CloudGpu::install(cx, tables)?,
+impl Default for CloudPlan {
+    fn default() -> Self {
+        Self {
             light: LightMap::default(),
             noise: None,
             dome_size: None,
@@ -371,21 +222,20 @@ impl CloudPass {
             frame: 0,
             active: false,
             shadowing: false,
-            shadows_filled: false,
             rows: 0,
-            view_size: None,
+            view_size: [0, 0],
             view_job: None,
             view_sky: false,
             view_pixels: 0,
-        })
+            uniform: CloudUniform::default(),
+            view_clouds: CloudUniform::default(),
+            view: CloudView::default(),
+        }
     }
+}
 
-    pub(crate) fn uniforms(&self) -> [Buffer<SkyGpu>; 2] {
-        [self.gpu.uniform, self.gpu.view_clouds]
-    }
-
-    fn plan_light(&mut self, cx: &mut Prepare<'_, SkyGpu>, uniform: &CloudUniform, whole: bool) -> [u32; 4] {
-        cx.allocate_buffer(self.gpu.light_cells, CLOUD_LIGHT_BYTES as u64);
+impl CloudPlan {
+    fn plan_light(&mut self, uniform: &CloudUniform, whole: bool) -> [u32; 4] {
         let [eye_x, _, eye_z, _] = uniform.eye;
         let [drift_x, drift_z, repeat, seed] = uniform.drift;
         let own = [eye_x + drift_x + seed, eye_z + drift_z - seed];
@@ -460,27 +310,6 @@ impl CloudPass {
         ]
     }
 
-    pub(crate) fn copy_regions(&self) -> [CopyRegion; 3] {
-        let at = |offset: usize| offset as u64;
-        [
-            CopyRegion::Bytes {
-                from: crate::sky::DERIVED_SUN * 16,
-                to: at(std::mem::offset_of!(CloudUniform, sun_color)),
-                size: 12,
-            },
-            CopyRegion::Bytes {
-                from: crate::sky::DERIVED_ZENITH * 16,
-                to: at(std::mem::offset_of!(CloudUniform, zenith)),
-                size: 12,
-            },
-            CopyRegion::Bytes {
-                from: crate::sky::DERIVED_HORIZON * 16,
-                to: at(std::mem::offset_of!(CloudUniform, horizon)),
-                size: 12,
-            },
-        ]
-    }
-
     pub(crate) fn submitted(&mut self, frame: Option<CloudFrame>) {
         if frame.is_some_and(|frame| frame.dome) {
             self.recorded = self.completed;
@@ -490,19 +319,16 @@ impl CloudPass {
 
     pub(crate) fn prepare(
         &mut self,
-        cx: &mut Prepare<'_, SkyGpu>,
         (settings, noise, (eye, surface), seconds): CloudInputs<'_>,
         light: CloudLight<'_>,
         whole: bool,
     ) {
         self.rows = 0;
         self.job = None;
-        self.allocate(cx);
         let wanted = settings.enabled && settings.coverage > 0.0;
         if let Some(noise) = noise.filter(|_| wanted)
             && self.noise.is_none_or(|held| held != noise.id)
         {
-            upload_noise(cx, (self.gpu.noise_shape, self.gpu.noise_detail), noise);
             self.noise = Some(noise.id);
             self.generation += 1;
         }
@@ -519,15 +345,6 @@ impl CloudPass {
         let size = [settings.resolution, settings.resolution / 4];
         let fresh = self.dome_size.is_none_or(|held| held != size);
         if fresh {
-            cx.allocate(
-                self.gpu.domes,
-                wgpu::Extent3d {
-                    width: size[0],
-                    height: size[1],
-                    depth_or_array_layers: DOME_ROLES * DOME_LAYERS,
-                },
-                1,
-            );
             self.dome_size = Some(size);
             self.generation += 1;
             self.ready = false;
@@ -538,7 +355,40 @@ impl CloudPass {
             self.completes = false;
             self.rotate();
         }
-        let (target, first, count, origin, at) = self.plan_dome(settings, size, (eye, surface), seconds, whole || fresh);
+        let rows = size[1];
+        let changed = self.marched.is_none_or(|marched| marched != *settings);
+        self.frame += 1;
+        let target = self.roles[2];
+        let origins = Origins::of(eye, surface);
+        let (origin, at, first, count) = if whole || fresh || changed || !self.ready {
+            let spare = (0..3).find(|&index| index != target).unwrap_or(0);
+            self.roles = [target, target, spare];
+            self.origins[target] = origins;
+            self.blend = 1.0;
+            self.marched = Some(*settings);
+            self.cycle = None;
+            self.ready = true;
+            self.completed += 1;
+            (origins, seconds, 0, rows)
+        } else {
+            let cycle = self.cycle.get_or_insert(Cycle {
+                origin: origins,
+                seconds,
+                next_row: 0,
+            });
+            let frames = settings.slices.max(1);
+            let first = cycle.next_row;
+            let count = rows.div_ceil(frames).min(rows - first);
+            cycle.next_row += count;
+            let (origin, at, done) = (cycle.origin, cycle.seconds, cycle.next_row >= rows);
+            self.blend = cycle.next_row as f32 / rows as f32;
+            if done {
+                self.origins[target] = origin;
+                self.cycle = None;
+                self.completes = true;
+            }
+            (origin, at, first, count)
+        };
         self.job = Some((target, first, count));
         self.rows = count;
         let mut uniform = march_uniform(settings, (origin.eye, at), light);
@@ -548,85 +398,21 @@ impl CloudPass {
             [first[0], first[1], cell, CLOUD_SHADOW_CELLS as f32]
         });
         uniform.shadow_rows = self.shadow_rows(whole);
-        uniform.light_rows = self.plan_light(cx, &uniform, whole);
+        uniform.light_rows = self.plan_light(&uniform, whole);
         uniform.light = self.light_uniform();
         uniform.layers = [target as u32 * DOME_LAYERS, 0, 0, 0];
-        cx.write(self.gpu.uniform, 0, &[uniform]);
+        self.uniform = uniform;
         self.write_domes(eye, settings);
-    }
-
-    fn plan_dome(
-        &mut self,
-        settings: &Clouds,
-        size: [u32; 2],
-        (eye, surface): (glam::Vec3, Option<f32>),
-        seconds: f64,
-        restart: bool,
-    ) -> (usize, u32, u32, Origins, f64) {
-        let rows = size[1];
-        let changed = self.marched.is_none_or(|marched| marched != *settings);
-        self.frame += 1;
-        let target = self.roles[2];
-        let origins = Origins::of(eye, surface);
-        if restart || changed || !self.ready {
-            let spare = (0..3).find(|&index| index != target).unwrap_or(0);
-            self.roles = [target, target, spare];
-            self.origins[target] = origins;
-            self.blend = 1.0;
-            self.marched = Some(*settings);
-            self.cycle = None;
-            self.ready = true;
-            self.completed += 1;
-            return (target, 0, rows, origins, seconds);
-        }
-        let cycle = self.cycle.get_or_insert(Cycle {
-            origin: origins,
-            seconds,
-            next_row: 0,
-        });
-        let frames = settings.slices.max(1);
-        let first = cycle.next_row;
-        let count = rows.div_ceil(frames).min(rows - first);
-        cycle.next_row += count;
-        let (origin, at, done) = (cycle.origin, cycle.seconds, cycle.next_row >= rows);
-        self.blend = cycle.next_row as f32 / rows as f32;
-        if done {
-            self.origins[target] = origin;
-            self.cycle = None;
-            self.completes = true;
-        }
-        (target, first, count, origin, at)
-    }
-
-    fn allocate(&mut self, cx: &mut Prepare<'_, SkyGpu>) {
-        cx.allocate_buffer(self.gpu.uniform, size_of::<CloudUniform>() as u64);
-        cx.allocate_buffer(self.gpu.view_clouds, size_of::<CloudUniform>() as u64);
-        cx.allocate_buffer(self.gpu.view_uniform, size_of::<CloudView>() as u64);
-        cx.allocate_buffer(self.gpu.composite_args, size_of_val(&COMPOSITE_ARGS) as u64);
-        cx.allocate_buffer(self.gpu.shadows, CLOUD_SHADOW_BYTES as u64);
-        cx.allocate_buffer(self.gpu.shadow_cells, CLOUD_SHADOW_BYTES as u64);
-        if self.shadows_filled {
-            return;
-        }
-        let ones = vec![0x3c00_3c00_u32; CLOUD_SHADOW_BYTES / 4];
-        cx.write(self.gpu.shadows, 0, &ones);
-        self.shadows_filled = true;
     }
 
     fn release(&mut self) {
         self.dome_size = None;
         self.noise = None;
         self.light = LightMap::default();
-        self.release_view();
-    }
-
-    fn release_view(&mut self) {
-        self.view_size = None;
     }
 
     pub(crate) fn prepare_view(
         &mut self,
-        cx: &mut Prepare<'_, SkyGpu>,
         (settings, eye, seconds): (&Clouds, glam::Vec3, f64),
         (view_projection, display, render): (glam::Mat4, glam::UVec2, glam::UVec2),
         light: CloudLight<'_>,
@@ -640,31 +426,16 @@ impl CloudPass {
             self.write_domes(eye, settings);
         }
         if !marches {
-            self.release_view();
             return;
         }
-        let size = [display.x, display.y];
-        if self.view_size.is_none_or(|held| held != size) {
-            cx.allocate(
-                self.gpu.view_texture,
-                wgpu::Extent3d {
-                    width: size[0],
-                    height: size[1],
-                    depth_or_array_layers: 1,
-                },
-                1,
-            );
-            self.view_size = Some(size);
-        }
+        self.view_size = [display.x, display.y];
         let mut uniform = march_uniform(settings, (eye, seconds), light);
         uniform.light = self.light_uniform();
-        cx.write(self.gpu.view_clouds, 0, &[uniform]);
-        let view = CloudView {
+        self.view_clouds = uniform;
+        self.view = CloudView {
             inverse_view_projection: view_projection.inverse().to_cols_array_2d(),
             pixels: [render.x, render.y, u32::from(view_sky), 0],
         };
-        cx.write(self.gpu.view_uniform, 0, &[view]);
-        cx.write(self.gpu.composite_args, 0, &COMPOSITE_ARGS);
         self.view_job = Some([render.x, render.y]);
         self.view_pixels = render.x * render.y;
     }
@@ -673,27 +444,6 @@ impl CloudPass {
         let dome = self.job.is_some() && self.dome_size.is_some();
         let view = self.view_job.is_some();
         (dome || view).then_some(CloudFrame { dome, view })
-    }
-
-    pub(crate) fn run(&self, cx: &mut Prepare<'_, SkyGpu>, frame: CloudFrame) {
-        if frame.dome {
-            cx.run(self.gpu.dome_pass);
-            if self.shadowing {
-                cx.copy(
-                    self.gpu.shadow_copy,
-                    &[CopyRegion::Bytes {
-                        from: 0,
-                        to: 0,
-                        size: CLOUD_SHADOW_BYTES as u64,
-                    }],
-                );
-                cx.run(self.gpu.shadow_copy);
-            }
-        }
-        if frame.view {
-            cx.run(self.gpu.view_pass);
-            cx.run(self.gpu.composite_pass);
-        }
     }
 
     fn rotate(&mut self) {
@@ -725,82 +475,374 @@ impl CloudPass {
     pub(crate) fn dome_piece(&self) -> [[f32; 4]; 6] {
         self.dome_piece
     }
+}
+
+#[derive(Clone, Copy, Default)]
+struct CloudRun {
+    light_rows: u32,
+    width: u32,
+    count: u32,
+    shadow_stride: u32,
+    view: [u32; 2],
+}
+
+pub(crate) struct CloudPass {
+    noise_shape: Texture<SkyGpu>,
+    noise_detail: Texture<SkyGpu>,
+    domes: Texture<SkyGpu>,
+    view_texture: Texture<SkyGpu>,
+    shadows: Buffer<SkyGpu>,
+    shadow_cells: Buffer<SkyGpu>,
+    light_cells: Buffer<SkyGpu>,
+    uniform: Buffer<SkyGpu>,
+    view_clouds: Buffer<SkyGpu>,
+    view_uniform: Buffer<SkyGpu>,
+    composite_args: Buffer<SkyGpu>,
+    light_pass: Pass<SkyGpu>,
+    march_pass: Pass<SkyGpu>,
+    shadow_pass: Pass<SkyGpu>,
+    shadow_copy: Pass<SkyGpu>,
+    view_pass: Pass<SkyGpu>,
+    composite_pass: Pass<SkyGpu>,
+    marching: ComputePipeline<SkyGpu>,
+    shading: ComputePipeline<SkyGpu>,
+    lighting: ComputePipeline<SkyGpu>,
+    viewing: ComputePipeline<SkyGpu>,
+    compositing: Pipeline<SkyGpu, Own>,
+    composite_draws: DrawInput<SkyGpu, Own>,
+    noise: Option<u64>,
+    shadows_filled: bool,
+    run: CloudRun,
+}
+
+fn composite_pipeline(
+    cx: &mut Install<'_, SkyGpu>,
+    pass: Pass<SkyGpu>,
+    view_texture: Texture<SkyGpu>,
+) -> Result<Pipeline<SkyGpu, Own>, Error> {
+    use crate::shaders::sky::draw;
+    cx.render_pipeline(
+        pass,
+        &RenderPipeline {
+            vertex: draw::VS_SKY,
+            fragment: Some(draw::FS_VIEW_CLOUDS_POST),
+            debug: None,
+            vertices: &[],
+            primitive: wgpu::PrimitiveState::default(),
+            depth: DepthUse::None,
+            blend: Some(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::SrcAlpha,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Zero,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            }),
+            writes: wgpu::ColorWrites::ALL,
+        },
+        &[(draw::VIEW_CLOUDS, Bind::Texture(view_texture))],
+    )
+}
+
+fn samplers(cx: &mut Install<'_, SkyGpu>) -> [Sampler<SkyGpu>; 2] {
+    let dome = cx.sampler(SamplerDesc {
+        filter: wgpu::FilterMode::Linear,
+        mipmap: wgpu::MipmapFilterMode::Nearest,
+        address: [
+            wgpu::AddressMode::Repeat,
+            wgpu::AddressMode::ClampToEdge,
+            wgpu::AddressMode::ClampToEdge,
+        ],
+        compare: None,
+        anisotropy: 1,
+    });
+    let noise = cx.sampler(SamplerDesc {
+        filter: wgpu::FilterMode::Linear,
+        mipmap: wgpu::MipmapFilterMode::Linear,
+        address: [wgpu::AddressMode::Repeat; 3],
+        compare: None,
+        anisotropy: 1,
+    });
+    [dome, noise]
+}
+
+impl CloudPass {
+    pub(crate) fn install(
+        cx: &mut Install<'_, SkyGpu>,
+        (transmittance, table_sampler): (Texture<SkyGpu>, Sampler<SkyGpu>),
+        environment: Pass<SkyGpu>,
+    ) -> Result<Self, Error> {
+        use crate::shaders::sky::{clouds, faces::cloud_shadows, light};
+        let noise_shape =
+            cx.texture("cloud_noise_shape", wgpu::TextureFormat::R8Unorm, Lifetime::Kept);
+        let noise_detail =
+            cx.texture("cloud_noise_detail", wgpu::TextureFormat::R8Unorm, Lifetime::Kept);
+        let domes = cx.texture("cloud_domes", DOME_FORMAT, Lifetime::Kept);
+        let view_texture =
+            cx.texture("cloud_view", wgpu::TextureFormat::Rgba16Float, Lifetime::Kept);
+        let shadows = cx.buffer("cloud_shadows", Lifetime::Kept);
+        let shadow_cells = cx.buffer("cloud_shadow_cells", Lifetime::Kept);
+        let light_cells = cx.buffer("cloud_light", Lifetime::Kept);
+        let uniform = cx.buffer("cloud_uniform", Lifetime::Kept);
+        let view_clouds = cx.buffer("cloud_view_march", Lifetime::Kept);
+        let view_uniform = cx.buffer("cloud_view_uniform", Lifetime::Kept);
+        let composite_args = cx.buffer("cloud_composite_draw", Lifetime::Kept);
+        let [dome_sampler, noise_sampler] = samplers(cx);
+        cx.frame(light::SKY_DOMES, Bind::Texture(domes))?;
+        cx.frame(light::SKY_CLOUD_SAMPLER, Bind::Sampler(dome_sampler))?;
+        cx.frame(cloud_shadows::CLOUD_SHADOWS, Bind::Buffer(shadows))?;
+        let light_pass = cx.pass("cloud_light").id();
+        let march_pass = cx
+            .pass("clouds")
+            .after(environment)
+            .after(light_pass)
+            .id();
+        let shadow_pass = cx.pass("cloud_shadows").after(march_pass).id();
+        let shadow_copy = cx.copy(
+            "cloud_shadow_copy",
+            Copied::Buffer(shadow_cells),
+            Copied::Buffer(shadows),
+        );
+        let view_pass = cx.pass("cloud_view").at(Layer::Over).id();
+        let composite_pass = cx
+            .pass("cloud_composite")
+            .at(Layer::Over)
+            .after(view_pass)
+            .id();
+        let noise = || {
+            [
+                (clouds::CLOUDS, Bind::Buffer(uniform)),
+                (clouds::NOISE_SHAPE, Bind::Texture(noise_shape)),
+                (clouds::NOISE_SAMPLER, Bind::Sampler(noise_sampler)),
+            ]
+        };
+        let lit = || {
+            [
+                (clouds::CLOUD_TRANSMITTANCE, Bind::Texture(transmittance)),
+                (clouds::CLOUD_TABLE_SAMPLER, Bind::Sampler(table_sampler)),
+                (clouds::LIGHT_CELLS, Bind::Buffer(light_cells)),
+            ]
+        };
+        let mut lighted = Vec::from(noise());
+        lighted.push((clouds::LIGHT_CELLS, Bind::Buffer(light_cells)));
+        let lighting = cx.compute_pipeline(light_pass, clouds::LIGHT_CLOUDS, &lighted)?;
+        let mut marched = Vec::from(noise());
+        marched.extend([
+            (clouds::NOISE_DETAIL, Bind::Texture(noise_detail)),
+            (clouds::DOME, Bind::Texture(domes)),
+        ]);
+        marched.extend(lit());
+        let marching = cx.compute_pipeline(march_pass, clouds::MARCH_CLOUDS, &marched)?;
+        let mut shaded = Vec::from(noise());
+        shaded.push((clouds::SHADOW_CELLS, Bind::Buffer(shadow_cells)));
+        let shading = cx.compute_pipeline(shadow_pass, clouds::SHADOW_CLOUDS, &shaded)?;
+        let mut viewed = vec![
+            (clouds::CLOUDS, Bind::Buffer(view_clouds)),
+            (clouds::NOISE_SHAPE, Bind::Texture(noise_shape)),
+            (clouds::NOISE_SAMPLER, Bind::Sampler(noise_sampler)),
+            (clouds::NOISE_DETAIL, Bind::Texture(noise_detail)),
+            (clouds::CLOUD_VIEW, Bind::Buffer(view_uniform)),
+            (clouds::VIEW_DEPTH, Bind::Target(ViewTarget::Depth)),
+            (clouds::VIEW_OUT, Bind::Texture(view_texture)),
+            (clouds::COMPOSITE_DRAW, Bind::Buffer(composite_args)),
+        ];
+        viewed.extend(lit());
+        let viewing = cx.compute_pipeline(view_pass, clouds::MARCH_VIEW, &viewed)?;
+        let compositing = composite_pipeline(cx, composite_pass, view_texture)?;
+        let composite_draws = cx.draw_input(composite_pass, composite_args);
+        Ok(Self {
+            noise_shape,
+            noise_detail,
+            domes,
+            view_texture,
+            shadows,
+            shadow_cells,
+            light_cells,
+            uniform,
+            view_clouds,
+            view_uniform,
+            composite_args,
+            light_pass,
+            march_pass,
+            shadow_pass,
+            shadow_copy,
+            view_pass,
+            composite_pass,
+            marching,
+            shading,
+            lighting,
+            viewing,
+            compositing,
+            composite_draws,
+            noise: None,
+            shadows_filled: false,
+            run: CloudRun::default(),
+        })
+    }
+
+    pub(crate) fn uniforms(&self) -> [Buffer<SkyGpu>; 2] {
+        [self.uniform, self.view_clouds]
+    }
+
+    fn allocate(&mut self, cx: &mut Prepare<'_, SkyGpu>) {
+        cx.allocate_buffer(self.uniform, size_of::<CloudUniform>() as u64);
+        cx.allocate_buffer(self.view_clouds, size_of::<CloudUniform>() as u64);
+        cx.allocate_buffer(self.view_uniform, size_of::<CloudView>() as u64);
+        cx.allocate_buffer(self.composite_args, size_of_val(&COMPOSITE_ARGS) as u64);
+        cx.allocate_buffer(self.shadows, CLOUD_SHADOW_BYTES as u64);
+        cx.allocate_buffer(self.shadow_cells, CLOUD_SHADOW_BYTES as u64);
+        if self.shadows_filled {
+            return;
+        }
+        let ones = vec![0x3c00_3c00_u32; CLOUD_SHADOW_BYTES / 4];
+        cx.write(self.shadows, 0, &ones);
+        self.shadows_filled = true;
+    }
+
+    pub(crate) fn prepare(
+        &mut self,
+        cx: &mut Prepare<'_, SkyGpu>,
+        (plan, noise): (&CloudPlan, Option<&StaticTable<CloudNoise>>),
+        frame: Option<CloudFrame>,
+    ) {
+        self.allocate(cx);
+        if plan.noise.is_none() {
+            self.noise = None;
+        }
+        if !plan.active {
+            return;
+        }
+        if let Some(noise) = noise.filter(|noise| Some(noise.id) == plan.noise)
+            && self.noise != plan.noise
+        {
+            upload_noise(cx, (self.noise_shape, self.noise_detail), noise);
+            self.noise = plan.noise;
+        }
+        if let Some(size) = plan.dome_size {
+            cx.allocate(
+                self.domes,
+                wgpu::Extent3d {
+                    width: size[0],
+                    height: size[1],
+                    depth_or_array_layers: DOME_ROLES * DOME_LAYERS,
+                },
+                1,
+            );
+        }
+        cx.allocate_buffer(self.light_cells, CLOUD_LIGHT_BYTES as u64);
+        cx.write(self.uniform, 0, &[plan.uniform]);
+        if let Some(pixels) = plan.view_job {
+            cx.allocate(
+                self.view_texture,
+                wgpu::Extent3d {
+                    width: plan.view_size[0],
+                    height: plan.view_size[1],
+                    depth_or_array_layers: 1,
+                },
+                1,
+            );
+            cx.write(self.view_clouds, 0, &[plan.view_clouds]);
+            cx.write(self.view_uniform, 0, &[plan.view]);
+            cx.write(self.composite_args, 0, &COMPOSITE_ARGS);
+            self.run.view = pixels;
+        }
+        let Some(frame) = frame else {
+            return;
+        };
+        if let (true, Some((_, _, count)), Some(size)) = (frame.dome, plan.job, plan.dome_size) {
+            self.run.light_rows = plan.light.job;
+            self.run.width = size[0];
+            self.run.count = count;
+            self.run.shadow_stride = plan.shadow_stride;
+            if plan.light.job > 0 {
+                cx.run(self.light_pass);
+            }
+            if count > 0 {
+                cx.run(self.march_pass);
+            }
+            if plan.shadowing {
+                cx.run(self.shadow_pass);
+                cx.copy(
+                    self.shadow_copy,
+                    &[CopyRegion::Bytes {
+                        from: 0,
+                        to: 0,
+                        size: CLOUD_SHADOW_BYTES as u64,
+                    }],
+                );
+            }
+        }
+        if frame.view {
+            cx.run(self.view_pass);
+            cx.run(self.composite_pass);
+        }
+    }
+
+    pub(crate) fn owns(&self, pass: Pass<SkyGpu>) -> bool {
+        pass == self.light_pass
+            || pass == self.march_pass
+            || pass == self.shadow_pass
+            || pass == self.view_pass
+            || pass == self.composite_pass
+    }
 
     pub(crate) fn encode(&self, pass: Pass<SkyGpu>, cx: &mut Encode<'_, SkyGpu>) -> u32 {
-        if pass == self.gpu.dome_pass {
-            self.encode_dome(cx);
-        } else if pass == self.gpu.view_pass {
-            self.encode_view(cx);
-        } else if pass == self.gpu.composite_pass {
+        let run = self.run;
+        if pass == self.light_pass {
+            cx.dispatch(
+                &self.lighting,
+                Count::Groups([
+                    LIGHT_TEXELS.div_ceil(CLOUD_GROUP),
+                    run.light_rows.div_ceil(CLOUD_GROUP),
+                    1,
+                ]),
+            );
+        } else if pass == self.march_pass {
+            cx.dispatch(
+                &self.marching,
+                Count::Groups([
+                    run.width.div_ceil(CLOUD_GROUP),
+                    run.count.div_ceil(CLOUD_GROUP),
+                    DOME_LAYERS,
+                ]),
+            );
+        } else if pass == self.shadow_pass {
+            let shadow_rows = CLOUD_SHADOW_CELLS.div_ceil(run.shadow_stride);
+            cx.dispatch(
+                &self.shading,
+                Count::Groups([
+                    (CLOUD_SHADOW_CELLS / 2).div_ceil(CLOUD_GROUP),
+                    shadow_rows.div_ceil(CLOUD_GROUP),
+                    1,
+                ]),
+            );
+        } else if pass == self.view_pass {
+            cx.dispatch(
+                &self.viewing,
+                Count::Groups([
+                    run.view[0].div_ceil(CLOUD_GROUP),
+                    run.view[1].div_ceil(CLOUD_GROUP),
+                    1,
+                ]),
+            );
+        } else if pass == self.composite_pass {
             let mut draw = cx.render(Attach::Declared, None);
             self.draw_composite(&mut draw);
         }
         0
     }
 
-    pub(crate) fn owns(&self, pass: Pass<SkyGpu>) -> bool {
-        pass == self.gpu.dome_pass || pass == self.gpu.view_pass || pass == self.gpu.composite_pass
-    }
-
-    fn encode_dome(&self, cx: &mut Encode<'_, SkyGpu>) {
-        let (Some((_, _, count)), Some(size)) = (self.job, self.dome_size) else {
-            return;
-        };
-        if self.light.job > 0 {
-            cx.dispatch(
-                &self.gpu.lighting,
-                Count::Groups([
-                    LIGHT_TEXELS.div_ceil(CLOUD_GROUP),
-                    self.light.job.div_ceil(CLOUD_GROUP),
-                    1,
-                ]),
-            );
-        }
-        if count > 0 {
-            cx.dispatch(
-                &self.gpu.marching,
-                Count::Groups([
-                    size[0].div_ceil(CLOUD_GROUP),
-                    count.div_ceil(CLOUD_GROUP),
-                    DOME_LAYERS,
-                ]),
-            );
-        }
-        if !self.shadowing {
-            return;
-        }
-        let shadow_rows = CLOUD_SHADOW_CELLS.div_ceil(self.shadow_stride);
-        cx.dispatch(
-            &self.gpu.shading,
-            Count::Groups([
-                (CLOUD_SHADOW_CELLS / 2).div_ceil(CLOUD_GROUP),
-                shadow_rows.div_ceil(CLOUD_GROUP),
-                1,
-            ]),
-        );
-    }
-
-    fn encode_view(&self, cx: &mut Encode<'_, SkyGpu>) {
-        let Some(pixels) = self.view_job else {
-            return;
-        };
-        cx.dispatch(
-            &self.gpu.viewing,
-            Count::Groups([
-                pixels[0].div_ceil(CLOUD_GROUP),
-                pixels[1].div_ceil(CLOUD_GROUP),
-                1,
-            ]),
-        );
-    }
-
     fn draw_composite(&self, draw: &mut Draw<'_, SkyGpu, Own>) {
         draw.draw(
-            &self.gpu.compositing,
+            &self.compositing,
             Shape::Indirect {
                 vertices: &[],
                 indices: None,
-                args: self.gpu.composite_draws,
+                args: self.composite_draws,
                 offset: 0,
             },
         );

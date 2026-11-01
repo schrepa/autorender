@@ -5,6 +5,12 @@ use glam::{Mat4, Vec3};
 use crate::ground::Pyramid;
 
 pub const GROUND_TEXELS: f32 = 2.0;
+pub const SHADOW_REGIONS: u32 = 7;
+pub const DEBUG_SUN_NONE: u32 = 0;
+pub const DEBUG_SUN_LEVEL: u32 = 1;
+pub const DEBUG_SUN_HORIZON: u32 = 21;
+pub const DEBUG_SUN_BEYOND: u32 = DEBUG_SUN_HORIZON + 1;
+pub const DEBUG_SHADOWED: u32 = 0x80;
 
 pub fn ground_level(pyramid: &Pyramid, texel: f32) -> u32 {
     let coarsest = pyramid.levels().saturating_sub(1);
@@ -23,7 +29,14 @@ pub struct ShadowMaps {
 
 impl Slot for ShadowMaps {
     const NAME: &'static str = "shadows";
-    const WGSL: Option<&'static str> = Some(include_str!("places/shadows.wgsl"));
+    const WGSL: Option<&'static str> = Some(contract!(
+        "places/shadows.wgsl",
+        DEBUG_SUN_NONE,
+        DEBUG_SUN_LEVEL,
+        DEBUG_SUN_HORIZON,
+        DEBUG_SUN_BEYOND,
+        DEBUG_SHADOWED,
+    ));
     const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::SHADOWS];
 }
 

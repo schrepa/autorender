@@ -9,12 +9,12 @@ mod agents;
 mod dev;
 pub mod jobs;
 mod nav;
+mod scene;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, ComponentKind, JobKind, SceneComponents, Schedule, Source};
-use engine_places::navigation::NavAgent;
+use engine_core::{Brick, Bricks, JobKind, SceneComponents, Schedule, Source};
 
-pub use agents::{NavAgents, NavQuery, NavStats, Navigation};
+pub use agents::{NavAgents, NavQuery, NavStats, Navigation, SceneNavAgent};
 pub use dev::{
     GroundKey, NavAgentQuery, NavAgentRow, NavAgentView, NavAgentsQuery, NavAgentsView,
     NavGoControl, NavGoResult, NavPathQuery, NavPathResult, WalkResult,
@@ -35,9 +35,8 @@ impl Brick for NavigationBrick {
         bricks
             .when(|navigation: Res<Navigation>| navigation.enabled)
             .settings::<Navigation>()
-            .stats::<NavStats>()
             .resource::<NavAgents>()
-            .join::<SceneComponents>(ComponentKind::of::<NavAgent>("nav_agent"), None)
+            .stats::<NavStats>()
             .systems(
                 Schedule::FixedMove,
                 (agents::walk_agents, agents::hold_heights),
@@ -45,7 +44,8 @@ impl Brick for NavigationBrick {
             .off(agents::stop_walks)
             .operation::<NavGoControl>()
             .operation::<NavPathQuery>()
+            .observation::<NavAgentQuery>()
             .observation::<NavAgentsQuery>()
-            .observation::<NavAgentQuery>();
+            .join::<SceneComponents>(scene::nav_agent(), None);
     }
 }

@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Poses, View};
+use engine_core::{GlobalTransforms, TransformIndex, View};
 use engine_places::probes::{Interior, ReflectionProbe};
 use glam::Vec3;
 
@@ -18,6 +18,7 @@ pub(crate) struct RenderReflectionProbe {
 pub(crate) struct ProbeList {
     pub(crate) list: Vec<RenderReflectionProbe>,
     pub(crate) cut: usize,
+    hints: Vec<TransformIndex>,
     candidates: Vec<(f32, RenderReflectionProbe)>,
     nearest: Nearest,
 }
@@ -25,7 +26,7 @@ pub(crate) struct ProbeList {
 pub(crate) fn gather_probes(
     settings: Res<ReflectionProbeSettings>,
     view: Res<View>,
-    poses: Res<Poses>,
+    globals: Res<GlobalTransforms>,
     probes: Query<(Entity, &ReflectionProbe)>,
     mut gathered: ResMut<ProbeList>,
 ) {
@@ -34,13 +35,19 @@ pub(crate) fn gather_probes(
     gathered.cut = 0;
     let eye = view.detail_eye();
     gathered.candidates.clear();
-    for (entity, probe) in &probes {
-        if !usable(probe) {
+    for (position, (entity, probe)) in probes.iter().enumerate() {
+        if !crate::component::valid(probe) {
             continue;
         }
-        let Some(center) = poses
-            .of(entity)
-            .map(|pose| Vec3::from(pose.translation))
+        if gathered.hints.len() <= position {
+            gathered
+                .hints
+                .resize(position + 1, TransformIndex::default());
+        }
+        let Some(center) = globals
+            .get_indexed(entity, &mut gathered.hints[position])
+            .and_then(|pose| pose.matrix())
+            .map(|matrix| matrix.w_axis.truncate())
             .filter(|center| center.is_finite())
         else {
             continue;
@@ -68,17 +75,6 @@ pub(crate) fn gather_probes(
     gathered
         .list
         .extend(ranked.map(|position| candidates[position].1));
-}
-
-fn usable(probe: &ReflectionProbe) -> bool {
-    let share = |value: f32| (0.0..=1.0).contains(&value);
-    probe.extent.is_finite()
-        && probe.extent.cmpgt(Vec3::ZERO).all()
-        && probe.blend.is_finite()
-        && probe.blend >= 0.0
-        && probe
-            .interior
-            .is_none_or(|interior| share(interior.sky) && share(interior.sun))
 }
 
 #[derive(Default)]

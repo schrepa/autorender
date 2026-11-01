@@ -9,10 +9,16 @@ mod part;
 mod smokes;
 mod water;
 
-use engine_core::{Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source};
+use engine_core::{
+    Brick, Bricks, ComponentKind, Error, ErrorCode, GpuStruct, Runs, SceneComponents, Schedule,
+    Smoke, Source, fields,
+};
 use engine_render::RenderBricks;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+const GENERATED: &[&str] = &[part::WGSL, <part::PondShape as GpuStruct>::WGSL];
 
 pub struct PondBrick;
 
@@ -26,57 +32,49 @@ impl Brick for PondBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .join::<SceneComponents>(ComponentKind::of::<Pond>("pond"), None)
+            .join::<SceneComponents>(
+                ComponentKind::of::<Pond>("pond")
+                    .check(check)
+                    .schema(schema)
+                    .example(example),
+                None,
+            )
             .systems(Schedule::ViewSync, water::publish_ponds)
+            .generated(GENERATED)
             .part::<part::PondGpu>();
     }
 }
 
-#[derive(bevy_ecs::prelude::Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "PondFile")]
-pub struct Pond {
-    pub center: [f32; 2],
-    pub size: [f32; 2],
-    pub surface: f32,
-}
-
-#[derive(Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct PondFile {
-    center: [f32; 2],
-    size: [f32; 2],
-    surface: f32,
-}
-
-impl Default for PondFile {
-    fn default() -> Self {
-        Self {
-            center: [0.0; 2],
-            size: [1.0; 2],
-            surface: 0.0,
-        }
+fields! {
+    #[derive(
+        bevy_ecs::prelude::Component,
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Serialize,
+        Deserialize,
+        schemars::JsonSchema,
+    )]
+    #[serde(deny_unknown_fields)]
+    pub struct Pond {
+        pub center: [f32; 2] = [0.0; 2] => finite,
+        pub size: [f32; 2] = [1.0; 2] => above(0.0),
+        pub surface: f32 = 0.0 => finite,
     }
 }
 
-impl TryFrom<PondFile> for Pond {
-    type Error = String;
+fn check(pond: &Pond, path: &str) -> Result<(), Error> {
+    pond.validate()
+        .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, path))
+}
 
-    fn try_from(file: PondFile) -> Result<Self, String> {
-        if !file.center.iter().all(|value| value.is_finite()) {
-            return Err(format!("$.center: finite, got {:?}", file.center));
-        }
-        if !file.size.iter().all(|value| *value > 0.0) {
-            return Err(format!("$.size: above 0, got {:?}", file.size));
-        }
-        if !file.surface.is_finite() {
-            return Err(format!("$.surface: finite, got {}", file.surface));
-        }
-        Ok(Self {
-            center: file.center,
-            size: file.size,
-            surface: file.surface,
-        })
-    }
+fn schema() -> Value {
+    serde_json::to_value(schemars::schema_for!(Pond)).unwrap_or(Value::Null)
+}
+
+fn example() -> Value {
+    json!({"center": [0.0, 0.0], "size": [16.0, 16.0], "surface": 0.0})
 }
 
 impl Pond {

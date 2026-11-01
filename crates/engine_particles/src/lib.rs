@@ -10,13 +10,19 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod emitters;
 mod nearest;
 mod part;
+mod scene;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, ComponentKind, SceneComponents, Schedule, Source};
+use engine_core::{Brick, Bricks, ComponentKind, GpuStruct, SceneComponents, Schedule, Source};
 use engine_places::particles::{ParticleEmitter, Transparency};
 use engine_render::RenderBricks;
 
 pub use emitters::{ParticleSettings, ParticleStats};
+
+const GENERATED: &[&str] = &[
+    <emitters::Emitter as GpuStruct>::WGSL,
+    <part::Particles as GpuStruct>::WGSL,
+];
 
 pub struct ParticlesBrick;
 
@@ -25,23 +31,31 @@ impl Brick for ParticlesBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(emits)
+            .when(enabled)
             .settings::<ParticleSettings>()
             .stats::<ParticleStats>()
             .resource::<emitters::Gather>()
             .resource::<emitters::Packed>()
             .resource::<emitters::Owners>()
             .fill::<Transparency>(Some(shaders::particles::faces::transparency::MODULE))
-            .join::<SceneComponents>(ComponentKind::of::<ParticleEmitter>("particles"), None)
+            .join::<SceneComponents>(
+                ComponentKind::of::<ParticleEmitter>("particles")
+                    .check(scene::check_emitter)
+                    .reach(scene::emitter_reach)
+                    .schema(scene::emitter_schema)
+                    .example(scene::emitter_example),
+                None,
+            )
             .systems(
                 Schedule::ViewSync,
                 (emitters::gather_emitters, emitters::particle_stats),
             )
             .off(emitters::forget)
+            .generated(GENERATED)
             .part::<part::ParticlesGpu>();
     }
 }
 
-fn emits(settings: Res<ParticleSettings>, emitters: Query<(), With<ParticleEmitter>>) -> bool {
-    settings.enabled && !emitters.is_empty()
+fn enabled(settings: Res<ParticleSettings>) -> bool {
+    settings.enabled
 }

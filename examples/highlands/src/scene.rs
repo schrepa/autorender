@@ -1,5 +1,3 @@
-use std::sync::OnceLock;
-
 use engine::prelude::*;
 use engine::{Error, ErrorCode, Expected};
 use serde_json::{Value, json};
@@ -24,6 +22,7 @@ const EFFECTS: [&str; 7] = [
 pub(crate) struct Furnished {
     pub(crate) instance: SceneInstance,
     pub(crate) start: Camera,
+    pub(crate) reflections: Option<Value>,
 }
 
 pub(crate) fn set(world: &mut World, key: &str, value: Value) -> engine::Result<()> {
@@ -40,19 +39,28 @@ pub(crate) fn furnish(
     land::provide(world, rocks)?;
     let instance = document.instantiate(world)?;
     land::populate(world, &document, options.bodies)?;
+    let reflections = document
+        .environment
+        .as_ref()
+        .and_then(|environment| environment.sections.get("reflections"))
+        .cloned();
     if options.bodies > 0 {
         set(world, "collision", collision_budgets())?;
     } else {
         set(world, "collision.enabled", json!(false))?;
         set(world, "physics.enabled", json!(false))?;
     }
+    let start = *world.resource::<Camera>();
     if flying {
         set(world, "fly_camera.speed", json!(SPEED))?;
     } else {
         set(world, "fly_camera.enabled", json!(false))?;
     }
-    let start = *world.resource::<Camera>();
-    Ok(Furnished { instance, start })
+    Ok(Furnished {
+        instance,
+        start,
+        reflections,
+    })
 }
 
 fn collision_budgets() -> Value {
@@ -65,17 +73,6 @@ fn collision_budgets() -> Value {
     })
 }
 
-fn scene_reflections() -> Option<&'static Value> {
-    static SECTION: OnceLock<Option<Value>> = OnceLock::new();
-    SECTION
-        .get_or_init(|| {
-            engine::bricks::parse_json::<Value>(SCENE)
-                .ok()
-                .and_then(|mut scene| Some(scene.get_mut("environment")?.get_mut("reflections")?.take()))
-        })
-        .as_ref()
-}
-
 fn exclusions() -> impl Iterator<Item = String> {
     EFFECTS.iter().map(|effect| format!("no-{effect}"))
 }
@@ -84,7 +81,11 @@ pub(crate) fn effects() -> String {
     format!("all|none|{}", exclusions().collect::<Vec<_>>().join(","))
 }
 
-pub(crate) fn set_effects(world: &mut World, name: &str) -> engine::Result<()> {
+pub(crate) fn set_effects(
+    world: &mut World,
+    name: &str,
+    scene_reflections: Option<&Value>,
+) -> engine::Result<()> {
     let mut on = [true; EFFECTS.len()];
     match name {
         "all" => {}
@@ -117,16 +118,16 @@ pub(crate) fn set_effects(world: &mut World, name: &str) -> engine::Result<()> {
     ] = on;
     set(world, "shadows.enabled", json!(shadows))?;
     if occlusion {
-        set(world, "ambient_occlusion", json!({}))?;
+        engine::host::reset_setting(world, "ambient_occlusion.intensity")?;
     } else {
         set(world, "ambient_occlusion.intensity", json!(0.0))?;
     }
     if bloom {
-        set(world, "bloom", json!({}))?;
+        engine::host::reset_setting(world, "bloom.intensity")?;
     } else {
         set(world, "bloom.intensity", json!(0.0))?;
     }
-    match scene_reflections().filter(|_| reflections) {
+    match scene_reflections.filter(|_| reflections) {
         Some(section) => set(world, "reflections", section.clone())?,
         None => set(world, "reflections.enabled", json!(false))?,
     }
@@ -161,5 +162,5 @@ pub(crate) fn stand(world: &mut World, place: &str) -> engine::Result<()> {
             .range(-90.0, 90.0)
             .got(pitch));
     }
-    set(world, "highlands.stand", json!([x, z, yaw, pitch]))
+    land::control(world, json!({"stand": {"place": [x, z, yaw, pitch]}}))
 }

@@ -1,20 +1,21 @@
+import package::engine::math::GRAVITY;
 import package::face::heightfield::{TERRAIN_GRID, TerrainGroundRise, TerrainGroundSamples,
-    terrain_ground_rise, terrain_ground_samples, terrain_level_height, terrain_uniform};
+    terrain_ground_rise, terrain_ground_samples, terrain_level_height, terrain_uniform,
+    use_terrain};
 import package::generated::water::{BLOCK_GROUND, COVER_POINTS, DRY, GROUND_D84, LIVE_CELL,
     LIVE_HEAD, LIVE_HELD, LIVE_NONE, NO_WATER_SURFACE, SETUP_RISEN, SETUP_SOLID_ENTRIES,
-    SETUP_STANDS, SETUP_WHOLE, SimSetup, THIN, TURBULENT_SPEED, UNHELD, WATER_GRAVITY,
-    WATER_SETUP_RING_GROUP};
-import package::place::water::{NO_WATER_BLOCK, WATER_HELD, WATER_LIVE_BLOCK, WATER_TILE_PATCHES,
-    WaterCell};
+    SETUP_STANDS, SETUP_WHOLE, SimSetup, THIN, TURBULENT_SPEED, UNHELD, WATER_SETUP_RING_GROUP};
+import package::generated::water::{NO_WATER_BLOCK, WATER_LIVE_BLOCK, WATER_TILE_PATCHES};
+import package::place::water::{WATER_HELD, WaterCell};
 import package::water::faces::water::{water_cell, water_info_at, water_read, water_texel};
 
-@group(2) @binding(41) var<uniform> setup_frame: SimSetup;
-@group(2) @binding(42) var<storage, read> setup_list: array<vec4<u32>>;
-@group(2) @binding(43) var<storage, read_write> setup_ground: array<f32>;
-@group(2) @binding(44) var<storage, read_write> setup_cells: array<vec4<f32>>;
-@group(2) @binding(45) var<storage, read_write> setup_looks: array<vec4<f32>>;
-@group(2) @binding(46) var<storage, read_write> setup_edges: array<vec4<f32>>;
-@group(2) @binding(47) var<storage, read> setup_live: array<u32>;
+@group(1) @binding(41) var<uniform> setup_frame: SimSetup;
+@group(1) @binding(42) var<storage, read> setup_list: array<vec4<u32>>;
+@group(1) @binding(43) var<storage, read_write> setup_ground: array<f32>;
+@group(1) @binding(44) var<storage, read_write> setup_cells: array<vec4<f32>>;
+@group(1) @binding(45) var<storage, read_write> setup_looks: array<vec4<f32>>;
+@group(1) @binding(46) var<storage, read_write> setup_edges: array<vec4<f32>>;
+@group(1) @binding(47) var<storage, read> setup_live: array<u32>;
 
 const SETUP_SIDE: u32 = WATER_LIVE_BLOCK + 1u;
 const SETUP_CORNERS: u32 = SETUP_SIDE * SETUP_SIDE;
@@ -156,7 +157,7 @@ fn setup_standing(water: SetupWater, bed: f32, at: vec2<i32>, unsteady: bool) ->
     if !unsteady {
         return vec4<f32>(water.surface, water.flow, 0.0);
     }
-    let heave = water.rush * sqrt(depth / WATER_GRAVITY);
+    let heave = water.rush * sqrt(depth / GRAVITY);
     let deep = depth + clamp(heave * setup_noise(at, 0u), -0.5 * depth, 0.5 * depth);
     let swing = water.rush * inverseSqrt(2.0) * vec2<f32>(setup_noise(at, 1u), setup_noise(at, 2u));
     return vec4<f32>(bed + deep, (deep / depth) * water.flow + deep * swing, 0.0);
@@ -278,6 +279,7 @@ fn setup_blocks(
     @builtin(num_workgroups) count: vec3<u32>,
     @builtin(local_invocation_id) local: vec3<u32>,
 ) {
+    use_terrain(setup_frame.terrain.x);
     let block = group.y * count.x + group.x;
     if block >= setup_frame.counts.x {
         return;
@@ -361,6 +363,7 @@ fn setup_raise(
     @builtin(num_workgroups) count: vec3<u32>,
     @builtin(local_invocation_id) local: vec3<u32>,
 ) {
+    use_terrain(setup_frame.terrain.x);
     let block = group.y * count.x + group.x;
     if block >= setup_frame.counts.x {
         return;
@@ -396,6 +399,7 @@ fn setup_raise(
 
 @compute @workgroup_size(WATER_SETUP_RING_GROUP)
 fn setup_ring(@builtin(global_invocation_id) id: vec3<u32>) {
+    use_terrain(setup_frame.terrain.x);
     let ghost = id.x;
     if ghost >= setup_frame.counts.z {
         return;

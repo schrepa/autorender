@@ -147,11 +147,11 @@ pub struct Owned {
 }
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
-pub fn owned(brick: &'static str) -> Owned {
-    let (previous, index) = ledger::own(brick);
+pub fn owned(brick: &'static str, index: u16) -> Owned {
+    let previous = ledger::own(brick);
     Owned {
         previous,
-        _span: engine_profile::span("brick", engine_profile::brick_name(index)),
+        _span: engine_profile::span("brick", brick),
         _brick: engine_profile::enter(index),
     }
 }
@@ -168,7 +168,7 @@ pub struct Owned;
 
 #[cfg(not(any(feature = "dev", feature = "profiling")))]
 #[inline(always)]
-pub fn owned(_brick: &'static str) -> Owned {
+pub fn owned(_brick: &'static str, _index: u16) -> Owned {
     Owned
 }
 
@@ -212,7 +212,6 @@ mod ledger {
     thread_local! {
         static LEDGER: RefCell<Ledger> = RefCell::new(Ledger::default());
         static OWNER: Cell<Owner> = const { Cell::new(None) };
-        static BRICKS: RefCell<Vec<(&'static str, u16)>> = const { RefCell::new(Vec::new()) };
     }
 
     pub(super) fn id_of(value: &impl Hash) -> u64 {
@@ -223,17 +222,8 @@ mod ledger {
         OWNER.with(Cell::get)
     }
 
-    pub(super) fn own(brick: &'static str) -> (Owner, u16) {
-        let previous = OWNER.replace(Some(brick));
-        let index = BRICKS.with_borrow_mut(|bricks| {
-            if let Some(&(_, index)) = bricks.iter().find(|&&(known, _)| known == brick) {
-                return index;
-            }
-            let index = engine_profile::brick_index(brick);
-            bricks.push((brick, index));
-            index
-        });
-        (previous, index)
+    pub(super) fn own(brick: &'static str) -> Owner {
+        OWNER.replace(Some(brick))
     }
 
     pub(super) fn restore(previous: Owner) {

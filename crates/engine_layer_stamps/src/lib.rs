@@ -9,15 +9,13 @@ use std::any::Any;
 use std::sync::Arc;
 
 use engine_codec::{Reader, Writer};
-use engine_core::{
-    Brick, Bricks, Error, ErrorCode, Job, JobCx, JobKind, JobRef, Source, parse_value,
-};
+use engine_core::{Brick, Bricks, ErrorCode, Source, parse_value};
 use engine_heightfield::layer::{
     Below, LayerFiles, LayerKind, Made, Row, TerrainLayer, no_files, no_points, same_as,
 };
 use engine_heightfield::layers::reaches;
 use engine_heightfield::{Stamp, StampOp};
-use engine_places::terrain::{self, TerrainLayers};
+use engine_places::terrain::TerrainLayers;
 use glam::Vec2;
 use serde_json::Value;
 
@@ -25,20 +23,11 @@ pub struct LayerStampsBrick;
 
 impl Brick for LayerStampsBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const JOBS: &'static [&'static JobKind] = &[&STAMP_JOB];
 
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.join::<TerrainLayers>(
-            terrain::LayerKind {
-                layer: &STAMP,
-                job: JobRef::from(&STAMP_JOB),
-            },
-            None,
-        );
+        bricks.join::<TerrainLayers>(&STAMP, None);
     }
 }
-
-pub static STAMP_JOB: JobKind = JobKind::new("layer_stamps::stamp", &SOURCE, refused);
 
 pub static STAMP: LayerKind = LayerKind {
     name: "stamp",
@@ -50,10 +39,6 @@ pub static STAMP: LayerKind = LayerKind {
     points: no_points,
 };
 
-fn refused(_input: &[u8], _cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    Err(Error::new(ErrorCode::JobUnsupported, "$.jobs"))
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StampLayer {
     pub stamp: Stamp,
@@ -62,7 +47,7 @@ pub struct StampLayer {
 fn made(stamp: Stamp) -> Made {
     stamp
         .validate()
-        .map_err(|error| error.coded(ErrorCode::InvalidValue))?;
+        .map_err(|error| error.coded(ErrorCode::InvalidTerrain))?;
     Ok(Arc::new(StampLayer { stamp }))
 }
 

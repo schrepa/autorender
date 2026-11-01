@@ -1,22 +1,58 @@
 use engine_core::Error;
 use engine_render::{
-    Access, Attach, Bind, DepthUse, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare,
+    Attach, Bind, DepthUse, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare,
     RenderPipeline, SamplerDesc, Shape, Texture, wgpu,
 };
 
 use crate::sky::SkyGpu;
 
-pub(crate) const ENVIRONMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-pub(crate) const ENVIRONMENT_SIZE: u32 = 128;
+const ENVIRONMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const ENVIRONMENT_SIZE: u32 = 128;
 
 const FACES: u32 = 6;
 const FACES_PER_PASS: u32 = 3;
 const CUBES: u32 = 1;
 
-pub(crate) type SkyLight = [[f32; 4]; 5];
+pub(crate) type EnvironmentLight = [[f32; 4]; 5];
 
-pub(crate) fn mip_levels(width: u32, height: u32) -> u32 {
+fn mip_levels(width: u32, height: u32) -> u32 {
     u32::BITS - width.max(height).max(1).leading_zeros()
+}
+
+#[derive(Default)]
+pub(crate) struct EnvironmentPlan {
+    drawn: Option<[[f32; 4]; 7]>,
+    changes: u64,
+    beyond: u64,
+}
+
+impl EnvironmentPlan {
+    pub(crate) fn prepare(
+        &mut self,
+        light: &EnvironmentLight,
+        (clouds, air): ([f32; 4], [f32; 4]),
+    ) {
+        let sky = sky(light, clouds, air);
+        if self.drawn == Some(sky) {
+            return;
+        }
+        let beyond_clouds = self.drawn.is_none_or(|drawn| {
+            drawn
+                .iter()
+                .zip(&sky)
+                .enumerate()
+                .any(|(index, (old, new))| index != 5 && old != new)
+        });
+        self.drawn = Some(sky);
+        self.changes += 1;
+        if beyond_clouds {
+            self.beyond += 1;
+        }
+    }
+
+    pub(crate) fn beyond(&self) -> u64 {
+        self.beyond
+    }
 }
 
 pub(crate) struct Environment {
@@ -27,7 +63,7 @@ pub(crate) struct Environment {
     down: Vec<Pipeline<SkyGpu, Own>>,
     prefilter: Pipeline<SkyGpu, Own>,
     levels: u32,
-    drawn: Option<[[f32; 4]; 7]>,
+    drawn: Option<u64>,
     runs: bool,
 }
 
@@ -42,8 +78,8 @@ impl Environment {
         cx.frame(environment::ENVIRONMENT_SAMPLER, Bind::Sampler(sampler))?;
         let pass = cx
             .pass("sky_environment")
-            .color(radiance, Access::Clear)
-            .color(maps, Access::Clear)
+            .color_cleared(radiance, wgpu::Color::BLACK)
+            .color_cleared(maps, wgpu::Color::BLACK)
             .id();
         let faces = |fragment| RenderPipeline {
             vertex: maps_shaders::VS_ENVIRONMENT,
@@ -107,12 +143,7 @@ impl Environment {
         self.pass
     }
 
-    pub(crate) fn prepare(
-        &mut self,
-        cx: &mut Prepare<'_, SkyGpu>,
-        light: &SkyLight,
-        (clouds, air): ([f32; 4], [f32; 4]),
-    ) {
+    pub(crate) fn prepare(&mut self, cx: &mut Prepare<'_, SkyGpu>, plan: &EnvironmentPlan) {
         let extent = |layers| wgpu::Extent3d {
             width: ENVIRONMENT_SIZE,
             height: ENVIRONMENT_SIZE,
@@ -120,10 +151,9 @@ impl Environment {
         };
         cx.allocate(self.radiance, extent(FACES), self.levels);
         cx.allocate(self.maps, extent(CUBES * FACES), self.levels);
-        let sky = sky(light, clouds, air);
-        self.runs = self.drawn != Some(sky);
+        self.runs = self.drawn != Some(plan.changes);
         if self.runs {
-            self.drawn = Some(sky);
+            self.drawn = Some(plan.changes);
             cx.run(self.pass);
         }
     }
@@ -174,7 +204,7 @@ fn faces_pass(
     );
 }
 
-fn sky(light: &SkyLight, clouds: [f32; 4], air: [f32; 4]) -> [[f32; 4]; 7] {
+fn sky(light: &EnvironmentLight, clouds: [f32; 4], air: [f32; 4]) -> [[f32; 4]; 7] {
     let [sun, sun_color, zenith, horizon, ground] = *light;
     [sun, sun_color, zenith, horizon, ground, clouds, air]
 }

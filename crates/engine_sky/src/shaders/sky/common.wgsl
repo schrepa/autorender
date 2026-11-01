@@ -1,7 +1,8 @@
+import package::generated::sky::{SKY_VIEW_HEIGHT, SKY_VIEW_WIDTH};
 import package::sky::piece::sky_air;
 
 const SKY_PI: f32 = 3.14159265358979;
-const SKY_VIEW_SIZE: vec2<f32> = vec2<f32>(192.0, 108.0);
+const SKY_VIEW_SIZE: vec2<f32> = vec2<f32>(f32(SKY_VIEW_WIDTH), f32(SKY_VIEW_HEIGHT));
 
 fn sphere_hit(origin: vec3<f32>, direction: vec3<f32>, radius: f32) -> f32 {
     let b = dot(origin, direction);

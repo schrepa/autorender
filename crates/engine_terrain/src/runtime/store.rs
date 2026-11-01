@@ -1,20 +1,24 @@
 use super::*;
+use crate::ErrorPyramid;
 use engine_places::ground::TileFace;
 
 struct Resident {
     tile: Arc<Tile>,
+    stamps: Arc<[Stamp]>,
     made: Generation,
     face: TileFace,
 }
 
 struct CachedTile {
     tile: Arc<Tile>,
+    stamps: Arc<[Stamp]>,
     bytes: u64,
     left: u64,
 }
 
 pub(super) struct Left {
     pub(super) tile: Arc<Tile>,
+    pub(super) stamps: Arc<[Stamp]>,
     pub(super) current: bool,
 }
 
@@ -24,7 +28,7 @@ fn memory_bytes(tile: &Tile) -> u64 {
     (arrays * 4 + holes + std::mem::size_of_val(tile.placed())) as u64
 }
 
-fn face_of(tile: &Tile, pyramid: &Pyramid) -> TileFace {
+fn face_of(tile: &Tile, stamps: &Arc<[Stamp]>, pyramid: &Pyramid) -> TileFace {
     let key = tile.key();
     let corner = pyramid.tile_origin(key);
     let size = TILE_QUADS as f32 * tile.spacing();
@@ -37,12 +41,20 @@ fn face_of(tile: &Tile, pyramid: &Pyramid) -> TileFace {
             Vec3::new(corner.x + size, high, corner.y + size),
         ),
         level: key.level,
+        spacing: tile.spacing(),
         heights: Arc::from(tile.heights()),
-        materials: tile.control().map_or_else(
-            || Arc::from(Vec::new()),
-            |control| control.iter().flat_map(|word| word.to_le_bytes()).collect(),
-        ),
+        holes: tile.hole_bits().map(Arc::from),
+        control: tile.control().map(Arc::from),
+        river_edges: tile.river_edges().map(Arc::from),
+        river_beds: tile.river_beds().map(Arc::from),
+        patch_bounds: (0..PATCHES_PER_TILE * PATCHES_PER_TILE)
+            .map(|index| tile.patch_bounds(index % PATCHES_PER_TILE, index / PATCHES_PER_TILE))
+            .collect(),
+        patch_holes: Arc::from(&tile.patch_holes()[..]),
+        ground_errors: Arc::from(tile.ground_errors().halves()),
+        water_errors: Arc::from(ErrorPyramid::dry().halves()),
         errors: tile.ground_errors().values().collect(),
+        stamps: Arc::clone(stamps),
         placed: Arc::from(tile.placed()),
     }
 }
@@ -112,12 +124,12 @@ impl TileStore {
         &self.errors
     }
 
-    pub(super) fn arrive(&mut self, tile: Arc<Tile>) {
+    pub(super) fn arrive(&mut self, tile: Arc<Tile>, stamps: Arc<[Stamp]>) {
         let made = self.generation;
-        self.put(tile, made);
+        self.put(tile, stamps, made);
     }
 
-    fn put(&mut self, tile: Arc<Tile>, made: Generation) {
+    fn put(&mut self, tile: Arc<Tile>, stamps: Arc<[Stamp]>, made: Generation) {
         let key = tile.key();
         let level = usize::from(key.level);
         if let Some(parent) = self
@@ -137,8 +149,16 @@ impl TileStore {
                 }
             }
         }
-        let face = face_of(&tile, &self.pyramid);
-        self.tiles.insert(key, Resident { tile, made, face });
+        let face = face_of(&tile, &stamps, &self.pyramid);
+        self.tiles.insert(
+            key,
+            Resident {
+                tile,
+                stamps,
+                made,
+                face,
+            },
+        );
         self.revision += 1;
     }
 
@@ -148,6 +168,7 @@ impl TileStore {
         Some(Left {
             current: resident.made == self.generation,
             tile: resident.tile,
+            stamps: resident.stamps,
         })
     }
 
@@ -167,7 +188,7 @@ impl TileStore {
         self.revision += 1;
     }
 
-    pub(super) fn keep_in_memory(&mut self, tile: Arc<Tile>, frame: u64) {
+    pub(super) fn keep_in_memory(&mut self, tile: Arc<Tile>, stamps: Arc<[Stamp]>, frame: u64) {
         let key = tile.key();
         let bytes = memory_bytes(&tile);
         self.forget(key);
@@ -176,6 +197,7 @@ impl TileStore {
             key,
             CachedTile {
                 tile,
+                stamps,
                 bytes,
                 left: frame,
             },
@@ -225,7 +247,7 @@ impl TileStore {
             if let Some(cached) = self.cache.remove(&key) {
                 self.cached_bytes -= cached.bytes;
                 work.upload(2 * TILE_ARRAY_BYTES);
-                self.arrive(cached.tile);
+                self.arrive(cached.tile, cached.stamps);
                 restored += 1;
             }
         }

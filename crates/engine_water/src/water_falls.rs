@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use engine_core::glam::{Vec2, Vec3};
+use glam::{Vec2, Vec3};
 use engine_core::math::{clamp, exp, max, min, pow};
 use engine_heightfield::Fall;
 use engine_render::wgpu;
@@ -24,7 +24,7 @@ const BOW: f32 = 0.12;
 const SLOWEST: f32 = 0.3;
 
 pub(crate) fn sheets<'a>(
-    falls: impl IntoIterator<Item = (Vec3, &'a [Fall])>,
+    falls: impl IntoIterator<Item = (Vec3, &'a [Fall], u32)>,
     vertices: &mut Vec<FallVertex>,
     indices: &mut Vec<u32>,
 ) -> Vec<Range<u32>> {
@@ -32,10 +32,14 @@ pub(crate) fn sheets<'a>(
     indices.clear();
     falls
         .into_iter()
-        .map(|(origin, set)| {
+        .map(|(origin, set, terrain)| {
             let first = indices.len() as u32;
+            let made = vertices.len();
             for fall in set {
                 fall_jets(fall, origin, vertices, indices);
+            }
+            for vertex in &mut vertices[made..] {
+                vertex.terrain = terrain;
             }
             first..indices.len() as u32
         })
@@ -223,6 +227,7 @@ fn fall_jets(fall: &Fall, origin: Vec3, vertices: &mut Vec<FallVertex>, indices:
                     sheet: [side * width, row.half, row.spread, thickness],
                     state: [row.white, row.broken],
                     sky: row.sky,
+                    terrain: 0,
                 });
             }
             if index > 0 {
@@ -237,8 +242,14 @@ fn fall_jets(fall: &Fall, origin: Vec3, vertices: &mut Vec<FallVertex>, indices:
 }
 
 pub(crate) fn fall_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 5] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Float32x2, 4 => Float32];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+        0 => Float32x3,
+        1 => Float32x3,
+        2 => Float32x4,
+        3 => Float32x2,
+        4 => Float32,
+        5 => Uint32,
+    ];
     wgpu::VertexBufferLayout {
         array_stride: size_of::<FallVertex>() as u64,
         step_mode: wgpu::VertexStepMode::Vertex,

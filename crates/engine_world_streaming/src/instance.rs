@@ -4,19 +4,17 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::math::max;
-use engine_core::{AssetLibrary, Mesh3d, Spawner, Transform};
-use engine_places::ground::Grounded;
-use engine_places::streaming::StreamingPaths;
+use engine_core::{Authored, Mesh3d, Reach, SceneContext, Spawner, Transform};
 use glam::{Mat4, Vec3};
 use serde_json::Value;
 
-use crate::scene::{ExpandedObject, Placed, StreamedScene};
-use crate::{WorldCells, WorldStreamingBrick};
+use crate::WorldStreamingBrick;
+use crate::scene::{ExpandedList, ExpandedObject, StreamedScene, kind};
 
 struct Prepared {
     transform: Transform,
     mesh: Option<Mesh3d>,
-    grounded: Option<Grounded>,
+    authored: Authored,
     components: Vec<(String, Value)>,
 }
 
@@ -40,60 +38,21 @@ pub(crate) struct Content {
     pub(crate) kept: Tree,
 }
 
-pub(crate) fn prepare_streamed(
-    scene: Res<StreamedScene>,
-    paths: Res<StreamingPaths>,
-    assets: Res<AssetLibrary>,
-    mut cells: ResMut<WorldCells>,
-) {
-    if !scene.is_changed() && !paths.is_changed() && !cells.waiting {
-        return;
-    }
-    let placed: Vec<Placed> = scene
-        .along
-        .iter()
-        .enumerate()
-        .filter_map(|(index, along)| {
-            let path = paths.paths.iter().find(|path| path.layer == along.layer)?;
-            let spots = along
-                .spots(&path.points, &format!("streamed.along[{index}]"))
-                .ok()?;
-            Some(Placed {
-                along: index,
-                origin: path.origin,
-                spots,
-            })
-        })
-        .collect();
-    if !scene.is_changed() && !cells.waiting && placed == cells.placed {
-        return;
-    }
-    cells.placed = placed;
-    let Ok(expanded) = scene.expand(&cells.placed) else {
-        cells.waiting = false;
-        cells.incoming = Some(Arc::new(Content::default()));
-        return;
+pub(crate) fn content(scene: &StreamedScene, context: &SceneContext) -> Content {
+    let Ok(expanded) = scene.expand(context) else {
+        return Content::default();
     };
-    let resident = |objects: &[ExpandedObject]| {
-        objects.iter().all(|object| {
-            object
-                .source
-                .mesh
-                .is_none_or(|mesh| assets.mesh(mesh).is_some())
-        })
-    };
-    if !resident(&expanded.streamed) || !resident(&expanded.kept) {
-        cells.waiting = true;
-        return;
+    Content {
+        streamed: tree(expanded.streamed, context),
+        kept: tree(expanded.kept, context),
     }
-    cells.waiting = false;
-    cells.incoming = Some(Arc::new(Content {
-        streamed: tree(expanded.streamed, &assets),
-        kept: tree(expanded.kept, &assets),
-    }));
 }
 
-fn tree(entities: Vec<ExpandedObject>, assets: &AssetLibrary) -> Tree {
+fn tree(list: ExpandedList, context: &SceneContext) -> Tree {
+    let ExpandedList {
+        entities,
+        transforms,
+    } = list;
     let indices: BTreeMap<&str, usize> = entities
         .iter()
         .enumerate()
@@ -119,7 +78,7 @@ fn tree(entities: Vec<ExpandedObject>, assets: &AssetLibrary) -> Tree {
             cursor = parents[index];
         }
         while let Some(index) = chain.pop() {
-            let local = entities[index].transform;
+            let local = transforms[index];
             let local = Mat4::from_scale_rotation_translation(
                 local.scale,
                 local.rotation,
@@ -130,12 +89,18 @@ fn tree(entities: Vec<ExpandedObject>, assets: &AssetLibrary) -> Tree {
             }));
         }
     }
+    let sizes = |id: &str| {
+        context
+            .bounds
+            .get(id)
+            .map_or(0.0, |bounds| (bounds.max() - bounds.min()).length())
+    };
     let mut items: Vec<TreeItem> = Vec::new();
     let mut item_of = HashMap::default();
     for (index, &root) in roots.iter().enumerate() {
         let item = *item_of.entry(root).or_insert_with(|| {
             items.push(TreeItem {
-                id: Arc::from(entities[root].source.id.as_str()),
+                id: Arc::from(format!("{}/{}", context.id, entities[root].source.id)),
                 entities: Vec::new(),
                 position: worlds[root]
                     .expect("world_matrix_composed")
@@ -148,14 +113,23 @@ fn tree(entities: Vec<ExpandedObject>, assets: &AssetLibrary) -> Tree {
         items[item].entities.push(index);
         let position = items[item].position;
         let world = worlds[index].expect("world_matrix_composed");
-        let mut reach = world.w_axis.truncate().distance(position);
-        if let Some(mesh) = entities[index]
-            .source
-            .mesh
-            .and_then(|mesh| assets.mesh(mesh))
-        {
-            let bounds = mesh.bounds();
-            reach = max(reach, of_box(world, position, bounds.min(), bounds.max()));
+        let from = world.w_axis.truncate().distance(position);
+        let standing = Reach {
+            world,
+            position,
+            from,
+            mesh_sizes: &sizes,
+        };
+        let source = &entities[index].source;
+        let mut reach = from;
+        let mut extend = |value: f32| reach = max(reach, value);
+        if let Some(bounds) = source.mesh.as_ref().and_then(|id| context.bounds.get(id)) {
+            extend(standing.of_box(bounds.min(), bounds.max()));
+        }
+        for (name, value) in source.authored() {
+            if let Some(kind) = kind(&context.kinds, name) {
+                kind.extend_reach(value, &standing, &mut extend);
+            }
         }
         if reach.is_finite() {
             items[item].reach = max(items[item].reach, reach);
@@ -175,19 +149,43 @@ fn tree(entities: Vec<ExpandedObject>, assets: &AssetLibrary) -> Tree {
     Tree {
         entities: entities
             .into_iter()
-            .map(|entity| Prepared {
-                transform: entity.transform,
-                mesh: entity
-                    .source
-                    .mesh
-                    .zip(entity.source.material)
-                    .map(|(mesh, material)| Mesh3d { mesh, material }),
-                grounded: entity.grounded,
-                components: entity.source.components.into_iter().collect(),
-            })
+            .zip(transforms)
+            .map(|(entity, transform)| prepared(entity, transform, context))
             .collect(),
         parents,
         items,
+    }
+}
+
+fn prepared(entity: ExpandedObject, transform: Transform, context: &SceneContext) -> Prepared {
+    let source = entity.source;
+    let mesh = match (&source.mesh, &source.material) {
+        (Some(mesh), Some(material)) => context
+            .assets
+            .meshes
+            .get(mesh)
+            .zip(context.assets.materials.get(material))
+            .map(|(&mesh, &material)| Mesh3d { mesh, material }),
+        (Some(_), None) | (None, Some(_)) | (None, None) => None,
+    };
+    let components = source
+        .authored()
+        .filter(|&(name, _)| kind(&context.kinds, name).is_some())
+        .map(|(name, value)| (name.to_owned(), value.clone()))
+        .collect();
+    Prepared {
+        transform,
+        mesh,
+        authored: Authored {
+            id: source.id,
+            name: source.name,
+            tags: source.tags,
+            parent: source.parent,
+            prefab_id: entity.prefab_id,
+            prefab_instance: entity.prefab_instance,
+            prefab_local_id: entity.prefab_local_id,
+        },
+        components,
     }
 }
 
@@ -200,22 +198,6 @@ fn item_roots(parents: &[Option<usize>]) -> Vec<usize> {
             index
         })
         .collect()
-}
-
-fn of_box(world: Mat4, position: Vec3, min: Vec3, max_corner: Vec3) -> f32 {
-    (0..8)
-        .map(|corner| {
-            let pick = |bit: u32, low: f32, high: f32| {
-                if corner & (1 << bit) == 0 { low } else { high }
-            };
-            let point = Vec3::new(
-                pick(0, min.x, max_corner.x),
-                pick(1, min.y, max_corner.y),
-                pick(2, min.z, max_corner.z),
-            );
-            world.transform_point3(point).distance(position)
-        })
-        .fold(0.0, max)
 }
 
 impl Tree {
@@ -236,14 +218,12 @@ impl Tree {
             .map(|&index| {
                 let prepared = &self.entities[index];
                 let entity = spawner.spawn(prepared.transform);
+                spawner.author(entity, prepared.authored.clone());
                 if let Some(mesh) = prepared.mesh {
                     spawner.insert(entity, mesh);
                 }
-                if let Some(grounded) = prepared.grounded {
-                    spawner.insert(entity, grounded);
-                }
                 for (key, value) in &prepared.components {
-                    spawner.insert_authored(entity, key, value);
+                    spawner.insert_scene(entity, key, value.clone());
                 }
                 entity
             })
@@ -255,11 +235,15 @@ impl Tree {
                 .position(|&own| own == index)
                 .expect("reference_within_item")]
         };
-        for (&index, &entity) in item.entities.iter().zip(&mine) {
-            if let Some(parent) = self.parents[index] {
-                spawner.set_parent(entity, Some(entity_of(parent)));
-            }
-        }
+        let parents: Vec<_> = item
+            .entities
+            .iter()
+            .zip(&mine)
+            .filter_map(|(&index, &entity)| {
+                self.parents[index].map(|parent| (entity, Some(entity_of(parent))))
+            })
+            .collect();
+        spawner.set_parents(parents);
         spawned.extend(mine);
     }
 }

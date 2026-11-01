@@ -1,7 +1,3 @@
-const IMPOSTOR_HEMISPHERE: u32 = 0x10000u;
-const IMPOSTOR_MASKED: u32 = 0x20000u;
-const IMPOSTOR_FRAMES_SHIFT: u32 = 19u;
-
 fn impostor_frames(flags: u32) -> u32 {
     return (flags >> IMPOSTOR_FRAMES_SHIFT) & 31u;
 }
@@ -23,14 +19,6 @@ fn impostor_fade(batch: u32) -> f32 {
         return 1.0;
     }
     return f32((batch >> 16u) & 0x3fffu) / 16383.0;
-}
-
-struct ImpostorRecord {
-    sphere: vec4<f32>,
-    extent: vec3<f32>,
-    layer: u32,
-    emissive: vec3<f32>,
-    flags: u32,
 }
 
 fn impostor_octahedral(d: vec3<f32>) -> vec2<f32> {

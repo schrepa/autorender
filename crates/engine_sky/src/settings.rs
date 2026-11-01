@@ -74,7 +74,7 @@ settings! {
         pub scale: f32 = 3000.0 => range(200.0, 50_000.0),
         pub seed: u32 = 1 => any,
         pub shadows: f32 = 0.75 => range(0.0, 1.0),
-        pub resolution: u32 = 2048 => range(256, 4096),
+        pub resolution: u32 = 2048 => multiple(64, 256, 4096),
         pub slices: u32 = 64 => range(1, 64),
         pub in_view: bool = true => any,
     }
@@ -87,18 +87,31 @@ settings! {
     #[schemars(rename = "SceneSkyLight")]
     pub struct SkyLighting {
         pub preset: LightPreset = LightPreset::GoldenHour => any,
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub zenith: Option<[f32; 3]> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub horizon: Option<[f32; 3]> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub ground: Option<[f32; 3]> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub ambient: Option<f32> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub fog_start: Option<f32> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub fog_density: Option<f32> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub fog_falloff: Option<f32> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub fog_max: Option<f32> = None => range(0.0, 1.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub aerial_start: Option<f32> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub aerial_density: Option<f32> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub aerial_falloff: Option<f32> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub aerial_color: Option<[f32; 3]> = None => at_least(0.0),
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub aerial_glow: Option<f32> = None => at_least(0.0),
     }
 }

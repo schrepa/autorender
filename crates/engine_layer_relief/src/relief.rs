@@ -105,14 +105,14 @@ fn read_hummocks(input: &mut Reader<'_>) -> Made {
 }
 
 fn checked(valid: Result<(), InvalidSetting>) -> Result<(), Error> {
-    valid.map_err(|invalid| invalid.error(ErrorCode::InvalidValue, "$"))
+    valid.map_err(|invalid| invalid.error(ErrorCode::InvalidTerrain, "$"))
 }
 
 fn water_below(place: Place<'_>) -> Result<(), Error> {
     if place.below().iter().any(|layer| layer.makes_water()) {
         Ok(())
     } else {
-        Err(Error::new(ErrorCode::InvalidValue, "$").variants(["hydrology"]))
+        Err(Error::new(ErrorCode::MissingLayer, "$").variants(["hydrology"]))
     }
 }
 

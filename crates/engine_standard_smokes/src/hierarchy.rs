@@ -49,7 +49,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let source = fixture();
     let loaded = load(session, &source)?;
     smoke_eq!(
-        json!(loaded["rendering"]["invalid_transforms"]),
+        json!(loaded["rendering"]["meshes_stats"]["invalid_transforms"]),
         json!(0),
         "fixture_transforms_valid"
     );
@@ -61,11 +61,11 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let rendering = query(session, "assets", json!({}))?["rendering"].clone();
     let entities = total(session, json!({"limit": 1}))?;
     smoke_eq!(
-        json!(rendering["invalid_transforms"]),
+        json!(rendering["meshes_stats"]["invalid_transforms"]),
         json!(0),
         "initial_transforms_valid"
     );
-    motion(session, &source)?;
+    motion(session)?;
     refusals(session, &source, &initial)?;
     let transformed = matrices(session, &source, &initial)?;
     instances(session, &transformed, &initial, (&rendering, entities))?;
@@ -237,18 +237,25 @@ fn children(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     Ok(())
 }
 
-fn motion(session: &mut dyn SmokeSession, source: &Value) -> Result<(), SmokeFailure> {
+fn motion(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let local = component(session, "player-accessory", "Transform")?;
     let player_before = component(session, "player", "GlobalTransform")?;
     let accessory_before = component(session, "player-accessory", "GlobalTransform")?;
     let tick_before = tick(session)?;
-    let mut moved = source.clone();
-    moved["entities"][1]["transform"]["translation"] =
-        json!(Vec3::new(0.0, 0.5, 4.0) + Vec3::new(0.0, 0.0, -0.65));
-    let edited = reload(session, &moved);
-    let wanted = json!(null);
+    let at = numbers(&component(session, "player", "Transform")?["translation"]);
+    let placed = Vec3::new(
+        at.first().copied().unwrap_or(f64::NAN) as f32,
+        at.get(1).copied().unwrap_or(f64::NAN) as f32,
+        at.get(2).copied().unwrap_or(f64::NAN) as f32,
+    );
+    let translation = placed + Vec3::new(0.0, 0.0, -0.65);
+    let edited = session.request(
+        "control",
+        json!({"name": "edit_transform", "args": {"entity": "player", "translation": translation.to_array()}}),
+    );
+    let wanted = json!(true);
     smoke_eq!(
-        seen(edited.is_ok(), json!(edited.as_ref().err()), &wanted),
+        seen(edited.is_ok(), json!(edited.is_ok()), &wanted),
         wanted,
         "player_moves"
     );
@@ -487,7 +494,7 @@ fn instances(
                 json!([
                     warm["mesh_upload_bytes"],
                     warm["texture_upload_bytes"],
-                    warm["invalid_transforms"]
+                    warm["meshes_stats"]["invalid_transforms"]
                 ]),
                 json!([0, 0, 0]),
                 "warm_upload_reuse"
@@ -576,7 +583,7 @@ fn removal(
         json!([
             drawn["resident_textures"],
             drawn["resident_texture_bytes"],
-            drawn["invalid_transforms"]
+            drawn["meshes_stats"]["invalid_transforms"]
         ]),
         json!([0, 0, 0]),
         "removed_textures_and_transforms"
@@ -595,7 +602,7 @@ fn reloaded(session: &mut dyn SmokeSession, document: &Value) -> Result<Value, S
     );
     let rendering = reloaded.unwrap_or_default()["rendering"].clone();
     smoke_eq!(
-        json!(rendering["invalid_transforms"]),
+        json!(rendering["meshes_stats"]["invalid_transforms"]),
         json!(0),
         "reload_transforms_valid"
     );
@@ -604,13 +611,13 @@ fn reloaded(session: &mut dyn SmokeSession, document: &Value) -> Result<Value, S
 
 fn settled(session: &mut dyn SmokeSession, mut rendering: Value) -> Result<Value, SmokeFailure> {
     for _ in 0..SETTLE_RENDERS {
-        if rendering["missing_assets"] == 0 {
+        if rendering["meshes_stats"]["missing_assets"] == 0 {
             break;
         }
         rendering = render(session)?;
     }
     smoke_eq!(
-        json!(rendering["missing_assets"]),
+        json!(rendering["meshes_stats"]["missing_assets"]),
         json!(0),
         "scene_settles"
     );

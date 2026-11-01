@@ -1,11 +1,13 @@
+import package::engine::math::GRAVITY;
 import package::engine::view::eye_world;
 import package::face::debug::{DEBUG_KIND_FALLS, DEBUG_KIND_WATER, DebugTargets, debug_targets};
+import package::face::heightfield::use_terrain;
 import package::face::lighting::sun_debug;
-import package::generated::water::{DEBUG_SPAN_STEPS, DRY, WATER_GRAVITY, WATER_SPAN_LEAST,
-    WATER_SPAN_MOST};
+import package::generated::pieces::water::piece;
+import package::generated::water::{DEBUG_SPAN_STEPS, DRY, WATER_SPAN_LEAST, WATER_SPAN_MOST};
 import package::place::water::WaterAt;
 import package::water::falls::{FallOutput, shade_fall};
-import package::water::surface::{WaterOutput, shade_water, water, water_drawn, water_eddy_froude,
+import package::water::surface::{WaterOutput, shade_water, water_drawn, water_eddy_froude,
     water_on_surface};
 
 fn debug_span_code(span: f32) -> f32 {
@@ -20,14 +22,14 @@ fn debug_span_code(span: f32) -> f32 {
 
 fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt) -> DebugTargets {
     let shade = shade_water(point, pixel, at, false);
-    if shade.coverage < 0.5 && water.debug.x == 0u { // optics: water covers as its shading sees it
+    if shade.coverage < 0.5 && piece().debug.x == 0u { // optics: water covers as its shading sees it
         discard;
     }
     let world = eye_world(point);
     let normal = shade.shaded.normal;
     let depth = at.depth;
     let speed = length(at.words.flow);
-    let froude = speed / sqrt(WATER_GRAVITY * max(depth, DRY));
+    let froude = speed / sqrt(GRAVITY * max(depth, DRY));
     let eddies = water_eddy_froude(speed, length(at.slope), depth);
     var targets = debug_targets(DEBUG_KIND_WATER, pack2x16float(vec2<f32>(depth, speed)),
         pack4x8unorm(vec4<f32>(debug_span_code(at.words.span), shade.shaded.roughness,
@@ -40,12 +42,14 @@ fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt) -> DebugTargets 
 
 @fragment
 fn fs_debug_water(input: WaterOutput) -> DebugTargets {
+    use_terrain(input.terrain);
     let at = water_drawn(input.relative);
     return debug_water(water_on_surface(input.relative, at), input.clip_position.xy, at);
 }
 
 @fragment
 fn fs_debug_fall(input: FallOutput) -> DebugTargets {
+    use_terrain(input.terrain);
     let shade = shade_fall(input);
     if shade.shown < 0.5 { // optics: falls show as their shading sees them
         discard;

@@ -11,29 +11,12 @@ pub const RULES: Rules = Rules {
             ("tools/lodbuild/src/simplify.rs", 2009),
         ],
         wide_structs: &[
-            ("crates/engine_core/src/frame_stats.rs", "RenderStats", 42),
             (
                 "crates/engine_core/src/interpolation/gpu.rs",
                 "GpuInputs",
                 35,
             ),
-            (
-                "crates/engine_render/src/renderer/core_state.rs",
-                "Core",
-                34,
-            ),
-            ("crates/engine_scatter/src/scatter.rs", "ScatterPass", 40),
-            ("crates/engine_sky/src/clouds.rs", "CloudPass", 48),
-            (
-                "crates/engine_terrain/src/runtime/residency.rs",
-                "TerrainState",
-                32,
-            ),
-            (
-                "crates/engine_terrain_shading/src/terrain/atlas.rs",
-                "TileAtlas",
-                32,
-            ),
+            ("crates/engine_scatter/src/gpu.rs", "ScatterGpu", 34),
         ],
         unsafe_files: &[
             "crates/engine_profile/src/allocator.rs",

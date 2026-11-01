@@ -132,8 +132,9 @@ fn build(root: &Path, project: &Project) -> Result<String, String> {
 fn scene_id(root: &Path, scene: &str) -> Result<String, String> {
     let text = fs::read_to_string(root.join(scene))
         .map_err(|error| format!("cannot read the scene {scene}: {error}"))?;
+    let kinds = crate::bricks::standard_kinds().map_err(|error| error.to_string())?;
     engine_scene::SceneDocument::from_json(&text)
-        .map(|document| document.id)
+        .and_then(|document| document.validate(&kinds).map(|()| document.id))
         .map_err(|error| json!({ "file": scene, "error": error }).to_string())
 }
 

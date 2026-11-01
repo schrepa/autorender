@@ -10,6 +10,7 @@ mod geometry;
 mod placed;
 mod queries;
 mod results;
+mod scene;
 mod smoke;
 mod terrain;
 mod terrain_sweep;
@@ -17,12 +18,10 @@ mod types;
 mod views;
 mod world;
 
-pub use types::{CollisionConfig, CollisionStats};
+pub use types::{CollisionConfig, CollisionLimits, CollisionStats, Count};
 
 use bevy_ecs::prelude::*;
-use engine_core::{
-    Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source,
-};
+use engine_core::{Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source};
 use engine_places::physics::{Collider, Collision};
 
 pub struct CollisionBrick;
@@ -41,18 +40,28 @@ impl Brick for CollisionBrick {
             .settings::<CollisionConfig>()
             .stats::<CollisionStats>()
             .fill::<Collision>(None)
-            .join::<SceneComponents>(ComponentKind::of::<Collider>("collider"), None)
+            .join::<SceneComponents>(
+                ComponentKind::of::<Collider>("collider")
+                    .check(scene::checked)
+                    .check_placed(scene::checked_world)
+                    .schema(scene::schema)
+                    .example(scene::example),
+                None,
+            )
             .systems(
                 Schedule::FixedPreSimulation,
                 (world::sync_ground, world::sync),
             )
-            .systems(Schedule::FixedPostSimulation, (world::sync, world::detect))
+            .systems(
+                Schedule::FixedPostSimulation,
+                (world::sync_ground, world::sync, world::detect),
+            )
             .off(world::forget)
-            .observation::<queries::RaycastQuery>()
-            .observation::<queries::OverlapQuery>()
-            .observation::<queries::ShapeCastQuery>()
+            .settled::<queries::RaycastQuery, _>(world::refresh)
+            .settled::<queries::OverlapQuery, _>(world::refresh)
+            .settled::<queries::ShapeCastQuery, _>(world::refresh)
             .observation::<queries::CollisionEventsQuery>()
-            .observation::<terrain_sweep::TerrainSweepQuery>()
-            .observation::<views::ColliderQuery>();
+            .settled::<terrain_sweep::TerrainSweepQuery, _>(world::refresh)
+            .settled::<views::ColliderQuery, _>(world::refresh);
     }
 }

@@ -14,12 +14,15 @@ stats! {
         pub restored_tiles: u64,
         pub prefetching_tiles: u32,
         pub tile_cut: Cut,
+        pub dropped_tiles: u32,
         pub fallback_tiles: u32,
         pub baking: u32,
         pub bridges: u32,
         pub tunnels: u32,
         pub surroundings_tiles: u32,
         pub loading: bool,
+        pub failed_jobs: u64,
+        pub latest_job_failure: Option<String>,
     }
 }
 

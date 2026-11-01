@@ -1,23 +1,26 @@
-use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::rc::Rc;
+use std::collections::{BTreeMap, VecDeque};
+use std::ops::Range;
 use std::sync::Arc;
 
+use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
-use engine_core::RecordKey;
-use engine_faces::heightfield::HeightfieldFace;
-use engine_terrain::shallow_water::{CELL_MEANS, DRY, step_seconds};
-use engine_terrain::{BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, SettleStart, SteadyWater, codec};
+use engine_core::{CookMode, DeviceLimits, Error, FrameTime, Jobs, Readback};
+use engine_places::ground::GroundTiles;
+use engine_render::{AfterRead, ComputePipeline, Count, Encode, Install, Pass, Prepare};
 
-use crate::gpu_layouts::constants::{
+use crate::gpu::{
     SIM_BLOCK_LOOKS, SIM_BURSTING, SIM_CELL_SUMS, SIM_KEEPING, SIM_LOCAL, SIM_LOOKING, SIM_OPEN,
-    SIM_SLOTS, SIM_SPARSE, SIM_STEPPING, SIM_SUMMING,
+    SIM_SLOTS, SIM_SPARSE, SIM_STEPPING, SIM_SUMMING, SimSetup, SimSlot,
 };
-use crate::gpu_layouts::water::{SimSetup, SimSlot};
+use crate::jobs::SETTLED;
+use crate::shallow_water::{CELL_MEANS, DRY, step_seconds};
+use crate::state::WaterState;
+use crate::water::WaterGpu;
 use crate::water_kernels::{
-    Capacity, Kernels, SlotBuffers, encode_look, encode_steps, slot_bytes, slot_largest_bytes,
+    Capacity, Kernels, Layout, SetupHandles, SlotHandles, grid, slot_bytes, slot_largest_bytes,
+    squares,
 };
-use crate::water_sim::{LiveGround, Setup, SetupBuffers};
+use crate::{BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, SettleStart, SteadyWater};
 
 const LOOK_EVERY: u32 = 256;
 const SETTLE_STEPS: [u32; 2] = [1024, 16_384];
@@ -29,30 +32,25 @@ const COOK_BYTES: u64 = 1 << 30;
 const PLAY_BYTES: u64 = 128 << 20;
 const COOK_CELL_STEPS: u64 = 160_000_000;
 const PLAY_CELL_STEPS: u64 = 2_000_000;
+const LOST_FRAMES: u64 = 120;
+pub(crate) const TALLIES: u32 = 0;
+const LOOK: u32 = 0;
+const MEANS: u32 = 1;
+const GROUND: u32 = 2;
 
-pub(crate) struct WaterSettle {
-    kernels: Kernels,
-    buffers: Option<SlotBuffers>,
-    setup: Setup,
-    setup_buffers: Option<SetupBuffers>,
-    waiting: VecDeque<(u64, Vec<RecordKey>, Arc<SettleStart>)>,
-    squares: Vec<Option<Square>>,
-    loads: u32,
-    readbacks: Vec<Readback>,
-    made: Vec<(RecordKey, Result<Vec<u8>, String>)>,
-    cooking: bool,
-    steps: u32,
-    blocks: u32,
-    sourced: u32,
-    stirring: bool,
-    raising: u32,
-    clears: Vec<Clear>,
-    copies: Vec<CopyBack>,
+fn tag(slot: usize, kind: u32) -> u32 {
+    1 + 3 * slot as u32 + kind
+}
+
+pub(crate) struct SettleAsk {
+    pub(crate) terrain: Entity,
+    pub(crate) inputs: Vec<Arc<[u8]>>,
+    pub(crate) start: Arc<SettleStart>,
 }
 
 struct Square {
-    records: Vec<RecordKey>,
-    terrain: u64,
+    inputs: Vec<Arc<[u8]>>,
+    terrain: Entity,
     start: Arc<SettleStart>,
     load: u32,
     raised: bool,
@@ -64,7 +62,9 @@ struct Square {
     stepping: u64,
     flowing: u64,
     phase: Phase,
-    fresh: bool,
+    asked_means: Option<u64>,
+    means: Option<Vec<u8>>,
+    ground: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -89,7 +89,7 @@ struct Look {
 
 impl Look {
     fn holds_to(&self, before: &Look) -> bool {
-        let floor = f64::from(codec::HEIGHT_STEP);
+        let floor = f64::from(engine_codec::HEIGHT_STEP);
         let pairs = [
             (self.volume, before.volume),
             (self.speed, before.speed),
@@ -104,93 +104,88 @@ impl Look {
     }
 }
 
-struct Clear {
-    averages: bool,
-    offset: u64,
-    bytes: u64,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Source {
+    Averages,
+    Ground,
 }
 
-struct CopyBack {
-    ground: bool,
-    offset: u64,
-    bytes: u64,
-    readback: usize,
-    into: u64,
+pub(crate) struct Read {
+    pub(crate) tag: u32,
+    pub(crate) source: Source,
+    pub(crate) range: Range<u64>,
 }
 
-struct Readback {
-    slot: usize,
-    load: u32,
-    means: bool,
-    buffer: wgpu::Buffer,
-    mapped: Rc<RefCell<Mapped>>,
+pub(crate) struct Raise {
+    pub(crate) list: Vec<[u32; 4]>,
+    pub(crate) frame: SimSetup,
+    pub(crate) blocks: u32,
 }
 
-enum Mapped {
-    Recorded,
-    Mapping,
-    Read(Vec<u8>),
-    Failed,
+#[derive(Default)]
+pub(crate) struct SettleWork {
+    pub(crate) layout: Option<(Layout, u64)>,
+    pub(crate) loads: Vec<Option<(u32, Arc<SettleStart>)>>,
+    pub(crate) room: Option<(usize, u64)>,
+    pub(crate) raise: Option<Raise>,
+    pub(crate) squares: Vec<SimSlot>,
+    pub(crate) steps: u32,
+    pub(crate) sourced: u32,
+    pub(crate) blocks: u32,
+    pub(crate) stirring: bool,
+    pub(crate) reads: Vec<Read>,
+}
+
+#[derive(Resource, Default)]
+pub struct SettleFeedback {
+    waiting: VecDeque<SettleAsk>,
+    squares: Vec<Option<Square>>,
+    loads: u32,
+    layout: Option<Layout>,
+    layout_generation: u64,
+    room: Option<usize>,
+    room_generation: u64,
+    steps: u32,
+    asked: BTreeMap<(u32, u64), (usize, u32)>,
+    arrivals: Vec<(u64, u32, Vec<u8>)>,
+    made: Vec<(Vec<u8>, Result<Vec<u8>, String>)>,
+    pub(crate) work: SettleWork,
+}
+
+impl Readback for SettleFeedback {
+    fn arrived(&mut self, frame: u64, tag: u32, bytes: &[u8]) {
+        self.arrivals.push((frame, tag, bytes.to_vec()));
+    }
 }
 
 fn needs(start: &SettleStart) -> Capacity {
     Capacity::of(&start.stored, start.sources.len())
 }
 
-impl WaterSettle {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
-        Self {
-            kernels: Kernels::new(device),
-            buffers: None,
-            setup: Setup::new(device),
-            setup_buffers: None,
-            waiting: VecDeque::new(),
-            squares: Vec::new(),
-            loads: 0,
-            readbacks: Vec::new(),
-            made: Vec::new(),
-            cooking: false,
-            steps: 0,
-            blocks: 0,
-            sourced: 0,
-            stirring: false,
-            raising: 0,
-            clears: Vec::new(),
-            copies: Vec::new(),
-        }
-    }
-
-    pub(crate) fn settle(&mut self, starts: Vec<(u64, Vec<RecordKey>, Arc<SettleStart>)>) {
-        for (terrain, records, start) in starts {
-            let asked = self.waiting.iter().any(|(_, held, _)| *held == records)
+impl SettleFeedback {
+    fn settle(&mut self, starts: Vec<SettleAsk>) {
+        for ask in starts {
+            let asked = self.waiting.iter().any(|held| held.inputs == ask.inputs)
                 || self
                     .squares
                     .iter()
                     .flatten()
-                    .any(|square| square.records == records);
+                    .any(|square| square.inputs == ask.inputs);
             if asked {
                 continue;
             }
-            if start.stored.stored() == 0 {
-                let made = start.finish(&[], &[], 0, true);
+            if ask.start.stored.stored() == 0 {
+                let made = ask.start.finish(&[], &[], 0, true);
                 self.made.extend(
-                    records
+                    ask.inputs
                         .into_iter()
                         .zip(made)
-                        .map(|(record, water)| (record, Ok(codec::encode(&water)))),
+                        .map(|(input, water)| (input.to_vec(), Ok(engine_codec::encode(&water)))),
                 );
                 continue;
             }
-            self.waiting.push_back((terrain, records, start));
+            self.waiting.push_back(ask);
         }
-    }
-
-    pub(crate) fn set_cooking(&mut self, cooking: bool) {
-        self.cooking = cooking;
-    }
-
-    pub(crate) fn take_made(&mut self) -> Vec<(RecordKey, Result<Vec<u8>, String>)> {
-        std::mem::take(&mut self.made)
     }
 
     pub(crate) fn looks_left(&self) -> u64 {
@@ -202,46 +197,44 @@ impl WaterSettle {
         waiting + settling.sum::<u64>()
     }
 
-    pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.buffers.as_ref().map_or(0, SlotBuffers::bytes)
-            + self.setup_buffers.as_ref().map_or(0, SetupBuffers::bytes)
+    fn reading(&self) -> bool {
+        !self.asked.is_empty()
     }
 
-    pub(crate) fn prepare(
+    fn prepare(
         &mut self,
-        device: &wgpu::Device,
-        queue: &engine_render::gpu_calls::Queue,
-        terrain: &dyn HeightfieldFace,
+        (cooking, binding, frame): (bool, u64, u64),
+        ground: &dyn Fn(Entity) -> Option<u32>,
     ) {
-        self.clears.clear();
-        self.copies.clear();
-        self.raising = 0;
+        self.work = SettleWork::default();
         let ran = std::mem::take(&mut self.steps);
-        let wanted = self.take_readbacks(ran);
+        let wanted = self.take_readbacks(ran, cooking, frame);
         let idle = self.waiting.is_empty() && self.squares.iter().all(Option::is_none);
         if idle {
-            if self.readbacks.is_empty() {
-                self.buffers = None;
-                self.setup_buffers = None;
+            if !self.reading() {
+                self.layout = None;
+                self.room = None;
                 self.squares.clear();
             }
             return;
         }
-        self.kernels.pipelines(device);
-        self.ensure_buffers(device);
+        self.ensure_buffers(binding, cooking);
         self.fill_slots();
-        let Some(buffers) = self.buffers.as_ref() else {
+        let Some(layout) = self.layout else {
             return;
         };
-        for (slot, square) in self.squares.iter_mut().enumerate() {
-            if let Some(square) = square
-                && std::mem::take(&mut square.fresh)
-            {
-                let clears = load(queue, buffers, slot as u32, square);
-                self.clears.extend(clears);
-            }
-        }
-        self.raise((device, queue), terrain);
+        self.work.layout = Some((layout, self.layout_generation));
+        self.raise(&layout, ground);
+        self.work.room = self.room.map(|room| (room, self.room_generation));
+        self.work.loads = self
+            .squares
+            .iter()
+            .map(|square| {
+                square
+                    .as_ref()
+                    .map(|square| (square.load, Arc::clone(&square.start)))
+            })
+            .collect();
         let stepping: u64 = self
             .squares
             .iter()
@@ -249,7 +242,7 @@ impl WaterSettle {
             .filter(|square| square.raised && square.phase != Phase::Reading)
             .map(|square| square.stepping.max(1))
             .sum();
-        let budget = if self.cooking {
+        let budget = if cooking {
             COOK_CELL_STEPS
         } else {
             PLAY_CELL_STEPS
@@ -258,63 +251,31 @@ impl WaterSettle {
             let most = most.clamp(1, u64::from(LOOK_EVERY)) as u32;
             self.steps = 1 << (u32::BITS - 1 - most.leading_zeros());
         }
-        let looks = self.write_squares(queue);
-        self.ask_readbacks(device, (looks, wanted));
+        let looks = self.write_squares();
+        self.ask_readbacks(&layout, (looks, wanted), frame);
     }
 
-    fn raise(
-        &mut self,
-        (device, queue): (&wgpu::Device, &engine_render::gpu_calls::Queue),
-        terrain: &dyn HeightfieldFace,
-    ) {
-        let Some(buffers) = self.buffers.as_ref() else {
-            return;
-        };
+    fn raise(&mut self, layout: &Layout, ground: &dyn Fn(Entity) -> Option<u32>) {
         let found = self.squares.iter().enumerate().find_map(|(slot, square)| {
             let square = square.as_ref().filter(|square| !square.raised)?;
-            let ground = terrain.ground(square.terrain)?;
-            Some((
-                slot,
-                LiveGround {
-                    group: ground.group,
-                    uniform: ground.uniform,
-                    terrain: ground.terrain,
-                    held: terrain,
-                },
-            ))
+            Some((slot, ground(square.terrain)?))
         });
-        self.setup.hold(found.as_ref().map(|(_, ground)| ground));
-        let Some((slot, _)) = found else {
+        let Some((slot, terrain)) = found else {
             return;
         };
-        self.setup.ensure(device);
         let Some(square) = self.squares[slot].as_mut() else {
             return;
         };
-        if !self.setup.sets_up() {
-            return;
-        }
         let start = &square.start;
         let blocks = start.stored.stored();
         let window = (start.window * start.window) as usize;
         let entries = 2 * blocks + blocks * window;
-        if self
-            .setup_buffers
-            .as_ref()
-            .is_none_or(|setup| setup.room < entries)
-        {
-            self.setup_buffers = Some(SetupBuffers::new(
-                device,
-                &self.setup.layout,
-                buffers,
-                (entries, 0),
-            ));
+        if self.room.is_none_or(|room| room < entries) {
+            self.room = Some(entries.max(1).next_power_of_two());
+            self.room_generation += 1;
         }
-        let Some(setup) = self.setup_buffers.as_ref() else {
-            return;
-        };
         let side = i64::from(BLOCK_SIDE);
-        let first = (slot as u32) * buffers.capacity.blocks;
+        let first = (slot as u32) * layout.capacity.blocks;
         let mut list: Vec<[u32; 4]> = Vec::with_capacity(entries);
         let blocks_and_samples = start.stored.places.iter().zip(&start.windows);
         for (block, (&place, sample)) in blocks_and_samples.enumerate() {
@@ -332,21 +293,24 @@ impl WaterSettle {
             list.push([bits(sample[0]), bits(sample[1]), 0, 0]);
         }
         list.extend_from_slice(&start.samples);
-        queue.write_buffer(&setup.list, 0, bytemuck::cast_slice(&list));
         let frame = SimSetup {
             counts: [blocks as u32, 0, 0, 0],
             square: [start.window, start.last[0] as u32, start.last[1] as u32, 0],
             meters: [start.cell, start.datum, 0.0, 0.0],
             ring: [0; 4],
             tiles: [0; 4],
+            terrain: [terrain, 0, 0, 0],
         };
-        queue.write_buffer(&setup.frame, 0, bytemuck::bytes_of(&frame));
         square.raised = true;
-        self.raising = blocks as u32;
+        self.work.raise = Some(Raise {
+            list,
+            frame,
+            blocks: blocks as u32,
+        });
     }
 
     fn fill_slots(&mut self) {
-        let Some(capacity) = self.buffers.as_ref().map(|buffers| buffers.capacity) else {
+        let Some(capacity) = self.layout.map(|layout| layout.capacity) else {
             return;
         };
         for slot in 0..self.squares.len() {
@@ -354,21 +318,17 @@ impl WaterSettle {
                 continue;
             }
             let fits = |start: &SettleStart| capacity.holds(needs(start));
-            let Some(at) = self
-                .waiting
-                .iter()
-                .position(|(_, _, start)| fits(start.as_ref()))
-            else {
+            let Some(at) = self.waiting.iter().position(|ask| fits(ask.start.as_ref())) else {
                 break;
             };
-            let Some((terrain, records, start)) = self.waiting.remove(at) else {
+            let Some(ask) = self.waiting.remove(at) else {
                 break;
             };
             self.loads += 1;
             self.squares[slot] = Some(Square {
-                records,
-                terrain,
-                start,
+                inputs: ask.inputs,
+                terrain: ask.terrain,
+                start: ask.start,
                 load: self.loads,
                 raised: false,
                 steps: 0,
@@ -376,20 +336,20 @@ impl WaterSettle {
                 stirred: 0,
                 looks: Vec::new(),
                 settled: false,
-                stepping: 0,
+                stepping: stepping(&ask.start),
                 flowing: 0,
                 phase: Phase::Stepping,
-                fresh: true,
+                asked_means: None,
+                means: None,
+                ground: None,
             });
         }
     }
 
-    fn write_squares(&mut self, queue: &engine_render::gpu_calls::Queue) -> Vec<usize> {
+    fn write_squares(&mut self) -> Vec<usize> {
         let steps = self.steps;
-        self.blocks = 0;
-        self.sourced = 0;
-        self.stirring = false;
-        let mut squares = vec![SimSlot::zeroed(); self.squares.len()];
+        let (mut blocks, mut sourced, mut stirring) = (0, 0, false);
+        let mut written = vec![SimSlot::zeroed(); self.squares.len()];
         let mut looks = Vec::new();
         for (slot, held) in self.squares.iter_mut().enumerate() {
             let Some(square) = held else {
@@ -411,21 +371,21 @@ impl WaterSettle {
                 square.since_look += steps;
                 if stirs {
                     square.stirred += steps;
-                    self.stirring = true;
+                    stirring = true;
                 } else {
                     square.steps += steps;
                 }
-                self.sourced = self.sourced.max(start.sources.len() as u32);
+                sourced = sourced.max(start.sources.len() as u32);
                 if square.since_look >= LOOK_EVERY {
                     flags |= SIM_LOOKING;
                     square.since_look = 0;
                     looks.push(slot);
                 }
             }
-            self.blocks = self.blocks.max(stored.stored() as u32);
+            blocks = blocks.max(stored.stored() as u32);
             let [x, z] = stored.cells;
             let [first_x, first_z] = start.first.map(|first| first as i32 as u32);
-            squares[slot] = SimSlot {
+            written[slot] = SimSlot {
                 shape: [x, z, flags, start.sources.len() as u32],
                 step: [start.cell, step_seconds(start.cell), 0.0, 0.0],
                 blocks: [
@@ -437,178 +397,141 @@ impl WaterSettle {
                 place: [first_x, first_z, index, 0],
             };
         }
-        if let Some(buffers) = self.buffers.as_ref() {
-            buffers.write_frames(queue);
-            buffers.write_squares(queue, &squares);
-        }
+        self.work.squares = written;
+        self.work.steps = steps;
+        self.work.sourced = sourced;
+        self.work.blocks = blocks;
+        self.work.stirring = stirring;
         looks
     }
 
-    fn ask_readbacks(&mut self, device: &wgpu::Device, (looks, wanted): (Vec<usize>, Vec<usize>)) {
-        let Some(buffers) = self.buffers.as_ref() else {
-            return;
-        };
-        let held = buffers.held();
+    fn ask_readbacks(&mut self, layout: &Layout, (looks, wanted): (Vec<usize>, Vec<usize>), frame: u64) {
+        let held = layout.held();
         let means = CELL_MEANS as u64;
-        let mut reads = Vec::new();
         for slot in looks {
             let Some(square) = self.squares[slot].as_ref() else {
                 continue;
             };
             let blocks = square.start.stored.stored() as u64;
-            let offset = (buffers.averages_at(slot as u32) + (SIM_CELL_SUMS + means) * held) * 16;
-            reads.push((
-                (slot, square.load, false),
-                [(false, offset, SIM_BLOCK_LOOKS * blocks * 16)],
-                None,
-            ));
+            let offset = (layout.averages_at(slot as u32) + (u64::from(SIM_CELL_SUMS) + means) * held) * 16;
+            let bytes = u64::from(SIM_BLOCK_LOOKS) * blocks * 16;
+            self.asked.insert((tag(slot, LOOK), frame), (slot, square.load));
+            self.work.reads.push(Read {
+                tag: tag(slot, LOOK),
+                source: Source::Averages,
+                range: offset..offset + bytes,
+            });
         }
-        for slot in wanted {
-            let Some(square) = self.squares[slot].as_ref() else {
+        let lost: Vec<usize> = self
+            .squares
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, square)| {
+                let square = square.as_ref()?;
+                let asked = square.asked_means?;
+                (square.phase == Phase::Reading && frame >= asked + LOST_FRAMES).then_some(slot)
+            })
+            .collect();
+        for slot in wanted.into_iter().chain(lost) {
+            let Some(square) = self.squares[slot].as_mut() else {
                 continue;
             };
             let cells = square.start.water.len() as u64;
             let blocks = square.start.stored.stored() as u64;
-            let offset = (buffers.averages_at(slot as u32) + SIM_CELL_SUMS * held) * 16;
-            let ground = buffers.ground_at(slot as u32) * 4;
-            reads.push((
-                (slot, square.load, true),
-                [(false, offset, means * cells * 16)],
-                Some((true, ground, blocks * BLOCK_GROUND as u64 * 4)),
-            ));
-        }
-        for (read, [first], then) in reads {
-            let copies: Vec<(bool, u64, u64)> = std::iter::once(first).chain(then).collect();
-            self.read_back(device, read, &copies);
-        }
-    }
-
-    fn read_back(
-        &mut self,
-        device: &wgpu::Device,
-        (slot, load, means): (usize, u32, bool),
-        copies: &[(bool, u64, u64)],
-    ) {
-        let bytes: u64 = copies.iter().map(|&(_, _, bytes)| bytes).sum();
-        let buffer = engine_render::memory::buffer(
-            device,
-            &wgpu::BufferDescriptor {
-                label: Some("engine/water-settle-readback"),
-                size: bytes,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            },
-        );
-        let mut into = 0;
-        for &(ground, offset, bytes) in copies {
-            self.copies.push(CopyBack {
-                ground,
-                offset,
-                bytes,
-                readback: self.readbacks.len(),
-                into,
+            let offset = (layout.averages_at(slot as u32) + u64::from(SIM_CELL_SUMS) * held) * 16;
+            let ground = layout.ground_at(slot as u32) * 4;
+            square.asked_means = Some(frame);
+            square.means = None;
+            square.ground = None;
+            for kind in [MEANS, GROUND] {
+                self.asked.insert((tag(slot, kind), frame), (slot, square.load));
+            }
+            self.work.reads.push(Read {
+                tag: tag(slot, MEANS),
+                source: Source::Averages,
+                range: offset..offset + means * cells * 16,
             });
-            into += bytes;
+            self.work.reads.push(Read {
+                tag: tag(slot, GROUND),
+                source: Source::Ground,
+                range: ground..ground + blocks * BLOCK_GROUND as u64 * 4,
+            });
         }
-        self.readbacks.push(Readback {
-            slot,
-            load,
-            means,
-            buffer,
-            mapped: Rc::new(RefCell::new(Mapped::Recorded)),
-        });
     }
 
-    fn ensure_buffers(&mut self, device: &wgpu::Device) {
-        let limits = device.limits();
-        let binding = limits
-            .max_storage_buffer_binding_size
-            .min(limits.max_buffer_size);
+    fn ensure_buffers(&mut self, binding: u64, cooking: bool) {
         let mut kept = VecDeque::with_capacity(self.waiting.len());
-        for (terrain, records, start) in std::mem::take(&mut self.waiting) {
-            if slot_largest_bytes(needs(&start)) <= binding {
-                kept.push_back((terrain, records, start));
+        for ask in std::mem::take(&mut self.waiting) {
+            if slot_largest_bytes(needs(&ask.start)) <= binding {
+                kept.push_back(ask);
                 continue;
             }
-            let [x, z] = start.stored.cells;
+            let [x, z] = ask.start.stored.cells;
             let error = format!(
                 "settling water over {} blocks of {x} by {z} cells takes more than the {binding} \
                  bytes the GPU binds",
-                start.stored.stored()
+                ask.start.stored.stored()
             );
             self.made.extend(
-                records
+                ask.inputs
                     .into_iter()
-                    .map(|record| (record, Err(error.clone()))),
+                    .map(|input| (input.to_vec(), Err(error.clone()))),
             );
         }
         self.waiting = kept;
         let largest = self
             .waiting
             .iter()
-            .map(|(_, _, start)| start)
+            .map(|ask| &ask.start)
             .chain(self.squares.iter().flatten().map(|square| &square.start))
             .fold(Capacity::default(), |most, start| most.max(needs(start)));
-        let settling = self.squares.iter().any(Option::is_some) || !self.readbacks.is_empty();
+        let settling = self.squares.iter().any(Option::is_some) || self.reading();
         let fits = self
-            .buffers
-            .as_ref()
-            .is_some_and(|buffers| buffers.capacity.holds(largest));
-        if fits || (settling && self.buffers.is_some()) {
+            .layout
+            .is_some_and(|layout| layout.capacity.holds(largest));
+        if fits || (settling && self.layout.is_some()) {
             return;
         }
-        let budget = if self.cooking { COOK_BYTES } else { PLAY_BYTES };
+        let budget = if cooking { COOK_BYTES } else { PLAY_BYTES };
         let slots = (budget / slot_bytes(largest).max(1))
             .min(binding / slot_largest_bytes(largest).max(1))
-            .clamp(1, SIM_SLOTS as u64) as u32;
-        self.buffers = Some(SlotBuffers::new(
-            device,
-            &self.kernels.layout,
-            (largest, slots),
-            false,
-        ));
-        self.setup_buffers = None;
+            .clamp(1, u64::from(SIM_SLOTS)) as u32;
+        self.layout = Some(Layout {
+            capacity: largest,
+            slots,
+            live: false,
+        });
+        self.layout_generation += 1;
+        self.room = None;
         self.squares = (0..slots).map(|_| None).collect();
     }
 
-    fn take_readbacks(&mut self, ran: u32) -> Vec<usize> {
-        let mut kept = Vec::with_capacity(self.readbacks.len());
+    fn take_readbacks(&mut self, ran: u32, cooking: bool, frame: u64) -> Vec<usize> {
         let mut wanted = Vec::new();
-        for readback in std::mem::take(&mut self.readbacks) {
-            let taken = std::mem::replace(&mut *readback.mapped.borrow_mut(), Mapped::Failed);
-            let read = match taken {
-                Mapped::Read(bytes) => Some(Ok(bytes)),
-                Mapped::Failed => Some(Err(())),
-                waiting @ (Mapped::Recorded | Mapped::Mapping) => {
-                    *readback.mapped.borrow_mut() = waiting;
-                    None
-                }
-            };
-            let Some(read) = read else {
-                kept.push(readback);
+        let mut arrivals = std::mem::take(&mut self.arrivals);
+        arrivals.sort_by_key(|(asked, tag, _)| (*asked, *tag));
+        for (asked, tag, bytes) in arrivals {
+            let Some((slot, load)) = self.asked.remove(&(tag, asked)) else {
                 continue;
             };
+            let kind = (tag - 1) % 3;
             let Some(square) = self
                 .squares
-                .get_mut(readback.slot)
+                .get_mut(slot)
                 .and_then(Option::as_mut)
-                .filter(|square| square.load == readback.load)
+                .filter(|square| square.load == load)
             else {
                 continue;
             };
-            let Ok(bytes) = read else {
-                let error = "settled water did not read back";
-                let records = std::mem::take(&mut square.records);
-                self.made.extend(
-                    records
-                        .into_iter()
-                        .map(|record| (record, Err(error.into()))),
-                );
-                self.squares[readback.slot] = None;
-                continue;
-            };
-            if readback.means {
-                self.finish(readback.slot, &bytes);
+            if kind != LOOK {
+                if kind == MEANS {
+                    square.means = Some(bytes);
+                } else {
+                    square.ground = Some(bytes);
+                }
+                if square.means.is_some() && square.ground.is_some() {
+                    self.finish(slot, cooking);
+                }
                 continue;
             }
             let values = floats(&bytes);
@@ -617,7 +540,7 @@ impl WaterSettle {
                 continue;
             }
             let done = looked(square, &values);
-            if self.cooking && (done || square.looks.len() % 16 == 1) {
+            if cooking && (done || square.looks.len() % 16 == 1) {
                 say(square, ran, done);
             }
             if !done {
@@ -630,21 +553,31 @@ impl WaterSettle {
                 square.since_look = 0;
             } else {
                 square.phase = Phase::Reading;
-                wanted.push(readback.slot);
+                wanted.push(slot);
             }
         }
-        self.readbacks = kept;
+        self.asked
+            .retain(|&(_, asked), _| frame < asked + LOST_FRAMES);
         wanted
     }
 
-    fn finish(&mut self, slot: usize, bytes: &[u8]) {
-        let Some(square) = self.squares[slot].as_mut() else {
+    fn finish(&mut self, slot: usize, cooking: bool) {
+        let ready = self.squares[slot]
+            .as_ref()
+            .is_some_and(|square| square.means.is_some() && square.ground.is_some());
+        if !ready {
+            return;
+        }
+        let Some(square) = self.squares[slot].take() else {
+            return;
+        };
+        let (Some(means), Some(ground)) = (square.means.as_deref(), square.ground.as_deref()) else {
             return;
         };
         let start = &square.start;
-        let split = (start.water.len() * CELL_MEANS * 16).min(bytes.len());
-        let means = floats(&bytes[..split]);
-        let ground: Vec<f32> = bytes[split..]
+        let split = (start.water.len() * CELL_MEANS * 16).min(means.len());
+        let means = floats(&means[..split]);
+        let ground: Vec<f32> = ground
             .as_chunks::<4>()
             .0
             .iter()
@@ -652,150 +585,13 @@ impl WaterSettle {
             .collect();
         let settled = square.settled && square.stirred < STIR_STEPS[1];
         let made = start.finish(&means, &ground, square.steps + square.stirred, settled);
-        if self.cooking {
-            say_made(square, &made);
+        if cooking {
+            say_made(&square, &made);
         }
-        for (record, water) in square.records.iter().zip(&made) {
-            self.made.push((*record, Ok(codec::encode(water))));
-        }
-        self.squares[slot] = None;
-    }
-
-    pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder) {
-        let (Some(pipelines), Some(buffers)) = (self.kernels.created(), &self.buffers) else {
-            return;
-        };
-        for clear in &self.clears {
-            let buffer = if clear.averages {
-                &buffers.averages
-            } else {
-                &buffers.steps
-            };
-            encoder.clear_buffer(buffer, clear.offset, Some(clear.bytes));
-        }
-        if self.raising > 0
-            && let Some(setup) = self.setup_buffers.as_ref()
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("engine/water-settle-raise"),
-                timestamp_writes: None,
-            });
-            self.setup
-                .encode_raise(&mut pass, &setup.group, self.raising);
-        }
-        if self.steps > 0 {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("engine/water-settle"),
-                timestamp_writes: None,
-            });
-            let run = (self.steps, self.sourced, true, self.stirring);
-            encode_steps(&mut pass, pipelines, buffers, run, self.blocks);
-            encode_look(&mut pass, pipelines, buffers, self.blocks);
-        }
-        for copy in &self.copies {
-            let readback = &self.readbacks[copy.readback];
-            let source = if copy.ground {
-                &buffers.ground
-            } else {
-                &buffers.averages
-            };
-            encoder.copy_buffer_to_buffer(
-                source,
-                copy.offset,
-                &readback.buffer,
-                copy.into,
-                copy.bytes,
-            );
+        for (input, water) in square.inputs.iter().zip(&made) {
+            self.made.push((input.to_vec(), Ok(engine_codec::encode(water))));
         }
     }
-
-    pub(crate) fn after_submit(&mut self) {
-        for readback in &self.readbacks {
-            if !matches!(*readback.mapped.borrow(), Mapped::Recorded) {
-                continue;
-            }
-            *readback.mapped.borrow_mut() = Mapped::Mapping;
-            let buffer = readback.buffer.clone();
-            let mapped = Rc::clone(&readback.mapped);
-            readback.buffer.slice(..).map_async(
-                wgpu::MapMode::Read,
-                engine_render::platform::map_callback(move |result| {
-                    let read = if result.is_ok() {
-                        let bytes = buffer
-                            .slice(..)
-                            .get_mapped_range()
-                            .ok()
-                            .map(|view| view.to_vec());
-                        buffer.unmap();
-                        bytes
-                    } else {
-                        None
-                    };
-                    *mapped.borrow_mut() = read.map_or(Mapped::Failed, Mapped::Read);
-                }),
-            );
-        }
-    }
-}
-
-fn load(
-    queue: &engine_render::gpu_calls::Queue,
-    buffers: &SlotBuffers,
-    slot: u32,
-    square: &mut Square,
-) -> [Clear; 2] {
-    let start = &square.start;
-    let n = start.water.len() as u64;
-    buffers.write_table(queue, slot, &start.stored);
-    queue.write_buffer(
-        &buffers.ground,
-        buffers.ground_at(slot) * 4,
-        bytemuck::cast_slice(&start.ground),
-    );
-    let cells: &[u8] = bytemuck::cast_slice(&start.water);
-    let at = buffers.cells_at(slot);
-    queue.write_buffer(&buffers.cells, at * 16, cells);
-    queue.write_buffer(&buffers.cells, (at + buffers.held()) * 16, cells);
-    let sources: Vec<[f32; 4]> = start
-        .sources
-        .iter()
-        .map(|source| {
-            [
-                f32::from_bits(source.cell),
-                source.rate,
-                source.way[0],
-                source.way[1],
-            ]
-        })
-        .collect();
-    if !sources.is_empty() {
-        queue.write_buffer(
-            &buffers.inputs,
-            buffers.sources_at(slot) * 16,
-            bytemuck::cast_slice(&sources),
-        );
-    }
-    let averages = buffers.averages_at(slot);
-    let (blocks, stepping) = blocks(start);
-    let steps = buffers.steps_at(slot);
-    queue.write_buffer(
-        &buffers.steps,
-        (steps + buffers.held()) * 8,
-        bytemuck::cast_slice(&blocks),
-    );
-    square.stepping = stepping;
-    [
-        Clear {
-            averages: true,
-            offset: averages * 16,
-            bytes: SIM_CELL_SUMS * n * 16,
-        },
-        Clear {
-            averages: false,
-            offset: steps * 8,
-            bytes: n * 8,
-        },
-    ]
 }
 
 fn blocks(start: &SettleStart) -> (Vec<[f32; 2]>, u64) {
@@ -908,7 +704,7 @@ fn say(square: &Square, steps: u32, done: bool) {
         "cells": [x, z],
         "cell_m": start.cell,
         "blocks_stored": start.stored.stored(),
-        "tiles_kept": square.records.len(),
+        "tiles_kept": square.inputs.len(),
         "sources_m3_per_s": sources,
         "state": state,
         "steps": square.steps,
@@ -986,4 +782,225 @@ fn floats(bytes: &[u8]) -> Vec<[f32; 4]> {
             [float(0), float(4), float(8), float(12)]
         })
         .collect()
+}
+
+pub(crate) fn hand_settles(mut state: ResMut<WaterState>, mut feedback: ResMut<SettleFeedback>) {
+    let asked = std::mem::take(&mut state.settling.asked);
+    if !asked.is_empty() {
+        feedback.settle(asked);
+    }
+}
+
+pub(crate) fn plan_settles(
+    ground: Res<GroundTiles>,
+    (limits, cook, time): (Res<DeviceLimits>, Res<CookMode>, Res<FrameTime>),
+    mut jobs: Jobs,
+    mut state: ResMut<WaterState>,
+    mut feedback: ResMut<SettleFeedback>,
+) {
+    let index_of = |entity: Entity| {
+        ground
+            .tables
+            .iter()
+            .find(|(terrain, _)| *terrain == entity)
+            .map(|&(_, index)| index)
+    };
+    let feedback = &mut *feedback;
+    feedback.prepare((cook.cooking, limits.storage_room, time.frame), &index_of);
+    for (input, made) in std::mem::take(&mut feedback.made) {
+        if let Ok(bytes) = &made {
+            let kept = jobs.keep(&SETTLED, &input, bytes.clone());
+            jobs.cancel(kept);
+        }
+        state.settling.settled.push((input, made));
+    }
+    state.looks_left = feedback.looks_left();
+}
+
+fn load(
+    slots: &SlotHandles,
+    layout: &Layout,
+    slot: u32,
+    start: &SettleStart,
+    cx: &mut Prepare<'_, WaterGpu>,
+) {
+    let n = start.water.len() as u64;
+    slots.write_table(layout, slot, &start.stored, cx);
+    cx.write(slots.ground, layout.ground_at(slot) * 4, &start.ground);
+    let at = layout.cells_at(slot);
+    cx.write(slots.cells, at * 16, &start.water);
+    cx.write(slots.cells, (at + layout.held()) * 16, &start.water);
+    let sources: Vec<[f32; 4]> = start
+        .sources
+        .iter()
+        .map(|source| {
+            [
+                f32::from_bits(source.cell),
+                source.rate,
+                source.way[0],
+                source.way[1],
+            ]
+        })
+        .collect();
+    if !sources.is_empty() {
+        cx.write(slots.inputs, layout.sources_at(slot) * 16, &sources);
+    }
+    let averages = layout.averages_at(slot);
+    let (blocks, _) = blocks(start);
+    let steps = layout.steps_at(slot);
+    cx.write(slots.steps, (steps + layout.held()) * 8, &blocks);
+    cx.write(
+        slots.averages,
+        averages * 16,
+        &vec![[0.0_f32; 4]; (u64::from(SIM_CELL_SUMS) * n) as usize],
+    );
+    cx.write(slots.steps, steps * 8, &vec![[0.0_f32; 2]; n as usize]);
+}
+
+pub(crate) fn stepping(start: &SettleStart) -> u64 {
+    blocks(start).1
+}
+
+pub(crate) struct SettleGpu {
+    slots: SlotHandles,
+    setup: SetupHandles,
+    kernels: Kernels,
+    raising: ComputePipeline<WaterGpu>,
+    raise: Pass<WaterGpu>,
+    pass: Pass<WaterGpu>,
+    layout: Option<(Layout, u64)>,
+    room: Option<(usize, u64)>,
+    loaded: Vec<u32>,
+    raised: u32,
+    run: Option<(u32, u32, u32, bool, u32)>,
+}
+
+impl SettleGpu {
+    pub(crate) fn install(cx: &mut Install<'_, WaterGpu>) -> Result<Self, Error> {
+        use crate::shaders::water::setup;
+        let slots = SlotHandles::install(
+            cx,
+            [
+                "water_settle_ground",
+                "water_settle_cells",
+                "water_settle_depths",
+                "water_settle_fluxes",
+                "water_settle_inputs",
+                "water_settle_blocks",
+                "water_settle_steps",
+                "water_settle_averages",
+                "water_settle_slots",
+                "water_settle_first",
+                "water_settle_second",
+                "water_settle_touches",
+            ],
+        );
+        let setup_handles = SetupHandles::install(
+            cx,
+            [
+                "water_settle_setup",
+                "water_settle_setup_list",
+                "water_settle_setup_live",
+            ],
+        );
+        let raise = cx.pass("water_settle_raise").id();
+        let pass = cx.pass("water_settle").after(raise).id();
+        let kernels = Kernels::install(cx, pass, &slots)?;
+        let bound = crate::water::reached(cx, &[setup::SETUP_RAISE], setup_handles.bound(&slots));
+        let raising = cx.compute_pipeline(raise, setup::SETUP_RAISE, &bound)?;
+        Ok(Self {
+            slots,
+            setup: setup_handles,
+            kernels,
+            raising,
+            raise,
+            pass,
+            layout: None,
+            room: None,
+            loaded: Vec::new(),
+            raised: 0,
+            run: None,
+        })
+    }
+
+    pub(crate) fn prepare(&mut self, work: &SettleWork, cx: &mut Prepare<'_, WaterGpu>) {
+        self.run = None;
+        self.raised = 0;
+        let Some((layout, generation)) = work.layout else {
+            self.layout = None;
+            self.room = None;
+            self.slots.release(cx);
+            self.setup.release(cx);
+            self.loaded.clear();
+            return;
+        };
+        let fresh = self.layout.is_none_or(|(_, held)| held != generation);
+        self.slots.hold(layout, fresh, cx);
+        if fresh {
+            self.loaded = vec![0; layout.slots as usize];
+        }
+        self.layout = Some((layout, generation));
+        for (slot, wanted) in work.loads.iter().enumerate() {
+            let Some((load, start)) = wanted else {
+                continue;
+            };
+            if self.loaded.get(slot) == Some(load) {
+                continue;
+            }
+            load(&self.slots, &layout, slot as u32, start, cx);
+            if let Some(held) = self.loaded.get_mut(slot) {
+                *held = *load;
+            }
+        }
+        match work.room {
+            Some((room, generation)) => {
+                let fresh = fresh || self.room != Some((room, generation));
+                self.setup.hold((room, 4), fresh, cx);
+                self.room = Some((room, generation));
+            }
+            None => {
+                self.room = None;
+                self.setup.release(cx);
+            }
+        }
+        if let Some(raise) = &work.raise {
+            cx.write(self.setup.list, 0, &raise.list);
+            cx.write(self.setup.frame, 0, &[raise.frame]);
+            self.raised = raise.blocks;
+            cx.run(self.raise);
+        }
+        self.slots.write_frames(&layout, cx);
+        cx.write(self.slots.squares, 0, &[squares(&work.squares)]);
+        if work.steps > 0 {
+            self.run = Some((work.steps, work.sourced, work.blocks, work.stirring, layout.slots));
+            cx.run(self.pass);
+        }
+        for read in &work.reads {
+            let buffer = match read.source {
+                Source::Averages => self.slots.averages,
+                Source::Ground => self.slots.ground,
+            };
+            cx.read_back::<SettleFeedback>(read.tag, buffer, read.range.clone(), AfterRead::Keep);
+        }
+    }
+
+    pub(crate) fn encode(&mut self, pass: Pass<WaterGpu>, cx: &mut Encode<'_, WaterGpu>) -> Option<u32> {
+        if pass == self.raise {
+            if self.raised == 0 {
+                return Some(0);
+            }
+            let [groups_x, groups_z] = grid(self.raised);
+            return Some(cx.dispatch(&self.raising, Count::Groups([groups_x, groups_z, 1])));
+        }
+        if pass != self.pass {
+            return None;
+        }
+        let Some((steps, sourced, blocks, stirring, slots)) = self.run else {
+            return Some(0);
+        };
+        let run = self
+            .kernels
+            .encode_steps(cx, (steps, sourced, true, stirring), (blocks, slots, None));
+        Some(run + self.kernels.encode_look(cx, (blocks, slots)))
+    }
 }

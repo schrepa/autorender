@@ -95,22 +95,32 @@ impl Setting for PlacedCollider {
     }
 }
 
-pub fn surface_color(color: [f32; 3], roughness: f32) -> SurfaceMaterial {
+pub fn surface_color(name: &str, color: [f32; 3], roughness: f32) -> SurfaceMaterial {
     SurfaceMaterial {
+        name: Arc::from(name),
         color,
         roughness,
         ..SurfaceMaterial::default()
     }
 }
 
+pub const MATERIAL_RULES: [(&str, Rule); 5] = [
+    ("color", Rule::range(0.0, 1.0)),
+    ("roughness", Rule::range(0.03, 1.0)),
+    ("tiling", Rule::range(0.01, 1000.0)),
+    ("height_contrast", Rule::range(0.0, 1.0)),
+    ("depth", Rule::range(0.0, 2.0)),
+];
+
 pub fn check_material(material: &SurfaceMaterial) -> Result<(), InvalidSetting> {
-    material.color.check("color", Rule::Range(0.0, 1.0))?;
-    material.roughness.check("roughness", Rule::Range(0.03, 1.0))?;
-    material.tiling.check("tiling", Rule::Range(0.01, 1000.0))?;
+    let [color, roughness, tiling, height_contrast, depth] = MATERIAL_RULES;
+    material.color.check(color.0, color.1)?;
+    material.roughness.check(roughness.0, roughness.1)?;
+    material.tiling.check(tiling.0, tiling.1)?;
     material
         .height_contrast
-        .check("height_contrast", Rule::Range(0.0, 1.0))?;
-    material.depth.check("depth", Rule::Range(0.0, 2.0))
+        .check(height_contrast.0, height_contrast.1)?;
+    material.depth.check(depth.0, depth.1)
 }
 
 impl TerrainSurface {
@@ -240,10 +250,10 @@ impl TerrainSurface {
 
     pub fn default_materials() -> Vec<SurfaceMaterial> {
         vec![
-            surface_color([0.105, 0.135, 0.045], 0.92),
-            surface_color([0.21, 0.165, 0.11], 0.92),
-            surface_color([0.25, 0.235, 0.22], 0.82),
-            surface_color([0.82, 0.84, 0.88], 0.55),
+            surface_color("grass", [0.105, 0.135, 0.045], 0.92),
+            surface_color("dirt", [0.21, 0.165, 0.11], 0.92),
+            surface_color("rock", [0.25, 0.235, 0.22], 0.82),
+            surface_color("snow", [0.82, 0.84, 0.88], 0.55),
         ]
     }
 }
@@ -318,13 +328,14 @@ impl Terrain {
     }
 }
 
-#[derive(Component, Clone, Debug, Default, PartialEq)]
-pub struct TerrainBuilt(pub Option<Terrain>);
-
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[require(TerrainBuilt, SolidSource)]
+#[require(SolidSource)]
 #[serde(transparent)]
-pub struct TerrainScene(pub crate::scene::SceneTerrain);
+pub struct TerrainScene {
+    pub authored: crate::scene::SceneTerrain,
+    #[serde(skip)]
+    pub built: Option<Terrain>,
+}
 
 fields! {
     #[derive(

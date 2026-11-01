@@ -131,7 +131,7 @@ fn png(width: u32, pixels: &[u8]) -> Vec<u8> {
 }
 
 fn loaded(source: &str, image: &[u8]) -> crate::Result<engine_scene::SceneFiles> {
-    let mut load = SceneLoad::new(source)?;
+    let mut load = SceneLoad::new(source, &engine_scene::SceneKinds::default())?;
     loop {
         let reads = load.take_reads();
         if reads.is_empty() {

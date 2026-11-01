@@ -10,7 +10,7 @@ use engine_assetc::{
 };
 use engine_core::{Error, ErrorCode, Expected};
 use engine_dev::authoring;
-use engine_scene::SceneDocument;
+use engine_scene::{SceneDocument, SceneKinds};
 use serde_json::{Value, json};
 
 const COLLIDER: &str = "collider";
@@ -43,9 +43,11 @@ fn command(arguments: &[String]) -> Result<Value, Error> {
         import_glb(&bytes, &options.id)?
     };
     let imported = result.document;
+    let kinds = crate::bricks::standard_kinds()?;
     let file_bytes: usize = result.files.iter().map(|file| file.bytes.len()).sum();
     let counts = json!({"textures":imported.textures.len(),"materials":imported.materials.len(),"meshes":imported.meshes.len(),"entities":imported.entities.len(),"prefabs":imported.prefabs.len(),"prefab_entities":imported.prefabs.iter().map(|prefab| prefab.entities.len()).sum::<usize>(),"files":result.files.len(),"file_bytes":file_bytes});
     let (report, document) = if let Some(output) = &options.output {
+        imported.validate(&kinds)?;
         let source = imported.to_json()?;
         write_files(output, &result.files)?;
         write_new(output, &source)?;
@@ -57,16 +59,17 @@ fn command(arguments: &[String]) -> Result<Value, Error> {
         let target = options.into.as_ref().expect("target_validated");
         let original = authoring::read_scene_source(target)?;
         let current = SceneDocument::from_json(&original)?;
+        current.validate(&kinds)?;
         let revision = options.revision.expect("revision_validated");
         if current.revision != revision {
             return Err(Error::new(ErrorCode::RevisionConflict, "$.revision")
                 .got(revision)
                 .nearest(current.revision));
         }
-        let candidate = merge(current, imported, &options.id, options.replace)?;
+        let candidate = merge(current, imported, &options.id, options.replace, &kinds)?;
         let source = candidate.to_json()?;
         write_files(target, &result.files)?;
-        let report = authoring::save_scene(target, &source, revision)?;
+        let report = authoring::save_scene(target, &source, revision, &kinds)?;
         (
             json!({"path":report.path,"revision":report.revision,"persisted":report.persisted,"source_bytes":report.source_bytes,"mode":if options.replace {"replace_namespace"} else {"append"}}),
             candidate,
@@ -198,6 +201,7 @@ fn merge(
     mut imported: SceneDocument,
     id: &str,
     replace: bool,
+    kinds: &SceneKinds,
 ) -> Result<SceneDocument, Error> {
     let as_prefab = !imported.prefabs.is_empty();
     let existing_prefab = current.prefabs.iter().any(|prefab| prefab.id == id);
@@ -299,7 +303,7 @@ fn merge(
         .revision
         .checked_add(1)
         .ok_or_else(|| Error::new(ErrorCode::RevisionExhausted, "$.revision"))?;
-    current.validate()?;
+    current.validate(kinds)?;
     Ok(current)
 }
 
@@ -316,7 +320,7 @@ fn preserve_colliders(
             continue;
         };
         let Some(replacement) = replacements.get_mut(&old.id) else {
-            return Err(Error::new(ErrorCode::InvalidValue, "$.replace")
+            return Err(Error::new(ErrorCode::InvalidCollider, "$.replace")
                 .expected(Expected::Present)
                 .got(&old.id));
         };

@@ -1,29 +1,14 @@
 use engine_core::math::GRAVITY;
 use engine_heightfield::Bed;
 
-pub const THETA: f32 = 1.3;
-pub const THIN: f32 = 0.01;
-pub const DRY: f32 = 1.0e-4;
-pub const WET_MOST: f32 = 0.5;
-pub const FASTEST: f32 = 20.0;
-pub const UNHELD: f32 = -1.0e30;
-pub const DENSITY: f32 = 1000.0;
-pub const FERGUSON_A1: f32 = 6.5;
-pub const FERGUSON_A2: f32 = 2.5;
-pub const SHALLOWEST: f32 = 0.1;
-pub const DEEPEST: f32 = 30.0;
-pub const STRICKLER: f32 = 20.4;
-pub const GROUND_D84: f32 = 0.05;
-pub const COURANT: f32 = 0.24;
+pub use crate::gpu::{
+    COURANT, DEEPEST, DENSITY, DRY, FASTEST, FERGUSON_A1, FERGUSON_A2, FOAM_LIFE, FOAM_LOSS,
+    FOAM_POWER, FOAM_WET, GROUND_D84, LOCAL_SHARE, SHALLOWEST, SLOWEST, SOURCE_SPEED, STRICKLER,
+    THETA, THIN, UNHELD, WET_MOST,
+};
+
 pub const BOUNDING_SPEED: f32 = 27.0;
-pub const LOCAL_SHARE: f32 = 0.9;
-pub const SLOWEST: f32 = 1.0;
-pub const FOAM_LIFE: f32 = 20.0;
-pub const FOAM_WET: f32 = 0.005;
-pub const FOAM_LOSS: f32 = 0.02;
-pub const FOAM_POWER: f32 = 500.0;
-pub const SOURCE_SPEED: f32 = 1.5;
-pub const CELL_MEANS: usize = 3;
+pub const CELL_MEANS: usize = crate::gpu::CELL_MEANS as usize;
 
 pub fn step_seconds(cell: f32) -> f32 {
     COURANT * cell / BOUNDING_SPEED

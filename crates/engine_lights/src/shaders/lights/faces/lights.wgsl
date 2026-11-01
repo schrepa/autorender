@@ -1,11 +1,7 @@
 import package::engine::view::camera;
-import package::generated::lights::{KEPT_REGIONS, LIT_VIEWS, REGION_EXTERIOR, REGION_INTERIOR,
-    SHAPED_LIGHTS};
+import package::generated::lights::{KEPT_REGIONS, LIT_VIEWS, SHAPED_LIGHTS};
 import package::lights::clusters::{clusters, light_data};
 import package::place::lights::{Light, LightCluster};
-
-const LIGHT_INTERIOR: u32 = REGION_INTERIOR;
-const LIGHT_EXTERIOR: u32 = REGION_EXTERIOR;
 
 fn light_cluster(world: vec3<f32>, pixel: vec2<f32>) -> LightCluster {
     var found: LightCluster;
@@ -61,5 +57,5 @@ fn kept_regions() -> bool {
 }
 
 fn lights_on() -> bool {
-    return true;
+    return clusters[0u].lights.x != 0u;
 }

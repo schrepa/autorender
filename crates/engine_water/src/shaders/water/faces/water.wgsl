@@ -1,9 +1,9 @@
 import package::face::ground_tiles::{GroundTerrain, NOT_RESIDENT, level_tiles, tile_layer};
 import package::face::heightfield::{TERRAIN_GRID, terrain_uniform};
-import package::generated::water::{WATER_BLOCK, WATER_BLOCKS_SIDE, WATER_FLOW_RANGE,
-    WATER_SHEAR_RANGE, WATER_TILE_WORDS};
-import package::place::water::{NO_WATER_BLOCK, NO_WATER_SURFACE, WATER_SPAN_LEAST, WATER_SPAN_MOST,
-    WATER_TILE_PATCHES, WaterAt, WaterCell, WaterLevel, WaterWords};
+import package::generated::water::{NO_WATER_BLOCK, NO_WATER_SURFACE, WATER_BLOCK, WATER_BLOCKS_SIDE,
+    WATER_FLOW_RANGE, WATER_SHEAR_RANGE, WATER_SPAN_LEAST, WATER_SPAN_MOST, WATER_TILE_PATCHES,
+    WATER_TILE_WORDS};
+import package::place::water::{WaterAt, WaterCell, WaterLevel, WaterWords};
 
 @group(0) @binding(0) var water_surface: texture_2d_array<f32>;
 

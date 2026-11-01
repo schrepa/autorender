@@ -1,12 +1,18 @@
 use std::sync::Arc;
 
-use engine_places::ground::TerrainEntry;
+use engine_core::Error;
+use engine_places::ground::{TerrainEntry, TerrainTiles};
+use engine_render::{
+    Bind, Buffer, ComputePipeline, Count, Encode, Install, Lifetime, Pass, Prepare, SamplerDesc,
+    Texture, wgpu,
+};
 use glam::{Vec2, Vec3};
 
 use crate::bounce::{PROBE_BYTES, TerrainBounce, bin_moments};
 use crate::gpu::{BOUNCE_GROUP, BounceFrame, BounceTerrain};
 use crate::settings::{MAX_BOUNCE_LEVELS, TerrainShading};
 use crate::state::Bakes;
+use crate::terrain::TerrainGpu;
 use crate::terrain_horizons::Horizons;
 use crate::terrain_macro::MacroMaps;
 use crate::terrain_sky::SkyMaps;
@@ -22,12 +28,7 @@ const SCRATCH_PROBE_BYTES: u64 = (BOUNCE_LAYERS * 16) as u64;
 const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const GROUND_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Uint;
 const GROUND_LAYERS: u32 = 2;
-const BINDINGS: usize = 17;
-const BUFFERS: [&str; 3] = [
-    "engine/terrain-bounce-blocks",
-    "engine/terrain-bounce-probes",
-    "engine/terrain-bounce-scratch",
-];
+const LIGHT_LEVELS: usize = (u32::BITS - (crate::bounce::MAX_PROBES / 2).leading_zeros()) as usize;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct BounceLevels {
@@ -60,50 +61,37 @@ impl BounceLevels {
     }
 }
 
-pub(crate) struct SceneSources<'a> {
-    pub(crate) pieces: Bound<'a>,
-    pub(crate) cloud_shadows: (&'static str, Bound<'a>),
-}
-
-pub(crate) struct TerrainSources<'a> {
+pub(crate) struct BounceSources<'a> {
     pub(crate) horizons: &'a Horizons,
     pub(crate) sky: &'a SkyMaps,
     pub(crate) colors: &'a MacroMaps,
-    pub(crate) palette: &'a wgpu::Buffer,
+    pub(crate) palette: Buffer<TerrainGpu>,
 }
 
-struct Maps {
-    ground: wgpu::Texture,
-    ground_view: wgpu::TextureView,
-    light: wgpu::Texture,
-    light_view: wgpu::TextureView,
-    levels: Vec<wgpu::TextureView>,
-    side: u32,
-    slots: usize,
+struct Pipelines {
+    ground: ComputePipeline<TerrainGpu>,
+    downs: Vec<ComputePipeline<TerrainGpu>>,
+    gathers: Vec<ComputePipeline<TerrainGpu>>,
 }
 
 pub(crate) struct Bounce {
-    layout: engine_render::pipelines::GroupLayout,
-    pipelines: Option<[wgpu::ComputePipeline; 3]>,
-    frame: wgpu::Buffer,
-    terrains: Vec<Growable>,
-    blocks: Growable,
-    probes: Growable,
-    scratch: Growable,
-    maps: Option<Maps>,
-    maps_generation: u64,
-    light_stand_in: wgpu::TextureView,
-    out_stand_in: wgpu::TextureView,
-    sampler: wgpu::Sampler,
+    pipelines: Pipelines,
+    frame: Buffer<TerrainGpu>,
+    terrains: Vec<Buffer<TerrainGpu>>,
+    blocks: Buffer<TerrainGpu>,
+    probes: Buffer<TerrainGpu>,
+    scratch: Buffer<TerrainGpu>,
+    ground: Texture<TerrainGpu>,
+    light: Texture<TerrainGpu>,
+    stand_ins: [Texture<TerrainGpu>; 2],
+    framed: bool,
+    maps: Option<(u32, usize)>,
     slots: Vec<Option<u32>>,
     windows: Vec<Option<BounceLevels>>,
     held: Vec<Option<Arc<TerrainBounce>>>,
     means: Vec<Vec<u8>>,
     bases: Vec<[u32; 3]>,
     records: Vec<Vec<BounceTerrain>>,
-    ground_group: GroupCache<BINDINGS>,
-    level_groups: Vec<GroupCache<BINDINGS>>,
-    gather_groups: Vec<GroupCache<BINDINGS>>,
     widest: [u32; MOST_LEVELS],
     pub(crate) relit: u32,
     pub(crate) relit_probes: u32,
@@ -112,244 +100,161 @@ pub(crate) struct Bounce {
 }
 
 impl Bounce {
-    pub(crate) fn new(device: &wgpu::Device, queue: &engine_render::gpu_calls::Queue) -> Self {
-        let frame = engine_render::buffers::uniform(
-            device,
-            "engine/terrain-bounce-frame",
-            size_of::<BounceFrame>() as u64,
-        );
-        queue.write_buffer(
-            &frame,
-            0,
-            bytemuck::bytes_of(&BounceFrame {
-                bins: bin_moments(),
-            }),
-        );
-        let stand_in = |label, usage| {
-            engine_render::targets::texture_2d(device, label, (1, 1), 1, 1, LIGHT_FORMAT, usage)
-                .create_view(&wgpu::TextureViewDescriptor {
-                    dimension: Some(wgpu::TextureViewDimension::D2Array),
-                    ..Default::default()
-                })
+    pub(crate) fn install(
+        cx: &mut Install<'_, TerrainGpu>,
+        sources: &BounceSources<'_>,
+        pass: Pass<TerrainGpu>,
+    ) -> Result<Self, Error> {
+        use crate::shaders::terrain_shading::bounce_maps;
+        let frame = cx.buffer("bounce_frame", Lifetime::Kept);
+        let terrains: Vec<Buffer<TerrainGpu>> =
+            (0..MOST_LEVELS).map(|_| cx.buffer("bounce_terrains", Lifetime::Kept)).collect();
+        let blocks = cx.buffer("bounce_blocks", Lifetime::Kept);
+        let probes = cx.buffer("bounce_records", Lifetime::Kept);
+        let scratch = cx.buffer("bounce_scratch", Lifetime::Kept);
+        let ground = cx.texture("bounce_ground", GROUND_FORMAT, Lifetime::Kept);
+        let light = cx.texture("bounce_light", LIGHT_FORMAT, Lifetime::Kept);
+        let light_stand_in = cx.texture("bounce_light_stand_in", LIGHT_FORMAT, Lifetime::Kept);
+        let out_stand_in = cx.texture("bounce_out_stand_in", LIGHT_FORMAT, Lifetime::Kept);
+        let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
+        let level = |mip: u32| Bind::Slice {
+            texture: light,
+            mips: mip..mip + 1,
+            layers: 0..u32::MAX,
         };
-        let [blocks, probes, scratch] = BUFFERS.map(|label| growable(device, label, 16));
-        Self {
-            layout: engine_render::pipelines::layout(device, &BOUNCE),
-            pipelines: None,
+        let shared = |records: Buffer<TerrainGpu>, light_in: Bind<TerrainGpu>, light_out: Bind<TerrainGpu>| {
+            [
+                (bounce_maps::BOUNCE_FRAME, Bind::Buffer(frame)),
+                (bounce_maps::BOUNCE_TERRAINS, Bind::Buffer(records)),
+                (bounce_maps::BOUNCE_SKY, Bind::Texture(sources.sky.texture)),
+                (bounce_maps::BOUNCE_SURFACE, Bind::Texture(ground)),
+                (bounce_maps::BOUNCE_BLOCKS, Bind::Buffer(blocks)),
+                (bounce_maps::BOUNCE_RECORDS, Bind::Buffer(probes)),
+                (bounce_maps::BOUNCE_LIGHT_IN, light_in),
+                (bounce_maps::BOUNCE_LIGHT_OUT, light_out),
+                (bounce_maps::BOUNCE_PROBES, Bind::Texture(sources.horizons.probes)),
+                (bounce_maps::BOUNCE_SAMPLER, Bind::Sampler(sampler)),
+                (bounce_maps::BOUNCE_PALETTE, Bind::Buffer(sources.palette)),
+                (bounce_maps::BOUNCE_MACRO, Bind::Texture(sources.colors.texture)),
+                (bounce_maps::BOUNCE_SCRATCH, Bind::Buffer(scratch)),
+            ]
+        };
+        let ground_pipeline = cx.compute_pipeline(
+            pass,
+            bounce_maps::BOUNCE_GROUND,
+            &shared(terrains[0], Bind::Texture(light_stand_in), level(0)),
+        )?;
+        let mut downs = Vec::with_capacity(LIGHT_LEVELS - 1);
+        for mip in 0..LIGHT_LEVELS as u32 - 1 {
+            downs.push(cx.compute_pipeline(
+                pass,
+                bounce_maps::BOUNCE_DOWN,
+                &shared(terrains[0], level(mip), level(mip + 1)),
+            )?);
+        }
+        let mut gathers = Vec::with_capacity(MOST_LEVELS);
+        for &records in &terrains {
+            gathers.push(cx.compute_pipeline(
+                pass,
+                bounce_maps::BOUNCE_GATHER,
+                &shared(records, Bind::Texture(light), Bind::Texture(out_stand_in)),
+            )?);
+        }
+        Ok(Self {
+            pipelines: Pipelines {
+                ground: ground_pipeline,
+                downs,
+                gathers,
+            },
             frame,
-            terrains: terrain_buffers(device),
+            terrains,
             blocks,
             probes,
             scratch,
+            ground,
+            light,
+            framed: false,
             maps: None,
-            maps_generation: 0,
-            light_stand_in: stand_in(
-                "engine/terrain-bounce-light-stand-in",
-                wgpu::TextureUsages::TEXTURE_BINDING,
-            ),
-            out_stand_in: stand_in(
-                "engine/terrain-bounce-out-stand-in",
-                wgpu::TextureUsages::STORAGE_BINDING,
-            ),
-            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("engine/terrain-bounce-sampler"),
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::MipmapFilterMode::Linear,
-                ..Default::default()
-            }),
             slots: Vec::new(),
             windows: Vec::new(),
             held: Vec::new(),
             means: Vec::new(),
             bases: Vec::new(),
             records: Vec::new(),
-            ground_group: GroupCache::default(),
-            level_groups: Vec::new(),
-            gather_groups: Vec::new(),
             widest: [0; MOST_LEVELS],
             relit: 0,
             relit_probes: 0,
             levels: 0,
             dropped: 0,
-        }
+            stand_ins: [light_stand_in, out_stand_in],
+        })
     }
 
     pub(crate) fn relights(&self) -> bool {
         self.widest.iter().any(|&widest| widest > 0)
     }
 
-    pub(crate) fn windows(&self) -> (&[Option<BounceLevels>], u32) {
-        let slots = self.slots.iter().flatten().count();
-        (&self.windows, slots as u32)
-    }
-
-    pub(crate) fn rest(&mut self, device: &wgpu::Device) {
-        self.slots.clear();
-        self.windows.clear();
-        self.widest = [0; MOST_LEVELS];
-        self.relit = 0;
-        self.relit_probes = 0;
-        self.levels = 0;
-        self.dropped = 0;
-        self.release(device);
-    }
-
-    fn release(&mut self, device: &wgpu::Device) {
-        if self.maps.is_none() && self.pipelines.is_none() {
-            return;
-        }
-        if let Some(maps) = self.maps.take() {
-            engine_render::memory::release_any(&maps.ground);
-            engine_render::memory::release_any(&maps.light);
-        }
-        self.pipelines = None;
+    fn release(&mut self) {
+        self.maps = None;
         self.held.clear();
         self.means.clear();
         self.bases.clear();
         self.records.clear();
-        self.ground_group.clear();
-        self.level_groups.clear();
-        self.gather_groups.clear();
-        for buffer in &self.terrains {
-            engine_render::memory::release_buffer(buffer);
-        }
-        self.terrains = terrain_buffers(device);
-        for (buffer, label) in [&mut self.blocks, &mut self.probes, &mut self.scratch]
-            .into_iter()
-            .zip(BUFFERS)
-        {
-            engine_render::memory::release_buffer(buffer);
-            *buffer = growable(device, label, 16);
-        }
-    }
-
-    pub(crate) fn capacity_bytes(&self) -> u64 {
-        let maps = self.maps.as_ref().map_or(0, |maps| {
-            let area = u64::from(maps.side) * u64::from(maps.side) * maps.slots as u64;
-            area * 4 * u64::from(GROUND_LAYERS) + area * 8 * 4 / 3
-        });
-        let records: u64 = self.terrains.iter().map(|records| records.size()).sum();
-        maps + records + self.blocks.size() + self.probes.size() + self.scratch.size()
-    }
-
-    pub(crate) fn place(
-        &mut self,
-        terrains: &RenderTerrains,
-        (eye, settings): (Vec3, &TerrainSettings),
-        (casting, slots): (usize, u32),
-    ) {
-        let on = settings.enabled && settings.sun_shadows && settings.bounce;
-        let mut next = 0;
-        self.slots.clear();
-        self.slots.extend(
-            terrains
-                .terrains
-                .iter()
-                .enumerate()
-                .map(|(index, terrain)| {
-                    let relit = on && !terrain.surroundings && index < casting && next < slots;
-                    let slot = relit.then_some(next);
-                    next += u32::from(relit);
-                    slot
-                }),
-        );
-        self.windows.clear();
-        self.dropped = 0;
-        let mut room = [self.blocks.room(), self.probes.room(), self.scratch.room()];
-        for (terrain, &slot) in terrains.terrains.iter().zip(&self.slots) {
-            let Some((slot, bounce)) = slot.zip(terrain.bounce.as_ref()) else {
-                self.windows.push(None);
-                continue;
-            };
-            let placed = levels(terrain, (bounce, slot), eye, settings).filter(|levels| {
-                let blocks = u64::from(bounce.texels());
-                let records = bounce.probe_bytes().len() + mean_bytes(bounce.probes);
-                let needs = [blocks * blocks * 4, records as u64, levels.scratch_bytes()];
-                let fits = needs.iter().zip(&room).all(|(need, left)| need <= left);
-                if fits {
-                    room = [room[0] - needs[0], room[1] - needs[1], room[2] - needs[2]];
-                }
-                fits
-            });
-            self.dropped += u32::from(placed.is_none());
-            self.windows.push(placed);
-        }
-    }
-
-    fn ensure_maps(
-        &mut self,
-        device: &wgpu::Device,
-        terrains: &RenderTerrains,
-        horizons: &Horizons,
-        count: usize,
-    ) -> bool {
-        let side = terrains
-            .terrains
-            .iter()
-            .zip(&self.windows)
-            .filter_map(|(terrain, window)| window.and(terrain.bounce.as_ref()))
-            .map(|bounce| bounce.texels())
-            .max();
-        let Some(side) = side.filter(|_| horizons.bounces()) else {
-            return false;
-        };
-        if self
-            .maps
-            .as_ref()
-            .is_none_or(|maps| maps.side < side || maps.slots != count)
-        {
-            self.maps = Some(maps(device, side, count));
-            self.maps_generation += 1;
-            self.held = vec![None; count];
-            self.means = vec![Vec::new(); count];
-        }
-        true
     }
 
     pub(crate) fn prepare(
         &mut self,
-        device: &wgpu::Device,
-        queue: &engine_render::gpu_calls::Queue,
-        terrains: &RenderTerrains,
+        cx: &mut Prepare<'_, TerrainGpu>,
+        (tiles, bakes, settings, eye, limits): (&TerrainTiles, &Bakes, &TerrainShading, Vec3, (u32, u64)),
         (horizons, sky, colors, palette): (&Horizons, &SkyMaps, &MacroMaps, &[u32]),
-        cooking: bool,
-    ) {
+    ) -> bool {
+        if !self.framed {
+            self.framed = true;
+            cx.allocate_buffer(self.frame, size_of::<BounceFrame>() as u64);
+            cx.write(self.frame, 0, &[BounceFrame { bins: bin_moments() }]);
+            for stand_in in self.stand_ins {
+                cx.allocate(
+                    stand_in,
+                    wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    1,
+                );
+            }
+        }
         self.widest = [0; MOST_LEVELS];
         self.relit = 0;
         self.relit_probes = 0;
         self.levels = 0;
+        self.place(&tiles.terrains, (bakes, settings, eye), limits);
         let count = self.slots.iter().flatten().count();
         if count == 0 {
-            self.release(device);
-            return;
+            self.release();
+            return false;
         }
-        if cooking && self.pipelines.is_none() {
-            self.pipelines = Some(pipelines(device));
+        if !self.ensure_maps(cx, (&tiles.terrains, bakes, horizons), count) {
+            return false;
         }
-        if !self.ensure_maps(device, terrains, horizons, count) {
-            return;
-        }
-        let Some(maps) = &self.maps else {
-            return;
-        };
         let mut changed = self.bases.len() != count;
-        let listed = terrains.terrains.iter().zip(&self.windows);
+        let listed = tiles.terrains.iter().zip(&self.windows);
         for ((terrain, window), &slot) in listed.zip(&self.slots) {
             let Some(slot) = slot else {
                 continue;
             };
-            let wanted = terrain.bounce.as_ref().filter(|_| window.is_some());
+            let made = bakes.of(terrain.terrain).and_then(|held| held.bounce.made.as_ref());
+            let wanted = made.filter(|_| window.is_some());
             let held = &mut self.held[slot as usize];
             match (wanted, &*held) {
                 (Some(bounce), Some(current)) if Arc::ptr_eq(bounce, current) => {}
                 (Some(bounce), _) => {
-                    write_ground(queue, &maps.ground, slot as usize, bounce);
+                    write_ground(cx, self.ground, slot as usize, bounce);
                     self.means[slot as usize] = means(bounce);
-                    *held = Some(bounce.clone());
+                    *held = Some(Arc::clone(bounce));
                     changed = true;
                 }
-                (None, Some(_)) if terrain.bounce.is_some() => {}
+                (None, Some(_)) if made.is_some() => {}
                 (None, current) => {
                     changed |= current.is_some();
                     *held = None;
@@ -358,17 +263,17 @@ impl Bounce {
             }
         }
         if changed {
-            self.upload(device, queue);
+            self.upload(cx);
         }
         let levels = self.windows.iter().flatten().map(|window| window.levels);
         let levels = levels.max().unwrap_or(1) as usize;
         self.records.resize_with(levels, Vec::new);
         for records in &mut self.records {
             records.clear();
-            records.resize(count, BounceTerrain::zeroed());
+            records.resize(count, BounceTerrain::default());
         }
         let mut scratch = 0_u32;
-        let listed = terrains.terrains.iter().zip(&self.windows).enumerate();
+        let listed = tiles.terrains.iter().zip(&self.windows).enumerate();
         for (index, (terrain, window)) in listed {
             let Some(window) = window else {
                 continue;
@@ -415,16 +320,94 @@ impl Bounce {
                 self.records[level as usize][slot] = record;
             }
         }
-        for (records, buffer) in self.records.iter().zip(&mut self.terrains) {
+        for (records, &buffer) in self.records.iter().zip(&self.terrains) {
             let bytes = (records.len() * size_of::<BounceTerrain>()) as u64;
-            buffer.grow(device, bytes);
-            queue.write_buffer(buffer, 0, bytemuck::cast_slice(records));
+            cx.allocate_buffer(buffer, bytes.next_power_of_two().max(16));
+            cx.write(buffer, 0, records);
         }
-        self.scratch
-            .grow(device, u64::from(scratch) * SCRATCH_PROBE_BYTES);
+        let scratch_bytes = u64::from(scratch) * SCRATCH_PROBE_BYTES;
+        cx.allocate_buffer(self.scratch, scratch_bytes.next_power_of_two().max(16));
+        self.relights()
     }
 
-    fn upload(&mut self, device: &wgpu::Device, queue: &engine_render::gpu_calls::Queue) {
+    fn place(
+        &mut self,
+        terrains: &[TerrainEntry],
+        (bakes, settings, eye): (&Bakes, &TerrainShading, Vec3),
+        limits: (u32, u64),
+    ) {
+        let (casting, slots) = crate::terrain_horizons::room(limits.0, terrains.len());
+        let on = settings.sun_shadows && settings.bounce;
+        let mut next = 0;
+        self.slots.clear();
+        self.slots.extend(terrains.iter().enumerate().map(|(index, terrain)| {
+            let relit = on && !terrain.surroundings && index < casting && next < slots;
+            let slot = relit.then_some(next);
+            next += u32::from(relit);
+            slot
+        }));
+        self.windows = windows(terrains, bakes, (eye, settings), limits);
+        self.dropped = self
+            .slots
+            .iter()
+            .zip(&self.windows)
+            .zip(terrains)
+            .filter(|((slot, window), terrain)| {
+                slot.is_some()
+                    && window.is_none()
+                    && bakes.of(terrain.terrain).is_some_and(|held| held.bounce.made.is_some())
+            })
+            .count() as u32;
+    }
+
+    fn ensure_maps(
+        &mut self,
+        cx: &mut Prepare<'_, TerrainGpu>,
+        (terrains, bakes, horizons): (&[TerrainEntry], &Bakes, &Horizons),
+        count: usize,
+    ) -> bool {
+        let side = terrains
+            .iter()
+            .zip(&self.windows)
+            .filter_map(|(terrain, window)| {
+                window.and(bakes.of(terrain.terrain).and_then(|held| held.bounce.made.as_ref()))
+            })
+            .map(|bounce| bounce.texels())
+            .max();
+        let Some(side) = side.filter(|_| horizons.bounces()) else {
+            return false;
+        };
+        if self
+            .maps
+            .is_none_or(|(held, slots)| held < side || slots != count)
+        {
+            let layers = count.max(1) as u32;
+            cx.allocate(
+                self.ground,
+                wgpu::Extent3d {
+                    width: side,
+                    height: side,
+                    depth_or_array_layers: GROUND_LAYERS * layers,
+                },
+                1,
+            );
+            cx.allocate(
+                self.light,
+                wgpu::Extent3d {
+                    width: side,
+                    height: side,
+                    depth_or_array_layers: layers,
+                },
+                u32::BITS - side.leading_zeros(),
+            );
+            self.maps = Some((side, count));
+            self.held = vec![None; count];
+            self.means = vec![Vec::new(); count];
+        }
+        true
+    }
+
+    fn upload(&mut self, cx: &mut Prepare<'_, TerrainGpu>) {
         let mut words: Vec<u32> = Vec::new();
         let mut probes: Vec<u8> = Vec::new();
         self.bases.clear();
@@ -439,175 +422,43 @@ impl Bounce {
                 probes.extend_from_slice(means);
             }
         }
-        self.blocks.grow(device, (words.len() * 4) as u64);
-        self.probes.grow(device, probes.len() as u64);
+        cx.allocate_buffer(self.blocks, ((words.len() * 4) as u64).next_power_of_two().max(16));
+        cx.allocate_buffer(self.probes, (probes.len() as u64).next_power_of_two().max(16));
         if !words.is_empty() {
-            queue.write_buffer(&self.blocks, 0, bytemuck::cast_slice(&words));
+            cx.write(self.blocks, 0, &words);
         }
         if !probes.is_empty() {
-            queue.write_buffer(&self.probes, 0, &probes);
+            cx.write(self.probes, 0, &probes);
         }
     }
 
-    pub(crate) fn encode(
-        &mut self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        profiler: &engine_render::profiling::GpuProfiler,
-        (terrain, scene): (TerrainSources<'_>, SceneSources<'_>),
-    ) {
-        if !self.relights() {
-            return;
-        }
-        let (Some(maps), Some((horizons, written))) =
-            (&self.maps, terrain.horizons.bounce_entries())
-        else {
-            return;
+    pub(crate) fn encode(&self, cx: &mut Encode<'_, TerrainGpu>) -> u32 {
+        let Some((side, slots)) = self.maps.filter(|_| self.relights()) else {
+            return 0;
         };
-        let pipelines = self.pipelines.get_or_insert_with(|| pipelines(device));
-        let generation = self.maps_generation;
-        let shared = Shared {
-            frame: Bound::fixed(self.frame.as_entire_binding()),
-            blocks: self.blocks.bound(),
-            probes: self.probes.bound(),
-            scratch: self.scratch.bound(),
-            surface: Bound::counted(
-                generation,
-                engine_render::pipelines::view(&maps.ground_view),
-            ),
-            sky: Bound::counted(
-                terrain.sky.generation(),
-                engine_render::pipelines::view(terrain.sky.view()),
-            ),
-            colors: Bound::counted(
-                terrain.colors.generation(),
-                engine_render::pipelines::view(terrain.colors.view()),
-            ),
-            palette: Bound::fixed(terrain.palette.as_entire_binding()),
-            sampler: Bound::fixed(engine_render::pipelines::sampler(&self.sampler)),
-            horizons,
-            written,
-            scene: [("pieces", scene.pieces), scene.cloud_shadows],
-        };
-        let level = |index: usize| {
-            Bound::counted(
-                generation,
-                engine_render::pipelines::view(&maps.levels[index]),
-            )
-        };
-        let (layout, label) = ((&BOUNCE, &self.layout), "engine/terrain-bounce");
-        let finest = self.terrains[0].bound();
-        let ground = self.ground_group.bind(
-            device,
-            label,
-            layout,
-            shared.entries(
-                finest.clone(),
-                Bound::fixed(engine_render::pipelines::view(&self.light_stand_in)),
-                level(0),
-            ),
-        );
-        self.level_groups
-            .resize_with(maps.levels.len() - 1, GroupCache::default);
-        let mut downs = Vec::with_capacity(self.level_groups.len());
-        for (index, group) in self.level_groups.iter_mut().enumerate() {
-            downs.push(group.bind(
-                device,
-                label,
-                layout,
-                shared.entries(finest.clone(), level(index), level(index + 1)),
-            ));
-        }
-        let levels = self.widest.iter().rposition(|&widest| widest > 0);
-        let levels = levels.map_or(0, |last| last + 1);
-        self.gather_groups.resize_with(levels, GroupCache::default);
-        let mut gathers = Vec::with_capacity(levels);
-        for (records, group) in self.terrains.iter().zip(&mut self.gather_groups) {
-            gathers.push(group.bind(
-                device,
-                label,
-                layout,
-                shared.entries(
-                    records.bound(),
-                    Bound::counted(generation, engine_render::pipelines::view(&maps.light_view)),
-                    Bound::fixed(engine_render::pipelines::view(&self.out_stand_in)),
-                ),
-            ));
-        }
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("engine/terrain-bounce"),
-            timestamp_writes: profiler.span("bounce").map(|span| span.compute()),
-        });
-        let layers = maps.slots as u32;
+        let layers = slots as u32;
         let groups = |texels: u32| texels.max(1).div_ceil(BOUNCE_GROUP);
-        pass.set_pipeline(&pipelines[0]);
-        pass.set_bind_group(0, ground, &[]);
-        pass.dispatch_workgroups(groups(maps.side), groups(maps.side), layers);
-        pass.set_pipeline(&pipelines[1]);
-        for (index, group) in downs.iter().enumerate() {
-            let side = maps.side >> (index + 1);
-            pass.set_bind_group(0, *group, &[]);
-            pass.dispatch_workgroups(groups(side), groups(side), layers);
+        let mut dispatched = cx.dispatch(
+            &self.pipelines.ground,
+            Count::Groups([groups(side), groups(side), layers]),
+        );
+        let mips = (u32::BITS - side.leading_zeros()) as usize;
+        for (index, pipeline) in self.pipelines.downs.iter().take(mips - 1).enumerate() {
+            let side = side >> (index + 1);
+            dispatched += cx.dispatch(pipeline, Count::Groups([groups(side), groups(side), layers]));
         }
-        pass.set_pipeline(&pipelines[2]);
-        for (group, &widest) in gathers.iter().zip(&self.widest) {
+        for (pipeline, &widest) in self.pipelines.gathers.iter().zip(&self.widest) {
             if widest == 0 {
                 continue;
             }
-            pass.set_bind_group(0, *group, &[]);
-            pass.dispatch_workgroups(groups(widest), groups(widest), layers);
+            dispatched += cx.dispatch(pipeline, Count::Groups([groups(widest), groups(widest), layers]));
         }
-    }
-}
-
-struct Shared<'a> {
-    frame: Bound<'a>,
-    blocks: Bound<'a>,
-    probes: Bound<'a>,
-    scratch: Bound<'a>,
-    surface: Bound<'a>,
-    sky: Bound<'a>,
-    colors: Bound<'a>,
-    palette: Bound<'a>,
-    sampler: Bound<'a>,
-    horizons: [(&'static str, Bound<'a>); 2],
-    written: Bound<'a>,
-    scene: [(&'static str, Bound<'a>); 2],
-}
-
-impl<'a> Shared<'a> {
-    fn entries(
-        &self,
-        terrains: Bound<'a>,
-        light_in: Bound<'a>,
-        light_out: Bound<'a>,
-    ) -> [(&'static str, Bound<'a>); BINDINGS] {
-        let [pieces, cloud_shadows] = self.scene.clone();
-        let [horizons, horizon_sampler] = self.horizons.clone();
-        [
-            pieces,
-            horizons,
-            horizon_sampler,
-            cloud_shadows,
-            ("bounce_frame", self.frame.clone()),
-            ("bounce_terrains", terrains),
-            ("bounce_sky", self.sky.clone()),
-            ("bounce_surface", self.surface.clone()),
-            ("bounce_blocks", self.blocks.clone()),
-            ("bounce_records", self.probes.clone()),
-            ("bounce_light_in", light_in),
-            ("bounce_light_out", light_out),
-            ("bounce_probes", self.written.clone()),
-            ("bounce_sampler", self.sampler.clone()),
-            ("bounce_palette", self.palette.clone()),
-            ("bounce_macro", self.colors.clone()),
-            ("bounce_scratch", self.scratch.clone()),
-        ]
+        dispatched
     }
 }
 
 fn terrain_record(
-    terrain: &RenderTerrain,
+    terrain: &TerrainEntry,
     bounce: &TerrainBounce,
     (window, index): (&BounceLevels, usize),
     bases: [u32; 3],
@@ -630,12 +481,12 @@ pub(crate) fn windows(
     terrains: &[TerrainEntry],
     bakes: &Bakes,
     (eye, settings): (Vec3, &TerrainShading),
-    (layers, storage_bytes): (u32, u64),
+    (layers, storage_room): (u32, u64),
 ) -> Vec<Option<BounceLevels>> {
     let (casting, slots) = crate::terrain_horizons::room(layers, terrains.len());
     let on = settings.sun_shadows && settings.bounce;
     let mut next = 0;
-    let mut room = [storage_bytes; 3];
+    let mut room = [storage_room / 16 * 16; 3];
     terrains
         .iter()
         .enumerate()
@@ -787,23 +638,14 @@ fn mean_of(four: [&[u8]; 4]) -> [u8; PROBE_BYTES] {
     mean
 }
 
-fn write_ground(
-    queue: &engine_render::gpu_calls::Queue,
-    ground: &wgpu::Texture,
-    index: usize,
-    bounce: &TerrainBounce,
-) {
+fn write_ground(cx: &mut Prepare<'_, TerrainGpu>, ground: Texture<TerrainGpu>, index: usize, bounce: &TerrainBounce) {
     let side = bounce.texels();
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: ground,
-            mip_level: 0,
-            origin: wgpu::Origin3d {
-                x: 0,
-                y: 0,
-                z: GROUND_LAYERS * index as u32,
-            },
-            aspect: wgpu::TextureAspect::All,
+    cx.write_texture(
+        ground,
+        wgpu::Origin3d {
+            x: 0,
+            y: 0,
+            z: GROUND_LAYERS * index as u32,
         },
         &bounce.ground_layers(),
         wgpu::TexelCopyBufferLayout {
@@ -817,76 +659,4 @@ fn write_ground(
             depth_or_array_layers: GROUND_LAYERS,
         },
     );
-}
-
-fn maps(device: &wgpu::Device, side: u32, slots: usize) -> Maps {
-    let layers = slots.max(1) as u32;
-    let ground = engine_render::targets::texture_2d(
-        device,
-        "engine/terrain-bounce-ground",
-        (side, side),
-        GROUND_LAYERS * layers,
-        1,
-        GROUND_FORMAT,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-    );
-    let levels = 32 - side.leading_zeros();
-    let light = engine_render::targets::texture_2d(
-        device,
-        "engine/terrain-bounce-light",
-        (side, side),
-        layers,
-        levels,
-        LIGHT_FORMAT,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
-    );
-    let array = |base: u32, count: Option<u32>| wgpu::TextureViewDescriptor {
-        label: Some("engine/terrain-bounce-light"),
-        dimension: Some(wgpu::TextureViewDimension::D2Array),
-        base_mip_level: base,
-        mip_level_count: count,
-        ..Default::default()
-    };
-    Maps {
-        ground_view: ground.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("engine/terrain-bounce-ground"),
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        }),
-        ground,
-        light_view: light.create_view(&array(0, None)),
-        levels: (0..levels)
-            .map(|level| light.create_view(&array(level, Some(1))))
-            .collect(),
-        light,
-        side,
-        slots,
-    }
-}
-
-fn growable(device: &wgpu::Device, label: &'static str, bytes: usize) -> Growable {
-    Growable::new(device, label, bytes as u64, wgpu::BufferUsages::empty())
-}
-
-fn terrain_buffers(device: &wgpu::Device) -> Vec<Growable> {
-    (0..MOST_LEVELS)
-        .map(|_| {
-            growable(
-                device,
-                "engine/terrain-bounce-terrains",
-                size_of::<BounceTerrain>(),
-            )
-        })
-        .collect()
-}
-
-fn pipelines(device: &wgpu::Device) -> [wgpu::ComputePipeline; 3] {
-    let pipeline_layout =
-        engine_render::pipelines::layout_of(device, &crate::pipeline_layouts::BOUNCE_PIPELINES);
-    [
-        terrain_bounce::bounce_ground,
-        terrain_bounce::bounce_down,
-        terrain_bounce::bounce_gather,
-    ]
-    .map(|entry| engine_render::pipelines::compute_entry(device, &pipeline_layout, entry))
 }

@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
-use engine_core::gpu_struct;
-use engine_render::{Output, Resolve, wgpu};
+use engine_core::glam::Vec2;
+use engine_core::{View, gpu_struct, profile};
+use engine_render::{Output, PassNames, Resolve, wgpu};
 
 use crate::antialiasing::{TemporalAntialiasing, TemporalAntialiasingStats};
 use crate::previous::History;
@@ -13,6 +14,12 @@ pub(crate) const HISTORY: Output = Output {
     layers: &[],
 };
 
+pub(crate) const PASS: PassNames = PassNames {
+    pass: "temporal_resolve",
+    label: "engine/taa-resolve",
+    span: "taa_resolve",
+};
+
 gpu_struct! {
     #[derive(Resource)]
     pub(crate) struct TaaPiece {
@@ -23,25 +30,39 @@ gpu_struct! {
     }
 }
 
-pub(crate) fn publish_resolve(
+pub(crate) fn publish(
+    view: Res<View>,
     settings: Res<TemporalAntialiasing>,
-    history: Res<History>,
-    resolve: Res<Resolve>,
+    mut history: ResMut<History>,
+    mut resolve: ResMut<Resolve>,
     mut piece: ResMut<TaaPiece>,
     mut stats: ResMut<TemporalAntialiasingStats>,
 ) {
+    let temporal = history.temporal(&view);
+    stats.set_if_neq(TemporalAntialiasingStats {
+        active: temporal.is_some(),
+    });
+    let Some(temporal) = temporal else {
+        resolve.set_if_neq(Resolve::default());
+        return;
+    };
+    profile::counter(
+        "render.taa_history",
+        f64::from(u8::from(temporal.history_valid)),
+    );
+    resolve.set_if_neq(Resolve {
+        offset: Vec2::from(temporal.offset),
+        turn: temporal.turn,
+    });
     piece.set_if_neq(TaaPiece {
         options: [
-            resolve.turn,
+            temporal.turn,
             f32::from(u8::from(settings.nearest_motion)),
             f32::from(u8::from(settings.rounded_clamp)),
             settings.particle_response,
         ],
-        offset: resolve.offset.to_array(),
+        offset: temporal.offset,
         current_weight: CURRENT_WEIGHT,
-        history_valid: u32::from(history.valid),
-    });
-    stats.set_if_neq(TemporalAntialiasingStats {
-        active: history.live,
+        history_valid: u32::from(temporal.history_valid),
     });
 }

@@ -1,9 +1,9 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode, Operation};
+use engine_core::{Error, ErrorCode, Expected, Operation, SceneIds};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{STREAMING_GRIDS, WorldCells, WorldChanges};
+use crate::{STREAMING_GRIDS, StreamedId, WorldCells, WorldChanges};
 
 pub const MAX_CHANGES: usize = 256;
 
@@ -46,6 +46,11 @@ pub struct WorldChangesView {
     pub ids: Vec<String>,
 }
 
+#[derive(Serialize)]
+pub struct StreamedIdView {
+    pub id: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldCellsQuery {}
@@ -73,6 +78,39 @@ impl Operation for WorldChangesQuery {
         Ok(serde_json::to_value(WorldChangesView {
             removed: changes.removed().len(),
             ids: changes.removed().take(64).map(str::to_owned).collect(),
+        })
+        .expect("results_serialize"))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StreamedIdQuery {
+    pub entity: String,
+}
+
+impl Operation for StreamedIdQuery {
+    const NAME: &'static str = "streamed_id";
+    type Params = (
+        SceneIds<'static, 'static>,
+        Query<'static, 'static, &'static StreamedId>,
+    );
+    type Request = Self;
+
+    fn run(
+        (ids, marked): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Value, Error> {
+        let entity = ids.entity(&request.entity).ok_or_else(|| {
+            Error::new(ErrorCode::UnknownEntity, "$.entity")
+                .expected(Expected::Entity)
+                .got(&request.entity)
+        })?;
+        let marked = marked.get(entity).map_err(|_| {
+            Error::new(ErrorCode::MissingComponent, "$.component").got("StreamedId")
+        })?;
+        Ok(serde_json::to_value(StreamedIdView {
+            id: marked.0.to_string(),
         })
         .expect("results_serialize"))
     }

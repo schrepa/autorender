@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, Material, MaterialHandle, Mesh, MeshHandle, MeshLods,
+    AlphaMode, AssetLibrary, AssetResidency, AtlasShape, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk,
+    ImpostorRecord, Material, MaterialHandle, Mesh, MeshHandle, ResidentMesh, TextureHandle,
 };
 use engine_math::collections::HashMap;
 use engine_places::ground::{PlacedAsset, TerrainEntry, TileFace};
@@ -27,11 +28,12 @@ type Levels = (
     u32,
 );
 
+const PLACED_FRAMES: u32 = 12;
+
 #[derive(Clone, Copy)]
 pub(crate) struct ResolvedMesh<'a> {
     pub(crate) handle: MeshHandle,
     pub(crate) mesh: &'a Arc<Mesh>,
-    pub(crate) lods: Option<&'a Arc<MeshLods>>,
 }
 
 #[derive(Clone, Copy)]
@@ -49,6 +51,7 @@ pub(crate) struct ResolvedPart<'a> {
 pub(crate) struct Resolved<'a> {
     pub(crate) mesh: ResolvedMesh<'a>,
     pub(crate) material: ResolvedMaterial<'a>,
+    pub(crate) textures: Vec<TextureHandle>,
     pub(crate) lods: Vec<(ResolvedMesh<'a>, f32)>,
     pub(crate) parts: Vec<ResolvedPart<'a>>,
     pub(crate) shadow: Option<ResolvedMesh<'a>>,
@@ -62,6 +65,20 @@ impl<'a> Resolved<'a> {
             .chain(self.parts.iter().flat_map(|part| &part.meshes))
             .chain(&self.shadow)
     }
+
+    pub(crate) fn materials(&self) -> impl Iterator<Item = MaterialHandle> + '_ {
+        std::iter::once(self.material.handle)
+            .chain(self.parts.iter().map(|part| part.material.handle))
+    }
+}
+
+pub(crate) fn placed_shape(pixels: f32) -> AtlasShape {
+    let texels = (pixels.ceil() as u32).clamp(2, 1 << 15);
+    AtlasShape {
+        frames: PLACED_FRAMES,
+        texels: texels.next_power_of_two(),
+        hemisphere: true,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -72,12 +89,8 @@ pub(crate) struct Kept {
 
 fn mesh_of(library: &AssetLibrary, handle: MeshHandle) -> Option<ResolvedMesh<'_>> {
     let mesh = library.mesh(handle)?;
-    let lods = library.mesh_lods(handle)?;
-    Some(ResolvedMesh {
-        handle,
-        mesh,
-        lods,
-    })
+    library.mesh_lods(handle)?;
+    Some(ResolvedMesh { handle, mesh })
 }
 
 fn material_of(library: &AssetLibrary, handle: MaterialHandle) -> Option<ResolvedMaterial<'_>> {
@@ -126,16 +139,20 @@ pub(crate) fn resolve<'a>(
         None => None,
     };
     let material = material_of(library, asset.material)?;
-    let textures_held = std::iter::once(material.material)
+    let textures: Vec<TextureHandle> = std::iter::once(material.material)
         .chain(parts.iter().map(|part| part.material.material))
         .flat_map(Material::textures)
-        .all(|handle| library.texture(handle).is_some());
-    if !textures_held {
+        .collect();
+    if !textures
+        .iter()
+        .all(|&handle| library.texture(handle).is_some())
+    {
         return None;
     }
     Some(Resolved {
         mesh,
         material,
+        textures,
         lods,
         parts,
         shadow,
@@ -147,6 +164,7 @@ pub(crate) struct DrawGroup {
     pub(crate) meshes: Vec<MeshHandle>,
     pub(crate) material: MaterialHandle,
     pub(crate) source: Material,
+    pub(crate) extended: bool,
     pub(crate) color: SlotColor,
     pub(crate) sphere: (Vec3, f32),
     pub(crate) objects: u32,
@@ -241,6 +259,7 @@ pub(crate) struct Groups {
     pub(crate) layouts: Vec<GroupLayout>,
     pub(crate) covers: Vec<Cover>,
     pub(crate) colors: Vec<[u32; 2]>,
+    pub(crate) asks: Vec<Option<ImpostorAsk>>,
     indices: HashMap<(Entity, usize), u32>,
     terrains: HashMap<Entity, u32>,
 }
@@ -265,6 +284,9 @@ impl Groups {
                 else {
                     continue;
                 };
+                let extended = residency
+                    .mesh(asset.mesh.handle)
+                    .is_some_and(ResidentMesh::extended);
                 let parts: Vec<(usize, PartLevels)> = asset
                     .parts
                     .iter()
@@ -307,6 +329,7 @@ impl Groups {
                     meshes,
                     material: asset.material.handle,
                     source: *material,
+                    extended,
                     color,
                     sphere,
                     objects,
@@ -328,6 +351,9 @@ impl Groups {
                 colors.push(color.color);
                 for (part, (part_levels, part_meshes)) in parts {
                     let rendered = &asset.parts[part];
+                    let extended = residency
+                        .mesh(part_meshes[0])
+                        .is_some_and(ResidentMesh::extended);
                     layouts.push(GroupLayout {
                         casters: Vec::new(),
                         camera: part_levels.len() as u32,
@@ -341,6 +367,7 @@ impl Groups {
                         meshes: part_meshes,
                         material: rendered.material.handle,
                         source: *rendered.material.material,
+                        extended,
                         color,
                         sphere,
                         objects,
@@ -354,11 +381,13 @@ impl Groups {
                 }
             }
         }
+        let asks = impostor_asks(residency, &groups, terrains);
         Self {
             groups,
             layouts,
             covers,
             colors,
+            asks,
             indices,
             terrains: terrain_indices(terrains),
         }
@@ -412,6 +441,58 @@ impl Groups {
         }
         objects
     }
+
+    pub(crate) fn take_impostors(&mut self, records: &[ImpostorRecord]) -> bool {
+        let mut changed = false;
+        for (index, (layout, record)) in self.layouts.iter_mut().zip(records).enumerate() {
+            let impostor = (record.error(), index as u32);
+            if layout.impostor != impostor {
+                layout.impostor = impostor;
+                changed = true;
+            }
+        }
+        changed
+    }
+}
+
+fn impostor_asks(
+    residency: &AssetResidency,
+    groups: &[DrawGroup],
+    terrains: &[(Entity, Vec<Option<Resolved<'_>>>)],
+) -> Vec<Option<ImpostorAsk>> {
+    let resolved = || terrains.iter().flat_map(|(_, assets)| assets.iter().flatten());
+    groups
+        .iter()
+        .enumerate()
+        .map(|(index, group)| {
+            if group.part.is_some() || !residency.resident(group.meshes[0]) {
+                return None;
+            }
+            let asset = resolved().find(|asset| asset.mesh.handle == group.meshes[0])?;
+            if asset.mesh.mesh.indices().len() / 3 < IMPOSTOR_MIN_TRIANGLES {
+                return None;
+            }
+            let parts = groups[index + 1..]
+                .iter()
+                .take_while(|drawn| drawn.objects == index as u32)
+                .filter(|drawn| {
+                    drawn.part.is_some_and(|part| {
+                        residency.resident(drawn.meshes[0])
+                            && asset
+                                .parts
+                                .get(part)
+                                .is_some_and(|rendered| !rendered.meshes.is_empty())
+                    })
+                })
+                .map(|drawn| (drawn.meshes[0], drawn.material))
+                .collect();
+            Some(ImpostorAsk {
+                mesh: group.meshes[0],
+                material: Some(group.material),
+                parts,
+            })
+        })
+        .collect()
 }
 
 fn terrain_indices(terrains: &[(Entity, Vec<Option<Resolved<'_>>>)]) -> HashMap<Entity, u32> {
@@ -422,66 +503,43 @@ fn terrain_indices(terrains: &[(Entity, Vec<Option<Resolved<'_>>>)]) -> HashMap<
         .collect()
 }
 
-fn extended(mesh: &Mesh) -> bool {
-    mesh.colors().is_some() || mesh.uv1().is_some()
-}
-
-fn index_count(mesh: &Mesh) -> u32 {
-    mesh.indices().len() as u32
-}
-
-fn caster_range(mesh: &ResolvedMesh<'_>, level: usize, own: (u32, u32)) -> (u32, u32) {
-    mesh.lods
-        .and_then(|lods| lods.casters.get(level).copied())
-        .unwrap_or(own)
-}
-
-fn lod_levels(mesh: &ResolvedMesh<'_>) -> Vec<(u32, u32, f32)> {
-    mesh.lods.map_or_else(Vec::new, |lods| {
-        lods.levels
-            .iter()
-            .map(|level| (level.first_index, level.index_count, level.error))
-            .collect()
-    })
-}
-
 fn scatter_levels(residency: &AssetResidency, asset: &Resolved<'_>) -> Option<Levels> {
-    let mesh = &asset.mesh;
-    if !residency.resident(mesh.handle) {
-        return None;
-    }
-    let level = |mesh: &ResolvedMesh<'_>, level: usize, own: (u32, u32)| {
-        let (first, count) = caster_range(mesh, level, own);
-        ((own.1, own.0, 0), (count, first, 0))
+    let mesh = residency.mesh(asset.mesh.handle)?;
+    let level = |mesh: &ResidentMesh, level: usize, own: (u32, u32)| {
+        let (first, count) = mesh.caster_range(level, own);
+        (
+            (own.1, mesh.first_index() + own.0, mesh.base_vertex()),
+            (count, mesh.first_index() + first, mesh.base_vertex()),
+        )
     };
-    let (finest, finest_casters) = level(mesh, 0, (0, index_count(mesh.mesh)));
+    let (finest, finest_casters) = level(mesh, 0, (0, mesh.index_count()));
     let mut levels = vec![finest];
     let mut casters = vec![finest_casters];
-    let mut meshes = vec![mesh.handle];
+    let mut meshes = vec![asset.mesh.handle];
     let mut errors = [0.0; LEVELS as usize - 1];
     if asset.lods.is_empty() {
-        for (first_index, count, error) in lod_levels(mesh).into_iter().take(LEVELS as usize - 1) {
-            if count == 0 {
+        for &(first_index, index_count, error) in mesh.lods().iter().take(LEVELS as usize - 1) {
+            if index_count == 0 {
                 break;
             }
             errors[levels.len() - 1] = error;
-            let (drawn, cast) = level(mesh, levels.len(), (first_index, count));
+            let (drawn, cast) = level(mesh, levels.len(), (first_index, index_count));
             levels.push(drawn);
             casters.push(cast);
-            meshes.push(mesh.handle);
+            meshes.push(asset.mesh.handle);
         }
         let camera = levels.len() as u32;
         return Some((levels, casters, meshes, errors, camera));
     }
     for (lod, error) in asset.lods.iter().take(LEVELS as usize - 1) {
-        if !residency.resident(lod.handle) {
+        let Some(coarser) = residency.mesh(lod.handle) else {
             break;
-        }
-        if extended(lod.mesh) != extended(mesh.mesh) {
+        };
+        if coarser.extended() != mesh.extended() {
             break;
         }
         errors[levels.len() - 1] = *error;
-        let (drawn, cast) = level(lod, 0, (0, index_count(lod.mesh)));
+        let (drawn, cast) = level(coarser, 0, (0, coarser.index_count()));
         levels.push(drawn);
         casters.push(cast);
         meshes.push(lod.handle);
@@ -495,29 +553,24 @@ fn part_levels(
     part: &ResolvedPart<'_>,
     levels: usize,
 ) -> Option<PartLevels> {
-    let first = part.meshes.first()?;
-    if !residency.resident(first.handle) {
-        return None;
-    }
+    let first = residency.mesh(part.meshes.first()?.handle)?;
     let mut ranges = Vec::new();
     let mut meshes = Vec::new();
     for rendered in part.meshes.iter().take(levels) {
-        if !residency.resident(rendered.handle) {
+        let Some(mesh) = residency.mesh(rendered.handle) else {
+            break;
+        };
+        if mesh.extended() != first.extended() {
             break;
         }
-        if extended(rendered.mesh) != extended(first.mesh) {
-            break;
-        }
-        ranges.push((index_count(rendered.mesh), 0, 0));
+        ranges.push((mesh.index_count(), mesh.first_index(), mesh.base_vertex()));
         meshes.push(rendered.handle);
     }
     Some((ranges, meshes))
 }
 
 fn proxy_caster(residency: &AssetResidency, proxy: &ResolvedMesh<'_>) -> Option<Range3> {
-    if !residency.resident(proxy.handle) {
-        return None;
-    }
-    let (first, count) = caster_range(proxy, 0, (0, index_count(proxy.mesh)));
-    Some((count, first, 0))
+    let mesh = residency.mesh(proxy.handle)?;
+    let (first, count) = mesh.caster_range(0, (0, mesh.index_count()));
+    Some((count, mesh.first_index() + first, mesh.base_vertex()))
 }

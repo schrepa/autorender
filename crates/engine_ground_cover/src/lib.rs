@@ -30,6 +30,7 @@ impl Brick for GroundCoverBrick {
                 Schedule::ViewSync,
                 (covers::write_covers, growth::plan_cover, growth::cover_stats),
             )
+            .generated(layouts::GENERATED)
             .draws::<part::CoverGpu, MainView>(Layer::Late, part::CoverGpu::draw);
     }
 }

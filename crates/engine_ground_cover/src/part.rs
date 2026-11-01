@@ -1,5 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::Error;
+use engine_places::ground::PALETTE_ENTRIES;
 use engine_render::{
     AfterRead, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput, Encode, GpuPart,
     Install, Lifetime, MainView, Pass, Pipeline, Prepare, RenderPipeline, Shape, wgpu,
@@ -7,7 +8,7 @@ use engine_render::{
 
 use crate::covers::CoverTable;
 use crate::growth::{BLADE_BYTES, BladeCounts, CoverPlan};
-use crate::layouts::{COVER_ENTRIES, CoverFrame, CoverMaterial, CoverTerrain, Grow};
+use crate::layouts::{CoverFrame, CoverMaterial, CoverTerrain, Grow};
 use crate::shaders::cover::{debug, draw, faces::cover as face, grow};
 
 const DRAW_ARGS: u64 = size_of::<wgpu::util::DrawIndirectArgs>() as u64;
@@ -15,7 +16,7 @@ const COUNT_BYTES: u64 = 32;
 const ROW_BYTES: u64 = size_of::<Grow>() as u64;
 const FRAME_BYTES: u64 = size_of::<CoverFrame>() as u64;
 const TERRAIN_BYTES: u64 = size_of::<CoverTerrain>() as u64;
-const MATERIAL_BYTES: u64 = COVER_ENTRIES as u64 * size_of::<CoverMaterial>() as u64;
+const MATERIAL_BYTES: u64 = PALETTE_ENTRIES as u64 * size_of::<CoverMaterial>() as u64;
 
 pub(crate) struct CoverGpu {
     clear_counts: Pass<Self>,

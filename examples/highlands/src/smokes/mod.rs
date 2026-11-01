@@ -3,21 +3,19 @@ mod lod;
 mod toon_lighting;
 mod torrent;
 
-use engine::smokes::{Runs, Smoke, SmokeEntry};
+use engine::BrickList;
+use engine::smokes::{Restart, Runs, Smoke, SmokeEntry};
 use engine_core::smoke::{Checked, control, inspect, number, query, render};
 use engine_core::{SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
 const GAME: &str = "highlands";
 
+const LIGHTING: &str = "lighting";
+
 const SETTLE_FRAMES: u32 = 20_000;
 
-const SMOKES: [Smoke; 3] = [
-    Smoke {
-        name: "highlands_jobs",
-        runs: Runs::Gpu,
-        run: jobs::run,
-    },
+const SMOKES: [Smoke; 2] = [
     Smoke {
         name: "highlands_lod",
         runs: Runs::Gpu,
@@ -30,22 +28,47 @@ const SMOKES: [Smoke; 3] = [
     },
 ];
 
+const JOBS: Smoke = Smoke {
+    name: "highlands_jobs",
+    runs: Runs::Gpu,
+    run: |session| jobs::workers(session).map(drop),
+};
+
 const TOON: Smoke = Smoke {
     name: "highlands_toon_lighting",
     runs: Runs::Gpu,
-    run: toon_lighting::run,
+    run: |session| toon_lighting::standard(session).map(drop),
 };
 
-pub fn smokes() -> Vec<SmokeEntry> {
-    let mut smokes: Vec<SmokeEntry> = SMOKES
-        .iter()
-        .map(|smoke| SmokeEntry::of(GAME, smoke))
-        .collect();
+pub fn smokes() -> engine::Result<Vec<SmokeEntry>> {
+    let mut smokes = vec![SmokeEntry {
+        restart: Some(Restart {
+            first: jobs::workers,
+            then: jobs::page,
+        }),
+        ..SmokeEntry::of(GAME, &JOBS)
+    }];
+    smokes.extend(SMOKES.iter().map(|smoke| SmokeEntry::of(GAME, smoke)));
     smokes.push(SmokeEntry {
         list: Some(highlands_bricks::toon),
+        restart: Some(Restart {
+            first: toon_lighting::standard,
+            then: toon_lighting::toon,
+        }),
         ..SmokeEntry::of(GAME, &TOON)
     });
-    smokes
+    let toon = highlands_bricks::toon(BrickList::default());
+    for entry in engine::smokes::registered(&toon)? {
+        if entry.owner != LIGHTING || entry.without.is_some() {
+            continue;
+        }
+        smokes.push(SmokeEntry {
+            name: Box::leak(format!("{}.{}", TOON.name, entry.name).into_boxed_str()),
+            list: Some(highlands_bricks::toon),
+            ..entry
+        });
+    }
+    Ok(smokes)
 }
 
 fn open(session: &mut dyn SmokeSession, in_place: bool) -> Checked<()> {
@@ -78,20 +101,20 @@ fn height_at(session: &mut dyn SmokeSession, point: [f64; 2]) -> Checked<Value> 
     Ok(samples.pop().unwrap_or_default())
 }
 
-fn settle(session: &mut dyn SmokeSession) -> Checked<Value> {
+fn settle(session: &mut dyn SmokeSession) -> Checked<()> {
     let mut resident = 0;
-    let mut terrain = Value::Null;
     for _ in 0..SETTLE_FRAMES {
         render(session)?;
-        terrain = inspect(session, "terrain_stats")?;
-        let ready = number(&terrain["resident_tiles"]) > 0.0
+        let shading = inspect(session, "terrain_shading_stats")?;
+        let terrain = inspect(session, "terrain_stats")?;
+        let ready = number(&shading["tiles"]) > 0.0
             && terrain["loading_tiles"] == 0
             && terrain["fallback_tiles"] == 0;
         resident = if ready { resident + 1 } else { 0 };
         if resident > 1 {
-            break;
+            return Ok(());
         }
     }
     smoke_eq!(resident > 1, true, "terrain_settles");
-    Ok(terrain)
+    Ok(())
 }

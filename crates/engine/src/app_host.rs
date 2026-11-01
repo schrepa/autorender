@@ -70,12 +70,7 @@ fn wire(
         jobs.set_workers(workers);
         jobs.set_verifying(verifying);
     }
-    limit(engine, renderer, workers);
-}
-
-fn limit(engine: &mut Engine, renderer: &Renderer, workers: u32) {
-    let limits = crate::game::device_limits(&renderer.limits(), renderer.features(), workers);
-    engine.app.world_mut().insert_resource(limits);
+    crate::game::limit(engine, &renderer.device_limits(), renderer.device_features());
 }
 
 pub(crate) struct AppHost {
@@ -285,7 +280,6 @@ impl AppHost {
         }
         let (resolution, dynamic) = self.resolution_settings();
         let FrameKind::Display { interval, .. } = kind else {
-            self.renderer.set_render_size(width, height);
             let stats = engine_core::DynamicResolutionStats {
                 active: false,
                 scale: 1.0,
@@ -302,7 +296,6 @@ impl AppHost {
             scale,
         )
         .unwrap_or((width, height));
-        self.renderer.set_render_size(render_width, render_height);
         let stats = engine_core::DynamicResolutionStats {
             active: dynamic.enabled,
             scale: scale as f32,
@@ -383,7 +376,6 @@ impl AppHost {
         {
             jobs.set_workers(workers);
         }
-        limit(&mut self.engine, &self.renderer, workers);
     }
 
     pub fn set_job_verifying(&mut self, verifying: bool) {
@@ -766,6 +758,7 @@ impl AppHost {
                     .map(|entry| (entry.key, u64::from(entry.pending(world))))
             })
             .collect();
+        features.push(("impostors", engine_core::assets_pending(world)));
         features.push(("pipelines", u64::from(self.pipeline_list.making())));
         features
     }

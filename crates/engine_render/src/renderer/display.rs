@@ -17,7 +17,6 @@ pub struct Display {
     pub max_layers: u32,
     pub(crate) suspended: bool,
     reconfigure_next_frame: bool,
-    asked: Option<(u32, u32)>,
     pub region: FrameRegion,
     timer: Option<Rc<FrameTimer>>,
 }
@@ -62,7 +61,6 @@ impl Display {
             max_layers,
             suspended: extent.is_none(),
             reconfigure_next_frame: false,
-            asked: None,
             region: FrameRegion::whole(FrameSize { width, height }),
             timer: None,
         })
@@ -108,14 +106,16 @@ impl Display {
         self.configuration.format
     }
 
-    pub(crate) fn ask_render_size(&mut self, width: u32, height: u32) {
-        self.asked = Some((width, height));
-    }
-
-    pub(crate) fn plan_region(&mut self, drawn: bool) -> FrameRegion {
+    pub(crate) fn plan_region(&mut self, render: Option<glam::UVec2>) -> FrameRegion {
         let display = self.size();
-        self.region = match self.asked.filter(|_| drawn) {
-            Some((width, height)) => FrameRegion::new(display, FrameSize { width, height }),
+        self.region = match render {
+            Some(render) => FrameRegion::new(
+                display,
+                FrameSize {
+                    width: render.x,
+                    height: render.y,
+                },
+            ),
             None => FrameRegion::whole(display),
         };
         self.region

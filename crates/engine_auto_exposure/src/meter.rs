@@ -1,3 +1,5 @@
+use std::mem::offset_of;
+
 use bevy_ecs::prelude::*;
 use engine_core::{Error, FrameTime, View};
 use engine_math::{clamp, max};
@@ -5,8 +7,8 @@ use engine_places::sky::{ADAPTATION_MOST, ADAPTATION_POWER, NOON_LIGHT, SkyLight
 use engine_places::sun::Sun;
 use engine_places::tonemap::Display;
 use engine_render::{
-    AfterRead, Bind, Buffer, ComputePipeline, Count, DebugShown, Encode, GpuPart, Install,
-    Lifetime, Pass, Prepare, ViewTarget,
+    AfterRead, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime, Pass,
+    Prepare, ViewTarget,
 };
 
 use crate::gpu_layouts::{
@@ -15,6 +17,7 @@ use crate::gpu_layouts::{
 use crate::{AutoExposure, ExposureFeedback, shaders};
 
 const STATE_BYTES: u64 = size_of::<ExposureState>() as u64;
+const READ_BYTES: u64 = offset_of!(ExposureState, spare) as u64;
 const UNIFORM_BYTES: u64 = size_of::<ExposureUniform>() as u64;
 const BIN_BYTES: u64 = EXPOSURE_BINS as u64 * 4;
 const STATE_READ: u32 = 0;
@@ -23,7 +26,6 @@ const DUSK: f32 = 0.069_756;
 const NIGHT: f32 = 0.241_922;
 
 pub(crate) struct MeterGpu {
-    clear: Pass<Self>,
     meter: Pass<Self>,
     metering: ComputePipeline<Self>,
     adapting: ComputePipeline<Self>,
@@ -82,8 +84,6 @@ impl GpuPart for MeterGpu {
         Res<'static, Display>,
         Res<'static, FrameTime>,
         Res<'static, View>,
-        Res<'static, DebugShown>,
-        Res<'static, ExposureFeedback>,
     );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
@@ -91,9 +91,8 @@ impl GpuPart for MeterGpu {
         let state = cx.buffer("exposure_state", Lifetime::Previous);
         cx.frame(face::EXPOSURE_STATE, Bind::Buffer(state))?;
         let uniform = cx.buffer("exposure_uniform", Lifetime::Kept);
-        let bins = cx.buffer("exposure_bins", Lifetime::Frame);
-        let clear = cx.clear("clear_exposure_bins", bins);
-        let pass = cx.pass("exposure").after(clear).id();
+        let bins = cx.buffer("exposure_bins", Lifetime::Kept);
+        let pass = cx.pass("exposure").span("auto_exposure").id();
         let metering = cx.compute_pipeline(
             pass,
             meter::METER_EXPOSURE,
@@ -115,7 +114,6 @@ impl GpuPart for MeterGpu {
             ],
         )?;
         Ok(Self {
-            clear,
             meter: pass,
             metering,
             adapting,
@@ -133,12 +131,12 @@ impl GpuPart for MeterGpu {
         reads: SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        let (settings, sun, sky, display, time, view, shown, feedback) = reads;
+        let (settings, sun, sky, display, time, view) = reads;
         cx.allocate_buffer(self.uniform, UNIFORM_BYTES);
         cx.allocate_buffer(self.bins, BIN_BYTES);
         cx.allocate_buffer(self.state, STATE_BYTES);
         let authored = display.exposure[0];
-        if feedback.is_added() {
+        if cx.fresh() {
             let state = ExposureState {
                 exposure: authored,
                 ..ExposureState::default()
@@ -148,7 +146,7 @@ impl GpuPart for MeterGpu {
             self.last_seconds = None;
             self.last_camera = [0; 16];
         }
-        if shown.owner.is_some() {
+        if view.debug() {
             return;
         }
         let seconds = time.presented_seconds;
@@ -169,14 +167,15 @@ impl GpuPart for MeterGpu {
             cx.write(self.uniform, 0, &[values]);
             self.written = Some(values);
         }
-        cx.run(self.clear);
         cx.run(self.meter);
-        cx.read_back::<ExposureFeedback>(STATE_READ, self.state, 0..STATE_BYTES, AfterRead::Keep);
+        cx.read_back::<ExposureFeedback>(STATE_READ, self.state, 0..READ_BYTES, AfterRead::Keep);
     }
 
     fn encode(&mut self, _: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+        cx.clear(self.bins);
         let groups = EXPOSURE_GRID / EXPOSURE_GROUP;
-        let metered = cx.dispatch(&self.metering, Count::Groups([groups, groups, 1]));
-        metered + cx.dispatch(&self.adapting, Count::Groups([1, 1, 1]))
+        cx.dispatch(&self.metering, Count::Groups([groups, groups, 1]));
+        cx.dispatch(&self.adapting, Count::Groups([1, 1, 1]));
+        0
     }
 }

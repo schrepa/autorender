@@ -5,7 +5,7 @@ use crate::app_host::AppHost;
 use engine_core::{Error, ErrorCode};
 use engine_dev::{
     CaptureRequest, Context, Control, DevTools, Envelope, ExplainQuestion, HostControl,
-    ProfileRequest, RenderedMesh, RendererFacts, Verb, WatchRequest,
+    ProfileRequest, RendererFacts, Verb, WatchRequest,
 };
 use engine_scene::SceneInstance;
 use engine_settings::Expected;
@@ -16,23 +16,6 @@ struct Facts<'a>(&'a engine_render::Renderer);
 impl RendererFacts for Facts<'_> {
     fn texture_resident(&self, texture: engine_core::TextureHandle) -> bool {
         self.0.is_texture_resident(texture)
-    }
-
-    fn mesh(&self, mesh: engine_core::MeshHandle) -> Option<RenderedMesh> {
-        let levels = self.0.mesh_levels(mesh)?;
-        Some(RenderedMesh { levels })
-    }
-
-    fn impostor(
-        &self,
-        mesh: engine_core::MeshHandle,
-        material: engine_core::MaterialHandle,
-    ) -> Option<bool> {
-        self.0.impostor_resident(mesh, material)
-    }
-
-    fn drawn_level(&self, slot: u32) -> Option<u32> {
-        self.0.drawn_level(slot)
     }
 }
 
@@ -242,7 +225,6 @@ fn execute(
     let context = Context {
         scene,
         renderer: Some(&facts),
-        render_slot: None,
     };
     tools.execute(&mut app.engine, context, source)
 }

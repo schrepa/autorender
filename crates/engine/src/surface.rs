@@ -34,6 +34,7 @@ macro_rules! __game_surface {
             always_ref {
                 fn stats() -> String as Json<FrameStats>;
                 fn tick_pipelining() -> bool;
+                fn job_hash() -> Vec<u8>;
                 fn distribution(values: Vec<f64>) -> String as Json<Option<Distribution>>;
             }
             dev_mut {
@@ -59,7 +60,21 @@ macro_rules! __game_surface {
 #[macro_export]
 macro_rules! export_game {
     ($(#[$meta:meta])* $vis:vis struct $name:ident($game:ty);) => {
-        $crate::__game_surface!(__export_game { $(#[$meta])* $vis $name $game });
+        $crate::__game_surface!(__export_game { $(#[$meta])* $vis $name $game [] });
+    };
+    ($(#[$meta:meta])* $vis:vis struct $name:ident($game:ty) with $bricks:path;) => {
+        $crate::__game_surface!(__export_game { $(#[$meta])* $vis $name $game [$bricks] });
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __listed {
+    () => {
+        ::core::option::Option::None
+    };
+    ($bricks:path) => {
+        ::core::option::Option::Some($bricks as fn($crate::BrickList) -> $crate::BrickList)
     };
 }
 
@@ -68,7 +83,7 @@ macro_rules! export_game {
 #[macro_export]
 macro_rules! __export_game {
     (
-        { $(#[$meta:meta])* $vis:vis $name:ident $game:ty }
+        { $(#[$meta:meta])* $vis:vis $name:ident $game:ty [$($bricks:path)?] }
         always_mut { $( fn $am:ident($($am_arg:ident: $am_ty:ty),*) $(-> $am_ret:ty $(as $am_json:ty)?)?; )* }
         always_ref { $( fn $ar:ident($($ar_arg:ident: $ar_ty:ty),*) $(-> $ar_ret:ty $(as $ar_json:ty)?)?; )* }
         dev_mut { $( fn $dm:ident($($dm_arg:ident: $dm_ty:ty),*) $(-> $dm_ret:ty $(as $dm_json:ty)?)?; )* }
@@ -119,7 +134,7 @@ macro_rules! __export_game {
             #[wasm_bindgen(constructor)]
             pub fn new(source: &str) -> Result<PageSceneLoad, $crate::__private::JsValue> {
                 Ok(Self {
-                    load: $crate::browser::SceneLoading::new(source)?,
+                    load: $crate::browser::SceneLoading::new(source, $crate::__listed!($($bricks)?))?,
                 })
             }
 

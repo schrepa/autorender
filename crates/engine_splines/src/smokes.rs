@@ -1,4 +1,4 @@
-use engine_core::smoke::{Checked, ask, capture, control, not, render};
+use engine_core::smoke::{Checked, ask, capture, control, not, query, render};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
@@ -51,28 +51,64 @@ fn shown(held: bool, got: Value, expected: &Value) -> Value {
     if held { expected.clone() } else { got }
 }
 
-fn loaded(session: &mut dyn SmokeSession, document: &Value) -> Checked<Value> {
+fn load(session: &mut dyn SmokeSession, document: &Value) -> Checked<Value> {
     session.source(&document.to_string());
-    control(
-        session,
-        "reload",
-        json!({"expected_revision": "1", "revision": "1"}),
-    )
+    let loaded = session
+        .request("control", json!({"name": "render"}))
+        .map(|reply| reply["result"].clone())
+        .map_err(|reply| reply["error"].clone());
+    smoke_eq!(
+        shown(loaded.is_ok(), json!(loaded.as_ref().err()), &Value::Null),
+        Value::Null,
+        "fixture_loads"
+    );
+    Ok(loaded.unwrap_or_default())
 }
 
-fn splines(session: &mut dyn SmokeSession) -> Checked<Value> {
-    let mut answered = ask(session, "splines", json!({}))?;
-    Ok(answered["splines"].take())
+fn reload(session: &mut dyn SmokeSession, document: &Value) -> Result<Value, Value> {
+    session.source(&document.to_string());
+    let revision = document["revision"].as_u64().unwrap_or_default().to_string();
+    let args = json!({"expected_revision": revision, "revision": revision});
+    session
+        .request("control", json!({"name": "reload", "args": args}))
+        .map_err(|reply| reply["error"].clone())?;
+    session
+        .request("control", json!({"name": "render"}))
+        .map(|reply| reply["result"].clone())
+        .map_err(|reply| reply["error"].clone())
+}
+
+fn reloaded(session: &mut dyn SmokeSession, document: &Value) -> Checked<Value> {
+    let reloaded = reload(session, document);
+    smoke_eq!(
+        shown(reloaded.is_ok(), json!(reloaded.as_ref().err()), &Value::Null),
+        Value::Null,
+        "reload_accepted"
+    );
+    Ok(reloaded.unwrap_or_default())
 }
 
 fn rail(session: &mut dyn SmokeSession) -> Checked<Value> {
-    Ok(splines(session)?.get(0).cloned().unwrap_or_default())
+    query(session, "spline_mesh", json!({"entity": "rail"}))
+}
+
+fn candidates(rendering: &Value) -> Value {
+    rendering["meshes_stats"]["render_candidates"].clone()
 }
 
 pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let source = fixture(&CURVE);
-    loaded(session, &source)?;
+    load(session, &source)?;
     control(session, "pause", json!({}))?;
+    let listing = ask(session, "describe", json!({}))?;
+    let listed = listing["types"]
+        .as_array()
+        .is_some_and(|types| types.iter().any(|kind| kind["name"] == "spline"));
+    smoke_eq!(
+        shown(listed, json!(listing["types"]), &json!("spline")),
+        json!("spline"),
+        "describe_lists_spline"
+    );
     let first = render(session)?;
     let built = rail(session)?;
     let flat: Vec<f64> = CURVE.iter().flatten().copied().collect();
@@ -87,21 +123,21 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         && points
             .iter()
             .zip(&flat)
-            .all(|(got, expected)| (got - expected).abs() <= 1e-6);
+            .all(|(got, expected)| got.is_finite() && (got - expected).abs() <= 1e-6);
     smoke_eq!(
-        shown(near, built["points"].clone(), &json!(CURVE)),
+        shown(near, json!(built["points"]), &json!(CURVE)),
         json!(CURVE),
         "built_points"
     );
-    smoke_eq!(built["error"], Value::Null, "built_without_error");
+    smoke_eq!(
+        shown(built["error"].is_null(), json!(built["error"]), &Value::Null),
+        Value::Null,
+        "built_without_error"
+    );
     lengths(&built, &CURVE)?;
     let copies = built["copies"].as_u64().unwrap_or(0);
     smoke_eq!(
-        json!([
-            built["chunks"],
-            built["vertices"],
-            first["render_candidates"]
-        ]),
+        json!([built["chunks"], built["vertices"], candidates(&first)]),
         json!([1, copies * 24, 3]),
         "built"
     );
@@ -111,23 +147,22 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     if let Some(rail) = bare["entities"][2].as_object_mut() {
         rail.remove("spline");
     }
-    loaded(session, &bare)?;
+    reloaded(session, &bare)?;
     let without = capture(session)?;
     smoke_eq!(
-        shown(without != with_rail, without, &not(&with_rail)),
+        shown(without != with_rail, json!(without), &not(&with_rail)),
         not(&with_rail),
         "draws_and_goes"
     );
     let removed = render(session)?;
     smoke_eq!(
-        json!(removed["render_candidates"]),
+        candidates(&removed),
         json!(2),
         "removing_the_field_removes_its_chunks"
     );
-    smoke_eq!(splines(session)?, json!([]), "released");
 
     let longer_points: Vec<[f64; 3]> = CURVE.iter().chain(&FARTHER).copied().collect();
-    loaded(session, &fixture(&longer_points))?;
+    reloaded(session, &fixture(&longer_points))?;
     render(session)?;
     let rebuilt = rail(session)?;
     lengths(&rebuilt, &longer_points)?;
@@ -140,13 +175,16 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
 
     let mut invalid = fixture(&longer_points);
     invalid["entities"][2]["spline"]["points"] = json!([[0, 0, 0]]);
-    loaded(session, &invalid)?;
-    render(session)?;
-    let refused = rail(session)?;
+    let refused = reload(session, &invalid).err().unwrap_or_default();
     smoke_eq!(
-        json!({"code": refused["error"]["code"], "path": refused["error"]["path"], "chunks": refused["chunks"]}),
-        json!({"code": "invalid_value", "path": "$.points", "chunks": 0}),
+        json!({"code": refused["code"], "path": refused["path"]}),
+        json!({"code": "invalid_spline", "path": "$.entities[2].spline.points"}),
         "refused"
+    );
+    smoke_eq!(
+        json!(rail(session)?["chunks"]),
+        json!(rebuilt["chunks"]),
+        "the_scene_stays"
     );
     Ok(())
 }

@@ -3,12 +3,13 @@ use engine_places::physics::{
     ColliderShape, CollisionLayers, CollisionRay, PlacedPart, QueryFilter, RayHit, SensorFilter,
     ShapeCastOptions, ShapeHit,
 };
-use engine_places::solids::{SolidShape, SolidSource, WorldSolid};
+use engine_places::solids::{SolidShape, WorldSolid};
 use glam::Vec3;
 
 use crate::bvh::Bvh;
 use crate::geometry::{AffineShape, Bounds, Narrow, intersects};
 use crate::types::Fault;
+use crate::world::Sources;
 
 #[derive(Clone, Copy)]
 struct Object {
@@ -36,13 +37,14 @@ impl PlacedShapes {
         self.objects.len()
     }
 
-    pub(crate) fn sync(&mut self, sources: &Query<'_, '_, &SolidSource>, changed: bool) -> bool {
-        if !changed {
-            return false;
-        }
+    pub(crate) fn sync(&mut self, sources: &Query<'_, '_, Sources>) -> bool {
         let had = !self.objects.is_empty();
         self.objects.clear();
-        self.collect(sources.iter().flat_map(|source| source.field.solids()));
+        self.collect(
+            sources
+                .iter()
+                .flat_map(|(_, source)| source.into_inner().field.solids()),
+        );
         self.bounds.clear();
         self.bounds
             .extend(self.objects.iter().map(|object| object.affine.bounds));

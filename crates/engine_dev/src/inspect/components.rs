@@ -1,3 +1,5 @@
+use engine_core::{AssetResidency, AtlasRole, IMPOSTOR_MIN_TRIANGLES, ImpostorBooks, ResidentMesh};
+
 use super::*;
 
 impl DevTools {
@@ -18,7 +20,7 @@ impl DevTools {
             read: Box::new(|world, entity, context| {
                 let mesh3d = world.get::<Mesh3d>(entity?)?;
                 let assets = world.get_resource::<AssetLibrary>()?;
-                Some(json!(mesh_view(assets, (entity?, mesh3d), context)))
+                Some(json!(mesh_view(world, assets, mesh3d, context)))
             }),
         })
         .expect("descriptor_bounded");
@@ -75,16 +77,22 @@ fn input_view(world: &World, _: Option<Entity>, _: &Context<'_>) -> Option<Value
     }))
 }
 
+fn impostor_resident(world: &World, resident: &ResidentMesh, mesh3d: &Mesh3d) -> Option<bool> {
+    if (resident.index_count() as usize) / 3 < IMPOSTOR_MIN_TRIANGLES {
+        return None;
+    }
+    let books = world.get_resource::<ImpostorBooks>()?;
+    Some(books.contains(AtlasRole::Scene, mesh3d.mesh, Some(mesh3d.material)))
+}
+
 pub(super) fn mesh_view(
+    world: &World,
     assets: &AssetLibrary,
-    (entity, mesh3d): (Entity, &Mesh3d),
+    mesh3d: &Mesh3d,
     context: &Context<'_>,
 ) -> Mesh3dView {
-    let Context {
-        scene,
-        renderer,
-        render_slot,
-    } = *context;
+    let Context { scene, renderer } = *context;
+    let residency = world.get_resource::<AssetResidency>();
     let mesh = assets.mesh(mesh3d.mesh).map(|mesh| {
         let origin = scene.and_then(|scene| scene.mesh_origin(mesh3d.mesh));
         let bounds = mesh.bounds();
@@ -99,15 +107,15 @@ pub(super) fn mesh_view(
             },
             colors: mesh.colors().is_some(),
             uv1: mesh.uv1().is_some(),
-            rendered: renderer.and_then(|renderer| {
-                let rendered = renderer.mesh(mesh3d.mesh)?;
+            rendered: renderer.and_then(|_| {
+                let resident = residency?.mesh(mesh3d.mesh)?;
                 Some(MeshRenderView {
-                    levels: rendered
-                        .levels
+                    levels: resident
+                        .lods()
                         .iter()
-                        .map(|&(indices, error)| LodLevelView { indices, error })
+                        .map(|&(_, indices, error)| LodLevelView { indices, error })
                         .collect(),
-                    impostor: renderer.impostor(mesh3d.mesh, mesh3d.material),
+                    impostor: impostor_resident(world, resident, mesh3d),
                 })
             }),
         }
@@ -160,14 +168,11 @@ pub(super) fn mesh_view(
         };
         SceneMaterial::from_runtime(id.unwrap_or_default(), material, texture)
     });
-    let drawn_level = renderer
-        .zip(render_slot.and_then(|slot| slot(entity)))
-        .and_then(|(renderer, slot)| renderer.drawn_level(slot));
     Mesh3dView {
         mesh,
         material,
         textures,
-        drawn_level,
+        drawn_level: None,
     }
 }
 

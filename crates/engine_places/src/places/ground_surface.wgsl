@@ -42,6 +42,10 @@ fn surface_level(terrain: u32, spacing: f32) -> u32 {
     return 0u;
 }
 
+fn surface_river(held: vec4<u32>, rivers: bool) -> vec4<f32> {
+    return vec4<f32>(0.0);
+}
+
 fn surface_inputs(terrain: u32, ground: SurfaceGround, level: u32, river: vec4<f32>)
         -> SurfaceInputs {
     var inputs: SurfaceInputs;

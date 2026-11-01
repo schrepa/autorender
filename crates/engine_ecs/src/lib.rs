@@ -9,6 +9,10 @@ pub mod prelude {
 
 pub use prelude::*;
 
+pub mod system {
+    pub use bevy_ecs::system::{Local, Query, SystemParamItem};
+}
+
 #[doc(hidden)]
 pub mod component {
     pub use bevy_ecs::component::{

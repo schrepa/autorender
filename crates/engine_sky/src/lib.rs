@@ -39,17 +39,18 @@ impl Brick for SkyBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .settings::<Sky>()
             .settings::<Clouds>()
+            .settings::<Sky>()
             .settings::<Haze>()
             .settings::<NightSky>()
             .settings::<SkyLighting>()
             .stats::<views::StaticTablesView>()
             .stats::<views::CloudStats>()
             .stats::<views::SkyStats>()
+            .stats::<views::HazeStats>()
             .resource::<tables::StaticTables>()
             .resource::<under_eye::SurfaceUnderEye>()
-            .resource::<views::SkyCounts>()
+            .resource::<sky::SkyPlan>()
             .fill::<SkyLight>(Some(shaders::sky::faces::sky::MODULE))
             .within(casts_cloud_shadows, |bricks| {
                 bricks.fill::<CloudShadows>(Some(shaders::sky::faces::cloud_shadows::MODULE));
@@ -65,11 +66,13 @@ impl Brick for SkyBrick {
                 (
                     tables::ask_tables,
                     under_eye::find_surface_under_eye,
+                    sky::plan_sky,
                     publish_sky_light,
                     tables::table_stats,
                     views::sky_stats,
                 ),
             )
+            .generated(gpu_layouts::GENERATED)
             .draws::<sky::SkyGpu, MainView>(Layer::Backdrop, sky::SkyGpu::draw_dome)
             .draws::<sky::SkyGpu, ProbeViews>((), sky::SkyGpu::draw_probe_face);
     }
@@ -79,11 +82,12 @@ fn casts_cloud_shadows(clouds: Res<Clouds>) -> bool {
     clouds.enabled && clouds.coverage > 0.0 && clouds.shadows > 0.0
 }
 
-fn publish_sky_light(sky: Res<Sky>, mut light: ResMut<SkyLight>) {
+fn publish_sky_light(sky: Res<Sky>, plan: Res<sky::SkyPlan>, mut light: ResMut<SkyLight>) {
     light.set_if_neq(SkyLight {
         on: sky.enabled,
         sun_intensity: sky.sun_intensity,
         sun_size: sky.sun_size,
         adaptation: sky.adaptation,
+        environment: plan.environment(),
     });
 }

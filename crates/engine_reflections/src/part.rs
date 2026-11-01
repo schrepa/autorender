@@ -1,10 +1,10 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Entry, Error, View};
+use engine_core::{DeviceLimits, Entry, Error, View};
 use engine_places::ground::{Cover, GroundTiles, PlacedTiles, TerrainTiles};
 use engine_render::{
-    Access, Attach, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DebugShown,
-    DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
-    SamplerDesc, Shape, Texture, ViewTarget, wgpu,
+    Access, Attach, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse, Encode,
+    FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
+    SCENE_FORMAT, SamplerDesc, Shape, Texture, ViewTarget, level_region, mip_levels, wgpu,
 };
 
 use crate::gpu::{PYRAMID_GROUP, PyramidExtent};
@@ -13,14 +13,14 @@ use crate::world_trace::{TraceFrame, WorldTrace};
 
 const SCENE_LEVELS: u32 = 6;
 const PYRAMID_LEVELS: u32 = 15;
+const SPAN: &str = "reflections";
 const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const NEAREST_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 
 pub(crate) struct TraceGpu {
+    reduce: Pass<Self>,
     copy: Pass<Self>,
     chain: Pass<Self>,
-    reduce: Pass<Self>,
     reflect: Pass<Self>,
     reflected: Texture<Self>,
     levels: Texture<Self>,
@@ -28,19 +28,21 @@ pub(crate) struct TraceGpu {
     terrains: Buffer<Self>,
     placed: Buffer<Self>,
     extents: Vec<Buffer<Self>>,
-    downs: Vec<Pipeline<Self, Own>>,
     reductions: Vec<ComputePipeline<Self>>,
+    downs: Vec<Pipeline<Self, Own>>,
     tracing: Pipeline<Self, Own>,
     world: WorldTrace,
-    region: Region,
+    changed: (bool, bool),
     count: u32,
+    render: (u32, u32),
+    drawn: [(u32, u32); SCENE_LEVELS as usize],
     reduced: Vec<PyramidExtent>,
 }
 
 impl GpuPart for TraceGpu {
     type Reads = (
         Res<'static, View>,
-        Res<'static, DebugShown>,
+        Res<'static, DeviceLimits>,
         Res<'static, TerrainTiles>,
         Res<'static, GroundTiles>,
         Res<'static, PlacedTiles>,
@@ -59,6 +61,7 @@ impl GpuPart for TraceGpu {
         let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
         cx.frame(apply::REFLECTIONS, Bind::Texture(reflected))?;
         cx.frame(apply::REFLECTIONS_SAMPLER, Bind::Sampler(sampler))?;
+        let reduce = cx.pass("nearest_depth").span(SPAN).id();
         let copy = cx.copy(
             "scene_levels_copy",
             Copied::Target(ViewTarget::Scene),
@@ -66,27 +69,15 @@ impl GpuPart for TraceGpu {
         );
         let chain = cx
             .pass("scene_levels")
+            .span(SPAN)
             .after(copy)
             .color(levels_texture, Access::Load)
             .id();
-        let reduce = cx.pass("nearest_depth").id();
         let reflect = cx
             .pass("reflections")
+            .span(SPAN)
             .color(reflected, Access::Clear)
             .id();
-        let mut downs = Vec::new();
-        for level in 1..=SCENE_LEVELS {
-            let fragment = if level == 1 {
-                levels::FS_LEVELS_FIRST
-            } else {
-                levels::FS_LEVELS_DOWN
-            };
-            downs.push(cx.render_pipeline(
-                chain,
-                &screen(levels::VS_LEVELS, fragment),
-                &[(levels::SOURCE, mip(levels_texture, level - 1))],
-            )?);
-        }
         let mut reductions = Vec::new();
         for (level, uniform) in (0..PYRAMID_LEVELS).zip(&extents) {
             let reduction = if level == 0 {
@@ -112,9 +103,22 @@ impl GpuPart for TraceGpu {
             };
             reductions.push(reduction);
         }
+        let mut downs = Vec::new();
+        for level in 1..=SCENE_LEVELS {
+            let fragment = if level == 1 {
+                levels::FS_LEVELS_FIRST
+            } else {
+                levels::FS_LEVELS_DOWN
+            };
+            downs.push(cx.render_pipeline(
+                chain,
+                &screen(fragment),
+                &[(levels::SOURCE, mip(levels_texture, level - 1))],
+            )?);
+        }
         let tracing = cx.render_pipeline(
             reflect,
-            &screen(trace::VS_TRACE, trace::FS_REFLECTIONS),
+            &screen(trace::FS_REFLECTIONS),
             &[
                 (trace::NEAREST_DEPTH, Bind::Texture(pyramid)),
                 (trace::SCENE_LEVELS, Bind::Texture(levels_texture)),
@@ -123,9 +127,9 @@ impl GpuPart for TraceGpu {
             ],
         )?;
         Ok(Self {
+            reduce,
             copy,
             chain,
-            reduce,
             reflect,
             reflected,
             levels: levels_texture,
@@ -133,25 +137,33 @@ impl GpuPart for TraceGpu {
             terrains,
             placed,
             extents,
-            downs,
             reductions,
+            downs,
             tracing,
             world: WorldTrace::default(),
-            region: Region::default(),
+            changed: (false, false),
             count: 0,
+            render: (0, 0),
+            drawn: [(0, 0); SCENE_LEVELS as usize],
             reduced: Vec::new(),
         })
     }
 
     fn prepare(
         &mut self,
-        (view, shown, tiles, ground, placed, cover): SystemParamItem<'_, '_, Self::Reads>,
+        (view, limits, tiles, ground, placed, cover): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        if view.is_added() {
+        if cx.fresh() {
             self.world.forget();
             self.reduced.clear();
         }
+        self.changed.0 |= ground.is_changed();
+        self.changed.1 |= placed.is_changed();
+        if view.debug() {
+            return;
+        }
+        let (ground_changed, placed_changed) = std::mem::take(&mut self.changed);
         self.world.prepare(
             cx,
             (self.terrains, self.placed),
@@ -160,17 +172,18 @@ impl GpuPart for TraceGpu {
                 ground: &ground,
                 placed: &placed,
                 cover: &cover,
-                ground_changed: ground.is_changed(),
-                placed_changed: placed.is_changed(),
+                room: limits.storage_room / 16 * 16,
+                ground_changed,
+                placed_changed,
             },
         );
-        if shown.owner.is_some() {
-            return;
-        }
         let display = view.display_size();
         let render = view.render_size();
-        self.region = Region::new((display.x, display.y), (render.x, render.y));
+        self.render = (render.x, render.y);
         self.count = SCENE_LEVELS.min(mip_levels(display.x, display.y) - 1);
+        for (level, drawn) in (0..).zip(&mut self.drawn) {
+            *drawn = level_region(&view, level);
+        }
         let whole = extent(display.x, display.y);
         cx.allocate(self.reflected, whole, 1);
         cx.allocate(self.levels, whole, 1 + self.count);
@@ -180,7 +193,7 @@ impl GpuPart for TraceGpu {
         );
         let reductions = mip_levels(base.0, base.1).min(PYRAMID_LEVELS);
         cx.allocate(self.pyramid, extent(base.0, base.1), reductions);
-        let reduced = extents(self.region.render, reductions);
+        let reduced = extents(self.render, reductions);
         for buffer in &self.extents {
             cx.allocate_buffer(*buffer, size_of::<PyramidExtent>() as u64);
         }
@@ -190,6 +203,7 @@ impl GpuPart for TraceGpu {
             }
             self.reduced = reduced;
         }
+        cx.run(self.reduce);
         cx.copy(
             self.copy,
             &[CopyRegion::Texels {
@@ -198,23 +212,13 @@ impl GpuPart for TraceGpu {
                 size: whole,
             }],
         );
-        cx.run(self.copy);
         if self.count > 0 {
             cx.run(self.chain);
         }
-        cx.run(self.reduce);
         cx.run(self.reflect);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        if pass == self.chain {
-            for (level, down) in (0..self.count).zip(&self.downs) {
-                let mut draw = cx.render(Attach::ColorMip(self.levels, level + 1, 0), None);
-                draw.scissor(self.region.level(level));
-                draw.draw(down, FULLSCREEN);
-            }
-            return 0;
-        }
         if pass == self.reduce {
             for (reduction, written) in self.reductions.iter().zip(&self.reduced) {
                 let [width, height] = written.size;
@@ -223,24 +227,31 @@ impl GpuPart for TraceGpu {
             }
             return 0;
         }
+        if pass == self.chain {
+            for ((level, down), drawn) in (0..self.count).zip(&self.downs).zip(self.drawn) {
+                let mut draw = cx.render(Attach::ColorMip(self.levels, level + 1, 0), None);
+                draw.within(drawn);
+                draw.draw(down, TRIANGLE);
+            }
+            return 0;
+        }
         if pass == self.reflect {
-            let (width, height) = self.region.render;
             let mut draw = cx.render(Attach::Declared, None);
-            draw.scissor([0, 0, width, height]);
-            draw.draw(&self.tracing, FULLSCREEN);
+            draw.within(self.render);
+            draw.draw(&self.tracing, TRIANGLE);
         }
         0
     }
 }
 
-const FULLSCREEN: Shape<'static, TraceGpu, Own> = Shape::Pulled {
+const TRIANGLE: Shape<'static, TraceGpu, Own> = Shape::Pulled {
     vertices: 0..3,
     instances: 0..1,
 };
 
-fn screen(vertex: Entry, fragment: Entry) -> RenderPipeline<'static> {
+fn screen(fragment: Entry) -> RenderPipeline<'static> {
     RenderPipeline {
-        vertex,
+        vertex: FULLSCREEN,
         fragment: Some(fragment),
         debug: None,
         vertices: &[],
@@ -267,10 +278,6 @@ fn extent(width: u32, height: u32) -> wgpu::Extent3d {
     }
 }
 
-fn mip_levels(width: u32, height: u32) -> u32 {
-    u32::BITS - width.max(height).max(1).leading_zeros()
-}
-
 fn extents((width, height): (u32, u32), count: u32) -> Vec<PyramidExtent> {
     let mut source = (width.max(1), height.max(1));
     (0..count)
@@ -284,33 +291,4 @@ fn extents((width, height): (u32, u32), count: u32) -> Vec<PyramidExtent> {
             extent
         })
         .collect()
-}
-
-#[derive(Clone, Copy, Default)]
-struct Region {
-    display: (u32, u32),
-    render: (u32, u32),
-}
-
-impl Region {
-    fn new(display: (u32, u32), render: (u32, u32)) -> Self {
-        let within = |size: u32, whole: u32| size.clamp(1, whole.max(1));
-        Self {
-            display,
-            render: (within(render.0, display.0), within(render.1, display.1)),
-        }
-    }
-
-    fn level(self, level: u32) -> [u32; 4] {
-        let part = |drawn: u32, whole: u32| {
-            let whole = (whole >> (level + 1)).max(1);
-            ((drawn >> (level + 1)).max(1) + 1).min(whole)
-        };
-        [
-            0,
-            0,
-            part(self.render.0, self.display.0),
-            part(self.render.1, self.display.1),
-        ]
-    }
 }
