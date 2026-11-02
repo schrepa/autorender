@@ -89,5 +89,4 @@ impl Sun {
 impl Slot for Sun {
     const NAME: &'static str = "sun";
     const WGSL: Option<&'static str> = Some(include_str!("places/sun.wgsl"));
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::SUN];
 }

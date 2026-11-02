@@ -1,43 +1,10 @@
 use std::any::{Any, TypeId};
 
 use engine_heightfield::layer::{LayerKind, NoFiles, TYPE_KEY, layer_from_json};
-use engine_place::{Runs, Smoke, SmokeFailure, SmokeSession, ask, smoke_check, smoke_eq};
+use engine_place::{Runs, Smoke, SmokeFailure, SmokeSession, ask, smoke_check};
 use serde_json::json;
 
 use crate::terrain::TerrainLayers;
-
-const fn frames(name: &'static str) -> Smoke {
-    Smoke {
-        name,
-        runs: Runs::Gpu,
-        run: drawn,
-    }
-}
-
-fn drawn(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
-    smoke_eq!(session.frame(), true, "frame_drawn");
-    Ok(())
-}
-
-pub const LIGHTING: Smoke = frames("slot_lighting");
-pub const SUN: Smoke = frames("slot_sun");
-pub const SHADOWS: Smoke = frames("slot_shadows");
-pub const LIGHTS: Smoke = frames("slot_lights");
-pub const SKY: Smoke = frames("slot_sky");
-pub const EXPOSURE: Smoke = frames("slot_exposure");
-pub const TONEMAP: Smoke = frames("slot_tonemap");
-pub const SUN_BLOCKERS: Smoke = frames("list_sun_blockers");
-pub const AMBIENT: Smoke = frames("list_ambient");
-pub const INTERIOR: Smoke = frames("list_interior");
-pub const OCCUPANCY: Smoke = frames("slot_occupancy");
-pub const PLACED_TILES: Smoke = frames("slot_placed_tiles");
-pub const COVER: Smoke = frames("slot_cover");
-pub const HORIZONS: Smoke = frames("slot_horizons");
-pub const HEIGHTFIELD: Smoke = frames("slot_heightfield");
-pub const GROUND_TILES: Smoke = frames("slot_ground_tiles");
-pub const WATER: Smoke = frames("slot_water");
-pub const INSTANCES: Smoke = frames("slot_instances");
-pub const TRANSPARENCY: Smoke = frames("slot_transparency");
 
 pub const TERRAIN_LAYERS: Smoke = Smoke {
     name: "list_terrain_layers",

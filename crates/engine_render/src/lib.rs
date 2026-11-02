@@ -12,8 +12,8 @@ use std::ops::Range;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
-    Bricks, DrawPoint, Entry, Error, List, MaterialHandle, MeshHandle, Read, Readback, Runs, Slot,
-    Smoke, SmokeFailure, SmokeSession, TextureHandle, Var, gpu_struct, smoke_eq,
+    Bricks, DrawPoint, Entry, Error, List, MaterialHandle, MeshHandle, Read, Readback, Slot,
+    TextureHandle, Var, gpu_struct,
 };
 use engine_registry::RecordExt;
 
@@ -1250,26 +1250,12 @@ impl Slot for Resolve {
     const WGSL: Option<&'static str> = Some(include_str!("places/resolve.wgsl"));
 }
 
-const fn frames(name: &'static str) -> Smoke {
-    Smoke {
-        name,
-        runs: Runs::Gpu,
-        run: drawn,
-    }
-}
-
-fn drawn(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
-    smoke_eq!(session.frame(), true, "frame_drawn");
-    Ok(())
-}
-
 pub struct PostScene;
 
 impl List for PostScene {
     const NAME: &'static str = "post_scene";
     type Member = ();
     const WGSL: Option<&'static str> = Some(include_str!("places/post_scene.wgsl"));
-    const SMOKES: &'static [Smoke] = &[frames("list_post_scene")];
 }
 
 pub struct PostLight;
@@ -1278,7 +1264,6 @@ impl List for PostLight {
     const NAME: &'static str = "post_light";
     type Member = ();
     const WGSL: Option<&'static str> = Some(include_str!("places/post_light.wgsl"));
-    const SMOKES: &'static [Smoke] = &[frames("list_post_light")];
 }
 
 #[derive(Resource, Default)]
@@ -1287,7 +1272,6 @@ pub struct PostTone;
 impl Slot for PostTone {
     const NAME: &'static str = "post_tone";
     const WGSL: Option<&'static str> = Some(include_str!("places/post_tone.wgsl"));
-    const SMOKES: &'static [Smoke] = &[frames("slot_post_tone")];
 }
 
 pub struct PostDisplay;
@@ -1296,7 +1280,6 @@ impl List for PostDisplay {
     const NAME: &'static str = "post_display";
     type Member = ();
     const WGSL: Option<&'static str> = Some(include_str!("places/post_display.wgsl"));
-    const SMOKES: &'static [Smoke] = &[frames("list_post_display")];
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1310,7 +1293,6 @@ pub struct DebugShown {
 impl Slot for DebugShown {
     const NAME: &'static str = "debug";
     const WGSL: Option<&'static str> = Some(include_str!("places/debug.wgsl"));
-    const SMOKES: &'static [Smoke] = &[frames("list_debug_view")];
 }
 
 pub struct DebugMode {

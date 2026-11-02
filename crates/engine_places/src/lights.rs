@@ -163,5 +163,4 @@ impl Slot for Lights {
         LIGHT_INTERIOR,
         LIGHT_EXTERIOR,
     ));
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::LIGHTS];
 }

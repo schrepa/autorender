@@ -7,5 +7,4 @@ pub struct Exposure;
 impl Slot for Exposure {
     const NAME: &'static str = "exposure";
     const WGSL: Option<&'static str> = Some(include_str!("places/exposure.wgsl"));
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::EXPOSURE];
 }

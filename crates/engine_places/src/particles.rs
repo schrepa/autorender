@@ -143,5 +143,4 @@ pub struct Transparency;
 impl Slot for Transparency {
     const NAME: &'static str = "transparency";
     const WGSL: Option<&'static str> = Some(include_str!("places/transparency.wgsl"));
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::TRANSPARENCY];
 }

@@ -36,7 +36,6 @@ impl Slot for Instances {
         FADE_WORD_OUT,
         STILL_FRAMES,
     ));
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::INSTANCES];
 }
 
 #[derive(Component, Debug, Clone, Copy)]

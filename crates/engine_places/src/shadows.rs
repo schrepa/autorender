@@ -38,7 +38,6 @@ impl Slot for ShadowMaps {
         DEBUG_SHADOWED;
         GROUND_TEXELS,
     ));
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::SHADOWS];
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

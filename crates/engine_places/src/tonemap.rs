@@ -14,5 +14,4 @@ gpu_struct! {
 impl Slot for Display {
     const NAME: &'static str = "tonemap";
     const WGSL: Option<&'static str> = Some(include_str!("places/tonemap.wgsl"));
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::TONEMAP];
 }

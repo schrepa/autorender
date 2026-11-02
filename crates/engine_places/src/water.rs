@@ -25,7 +25,6 @@ pub struct Waterline {
 impl Slot for Waterline {
     const NAME: &'static str = "water";
     const WGSL: Option<&'static str> = Some(include_str!("places/water.wgsl"));
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::WATER];
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

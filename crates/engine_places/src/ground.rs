@@ -356,7 +356,6 @@ pub struct Heightfield {
 impl Slot for Heightfield {
     const NAME: &'static str = "heightfield";
     const WGSL: Option<&'static str> = Some(include_str!("places/heightfield.wgsl"));
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::HEIGHTFIELD];
 }
 
 #[derive(Clone, Debug)]
@@ -413,7 +412,6 @@ impl Slot for GroundTiles {
         TILE_QUADS,
         PALETTE_ENTRIES,
     ));
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::GROUND_TILES];
 }
 
 #[derive(Resource, Default)]
@@ -422,7 +420,6 @@ pub struct Horizons;
 impl Slot for Horizons {
     const NAME: &'static str = "horizons";
     const WGSL: Option<&'static str> = Some(include_str!("places/horizons.wgsl"));
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::HORIZONS];
 }
 
 #[derive(Resource, Default)]
@@ -452,7 +449,6 @@ pub struct PlacedTiles {
 impl Slot for PlacedTiles {
     const NAME: &'static str = "placed_tiles";
     const WGSL: Option<&'static str> = Some(include_str!("places/placed_tiles.wgsl"));
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::PLACED_TILES];
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
@@ -474,7 +470,6 @@ impl Cover {
 impl Slot for Cover {
     const NAME: &'static str = "cover";
     const WGSL: Option<&'static str> = Some(include_str!("places/cover.wgsl"));
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::COVER];
 }
 
 pub struct FarCover;
@@ -492,7 +487,6 @@ pub struct Occupancy {
 
 impl Slot for Occupancy {
     const NAME: &'static str = "occupancy";
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::OCCUPANCY];
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]

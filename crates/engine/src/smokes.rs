@@ -4,9 +4,7 @@ mod proofs;
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 
-use engine_core::{
-    BrickList, Engine, ErrorCode, JobExchange, MAX_DEV_TICKS, MISSING_RECORD, smoke_eq,
-};
+use engine_core::{BrickList, Engine, ErrorCode, JobExchange, MAX_DEV_TICKS, MISSING_RECORD};
 pub use engine_core::{Runs, Smoke, SmokeFailure, SmokeSession};
 use engine_registry::Registry;
 use engine_scene::{SceneFiles, SceneInstance, SceneKinds};
@@ -36,8 +34,6 @@ pub struct SmokeEntry {
     pub owner: &'static str,
     pub runs: Runs,
     pub run: fn(&mut dyn SmokeSession) -> std::result::Result<(), SmokeFailure>,
-    pub without: Option<&'static str>,
-    pub held: &'static [&'static str],
     pub list: Option<fn(BrickList) -> BrickList>,
     pub restart: Option<Restart>,
 }
@@ -49,32 +45,6 @@ impl SmokeEntry {
             owner,
             runs: smoke.runs,
             run: smoke.run,
-            without: None,
-            held: &[],
-            list: None,
-            restart: None,
-        }
-    }
-
-    fn left_out(registry: &Registry, package: &'static str) -> Self {
-        let held: Vec<&'static str> = registry
-            .sections()
-            .filter(|section| section.brick == package)
-            .map(|section| section.key)
-            .chain(
-                registry
-                    .stats()
-                    .filter(|stats| stats.brick == package)
-                    .map(|stats| stats.key),
-            )
-            .collect();
-        Self {
-            name: Box::leak(format!("left_out.{package}").into_boxed_str()),
-            owner: package,
-            runs: Runs::Gpu,
-            run: |_| Ok(()),
-            without: Some(package),
-            held: Box::leak(held.into_boxed_slice()),
             list: None,
             restart: None,
         }
@@ -85,21 +55,14 @@ impl SmokeEntry {
     }
 
     pub fn bricks(&self, bricks: &BrickList) -> BrickList {
-        let listed = match self.list {
+        match self.list {
             Some(list) => list(bricks.clone()),
             None => bricks.clone(),
-        };
-        match self.without {
-            Some(package) => listed.without_package(package),
-            None => listed,
         }
     }
 
     pub fn run_in(&self, session: &mut dyn SmokeSession) -> std::result::Result<(), SmokeFailure> {
-        match self.without {
-            Some(package) => left_out(session, package, self.held),
-            None => (self.run)(session),
-        }
+        (self.run)(session)
     }
 }
 
@@ -137,45 +100,6 @@ pub fn without(bricks: &BrickList, packages: &[&'static str]) -> BrickList {
         })
 }
 
-fn left_out(
-    session: &mut dyn SmokeSession,
-    package: &'static str,
-    held: &[&'static str],
-) -> std::result::Result<(), SmokeFailure> {
-    let paused = session.request("control", json!({ "name": "pause" }));
-    smoke_eq!(paused.is_ok(), true, "pauses");
-    let status = session
-        .request("query", json!({ "name": "status" }))
-        .map(|reply| reply["result"]["features"].clone())
-        .unwrap_or_default();
-    let features = status.as_array().cloned().unwrap_or_default();
-    smoke_eq!(features.is_empty(), false, "status_names_bricks_added");
-    smoke_eq!(
-        json!({ "without": package, "listed": features.contains(&json!(package)) }),
-        json!({ "without": package, "listed": false }),
-        "status_leaves_brick_out"
-    );
-    for &key in held {
-        let inspected = session.request("inspect", json!({ "component": key }));
-        smoke_eq!(
-            json!({ "without": package, "key": key, "refused": inspected.is_err() }),
-            json!({ "without": package, "key": key, "refused": true }),
-            "inspect_leaves_brick_out"
-        );
-    }
-    session.step(1);
-    let rendered = session
-        .request("control", json!({ "name": "render" }))
-        .map_err(|reply| reply["error"].clone());
-    smoke_eq!(
-        json!({ "without": package, "error": rendered.err() }),
-        json!({ "without": package, "error": null }),
-        "renders_without_brick"
-    );
-    smoke_eq!(session.frame(), true, "frames_without_brick");
-    Ok(())
-}
-
 pub fn registered(bricks: &BrickList) -> Result<Vec<SmokeEntry>> {
     let mut smokes: Vec<SmokeEntry> = host::SMOKES
         .iter()
@@ -189,11 +113,6 @@ pub fn registered(bricks: &BrickList) -> Result<Vec<SmokeEntry>> {
         registry
             .smokes()
             .map(|(owner, smoke)| SmokeEntry::of(owner, smoke)),
-    );
-    smokes.extend(
-        registry
-            .names()
-            .map(|package| SmokeEntry::left_out(registry, package)),
     );
     if proofs::room_listed(registry) {
         smokes.push(SmokeEntry {

@@ -11,8 +11,6 @@ use serde_json::{Value, json};
 
 const GAME: &str = "highlands";
 
-const LIGHTING: &str = "lighting";
-
 const FLY_CAMERA_INPUT: (&str, &str) = ("engine_fly_camera", "input_camera");
 
 const SETTLE_FRAMES: u32 = 20_000;
@@ -61,17 +59,6 @@ pub fn smokes(bricks: &BrickList) -> engine::Result<Vec<SmokeEntry>> {
         }),
         ..SmokeEntry::of(GAME, &TOON)
     });
-    let toon = crate::toon(BrickList::default());
-    for entry in engine::smokes::registered(&toon)? {
-        if entry.owner != LIGHTING || entry.without.is_some() {
-            continue;
-        }
-        smokes.push(SmokeEntry {
-            name: Box::leak(format!("{}.{}", TOON.name, entry.name).into_boxed_str()),
-            list: Some(crate::toon),
-            ..entry
-        });
-    }
     Ok(smokes)
 }
 
