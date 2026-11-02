@@ -555,7 +555,8 @@ impl GpuPart for TerrainGpu {
             .prepare(cx, (&tiles, &bakes, &settings, limits.texture_layers));
         self.macro_maps
             .prepare(cx, (&tiles, &bakes, &assets, limits.texture_layers));
-        let (_, slots) = crate::terrain_horizons::room(limits.texture_layers, tiles.terrains.len());
+        let slots =
+            crate::terrain_bounce::relit_slots(&tiles.terrains, &settings, limits.texture_layers);
         self.horizons.prepare(
             cx,
             (&tiles, &bakes, &settings, shadows.on, limits.texture_layers),

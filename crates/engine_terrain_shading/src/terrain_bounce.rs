@@ -529,6 +529,19 @@ fn terrain_record(
     }
 }
 
+pub(crate) fn relit_slots(terrains: &[TerrainEntry], settings: &TerrainShading, layers: u32) -> u32 {
+    let (casting, slots) = crate::terrain_horizons::room(layers, terrains.len());
+    if !(settings.sun_shadows && settings.bounce) {
+        return 0;
+    }
+    let wanted = terrains
+        .iter()
+        .take(casting)
+        .filter(|terrain| !terrain.surroundings)
+        .count();
+    (wanted as u32).min(slots)
+}
+
 pub(crate) fn windows(
     terrains: &[TerrainEntry],
     bakes: &Bakes,
