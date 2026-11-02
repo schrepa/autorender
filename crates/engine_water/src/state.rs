@@ -63,7 +63,7 @@ impl HeldWater {
         let mesh = water.as_ref().map(|water| water.mesh(&self.face.heights));
         self.errors = mesh.as_ref().map(|mesh| {
             let holding: Vec<bool> = (0..mesh.levels().len()).map(|at| mesh.holds(at)).collect();
-            Arc::from(ErrorPyramid::over(mesh.levels(), Some(&holding[..])).halves())
+            ErrorPyramid::over(mesh.levels(), Some(&holding[..])).shared_halves()
         });
         self.mesh = mesh.map(Arc::new);
         self.water = water.map(Arc::new);
@@ -87,6 +87,7 @@ pub(crate) struct WaterTerrain {
     pub(crate) settled: Settled,
     pub(crate) faces: Arc<[TileFace]>,
     pub(crate) held: BTreeMap<TileKey, HeldWater>,
+    pub(crate) left: BTreeMap<TileKey, HeldWater>,
     pub(crate) revision: u64,
 }
 
@@ -136,13 +137,19 @@ impl WaterTerrain {
                 jobs.cancel(ticket);
             }
         }
+        self.left.clear();
         self.settled.cancel_all(jobs);
     }
 
-    fn follow_faces(&mut self, jobs: &mut Jobs, (eye, frame): (Vec2, u64)) {
+    fn follow_faces(
+        &mut self,
+        jobs: &mut Jobs,
+        kept: &[(TileKey, engine_core::Stamp)],
+        (eye, frame): (Vec2, u64),
+    ) {
         let faces = Arc::clone(&self.faces);
         let mut changed = false;
-        let mut kept = BTreeMap::new();
+        let mut following = BTreeMap::new();
         for face in faces.iter() {
             let held = match self.held.remove(&face.key) {
                 Some(mut held) if held.face.stamp == face.stamp => {
@@ -158,17 +165,27 @@ impl WaterTerrain {
                 }
                 None => {
                     changed = true;
-                    HeldWater::new(face.clone())
+                    match self.left.remove(&face.key) {
+                        Some(mut held) if held.face.stamp == face.stamp => {
+                            held.face = face.clone();
+                            held
+                        }
+                        Some(_) | None => HeldWater::new(face.clone()),
+                    }
                 }
             };
-            kept.insert(face.key, held);
+            following.insert(face.key, held);
         }
-        for (_, held) in std::mem::replace(&mut self.held, kept) {
+        for (key, held) in std::mem::replace(&mut self.held, following) {
             changed = true;
             if let Base::Asking(ticket) = held.base {
                 jobs.cancel(ticket);
+            } else if held.resident() && kept.contains(&(key, held.face.stamp)) {
+                self.left.insert(key, held);
             }
         }
+        self.left
+            .retain(|&key, held| kept.contains(&(key, held.face.stamp)));
         if changed {
             self.revision += 1;
         }
@@ -432,6 +449,7 @@ pub(crate) fn follow(
             settled: Settled::default(),
             faces: Arc::from(Vec::new()),
             held: BTreeMap::new(),
+            left: BTreeMap::new(),
             revision: 1,
         });
         if (fresh || !Arc::ptr_eq(&terrain.baked, &baked)) && baked.unbaked().is_none() {
@@ -452,7 +470,7 @@ pub(crate) fn follow(
         if fresh || !Arc::ptr_eq(&terrain.faces, &entry.tiles) {
             terrain.faces = Arc::clone(&entry.tiles);
         }
-        terrain.follow_faces(&mut jobs, (local, frame));
+        terrain.follow_faces(&mut jobs, &entry.kept, (local, frame));
         terrain.take_bases((&records, &mut jobs), &mut state.failures, frame);
         state.terrains.push(terrain);
     }
@@ -469,7 +487,7 @@ pub(crate) fn publish_waterline(
     let state = &mut *state;
     let dry = state
         .dry
-        .get_or_insert_with(|| Arc::from(ErrorPyramid::dry().halves()))
+        .get_or_insert_with(|| ErrorPyramid::dry().shared_halves())
         .clone();
     let errors: Vec<WaterTileErrors> = state
         .terrains

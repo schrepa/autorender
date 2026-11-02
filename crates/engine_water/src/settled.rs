@@ -908,8 +908,7 @@ fn arrive(
         settled.release(jobs, (before, SUMMARY_TAG));
     }
     settled.share(jobs, (record, SUMMARY_TAG), || {
-        let head = &bytes[..length];
-        (summary_share(head), Arc::from(head))
+        (summary_share(record), Arc::from(&bytes[..length]))
     });
     if whole.binary_search(&key).is_ok() {
         if let Some(before) = settled.shared.insert(key, record)
@@ -918,7 +917,7 @@ fn arrive(
             settled.release(jobs, (before, SETTLED_TAG));
         }
         settled.share(jobs, (record, SETTLED_TAG), || {
-            (settled_share(&bytes), Arc::clone(&bytes))
+            (settled_share(record), Arc::clone(&bytes))
         });
     }
     if let Some(water) = held {
@@ -1293,10 +1292,11 @@ fn ask_waters(
 
 fn give_waters(terrain: &mut WaterTerrain, work: &Work) {
     let resident: Vec<TileKey> = terrain.resident_keys(|_| true);
+    let left = &terrain.left;
     terrain
         .settled
         .given
-        .retain(|key, _| resident.binary_search(key).is_ok());
+        .retain(|key, _| resident.binary_search(key).is_ok() || left.contains_key(key));
     let settled = &terrain.settled;
     type Giving = (TileKey, Arc<Option<TileWater>>, RecordKey);
     let giving: Vec<Giving> = settled

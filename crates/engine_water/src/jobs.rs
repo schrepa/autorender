@@ -22,12 +22,12 @@ pub static SETTLED: JobKind =
 const SETTLED_SHARE: u8 = 2;
 const SUMMARY_SHARE: u8 = 3;
 
-pub fn settled_share(record: &[u8]) -> RecordKey {
-    RecordKey::shared_tagged(SETTLED_SHARE, record)
+pub fn settled_share(record: RecordKey) -> RecordKey {
+    RecordKey::shared_tagged(SETTLED_SHARE, &record.hash())
 }
 
-pub fn summary_share(head: &[u8]) -> RecordKey {
-    RecordKey::shared_tagged(SUMMARY_SHARE, head)
+pub fn summary_share(record: RecordKey) -> RecordKey {
+    RecordKey::shared_tagged(SUMMARY_SHARE, &record.hash())
 }
 
 #[derive(Clone, Debug, PartialEq)]
