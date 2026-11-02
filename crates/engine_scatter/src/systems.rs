@@ -624,7 +624,7 @@ fn impostor_boxes(state: &ScatterState, slots: Range<u32>) -> Vec<(Vec3, Vec3)> 
 pub(crate) fn publish_tiles(
     state: Res<ScatterState>,
     mut placed: ResMut<PlacedTiles>,
-    mut published: Local<Option<(u64, Boxes)>>,
+    mut published: Local<Option<(u64, Boxes, u64)>>,
 ) {
     let revision = state.pool.revision();
     let boxes: Boxes = state
@@ -634,27 +634,42 @@ pub(crate) fn publish_tiles(
         .collect();
     if published
         .as_ref()
-        .is_some_and(|(seen, held)| *seen == revision && *held == boxes)
+        .is_some_and(|(seen, held, _)| *seen == revision && *held == boxes)
         && !placed.is_changed()
     {
         return;
     }
     let placed = &mut *placed;
-    placed.tiles.clear();
+    let same_impostors = published
+        .as_ref()
+        .is_some_and(|(_, _, impostors)| *impostors == state.impostors_revision);
+    let mut before = std::mem::take(&mut placed.tiles);
     placed
         .tiles
         .extend(state.pool.tiles().into_iter().map(|((terrain, key), pooled)| {
+            let identity = pooled.placed.as_ptr() as usize as u64;
+            let kept = before
+                .binary_search_by_key(&(terrain, key), |tile| (tile.terrain, tile.key))
+                .ok()
+                .map(|at| &mut before[at])
+                .filter(|tile| {
+                    same_impostors
+                        && tile.stamp == pooled.stamp
+                        && tile.slots == pooled.slots
+                        && tile.identity == identity
+                })
+                .map(|tile| std::mem::take(&mut tile.impostors));
             PooledTile {
                 terrain,
                 key,
                 stamp: pooled.stamp,
                 slots: pooled.slots.clone(),
-                identity: pooled.placed.as_ptr() as usize as u64,
-                impostors: impostor_boxes(&state, pooled.slots.clone()),
+                identity,
+                impostors: kept.unwrap_or_else(|| impostor_boxes(&state, pooled.slots.clone())),
             }
         }));
     placed.groups.clone_from(&boxes);
-    *published = Some((revision, boxes));
+    *published = Some((revision, boxes, state.impostors_revision));
 }
 
 pub(crate) fn publish_changes(
