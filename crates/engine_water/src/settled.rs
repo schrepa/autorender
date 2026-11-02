@@ -497,7 +497,9 @@ pub(crate) fn follow(
         generation(terrain),
         cx.settles,
     );
-    if cooking || !terrain.settled.failed.is_empty() || terrain.settled.ask_seen.as_ref() != Some(&seen)
+    if cooking
+        || !terrain.settled.failed.is_empty()
+        || terrain.settled.ask_seen.as_ref() != Some(&seen)
     {
         terrain.settled.ask_seen = Some(seen);
         ask(terrain, cx, (recipe, &watered, &near, &whole), (eye, frame));

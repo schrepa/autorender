@@ -7,8 +7,8 @@ use engine_core::{Entry, Error, ErrorCode};
 use crate::bindings::Stages;
 use crate::frame_group::{Class, FrameVariable, Reach};
 use crate::graph::{
-    Access as GraphAccess, Clear, Declared as GraphPass, FAR, Life, PassEntry, PassId, ResourceEntry,
-    ResourceId, SCENE_CLEAR, StaticGraph, TRANSPARENT,
+    Access as GraphAccess, Clear, Declared as GraphPass, FAR, Life, PassEntry, PassId,
+    ResourceEntry, ResourceId, SCENE_CLEAR, StaticGraph, TRANSPARENT,
 };
 use crate::install::{Bound, Copied, Declared, PassDecl, PipelineDecl, Program, Scoped, Work};
 use crate::linker::{Composed, Linker, Ty};
@@ -614,7 +614,10 @@ impl Machine {
                         label: Some("engine/frame-group"),
                         entries: &layout,
                     }),
-                    entries: entries.iter().map(|&(binding, _, stages)| (binding, stages)).collect(),
+                    entries: entries
+                        .iter()
+                        .map(|&(binding, _, stages)| (binding, stages))
+                        .collect(),
                     camera: entries.iter().any(|&(binding, _, _)| binding == 0),
                 }
             })
@@ -666,7 +669,11 @@ impl Machine {
             groups.sort_by_key(|group| group.index);
             let mut layout_key = String::new();
             for group in &mut groups {
-                group.windows = group.entries.iter().filter(|(_, bound, _)| bound.window()).count();
+                group.windows = group
+                    .entries
+                    .iter()
+                    .filter(|(_, bound, _)| bound.window())
+                    .count();
                 let entries: Vec<wgpu::BindGroupLayoutEntry> = group
                     .entries
                     .iter()
@@ -726,7 +733,11 @@ impl Machine {
                 })
                 .collect();
             let mesh_slots = match &decl.program {
-                Program::Render(desc) => desc.vertices.iter().filter(|layout| matches!(layout, VertexLayout::Mesh)).count() as u32,
+                Program::Render(desc) => desc
+                    .vertices
+                    .iter()
+                    .filter(|layout| matches!(layout, VertexLayout::Mesh))
+                    .count() as u32,
                 Program::Compute(_) => 0,
             };
             let holes = decl.holes() > 0;

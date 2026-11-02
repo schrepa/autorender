@@ -191,11 +191,17 @@ impl Renderer {
     }
 
     fn close_batch(&self, encoder: &mut wgpu::CommandEncoder, batch: u8) {
-        let busy = self.core.profiler.busy(BATCHES.get(usize::from(batch)).copied().unwrap_or_default());
+        let busy = self
+            .core
+            .profiler
+            .busy(BATCHES.get(usize::from(batch)).copied().unwrap_or_default());
         mark_between(encoder, busy, None);
     }
 
-    #[expect(clippy::too_many_lines, reason = "longer than the line ceiling; it may only shrink")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn render(&mut self, frame: RenderFrame<'_>, display: bool) -> Result<RenderStats, Error> {
         let _profile = engine_profile::span("render", "render_snapshot");
         let _row = engine_profile::timed(engine_profile::row("render.total"));
@@ -224,8 +230,17 @@ impl Renderer {
         let row_upload = engine_profile::timed(engine_profile::row("render.uploads"));
         let mesh_bytes = run.assets.meshes.sync(&device, &self.core.queue, world);
         let mut mips = None;
-        let (mut texture_bytes, mut mip_levels) = run.assets.materials.sync(&device, &self.core.queue, world, &mut mips);
-        run.assets.impostors.run(&device, &self.core.queue, world, (&run.assets.meshes, &run.assets.materials), &mut mips);
+        let (mut texture_bytes, mut mip_levels) =
+            run.assets
+                .materials
+                .sync(&device, &self.core.queue, world, &mut mips);
+        run.assets.impostors.run(
+            &device,
+            &self.core.queue,
+            world,
+            (&run.assets.meshes, &run.assets.materials),
+            &mut mips,
+        );
         if let Some(encoder) = mips.take() {
             self.core.queue.hand(Handover::from(encoder));
         }
@@ -241,8 +256,13 @@ impl Renderer {
         run.queued.ending.clear();
         run.part_draws.fill(0);
         run.region = region.upscales().then(|| region.render.pixels());
-        run.asked_frame = world.get_resource::<FrameTime>().map_or(run.frame, |time| time.frame);
-        let settings = world.get_resource::<crate::RenderSettings>().cloned().unwrap_or_default();
+        run.asked_frame = world
+            .get_resource::<FrameTime>()
+            .map_or(run.frame, |time| time.frame);
+        let settings = world
+            .get_resource::<crate::RenderSettings>()
+            .cloned()
+            .unwrap_or_default();
         run.readback_slots = settings.readback_slots.max(1) as usize;
         run.readback_slot_bytes = settings.readback_slot_bytes;
         let faulted: Vec<engine_registry::GateId> = run
@@ -356,7 +376,9 @@ impl Renderer {
                 outputs.insert(id.index());
             }
         }
-        let plan = self.plans.plan(&run.machine.graph, &run.runs, &outputs, crate::graph::PLANS)?;
+        let plan = self
+            .plans
+            .plan(&run.machine.graph, &run.runs, &outputs, crate::graph::PLANS)?;
         run.plan = Some(std::sync::Arc::clone(&plan));
         let profile_encoding = engine_profile::span("render", "command_encoding");
         let row_encoding = engine_profile::timed(engine_profile::row("render.encoding"));
@@ -405,7 +427,10 @@ impl Renderer {
             }
             let pass = &run.machine.declared.passes[index];
             let (part, work) = (pass.part, pass.work);
-            let elsewhere = pass.claims.iter().any(|point| *point != TypeId::of::<crate::MainView>());
+            let elsewhere = pass
+                .claims
+                .iter()
+                .any(|point| *point != TypeId::of::<crate::MainView>());
             if !run.drawable(part) {
                 continue;
             }
@@ -525,7 +550,8 @@ impl Renderer {
         crate::platform::poll(&device);
         drop(profile_submit);
         drop(row_submit);
-        let (resident_textures, resident_texture_bytes, mip_bytes) = run.assets.materials.texture_totals();
+        let (resident_textures, resident_texture_bytes, mip_bytes) =
+            run.assets.materials.texture_totals();
         let resident_mesh_bytes = world
             .get_resource::<AssetResidency>()
             .map_or(0, |residency| {
@@ -552,7 +578,8 @@ impl Renderer {
             readback_overflows: run.overflows,
             ..RenderStats::default()
         };
-        let immediate = self.core.queue.take_immediate() + std::mem::take(&mut run.queued.immediate);
+        let immediate =
+            self.core.queue.take_immediate() + std::mem::take(&mut run.queued.immediate);
         rebuilt_counters(&mut run.rebuilt);
         if engine_profile::active() {
             stat_counters(&stats);

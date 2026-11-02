@@ -261,9 +261,9 @@ impl ScatterPool {
             .iter()
             .take_while(|range| range.start <= slots.end)
             .count();
-        let joined = self.dirty[at..at + reach]
-            .iter()
-            .fold(slots, |all, range| all.start.min(range.start)..all.end.max(range.end));
+        let joined = self.dirty[at..at + reach].iter().fold(slots, |all, range| {
+            all.start.min(range.start)..all.end.max(range.end)
+        });
         self.dirty.drain(at..at + reach);
         self.dirty.insert(at, joined);
     }

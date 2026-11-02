@@ -342,10 +342,15 @@ impl Run {
         self.pass = u32::MAX;
         for parity in 0..2 {
             self.parity = parity;
-            let entries: Vec<(u32, crate::bindings::Stages)> = self.machine.variants[variant].entries.clone();
+            let entries: Vec<(u32, crate::bindings::Stages)> =
+                self.machine.variants[variant].entries.clone();
             let mut resolved = Vec::with_capacity(entries.len());
             for (binding, _) in entries {
-                let ty = self.machine.frame_slots.get(&binding).map_or(Ty::Uniform, |slot| slot.ty);
+                let ty = self
+                    .machine
+                    .frame_slots
+                    .get(&binding)
+                    .map_or(Ty::Uniform, |slot| slot.ty);
                 let found = match binding {
                     0 => Resolved::Dynamic(self.camera.clone(), size_of::<CameraUniform>() as u64),
                     1 => Resolved::Buffer(self.pieces.clone()),
@@ -367,13 +372,17 @@ impl Run {
         self.pass = self.machine.pipelines[pipeline].home;
         for parity in 0..2 {
             self.parity = parity;
-            let entries = self.machine.pipelines[pipeline].groups[group].entries.clone();
+            let entries = self.machine.pipelines[pipeline].groups[group]
+                .entries
+                .clone();
             let mut resolved = Vec::with_capacity(entries.len());
             for (binding, bound, ty) in entries {
                 let found = self.resource(&bound, ty, !ty.writes());
                 resolved.push((binding, found));
             }
-            let layout = self.machine.pipelines[pipeline].groups[group].layout.clone();
+            let layout = self.machine.pipelines[pipeline].groups[group]
+                .layout
+                .clone();
             let index = self.machine.pipelines[pipeline].groups[group].index;
             let made = self.bind_group(&layout, (Some(pipeline), index), resolved);
             self.own_groups[pipeline][group].made[parity] = Some(made);
@@ -401,11 +410,17 @@ impl Run {
     }
 
     pub(super) fn core_frame(&mut self, binding: u32, ty: Ty) -> Resolved {
-        let core = self.machine.frame_slots.get(&binding).and_then(|slot| slot.core.as_ref());
+        let core = self
+            .machine
+            .frame_slots
+            .get(&binding)
+            .and_then(|slot| slot.core.as_ref());
         match core {
             Some(CoreFrame::Impostor(name)) => match self.assets.impostors.frame_resource(name) {
                 Some(crate::impostors::FrameResource::View(view)) => Resolved::View(view.clone()),
-                Some(crate::impostors::FrameResource::Sampler(sampler)) => Resolved::Sampler(sampler.clone()),
+                Some(crate::impostors::FrameResource::Sampler(sampler)) => {
+                    Resolved::Sampler(sampler.clone())
+                }
                 None => Resolved::Placeholder(ty),
             },
             Some(CoreFrame::Post) => Resolved::Buffer(self.post_buffer.clone()),
@@ -459,7 +474,10 @@ impl Run {
         }
         self.targets = targets;
         self.previous_targets = previous;
-        self.debug_targets = DEBUG_FORMATS.iter().map(|format| made("engine/debug-target", *format)).collect();
+        self.debug_targets = DEBUG_FORMATS
+            .iter()
+            .map(|format| made("engine/debug-target", *format))
+            .collect();
         self.rebuilt.textures += 1;
         self.touch(Held::Targets);
     }

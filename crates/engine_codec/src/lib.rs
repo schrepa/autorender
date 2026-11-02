@@ -164,7 +164,11 @@ pub fn get_grid<T: FromIterator<f32>>(input: &mut Reader<'_>, stride: usize) -> 
         };
         let residual = (code >> 1).cast_signed() ^ -(code & 1).cast_signed();
         let left = if column > 0 { steps[at - 1] } else { NOTHING };
-        let up = if at >= stride { steps[at - stride] } else { NOTHING };
+        let up = if at >= stride {
+            steps[at - stride]
+        } else {
+            NOTHING
+        };
         let corner = if column > 0 && at >= stride {
             steps[at - stride - 1]
         } else {
@@ -216,8 +220,17 @@ pub fn get_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u8]>, Erro
     let (residuals, rest) = input.bytes.split_at(count);
     input.bytes = rest;
     let mut planes = vec![0_u8; count];
-    for (plane, residuals) in planes.chunks_exact_mut(area).zip(residuals.chunks_exact(area)) {
-        plane_from(plane, side, |at| residuals[at], u8::wrapping_add, u8::wrapping_sub);
+    for (plane, residuals) in planes
+        .chunks_exact_mut(area)
+        .zip(residuals.chunks_exact(area))
+    {
+        plane_from(
+            plane,
+            side,
+            |at| residuals[at],
+            u8::wrapping_add,
+            u8::wrapping_sub,
+        );
     }
     Ok(planes.into_boxed_slice())
 }
@@ -273,7 +286,10 @@ pub fn get_wide_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u16]>
     let (residuals, rest) = input.bytes.split_at(bytes);
     input.bytes = rest;
     let mut planes = vec![0_u16; count];
-    for (plane, residuals) in planes.chunks_exact_mut(area).zip(residuals.chunks_exact(2 * area)) {
+    for (plane, residuals) in planes
+        .chunks_exact_mut(area)
+        .zip(residuals.chunks_exact(2 * area))
+    {
         plane_from(
             plane,
             side,

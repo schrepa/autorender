@@ -139,10 +139,16 @@ impl Run {
         self.layer_sets
             .iter()
             .find(|(known, _)| *known == layer)
-            .map_or_else(|| Arc::from(set_formats(&self.machine.outputs, layer)), |(_, set)| Arc::clone(set))
+            .map_or_else(
+                || Arc::from(set_formats(&self.machine.outputs, layer)),
+                |(_, set)| Arc::clone(set),
+            )
     }
 
-    #[expect(clippy::too_many_lines, reason = "longer than the line ceiling; it may only shrink")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(crate) fn begin_render(&mut self, attach: AttachRaw, view: Option<u32>) -> bool {
         let Some(offset) = self.view_offset(self.part, view) else {
             let error = fault(self.path("render.view"), ErrorCode::OutOfRange);
@@ -162,7 +168,13 @@ impl Run {
         let is_shared = shared(&pass);
         let mut colors = std::mem::take(&mut self.spare.colors);
         colors.clear();
-        let mut depth: Option<(u64, wgpu::TextureView, wgpu::TextureFormat, Option<Ops>, bool)> = None;
+        let mut depth: Option<(
+            u64,
+            wgpu::TextureView,
+            wgpu::TextureFormat,
+            Option<Ops>,
+            bool,
+        )> = None;
         let mut main = false;
         let ops_of = |id: Option<crate::graph::ResourceId>| {
             planned
@@ -172,12 +184,21 @@ impl Run {
                 .map(|(_, ops)| *ops)
         };
         let depth_of = |id: Option<crate::graph::ResourceId>| -> Option<Option<Ops>> {
-            planned.depth.and_then(|(known, ops)| (Some(known) == id).then_some(ops))
+            planned
+                .depth
+                .and_then(|(known, ops)| (Some(known) == id).then_some(ops))
         };
-        let declared_ops = |access: crate::Access, clear: Option<Clear>, fallback: Clear| match access {
-            crate::Access::Load => Ops { load: Load::Load, store: true },
-            crate::Access::Clear => Ops { load: Load::Clear(clear.unwrap_or(fallback)), store: true },
-        };
+        let declared_ops =
+            |access: crate::Access, clear: Option<Clear>, fallback: Clear| match access {
+                crate::Access::Load => Ops {
+                    load: Load::Load,
+                    store: true,
+                },
+                crate::Access::Clear => Ops {
+                    load: Load::Clear(clear.unwrap_or(fallback)),
+                    store: true,
+                },
+            };
         let key = target_key;
         match attach {
             AttachRaw::Declared => {
@@ -187,23 +208,50 @@ impl Run {
                         if self.debug {
                             for index in 0..self.debug_targets.len() {
                                 let target = Target::Debug(index as u32);
-                                let ops = ops_of(self.machine.ids.target(target)).unwrap_or(Ops { load: Load::Load, store: true });
+                                let ops = ops_of(self.machine.ids.target(target)).unwrap_or(Ops {
+                                    load: Load::Load,
+                                    store: true,
+                                });
                                 let made = &self.debug_targets[index];
-                                colors.push((key(target), Some(made.view.clone()), made.texture.format(), ops));
+                                colors.push((
+                                    key(target),
+                                    Some(made.view.clone()),
+                                    made.texture.format(),
+                                    ops,
+                                ));
                             }
                         } else {
                             let set = self.layer_set(Some(layer));
                             for &(target, format, _, written) in set.iter() {
                                 let id = self.machine.ids.target(target);
                                 match ops_of(id).filter(|_| written) {
-                                    Some(ops) => colors.push((key(target), self.view_of(target, true).cloned(), format, ops)),
-                                    None => colors.push((key(target), None, format, Ops { load: Load::Load, store: false })),
+                                    Some(ops) => colors.push((
+                                        key(target),
+                                        self.view_of(target, true).cloned(),
+                                        format,
+                                        ops,
+                                    )),
+                                    None => colors.push((
+                                        key(target),
+                                        None,
+                                        format,
+                                        Ops {
+                                            load: Load::Load,
+                                            store: false,
+                                        },
+                                    )),
                                 }
                             }
                         }
                     }
-                    if let (Some(id), Some(made)) = (self.machine.ids.target(Target::Depth), self.view_of(Target::Depth, true)) {
-                        let ops = depth_of(Some(id)).unwrap_or(Some(Ops { load: Load::Load, store: true }));
+                    if let (Some(id), Some(made)) = (
+                        self.machine.ids.target(Target::Depth),
+                        self.view_of(Target::Depth, true),
+                    ) {
+                        let ops = depth_of(Some(id)).unwrap_or(Some(Ops {
+                            load: Load::Load,
+                            store: true,
+                        }));
                         depth = Some((key(Target::Depth), made.clone(), DEPTH_FORMAT, ops, true));
                     }
                 }
@@ -216,10 +264,20 @@ impl Run {
                 }
                 if pass.name == crate::shared::COMPOSITE {
                     let set = self.layer_set(None);
-                    for &(target, format, _, _) in set.iter().skip(1).filter(|(_, _, _, written)| *written) {
+                    for &(target, format, _, _) in
+                        set.iter().skip(1).filter(|(_, _, _, written)| *written)
+                    {
                         let id = self.machine.ids.target(target);
-                        let ops = ops_of(id).unwrap_or(Ops { load: Load::Load, store: true });
-                        colors.push((key(target), self.view_of(target, true).cloned(), format, ops));
+                        let ops = ops_of(id).unwrap_or(Ops {
+                            load: Load::Load,
+                            store: true,
+                        });
+                        colors.push((
+                            key(target),
+                            self.view_of(target, true).cloned(),
+                            format,
+                            ops,
+                        ));
                     }
                 }
                 for &(texture, access) in &pass.colors {
@@ -280,17 +338,36 @@ impl Run {
                         return self.mismatch(pass.name);
                     };
                     let id = self.machine.ids.textures.get(texture as usize).copied();
-                    let planned = ops_of(id).unwrap_or_else(|| declared_ops(access, pass.clear_of(texture), Clear::Color(crate::graph::TRANSPARENT)));
-                    let ops = Ops { store: true, ..planned };
+                    let planned = ops_of(id).unwrap_or_else(|| {
+                        declared_ops(
+                            access,
+                            pass.clear_of(texture),
+                            Clear::Color(crate::graph::TRANSPARENT),
+                        )
+                    });
+                    let ops = Ops {
+                        store: true,
+                        ..planned
+                    };
                     let format = self.machine.declared.textures[texture as usize].format;
                     let view = self.attachment_view(texture, 0, at);
-                    colors.push(((u64::from(texture) * 4_096 + u64::from(at)) * 64 + 10_000, view, format, ops));
+                    colors.push((
+                        (u64::from(texture) * 4_096 + u64::from(at)) * 64 + 10_000,
+                        view,
+                        format,
+                        ops,
+                    ));
                 }
             }
         }
         let mut attachments = std::mem::take(&mut self.spare.attachments);
         attachments.clear();
-        attachments.extend(colors.iter().map(|(key, ..)| *key).chain(depth.as_ref().map(|(key, ..)| *key)));
+        attachments.extend(
+            colors
+                .iter()
+                .map(|(key, ..)| *key)
+                .chain(depth.as_ref().map(|(key, ..)| *key)),
+        );
         if let Some(open) = &mut self.open
             && self.merge
             && open.shared
@@ -317,25 +394,35 @@ impl Run {
         let current = self.pass;
         self.group(current);
         let label = self.label_of(current).unwrap_or(pass.name);
-        let layout = self.pass_layout(&colors, depth.as_ref().map(|(_, _, format, _, view)| (*format, *view)), (self.debug && layer.is_some(), main));
+        let layout = self.pass_layout(
+            &colors,
+            depth
+                .as_ref()
+                .map(|(_, _, format, _, view)| (*format, *view)),
+            (self.debug && layer.is_some(), main),
+        );
         let Some(encoder) = self.encoder.as_mut() else {
             return false;
         };
-        let color_attachments: [Option<wgpu::RenderPassColorAttachment<'_>>; MOST_COLORS] = std::array::from_fn(|at| {
-            colors.get(at).and_then(|(_, view, _, ops)| {
-                view.as_ref().map(|view| wgpu::RenderPassColorAttachment {
-                    view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: color_ops(*ops),
+        let color_attachments: [Option<wgpu::RenderPassColorAttachment<'_>>; MOST_COLORS] =
+            std::array::from_fn(|at| {
+                colors.get(at).and_then(|(_, view, _, ops)| {
+                    view.as_ref().map(|view| wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: color_ops(*ops),
+                    })
                 })
-            })
-        });
-        let depth_attachment = depth.as_ref().map(|(_, view, _, ops, _)| wgpu::RenderPassDepthStencilAttachment {
-            view,
-            depth_ops: ops.map(depth_ops),
-            stencil_ops: None,
-        });
+            });
+        let depth_attachment =
+            depth.as_ref().map(
+                |(_, view, _, ops, _)| wgpu::RenderPassDepthStencilAttachment {
+                    view,
+                    depth_ops: ops.map(depth_ops),
+                    stencil_ops: None,
+                },
+            );
         let mut render = encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(label),
@@ -372,19 +459,34 @@ impl Run {
         depth: Option<(wgpu::TextureFormat, bool)>,
         (debug, main): (bool, bool),
     ) -> u32 {
-        let formats = || colors.iter().map(|(_, view, format, _)| view.as_ref().map(|_| *format));
+        let formats = || {
+            colors
+                .iter()
+                .map(|(_, view, format, _)| view.as_ref().map(|_| *format))
+        };
         let found = self.layouts.iter().position(|known| {
-            known.depth == depth && known.debug == debug && known.main == main && known.formats.iter().copied().eq(formats())
+            known.depth == depth
+                && known.debug == debug
+                && known.main == main
+                && known.formats.iter().copied().eq(formats())
         });
         let at = found.unwrap_or_else(|| {
-            self.layouts.push(PassLayout { formats: formats().collect(), depth, debug, main });
+            self.layouts.push(PassLayout {
+                formats: formats().collect(),
+                depth,
+                debug,
+                main,
+            });
             self.layouts.len() - 1
         });
         at as u32
     }
 
     pub(super) fn mismatch(&mut self, name: &str) -> bool {
-        let error = fault(self.path(&format!("passes.{name}.attach")), ErrorCode::PassMismatch);
+        let error = fault(
+            self.path(&format!("passes.{name}.attach")),
+            ErrorCode::PassMismatch,
+        );
         self.fault(error);
         false
     }
@@ -394,7 +496,13 @@ impl Run {
         pass: &crate::install::PassDecl,
         texture: u32,
         layer: u32,
-        depth: &mut Option<(u64, wgpu::TextureView, wgpu::TextureFormat, Option<Ops>, bool)>,
+        depth: &mut Option<(
+            u64,
+            wgpu::TextureView,
+            wgpu::TextureFormat,
+            Option<Ops>,
+            bool,
+        )>,
     ) -> bool {
         let Some(&(_, access)) = pass.depths.iter().find(|(known, _)| *known == texture) else {
             return false;
@@ -404,18 +512,30 @@ impl Run {
             .planned()
             .and_then(|planned| planned.depth)
             .and_then(|(known, ops)| (Some(known) == id).then_some(ops));
-        let ops = planned.flatten().map(|ops| Ops { store: true, ..ops }).or_else(|| {
-            Some(match access {
-                crate::Access::Load => Ops { load: Load::Load, store: true },
-                crate::Access::Clear => Ops {
-                    load: Load::Clear(pass.clear_of(texture).unwrap_or(Clear::Depth(FAR))),
-                    store: true,
-                },
-            })
-        });
+        let ops = planned
+            .flatten()
+            .map(|ops| Ops { store: true, ..ops })
+            .or_else(|| {
+                Some(match access {
+                    crate::Access::Load => Ops {
+                        load: Load::Load,
+                        store: true,
+                    },
+                    crate::Access::Clear => Ops {
+                        load: Load::Clear(pass.clear_of(texture).unwrap_or(Clear::Depth(FAR))),
+                        store: true,
+                    },
+                })
+            });
         let format = self.machine.declared.textures[texture as usize].format;
         if let Some(view) = self.attachment_view(texture, 0, layer) {
-            *depth = Some(((u64::from(texture) * 4_096 + u64::from(layer)) * 64 + 20_000, view, format, ops, false));
+            *depth = Some((
+                (u64::from(texture) * 4_096 + u64::from(layer)) * 64 + 20_000,
+                view,
+                format,
+                ops,
+                false,
+            ));
         }
         true
     }
@@ -431,7 +551,12 @@ impl Run {
             1 if made[1].is_some() => made[1].as_mut()?,
             _ => made[0].as_mut()?,
         };
-        made.slice(&(mip..mip + 1), &(layer..layer + 1), Some(wgpu::TextureViewDimension::D2)).cloned()
+        made.slice(
+            &(mip..mip + 1),
+            &(layer..layer + 1),
+            Some(wgpu::TextureViewDimension::D2),
+        )
+        .cloned()
     }
 
     pub(crate) fn end_render(&mut self) {

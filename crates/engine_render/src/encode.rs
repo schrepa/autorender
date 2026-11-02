@@ -97,7 +97,11 @@ impl Holders {
                     (0, _) => holders.cameras.push(holder),
                     (1, _) => holders.pieces.push(holder),
                     (_, Some(bound)) => holders.hold(bound, holder),
-                    (_, None) => match machine.frame_slots.get(&binding).and_then(|slot| slot.core.as_ref()) {
+                    (_, None) => match machine
+                        .frame_slots
+                        .get(&binding)
+                        .and_then(|slot| slot.core.as_ref())
+                    {
                         Some(CoreFrame::Impostor(_)) => holders.atlas.push(holder),
                         Some(CoreFrame::Target(_)) => holders.targets.push(holder),
                         Some(CoreFrame::Post | CoreFrame::Linear) | None => {}
@@ -117,8 +121,12 @@ impl Holders {
 
     fn hold(&mut self, bound: &Bound, holder: Holder) {
         match bound {
-            Bound::Texture(texture) | Bound::Slice { texture, .. } => self.textures[*texture as usize].push(holder),
-            Bound::Buffer(buffer) | Bound::Window { buffer, .. } => self.buffers[*buffer as usize].push(holder),
+            Bound::Texture(texture) | Bound::Slice { texture, .. } => {
+                self.textures[*texture as usize].push(holder)
+            }
+            Bound::Buffer(buffer) | Bound::Window { buffer, .. } => {
+                self.buffers[*buffer as usize].push(holder)
+            }
             Bound::Target(_) => self.targets.push(holder),
             Bound::Sampler(_) | Bound::Asset => {}
         }
@@ -143,7 +151,10 @@ pub(crate) struct Groups {
 
 impl Groups {
     fn fresh() -> Self {
-        Self { made: [None, None], stale: true }
+        Self {
+            made: [None, None],
+            stale: true,
+        }
     }
 }
 
@@ -446,12 +457,41 @@ pub(crate) enum Placeholder {
 }
 
 pub(crate) enum RawShape {
-    Pulled { vertices: Range<u32>, instances: Range<u32> },
-    Buffers { vertices: Streams, indices: Option<u32>, elements: Range<u32>, instances: Range<u32> },
-    Indirect { vertices: Streams, indices: Option<u32>, args: u32, offset: u64 },
-    IndirectAt { vertices: Streams, indices: Option<u32>, args: u32, offset: u64 },
-    Mesh { mesh: MeshHandle, material: Option<MaterialHandle>, instances: Range<u32>, streams: Streams },
-    MeshIndirect { mesh: MeshHandle, material: Option<MaterialHandle>, args: u32, offset: u64, streams: Streams },
+    Pulled {
+        vertices: Range<u32>,
+        instances: Range<u32>,
+    },
+    Buffers {
+        vertices: Streams,
+        indices: Option<u32>,
+        elements: Range<u32>,
+        instances: Range<u32>,
+    },
+    Indirect {
+        vertices: Streams,
+        indices: Option<u32>,
+        args: u32,
+        offset: u64,
+    },
+    IndirectAt {
+        vertices: Streams,
+        indices: Option<u32>,
+        args: u32,
+        offset: u64,
+    },
+    Mesh {
+        mesh: MeshHandle,
+        material: Option<MaterialHandle>,
+        instances: Range<u32>,
+        streams: Streams,
+    },
+    MeshIndirect {
+        mesh: MeshHandle,
+        material: Option<MaterialHandle>,
+        args: u32,
+        offset: u64,
+        streams: Streams,
+    },
 }
 
 #[derive(Default)]
@@ -524,11 +564,14 @@ fn texture_uses(machine: &Machine, texture: u32) -> impl Iterator<Item = Ty> + '
                 .map(|(_, _, ty)| *ty)
         })
     });
-    let frame = machine.frame_bound.iter().filter_map(move |(binding, bound)| {
-        (bound_texture(bound) == Some(texture))
-            .then(|| machine.frame_slots.get(binding).map(|slot| slot.ty))
-            .flatten()
-    });
+    let frame = machine
+        .frame_bound
+        .iter()
+        .filter_map(move |(binding, bound)| {
+            (bound_texture(bound) == Some(texture))
+                .then(|| machine.frame_slots.get(binding).map(|slot| slot.ty))
+                .flatten()
+        });
     own.chain(frame)
 }
 
@@ -614,10 +657,24 @@ impl Run {
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
-        let pieces = buffer("engine/pieces", crate::pieces::PIECE_ALIGN, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST);
-        let samplers = machine.declared.samplers.iter().map(|desc| sampler_of(&device, desc)).collect();
+        let pieces = buffer(
+            "engine/pieces",
+            crate::pieces::PIECE_ALIGN,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let samplers = machine
+            .declared
+            .samplers
+            .iter()
+            .map(|desc| sampler_of(&device, desc))
+            .collect();
         let count = parts.len();
-        let textures = machine.declared.textures.iter().map(|_| [None, None]).collect();
+        let textures = machine
+            .declared
+            .textures
+            .iter()
+            .map(|_| [None, None])
+            .collect();
         let dimensions = (0..machine.declared.textures.len())
             .map(|texture| texture_dimension(&machine, texture as u32))
             .collect();
@@ -625,16 +682,33 @@ impl Run {
         let buffers = machine.declared.buffers.iter().map(|_| None).collect();
         let runs = Bits::of(machine.graph.passes());
         let frame_groups = machine.variants.iter().map(|_| Groups::fresh()).collect();
-        let own_groups = machine.pipelines.iter().map(|pipeline| pipeline.groups.iter().map(|_| Groups::fresh()).collect()).collect();
+        let own_groups = machine
+            .pipelines
+            .iter()
+            .map(|pipeline| pipeline.groups.iter().map(|_| Groups::fresh()).collect())
+            .collect();
         let holders = Holders::of(&machine);
         let stale = (0..machine.variants.len())
             .map(|variant| Holder::Frame(variant as u32))
-            .chain(machine.pipelines.iter().enumerate().flat_map(|(pipeline, built)| {
-                (0..built.groups.len()).map(move |group| Holder::Own(pipeline as u32, group as u32))
-            }))
+            .chain(
+                machine
+                    .pipelines
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(pipeline, built)| {
+                        (0..built.groups.len())
+                            .map(move |group| Holder::Own(pipeline as u32, group as u32))
+                    }),
+            )
             .collect();
-        let pass_decls = machine.declared.passes.iter().map(|pass| Arc::new(pass.clone())).collect();
-        let mut layer_sets: Vec<(Option<crate::Layer>, Arc<[SetFormat]>)> = vec![(None, Arc::from(set_formats(&machine.outputs, None)))];
+        let pass_decls = machine
+            .declared
+            .passes
+            .iter()
+            .map(|pass| Arc::new(pass.clone()))
+            .collect();
+        let mut layer_sets: Vec<(Option<crate::Layer>, Arc<[SetFormat]>)> =
+            vec![(None, Arc::from(set_formats(&machine.outputs, None)))];
         for pass in &machine.declared.passes {
             let layer = pass_layer(pass);
             if !layer_sets.iter().any(|(known, _)| *known == layer) {
@@ -753,7 +827,12 @@ impl Run {
                 continue;
             }
             let before = self.compiled.len();
-            let _ = self.compile(key.pipeline, (&key.formats, key.depth), (key.debug, key.main), specialized(&key));
+            let _ = self.compile(
+                key.pipeline,
+                (&key.formats, key.depth),
+                (key.debug, key.main),
+                specialized(&key),
+            );
             if self.compiled.len() > before {
                 created += 1;
             }
@@ -766,7 +845,9 @@ impl Run {
         for &holder in self.holders.of_held(held) {
             let groups = match holder {
                 Holder::Frame(variant) => &mut self.frame_groups[variant as usize],
-                Holder::Own(pipeline, group) => &mut self.own_groups[pipeline as usize][group as usize],
+                Holder::Own(pipeline, group) => {
+                    &mut self.own_groups[pipeline as usize][group as usize]
+                }
             };
             if groups.stale {
                 continue;
@@ -775,7 +856,9 @@ impl Run {
             self.stale.push(holder);
             if cfg!(feature = "profiling") {
                 let reason = match held {
-                    Held::Texture(texture) => self.machine.declared.textures[texture as usize].label,
+                    Held::Texture(texture) => {
+                        self.machine.declared.textures[texture as usize].label
+                    }
                     Held::Buffer(buffer) => self.machine.declared.buffers[buffer as usize].label,
                     Held::Targets => "targets",
                     Held::Cameras => "cameras",
@@ -1066,7 +1149,11 @@ impl Run {
     }
 
     pub(crate) fn grow_buffer(&mut self, buffer: u32, bytes: u64) {
-        let held = self.buffers.get(buffer as usize).and_then(Option::as_ref).map(|(_, known)| *known);
+        let held = self
+            .buffers
+            .get(buffer as usize)
+            .and_then(Option::as_ref)
+            .map(|(_, known)| *known);
         if held.is_none_or(|known| known < bytes) {
             self.allocate_buffer(buffer, bytes.max(16).next_power_of_two());
         }
@@ -1150,7 +1237,11 @@ impl Run {
 
 pub(crate) type TimedDraw<'t> = Option<(&'t GpuProfiler, &'t mut dyn FnMut() -> String)>;
 
-fn timed_draw(render: &mut wgpu::RenderPass<'static>, timed: TimedDraw<'_>, draw: impl FnOnce(&mut wgpu::RenderPass<'static>)) {
+fn timed_draw(
+    render: &mut wgpu::RenderPass<'static>,
+    timed: TimedDraw<'_>,
+    draw: impl FnOnce(&mut wgpu::RenderPass<'static>),
+) {
     let Some((timer, label)) = timed else {
         draw(render);
         return;

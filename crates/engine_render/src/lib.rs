@@ -817,7 +817,8 @@ impl<P: GpuPart> Prepare<'_, P> {
     }
 
     pub fn write<T: bytemuck::Pod>(&mut self, buffer: Buffer<P>, offset: u64, data: &[T]) {
-        self.core.write(buffer.0, offset, bytemuck::cast_slice(data));
+        self.core
+            .write(buffer.0, offset, bytemuck::cast_slice(data));
     }
 
     pub fn grow_buffer(&mut self, buffer: Buffer<P>, bytes: u64) {
@@ -1066,7 +1067,11 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         let timer = self.raw.timer();
         let mut label = Some(label);
         let mut named = || label.take().map_or_else(String::new, |label| label());
-        self.issue(pipeline, (shape, &[], MeshPass::default()), Some((timer, &mut named)));
+        self.issue(
+            pipeline,
+            (shape, &[], MeshPass::default()),
+            Some((timer, &mut named)),
+        );
     }
 
     pub fn draw_timed_with<'l>(

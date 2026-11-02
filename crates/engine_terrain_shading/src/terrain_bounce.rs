@@ -529,7 +529,11 @@ fn terrain_record(
     }
 }
 
-pub(crate) fn relit_slots(terrains: &[TerrainEntry], settings: &TerrainShading, layers: u32) -> u32 {
+pub(crate) fn relit_slots(
+    terrains: &[TerrainEntry],
+    settings: &TerrainShading,
+    layers: u32,
+) -> u32 {
     let (casting, slots) = crate::terrain_horizons::room(layers, terrains.len());
     if !(settings.sun_shadows && settings.bounce) {
         return 0;

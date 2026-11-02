@@ -347,7 +347,7 @@ fn write_slots(state: &mut ScatterState, dirty: Vec<Range<u32>>) {
         state.generation += 1;
     }
     state.dirty = if grown {
-        vec![0..held as u32]
+        std::iter::once(0..held as u32).collect()
     } else {
         dirty
             .into_iter()

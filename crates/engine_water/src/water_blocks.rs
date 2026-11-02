@@ -200,7 +200,10 @@ impl Blocks {
         let half = PATCHES_PER_TILE as usize / 2;
         let (mut level, mut x, mut z, mut px, mut pz) = (key.level, key.x, key.z, px, pz);
         while level < u8::MAX {
-            (px, pz) = (usize::from(x & 1) * half + px / 2, usize::from(z & 1) * half + pz / 2);
+            (px, pz) = (
+                usize::from(x & 1) * half + px / 2,
+                usize::from(z & 1) * half + pz / 2,
+            );
             (level, x, z) = (level + 1, x / 2, z / 2);
             if let Some(tile) = self.tiles.get(&(terrain, TileKey::new(level, x, z))) {
                 return tile.blocks[pz * 2 * half + px] != NO_WATER_BLOCK;
@@ -423,7 +426,12 @@ fn block_texels(
 
 pub(crate) fn place_blocks(
     ground: Res<GroundTiles>,
-    (limits, view, clock, work): (Res<DeviceLimits>, Res<View>, Res<WorkClock>, Res<GroundWork>),
+    (limits, view, clock, work): (
+        Res<DeviceLimits>,
+        Res<View>,
+        Res<WorkClock>,
+        Res<GroundWork>,
+    ),
     mut state: ResMut<WaterState>,
 ) {
     let state = &mut *state;
@@ -482,7 +490,9 @@ pub(crate) fn place_blocks(
     }
     let terrains = &state.terrains;
     state.blocks.write_directory(&ground, carried, |tile| {
-        terrains.iter().any(|terrain| terrain.entity == tile.terrain)
+        terrains
+            .iter()
+            .any(|terrain| terrain.entity == tile.terrain)
     });
 }
 

@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    FrameTime, JobFailures, Jobs, Records, Spawner, Ticket, VIEW_JOBS, View, WorkClock, job_priority,
+    FrameTime, JobFailures, Jobs, Records, Spawner, Ticket, VIEW_JOBS, View, WorkClock,
+    job_priority,
 };
 use engine_heightfield::tile::{Solid, TileJob};
 use engine_heightfield::{

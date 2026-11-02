@@ -594,7 +594,8 @@ impl PlanCache {
                 if self.plans.len() >= most.max(1) {
                     self.plans.remove(0);
                 }
-                self.plans.push((runs.clone(), outputs.clone(), std::sync::Arc::new(plan)));
+                self.plans
+                    .push((runs.clone(), outputs.clone(), std::sync::Arc::new(plan)));
                 self.plans.len() - 1
             }
         };

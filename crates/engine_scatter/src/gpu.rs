@@ -435,21 +435,22 @@ impl ScatterGpu {
         held.group_count = state.groups.layouts.len() as u32;
         held.ids_per_view = data.ids_per_view;
         held.groups.clear();
-        held.groups.extend(state.groups.groups.iter().map(|group| HeldGroup {
-            meshes: group.meshes.iter().map(|&mesh| (mesh, false)).collect(),
-            casters: group.casters.iter().map(|&mesh| (mesh, false)).collect(),
-            material: group.material,
-            material_resident: false,
-            count: group.count,
-            casts: group.casts,
-            look: look(
-                group.masked(),
-                group.source.is_double_sided(),
-                group.extended,
-            ),
-            masked: group.masked(),
-            grounded: group.source.grounding().is_some(),
-        }));
+        held.groups
+            .extend(state.groups.groups.iter().map(|group| HeldGroup {
+                meshes: group.meshes.iter().map(|&mesh| (mesh, false)).collect(),
+                casters: group.casters.iter().map(|&mesh| (mesh, false)).collect(),
+                material: group.material,
+                material_resident: false,
+                count: group.count,
+                casts: group.casts,
+                look: look(
+                    group.masked(),
+                    group.source.is_double_sided(),
+                    group.extended,
+                ),
+                masked: group.masked(),
+                grounded: group.source.grounding().is_some(),
+            }));
     }
 
     fn write_slots(&mut self, cx: &mut Prepare<'_, Self>, state: &ScatterState) {
@@ -466,11 +467,11 @@ impl ScatterGpu {
         }
         let pool = &state.pool;
         let objects = state.objects;
-        let whole = [0..objects];
+        let whole = 0..objects;
         let ranges: &[std::ops::Range<u32>] = match held.uploaded {
             Some(seen) if seen == state.slots_revision => &[],
             Some(seen) if seen + 1 == state.slots_revision => &state.dirty,
-            Some(_) | None => &whole,
+            Some(_) | None => std::slice::from_ref(&whole),
         };
         for range in ranges.iter().filter(|range| !range.is_empty()) {
             held.slots_written = true;

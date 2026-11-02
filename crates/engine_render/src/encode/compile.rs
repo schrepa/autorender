@@ -17,20 +17,34 @@ impl Run {
         Some((self.filled.get(filled)?.base, Some(filled)))
     }
 
-    pub(super) fn render_pipeline(&mut self, pipeline: u32, variant: Option<crate::materials::Variant>) -> Option<usize> {
+    pub(super) fn render_pipeline(
+        &mut self,
+        pipeline: u32,
+        variant: Option<crate::materials::Variant>,
+    ) -> Option<usize> {
         let layout = self.open.as_ref()?.layout;
         let bits = variant.map(crate::materials::Variant::bits);
         let built = self.machine.pipelines.get(pipeline as usize)?;
-        if let Some(at) = built.ready.iter().position(|ready| ready.layout == layout && ready.bits == bits) {
+        if let Some(at) = built
+            .ready
+            .iter()
+            .position(|ready| ready.layout == layout && ready.bits == bits)
+        {
             return Some(at);
         }
         let known = self.layouts.get(layout as usize)?;
-        let (formats, depth, debug, main) = (known.formats.clone(), known.depth, known.debug, known.main);
+        let (formats, depth, debug, main) =
+            (known.formats.clone(), known.depth, known.debug, known.main);
         let specialized = variant.map(|variant| (variant.bits(), variant.constants()));
         let (key, made) = self.compile(pipeline, (&formats, depth), (debug, main), specialized)?;
         self.rebuilt.compiles += 1;
         let built = self.machine.pipelines.get_mut(pipeline as usize)?;
-        built.ready.push(Ready { layout, bits, key, made });
+        built.ready.push(Ready {
+            layout,
+            bits,
+            key,
+            made,
+        });
         Some(built.ready.len() - 1)
     }
 
@@ -45,8 +59,14 @@ impl Run {
         }
     }
 
-    #[expect(clippy::too_many_lines, reason = "longer than the line ceiling; it may only shrink")]
-    #[expect(clippy::disallowed_methods, reason = "the machine keys every pipeline, which the pipeline list records")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the machine keys every pipeline, which the pipeline list records"
+    )]
     pub(crate) fn compile(
         &mut self,
         pipeline: u32,
