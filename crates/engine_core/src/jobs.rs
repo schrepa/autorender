@@ -198,6 +198,17 @@ impl RecordKey {
     }
 
     #[doc(hidden)]
+    pub fn shared_tagged(tag: u8, bytes: &[u8]) -> Self {
+        Self(
+            Sha256::new()
+                .chain_update([tag])
+                .chain_update(bytes)
+                .finalize()
+                .into(),
+        )
+    }
+
+    #[doc(hidden)]
     pub fn hash(&self) -> [u8; 32] {
         self.0
     }
@@ -325,6 +336,10 @@ impl Jobs<'_, '_> {
         let key = share_key(&bytes);
         self.orders.orders.push(JobOrder::Share { key: key.0, bytes });
         key
+    }
+
+    pub fn share_as(&mut self, key: RecordKey, bytes: Arc<[u8]>) {
+        self.orders.orders.push(JobOrder::Share { key: key.0, bytes });
     }
 
     pub fn share_record(&mut self, ticket: &Ticket) -> RecordKey {

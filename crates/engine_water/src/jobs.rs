@@ -22,18 +22,12 @@ pub static SETTLED: JobKind =
 const SETTLED_SHARE: u8 = 2;
 const SUMMARY_SHARE: u8 = 3;
 
-pub fn share_settled(record: &[u8]) -> Vec<u8> {
-    let mut shared = Vec::with_capacity(record.len() + 1);
-    shared.push(SETTLED_SHARE);
-    shared.extend_from_slice(record);
-    shared
+pub fn settled_share(record: &[u8]) -> RecordKey {
+    RecordKey::shared_tagged(SETTLED_SHARE, record)
 }
 
-pub fn share_summary(head: &[u8]) -> Vec<u8> {
-    let mut shared = Vec::with_capacity(head.len() + 1);
-    shared.push(SUMMARY_SHARE);
-    shared.extend_from_slice(head);
-    shared
+pub fn summary_share(head: &[u8]) -> RecordKey {
+    RecordKey::shared_tagged(SUMMARY_SHARE, head)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -233,10 +227,10 @@ fn settled(
     cell: f32,
 ) -> Result<SteadyWater, Error> {
     let shared = RecordKey::from_hash(record);
-    let water: SteadyWater = match cx.share(shared).map(<[u8]>::split_first) {
-        Some(Some((&SETTLED_SHARE, rest))) => codec::decode(rest)?,
-        _ => return Err(unshared("$.settled", &shared.hex())),
+    let Some(bytes) = cx.share(shared) else {
+        return Err(unshared("$.settled", &shared.hex()));
     };
+    let water: SteadyWater = codec::decode(bytes)?;
     if water.key != key || water.cell != cell {
         return Err(mismatched("$.settled", &shared.hex()));
     }
@@ -250,10 +244,10 @@ fn summary(
     cell: f32,
 ) -> Result<SteadySummary, Error> {
     let shared = RecordKey::from_hash(record);
-    let (head, _) = match cx.share(shared).map(<[u8]>::split_first) {
-        Some(Some((&SUMMARY_SHARE, rest))) => SteadyWater::head(rest)?,
-        _ => return Err(unshared("$.settled", &shared.hex())),
+    let Some(bytes) = cx.share(shared) else {
+        return Err(unshared("$.settled", &shared.hex()));
     };
+    let (head, _) = SteadyWater::head(bytes)?;
     if head.key != key || head.cell != cell {
         return Err(mismatched("$.settled", &shared.hex()));
     }

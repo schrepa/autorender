@@ -11,7 +11,7 @@ use engine_heightfield::{Pyramid, Stamp, TILE_QUADS, reaches};
 use engine_places::ground::GroundWork;
 use glam::Vec2;
 
-use crate::jobs::{PARTS, SETTLED, STEADIED, SteadiedJob, WaterJob, share_settled, share_summary};
+use crate::jobs::{PARTS, SETTLED, STEADIED, SteadiedJob, WaterJob, settled_share, summary_share};
 use crate::state::{RETRY_AFTER, SettleQueue, WaterState, WaterTerrain};
 use crate::water_settle::SettleAsk;
 use crate::work::Work;
@@ -238,11 +238,17 @@ impl Settled {
         self.making.clear();
     }
 
-    fn share(&mut self, jobs: &mut Jobs, at: (RecordKey, u8), bytes: impl FnOnce() -> Vec<u8>) {
+    fn share(
+        &mut self,
+        jobs: &mut Jobs,
+        at: (RecordKey, u8),
+        shared: impl FnOnce() -> (RecordKey, Arc<[u8]>),
+    ) {
         if self.sharing.contains_key(&at) {
             return;
         }
-        let key = jobs.share(Arc::from(bytes()));
+        let (key, bytes) = shared();
+        jobs.share_as(key, bytes);
         self.sharing.insert(at, key);
     }
 
@@ -823,15 +829,13 @@ fn take_arrived(
             continue;
         };
         let output = match &asked.phase {
-            Phase::Fetching(ticket) => arrived(cx.records, ticket).map(|output| {
-                output
-                    .map(|bytes| bytes.to_vec())
-                    .map_err(|_| None::<String>)
-            }),
+            Phase::Fetching(ticket) => {
+                arrived(cx.records, ticket).map(|output| output.map_err(|_| None::<String>))
+            }
             Phase::Settling => cx
                 .queue
                 .take(&asked.record.bytes)
-                .map(|output| output.map_err(Some)),
+                .map(|output| output.map(Arc::from).map_err(Some)),
             Phase::Starting => None,
         };
         let Some(output) = output else {
@@ -881,7 +885,7 @@ fn take_arrived(
 fn arrive(
     settled: &mut Settled,
     jobs: &mut Jobs,
-    (key, record, bytes): (TileKey, RecordKey, Vec<u8>),
+    (key, record, bytes): (TileKey, RecordKey, Arc<[u8]>),
     (kept, whole): (&[TileKey], &[TileKey]),
 ) -> Result<bool, Error> {
     let unread = |error: Error| error.within(&format!("$.{}", SETTLED.name()));
@@ -904,7 +908,8 @@ fn arrive(
         settled.release(jobs, (before, SUMMARY_TAG));
     }
     settled.share(jobs, (record, SUMMARY_TAG), || {
-        share_summary(&bytes[..length])
+        let head = &bytes[..length];
+        (summary_share(head), Arc::from(head))
     });
     if whole.binary_search(&key).is_ok() {
         if let Some(before) = settled.shared.insert(key, record)
@@ -912,7 +917,9 @@ fn arrive(
         {
             settled.release(jobs, (before, SETTLED_TAG));
         }
-        settled.share(jobs, (record, SETTLED_TAG), || share_settled(&bytes));
+        settled.share(jobs, (record, SETTLED_TAG), || {
+            (settled_share(&bytes), Arc::clone(&bytes))
+        });
     }
     if let Some(water) = held {
         settled.held.insert(key, (water, record));
