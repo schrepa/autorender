@@ -38,10 +38,7 @@ impl SurfacePrograms {
 
     fn of(terrains: &Terrains) -> Self {
         let mut programs = Self::default();
-        for state in terrains.entries.iter().filter(|state| state.drawn) {
-            let data = (!state.materials)
-                .then(|| state.surface.as_ref().and_then(|(_, data)| data.clone()))
-                .flatten();
+        for data in drawn_surfaces(terrains) {
             let entry = match data {
                 Some(data) => {
                     let base = programs.program.len() as u32;
@@ -64,20 +61,46 @@ impl SurfacePrograms {
     }
 }
 
+fn drawn_surfaces(terrains: &Terrains) -> impl Iterator<Item = Option<&Arc<SurfaceData>>> {
+    terrains
+        .entries
+        .iter()
+        .filter(|state| state.drawn)
+        .map(|state| {
+            (!state.materials)
+                .then(|| state.surface.as_ref().and_then(|(_, data)| data.as_ref()))
+                .flatten()
+        })
+}
+
 pub(crate) fn publish_programs(
     terrains: Res<Terrains>,
     mut programs: ResMut<SurfacePrograms>,
-    mut published: Local<Option<(u64, u64)>>,
+    mut published: Local<Option<Vec<Option<Arc<SurfaceData>>>>>,
 ) {
-    let seen = (terrains.epoch, terrains.revision());
-    if *published == Some(seen) {
+    let unchanged = published.as_ref().is_some_and(|held| {
+        held.len() == drawn_surfaces(&terrains).count()
+            && held
+                .iter()
+                .zip(drawn_surfaces(&terrains))
+                .all(|(held, now)| match (held, now) {
+                    (Some(held), Some(now)) => Arc::ptr_eq(held, now),
+                    (None, None) => true,
+                    _ => false,
+                })
+    });
+    if unchanged {
         return;
     }
     let made = SurfacePrograms::of(&terrains);
     if made.program != programs.program || made.entries != programs.entries {
         *programs = made;
     }
-    *published = Some(seen);
+    *published = Some(
+        drawn_surfaces(&terrains)
+            .map(|data| data.cloned())
+            .collect(),
+    );
 }
 
 pub(crate) struct SurfaceProgramGpu {
