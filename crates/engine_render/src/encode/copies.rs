@@ -141,6 +141,9 @@ impl Run {
             let over = most.is_some_and(|most| bytes > most);
             let once = request.once || over;
             let idle = |slot: &Slot| !slot.once && slot.state.load(Ordering::Acquire) == 0 && slot.bytes >= bytes;
+            if !self.rings[ring].slots.iter().any(idle) {
+                self.rings[ring].slots.retain(|slot| slot.once || slot.state.load(Ordering::Acquire) != 0 || slot.bytes >= bytes);
+            }
             if once || (!self.rings[ring].slots.iter().any(idle) && self.rings[ring].kept() < slots) {
                 let staging = crate::memory::buffer(
                     &self.device,

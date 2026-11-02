@@ -157,8 +157,9 @@ fn removals(session: &mut dyn SmokeSession) -> Checked<()> {
     )?;
     smoke_eq!(removal["newly_removed"], json!(1), "removal_counts");
     smoke_eq!(loaded(session, "crate-near")?, false, "removed_despawns");
+    let removals = query(session, "world_removals", json!({}))?;
     smoke_eq!(
-        query(session, "world_removals", json!({}))?,
+        json!({"removed": removals["removed"], "ids": removals["ids"]}),
         json!({"removed": 1, "ids": ["streaming-fixture/crate-near"]}),
         "removal_inspects"
     );

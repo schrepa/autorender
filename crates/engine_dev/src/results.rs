@@ -50,6 +50,7 @@ results! {
     game: crate::results::GameResult,
     pause: crate::results::StatusResult,
     resume: crate::results::StatusResult,
+    jobs: crate::results::StatusResult,
     capture: crate::results::CaptureResult,
     profile: crate::results::ProfileResult,
     explain: crate::results::ExplainResult,
@@ -273,6 +274,7 @@ pub struct DescribedBrick {
     pub settings: Vec<DescribedEntry>,
     pub stats: Vec<DescribedEntry>,
     pub operations: Vec<DescribedEntry>,
+    pub explains: Vec<String>,
 }
 
 #[derive(Serialize)]

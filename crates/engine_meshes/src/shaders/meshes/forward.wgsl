@@ -1,5 +1,6 @@
 import package::engine::mesh::declarations::TemporalOutput;
 import package::engine::shading::{Shaded, ViewPixel};
+import package::engine::view::view_pixel;
 import package::generated::targets::{ViewTargets, view_targets};
 import package::meshes::shade::{extended_fragment, extended_temporal_output, fragment,
     masked_depth, shade, temporal_output};

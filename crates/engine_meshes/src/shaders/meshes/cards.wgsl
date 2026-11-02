@@ -346,7 +346,7 @@ fn mesh_card_lit(input: CardVertex) -> CardShaded {
 
 fn placed_card_lit(input: CardVertex) -> CardShaded {
     return card_lit(input, placed_card_point(input),
-        card_body(placed_impostor_records[impostor_index(input.batch)]));
+        card_body(placed_impostor(impostor_index(input.batch))));
 }
 
 fn card_debug(input: CardVertex, point: SurfacePoint, record: u32, object: u32)

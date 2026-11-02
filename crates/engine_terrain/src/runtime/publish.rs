@@ -124,6 +124,11 @@ fn placed_layers(rules: &Biomes) -> Vec<PlacedLayer> {
         .collect()
 }
 
+fn entry_entity(state: &TerrainState) -> Entity {
+    let around = u64::from(state.around.is_some()) << 63;
+    Entity::from_bits(state.entity.to_bits() ^ around)
+}
+
 fn entry_of(
     (terrains, state): (&Terrains, &TerrainState),
     (settings, kinds): (&TerrainSettings, &[&'static LayerKind]),
@@ -131,7 +136,7 @@ fn entry_of(
 ) -> TerrainEntry {
     let surface = &state.terrain.surface;
     TerrainEntry {
-        terrain: state.entity,
+        terrain: entry_entity(state),
         origin: state.terrain.origin,
         pyramid: state.terrain.pyramid,
         cutout: state.around.as_ref().map(|around| around.cutout),

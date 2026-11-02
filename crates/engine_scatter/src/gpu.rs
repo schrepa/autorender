@@ -78,9 +78,7 @@ const CARD_STREAMS: &[VertexLayout] = &[VertexLayout::Buffer(CARDS), VertexLayou
 
 const SHADOW_CARD_STREAMS: &[VertexLayout] = &[VertexLayout::Buffer(CARDS)];
 
-const COVERAGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
-
-const HEIGHTS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+const OCCUPANCY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 const LEFT_OUT: u32 = 0;
 
@@ -178,9 +176,8 @@ pub(crate) struct ScatterGpu {
     splats: Vec<Buffer<Self>>,
     listed_draws: Vec<Buffer<Self>>,
     placed_far: Buffer<Self>,
-    coverage: Texture<Self>,
-    heights: Texture<Self>,
-    unfiner: [Texture<Self>; 2],
+    occupancy_map: Texture<Self>,
+    unfiner: Texture<Self>,
     snapping: ComputePipeline<Self>,
     culling: ComputePipeline<Self>,
     maps: Vec<MapPipelines>,
@@ -199,15 +196,11 @@ fn grow(held: &mut u64, bytes: u64, room: u64) {
     }
 }
 
-fn blend(dst_factor: wgpu::BlendFactor, operation: wgpu::BlendOperation) -> wgpu::BlendState {
-    let component = wgpu::BlendComponent {
+fn component(dst_factor: wgpu::BlendFactor, operation: wgpu::BlendOperation) -> wgpu::BlendComponent {
+    wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
         dst_factor,
         operation,
-    };
-    wgpu::BlendState {
-        color: component,
-        alpha: component,
     }
 }
 
@@ -254,7 +247,7 @@ impl ScatterGpu {
         pass: Pass<Self>,
         (splat, listed_draw): (Buffer<Self>, Buffer<Self>),
         (records, poses, covers, listed): (Buffer<Self>, Buffer<Self>, Buffer<Self>, Buffer<Self>),
-        (coverage, heights, unfiner): (Texture<Self>, Texture<Self>, [Texture<Self>; 2]),
+        (occupancy, unfiner): (Texture<Self>, Texture<Self>),
     ) -> Result<MapPipelines, Error> {
         use crate::shaders::scatter::occupancy_maps as maps;
         let target = |vertex, fragment| RenderPipeline {
@@ -275,10 +268,11 @@ impl ScatterGpu {
             },
             None => Bind::Texture(held),
         };
-        let red = wgpu::ColorWrites::RED;
-        let red_green = wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN;
-        let over = Some(blend(wgpu::BlendFactor::OneMinusSrc, wgpu::BlendOperation::Add));
-        let max = Some(blend(wgpu::BlendFactor::One, wgpu::BlendOperation::Max));
+        let written = wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN | wgpu::ColorWrites::ALPHA;
+        let splatted = Some(wgpu::BlendState {
+            color: component(wgpu::BlendFactor::One, wgpu::BlendOperation::Max),
+            alpha: component(wgpu::BlendFactor::OneMinusSrc, wgpu::BlendOperation::Add),
+        });
         let select = cx.compute_pipeline(
             pass,
             maps::SELECT_COVERS,
@@ -294,13 +288,13 @@ impl ScatterGpu {
         let clear = cx.render_pipeline_targets(
             pass,
             &target(maps::VS_CLEAR, maps::FS_CLEAR),
-            &[(None, red), (None, red_green)],
+            &[(None, written)],
             &[(maps::SPLAT, Bind::Buffer(splat))],
         )?;
         let splat_pipeline = cx.render_pipeline_targets(
             pass,
             &target(maps::VS_SPLAT, maps::FS_SPLAT),
-            &[(over, red), (max, red_green)],
+            &[(splatted, written)],
             &[
                 (maps::SPLAT, Bind::Buffer(splat)),
                 (maps::RECORDS, Bind::Buffer(records)),
@@ -312,11 +306,10 @@ impl ScatterGpu {
         let means = cx.render_pipeline_targets(
             pass,
             &target(maps::VS_MEANS, maps::FS_MEANS),
-            &[(None, red), (None, red_green)],
+            &[(None, written)],
             &[
                 (maps::SPLAT, Bind::Buffer(splat)),
-                (maps::FINER_COVERAGE, finer(coverage, unfiner[0])),
-                (maps::FINER_HEIGHTS, finer(heights, unfiner[1])),
+                (maps::FINER_MAP, finer(occupancy, unfiner)),
             ],
         )?;
         let listed = cx.draw_input(pass, listed_draw);
@@ -627,11 +620,8 @@ impl ScatterGpu {
         } else {
             (1, 1)
         };
-        cx.allocate(self.coverage, layer(texels, layers), 1);
-        cx.allocate(self.heights, layer(texels, layers), 1);
-        for unfiner in self.unfiner {
-            cx.allocate(unfiner, layer(1, 1), 1);
-        }
+        cx.allocate(self.occupancy_map, layer(texels, layers), 1);
+        cx.allocate(self.unfiner, layer(1, 1), 1);
         let cover = size_of::<crate::layouts::Cover>() as u64;
         let word = size_of::<u32>() as u64;
         if !windows.runs {
@@ -850,7 +840,7 @@ impl ScatterGpu {
             }
             let layer = map as u32;
             let mut draw = cx.render(
-                Attach::Colors(vec![(self.coverage, layer), (self.heights, layer)]),
+                Attach::Colors(vec![(self.occupancy_map, layer)]),
                 None,
             );
             if redraw {
@@ -918,27 +908,21 @@ impl GpuPart for ScatterGpu {
         let covers = cx.buffer("occupancy_covers", Lifetime::Kept);
         let listed = cx.buffer("occupancy_listed", Lifetime::Kept);
         let placed_far = cx.buffer("placed_far", Lifetime::Kept);
-        let coverage = cx.texture("occupancy_coverage", COVERAGE_FORMAT, Lifetime::Kept);
-        let heights = cx.texture("occupancy_heights", HEIGHTS_FORMAT, Lifetime::Kept);
-        let unfiner = [
-            cx.texture("occupancy_unfiner_coverage", COVERAGE_FORMAT, Lifetime::Kept),
-            cx.texture("occupancy_unfiner_heights", HEIGHTS_FORMAT, Lifetime::Kept),
-        ];
+        let occupancy_map = cx.texture("occupancy", OCCUPANCY_FORMAT, Lifetime::Kept);
+        let unfiner = cx.texture("occupancy_unfiner", OCCUPANCY_FORMAT, Lifetime::Kept);
         let linear = cx.sampler(SamplerDesc::LINEAR_CLAMP);
         cx.frame(faces::placed_tiles::PLACED_RECORDS, Bind::Buffer(records))?;
         cx.frame(faces::placed_tiles::PLACED_POSES, Bind::Buffer(poses))?;
         cx.frame(faces::placed_tiles::PLACED_GROUPS, Bind::Buffer(placed_groups))?;
         cx.frame(faces::placed_tiles::PLACED_FRAMES_SAMPLER, Bind::Sampler(linear))?;
-        cx.frame(ambient::OCCUPANCY_COVERAGE, Bind::Texture(coverage))?;
-        cx.frame(ambient::OCCUPANCY_HEIGHTS, Bind::Texture(heights))?;
+        cx.frame(ambient::OCCUPANCY, Bind::Texture(occupancy_map))?;
         cx.frame(ambient::OCCUPANCY_SAMPLER, Bind::Sampler(linear))?;
         cx.frame(faces::far_cover::PLACED_FAR, Bind::Buffer(placed_far))?;
         let scatter = cx.pass("scatter").id();
         let occupancy = cx
             .pass("occupancy")
             .after(scatter)
-            .color(coverage, Access::Load)
-            .color(heights, Access::Load)
+            .color(occupancy_map, Access::Load)
             .id();
         let snapping = cx.compute_pipeline(
             scatter,
@@ -976,7 +960,7 @@ impl GpuPart for ScatterGpu {
                 occupancy,
                 (splat, listed_draw),
                 (records, poses, covers, listed),
-                (coverage, heights, unfiner),
+                (occupancy_map, unfiner),
             )?);
             splats.push(splat);
             listed_draws.push(listed_draw);
@@ -1057,8 +1041,7 @@ impl GpuPart for ScatterGpu {
             splats,
             listed_draws,
             placed_far,
-            coverage,
-            heights,
+            occupancy_map,
             unfiner,
             snapping,
             culling,

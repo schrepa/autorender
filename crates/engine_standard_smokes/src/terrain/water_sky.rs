@@ -419,7 +419,7 @@ fn exposure(session: &mut dyn SmokeSession, starry: &Value) -> Checked<()> {
         "frames_meter_their_exposure"
     );
     for _ in 0..WAIT_FRAMES {
-        if exposure["metered"] != 0 {
+        if number(&exposure["stops"]) > 0.0 {
             break;
         }
         let mut rendering = render(session)?;
@@ -520,12 +520,13 @@ fn horizons(session: &mut dyn SmokeSession) -> Checked<Value> {
     camera(session, view([-60.0, 320.0, 220.0], [0.0, 30.0, 0.0]))?;
     settle(session)?;
     let long = capture(session)?;
-    let flat = environment(
+    environment(
         session,
         json!({"terrain": fast(), "terrain_shading": {"sun_shadows": false}}),
     )?;
+    let flat = render(session)?;
     smoke_eq!(
-        terrain(&flat["rendering"])["horizons"].clone(),
+        terrain(&flat)["horizons"].clone(),
         json!(0),
         "without_sun_shadows_no_horizons"
     );
@@ -566,12 +567,13 @@ fn bounce(session: &mut dyn SmokeSession) -> Checked<()> {
     );
     settle(session)?;
     let relit = capture(session)?;
-    let unlit = environment(
+    environment(
         session,
         json!({"terrain": fast(), "terrain_shading": {"bounce": false}}),
     )?;
+    let unlit = render(session)?;
     smoke_eq!(
-        terrain(&unlit["rendering"])["bounce"]["relit"].clone(),
+        terrain(&unlit)["bounce"]["relit"].clone(),
         json!(0),
         "without_bounce_light_nothing_relights"
     );

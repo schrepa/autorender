@@ -117,6 +117,60 @@
       ],
       "type": "string"
     },
+    "CollisionConfig": {
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_candidate_pairs": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_colliders": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_query_candidates": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_query_hits": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_sensor_pairs": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "Cover": {
       "additionalProperties": false,
       "properties": {
@@ -175,31 +229,28 @@
       },
       "type": "object"
     },
-    "DebugViewMode": {
-      "enum": [
-        "off",
-        "kinds",
-        "levels",
-        "cards",
-        "shadows",
-        "casters",
-        "overdraw",
-        "normals",
-        "tiles",
-        "materials",
-        "sky",
-        "detail",
-        "water_depth",
-        "water_speed",
-        "water_froude",
-        "water_turbulence",
-        "water_white",
-        "water_reach",
-        "water_span",
-        "water_eddies",
-        "water_roughness"
-      ],
-      "type": "string"
+    "Detail": {
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "fade_seconds": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "pixel_error": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.25,
+          "type": "number"
+        }
+      },
+      "type": "object"
     },
     "ErosionLayer": {
       "properties": {
@@ -732,6 +783,17 @@
       ],
       "type": "object"
     },
+    "JobSettings": {
+      "properties": {
+        "keep_frames": {
+          "default": 120,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "LightPreset": {
       "enum": [
         "day",
@@ -1170,6 +1232,93 @@
       ],
       "type": "object"
     },
+    "PlacedLod": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "format": "float",
+          "type": "number"
+        },
+        "mesh": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mesh",
+        "error"
+      ],
+      "type": "object"
+    },
+    "PlacedLook": {
+      "additionalProperties": false,
+      "properties": {
+        "lods": {
+          "items": {
+            "$ref": "#/$defs/PlacedLod"
+          },
+          "type": "array"
+        },
+        "mesh": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "parts": {
+          "items": {
+            "$ref": "#/$defs/PlacedPart"
+          },
+          "type": "array"
+        },
+        "shadow": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sway": {
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "mesh"
+      ],
+      "type": "object"
+    },
+    "PlacedPart": {
+      "additionalProperties": false,
+      "properties": {
+        "material": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "meshes": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.-]+$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "material",
+        "meshes"
+      ],
+      "type": "object"
+    },
     "PlacementChoice": {
       "additionalProperties": false,
       "properties": {
@@ -1330,6 +1479,26 @@
       ],
       "type": "object"
     },
+    "RenderSettings": {
+      "properties": {
+        "readback_slot_bytes": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 4,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "readback_slots": {
+          "default": 3,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "RiversLayer": {
       "properties": {
         "attribution": {
@@ -1365,6 +1534,32 @@
       "required": [
         "lines"
       ],
+      "type": "object"
+    },
+    "ScatterSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "lods": {
+          "default": 4,
+          "format": "uint32",
+          "maximum": 4,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "looks": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PlacedLook"
+          },
+          "type": "array"
+        },
+        "parts": {
+          "default": 2,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "SceneAlong": {
@@ -1520,7 +1715,7 @@
           "type": "number"
         },
         "enabled": {
-          "default": true,
+          "default": false,
           "type": "boolean"
         },
         "night": {
@@ -1678,7 +1873,7 @@
           "type": "number"
         },
         "enabled": {
-          "default": true,
+          "default": false,
           "type": "boolean"
         },
         "in_view": {
@@ -1822,6 +2017,25 @@
         }
       ]
     },
+    "SceneCulling": {
+      "additionalProperties": false,
+      "properties": {
+        "frustum": {
+          "default": true,
+          "type": "boolean"
+        },
+        "instances": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "SceneDebugView": {
       "additionalProperties": false,
       "properties": {
@@ -1830,8 +2044,31 @@
           "type": "boolean"
         },
         "view": {
-          "$ref": "#/$defs/DebugViewMode",
-          "default": "off"
+          "default": "off",
+          "enum": [
+            "off",
+            "kinds",
+            "levels",
+            "cards",
+            "overdraw",
+            "normals",
+            "shadows",
+            "casters",
+            "tiles",
+            "materials",
+            "sky",
+            "detail",
+            "water_depth",
+            "water_speed",
+            "water_froude",
+            "water_turbulence",
+            "water_white",
+            "water_reach",
+            "water_span",
+            "water_eddies",
+            "water_roughness"
+          ],
+          "type": "string"
         }
       },
       "type": "object"
@@ -1859,7 +2096,7 @@
           ]
         },
         "enabled": {
-          "default": true,
+          "default": false,
           "type": "boolean"
         },
         "max_scale": {
@@ -2080,10 +2317,40 @@
             }
           ]
         },
+        "collision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CollisionConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "culling": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneCulling"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "debug_view": {
           "anyOf": [
             {
               "$ref": "#/$defs/SceneDebugView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Detail"
             },
             {
               "type": "null"
@@ -2160,10 +2427,20 @@
             }
           ]
         },
-        "level_of_detail": {
+        "impostors": {
           "anyOf": [
             {
-              "$ref": "#/$defs/SceneLevelOfDetail"
+              "$ref": "#/$defs/SceneImpostors"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "jobs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JobSettings"
             },
             {
               "type": "null"
@@ -2260,10 +2537,30 @@
             }
           ]
         },
+        "render": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RenderSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "resolution": {
           "anyOf": [
             {
               "$ref": "#/$defs/SceneResolution"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scatter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScatterSettings"
             },
             {
               "type": "null"
@@ -2354,6 +2651,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTerrainSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terrain_shading": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerrainShading"
             },
             {
               "type": "null"
@@ -2530,6 +2837,12 @@
           "default": true,
           "type": "boolean"
         },
+        "looks": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Cover"
+          },
+          "type": "object"
+        },
         "max_blades": {
           "format": "uint32",
           "minimum": 1,
@@ -2641,32 +2954,14 @@
       },
       "type": "object"
     },
-    "SceneLevelOfDetail": {
+    "SceneImpostors": {
       "additionalProperties": false,
       "properties": {
         "enabled": {
           "default": true,
           "type": "boolean"
         },
-        "fade_seconds": {
-          "default": 0.5,
-          "format": "float",
-          "maximum": 4.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "impostor_pixels": {
-          "default": 128.0,
-          "format": "float",
-          "maximum": 4096.0,
-          "minimum": 8.0,
-          "type": "number"
-        },
-        "impostors": {
-          "default": true,
-          "type": "boolean"
-        },
-        "max_impostors": {
+        "max": {
           "format": "uint32",
           "minimum": 1,
           "type": [
@@ -2674,11 +2969,11 @@
             "null"
           ]
         },
-        "pixel_error": {
-          "default": 1.0,
+        "pixels": {
+          "default": 128.0,
           "format": "float",
-          "maximum": 64.0,
-          "minimum": 0.25,
+          "maximum": 4096.0,
+          "minimum": 8.0,
           "type": "number"
         }
       },
@@ -3110,13 +3405,6 @@
           "default": 1.0,
           "format": "float",
           "maximum": 8.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "moon_age": {
-          "default": 0.5,
-          "format": "float",
-          "maximum": 1.0,
           "minimum": 0.0,
           "type": "number"
         },
@@ -3575,6 +3863,10 @@
           "minimum": 0.001,
           "type": "number"
         },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
         "intensity": {
           "default": 1.0,
           "format": "float",
@@ -3703,14 +3995,12 @@
         "levels": {
           "default": 16,
           "format": "uint32",
-          "maximum": 20,
           "minimum": 1,
           "type": "integer"
         },
         "moving_tiles": {
           "default": 256,
           "format": "uint32",
-          "maximum": 256,
           "minimum": 0,
           "type": "integer"
         },
@@ -3768,7 +4058,7 @@
           "type": "number"
         },
         "enabled": {
-          "default": true,
+          "default": false,
           "type": "boolean"
         },
         "ground_albedo": {
@@ -4374,35 +4664,11 @@
         "id": {
           "type": "string"
         },
-        "lods": {
-          "items": {
-            "$ref": "#/$defs/SceneTerrainLod"
-          },
-          "type": "array"
-        },
         "material": {
           "type": "string"
         },
         "mesh": {
           "type": "string"
-        },
-        "parts": {
-          "items": {
-            "$ref": "#/$defs/SceneTerrainPart"
-          },
-          "type": "array"
-        },
-        "shadow": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "sway": {
-          "format": "float",
-          "maximum": 10.0,
-          "minimum": 0.0,
-          "type": "number"
         }
       },
       "required": [
@@ -4639,23 +4905,6 @@
         }
       ]
     },
-    "SceneTerrainLod": {
-      "additionalProperties": false,
-      "properties": {
-        "error": {
-          "format": "float",
-          "type": "number"
-        },
-        "mesh": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "mesh",
-        "error"
-      ],
-      "type": "object"
-    },
     "SceneTerrainMaterial": {
       "additionalProperties": false,
       "properties": {
@@ -4674,16 +4923,6 @@
           "maxItems": 3,
           "minItems": 3,
           "type": "array"
-        },
-        "cover": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Cover"
-            },
-            {
-              "type": "null"
-            }
-          ]
         },
         "depth": {
           "format": "float",
@@ -4765,54 +5004,9 @@
       },
       "type": "object"
     },
-    "SceneTerrainPart": {
-      "additionalProperties": false,
-      "properties": {
-        "material": {
-          "type": "string"
-        },
-        "meshes": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "material",
-        "meshes"
-      ],
-      "type": "object"
-    },
     "SceneTerrainSettings": {
       "additionalProperties": false,
       "properties": {
-        "bounce": {
-          "default": true,
-          "type": "boolean"
-        },
-        "bounce_columns": {
-          "default": 64,
-          "format": "uint32",
-          "maximum": 1024,
-          "minimum": 8,
-          "multipleOf": 2,
-          "type": "integer"
-        },
-        "bounce_levels": {
-          "default": 8,
-          "format": "uint32",
-          "maximum": 8,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "bounce_spacing": {
-          "default": 16.0,
-          "format": "float",
-          "maximum": 1024.0,
-          "minimum": 1.0,
-          "type": "number"
-        },
         "cache_bytes": {
           "default": 268435456,
           "format": "uint64",
@@ -4840,13 +5034,6 @@
           "maximum": 1000.0,
           "minimum": 0.1,
           "type": "number"
-        },
-        "macro_resolution": {
-          "default": 2048,
-          "format": "uint32",
-          "maximum": 4096,
-          "minimum": 64,
-          "type": "integer"
         },
         "max_tiles": {
           "format": "uint32",
@@ -4880,68 +5067,11 @@
           "minimum": 1.0,
           "type": "number"
         },
-        "relief_steps": {
-          "default": 8,
-          "format": "uint32",
-          "maximum": 64,
-          "minimum": 2,
-          "type": "integer"
-        },
         "samples_per_frame": {
           "default": 24576,
           "format": "uint32",
           "minimum": 1,
           "type": "integer"
-        },
-        "shadow_resolution": {
-          "default": 512,
-          "format": "uint32",
-          "maximum": 4096,
-          "minimum": 64,
-          "type": "integer"
-        },
-        "shadow_softness": {
-          "default": 0.009999999776482582,
-          "format": "float",
-          "maximum": 0.2,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "sky_resolution": {
-          "default": 1024,
-          "format": "uint32",
-          "maximum": 4096,
-          "minimum": 64,
-          "type": "integer"
-        },
-        "sky_visibility": {
-          "default": true,
-          "type": "boolean"
-        },
-        "subdivision_depth": {
-          "default": 27,
-          "format": "uint32",
-          "maximum": 29,
-          "minimum": 10,
-          "type": "integer"
-        },
-        "subdivision_error": {
-          "default": 2.0,
-          "format": "float",
-          "maximum": 64.0,
-          "minimum": 0.25,
-          "type": "number"
-        },
-        "subdivision_leaves": {
-          "default": 131072,
-          "format": "uint32",
-          "maximum": 4000000,
-          "minimum": 1024,
-          "type": "integer"
-        },
-        "sun_shadows": {
-          "default": true,
-          "type": "boolean"
         },
         "surroundings": {
           "default": true,
@@ -5194,7 +5324,7 @@
           "type": "number"
         },
         "enabled": {
-          "default": true,
+          "default": false,
           "type": "boolean"
         },
         "hours": {
@@ -5209,6 +5339,13 @@
           "format": "float",
           "maximum": 90.0,
           "minimum": -90.0,
+          "type": "number"
+        },
+        "moon_age": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
           "type": "number"
         },
         "north": {
@@ -5823,6 +5960,105 @@
           "maximum": 8.0,
           "minimum": 0.0,
           "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "TerrainShading": {
+      "properties": {
+        "bounce": {
+          "default": true,
+          "type": "boolean"
+        },
+        "bounce_columns": {
+          "default": 64,
+          "format": "uint32",
+          "maximum": 1024,
+          "minimum": 8,
+          "multipleOf": 2,
+          "type": "integer"
+        },
+        "bounce_levels": {
+          "default": 8,
+          "format": "uint32",
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "bounce_spacing": {
+          "default": 16.0,
+          "format": "float",
+          "maximum": 1024.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "macro_resolution": {
+          "default": 2048,
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 64,
+          "type": "integer"
+        },
+        "relief_steps": {
+          "default": 8,
+          "format": "uint32",
+          "maximum": 64,
+          "minimum": 2,
+          "type": "integer"
+        },
+        "shadow_resolution": {
+          "default": 512,
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 64,
+          "type": "integer"
+        },
+        "shadow_softness": {
+          "default": 0.009999999776482582,
+          "format": "float",
+          "maximum": 0.2,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "sky_resolution": {
+          "default": 1024,
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 64,
+          "type": "integer"
+        },
+        "sky_visibility": {
+          "default": true,
+          "type": "boolean"
+        },
+        "subdivision_depth": {
+          "default": 27,
+          "format": "uint32",
+          "maximum": 29,
+          "minimum": 10,
+          "type": "integer"
+        },
+        "subdivision_error": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.25,
+          "type": "number"
+        },
+        "subdivision_leaves": {
+          "default": 131072,
+          "format": "uint32",
+          "maximum": 4000000,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        "sun_shadows": {
+          "default": true,
+          "type": "boolean"
         }
       },
       "type": "object"

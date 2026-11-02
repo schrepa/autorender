@@ -68,7 +68,6 @@ impl Ids {
 pub(crate) struct Stage {
     pub(crate) entry: Entry,
     pub(crate) composed: Arc<Composed>,
-    pub(crate) stages: Stages,
 }
 
 pub(crate) struct OwnGroup {
@@ -86,6 +85,7 @@ pub(crate) struct BuiltPipeline {
     pub(crate) variant: u32,
     pub(crate) reads: Vec<Bound>,
     pub(crate) writes: Vec<Bound>,
+    pub(crate) view_reads: Vec<Target>,
     pub(crate) made: Vec<(u64, wgpu::RenderPipeline)>,
     pub(crate) computed: Vec<(u64, wgpu::ComputePipeline)>,
     pub(crate) layout_key: String,
@@ -420,7 +420,7 @@ impl Machine {
                                 None => reached.push((module, declaration, at)),
                             }
                         }
-                        stages.push(Stage { entry, composed, stages: at });
+                        stages.push(Stage { entry, composed });
                     }
                     Err(error) => {
                         problems.push(error);
@@ -453,11 +453,22 @@ impl Machine {
                 continue;
             }
             let label: &'static str = Box::leak(named.into_boxed_str());
-            let own: Vec<(Class, Stages)> = reached
+            let is_material = |module: &str, group: u32| group == 1 && linker.is_core(module);
+            let mut own: Vec<(Class, Stages)> = reached
                 .iter()
-                .filter(|(_, found, _)| found.group > 0)
+                .filter(|(module, found, _)| found.group > 0 && !is_material(module, found.group))
                 .map(|(_, found, stages)| (class(found.ty, false), *stages))
                 .collect();
+            if reached.iter().any(|(module, found, _)| is_material(module, found.group)) {
+                own.extend(crate::bindings::MATERIAL.bindings.iter().map(|binding| {
+                    let class = match binding.kind {
+                        crate::bindings::Kind::Uniform { dynamic, .. } => Class::Uniform { dynamic },
+                        crate::bindings::Kind::Texture { .. } => Class::Texture,
+                        crate::bindings::Kind::Sampler(_) => Class::Sampler,
+                    };
+                    (class, Stages::FRAGMENT)
+                }));
+            }
             let groups = reached
                 .iter()
                 .filter(|(_, found, _)| found.group > 0)
@@ -480,7 +491,6 @@ impl Machine {
             reaches.push(Reach {
                 label,
                 pass,
-                stages: stages.iter().fold(Stages(0), |all, stage| Stages(all.0 | stage.stages.0)),
                 own_groups: groups,
                 own,
                 reached: frame_reached,
@@ -588,8 +598,12 @@ impl Machine {
             let mut groups: Vec<OwnGroup> = Vec::new();
             let mut reads = Vec::new();
             let mut writes = Vec::new();
+            let mut view_reads = Vec::new();
             for (module, found, _) in &reached {
                 if found.group == 0 {
+                    if linker.is_core(module) {
+                        view_reads.extend(core_target(&found.name, &outputs).filter(|target| !matches!(target, Target::Debug(_))));
+                    }
                     if let Some(bound) = linker.binding_of(module, &found.name).and_then(|number| frame_bound.get(&number)) {
                         reads.push(bound.clone());
                     }
@@ -689,6 +703,7 @@ impl Machine {
                 variant,
                 reads,
                 writes,
+                view_reads,
                 made: Vec::new(),
                 computed: Vec::new(),
                 layout_key,
@@ -908,6 +923,9 @@ fn graph_of(
         let mut current = Vec::new();
         for pipeline in pipelines.iter().filter(|pipeline| in_pass(pipeline, index as u32, pass)) {
             reads.extend(pipeline.reads.iter().filter_map(&bound_id));
+            if entry.layer.is_none() {
+                reads.extend(pipeline.view_reads.iter().filter_map(|target| ids.target(*target)));
+            }
             writes.extend(pipeline.writes.iter().filter_map(&bound_id));
             if claimed_member(&pipeline.decl, pass) {
                 current.extend(
@@ -920,12 +938,23 @@ fn graph_of(
             }
         }
         for input in &declared.inputs {
-            let scoped = match input.scope {
-                Scoped::Pass(own) => own == index as u32,
-                Scoped::Point(point) => pass.claims.contains(&point),
+            let (scoped, member) = match input.scope {
+                Scoped::Pass(own) => (own == index as u32, false),
+                Scoped::Point(point) => (
+                    pass.claims.contains(&point),
+                    point != std::any::TypeId::of::<crate::MainView>() && input.part != pass.part,
+                ),
             };
             if scoped && let Some(id) = ids.buffers.get(input.buffer as usize) {
                 reads.push(*id);
+                if member
+                    && declared
+                        .buffers
+                        .get(input.buffer as usize)
+                        .is_some_and(|buffer| buffer.part == input.part)
+                {
+                    current.push(*id);
+                }
             }
         }
         match pass.work {

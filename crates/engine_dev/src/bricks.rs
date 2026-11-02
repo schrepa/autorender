@@ -234,9 +234,11 @@ impl DevTools {
         }
         for kind in engine_core::scene_components(world) {
             let key = kind.key();
-            if inspectors.contains_key(key) {
-                continue;
-            }
+            let name = if inspectors.contains_key(key) {
+                format!("{key}_component")
+            } else {
+                key.to_owned()
+            };
             let schema = match kind.view_schema() {
                 Some(schema) => schema,
                 None => match kind.json_schema_in(&engine_core::SceneCx::of(world)) {
@@ -246,9 +248,9 @@ impl DevTools {
             };
             let (has, read) = (kind.clone(), kind.clone());
             inspectors.insert(
-                key.to_owned(),
+                name.clone(),
                 Inspector {
-                    descriptor: InspectorDescriptor::new(key, schema),
+                    descriptor: InspectorDescriptor::new(name, schema),
                     kind: InspectorKind::Component,
                     has: Box::new(move |world, entity| {
                         entity.is_some_and(|entity| has.value(world, entity).is_some())
@@ -293,6 +295,7 @@ pub(crate) fn schema_value(schema: impl serde::Serialize) -> Value {
 pub(crate) fn sections_schema(registry: &Registry) -> Value {
     let properties: serde_json::Map<String, Value> = registry
         .sections()
+        .filter(|section| section.key != engine_scene::STREAMED)
         .map(|section| {
             (
                 section.key.to_owned(),

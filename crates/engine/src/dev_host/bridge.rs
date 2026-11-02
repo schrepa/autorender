@@ -383,7 +383,7 @@ impl<G: Game> GameHost<G> {
                 }
                 let refused = Error::new(ErrorCode::SourceIo, "$");
                 self.dev_refused(match outcome.failed {
-                    Some(failed) => refused.got(failed),
+                    Some(failed) => serde_json::from_str(&failed).unwrap_or_else(|_| refused.got(failed)),
                     None => refused.expected(Expected::Present),
                 })
             }
@@ -783,7 +783,7 @@ impl<G: Game> GameHost<G> {
         context: &HostContext,
     ) -> Step {
         match self.mesh_read_back(&id).1 {
-            Some((level, 0)) if waits >= EXPLAIN_FRAMES => {
+            Some((level, age)) if age <= 1 && waits >= EXPLAIN_FRAMES => {
                 let drawn = level.map_or(DrawState::Culled, DrawState::Level);
                 self.dev_explained((id, entity), Some(slot), drawn, context)
             }

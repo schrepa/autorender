@@ -309,16 +309,59 @@ impl Run {
                     continue;
                 }
                 let (formats, depth, main) = self.pass_formats(pass);
-                let _ = self.compile(pipeline as u32, (&formats, depth), (false, main), None);
-                for layered in self.layered_formats(pipeline, pass, formats.len()) {
-                    let _ = self.compile(pipeline as u32, (&layered, None), (false, main), None);
+                if self.writes_fit(pipeline, &formats, false) {
+                    let _ = self.compile(pipeline as u32, (&formats, depth), (false, main), None);
                 }
-                if debug && shares {
-                    let shown: Vec<Option<wgpu::TextureFormat>> = DEBUG_FORMATS.iter().copied().map(Some).collect();
+                for layered in self.layered_formats(pipeline, pass, formats.len()) {
+                    if self.writes_fit(pipeline, &layered, false) {
+                        let _ = self.compile(pipeline as u32, (&layered, None), (false, main), None);
+                    }
+                }
+                let shown: Vec<Option<wgpu::TextureFormat>> = DEBUG_FORMATS.iter().copied().map(Some).collect();
+                if debug && shares && self.writes_fit(pipeline, &shown, true) {
                     let _ = self.compile(pipeline as u32, (&shown, Some((DEPTH_FORMAT, true))), (true, false), None);
                 }
             }
         }
+    }
+
+    pub(super) fn camera_bound(&self, variant: u32) -> bool {
+        self.machine
+            .variants
+            .get(variant as usize)
+            .is_some_and(|found| found.entries.iter().any(|&(binding, _)| binding == 0))
+    }
+
+    fn writes_fit(&self, pipeline: usize, formats: &[Option<wgpu::TextureFormat>], debug: bool) -> bool {
+        let Some(built) = self.machine.pipelines.get(pipeline) else {
+            return false;
+        };
+        let Program::Render(desc) = &built.decl.program else {
+            return true;
+        };
+        let (at, entry) = if debug {
+            (1 + usize::from(desc.fragment.is_some()), desc.debug)
+        } else {
+            (1, desc.fragment)
+        };
+        let Some(kinds) = built
+            .stages
+            .get(at)
+            .zip(entry)
+            .and_then(|(stage, entry)| fragment_kinds(&stage.composed.text, entry.name()))
+        else {
+            return true;
+        };
+        kinds.iter().all(|&(location, kind)| {
+            formats.get(location as usize).copied().flatten().is_none_or(|format| {
+                matches!(
+                    (format.sample_type(None, None), kind),
+                    (Some(wgpu::TextureSampleType::Uint), wgpu::TextureSampleType::Uint)
+                        | (Some(wgpu::TextureSampleType::Sint), wgpu::TextureSampleType::Sint)
+                        | (Some(wgpu::TextureSampleType::Float { .. }), wgpu::TextureSampleType::Float { .. })
+                )
+            })
+        })
     }
 
     pub(super) fn layered_formats(&self, pipeline: usize, pass: u32, declared: usize) -> Vec<Vec<Option<wgpu::TextureFormat>>> {

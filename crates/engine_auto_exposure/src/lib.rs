@@ -54,7 +54,7 @@ pub(crate) struct ExposureFeedback {
 
 impl Readback for ExposureFeedback {
     fn arrived(&mut self, frame: u64, _: u32, bytes: &[u8]) {
-        if self.forgot.is_some_and(|forgot| frame <= forgot) {
+        if self.forgot.is_some_and(|forgot| frame < forgot) {
             return;
         }
         let word = |offset: usize| {

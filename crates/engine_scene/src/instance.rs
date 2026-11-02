@@ -232,6 +232,14 @@ impl SceneInstance {
         }
     }
 
+    pub fn current_scene(&self, world: &World) -> OperationScene {
+        world
+            .get_resource::<OperationScene>()
+            .filter(|scene| Arc::ptr_eq(&scene.entities, &self.entities))
+            .cloned()
+            .unwrap_or_else(|| self.operation_scene())
+    }
+
     pub fn belongs_to(&self, world: &World) -> bool {
         self.world_id == world.id()
     }

@@ -1,43 +1,37 @@
 export interface FrameStats {
-  ambient_occlusion: Applied;
-  bloom: Applied;
+  ambient_occlusion_stats: AmbientOcclusionStats;
+  bloom_stats: BloomStats;
   bricks_cost: BrickCosts | null;
-  clouds: CloudStats;
-  culled_instances: number;
-  culling_enabled: boolean;
+  cloud_stats: CloudStats;
+  collision_stats: CollisionWorldView;
   disabled_features: string[];
   draw_calls: number;
-  dropped_instances: number;
   dropped_seconds: number;
   dynamic_resolution: DynamicResolutionStats;
+  exposure_stats: ExposureStats;
   extraction_ms: number;
   fixed_steps: number;
   frame: number;
-  ground_cover: GroundCoverStats;
-  haze: Applied;
+  ground_cover_stats: GroundCoverStats;
+  haze_stats: HazeStats;
   instances: number;
-  invalid_transforms: number;
   jobs: JobStats;
-  level_of_detail: DetailStats;
   linked: { faces: Record<string, string>; lists: Record<string, string[]>; nobody: string[] };
   loading: boolean;
-  local_lights: LightStats;
+  local_light_stats: LightStats;
   mesh_upload_bytes: number;
-  missing_assets: number;
-  navigation: NavStats;
-  occlusion_culling: CullingStats;
-  occupancy: OccupancyStats;
-  particles: ParticleStats;
-  physics: PhysicsStats;
+  meshes_stats: MeshStats;
+  navigation_stats: NavStats;
+  particle_stats: ParticleStats;
+  physics_stats: PhysicsStats;
   pipelines: number;
   pipelines_compiling: boolean;
   pipelines_created: number;
   pipelines_listed: number;
   pipelines_unlisted: number;
   read_back_age: number | null;
-  reflection_probes: ProbeStats;
-  reflections: Applied;
-  render_candidates: number;
+  reflection_probes_stats: ReflectionProbeStats;
+  reflections_stats: ReflectionsStats;
   render_ms: number;
   render_passes: string[];
   resident_mesh_bytes: number;
@@ -45,22 +39,27 @@ export interface FrameStats {
   resident_texture_bytes: number;
   resident_textures: number;
   resolution: ResolutionStats;
-  shadows: ShadowStats;
+  scatter_stats: ScatterStats;
+  shadow_stats: ShadowStats;
   simulation_ms: number;
-  sky: SkyStats;
-  subpixel_culling: CullingStats;
-  temporal_antialiasing: Applied;
-  terrain: TerrainRenderStats;
+  sky_stats: SkyStats;
+  static_tables: StaticTablesView;
+  temporal_antialiasing_stats: TemporalAntialiasingStats;
+  terrain_shading_stats: TerrainShadingStats;
+  terrain_stats: TerrainStats;
   texture_upload_bytes: number;
   tick: number;
   triangles: number | null;
   upload_bytes: number;
-  visible_instances: number;
-  water: WaterStats;
-  world_streaming: CellStats;
+  water_stats: WaterStats;
+  world_streaming_stats: CellStats;
 }
 
-export interface Applied {
+export interface AmbientOcclusionStats {
+  active: boolean;
+}
+
+export interface BloomStats {
   active: boolean;
 }
 
@@ -95,6 +94,29 @@ export interface CellStats {
 export interface CloudStats {
   rows: number;
   view_pixels: number;
+}
+
+export interface CollisionLimitsView {
+  max_candidate_pairs: number;
+  max_colliders: number;
+  max_query_candidates: number;
+  max_query_hits: number;
+  max_sensor_pairs: number;
+}
+
+export interface CollisionWorldView {
+  active_colliders: number;
+  bvh_nodes: number;
+  cache_bytes: number;
+  colliders: number;
+  complete: boolean;
+  frame: string;
+  invalid_colliders: number;
+  limits: CollisionLimitsView;
+  overflow_colliders: number;
+  placed_colliders: number;
+  revision: string;
+  tick: string;
 }
 
 export interface CullingStats {
@@ -137,6 +159,10 @@ export interface GroundCoverStats {
   tiers: number;
 }
 
+export interface HazeStats {
+  active: boolean;
+}
+
 export interface JobStats {
   cache_bytes: number;
   cache_hits: number;
@@ -162,9 +188,29 @@ export interface LightStats {
   visible: number | null;
 }
 
+export interface MeshStats {
+  casters: number | null;
+  culled_instances: number;
+  culling_enabled: boolean;
+  dropped_instances: number;
+  gpu_visible: number | null;
+  instances: number;
+  invalid_transforms: number;
+  level_of_detail: DetailStats;
+  missing_assets: number;
+  moving_casters: number | null;
+  occlusion_culling: CullingStats;
+  read_back_age: number | null;
+  render_candidates: number;
+  subpixel_culling: CullingStats;
+  triangles: number | null;
+  visible_instances: number;
+}
+
 export interface NavStats {
   agents: number;
   arrived: number;
+  cooking: number;
   grounds: number;
   portals: number;
   searching: number;
@@ -172,11 +218,6 @@ export interface NavStats {
   waiting: number;
   walking: number;
   work: number;
-}
-
-export interface OccupancyStats {
-  averages: number;
-  redraws: number;
 }
 
 export interface ParticleStats {
@@ -195,10 +236,14 @@ export interface PhysicsStats {
   wet: number;
 }
 
-export interface ProbeStats {
+export interface ReflectionProbeStats {
   faces: number;
   probe_cut: Cut;
   ready: number;
+}
+
+export interface ReflectionsStats {
+  active: boolean;
 }
 
 export interface ResolutionStats {
@@ -210,12 +255,24 @@ export interface ResolutionStats {
   render_width: number;
 }
 
+export interface ScatterStats {
+  dropped_objects: number;
+  impostors: Cut;
+  lods: Cut;
+  occupancy_averages: number;
+  occupancy_redraws: number;
+  parts: Cut;
+  placed_far_objects: number;
+  placed_impostors: number;
+  placed_objects: number;
+}
+
 export interface ShadowStats {
   active: boolean;
-  casters: number | null;
   draws: number;
-  moving_casters: number | null;
+  level_cut: Cut;
   moving_cut: Cut;
+  moving_slot_cut: Cut;
   sky_drawn: number;
   sky_maps: number;
   tile_cut: Cut;
@@ -226,39 +283,79 @@ export interface ShadowStats {
 }
 
 export interface SkyStats {
-  exposure: ExposureStats;
   tables: number;
 }
 
-export interface TerrainBounceStats {
-  dropped: number;
-  levels: number;
-  probes: number;
-  relit: number;
+export interface StaticTableRow {
+  arrived: number;
+  kind: string;
+  parts: number;
+  showing: boolean;
 }
 
-export interface TerrainRenderStats {
-  bounce: TerrainBounceStats;
+export interface StaticTablesView {
+  failed_jobs: number;
+  latest_job_failure: string | null;
+  loading: number;
+  tables: StaticTableRow[];
+}
+
+export interface TemporalAntialiasingStats {
+  active: boolean;
+}
+
+export interface TerrainShadingStats {
+  bounce_dropped: number;
+  bounce_levels: number;
+  bounce_probes: number;
+  bounce_relit: number;
+  bounced: number;
+  bouncing: number;
+  colored: number;
+  coloring: number;
   dropped_materials: number;
-  dropped_placed_objects: number;
-  dropped_tiles: number;
-  fallback_tiles: number;
+  failed_jobs: number;
   gpu_controls: number;
   horizons: number;
-  leaf_cut: Cut;
+  latest_job_failure: string | null;
+  leaves: Cut;
+  lighting: number;
   lighting_uploads: number;
-  loading_tiles: number;
+  lit: number;
   macro_maps: number;
-  placed_far_objects: number;
-  placed_impostors: number;
-  placed_objects: number;
+  pending: number;
+  shaded_tiles: number;
+  shading_records: number;
   shadow_patches: number;
   shallow_subdivisions: number;
   sky_maps: number;
-  tile_cut: Cut;
+  surface_slots: Cut;
   tiles: number;
+  tiles_dropped: Cut;
   triangles: number;
-  white_water: number;
+}
+
+export interface TerrainStats {
+  baking: number;
+  bridges: number;
+  cached_bytes: number;
+  cached_tiles: number;
+  dropped_tiles: number;
+  failed_jobs: number;
+  fallback_tiles: number;
+  latest_job_failure: string | null;
+  loading: boolean;
+  loading_tiles: number;
+  missing_tiles: number;
+  pending: number;
+  prefetching_tiles: number;
+  resident_tiles: number;
+  restored_tiles: number;
+  surroundings_tiles: number;
+  terrains: number;
+  tile_cut: Cut;
+  tunnels: number;
+  waiting_tiles: number;
 }
 
 export interface WaterStats {
@@ -267,6 +364,8 @@ export interface WaterStats {
   dropped_blocks: number;
   dropped_particles: number;
   dropped_touches: number;
+  failed_jobs: number;
+  falls: number;
   foam_cut: Cut;
   foam_particles: number;
   foam_points: number;
@@ -277,8 +376,15 @@ export interface WaterStats {
   live_setup: number;
   live_steps: number;
   live_waiting: number;
+  looks_left: number;
   particle_texels: number;
   particles_born: number;
+  rewatered_tiles: number;
+  settled_records: number;
+  settles_left: number;
+  settling_records: number;
+  stale_water_tiles: number;
   touches: number;
   wave_particles: number;
+  white_water: number;
 }

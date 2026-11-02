@@ -387,9 +387,9 @@ pub(super) fn patch_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
-pub(super) fn grid_indices() -> Vec<u16> {
-    let at = |x: u32, z: u32| (z * GRID + x) as u16;
-    let skirt = |edge: u32, along: u32| (GRID_VERTICES + edge * GRID + along) as u16;
+pub(super) fn grid_indices() -> Vec<u32> {
+    let at = |x: u32, z: u32| z * GRID + x;
+    let skirt = |edge: u32, along: u32| GRID_VERTICES + edge * GRID + along;
     let mut indices = Vec::new();
     for z in 0..GRID - 1 {
         for x in 0..GRID - 1 {

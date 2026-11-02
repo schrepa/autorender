@@ -2,8 +2,7 @@ import package::engine::view::{detail_distance, detail_level};
 import package::generated::pieces::scatter::piece;
 import package::place::ambient::{EnvironmentAt, EnvironmentLight};
 
-@group(0) @binding(0) var occupancy_coverage: texture_2d_array<f32>;
-@group(0) @binding(0) var occupancy_heights: texture_2d_array<f32>;
+@group(0) @binding(0) var occupancy: texture_2d_array<f32>;
 @group(0) @binding(0) var occupancy_sampler: sampler;
 
 fn occupancy_cover(world: vec3<f32>, map: u32) -> f32 {
@@ -21,16 +20,16 @@ fn occupancy_cover(world: vec3<f32>, map: u32) -> f32 {
     let corner = floor(at);
     var coverage: f32;
     if all(corner >= vec2<f32>(0.0)) && all(corner < vec2<f32>(size - 1.0)) {
-        coverage = textureSampleLevel(occupancy_coverage, occupancy_sampler, uv, map, 0.0).r;
+        coverage = textureSampleLevel(occupancy, occupancy_sampler, uv, map, 0.0).a;
     } else {
         let texels = vec2<i32>(i32(size));
         let low = (vec2<i32>(corner) + texels) % texels;
         let high = (vec2<i32>(corner) + vec2<i32>(1) + texels) % texels;
         let share = at - corner;
-        let below = mix(textureLoad(occupancy_coverage, low, map, 0).r,
-            textureLoad(occupancy_coverage, vec2<i32>(high.x, low.y), map, 0).r, share.x);
-        let above = mix(textureLoad(occupancy_coverage, vec2<i32>(low.x, high.y), map, 0).r,
-            textureLoad(occupancy_coverage, high, map, 0).r, share.x);
+        let below = mix(textureLoad(occupancy, low, map, 0).a,
+            textureLoad(occupancy, vec2<i32>(high.x, low.y), map, 0).a, share.x);
+        let above = mix(textureLoad(occupancy, vec2<i32>(low.x, high.y), map, 0).a,
+            textureLoad(occupancy, high, map, 0).a, share.x);
         coverage = mix(below, above, share.y);
     }
     coverage = min(coverage, 1.0);
@@ -38,7 +37,7 @@ fn occupancy_cover(world: vec3<f32>, map: u32) -> f32 {
         return 0.0;
     }
     let texel = min(vec2<u32>(uv * size), vec2<u32>(u32(size) - 1u));
-    let heights = textureLoad(occupancy_heights, texel, map, 0).rg;
+    let heights = textureLoad(occupancy, texel, map, 0).rg;
     let height = world.y - canopy.occupancy_maps.y;
     let top = heights.x;
     let bottom = -heights.y;

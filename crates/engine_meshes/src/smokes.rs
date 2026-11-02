@@ -29,12 +29,11 @@ fn grid() -> Value {
         let (row, column) = ((index / SIDE) as f32, (index % SIDE) as f32);
         let scale = 0.8 + (index % 5) as f32 * 0.3;
         let turn = ((index * 37) % 360) as f32;
-        let half = turn.to_radians() / 2.0;
         entities.push(json!({
             "id": format!("box-{index}"), "mesh": "box", "material": format!("paint-{}", index % PAINTS.len()),
             "transform": {
                 "translation": [(column - middle) * 4.0, scale / 2.0, (row - middle) * 4.0],
-                "rotation": [0.0, sin(half), 0.0, cos(half)],
+                "rotation_degrees": [0.0, turn, 0.0],
                 "scale": [scale, scale, scale],
             },
         }));

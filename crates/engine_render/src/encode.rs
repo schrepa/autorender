@@ -193,6 +193,7 @@ pub(crate) struct Open {
     pub(crate) main: bool,
     pub(crate) offset: u32,
     pub(crate) shared: bool,
+    pub(crate) layered: bool,
     pub(crate) label: Option<u32>,
     pub(crate) set: Set,
 }
@@ -931,7 +932,7 @@ fn blendable(format: wgpu::TextureFormat) -> bool {
         .is_some_and(|sample| matches!(sample, wgpu::TextureSampleType::Float { filterable: true }))
 }
 
-fn fragment_locations(text: &str, entry: &str) -> Option<Vec<u32>> {
+fn fragment_outputs<'a>(text: &'a str, entry: &str) -> Option<&'a str> {
     let at = text.find(&format!("fn {entry}("))?;
     let rest = &text[at..];
     let (arrow, brace) = (rest.find("->")?, rest.find('{')?);
@@ -940,7 +941,7 @@ fn fragment_locations(text: &str, entry: &str) -> Option<Vec<u32>> {
     }
     let returns = rest[arrow + 2..brace].trim();
     if returns.starts_with('@') {
-        return Some(locations(returns));
+        return Some(returns);
     }
     let name: String = returns
         .chars()
@@ -948,7 +949,27 @@ fn fragment_locations(text: &str, entry: &str) -> Option<Vec<u32>> {
         .collect();
     let start = text.find(&format!("struct {name} {{"))?;
     let body = &text[start..];
-    Some(locations(&body[..body.find('}')?]))
+    Some(&body[..body.find('}')?])
+}
+
+fn fragment_locations(text: &str, entry: &str) -> Option<Vec<u32>> {
+    fragment_outputs(text, entry).map(locations)
+}
+
+fn fragment_kinds(text: &str, entry: &str) -> Option<Vec<(u32, wgpu::TextureSampleType)>> {
+    let outputs = fragment_outputs(text, entry)?;
+    let kinds = outputs.match_indices("@location(").map(|(at, _)| {
+        let field = &outputs[at..];
+        let field = &field[..field.find(',').unwrap_or(field.len())];
+        if field.contains("u32") {
+            wgpu::TextureSampleType::Uint
+        } else if field.contains("i32") {
+            wgpu::TextureSampleType::Sint
+        } else {
+            wgpu::TextureSampleType::Float { filterable: true }
+        }
+    });
+    Some(locations(outputs).into_iter().zip(kinds).collect())
 }
 
 fn locations(text: &str) -> Vec<u32> {

@@ -188,7 +188,7 @@ impl Node {
     }
 
     fn required(&self) -> Bits {
-        let mut required = self.reads.clone();
+        let mut required = self.reads.without(&self.writes);
         for (resource, access) in self.attachments() {
             if matches!(access, Access::Load | Access::ReadOnly) {
                 required.insert(resource.index());

@@ -123,7 +123,7 @@ impl Haze {
             .pass("haze")
             .label("engine/post-haze")
             .span("haze")
-            .color(marched, Access::Load)
+            .color(marched, Access::Clear)
             .id();
         let filter_pass = cx
             .pass("haze_filter")

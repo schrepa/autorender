@@ -1,14 +1,21 @@
 {
   "$defs": {
-    "Applied": {
+    "AmbientOcclusionStats": {
       "properties": {
         "active": {
+          "default": false,
           "type": "boolean"
         }
       },
-      "required": [
-        "active"
-      ],
+      "type": "object"
+    },
+    "BloomStats": {
+      "properties": {
+        "active": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
       "type": "object"
     },
     "BrickCost": {
@@ -98,77 +105,185 @@
     "CellStats": {
       "properties": {
         "cells": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "despawned": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "entities": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "items": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "loaded": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "pending": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "spawned": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         }
       },
-      "required": [
-        "cells",
-        "loaded",
-        "pending",
-        "items",
-        "entities",
-        "spawned",
-        "despawned"
-      ],
       "type": "object"
     },
     "CloudStats": {
       "properties": {
         "rows": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "view_pixels": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         }
       },
+      "type": "object"
+    },
+    "CollisionLimitsView": {
+      "properties": {
+        "max_candidate_pairs": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_colliders": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_query_candidates": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_query_hits": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_sensor_pairs": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
       "required": [
-        "rows",
-        "view_pixels"
+        "max_colliders",
+        "max_candidate_pairs",
+        "max_sensor_pairs",
+        "max_query_candidates",
+        "max_query_hits"
       ],
+      "type": "object"
+    },
+    "CollisionWorldView": {
+      "properties": {
+        "active_colliders": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bvh_nodes": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cache_bytes": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "colliders": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "complete": {
+          "default": false,
+          "type": "boolean"
+        },
+        "frame": {
+          "default": "0",
+          "type": "string"
+        },
+        "invalid_colliders": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "limits": {
+          "$ref": "#/$defs/CollisionLimitsView",
+          "default": {
+            "max_candidate_pairs": 1000000,
+            "max_colliders": 100000,
+            "max_query_candidates": 100000,
+            "max_query_hits": 4096,
+            "max_sensor_pairs": 65536
+          }
+        },
+        "overflow_colliders": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "placed_colliders": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "revision": {
+          "default": "0",
+          "type": "string"
+        },
+        "tick": {
+          "default": "0",
+          "type": "string"
+        }
+      },
       "type": "object"
     },
     "CullingStats": {
       "properties": {
         "active": {
+          "default": false,
           "type": "boolean"
         },
         "instances": {
+          "default": null,
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -177,9 +292,6 @@
           ]
         }
       },
-      "required": [
-        "active"
-      ],
       "type": "object"
     },
     "Cut": {
@@ -210,9 +322,15 @@
     "DetailStats": {
       "properties": {
         "impostor_cut": {
-          "$ref": "#/$defs/Cut"
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
         },
         "impostor_instances": {
+          "default": null,
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -221,11 +339,13 @@
           ]
         },
         "impostors": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "lod0_instances": {
+          "default": null,
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -234,6 +354,7 @@
           ]
         },
         "lod1_instances": {
+          "default": null,
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -242,6 +363,7 @@
           ]
         },
         "lod2_instances": {
+          "default": null,
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -250,16 +372,12 @@
           ]
         },
         "meshes_without_levels": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         }
       },
-      "required": [
-        "impostors",
-        "meshes_without_levels",
-        "impostor_cut"
-      ],
       "type": "object"
     },
     "DynamicResolutionStats": {
@@ -286,50 +404,59 @@
     "ExposureStats": {
       "properties": {
         "active": {
+          "default": false,
           "type": "boolean"
         },
         "metered": {
+          "default": 0,
           "format": "int32",
           "type": "integer"
         },
         "stops": {
+          "default": 0,
           "format": "int32",
           "type": "integer"
         },
         "view": {
+          "default": 0,
           "format": "int32",
           "type": "integer"
         }
       },
-      "required": [
-        "active",
-        "stops",
-        "metered",
-        "view"
-      ],
       "type": "object"
     },
     "GroundCoverStats": {
       "properties": {
         "blade_cut": {
-          "$ref": "#/$defs/Cut"
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
         },
         "reach": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "tiers": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         }
       },
-      "required": [
-        "reach",
-        "tiers",
-        "blade_cut"
-      ],
+      "type": "object"
+    },
+    "HazeStats": {
+      "properties": {
+        "active": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
       "type": "object"
     },
     "JobStats": {
@@ -426,22 +553,35 @@
     "LightStats": {
       "properties": {
         "cluster_cut": {
-          "$ref": "#/$defs/Cut"
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
         },
         "invalid": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "light_cut": {
-          "$ref": "#/$defs/Cut"
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
         },
         "shaded": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "visible": {
+          "default": null,
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -450,187 +590,303 @@
           ]
         }
       },
-      "required": [
-        "shaded",
-        "invalid",
-        "light_cut",
-        "cluster_cut"
-      ],
+      "type": "object"
+    },
+    "MeshStats": {
+      "properties": {
+        "casters": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "culled_instances": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "culling_enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "dropped_instances": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gpu_visible": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "instances": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "invalid_transforms": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "level_of_detail": {
+          "$ref": "#/$defs/DetailStats",
+          "default": {
+            "impostor_cut": {
+              "asked": 0,
+              "cut": 0,
+              "kept": 0
+            },
+            "impostor_instances": null,
+            "impostors": 0,
+            "lod0_instances": null,
+            "lod1_instances": null,
+            "lod2_instances": null,
+            "meshes_without_levels": 0
+          }
+        },
+        "missing_assets": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "moving_casters": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "occlusion_culling": {
+          "$ref": "#/$defs/CullingStats",
+          "default": {
+            "active": false,
+            "instances": null
+          }
+        },
+        "read_back_age": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "render_candidates": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "subpixel_culling": {
+          "$ref": "#/$defs/CullingStats",
+          "default": {
+            "active": false,
+            "instances": null
+          }
+        },
+        "triangles": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "visible_instances": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "NavStats": {
       "properties": {
         "agents": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "arrived": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cooking": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "grounds": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "portals": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "searching": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "unreachable": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "waiting": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "walking": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "work": {
+          "default": 0,
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         }
       },
-      "required": [
-        "agents",
-        "searching",
-        "waiting",
-        "walking",
-        "arrived",
-        "unreachable",
-        "work",
-        "grounds",
-        "portals"
-      ],
-      "type": "object"
-    },
-    "OccupancyStats": {
-      "properties": {
-        "averages": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "redraws": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "redraws",
-        "averages"
-      ],
       "type": "object"
     },
     "ParticleStats": {
       "properties": {
         "drawn": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "invalid": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "particle_cut": {
-          "$ref": "#/$defs/Cut"
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
         }
       },
-      "required": [
-        "drawn",
-        "invalid",
-        "particle_cut"
-      ],
       "type": "object"
     },
     "PhysicsStats": {
       "properties": {
         "awake": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "bodies": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "contacts": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "held": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "solids": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "water_samples": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "wet": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         }
       },
-      "required": [
-        "bodies",
-        "awake",
-        "held",
-        "wet",
-        "solids",
-        "contacts",
-        "water_samples"
-      ],
       "type": "object"
     },
-    "ProbeStats": {
+    "ReflectionProbeStats": {
       "properties": {
         "faces": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "probe_cut": {
-          "$ref": "#/$defs/Cut"
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
         },
         "ready": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         }
       },
-      "required": [
-        "ready",
-        "faces",
-        "probe_cut"
-      ],
+      "type": "object"
+    },
+    "ReflectionsStats": {
+      "properties": {
+        "active": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
       "type": "object"
     },
     "ResolutionStats": {
@@ -677,381 +933,725 @@
       ],
       "type": "object"
     },
-    "ShadowStats": {
+    "ScatterStats": {
       "properties": {
-        "active": {
-          "type": "boolean"
-        },
-        "casters": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "draws": {
+        "dropped_objects": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "moving_casters": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
+        "impostors": {
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
         },
-        "moving_cut": {
-          "$ref": "#/$defs/Cut"
+        "lods": {
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
         },
-        "sky_drawn": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "sky_maps": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "tile_cut": {
-          "$ref": "#/$defs/Cut"
-        },
-        "tiles_drawn": {
+        "occupancy_averages": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "tiles_marked": {
+        "occupancy_redraws": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "tiles_reclaimed": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "tiles_resident": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "active",
-        "draws",
-        "tiles_marked",
-        "tiles_resident",
-        "tiles_drawn",
-        "tiles_reclaimed",
-        "sky_maps",
-        "sky_drawn",
-        "tile_cut",
-        "moving_cut"
-      ],
-      "type": "object"
-    },
-    "SkyStats": {
-      "properties": {
-        "exposure": {
-          "$ref": "#/$defs/ExposureStats"
-        },
-        "tables": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "tables",
-        "exposure"
-      ],
-      "type": "object"
-    },
-    "TerrainBounceStats": {
-      "properties": {
-        "dropped": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "levels": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "probes": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "relit": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "relit",
-        "probes",
-        "levels",
-        "dropped"
-      ],
-      "type": "object"
-    },
-    "TerrainRenderStats": {
-      "properties": {
-        "bounce": {
-          "$ref": "#/$defs/TerrainBounceStats"
-        },
-        "dropped_materials": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "dropped_placed_objects": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "dropped_tiles": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "fallback_tiles": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "gpu_controls": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "horizons": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "leaf_cut": {
-          "$ref": "#/$defs/Cut"
-        },
-        "lighting_uploads": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "loading_tiles": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "macro_maps": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
+        "parts": {
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
         },
         "placed_far_objects": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "placed_impostors": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "placed_objects": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "ShadowStats": {
+      "properties": {
+        "active": {
+          "default": false,
+          "type": "boolean"
+        },
+        "draws": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "shadow_patches": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
+        "level_cut": {
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
         },
-        "shallow_subdivisions": {
+        "moving_cut": {
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
+        },
+        "moving_slot_cut": {
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
+        },
+        "sky_drawn": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "sky_maps": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "tile_cut": {
-          "$ref": "#/$defs/Cut"
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
         },
-        "tiles": {
+        "tiles_drawn": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "triangles": {
+        "tiles_marked": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "white_water": {
+        "tiles_reclaimed": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tiles_resident": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         }
       },
+      "type": "object"
+    },
+    "SkyStats": {
+      "properties": {
+        "tables": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "StaticTableRow": {
+      "properties": {
+        "arrived": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "parts": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "showing": {
+          "type": "boolean"
+        }
+      },
       "required": [
-        "triangles",
-        "shallow_subdivisions",
-        "shadow_patches",
-        "tiles",
-        "loading_tiles",
-        "gpu_controls",
-        "dropped_tiles",
-        "fallback_tiles",
-        "horizons",
-        "sky_maps",
-        "lighting_uploads",
-        "bounce",
-        "macro_maps",
-        "dropped_materials",
-        "placed_objects",
-        "placed_far_objects",
-        "placed_impostors",
-        "dropped_placed_objects",
-        "white_water",
-        "tile_cut",
-        "leaf_cut"
+        "kind",
+        "parts",
+        "arrived",
+        "showing"
       ],
+      "type": "object"
+    },
+    "StaticTablesView": {
+      "properties": {
+        "failed_jobs": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "latest_job_failure": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "loading": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tables": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/StaticTableRow"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "TemporalAntialiasingStats": {
+      "properties": {
+        "active": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "TerrainShadingStats": {
+      "properties": {
+        "bounce_dropped": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bounce_levels": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bounce_probes": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bounce_relit": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bounced": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bouncing": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "colored": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "coloring": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dropped_materials": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed_jobs": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gpu_controls": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "horizons": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "latest_job_failure": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "leaves": {
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
+        },
+        "lighting": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lighting_uploads": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lit": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "macro_maps": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pending": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shaded_tiles": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shading_records": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shadow_patches": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shallow_subdivisions": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sky_maps": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "surface_slots": {
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
+        },
+        "tiles": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tiles_dropped": {
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
+        },
+        "triangles": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "TerrainStats": {
+      "properties": {
+        "baking": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bridges": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cached_bytes": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cached_tiles": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dropped_tiles": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed_jobs": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fallback_tiles": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "latest_job_failure": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "loading": {
+          "default": false,
+          "type": "boolean"
+        },
+        "loading_tiles": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "missing_tiles": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pending": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "prefetching_tiles": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "resident_tiles": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "restored_tiles": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "surroundings_tiles": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "terrains": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tile_cut": {
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
+        },
+        "tunnels": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "waiting_tiles": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "WaterStats": {
       "properties": {
         "blocks": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "cell_cut": {
-          "$ref": "#/$defs/Cut"
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
         },
         "dropped_blocks": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "dropped_particles": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "dropped_touches": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed_jobs": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "falls": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "foam_cut": {
-          "$ref": "#/$defs/Cut"
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
         },
         "foam_particles": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "foam_points": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "foam_reach": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "leaf_cut": {
-          "$ref": "#/$defs/Cut"
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
         },
         "live_behind": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "live_cut": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "live_setup": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "live_steps": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "live_waiting": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "looks_left": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "particle_texels": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "particles_born": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rewatered_tiles": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "settled_records": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "settles_left": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "settling_records": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stale_water_tiles": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "touches": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "wave_particles": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "white_water": {
+          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         }
       },
-      "required": [
-        "blocks",
-        "dropped_blocks",
-        "live_cut",
-        "live_steps",
-        "live_behind",
-        "live_setup",
-        "live_waiting",
-        "touches",
-        "dropped_touches",
-        "particle_texels",
-        "foam_points",
-        "foam_reach",
-        "foam_particles",
-        "wave_particles",
-        "particles_born",
-        "dropped_particles",
-        "cell_cut",
-        "foam_cut",
-        "leaf_cut"
-      ],
       "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
-    "ambient_occlusion": {
-      "$ref": "#/$defs/Applied"
+    "ambient_occlusion_stats": {
+      "$ref": "#/$defs/AmbientOcclusionStats"
     },
-    "bloom": {
-      "$ref": "#/$defs/Applied"
+    "bloom_stats": {
+      "$ref": "#/$defs/BloomStats"
     },
     "bricks_cost": {
       "anyOf": [
@@ -1063,16 +1663,11 @@
         }
       ]
     },
-    "clouds": {
+    "cloud_stats": {
       "$ref": "#/$defs/CloudStats"
     },
-    "culled_instances": {
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
-    },
-    "culling_enabled": {
-      "type": "boolean"
+    "collision_stats": {
+      "$ref": "#/$defs/CollisionWorldView"
     },
     "disabled_features": {
       "items": {
@@ -1085,17 +1680,15 @@
       "minimum": 0,
       "type": "integer"
     },
-    "dropped_instances": {
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
-    },
     "dropped_seconds": {
       "format": "double",
       "type": "number"
     },
     "dynamic_resolution": {
       "$ref": "#/$defs/DynamicResolutionStats"
+    },
+    "exposure_stats": {
+      "$ref": "#/$defs/ExposureStats"
     },
     "extraction_ms": {
       "format": "double",
@@ -1111,27 +1704,19 @@
       "minimum": 0,
       "type": "integer"
     },
-    "ground_cover": {
+    "ground_cover_stats": {
       "$ref": "#/$defs/GroundCoverStats"
     },
-    "haze": {
-      "$ref": "#/$defs/Applied"
+    "haze_stats": {
+      "$ref": "#/$defs/HazeStats"
     },
     "instances": {
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
-    "invalid_transforms": {
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
-    },
     "jobs": {
       "$ref": "#/$defs/JobStats"
-    },
-    "level_of_detail": {
-      "$ref": "#/$defs/DetailStats"
     },
     "linked": {
       "properties": {
@@ -1167,7 +1752,7 @@
     "loading": {
       "type": "boolean"
     },
-    "local_lights": {
+    "local_light_stats": {
       "$ref": "#/$defs/LightStats"
     },
     "mesh_upload_bytes": {
@@ -1175,24 +1760,16 @@
       "minimum": 0,
       "type": "integer"
     },
-    "missing_assets": {
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
+    "meshes_stats": {
+      "$ref": "#/$defs/MeshStats"
     },
-    "navigation": {
+    "navigation_stats": {
       "$ref": "#/$defs/NavStats"
     },
-    "occlusion_culling": {
-      "$ref": "#/$defs/CullingStats"
-    },
-    "occupancy": {
-      "$ref": "#/$defs/OccupancyStats"
-    },
-    "particles": {
+    "particle_stats": {
       "$ref": "#/$defs/ParticleStats"
     },
-    "physics": {
+    "physics_stats": {
       "$ref": "#/$defs/PhysicsStats"
     },
     "pipelines": {
@@ -1226,16 +1803,11 @@
         "null"
       ]
     },
-    "reflection_probes": {
-      "$ref": "#/$defs/ProbeStats"
+    "reflection_probes_stats": {
+      "$ref": "#/$defs/ReflectionProbeStats"
     },
-    "reflections": {
-      "$ref": "#/$defs/Applied"
-    },
-    "render_candidates": {
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
+    "reflections_stats": {
+      "$ref": "#/$defs/ReflectionsStats"
     },
     "render_ms": {
       "format": "double",
@@ -1270,24 +1842,30 @@
     "resolution": {
       "$ref": "#/$defs/ResolutionStats"
     },
-    "shadows": {
+    "scatter_stats": {
+      "$ref": "#/$defs/ScatterStats"
+    },
+    "shadow_stats": {
       "$ref": "#/$defs/ShadowStats"
     },
     "simulation_ms": {
       "format": "double",
       "type": "number"
     },
-    "sky": {
+    "sky_stats": {
       "$ref": "#/$defs/SkyStats"
     },
-    "subpixel_culling": {
-      "$ref": "#/$defs/CullingStats"
+    "static_tables": {
+      "$ref": "#/$defs/StaticTablesView"
     },
-    "temporal_antialiasing": {
-      "$ref": "#/$defs/Applied"
+    "temporal_antialiasing_stats": {
+      "$ref": "#/$defs/TemporalAntialiasingStats"
     },
-    "terrain": {
-      "$ref": "#/$defs/TerrainRenderStats"
+    "terrain_shading_stats": {
+      "$ref": "#/$defs/TerrainShadingStats"
+    },
+    "terrain_stats": {
+      "$ref": "#/$defs/TerrainStats"
     },
     "texture_upload_bytes": {
       "format": "uint64",
@@ -1312,15 +1890,10 @@
       "minimum": 0,
       "type": "integer"
     },
-    "visible_instances": {
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
-    },
-    "water": {
+    "water_stats": {
       "$ref": "#/$defs/WaterStats"
     },
-    "world_streaming": {
+    "world_streaming_stats": {
       "$ref": "#/$defs/CellStats"
     }
   },
@@ -1330,13 +1903,6 @@
     "simulation_ms",
     "extraction_ms",
     "render_ms",
-    "invalid_transforms",
-    "render_candidates",
-    "visible_instances",
-    "culled_instances",
-    "dropped_instances",
-    "missing_assets",
-    "culling_enabled",
     "fixed_steps",
     "dropped_seconds",
     "pipelines_compiling",
@@ -1359,28 +1925,30 @@
     "pipelines",
     "pipelines_created",
     "render_passes",
-    "shadows",
-    "ambient_occlusion",
-    "bloom",
-    "local_lights",
-    "haze",
-    "reflections",
-    "particles",
-    "reflection_probes",
-    "level_of_detail",
-    "terrain",
-    "ground_cover",
-    "occupancy",
-    "water",
-    "clouds",
-    "sky",
-    "occlusion_culling",
-    "subpixel_culling",
-    "temporal_antialiasing",
     "linked",
-    "world_streaming",
-    "navigation",
-    "physics"
+    "ambient_occlusion_stats",
+    "exposure_stats",
+    "bloom_stats",
+    "collision_stats",
+    "ground_cover_stats",
+    "local_light_stats",
+    "meshes_stats",
+    "navigation_stats",
+    "particle_stats",
+    "physics_stats",
+    "reflection_probes_stats",
+    "reflections_stats",
+    "scatter_stats",
+    "shadow_stats",
+    "static_tables",
+    "cloud_stats",
+    "sky_stats",
+    "haze_stats",
+    "temporal_antialiasing_stats",
+    "terrain_stats",
+    "terrain_shading_stats",
+    "water_stats",
+    "world_streaming_stats"
   ],
   "title": "FrameStats",
   "type": "object"

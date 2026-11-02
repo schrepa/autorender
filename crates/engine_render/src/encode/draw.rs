@@ -102,6 +102,7 @@ impl Run {
             Program::Compute(_) => 0,
         };
         let frame_group = self.frame_groups.get(variant as usize).and_then(|groups| groups.0[parity].clone());
+        let camera = usize::from(self.camera_bound(variant));
         let own: Vec<(u32, Option<wgpu::BindGroup>, Vec<u32>)> = built
             .groups
             .iter()
@@ -164,7 +165,7 @@ impl Run {
         if open.set.frame != Some((variant, open.offset))
             && let Some(group) = &frame_group
         {
-            render.set_bind_group(0, group, &[open.offset]);
+            render.set_bind_group(0, group, &[open.offset][..camera]);
             open.set.frame = Some((variant, open.offset));
         }
         for (index, group, dynamic) in &own {
@@ -299,7 +300,7 @@ impl Run {
 
     pub(crate) fn reset_scissor(&mut self) {
         let size = self.targets.first().map(|(_, made)| (made.size.width, made.size.height));
-        if let (Some(open), Some((width, height))) = (self.open.as_mut(), self.region.or(size)) {
+        if let (Some(open), Some((width, height))) = (self.open.as_mut().filter(|open| open.layered), self.region.or(size)) {
             open.pass.set_scissor_rect(0, 0, width, height);
         }
     }
@@ -321,6 +322,7 @@ impl Run {
         let label = self.label_of(self.pass).unwrap_or("engine/part-dispatch");
         let parity = self.parity;
         let frame_group = self.frame_groups.get(built.variant as usize).and_then(|groups| groups.0[parity].clone());
+        let camera = usize::from(self.camera_bound(built.variant));
         let own: Vec<(u32, Option<wgpu::BindGroup>, Vec<u32>)> = built
             .groups
             .iter()
@@ -355,7 +357,7 @@ impl Run {
         };
         pass.set_pipeline(&compute);
         if let Some(group) = &frame_group {
-            pass.set_bind_group(0, group, &[0]);
+            pass.set_bind_group(0, group, &[0][..camera]);
         }
         for (index, group, dynamic) in &own {
             if let Some(group) = group {

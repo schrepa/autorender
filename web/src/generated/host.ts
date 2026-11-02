@@ -74,4 +74,6 @@ export const FRAME_PHASES = {"compiling":0,"idle":4,"playing":3,"preparing":1,"s
 
 export const IMAGE_FORMATS = ["png","jpeg","ktx2-rgba8"];
 
-export const HOST_SETTINGS = {"between":"on|off","debug-view":"off|kinds|levels|cards|shadows|casters|overdraw|normals|tiles|materials|sky|detail|water_depth|water_speed|water_froude|water_turbulence|water_white|water_reach|water_span|water_eddies|water_roughness","dynamic-resolution":"host|on|off","occlusion":"scene|on|off","pipeline":"on|off","subpixel":"scene|on|off","taa":"scene|on|off","terrain-clock":"wall|frames"};
+export const HOST_SETTINGS = {"between":"on|off","pipeline":"on|off","terrain-clock":"wall|frames"};
+
+export const HOST_OVERLAY = "set";

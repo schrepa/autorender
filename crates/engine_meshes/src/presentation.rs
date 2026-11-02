@@ -51,13 +51,6 @@ pub(crate) fn frustum_uniform(view_projection: Mat4) -> ([[f32; 4]; 6], [[f32; 4
     (planes, absolute.to_cols_array_2d())
 }
 
-fn jitter_clip(offset: [f32; 2], width: u32, height: u32) -> [f32; 2] {
-    [
-        2.0 * offset[0] / width.max(1) as f32,
-        -2.0 * offset[1] / height.max(1) as f32,
-    ]
-}
-
 fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
     Mat4::from_cols(
         glam::Vec4::X,
@@ -73,7 +66,7 @@ pub(crate) fn rasterized(view: &engine_core::View, offset: glam::Vec2, temporal:
         return view_projection;
     }
     let size = view.render_size();
-    jittered(view_projection, jitter_clip(offset.to_array(), size.x, size.y))
+    jittered(view_projection, engine_render::jitter_clip(offset.to_array(), size.x, size.y))
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

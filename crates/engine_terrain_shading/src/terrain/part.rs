@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use engine_core::{AssetLibrary, Camera, DeviceLimits, Error, View};
 use engine_places::ground::{Cover, TerrainTiles};
 use engine_places::probes::{MIRRORED, ProbeCaptures, ProbeView, ProbeViews};
-use engine_places::shadows::{CasterView, KeptRefresh, Refresh, ShadowCasters, ShadowMaps};
+use engine_places::shadows::{CasterMap, CasterView, KeptRefresh, Refresh, ShadowCasters, ShadowMaps};
 use engine_places::water::Waterline;
 use engine_render::{
     Attach, Bind, Buffer, ComputePipeline, Count, DebugShown, DepthUse, Draw, DrawInput, Encode,
@@ -503,11 +503,16 @@ impl GpuPart for TerrainGpu {
         let h = &self.handles;
         let eye = camera.position;
         let culling = view.view_projection() * Mat4::from_translation(eye);
-        let jitter = [resolve.offset.x, resolve.offset.y];
+        let jitter = if self.temporal {
+            engine_render::jitter_clip(resolve.offset.to_array(), size.x, size.y)
+        } else {
+            [0.0; 2]
+        };
         let regions: Vec<(usize, KeptRefresh)> = shadows
             .regions
             .iter()
             .enumerate()
+            .filter(|(_, region)| region.map != CasterMap::Moving)
             .filter_map(|(index, region)| match region.refresh {
                 Refresh::Kept(kept) => Some((index, kept)),
                 Refresh::Redraw => None,
@@ -626,7 +631,15 @@ impl GpuPart for TerrainGpu {
         if self.surface.any() {
             cx.run(self.passes.clear_counters);
             cx.run(self.passes.begin);
-            cx.run(self.passes.copy_args);
+            let bytes = self.surface.counter_bytes().end;
+            cx.copy(
+                self.passes.copy_args,
+                &[engine_render::CopyRegion::Bytes {
+                    from: 0,
+                    to: 0,
+                    size: bytes,
+                }],
+            );
             cx.run(self.passes.subdivide);
             cx.read_back::<SurfaceTotals>(
                 SURFACE_TOTALS,
@@ -769,6 +782,7 @@ impl TerrainGpu {
             );
             draws += 1;
         }
+        draw.scissor([0, 0, self.render.0, self.render.1]);
         draws
     }
 

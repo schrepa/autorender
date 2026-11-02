@@ -26,7 +26,7 @@ fn fixture(points: &[[f64; 3]]) -> Value {
         ],
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
         "entities": [
-            {"id": "player", "mesh": "box", "material": "plain", "tags": ["player"], "transform": {"translation": [0, 0.5, 8]}},
+            {"id": "player", "mesh": "box", "material": "plain", "transform": {"translation": [0, 0.5, 8]}},
             {"id": "floor", "mesh": "box", "material": "ground", "transform": {"translation": [0, -0.5, 0], "scale": [40, 1, 30]}},
             {"id": "rail", "spline": {"points": points, "mesh": "box", "material": "rail"}, "transform": {"scale": [1, 1, 1]}},
         ],

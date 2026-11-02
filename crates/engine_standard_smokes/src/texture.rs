@@ -57,6 +57,7 @@ fn fixture(inverted: bool) -> Value {
         .collect();
     json!({
         "id": "texture-fixture", "revision": 1,
+        "environment": {"sky_occlusion": {"enabled": false}},
         "camera": {"position": [0, 6, 10], "target": [0, 1, 0], "fov_degrees": 60, "near": 0.1, "far": 300},
         "textures": textures,
         "materials": [
@@ -67,7 +68,7 @@ fn fixture(inverted: bool) -> Value {
         "meshes": [{"id": "box", "source": {"kind": "cube"}}, {"id": "gem", "source": {"kind": "octahedron"}}],
         "entities": [
             {"id": "ground", "mesh": "box", "material": "ground", "transform": {"translation": [0, -0.5, 0], "scale": [20, 1, 20]}},
-            {"id": "player", "tags": ["player"], "mesh": "box", "material": "ground", "transform": {"translation": [0, 0.5, 4]}},
+            {"id": "player", "mesh": "box", "material": "ground", "transform": {"translation": [0, 0.5, 4]}},
             {"id": "trunk", "mesh": "box", "material": "bark", "transform": {"translation": [-1.5, 1.5, 0], "scale": [1, 3, 1]}},
             {"id": "crown", "mesh": "gem", "material": "leaf", "transform": {"translation": [-1.5, 3.8, 0], "scale": [2.4, 2, 2.4]}},
             {"id": "stump", "mesh": "box", "material": "bark", "transform": {"translation": [2, 0.4, -1], "scale": [1.4, 0.8, 1.4]}},

@@ -56,7 +56,7 @@ mod staging;
 mod targets;
 
 pub use gpu_data::{
-    ground_data, mip_levels, pack_color, pack_surface, pixel_angle, pixels_per_meter, planes,
+    ground_data, jitter_clip, mip_levels, pack_color, pack_surface, pixel_angle, pixels_per_meter, planes,
     pyramid_extents,
 };
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};

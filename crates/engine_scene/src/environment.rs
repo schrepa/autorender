@@ -7,7 +7,7 @@ use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub(crate) const STREAMED: &str = "streamed";
+pub const STREAMED: &str = "streamed";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]

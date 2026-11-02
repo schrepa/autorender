@@ -754,7 +754,7 @@ impl DevTools {
             });
         }
         let scene = scene
-            .map(SceneInstance::operation_scene)
+            .map(|scene| scene.current_scene(world))
             .or_else(|| world.get_resource::<OperationScene>().cloned())
             .ok_or_else(|| Error::new(ErrorCode::NoScene, "$.entity").expected(Expected::Entity))?;
         if scene.entity_count() > MAX_SCAN_ENTITIES {
@@ -1103,6 +1103,11 @@ fn described_brick(brick: &BrickRecord, full: bool) -> DescribedBrick {
                 }),
                 at: at(operation.at),
             })
+            .collect(),
+        explains: brick
+            .explainers()
+            .iter()
+            .map(|explainer| source_line(explainer.at))
             .collect(),
     }
 }

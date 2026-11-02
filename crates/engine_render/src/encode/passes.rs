@@ -346,6 +346,7 @@ impl Run {
             main,
             offset,
             shared: is_shared,
+            layered: layer.is_some(),
             label: None,
             set: Set::default(),
         });

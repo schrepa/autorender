@@ -665,6 +665,8 @@ const DOCUMENT: &[(&str, &str)] = &[
     ("revision", "structure"),
     ("entities", "structure"),
     ("prefabs", "structure"),
+    ("streamed", "structure"),
+    ("along", "structure"),
     ("views", "structure"),
     ("looks", "structure"),
     ("environment", "Environment"),

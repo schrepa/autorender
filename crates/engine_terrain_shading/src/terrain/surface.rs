@@ -337,7 +337,7 @@ fn finest_spacing(side: f32, depth: u32) -> f32 {
     leg / (1 << SURFACE_MESHLET_LEVEL) as f32
 }
 
-pub(crate) fn meshlet_indices() -> Vec<u16> {
+pub(crate) fn meshlet_indices() -> Vec<u32> {
     let parts = 1_u32 << SURFACE_MESHLET_LEVEL;
     (0..SURFACE_MESHLET_INDICES / 3)
         .flat_map(|piece| {
@@ -356,9 +356,9 @@ pub(crate) fn meshlet_indices() -> Vec<u16> {
         .collect()
 }
 
-fn lattice_vertex(i: u32, j: u32) -> u16 {
+fn lattice_vertex(i: u32, j: u32) -> u32 {
     let row = i + j;
-    (row * (row + 1) / 2 + j) as u16
+    row * (row + 1) / 2 + j
 }
 
 fn world_planes(culling: Mat4, eye: Vec3) -> [[f32; 4]; 6] {

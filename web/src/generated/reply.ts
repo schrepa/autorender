@@ -58,12 +58,6 @@ export interface CullingResult {
   temporary: boolean;
 }
 
-export interface Cut {
-  asked: number;
-  cut: number;
-  kept: number;
-}
-
 export interface DebugFaultResult {
   injected: boolean;
 }
@@ -73,13 +67,12 @@ export interface DebugMissingAssetResult {
   temporary: boolean;
 }
 
-export type DescribeResult = { bricks: DescribedBrick[]; types: DescribedType[]; verbs: string[] } | { control_state?: Record<string, unknown> | null; kind: TypeKind; name: string; schema: unknown } | { kind: TypeKind; name: string; opt_in_sections: string[]; schema: unknown } | { kind: TypeKind; name: string; schema: unknown } | { codes: string[]; kind: TypeKind; name: string } | { at?: string | null; brick?: string | null; descriptor: InspectorDescriptor; kind: TypeKind } | { args: unknown; at?: string | null; brick?: string | null; kind: TypeKind; name: string; shows?: string | null; verb: string } | { brick: DescribedBrick; kind: TypeKind } | { at: string; brick: string; kind: TypeKind; name: string; schema: unknown };
+export type DescribeResult = { bricks: DescribedBrick[]; types: DescribedType[]; verbs: string[] } | { control_state?: Record<string, unknown> | null; kind: TypeKind; name: string; schema: unknown } | { kind: TypeKind; name: string; schema: unknown } | { codes: string[]; kind: TypeKind; name: string } | { at?: string | null; brick?: string | null; descriptor: InspectorDescriptor; kind: TypeKind } | { args: unknown; at?: string | null; brick?: string | null; kind: TypeKind; name: string; shows?: string | null; verb: string } | { brick: DescribedBrick; kind: TypeKind } | { at: string; brick: string; kind: TypeKind; name: string; schema: unknown };
 
 export interface DescribedBrick {
   crate: string;
   explains: string[];
   fills: string[];
-  inspectors: DescribedEntry[];
   joins: string[];
   name: string;
   operations: DescribedEntry[];
@@ -98,12 +91,6 @@ export interface DescribedType {
   brick?: string | null;
   kind: TypeKind;
   name: string;
-}
-
-export interface DetailShares {
-  averaged: number;
-  canopy: number;
-  detailed: number;
 }
 
 export interface DigestEntry {
@@ -130,8 +117,6 @@ export interface DistributionResult {
   distribution?: Distribution | null;
 }
 
-export type DrawnKind = "mesh" | "placed" | "card" | "placed_card" | "terrain" | "cover" | "water" | "falls" | "sky";
-
 export type Effect = { kind: "pause"; paused: boolean } | { kind: "wait"; within_ms: number } | { kind: "frame"; timestamp: number } | { kind: "show" } | { args: Record<string, unknown>; kind: "game"; name: string } | { kind: "source" } | { contents: unknown; kind: "save"; name: string } | { kind: "stream"; records: unknown[] };
 
 export type EntityComponents = Record<string, unknown> | string[];
@@ -147,6 +132,7 @@ export interface EnvironmentResult {
   after: Record<string, unknown>;
   before: Record<string, unknown>;
   environment_changed: string[];
+  skipped: unknown[];
   temporary: boolean;
 }
 
@@ -179,17 +165,6 @@ export interface GameResult {
   result: unknown;
 }
 
-export interface HeightSample {
-  height: number;
-  hole: boolean;
-  level: number;
-  normal: number[];
-  path?: number | null;
-  standing_water?: StandingWater | null;
-  terrain: TerrainKey;
-  water?: HydrologySample | null;
-}
-
 export interface HostContext {
   device_pixel_ratio: number;
   height: number;
@@ -198,16 +173,6 @@ export interface HostContext {
   timing: string;
   user_agent: string;
   width: number;
-}
-
-export interface HydrologySample {
-  flood: number;
-  flow: number;
-  grain: number;
-  lake: number;
-  power: number;
-  river: number;
-  wetness: number;
 }
 
 export interface InputResult {
@@ -232,17 +197,59 @@ export interface KeptArtifact {
   tick?: string | null;
 }
 
-export interface MaterialShare {
-  material: number;
-  share: number;
-}
-
 export interface MissingAsset {
   draws: string;
   entity: AuthoredEntity;
   missing: string;
   position?: number[] | null;
 }
+
+export interface NavAgent {
+  destination?: number[] | null;
+  level?: number;
+  max_slope?: number;
+  max_water?: number;
+  offset?: number;
+  radius?: number;
+  speed?: number;
+  turn?: number;
+}
+
+export interface NavAgentRow {
+  destination?: number[] | null;
+  id?: string | null;
+  left: number;
+  position: number[];
+  status: NavStatus;
+}
+
+export interface NavAgentView {
+  agent: NavAgent;
+  left: number;
+  length: number;
+  next: number;
+  points: number;
+  searched: number;
+  searched_for?: number[] | null;
+  status: NavStatus;
+}
+
+export interface NavAgentsView {
+  agents: number;
+  arrived: number;
+  failed_jobs: number;
+  first: NavAgentRow[];
+  grounds: number;
+  latest_job_failure?: string | null;
+  portals: number;
+  searching: number;
+  unreachable: number;
+  waiting: number;
+  walking: number;
+  work: number;
+}
+
+export type NavStatus = "idle" | "searching" | "walking" | "arrived" | "unreachable";
 
 export interface Observation {
   frame?: string | null;
@@ -267,6 +274,10 @@ export interface OpResults {
   game: GameResult;
   input: InputResult;
   inspect: InspectResult;
+  jobs: StatusResult;
+  nav_agent: NavAgentView;
+  nav_agents: NavAgentsView;
+  parent: ParentResult;
   pause: StatusResult;
   present: PresentResult;
   probe: ProbeResult;
@@ -275,14 +286,7 @@ export interface OpResults {
   resume: StatusResult;
   status: StatusResult;
   step: StepResult;
-  terrain: TerrainControlResult;
-  terrain_edit: TerrainEdited;
-  terrain_height: TerrainHeightResult;
-  terrain_redo: TerrainEdited;
-  terrain_river: TerrainEdited;
-  terrain_route: TerrainRouteResult;
   terrain_sweep: TerrainSweepResult;
-  terrain_undo: TerrainEdited;
   watch: WatchResult;
 }
 
@@ -293,6 +297,10 @@ export interface Outcome {
   missing?: string[] | null;
   now?: number | null;
   result?: unknown;
+}
+
+export interface ParentResult {
+  temporary: boolean;
 }
 
 export interface PresentResult {
@@ -317,25 +325,7 @@ export interface PresentationStateView {
 }
 
 export interface ProbeResult {
-  casts_shadows: boolean;
-  depth: number;
-  detail?: number | null;
-  displayed?: number[] | null;
   entity?: AuthoredEntity | null;
-  fading: boolean;
-  fragments: number;
-  kind?: DrawnKind | null;
-  level: number;
-  normal?: number[] | null;
-  object?: number | null;
-  pixel: number[];
-  shaded?: number[] | null;
-  shadowed: boolean;
-  sun: SunLookup;
-  sun_index: number;
-  terrain?: TerrainProbe | null;
-  water?: WaterProbe | null;
-  world?: number[] | null;
 }
 
 export interface ProfileResult {
@@ -364,38 +354,13 @@ export interface ProfiledBrick {
   heap_peak_bytes?: number | null;
 }
 
-export interface Reach {
-  max: number[];
-  min: number[];
-}
-
 export interface RenderResult {
   rendered: boolean;
-}
-
-export interface RouteFound {
-  hairpin_steps: number;
-  length: number;
-  points: number[][];
-  steepest: number;
-}
-
-export interface RouteOptions {
-  grade_cost?: number;
-  level?: number;
-  max_grade?: number;
-  turn_cost?: number;
-  water_cost?: number;
 }
 
 export interface SceneObservation {
   id: string;
   revision: string;
-}
-
-export interface StandingWater {
-  depth: number;
-  surface: number;
 }
 
 export interface StatusLimits {
@@ -424,8 +389,6 @@ export interface StepResult {
   ticks: number;
 }
 
-export type SunLookup = "none" | "level" | "horizon" | "beyond";
-
 export interface SweepExample {
   at: number[];
   height: number;
@@ -436,71 +399,6 @@ export interface SweepRays {
   missed: number;
   placed_first: number;
   worst: Worst;
-}
-
-export interface TerrainControlResult {
-  frozen_at?: number[] | null;
-  pixel_error?: number | null;
-  subdivision_error?: number | null;
-  temporary: boolean;
-  terrain_changed: boolean;
-}
-
-export type TerrainEdited = { applied: boolean; dirty?: Reach | null; id: string; rivers: number; temporary: boolean } | { applied: boolean; dirty: Reach; edits: number; id: string; largest_change: number; temporary: boolean } | { dirty?: Reach | null; edits: number; temporary: boolean; undone?: string | null } | { dirty?: Reach | null; edits: number; redone?: string | null; temporary: boolean };
-
-export interface TerrainHeightResult {
-  samples: HeightSample | null[];
-  stats: TerrainStats;
-}
-
-export type TerrainKey = string | number;
-
-export interface TerrainProbe {
-  detail: DetailShares;
-  materials: MaterialShare[];
-  patch: number[];
-  sky: number;
-  tile: number[];
-}
-
-export interface TerrainRouteResult {
-  options: RouteOptions;
-  origin: number[];
-  route?: RouteFound | null;
-  terrain: TerrainKey;
-}
-
-export interface TerrainStats {
-  baking: number;
-  bounced: number;
-  bouncing: number;
-  bridges: number;
-  cached_bytes: number;
-  cached_tiles: number;
-  colored: number;
-  coloring: number;
-  fallback_tiles: number;
-  falls: number;
-  lighting: number;
-  lit: number;
-  loading: boolean;
-  loading_tiles: number;
-  missing_tiles: number;
-  prefetching_tiles: number;
-  resident_tiles: number;
-  restored_tiles: number;
-  rewatered_tiles: number;
-  settled_records: number;
-  settling_records: number;
-  shaded_tiles: number;
-  shading_records: number;
-  stale_water_tiles: number;
-  surroundings_tiles: number;
-  terrains: number;
-  tile_cut: Cut;
-  tunnels: number;
-  waiting_tiles: number;
-  white_water: number;
 }
 
 export interface TerrainSweepResult {
@@ -540,20 +438,6 @@ export interface WatchResult {
   records: number;
   temporary: boolean;
 }
-
-export interface WaterProbe {
-  depth: number;
-  eddies: number;
-  froude: number;
-  reach?: WaterReach | null;
-  roughness: number;
-  span: number;
-  speed: number;
-  turbulence: number;
-  white: number;
-}
-
-export type WaterReach = "pool" | "plane" | "steps" | "cascade" | "falls";
 
 export interface Worst {
   at?: number[] | null;

@@ -20,7 +20,7 @@ fn drawn(
     };
     let slot = instances.drawn(*entity)?;
     let (seen, state) = totals.last()?.watched?;
-    (seen == slot && totals.age(time.frame) == Some(0))
+    (seen == slot && totals.age(time.frame).is_some_and(|age| age <= 1))
         .then(|| ((*id).to_owned(), slot, (state & LOD_STATE != 0).then_some(state & 3)))
 }
 

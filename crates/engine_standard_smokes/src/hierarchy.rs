@@ -36,7 +36,7 @@ fn fixture() -> Value {
         ]}],
         "entities": [
             {"id": "ground", "mesh": "box", "material": "ground", "transform": {"translation": [0, -0.5, 0], "scale": [30, 1, 30]}},
-            {"id": "player", "tags": ["player"], "mesh": "box", "material": "cloth", "transform": {"translation": [0, 0.5, 4]}},
+            {"id": "player", "mesh": "box", "material": "cloth", "transform": {"translation": [0, 0.5, 4]}},
             {"id": "player-accessory", "parent": "player", "mesh": "box", "material": "brass",
              "transform": {"translation": [0, 0.8, 0], "scale": [0.3, 0.3, 0.3]}},
             {"id": "west-lantern", "prefab": PREFAB, "transform": {"translation": [-4, 0, -2]}},

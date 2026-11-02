@@ -23,7 +23,6 @@ pub(crate) struct FrameVariable {
 pub(crate) struct Reach {
     pub(crate) label: &'static str,
     pub(crate) pass: u32,
-    pub(crate) stages: Stages,
     pub(crate) own_groups: u32,
     pub(crate) own: Vec<(Class, Stages)>,
     pub(crate) reached: Vec<(u32, Stages)>,
@@ -107,9 +106,6 @@ fn fits(
         return Err(("layout", "dynamic_uniform_buffers"));
     }
     for (name, stage) in STAGES {
-        if !reach.stages.covers(stage) {
-            continue;
-        }
         let mut counted = Counted::default();
         for &(kind, visible) in &reach.own {
             if visible.covers(stage) {
@@ -208,6 +204,14 @@ pub(crate) fn plan(
                     .iter()
                     .zip(&entries)
                     .all(|(known, entry)| known.0 == entry.0)
+                && {
+                    let together = joined(&variant.entries, &entries);
+                    variant
+                        .members
+                        .iter()
+                        .chain([&pipeline])
+                        .all(|&member| fits(&reaches[member as usize], &together, variables, limits).is_ok())
+                }
         });
         match same {
             Some(variant) => {

@@ -431,7 +431,7 @@ impl Linker {
         result.modules.sort_by_key(|module| order(&module.path));
         let linked = wesl::pass::link(&result.modules, Some(&result.used_items));
         let bindings = bound_vars(&linked);
-        let text = linked.to_string();
+        let text = self.pieces_read_in_place(linked.to_string());
         let switches = switch_ids(&text);
         let mut overrides = Vec::new();
         for source in &self.modules {
@@ -456,6 +456,32 @@ impl Linker {
         });
         self.composed.insert(key, Arc::clone(&composed));
         Ok(composed)
+    }
+
+    fn pieces_read_in_place(&self, mut text: String) -> String {
+        use wesl::Mangler as _;
+        let Ok(arena) = module_path(crate::pieces::PIECES_MODULE) else {
+            return text;
+        };
+        let arena = wesl::mangler::EscapeMangler.mangle(&arena, crate::pieces::PIECES_BINDING);
+        let inner = format!("{}::", crate::pieces::PIECES_MODULE);
+        for source in &self.modules {
+            let Some(prefix) = source.path.strip_prefix(&inner) else {
+                continue;
+            };
+            let Ok(path) = module_path(&source.path) else {
+                continue;
+            };
+            let read = wesl::mangler::EscapeMangler.mangle(&path, "piece");
+            let call = format!("{read}()");
+            let Some(at) = text.find(&format!("fn {call}")) else {
+                continue;
+            };
+            let end = text[at..].find('}').map_or(text.len(), |close| at + close + 1);
+            text.replace_range(at..end, "");
+            text = text.replace(&call, &format!("{arena}.{prefix}"));
+        }
+        text
     }
 
     fn numbered_text(&self, module: &Module) -> String {

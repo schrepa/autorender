@@ -167,16 +167,16 @@ fn clipmap(session: &mut dyn SmokeSession) -> Checked<()> {
         wanted,
         "finer_texels_change_the_view"
     );
-    let deep = refuse(
+    let none = refuse(
         session,
         "control",
         "environment",
-        json!({"shadows": with(&clipmap, json!({"levels": 64}))}),
+        json!({"shadows": with(&clipmap, json!({"levels": 0}))}),
     )?;
     smoke_eq!(
-        &deep["path"],
+        &none["path"],
         &json!("$.args.shadows.levels"),
-        "too_many_shadow_levels_are_refused"
+        "no_shadow_levels_are_refused"
     );
     environment(session, json!({ "shadows": clipmap }))?;
     camera(session, overview())?;

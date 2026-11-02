@@ -21,8 +21,7 @@ const ACROSS_Z: u32 = 0x80000000u;
 @group(1) @binding(4) var<storage, read> listed: array<u32>;
 @group(1) @binding(5) var<storage, read_write> listing: array<u32>;
 @group(1) @binding(6) var<storage, read_write> listed_draw: ListedDraw;
-@group(1) @binding(7) var finer_coverage: texture_2d<f32>;
-@group(1) @binding(8) var finer_heights: texture_2d<f32>;
+@group(1) @binding(7) var finer_map: texture_2d<f32>;
 
 const CORNERS = array<vec2<f32>, QUAD>(
     vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
@@ -155,13 +154,8 @@ fn vs_splat(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instanc
     return output;
 }
 
-struct SplatTargets {
-    @location(0) coverage: vec4<f32>,
-    @location(1) heights: vec4<f32>,
-}
-
 @fragment
-fn fs_splat(input: SplatOutput) -> SplatTargets {
+fn fs_splat(input: SplatOutput) -> @location(0) vec4<f32> {
     let texels = f32(splat.counts.w);
     if any(input.window < vec2<f32>(0.0)) || any(input.window >= vec2<f32>(texels))
         || !redrawn(vec2<u32>(input.clip.xy) / splat.place.z) {
@@ -172,10 +166,7 @@ fn fs_splat(input: SplatOutput) -> SplatTargets {
         discard;
     }
     let one = min(input.cover.x * (1.0 - smoothstep(0.55, 1.0, away)), 1.0);
-    var targets: SplatTargets;
-    targets.coverage = vec4<f32>(one, 0.0, 0.0, 0.0);
-    targets.heights = vec4<f32>(input.cover.z, -input.cover.y, 0.0, 0.0);
-    return targets;
+    return vec4<f32>(input.cover.z, -input.cover.y, 0.0, one);
 }
 
 @vertex
@@ -190,11 +181,8 @@ fn vs_clear(@builtin(vertex_index) vertex: u32, @builtin(instance_index) cell: u
 }
 
 @fragment
-fn fs_clear() -> SplatTargets {
-    var targets: SplatTargets;
-    targets.coverage = vec4<f32>(0.0);
-    targets.heights = vec4<f32>(NOTHING, NOTHING, 0.0, 0.0);
-    return targets;
+fn fs_clear() -> @location(0) vec4<f32> {
+    return vec4<f32>(NOTHING, NOTHING, 0.0, 0.0);
 }
 
 struct MeansOutput {
@@ -225,18 +213,16 @@ fn vs_means(@builtin(vertex_index) vertex: u32, @builtin(instance_index) cell: u
 }
 
 @fragment
-fn fs_means(input: MeansOutput) -> SplatTargets {
+fn fs_means(input: MeansOutput) -> @location(0) vec4<f32> {
     let local = vec2<u32>(input.clip.xy) - input.first;
     let finer = vec2<i32>(input.finer + local * 2u);
     var coverage = 0.0;
     var heights = vec2<f32>(NOTHING);
     for (var corner = 0u; corner < 4u; corner++) {
         let at = finer + vec2<i32>(i32(corner & 1u), i32(corner >> 1u));
-        coverage += textureLoad(finer_coverage, at, 0).r;
-        heights = max(heights, textureLoad(finer_heights, at, 0).rg);
+        let texel = textureLoad(finer_map, at, 0);
+        coverage += texel.a;
+        heights = max(heights, texel.rg);
     }
-    var targets: SplatTargets;
-    targets.coverage = vec4<f32>(0.25 * coverage, 0.0, 0.0, 0.0);
-    targets.heights = vec4<f32>(heights, 0.0, 0.0);
-    return targets;
+    return vec4<f32>(heights, 0.0, 0.25 * coverage);
 }
