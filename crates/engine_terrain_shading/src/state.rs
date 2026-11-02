@@ -415,6 +415,7 @@ pub(crate) fn place_tiles(
     bakes: Res<Bakes>,
     mut atlas: ResMut<Atlas>,
     mut ground: ResMut<GroundTiles>,
+    mut baking: ResMut<GroundBaking>,
 ) {
     let atlas = &mut *atlas;
     atlas.now = time.elapsed_seconds as f32;
@@ -423,6 +424,9 @@ pub(crate) fn place_tiles(
     atlas.changed.clear();
     atlas.ground_changes.clear();
     let shaded = shaded_changes(atlas, &tiles, &bakes);
+    if !shaded.is_empty() {
+        baking.shaded += 1;
+    }
     let capacity = limits.texture_layers;
     let unchanged = !tiles.is_changed() && capacity == atlas.capacity;
     if unchanged && atlas.unplaced.is_empty() && shaded.is_empty() {
@@ -801,6 +805,7 @@ pub(crate) fn bake(
         *baking = GroundBaking {
             lighting,
             unbounced,
+            ..*baking
         };
     }
 }
@@ -1171,6 +1176,7 @@ pub(crate) fn forget(
         *baking = GroundBaking {
             lighting: 0,
             unbounced: 0,
+            ..*baking
         };
     }
     let bakes = &mut *bakes;

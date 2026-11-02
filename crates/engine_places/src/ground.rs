@@ -383,6 +383,7 @@ impl Slot for GroundWork {
 pub struct GroundBaking {
     pub lighting: u32,
     pub unbounced: u32,
+    pub shaded: u64,
 }
 
 impl Slot for GroundBaking {

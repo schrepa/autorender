@@ -39,7 +39,6 @@ gpu_struct! {
 gpu_struct! {
     pub(crate) struct Snap {
         pub counts: [u32; 4],
-        pub eye: [f32; 4],
     }
 }
 

@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{AssetResidency, Error, MaterialHandle, MeshHandle, Var, View};
+use engine_core::{AssetResidency, Error, MaterialHandle, MeshHandle, Var};
 use engine_places::ground::{GroundTiles, TerrainTiles};
 use engine_places::shadows::{CasterMap, CasterView, ShadowCasters};
 use engine_render::{
@@ -103,12 +103,6 @@ struct HeldGroup {
 }
 
 #[derive(Default)]
-struct Snapped {
-    generation: u64,
-    eye: [f32; 4],
-}
-
-#[derive(Default)]
 struct Held {
     groups: Vec<HeldGroup>,
     lists: Vec<(u32, u32)>,
@@ -123,7 +117,8 @@ struct Held {
     groups_revision: Option<u64>,
     impostors_revision: Option<u64>,
     covers_revision: Option<u64>,
-    snapped: Option<Snapped>,
+    snapped: Option<u64>,
+    snap_again: bool,
     slots_written: bool,
     snapping: bool,
     prepared: bool,
@@ -526,8 +521,12 @@ impl ScatterGpu {
     fn prepare_snap(
         &mut self,
         cx: &mut Prepare<'_, Self>,
-        (state, view): (&ScatterState, &View),
-        (tiles, ground): (&Res<'_, TerrainTiles>, &Res<'_, GroundTiles>),
+        state: &ScatterState,
+        (tiles, ground, baking): (
+            &Res<'_, TerrainTiles>,
+            &Res<'_, GroundTiles>,
+            &Res<'_, engine_places::ground::GroundBaking>,
+        ),
     ) {
         let held = &mut self.held;
         held.snapping = false;
@@ -536,30 +535,21 @@ impl ScatterGpu {
         if ground.layers == 0 || terrains == 0 || state.resident == 0 {
             return;
         }
-        let eye = view.detail_eye().extend(0.0).to_array();
+        let changed = tiles.is_changed()
+            || ground.is_changed()
+            || baking.is_changed()
+            || held.slots_written
+            || held.snapped != Some(state.generation);
+        if !changed && !held.snap_again {
+            return;
+        }
+        held.snap_again = changed;
+        held.snapped = Some(state.generation);
+        held.slots_written = false;
         let snap = Snap {
             counts: [held.objects, terrains, 0, 0],
-            eye,
         };
         cx.write(self.snap_uniform, 0, &[snap]);
-        let unchanged = !tiles.is_changed()
-            && !ground.is_changed()
-            && held
-                .snapped
-                .as_ref()
-                .is_some_and(|snapped| snapped.generation == state.generation);
-        if unchanged && !held.slots_written {
-            match &mut held.snapped {
-                Some(snapped) if snapped.eye != eye => snapped.eye = eye,
-                Some(_) | None => return,
-            }
-        } else {
-            held.snapped = Some(Snapped {
-                generation: state.generation,
-                eye,
-            });
-            held.slots_written = false;
-        }
         held.snapping = true;
     }
 
@@ -879,9 +869,9 @@ impl GpuPart for ScatterGpu {
         Res<'static, ScatterState>,
         Res<'static, OccupancyWindows>,
         Res<'static, FarCoverTable>,
-        Res<'static, View>,
         Res<'static, TerrainTiles>,
         Res<'static, GroundTiles>,
+        Res<'static, engine_places::ground::GroundBaking>,
         Res<'static, AssetResidency>,
     );
 
@@ -1057,7 +1047,7 @@ impl GpuPart for ScatterGpu {
 
     fn prepare(
         &mut self,
-        (state, windows, far, view, tiles, ground, residency): SystemParamItem<
+        (state, windows, far, tiles, ground, baking, residency): SystemParamItem<
             '_,
             '_,
             Self::Reads,
@@ -1095,7 +1085,7 @@ impl GpuPart for ScatterGpu {
             );
             cx.write(self.placed_far, 0, &words);
         }
-        self.prepare_snap(cx, (&*state, &*view), (&tiles, &ground));
+        self.prepare_snap(cx, &state, (&tiles, &ground, &baking));
         self.prepare_cull(cx, &state);
         if self.held.prepared && self.held.objects > 0 {
             cx.run(self.scatter);
