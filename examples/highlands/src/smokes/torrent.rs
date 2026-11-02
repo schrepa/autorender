@@ -27,7 +27,7 @@ const QUIET_FRAMES: u32 = 20_000;
 const PROBES_ACROSS: u32 = 7;
 
 pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
-    open(session, false)?;
+    open(session)?;
     for stream in STREAMS {
         aim(session, stream)?;
         environment(session, json!({"debug_view": {"view": "off"}}))?;

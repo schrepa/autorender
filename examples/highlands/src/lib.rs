@@ -32,8 +32,7 @@ pub fn bricks<L: Listing>(list: L) -> L {
 }
 
 pub fn toon<L: Listing>(list: L) -> L {
-    bricks(list)
-        .without::<LightingModelBrick>()
+    list.without::<LightingModelBrick>()
         .with::<bricks::toon_lighting::ToonLightingBrick>()
 }
 

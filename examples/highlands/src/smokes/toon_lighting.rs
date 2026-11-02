@@ -11,12 +11,12 @@ const FRAMES: u32 = 8;
 const UNLINKED: [&str; 3] = ["shader_link", "unknown_module", "place_not_filled"];
 
 pub(super) fn standard(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
-    open(session, false)?;
+    open(session)?;
     looked(session)
 }
 
 pub(super) fn toon(session: &mut dyn SmokeSession, standard: Value) -> Result<(), SmokeFailure> {
-    open(session, false)?;
+    open(session)?;
     filled(session)?;
     let toon = looked(session)?;
     smoke_eq!(

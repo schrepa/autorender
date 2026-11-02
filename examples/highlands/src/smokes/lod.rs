@@ -5,7 +5,7 @@ use serde_json::json;
 use super::open;
 
 pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
-    open(session, false)?;
+    open(session)?;
     described(session)?;
     refused(session)
 }

@@ -1,13 +1,12 @@
-mod jobs;
 mod lod;
 mod toon_lighting;
 mod torrent;
 
 use engine::BrickList;
 use engine::smokes::{Restart, Runs, Smoke, SmokeEntry};
-use engine_core::smoke::{Checked, control, inspect, number, query, render};
+use engine_core::smoke::{Checked, control, inspect, number, render};
 use engine_core::{SmokeSession, smoke_eq};
-use serde_json::{Value, json};
+use serde_json::json;
 
 const GAME: &str = "highlands";
 
@@ -28,12 +27,6 @@ const SMOKES: [Smoke; 2] = [
     },
 ];
 
-const JOBS: Smoke = Smoke {
-    name: "highlands_jobs",
-    runs: Runs::Gpu,
-    run: |session| jobs::workers(session).map(drop),
-};
-
 const TOON: Smoke = Smoke {
     name: "highlands_toon_lighting",
     runs: Runs::Gpu,
@@ -43,13 +36,6 @@ const TOON: Smoke = Smoke {
 pub fn smokes(bricks: &BrickList) -> engine::Result<Vec<SmokeEntry>> {
     let mut smokes = engine::smokes::registered(bricks)?;
     smokes.retain(|entry| (entry.owner, entry.name) != FLY_CAMERA_INPUT);
-    smokes.push(SmokeEntry {
-        restart: Some(Restart {
-            first: jobs::workers,
-            then: jobs::page,
-        }),
-        ..SmokeEntry::of(GAME, &JOBS)
-    });
     smokes.extend(SMOKES.iter().map(|smoke| SmokeEntry::of(GAME, smoke)));
     smokes.push(SmokeEntry {
         list: Some(crate::toon),
@@ -62,10 +48,7 @@ pub fn smokes(bricks: &BrickList) -> engine::Result<Vec<SmokeEntry>> {
     Ok(smokes)
 }
 
-fn open(session: &mut dyn SmokeSession, in_place: bool) -> Checked<()> {
-    if in_place {
-        control(session, "jobs", json!({ "workers": 0 }))?;
-    }
+fn open(session: &mut dyn SmokeSession) -> Checked<()> {
     session.source(crate::scene::SCENE);
     control(session, "pause", json!({}))?;
     Ok(())
@@ -73,23 +56,6 @@ fn open(session: &mut dyn SmokeSession, in_place: bool) -> Checked<()> {
 
 fn aim(session: &mut dyn SmokeSession, view: &str) -> Checked<()> {
     control(session, "scene_view", json!({ "name": view })).map(drop)
-}
-
-fn heights(session: &mut dyn SmokeSession, points: &[[f64; 2]]) -> Checked<Vec<Value>> {
-    let mut samples = Vec::with_capacity(points.len());
-    for chunk in points.chunks(100) {
-        let mut found = query(session, "terrain_height", json!({ "points": chunk }))?;
-        if let Value::Array(found) = found["samples"].take() {
-            samples.extend(found);
-        }
-    }
-    smoke_eq!(samples.len(), points.len(), "heights_answer_every_point");
-    Ok(samples)
-}
-
-fn height_at(session: &mut dyn SmokeSession, point: [f64; 2]) -> Checked<Value> {
-    let mut samples = heights(session, &[point])?;
-    Ok(samples.pop().unwrap_or_default())
 }
 
 fn settle(session: &mut dyn SmokeSession) -> Checked<()> {

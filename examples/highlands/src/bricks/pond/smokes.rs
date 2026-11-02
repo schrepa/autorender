@@ -108,7 +108,7 @@ fn floats(session: &mut dyn SmokeSession) -> Checked<()> {
     for _ in 0..FLOAT_TICKS / TICKS_AT_ONCE {
         session.step(TICKS_AT_ONCE);
     }
-    let placed = component(session, "body", "transform")?;
+    let placed = component(session, "body", "Transform")?;
     let height = number(&placed["translation"][1]);
     smoke_eq!(
         (height - FLOATS_AT).abs() <= FLOAT_WITHIN,
