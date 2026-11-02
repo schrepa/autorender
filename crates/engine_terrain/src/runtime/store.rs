@@ -92,6 +92,11 @@ impl TileStore {
         self.tiles.get(key).map(|resident| &resident.tile)
     }
 
+    pub(super) fn known(&self, key: &TileKey) -> Option<&Arc<Tile>> {
+        self.get(key)
+            .or_else(|| self.cache.get(key).map(|cached| &cached.tile))
+    }
+
     pub(super) fn contains(&self, key: &TileKey) -> bool {
         self.tiles.contains_key(key)
     }

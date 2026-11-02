@@ -215,7 +215,7 @@ fn wanted(input: &PlanInput<'_>) -> Wanted {
 fn ground_bounds(store: &TileStore, pyramid: &Pyramid, key: TileKey) -> Option<[f32; 2]> {
     let errors = store.errors();
     let error = |level: u8| errors.get(usize::from(level)).copied().unwrap_or(0.0);
-    if let Some(tile) = store.get(&key) {
+    if let Some(tile) = store.known(&key) {
         let [low, high] = tile.bounds();
         return Some([low - error(key.level), high + error(key.level)]);
     }
