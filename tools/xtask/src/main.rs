@@ -6,6 +6,7 @@ mod checks;
 mod cook;
 mod development;
 mod equivalence;
+mod gate;
 mod heavy;
 mod importing;
 mod iteration_build;
@@ -103,6 +104,9 @@ fn execute() -> Result<(), Failure> {
         let mut corpus = vec!["caches".to_owned()];
         corpus.extend(options);
         return pure::pure(&root, &corpus);
+    }
+    if task == "gate" {
+        return Ok(gate::gate(&root, &options)?);
     }
     if task == "bench" {
         return Ok(bench::bench(&root, &options)?);
@@ -284,6 +288,8 @@ fn authoring_commands() -> Vec<Command> {
             ],
         ),
         Command::new("bench check", []),
+        Command::new("gate flight", []),
+        Command::new("gate still", [CommandOption::flag("--write")]),
     ]
 }
 

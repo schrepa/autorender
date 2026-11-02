@@ -1,0 +1,434 @@
+{
+  "bin": "highlands-native",
+  "flight": [
+    "--gpu",
+    "discrete",
+    "--look",
+    "day",
+    "--view",
+    "close",
+    "--flight",
+    "120:-127:66",
+    "--packs",
+    "web/public/cooked"
+  ],
+  "flight_limits": {
+    "over_33_per_minute": 150,
+    "resolution_steps_per_minute": 2,
+    "water_uncovered_frames": 20,
+    "worst_ms": 130
+  },
+  "package": "highlands",
+  "still": [
+    "--gpu",
+    "discrete",
+    "--look",
+    "day",
+    "--view",
+    "close",
+    "--offscreen",
+    "600",
+    "--size",
+    "1600x900",
+    "--packs",
+    "web/public/cooked"
+  ],
+  "still_rows": {
+    "engine_ambient_occlusion::publish_piece": {
+      "allocations": 0.0,
+      "ms": 0.0008819999998619702
+    },
+    "engine_ambient_occlusion::publish_stats": {
+      "allocations": 0.0,
+      "ms": 0.0005090000000200234
+    },
+    "engine_auto_exposure::exposure_stats": {
+      "allocations": 0.0,
+      "ms": 0.0008183333333242141
+    },
+    "engine_bloom::publish_bloom": {
+      "allocations": 0.0,
+      "ms": 0.0010800000000017462
+    },
+    "engine_debug_view::modes::publish": {
+      "allocations": 0.0,
+      "ms": 0.0016946666665414037
+    },
+    "engine_fly_camera::camera::fly": {
+      "allocations": 0.0,
+      "ms": 0.001707666666819326
+    },
+    "engine_ground_cover::covers::write_covers": {
+      "allocations": 0.0,
+      "ms": 0.001181333333333896
+    },
+    "engine_ground_cover::growth::cover_stats": {
+      "allocations": 0.0,
+      "ms": 0.0003486666666503879
+    },
+    "engine_ground_cover::growth::plan_cover": {
+      "allocations": 0.0,
+      "ms": 0.0033749999999902985
+    },
+    "engine_grounding::settle": {
+      "allocations": 0.0,
+      "ms": 0.002880999999991521
+    },
+    "engine_lighting::publish_lighting": {
+      "allocations": 0.0,
+      "ms": 0.0010970000000816071
+    },
+    "engine_lighting::publish_piece": {
+      "allocations": 0.0,
+      "ms": 0.0009063333332718079
+    },
+    "engine_meshes::assets::impostor_policy": {
+      "allocations": 0.0,
+      "ms": 0.0005093333333813159
+    },
+    "engine_meshes::assets::publish_assets": {
+      "allocations": 0.0,
+      "ms": 0.0011983333335592761
+    },
+    "engine_meshes::casters::plan_casters": {
+      "allocations": 1.0,
+      "ms": 0.004308333333259118
+    },
+    "engine_meshes::order::plan_draws": {
+      "allocations": 0.0,
+      "ms": 0.0030649999999150168
+    },
+    "engine_meshes::retained::retain_instances": {
+      "allocations": 0.0,
+      "ms": 0.004639999999938785
+    },
+    "engine_meshes::settings::mesh_stats": {
+      "allocations": 0.0,
+      "ms": 0.002384000000092783
+    },
+    "engine_navigation::agents::hold_heights": {
+      "allocations": 0.0,
+      "ms": 0.0009429999999944509
+    },
+    "engine_navigation::agents::walk_agents": {
+      "allocations": 3.0,
+      "ms": 0.010393999999917773
+    },
+    "engine_particles::emitters::gather_emitters": {
+      "allocations": 0.0,
+      "ms": 0.01721966666673931
+    },
+    "engine_particles::emitters::particle_stats": {
+      "allocations": 0.0,
+      "ms": 0.0005159999999644545
+    },
+    "engine_probes::gather::gather_probes": {
+      "allocations": 0.0,
+      "ms": 0.003065666666601222
+    },
+    "engine_probes::probes::plan_captures": {
+      "allocations": 0.0,
+      "ms": 0.0016020000000935397
+    },
+    "engine_probes::probes::publish_captures": {
+      "allocations": 0.0,
+      "ms": 0.000759333333298855
+    },
+    "engine_reflections::publish_piece": {
+      "allocations": 0.0,
+      "ms": 0.002052000000124584
+    },
+    "engine_scatter::systems::mark_moved": {
+      "allocations": 0.0,
+      "ms": 0.0004556666666151917
+    },
+    "engine_scatter::systems::place_pool": {
+      "allocations": 32.0,
+      "ms": 0.018773999999939405
+    },
+    "engine_scatter::systems::place_windows": {
+      "allocations": 1.0,
+      "ms": 0.0038813333333746415
+    },
+    "engine_scatter::systems::plan_cull": {
+      "allocations": 0.0,
+      "ms": 0.0010483333332861851
+    },
+    "engine_scatter::systems::publish_assets": {
+      "allocations": 1.0,
+      "ms": 0.0021559999999711484
+    },
+    "engine_scatter::systems::publish_changes": {
+      "allocations": 0.0,
+      "ms": 0.00038433333330128034
+    },
+    "engine_scatter::systems::publish_foliage": {
+      "allocations": 0.0,
+      "ms": 0.0010943333333852934
+    },
+    "engine_scatter::systems::publish_tiles": {
+      "allocations": 1.0,
+      "ms": 0.0007820000001326359
+    },
+    "engine_scatter::systems::scatter_stats": {
+      "allocations": 0.0,
+      "ms": 0.0002906666665391337
+    },
+    "engine_scatter::systems::take_impostors": {
+      "allocations": 1.0,
+      "ms": 0.0020443333334090614
+    },
+    "engine_shadows::plan::plan_shadows": {
+      "allocations": 4.0,
+      "ms": 0.07372699999995044
+    },
+    "engine_shadows::plan::shadow_stats": {
+      "allocations": 0.0,
+      "ms": 0.0005953333333309274
+    },
+    "engine_sky::publish_sky_light": {
+      "allocations": 0.0,
+      "ms": 0.0005243333332449159
+    },
+    "engine_sky::sky::plan_sky": {
+      "allocations": 0.0,
+      "ms": 0.003753000000142492
+    },
+    "engine_sky::tables::ask_tables": {
+      "allocations": 0.0,
+      "ms": 0.002124000000015561
+    },
+    "engine_sky::tables::table_stats": {
+      "allocations": 3.0,
+      "ms": 0.001619333333170895
+    },
+    "engine_sky::under_eye::find_surface_under_eye": {
+      "allocations": 0.0,
+      "ms": 0.016089999999967405
+    },
+    "engine_sky::views::sky_stats": {
+      "allocations": 0.0,
+      "ms": 0.0008223333334778242
+    },
+    "engine_splines::spline_mesh::build": {
+      "allocations": 0.0,
+      "ms": 0.004644666666717967
+    },
+    "engine_sun::publish_sun": {
+      "allocations": 0.0,
+      "ms": 0.0010976666666586729
+    },
+    "engine_taa::temporal::publish": {
+      "allocations": 0.0,
+      "ms": 0.0015866666666624952
+    },
+    "engine_terrain::runtime::bridges::sync": {
+      "allocations": 1.0,
+      "ms": 0.002266000000151204
+    },
+    "engine_terrain::runtime::ground_face::publish_ground": {
+      "allocations": 1.0,
+      "ms": 0.0010820000000846145
+    },
+    "engine_terrain::runtime::programs::publish_programs": {
+      "allocations": 0.0,
+      "ms": 0.000675666666587252
+    },
+    "engine_terrain::runtime::publish::publish_hydrology": {
+      "allocations": 0.0,
+      "ms": 0.0005643333331681788
+    },
+    "engine_terrain::runtime::publish::publish_tiles": {
+      "allocations": 1.0,
+      "ms": 0.005231333333322255
+    },
+    "engine_terrain::runtime::solids::sync_solids": {
+      "allocations": 0.0,
+      "ms": 0.0016433333331466807
+    },
+    "engine_terrain::runtime::streaming::settle_view": {
+      "allocations": 0.0,
+      "ms": 0.0005249999998583613
+    },
+    "engine_terrain::runtime::streaming::stream_terrains": {
+      "allocations": 114.0,
+      "ms": 0.08952766666679964
+    },
+    "engine_terrain_shading::shadings::shade": {
+      "allocations": 52.0,
+      "ms": 0.04005300000004354
+    },
+    "engine_terrain_shading::state::bake": {
+      "allocations": 7.0,
+      "ms": 0.007887999999923826
+    },
+    "engine_terrain_shading::state::color": {
+      "allocations": 0.0,
+      "ms": 0.0008470000001276882
+    },
+    "engine_terrain_shading::state::count": {
+      "allocations": 0.0,
+      "ms": 0.0012016666667235161
+    },
+    "engine_terrain_shading::state::place_tiles": {
+      "allocations": 0.0,
+      "ms": 0.0026630000002721014
+    },
+    "engine_terrain_shading::state::publish_changes": {
+      "allocations": 0.0,
+      "ms": 0.0008520000000498839
+    },
+    "engine_terrain_shading::state::publish_heightfield": {
+      "allocations": 0.0,
+      "ms": 0.000596999999822098
+    },
+    "engine_terrain_shading::state::publish_piece": {
+      "allocations": 2.0,
+      "ms": 0.0024596666666305586
+    },
+    "engine_terrain_shading::state::rest_surface": {
+      "allocations": 0.0,
+      "ms": 0.00033333333344974866
+    },
+    "engine_tonemap::tonemap::publish_display": {
+      "allocations": 0.0,
+      "ms": 0.0008993333334001364
+    },
+    "engine_water::flow_step::step": {
+      "allocations": 0.0,
+      "ms": 0.0007916666665065956
+    },
+    "engine_water::publish_piece": {
+      "allocations": 0.0,
+      "ms": 0.000637666666698351
+    },
+    "engine_water::rewater::rewater": {
+      "allocations": 0.0,
+      "ms": 0.002825666666806986
+    },
+    "engine_water::settled::request_settle": {
+      "allocations": 0.0,
+      "ms": 0.0066526666666929185
+    },
+    "engine_water::state::follow": {
+      "allocations": 1.0,
+      "ms": 0.005869000000056985
+    },
+    "engine_water::state::publish_bodies": {
+      "allocations": 1.0,
+      "ms": 0.0012010000000373111
+    },
+    "engine_water::state::publish_waterline": {
+      "allocations": 1.0,
+      "ms": 0.007470000000054522
+    },
+    "engine_water::water_blocks::place_blocks": {
+      "allocations": 0.0,
+      "ms": 0.0013180000002830639
+    },
+    "engine_water::water_particles::plan_particles": {
+      "allocations": 0.0,
+      "ms": 0.0010219999998662388
+    },
+    "engine_water::water_settle::hand_settles": {
+      "allocations": 0.0,
+      "ms": 0.0008476666667775135
+    },
+    "engine_water::water_settle::plan_settles": {
+      "allocations": 0.0,
+      "ms": 0.0019519999999586919
+    },
+    "engine_water::water_sim::plan_sim": {
+      "allocations": 5.0,
+      "ms": 0.036305333333402814
+    },
+    "engine_water::water_stats": {
+      "allocations": 0.0,
+      "ms": 0.0007583333332634841
+    },
+    "engine_water::waterfalls::sync": {
+      "allocations": 1.0,
+      "ms": 0.0020820000000094296
+    },
+    "engine_water::white_water::sync": {
+      "allocations": 1.0,
+      "ms": 0.00691466666663473
+    },
+    "engine_water::windows::place_water_windows": {
+      "allocations": 1.0,
+      "ms": 0.008831000000124429
+    },
+    "engine_wind::publish_view_wind": {
+      "allocations": 0.0,
+      "ms": 0.00037766666668176185
+    },
+    "engine_wind::publish_wind": {
+      "allocations": 0.0,
+      "ms": 0.0013793333335464315
+    },
+    "engine_world_streaming::stream_cells": {
+      "allocations": 0.0,
+      "ms": 0.004718666666703939
+    },
+    "highlands::bricks::game::bodies::place": {
+      "allocations": 0.0,
+      "ms": 0.0010836666666970511
+    },
+    "highlands::bricks::game::cave::open": {
+      "allocations": 0.0,
+      "ms": 0.0012236666667983325
+    },
+    "highlands::bricks::game::content::arrive": {
+      "allocations": 0.0,
+      "ms": 0.0011826666666699263
+    },
+    "highlands::bricks::game::content::publish": {
+      "allocations": 0.0,
+      "ms": 0.00046366666652223405
+    },
+    "highlands::bricks::game::hiker::hike": {
+      "allocations": 0.0,
+      "ms": 0.000993666666872741
+    },
+    "highlands::bricks::game::views::look": {
+      "allocations": 0.0,
+      "ms": 0.0007380000000921427
+    },
+    "highlands::bricks::game::views::watch": {
+      "allocations": 0.0,
+      "ms": 0.0014359999999821109
+    },
+    "highlands::bricks::pond::water::publish_ponds": {
+      "allocations": 0.0,
+      "ms": 0.0007900000001609442
+    },
+    "render.acquire": {
+      "allocations": 0.0,
+      "ms": 0.000421666666722255
+    },
+    "render.draw": {
+      "allocations": 73.34666666666666,
+      "ms": 0.09777566666267376
+    },
+    "render.encoding": {
+      "allocations": 838.4633333333334,
+      "ms": 0.4130133333334015
+    },
+    "render.submit": {
+      "allocations": 1330.3733333333332,
+      "ms": 1.1314940000001055
+    },
+    "render.total": {
+      "allocations": 2369.85,
+      "ms": 1.7749369999999909
+    },
+    "render.uploads": {
+      "allocations": 0.0,
+      "ms": 0.0007319999998799176
+    },
+    "render.writes": {
+      "allocations": 195.67333333333335,
+      "ms": 0.20295333333348634
+    }
+  }
+}
