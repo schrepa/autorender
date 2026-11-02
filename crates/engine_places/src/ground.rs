@@ -246,7 +246,7 @@ pub struct TileFace {
     pub river_beds: Option<Arc<[u16]>>,
     pub rivers: Option<Arc<[[u16; 4]]>>,
     pub patch_bounds: Arc<[[f32; 2]]>,
-    pub patch_holes: Arc<[u64]>,
+    pub patch_holes: [u64; 4],
     pub ground_errors: Arc<[u16]>,
     pub stamps: Arc<[engine_heightfield::Stamp]>,
     pub placed: Arc<[Placed]>,

@@ -134,7 +134,7 @@ fn size(count: u64, path: &str) -> Result<usize, Error> {
     usize::try_from(count).map_err(|_| invalid(path).at_most(usize::MAX as u64).got(count))
 }
 
-pub fn get_grid(input: &mut Reader<'_>, stride: usize) -> Result<Box<[f32]>, Error> {
+pub fn get_grid<T: FromIterator<f32>>(input: &mut Reader<'_>, stride: usize) -> Result<T, Error> {
     let count = input.count()?;
     let mut steps: Vec<Option<i64>> = Vec::with_capacity(count);
     for at in 0..count {

@@ -353,17 +353,17 @@ pub fn word_gradient(word: u32) -> [f32; 2] {
 pub struct Tile {
     key: TileKey,
     spacing: f32,
-    heights: Box<[f32]>,
-    holes: Option<Box<[u64]>>,
-    control: Option<Box<[u32]>>,
-    river_edges: Option<Box<[u16]>>,
-    river_beds: Option<Box<[u16]>>,
+    heights: Arc<[f32]>,
+    holes: Option<Arc<[u64]>>,
+    control: Option<Arc<[u32]>>,
+    river_edges: Option<Arc<[u16]>>,
+    river_beds: Option<Arc<[u16]>>,
     placed: Option<Arc<[Placed]>>,
     placing: Option<Placing>,
     ground_errors: Arc<ErrorPyramid>,
     lake: Option<Arc<[f32]>>,
     bounds: [f32; 2],
-    patch_bounds: Box<[[f32; 2]]>,
+    patch_bounds: Arc<[[f32; 2]]>,
     patch_holes: [u64; 4],
     patch_culling: Box<[PatchCulling]>,
 }
@@ -397,7 +397,7 @@ impl Tile {
         heights: Box<[f32]>,
         holes: Option<Box<[u64]>>,
     ) -> Option<Self> {
-        let mut tile = Self::shaped(key, spacing, heights, holes)?;
+        let mut tile = Self::shaped(key, spacing, Arc::from(heights), holes)?;
         tile.patch_culling = (0..PATCHES_PER_TILE * PATCHES_PER_TILE)
             .map(|index| tile.cull(index % PATCHES_PER_TILE, index / PATCHES_PER_TILE))
             .collect();
@@ -407,7 +407,7 @@ impl Tile {
     fn shaped(
         key: TileKey,
         spacing: f32,
-        heights: Box<[f32]>,
+        heights: Arc<[f32]>,
         holes: Option<Box<[u64]>>,
     ) -> Option<Self> {
         let stride = TILE_STRIDE as usize;
@@ -417,7 +417,9 @@ impl Tile {
         {
             return None;
         }
-        let holes = holes.filter(|bits| bits.iter().any(|&word| word != 0));
+        let holes = holes
+            .filter(|bits| bits.iter().any(|&word| word != 0))
+            .map(Arc::from);
         let ground_errors = Arc::new(ErrorPyramid::ground(&heights));
         let mut tile = Self {
             key,
@@ -432,11 +434,11 @@ impl Tile {
             ground_errors,
             lake: None,
             bounds: [0.0; 2],
-            patch_bounds: vec![[0.0; 2]; (PATCHES_PER_TILE * PATCHES_PER_TILE) as usize]
-                .into_boxed_slice(),
+            patch_bounds: Arc::default(),
             patch_holes: [0; 4],
             patch_culling: Box::default(),
         };
+        let mut patch_bounds = vec![[0.0; 2]; (PATCHES_PER_TILE * PATCHES_PER_TILE) as usize];
         let mut low = f32::INFINITY;
         let mut high = f32::NEG_INFINITY;
         let patch = PATCH_QUADS as i32;
@@ -452,7 +454,7 @@ impl Tile {
                     }
                 }
                 let index = (pz * PATCHES_PER_TILE as i32 + px) as usize;
-                tile.patch_bounds[index] = [patch_low, patch_high];
+                patch_bounds[index] = [patch_low, patch_high];
                 low = min(low, patch_low);
                 high = max(high, patch_high);
                 let holed = (pz * patch..(pz + 1) * patch).any(|z| {
@@ -464,6 +466,7 @@ impl Tile {
             }
         }
         tile.bounds = [low, high];
+        tile.patch_bounds = Arc::from(patch_bounds);
         Some(tile)
     }
 
@@ -539,7 +542,7 @@ impl Tile {
     pub fn with_control(mut self, control: Box<[u32]>) -> Option<Self> {
         let stride = TILE_STRIDE as usize;
         (control.len() == stride * stride).then(|| {
-            self.control = Some(control);
+            self.control = Some(Arc::from(control));
             self
         })
     }
@@ -656,6 +659,34 @@ impl Tile {
 
     pub fn heights(&self) -> &[f32] {
         &self.heights
+    }
+
+    pub fn shared_heights(&self) -> Arc<[f32]> {
+        Arc::clone(&self.heights)
+    }
+
+    pub fn shared_holes(&self) -> Option<Arc<[u64]>> {
+        self.holes.clone()
+    }
+
+    pub fn shared_control(&self) -> Option<Arc<[u32]>> {
+        self.control.clone()
+    }
+
+    pub fn shared_river_edges(&self) -> Option<Arc<[u16]>> {
+        self.river_edges.clone()
+    }
+
+    pub fn shared_river_beds(&self) -> Option<Arc<[u16]>> {
+        self.river_beds.clone()
+    }
+
+    pub fn shared_patch_bounds(&self) -> Arc<[[f32; 2]]> {
+        Arc::clone(&self.patch_bounds)
+    }
+
+    pub fn shared_placed(&self) -> Arc<[Placed]> {
+        self.placed.clone().unwrap_or_default()
     }
 
     pub fn bounds(&self) -> [f32; 2] {
@@ -1366,11 +1397,11 @@ impl engine_codec::Codec for Tile {
         let placing = input.get()?;
         let watered: bool = input.get()?;
         let lake = if watered {
-            let surface = engine_codec::get_grid(input, stride)?;
+            let surface: Arc<[f32]> = engine_codec::get_grid(input, stride)?;
             if surface.len() != stride * stride {
                 return Err(engine_codec::invalid("$.tile_water"));
             }
-            Some(Arc::from(surface))
+            Some(surface)
         } else {
             None
         };

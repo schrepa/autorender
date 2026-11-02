@@ -415,7 +415,7 @@ impl Codec for ShapeGrid {
         if width < 2 || spacing.is_nan() || spacing <= 0.0 {
             return Err(invalid("$.shapes").got(width));
         }
-        let heights = get_grid(input, width)?;
+        let heights: Box<[f32]> = get_grid(input, width)?;
         if !heights.len().is_multiple_of(width)
             || heights.len() / width < 2
             || heights.iter().any(|height| height.is_nan())

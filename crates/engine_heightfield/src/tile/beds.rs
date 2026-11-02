@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use glam::Vec2;
 
 use engine_math::clamp;
@@ -111,8 +113,8 @@ impl Tile {
         {
             return None;
         }
-        self.river_edges = edges;
-        self.river_beds = beds;
+        self.river_edges = edges.map(Arc::from);
+        self.river_beds = beds.map(Arc::from);
         Some(self)
     }
 
@@ -120,7 +122,7 @@ impl Tile {
         self.river_beds.as_deref()
     }
 
-    pub fn river_texels(&self) -> Option<Box<[[u16; 4]]>> {
+    pub fn river_texels(&self) -> Option<Arc<[[u16; 4]]>> {
         let (edges, beds) = (self.river_edges.as_deref(), self.river_beds.as_deref());
         if edges.is_none() && beds.is_none() {
             return None;

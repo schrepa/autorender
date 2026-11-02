@@ -11,7 +11,7 @@ struct Resident {
 struct CachedTile {
     tile: Arc<Tile>,
     stamps: Arc<[Stamp]>,
-    stamp: engine_core::Stamp,
+    face: TileFace,
     bytes: u64,
     left: u64,
 }
@@ -19,7 +19,7 @@ struct CachedTile {
 pub(super) struct Left {
     pub(super) tile: Arc<Tile>,
     pub(super) stamps: Arc<[Stamp]>,
-    pub(super) stamp: engine_core::Stamp,
+    pub(super) face: TileFace,
     pub(super) current: bool,
 }
 
@@ -33,7 +33,6 @@ fn face_of(
     tile: &Tile,
     (stamps, stamp): (&Arc<[Stamp]>, engine_core::Stamp),
     pyramid: &Pyramid,
-    current: bool,
 ) -> TileFace {
     let key = tile.key();
     let corner = pyramid.tile_origin(key);
@@ -48,20 +47,18 @@ fn face_of(
         ),
         level: key.level,
         spacing: tile.spacing(),
-        heights: Arc::from(tile.heights()),
-        holes: tile.hole_bits().map(Arc::from),
-        control: tile.control().map(Arc::from),
-        river_edges: tile.river_edges().map(Arc::from),
-        river_beds: tile.river_beds().map(Arc::from),
-        rivers: tile.river_texels().map(Arc::from),
-        patch_bounds: (0..PATCHES_PER_TILE * PATCHES_PER_TILE)
-            .map(|index| tile.patch_bounds(index % PATCHES_PER_TILE, index / PATCHES_PER_TILE))
-            .collect(),
-        patch_holes: Arc::from(&tile.patch_holes()[..]),
-        ground_errors: Arc::from(tile.ground_errors().halves()),
+        heights: tile.shared_heights(),
+        holes: tile.shared_holes(),
+        control: tile.shared_control(),
+        river_edges: tile.shared_river_edges(),
+        river_beds: tile.shared_river_beds(),
+        rivers: tile.river_texels(),
+        patch_bounds: tile.shared_patch_bounds(),
+        patch_holes: *tile.patch_holes(),
+        ground_errors: tile.ground_errors().shared_halves(),
         stamps: Arc::clone(stamps),
-        placed: Arc::from(tile.placed()),
-        current,
+        placed: tile.shared_placed(),
+        current: true,
     }
 }
 
@@ -137,15 +134,22 @@ impl TileStore {
 
     pub(super) fn arrive(&mut self, tile: Arc<Tile>, stamps: Arc<[Stamp]>) {
         let made = self.generation;
-        self.put(tile, (stamps, engine_core::Stamp::next()), made);
+        let face = face_of(&tile, (&stamps, engine_core::Stamp::next()), &self.pyramid);
+        self.put(tile, stamps, face, made);
     }
 
-    fn put(
-        &mut self,
-        tile: Arc<Tile>,
-        (stamps, stamp): (Arc<[Stamp]>, engine_core::Stamp),
-        made: Generation,
-    ) {
+    pub(super) fn keep_unseen(&mut self, tile: Arc<Tile>, stamps: Arc<[Stamp]>, frame: u64) {
+        let face = face_of(&tile, (&stamps, engine_core::Stamp::next()), &self.pyramid);
+        let left = Left {
+            tile,
+            stamps,
+            face,
+            current: true,
+        };
+        self.keep_in_memory(left, frame);
+    }
+
+    fn put(&mut self, tile: Arc<Tile>, stamps: Arc<[Stamp]>, face: TileFace, made: Generation) {
         let key = tile.key();
         let level = usize::from(key.level);
         if let Some(parent) = self
@@ -165,7 +169,6 @@ impl TileStore {
                 }
             }
         }
-        let face = face_of(&tile, (&stamps, stamp), &self.pyramid, made == self.generation);
         self.tiles.insert(
             key,
             Resident {
@@ -185,7 +188,7 @@ impl TileStore {
             current: resident.made == self.generation,
             tile: resident.tile,
             stamps: resident.stamps,
-            stamp: resident.face.stamp,
+            face: resident.face,
         })
     }
 
@@ -218,7 +221,7 @@ impl TileStore {
             CachedTile {
                 tile: left.tile,
                 stamps: left.stamps,
-                stamp: left.stamp,
+                face: left.face,
                 bytes,
                 left: frame,
             },
@@ -226,7 +229,7 @@ impl TileStore {
     }
 
     pub(super) fn kept_faces(&self) -> impl Iterator<Item = (TileKey, engine_core::Stamp)> + '_ {
-        self.cache.iter().map(|(key, kept)| (key, kept.stamp))
+        self.cache.iter().map(|(key, kept)| (key, kept.face.stamp))
     }
 
     pub(super) fn forget(&mut self, key: TileKey) {
@@ -273,7 +276,11 @@ impl TileStore {
                 self.cached_bytes -= cached.bytes;
                 work.upload(2 * TILE_ARRAY_BYTES);
                 let made = self.generation;
-                self.put(cached.tile, (cached.stamps, cached.stamp), made);
+                let face = TileFace {
+                    current: true,
+                    ..cached.face
+                };
+                self.put(cached.tile, cached.stamps, face, made);
                 restored += 1;
             }
         }

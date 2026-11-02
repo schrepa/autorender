@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use engine_math::max;
 
@@ -12,7 +12,7 @@ const LARGEST_HALF: f32 = 65504.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ErrorPyramid {
-    halves: Box<[u16]>,
+    halves: Arc<[u16]>,
 }
 
 impl ErrorPyramid {
@@ -23,12 +23,16 @@ impl ErrorPyramid {
     pub fn dry() -> &'static Self {
         static DRY: OnceLock<ErrorPyramid> = OnceLock::new();
         DRY.get_or_init(|| ErrorPyramid {
-            halves: vec![half_up(DRY_CELL); ERROR_TEXELS].into_boxed_slice(),
+            halves: Arc::from(vec![half_up(DRY_CELL); ERROR_TEXELS]),
         })
     }
 
     pub fn halves(&self) -> &[u16] {
         &self.halves
+    }
+
+    pub fn shared_halves(&self) -> Arc<[u16]> {
+        Arc::clone(&self.halves)
     }
 
     pub fn mip(&self, mip: u32) -> &[u16] {
@@ -53,7 +57,7 @@ impl ErrorPyramid {
             cells /= 2;
         }
         Self {
-            halves: held.into_boxed_slice(),
+            halves: Arc::from(held),
         }
     }
 }

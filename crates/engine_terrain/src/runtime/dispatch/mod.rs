@@ -157,8 +157,7 @@ fn prefetch(
                 && !state.store.contains(&key)
             {
                 let stamps = state.reaching(key);
-                let left = super::store::Left { tile: Arc::new(tile), stamps, stamp: engine_core::Stamp::next(), current: true };
-                state.store.keep_in_memory(left, frame);
+                state.store.keep_unseen(Arc::new(tile), stamps, frame);
             }
         } else if (made != generation || !named.contains(&key))
             && let Some((ticket, _)) = state.prefetched.remove(&key)
