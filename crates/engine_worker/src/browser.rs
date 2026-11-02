@@ -14,7 +14,7 @@ pub fn report(report: Option<Report>) -> JsValue {
     let object = Object::new();
     let (kind, id) = match &report {
         Report::Done(id, output) => {
-            set(&object, "output", &Uint8Array::from(output.as_slice()));
+            set(&object, "output", &Uint8Array::from(&output[..]));
             ("done", *id)
         }
         Report::Failed(id, error) => {

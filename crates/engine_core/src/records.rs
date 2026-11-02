@@ -261,7 +261,7 @@ impl RecordExchange {
                             Arc::new(vec![TextureSource {
                                 width: size[0],
                                 height: size[1],
-                                pixels,
+                                pixels: pixels.to_vec(),
                                 usage,
                             }])
                         })
@@ -303,7 +303,7 @@ enum Step {
     Waiting(Request),
     Arrived {
         request: Request,
-        bytes: Vec<u8>,
+        bytes: Arc<[u8]>,
         made: bool,
     },
     Failed(RecordKey, String),
@@ -345,7 +345,7 @@ fn step(
                     return match make() {
                         Ok(bytes) => Step::Arrived {
                             request,
-                            bytes,
+                            bytes: Arc::from(bytes),
                             made: true,
                         },
                         Err(error) => Step::Failed(request.key, error),
@@ -427,7 +427,7 @@ pub(crate) fn exchange(world: &mut World) {
                             Make::Here(_) => None,
                             Make::Texture { .. } => Some(JobRef::from(&TEXTURE_COOK)),
                         };
-                        jobs.keep(key, kind, bytes.clone());
+                        jobs.keep(key, kind, bytes.to_vec());
                     }
                     let deliver = request.deliver.take();
                     if !made && verifying {

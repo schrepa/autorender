@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use engine_core::collections::HashMap;
 use engine_core::{
     JobId, JobRef, JobRequest, JobShare, MISSING_RECORD, RecordFetch, RecordKey, RecordParity,
@@ -31,7 +33,7 @@ pub enum JobOrder {
     Keep {
         key: String,
         kind: Option<JobRef>,
-        output: Vec<u8>,
+        output: Arc<[u8]>,
     },
     Mismatch {
         key: String,
@@ -39,7 +41,7 @@ pub enum JobOrder {
     },
 }
 
-pub(crate) type Finished = (JobId, Result<Vec<u8>, String>);
+pub(crate) type Finished = (JobId, Result<Arc<[u8]>, String>);
 
 #[derive(Debug, Default)]
 struct Load {
@@ -61,8 +63,8 @@ pub struct JobScheduler {
     verify: bool,
     running: HashMap<u64, u32>,
     keys: HashMap<u64, (RecordKey, JobRef)>,
-    verifying: HashMap<u64, Vec<u8>>,
-    fetched: HashMap<String, Vec<u8>>,
+    verifying: HashMap<u64, Arc<[u8]>>,
+    fetched: HashMap<String, Arc<[u8]>>,
     looking: HashMap<u64, Looking>,
     here: Vec<JobRequest>,
     orders: Vec<JobOrder>,
@@ -132,6 +134,7 @@ impl JobScheduler {
                             self.orders.push(JobOrder::Mismatch { key, kind });
                         }
                     } else if self.caching {
+                        let output = Arc::from(output);
                         self.orders.push(JobOrder::Keep { key, kind, output });
                     }
                 }
@@ -153,7 +156,7 @@ impl JobScheduler {
         &mut self,
         id: JobId,
         key: String,
-        output: Option<Vec<u8>>,
+        output: Option<Arc<[u8]>>,
         finished: &mut Vec<Finished>,
     ) {
         let Some(looking) = self.looking.remove(&id.0) else {
@@ -217,7 +220,7 @@ impl JobScheduler {
             .map(|(worker, _)| worker as u32)
     }
 
-    pub(crate) fn done(&mut self, id: JobId, output: Vec<u8>, finished: &mut Vec<Finished>) {
+    pub(crate) fn done(&mut self, id: JobId, output: Arc<[u8]>, finished: &mut Vec<Finished>) {
         let Some(worker) = self.running.remove(&id.0) else {
             return;
         };
@@ -231,10 +234,10 @@ impl JobScheduler {
         output: Result<Vec<u8>, String>,
         finished: &mut Vec<Finished>,
     ) {
-        self.made(id, output, finished);
+        self.made(id, output.map(Arc::from), finished);
     }
 
-    fn made(&mut self, id: JobId, output: Result<Vec<u8>, String>, finished: &mut Vec<Finished>) {
+    fn made(&mut self, id: JobId, output: Result<Arc<[u8]>, String>, finished: &mut Vec<Finished>) {
         let key = self.keys.remove(&id.0);
         if let Some(kept) = self.verifying.remove(&id.0) {
             if let (Some((key, kind)), Ok(output)) = (key, &output)

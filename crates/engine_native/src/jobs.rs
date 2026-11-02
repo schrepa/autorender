@@ -83,7 +83,7 @@ enum Reported {
         key: String,
         kind: Option<JobRef>,
         sources: Vec<Source>,
-        read: Option<(usize, Vec<u8>)>,
+        read: Option<(usize, Arc<[u8]>)>,
     },
 }
 
@@ -277,7 +277,7 @@ impl JobPool {
         host: &mut GameHost<G>,
         (id, key, kind): (JobId, String, Option<JobRef>),
         sources: &[Source],
-        read: Option<(usize, Vec<u8>)>,
+        read: Option<(usize, Arc<[u8]>)>,
     ) {
         let kept = self
             .store

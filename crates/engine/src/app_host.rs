@@ -442,7 +442,7 @@ impl AppHost {
         }
     }
 
-    pub fn complete_job(&mut self, id: JobId, output: Vec<u8>) {
+    pub fn complete_job(&mut self, id: JobId, output: std::sync::Arc<[u8]>) {
         self.finish_job(id, Ok(output));
     }
 
@@ -472,7 +472,7 @@ impl AppHost {
         }
     }
 
-    fn finish_job(&mut self, id: JobId, output: std::result::Result<Vec<u8>, String>) {
+    fn finish_job(&mut self, id: JobId, output: std::result::Result<std::sync::Arc<[u8]>, String>) {
         if let Some(mut jobs) = self
             .engine
             .app

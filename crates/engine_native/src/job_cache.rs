@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use engine::{Error, ErrorCode};
 use engine_worker::{JobCache, PACK_HEADER, PackEntry, PackIndex, pack_directory, unpack};
@@ -104,8 +105,8 @@ impl JobStore {
         &mut self,
         key: &str,
         sources: &[Source],
-        read: Option<(usize, Vec<u8>)>,
-    ) -> Option<Vec<u8>> {
+        read: Option<(usize, Arc<[u8]>)>,
+    ) -> Option<Arc<[u8]>> {
         let kept = sources
             .iter()
             .any(|source| matches!(source, Source::Kept { .. }));
@@ -176,7 +177,7 @@ impl JobStore {
     }
 }
 
-pub fn read(sources: &[Source]) -> Option<(usize, Vec<u8>)> {
+pub fn read(sources: &[Source]) -> Option<(usize, Arc<[u8]>)> {
     sources.iter().enumerate().find_map(|(at, source)| {
         let read = match source {
             Source::Packed { path, entry } => {
@@ -201,7 +202,7 @@ pub fn read(sources: &[Source]) -> Option<(usize, Vec<u8>)> {
             }
             Source::Kept { path } => std::fs::read(path).ok(),
         };
-        read.map(|bytes| (at, bytes))
+        read.map(|bytes: Vec<u8>| (at, Arc::from(bytes)))
     })
 }
 

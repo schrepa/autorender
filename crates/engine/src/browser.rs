@@ -174,13 +174,13 @@ impl<G: Game> PageHost<G> {
 
     pub fn job_kept(&mut self, id: f64, key: String, output: Option<Vec<u8>>) {
         if let Some(id) = job_id(id) {
-            self.host.job_kept(id, key, output);
+            self.host.job_kept(id, key, output.map(std::sync::Arc::from));
         }
     }
 
     pub fn complete_job(&mut self, id: f64, output: Vec<u8>) {
         if let Some(id) = job_id(id) {
-            self.host.complete_job(id, output);
+            self.host.complete_job(id, std::sync::Arc::from(output));
         }
     }
 

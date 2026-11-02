@@ -617,7 +617,7 @@ pub struct JobExchange {
     shares: Vec<JobShare>,
     running: HashSet<JobId>,
     cancels: Vec<JobId>,
-    done: HashMap<JobId, Result<Vec<u8>, String>>,
+    done: HashMap<JobId, Result<Arc<[u8]>, String>>,
     flights: Vec<Flight>,
     asked: Vec<Asked>,
     admitted: AtomicUsize,
@@ -720,7 +720,7 @@ impl JobExchange {
         self.stats.submitted += 1;
         if !self.hosted {
             let output = self.run_here(&kind, &input);
-            self.finish(id, output);
+            self.finish(id, output.map(Arc::from));
             return id;
         }
         self.running.insert(id);
@@ -767,7 +767,7 @@ impl JobExchange {
         }
     }
 
-    pub fn take(&mut self, id: JobId) -> Option<Result<Vec<u8>, String>> {
+    pub fn take(&mut self, id: JobId) -> Option<Result<Arc<[u8]>, String>> {
         self.done.remove(&id)
     }
 
@@ -836,7 +836,7 @@ impl JobExchange {
         out.append(&mut self.cancels);
     }
 
-    pub fn complete(&mut self, id: JobId, output: Result<Vec<u8>, String>) {
+    pub fn complete(&mut self, id: JobId, output: Result<Arc<[u8]>, String>) {
         if self.running.remove(&id) {
             self.finish(id, output);
         }
@@ -850,7 +850,7 @@ impl JobExchange {
         self.held = held;
     }
 
-    fn finish(&mut self, id: JobId, output: Result<Vec<u8>, String>) {
+    fn finish(&mut self, id: JobId, output: Result<Arc<[u8]>, String>) {
         match &output {
             Ok(_) => self.stats.completed += 1,
             Err(message) if message == MISSING_RECORD => {}
@@ -1080,7 +1080,7 @@ impl JobExchange {
                 continue;
             }
             let flight = self.flights.remove(at);
-            let record = output.map(Arc::from).map_err(|message| {
+            let record = output.map_err(|message| {
                 Error::new(
                     ErrorCode::InvalidRecord,
                     format!("$.jobs.{}", flight.kind.name()),

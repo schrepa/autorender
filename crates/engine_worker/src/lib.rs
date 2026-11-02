@@ -48,7 +48,7 @@ pub fn job_ref(name: &str, source: &str) -> Result<JobRef, Error> {
 
 #[derive(Debug, PartialEq)]
 pub enum Report {
-    Done(u64, Vec<u8>),
+    Done(u64, Arc<[u8]>),
     Failed(u64, Error),
 }
 
@@ -150,7 +150,7 @@ impl Worker {
         match stepped {
             Ok(Some(output)) => {
                 self.held.remove(at);
-                Some(Report::Done(id, output))
+                Some(Report::Done(id, Arc::from(output)))
             }
             Ok(None) => None,
             Err(error) => {

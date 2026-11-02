@@ -644,7 +644,7 @@ impl<G: Game> Headless<G> {
         jobs.take_fetches(&mut fetches);
         for request in requests {
             let output = jobs.run_here(&request.kind, &request.input);
-            jobs.complete(request.id, output);
+            jobs.complete(request.id, output.map(std::sync::Arc::from));
         }
         for fetch in fetches {
             jobs.complete(fetch.id, Err(MISSING_RECORD.to_owned()));

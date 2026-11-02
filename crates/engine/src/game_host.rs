@@ -200,7 +200,7 @@ impl<G: Game> GameHost<G> {
         orders
     }
 
-    pub fn complete_job(&mut self, id: JobId, output: Vec<u8>) {
+    pub fn complete_job(&mut self, id: JobId, output: std::sync::Arc<[u8]>) {
         let mut finished = Vec::new();
         self.jobs.done(id, output, &mut finished);
         self.finish_jobs(finished);
@@ -212,7 +212,7 @@ impl<G: Game> GameHost<G> {
         self.finish_jobs(finished);
     }
 
-    pub fn job_kept(&mut self, id: JobId, key: String, output: Option<Vec<u8>>) {
+    pub fn job_kept(&mut self, id: JobId, key: String, output: Option<std::sync::Arc<[u8]>>) {
         let mut finished = Vec::new();
         self.jobs.kept(id, key, output, &mut finished);
         self.finish_jobs(finished);
