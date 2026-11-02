@@ -233,12 +233,12 @@ impl TileAtlas {
         }
         if !self.normal_jobs.is_empty() {
             let bytes = std::mem::size_of_val(self.normal_jobs.as_slice()) as u64;
-            cx.allocate_buffer(handles.normal_jobs, bytes);
+            cx.grow_buffer(handles.normal_jobs, bytes);
             cx.write(handles.normal_jobs, 0, &self.normal_jobs);
         }
         if !self.control_jobs.is_empty() {
             let bytes = std::mem::size_of_val(self.control_jobs.as_slice()) as u64;
-            cx.allocate_buffer(handles.control_jobs, bytes);
+            cx.grow_buffer(handles.control_jobs, bytes);
             cx.write(handles.control_jobs, 0, &self.control_jobs);
             self.controls = self.control_jobs.len() as u32;
         }

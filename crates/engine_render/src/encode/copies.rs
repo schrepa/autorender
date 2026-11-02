@@ -24,7 +24,7 @@ impl Run {
             return;
         };
         let (_, regions) = self.copies.swap_remove(at);
-        let Some(decl) = self.machine.declared.passes.get(pass as usize).cloned() else {
+        let Some(decl) = self.pass_decls.get(pass as usize).cloned() else {
             return;
         };
         if decl.part != self.part {

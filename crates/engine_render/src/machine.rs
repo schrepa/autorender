@@ -12,7 +12,7 @@ use crate::graph::{
 };
 use crate::install::{Bound, Copied, Declared, PassDecl, PipelineDecl, Program, Scoped, Work};
 use crate::linker::{Composed, Linker, Ty};
-use crate::{Access, DepthUse, Layer, Lifetime, ViewTarget};
+use crate::{Access, DepthUse, Layer, Lifetime, VertexLayout, ViewTarget};
 
 pub const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -74,6 +74,14 @@ pub(crate) struct OwnGroup {
     pub(crate) index: u32,
     pub(crate) layout: wgpu::BindGroupLayout,
     pub(crate) entries: Vec<(u32, Bound, Ty)>,
+    pub(crate) windows: usize,
+}
+
+pub(crate) struct Ready {
+    pub(crate) layout: u32,
+    pub(crate) bits: Option<u32>,
+    pub(crate) key: u64,
+    pub(crate) made: wgpu::RenderPipeline,
 }
 
 pub(crate) struct BuiltPipeline {
@@ -88,6 +96,11 @@ pub(crate) struct BuiltPipeline {
     pub(crate) view_reads: Vec<Target>,
     pub(crate) made: Vec<(u64, wgpu::RenderPipeline)>,
     pub(crate) computed: Vec<(u64, wgpu::ComputePipeline)>,
+    pub(crate) ready: Vec<Ready>,
+    pub(crate) compute_ready: Option<wgpu::ComputePipeline>,
+    pub(crate) mesh_slots: u32,
+    pub(crate) holes: bool,
+    pub(crate) home: u32,
     pub(crate) layout_key: String,
     pub(crate) program_key: u64,
 }
@@ -99,7 +112,22 @@ pub(crate) fn layout_key(pipeline: &BuiltPipeline) -> String {
 pub(crate) struct FrameVariant {
     pub(crate) layout: wgpu::BindGroupLayout,
     pub(crate) entries: Vec<(u32, Stages)>,
+    pub(crate) camera: bool,
 }
+
+pub(crate) enum CoreFrame {
+    Impostor(String),
+    Post,
+    Linear,
+    Target(Target),
+}
+
+pub(crate) struct FrameSlot {
+    pub(crate) ty: Ty,
+    pub(crate) core: Option<CoreFrame>,
+}
+
+pub(crate) type SetFormat = (Target, wgpu::TextureFormat, Clear, bool);
 
 pub(crate) struct Machine {
     pub(crate) declared: Declared,
@@ -107,7 +135,7 @@ pub(crate) struct Machine {
     pub(crate) graph: StaticGraph,
     pub(crate) ids: Ids,
     pub(crate) pipelines: Vec<BuiltPipeline>,
-    pub(crate) frame: Vec<(String, String, Ty)>,
+    pub(crate) frame_slots: BTreeMap<u32, FrameSlot>,
     pub(crate) frame_bound: BTreeMap<u32, Bound>,
     pub(crate) variants: Vec<FrameVariant>,
     pub(crate) switches: Vec<(u32, engine_registry::GateId)>,
@@ -587,6 +615,7 @@ impl Machine {
                         entries: &layout,
                     }),
                     entries: entries.iter().map(|&(binding, _, stages)| (binding, stages)).collect(),
+                    camera: entries.iter().any(|&(binding, _, _)| binding == 0),
                 }
             })
             .collect();
@@ -630,12 +659,14 @@ impl Machine {
                         index: found.group,
                         layout: empty.clone(),
                         entries: vec![entry],
+                        windows: 0,
                     }),
                 }
             }
             groups.sort_by_key(|group| group.index);
             let mut layout_key = String::new();
             for group in &mut groups {
+                group.windows = group.entries.iter().filter(|(_, bound, _)| bound.window()).count();
                 let entries: Vec<wgpu::BindGroupLayoutEntry> = group
                     .entries
                     .iter()
@@ -694,6 +725,17 @@ impl Machine {
                     })
                 })
                 .collect();
+            let mesh_slots = match &decl.program {
+                Program::Render(desc) => desc.vertices.iter().filter(|layout| matches!(layout, VertexLayout::Mesh)).count() as u32,
+                Program::Compute(_) => 0,
+            };
+            let holes = decl.holes() > 0;
+            let home = declared
+                .passes
+                .iter()
+                .enumerate()
+                .find(|(at, pass)| decl_in_pass(&decl, *at as u32, pass))
+                .map_or(u32::MAX, |(at, _)| at as u32);
             pipelines.push(BuiltPipeline {
                 decl,
                 stages,
@@ -706,6 +748,11 @@ impl Machine {
                 view_reads,
                 made: Vec::new(),
                 computed: Vec::new(),
+                ready: Vec::new(),
+                compute_ready: None,
+                mesh_slots,
+                holes,
+                home,
                 layout_key,
                 program_key,
             });
@@ -718,13 +765,31 @@ impl Machine {
                 return None;
             }
         };
+        let frame_slots = core_frame
+            .iter()
+            .filter_map(|(path, name, ty)| {
+                let number = linker.binding_of(path, name)?;
+                let core = if !linker.is_core(path) {
+                    None
+                } else if path == crate::shaders::IMPOSTORS_MODULE {
+                    Some(CoreFrame::Impostor(name.clone()))
+                } else if name == crate::shared::POST {
+                    Some(CoreFrame::Post)
+                } else if name == crate::shared::LINEAR {
+                    Some(CoreFrame::Linear)
+                } else {
+                    core_target(name, &outputs).map(CoreFrame::Target)
+                };
+                Some((number, FrameSlot { ty: *ty, core }))
+            })
+            .collect();
         Some(Self {
             declared,
             outputs,
             graph,
             ids,
             pipelines,
-            frame: core_frame,
+            frame_slots,
             frame_bound,
             variants,
             switches,
@@ -823,7 +888,7 @@ fn graph_access(access: Access, clear: Clear) -> GraphAccess {
     }
 }
 
-pub(crate) fn set_formats(outputs: &[OutputDecl], layer: Option<Layer>) -> Vec<(Target, wgpu::TextureFormat, Clear, bool)> {
+pub(crate) fn set_formats(outputs: &[OutputDecl], layer: Option<Layer>) -> Vec<SetFormat> {
     let mut set = vec![(Target::Scene, SCENE_FORMAT, Clear::Color(SCENE_CLEAR), true)];
     for (index, output) in outputs.iter().enumerate() {
         let written = match layer {

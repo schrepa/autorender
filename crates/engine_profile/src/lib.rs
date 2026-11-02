@@ -5,12 +5,23 @@
 
 pub const MAX_EVENTS: usize = 65_536;
 
+#[derive(Clone, Copy, Debug)]
+pub struct Row {
+    pub name: &'static str,
+    pub ms: f64,
+    pub worst_ms: f64,
+    pub runs: u64,
+    pub allocations: u64,
+}
+
 #[cfg(feature = "enabled")]
 mod allocator;
 #[cfg(feature = "bricks")]
 mod bricks;
 #[cfg(feature = "enabled")]
 mod collector;
+#[cfg(feature = "enabled")]
+mod rows;
 #[cfg(feature = "enabled")]
 pub use allocator::{
     AllocationSnapshot, SAMPLE_EVERY, TrackingAllocator, allocation_snapshot, sample_allocations,
@@ -22,6 +33,11 @@ pub use bricks::{
 };
 #[cfg(feature = "enabled")]
 pub use collector::*;
+#[cfg(feature = "enabled")]
+pub use rows::{
+    RowScope, frame_mark, mark_speed, now_ms, row, take_rows, take_slow, take_speed, take_waits,
+    tally, timed, waited,
+};
 
 #[cfg(not(feature = "enabled"))]
 mod disabled {
@@ -49,6 +65,45 @@ mod disabled {
     #[inline(always)]
     pub fn current_frame() -> u64 {
         0
+    }
+    pub struct RowScope;
+    impl Drop for RowScope {
+        #[inline(always)]
+        fn drop(&mut self) {}
+    }
+    #[inline(always)]
+    pub fn row(_: &'static str) -> usize {
+        0
+    }
+    #[inline(always)]
+    pub fn timed(_: usize) -> RowScope {
+        RowScope
+    }
+    #[inline(always)]
+    pub fn tally(_: &'static str, _: u64) {}
+    #[inline(always)]
+    pub fn now_ms() -> f64 {
+        0.0
+    }
+    #[inline(always)]
+    pub fn waited(_: &str, _: f64) {}
+    #[inline(always)]
+    pub fn mark_speed() {}
+    pub fn take_rows() -> Vec<crate::Row> {
+        Vec::new()
+    }
+    pub fn take_waits() -> Vec<crate::Row> {
+        Vec::new()
+    }
+    pub fn take_speed() -> Option<(f64, f64)> {
+        None
+    }
+    #[inline(always)]
+    pub fn frame_mark() -> u64 {
+        0
+    }
+    pub fn take_slow() -> Vec<(u64, &'static str, f64)> {
+        Vec::new()
     }
     pub struct Aggregate;
     impl Aggregate {

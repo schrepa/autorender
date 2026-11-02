@@ -17,10 +17,32 @@ impl Run {
         Some((self.filled.get(filled)?.base, Some(filled)))
     }
 
-    pub(super) fn render_pipeline(&mut self, pipeline: u32, variant: Option<Specialized>) -> Option<(u64, wgpu::RenderPipeline)> {
-        let open = self.open.as_ref()?;
-        let (formats, depth, debug, main) = (open.formats.clone(), open.depth, open.debug, open.main);
-        self.compile(pipeline, (&formats, depth), (debug, main), variant)
+    pub(super) fn render_pipeline(&mut self, pipeline: u32, variant: Option<crate::materials::Variant>) -> Option<usize> {
+        let layout = self.open.as_ref()?.layout;
+        let bits = variant.map(crate::materials::Variant::bits);
+        let built = self.machine.pipelines.get(pipeline as usize)?;
+        if let Some(at) = built.ready.iter().position(|ready| ready.layout == layout && ready.bits == bits) {
+            return Some(at);
+        }
+        let known = self.layouts.get(layout as usize)?;
+        let (formats, depth, debug, main) = (known.formats.clone(), known.depth, known.debug, known.main);
+        let specialized = variant.map(|variant| (variant.bits(), variant.constants()));
+        let (key, made) = self.compile(pipeline, (&formats, depth), (debug, main), specialized)?;
+        self.rebuilt.compiles += 1;
+        let built = self.machine.pipelines.get_mut(pipeline as usize)?;
+        built.ready.push(Ready { layout, bits, key, made });
+        Some(built.ready.len() - 1)
+    }
+
+    pub(crate) fn set_switches(&mut self, switches: Vec<(u32, bool)>) {
+        if self.switches == switches {
+            return;
+        }
+        self.switches = switches;
+        for built in &mut self.machine.pipelines {
+            built.ready.clear();
+            built.compute_ready = None;
+        }
     }
 
     #[expect(clippy::too_many_lines, reason = "longer than the line ceiling; it may only shrink")]
@@ -323,13 +345,6 @@ impl Run {
                 }
             }
         }
-    }
-
-    pub(super) fn camera_bound(&self, variant: u32) -> bool {
-        self.machine
-            .variants
-            .get(variant as usize)
-            .is_some_and(|found| found.entries.iter().any(|&(binding, _)| binding == 0))
     }
 
     fn writes_fit(&self, pipeline: usize, formats: &[Option<wgpu::TextureFormat>], debug: bool) -> bool {

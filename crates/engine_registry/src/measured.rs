@@ -8,6 +8,7 @@ use bevy_ecs::system::{
 struct Measured {
     brick: &'static str,
     index: u16,
+    row: usize,
 }
 
 impl Adapt<SystemWithAccess> for Measured {
@@ -23,6 +24,7 @@ impl Adapt<SystemWithAccess> for Measured {
     ) -> Result<Self::Out, RunSystemError> {
         let _span = engine_profile::span("brick", self.brick);
         let _scope = engine_profile::enter(self.index);
+        let _row = engine_profile::timed(self.row);
         run_system(input)
     }
 }
@@ -60,8 +62,9 @@ pub(crate) fn wrap(
             SystemWithAccess::new(Box::new(IntoSystem::<(), (), _>::into_system(idle))),
         );
         let name = inner.name();
+        let row = engine_profile::row(Box::leak(name.to_string().into_boxed_str()));
         *slot = SystemWithAccess::new(Box::new(AdapterSystem::new(
-            Measured { brick, index },
+            Measured { brick, index, row },
             inner,
             name,
         )));

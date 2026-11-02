@@ -37,7 +37,7 @@ pub(crate) struct ScatterPool {
     pub(crate) far: u32,
     tiles: HashMap<PoolKey, Pooled>,
     free: Vec<Range<u32>>,
-    dirty: Option<Range<u32>>,
+    dirty: Vec<Range<u32>>,
     counts_changed: bool,
     moved: Vec<(Vec3, Vec3)>,
     refilling: bool,
@@ -129,8 +129,11 @@ impl ScatterPool {
         self.revision += 1;
     }
 
-    pub(crate) fn take_changes(&mut self) -> (Option<Range<u32>>, bool) {
-        (self.dirty.take(), std::mem::take(&mut self.counts_changed))
+    pub(crate) fn take_changes(&mut self) -> (Vec<Range<u32>>, bool) {
+        (
+            std::mem::take(&mut self.dirty),
+            std::mem::take(&mut self.counts_changed),
+        )
     }
 
     pub(crate) fn uploaded(&mut self, slots: Range<u32>) {
@@ -144,9 +147,59 @@ impl ScatterPool {
         std::mem::take(&mut self.moved)
     }
 
-    pub(crate) fn fragmented(&self) -> bool {
+    pub(crate) fn compact(&mut self) {
+        if let Some(last) = self.free.last().cloned()
+            && last.end as usize == self.records.len()
+        {
+            self.free.pop();
+            let end = last.start as usize;
+            self.poses.truncate(end);
+            self.colors.truncate(end);
+            self.records.truncate(end);
+            self.grounds.truncate(end);
+        }
         let freed: u32 = self.free.iter().map(|range| range.end - range.start).sum();
-        freed > 4096 && freed as usize * 2 > self.records.len()
+        if freed <= 4096 || freed as usize * 2 <= self.records.len() {
+            return;
+        }
+        let free = &self.free;
+        let fits = |slots: &Range<u32>| {
+            free.iter().position(|range| {
+                range.end <= slots.start && range.end - range.start >= slots.end - slots.start
+            })
+        };
+        let Some((&key, at)) = self
+            .tiles
+            .iter()
+            .filter_map(|(key, pooled)| Some(((key, pooled.slots.start), fits(&pooled.slots)?)))
+            .max_by_key(|((_, start), _)| *start)
+            .map(|((key, _), at)| (key, at))
+        else {
+            return;
+        };
+        let Some(pooled) = self.tiles.get_mut(&key) else {
+            return;
+        };
+        let from = pooled.slots.clone();
+        let count = from.end - from.start;
+        let start = self.free[at].start;
+        pooled.slots = start..start + count;
+        self.free[at].start += count;
+        if self.free[at].is_empty() {
+            self.free.remove(at);
+        }
+        let (source, target) = (from.start as usize..from.end as usize, start as usize);
+        self.poses.copy_within(source.clone(), target);
+        self.colors.copy_within(source.clone(), target);
+        self.records.copy_within(source.clone(), target);
+        self.grounds.copy_within(source, target);
+        let moved = start as usize..start as usize + count as usize;
+        for record in &mut self.records[moved] {
+            record.state = STATE_ADOPT;
+        }
+        self.mark(start..start + count);
+        self.vacate(from);
+        self.revision += 1;
     }
 
     fn allocate(&mut self, count: u32) -> Range<u32> {
@@ -179,12 +232,16 @@ impl ScatterPool {
     }
 
     fn free_slots(&mut self, slots: Range<u32>) {
-        for record in &mut self.records[slots.start as usize..slots.end as usize] {
+        for record in &self.records[slots.start as usize..slots.end as usize] {
             self.counts[record.group as usize] -= 1;
             self.far -= u32::from(stands_far(record));
-            *record = dead();
         }
         self.counts_changed = true;
+        self.vacate(slots);
+    }
+
+    fn vacate(&mut self, slots: Range<u32>) {
+        self.records[slots.start as usize..slots.end as usize].fill(dead());
         self.mark(slots.clone());
         let at = self.free.partition_point(|range| range.start < slots.start);
         self.free.insert(at, slots);
@@ -199,10 +256,16 @@ impl ScatterPool {
     }
 
     fn mark(&mut self, slots: Range<u32>) {
-        self.dirty = Some(match self.dirty.take() {
-            Some(dirty) => dirty.start.min(slots.start)..dirty.end.max(slots.end),
-            None => slots,
-        });
+        let at = self.dirty.partition_point(|range| range.end < slots.start);
+        let reach = self.dirty[at..]
+            .iter()
+            .take_while(|range| range.start <= slots.end)
+            .count();
+        let joined = self.dirty[at..at + reach]
+            .iter()
+            .fold(slots, |all, range| all.start.min(range.start)..all.end.max(range.end));
+        self.dirty.drain(at..at + reach);
+        self.dirty.insert(at, joined);
     }
 }
 

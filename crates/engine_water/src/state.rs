@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    FrameTime, JobFailures, Jobs, Records, Spawner, Ticket, VIEW_JOBS, View, job_priority,
+    FrameTime, JobFailures, Jobs, Records, Spawner, Ticket, VIEW_JOBS, View, WorkClock, job_priority,
 };
 use engine_heightfield::tile::{Solid, TileJob};
 use engine_heightfield::{
     ErrorPyramid, Fall, HydrologyBake, Layers, Pyramid, Rivers, Stamp, TileKey, reaches,
 };
-use engine_places::ground::{TerrainTiles, TileFace};
+use engine_places::ground::{GroundWork, TerrainTiles, TileFace};
 use engine_places::water::{WaterBody, WaterQuery, WaterSample, WaterTileErrors, Waterline};
 use glam::{Vec2, Vec3};
 
@@ -18,6 +18,7 @@ use crate::settled::Settled;
 use crate::water_blocks::Blocks;
 use crate::water_particles::Particles;
 use crate::water_sim::LiveSim;
+use crate::work::Work;
 use crate::{RiverFlow, TileWater, Water, WaterBrick, WaterMesh, WaterWindow};
 
 pub(crate) const RETRY_AFTER: u64 = 120;
@@ -141,12 +142,7 @@ impl WaterTerrain {
         self.settled.cancel_all(jobs);
     }
 
-    fn follow_faces(
-        &mut self,
-        jobs: &mut Jobs,
-        kept: &[(TileKey, engine_core::Stamp)],
-        (eye, frame): (Vec2, u64),
-    ) {
+    fn take_faces(&mut self, jobs: &mut Jobs, kept: &[(TileKey, engine_core::Stamp)]) {
         let faces = Arc::clone(&self.faces);
         let mut changed = false;
         let mut following = BTreeMap::new();
@@ -184,11 +180,19 @@ impl WaterTerrain {
                 self.left.insert(key, held);
             }
         }
-        self.left
-            .retain(|&key, held| kept.contains(&(key, held.face.stamp)));
         if changed {
             self.revision += 1;
         }
+    }
+
+    fn follow_faces(
+        &mut self,
+        jobs: &mut Jobs,
+        kept: &[(TileKey, engine_core::Stamp)],
+        (eye, frame): (Vec2, u64),
+    ) {
+        self.left
+            .retain(|&key, held| kept.contains(&(key, held.face.stamp)));
         let pyramid = self.pyramid;
         let size = pyramid.tile_size(0);
         let mut asking: Vec<(u32, TileKey)> = self
@@ -223,10 +227,11 @@ impl WaterTerrain {
 
     fn take_bases(
         &mut self,
-        (records, jobs): (&Records, &mut Jobs),
+        (records, jobs, work): (&Records, &mut Jobs, &Work),
         failures: &mut JobFailures,
         frame: u64,
     ) {
+        let mut taken = false;
         let asked: Vec<TileKey> = self
             .held
             .iter()
@@ -234,6 +239,9 @@ impl WaterTerrain {
             .map(|(&key, _)| key)
             .collect();
         for key in asked {
+            if taken && work.expired() {
+                break;
+            }
             let Some(held) = self.held.get_mut(&key) else {
                 continue;
             };
@@ -243,6 +251,7 @@ impl WaterTerrain {
             let Some(output) = records.get(ticket) else {
                 continue;
             };
+            taken = true;
             let Base::Asking(ticket) = std::mem::replace(&mut held.base, Base::Made) else {
                 continue;
             };
@@ -412,12 +421,15 @@ pub(crate) fn follow(
     records: Res<Records>,
     view: Res<View>,
     time: Res<FrameTime>,
+    (clock, ground): (Res<WorkClock>, Res<GroundWork>),
     mut jobs: Jobs,
     mut state: ResMut<WaterState>,
 ) {
     let eye = view.detail_eye();
     let frame = time.frame;
     let state = &mut *state;
+    let work = Work::of(&clock, &ground);
+    state.work_end = work.end();
     let mut before = std::mem::take(&mut state.terrains);
     for entry in tiles.terrains.iter() {
         let Some(baked) = entry
@@ -469,9 +481,10 @@ pub(crate) fn follow(
         let local = Vec2::new(eye.x - entry.origin.x, eye.z - entry.origin.z);
         if fresh || !Arc::ptr_eq(&terrain.faces, &entry.tiles) {
             terrain.faces = Arc::clone(&entry.tiles);
+            terrain.take_faces(&mut jobs, &entry.kept);
         }
         terrain.follow_faces(&mut jobs, &entry.kept, (local, frame));
-        terrain.take_bases((&records, &mut jobs), &mut state.failures, frame);
+        terrain.take_bases((&records, &mut jobs, &work), &mut state.failures, frame);
         state.terrains.push(terrain);
     }
     for mut gone in before {

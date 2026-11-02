@@ -168,6 +168,18 @@ pub(crate) struct Settled {
     deferred: bool,
     waters_waiting: u64,
     cooking: bool,
+    around: Option<Around>,
+    ask_seen: Option<(u64, u64, Generation, bool)>,
+    give_seen: Option<usize>,
+    give_more: bool,
+}
+
+#[derive(Clone)]
+struct Around {
+    seen: (u64, bool),
+    near: Arc<[TileKey]>,
+    kept: Arc<[TileKey]>,
+    whole: Arc<[TileKey]>,
 }
 
 impl Settled {
@@ -414,34 +426,55 @@ pub(crate) fn follow(
     let Some((recipe, watered)) = refresh(terrain, water, cx.jobs) else {
         return;
     };
-    let pyramid = terrain.pyramid;
-    let near: Vec<TileKey> =
-        terrain.resident_keys(|key| key.level == 0 && watered.binary_search(key).is_ok());
-    let kept = beside(&pyramid, &near, &watered);
-    let whole: Vec<TileKey> = if terrain.settled.cooking {
-        watered.to_vec()
-    } else {
-        kept.clone()
+    let seen = (terrain.revision, terrain.settled.cooking);
+    let moved = terrain
+        .settled
+        .around
+        .as_ref()
+        .is_none_or(|around| around.seen != seen);
+    if moved {
+        let near: Vec<TileKey> =
+            terrain.resident_keys(|key| key.level == 0 && watered.binary_search(key).is_ok());
+        let kept: Arc<[TileKey]> = beside(&terrain.pyramid, &near, &watered).into();
+        let whole = if terrain.settled.cooking {
+            Arc::clone(&watered)
+        } else {
+            Arc::clone(&kept)
+        };
+        terrain.settled.around = Some(Around {
+            seen,
+            near: near.into(),
+            kept,
+            whole,
+        });
+    }
+    let Some(Around {
+        near, kept, whole, ..
+    }) = terrain.settled.around.clone()
+    else {
+        return;
     };
     take_arrived(terrain, cx, (&kept, &whole), frame);
     let settled = &mut terrain.settled;
-    let held = settled.held.len();
-    settled
-        .held
-        .retain(|key, _| kept.binary_search(key).is_ok());
-    let mut gone = Vec::new();
-    settled.shared.retain(|key, record| {
-        let keep = whole.binary_search(key).is_ok();
-        if !keep {
-            gone.push((*record, SETTLED_TAG));
+    if moved {
+        let held = settled.held.len();
+        settled
+            .held
+            .retain(|key, _| kept.binary_search(key).is_ok());
+        let mut gone = Vec::new();
+        settled.shared.retain(|key, record| {
+            let keep = whole.binary_search(key).is_ok();
+            if !keep {
+                gone.push((*record, SETTLED_TAG));
+            }
+            keep
+        });
+        if held != settled.held.len() || !gone.is_empty() {
+            settled.revision += 1;
         }
-        keep
-    });
-    if held != settled.held.len() || !gone.is_empty() {
-        settled.revision += 1;
-    }
-    for at in gone {
-        settled.release(cx.jobs, at);
+        for at in gone {
+            settled.release(cx.jobs, at);
+        }
     }
     let cooking = settled.cooking;
     let leaving: Vec<TileKey> = settled
@@ -458,7 +491,17 @@ pub(crate) fn follow(
             }
         }
     }
-    ask(terrain, cx, (recipe, &watered, &near, &whole), (eye, frame));
+    let seen = (
+        terrain.settled.revision,
+        terrain.revision,
+        generation(terrain),
+        cx.settles,
+    );
+    if cooking || !terrain.settled.failed.is_empty() || terrain.settled.ask_seen.as_ref() != Some(&seen)
+    {
+        terrain.settled.ask_seen = Some(seen);
+        ask(terrain, cx, (recipe, &watered, &near, &whole), (eye, frame));
+    }
     release_parts(&mut terrain.settled, cx.jobs);
     water_tiles(terrain, cx, (&watered, &near), (eye, frame));
 }
@@ -824,11 +867,13 @@ fn take_arrived(
 ) {
     take_parts(terrain, cx, frame);
     let keys: Vec<TileKey> = terrain.settled.asked.keys().copied().collect();
+    let mut taken = false;
     for key in keys {
         let Some(asked) = terrain.settled.asked.get(&key) else {
             continue;
         };
         let output = match &asked.phase {
+            Phase::Fetching(_) if taken && cx.work.expired() => continue,
             Phase::Fetching(ticket) => {
                 arrived(cx.records, ticket).map(|output| output.map_err(|_| None::<String>))
             }
@@ -844,6 +889,7 @@ fn take_arrived(
         let Some(asked) = terrain.settled.asked.remove(&key) else {
             continue;
         };
+        taken = true;
         let fetched = matches!(asked.phase, Phase::Fetching(_));
         if let Phase::Fetching(ticket) = asked.phase {
             cx.jobs.cancel(ticket);
@@ -1026,21 +1072,31 @@ fn water_tiles(
     if terrain.recipe.is_none() {
         return;
     }
-    take_waters(terrain, cx, frame);
+    let took = take_waters(terrain, cx, frame);
     let seen = (
         terrain.settled.revision,
         terrain.revision,
         generation(terrain),
         terrain.settled.cooking,
     );
-    if terrain.settled.seen.as_ref() != Some(&seen) || terrain.settled.deferred {
+    let asks = terrain.settled.seen.as_ref() != Some(&seen) || terrain.settled.deferred;
+    if asks {
         terrain.settled.seen = Some(seen);
         ask_waters(terrain, cx, (watered, near), (eye, frame));
     }
-    give_waters(terrain, cx.work);
+    let faces = Some(Arc::as_ptr(&terrain.faces).cast::<u8>() as usize);
+    if took
+        || asks
+        || terrain.settled.give_more
+        || terrain.flow.is_some()
+        || terrain.settled.give_seen != faces
+    {
+        terrain.settled.give_seen = faces;
+        terrain.settled.give_more = give_waters(terrain, cx.work);
+    }
 }
 
-fn take_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u64) {
+fn take_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u64) -> bool {
     let asked: Vec<TileKey> = terrain
         .settled
         .waters
@@ -1093,6 +1149,7 @@ fn take_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u
             }
         }
     }
+    taken
 }
 
 fn watering(terrain: &WaterTerrain, (watered, near): (&[TileKey], &[TileKey])) -> Vec<TileKey> {
@@ -1290,7 +1347,7 @@ fn ask_waters(
     terrain.settled.waters_waiting = waiting;
 }
 
-fn give_waters(terrain: &mut WaterTerrain, work: &Work) {
+fn give_waters(terrain: &mut WaterTerrain, work: &Work) -> bool {
     let resident: Vec<TileKey> = terrain.resident_keys(|_| true);
     let left = &terrain.left;
     terrain
@@ -1319,7 +1376,7 @@ fn give_waters(terrain: &mut WaterTerrain, work: &Work) {
     let mut gave = false;
     for (key, water, record) in giving {
         if gave && (work.expired() || !work.uploads()) {
-            break;
+            return true;
         }
         gave = true;
         work.upload(2 * TILE_ARRAY_BYTES);
@@ -1332,6 +1389,7 @@ fn give_waters(terrain: &mut WaterTerrain, work: &Work) {
         terrain.revision += 1;
         terrain.settled.given.insert(key, (stamp, record));
     }
+    false
 }
 
 pub(crate) fn request_settle(
@@ -1349,9 +1407,8 @@ pub(crate) fn request_settle(
     mut state: ResMut<WaterState>,
 ) {
     let eye = view.detail_eye();
-    let work = Work::of(&clock, &ground);
     let state = &mut *state;
-    state.work_end = work.end();
+    let work = Work::until(&clock, &ground, state.work_end);
     let mut cx = Follow {
         jobs: &mut jobs,
         records: &records,

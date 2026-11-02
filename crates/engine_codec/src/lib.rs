@@ -135,13 +135,19 @@ fn size(count: u64, path: &str) -> Result<usize, Error> {
 }
 
 pub fn get_grid<T: FromIterator<f32>>(input: &mut Reader<'_>, stride: usize) -> Result<T, Error> {
+    const NOTHING: i64 = i64::MIN;
     let count = input.count()?;
-    let mut steps: Vec<Option<i64>> = Vec::with_capacity(count);
+    let mut steps = vec![NOTHING; count];
+    let mut bytes = input.bytes;
+    let mut x = 0;
     for at in 0..count {
         let mut code = 0_u64;
         let mut shift = 0;
         loop {
-            let [byte] = input.take::<1>()?;
+            let Some((&byte, rest)) = bytes.split_first() else {
+                return Err(invalid("$").at_least(1).got(bytes.len()));
+            };
+            bytes = rest;
             if shift > 63 {
                 return Err(invalid(format!("$.grid[{at}]")));
             }
@@ -151,20 +157,40 @@ pub fn get_grid<T: FromIterator<f32>>(input: &mut Reader<'_>, stride: usize) -> 
                 break;
             }
         }
+        let column = x;
+        x = if x + 1 == stride { 0 } else { x + 1 };
         let Some(code) = code.checked_sub(1) else {
-            steps.push(None);
             continue;
         };
         let residual = (code >> 1).cast_signed() ^ -(code & 1).cast_signed();
-        let predicted = predict(at, stride, |at| steps[at]);
-        let value = predicted
+        let left = if column > 0 { steps[at - 1] } else { NOTHING };
+        let up = if at >= stride { steps[at - stride] } else { NOTHING };
+        let corner = if column > 0 && at >= stride {
+            steps[at - stride - 1]
+        } else {
+            NOTHING
+        };
+        let predicted = match (left != NOTHING, up != NOTHING, corner != NOTHING) {
+            (true, true, true) => left + up - corner,
+            (true, _, _) => left,
+            (false, true, _) => up,
+            (false, false, _) => 0,
+        };
+        steps[at] = predicted
             .checked_add(residual)
+            .filter(|&value| value != NOTHING)
             .ok_or_else(|| invalid(format!("$.grid[{at}]")))?;
-        steps.push(Some(value));
     }
+    input.bytes = bytes;
     Ok(steps
-        .into_iter()
-        .map(|steps| steps.map_or(f32::NAN, |steps| steps as f32 / STEPS_PER_METER))
+        .iter()
+        .map(|&steps| {
+            if steps == NOTHING {
+                f32::NAN
+            } else {
+                steps as f32 / STEPS_PER_METER
+            }
+        })
         .collect())
 }
 
@@ -190,13 +216,31 @@ pub fn get_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u8]>, Erro
     let (residuals, rest) = input.bytes.split_at(count);
     input.bytes = rest;
     let mut planes = vec![0_u8; count];
-    for at in 0..count {
-        let within = at % area;
-        let start = at - within;
-        let predicted = predict_byte(within, side, |within| planes[start + within]);
-        planes[at] = residuals[at].wrapping_add(predicted);
+    for (plane, residuals) in planes.chunks_exact_mut(area).zip(residuals.chunks_exact(area)) {
+        plane_from(plane, side, |at| residuals[at], u8::wrapping_add, u8::wrapping_sub);
     }
     Ok(planes.into_boxed_slice())
+}
+
+fn plane_from<T: Copy + Default>(
+    plane: &mut [T],
+    side: usize,
+    residual: impl Fn(usize) -> T,
+    add: impl Fn(T, T) -> T,
+    sub: impl Fn(T, T) -> T,
+) {
+    for z in 0..side {
+        for x in 0..side {
+            let at = z * side + x;
+            let predicted = match (x > 0, z > 0) {
+                (true, true) => sub(add(plane[at - 1], plane[at - side]), plane[at - side - 1]),
+                (true, false) => plane[at - 1],
+                (false, true) => plane[at - side],
+                (false, false) => T::default(),
+            };
+            plane[at] = add(residual(at), predicted);
+        }
+    }
 }
 
 pub fn put_wide_planes(out: &mut Writer, planes: &[u16], side: usize) {
@@ -229,12 +273,14 @@ pub fn get_wide_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u16]>
     let (residuals, rest) = input.bytes.split_at(bytes);
     input.bytes = rest;
     let mut planes = vec![0_u16; count];
-    for at in 0..count {
-        let within = at % area;
-        let start = at - within;
-        let predicted = predict_wide(within, side, |within| planes[start + within]);
-        let residual = u16::from_le_bytes([residuals[2 * at], residuals[2 * at + 1]]);
-        planes[at] = residual.wrapping_add(predicted);
+    for (plane, residuals) in planes.chunks_exact_mut(area).zip(residuals.chunks_exact(2 * area)) {
+        plane_from(
+            plane,
+            side,
+            |at| u16::from_le_bytes([residuals[2 * at], residuals[2 * at + 1]]),
+            u16::wrapping_add,
+            u16::wrapping_sub,
+        );
     }
     Ok(planes.into_boxed_slice())
 }

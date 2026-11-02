@@ -580,6 +580,7 @@ struct Flight {
     job: JobId,
     fetching: bool,
     making: bool,
+    asked: f64,
 }
 
 struct Asked {
@@ -1051,6 +1052,7 @@ impl JobExchange {
             job,
             fetching,
             making,
+            asked: crate::profile::now_ms(),
         });
     }
 
@@ -1080,6 +1082,7 @@ impl JobExchange {
                 continue;
             }
             let flight = self.flights.remove(at);
+            crate::profile::waited(flight.kind.name(), flight.asked);
             let record = output.map_err(|message| {
                 Error::new(
                     ErrorCode::InvalidRecord,

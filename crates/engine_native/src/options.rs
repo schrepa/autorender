@@ -63,6 +63,7 @@ pub fn options() -> Vec<CommandOption> {
         CommandOption::taking("--packs", "DIR"),
         CommandOption::taking("--cook", "FILE"),
         CommandOption::taking("--measure", "FILE"),
+        CommandOption::taking("--flight", "SECONDS:LOOK:TURN"),
         CommandOption::flag("--shader-hash"),
         CommandOption::taking("--settings", "FILE"),
         CommandOption::flag("--dev"),
@@ -267,6 +268,7 @@ pub struct HostOptions {
     pub dev_artifacts: Option<PathBuf>,
     pub smoke: Option<String>,
     pub measure: Option<Method>,
+    pub flight: Option<crate::window::Flight>,
     pub shader_hash: bool,
     pub cook: Option<PathBuf>,
     pub workers_given: bool,
@@ -296,6 +298,7 @@ impl Default for HostOptions {
             dev_artifacts: None,
             smoke: None,
             measure: None,
+            flight: None,
             shader_hash: false,
             cook: None,
             workers_given: false,
@@ -421,6 +424,19 @@ impl HostOptions {
                 let text = std::fs::read_to_string(&path)
                     .map_err(|error| file_error(name, Path::new(&path), &error))?;
                 self.measure = Some(Method::parse(&text).map_err(|error| error.within(name))?);
+            }
+            "--flight" => {
+                let text = arguments.value(argument)?;
+                let mut parts = text.split(':');
+                let mut next = || parts.next().and_then(|part| part.parse::<f32>().ok());
+                let flight = (|| {
+                    Some(crate::window::Flight {
+                        seconds: next()? as u32,
+                        look: next()?,
+                        turn: next()?,
+                    })
+                })();
+                self.flight = Some(flight.ok_or_else(|| argument.invalid(&text))?);
             }
             "--settings" => arguments.include(argument)?,
             "--shader-hash" => {
@@ -563,6 +579,7 @@ impl HostOptions {
                             settle: Duration::from_millis(self.settle_ms),
                             frames,
                         }),
+                        flight: self.flight,
                         ..Window::new(title)
                     },
                     bricks,
@@ -789,6 +806,10 @@ impl HostOptions {
             })),
             "main_stack_peak_bytes": engine_profiler::stack::peak(),
             "mismatched": mismatched,
+            "rows_frames": recorded.frames - recorded.frames / 2,
+            "rows": rows(engine::profiling::take_rows()),
+            "waits": rows(engine::profiling::take_waits()),
+            "speed": speed(),
             "stats": stats,
         });
         println!("{report:#}");
@@ -853,6 +874,27 @@ fn distribution(values: &[f64]) -> serde_json::Value {
     json!(engine::host::Distribution::of(values))
 }
 
+fn rows(rows: Vec<engine::profiling::Row>) -> serde_json::Value {
+    rows.iter()
+        .map(|row| {
+            json!({
+                "name": row.name,
+                "ms": row.ms,
+                "worst_ms": row.worst_ms,
+                "runs": row.runs,
+                "allocations": row.allocations,
+            })
+        })
+        .collect()
+}
+
+fn speed() -> serde_json::Value {
+    engine::profiling::take_speed().map_or(
+        serde_json::Value::Null,
+        |(fast, slow)| json!({ "fast_ms": fast, "slow_ms": slow }),
+    )
+}
+
 fn window_report(report: &WindowReport) -> serde_json::Value {
     let stats: serde_json::Value = serde_json::from_str(&report.stats).expect("stats_json");
     json!({
@@ -864,6 +906,14 @@ fn window_report(report: &WindowReport) -> serde_json::Value {
         "cpu_ms": distribution(&report.cpu_ms),
         "adapter": {"name": report.adapter.name, "backend": report.adapter.backend},
         "main_stack_peak_bytes": engine_profiler::stack::peak(),
+        "flight": report.flight,
+        "slow": engine::profiling::take_slow()
+            .iter()
+            .map(|(frame, name, ms)| json!({ "frame": frame, "name": name, "ms": ms }))
+            .collect::<Vec<_>>(),
+        "rows": rows(engine::profiling::take_rows()),
+        "waits": rows(engine::profiling::take_waits()),
+        "speed": speed(),
         "stats": stats,
     })
 }

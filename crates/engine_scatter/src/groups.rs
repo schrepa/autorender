@@ -383,6 +383,18 @@ impl Groups {
         }
     }
 
+    pub(crate) fn same_objects(&self, other: &Self) -> bool {
+        self.indices == other.indices
+            && self.terrains == other.terrains
+            && self.groups.len() == other.groups.len()
+            && self.groups.iter().zip(&other.groups).all(|(a, b)| {
+                a.color == b.color
+                    && a.sphere == b.sphere
+                    && a.objects == b.objects
+                    && a.source.grounding() == b.source.grounding()
+            })
+    }
+
     pub(crate) fn tile_objects(&self, terrain: &TerrainEntry, tile: &TileFace) -> TileObjects {
         let placed = &tile.placed;
         let mut objects = (

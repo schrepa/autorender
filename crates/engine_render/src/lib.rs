@@ -820,6 +820,10 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.write(buffer.0, offset, bytemuck::cast_slice(data));
     }
 
+    pub fn grow_buffer(&mut self, buffer: Buffer<P>, bytes: u64) {
+        self.core.grow_buffer(buffer.0, bytes);
+    }
+
     pub fn write_staged<T: bytemuck::Pod>(
         &mut self,
         buffer: Buffer<P>,
@@ -1032,12 +1036,12 @@ pub struct Draw<'e, P, S> {
     part: PhantomData<fn() -> (P, S)>,
 }
 
-fn inputs<P, S>(inputs: &[DrawInput<P, S>]) -> Vec<u32> {
-    inputs.iter().map(|input| input.0).collect()
+fn inputs<P, S>(inputs: &[DrawInput<P, S>]) -> encode::Streams {
+    encode::Streams::of(inputs.iter().map(|input| (input.0, 0)))
 }
 
-fn streams<P, S>(streams: &[(DrawInput<P, S>, u64)]) -> Vec<(u32, u64)> {
-    streams.iter().map(|(input, offset)| (input.0, *offset)).collect()
+fn streams<P, S>(streams: &[(DrawInput<P, S>, u64)]) -> encode::Streams {
+    encode::Streams::of(streams.iter().map(|(input, offset)| (input.0, *offset)))
 }
 
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
@@ -1060,8 +1064,9 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         label: impl FnOnce() -> String + 'l,
     ) {
         let timer = self.raw.timer();
-        let label: Box<dyn FnOnce() -> String + 'l> = Box::new(label);
-        self.issue(pipeline, (shape, &[], MeshPass::default()), Some((timer, label)));
+        let mut label = Some(label);
+        let mut named = || label.take().map_or_else(String::new, |label| label());
+        self.issue(pipeline, (shape, &[], MeshPass::default()), Some((timer, &mut named)));
     }
 
     pub fn draw_timed_with<'l>(
@@ -1071,8 +1076,9 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         label: impl FnOnce() -> String + 'l,
     ) {
         let timer = self.raw.timer();
-        let label: Box<dyn FnOnce() -> String + 'l> = Box::new(label);
-        self.issue(pipeline, (shape, &[], mesh), Some((timer, label)));
+        let mut label = Some(label);
+        let mut named = || label.take().map_or_else(String::new, |label| label());
+        self.issue(pipeline, (shape, &[], mesh), Some((timer, &mut named)));
     }
 
     fn issue(

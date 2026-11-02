@@ -198,6 +198,7 @@ impl Renderer {
     #[expect(clippy::too_many_lines, reason = "longer than the line ceiling; it may only shrink")]
     fn render(&mut self, frame: RenderFrame<'_>, display: bool) -> Result<RenderStats, Error> {
         let _profile = engine_profile::span("render", "render_snapshot");
+        let _row = engine_profile::timed(engine_profile::row("render.total"));
         self.check_health()?;
         let gpu_mode = frame.gpu().is_some();
         let world = frame.world();
@@ -210,14 +211,17 @@ impl Renderer {
         if self.core.display.suspended {
             return Ok(RenderStats::default());
         }
+        let row_acquire = engine_profile::timed(engine_profile::row("render.acquire"));
         let Some(surface) = self.core.display.acquire(&self.core.device)? else {
             return Ok(RenderStats::default());
         };
+        drop(row_acquire);
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
         };
         let device = self.core.device.clone();
         let profile_upload = engine_profile::span("render", "asset_uploads");
+        let row_upload = engine_profile::timed(engine_profile::row("render.uploads"));
         let mesh_bytes = run.assets.meshes.sync(&device, &self.core.queue, world);
         let mut mips = None;
         let (mut texture_bytes, mut mip_levels) = run.assets.materials.sync(&device, &self.core.queue, world, &mut mips);
@@ -226,6 +230,7 @@ impl Renderer {
             self.core.queue.hand(Handover::from(encoder));
         }
         drop(profile_upload);
+        drop(row_upload);
         run.frame += 1;
         run.parity = (run.frame % 2) as usize;
         run.debug = debug;
@@ -247,7 +252,8 @@ impl Renderer {
             .filter(|(fault, _)| fault.is_some())
             .filter_map(|(_, gate)| *gate)
             .collect();
-        run.switches = super::install::switches_of(&run.machine, world, &faulted);
+        let switches = super::install::switches_of(&run.machine, world, &faulted);
+        run.set_switches(switches);
         run.drop_unfilled();
         let viewed = match view {
             Some(view) => Viewed {
@@ -291,6 +297,7 @@ impl Renderer {
         run.size_targets(region.display.pixels(), Some(canvas));
         run.canvas_texture = Some(surface.texture().clone());
         let profile_writes = engine_profile::span("render", "queue_writes");
+        let row_writes = engine_profile::timed(engine_profile::row("render.writes"));
         run.runs = Bits::of(run.machine.graph.passes());
         for at in run.machine.declared.passes.len()..run.machine.graph.passes() {
             run.runs.insert(at);
@@ -333,6 +340,7 @@ impl Renderer {
         camera_bytes += run.write_pieces(bytes);
         run.refresh_groups();
         drop(profile_writes);
+        drop(row_writes);
         self.core.profiler.begin_frame(&device);
         let capturing = self.core.profiler.capturing();
         let Some(run) = self.run.as_mut() else {
@@ -348,11 +356,10 @@ impl Renderer {
                 outputs.insert(id.index());
             }
         }
-        let plan = self
-            .plans
-            .plan(&run.machine.graph, &run.runs, &outputs, crate::graph::PLANS)?
-            .clone();
+        let plan = self.plans.plan(&run.machine.graph, &run.runs, &outputs, crate::graph::PLANS)?;
+        run.plan = Some(std::sync::Arc::clone(&plan));
         let profile_encoding = engine_profile::span("render", "command_encoding");
+        let row_encoding = engine_profile::timed(engine_profile::row("render.encoding"));
         let mut encoder = self.frame_encoder(&device, 0);
         self.core.display.time_begin(&mut encoder);
         let Some(run) = self.run.as_mut() else {
@@ -404,7 +411,7 @@ impl Renderer {
             }
             run.part = part;
             run.pass = index as u32;
-            run.planned = Some(planned.clone());
+            run.planned_at = at;
             if let Work::Clear(buffer) = work {
                 run.queued.cleared.push(buffer);
                 continue;
@@ -500,7 +507,9 @@ impl Renderer {
         self.close_batch(&mut encoder, batch);
         self.core.profiler.end_frame(&mut encoder);
         drop(profile_encoding);
+        drop(row_encoding);
         let profile_submit = engine_profile::span("render", "submit_and_present");
+        let row_submit = engine_profile::timed(engine_profile::row("render.submit"));
         self.core.queue.hand(Handover::from(encoder));
         self.core.queue.settle();
         self.core.profiler.submitted();
@@ -515,6 +524,7 @@ impl Renderer {
         run.map_readbacks();
         crate::platform::poll(&device);
         drop(profile_submit);
+        drop(row_submit);
         let (resident_textures, resident_texture_bytes, mip_bytes) = run.assets.materials.texture_totals();
         let resident_mesh_bytes = world
             .get_resource::<AssetResidency>()
@@ -543,6 +553,7 @@ impl Renderer {
             ..RenderStats::default()
         };
         let immediate = self.core.queue.take_immediate() + std::mem::take(&mut run.queued.immediate);
+        rebuilt_counters(&mut run.rebuilt);
         if engine_profile::active() {
             stat_counters(&stats);
             engine_profile::counter("render.immediate_submissions", f64::from(immediate));
@@ -594,6 +605,29 @@ impl Renderer {
             names,
         }
     }
+}
+
+fn rebuilt_counters(rebuilt: &mut crate::encode::Rebuilt) {
+    engine_profile::counter("render.group_rebuilds", f64::from(rebuilt.groups));
+    engine_profile::counter("render.buffer_recreations", f64::from(rebuilt.buffers));
+    engine_profile::counter("render.texture_recreations", f64::from(rebuilt.textures));
+    engine_profile::counter("render.draw_compiles", f64::from(rebuilt.compiles));
+    engine_profile::tally("render.group_rebuilds", u64::from(rebuilt.groups));
+    engine_profile::tally("render.buffer_recreations", u64::from(rebuilt.buffers));
+    engine_profile::tally("render.texture_recreations", u64::from(rebuilt.textures));
+    engine_profile::tally("render.draw_compiles", u64::from(rebuilt.compiles));
+    rebuilt.reasons.sort_unstable();
+    let mut reasons = std::mem::take(&mut rebuilt.reasons);
+    for reason in reasons.chunk_by(|a, b| a == b) {
+        engine_profile::counter(rebuilt.reason_name(reason[0]), reason.len() as f64);
+        engine_profile::tally(rebuilt.reason_name(reason[0]), reason.len() as u64);
+    }
+    reasons.clear();
+    rebuilt.reasons = reasons;
+    rebuilt.groups = 0;
+    rebuilt.buffers = 0;
+    rebuilt.textures = 0;
+    rebuilt.compiles = 0;
 }
 
 #[cfg(feature = "profiling")]

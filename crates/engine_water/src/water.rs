@@ -329,7 +329,7 @@ impl GpuPart for WaterGpu {
             self.leaf_args,
             u64::from(WATER_LEAF_FIRST + 2 * terrains.max(1)) * 4,
         );
-        let size = view.render_size();
+        let size = view.display_size();
         cx.allocate(
             self.foam,
             wgpu::Extent3d {
@@ -496,7 +496,6 @@ impl WaterGpu {
             })
             .collect();
         if self.indices.is_empty() {
-            self.built.clear();
             return;
         }
         cx.allocate_buffer(

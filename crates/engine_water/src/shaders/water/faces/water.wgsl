@@ -2,7 +2,7 @@ import package::face::ground_tiles::{GroundTerrain, NOT_RESIDENT, level_tiles, t
 import package::face::heightfield::{TERRAIN_GRID, terrain_uniform};
 import package::generated::water::{NO_WATER_BLOCK, NO_WATER_SURFACE, WATER_BLOCK, WATER_BLOCKS_SIDE,
     WATER_FLOW_RANGE, WATER_SHEAR_RANGE, WATER_SPAN_LEAST, WATER_SPAN_MOST, WATER_SPAN_STEPS,
-    WATER_TILE_PATCHES, WATER_TILE_WORDS};
+    WATER_TILE_PATCHES, WATER_TILE_WORDS, WATER_WAITING};
 import package::place::water::{WaterAt, WaterCell, WaterLevel, WaterWords};
 
 @group(0) @binding(0) var water_surface: texture_2d_array<f32>;
@@ -105,9 +105,13 @@ fn water_cell(local: vec2<f32>, level: u32) -> WaterCell {
             vec2<f32>(f32(tile_quads)));
         let corner = min(vec2<u32>(within), vec2<u32>(tile_quads - 1u));
         let tile_patch = corner / quads;
-        cell.level = index;
-        cell.block = water_directory[layer * WATER_TILE_WORDS
+        let block = water_directory[layer * WATER_TILE_WORDS
             + tile_patch.y * WATER_TILE_PATCHES + tile_patch.x];
+        if block == WATER_WAITING {
+            continue;
+        }
+        cell.level = index;
+        cell.block = block;
         cell.first = corner - tile_patch * quads + vec2<u32>(1u);
         cell.within = within - vec2<f32>(corner);
         return cell;

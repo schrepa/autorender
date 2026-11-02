@@ -27,7 +27,7 @@ pub use jobs::{CacheOptions, JobOptions, JobPool, Written};
 pub use measure::{Method, Settle};
 pub use offscreen::{Frames, Offscreen, PixRecord, ProfileRecord, Record, Recorded};
 pub use options::{Argument, Arguments, HostOptions, Vendor, options, parameters};
-pub use window::{Measure, Window, WindowReport, run};
+pub use window::{Flight, Measure, Window, WindowReport, run};
 
 pub(crate) use engine::DYNAMIC_RESOLUTION;
 

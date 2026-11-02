@@ -7,12 +7,13 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use bevy_ecs::world::World;
 use engine_core::{Error, ErrorCode, MaterialHandle, MeshHandle, TextureHandle};
 
-use crate::graph::{Bits, Clear, FAR, Load, Ops, Planned};
-use crate::install::{Bound, Copied, Program, Scoped, Work};
+use crate::graph::{Bits, Clear, FAR, Load, Ops, Plan, Planned};
+use crate::install::{Bound, Copied, PassDecl, Program, Scoped, Work};
 use crate::linker::Ty;
 use crate::machine::{
-    CAMERA_STRIDE, DEBUG_COUNT, DEBUG_FORMATS, DEPTH_FORMAT, Machine, Target, final_target,
-    own_colors_only, pass_layer, reads_depth_direct, set_formats, shared, target_read,
+    CAMERA_STRIDE, CoreFrame, DEBUG_COUNT, DEBUG_FORMATS, DEPTH_FORMAT, Machine, Ready, SetFormat,
+    Target, final_target, own_colors_only, pass_layer, reads_depth_direct, set_formats, shared,
+    target_read,
 };
 use crate::profiling::GpuProfiler;
 use crate::registration::Installed;
@@ -28,6 +29,130 @@ pub(crate) type FrameCore = Run;
 pub(crate) type EncodeCore = Run;
 
 type Specialized = (u32, [(&'static str, f64); 15]);
+
+const MOST_STREAMS: usize = 16;
+const MOST_OFFSETS: usize = 16;
+const MOST_GROUPS: usize = 8;
+const MOST_COLORS: usize = 8;
+
+#[derive(Clone, Copy)]
+pub(crate) struct Streams {
+    held: [(u32, u64); MOST_STREAMS],
+    count: usize,
+}
+
+impl Streams {
+    pub(crate) fn of(given: impl Iterator<Item = (u32, u64)>) -> Self {
+        let mut held = [(0, 0); MOST_STREAMS];
+        let mut count = 0;
+        for (slot, stream) in held.iter_mut().zip(given) {
+            *slot = stream;
+            count += 1;
+        }
+        Self { held, count }
+    }
+
+    fn listed(&self) -> &[(u32, u64)] {
+        &self.held[..self.count]
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Holder {
+    Frame(u32),
+    Own(u32, u32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Held {
+    Texture(u32),
+    Buffer(u32),
+    Targets,
+    Cameras,
+    Pieces,
+    Atlas,
+}
+
+#[derive(Default)]
+pub(crate) struct Holders {
+    textures: Vec<Vec<Holder>>,
+    buffers: Vec<Vec<Holder>>,
+    targets: Vec<Holder>,
+    cameras: Vec<Holder>,
+    pieces: Vec<Holder>,
+    atlas: Vec<Holder>,
+}
+
+impl Holders {
+    fn of(machine: &Machine) -> Self {
+        let mut holders = Self {
+            textures: vec![Vec::new(); machine.declared.textures.len()],
+            buffers: vec![Vec::new(); machine.declared.buffers.len()],
+            ..Self::default()
+        };
+        for (variant, found) in machine.variants.iter().enumerate() {
+            let holder = Holder::Frame(variant as u32);
+            for &(binding, _) in &found.entries {
+                match (binding, machine.frame_bound.get(&binding)) {
+                    (0, _) => holders.cameras.push(holder),
+                    (1, _) => holders.pieces.push(holder),
+                    (_, Some(bound)) => holders.hold(bound, holder),
+                    (_, None) => match machine.frame_slots.get(&binding).and_then(|slot| slot.core.as_ref()) {
+                        Some(CoreFrame::Impostor(_)) => holders.atlas.push(holder),
+                        Some(CoreFrame::Target(_)) => holders.targets.push(holder),
+                        Some(CoreFrame::Post | CoreFrame::Linear) | None => {}
+                    },
+                }
+            }
+        }
+        for (pipeline, built) in machine.pipelines.iter().enumerate() {
+            for (group, own) in built.groups.iter().enumerate() {
+                for (_, bound, _) in &own.entries {
+                    holders.hold(bound, Holder::Own(pipeline as u32, group as u32));
+                }
+            }
+        }
+        holders
+    }
+
+    fn hold(&mut self, bound: &Bound, holder: Holder) {
+        match bound {
+            Bound::Texture(texture) | Bound::Slice { texture, .. } => self.textures[*texture as usize].push(holder),
+            Bound::Buffer(buffer) | Bound::Window { buffer, .. } => self.buffers[*buffer as usize].push(holder),
+            Bound::Target(_) => self.targets.push(holder),
+            Bound::Sampler(_) | Bound::Asset => {}
+        }
+    }
+
+    fn of_held(&self, held: Held) -> &[Holder] {
+        match held {
+            Held::Texture(texture) => &self.textures[texture as usize],
+            Held::Buffer(buffer) => &self.buffers[buffer as usize],
+            Held::Targets => &self.targets,
+            Held::Cameras => &self.cameras,
+            Held::Pieces => &self.pieces,
+            Held::Atlas => &self.atlas,
+        }
+    }
+}
+
+pub(crate) struct Groups {
+    pub(crate) made: [Option<wgpu::BindGroup>; 2],
+    pub(crate) stale: bool,
+}
+
+impl Groups {
+    fn fresh() -> Self {
+        Self { made: [None, None], stale: true }
+    }
+}
+
+pub(crate) struct PassLayout {
+    formats: Vec<Option<wgpu::TextureFormat>>,
+    depth: Option<(wgpu::TextureFormat, bool)>,
+    debug: bool,
+    main: bool,
+}
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Compiled {
@@ -182,15 +307,14 @@ pub(crate) struct Filled {
 pub(crate) struct Set {
     pipeline: Option<(u32, u64)>,
     frame: Option<(u32, u32)>,
+    own: [Option<(u32, Option<usize>, usize)>; MOST_GROUPS],
+    material: Option<Option<MaterialHandle>>,
 }
 
 pub(crate) struct Open {
     pub(crate) pass: wgpu::RenderPass<'static>,
     pub(crate) attachments: Vec<u64>,
-    pub(crate) formats: Vec<Option<wgpu::TextureFormat>>,
-    pub(crate) depth: Option<(wgpu::TextureFormat, bool)>,
-    pub(crate) debug: bool,
-    pub(crate) main: bool,
+    pub(crate) layout: u32,
     pub(crate) offset: u32,
     pub(crate) shared: bool,
     pub(crate) layered: bool,
@@ -249,8 +373,14 @@ pub(crate) struct Run {
     pub(crate) frame: u64,
     pub(crate) asked_frame: u64,
     pub(crate) parity: usize,
-    pub(crate) generation: u64,
     pub(crate) atlas_generation: Option<u64>,
+    pub(crate) holders: Holders,
+    pub(crate) stale: Vec<Holder>,
+    pub(crate) rebuilt: Rebuilt,
+    pub(crate) pass_decls: Vec<Arc<PassDecl>>,
+    pub(crate) layouts: Vec<PassLayout>,
+    pub(crate) layer_sets: Vec<(Option<crate::Layer>, Arc<[SetFormat]>)>,
+    pub(crate) spare: Spare,
     pub(crate) textures: Vec<[Option<Allocated>; 2]>,
     pub(crate) dimensions: Vec<wgpu::TextureDimension>,
     pub(crate) sizes: Vec<Option<(wgpu::Extent3d, u32)>>,
@@ -273,8 +403,8 @@ pub(crate) struct Run {
     pub(crate) camera: wgpu::Buffer,
     pub(crate) pieces: wgpu::Buffer,
     pub(crate) uploads: Uploads,
-    pub(crate) frame_groups: Vec<([Option<wgpu::BindGroup>; 2], u64)>,
-    pub(crate) own_groups: Vec<(Vec<[Option<wgpu::BindGroup>; 2]>, u64)>,
+    pub(crate) frame_groups: Vec<Groups>,
+    pub(crate) own_groups: Vec<Vec<Groups>>,
     pub(crate) filled: Vec<Filled>,
     pub(crate) wanted_textures: Vec<TextureHandle>,
     pub(crate) switches: Vec<(u32, bool)>,
@@ -288,7 +418,8 @@ pub(crate) struct Run {
     pub(crate) resolve: Option<(PassNames, &'static str)>,
     pub(crate) labelled: Option<u32>,
     pub(crate) merge: bool,
-    pub(crate) planned: Option<Planned>,
+    pub(crate) plan: Option<Arc<Plan>>,
+    pub(crate) planned_at: usize,
     pub(crate) debug: bool,
     pub(crate) temporal: bool,
     pub(crate) region: Option<(u32, u32)>,
@@ -316,11 +447,60 @@ pub(crate) enum Placeholder {
 
 pub(crate) enum RawShape {
     Pulled { vertices: Range<u32>, instances: Range<u32> },
-    Buffers { vertices: Vec<u32>, indices: Option<u32>, elements: Range<u32>, instances: Range<u32> },
-    Indirect { vertices: Vec<u32>, indices: Option<u32>, args: u32, offset: u64 },
-    IndirectAt { vertices: Vec<(u32, u64)>, indices: Option<u32>, args: u32, offset: u64 },
-    Mesh { mesh: MeshHandle, material: Option<MaterialHandle>, instances: Range<u32>, streams: Vec<(u32, u64)> },
-    MeshIndirect { mesh: MeshHandle, material: Option<MaterialHandle>, args: u32, offset: u64, streams: Vec<(u32, u64)> },
+    Buffers { vertices: Streams, indices: Option<u32>, elements: Range<u32>, instances: Range<u32> },
+    Indirect { vertices: Streams, indices: Option<u32>, args: u32, offset: u64 },
+    IndirectAt { vertices: Streams, indices: Option<u32>, args: u32, offset: u64 },
+    Mesh { mesh: MeshHandle, material: Option<MaterialHandle>, instances: Range<u32>, streams: Streams },
+    MeshIndirect { mesh: MeshHandle, material: Option<MaterialHandle>, args: u32, offset: u64, streams: Streams },
+}
+
+#[derive(Default)]
+pub(crate) struct Rebuilt {
+    pub(crate) groups: u32,
+    pub(crate) buffers: u32,
+    pub(crate) textures: u32,
+    pub(crate) compiles: u32,
+    pub(crate) reasons: Vec<&'static str>,
+    names: Vec<(&'static str, &'static str)>,
+}
+
+impl Rebuilt {
+    pub(crate) fn reason_name(&mut self, reason: &'static str) -> &'static str {
+        if let Some((_, name)) = self.names.iter().find(|(known, _)| *known == reason) {
+            return name;
+        }
+        let name: &'static str = Box::leak(format!("render.rebuilt_by.{reason}").into_boxed_str());
+        self.names.push((reason, name));
+        name
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Spare {
+    colors: Vec<(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)>,
+    attachments: Vec<u64>,
+    cameras: Vec<u8>,
+}
+
+const TARGET_KEY: u64 = 1 << 62;
+
+fn target_key(target: Target) -> u64 {
+    let (kind, index) = match target {
+        Target::Scene => (0, 0),
+        Target::Depth => (1, 0),
+        Target::Canvas => (2, 0),
+        Target::Output(index) => (3, u64::from(index)),
+        Target::Debug(index) => (4, u64::from(index)),
+        Target::Copy(layer, view) => {
+            let view = match view {
+                ViewTarget::Scene => 0,
+                ViewTarget::Depth => 1,
+                ViewTarget::Debug(index) => 2 + u64::from(index),
+            };
+            (5, view << 8 | layer as u64)
+        }
+    };
+    TARGET_KEY | kind << 32 | index
 }
 
 fn fault(path: String, code: ErrorCode) -> Error {
@@ -346,13 +526,7 @@ fn texture_uses(machine: &Machine, texture: u32) -> impl Iterator<Item = Ty> + '
     });
     let frame = machine.frame_bound.iter().filter_map(move |(binding, bound)| {
         (bound_texture(bound) == Some(texture))
-            .then(|| {
-                machine
-                    .frame
-                    .iter()
-                    .find(|(path, name, _)| machine.linker.binding_of(path, name) == Some(*binding))
-                    .map(|(_, _, ty)| *ty)
-            })
+            .then(|| machine.frame_slots.get(binding).map(|slot| slot.ty))
             .flatten()
     });
     own.chain(frame)
@@ -450,8 +624,23 @@ impl Run {
         let sizes = machine.declared.textures.iter().map(|_| None).collect();
         let buffers = machine.declared.buffers.iter().map(|_| None).collect();
         let runs = Bits::of(machine.graph.passes());
-        let frame_groups = machine.variants.iter().map(|_| ([None, None], 0)).collect();
-        let own_groups = machine.pipelines.iter().map(|pipeline| (pipeline.groups.iter().map(|_| [None, None]).collect(), 0)).collect();
+        let frame_groups = machine.variants.iter().map(|_| Groups::fresh()).collect();
+        let own_groups = machine.pipelines.iter().map(|pipeline| pipeline.groups.iter().map(|_| Groups::fresh()).collect()).collect();
+        let holders = Holders::of(&machine);
+        let stale = (0..machine.variants.len())
+            .map(|variant| Holder::Frame(variant as u32))
+            .chain(machine.pipelines.iter().enumerate().flat_map(|(pipeline, built)| {
+                (0..built.groups.len()).map(move |group| Holder::Own(pipeline as u32, group as u32))
+            }))
+            .collect();
+        let pass_decls = machine.declared.passes.iter().map(|pass| Arc::new(pass.clone())).collect();
+        let mut layer_sets: Vec<(Option<crate::Layer>, Arc<[SetFormat]>)> = vec![(None, Arc::from(set_formats(&machine.outputs, None)))];
+        for pass in &machine.declared.passes {
+            let layer = pass_layer(pass);
+            if !layer_sets.iter().any(|(known, _)| *known == layer) {
+                layer_sets.push((layer, Arc::from(set_formats(&machine.outputs, layer))));
+            }
+        }
         Self {
             device,
             queue,
@@ -465,8 +654,14 @@ impl Run {
             frame: 0,
             asked_frame: 0,
             parity: 0,
-            generation: 1,
             atlas_generation: None,
+            holders,
+            stale,
+            rebuilt: Rebuilt::default(),
+            pass_decls,
+            layouts: Vec::new(),
+            layer_sets,
+            spare: Spare::default(),
             textures,
             dimensions,
             sizes,
@@ -504,7 +699,8 @@ impl Run {
             resolve: None,
             labelled: None,
             merge: true,
-            planned: None,
+            plan: None,
+            planned_at: 0,
             debug: false,
             temporal: false,
             region: None,
@@ -564,6 +760,35 @@ impl Run {
         }
         self.up_front += created;
         Ok(created)
+    }
+
+    pub(crate) fn touch(&mut self, held: Held) {
+        for &holder in self.holders.of_held(held) {
+            let groups = match holder {
+                Holder::Frame(variant) => &mut self.frame_groups[variant as usize],
+                Holder::Own(pipeline, group) => &mut self.own_groups[pipeline as usize][group as usize],
+            };
+            if groups.stale {
+                continue;
+            }
+            groups.stale = true;
+            self.stale.push(holder);
+            if cfg!(feature = "profiling") {
+                let reason = match held {
+                    Held::Texture(texture) => self.machine.declared.textures[texture as usize].label,
+                    Held::Buffer(buffer) => self.machine.declared.buffers[buffer as usize].label,
+                    Held::Targets => "targets",
+                    Held::Cameras => "cameras",
+                    Held::Pieces => "pieces",
+                    Held::Atlas => "impostors",
+                };
+                self.rebuilt.reasons.push(reason);
+            }
+        }
+    }
+
+    pub(crate) fn planned(&self) -> Option<&Planned> {
+        self.plan.as_ref()?.passes.get(self.planned_at)
     }
 
     pub(crate) fn path(&self, what: &str) -> String {
@@ -658,7 +883,8 @@ impl Run {
             doubled.then(|| Allocated::new(&self.device, &made, size, mips)),
         ];
         self.sizes[at] = Some((size, mips));
-        self.generation += 1;
+        self.rebuilt.textures += 1;
+        self.touch(Held::Texture(texture));
     }
 
     pub(crate) fn grow(&mut self, texture: u32, size: wgpu::Extent3d, mips: u32) {
@@ -726,7 +952,7 @@ impl Run {
         }
         *held = [None, None];
         self.sizes[at] = None;
-        self.generation += 1;
+        self.touch(Held::Texture(texture));
     }
 
     pub(crate) fn renew_buffer(&mut self, buffer: u32, bytes: u64) {
@@ -761,7 +987,7 @@ impl Run {
         };
         if let Some((made, _)) = held.take() {
             crate::memory::release_buffer(&made);
-            self.generation += 1;
+            self.touch(Held::Buffer(buffer));
         }
     }
 
@@ -835,7 +1061,15 @@ impl Run {
             },
         );
         self.buffers[at] = Some((made, bytes));
-        self.generation += 1;
+        self.rebuilt.buffers += 1;
+        self.touch(Held::Buffer(buffer));
+    }
+
+    pub(crate) fn grow_buffer(&mut self, buffer: u32, bytes: u64) {
+        let held = self.buffers.get(buffer as usize).and_then(Option::as_ref).map(|(_, known)| *known);
+        if held.is_none_or(|known| known < bytes) {
+            self.allocate_buffer(buffer, bytes.max(16).next_power_of_two());
+        }
     }
 
     pub(crate) fn write(&mut self, buffer: u32, offset: u64, bytes: &[u8]) {
@@ -914,7 +1148,7 @@ impl Run {
     }
 }
 
-pub(crate) type TimedDraw<'t> = Option<(&'t GpuProfiler, Box<dyn FnOnce() -> String + 't>)>;
+pub(crate) type TimedDraw<'t> = Option<(&'t GpuProfiler, &'t mut dyn FnMut() -> String)>;
 
 fn timed_draw(render: &mut wgpu::RenderPass<'static>, timed: TimedDraw<'_>, draw: impl FnOnce(&mut wgpu::RenderPass<'static>)) {
     let Some((timer, label)) = timed else {

@@ -154,6 +154,7 @@ pub(crate) struct Gather {
     records: Vec<Emitter>,
     cut: usize,
     invalid: usize,
+    broken: Vec<Entity>,
 }
 
 #[derive(Resource, Default)]
@@ -189,7 +190,7 @@ impl Gather {
         self.candidates.clear();
         let mut wanted = 0_u64;
         for (entity, emitter) in emitters.iter() {
-            if !valid(emitter) {
+            if self.broken.contains(&entity) {
                 self.invalid += 1;
                 continue;
             }
@@ -267,12 +268,19 @@ impl Gather {
 pub(crate) fn gather_emitters(
     settings: Res<ParticleSettings>,
     emitters: Query<(Entity, &'static ParticleEmitter)>,
+    changed: Query<(Entity, &'static ParticleEmitter), Changed<ParticleEmitter>>,
     (poses, view, time, limits): (Res<Poses>, Res<View>, Res<FrameTime>, Res<DeviceLimits>),
     mut gather: ResMut<Gather>,
     mut packed: ResMut<Packed>,
     mut owners: ResMut<Owners>,
 ) {
     let gather = &mut *gather;
+    for (entity, emitter) in &changed {
+        gather.broken.retain(|&broken| broken != entity);
+        if !valid(emitter) {
+            gather.broken.push(entity);
+        }
+    }
     gather.fill(
         &settings,
         &emitters,
@@ -321,7 +329,10 @@ pub(crate) fn forget(
     mut stats: ResMut<ParticleStats>,
 ) {
     let epoch = packed.epoch.wrapping_add(1);
-    *gather = Gather::default();
+    *gather = Gather {
+        broken: std::mem::take(&mut gather.broken),
+        ..Gather::default()
+    };
     *packed = Packed {
         epoch,
         ..Packed::default()

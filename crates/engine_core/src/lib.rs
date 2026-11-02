@@ -38,7 +38,7 @@ mod sources {
 }
 
 pub mod profile {
-    pub use engine_profile::{Aggregate, Span, active, counter, span};
+    pub use engine_profile::{Aggregate, Span, active, counter, now_ms, span, tally, waited};
 }
 
 pub use assets::*;

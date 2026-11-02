@@ -23,6 +23,7 @@ pub struct Window {
     pub vsync: bool,
     pub settings: HostSettings,
     pub measure: Option<Measure>,
+    pub flight: Option<Flight>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -30,6 +31,17 @@ pub struct Measure {
     pub settle: Duration,
     pub frames: u32,
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct Flight {
+    pub seconds: u32,
+    pub look: f32,
+    pub turn: f32,
+}
+
+const FLIGHT_SETTLE: u32 = 120;
+const HITCH_MS: f64 = 33.4;
+const TRACK_MS: f64 = 4000.0;
 
 #[derive(Clone, Debug)]
 pub struct WindowReport {
@@ -40,6 +52,7 @@ pub struct WindowReport {
     pub adapter: engine::AdapterInfo,
     pub size: (u32, u32),
     pub window: (u32, u32),
+    pub flight: Option<serde_json::Value>,
 }
 
 impl Window {
@@ -52,6 +65,7 @@ impl Window {
             vsync: true,
             settings: HostSettings::default(),
             measure: None,
+            flight: None,
         }
     }
 }
@@ -100,6 +114,13 @@ struct Running<G: Game> {
     jobs: JobPool,
     playing: Option<Instant>,
     measured: Vec<(Instant, f64)>,
+    settled: u32,
+    flown: Vec<f64>,
+    marks: Vec<u64>,
+    track: Vec<serde_json::Value>,
+    tracked: usize,
+    steps: u32,
+    render_size: (u32, u32),
 }
 
 impl<'a, G: Game> App<'a, G> {
@@ -108,8 +129,9 @@ impl<'a, G: Game> App<'a, G> {
         event_loop: &ActiveEventLoop,
         (bricks, build): Build<'a, G>,
     ) -> engine::Result<Running<G>> {
-        let attributes =
-            winit::window::Window::default_attributes().with_title(&self.options.title);
+        let attributes = winit::window::Window::default_attributes()
+            .with_title(&self.options.title)
+            .with_active(self.options.flight.is_none());
         let attributes = match self.options.size {
             Some((width, height)) => attributes.with_inner_size(PhysicalSize::new(width, height)),
             None => attributes.with_inner_size(LogicalSize::new(1280.0, 720.0)),
@@ -147,6 +169,13 @@ impl<'a, G: Game> App<'a, G> {
             jobs,
             playing: None,
             measured: Vec::new(),
+            settled: 0,
+            flown: Vec::new(),
+            marks: Vec::new(),
+            track: Vec::new(),
+            tracked: 0,
+            steps: 0,
+            render_size: (0, 0),
         })
     }
 }
@@ -173,6 +202,17 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
         let Some(running) = &mut self.running else {
             return;
         };
+        if self.options.flight.is_some()
+            && matches!(
+                event,
+                WindowEvent::KeyboardInput { .. }
+                    | WindowEvent::MouseInput { .. }
+                    | WindowEvent::CursorMoved { .. }
+                    | WindowEvent::Focused(_)
+            )
+        {
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -225,6 +265,13 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                     event_loop.exit();
                     return;
                 }
+                if let Some(flight) = self.options.flight
+                    && let Some(report) = running.flown(flight)
+                {
+                    self.outcome = Ok(Some(report));
+                    event_loop.exit();
+                    return;
+                }
                 running.window.request_redraw();
             }
             _ => {}
@@ -237,6 +284,7 @@ impl<G: Game> Running<G> {
         let timestamp = engine::host::now_ms();
         let (width, height) = self.size;
         let phase = self.host.animation_frame(timestamp, width, height)?;
+        engine::profiling::mark_speed();
         self.exchange_jobs();
         if phase == FramePhase::Playing {
             self.title.frame(&self.window, timestamp, &self.host);
@@ -251,6 +299,82 @@ impl<G: Game> Running<G> {
         self.jobs.exchange(&mut self.host);
     }
 
+    fn flown(&mut self, flight: Flight) -> Option<WindowReport> {
+        if self.host.preparing() {
+            return None;
+        }
+        if self.settled < FLIGHT_SETTLE {
+            self.settled += 1;
+            return None;
+        }
+        if self.flown.is_empty() {
+            self.host.look(0.0, flight.look);
+            drop(engine::profiling::take_rows());
+            _ = engine::profiling::take_speed();
+        }
+        self.host.key("KeyW", true);
+        let now = engine::host::now_ms();
+        let since = self.flown.last().map_or(0.0, |&before| now - before);
+        self.host.look(flight.turn * (since / 1000.0) as f32, 0.0);
+        self.flown.push(now);
+        self.marks.push(engine::profiling::frame_mark());
+        let resolution = self.host.frame_times().resolution;
+        let size = (resolution.render_width, resolution.render_height);
+        if self.flown.len() > 1 && size != self.render_size {
+            self.steps += 1;
+        }
+        self.render_size = size;
+        let first = self.flown.first().copied()?;
+        let last = self.flown.last().copied()?;
+        if last - self.flown[self.tracked] >= TRACK_MS {
+            let mut spans: Vec<f64> = self.flown[self.tracked..]
+                .windows(2)
+                .map(|at| at[1] - at[0])
+                .collect();
+            spans.sort_by(f64::total_cmp);
+            self.track.push(serde_json::json!({
+                "seconds": (last - first) / 1000.0,
+                "eye": self.host.eye(),
+                "gpu_ms": resolution.gpu_ms,
+                "width": size.0,
+                "median_ms": spans.get(spans.len() / 2),
+                "worst_ms": spans.last(),
+            }));
+            self.tracked = self.flown.len() - 1;
+        }
+        if last - first < f64::from(flight.seconds) * 1000.0 {
+            return None;
+        }
+        let mut intervals: Vec<f64> = self.flown.windows(2).map(|at| at[1] - at[0]).collect();
+        let hitches: Vec<serde_json::Value> = intervals
+            .iter()
+            .zip(&self.marks)
+            .filter(|&(&ms, _)| ms > HITCH_MS)
+            .map(|(&ms, &mark)| serde_json::json!({ "frame": mark, "ms": ms }))
+            .collect();
+        let minutes = (last - first) / 60_000.0;
+        let over = intervals.iter().filter(|&&ms| ms > HITCH_MS).count();
+        intervals.sort_by(f64::total_cmp);
+        Some(WindowReport {
+            frames: self.flown.len() as u32,
+            elapsed_ms: last - first,
+            cpu_ms: Vec::new(),
+            stats: self.host.stats(),
+            adapter: self.host.adapter().clone(),
+            size,
+            window: self.size,
+            flight: Some(serde_json::json!({
+                "frames": self.flown.len(),
+                "over_33_per_minute": over as f64 / minutes,
+                "worst_ms": intervals.last(),
+                "median_ms": intervals.get(intervals.len() / 2),
+                "resolution_steps_per_minute": f64::from(self.steps) / minutes,
+                "hitches": hitches,
+                "track": self.track,
+            })),
+        })
+    }
+
     fn measured(&mut self, measure: Measure, start: Instant) -> Option<WindowReport> {
         if self.host.preparing() {
             return None;
@@ -259,7 +383,7 @@ impl<G: Game> Running<G> {
         if start.duration_since(playing) < measure.settle {
             return None;
         }
-        let stats = self.host.frame_stats();
+        let stats = self.host.frame_times();
         self.measured.push((
             start,
             stats.simulation_ms + stats.extraction_ms + stats.render_ms,
@@ -276,6 +400,7 @@ impl<G: Game> Running<G> {
             adapter: self.host.adapter().clone(),
             size: (resolution.render_width, resolution.render_height),
             window: self.size,
+            flight: None,
         })
     }
 }
@@ -308,7 +433,7 @@ impl Title {
         timestamp: f64,
         host: &GameHost<G>,
     ) {
-        let stats = host.frame_stats();
+        let stats = host.frame_times();
         self.frames += 1;
         self.cpu_ms += stats.simulation_ms + stats.extraction_ms + stats.render_ms;
         let since = *self.since.get_or_insert(timestamp);

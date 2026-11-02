@@ -54,22 +54,26 @@ impl Run {
                     mapped_at_creation: false,
                 },
             );
-            self.generation += 1;
+            self.rebuilt.buffers += 1;
+            self.touch(Held::Cameras);
             self.uploads.cameras.clear();
         }
-        let mut staged = vec![0_u8; bytes as usize];
+        let mut staged = std::mem::take(&mut self.spare.cameras);
+        staged.clear();
+        staged.resize(bytes as usize, 0);
         for (index, camera) in self.cameras.iter().enumerate() {
             let at = index * CAMERA_STRIDE as usize;
             let raw = bytemuck::bytes_of(camera);
             staged[at..at + raw.len()].copy_from_slice(raw);
         }
         if staged == self.uploads.cameras {
+            self.spare.cameras = staged;
             return 0;
         }
         let main = size_of::<CameraUniform>();
         let changed = self.uploads.cameras.get(..main) != staged.get(..main);
         crate::gpu_calls::upload_buffer(&self.queue, &self.camera, 0, &staged);
-        self.uploads.cameras = staged;
+        self.spare.cameras = std::mem::replace(&mut self.uploads.cameras, staged);
         if changed { main as u64 } else { 0 }
     }
 
@@ -96,7 +100,8 @@ impl Run {
                     mapped_at_creation: false,
                 },
             );
-            self.generation += 1;
+            self.rebuilt.buffers += 1;
+            self.touch(Held::Pieces);
         }
         let mut staged = bytes.clone();
         staged.resize(size as usize, 0);
@@ -313,65 +318,72 @@ impl Run {
         let atlas = self.assets.impostors.generation();
         if self.atlas_generation != Some(atlas) {
             self.atlas_generation = Some(atlas);
-            self.generation += 1;
+            self.touch(Held::Atlas);
         }
-        let generation = self.generation;
+        if self.stale.is_empty() {
+            return;
+        }
         let saved_pass = self.pass;
-        self.pass = u32::MAX;
-        for variant in 0..self.machine.variants.len() {
-            if self.frame_groups[variant].1 == generation {
-                continue;
+        let saved_parity = self.parity;
+        let mut stale = std::mem::take(&mut self.stale);
+        self.rebuilt.groups += stale.len() as u32;
+        for holder in stale.drain(..) {
+            match holder {
+                Holder::Frame(variant) => self.rebuild_frame(variant as usize),
+                Holder::Own(pipeline, group) => self.rebuild_own(pipeline as usize, group as usize),
             }
-            for parity in 0..2 {
-                let saved = self.parity;
-                self.parity = parity;
-                let entries: Vec<(u32, crate::bindings::Stages)> = self.machine.variants[variant].entries.clone();
-                let mut resolved = Vec::with_capacity(entries.len());
-                for (binding, _) in entries {
-                    let ty = self.frame_ty(binding);
-                    let found = match binding {
-                        0 => Resolved::Dynamic(self.camera.clone(), size_of::<CameraUniform>() as u64),
-                        1 => Resolved::Buffer(self.pieces.clone()),
-                        _ => match self.machine.frame_bound.get(&binding).cloned() {
-                            Some(bound) => self.resource(&bound, ty, true),
-                            None => self.core_frame(binding, ty),
-                        },
-                    };
-                    resolved.push((binding, found));
-                }
-                let layout = self.machine.variants[variant].layout.clone();
-                let group = self.bind_group(&layout, (None, 0), resolved);
-                self.frame_groups[variant].0[parity] = Some(group);
-                self.parity = saved;
-            }
-            self.frame_groups[variant].1 = generation;
         }
-        for pipeline in 0..self.machine.pipelines.len() {
-            if self.own_groups[pipeline].1 == generation {
-                continue;
-            }
-            let groups = self.machine.pipelines[pipeline].groups.len();
-            self.pass = self.home_pass(pipeline);
-            for group in 0..groups {
-                for parity in 0..2 {
-                    let saved = self.parity;
-                    self.parity = parity;
-                    let entries = self.machine.pipelines[pipeline].groups[group].entries.clone();
-                    let mut resolved = Vec::with_capacity(entries.len());
-                    for (binding, bound, ty) in entries {
-                        let found = self.resource(&bound, ty, !ty.writes());
-                        resolved.push((binding, found));
-                    }
-                    let layout = self.machine.pipelines[pipeline].groups[group].layout.clone();
-                    let index = self.machine.pipelines[pipeline].groups[group].index;
-                    let made = self.bind_group(&layout, (Some(pipeline), index), resolved);
-                    self.own_groups[pipeline].0[group][parity] = Some(made);
-                    self.parity = saved;
-                }
-            }
-            self.own_groups[pipeline].1 = generation;
-        }
+        self.stale = stale;
+        self.parity = saved_parity;
         self.pass = saved_pass;
+    }
+
+    fn rebuild_frame(&mut self, variant: usize) {
+        self.pass = u32::MAX;
+        for parity in 0..2 {
+            self.parity = parity;
+            let entries: Vec<(u32, crate::bindings::Stages)> = self.machine.variants[variant].entries.clone();
+            let mut resolved = Vec::with_capacity(entries.len());
+            for (binding, _) in entries {
+                let ty = self.machine.frame_slots.get(&binding).map_or(Ty::Uniform, |slot| slot.ty);
+                let found = match binding {
+                    0 => Resolved::Dynamic(self.camera.clone(), size_of::<CameraUniform>() as u64),
+                    1 => Resolved::Buffer(self.pieces.clone()),
+                    _ => match self.machine.frame_bound.get(&binding).cloned() {
+                        Some(bound) => self.resource(&bound, ty, true),
+                        None => self.core_frame(binding, ty),
+                    },
+                };
+                resolved.push((binding, found));
+            }
+            let layout = self.machine.variants[variant].layout.clone();
+            let group = self.bind_group(&layout, (None, 0), resolved);
+            self.frame_groups[variant].made[parity] = Some(group);
+        }
+        self.frame_groups[variant].stale = false;
+    }
+
+    fn rebuild_own(&mut self, pipeline: usize, group: usize) {
+        self.pass = self.machine.pipelines[pipeline].home;
+        for parity in 0..2 {
+            self.parity = parity;
+            let entries = self.machine.pipelines[pipeline].groups[group].entries.clone();
+            let mut resolved = Vec::with_capacity(entries.len());
+            for (binding, bound, ty) in entries {
+                let found = self.resource(&bound, ty, !ty.writes());
+                resolved.push((binding, found));
+            }
+            let layout = self.machine.pipelines[pipeline].groups[group].layout.clone();
+            let index = self.machine.pipelines[pipeline].groups[group].index;
+            let made = self.bind_group(&layout, (Some(pipeline), index), resolved);
+            self.own_groups[pipeline][group].made[parity] = Some(made);
+        }
+        self.own_groups[pipeline][group].stale = false;
+        for filled in &mut self.filled {
+            if filled.base as usize == pipeline {
+                filled.groups.clear();
+            }
+        }
     }
 
     pub(super) fn scope_passes(&self, pipeline: usize) -> Vec<u32> {
@@ -388,41 +400,20 @@ impl Run {
             .collect()
     }
 
-    pub(super) fn home_pass(&self, pipeline: usize) -> u32 {
-        self.scope_passes(pipeline).first().copied().unwrap_or(u32::MAX)
-    }
-
-    pub(super) fn frame_ty(&self, binding: u32) -> Ty {
-        self.machine
-            .frame
-            .iter()
-            .find(|(path, name, _)| self.machine.linker.binding_of(path, name) == Some(binding))
-            .map_or(Ty::Uniform, |(_, _, ty)| *ty)
-    }
-
     pub(super) fn core_frame(&mut self, binding: u32, ty: Ty) -> Resolved {
-        let found = self
-            .machine
-            .frame
-            .iter()
-            .find(|(path, name, _)| self.machine.linker.binding_of(path, name) == Some(binding))
-            .filter(|(path, _, _)| self.machine.linker.is_core(path));
-        if let Some((_, name, _)) = found.filter(|(path, _, _)| path == crate::shaders::IMPOSTORS_MODULE) {
-            return match self.assets.impostors.frame_resource(name) {
+        let core = self.machine.frame_slots.get(&binding).and_then(|slot| slot.core.as_ref());
+        match core {
+            Some(CoreFrame::Impostor(name)) => match self.assets.impostors.frame_resource(name) {
                 Some(crate::impostors::FrameResource::View(view)) => Resolved::View(view.clone()),
                 Some(crate::impostors::FrameResource::Sampler(sampler)) => Resolved::Sampler(sampler.clone()),
                 None => Resolved::Placeholder(ty),
-            };
-        }
-        let named = found.map(|(_, name, _)| name.clone());
-        let target = match named.as_deref() {
-            Some(crate::shared::POST) => return Resolved::Buffer(self.post_buffer.clone()),
-            Some(crate::shared::LINEAR) => return Resolved::Sampler(self.linear.clone()),
-            Some(name) => crate::machine::core_target(name, &self.machine.outputs),
-            None => None,
-        };
-        match target.and_then(|target| self.view_of(target, false).cloned()) {
-            Some(view) => Resolved::View(view),
+            },
+            Some(CoreFrame::Post) => Resolved::Buffer(self.post_buffer.clone()),
+            Some(CoreFrame::Linear) => Resolved::Sampler(self.linear.clone()),
+            Some(CoreFrame::Target(target)) => match self.view_of(*target, false) {
+                Some(view) => Resolved::View(view.clone()),
+                None => Resolved::Placeholder(ty),
+            },
             None => Resolved::Placeholder(ty),
         }
     }
@@ -469,6 +460,7 @@ impl Run {
         self.targets = targets;
         self.previous_targets = previous;
         self.debug_targets = DEBUG_FORMATS.iter().map(|format| made("engine/debug-target", *format)).collect();
-        self.generation += 1;
+        self.rebuilt.textures += 1;
+        self.touch(Held::Targets);
     }
 }

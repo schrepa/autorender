@@ -466,13 +466,13 @@ impl ScatterGpu {
         }
         let pool = &state.pool;
         let objects = state.objects;
-        let range = match held.uploaded {
-            Some(seen) if seen == state.slots_revision => None,
-            Some(seen) if seen + 1 == state.slots_revision => state.dirty.clone(),
-            Some(_) | None => Some(0..objects),
-        }
-        .filter(|range| !range.is_empty());
-        if let Some(range) = range {
+        let whole = [0..objects];
+        let ranges: &[std::ops::Range<u32>] = match held.uploaded {
+            Some(seen) if seen == state.slots_revision => &[],
+            Some(seen) if seen + 1 == state.slots_revision => &state.dirty,
+            Some(_) | None => &whole,
+        };
+        for range in ranges.iter().filter(|range| !range.is_empty()) {
             held.slots_written = true;
             let slots = range.start as usize..range.end as usize;
             cx.write(

@@ -331,6 +331,16 @@ impl<G: Game> GameHost<G> {
         self.app.stats()
     }
 
+    pub fn frame_times(&self) -> &engine_core::FrameStats {
+        self.app.frame_times()
+    }
+
+    pub fn eye(&self) -> Option<[f32; 3]> {
+        let world = self.app.engine().app.world();
+        let view = world.get_resource::<engine_core::View>()?;
+        Some(view.detail_eye().to_array())
+    }
+
     pub fn stats(&self) -> String {
         self.app.stats_json()
     }

@@ -102,6 +102,7 @@ struct Cell {
     slot: Option<u16>,
     drawn: bool,
     dirty: bool,
+    listed: bool,
     marked: u32,
     moving: u32,
 }
@@ -124,6 +125,7 @@ struct ClipLevel {
     depth: f32,
     half_depth: f32,
     cells: Vec<Cell>,
+    live: Vec<u16>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -189,6 +191,7 @@ pub(crate) struct Clipmap {
     table: Vec<u32>,
     changed: Vec<bool>,
     moving: Vec<(usize, usize)>,
+    order: Vec<(i32, u16)>,
     frame: u32,
     stats: ClipStats,
 }
@@ -234,6 +237,7 @@ impl Clipmap {
                 depth: light.z,
                 half_depth,
                 cells: vec![Cell::default(); cells],
+                live: Vec::new(),
             };
             match self.levels.get(index) {
                 Some(level) if (light.z - level.depth).abs() <= 0.5 * width => {
@@ -337,7 +341,13 @@ impl Clipmap {
     pub(crate) fn merge_marks(&mut self, words: &[u32]) {
         let frame = self.frame;
         for (level, cell) in self.marked_cells(words) {
-            self.levels[level].cells[cell].marked = frame;
+            let clip = &mut self.levels[level];
+            let held = &mut clip.cells[cell];
+            held.marked = frame;
+            if !held.listed {
+                held.listed = true;
+                clip.live.push(cell as u16);
+            }
         }
     }
 
@@ -408,17 +418,19 @@ impl Clipmap {
         out.composes.clear();
         out.moving.clear();
         self.stats = ClipStats::default();
+        self.prune_live();
         self.allocate();
         self.redraw(budget, region, out);
         self.draw_moving(moving_budget, out);
         let frame = self.frame;
         let (mut slotted, mut moving) = (0, 0);
-        let cells = self.levels.iter().flat_map(|level| &level.cells);
-        for cell in cells {
-            let marked = cell.marked_at(frame);
-            self.stats.marked += u32::from(marked);
-            slotted += u32::from(marked && cell.slot.is_some());
-            moving += u32::from(cell.drawn && marked && cell.moving_at(frame));
+        for clip in &self.levels {
+            for &cell in &clip.live {
+                let cell = &clip.cells[cell as usize];
+                self.stats.marked += 1;
+                slotted += u32::from(cell.slot.is_some());
+                moving += u32::from(cell.drawn && cell.moving_at(frame));
+            }
         }
         self.stats.resident = self.owners.iter().flatten().count() as u32;
         self.stats.drawn = out.composes.len() as u32;
@@ -427,14 +439,42 @@ impl Clipmap {
         self.stats.moving_cut = Cut::of(moving, self.stats.moving);
     }
 
+    fn prune_live(&mut self) {
+        let frame = self.frame;
+        for clip in &mut self.levels {
+            let ClipLevel { cells, live, .. } = clip;
+            live.sort_unstable();
+            live.dedup();
+            live.retain(|&cell| {
+                let held = &mut cells[cell as usize];
+                let kept = held.marked_at(frame);
+                held.listed = kept;
+                kept
+            });
+        }
+    }
+
+    fn scan_order(&self, level: usize, order: &mut Vec<(i32, u16)>) {
+        let clip = &self.levels[level];
+        let side = self.side as i32;
+        let mask = side - 1;
+        order.clear();
+        order.extend(clip.live.iter().map(|&cell| {
+            let (row, column) = (i32::from(cell) / side, i32::from(cell) % side);
+            let across = (row - clip.origin[1]) & mask;
+            let along = (column - clip.origin[0]) & mask;
+            (across * side + along, cell)
+        }));
+        order.sort_unstable();
+    }
+
     fn allocate(&mut self) {
         let frame = self.frame;
-        let cells = (self.side * self.side) as usize;
         let wanted = self
             .levels
             .iter()
-            .flat_map(|level| &level.cells)
-            .filter(|cell| cell.marked_at(frame) && cell.slot.is_none())
+            .flat_map(|level| level.live.iter().map(|&cell| &level.cells[cell as usize]))
+            .filter(|cell| cell.slot.is_none())
             .count();
         let mut reclaimable: Vec<(u32, u16)> = Vec::new();
         if wanted > self.free.len() {
@@ -450,9 +490,9 @@ impl Clipmap {
             reclaimable.sort_unstable_by(|a, b| b.cmp(a));
         }
         for level in (0..self.levels.len()).rev() {
-            for cell in 0..cells {
-                let held = self.levels[level].cells[cell];
-                if !held.marked_at(frame) || held.slot.is_some() {
+            for at in 0..self.levels[level].live.len() {
+                let cell = usize::from(self.levels[level].live[at]);
+                if self.levels[level].cells[cell].slot.is_some() {
                     continue;
                 }
                 let slot = match self.free.pop() {
@@ -475,57 +515,55 @@ impl Clipmap {
     }
 
     fn redraw(&mut self, budget: u32, region: u32, out: &mut ClipPlan) {
-        let frame = self.frame;
         let side = self.side as i32;
         let square = region as i32;
         let mut left = budget;
-        for level in (0..self.levels.len()).rev() {
+        let mut order = std::mem::take(&mut self.order);
+        'levels: for level in (0..self.levels.len()).rev() {
+            self.scan_order(level, &mut order);
             for redrawing in [false, true] {
-                for row in 0..side {
-                    for column in 0..side {
-                        if left == 0 {
-                            return;
-                        }
-                        let clip = &self.levels[level];
-                        let tile = [clip.origin[0] + column, clip.origin[1] + row];
-                        let cell =
-                            ((tile[1] & (side - 1)) * side + (tile[0] & (side - 1))) as usize;
-                        let held = clip.cells[cell];
-                        let Some(slot) = held.slot.filter(|_| held.marked_at(frame)) else {
-                            continue;
-                        };
-                        if held.drawn != redrawing || (redrawing && !held.dirty) {
-                            continue;
-                        }
-                        let first = tile.map(|at| at.div_euclid(square) * square);
-                        let index = match out
-                            .regions
-                            .iter()
-                            .position(|region| region.level == level && region.first == first)
-                        {
-                            Some(index) => index,
-                            None if out.regions.len() < SHADOW_REGIONS as usize => {
-                                out.regions.push(self.region(level, first, square));
-                                out.regions.len() - 1
-                            }
-                            None => continue,
-                        };
-                        out.composes.push(Compose {
-                            slot,
-                            region: index as u8,
-                            at: [(tile[0] - first[0]) as u32, (tile[1] - first[1]) as u32],
-                        });
-                        let held = &mut self.levels[level].cells[cell];
-                        held.drawn = true;
-                        held.dirty = false;
-                        let moving =
-                            self.table[level * (side * side) as usize + cell] & 0xffff_0000;
-                        self.set_entry(level, cell, moving | entry(Some(slot), None));
-                        left -= 1;
+                for &(place, cell) in &order {
+                    if left == 0 {
+                        break 'levels;
                     }
+                    let cell = usize::from(cell);
+                    let clip = &self.levels[level];
+                    let tile = [clip.origin[0] + place % side, clip.origin[1] + place / side];
+                    let held = clip.cells[cell];
+                    let Some(slot) = held.slot else {
+                        continue;
+                    };
+                    if held.drawn != redrawing || (redrawing && !held.dirty) {
+                        continue;
+                    }
+                    let first = tile.map(|at| at.div_euclid(square) * square);
+                    let index = match out
+                        .regions
+                        .iter()
+                        .position(|region| region.level == level && region.first == first)
+                    {
+                        Some(index) => index,
+                        None if out.regions.len() < SHADOW_REGIONS as usize => {
+                            out.regions.push(self.region(level, first, square));
+                            out.regions.len() - 1
+                        }
+                        None => continue,
+                    };
+                    out.composes.push(Compose {
+                        slot,
+                        region: index as u8,
+                        at: [(tile[0] - first[0]) as u32, (tile[1] - first[1]) as u32],
+                    });
+                    let held = &mut self.levels[level].cells[cell];
+                    held.drawn = true;
+                    held.dirty = false;
+                    let moving = self.table[level * (side * side) as usize + cell] & 0xffff_0000;
+                    self.set_entry(level, cell, moving | entry(Some(slot), None));
+                    left -= 1;
                 }
             }
         }
+        self.order = order;
     }
 
     fn region(&self, level: usize, first: [i32; 2], square: i32) -> Region {
@@ -555,27 +593,28 @@ impl Clipmap {
         }
         let frame = self.frame;
         let side = self.side as i32;
-        for level in (0..self.levels.len()).rev() {
-            for row in 0..side {
-                for column in 0..side {
-                    if out.moving.len() >= budget as usize {
-                        return;
-                    }
-                    let clip = &self.levels[level];
-                    let tile = [clip.origin[0] + column, clip.origin[1] + row];
-                    let cell = ((tile[1] & (side - 1)) * side + (tile[0] & (side - 1))) as usize;
-                    let held = clip.cells[cell];
-                    if !(held.drawn && held.marked_at(frame) && held.moving_at(frame)) {
-                        continue;
-                    }
-                    let index = out.moving.len() as u16;
-                    out.moving.push(MovingTile { level, tile, index });
-                    self.moving.push((level, cell));
-                    let slot = self.owners.len() as u32 + u32::from(index);
-                    self.set_entry(level, cell, entry(held.slot, Some(slot)));
+        let mut order = std::mem::take(&mut self.order);
+        'levels: for level in (0..self.levels.len()).rev() {
+            self.scan_order(level, &mut order);
+            for &(place, cell) in &order {
+                if out.moving.len() >= budget as usize {
+                    break 'levels;
                 }
+                let cell = usize::from(cell);
+                let clip = &self.levels[level];
+                let tile = [clip.origin[0] + place % side, clip.origin[1] + place / side];
+                let held = clip.cells[cell];
+                if !(held.drawn && held.moving_at(frame)) {
+                    continue;
+                }
+                let index = out.moving.len() as u16;
+                out.moving.push(MovingTile { level, tile, index });
+                self.moving.push((level, cell));
+                let slot = self.owners.len() as u32 + u32::from(index);
+                self.set_entry(level, cell, entry(held.slot, Some(slot)));
             }
         }
+        self.order = order;
     }
 
     pub(crate) fn take_table(&mut self) -> (&[u32], Vec<usize>) {

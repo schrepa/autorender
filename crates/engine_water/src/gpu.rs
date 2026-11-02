@@ -5,6 +5,7 @@ use engine_heightfield::tile::{PATCH_QUADS, PATCHES_PER_TILE};
 gpu_consts! {
     pub const NO_WATER_SURFACE: f32 = -1.0e30;
     pub const NO_WATER_BLOCK: u32 = 0xffffffff;
+    pub const WATER_WAITING: u32 = 0xfffffffe;
     pub const WATER_FLOW_RANGE: f32 = 8.0;
     pub const WATER_SHEAR_RANGE: f32 = 8.0;
     pub const WATER_GRADIENT_RANGE: f32 = 4.0;

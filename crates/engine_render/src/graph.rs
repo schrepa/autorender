@@ -572,7 +572,7 @@ pub const PLANS: usize = 16;
 
 #[derive(Debug, Default)]
 pub struct PlanCache {
-    plans: Vec<(Bits, Bits, Plan)>,
+    plans: Vec<(Bits, Bits, std::sync::Arc<Plan>)>,
 }
 
 impl PlanCache {
@@ -582,7 +582,7 @@ impl PlanCache {
         runs: &Bits,
         outputs: &Bits,
         most: usize,
-    ) -> Result<&Plan, Error> {
+    ) -> Result<std::sync::Arc<Plan>, Error> {
         let found = self
             .plans
             .iter()
@@ -594,11 +594,11 @@ impl PlanCache {
                 if self.plans.len() >= most.max(1) {
                     self.plans.remove(0);
                 }
-                self.plans.push((runs.clone(), outputs.clone(), plan));
+                self.plans.push((runs.clone(), outputs.clone(), std::sync::Arc::new(plan)));
                 self.plans.len() - 1
             }
         };
-        Ok(&self.plans[index].2)
+        Ok(std::sync::Arc::clone(&self.plans[index].2))
     }
 
     pub fn clear(&mut self) {

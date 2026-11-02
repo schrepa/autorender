@@ -1,20 +1,21 @@
 use super::*;
 
-type OwnGroups = Vec<(u32, Option<wgpu::BindGroup>, Vec<u32>)>;
-
-fn with_offsets(mut own: OwnGroups, groups: &[crate::machine::OwnGroup], offsets: &[u32]) -> OwnGroups {
-    let mut given = offsets.iter().copied();
-    for ((_, _, dynamic), group) in own.iter_mut().zip(groups) {
-        let mut windows: Vec<u32> = group
-            .entries
-            .iter()
-            .filter(|(_, bound, _)| bound.window())
-            .map(|(binding, _, _)| *binding)
-            .collect();
-        windows.sort_unstable();
-        dynamic.extend(windows.iter().map(|_| given.next().unwrap_or(0)));
+fn input_of<'b>(machine: &Machine, buffers: &'b [Option<(wgpu::Buffer, u64)>], part: u32, input: u32) -> Option<&'b wgpu::Buffer> {
+    let decl = machine.declared.inputs.get(input as usize)?;
+    if decl.part != part {
+        return None;
     }
-    own
+    buffers.get(decl.buffer as usize)?.as_ref().map(|(buffer, _)| buffer)
+}
+
+fn offsets_of<'o>(windows: usize, given: &mut &[u32], held: &'o mut [u32; MOST_OFFSETS]) -> &'o [u32] {
+    let count = windows.min(MOST_OFFSETS);
+    for slot in &mut held[..count] {
+        let (first, rest) = given.split_first().map_or((0, &[][..]), |(first, rest)| (*first, rest));
+        *slot = first;
+        *given = rest;
+    }
+    &held[..count]
 }
 
 impl Run {
@@ -36,16 +37,34 @@ impl Run {
         }
     }
 
-    pub(super) fn input(&self, part: u32, input: u32) -> Option<wgpu::Buffer> {
-        let decl = self.machine.declared.inputs.get(input as usize)?;
-        if decl.part != part {
+    fn mesh_variant(&self, point: Option<TypeId>, mesh: MeshHandle, material: Option<MaterialHandle>, pass: crate::MeshPass) -> Option<crate::materials::Variant> {
+        let extended = self.assets.meshes.get(mesh)?.extended;
+        if material.is_some_and(|handle| self.assets.materials.group(handle).is_none()) {
             return None;
         }
-        self.buffers.get(decl.buffer as usize)?.as_ref().map(|(buffer, _)| buffer.clone())
+        let uber = point.is_some_and(|point| self.machine.declared.claims.iter().any(|claim| claim.point == point && claim.uber));
+        let variant = self
+            .assets
+            .materials
+            .binding(material)
+            .1
+            .with_extended(extended)
+            .with_fading(pass.fading)
+            .with_grounding(pass.grounding);
+        Some(if uber {
+            variant.uber()
+        } else if pass.prepass {
+            variant.prepass()
+        } else if pass.opaque {
+            variant.opaque()
+        } else {
+            variant
+        })
     }
 
     #[expect(clippy::too_many_lines, reason = "longer than the line ceiling; it may only shrink")]
     pub(crate) fn draw(&mut self, part: u32, point: Option<TypeId>, handle: u32, (shape, offsets, pass): (RawShape, &[u32], crate::MeshPass), timed: TimedDraw<'_>) {
+        let _row = engine_profile::timed(engine_profile::row("render.draw"));
         let Some((pipeline, filled)) = self.pipeline_of(handle) else {
             return;
         };
@@ -57,131 +76,77 @@ impl Run {
             self.part = saved;
             return;
         }
-        if self.machine.pipelines[pipeline as usize].decl.holes() > 0 && filled.is_none() {
+        if self.machine.pipelines[pipeline as usize].holes && filled.is_none() {
             return;
         }
         if filled.is_some_and(|filled| self.filled[filled].groups.is_empty()) {
             self.fill_groups(pipeline, filled);
         }
-        let uber = point.is_some_and(|point| self.machine.declared.claims.iter().any(|claim| claim.point == point && claim.uber));
         let variant = match &shape {
             RawShape::Mesh { mesh, material, .. } | RawShape::MeshIndirect { mesh, material, .. } => {
-                let extended = self.assets.meshes.get(*mesh).is_some_and(|gpu| gpu.extended);
-                let known = material.is_none_or(|handle| self.assets.materials.group(handle).is_some());
-                known.then(|| {
-                    let variant = self
-                        .assets
-                        .materials
-                        .binding(*material)
-                        .1
-                        .with_extended(extended)
-                        .with_fading(pass.fading)
-                        .with_grounding(pass.grounding);
-                    let variant = if uber {
-                        variant.uber()
-                    } else if pass.prepass {
-                        variant.prepass()
-                    } else if pass.opaque {
-                        variant.opaque()
-                    } else {
-                        variant
-                    };
-                    (variant.bits(), variant.constants())
-                })
-            }
-            RawShape::Pulled { .. } | RawShape::Buffers { .. } | RawShape::Indirect { .. } | RawShape::IndirectAt { .. } => None,
-        };
-        let Some((key, made)) = self.render_pipeline(pipeline, variant) else {
-            return;
-        };
-        let parity = self.parity;
-        let built = &self.machine.pipelines[pipeline as usize];
-        let variant = built.variant;
-        let mesh_slots = match &built.decl.program {
-            Program::Render(desc) => desc.vertices.iter().filter(|layout| matches!(layout, VertexLayout::Mesh)).count() as u32,
-            Program::Compute(_) => 0,
-        };
-        let frame_group = self.frame_groups.get(variant as usize).and_then(|groups| groups.0[parity].clone());
-        let camera = usize::from(self.camera_bound(variant));
-        let own: Vec<(u32, Option<wgpu::BindGroup>, Vec<u32>)> = built
-            .groups
-            .iter()
-            .enumerate()
-            .map(|(at, group)| {
-                let filled_group = filled.and_then(|filled| {
-                    self.filled[filled].groups.iter().find(|(index, _)| *index == group.index).map(|(_, made)| made.clone())
-                });
-                (group.index, filled_group.or_else(|| self.own_groups[pipeline as usize].0[at][parity].clone()), Vec::new())
-            })
-            .collect();
-        let own = with_offsets(own, &built.groups, offsets);
-        let vertex_inputs: Vec<Option<wgpu::Buffer>> = match &shape {
-            RawShape::Buffers { vertices, .. } | RawShape::Indirect { vertices, .. } => {
-                vertices.iter().map(|input| self.input(part, *input)).collect()
-            }
-            RawShape::Pulled { .. } | RawShape::IndirectAt { .. } | RawShape::Mesh { .. } | RawShape::MeshIndirect { .. } => Vec::new(),
-        };
-        let index_input = match &shape {
-            RawShape::Buffers { indices, .. } | RawShape::Indirect { indices, .. } | RawShape::IndirectAt { indices, .. } => {
-                indices.and_then(|input| self.input(part, input))
-            }
-            RawShape::Pulled { .. } | RawShape::Mesh { .. } | RawShape::MeshIndirect { .. } => None,
-        };
-        let args_input = match &shape {
-            RawShape::Indirect { args, .. } | RawShape::IndirectAt { args, .. } | RawShape::MeshIndirect { args, .. } => self.input(part, *args),
-            RawShape::Pulled { .. } | RawShape::Buffers { .. } | RawShape::Mesh { .. } => None,
-        };
-        let stream_inputs: Vec<(Option<wgpu::Buffer>, u64)> = match &shape {
-            RawShape::Mesh { streams, .. } | RawShape::MeshIndirect { streams, .. } | RawShape::IndirectAt { vertices: streams, .. } => {
-                streams.iter().map(|(input, offset)| (self.input(part, *input), *offset)).collect()
-            }
-            RawShape::Pulled { .. } | RawShape::Buffers { .. } | RawShape::Indirect { .. } => Vec::new(),
-        };
-        let mesh = match &shape {
-            RawShape::Mesh { mesh, material, .. } | RawShape::MeshIndirect { mesh, material, .. } => {
-                let Some(draw) = self.assets.meshes.draw(*mesh) else {
+                let Some(variant) = self.mesh_variant(point, *mesh, *material, pass) else {
                     return;
                 };
-                let group = match material {
-                    Some(handle) => match self.assets.materials.group(*handle) {
-                        Some(group) => group.clone(),
-                        None => return,
-                    },
-                    None => self.assets.materials.binding(None).0.clone(),
-                };
-                Some((draw.vertices.clone(), draw.extras.cloned(), draw.indices.clone(), draw.first_index, draw.base_vertex, draw.index_count, group))
+                Some(variant)
             }
             RawShape::Pulled { .. } | RawShape::Buffers { .. } | RawShape::Indirect { .. } | RawShape::IndirectAt { .. } => None,
         };
-        let Some(open) = self.open.as_mut() else {
+        let Some(ready) = self.render_pipeline(pipeline, variant) else {
             return;
         };
+        let Self { machine, open, frame_groups, own_groups, filled: fills, buffers, assets, parity, .. } = self;
+        let parity = *parity;
+        let Some(open) = open.as_mut() else {
+            return;
+        };
+        let built = &machine.pipelines[pipeline as usize];
+        let chosen = &built.ready[ready];
         let render = &mut open.pass;
-        if open.set.pipeline != Some((pipeline, key)) {
-            render.set_pipeline(&made);
-            open.set.pipeline = Some((pipeline, key));
+        if open.set.pipeline != Some((pipeline, chosen.key)) {
+            render.set_pipeline(&chosen.made);
+            open.set.pipeline = Some((pipeline, chosen.key));
             open.set.frame = None;
         }
-        if open.set.frame != Some((variant, open.offset))
-            && let Some(group) = &frame_group
+        if open.set.frame != Some((built.variant, open.offset))
+            && let Some(group) = frame_groups.get(built.variant as usize).and_then(|groups| groups.made[parity].as_ref())
         {
+            let camera = usize::from(machine.variants.get(built.variant as usize).is_some_and(|found| found.camera));
             render.set_bind_group(0, group, &[open.offset][..camera]);
-            open.set.frame = Some((variant, open.offset));
+            open.set.frame = Some((built.variant, open.offset));
         }
-        for (index, group, dynamic) in &own {
-            if let Some(group) = group {
-                render.set_bind_group(*index, group, dynamic);
+        let mut given = offsets;
+        let mut held = [0_u32; MOST_OFFSETS];
+        for (at, group) in built.groups.iter().enumerate() {
+            let dynamic = offsets_of(group.windows, &mut given, &mut held);
+            let holding = (pipeline, filled, at);
+            let slot = group.index as usize;
+            if group.windows == 0 && open.set.own.get(slot).copied().flatten() == Some(holding) {
+                continue;
+            }
+            let filled_group = filled.and_then(|filled| {
+                fills[filled].groups.iter().find(|(index, _)| *index == group.index).map(|(_, made)| made)
+            });
+            if let Some(made) = filled_group.or(own_groups[pipeline as usize][at].made[parity].as_ref()) {
+                render.set_bind_group(group.index, made, dynamic);
+                if let Some(known) = open.set.own.get_mut(slot) {
+                    *known = Some(holding);
+                }
+                if group.index == 1 {
+                    open.set.material = None;
+                }
             }
         }
+        let input = |input: u32| input_of(machine, buffers, part, input);
+        let mesh_slots = built.mesh_slots;
         match shape {
             RawShape::Pulled { vertices, instances } => timed_draw(render, timed, |render| render.draw(vertices, instances)),
-            RawShape::Buffers { elements, instances, .. } => {
-                for (slot, buffer) in vertex_inputs.iter().enumerate() {
-                    if let Some(buffer) = buffer {
+            RawShape::Buffers { vertices, indices, elements, instances } => {
+                for (slot, (stream, _)) in vertices.listed().iter().enumerate() {
+                    if let Some(buffer) = input(*stream) {
                         render.set_vertex_buffer(slot as u32, buffer.slice(..));
                     }
                 }
-                match index_input {
+                match indices.and_then(input) {
                     Some(indices) => {
                         render.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
                         timed_draw(render, timed, |render| render.draw_indexed(elements, 0, instances));
@@ -189,70 +154,89 @@ impl Run {
                     None => timed_draw(render, timed, |render| render.draw(elements, instances)),
                 }
             }
-            RawShape::Indirect { offset, .. } => {
-                for (slot, buffer) in vertex_inputs.iter().enumerate() {
-                    if let Some(buffer) = buffer {
+            RawShape::Indirect { vertices, indices, args, offset } => {
+                for (slot, (stream, _)) in vertices.listed().iter().enumerate() {
+                    if let Some(buffer) = input(*stream) {
                         render.set_vertex_buffer(slot as u32, buffer.slice(..));
                     }
                 }
-                let Some(args) = args_input else { return };
-                match index_input {
+                let Some(args) = input(args) else { return };
+                match indices.and_then(input) {
                     Some(indices) => {
                         render.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
-                        timed_draw(render, timed, |render| render.draw_indexed_indirect(&args, offset));
+                        timed_draw(render, timed, |render| render.draw_indexed_indirect(args, offset));
                     }
-                    None => timed_draw(render, timed, |render| render.draw_indirect(&args, offset)),
+                    None => timed_draw(render, timed, |render| render.draw_indirect(args, offset)),
                 }
             }
-            RawShape::IndirectAt { offset, .. } => {
-                for (slot, (buffer, start)) in stream_inputs.iter().enumerate() {
-                    if let Some(buffer) = buffer {
+            RawShape::IndirectAt { vertices, indices, args, offset } => {
+                for (slot, (stream, start)) in vertices.listed().iter().enumerate() {
+                    if let Some(buffer) = input(*stream) {
                         render.set_vertex_buffer(slot as u32, buffer.slice(*start..));
                     }
                 }
-                let Some(args) = args_input else { return };
-                match index_input {
+                let Some(args) = input(args) else { return };
+                match indices.and_then(input) {
                     Some(indices) => {
                         render.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
-                        timed_draw(render, timed, |render| render.draw_indexed_indirect(&args, offset));
+                        timed_draw(render, timed, |render| render.draw_indexed_indirect(args, offset));
                     }
-                    None => timed_draw(render, timed, |render| render.draw_indirect(&args, offset)),
+                    None => timed_draw(render, timed, |render| render.draw_indirect(args, offset)),
                 }
             }
-            RawShape::Mesh { instances, .. } => {
-                let Some((vertices, extras, indices, first, base, count, group)) = mesh else { return };
-                render.set_bind_group(1, &group, &[]);
-                render.set_vertex_buffer(0, vertices.slice(..));
+            RawShape::Mesh { mesh, material, instances, streams } => {
+                let Some(draw) = assets.meshes.draw(mesh) else { return };
+                let group = match material {
+                    Some(handle) => assets.materials.group(handle),
+                    None => Some(assets.materials.binding(None).0),
+                };
+                let Some(group) = group else { return };
+                if open.set.material != Some(material) {
+                    render.set_bind_group(1, group, &[]);
+                    open.set.material = Some(material);
+                    open.set.own[1] = None;
+                }
+                render.set_vertex_buffer(0, draw.vertices.slice(..));
                 if mesh_slots > 1
-                    && let Some(extras) = &extras
+                    && let Some(extras) = draw.extras
                 {
                     render.set_vertex_buffer(1, extras.slice(..));
                 }
-                for (at, (buffer, start)) in stream_inputs.iter().enumerate() {
-                    if let Some(buffer) = buffer {
+                for (at, (stream, start)) in streams.listed().iter().enumerate() {
+                    if let Some(buffer) = input(*stream) {
                         render.set_vertex_buffer(mesh_slots + at as u32, buffer.slice(*start..));
                     }
                 }
-                render.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+                render.set_index_buffer(draw.indices.slice(..), wgpu::IndexFormat::Uint32);
+                let (first, base, count) = (draw.first_index, draw.base_vertex, draw.index_count);
                 timed_draw(render, timed, |render| render.draw_indexed(first..first + count, base, instances));
             }
-            RawShape::MeshIndirect { offset, .. } => {
-                let Some((vertices, extras, indices, _, _, _, group)) = mesh else { return };
-                let Some(args) = args_input else { return };
-                render.set_bind_group(1, &group, &[]);
-                render.set_vertex_buffer(0, vertices.slice(..));
+            RawShape::MeshIndirect { mesh, material, args, offset, streams } => {
+                let Some(draw) = assets.meshes.draw(mesh) else { return };
+                let group = match material {
+                    Some(handle) => assets.materials.group(handle),
+                    None => Some(assets.materials.binding(None).0),
+                };
+                let Some(group) = group else { return };
+                let Some(args) = input(args) else { return };
+                if open.set.material != Some(material) {
+                    render.set_bind_group(1, group, &[]);
+                    open.set.material = Some(material);
+                    open.set.own[1] = None;
+                }
+                render.set_vertex_buffer(0, draw.vertices.slice(..));
                 if mesh_slots > 1
-                    && let Some(extras) = &extras
+                    && let Some(extras) = draw.extras
                 {
                     render.set_vertex_buffer(1, extras.slice(..));
                 }
-                for (at, (buffer, start)) in stream_inputs.iter().enumerate() {
-                    if let Some(buffer) = buffer {
+                for (at, (stream, start)) in streams.listed().iter().enumerate() {
+                    if let Some(buffer) = input(*stream) {
                         render.set_vertex_buffer(mesh_slots + at as u32, buffer.slice(*start..));
                     }
                 }
-                render.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
-                timed_draw(render, timed, |render| render.draw_indexed_indirect(&args, offset));
+                render.set_index_buffer(draw.indices.slice(..), wgpu::IndexFormat::Uint32);
+                timed_draw(render, timed, |render| render.draw_indexed_indirect(args, offset));
             }
         }
     }
@@ -315,32 +299,22 @@ impl Run {
             self.fault(error);
             return 0;
         }
-        let Some(compute) = self.compute_pipeline(handle) else {
+        if built.compute_ready.is_none() {
+            let Some(made) = self.compute_pipeline(handle) else {
+                return 0;
+            };
+            self.machine.pipelines[handle as usize].compute_ready = Some(made);
+        }
+        if let CountRaw::Indirect(input, _) = count
+            && input_of(&self.machine, &self.buffers, part, input).is_none()
+        {
             return 0;
-        };
-        let built = &self.machine.pipelines[handle as usize];
-        let label = self.label_of(self.pass).unwrap_or("engine/part-dispatch");
-        let parity = self.parity;
-        let frame_group = self.frame_groups.get(built.variant as usize).and_then(|groups| groups.0[parity].clone());
-        let camera = usize::from(self.camera_bound(built.variant));
-        let own: Vec<(u32, Option<wgpu::BindGroup>, Vec<u32>)> = built
-            .groups
-            .iter()
-            .enumerate()
-            .map(|(at, group)| (group.index, self.own_groups[handle as usize].0[at][parity].clone(), Vec::new()))
-            .collect();
-        let own = with_offsets(own, &built.groups, offsets);
-        let indirect = match count {
-            CountRaw::Indirect(input, offset) => match self.input(part, input) {
-                Some(buffer) => Some((buffer, offset)),
-                None => return 0,
-            },
-            CountRaw::Groups(_) => None,
-        };
+        }
         let current = self.pass;
         if self.computing.as_ref().is_none_or(|(known, _)| *known != current) {
             self.computing = None;
             self.group(current);
+            let label = self.label_of(current).unwrap_or("engine/part-dispatch");
             let Some(encoder) = self.encoder.as_mut() else {
                 return 0;
             };
@@ -352,22 +326,35 @@ impl Run {
                 .forget_lifetime();
             self.computing = Some((current, begun));
         }
-        let Some((_, pass)) = self.computing.as_mut() else {
+        let Self { machine, computing, frame_groups, own_groups, buffers, parity, .. } = self;
+        let parity = *parity;
+        let Some((_, pass)) = computing.as_mut() else {
             return 0;
         };
-        pass.set_pipeline(&compute);
-        if let Some(group) = &frame_group {
+        let built = &machine.pipelines[handle as usize];
+        let Some(compute) = built.compute_ready.as_ref() else {
+            return 0;
+        };
+        pass.set_pipeline(compute);
+        if let Some(group) = frame_groups.get(built.variant as usize).and_then(|groups| groups.made[parity].as_ref()) {
+            let camera = usize::from(machine.variants.get(built.variant as usize).is_some_and(|found| found.camera));
             pass.set_bind_group(0, group, &[0][..camera]);
         }
-        for (index, group, dynamic) in &own {
-            if let Some(group) = group {
-                pass.set_bind_group(*index, group, dynamic);
+        let mut given = offsets;
+        let mut held = [0_u32; MOST_OFFSETS];
+        for (at, group) in built.groups.iter().enumerate() {
+            let dynamic = offsets_of(group.windows, &mut given, &mut held);
+            if let Some(made) = own_groups[handle as usize][at].made[parity].as_ref() {
+                pass.set_bind_group(group.index, made, dynamic);
             }
         }
-        match (count, indirect) {
-            (_, Some((buffer, offset))) => pass.dispatch_workgroups_indirect(&buffer, offset),
-            (CountRaw::Groups([x, y, z]), None) => pass.dispatch_workgroups(x, y, z),
-            (CountRaw::Indirect(..), None) => {}
+        match count {
+            CountRaw::Indirect(input, offset) => {
+                if let Some(buffer) = input_of(machine, buffers, part, input) {
+                    pass.dispatch_workgroups_indirect(buffer, offset);
+                }
+            }
+            CountRaw::Groups([x, y, z]) => pass.dispatch_workgroups(x, y, z),
         }
         1
     }

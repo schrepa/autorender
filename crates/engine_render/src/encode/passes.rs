@@ -135,6 +135,13 @@ impl Run {
         }
     }
 
+    fn layer_set(&self, layer: Option<crate::Layer>) -> Arc<[SetFormat]> {
+        self.layer_sets
+            .iter()
+            .find(|(known, _)| *known == layer)
+            .map_or_else(|| Arc::from(set_formats(&self.machine.outputs, layer)), |(_, set)| Arc::clone(set))
+    }
+
     #[expect(clippy::too_many_lines, reason = "longer than the line ceiling; it may only shrink")]
     pub(crate) fn begin_render(&mut self, attach: AttachRaw, view: Option<u32>) -> bool {
         let Some(offset) = self.view_offset(self.part, view) else {
@@ -142,15 +149,19 @@ impl Run {
             self.fault(error);
             return false;
         };
-        let Some(pass) = self.machine.declared.passes.get(self.pass as usize).cloned() else {
+        let Some(pass) = self.pass_decls.get(self.pass as usize).cloned() else {
             return false;
         };
-        let Some(planned) = self.planned.clone() else {
+        let Some(plan) = self.plan.clone() else {
+            return false;
+        };
+        let Some(planned) = plan.passes.get(self.planned_at) else {
             return false;
         };
         let layer = self.pass_layer();
         let is_shared = shared(&pass);
-        let mut colors: Vec<(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)> = Vec::new();
+        let mut colors = std::mem::take(&mut self.spare.colors);
+        colors.clear();
         let mut depth: Option<(u64, wgpu::TextureView, wgpu::TextureFormat, Option<Ops>, bool)> = None;
         let mut main = false;
         let ops_of = |id: Option<crate::graph::ResourceId>| {
@@ -167,11 +178,7 @@ impl Run {
             crate::Access::Load => Ops { load: Load::Load, store: true },
             crate::Access::Clear => Ops { load: Load::Clear(clear.unwrap_or(fallback)), store: true },
         };
-        let key = |target: Target| -> u64 {
-            let mut hasher = DefaultHasher::new();
-            format!("{target:?}").hash(&mut hasher);
-            hasher.finish()
-        };
+        let key = target_key;
         match attach {
             AttachRaw::Declared => {
                 if let Some(layer) = layer {
@@ -185,7 +192,8 @@ impl Run {
                                 colors.push((key(target), Some(made.view.clone()), made.texture.format(), ops));
                             }
                         } else {
-                            for (target, format, _, written) in set_formats(&self.machine.outputs, Some(layer)) {
+                            let set = self.layer_set(Some(layer));
+                            for &(target, format, _, written) in set.iter() {
                                 let id = self.machine.ids.target(target);
                                 match ops_of(id).filter(|_| written) {
                                     Some(ops) => colors.push((key(target), self.view_of(target, true).cloned(), format, ops)),
@@ -207,7 +215,8 @@ impl Run {
                     }
                 }
                 if pass.name == crate::shared::COMPOSITE {
-                    for (target, format, _, _) in set_formats(&self.machine.outputs, None).into_iter().skip(1).filter(|(_, _, _, written)| *written) {
+                    let set = self.layer_set(None);
+                    for &(target, format, _, _) in set.iter().skip(1).filter(|(_, _, _, written)| *written) {
                         let id = self.machine.ids.target(target);
                         let ops = ops_of(id).unwrap_or(Ops { load: Load::Load, store: true });
                         colors.push((key(target), self.view_of(target, true).cloned(), format, ops));
@@ -279,7 +288,9 @@ impl Run {
                 }
             }
         }
-        let attachments: Vec<u64> = colors.iter().map(|(key, ..)| *key).chain(depth.as_ref().map(|(key, ..)| *key)).collect();
+        let mut attachments = std::mem::take(&mut self.spare.attachments);
+        attachments.clear();
+        attachments.extend(colors.iter().map(|(key, ..)| *key).chain(depth.as_ref().map(|(key, ..)| *key)));
         if let Some(open) = &mut self.open
             && self.merge
             && open.shared
@@ -297,18 +308,21 @@ impl Run {
                 open.pass.push_debug_group(pass.name);
                 open.label = Some(self.pass);
             }
+            colors.clear();
+            self.spare.colors = colors;
+            self.spare.attachments = attachments;
             return true;
         }
         self.end_render();
         let current = self.pass;
         self.group(current);
         let label = self.label_of(current).unwrap_or(pass.name);
+        let layout = self.pass_layout(&colors, depth.as_ref().map(|(_, _, format, _, view)| (*format, *view)), (self.debug && layer.is_some(), main));
         let Some(encoder) = self.encoder.as_mut() else {
             return false;
         };
-        let color_attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> = colors
-            .iter()
-            .map(|(_, view, _, ops)| {
+        let color_attachments: [Option<wgpu::RenderPassColorAttachment<'_>>; MOST_COLORS] = std::array::from_fn(|at| {
+            colors.get(at).and_then(|(_, view, _, ops)| {
                 view.as_ref().map(|view| wgpu::RenderPassColorAttachment {
                     view,
                     depth_slice: None,
@@ -316,7 +330,7 @@ impl Run {
                     ops: color_ops(*ops),
                 })
             })
-            .collect();
+        });
         let depth_attachment = depth.as_ref().map(|(_, view, _, ops, _)| wgpu::RenderPassDepthStencilAttachment {
             view,
             depth_ops: ops.map(depth_ops),
@@ -325,7 +339,7 @@ impl Run {
         let mut render = encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(label),
-                color_attachments: &color_attachments,
+                color_attachments: &color_attachments[..colors.len().min(MOST_COLORS)],
                 depth_stencil_attachment: depth_attachment,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -340,17 +354,33 @@ impl Run {
         self.open = Some(Open {
             pass: render,
             attachments,
-            formats: colors.iter().map(|(_, view, format, _)| view.as_ref().map(|_| *format)).collect(),
-            depth: depth.map(|(_, _, format, _, view)| (format, view)),
-            debug: self.debug && layer.is_some(),
-            main,
+            layout,
             offset,
             shared: is_shared,
             layered: layer.is_some(),
             label: None,
             set: Set::default(),
         });
+        colors.clear();
+        self.spare.colors = colors;
         true
+    }
+
+    fn pass_layout(
+        &mut self,
+        colors: &[(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)],
+        depth: Option<(wgpu::TextureFormat, bool)>,
+        (debug, main): (bool, bool),
+    ) -> u32 {
+        let formats = || colors.iter().map(|(_, view, format, _)| view.as_ref().map(|_| *format));
+        let found = self.layouts.iter().position(|known| {
+            known.depth == depth && known.debug == debug && known.main == main && known.formats.iter().copied().eq(formats())
+        });
+        let at = found.unwrap_or_else(|| {
+            self.layouts.push(PassLayout { formats: formats().collect(), depth, debug, main });
+            self.layouts.len() - 1
+        });
+        at as u32
     }
 
     pub(super) fn mismatch(&mut self, name: &str) -> bool {
@@ -371,8 +401,7 @@ impl Run {
         };
         let id = self.machine.ids.textures.get(texture as usize).copied();
         let planned = self
-            .planned
-            .as_ref()
+            .planned()
             .and_then(|planned| planned.depth)
             .and_then(|(known, ops)| (Some(known) == id).then_some(ops));
         let ops = planned.flatten().map(|ops| Ops { store: true, ..ops }).or_else(|| {
@@ -411,11 +440,11 @@ impl Run {
     }
 
     pub(super) fn end_open(&mut self) {
-        if let Some(mut open) = self.open.take()
-            && GROUPED
-            && open.label.is_some()
-        {
-            open.pass.pop_debug_group();
+        if let Some(mut open) = self.open.take() {
+            if GROUPED && open.label.is_some() {
+                open.pass.pop_debug_group();
+            }
+            self.spare.attachments = std::mem::take(&mut open.attachments);
         }
     }
 }

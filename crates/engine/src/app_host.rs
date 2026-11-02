@@ -775,6 +775,10 @@ impl AppHost {
         self.engine.job_list()
     }
 
+    pub fn frame_times(&self) -> &FrameStats {
+        &self.stats
+    }
+
     pub fn stats(&self) -> FrameStats {
         let (pipelines_listed, pipelines_unlisted) = self.renderer.pipelines_listed();
         let world = self.engine.app.world();

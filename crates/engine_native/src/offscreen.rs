@@ -123,6 +123,13 @@ impl<G: Game> Offscreen<G> {
         let started = Instant::now();
         let (mut drawn, mut cpu_ms, mut captured, mut failed) = (0, Vec::new(), None, None);
         loop {
+            engine::profiling::mark_speed();
+            if let Frames::Count(count) = frames
+                && drawn == count / 2
+            {
+                drop(engine::profiling::take_rows());
+                _ = engine::profiling::take_speed();
+            }
             let last = match frames {
                 Frames::Count(count) => drawn + 1 >= count,
                 Frames::For(time) => started.elapsed() >= time,
@@ -138,7 +145,7 @@ impl<G: Game> Offscreen<G> {
                 failed = Some(error);
                 break;
             }
-            let stats = self.host.frame_stats();
+            let stats = self.host.frame_times();
             cpu_ms.push(stats.simulation_ms + stats.extraction_ms + stats.render_ms);
             drawn += 1;
             if last {
