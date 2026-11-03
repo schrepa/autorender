@@ -10,7 +10,6 @@ mod cave;
 mod caves;
 mod content;
 mod control;
-mod hiker;
 mod random;
 mod rocks;
 mod trees;
@@ -47,7 +46,6 @@ impl Brick for HighlandsBrick {
             .resource::<views::Views>()
             .resource::<views::BodiesView>()
             .operation::<control::HighlandsControl>()
-            .systems(Schedule::FixedSimulation, hiker::hike)
             .systems(
                 Schedule::Presentation,
                 (

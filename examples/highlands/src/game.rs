@@ -8,13 +8,10 @@ use crate::options::{CONTROLS, WATCH_BODIES};
 use crate::scene::{self, Furnished, set};
 use crate::{Options, RockMaps};
 
-const FREEZE_DETAIL: ActionId = ActionId::new(2).expect("action_index_valid");
-
 const APPLIED: [&str; 4] = ["lod", "effects", "stand", WATCH_BODIES];
 
 pub struct Highlands {
     options: Options,
-    freeze_held: bool,
     scene: Option<SceneInstance>,
     start: Option<Camera>,
     reflections: Option<Value>,
@@ -32,7 +29,6 @@ impl Highlands {
     fn new(options: Options) -> Self {
         Self {
             options,
-            freeze_held: false,
             scene: None,
             start: None,
             reflections: None,
@@ -124,12 +120,6 @@ engine::__if_dev! {
     }
 }
 
-fn freeze_detail(world: &mut World) -> engine::Result<()> {
-    let view = engine::host::run_operation(world, "view", json!({}))?;
-    let freeze = view["frozen_at"].is_null();
-    engine::host::run_operation(world, "view", json!({ "freeze": freeze })).map(drop)
-}
-
 fn report_failure(event: &str, error: &Error) {
     let record = json!({
         "event": event,
@@ -139,20 +129,6 @@ fn report_failure(event: &str, error: &Error) {
 }
 
 impl Game for Highlands {
-    const ACTIONS: &'static [(&'static str, u32)] = &[("Space", 0), ("KeyL", 2)];
-
-    fn before_frame(&mut self, engine: &mut Engine) {
-        let world = engine.app.world_mut();
-        let held = world.resource::<ActionInput>().pressed(FREEZE_DETAIL);
-        if held
-            && !self.freeze_held
-            && let Err(error) = freeze_detail(world)
-        {
-            report_failure("highlands_freeze_failed", &error);
-        }
-        self.freeze_held = held;
-    }
-
     fn reset_camera(&mut self, engine: &mut Engine) {
         let world = engine.app.world_mut();
         if let Err(error) = land::control(world, json!("reset")) {

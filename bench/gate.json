@@ -386,10 +386,6 @@
       "allocations": 0.0,
       "ms": 0.00046366666652223405
     },
-    "highlands::bricks::game::hiker::hike": {
-      "allocations": 0.0,
-      "ms": 0.000993666666872741
-    },
     "highlands::bricks::game::views::look": {
       "allocations": 0.0,
       "ms": 0.0007380000000921427

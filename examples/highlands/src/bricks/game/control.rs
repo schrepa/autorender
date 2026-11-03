@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
     AssetLibrary, Camera, Error, ErrorCode, Expected, Jobs, Operation, ProvidedAssets,
-    RecordExchange, Spawner, Transform,
+    RecordExchange, Transform,
 };
 use engine_places::ground::Ground;
 use engine_places::physics::RigidBody;
@@ -10,11 +10,9 @@ use glam::Vec2;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::bricks::game::HighlandsBrick;
 use crate::bricks::game::bodies::Bodies;
 use crate::bricks::game::cave::{Cave, CaveMouth};
 use crate::bricks::game::content::{self, Content};
-use crate::bricks::game::hiker;
 use crate::bricks::game::views::{Views, bodies_view};
 
 #[derive(Deserialize)]
@@ -26,10 +24,6 @@ pub(crate) enum HighlandsControl {
         radius: f32,
         rock: String,
         wall: String,
-    },
-    Hiker {
-        road: Vec<[f32; 2]>,
-        origin: [f32; 2],
     },
     Bodies {
         count: u32,
@@ -51,7 +45,6 @@ impl Operation for HighlandsControl {
             ResMut<'static, RecordExchange>,
             Option<ResMut<'static, ProvidedAssets>>,
             Jobs<'static, 'static>,
-            Spawner<'static, 'static, HighlandsBrick>,
         ),
         (
             ResMut<'static, Content>,
@@ -69,7 +62,7 @@ impl Operation for HighlandsControl {
 
     fn run(
         (
-            (mut assets, mut records, provided, mut jobs, mut spawner),
+            (mut assets, mut records, provided, mut jobs),
             (mut content, mut cave, mut bodies, mut views),
             (ground, rigid, mut camera),
         ): SystemParamItem<'_, '_, Self::Params>,
@@ -107,14 +100,6 @@ impl Operation for HighlandsControl {
                     material: material(&rock, "$.cave.rock")?,
                     wall: material(&wall, "$.cave.wall")?,
                 });
-            }
-            Self::Hiker { road, origin } => {
-                if road.is_empty() {
-                    return Err(
-                        Error::new(ErrorCode::GameRule, "$.road").expected(Expected::NonEmpty)
-                    );
-                }
-                hiker::hiker((&mut *assets, &mut spawner), &road, Vec2::from(origin))?;
             }
             Self::Bodies { count } => {
                 if count > 0 {

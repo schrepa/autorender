@@ -48,8 +48,6 @@ const GROUND_MAPS: [(&str, TextureUsage); 3] = [
 
 const ROCK_TINT: [f32; 3] = [0.74, 0.7, 0.64];
 
-const ROAD: &str = "road";
-
 const CAVE_MOUTH: &str = "cave_mouth";
 
 const WALL_ROCK: &str = "highlands_wall_rock";
@@ -127,8 +125,6 @@ pub(crate) fn populate(
     let terrain = &terrain;
     let origin = parse_value_at::<[f32; 3]>(terrain["origin"].clone(), &format!("{path}.origin"))?;
     let origin = Vec2::new(origin[0], origin[2]);
-    let (at, road) = scene_layer(terrain, &path, ROAD)?;
-    let road = parse_value_at::<Vec<[f32; 2]>>(road["points"].clone(), &format!("{at}.points"))?;
     let (at, mouth) = scene_layer(terrain, &path, CAVE_MOUTH)?;
     let center = parse_value_at::<[f32; 2]>(mouth["center"].clone(), &format!("{at}.center"))?;
     let radius = parse_value_at::<f32>(mouth["radius"].clone(), &format!("{at}.radius"))?;
@@ -141,10 +137,6 @@ pub(crate) fn populate(
             "rock": WALL_ROCK,
             "wall": CAVE_WALL,
         }}),
-    )?;
-    control(
-        world,
-        json!({"hiker": {"road": road, "origin": [origin.x, origin.y]}}),
     )?;
     control(world, json!({"bodies": {"count": bodies}}))
 }
