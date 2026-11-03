@@ -1,3 +1,5 @@
+mod screens;
+
 use std::any::{Any, TypeId};
 
 use bevy_ecs::{component::Component, resource::Resource, world::World};
@@ -5,6 +7,7 @@ use serde_json::Value;
 
 pub use engine_assets::{MaterialHandle, MeshHandle, TextureHandle};
 pub use engine_settings::{Error, ErrorCode};
+pub use screens::{LevelProgress, LevelRequest, Screens};
 
 pub trait Slot: Resource + Default {
     const NAME: &'static str;

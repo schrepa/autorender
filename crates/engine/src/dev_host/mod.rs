@@ -35,6 +35,14 @@ struct InputBatch {
     held: u32,
     pressed: u32,
     released: u32,
+    pointer: Option<[f32; 2]>,
+    pointer_delta: [f32; 2],
+    pointer_held: bool,
+    pointer_pressed: bool,
+    pointer_released: bool,
+    wheel: [f32; 2],
+    axes: Vec<f32>,
+    menu: Vec<engine_dev::MenuPress>,
 }
 
 pub(crate) enum Call<'a> {
@@ -210,12 +218,7 @@ impl DevHost {
         reply
     }
 
-    fn reply(
-        &self,
-        app: &mut AppHost,
-        scene: Option<&SceneInstance>,
-        call: ToolCall<'_>,
-    ) -> Value {
+    fn reply(&self, app: &mut AppHost, scene: Option<&SceneInstance>, call: ToolCall<'_>) -> Value {
         let facts = Facts(&app.renderer);
         let context = Context {
             scene,

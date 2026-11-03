@@ -21,7 +21,7 @@
     {"rule": "entity_removed", "path": "$.args.filter.exclude", "scene": "without ground", "request": {"verb": "query", "name": "raycast", "args": {"origin": [0, 10, 0], "direction": [0, -1, 0], "max_distance": 20, "filter": {"exclude": "ground"}}}},
     {"rule": "wrong_world", "path": "$.scene", "scene": "foreign", "request": {"verb": "query", "name": "status"}},
     {"rule": "scan_limit", "path": "$.args.scene", "scene": "large", "request": {"verb": "query", "name": "raycast", "args": {"origin": [0, 10, 0], "direction": [0, -1, 0], "max_distance": 20}}},
-    {"rule": "missing_component", "path": "$.component", "request": {"verb": "inspect", "entity": "fountain", "component": "Collider"}},
+    {"rule": "missing_component", "path": "$.component", "request": {"verb": "inspect", "entity": "fountain", "component": "InterpolateTransform"}},
     {"rule": "missing_resource", "path": "$.assets", "engine": "without assets", "request": {"verb": "query", "name": "assets"}},
     {"rule": "missing_plugin", "path": "$.name", "engine": "bare", "request": {"verb": "query", "name": "terrain_height", "args": {"points": [[0, 0]]}}},
     {"rule": "out_of_range", "path": "$.args.points", "request": {"verb": "query", "name": "terrain_height", "args": {"points": []}}},

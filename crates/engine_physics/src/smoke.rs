@@ -1,10 +1,20 @@
-use engine_core::smoke::{Checked, ask, component, control, environment, inspect, not, number, query};
+use engine_core::smoke::{
+    Checked, ask, component, control, environment, inspect, not, number, query,
+};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
 const SCENE: &str = "physics-fixture";
 const ENTITIES: [&str; 4] = ["floor", "crate", "seabed", "stone"];
-const DESCRIBED: [&str; 4] = ["rigid_body", "physics_body", "physics_stats", "physics"];
+const DESCRIBED: [&str; 5] = [
+    "rigid_body",
+    "physics_body",
+    "physics_stats",
+    "physics",
+    "body_push",
+];
+const IMPULSE: f64 = 1800.0;
+const FORCE: f64 = 12000.0;
 const FLOOR_TOP: f64 = 10.0;
 const HALF: f64 = 0.5;
 const RESTS_WITHIN: f64 = 0.05;
@@ -40,13 +50,18 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         "settings_inspect"
     );
     rests(session)?;
+    pushed(session)?;
     toggles(session)?;
     parented(session)?;
     session.source(&empty().to_string());
     session.without(&["engine_collision", "engine_physics"]);
     let missing = session.request("inspect", json!({"component": "physics"}));
     smoke_eq!(
-        json!(missing.err().map(|refused| refused["error"]["code"].clone())),
+        json!(
+            missing
+                .err()
+                .map(|refused| refused["error"]["code"].clone())
+        ),
         json!("missing_plugin"),
         "left_out_without_collision"
     );
@@ -104,6 +119,50 @@ fn rests(session: &mut dyn SmokeSession) -> Checked<()> {
         json!(2),
         "frames_observe"
     );
+    Ok(())
+}
+
+fn crate_speed(session: &mut dyn SmokeSession) -> Checked<f64> {
+    let body = query(session, "physics_body", json!({"entity": "crate"}))?;
+    Ok(number(&body["velocity"][0]))
+}
+
+fn pushed(session: &mut dyn SmokeSession) -> Checked<()> {
+    control(
+        session,
+        "body_push",
+        json!({"entity": "crate", "push": {"impulse": [IMPULSE, 0.0, 0.0]}}),
+    )?;
+    session.step(1);
+    let hit = crate_speed(session)?;
+    let expected = json!({"above": 1.0});
+    smoke_eq!(
+        shown(hit > 1.0, &json!(hit), &expected),
+        expected,
+        "impulse_gains_speed"
+    );
+    session.step(1);
+    let after = crate_speed(session)?;
+    let expected = json!({"at_most": hit});
+    smoke_eq!(
+        shown(after <= hit, &json!(after), &expected),
+        expected,
+        "impulse_applies_once"
+    );
+    control(
+        session,
+        "body_push",
+        json!({"entity": "crate", "push": {"force": [FORCE, 0.0, 0.0]}}),
+    )?;
+    session.step(10);
+    let forced = crate_speed(session)?;
+    let expected = json!({"above": after});
+    smoke_eq!(
+        shown(forced > after, &json!(forced), &expected),
+        expected,
+        "force_keeps_pushing"
+    );
+    control(session, "body_push", json!({"entity": "crate", "push": {}}))?;
     Ok(())
 }
 

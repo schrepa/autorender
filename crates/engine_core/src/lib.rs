@@ -47,19 +47,18 @@ pub use bricks::*;
 pub use clock::*;
 pub use engine_assets::{
     Aabb, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, Filter, Grounding, LodInput, LodLevel,
-    MAX_TEXTURE_DIMENSION, Material, MaterialBinding, Mesh, MeshLods, MeshVertex, Sampler,
-    Surface, Texture, TextureFormat, TextureRef, TopLayer, UvTransform, Wrap, lod_input,
-    trim_cards,
+    MAX_TEXTURE_DIMENSION, Material, MaterialBinding, Mesh, MeshLods, MeshVertex, Sampler, Surface,
+    Texture, TextureFormat, TextureRef, TopLayer, UvTransform, Wrap, lod_input, trim_cards,
 };
 pub use engine_place::{
-    DrawPoint, Error, ErrorCode, GpuStruct, InterpolateTransform, JobRef, List, MaterialHandle,
-    Mesh3d, MeshHandle, PlaceDecl, Runs, Slot, Smoke, SmokeFailure, SmokeSession, Stamp,
-    TextureHandle, gpu_consts, smoke_check, smoke_eq,
+    DrawPoint, Error, ErrorCode, GpuStruct, InterpolateTransform, JobRef, LevelProgress,
+    LevelRequest, List, MaterialHandle, Mesh3d, MeshHandle, PlaceDecl, Runs, Screens, Slot, Smoke,
+    SmokeFailure, SmokeSession, Stamp, TextureHandle, gpu_consts, smoke_check, smoke_eq,
 };
 pub use engine_registry::{AuthoredId, ExplainAsk, ExplainRecord, FrameFacts, RecordParity};
 pub use engine_settings::{
-    Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting,
-    fields, is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
+    Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
+    is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
 };
 pub use frame_stats::*;
 pub use glam;
@@ -234,7 +233,23 @@ fn core_entries(registry: &mut Registry) {
         true,
         transform_edits::run_edit_transform,
     ));
+    registry.core_operation(OperationEntry::of::<
+        <clock::TimeOperation as Operation>::Params,
+    >(
+        clock::TimeOperation::NAME,
+        clock::TimeOperation::CONTROL,
+        bricks::run_operation::<clock::TimeOperation>,
+    ));
+    registry.core_operation(
+        OperationEntry::of::<<clock::TimeState as Operation>::Params>(
+            clock::TimeState::NAME,
+            clock::TimeState::CONTROL,
+            bricks::run_operation::<clock::TimeState>,
+        ),
+    );
     registry.writers_first::<Camera>();
+    registry.writers_first::<TimeControl>();
+    registry.writers_first::<Screens>();
 }
 
 fn refused(problems: &[Error]) -> Result<(), Error> {
@@ -287,9 +302,7 @@ impl Engine {
     pub fn new(config: EngineConfig) -> Self {
         let clock = FixedClock::new(config);
         let mut assets = AssetLibrary::default();
-        assets
-            .insert_cube()
-            .expect("unlimited_library_holds_cube");
+        assets.insert_cube().expect("unlimited_library_holds_cube");
         assets.set_budget(config.asset_budget);
         let exchange = JobExchange::default();
         let listed = JobListed::of(exchange.list());
@@ -317,6 +330,10 @@ impl Engine {
                 tick: 0,
             })
             .init_resource::<FrameTime>()
+            .init_resource::<TimeControl>()
+            .init_resource::<Screens>()
+            .init_resource::<LevelRequest>()
+            .init_resource::<LevelProgress>()
             .init_resource::<Camera>()
             .init_resource::<Detail>()
             .init_resource::<JobSettings>()
@@ -337,6 +354,10 @@ impl Engine {
             .init_resource::<Viewport>()
             .init_resource::<MoveInput>()
             .init_resource::<ActionInput>()
+            .init_resource::<AxisInput>()
+            .init_resource::<PointerInput>()
+            .init_resource::<MenuInput>()
+            .init_resource::<CursorMode>()
             .init_resource::<PresentationState>()
             .init_resource::<InterpolationState>()
             .init_resource::<TickCheck>()
@@ -455,9 +476,18 @@ impl Engine {
     pub fn advance(&mut self, delta_seconds: f64) -> FrameReport {
         self.finalize();
         let delta_seconds = clock::sanitize_delta(delta_seconds);
-        let report = self.clock.advance(delta_seconds);
-        self.run_frame(report.fixed_steps, delta_seconds.min(0.25));
+        let rate = self.time_rate();
+        if rate == 0.0 {
+            self.forget_ticks_ahead();
+        }
+        let report = self.clock.advance(delta_seconds * rate);
+        let shown = delta_seconds.min(0.25);
+        self.run_frame(report.fixed_steps, shown, shown * rate);
         report
+    }
+
+    fn time_rate(&self) -> f64 {
+        self.app.world().resource::<TimeControl>().rate()
     }
 
     #[cfg(feature = "dev")]
@@ -467,7 +497,13 @@ impl Engine {
         self.forget_ticks_ahead();
         self.clock.reset();
         let delta_seconds = (f64::from(ticks) * self.clock.step_seconds()).min(0.25);
-        self.run_frame(ticks, delta_seconds);
+        let stopped = self.time_rate() == 0.0;
+        let (ticks, game_seconds) = if stopped {
+            (0, 0.0)
+        } else {
+            (ticks, delta_seconds)
+        };
+        self.run_frame(ticks, delta_seconds, game_seconds);
         Ok(FrameReport {
             fixed_steps: ticks,
             dropped_seconds: 0.0,
@@ -573,7 +609,7 @@ impl Engine {
         }
     }
 
-    fn run_frame(&mut self, fixed_steps: u32, delta_seconds: f64) {
+    fn run_frame(&mut self, fixed_steps: u32, delta_seconds: f64, game_seconds: f64) {
         let _profile = engine_profile::span("cpu", "simulation_frame");
         self.run_gates();
         let mut fixed_steps = fixed_steps;
@@ -596,6 +632,8 @@ impl Engine {
         modify(self.app.world_mut(), |frame: &mut FrameTime| {
             frame.delta_seconds = delta_seconds as f32;
             frame.elapsed_seconds += delta_seconds;
+            frame.game_delta_seconds = game_seconds as f32;
+            frame.game_elapsed_seconds += game_seconds;
             frame.frame = frame.frame.saturating_add(1);
         });
         for _ in 0..fixed_steps {
@@ -616,12 +654,16 @@ impl Engine {
 
     pub fn run_ahead(&mut self, predicted_delta_seconds: f64) -> bool {
         self.finalize();
+        let rate = self.time_rate();
+        if rate == 0.0 {
+            return false;
+        }
         let in_flight = match self.tick_ahead {
             TickAhead::None => false,
             TickAhead::InFlight => true,
             TickAhead::Hidden { .. } | TickAhead::Revealed => return false,
         };
-        let predicted = clock::sanitize_delta(predicted_delta_seconds).min(0.25);
+        let predicted = clock::sanitize_delta(predicted_delta_seconds).min(0.25) * rate;
         let accumulator = self.clock.accumulator_seconds();
         let step = self.clock.step_seconds();
         if in_flight {
@@ -732,7 +774,10 @@ impl Engine {
         let world = self.app.world_mut();
         reset_all_interpolation(world);
         modify(world, ActionInput::clear);
-        modify(world, |frame: &mut FrameTime| frame.delta_seconds = 0.0);
+        modify(world, |frame: &mut FrameTime| {
+            frame.delta_seconds = 0.0;
+            frame.game_delta_seconds = 0.0;
+        });
     }
 
     pub fn refresh_transforms(&mut self) {
@@ -837,7 +882,10 @@ impl Engine {
     }
 
     fn refuse_unrun_schedules(&self) {
-        let mut run: Vec<_> = Schedule::ALL.iter().map(|schedule| schedule.label()).collect();
+        let mut run: Vec<_> = Schedule::ALL
+            .iter()
+            .map(|schedule| schedule.label())
+            .collect();
         run.push(TransformPropagation.intern());
         let schedules = self.app.world().resource::<Schedules>();
         for (label, schedule) in schedules.iter() {

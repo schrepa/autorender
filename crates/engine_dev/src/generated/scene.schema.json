@@ -117,6 +117,16 @@
       ],
       "type": "string"
     },
+    "Bus": {
+      "enum": [
+        "master",
+        "music",
+        "effects",
+        "ambient",
+        "voice"
+      ],
+      "type": "string"
+    },
     "CollisionConfig": {
       "properties": {
         "enabled": {
@@ -790,6 +800,98 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Label": {
+      "additionalProperties": false,
+      "properties": {
+        "align": {
+          "$ref": "#/$defs/TextAlign",
+          "default": "left"
+        },
+        "anchor": {
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "color": {
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "font": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_width": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "offset": {
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "pivot": {
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "size": {
+          "default": 16.0,
+          "format": "float",
+          "type": "number"
+        },
+        "text": {
+          "default": "",
+          "type": "string"
+        },
+        "visible": {
+          "default": true,
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -1683,6 +1785,58 @@
       },
       "type": "object"
     },
+    "SceneAudio": {
+      "additionalProperties": false,
+      "properties": {
+        "ambient": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "effects": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "master": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "max_voices": {
+          "default": 64,
+          "format": "uint32",
+          "maximum": 512,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "music": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "voice": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
     "SceneAutoExposure": {
       "additionalProperties": false,
       "properties": {
@@ -1785,6 +1939,76 @@
           "format": "float",
           "minimum": 0.0,
           "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneBodyPush": {
+      "additionalProperties": false,
+      "properties": {
+        "angular_impulse": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000000.0,
+            "minimum": -1000000000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "force": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000000.0,
+            "minimum": -1000000000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "impulse": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000000.0,
+            "minimum": -1000000000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "torque": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000000.0,
+            "minimum": -1000000000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
         }
       },
       "type": "object"
@@ -2287,6 +2511,16 @@
             }
           ]
         },
+        "audio": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneAudio"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "auto_exposure": {
           "anyOf": [
             {
@@ -2667,10 +2901,30 @@
             }
           ]
         },
+        "text": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "time_of_day": {
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTimeOfDay"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ui": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiSettings"
             },
             {
               "type": "null"
@@ -3435,6 +3689,16 @@
     "SceneObject": {
       "additionalProperties": false,
       "properties": {
+        "body_push": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneBodyPush"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "collider": {
           "anyOf": [
             {
@@ -3562,6 +3826,26 @@
             }
           ]
         },
+        "screen": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneScreen"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sound": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSound"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "spline": {
           "anyOf": [
             {
@@ -3584,6 +3868,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTerrain"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Label"
             },
             {
               "type": "null"
@@ -3627,6 +3921,16 @@
               0.0
             ]
           }
+        },
+        "ui": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiRoot"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -3969,6 +4273,22 @@
           "type": "array"
         }
       },
+      "type": "object"
+    },
+    "SceneScreen": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "pauses": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name"
+      ],
       "type": "object"
     },
     "SceneShadows": {
@@ -4339,6 +4659,57 @@
           "type": "number"
         },
         "strength": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneSound": {
+      "additionalProperties": false,
+      "properties": {
+        "autoplay": {
+          "default": true,
+          "type": "boolean"
+        },
+        "bus": {
+          "$ref": "#/$defs/Bus",
+          "default": "effects"
+        },
+        "file": {
+          "default": "",
+          "type": "string"
+        },
+        "looping": {
+          "default": false,
+          "type": "boolean"
+        },
+        "pitch": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.0625,
+          "type": "number"
+        },
+        "radius": {
+          "default": 30.0,
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 0.125,
+          "type": "number"
+        },
+        "spatial": {
+          "default": false,
+          "type": "boolean"
+        },
+        "stream": {
+          "default": false,
+          "type": "boolean"
+        },
+        "volume": {
           "default": 1.0,
           "format": "float",
           "maximum": 1.0,
@@ -6059,6 +6430,579 @@
         "sun_shadows": {
           "default": true,
           "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "TextAlign": {
+      "enum": [
+        "left",
+        "center",
+        "right"
+      ],
+      "type": "string"
+    },
+    "TextSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "atlas_size": {
+          "default": 2048,
+          "format": "uint32",
+          "maximum": 8192,
+          "minimum": 256,
+          "type": "integer"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_glyphs": {
+          "default": 65536,
+          "format": "uint32",
+          "maximum": 2000000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "UiAction": {
+      "oneOf": [
+        {
+          "enum": [
+            "pop"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "go": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "go"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "push": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "push"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "emit": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "emit"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiAlign": {
+      "enum": [
+        "start",
+        "center",
+        "end",
+        "stretch"
+      ],
+      "type": "string"
+    },
+    "UiDirection": {
+      "enum": [
+        "column",
+        "row"
+      ],
+      "type": "string"
+    },
+    "UiInsets": {
+      "additionalProperties": false,
+      "properties": {
+        "bottom": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "left": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "right": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "top": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "UiJustify": {
+      "enum": [
+        "start",
+        "center",
+        "end",
+        "space_between",
+        "space_around",
+        "space_evenly"
+      ],
+      "type": "string"
+    },
+    "UiKind": {
+      "enum": [
+        "panel",
+        "label",
+        "image",
+        "bar",
+        "button",
+        "list"
+      ],
+      "type": "string"
+    },
+    "UiLength": {
+      "oneOf": [
+        {
+          "enum": [
+            "auto"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "px": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "px"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "percent": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "percent"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiNode": {
+      "additionalProperties": false,
+      "properties": {
+        "absolute": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiInsets"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "align": {
+          "$ref": "#/$defs/UiAlign",
+          "default": "stretch"
+        },
+        "bar_color": {
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "bar_value": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "bind": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "border_color": {
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "border_width": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "children": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/UiNode"
+          },
+          "type": "array"
+        },
+        "color": {
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "direction": {
+          "$ref": "#/$defs/UiDirection",
+          "default": "column"
+        },
+        "focus_color": {
+          "default": null,
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "gap": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "grow": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "height": {
+          "$ref": "#/$defs/UiLength",
+          "default": "auto"
+        },
+        "hover_color": {
+          "default": null,
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image_rect": {
+          "default": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "justify": {
+          "$ref": "#/$defs/UiJustify",
+          "default": "start"
+        },
+        "kind": {
+          "$ref": "#/$defs/UiKind",
+          "default": "panel"
+        },
+        "margin": {
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "padding": {
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "press_color": {
+          "default": null,
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "radius": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "text": {
+          "default": "",
+          "type": "string"
+        },
+        "text_align": {
+          "$ref": "#/$defs/TextAlign",
+          "default": "left"
+        },
+        "text_color": {
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "text_size": {
+          "default": 16.0,
+          "format": "float",
+          "type": "number"
+        },
+        "width": {
+          "$ref": "#/$defs/UiLength",
+          "default": "auto"
+        }
+      },
+      "type": "object"
+    },
+    "UiRoot": {
+      "additionalProperties": false,
+      "properties": {
+        "font": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root": {
+          "$ref": "#/$defs/UiNode",
+          "default": {
+            "absolute": null,
+            "action": null,
+            "align": "stretch",
+            "bar_color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "bar_value": 0.0,
+            "bind": null,
+            "border_color": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "border_width": 0.0,
+            "children": [],
+            "color": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "direction": "column",
+            "focus_color": null,
+            "gap": 0.0,
+            "grow": 0.0,
+            "height": "auto",
+            "hover_color": null,
+            "id": null,
+            "image": null,
+            "image_rect": [
+              0.0,
+              0.0,
+              1.0,
+              1.0
+            ],
+            "justify": "start",
+            "kind": "panel",
+            "margin": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "padding": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "press_color": null,
+            "radius": 0.0,
+            "text": "",
+            "text_align": "left",
+            "text_color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "text_size": 16.0,
+            "width": "auto"
+          }
+        },
+        "screen": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "UiSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_nodes": {
+          "default": 4096,
+          "format": "uint32",
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_rects": {
+          "default": 8192,
+          "format": "uint32",
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "scale": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.25,
+          "type": "number"
         }
       },
       "type": "object"

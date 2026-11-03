@@ -186,7 +186,11 @@ fn specialized(compiled: &Compiled) -> Option<Specialized> {
     let bits = compiled.variant?;
     let mut constants = crate::materials::Variant::BASIC.constants();
     for (name, value) in &mut constants {
-        if let Some((_, listed)) = compiled.constants.iter().find(|(known, _)| known.as_str() == *name) {
+        if let Some((_, listed)) = compiled
+            .constants
+            .iter()
+            .find(|(known, _)| known.as_str() == *name)
+        {
             *value = *listed;
         }
     }
@@ -202,7 +206,12 @@ pub(crate) struct Allocated {
     pub(crate) view: wgpu::TextureView,
     pub(crate) size: wgpu::Extent3d,
     pub(crate) mips: u32,
-    pub(crate) slices: Vec<(Range<u32>, Range<u32>, Option<wgpu::TextureViewDimension>, wgpu::TextureView)>,
+    pub(crate) slices: Vec<(
+        Range<u32>,
+        Range<u32>,
+        Option<wgpu::TextureViewDimension>,
+        wgpu::TextureView,
+    )>,
 }
 
 pub(crate) struct Made {
@@ -227,7 +236,8 @@ impl Allocated {
                 view_formats: &[],
             },
         );
-        let layered = made.dimension == wgpu::TextureDimension::D2 && size.depth_or_array_layers > 1;
+        let layered =
+            made.dimension == wgpu::TextureDimension::D2 && size.depth_or_array_layers > 1;
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
             dimension: layered.then_some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
@@ -249,15 +259,23 @@ impl Allocated {
         }
     }
 
-    fn slice(&mut self, mips: &Range<u32>, layers: &Range<u32>, dimension: Option<wgpu::TextureViewDimension>) -> Option<&wgpu::TextureView> {
+    fn slice(
+        &mut self,
+        mips: &Range<u32>,
+        layers: &Range<u32>,
+        dimension: Option<wgpu::TextureViewDimension>,
+    ) -> Option<&wgpu::TextureView> {
         let mips = mips.start..mips.end.min(self.mips);
         let layers = layers.start..layers.end.min(self.layers());
         if mips.start >= mips.end || layers.start >= layers.end {
             return None;
         }
-        let at = match self.slices.iter().position(|(known_mips, known_layers, known, _)| {
-            *known_mips == mips && *known_layers == layers && *known == dimension
-        }) {
+        let at = match self
+            .slices
+            .iter()
+            .position(|(known_mips, known_layers, known, _)| {
+                *known_mips == mips && *known_layers == layers && *known == dimension
+            }) {
             Some(at) => at,
             None => {
                 let view = self.texture.create_view(&wgpu::TextureViewDescriptor {
@@ -550,7 +568,11 @@ fn fault(path: String, code: ErrorCode) -> Error {
 fn bound_texture(bound: &Bound) -> Option<u32> {
     match bound {
         Bound::Texture(texture) | Bound::Slice { texture, .. } => Some(*texture),
-        Bound::Buffer(_) | Bound::Window { .. } | Bound::Sampler(_) | Bound::Target(_) | Bound::Asset => None,
+        Bound::Buffer(_)
+        | Bound::Window { .. }
+        | Bound::Sampler(_)
+        | Bound::Target(_)
+        | Bound::Asset => None,
     }
 }
 
@@ -576,9 +598,14 @@ fn texture_uses(machine: &Machine, texture: u32) -> impl Iterator<Item = Ty> + '
 }
 
 fn texture_usage(machine: &Machine, texture: u32) -> wgpu::TextureUsages {
-    let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC;
+    let mut usage = wgpu::TextureUsages::TEXTURE_BINDING
+        | wgpu::TextureUsages::COPY_DST
+        | wgpu::TextureUsages::COPY_SRC;
     let attached = machine.declared.passes.iter().any(|pass| {
-        pass.colors.iter().chain(&pass.depths).any(|(known, _)| *known == texture)
+        pass.colors
+            .iter()
+            .chain(&pass.depths)
+            .any(|(known, _)| *known == texture)
     });
     if attached {
         usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
@@ -593,7 +620,13 @@ fn texture_dimension(machine: &Machine, texture: u32) -> wgpu::TextureDimension 
     let volume = texture_uses(machine, texture).any(|ty| {
         matches!(
             ty,
-            Ty::Texture { view: wgpu::TextureViewDimension::D3, .. } | Ty::StorageTexture { view: wgpu::TextureViewDimension::D3, .. }
+            Ty::Texture {
+                view: wgpu::TextureViewDimension::D3,
+                ..
+            } | Ty::StorageTexture {
+                view: wgpu::TextureViewDimension::D3,
+                ..
+            }
         )
     });
     if volume {
@@ -619,18 +652,29 @@ fn sampler_of(device: &wgpu::Device, desc: &crate::SamplerDesc) -> wgpu::Sampler
     })
 }
 
-fn target_format(target: Target, outputs: &[crate::machine::OutputDecl]) -> Option<wgpu::TextureFormat> {
+fn target_format(
+    target: Target,
+    outputs: &[crate::machine::OutputDecl],
+) -> Option<wgpu::TextureFormat> {
     match target {
         Target::Scene | Target::Copy(_, ViewTarget::Scene) => Some(crate::machine::SCENE_FORMAT),
         Target::Depth | Target::Copy(_, ViewTarget::Depth) => Some(DEPTH_FORMAT),
         Target::Output(index) => outputs.get(index as usize).map(|output| output.format),
-        Target::Debug(index) | Target::Copy(_, ViewTarget::Debug(index)) => DEBUG_FORMATS.get(index as usize).copied(),
+        Target::Debug(index) | Target::Copy(_, ViewTarget::Debug(index)) => {
+            DEBUG_FORMATS.get(index as usize).copied()
+        }
         Target::Canvas => None,
     }
 }
 
 impl Run {
-    pub(crate) fn new(device: wgpu::Device, queue: wgpu::Queue, machine: Machine, parts: Vec<Option<Box<dyn Installed>>>, assets: Assets) -> Self {
+    pub(crate) fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        machine: Machine,
+        parts: Vec<Option<Box<dyn Installed>>>,
+        assets: Assets,
+    ) -> Self {
         let buffer = |label, size, usage| {
             crate::memory::buffer(
                 &device,
@@ -642,7 +686,11 @@ impl Run {
                 },
             )
         };
-        let camera = buffer("engine/cameras", CAMERA_STRIDE, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST);
+        let camera = buffer(
+            "engine/cameras",
+            CAMERA_STRIDE,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         let post_buffer = buffer(
             "engine/post-uniform",
             size_of::<crate::shared::PostUniform>() as u64,
@@ -922,25 +970,55 @@ impl Run {
         }
     }
 
+    pub(crate) fn want_overlay(&mut self) {
+        let overlay = self
+            .machine
+            .declared
+            .passes
+            .iter()
+            .position(|declared| declared.name == crate::shared::OVERLAY);
+        if let Some(at) = overlay {
+            self.runs.insert(at);
+        }
+    }
+
     fn doubled(&self, texture: u32) -> bool {
-        self.machine.doubled.get(texture as usize).copied().unwrap_or(false)
+        self.machine
+            .doubled
+            .get(texture as usize)
+            .copied()
+            .unwrap_or(false)
     }
 
     pub(crate) fn allocate(&mut self, texture: u32, size: wgpu::Extent3d, mips: u32) {
         self.allocate_with(texture, None, size, mips);
     }
 
-    pub(crate) fn allocate_as(&mut self, texture: u32, format: wgpu::TextureFormat, size: wgpu::Extent3d, mips: u32) {
+    pub(crate) fn allocate_as(
+        &mut self,
+        texture: u32,
+        format: wgpu::TextureFormat,
+        size: wgpu::Extent3d,
+        mips: u32,
+    ) {
         self.allocate_with(texture, Some(format), size, mips);
     }
 
-    fn allocate_with(&mut self, texture: u32, format: Option<wgpu::TextureFormat>, size: wgpu::Extent3d, mips: u32) {
+    fn allocate_with(
+        &mut self,
+        texture: u32,
+        format: Option<wgpu::TextureFormat>,
+        size: wgpu::Extent3d,
+        mips: u32,
+    ) {
         let Some(decl) = self.machine.declared.textures.get(texture as usize) else {
             return;
         };
         let at = texture as usize;
         let wanted = format.unwrap_or(decl.format);
-        let same = self.textures[at][0].as_ref().is_some_and(|made| made.texture.format() == wanted);
+        let same = self.textures[at][0]
+            .as_ref()
+            .is_some_and(|made| made.texture.format() == wanted);
         if self.sizes[at] == Some((size, mips)) && same {
             return;
         }
@@ -949,13 +1027,19 @@ impl Run {
             if mips > 1 {
                 usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
             }
-            usage &= wanted.guaranteed_format_features(self.device.features()).allowed_usages;
+            usage &= wanted
+                .guaranteed_format_features(self.device.features())
+                .allowed_usages;
         }
         let made = Made {
             label: decl.label,
             format: wanted,
             usage,
-            dimension: self.dimensions.get(at).copied().unwrap_or(wgpu::TextureDimension::D2),
+            dimension: self
+                .dimensions
+                .get(at)
+                .copied()
+                .unwrap_or(wgpu::TextureDimension::D2),
         };
         let doubled = self.doubled(texture);
         for held in self.textures[at].iter().flatten() {
@@ -984,9 +1068,11 @@ impl Run {
         self.sizes[at] = None;
         self.allocate(texture, size, mips);
         if levels == mips {
-            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("engine/part-grow"),
-            });
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("engine/part-grow"),
+                });
             for (old, new) in previous.iter().zip(&self.textures[at]) {
                 let (Some(old), Some(new)) = (old, new) else {
                     continue;
@@ -1049,7 +1135,11 @@ impl Run {
             self.fault(error);
             return;
         };
-        if range.start > range.end || range.end > *size || range.start % 4 != 0 || range.end % 4 != 0 {
+        if range.start > range.end
+            || range.end > *size
+            || range.start % 4 != 0
+            || range.end % 4 != 0
+        {
             let error = fault(self.path("clear_buffer_range"), ErrorCode::OutOfRange);
             self.fault(error);
             return;
@@ -1090,7 +1180,10 @@ impl Run {
     }
 
     pub(crate) fn mipmaps(&mut self, texture: u32, layers: Range<u32>) {
-        let Some(made) = self.written_texture(texture).map(|made| made.texture.clone()) else {
+        let Some(made) = self
+            .written_texture(texture)
+            .map(|made| made.texture.clone())
+        else {
             let error = fault(self.path("mipmaps"), ErrorCode::InvalidValue);
             self.fault(error);
             return;
@@ -1102,11 +1195,19 @@ impl Run {
             })
         });
         for layer in layers {
-            self.assets.materials.mips().record_layer(device, encoder, &made, layer);
+            self.assets
+                .materials
+                .mips()
+                .record_layer(device, encoder, &made, layer);
         }
     }
 
-    pub(crate) fn deliver_bytes(&mut self, tag: u32, bytes: Vec<u8>, deliver: fn(&mut World, u64, u32, &[u8])) {
+    pub(crate) fn deliver_bytes(
+        &mut self,
+        tag: u32,
+        bytes: Vec<u8>,
+        deliver: fn(&mut World, u64, u32, &[u8]),
+    ) {
         self.queued.delivered.push(Delivered {
             frame: self.asked_frame,
             tag,
@@ -1127,7 +1228,10 @@ impl Run {
         };
         let at = buffer as usize;
         let bytes = bytes.max(16).next_multiple_of(4);
-        if self.buffers[at].as_ref().is_some_and(|(_, known)| *known == bytes) {
+        if self.buffers[at]
+            .as_ref()
+            .is_some_and(|(_, known)| *known == bytes)
+        {
             return;
         }
         if let Some((held, _)) = &self.buffers[at] {
@@ -1173,13 +1277,22 @@ impl Run {
         crate::gpu_calls::upload_buffer(&self.queue, made, offset, bytes);
     }
 
-    pub(crate) fn write_staged(&mut self, buffer: u32, (bytes, stride): (&[u8], usize), ranges: &[Range<usize>]) -> bool {
+    pub(crate) fn write_staged(
+        &mut self,
+        buffer: u32,
+        (bytes, stride): (&[u8], usize),
+        ranges: &[Range<usize>],
+    ) -> bool {
         let Some(Some((made, size))) = self.buffers.get(buffer as usize) else {
             let error = fault(self.path("write_staged"), ErrorCode::InvalidValue);
             self.fault(error);
             return false;
         };
-        let reach = ranges.iter().map(|range| range.end * stride).max().unwrap_or(0);
+        let reach = ranges
+            .iter()
+            .map(|range| range.end * stride)
+            .max()
+            .unwrap_or(0);
         if reach as u64 > *size || reach > bytes.len() || stride % 4 != 0 {
             let error = fault(self.path("write_staged"), ErrorCode::OutOfRange);
             self.fault(error);
@@ -1192,7 +1305,10 @@ impl Run {
                 label: Some("engine/pose-staging-copies"),
             })
         });
-        let staged = self.queued.staging.record(device, encoder, &made, (bytes, stride), ranges);
+        let staged = self
+            .queued
+            .staging
+            .record(device, encoder, &made, (bytes, stride), ranges);
         staged == crate::staging::Staged::Recorded
     }
 
@@ -1332,10 +1448,16 @@ pub(crate) enum CountRaw {
 fn color_ops(ops: Ops) -> wgpu::Operations<wgpu::Color> {
     wgpu::Operations {
         load: match ops.load {
-            Load::Clear(Clear::Color([r, g, b, a])) => wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
+            Load::Clear(Clear::Color([r, g, b, a])) => {
+                wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a })
+            }
             Load::Clear(Clear::Depth(_)) | Load::Load => wgpu::LoadOp::Load,
         },
-        store: if ops.store { wgpu::StoreOp::Store } else { wgpu::StoreOp::Discard },
+        store: if ops.store {
+            wgpu::StoreOp::Store
+        } else {
+            wgpu::StoreOp::Discard
+        },
     }
 }
 
@@ -1345,7 +1467,11 @@ fn depth_ops(ops: Ops) -> wgpu::Operations<f32> {
             Load::Clear(Clear::Depth(depth)) => wgpu::LoadOp::Clear(depth),
             Load::Clear(Clear::Color(_)) | Load::Load => wgpu::LoadOp::Load,
         },
-        store: if ops.store { wgpu::StoreOp::Store } else { wgpu::StoreOp::Discard },
+        store: if ops.store {
+            wgpu::StoreOp::Store
+        } else {
+            wgpu::StoreOp::Discard
+        },
     }
 }
 
@@ -1365,7 +1491,9 @@ fn placeholder(device: &wgpu::Device, (ty, bytes): (Ty, u64)) -> Placeholder {
     match ty {
         Ty::Uniform => buffer(wgpu::BufferUsages::UNIFORM),
         Ty::Storage { .. } => buffer(wgpu::BufferUsages::STORAGE),
-        Ty::Sampler => Placeholder::Sampler(device.create_sampler(&wgpu::SamplerDescriptor::default())),
+        Ty::Sampler => {
+            Placeholder::Sampler(device.create_sampler(&wgpu::SamplerDescriptor::default()))
+        }
         Ty::Comparison => Placeholder::Sampler(device.create_sampler(&wgpu::SamplerDescriptor {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
@@ -1379,25 +1507,42 @@ fn placeholder(device: &wgpu::Device, (ty, bytes): (Ty, u64)) -> Placeholder {
             };
             placeholder_texture(device, format, view, wgpu::TextureUsages::TEXTURE_BINDING)
         }
-        Ty::StorageTexture { format, view, .. } => placeholder_texture(device, format, view, wgpu::TextureUsages::STORAGE_BINDING),
+        Ty::StorageTexture { format, view, .. } => {
+            placeholder_texture(device, format, view, wgpu::TextureUsages::STORAGE_BINDING)
+        }
     }
 }
 
-fn placeholder_texture(device: &wgpu::Device, format: wgpu::TextureFormat, view: wgpu::TextureViewDimension, usage: wgpu::TextureUsages) -> Placeholder {
+fn placeholder_texture(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    view: wgpu::TextureViewDimension,
+    usage: wgpu::TextureUsages,
+) -> Placeholder {
     let layers = match view {
         wgpu::TextureViewDimension::Cube | wgpu::TextureViewDimension::CubeArray => 6,
-        wgpu::TextureViewDimension::D1 | wgpu::TextureViewDimension::D2 | wgpu::TextureViewDimension::D2Array | wgpu::TextureViewDimension::D3 => 1,
+        wgpu::TextureViewDimension::D1
+        | wgpu::TextureViewDimension::D2
+        | wgpu::TextureViewDimension::D2Array
+        | wgpu::TextureViewDimension::D3 => 1,
     };
     let dimension = match view {
         wgpu::TextureViewDimension::D3 => wgpu::TextureDimension::D3,
         wgpu::TextureViewDimension::D1 => wgpu::TextureDimension::D1,
-        wgpu::TextureViewDimension::D2 | wgpu::TextureViewDimension::D2Array | wgpu::TextureViewDimension::Cube | wgpu::TextureViewDimension::CubeArray => wgpu::TextureDimension::D2,
+        wgpu::TextureViewDimension::D2
+        | wgpu::TextureViewDimension::D2Array
+        | wgpu::TextureViewDimension::Cube
+        | wgpu::TextureViewDimension::CubeArray => wgpu::TextureDimension::D2,
     };
     let texture = crate::memory::texture(
         device,
         &wgpu::TextureDescriptor {
             label: Some("engine/placeholder"),
-            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: layers },
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: layers,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension,

@@ -280,22 +280,38 @@ const EVERY: [u32; 2] = [0, u32::MAX];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Handle {
-    Texture { texture: u32, mips: [u32; 2], layers: [u32; 2] },
+    Texture {
+        texture: u32,
+        mips: [u32; 2],
+        layers: [u32; 2],
+    },
     Buffer(u32),
     Target(Target),
 }
 
 impl Handle {
     fn whole(texture: u32) -> Self {
-        Self::Texture { texture, mips: EVERY, layers: EVERY }
+        Self::Texture {
+            texture,
+            mips: EVERY,
+            layers: EVERY,
+        }
     }
 
     fn overlaps(self, other: Self) -> bool {
         let meet = |[start, end]: [u32; 2], [low, high]: [u32; 2]| start < high && low < end;
         match (self, other) {
             (
-                Self::Texture { texture, mips, layers },
-                Self::Texture { texture: known, mips: known_mips, layers: known_layers },
+                Self::Texture {
+                    texture,
+                    mips,
+                    layers,
+                },
+                Self::Texture {
+                    texture: known,
+                    mips: known_mips,
+                    layers: known_layers,
+                },
             ) => texture == known && meet(mips, known_mips) && meet(layers, known_layers),
             _ => self == other,
         }
@@ -311,7 +327,11 @@ enum Usage {
 fn handle_of(bound: &Bound) -> Option<Handle> {
     match bound {
         Bound::Texture(texture) => Some(Handle::whole(*texture)),
-        Bound::Slice { texture, mips, layers } => Some(Handle::Texture {
+        Bound::Slice {
+            texture,
+            mips,
+            layers,
+        } => Some(Handle::Texture {
             texture: *texture,
             mips: [mips.start, mips.end],
             layers: [layers.start, layers.end],
@@ -326,7 +346,10 @@ pub(crate) fn core_target(name: &str, outputs: &[OutputDecl]) -> Option<Target> 
     match name {
         crate::shared::SCENE => Some(Target::Scene),
         crate::shared::DEPTH => Some(Target::Depth),
-        _ => match crate::shared::DEBUG_TARGETS.iter().position(|known| *known == name) {
+        _ => match crate::shared::DEBUG_TARGETS
+            .iter()
+            .position(|known| *known == name)
+        {
             Some(index) => Some(Target::Debug(index as u32)),
             None => name
                 .strip_prefix(crate::shared::OUTPUT_PREFIX)
@@ -341,11 +364,15 @@ type Reached = Vec<(String, crate::linker::Declaration, Stages)>;
 fn own_writes(decl: &PipelineDecl, reached: &Reached, linker: &Linker) -> Vec<Handle> {
     reached
         .iter()
-        .filter(|(module, found, _)| found.group > 0 && found.ty.writes() && !linker.is_core(module))
+        .filter(|(module, found, _)| {
+            found.group > 0 && found.ty.writes() && !linker.is_core(module)
+        })
         .filter_map(|(module, found, _)| {
             decl.bound.iter().find_map(|(var, bound)| {
                 let (known, name) = crate::linker::path_of((var.module(), var.name()));
-                (known == module && name == found.name).then(|| handle_of(bound)).flatten()
+                (known == module && name == found.name)
+                    .then(|| handle_of(bound))
+                    .flatten()
             })
         })
         .collect()
@@ -378,15 +405,21 @@ fn attachments(
             found.push(Handle::Target(Target::Depth));
         }
     }
-    if pass.name == crate::shared::COMPOSITE || pass.name == crate::shared::DEBUG_VIEW {
+    if crate::shared::draws_canvas(pass.name) {
         found.push(Handle::Target(Target::Canvas));
     }
     found
 }
 
 impl Machine {
-    #[expect(clippy::too_many_lines, reason = "longer than the line ceiling; it may only shrink")]
-    #[expect(clippy::disallowed_methods, reason = "the machine lays out and keys every pipeline it builds")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the machine lays out and keys every pipeline it builds"
+    )]
     pub(crate) fn build(
         device: &wgpu::Device,
         mut linker: Linker,
@@ -433,7 +466,11 @@ impl Machine {
             let path = format!("$.pipelines.{index}");
             let named = format!(
                 "{path}.{}",
-                decl.entries().iter().map(|entry| entry.name()).collect::<Vec<_>>().join("+")
+                decl.entries()
+                    .iter()
+                    .map(|entry| entry.name())
+                    .collect::<Vec<_>>()
+                    .join("+")
             );
             let mut stages = Vec::new();
             let mut reached: Reached = Vec::new();
@@ -443,7 +480,9 @@ impl Machine {
                     Ok(composed) => {
                         let at = stage_of(entry, &linker);
                         for (module, declaration) in linker.reached(&composed) {
-                            match reached.iter_mut().find(|(known, found, _)| *known == module && found.name == declaration.name) {
+                            match reached.iter_mut().find(|(known, found, _)| {
+                                *known == module && found.name == declaration.name
+                            }) {
                                 Some((_, _, stages)) => *stages = Stages(stages.0 | at.0),
                                 None => reached.push((module, declaration, at)),
                             }
@@ -461,8 +500,13 @@ impl Machine {
             }
             for (var, _) in &decl.bound {
                 let (module, name) = crate::linker::path_of((var.module(), var.name()));
-                if !reached.iter().any(|(known, found, _)| known == module && found.name == name) {
-                    problems.push(Error::new(ErrorCode::UnknownVariable, named.clone()).got(var.name()));
+                if !reached
+                    .iter()
+                    .any(|(known, found, _)| known == module && found.name == name)
+                {
+                    problems.push(
+                        Error::new(ErrorCode::UnknownVariable, named.clone()).got(var.name()),
+                    );
                     failed = true;
                 }
             }
@@ -473,7 +517,9 @@ impl Machine {
                     known == module && name == found.name
                 });
                 if found.group > 0 && !core && !bound {
-                    problems.push(Error::new(ErrorCode::UnknownVariable, named.clone()).got(&found.name));
+                    problems.push(
+                        Error::new(ErrorCode::UnknownVariable, named.clone()).got(&found.name),
+                    );
                     failed = true;
                 }
             }
@@ -487,10 +533,15 @@ impl Machine {
                 .filter(|(module, found, _)| found.group > 0 && !is_material(module, found.group))
                 .map(|(_, found, stages)| (class(found.ty, false), *stages))
                 .collect();
-            if reached.iter().any(|(module, found, _)| is_material(module, found.group)) {
+            if reached
+                .iter()
+                .any(|(module, found, _)| is_material(module, found.group))
+            {
                 own.extend(crate::bindings::MATERIAL.bindings.iter().map(|binding| {
                     let class = match binding.kind {
-                        crate::bindings::Kind::Uniform { dynamic, .. } => Class::Uniform { dynamic },
+                        crate::bindings::Kind::Uniform { dynamic, .. } => {
+                            Class::Uniform { dynamic }
+                        }
                         crate::bindings::Kind::Texture { .. } => Class::Texture,
                         crate::bindings::Kind::Sampler(_) => Class::Sampler,
                     };
@@ -541,11 +592,20 @@ impl Machine {
                         continue;
                     }
                     let depth = depth_writes.get(index).copied().unwrap_or(true);
-                    written.extend(attachments(pass, &outputs, depth, &doubled).into_iter().map(|handle| (handle, Usage::Attached)));
+                    written.extend(
+                        attachments(pass, &outputs, depth, &doubled)
+                            .into_iter()
+                            .map(|handle| (handle, Usage::Attached)),
+                    );
                     for (other, _, reached) in staged.iter().filter(|(other, _, _)| {
-                        matches!(other.program, Program::Render(_)) && decl_in_pass(other, index as u32, pass)
+                        matches!(other.program, Program::Render(_))
+                            && decl_in_pass(other, index as u32, pass)
                     }) {
-                        written.extend(own_writes(other, reached, &linker).into_iter().map(|handle| (handle, Usage::Stored)));
+                        written.extend(
+                            own_writes(other, reached, &linker)
+                                .into_iter()
+                                .map(|handle| (handle, Usage::Stored)),
+                        );
                     }
                 }
                 written
@@ -560,8 +620,12 @@ impl Machine {
                     None => None,
                 };
                 let handle = handle.filter(|handle| match handle {
-                    Handle::Texture { texture, .. } => !doubled.get(*texture as usize).copied().unwrap_or(false),
-                    Handle::Target(Target::Output(index)) => outputs.get(*index as usize).is_none_or(|output| !output.layers.is_empty()),
+                    Handle::Texture { texture, .. } => {
+                        !doubled.get(*texture as usize).copied().unwrap_or(false)
+                    }
+                    Handle::Target(Target::Output(index)) => outputs
+                        .get(*index as usize)
+                        .is_none_or(|output| !output.layers.is_empty()),
                     Handle::Buffer(_) | Handle::Target(_) => true,
                 });
                 handle.map(|handle| (handle, *ty))
@@ -572,9 +636,9 @@ impl Machine {
                 return false;
             };
             writes.get(pipeline as usize).is_some_and(|written| {
-                written
-                    .iter()
-                    .any(|(known, usage)| known.overlaps(*handle) && !(*usage == Usage::Stored && ty.writes()))
+                written.iter().any(|(known, usage)| {
+                    known.overlaps(*handle) && !(*usage == Usage::Stored && ty.writes())
+                })
             })
         };
         let plan = match crate::frame_group::plan(&variables, &reaches, limits, &conflict) {
@@ -596,17 +660,24 @@ impl Machine {
                 let mut layout = layout_entries(&entries);
                 for entry in &mut layout {
                     if entry.binding == 0
-                        && let wgpu::BindingType::Buffer { has_dynamic_offset, .. } = &mut entry.ty
+                        && let wgpu::BindingType::Buffer {
+                            has_dynamic_offset, ..
+                        } = &mut entry.ty
                     {
                         *has_dynamic_offset = true;
                     }
-                    if let wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable }, .. } = &mut entry.ty {
+                    if let wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable },
+                        ..
+                    } = &mut entry.ty
+                    {
                         *filterable = filterable_bound(frame_bound.get(&entry.binding), &declared);
                     }
                     if entry.ty == wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
                         && !filterable_bound(frame_bound.get(&entry.binding), &declared)
                     {
-                        entry.ty = wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering);
+                        entry.ty =
+                            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering);
                     }
                 }
                 FrameVariant {
@@ -634,9 +705,15 @@ impl Machine {
             for (module, found, _) in &reached {
                 if found.group == 0 {
                     if linker.is_core(module) {
-                        view_reads.extend(core_target(&found.name, &outputs).filter(|target| !matches!(target, Target::Debug(_))));
+                        view_reads.extend(
+                            core_target(&found.name, &outputs)
+                                .filter(|target| !matches!(target, Target::Debug(_))),
+                        );
                     }
-                    if let Some(bound) = linker.binding_of(module, &found.name).and_then(|number| frame_bound.get(&number)) {
+                    if let Some(bound) = linker
+                        .binding_of(module, &found.name)
+                        .and_then(|number| frame_bound.get(&number))
+                    {
                         reads.push(bound.clone());
                     }
                     continue;
@@ -680,12 +757,15 @@ impl Machine {
                     .map(|(binding, bound, ty)| {
                         let stages = reached
                             .iter()
-                            .find(|(_, found, _)| found.group == group.index && found.binding == *binding)
+                            .find(|(_, found, _)| {
+                                found.group == group.index && found.binding == *binding
+                            })
                             .map_or(Stages::VERTEX_FRAGMENT_COMPUTE, |(_, _, stages)| *stages);
                         wgpu::BindGroupLayoutEntry {
                             binding: *binding,
                             visibility: shader_stages(stages),
-                            ty: ty.binding(filterable_bound(Some(bound), &declared), bound.window()),
+                            ty: ty
+                                .binding(filterable_bound(Some(bound), &declared), bound.window()),
                             count: None,
                         }
                     })
@@ -698,9 +778,14 @@ impl Machine {
             }
             let variant = plan.of_pipeline.get(index).copied().unwrap_or(0);
             layout_key.push_str(&format!("frame {variant} material {material}"));
-            let top = groups.last().map_or(0, |group| group.index).max(u32::from(material));
+            let top = groups
+                .last()
+                .map_or(0, |group| group.index)
+                .max(u32::from(material));
             let mut layouts: Vec<&wgpu::BindGroupLayout> = Vec::new();
-            let frame_layout = variants.get(variant as usize).map_or(&empty, |found| &found.layout);
+            let frame_layout = variants
+                .get(variant as usize)
+                .map_or(&empty, |found| &found.layout);
             layouts.push(frame_layout);
             for at in 1..=top {
                 let layout = match groups.iter().find(|group| group.index == at) {
@@ -712,7 +797,10 @@ impl Machine {
             }
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("engine/part-pipeline"),
-                bind_group_layouts: &layouts.iter().map(|layout| Some(*layout)).collect::<Vec<_>>(),
+                bind_group_layouts: &layouts
+                    .iter()
+                    .map(|layout| Some(*layout))
+                    .collect::<Vec<_>>(),
                 immediate_size: 0,
             });
             let mut hasher = DefaultHasher::new();
@@ -820,7 +908,11 @@ fn doubled_of(
 ) -> Vec<bool> {
     let texture_of = |bound: &Bound| match bound {
         Bound::Texture(texture) | Bound::Slice { texture, .. } => Some(*texture),
-        Bound::Buffer(_) | Bound::Window { .. } | Bound::Sampler(_) | Bound::Target(_) | Bound::Asset => None,
+        Bound::Buffer(_)
+        | Bound::Window { .. }
+        | Bound::Sampler(_)
+        | Bound::Target(_)
+        | Bound::Asset => None,
     };
     declared
         .textures
@@ -842,13 +934,20 @@ fn doubled_of(
                     read |= from == Copied::Texture(texture);
                     written |= to == Copied::Texture(texture);
                 }
-                for (decl, _, reached) in staged.iter().filter(|(decl, _, _)| decl_in_pass(decl, index as u32, pass)) {
+                for (decl, _, reached) in staged
+                    .iter()
+                    .filter(|(decl, _, _)| decl_in_pass(decl, index as u32, pass))
+                {
                     for (module, found, _) in reached {
                         let bound = if found.group == 0 {
-                            linker.binding_of(module, &found.name).and_then(|number| frame_bound.get(&number)).cloned()
+                            linker
+                                .binding_of(module, &found.name)
+                                .and_then(|number| frame_bound.get(&number))
+                                .cloned()
                         } else {
                             decl.bound.iter().find_map(|(var, bound)| {
-                                let (known, name) = crate::linker::path_of((var.module(), var.name()));
+                                let (known, name) =
+                                    crate::linker::path_of((var.module(), var.name()));
                                 (known == module && name == found.name).then(|| bound.clone())
                             })
                         };
@@ -874,11 +973,14 @@ fn filterable_bound(bound: Option<&Bound>, declared: &Declared) -> bool {
         });
     }
     let format = match bound {
-        Some(Bound::Texture(texture) | Bound::Slice { texture, .. }) => {
-            declared.textures.get(*texture as usize).map(|texture| texture.format)
-        }
+        Some(Bound::Texture(texture) | Bound::Slice { texture, .. }) => declared
+            .textures
+            .get(*texture as usize)
+            .map(|texture| texture.format),
         Some(Bound::Target(ViewTarget::Depth)) => Some(DEPTH_FORMAT),
-        Some(Bound::Target(ViewTarget::Debug(index))) => DEBUG_FORMATS.get(*index as usize).copied(),
+        Some(Bound::Target(ViewTarget::Debug(index))) => {
+            DEBUG_FORMATS.get(*index as usize).copied()
+        }
         Some(_) | None => None,
     };
     format.is_none_or(|format| {
@@ -907,7 +1009,12 @@ pub(crate) fn set_formats(outputs: &[OutputDecl], layer: Option<Layer>) -> Vec<S
             Some(layer) => output.layers.contains(&layer),
             None => output.layers.is_empty(),
         };
-        set.push((Target::Output(index as u32), output.format, Clear::Color(TRANSPARENT), written));
+        set.push((
+            Target::Output(index as u32),
+            output.format,
+            Clear::Color(TRANSPARENT),
+            written,
+        ));
     }
     set
 }
@@ -921,7 +1028,10 @@ pub(crate) fn target_read(view: ViewTarget, layer: Option<Layer>, direct_depth: 
     }
 }
 
-#[expect(clippy::too_many_lines, reason = "longer than the line ceiling; it may only shrink")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn graph_of(
     declared: &Declared,
     outputs: &[OutputDecl],
@@ -950,26 +1060,41 @@ fn graph_of(
             view: false,
         });
     }
-    let mut target = |target: Target, label: &'static str, view: bool, life: Life, ids: &mut Ids| {
-        ids.targets.push((target, ResourceId::new(resources.len())));
-        resources.push(ResourceEntry {
-            label,
-            life,
-            view,
-        });
-    };
+    let mut target =
+        |target: Target, label: &'static str, view: bool, life: Life, ids: &mut Ids| {
+            ids.targets.push((target, ResourceId::new(resources.len())));
+            resources.push(ResourceEntry { label, life, view });
+        };
     target(Target::Scene, "scene", true, Life::Output, &mut ids);
     target(Target::Depth, "depth", true, Life::Output, &mut ids);
     for (index, output) in outputs.iter().enumerate() {
-        target(Target::Output(index as u32), output.name, !output.layers.is_empty(), Life::Output, &mut ids);
+        target(
+            Target::Output(index as u32),
+            output.name,
+            !output.layers.is_empty(),
+            Life::Output,
+            &mut ids,
+        );
     }
     for (index, name) in crate::shared::DEBUG_TARGETS.iter().enumerate() {
-        target(Target::Debug(index as u32), *name, true, Life::Output, &mut ids);
+        target(
+            Target::Debug(index as u32),
+            *name,
+            true,
+            Life::Output,
+            &mut ids,
+        );
     }
     target(Target::Canvas, "canvas", false, Life::Output, &mut ids);
     let copied = copies(declared, pipelines, depth_writes);
     for &(layer, view) in &copied {
-        target(Target::Copy(layer, view), "view_copy", false, Life::Frame, &mut ids);
+        target(
+            Target::Copy(layer, view),
+            "view_copy",
+            false,
+            Life::Frame,
+            &mut ids,
+        );
     }
     let mut passes = Vec::with_capacity(declared.passes.len() + copied.len());
     for (index, pass) in declared.passes.iter().enumerate() {
@@ -990,17 +1115,29 @@ fn graph_of(
         let mut depth = None;
         let bound_id = |bound: &Bound| -> Option<ResourceId> {
             match bound {
-                Bound::Texture(texture) | Bound::Slice { texture, .. } => ids.textures.get(*texture as usize).copied(),
-                Bound::Buffer(buffer) | Bound::Window { buffer, .. } => ids.buffers.get(*buffer as usize).copied(),
+                Bound::Texture(texture) | Bound::Slice { texture, .. } => {
+                    ids.textures.get(*texture as usize).copied()
+                }
+                Bound::Buffer(buffer) | Bound::Window { buffer, .. } => {
+                    ids.buffers.get(*buffer as usize).copied()
+                }
                 Bound::Target(view) => ids.target(target_read(*view, entry.layer, direct_depth)),
                 Bound::Sampler(_) | Bound::Asset => None,
             }
         };
         let mut current = Vec::new();
-        for pipeline in pipelines.iter().filter(|pipeline| in_pass(pipeline, index as u32, pass)) {
+        for pipeline in pipelines
+            .iter()
+            .filter(|pipeline| in_pass(pipeline, index as u32, pass))
+        {
             reads.extend(pipeline.reads.iter().filter_map(&bound_id));
             if entry.layer.is_none() {
-                reads.extend(pipeline.view_reads.iter().filter_map(|target| ids.target(*target)));
+                reads.extend(
+                    pipeline
+                        .view_reads
+                        .iter()
+                        .filter_map(|target| ids.target(*target)),
+                );
             }
             writes.extend(pipeline.writes.iter().filter_map(&bound_id));
             if claimed_member(&pipeline.decl, pass) {
@@ -1051,13 +1188,21 @@ fn graph_of(
             if !own_colors_only(pass) {
                 for (target, _, clear, written) in set_formats(outputs, Some(layer)) {
                     if let Some(id) = ids.target(target).filter(|_| written) {
-                        let access = if entry.shared { GraphAccess::Draw(clear) } else { GraphAccess::Load };
+                        let access = if entry.shared {
+                            GraphAccess::Draw(clear)
+                        } else {
+                            GraphAccess::Load
+                        };
                         colors.push((id, access));
                     }
                 }
                 for index in 0..DEBUG_FORMATS.len() {
                     if let Some(id) = ids.target(Target::Debug(index as u32)) {
-                        let access = if entry.shared { GraphAccess::Draw(Clear::Color(TRANSPARENT)) } else { GraphAccess::Load };
+                        let access = if entry.shared {
+                            GraphAccess::Draw(Clear::Color(TRANSPARENT))
+                        } else {
+                            GraphAccess::Load
+                        };
                         colors.push((id, access));
                     }
                 }
@@ -1094,16 +1239,29 @@ fn graph_of(
             writes,
             colors,
             depth,
-            after: pass.after.iter().map(|after| PassId::new(*after as usize)).collect(),
+            after: pass
+                .after
+                .iter()
+                .map(|after| PassId::new(*after as usize))
+                .collect(),
             current,
         });
     }
     let canvas = ids.target(Target::Canvas);
     if let (Some(at), Some(canvas)) = (
-        declared.passes.iter().position(|pass| pass.name == crate::shared::COMPOSITE),
+        declared
+            .passes
+            .iter()
+            .position(|pass| pass.name == crate::shared::COMPOSITE),
         canvas,
     ) {
-        passes[at].colors.insert(0, (canvas, GraphAccess::Clear(Clear::Color(crate::graph::BLACK))));
+        passes[at].colors.insert(
+            0,
+            (
+                canvas,
+                GraphAccess::Clear(Clear::Color(crate::graph::BLACK)),
+            ),
+        );
         for target in [Target::Scene, Target::Depth] {
             passes[at].reads.extend(ids.target(target));
         }
@@ -1117,17 +1275,43 @@ fn graph_of(
         }
     }
     if let (Some(at), Some(canvas)) = (
-        declared.passes.iter().position(|pass| pass.name == crate::shared::DEBUG_VIEW),
+        declared
+            .passes
+            .iter()
+            .position(|pass| pass.name == crate::shared::DEBUG_VIEW),
         canvas,
     ) {
-        passes[at].colors.insert(0, (canvas, GraphAccess::Clear(Clear::Color(crate::graph::BLACK))));
+        passes[at].colors.insert(
+            0,
+            (
+                canvas,
+                GraphAccess::Clear(Clear::Color(crate::graph::BLACK)),
+            ),
+        );
         for index in 0..DEBUG_FORMATS.len() {
-            passes[at].reads.extend(ids.target(Target::Debug(index as u32)));
+            passes[at]
+                .reads
+                .extend(ids.target(Target::Debug(index as u32)));
         }
         passes[at].reads.extend(ids.target(Target::Depth));
     }
+    if let (Some(at), Some(canvas)) = (
+        declared
+            .passes
+            .iter()
+            .position(|pass| pass.name == crate::shared::OVERLAY),
+        canvas,
+    ) {
+        passes[at].colors.insert(
+            0,
+            (canvas, GraphAccess::Draw(Clear::Color(crate::graph::BLACK))),
+        );
+    }
     for &(layer, view) in &copied {
-        let (Some(copy), Some(from)) = (ids.target(Target::Copy(layer, view)), ids.target(final_target(view))) else {
+        let (Some(copy), Some(from)) = (
+            ids.target(Target::Copy(layer, view)),
+            ids.target(final_target(view)),
+        ) else {
             continue;
         };
         passes.push(GraphPass {
@@ -1151,14 +1335,22 @@ fn graph_of(
     Ok((graph, ids))
 }
 
-fn copies(declared: &Declared, pipelines: &[BuiltPipeline], depth_writes: &[bool]) -> Vec<(Layer, ViewTarget)> {
+fn copies(
+    declared: &Declared,
+    pipelines: &[BuiltPipeline],
+    depth_writes: &[bool],
+) -> Vec<(Layer, ViewTarget)> {
     let mut found: Vec<(Layer, ViewTarget)> = Vec::new();
     for (index, pass) in declared.passes.iter().enumerate() {
         let Some(layer) = pass_layer(pass) else {
             continue;
         };
-        let direct_depth = reads_depth_direct(pass, depth_writes.get(index).copied().unwrap_or(true));
-        for pipeline in pipelines.iter().filter(|pipeline| in_pass(pipeline, index as u32, pass)) {
+        let direct_depth =
+            reads_depth_direct(pass, depth_writes.get(index).copied().unwrap_or(true));
+        for pipeline in pipelines
+            .iter()
+            .filter(|pipeline| in_pass(pipeline, index as u32, pass))
+        {
             for bound in &pipeline.reads {
                 let Bound::Target(view) = bound else {
                     continue;

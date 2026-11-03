@@ -38,7 +38,11 @@ fn options() -> Vec<(&'static str, String)> {
 }
 
 fn default_assets() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/public")
+    std::env::current_exe()
+        .ok()
+        .and_then(|program| Some(program.parent()?.join("assets")))
+        .filter(|assets| assets.is_dir())
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/public"))
 }
 
 fn command_options() -> Vec<CommandOption> {

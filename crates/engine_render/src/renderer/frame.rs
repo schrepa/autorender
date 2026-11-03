@@ -43,7 +43,11 @@ struct Viewed {
     scene: u64,
 }
 
-fn mark_between(encoder: &mut wgpu::CommandEncoder, end: Option<Span<'_>>, begin: Option<Span<'_>>) {
+fn mark_between(
+    encoder: &mut wgpu::CommandEncoder,
+    end: Option<Span<'_>>,
+    begin: Option<Span<'_>>,
+) {
     if let Some(end) = end {
         end.mark(encoder, true);
     }
@@ -52,19 +56,32 @@ fn mark_between(encoder: &mut wgpu::CommandEncoder, end: Option<Span<'_>>, begin
     }
 }
 
-fn mark_span(profiler: &GpuProfiler, encoder: Option<&mut wgpu::CommandEncoder>, name: &'static str, end: bool) {
+fn mark_span(
+    profiler: &GpuProfiler,
+    encoder: Option<&mut wgpu::CommandEncoder>,
+    name: &'static str,
+    end: bool,
+) {
     if let (Some(encoder), Some(span)) = (encoder, profiler.span(name)) {
         span.mark(encoder, end);
     }
 }
 
-fn opaque_span(passes: &[crate::install::PassDecl], plan: &crate::graph::Plan) -> Option<(usize, usize)> {
+fn opaque_span(
+    passes: &[crate::install::PassDecl],
+    plan: &crate::graph::Plan,
+) -> Option<(usize, usize)> {
     let opaque = |planned: &crate::graph::Planned| {
         passes.get(planned.pass.index()).is_some_and(|pass| {
-            crate::machine::shared(pass) && crate::machine::pass_layer(pass).is_some_and(|layer| layer <= crate::Layer::Backdrop)
+            crate::machine::shared(pass)
+                && crate::machine::pass_layer(pass)
+                    .is_some_and(|layer| layer <= crate::Layer::Backdrop)
         })
     };
-    Some((plan.passes.iter().position(opaque)?, plan.passes.iter().rposition(opaque)?))
+    Some((
+        plan.passes.iter().position(opaque)?,
+        plan.passes.iter().rposition(opaque)?,
+    ))
 }
 
 fn camera_of(
@@ -161,7 +178,8 @@ impl Renderer {
             .collect();
         for (index, on) in live.iter().enumerate() {
             let was = run.live.get(index).copied().unwrap_or(true);
-            if *on && !was
+            if *on
+                && !was
                 && let Some(Some(held)) = run.parts.get_mut(index)
             {
                 held.refresh(world);
@@ -173,7 +191,12 @@ impl Renderer {
         run.live = live;
     }
 
-    fn mark(&self, encoder: Option<&mut wgpu::CommandEncoder>, end: Option<&'static str>, begin: Option<&'static str>) {
+    fn mark(
+        &self,
+        encoder: Option<&mut wgpu::CommandEncoder>,
+        end: Option<&'static str>,
+        begin: Option<&'static str>,
+    ) {
         let Some(encoder) = encoder else {
             return;
         };
@@ -280,7 +303,9 @@ impl Renderer {
                 view_projection: view.view_projection(),
                 eye: view.state().eye(),
                 detail: view.detail_eye(),
-                seconds: world.get_resource::<FrameTime>().map_or(0.0, |time| time.elapsed_seconds as f32),
+                seconds: world
+                    .get_resource::<FrameTime>()
+                    .map_or(0.0, |time| time.game_elapsed_seconds as f32),
                 scene: view.scene(),
             },
             None => Viewed {
@@ -291,8 +316,14 @@ impl Renderer {
                 scene: 0,
             },
         };
-        let previous_seconds = self.seconds.replace(viewed.seconds).unwrap_or(viewed.seconds);
-        let resolve = world.get_resource::<crate::Resolve>().copied().unwrap_or_default();
+        let previous_seconds = self
+            .seconds
+            .replace(viewed.seconds)
+            .unwrap_or(viewed.seconds);
+        let resolve = world
+            .get_resource::<crate::Resolve>()
+            .copied()
+            .unwrap_or_default();
         let size = region.display.pixels();
         let temporal = temporal_frame.then(|| {
             let previous = self
@@ -301,7 +332,10 @@ impl Renderer {
                 .map_or(viewed.view_projection, |(previous, _, _)| previous);
             (resolve, previous)
         });
-        let wind = world.get_resource::<engine_core::ViewWind>().copied().unwrap_or_default();
+        let wind = world
+            .get_resource::<engine_core::ViewWind>()
+            .copied()
+            .unwrap_or_default();
         run.cameras[0] = camera_of(&viewed, temporal, region, (previous_seconds, wind));
         self.previous = temporal.map(|_| (viewed.view_projection, size, viewed.scene));
         run.post = crate::shared::post_uniform(
@@ -330,7 +364,12 @@ impl Renderer {
                 continue;
             };
             run.part = index as u32;
-            let _owner = run.machine.declared.parts.get(index).map(crate::install::PartInfo::owned);
+            let _owner = run
+                .machine
+                .declared
+                .parts
+                .get(index)
+                .map(crate::install::PartInfo::owned);
             if let Err(error) = held.prepare(world, run) {
                 run.fault(error);
             }
@@ -339,7 +378,13 @@ impl Renderer {
         if let Some(library) = world.get_resource::<engine_core::AssetLibrary>() {
             for texture in std::mem::take(&mut run.wanted_textures) {
                 if let Some(source) = library.texture(texture) {
-                    let (bytes, levels) = run.assets.materials.upload_texture(&device, &self.core.queue, (texture, true), source, &mut mips);
+                    let (bytes, levels) = run.assets.materials.upload_texture(
+                        &device,
+                        &self.core.queue,
+                        (texture, true),
+                        source,
+                        &mut mips,
+                    );
                     texture_bytes += bytes;
                     mip_levels += levels;
                 }
@@ -400,7 +445,12 @@ impl Renderer {
             if opaque_open && opaque.is_some_and(|(_, last)| at > last) {
                 let Some(run) = self.run.as_mut() else { break };
                 run.leave();
-                mark_span(&self.core.profiler, run.encoder.as_mut(), OPAQUE_MESHES, true);
+                mark_span(
+                    &self.core.profiler,
+                    run.encoder.as_mut(),
+                    OPAQUE_MESHES,
+                    true,
+                );
                 opaque_open = false;
             }
             if planned.batch != batch {
@@ -441,7 +491,8 @@ impl Renderer {
                 run.queued.cleared.push(buffer);
                 continue;
             }
-            let continues = ran_last.is_some_and(|last| last != index as u32 && run.same_group(last, index as u32));
+            let continues = ran_last
+                .is_some_and(|last| last != index as u32 && run.same_group(last, index as u32));
             if !continues {
                 ran.push(run.group_of(index as u32));
             }
@@ -453,7 +504,9 @@ impl Renderer {
                 (None, _) => false,
             };
             if run.enter(index as u32) {
-                let span = run.stage_of(index as u32).or_else(|| self.spans.get(index).copied());
+                let span = run
+                    .stage_of(index as u32)
+                    .or_else(|| self.spans.get(index).copied());
                 let mut encoder = run.encoder.take();
                 if !keeps && let Some((open, _)) = parted.take() {
                     mark_span(&self.core.profiler, encoder.as_mut(), open, true);
@@ -476,7 +529,12 @@ impl Renderer {
             }
             let Some(run) = self.run.as_mut() else { break };
             run.flush_clears();
-            let _owner = run.machine.declared.parts.get(part as usize).map(crate::install::PartInfo::owned);
+            let _owner = run
+                .machine
+                .declared
+                .parts
+                .get(part as usize)
+                .map(crate::install::PartInfo::owned);
             match work {
                 Work::Copy { .. } => run.copy(index as u32),
                 Work::Clear(_) => {}
@@ -486,7 +544,9 @@ impl Renderer {
                     };
                     let drawn = held.encode(index as u32, run, &self.core.profiler);
                     let next = plan.passes.get(at + 1).map(|next| next.pass.index() as u32);
-                    if !next.is_some_and(|next| next != index as u32 && run.same_group(index as u32, next)) {
+                    if !next.is_some_and(|next| {
+                        next != index as u32 && run.same_group(index as u32, next)
+                    }) {
                         run.close_encode_span(&self.core.profiler);
                     }
                     if let Some(sum) = run.part_draws.get_mut(part as usize) {
@@ -587,7 +647,10 @@ impl Renderer {
             engine_profile::counter("render.texture_mip_levels", f64::from(mip_levels));
             engine_profile::counter("render.camera_write_bytes", camera_bytes as f64);
             engine_profile::counter("render.gpu_presentation", f64::from(u8::from(gpu_mode)));
-            engine_profile::counter("render.camera_upload_reused", f64::from(u8::from(camera_bytes == 0)));
+            engine_profile::counter(
+                "render.camera_upload_reused",
+                f64::from(u8::from(camera_bytes == 0)),
+            );
             for name in MEMORY {
                 let held = match name {
                     "memory.gpu_impostor_bytes" => run.assets.impostors.capacity_bytes(),
@@ -600,7 +663,13 @@ impl Renderer {
                     "memory.gpu_texture_mip_bytes" => mip_bytes,
                     _ => 0,
                 };
-                let parts: u64 = run.uploads.memory.iter().filter(|(known, _)| *known == name).map(|(_, bytes)| *bytes).sum();
+                let parts: u64 = run
+                    .uploads
+                    .memory
+                    .iter()
+                    .filter(|(known, _)| *known == name)
+                    .map(|(_, bytes)| *bytes)
+                    .sum();
                 engine_profile::counter(name, (held + parts) as f64);
             }
         }
@@ -621,7 +690,9 @@ impl Renderer {
                     .iter()
                     .enumerate()
                     .filter(|(_, name)| ran.contains(name))
-                    .fold(0_u64, |bits, (at, _)| bits | 1_u64.checked_shl(at as u32).unwrap_or(0));
+                    .fold(0_u64, |bits, (at, _)| {
+                        bits | 1_u64.checked_shl(at as u32).unwrap_or(0)
+                    });
                 return engine_core::Names { bits, names };
             }
         };
@@ -704,7 +775,11 @@ fn piece_bytes(world: &World, layout: &[(usize, crate::pieces::PieceAt)]) -> Vec
         return Vec::new();
     };
     let entries: Vec<_> = registry.pieces().map(|(_, entry)| entry).collect();
-    let end = layout.iter().map(|(_, at)| at.offset + at.size).max().unwrap_or(0);
+    let end = layout
+        .iter()
+        .map(|(_, at)| at.offset + at.size)
+        .max()
+        .unwrap_or(0);
     let mut bytes = vec![0_u8; end as usize];
     for &(index, at) in layout {
         let Some(found) = entries.get(index).and_then(|entry| entry.bytes(world)) else {

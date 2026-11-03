@@ -400,7 +400,7 @@ pub(crate) fn plan_captures(
             drawn = state.capture(
                 probes,
                 (settings.faces_per_frame, instances.candidates != 0),
-                time.elapsed_seconds as f32,
+                time.game_elapsed_seconds as f32,
             );
         }
     }

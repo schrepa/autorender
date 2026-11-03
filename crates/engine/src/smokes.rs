@@ -93,11 +93,9 @@ pub fn slot(world: &bevy_ecs::world::World, slot: TypeId, each: &mut dyn FnMut(&
 }
 
 pub fn without(bricks: &BrickList, packages: &[&'static str]) -> BrickList {
-    packages
-        .iter()
-        .fold(bricks.clone(), |listed, package| {
-            listed.without_package(package)
-        })
+    packages.iter().fold(bricks.clone(), |listed, package| {
+        listed.without_package(package)
+    })
 }
 
 pub fn registered(bricks: &BrickList) -> Result<Vec<SmokeEntry>> {
@@ -157,6 +155,8 @@ pub fn played<G>(
 
 impl<G: Game> Game for Played<G> {
     const ACTIONS: &'static [(&'static str, u32)] = G::ACTIONS;
+
+    const AXES: &'static [(&'static str, u32, f32)] = G::AXES;
 
     fn before_frame(&mut self, engine: &mut Engine) {
         if let Self::Scene(game) = self {
@@ -309,7 +309,10 @@ pub fn request_line(verb: &str, body: Value) -> String {
         }
     };
     fields.insert("verb".to_owned(), Value::from(verb));
-    fields.insert("version".to_owned(), Value::from(engine_dev::PROTOCOL_VERSION));
+    fields.insert(
+        "version".to_owned(),
+        Value::from(engine_dev::PROTOCOL_VERSION),
+    );
     Value::Object(fields).to_string()
 }
 

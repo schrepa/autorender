@@ -9,6 +9,14 @@ pub struct InputView {
     pub look_yaw: f32,
     pub look_pitch: f32,
     pub held: Vec<u32>,
+    pub pointer: Option<[f32; 2]>,
+    pub pointer_delta: [f32; 2],
+    pub pointer_inside: bool,
+    pub wheel: [f32; 2],
+    pub axes: Vec<f32>,
+    pub menu: Vec<crate::MenuPress>,
+    pub menu_wanted: bool,
+    pub cursor: &'static str,
 }
 
 #[derive(Serialize)]

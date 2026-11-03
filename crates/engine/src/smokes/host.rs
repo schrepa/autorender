@@ -16,54 +16,273 @@ pub(super) const SMOKES: &[Smoke] = &[
     },
 ];
 
+const ACTIONS: &[(&str, u32)] = &[("Space", 0), ("MouseRight", 1)];
+const AXES: &[(&str, u32, f32)] = &[("KeyL", 0, 1.0), ("KeyJ", 0, -1.0), ("PadLeftX", 1, 0.5)];
+const PAD_UP: u32 = 1 << 12;
+const PAD_SOUTH: u32 = 1;
+
 fn input_keys(_: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
-    let built = InputGatherer::new(&[("Space", 0)]);
+    let built = InputGatherer::new(ACTIONS, AXES);
     smoke_eq!(built.is_ok(), true, "gatherer_builds");
     let Ok(mut keys) = built else {
         return Ok(());
     };
-    smoke_eq!(keys.key("KeyW", true), true, "movement_key_used");
-    let held = [keys.take(), keys.take()].map(|input| input.state.move_forward);
+    keyboard(&mut keys)?;
+    pointer(&mut keys)?;
+    mouse_binding(&mut keys)?;
+    axes(&mut keys)?;
+    pad(&mut keys)?;
+    menu(&mut keys)
+}
+
+fn keyboard(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
+    smoke_eq!(keys.key("KeyW", true, false), true, "movement_key_used");
+    let held = [keys.take(0.0), keys.take(0.0)].map(|input| input.state.move_forward);
     smoke_eq!(json!(held), json!([1.0, 1.0]), "key_moves");
-    keys.key("KeyW", false);
+    keys.key("KeyW", false, false);
     smoke_eq!(
-        json!(keys.take().state.move_forward),
+        json!(keys.take(0.0).state.move_forward),
         json!(0.0),
         "release_stops"
     );
     keys.look(120.0, 40.0);
-    let turned = keys.take().state;
+    let turned = keys.take(0.0).state;
     smoke_eq!(
         json!([turned.look_yaw, turned.look_pitch]),
         json!([120.0, 40.0]),
         "drag_turns"
     );
-    let after = keys.take().state;
+    let after = keys.take(0.0).state;
     smoke_eq!(
         json!([after.look_yaw, after.look_pitch]),
         json!([0.0, 0.0]),
         "turns_apply_once"
     );
     smoke_eq!(
-        json!([keys.key("KeyW", true), keys.key("KeyF", true)]),
+        json!([keys.key("KeyW", true, false), keys.key("KeyF", true, false)]),
         json!([true, false]),
         "unused_keys_stay"
     );
-    keys.key("KeyW", false);
-    keys.key("Space", true);
-    let pressed = keys.take();
+    keys.key("KeyW", false, false);
+    keys.key("Space", true, false);
+    let pressed = keys.take(0.0);
     smoke_eq!(
         json!([pressed.held & 1, pressed.pressed & 1]),
         json!([1, 1]),
         "actions_press"
     );
-    keys.key("KeyW", true);
+    keys.key("KeyW", true, false);
     keys.clear();
-    let blurred = keys.take();
+    let blurred = keys.take(0.0);
     smoke_eq!(
         json!([blurred.state.move_forward, blurred.held]),
         json!([0.0, 0]),
         "blur_releases"
+    );
+    Ok(())
+}
+
+fn pointer(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
+    keys.pointer(10.0, 20.0);
+    keys.pointer(13.0, 24.0);
+    keys.wheel(0.0, 2.0);
+    let moved = keys.take(0.0).pointer;
+    smoke_eq!(
+        json!([
+            moved.position.map(|position| position.to_array()),
+            moved.delta.to_array(),
+            moved.wheel.to_array(),
+            moved.inside
+        ]),
+        json!([[13.0, 24.0], [3.0, 4.0], [0.0, 2.0], true]),
+        "pointer_moves"
+    );
+    let still = keys.take(0.0).pointer;
+    smoke_eq!(
+        json!([still.delta.to_array(), still.wheel.to_array()]),
+        json!([[0.0, 0.0], [0.0, 0.0]]),
+        "pointer_motion_covers_one_frame"
+    );
+    keys.pointer_left();
+    smoke_eq!(
+        json!(keys.take(0.0).pointer.inside),
+        json!(false),
+        "pointer_left"
+    );
+    keys.motion(5.0, 6.0);
+    let captured = keys.take(0.0);
+    smoke_eq!(
+        json!([
+            captured.pointer.delta.to_array(),
+            captured.state.look_yaw,
+            captured.state.look_pitch
+        ]),
+        json!([[5.0, 6.0], 5.0, 6.0]),
+        "motion_looks"
+    );
+    keys.pointer(1.0, 2.0);
+    keys.wheel(1.0, 0.0);
+    keys.clear();
+    let cleared = keys.take(0.0).pointer;
+    smoke_eq!(
+        json!([
+            cleared.position.is_none(),
+            cleared.delta.to_array(),
+            cleared.wheel.to_array()
+        ]),
+        json!([true, [0.0, 0.0], [0.0, 0.0]]),
+        "pointer_clears"
+    );
+    Ok(())
+}
+
+fn mouse_binding(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
+    smoke_eq!(
+        json!([
+            keys.key("MouseRight", true, false),
+            keys.key("MouseLeft", true, false)
+        ]),
+        json!([true, true]),
+        "mouse_bindings_used"
+    );
+    let pressed = keys.take(0.0);
+    smoke_eq!(
+        json!([pressed.held, pressed.pressed]),
+        json!([2, 2]),
+        "mouse_presses_action"
+    );
+    smoke_eq!(
+        json!([pressed.pointer.held, pressed.pointer.pressed]),
+        json!([true, true]),
+        "mouse_left_presses_pointer"
+    );
+    keys.key("MouseRight", false, false);
+    keys.key("MouseLeft", false, false);
+    let released = keys.take(0.0);
+    smoke_eq!(
+        json!([released.held, released.released]),
+        json!([0, 2]),
+        "mouse_releases_action"
+    );
+    smoke_eq!(
+        json!([
+            released.pointer.held,
+            released.pointer.pressed,
+            released.pointer.released
+        ]),
+        json!([false, false, true]),
+        "mouse_left_releases_pointer"
+    );
+    let after = keys.take(0.0).pointer;
+    smoke_eq!(
+        json!([after.held, after.pressed, after.released]),
+        json!([false, false, false]),
+        "pointer_press_covers_one_frame"
+    );
+    Ok(())
+}
+
+fn axes(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
+    keys.key("KeyL", true, false);
+    smoke_eq!(
+        json!(keys.take(0.0).axes.values()[0]),
+        json!(1.0),
+        "axis_key_counts"
+    );
+    keys.key("KeyJ", true, false);
+    smoke_eq!(
+        json!(keys.take(0.0).axes.values()[0]),
+        json!(0.0),
+        "axis_sums"
+    );
+    keys.key("KeyL", false, false);
+    keys.key("KeyJ", false, false);
+    keys.pad(0, [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    smoke_eq!(
+        json!(keys.take(0.0).axes.values()[1]),
+        json!(0.5),
+        "axis_analog_scales"
+    );
+    keys.pad(0, [0.1, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    smoke_eq!(
+        json!(keys.take(0.0).axes.values()[1]),
+        json!(0.0),
+        "stick_dead_zone"
+    );
+    Ok(())
+}
+
+fn pad(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
+    keys.take(0.0);
+    keys.pad(0, [0.0, 1.0, 1.0, 0.0, 0.0, 1.0]);
+    keys.pad(0, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    let moved = keys.take(1000.0).state;
+    smoke_eq!(
+        json!([moved.move_forward, moved.move_up, moved.look_yaw]),
+        json!([1.0, 1.0, 600.0]),
+        "pads_merge_and_move"
+    );
+    let unplugged = keys.take(2000.0).state;
+    smoke_eq!(
+        json!([unplugged.move_forward, unplugged.look_yaw]),
+        json!([0.0, 0.0]),
+        "pad_needs_polling"
+    );
+    Ok(())
+}
+
+fn menu(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
+    smoke_eq!(
+        json!(keys.key("Tab", true, false)),
+        json!(false),
+        "menu_key_stays_with_browser"
+    );
+    keys.key("Tab", false, false);
+    smoke_eq!(
+        json!(keys.take(0.0).menu.down),
+        json!(true),
+        "menu_gathered_unwanted"
+    );
+    smoke_eq!(
+        json!(keys.key("Tab", true, true)),
+        json!(true),
+        "menu_key_taken_while_wanted"
+    );
+    smoke_eq!(
+        json!(keys.take(0.0).menu.down),
+        json!(true),
+        "menu_pressed_wanted"
+    );
+    smoke_eq!(
+        json!(keys.take(0.0).menu.down),
+        json!(false),
+        "menu_pressed_once"
+    );
+    smoke_eq!(
+        json!(keys.key("Tab", false, false)),
+        json!(true),
+        "menu_release_taken_after_unwanted"
+    );
+    keys.pad(PAD_UP | PAD_SOUTH, [0.0; 6]);
+    let pressed = keys.take(0.0).menu;
+    smoke_eq!(
+        json!([pressed.up, pressed.accept]),
+        json!([true, true]),
+        "pad_menu"
+    );
+    keys.pad(PAD_UP | PAD_SOUTH, [0.0; 6]);
+    let held = keys.take(0.0).menu;
+    smoke_eq!(
+        json!([held.up, held.accept]),
+        json!([false, false]),
+        "pad_menu_once"
+    );
+    keys.key("Enter", true, true);
+    keys.clear();
+    smoke_eq!(
+        json!(keys.take(0.0).menu.accept),
+        json!(false),
+        "menu_clears"
     );
     Ok(())
 }

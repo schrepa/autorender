@@ -1,6 +1,10 @@
-use engine_core::{AssetResidency, IMPOSTOR_MIN_TRIANGLES, ImpostorBooks, ResidentMesh};
+use engine_core::{
+    AssetResidency, AxisInput, CursorMode, IMPOSTOR_MIN_TRIANGLES, ImpostorBooks, MenuInput,
+    PointerInput, ResidentMesh,
+};
 
 use super::*;
+use crate::MenuPress;
 
 impl DevTools {
     pub(super) fn register_components(&mut self, schemas: &Value) {
@@ -62,6 +66,16 @@ impl DevTools {
 fn input_view(world: &World, _: Option<Entity>, _: &Context<'_>) -> Option<Value> {
     let input = world.get_resource::<MoveInput>()?;
     let actions = world.get_resource::<ActionInput>();
+    let pointer = current::<PointerInput>(world);
+    let menu = current::<MenuInput>(world);
+    let pressed = [
+        (menu.up, MenuPress::Up),
+        (menu.down, MenuPress::Down),
+        (menu.left, MenuPress::Left),
+        (menu.right, MenuPress::Right),
+        (menu.accept, MenuPress::Accept),
+        (menu.back, MenuPress::Back),
+    ];
     Some(json!(InputView {
         move_forward: input.move_forward,
         move_right: input.move_right,
@@ -74,7 +88,23 @@ fn input_view(world: &World, _: Option<Entity>, _: &Context<'_>) -> Option<Value
                     .is_some_and(|action| actions.is_some_and(|actions| actions.pressed(action)))
             })
             .collect(),
+        pointer: pointer.position.map(|position| position.to_array()),
+        pointer_delta: pointer.delta.to_array(),
+        pointer_inside: pointer.inside,
+        wheel: pointer.wheel.to_array(),
+        axes: current::<AxisInput>(world).values().to_vec(),
+        menu: pressed
+            .iter()
+            .filter(|&&(on, _)| on)
+            .map(|&(_, press)| press)
+            .collect(),
+        menu_wanted: menu.wanted,
+        cursor: current::<CursorMode>(world).name(),
     }))
+}
+
+fn current<R: Resource + Copy + Default>(world: &World) -> R {
+    world.get_resource::<R>().copied().unwrap_or_default()
 }
 
 fn impostor_resident(world: &World, resident: &ResidentMesh, mesh3d: &Mesh3d) -> Option<bool> {

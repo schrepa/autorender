@@ -1,7 +1,7 @@
 use bevy_ecs::entity::Entity;
 use glam::{Affine3A, Mat4, UVec2, Vec3};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrameFacts {
     pub display: bool,
     pub exact: bool,
@@ -10,6 +10,7 @@ pub struct FrameFacts {
     pub debug: bool,
     pub display_size: UVec2,
     pub render_size: UVec2,
+    pub pixel_ratio: f32,
     pub submitted: bool,
 }
 
@@ -23,6 +24,7 @@ impl Default for FrameFacts {
             debug: false,
             display_size: UVec2::new(1920, 1080),
             render_size: UVec2::new(1920, 1080),
+            pixel_ratio: 1.0,
             submitted: true,
         }
     }

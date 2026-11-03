@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use serde_json::{Value, json};
@@ -108,6 +108,22 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), Failure> {
         }
     }
     Ok(write_index(&folder)?)
+}
+
+pub(crate) fn project_packs(
+    root: &Path,
+    folder: &str,
+    project: &Project,
+) -> Result<Vec<PathBuf>, String> {
+    let mut names = vec![project.package.clone()];
+    for scene in &project.scenes {
+        names.push(scene_id(root, &format!("{folder}/{scene}"))?);
+    }
+    let cooked = root.join(COOKED);
+    Ok(names
+        .iter()
+        .map(|name| cooked.join(format!("{name}.pack")))
+        .collect())
 }
 
 fn build(root: &Path, project: &Project) -> Result<String, String> {

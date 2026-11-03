@@ -1,4 +1,5 @@
 use engine_ambient_occlusion::AmbientOcclusionBrick;
+use engine_audio::AudioBrick;
 use engine_auto_exposure::AutoExposureBrick;
 use engine_bloom::BloomBrick;
 use engine_collision::CollisionBrick;
@@ -23,6 +24,7 @@ use engine_physics::PhysicsBrick;
 use engine_probes::ReflectionProbesBrick;
 use engine_reflections::ReflectionsBrick;
 use engine_scatter::ScatterBrick;
+use engine_screens::ScreensBrick;
 use engine_shadows::ShadowsBrick;
 use engine_sky::SkyBrick;
 use engine_splines::SplinesBrick;
@@ -30,8 +32,10 @@ use engine_sun::SunBrick;
 use engine_taa::TaaBrick;
 use engine_terrain::TerrainBrick;
 use engine_terrain_shading::TerrainShadingBrick;
+use engine_text::TextBrick;
 use engine_time_of_day::TimeOfDayBrick;
 use engine_tonemap::TonemapBrick;
+use engine_ui::UiBrick;
 use engine_water::WaterBrick;
 use engine_wind::WindBrick;
 use engine_world_streaming::WorldStreamingBrick;
@@ -65,6 +69,10 @@ pub fn standard<L: Listing>(list: L) -> L {
         .with::<AutoExposureBrick>()
         .with::<TonemapBrick>()
         .with::<DebugViewBrick>()
+        .with::<AudioBrick>()
+        .with::<ScreensBrick>()
+        .with::<TextBrick>()
+        .with::<UiBrick>()
         .with::<SplinesBrick>()
         .with::<LayerNoiseBrick>()
         .with::<LayerStampsBrick>()

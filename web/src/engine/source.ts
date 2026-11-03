@@ -46,10 +46,12 @@ interface SceneFileBindings<Files> {
   SceneLoad: new (source: string) => SceneLoad<Files>;
 }
 
-export async function loadSceneFiles<Files>(sceneUrl: string, source: string, bindings: SceneFileBindings<Files>, signal: AbortSignal): Promise<Files> {
+export async function loadSceneFiles<Files>(sceneUrl: string, source: string, bindings: SceneFileBindings<Files>, signal: AbortSignal, progress?: (done: number, total: number) => void): Promise<Files> {
   const load = new bindings.SceneLoad(source);
   const base = new URL(sceneUrl, location.href);
   const pool = jobPool();
+  let done = 0;
+  let total = 0;
   const file = async ({ uri }: { uri: string }) => {
     const url = new URL(uri, base).href;
     const bytes = await fetchBytes(url, signal);
@@ -58,9 +60,13 @@ export async function loadSceneFiles<Files>(sceneUrl: string, source: string, bi
       if (image) load.image(uri, image.width, image.height, image.pixels);
       else load.decode(uri, bytes);
     }
+    done += 1;
+    progress?.(done, total);
   };
   try {
     for (let reads = load.take_reads(); reads.length > 0; reads = load.take_reads()) {
+      total += reads.length;
+      progress?.(done, total);
       await Promise.all(reads.map(file));
     }
     return load.finish();

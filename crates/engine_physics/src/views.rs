@@ -1,10 +1,10 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Error, ErrorCode, Expected, Operation, SceneIds};
-use engine_places::physics::RigidBody;
+use engine_places::physics::{BodyPush, RigidBody};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::body::{BodyProblem, BodyWater};
+use crate::body::{BodyProblem, BodyWater, check_push};
 use crate::world::PhysicsWorld;
 
 #[derive(Serialize)]
@@ -66,5 +66,40 @@ impl Operation for PhysicsBody {
             water: status.water,
         };
         Ok(json!(view))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PushRequest {
+    entity: String,
+    push: BodyPush,
+}
+
+pub(crate) struct BodyPushOperation;
+
+impl Operation for BodyPushOperation {
+    const NAME: &'static str = "body_push";
+    type Params = (
+        SceneIds<'static, 'static>,
+        Query<'static, 'static, &'static mut BodyPush, With<RigidBody>>,
+    );
+    type Request = PushRequest;
+
+    fn run(
+        (ids, mut bodies): SystemParamItem<'_, '_, Self::Params>,
+        request: PushRequest,
+    ) -> Result<Value, Error> {
+        let entity = ids.entity(&request.entity).ok_or_else(|| {
+            Error::new(ErrorCode::UnknownEntity, "$.entity")
+                .expected(Expected::Entity)
+                .got(&request.entity)
+        })?;
+        check_push(&request.push, "$.push")?;
+        let mut push = bodies.get_mut(entity).map_err(|_| {
+            Error::new(ErrorCode::InvalidRigidBody, "$.entity").got(&request.entity)
+        })?;
+        *push = request.push;
+        Ok(json!(request.push))
     }
 }

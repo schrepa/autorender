@@ -5,7 +5,7 @@ use engine::host::{FramePhase, HostSettings};
 use engine::{BrickList, Engine, ErrorCode, Game, GameHost, GpuPreference, RenderTarget};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::WindowEvent;
+use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::PhysicalKey;
 use winit::window::WindowId;
@@ -161,6 +161,9 @@ impl<'a, G: Game> App<'a, G> {
         self.options.settings.apply(&mut host)?;
         let mut jobs = self.options.jobs.pool(false);
         jobs.attach(&mut host);
+        if self.options.measure.is_none() && self.options.flight.is_none() {
+            self.input.connect_pads();
+        }
         Ok(Running {
             window,
             host,
@@ -207,7 +210,9 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                 event,
                 WindowEvent::KeyboardInput { .. }
                     | WindowEvent::MouseInput { .. }
+                    | WindowEvent::MouseWheel { .. }
                     | WindowEvent::CursorMoved { .. }
+                    | WindowEvent::CursorLeft { .. }
                     | WindowEvent::Focused(_)
             )
         {
@@ -239,14 +244,21 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                     Input::key(&mut running.host, code, event.state);
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } => self.input.button(button, state),
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.input.button(&mut running.host, button, state);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                Input::wheel(&mut running.host, delta, running.window.scale_factor());
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 let position = position.to_logical::<f64>(running.window.scale_factor());
                 self.input
                     .cursor(&mut running.host, (position.x, position.y));
             }
+            WindowEvent::CursorLeft { .. } => running.host.pointer_left(),
             WindowEvent::RedrawRequested => {
                 let start = Instant::now();
+                self.input.poll_pads(&mut running.host, &running.window);
                 let phase = match running.redraw() {
                     Ok(phase) => phase,
                     Err(error) => {
@@ -255,6 +267,7 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                         return;
                     }
                 };
+                self.input.apply_cursor(&running.host, &running.window);
                 if phase == FramePhase::Idle {
                     return;
                 }
@@ -275,6 +288,15 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                 running.window.request_redraw();
             }
             _ => {}
+        }
+    }
+
+    fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
+        if let DeviceEvent::MouseMotion { delta } = event
+            && let Some(running) = &mut self.running
+            && self.options.flight.is_none()
+        {
+            Input::motion(&mut running.host, delta);
         }
     }
 }

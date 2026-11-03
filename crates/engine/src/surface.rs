@@ -8,6 +8,11 @@ macro_rules! __game_surface {
                 fn frame(timestamp: f64, width: u32, height: u32) -> Result<(), $crate::__private::JsValue>;
                 fn key(code: &str, down: bool) -> bool;
                 fn look(dx: f32, dy: f32);
+                fn motion(dx: f32, dy: f32);
+                fn pointer(x: f32, y: f32);
+                fn pointer_left();
+                fn wheel(dx: f32, dy: f32);
+                fn pad(buttons: u32, axes: Vec<f32>);
                 fn clear_input();
                 fn animation_frame(timestamp: f64, width: u32, height: u32) -> Result<u32, $crate::__private::JsValue>;
                 fn work_while_compiling(width: u32, height: u32) -> bool;
@@ -26,6 +31,9 @@ macro_rules! __game_surface {
                 fn suspend();
                 fn reset_camera();
                 fn reload_scene(source: &str, files: SceneFileSet) -> Result<(), $crate::__private::JsValue>;
+                fn take_level_request() -> Option<String>;
+                fn report_level(done: u32, total: u32);
+                fn fail_level(message: &str);
                 fn set_tick_pipelining(enabled: bool);
                 fn set_pixel_ratio(ratio: f64);
                 fn set_setting(key: &str, value: &str) -> Result<(), $crate::__private::JsValue>;
@@ -34,6 +42,7 @@ macro_rules! __game_surface {
             always_ref {
                 fn stats() -> String as Json<FrameStats>;
                 fn tick_pipelining() -> bool;
+                fn cursor_mode() -> u32;
                 fn job_hash() -> Vec<u8>;
                 fn distribution(values: Vec<f64>) -> String as Json<Option<Distribution>>;
             }
@@ -352,6 +361,7 @@ fn typescript_type(ty: &str) -> String {
         "bool" => "boolean",
         "String" | "&str" => "string",
         "Vec<u8>" => "Uint8Array",
+        "Vec<f32>" => "Float32Array",
         "Vec<f64>" => "Float64Array",
         "Vec<u32>" => "Uint32Array",
         "Array" => "JobOrder[]",

@@ -1,7 +1,12 @@
 use crate::app_host::AppHost;
 use crate::game::Game;
-use crate::host::{FrameLoop, FramePhase, InputGatherer, JobId, JobOrder, JobScheduler};
-use engine_core::{ActionInput, BrickList, CookMode, Engine};
+use crate::host::{
+    FrameLoop, FramePhase, InputGatherer, JobId, JobOrder, JobScheduler, LevelLoad, LevelStep,
+};
+use engine_core::{
+    ActionInput, BrickList, CookMode, CursorMode, Engine, ErrorCode, LevelProgress, LevelRequest,
+    MenuInput, MoveInput, WorkRemaining,
+};
 use engine_render::RenderTarget;
 use engine_scene::SceneFiles;
 
@@ -11,6 +16,7 @@ pub struct GameHost<G: Game> {
     input: InputGatherer,
     frames: FrameLoop,
     jobs: JobScheduler,
+    level: LevelLoad,
     #[cfg(feature = "dev")]
     development: crate::dev_host::DevHost,
     #[cfg(feature = "dev")]
@@ -24,7 +30,7 @@ impl<G: Game> GameHost<G> {
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> crate::Result<Self> {
         engine_panic::install();
-        let input = InputGatherer::new(G::ACTIONS)?;
+        let input = InputGatherer::new(G::ACTIONS, G::AXES)?;
         let mut game = None;
         let app = AppHost::launch(target, bricks, |engine| {
             game = Some(build(engine).map_err(Into::into)?);
@@ -44,6 +50,7 @@ impl<G: Game> GameHost<G> {
             input,
             frames: FrameLoop::default(),
             jobs: JobScheduler::default(),
+            level: LevelLoad::default(),
             #[cfg(feature = "dev")]
             development,
             #[cfg(feature = "dev")]
@@ -96,9 +103,85 @@ impl<G: Game> GameHost<G> {
         self.suspend();
     }
 
+    pub fn take_level_request(&mut self) -> Option<String> {
+        self.app
+            .engine_mut()
+            .app
+            .world_mut()
+            .resource_mut::<LevelRequest>()
+            .path
+            .take()
+    }
+
+    pub fn report_level(&mut self, done: u32, total: u32) {
+        self.show_level(LevelProgress::Reading { done, total });
+    }
+
+    pub fn fail_level(&mut self, message: &str) {
+        self.level_failed(crate::Error::new(ErrorCode::SourceIo, "$.path").got(message));
+    }
+
+    fn level_failed(&mut self, error: crate::Error) {
+        self.level = LevelLoad::Idle;
+        self.show_level(LevelProgress::Failed { error });
+    }
+
+    fn show_level(&mut self, progress: LevelProgress) {
+        self.app
+            .engine_mut()
+            .app
+            .world_mut()
+            .insert_resource(progress);
+    }
+
+    fn level_built(&mut self) {
+        let world = self.app.engine().app.world();
+        if *world.resource::<LevelProgress>() != LevelProgress::Idle {
+            self.level = LevelLoad::Building { quiet: 0 };
+            self.show_level(LevelProgress::Building);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn open_level(&mut self) {
+        let Some(path) = self.take_level_request() else {
+            return;
+        };
+        let kinds = engine_scene::SceneKinds::of(self.app.engine().app.world());
+        match LevelLoad::open(&path, &kinds) {
+            Ok(level) => {
+                self.level = level;
+                self.report_level(0, 0);
+            }
+            Err(error) => self.level_failed(error),
+        }
+    }
+
+    fn step_level(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.open_level();
+        if matches!(self.level, LevelLoad::Idle) {
+            return;
+        }
+        let world = self.app.engine().app.world();
+        let busy = self.app.loading() || world.resource::<WorkRemaining>().remaining();
+        match self.level.step(busy) {
+            Ok(LevelStep::Progress(progress)) => self.show_level(progress),
+            #[cfg(not(target_arch = "wasm32"))]
+            Ok(LevelStep::Ready { source, files }) => {
+                if let Err(error) = self.reload_scene(&source, &files) {
+                    self.level_failed(error);
+                }
+            }
+            Err(error) => self.level_failed(error),
+        }
+    }
+
     pub fn frame(&mut self, timestamp: f64, width: u32, height: u32) -> crate::Result<()> {
+        self.step_level();
         self.prepare_pipelines();
-        let input = self.input.take();
+        let input = self.input.take(timestamp);
+        self.app.set_gathered(input);
         let engine = self.app.engine_mut();
         self.game.before_frame(engine);
         let _ = engine
@@ -107,7 +190,12 @@ impl<G: Game> GameHost<G> {
             .modify_resource(|actions: &mut ActionInput| {
                 actions.ingest(input.held, input.pressed, input.released);
             });
-        self.app.frame(timestamp, width, height, input.state)
+        let state = if engine.app.world().resource::<MenuInput>().wanted {
+            MoveInput::default()
+        } else {
+            input.state
+        };
+        self.app.frame(timestamp, width, height, state)
     }
 
     pub fn animation_frame(
@@ -155,11 +243,37 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn key(&mut self, code: &str, down: bool) -> bool {
-        self.input.key(code, down)
+        let world = self.app.engine().app.world();
+        let wanted = world.resource::<MenuInput>().wanted;
+        self.input.key(code, down, wanted)
     }
 
     pub fn look(&mut self, dx: f32, dy: f32) {
         self.input.look(dx, dy);
+    }
+
+    pub fn motion(&mut self, dx: f32, dy: f32) {
+        self.input.motion(dx, dy);
+    }
+
+    pub fn pointer(&mut self, x: f32, y: f32) {
+        self.input.pointer(x, y);
+    }
+
+    pub fn pointer_left(&mut self) {
+        self.input.pointer_left();
+    }
+
+    pub fn wheel(&mut self, dx: f32, dy: f32) {
+        self.input.wheel(dx, dy);
+    }
+
+    pub fn pad(&mut self, buttons: u32, axes: [f32; 6]) {
+        self.input.pad(buttons, axes);
+    }
+
+    pub fn cursor_mode(&self) -> CursorMode {
+        *self.app.engine().app.world().resource::<CursorMode>()
     }
 
     pub fn clear_input(&mut self) {
@@ -270,6 +384,7 @@ impl<G: Game> GameHost<G> {
         self.app.replay_settings()?;
         self.app.forget_pipeline_list();
         self.suspend();
+        self.level_built();
         Ok(())
     }
 

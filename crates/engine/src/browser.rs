@@ -119,6 +119,16 @@ impl<G: Game> PageHost<G> {
             .map_err(js)? as u32)
     }
 
+    pub fn pad(&mut self, buttons: u32, axes: Vec<f32>) {
+        if let Ok(axes) = <[f32; 6]>::try_from(axes) {
+            self.host.pad(buttons, axes);
+        }
+    }
+
+    pub fn cursor_mode(&self) -> u32 {
+        self.host.cursor_mode() as u32
+    }
+
     pub fn take_jobs(&mut self) -> js_sys::Array {
         let out = js_sys::Array::new();
         let set = |object: &js_sys::Object, field: &str, value: &JsValue| {
@@ -174,7 +184,8 @@ impl<G: Game> PageHost<G> {
 
     pub fn job_kept(&mut self, id: f64, key: String, output: Option<Vec<u8>>) {
         if let Some(id) = job_id(id) {
-            self.host.job_kept(id, key, output.map(std::sync::Arc::from));
+            self.host
+                .job_kept(id, key, output.map(std::sync::Arc::from));
         }
     }
 

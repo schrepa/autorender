@@ -95,11 +95,11 @@ class FrameHud {
     metric("draws", String(stats.draw_calls));
     element("uploads").textContent = `${(stats.upload_bytes / 1024).toFixed(0)} KiB / frame`;
     const triangles = stats.triangles === null ? "" : ` · ${stats.triangles.toLocaleString("en-US")} triangles`;
-    element("render-time").textContent = `${stats.instances} drawn${triangles} · ${stats.culled_instances} culled · CPU render ${(this.submission / this.samples).toFixed(2)} ms · GPU time not measured`;
+    element("render-time").textContent = `${stats.instances} drawn${triangles} · ${stats.meshes_stats.culled_instances} culled · CPU render ${(this.submission / this.samples).toFixed(2)} ms · GPU time not measured`;
     const dataset = this.canvas.dataset;
     dataset.frames = String(this.frames);
     dataset.instances = String(stats.instances);
-    dataset.renderCandidates = String(stats.render_candidates);
+    dataset.renderCandidates = String(stats.meshes_stats.render_candidates);
     dataset.residentMeshes = String(stats.resident_meshes);
     dataset.meshUploadBytes = String(stats.mesh_upload_bytes);
     dataset.residentMeshBytes = String(stats.resident_mesh_bytes);
@@ -119,6 +119,7 @@ export interface GameOptions<T extends Runtime> {
   parameters?: Record<string, string>;
   poll?(game: T): void;
   reload?(game: T, signal: AbortSignal): Promise<void>;
+  level?(game: T, path: string, signal: AbortSignal, progress: (done: number, total: number) => void): Promise<void>;
   source?: { url: string; load(signal: AbortSignal): Promise<string>; files?(source: string, signal: AbortSignal): Promise<unknown> };
   ready?(game: T, controls: HostControls<T>): void;
   beforeFrame?(game: T, timestamp: number): void;
@@ -148,6 +149,7 @@ let paused = development && !preparedDevelopment;
 let preparing = !development || preparedDevelopment;
 if (preparing) canvas.style.visibility = "hidden";
 let developmentBusy = false;
+let loadingLevel = false;
 let disposeDevelopment: (() => void) | undefined;
 let failed = false;
 let stopped: string | undefined;
@@ -265,19 +267,36 @@ function started() {
   setStatus("WebGPU active", "running");
 }
 
+function pollLevel(current: T) {
+  if (loadingLevel || !options.level) return;
+  const path = current.take_level_request();
+  if (path === undefined) return;
+  loadingLevel = true;
+  current.report_level(0, 0);
+  void options.level(current, path, lifecycle.signal, (done, total) => current.report_level(done, total))
+    .catch(error => {
+      if (fatal(error)) fail(error);
+      else if (!disposed && !failed) current.fail_level(String(error));
+    })
+    .finally(() => { loadingLevel = false; });
+}
+
 function frame(timestamp: number) {
   request = 0;
   if (disposed || !game || paused || document.hidden || failed) return;
   if (panicReport()) { fail(engineFailure({ code: "runtime_panicked", path: "$" })); return; }
   try {
     if (!preparing) options.beforeFrame?.(game, timestamp);
+    input.pollPads();
     const phase = game.animation_frame(timestamp, pixelWidth, pixelHeight);
+    input.setCursorMode(game.cursor_mode());
     jobs?.exchange();
     if (phase === FRAME_PHASES.compiling) {
       if (!working) working = window.setTimeout(workWhileCompiling, 0);
     } else if (phase === FRAME_PHASES.started) {
       started();
     } else if (phase === FRAME_PHASES.playing) {
+      pollLevel(game);
       options.afterFrame?.(game, timestamp);
       if (hud.frame(game, timestamp)) options.poll?.(game);
       options.afterHostFrame?.(game, timestamp);

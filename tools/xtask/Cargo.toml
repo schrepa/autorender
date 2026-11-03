@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+zip.workspace = true
 engine_scene = { workspace = true, features = ["schema"] }
 engine_dev.workspace = true
 base64.workspace = true

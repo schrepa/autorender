@@ -133,6 +133,7 @@ error_codes! {
     InvalidMesh => "invalid_mesh",
     InvalidMaterial => "invalid_material",
     InvalidTexture => "invalid_texture",
+    InvalidFont => "invalid_font",
     InvalidRenderable => "invalid_renderable",
     InvalidCollider => "invalid_collider",
     InvalidColliderTransform => "invalid_collider_transform",

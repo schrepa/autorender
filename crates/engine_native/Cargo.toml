@@ -19,6 +19,7 @@ png.workspace = true
 sha2.workspace = true
 serde_json.workspace = true
 winit.workspace = true
+gilrs.workspace = true
 pollster.workspace = true
 zstd.workspace = true
 

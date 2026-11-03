@@ -25,7 +25,7 @@ use engine_core::{
     Brick, Bricks, ComponentKind, ErrorCode, Placement, Runs, SceneComponents, Schedule, Smoke,
     Source,
 };
-use engine_places::physics::RigidBody;
+use engine_places::physics::{BodyPush, RigidBody};
 use engine_places::water::WaterObstacles;
 
 pub struct PhysicsBrick;
@@ -54,6 +54,13 @@ impl Brick for PhysicsBrick {
                     .example(body::body_example),
                 None,
             )
+            .join::<SceneComponents>(
+                ComponentKind::of::<BodyPush>("body_push")
+                    .check(body::check_push)
+                    .schema(body::push_schema)
+                    .example(body::push_example),
+                None,
+            )
             .systems(
                 Schedule::FixedPreSimulation,
                 (solids::sync_sources, solids::sync_colliders),
@@ -63,7 +70,8 @@ impl Brick for PhysicsBrick {
                 (world::step, obstacles::obstruct),
             )
             .systems(Schedule::FixedPostSimulation, solids::sync_colliders)
-            .observation::<views::PhysicsBody>();
+            .observation::<views::PhysicsBody>()
+            .operation::<views::BodyPushOperation>();
     }
 }
 

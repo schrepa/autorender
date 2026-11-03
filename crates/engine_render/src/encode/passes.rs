@@ -11,7 +11,10 @@ impl Run {
         if self.merge && shares && self.open.as_ref().is_some_and(|open| open.shared) {
             return false;
         }
-        if self.labelled.is_some_and(|known| self.same_group(known, pass)) {
+        if self
+            .labelled
+            .is_some_and(|known| self.same_group(known, pass))
+        {
             self.end_render();
         } else {
             self.leave();
@@ -58,7 +61,9 @@ impl Run {
     }
 
     pub(crate) fn stage_of(&self, pass: u32) -> Option<&'static str> {
-        self.resolving(pass).and(self.resolve).map(|(_, stage)| stage)
+        self.resolving(pass)
+            .and(self.resolve)
+            .map(|(_, stage)| stage)
     }
 
     pub(crate) fn span_of(&self, pass: u32) -> Option<&'static str> {
@@ -73,13 +78,18 @@ impl Run {
             return;
         };
         self.end_render();
-        if let (Some(span), Some(encoder)) = (self.encode_span(timer, name), self.encoder.as_mut()) {
+        if let (Some(span), Some(encoder)) = (self.encode_span(timer, name), self.encoder.as_mut())
+        {
             span.mark(encoder, false);
         }
         self.timed.open = Some(name);
     }
 
-    fn encode_span<'t>(&self, timer: &'t GpuProfiler, name: &'static str) -> Option<crate::profiling::Span<'t>> {
+    fn encode_span<'t>(
+        &self,
+        timer: &'t GpuProfiler,
+        name: &'static str,
+    ) -> Option<crate::profiling::Span<'t>> {
         let group = self.group_of(self.pass);
         if group == name {
             timer.span(name)
@@ -94,7 +104,8 @@ impl Run {
             return;
         };
         self.end_render();
-        if let (Some(span), Some(encoder)) = (self.encode_span(timer, name), self.encoder.as_mut()) {
+        if let (Some(span), Some(encoder)) = (self.encode_span(timer, name), self.encoder.as_mut())
+        {
             span.mark(encoder, true);
         }
     }
@@ -105,14 +116,20 @@ impl Run {
         }
         self.end_render();
         for buffer in std::mem::take(&mut self.queued.cleared) {
-            if let (Some(Some((made, _))), Some(encoder)) = (self.buffers.get(buffer as usize), self.encoder.as_mut()) {
+            if let (Some(Some((made, _))), Some(encoder)) =
+                (self.buffers.get(buffer as usize), self.encoder.as_mut())
+            {
                 encoder.clear_buffer(made, 0, None);
             }
         }
     }
 
     pub(crate) fn group(&mut self, pass: u32) {
-        if !GROUPED || self.labelled.is_some_and(|known| self.same_group(known, pass)) {
+        if !GROUPED
+            || self
+                .labelled
+                .is_some_and(|known| self.same_group(known, pass))
+        {
             return;
         }
         let name = self.group_of(pass);
@@ -255,7 +272,7 @@ impl Run {
                         depth = Some((key(Target::Depth), made.clone(), DEPTH_FORMAT, ops, true));
                     }
                 }
-                if pass.name == crate::shared::COMPOSITE || pass.name == crate::shared::DEBUG_VIEW {
+                if crate::shared::draws_canvas(pass.name) {
                     let id = self.machine.ids.target(Target::Canvas);
                     if let (Some(ops), Some(canvas)) = (ops_of(id), self.canvas.clone()) {
                         let format = self.canvas_format();
@@ -282,7 +299,13 @@ impl Run {
                 }
                 for &(texture, access) in &pass.colors {
                     let id = self.machine.ids.textures.get(texture as usize).copied();
-                    let ops = ops_of(id).unwrap_or_else(|| declared_ops(access, pass.clear_of(texture), Clear::Color(crate::graph::TRANSPARENT)));
+                    let ops = ops_of(id).unwrap_or_else(|| {
+                        declared_ops(
+                            access,
+                            pass.clear_of(texture),
+                            Clear::Color(crate::graph::TRANSPARENT),
+                        )
+                    });
                     let format = self.machine.declared.textures[texture as usize].format;
                     let view = self.attachment_view(texture, 0, 0);
                     colors.push((u64::from(texture) + 1_000, view, format, ops));
@@ -291,7 +314,13 @@ impl Run {
                     && let Some(&(texture, access)) = pass.depths.first()
                 {
                     let id = self.machine.ids.textures.get(texture as usize).copied();
-                    let ops = depth_of(id).unwrap_or_else(|| Some(declared_ops(access, pass.clear_of(texture), Clear::Depth(FAR))));
+                    let ops = depth_of(id).unwrap_or_else(|| {
+                        Some(declared_ops(
+                            access,
+                            pass.clear_of(texture),
+                            Clear::Depth(FAR),
+                        ))
+                    });
                     let format = self.machine.declared.textures[texture as usize].format;
                     if let Some(view) = self.attachment_view(texture, 0, 0) {
                         depth = Some((u64::from(texture) + 2_000, view, format, ops, false));
@@ -299,16 +328,27 @@ impl Run {
                 }
             }
             AttachRaw::Color(texture, mip, ref layers) => {
-                let Some(&(_, access)) = pass.colors.iter().find(|(known, _)| *known == texture) else {
+                let Some(&(_, access)) = pass.colors.iter().find(|(known, _)| *known == texture)
+                else {
                     return self.mismatch(pass.name);
                 };
                 let id = self.machine.ids.textures.get(texture as usize).copied();
-                let planned = ops_of(id).unwrap_or_else(|| declared_ops(access, pass.clear_of(texture), Clear::Color(crate::graph::TRANSPARENT)));
-                let ops = Ops { store: true, ..planned };
+                let planned = ops_of(id).unwrap_or_else(|| {
+                    declared_ops(
+                        access,
+                        pass.clear_of(texture),
+                        Clear::Color(crate::graph::TRANSPARENT),
+                    )
+                });
+                let ops = Ops {
+                    store: true,
+                    ..planned
+                };
                 let format = self.machine.declared.textures[texture as usize].format;
                 for at in layers.clone() {
                     let view = self.attachment_view(texture, mip, at);
-                    let attachment = (u64::from(texture) * 4_096 + u64::from(at)) * 64 + u64::from(mip) + 10_000;
+                    let attachment =
+                        (u64::from(texture) * 4_096 + u64::from(at)) * 64 + u64::from(mip) + 10_000;
                     colors.push((attachment, view, format, ops));
                 }
             }
@@ -318,23 +358,40 @@ impl Run {
                 }
             }
             AttachRaw::ColorDepth(color, layer, texture) => {
-                let Some(&(_, access)) = pass.colors.iter().find(|(known, _)| *known == color) else {
+                let Some(&(_, access)) = pass.colors.iter().find(|(known, _)| *known == color)
+                else {
                     return self.mismatch(pass.name);
                 };
                 let id = self.machine.ids.textures.get(color as usize).copied();
-                let planned = ops_of(id).unwrap_or_else(|| declared_ops(access, pass.clear_of(color), Clear::Color(crate::graph::TRANSPARENT)));
-                let ops = Ops { store: true, ..planned };
+                let planned = ops_of(id).unwrap_or_else(|| {
+                    declared_ops(
+                        access,
+                        pass.clear_of(color),
+                        Clear::Color(crate::graph::TRANSPARENT),
+                    )
+                });
+                let ops = Ops {
+                    store: true,
+                    ..planned
+                };
                 let format = self.machine.declared.textures[color as usize].format;
                 let at = layer.unwrap_or(0);
                 let view = self.attachment_view(color, 0, at);
-                colors.push(((u64::from(color) * 4_096 + u64::from(at)) * 64 + 10_000, view, format, ops));
+                colors.push((
+                    (u64::from(color) * 4_096 + u64::from(at)) * 64 + 10_000,
+                    view,
+                    format,
+                    ops,
+                ));
                 if !self.depth_attachment(&pass, texture, 0, &mut depth) {
                     return self.mismatch(pass.name);
                 }
             }
             AttachRaw::Colors(ref attached) => {
                 for &(texture, at) in attached {
-                    let Some(&(_, access)) = pass.colors.iter().find(|(known, _)| *known == texture) else {
+                    let Some(&(_, access)) =
+                        pass.colors.iter().find(|(known, _)| *known == texture)
+                    else {
                         return self.mismatch(pass.name);
                     };
                     let id = self.machine.ids.textures.get(texture as usize).copied();
@@ -544,7 +601,12 @@ impl Run {
         self.surface
     }
 
-    pub(super) fn attachment_view(&mut self, texture: u32, mip: u32, layer: u32) -> Option<wgpu::TextureView> {
+    pub(super) fn attachment_view(
+        &mut self,
+        texture: u32,
+        mip: u32,
+        layer: u32,
+    ) -> Option<wgpu::TextureView> {
         let parity = self.parity;
         let made = self.textures.get_mut(texture as usize)?;
         let made = match parity {

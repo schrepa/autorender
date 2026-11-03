@@ -70,6 +70,7 @@ export type ErrorCode =
   | "invalid_mesh"
   | "invalid_material"
   | "invalid_texture"
+  | "invalid_font"
   | "invalid_renderable"
   | "invalid_collider"
   | "invalid_collider_transform"

@@ -18,6 +18,7 @@ macro_rules! contract {
     }};
 }
 
+pub mod audio;
 pub mod exposure;
 pub mod ground;
 pub mod lighting;
@@ -27,6 +28,7 @@ pub mod navigation;
 pub mod particles;
 pub mod physics;
 pub mod probes;
+pub mod screens;
 pub mod shadows;
 pub mod sky;
 mod smokes;
@@ -35,7 +37,9 @@ pub mod splines;
 pub mod streaming;
 pub mod sun;
 pub mod terrain;
+pub mod text;
 pub mod tonemap;
+pub mod ui;
 pub mod water;
 pub mod wind;
 
@@ -239,8 +243,16 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::component::<water::WaterBody>("water_body"),
     PlaceDecl::slot::<wind::Wind>(),
     PlaceDecl::slot::<physics::Collision>(),
+    PlaceDecl::slot::<text::Text>(),
+    PlaceDecl::slot::<ui::UiValues>(),
+    PlaceDecl::slot::<ui::UiEvents>(),
+    PlaceDecl::component::<ui::UiRoot>("ui"),
+    PlaceDecl::slot::<audio::Sounds>(),
+    PlaceDecl::component::<audio::SoundSource>("sound_source"),
     PlaceDecl::component::<physics::Collider>("collider"),
     PlaceDecl::component::<physics::RigidBody>("rigid_body"),
+    PlaceDecl::component::<physics::BodyPush>("body_push"),
+    PlaceDecl::component::<screens::Screen>("screen"),
     PlaceDecl::component::<solids::SolidSource>("solid_source"),
     PlaceDecl::component::<splines::SplineMesh>("spline_mesh"),
     PlaceDecl::component::<streaming::StreamingFocus>("streaming_focus"),

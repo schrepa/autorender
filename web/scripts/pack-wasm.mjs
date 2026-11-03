@@ -2,14 +2,14 @@
 import "./exit-codes.mjs";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { initSync, PackDirectory } from "../pkg-dev/engine_worker.js";
+import { initSync, PackDirectory } from "../pkg-dev/engine_player.js";
 
 const [path, listed] = process.argv.slice(2);
 if (!path || !listed) {
   console.error("usage: node web/scripts/pack-wasm.mjs PACK RECORDS.json");
   process.exit(1);
 }
-initSync({ module: readFileSync(new URL("../pkg-dev/engine_worker_bg.wasm", import.meta.url)) });
+initSync({ module: readFileSync(new URL("../pkg-dev/engine_player_bg.wasm", import.meta.url)) });
 const pack = readFileSync(path);
 const header = pack.subarray(0, 32);
 const [at, stored] = PackDirectory.locate(header);

@@ -48,6 +48,8 @@ export const MAX_ACTIONS = 32;
 
 export const LOOK_LIMIT = 1000.0;
 
+export const WHEEL_PIXELS = 100.0;
+
 export const BENCHMARK_LIMIT_MS = 10000;
 
 export const MAX_PIXEL_RATIO = 1.5;
@@ -71,6 +73,8 @@ export const DYNAMIC_RAISE_FRAMES = 30;
 export const DYNAMIC_PROBE_FRAMES = 120;
 
 export const FRAME_PHASES = {"compiling":0,"idle":4,"playing":3,"preparing":1,"started":2};
+
+export const CURSOR_MODES = {"captured":2,"drag":0,"free":1};
 
 export const IMAGE_FORMATS = ["png","jpeg","ktx2-rgba8"];
 

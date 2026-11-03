@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
-use engine_core::{FixedTime, Filled, InterpolateTransform, Parent, Transform};
+use engine_core::{Filled, FixedTime, InterpolateTransform, Parent, Transform};
 use engine_places::ground::Ground;
-use engine_places::physics::{BodyMotion, Collider, RigidBody};
+use engine_places::physics::{BodyMotion, BodyPush, Collider, RigidBody};
 use engine_places::water::{WaterBody, WaterObstacle};
 use engine_places::wind::Wind;
 use glam::{Quat, Vec2, Vec3};
@@ -172,6 +172,7 @@ pub(crate) type BodyQuery = (
 );
 
 type Markers<'w, 's> = Query<'w, 's, &'static mut InterpolateTransform, With<RigidBody>>;
+type Pushes<'w, 's> = Query<'w, 's, &'static mut BodyPush>;
 
 impl PhysicsWorld {
     pub fn stats(&self) -> PhysicsStats {
@@ -224,6 +225,7 @@ impl PhysicsWorld {
         around: &Surroundings<'_>,
         poses: &mut Query<'_, '_, BodyQuery>,
         markers: &mut Markers<'_, '_>,
+        pushes: &mut Pushes<'_, '_>,
     ) {
         wanted.sort_unstable_by_key(|wanted| wanted.entity);
         let settings = around.settings;
@@ -270,7 +272,7 @@ impl PhysicsWorld {
             });
         }
         hold(&mut self.bodies, &self.statics, solver, around.ground);
-        let samples = push(&mut self.bodies, solver, around);
+        let samples = push(&mut self.bodies, solver, around, pushes);
         {
             let _profile = engine_core::profile::span("physics", "solve");
             solver.step(
@@ -379,7 +381,27 @@ fn hold(bodies: &mut [Body], statics: &Statics, solver: &mut Solver, ground: &Gr
     }
 }
 
-fn push(bodies: &mut [Body], solver: &mut Solver, around: &Surroundings<'_>) -> u32 {
+fn asked_push(rigid: &mut rp::RigidBody, mut asked: Mut<'_, BodyPush>) {
+    if *asked == BodyPush::default() {
+        return;
+    }
+    let kept = body::sanitized_push(*asked);
+    rigid.add_force(Vec3::from_array(kept.force), true);
+    rigid.add_torque(Vec3::from_array(kept.torque), true);
+    rigid.apply_impulse(Vec3::from_array(kept.impulse), true);
+    rigid.apply_torque_impulse(Vec3::from_array(kept.angular_impulse), true);
+    if asked.impulse != [0.0; 3] || asked.angular_impulse != [0.0; 3] {
+        asked.impulse = [0.0; 3];
+        asked.angular_impulse = [0.0; 3];
+    }
+}
+
+fn push(
+    bodies: &mut [Body],
+    solver: &mut Solver,
+    around: &Surroundings<'_>,
+    pushes: &mut Pushes<'_, '_>,
+) -> u32 {
     let _profile = engine_core::profile::span("physics", "push");
     let mut samples = 0;
     for body in bodies {
@@ -418,6 +440,9 @@ fn push(bodies: &mut [Body], solver: &mut Solver, around: &Surroundings<'_>) -> 
             rigid.add_torque(pushed.torque, sleeping);
         }
         body.status.water = pushed.water;
+        if let Ok(asked) = pushes.get_mut(body.entity) {
+            asked_push(rigid, asked);
+        }
     }
     samples
 }
@@ -466,6 +491,7 @@ pub(crate) fn step(
     waters: Query<&WaterBody>,
     mut poses: Query<BodyQuery>,
     mut markers: Markers,
+    mut pushes: Pushes,
     mut physics: ResMut<PhysicsWorld>,
     mut stats: ResMut<PhysicsStats>,
 ) {
@@ -492,6 +518,6 @@ pub(crate) fn step(
         solids: &solids,
         waters: &waters,
     };
-    physics.tick(wanted, &around, &mut poses, &mut markers);
+    physics.tick(wanted, &around, &mut poses, &mut markers, &mut pushes);
     stats.set_if_neq(physics.stats());
 }

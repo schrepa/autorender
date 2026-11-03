@@ -3,6 +3,7 @@ mod environment;
 mod frame_loop;
 mod input;
 mod jobs;
+mod level;
 mod pipeline_list;
 pub mod policy;
 mod resolution;
@@ -24,6 +25,7 @@ pub use frame_loop::{FrameLoop, FramePhase};
 pub use input::{FrameInput, InputGatherer, KEYS};
 pub(crate) use jobs::{Finished, JobScheduler};
 pub use jobs::{JobMessage, JobOrder};
+pub(crate) use level::{LevelLoad, LevelStep};
 pub(crate) use pipeline_list::PipelineList;
 pub(crate) use resolution::DynamicScale;
 pub use resolution::{render_size, view_size};
@@ -66,6 +68,11 @@ pub fn typescript() -> String {
         .map(|&(phase, name)| (name.to_owned(), (phase as u32).into()))
         .collect();
     output.push_str(&constant("FRAME_PHASES", &phases.into()));
+    let cursors: serde_json::Map<String, serde_json::Value> = engine_core::CursorMode::ALL
+        .iter()
+        .map(|&(mode, name)| (name.to_owned(), (mode as u32).into()))
+        .collect();
+    output.push_str(&constant("CURSOR_MODES", &cursors.into()));
     let formats: Vec<serde_json::Value> = IMAGE_FORMATS
         .iter()
         .map(|format| format.name.into())

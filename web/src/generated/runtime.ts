@@ -13,6 +13,11 @@ export interface Runtime {
   frame(timestamp: number, width: number, height: number): void;
   key(code: string, down: boolean): boolean;
   look(dx: number, dy: number): void;
+  motion(dx: number, dy: number): void;
+  pointer(x: number, y: number): void;
+  pointer_left(): void;
+  wheel(dx: number, dy: number): void;
+  pad(buttons: number, axes: Float32Array): void;
   clear_input(): void;
   animation_frame(timestamp: number, width: number, height: number): number;
   work_while_compiling(width: number, height: number): boolean;
@@ -31,12 +36,16 @@ export interface Runtime {
   suspend(): void;
   reset_camera(): void;
   reload_scene(source: string, files: unknown): void;
+  take_level_request(): string | undefined;
+  report_level(done: number, total: number): void;
+  fail_level(message: string): void;
   set_tick_pipelining(enabled: boolean): void;
   set_pixel_ratio(ratio: number): void;
   set_setting(key: string, value: string): void;
   apply_host_settings(query: string): void;
   stats(): Json<FrameStats>;
   tick_pipelining(): boolean;
+  cursor_mode(): number;
   job_hash(): Uint8Array;
   distribution(values: Float64Array): Json<Distribution | null>;
   dev_request?(line: string, context: string): Json<Step>;

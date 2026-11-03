@@ -5,12 +5,13 @@ use engine_core::{Error, PlaceDecl, ShaderText, Source};
 use crate::install::Work;
 use crate::machine::OutputDecl;
 use crate::{
-    DebugModes, DebugShown, Draws, GpuPart, Install, Layer, MainView, Pass, PostDisplay, PostLight,
-    PostScene, PostTone, Prepare, Resolve, ViewOutputs,
+    DebugModes, DebugShown, Draws, GpuPart, Install, Layer, MainView, Overlay, Pass, PostDisplay,
+    PostLight, PostScene, PostTone, Prepare, Resolve, ViewOutputs,
 };
 
 pub(crate) const COMPOSITE: &str = "composite";
 pub(crate) const DEBUG_VIEW: &str = "debug_view";
+pub(crate) const OVERLAY: &str = "overlay";
 pub(crate) const DEBUG_TARGETS: [&str; 3] = ["debug_ids", "debug_count", "debug_terrain"];
 pub(crate) const OUTPUT_PREFIX: &str = "output_";
 pub(crate) const POST: &str = "post";
@@ -39,6 +40,10 @@ pub(crate) static PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<DebugShown>(),
     PlaceDecl::list::<DebugModes>(),
 ];
+
+pub(crate) fn draws_canvas(pass: &str) -> bool {
+    pass == COMPOSITE || pass == DEBUG_VIEW || pass == OVERLAY
+}
 
 pub(crate) struct Layers {
     passes: Vec<(Layer, Pass<Self>)>,
@@ -120,6 +125,8 @@ pub(crate) struct Composite {
     plain: crate::Pipeline<Self, crate::Own>,
     debug_pass: Pass<Self>,
     debug_pipeline: crate::Pipeline<Self, crate::Own>,
+    overlay: Pass<Self>,
+    overlay_draws: Draws<Overlay>,
 }
 
 fn fullscreen(fragment: engine_core::Entry) -> crate::RenderPipeline<'static> {
@@ -142,17 +149,32 @@ impl GpuPart for Composite {
     const LABELS: &'static [&'static str] = &["engine/post-", "engine/post."];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let pass = cx.pass(COMPOSITE).label("engine/post-composite").span("post_composite").id();
+        let pass = cx
+            .pass(COMPOSITE)
+            .label("engine/post-composite")
+            .span("post_composite")
+            .id();
         let pipeline = cx.render_pipeline(pass, &fullscreen(crate::shaders::FS_COMPOSITE), &[])?;
-        let plain = cx.render_pipeline(pass, &fullscreen(crate::shaders::FS_COMPOSITE_PLAIN), &[])?;
+        let plain =
+            cx.render_pipeline(pass, &fullscreen(crate::shaders::FS_COMPOSITE_PLAIN), &[])?;
         let debug_pass = cx.pass(DEBUG_VIEW).after(pass).id();
-        let debug_pipeline = cx.render_pipeline(debug_pass, &fullscreen(crate::shaders::FS_DEBUG_VIEW), &[])?;
+        let debug_pipeline =
+            cx.render_pipeline(debug_pass, &fullscreen(crate::shaders::FS_DEBUG_VIEW), &[])?;
+        let overlay = cx
+            .pass(OVERLAY)
+            .label("engine/post-overlay")
+            .after(pass)
+            .after(debug_pass)
+            .id();
+        let overlay_draws = cx.claim::<Overlay>(overlay)?;
         Ok(Self {
             pass,
             pipeline,
             plain,
             debug_pass,
             debug_pipeline,
+            overlay,
+            overlay_draws,
         })
     }
 
@@ -165,6 +187,13 @@ impl GpuPart for Composite {
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
+        if pass == self.overlay {
+            let mut draw = cx.render(crate::Attach::Declared, None);
+            return LAYERS
+                .into_iter()
+                .map(|layer| self.overlay_draws.draw::<Self>(&mut draw, layer, &()))
+                .sum();
+        }
         let pipeline = if pass == self.debug_pass {
             &self.debug_pipeline
         } else if cx.core.temporal {
@@ -208,7 +237,8 @@ pub(crate) fn post_uniform(
     let (wide, tall) = (display.0 as f32, display.1 as f32);
     let focal = view_projection.row(1).truncate().length();
     PostUniform {
-        inverse_view_projection: crate::renderer::inverse_or_identity(view_projection).to_cols_array_2d(),
+        inverse_view_projection: crate::renderer::inverse_or_identity(view_projection)
+            .to_cols_array_2d(),
         view_projection: view_projection.to_cols_array_2d(),
         eye: position.extend(focal * height * 0.5).to_array(),
         size: [width, height, 1.0 / width, 1.0 / height],
@@ -248,7 +278,11 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
     let mut body = String::new();
     for (index, output) in outputs.iter().enumerate() {
         if let Some(module) = &output.module {
-            let _ = writeln!(imports, "import package::{module}::{} as member_{index};", output.name);
+            let _ = writeln!(
+                imports,
+                "import package::{module}::{} as member_{index};",
+                output.name
+            );
         }
         let _ = writeln!(
             body,
@@ -258,35 +292,79 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
         );
     }
     for depth in [false, true] {
-        let name = if depth { "DepthViewTargets" } else { "ViewTargets" };
-        let _ = writeln!(body, "\nstruct {name} {{\n    @location(0) color: vec4<f32>,");
-        for (index, output) in outputs.iter().filter(|output| !output.layers.is_empty()).enumerate() {
-            let _ = writeln!(body, "    @location({}) {}: {},", index + 1, output.name, output_type(output.format));
+        let name = if depth {
+            "DepthViewTargets"
+        } else {
+            "ViewTargets"
+        };
+        let _ = writeln!(
+            body,
+            "\nstruct {name} {{\n    @location(0) color: vec4<f32>,"
+        );
+        for (index, output) in outputs
+            .iter()
+            .filter(|output| !output.layers.is_empty())
+            .enumerate()
+        {
+            let _ = writeln!(
+                body,
+                "    @location({}) {}: {},",
+                index + 1,
+                output.name,
+                output_type(output.format)
+            );
         }
         if depth {
             let _ = writeln!(body, "    @builtin(frag_depth) depth: f32,");
         }
         let _ = writeln!(body, "}}");
     }
-    let _ = writeln!(body, "\nfn view_targets(shaded: Shaded, at: ViewPixel) -> ViewTargets {{");
-    let _ = writeln!(body, "    var targets: ViewTargets;\n    targets.color = vec4<f32>(shaded.linear, shaded.ambient);");
+    let _ = writeln!(
+        body,
+        "\nfn view_targets(shaded: Shaded, at: ViewPixel) -> ViewTargets {{"
+    );
+    let _ = writeln!(
+        body,
+        "    var targets: ViewTargets;\n    targets.color = vec4<f32>(shaded.linear, shaded.ambient);"
+    );
     for (index, output) in outputs.iter().enumerate() {
         if !output.layers.is_empty() && output.module.is_some() {
-            let _ = writeln!(body, "    targets.{} = member_{index}(shaded, at);", output.name);
+            let _ = writeln!(
+                body,
+                "    targets.{} = member_{index}(shaded, at);",
+                output.name
+            );
         }
     }
-    let _ = writeln!(body, "    return targets;\n}}\n\nfn depth_view_targets(shaded: Shaded, at: ViewPixel, depth: f32) -> DepthViewTargets {{");
-    let _ = writeln!(body, "    let targets = view_targets(shaded, at);\n    var out: DepthViewTargets;\n    out.color = targets.color;");
+    let _ = writeln!(
+        body,
+        "    return targets;\n}}\n\nfn depth_view_targets(shaded: Shaded, at: ViewPixel, depth: f32) -> DepthViewTargets {{"
+    );
+    let _ = writeln!(
+        body,
+        "    let targets = view_targets(shaded, at);\n    var out: DepthViewTargets;\n    out.color = targets.color;"
+    );
     for output in outputs.iter().filter(|output| !output.layers.is_empty()) {
         let _ = writeln!(body, "    out.{name} = targets.{name};", name = output.name);
     }
-    let _ = writeln!(body, "    out.depth = depth;\n    return out;\n}}\n\nstruct CompositeOut {{\n    @location(0) canvas: vec4<f32>,");
+    let _ = writeln!(
+        body,
+        "    out.depth = depth;\n    return out;\n}}\n\nstruct CompositeOut {{\n    @location(0) canvas: vec4<f32>,"
+    );
     let mut location = 1;
     for output in outputs.iter().filter(|output| output.layers.is_empty()) {
-        let _ = writeln!(body, "    @location({location}) {}: {},", output.name, output_type(output.format));
+        let _ = writeln!(
+            body,
+            "    @location({location}) {}: {},",
+            output.name,
+            output_type(output.format)
+        );
         location += 1;
     }
-    let _ = writeln!(body, "}}\n\nfn composite_out(color: vec4<f32>, light: SceneLight, at: PostPixel) -> CompositeOut {{\n    var out: CompositeOut;\n    out.canvas = color;");
+    let _ = writeln!(
+        body,
+        "}}\n\nfn composite_out(color: vec4<f32>, light: SceneLight, at: PostPixel) -> CompositeOut {{\n    var out: CompositeOut;\n    out.canvas = color;"
+    );
     for (index, output) in outputs.iter().enumerate() {
         if output.layers.is_empty() && output.module.is_some() {
             let _ = writeln!(body, "    out.{} = member_{index}(light, at);", output.name);

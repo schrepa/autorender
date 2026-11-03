@@ -24,6 +24,7 @@ policy! {
     pub const MAX_JOB_CACHE_MIB: u64 = 9_999_999;
     pub const MAX_ACTIONS: u32 = ActionId::COUNT;
     pub const LOOK_LIMIT: f32 = 1000.0;
+    pub const WHEEL_PIXELS: f32 = 100.0;
     pub const BENCHMARK_LIMIT_MS: u64 = 10_000;
     pub const MAX_PIXEL_RATIO: f64 = 1.5;
     pub const MAX_VIEW_WIDTH: u32 = 2560;

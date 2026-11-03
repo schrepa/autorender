@@ -356,8 +356,8 @@ fn external(kind: &str, package: &str) -> Option<String> {
             "a place crate depends only on {} among external crates ({package})",
             PLACE_EXTERNALS.join(", ")
         )),
-        "support" | "brick" if engine_only(package) => Some(format!("{package} is engine-only")),
-        "game" if engine_only(package) && !page_bindings(package) => {
+        "support" if engine_only(package) => Some(format!("{package} is engine-only")),
+        "brick" | "game" if engine_only(package) && !page_bindings(package) => {
             Some(format!("{package} is engine-only"))
         }
         _ => None,
@@ -398,8 +398,7 @@ fn forbids_unsafe(manifest: &Item, workspace: &Item) -> bool {
 }
 
 fn read(path: &Path) -> Result<Item, String> {
-    let text = fs::read_to_string(path)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
+    let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
     Document::parse(text)
         .map(Document::into_item)
         .map_err(|error| format!("{}: {error}", path.display()))

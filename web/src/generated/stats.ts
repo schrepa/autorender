@@ -1,5 +1,6 @@
 export interface FrameStats {
   ambient_occlusion_stats: AmbientOcclusionStats;
+  audio_stats: AudioStats;
   bloom_stats: BloomStats;
   bricks_cost: BrickCosts | null;
   cloud_stats: CloudStats;
@@ -47,9 +48,11 @@ export interface FrameStats {
   temporal_antialiasing_stats: TemporalAntialiasingStats;
   terrain_shading_stats: TerrainShadingStats;
   terrain_stats: TerrainStats;
+  text_stats: TextStats;
   texture_upload_bytes: number;
   tick: number;
   triangles: number | null;
+  ui_stats: UiStats;
   upload_bytes: number;
   water_stats: WaterStats;
   world_streaming_stats: CellStats;
@@ -57,6 +60,16 @@ export interface FrameStats {
 
 export interface AmbientOcclusionStats {
   active: boolean;
+}
+
+export interface AudioStats {
+  decode_failures: number;
+  decoding: number;
+  device: boolean;
+  latest_failure: string | null;
+  sounds_loaded: number;
+  voices: number;
+  voices_cut: number;
 }
 
 export interface BloomStats {
@@ -356,6 +369,25 @@ export interface TerrainStats {
   tile_cut: Cut;
   tunnels: number;
   waiting_tiles: number;
+}
+
+export interface TextStats {
+  atlas_resets: number;
+  failed_fonts: number;
+  fonts: number;
+  glyphs_cut: number;
+  glyphs_drawn: number;
+  runs: number;
+}
+
+export interface UiStats {
+  events: number;
+  layouts: number;
+  missing_bindings: number;
+  nodes: number;
+  rects_cut: number;
+  rects_drawn: number;
+  roots: number;
 }
 
 export interface WaterStats {

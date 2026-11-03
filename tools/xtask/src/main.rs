@@ -22,6 +22,7 @@ mod scaffold;
 mod selfcheck;
 mod serve;
 mod shader_report;
+mod ship;
 mod smoke;
 mod verify;
 
@@ -119,6 +120,9 @@ fn execute() -> Result<(), Failure> {
     }
     if task == "cook" {
         return cook::cook(&root, &options);
+    }
+    if task == "ship" {
+        return ship::ship(&root, &options);
     }
     if task == "equivalence" {
         return equivalence::equivalence(&root, &options);
@@ -302,6 +306,10 @@ fn checking_commands() -> Vec<Command> {
                 CommandOption::taking("SCENE", "PATH.scene.json..."),
                 CommandOption::flag("--check"),
             ],
+        ),
+        Command::new(
+            "ship",
+            [CommandOption::taking("--project", "DIR").required()],
         ),
         Command::new(
             "measure",

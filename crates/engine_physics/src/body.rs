@@ -1,5 +1,5 @@
 use engine_core::{Error, ErrorCode, InvalidSetting, Rule, Setting};
-use engine_places::physics::RigidBody;
+use engine_places::physics::{BodyPush, RigidBody};
 use engine_places::water::WaterKind;
 use glam::Vec3;
 use serde::Serialize;
@@ -19,6 +19,13 @@ const RULES: [(&str, Rule); 8] = [
     ("velocity", MOTION),
     ("spin", MOTION),
     ("fast", Rule::any()),
+];
+const PUSH: Rule = Rule::range(-1.0e9, 1.0e9);
+const PUSH_RULES: [(&str, Rule); 4] = [
+    ("force", PUSH),
+    ("torque", PUSH),
+    ("impulse", PUSH),
+    ("angular_impulse", PUSH),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -85,5 +92,38 @@ pub(crate) fn sanitized(body: RigidBody) -> RigidBody {
         velocity: body.velocity.kept(MOTION, defaults.velocity),
         spin: body.spin.kept(MOTION, defaults.spin),
         fast: body.fast,
+    }
+}
+
+fn push_ruled(push: &BodyPush) -> Result<(), InvalidSetting> {
+    push.force.check("force", PUSH)?;
+    push.torque.check("torque", PUSH)?;
+    push.impulse.check("impulse", PUSH)?;
+    push.angular_impulse.check("angular_impulse", PUSH)
+}
+
+pub(crate) fn check_push(push: &BodyPush, path: &str) -> Result<(), Error> {
+    push_ruled(push).map_err(|invalid| invalid.error(ErrorCode::InvalidValue, path))
+}
+
+pub(crate) fn push_schema() -> Value {
+    let mut schema = schemars::schema_for!(BodyPush);
+    for (field, rule) in PUSH_RULES {
+        engine_core::state(&mut schema, field, rule);
+    }
+    serde_json::to_value(schema).unwrap_or(Value::Null)
+}
+
+pub(crate) fn push_example() -> Value {
+    json!({"force": [0.0, 500.0, 0.0]})
+}
+
+pub(crate) fn sanitized_push(push: BodyPush) -> BodyPush {
+    let none = [0.0; 3];
+    BodyPush {
+        force: push.force.kept(PUSH, none),
+        torque: push.torque.kept(PUSH, none),
+        impulse: push.impulse.kept(PUSH, none),
+        angular_impulse: push.angular_impulse.kept(PUSH, none),
     }
 }

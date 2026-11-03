@@ -89,7 +89,7 @@ pub(crate) fn plan_cover(
     plan.cells.clear();
     plan.reach = 0.0;
     plan.tiers = 0;
-    let time = time.elapsed_seconds as f32;
+    let time = time.game_elapsed_seconds as f32;
     let previous = plan.previous_time.replace(time).unwrap_or(time);
     let grounded = foliage.ground_blend > 0.0;
     let sight = Sight {
@@ -155,7 +155,13 @@ impl CoverPlan {
             if density <= 0.0 || law.span <= 0.0 || terrain.surroundings {
                 continue;
             }
-            self.grow_terrain(terrain, (at, table.base(index)), (law, density), sight, common);
+            self.grow_terrain(
+                terrain,
+                (at, table.base(index)),
+                (law, density),
+                sight,
+                common,
+            );
             most += law.area() * density;
         }
         if self.rows.is_empty() {

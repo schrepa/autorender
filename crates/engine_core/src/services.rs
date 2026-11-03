@@ -350,9 +350,11 @@ impl<C: Component + Clone + Serialize + DeserializeOwned> ComponentKindOf<C> {
     }
 
     pub fn check_placed(mut self, check: fn(&C, Placed, &str) -> Result<(), Error>) -> Self {
-        self.kind.placed = Some(Arc::new(move |value: &Value, placed: Placed, path: &str| {
-            check(&parsed::<C>(value, path)?, placed, path)
-        }));
+        self.kind.placed = Some(Arc::new(
+            move |value: &Value, placed: Placed, path: &str| {
+                check(&parsed::<C>(value, path)?, placed, path)
+            },
+        ));
         self
     }
 
@@ -528,7 +530,9 @@ pub fn scene_components(world: &World) -> impl Iterator<Item = &ComponentKind> +
 
 #[doc(hidden)]
 pub fn scene_component(world: &World, key: &str) -> Option<ComponentKind> {
-    scene_components(world).find(|kind| kind.key == key).cloned()
+    scene_components(world)
+        .find(|kind| kind.key == key)
+        .cloned()
 }
 
 #[derive(SystemParam)]
@@ -543,9 +547,7 @@ impl SceneIds<'_, '_> {
     }
 
     pub fn len(&self) -> usize {
-        self.scene
-            .as_ref()
-            .map_or(0, |scene| scene.entity_count())
+        self.scene.as_ref().map_or(0, |scene| scene.entity_count())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -656,6 +658,10 @@ impl View {
         self.cameras.display_size()
     }
 
+    pub fn pixel_ratio(&self) -> f32 {
+        self.cameras.facts().pixel_ratio
+    }
+
     pub fn render_share(&self) -> f32 {
         let (render, display) = (self.render_size(), self.display_size());
         render.y as f32 / display.y.max(1) as f32
@@ -713,7 +719,11 @@ pub(crate) struct ViewControl {
 
 impl Operation for ViewControl {
     const NAME: &'static str = "view";
-    type Params = (Res<'static, View>, Res<'static, Camera>, Commands<'static, 'static>);
+    type Params = (
+        Res<'static, View>,
+        Res<'static, Camera>,
+        Commands<'static, 'static>,
+    );
     type Request = Self;
 
     fn run(params: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<Value, Error> {

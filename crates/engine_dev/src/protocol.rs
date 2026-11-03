@@ -430,6 +430,18 @@ pub enum Control {
     Host(BrowserControl),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum MenuPress {
+    Up,
+    Down,
+    Left,
+    Right,
+    Accept,
+    Back,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
@@ -513,6 +525,32 @@ pub enum BrowserControl {
         pressed: u32,
         #[serde(default)]
         released: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(with = "[f32; 2]", transform = stated(bounds::COORDINATE))
+        )]
+        pointer: Option<[f32; 2]>,
+        #[serde(default)]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
+        pointer_delta: [f32; 2],
+        #[serde(default)]
+        pointer_held: bool,
+        #[serde(default)]
+        pointer_pressed: bool,
+        #[serde(default)]
+        pointer_released: bool,
+        #[serde(default)]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
+        wheel: [f32; 2],
+        #[serde(default)]
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(length(max = bounds::MAX_AXES), transform = stated(bounds::AXIS))
+        )]
+        axes: Vec<f32>,
+        #[serde(default)]
+        menu: Vec<MenuPress>,
     },
     Render {},
     Pause {},

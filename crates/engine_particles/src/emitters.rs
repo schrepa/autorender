@@ -286,7 +286,7 @@ pub(crate) fn gather_emitters(
         &emitters,
         &poses,
         view.detail_eye(),
-        time.elapsed_seconds as f32,
+        time.game_elapsed_seconds as f32,
     );
     let room = limits.storage_room / 16 * 16;
     if gather.list == gather.previous && packed.room == room {
@@ -313,8 +313,8 @@ pub(crate) fn particle_stats(
 ) {
     let frame = (!view.debug() && packed.emits && packed.total > 0).then_some(&*packed);
     let drawn = frame.map_or(0, |frame| frame.total);
-    let cut = (gather.cut as u64 + frame.map_or(0, |frame| frame.cut))
-        .min(u64::from(u32::MAX)) as u32;
+    let cut =
+        (gather.cut as u64 + frame.map_or(0, |frame| frame.cut)).min(u64::from(u32::MAX)) as u32;
     stats.set_if_neq(ParticleStats {
         drawn,
         invalid: gather.invalid.min(u32::MAX as usize) as u32,

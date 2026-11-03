@@ -56,8 +56,8 @@ mod staging;
 mod targets;
 
 pub use gpu_data::{
-    ground_data, jitter_clip, mip_levels, pack_color, pack_surface, pixel_angle, pixels_per_meter, planes,
-    pyramid_extents,
+    ground_data, jitter_clip, mip_levels, pack_color, pack_surface, pixel_angle, pixels_per_meter,
+    planes, pyramid_extents,
 };
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;
@@ -78,9 +78,9 @@ pub use renderer::{
     GpuPassTimes, Installation, InstalledPart, InstalledPiece, Renderer, StartingRenderer,
     install_noop,
 };
+pub use shaders::FULLSCREEN;
 #[doc(hidden)]
 pub use shaders::core_modules;
-pub use shaders::FULLSCREEN;
 pub use staging::MIN_STAGED_BYTES;
 
 pub const IMPOSTOR_VERTICES: u32 = 6;
@@ -573,7 +573,10 @@ impl<P: GpuPart> Install<'_, P> {
     }
 
     pub fn clear(&mut self, name: &'static str, buffer: Buffer<P>) -> Pass<P> {
-        Pass(self.core.pass(name, install::Work::Clear(buffer.0)), PhantomData)
+        Pass(
+            self.core.pass(name, install::Work::Clear(buffer.0)),
+            PhantomData,
+        )
     }
 
     pub fn after(&mut self, pass: Pass<P>, earlier: Pass<P>) {
@@ -629,7 +632,9 @@ impl<P: GpuPart> Install<'_, P> {
             writes: desc.writes,
             targets,
         });
-        let pipeline = self.core.pipeline(scoped(scope), program, bound_list(bound))?;
+        let pipeline = self
+            .core
+            .pipeline(scoped(scope), program, bound_list(bound))?;
         Ok(Pipeline(pipeline, PhantomData))
     }
 
@@ -652,7 +657,8 @@ impl<P: GpuPart> Install<'_, P> {
     }
 
     pub fn claim<D: DrawPoint>(&mut self, pass: Pass<P>) -> Result<Draws<D>, Error> {
-        self.core.claim((TypeId::of::<D>(), D::UBER_MATERIALS), D::NAME, pass.0)?;
+        self.core
+            .claim((TypeId::of::<D>(), D::UBER_MATERIALS), D::NAME, pass.0)?;
         let members = self
             .core
             .members::<registration::DrawRecord<D>>()
@@ -709,7 +715,10 @@ impl<P: GpuPart> PassBuilder<'_, P> {
     pub fn color_cleared(self, target: Texture<P>, clear: wgpu::Color) -> Self {
         if let Some(pass) = self.core.pass_mut(self.pass) {
             pass.colors.push((target.0, Access::Clear));
-            pass.clears.push((target.0, graph::Clear::Color([clear.r, clear.g, clear.b, clear.a])));
+            pass.clears.push((
+                target.0,
+                graph::Clear::Color([clear.r, clear.g, clear.b, clear.a]),
+            ));
         }
         self
     }
@@ -772,6 +781,10 @@ fn region_of(region: &CopyRegion) -> CopyRegion {
 impl<P: GpuPart> Prepare<'_, P> {
     pub fn run(&mut self, pass: Pass<P>) {
         self.core.run_pass(pass.0);
+    }
+
+    pub fn want_overlay(&mut self) {
+        self.core.want_overlay();
     }
 
     pub fn fresh(&self) -> bool {
@@ -856,7 +869,8 @@ impl<P: GpuPart> Prepare<'_, P> {
         layout: wgpu::TexelCopyBufferLayout,
         size: wgpu::Extent3d,
     ) {
-        self.core.write_texture(texture.0, 0, at, bytes, layout, size);
+        self.core
+            .write_texture(texture.0, 0, at, bytes, layout, size);
     }
 
     pub fn write_texture_level(
@@ -868,7 +882,8 @@ impl<P: GpuPart> Prepare<'_, P> {
         layout: wgpu::TexelCopyBufferLayout,
         size: wgpu::Extent3d,
     ) {
-        self.core.write_texture(texture.0, level, at, bytes, layout, size);
+        self.core
+            .write_texture(texture.0, level, at, bytes, layout, size);
     }
 
     pub fn write_level(
@@ -885,7 +900,8 @@ impl<P: GpuPart> Prepare<'_, P> {
             y: 0,
             z: layer,
         };
-        self.core.write_texture(texture.0, level, at, bytes, layout, extent);
+        self.core
+            .write_texture(texture.0, level, at, bytes, layout, extent);
     }
 
     pub fn mipmaps(&mut self, texture: Texture<P>, layers: Range<u32>) {
@@ -901,14 +917,21 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn copy_at_end(&mut self, from: Copied<P>, to: Copied<P>, regions: &[CopyRegion]) {
         let regions = regions.iter().map(region_of).collect();
-        self.core.queued.ending.push((copied(from), copied(to), regions));
+        self.core
+            .queued
+            .ending
+            .push((copied(from), copied(to), regions));
     }
 
     pub fn cameras(&mut self, views: &[CameraUniform]) {
         self.core.cameras(views);
     }
 
-    pub fn fill<S>(&mut self, pipeline: &Pipeline<P, S>, textures: &[TextureHandle]) -> Pipeline<P, S> {
+    pub fn fill<S>(
+        &mut self,
+        pipeline: &Pipeline<P, S>,
+        textures: &[TextureHandle],
+    ) -> Pipeline<P, S> {
         Pipeline(self.core.fill(pipeline.0, textures), PhantomData)
     }
 
@@ -990,9 +1013,15 @@ impl<P: GpuPart> Encode<'_, P> {
         let raw = match attach {
             Attach::Declared => encode::AttachRaw::Declared,
             Attach::Depth(texture, layer) => encode::AttachRaw::Depth(texture.0, layer),
-            Attach::Color(texture, layer) => encode::AttachRaw::Color(texture.0, 0, layer.unwrap_or(0)..layer.unwrap_or(0) + 1),
-            Attach::ColorMip(texture, mip, layer) => encode::AttachRaw::Color(texture.0, mip, layer..layer + 1),
-            Attach::ColorDepth(color, layer, depth) => encode::AttachRaw::ColorDepth(color.0, layer, depth.0),
+            Attach::Color(texture, layer) => {
+                encode::AttachRaw::Color(texture.0, 0, layer.unwrap_or(0)..layer.unwrap_or(0) + 1)
+            }
+            Attach::ColorMip(texture, mip, layer) => {
+                encode::AttachRaw::Color(texture.0, mip, layer..layer + 1)
+            }
+            Attach::ColorDepth(color, layer, depth) => {
+                encode::AttachRaw::ColorDepth(color.0, layer, depth.0)
+            }
             Attach::Layers {
                 texture,
                 mip,
@@ -1021,7 +1050,12 @@ impl<P: GpuPart> Encode<'_, P> {
         self.dispatch_at(pipeline, count, &[])
     }
 
-    pub fn dispatch_at(&mut self, pipeline: &ComputePipeline<P>, count: Count<P>, offsets: &[u32]) -> u32 {
+    pub fn dispatch_at(
+        &mut self,
+        pipeline: &ComputePipeline<P>,
+        count: Count<P>,
+        offsets: &[u32],
+    ) -> u32 {
         let count = match count {
             Count::Groups(groups) => encode::CountRaw::Groups(groups),
             Count::Indirect(input, offset) => encode::CountRaw::Indirect(input.0, offset),
@@ -1180,7 +1214,12 @@ pub struct Draws<D: DrawPoint> {
 }
 
 impl<D: DrawPoint> Draws<D> {
-    pub fn draw<P: GpuPart>(&self, owner: &mut Draw<'_, P, Own>, layer: D::Layer, args: &D::Args) -> u32 {
+    pub fn draw<P: GpuPart>(
+        &self,
+        owner: &mut Draw<'_, P, Own>,
+        layer: D::Layer,
+        args: &D::Args,
+    ) -> u32 {
         owner.raw.run().reset_scissor();
         let mut drawn = 0;
         for member in self.members.iter().filter(|member| member.layer == layer) {
@@ -1221,6 +1260,18 @@ impl Slot for MainView {
 }
 
 impl DrawPoint for MainView {
+    type Layer = Layer;
+    type Args = ();
+}
+
+#[derive(Resource, Default)]
+pub struct Overlay;
+
+impl Slot for Overlay {
+    const NAME: &'static str = "overlay";
+}
+
+impl DrawPoint for Overlay {
     type Layer = Layer;
     type Args = ();
 }

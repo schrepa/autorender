@@ -222,7 +222,12 @@ pub(crate) fn plan_shadows(
     } else {
         published
     };
-    let basis = plan.place(&settings, limits.max_texture_dimension_2d, (sun, eye), time.frame);
+    let basis = plan.place(
+        &settings,
+        limits.max_texture_dimension_2d,
+        (sun, eye),
+        time.frame,
+    );
     let still_changed = plan.merge(&mut feedback);
     let mut casters_changed = false;
     for change in &changes {
@@ -237,8 +242,15 @@ pub(crate) fn plan_shadows(
         key.atlas.moving,
         &mut plan.plan,
     );
-    plan.sky_draw = plan.sky.prepare(&sky, eye, still_changed || casters_changed);
-    let gusting = [wind.velocity[0], wind.velocity[1], wind.gusts, time.elapsed_seconds as f32];
+    plan.sky_draw = plan
+        .sky
+        .prepare(&sky, eye, still_changed || casters_changed);
+    let gusting = [
+        wind.velocity[0],
+        wind.velocity[1],
+        wind.gusts,
+        time.game_elapsed_seconds as f32,
+    ];
     if let Some(draw) = plan.sky_draw
         && plan.sky_view.is_none_or(|(clip, _)| clip != draw.clip)
     {
@@ -252,7 +264,11 @@ pub(crate) fn plan_shadows(
     };
     let viewer = eye.extend(1.0 / pixel_angle(view.view_projection(), view.display_size().y));
     regions.views(plan.sky_draw.as_ref(), &mut plan.views);
-    regions.cameras((wind.velocity, gusting), (viewer, plan.sky_view), &mut plan.cameras);
+    regions.cameras(
+        (wind.velocity, gusting),
+        (viewer, plan.sky_view),
+        &mut plan.cameras,
+    );
     regions.routes(&mut plan.routes);
     regions.levels(&mut plan.levels);
     regions.composes(settings.tile_texels, &mut plan.composes);

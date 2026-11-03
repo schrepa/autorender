@@ -1,22 +1,27 @@
-use bevy_ecs::prelude::Resource;
+use bevy_ecs::prelude::{Res, ResMut, Resource};
+use bevy_ecs::system::SystemParamItem;
+use serde::Deserialize;
+use serde_json::{Value, json};
 
-use crate::AssetBudget;
+use crate::{AssetBudget, Error, Operation};
+
+pub const MAX_TIME_SCALE: f32 = 8.0;
 
 #[derive(Debug, Clone, Copy)]
 pub struct EngineConfig {
     pub fixed_hz: f64,
-    pub max_fixed_steps: u32,
+    pub max_fixed_steps: u32,
     pub asset_budget: AssetBudget,
-    pub max_transform_nodes: usize,
+    pub max_transform_nodes: usize,
 }
 
 impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             fixed_hz: 60.0,
-            max_fixed_steps: 5,
+            max_fixed_steps: 5,
             asset_budget: AssetBudget::default(),
-            max_transform_nodes: crate::MAX_TRANSFORM_NODES,
+            max_transform_nodes: crate::MAX_TRANSFORM_NODES,
         }
     }
 }
@@ -26,9 +31,105 @@ impl Default for EngineConfig {
 pub struct FrameTime {
     pub delta_seconds: f32,
     pub elapsed_seconds: f64,
+    pub game_delta_seconds: f32,
+    pub game_elapsed_seconds: f64,
     pub presented_seconds: f64,
     pub frame: u64,
     pub between_frames_micros: u32,
+}
+
+impl FrameTime {
+    pub fn real_presented_seconds(&self) -> f64 {
+        self.presented_seconds + (self.elapsed_seconds - self.game_elapsed_seconds)
+    }
+}
+
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct TimeControl {
+    pub paused: bool,
+    pub scale: f32,
+}
+
+impl Default for TimeControl {
+    fn default() -> Self {
+        Self {
+            paused: false,
+            scale: 1.0,
+        }
+    }
+}
+
+impl TimeControl {
+    pub fn kept_scale(self) -> f32 {
+        if self.scale.is_nan() {
+            1.0
+        } else {
+            crate::math::clamp(self.scale, 0.0, MAX_TIME_SCALE)
+        }
+    }
+
+    pub fn rate(self) -> f64 {
+        if self.paused {
+            0.0
+        } else {
+            f64::from(self.kept_scale())
+        }
+    }
+
+    fn view(self) -> Value {
+        json!({"time_paused": self.paused, "time_scale": self.kept_scale()})
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TimeRequest {
+    #[serde(default)]
+    paused: Option<bool>,
+    #[serde(default)]
+    scale: Option<f32>,
+}
+
+pub(crate) struct TimeOperation;
+
+impl Operation for TimeOperation {
+    const NAME: &'static str = "time";
+    type Params = ResMut<'static, TimeControl>;
+    type Request = TimeRequest;
+
+    fn run(
+        mut control: SystemParamItem<'_, '_, Self::Params>,
+        request: TimeRequest,
+    ) -> Result<Value, Error> {
+        if let Some(paused) = request.paused {
+            control.paused = paused;
+        }
+        if let Some(scale) = request.scale {
+            control.scale = scale;
+            control.scale = control.kept_scale();
+        }
+        Ok(control.view())
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TimeStateRequest {}
+
+pub(crate) struct TimeState;
+
+impl Operation for TimeState {
+    const NAME: &'static str = "time_state";
+    const CONTROL: bool = false;
+    type Params = Res<'static, TimeControl>;
+    type Request = TimeStateRequest;
+
+    fn run(
+        control: SystemParamItem<'_, '_, Self::Params>,
+        _: TimeStateRequest,
+    ) -> Result<Value, Error> {
+        Ok(control.view())
+    }
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default)]

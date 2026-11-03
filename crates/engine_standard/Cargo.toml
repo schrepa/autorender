@@ -6,6 +6,10 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+engine_screens.workspace = true
+engine_ui.workspace = true
+engine_text.workspace = true
+engine_audio.workspace = true
 engine_core.workspace = true
 engine_places.workspace = true
 engine_terrain.workspace = true

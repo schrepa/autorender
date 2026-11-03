@@ -32,10 +32,12 @@ impl ColliderShape {
         {
             Ok(())
         } else {
-            Err(Error::new(ErrorCode::CollisionInvalidShape, "$.collision").range(
-                engine_heightfield::bound(MIN_COLLIDER_EXTENT),
-                engine_heightfield::bound(MAX_COLLIDER_EXTENT),
-            ))
+            Err(
+                Error::new(ErrorCode::CollisionInvalidShape, "$.collision").range(
+                    engine_heightfield::bound(MIN_COLLIDER_EXTENT),
+                    engine_heightfield::bound(MAX_COLLIDER_EXTENT),
+                ),
+            )
         }
     }
 }
@@ -192,7 +194,9 @@ impl Collider {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum BodyMotion {
     #[default]
@@ -200,8 +204,10 @@ pub enum BodyMotion {
     Kinematic,
 }
 
-#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[require(InterpolateTransform)]
+#[derive(
+    Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[require(InterpolateTransform, BodyPush)]
 #[schemars(rename = "SceneRigidBody")]
 #[serde(default, deny_unknown_fields)]
 pub struct RigidBody {
@@ -228,6 +234,18 @@ impl Default for RigidBody {
             fast: false,
         }
     }
+}
+
+#[derive(
+    Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[schemars(rename = "SceneBodyPush")]
+#[serde(default, deny_unknown_fields)]
+pub struct BodyPush {
+    pub force: [f32; 3],
+    pub torque: [f32; 3],
+    pub impulse: [f32; 3],
+    pub angular_impulse: [f32; 3],
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

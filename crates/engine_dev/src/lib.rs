@@ -36,8 +36,8 @@ pub use protocol::bounds::{MAX_PAGE_SIZE, MAX_SCAN_ENTITIES};
 pub use protocol::{
     BenchmarkMode, BrowserControl, CaptureRequest, CheckLevel, CheckRequest, CompareRequest,
     Control, DeepProfile, DescribeRequest, Detail, Envelope, EnvironmentControl, ExplainQuestion,
-    InspectRequest, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION, ProfileRequest,
-    Query, Vendor, Verb, WatchRequest, WatchedComponent,
+    InspectRequest, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MenuPress, PROTOCOL_VERSION,
+    ProfileRequest, Query, Vendor, Verb, WatchRequest, WatchedComponent,
 };
 pub use reply::{Observation, Reply, SceneObservation};
 pub use watch::{Watcher, stat};

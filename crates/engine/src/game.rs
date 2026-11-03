@@ -39,6 +39,8 @@ pub(crate) fn limit(engine: &mut Engine, limits: &wgpu::Limits, features: wgpu::
 pub trait Game: 'static {
     const ACTIONS: &'static [(&'static str, u32)] = &[("Space", 0)];
 
+    const AXES: &'static [(&'static str, u32, f32)] = &[];
+
     fn before_frame(&mut self, _engine: &mut Engine) {}
 
     fn reset_camera(&mut self, _engine: &mut Engine) {}

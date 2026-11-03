@@ -60,7 +60,7 @@ fn publish_wind(settings: Res<WindSettings>, time: Res<FrameTime>, mut wind: Res
     wind.set_if_neq(Wind {
         velocity: settings.velocity,
         gusts: settings.gusts,
-        clock: time.elapsed_seconds as f32,
+        clock: time.game_elapsed_seconds as f32,
         waves: WAVES,
     });
 }

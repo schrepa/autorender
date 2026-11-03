@@ -23,10 +23,12 @@ const NATIVE_PROFILE: &str = "native profile captures answer it (crates/engine_n
 const CHECKS: &str = "the checks report it (crates/engine_checks)";
 const LINKER: &str = "the shader linker answers it at install, which the no-op install runs (crates/engine_render/src/linker.rs)";
 const APP_BUILD: &str = "building the App refuses it, and the no-op install builds every listed brick (crates/engine_registry, crates/engine_render)";
-const SPAWNER: &str = "a spawner reports it when a command reaches another brick's entity (crates/engine_core)";
+const SPAWNER: &str =
+    "a spawner reports it when a command reaches another brick's entity (crates/engine_core)";
 const IMPORT: &str = "the glTF importer answers it (tools/assetc)";
 const RECORDS: &str = "records that do not decode answer it (crates/engine_codec/src/lib.rs)";
 const LAYERS: &str = "terrain layer stacks answer it (crates/engine_heightfield/src/layers.rs)";
+const FONTS: &str = "registering font bytes answers it (crates/engine_text/src/typeset.rs)";
 const PACKS: &str = "packs that do not read answer it (crates/engine_worker/src/pack.rs)";
 const COLLISION: &str = "engine_collision's own check, after the development tools' and scenes' bounds, \
                          or its budgets, which overflow only with more colliders than the corpora load";
@@ -88,6 +90,7 @@ const UNREACHED: &[(&str, &str)] = &[
     ("invalid_candidate", WATCH),
     ("invalid_command", BRIDGE),
     ("invalid_fingerprint", WATCH),
+    ("invalid_font", FONTS),
     ("invalid_gltf", IMPORT),
     (
         "invalid_input",

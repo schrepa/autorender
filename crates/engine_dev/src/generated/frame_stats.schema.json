@@ -9,6 +9,52 @@
       },
       "type": "object"
     },
+    "AudioStats": {
+      "properties": {
+        "decode_failures": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "decoding": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "device": {
+          "default": false,
+          "type": "boolean"
+        },
+        "latest_failure": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sounds_loaded": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "voices": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "voices_cut": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "BloomStats": {
       "properties": {
         "active": {
@@ -1465,6 +1511,94 @@
       },
       "type": "object"
     },
+    "TextStats": {
+      "properties": {
+        "atlas_resets": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed_fonts": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fonts": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "glyphs_cut": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "glyphs_drawn": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runs": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "UiStats": {
+      "properties": {
+        "events": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "layouts": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "missing_bindings": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "nodes": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rects_cut": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rects_drawn": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "roots": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "WaterStats": {
       "properties": {
         "blocks": {
@@ -1649,6 +1783,9 @@
   "properties": {
     "ambient_occlusion_stats": {
       "$ref": "#/$defs/AmbientOcclusionStats"
+    },
+    "audio_stats": {
+      "$ref": "#/$defs/AudioStats"
     },
     "bloom_stats": {
       "$ref": "#/$defs/BloomStats"
@@ -1867,6 +2004,9 @@
     "terrain_stats": {
       "$ref": "#/$defs/TerrainStats"
     },
+    "text_stats": {
+      "$ref": "#/$defs/TextStats"
+    },
     "texture_upload_bytes": {
       "format": "uint64",
       "minimum": 0,
@@ -1884,6 +2024,9 @@
         "integer",
         "null"
       ]
+    },
+    "ui_stats": {
+      "$ref": "#/$defs/UiStats"
     },
     "upload_bytes": {
       "format": "uint64",
@@ -1927,6 +2070,7 @@
     "render_passes",
     "linked",
     "ambient_occlusion_stats",
+    "audio_stats",
     "exposure_stats",
     "bloom_stats",
     "collision_stats",
@@ -1947,6 +2091,8 @@
     "temporal_antialiasing_stats",
     "terrain_stats",
     "terrain_shading_stats",
+    "text_stats",
+    "ui_stats",
     "water_stats",
     "world_streaming_stats"
   ],

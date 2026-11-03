@@ -30,13 +30,14 @@ pub use engine_core::smoke_eq;
 mod games {
     pub use crate::resolution::{DynamicResolution, Resolution};
     pub use engine_core::{
-        Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, BrickList,
-        Camera, DynamicResolutionStats, Engine, EngineConfig, Filter, FixedTime, FrameReport,
-        FrameTime, GlobalTransform, GlobalTransforms, Grounding, InterpolateTransform, Listing,
-        MakeSources, MakeTextures, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex,
-        MoveInput, Parent, PresentedTransform, PresentedTransforms, Projection, ProvidedAssets,
-        ResolutionStats, Sampler, Surface, Texture, TextureHandle, TextureRef, TextureSet,
-        TextureSource, TextureUsage, TopLayer, Transform, UvTransform, Wrap, edit_transform, math,
+        Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, AxisId,
+        AxisInput, BrickList, Camera, CursorMode, DynamicResolutionStats, Engine, EngineConfig,
+        Filter, FixedTime, FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Grounding,
+        InterpolateTransform, Listing, MakeSources, MakeTextures, Material, MaterialHandle,
+        MenuInput, Mesh, Mesh3d, MeshHandle, MeshVertex, MoveInput, Parent, PointerInput,
+        PresentedTransform, PresentedTransforms, Projection, ProvidedAssets, ResolutionStats,
+        Sampler, Surface, Texture, TextureHandle, TextureRef, TextureSet, TextureSource,
+        TextureUsage, TopLayer, Transform, UvTransform, Wrap, edit_transform, math,
         reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
     };
 }

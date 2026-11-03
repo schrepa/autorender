@@ -129,11 +129,7 @@ impl GpuPart for MeterGpu {
         })
     }
 
-    fn prepare(
-        &mut self,
-        reads: SystemParamItem<'_, '_, Self::Reads>,
-        cx: &mut Prepare<'_, Self>,
-    ) {
+    fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
         let (settings, sun, sky, display, time, view) = reads;
         cx.allocate_buffer(self.uniform, UNIFORM_BYTES);
         cx.allocate_buffer(self.bins, BIN_BYTES);
@@ -152,7 +148,7 @@ impl GpuPart for MeterGpu {
         if view.debug() {
             return;
         }
-        let seconds = time.presented_seconds;
+        let seconds = time.real_presented_seconds();
         let camera = view.view_projection().to_cols_array().map(f32::to_bits);
         let moved = std::mem::replace(&mut self.last_camera, camera) != camera;
         let elapsed = self

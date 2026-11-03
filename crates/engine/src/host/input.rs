@@ -1,4 +1,7 @@
-use engine_core::{Error, ErrorCode, MoveInput};
+use engine_core::{
+    AxisId, AxisInput, Error, ErrorCode, Expected, MenuInput, MoveInput, PointerInput,
+};
+use glam::Vec2;
 
 use super::policy::{LOOK_LIMIT, MAX_ACTIONS};
 
@@ -54,7 +57,112 @@ pub const KEYS: &[&str] = &[
     "ArrowDown",
     "ArrowLeft",
     "ArrowRight",
+    "F1",
+    "F2",
+    "F3",
+    "F4",
+    "F5",
+    "F6",
+    "F7",
+    "F8",
+    "F9",
+    "F10",
+    "F11",
+    "F12",
+    "Minus",
+    "Equal",
+    "BracketLeft",
+    "BracketRight",
+    "Semicolon",
+    "Quote",
+    "Backquote",
+    "Backslash",
+    "Comma",
+    "Period",
+    "Slash",
+    "CapsLock",
+    "Delete",
+    "Insert",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+    "MouseLeft",
+    "MouseRight",
+    "MouseMiddle",
+    "PadSouth",
+    "PadEast",
+    "PadWest",
+    "PadNorth",
+    "PadLeftShoulder",
+    "PadRightShoulder",
+    "PadSelect",
+    "PadStart",
+    "PadLeftStick",
+    "PadRightStick",
+    "PadUp",
+    "PadDown",
+    "PadLeft",
+    "PadRight",
 ];
+
+const ANALOG: [&str; 6] = [
+    "PadLeftX",
+    "PadLeftY",
+    "PadRightX",
+    "PadRightY",
+    "PadLeftTrigger",
+    "PadRightTrigger",
+];
+
+const PAD_BUTTONS: [(&str, u32); 14] = [
+    ("PadSouth", 0),
+    ("PadEast", 1),
+    ("PadWest", 2),
+    ("PadNorth", 3),
+    ("PadLeftShoulder", 4),
+    ("PadRightShoulder", 5),
+    ("PadSelect", 8),
+    ("PadStart", 9),
+    ("PadLeftStick", 10),
+    ("PadRightStick", 11),
+    ("PadUp", 12),
+    ("PadDown", 13),
+    ("PadLeft", 14),
+    ("PadRight", 15),
+];
+
+const STICK_DEAD_ZONE: f32 = 0.15;
+const PAD_LOOK_RATE: f32 = 600.0;
+
+const MENU_UP: u8 = 1;
+const MENU_DOWN: u8 = 1 << 1;
+const MENU_LEFT: u8 = 1 << 2;
+const MENU_RIGHT: u8 = 1 << 3;
+const MENU_ACCEPT: u8 = 1 << 4;
+const MENU_BACK: u8 = 1 << 5;
+
+const MENU: &[(&str, u8)] = &[
+    ("ArrowUp", MENU_UP),
+    ("PadUp", MENU_UP),
+    ("ArrowDown", MENU_DOWN),
+    ("Tab", MENU_DOWN),
+    ("PadDown", MENU_DOWN),
+    ("ArrowLeft", MENU_LEFT),
+    ("PadLeft", MENU_LEFT),
+    ("ArrowRight", MENU_RIGHT),
+    ("PadRight", MENU_RIGHT),
+    ("Enter", MENU_ACCEPT),
+    ("PadSouth", MENU_ACCEPT),
+    ("Escape", MENU_BACK),
+    ("PadEast", MENU_BACK),
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Source {
+    Key(usize),
+    Analog(usize),
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Axis {
@@ -82,22 +190,34 @@ pub struct FrameInput {
     pub held: u32,
     pub pressed: u32,
     pub released: u32,
+    pub pointer: PointerInput,
+    pub axes: AxisInput,
+    pub menu: MenuInput,
 }
 
 #[derive(Clone, Debug)]
 pub struct InputGatherer {
     holds: [u8; KEYS.len()],
     bits: [u32; KEYS.len()],
+    menu: [u8; KEYS.len()],
+    primary: usize,
     movement: [(usize, Axis, bool); MOVEMENT.len()],
+    axes: Vec<(Source, usize, f32)>,
     yaw: f32,
     pitch: f32,
     held: u32,
     pressed: u32,
     released: u32,
+    menu_pressed: u8,
+    pointer: PointerInput,
+    pad_buttons: u32,
+    pad_held: u32,
+    analog: [f32; 6],
+    timestamp: Option<f64>,
 }
 
 impl InputGatherer {
-    pub fn new(actions: &[(&str, u32)]) -> Result<Self, Error> {
+    pub fn new(actions: &[(&str, u32)], axes: &[(&str, u32, f32)]) -> Result<Self, Error> {
         let mut bits = [0; KEYS.len()];
         for (at, &(name, action)) in actions.iter().enumerate() {
             if action >= MAX_ACTIONS {
@@ -114,6 +234,10 @@ impl InputGatherer {
             })?;
             bits[index] |= 1 << action;
         }
+        let mut menu = [0; KEYS.len()];
+        for &(name, press) in MENU {
+            menu[index(name).expect("menu_key_known")] |= press;
+        }
         let movement = std::array::from_fn(|entry| {
             let (name, axis, way) = MOVEMENT[entry];
             (index(name).expect("movement_key_known"), axis, way)
@@ -121,28 +245,51 @@ impl InputGatherer {
         Ok(Self {
             holds: [0; KEYS.len()],
             bits,
+            menu,
+            primary: index("MouseLeft").expect("mouse_left_known"),
             movement,
+            axes: axis_sources(axes)?,
             yaw: 0.0,
             pitch: 0.0,
             held: 0,
             pressed: 0,
             released: 0,
+            menu_pressed: 0,
+            pointer: PointerInput::default(),
+            pad_buttons: 0,
+            pad_held: 0,
+            analog: [0.0; 6],
+            timestamp: None,
         })
     }
 
-    pub fn key(&mut self, code: &str, down: bool) -> bool {
-        let used = |index: usize| {
-            self.bits[index] != 0 || self.movement.iter().any(|&(key, _, _)| key == index)
-        };
-        let Some(index) = index(code).filter(|&index| used(index)) else {
+    pub fn key(&mut self, code: &str, down: bool, menu_wanted: bool) -> bool {
+        let Some(index) = index(code) else {
             return false;
         };
+        let menu = self.menu[index];
+        let source = Source::Key(index);
+        let primary = index == self.primary;
+        let used = primary
+            || self.bits[index] != 0
+            || self.holds[index] > 0
+            || self.movement.iter().any(|&(key, _, _)| key == index)
+            || self.axes.iter().any(|&(key, _, _)| key == source)
+            || (menu_wanted && menu != 0);
+        if down && self.holds[index] == 0 {
+            self.menu_pressed |= menu;
+        }
+        if !used {
+            return false;
+        }
         let bit = self.bits[index];
         let holds = &mut self.holds[index];
         if down {
             if *holds == 0 {
                 self.held |= bit;
                 self.pressed |= bit;
+                self.pointer.held |= primary;
+                self.pointer.pressed |= primary;
             }
             *holds = holds.saturating_add(1);
         } else if *holds > 0 {
@@ -150,6 +297,8 @@ impl InputGatherer {
             if *holds == 0 {
                 self.held &= !bit;
                 self.released |= bit;
+                self.pointer.held &= !primary;
+                self.pointer.released |= primary;
             }
         }
         true
@@ -157,20 +306,79 @@ impl InputGatherer {
 
     pub fn look(&mut self, dx: f32, dy: f32) {
         let turn = |total: f32, delta: f32| {
-            let delta = if delta.is_finite() { delta } else { 0.0 };
-            engine_core::math::clamp(total + delta, -LOOK_LIMIT, LOOK_LIMIT)
+            engine_core::math::clamp(total + finite(delta), -LOOK_LIMIT, LOOK_LIMIT)
         };
         self.yaw = turn(self.yaw, dx);
         self.pitch = turn(self.pitch, dy);
     }
 
-    pub fn clear(&mut self) {
-        self.holds = [0; KEYS.len()];
-        self.held = 0;
-        self.take();
+    pub fn motion(&mut self, dx: f32, dy: f32) {
+        self.pointer.delta += Vec2::new(finite(dx), finite(dy));
+        self.look(dx, dy);
     }
 
-    pub fn take(&mut self) -> FrameInput {
+    pub fn pointer(&mut self, x: f32, y: f32) {
+        let position = Vec2::new(finite(x), finite(y));
+        if self.pointer.inside
+            && let Some(last) = self.pointer.position
+        {
+            self.pointer.delta += position - last;
+        }
+        self.pointer.position = Some(position);
+        self.pointer.inside = true;
+    }
+
+    pub fn pointer_left(&mut self) {
+        self.pointer.inside = false;
+    }
+
+    pub fn wheel(&mut self, dx: f32, dy: f32) {
+        self.pointer.wheel += Vec2::new(finite(dx), finite(dy));
+    }
+
+    pub fn pad(&mut self, buttons: u32, [lx, ly, rx, ry, lt, rt]: [f32; 6]) {
+        self.pad_buttons |= buttons;
+        let [lx, ly] = stick(lx, ly);
+        let [rx, ry] = stick(rx, ry);
+        let [lt, rt] = [lt, rt].map(|value| engine_core::math::clamp(finite(value), 0.0, 1.0));
+        for (merged, value) in self.analog.iter_mut().zip([lx, ly, rx, ry, lt, rt]) {
+            if value.abs() > merged.abs() {
+                *merged = value;
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.holds = [0; KEYS.len()];
+        self.yaw = 0.0;
+        self.pitch = 0.0;
+        self.held = 0;
+        self.pressed = 0;
+        self.released = 0;
+        self.menu_pressed = 0;
+        self.pointer = PointerInput::default();
+        self.pad_buttons = 0;
+        self.analog = [0.0; 6];
+        self.timestamp = None;
+    }
+
+    pub fn take(&mut self, timestamp: f64) -> FrameInput {
+        self.take_pad_buttons();
+        let seconds = self
+            .timestamp
+            .map_or(0.0, |last| ((timestamp - last).max(0.0) * 0.001) as f32);
+        self.timestamp = Some(timestamp);
+        let analog = std::mem::take(&mut self.analog);
+        let [
+            left_x,
+            left_y,
+            right_x,
+            right_y,
+            left_trigger,
+            right_trigger,
+        ] = analog;
+        let turn = PAD_LOOK_RATE * seconds;
+        let unit = |value: f32| engine_core::math::clamp(value, -1.0, 1.0);
         let axis = |axis: Axis| {
             let way = |positive: bool| {
                 self.movement.iter().any(|&(index, along, way)| {
@@ -181,24 +389,112 @@ impl InputGatherer {
         };
         let input = FrameInput {
             state: MoveInput {
-                move_forward: axis(Axis::Forward),
-                move_right: axis(Axis::Right),
-                move_up: axis(Axis::Up),
-                look_yaw: self.yaw,
-                look_pitch: self.pitch,
+                move_forward: unit(axis(Axis::Forward) + left_y),
+                move_right: unit(axis(Axis::Right) + left_x),
+                move_up: unit(axis(Axis::Up) + right_trigger - left_trigger),
+                look_yaw: self.yaw + right_x * turn,
+                look_pitch: self.pitch - right_y * turn,
             },
             held: self.held,
             pressed: self.pressed,
             released: self.released,
+            pointer: self.pointer,
+            axes: AxisInput::of(self.axis_values(&analog)),
+            menu: menu_input(self.menu_pressed),
         };
         self.yaw = 0.0;
         self.pitch = 0.0;
         self.pressed = 0;
         self.released = 0;
+        self.menu_pressed = 0;
+        self.pointer.delta = Vec2::ZERO;
+        self.pointer.wheel = Vec2::ZERO;
+        self.pointer.pressed = false;
+        self.pointer.released = false;
         input
+    }
+
+    fn take_pad_buttons(&mut self) {
+        let changed = self.pad_buttons ^ self.pad_held;
+        for (code, bit) in PAD_BUTTONS {
+            let mask = 1_u32 << bit;
+            if changed & mask != 0 {
+                self.key(code, self.pad_buttons & mask != 0, true);
+            }
+        }
+        self.pad_held = self.pad_buttons;
+        self.pad_buttons = 0;
+    }
+
+    fn axis_values(&self, analog: &[f32; 6]) -> [f32; AxisId::COUNT as usize] {
+        let mut values = [0.0; AxisId::COUNT as usize];
+        for &(source, axis, scale) in &self.axes {
+            let value = match source {
+                Source::Key(index) => f32::from(u8::from(self.holds[index] > 0)),
+                Source::Analog(index) => analog[index],
+            };
+            values[axis] += value * scale;
+        }
+        values.map(|value| engine_core::math::clamp(value, -1.0, 1.0))
     }
 }
 
 fn index(code: &str) -> Option<usize> {
     KEYS.iter().position(|&key| key == code)
+}
+
+fn axis_sources(axes: &[(&str, u32, f32)]) -> Result<Vec<(Source, usize, f32)>, Error> {
+    let mut sources = Vec::with_capacity(axes.len());
+    for (at, &(name, axis, scale)) in axes.iter().enumerate() {
+        let path = format!("$.axes[{at}]");
+        if axis >= AxisId::COUNT {
+            return Err(Error::new(ErrorCode::InvalidInput, path)
+                .at_most(u64::from(AxisId::COUNT - 1))
+                .got(axis));
+        }
+        if !scale.is_finite() {
+            return Err(Error::new(ErrorCode::InvalidInput, path)
+                .expected(Expected::Finite)
+                .got(scale));
+        }
+        let analog = ANALOG.iter().position(|&source| source == name);
+        let source = index(name)
+            .map(Source::Key)
+            .or_else(|| analog.map(Source::Analog))
+            .ok_or_else(|| {
+                Error::new(ErrorCode::InvalidInput, path)
+                    .got(name)
+                    .variants(KEYS.iter().chain(&ANALOG).copied())
+            })?;
+        sources.push((source, axis as usize, scale));
+    }
+    Ok(sources)
+}
+
+fn stick(x: f32, y: f32) -> [f32; 2] {
+    let (x, y) = (finite(x), finite(y));
+    let length = (x * x + y * y).sqrt();
+    if length <= STICK_DEAD_ZONE {
+        return [0.0, 0.0];
+    }
+    let reach = engine_core::math::min(length, 1.0) - STICK_DEAD_ZONE;
+    let scale = reach / (1.0 - STICK_DEAD_ZONE) / length;
+    [x * scale, y * scale]
+}
+
+fn finite(value: f32) -> f32 {
+    if value.is_finite() { value } else { 0.0 }
+}
+
+fn menu_input(pressed: u8) -> MenuInput {
+    let has = |press: u8| pressed & press != 0;
+    MenuInput {
+        up: has(MENU_UP),
+        down: has(MENU_DOWN),
+        left: has(MENU_LEFT),
+        right: has(MENU_RIGHT),
+        accept: has(MENU_ACCEPT),
+        back: has(MENU_BACK),
+        wanted: false,
+    }
 }

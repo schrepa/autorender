@@ -2,14 +2,14 @@
 import "./exit-codes.mjs";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { initSync, JobWorker } from "../pkg-dev/engine_worker.js";
+import { initSync, JobWorker } from "../pkg-dev/engine_player.js";
 
 const [path] = process.argv.slice(2);
 if (!path) {
   console.error("usage: node web/scripts/pure-wasm.mjs JOBS.json");
   process.exit(1);
 }
-initSync({ module: readFileSync(new URL("../pkg-dev/engine_worker_bg.wasm", import.meta.url)) });
+initSync({ module: readFileSync(new URL("../pkg-dev/engine_player_bg.wasm", import.meta.url)) });
 const worker = new JobWorker();
 const hash = bytes => createHash("sha256").update(bytes).digest("hex").slice(0, 16);
 const entries = JSON.parse(readFileSync(path, "utf8"));

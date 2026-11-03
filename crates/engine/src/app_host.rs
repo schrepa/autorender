@@ -2,12 +2,12 @@ use std::collections::BTreeMap;
 
 use engine_core::{
     BrickList, Engine, ErrorCode, FrameFacts, FrameReport, FrameStats, JobExchange, JobId, JobRef,
-    MoveInput, RecordExchange, WorkClock,
+    MenuInput, MoveInput, RecordExchange, WorkClock,
 };
 use engine_registry::Registry;
 use engine_render::{RenderTarget, Renderer};
 
-use crate::host::JobMessage;
+use crate::host::{FrameInput, JobMessage};
 use crate::resolution::{DynamicResolution, Resolution};
 use crate::{Error, Result};
 
@@ -625,6 +625,17 @@ impl AppHost {
         });
     }
 
+    pub(crate) fn set_gathered(&mut self, input: FrameInput) {
+        let world = self.engine.app.world_mut();
+        let wanted = world.resource::<MenuInput>().wanted;
+        world.insert_resource(input.pointer);
+        world.insert_resource(input.axes);
+        world.insert_resource(MenuInput {
+            wanted,
+            ..input.menu
+        });
+    }
+
     fn display_size(&self, (width, height): (u32, u32)) -> glam::UVec2 {
         let (width, height) = self.renderer.view_size().unwrap_or((width, height));
         glam::UVec2::new(width, height)
@@ -692,6 +703,7 @@ impl AppHost {
             debug,
             display_size,
             render_size,
+            pixel_ratio: self.pixel_ratio as f32,
             submitted: self.submitted,
         };
         self.engine.set_frame(facts);
@@ -751,7 +763,7 @@ impl AppHost {
                 .is_some_and(RecordExchange::loading)
     }
 
-    fn loading(&self) -> bool {
+    pub(crate) fn loading(&self) -> bool {
         self.engine_loading() || self.pipeline_list.waiting()
     }
 
@@ -811,5 +823,6 @@ impl AppHost {
             .app
             .world_mut()
             .insert_resource(MoveInput::default());
+        self.set_gathered(FrameInput::default());
     }
 }
