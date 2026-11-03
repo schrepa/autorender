@@ -1,6 +1,7 @@
 use engine::host::policy::WHEEL_PIXELS;
 use engine::{CursorMode, Game, GameHost};
 use gilrs::{Axis, Button, Gamepad, Gilrs};
+use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
 use winit::keyboard::KeyCode;
 use winit::window::{CursorGrabMode, Window};
@@ -116,12 +117,21 @@ impl Input {
             return;
         }
         self.grabbed = grabbed;
-        if !grabbed {
+        if grabbed {
+            let size = window.inner_size();
+            let middle = PhysicalPosition::new(size.width / 2, size.height / 2);
+            let _ = window.set_cursor_position(middle);
+            if window.set_cursor_grab(CursorGrabMode::Locked).is_err() {
+                let _ = window.set_cursor_grab(CursorGrabMode::Confined);
+            }
+        } else {
             let _ = window.set_cursor_grab(CursorGrabMode::None);
-        } else if window.set_cursor_grab(CursorGrabMode::Locked).is_err() {
-            let _ = window.set_cursor_grab(CursorGrabMode::Confined);
         }
         window.set_cursor_visible(!grabbed);
+    }
+
+    pub(crate) fn regrab(&mut self) {
+        self.grabbed = false;
     }
 
     pub(crate) fn clear(&mut self) {

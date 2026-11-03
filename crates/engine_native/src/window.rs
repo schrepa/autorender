@@ -220,7 +220,9 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
         }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Moved(_) => self.input.regrab(),
             WindowEvent::Resized(size) => {
+                self.input.regrab();
                 let idle = running.size.0 == 0 || running.size.1 == 0;
                 running.size = (size.width, size.height);
                 if idle {
