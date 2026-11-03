@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use bevy_ecs::prelude::{Component, Resource};
 use engine_place::Slot;
@@ -116,12 +116,17 @@ pub enum SoundOrder {
     Volume(VoiceHandle, f32),
 }
 
-#[derive(Resource, Default)]
-pub struct Sounds {
+#[derive(Default)]
+struct Queue {
     next_sound: u32,
     next_voice: u32,
     orders: Vec<SoundOrder>,
     cut: u32,
+}
+
+#[derive(Resource, Default)]
+pub struct Sounds {
+    queue: Mutex<Queue>,
 }
 
 impl Slot for Sounds {
@@ -129,25 +134,28 @@ impl Slot for Sounds {
 }
 
 impl Sounds {
-    pub fn load(&mut self, bytes: impl Into<Arc<[u8]>>) -> SoundHandle {
-        self.next_sound += 1;
-        let sound = SoundHandle(self.next_sound);
-        self.order(SoundOrder::Load {
+    pub fn load(&self, bytes: impl Into<Arc<[u8]>>) -> SoundHandle {
+        let mut queue = self.lock();
+        queue.next_sound += 1;
+        let sound = SoundHandle(queue.next_sound);
+        queue.order(SoundOrder::Load {
             sound,
             bytes: bytes.into(),
         });
         sound
     }
 
-    pub fn play(&mut self, sound: SoundHandle, shot: OneShot) -> VoiceHandle {
-        let voice = self.voice();
-        self.order(SoundOrder::Play { voice, sound, shot });
+    pub fn play(&self, sound: SoundHandle, shot: OneShot) -> VoiceHandle {
+        let mut queue = self.lock();
+        let voice = queue.voice();
+        queue.order(SoundOrder::Play { voice, sound, shot });
         voice
     }
 
-    pub fn play_bytes(&mut self, bytes: impl Into<Arc<[u8]>>, shot: OneShot) -> VoiceHandle {
-        let voice = self.voice();
-        self.order(SoundOrder::PlayBytes {
+    pub fn play_bytes(&self, bytes: impl Into<Arc<[u8]>>, shot: OneShot) -> VoiceHandle {
+        let mut queue = self.lock();
+        let voice = queue.voice();
+        queue.order(SoundOrder::PlayBytes {
             voice,
             bytes: bytes.into(),
             shot,
@@ -155,29 +163,36 @@ impl Sounds {
         voice
     }
 
-    pub fn stop(&mut self, voice: VoiceHandle) {
-        self.order(SoundOrder::Stop(voice));
+    pub fn stop(&self, voice: VoiceHandle) {
+        self.lock().order(SoundOrder::Stop(voice));
     }
 
-    pub fn set_volume(&mut self, voice: VoiceHandle, volume: f32) {
-        self.order(SoundOrder::Volume(voice, volume));
+    pub fn set_volume(&self, voice: VoiceHandle, volume: f32) {
+        self.lock().order(SoundOrder::Volume(voice, volume));
     }
 
     #[doc(hidden)]
     pub fn is_idle(&self) -> bool {
-        self.orders.is_empty() && self.cut == 0
+        let queue = self.lock();
+        queue.orders.is_empty() && queue.cut == 0
     }
 
     #[doc(hidden)]
-    pub fn take_orders(&mut self) -> Vec<SoundOrder> {
-        std::mem::take(&mut self.orders)
+    pub fn take_orders(&self) -> Vec<SoundOrder> {
+        std::mem::take(&mut self.lock().orders)
     }
 
     #[doc(hidden)]
-    pub fn take_cut(&mut self) -> u32 {
-        std::mem::take(&mut self.cut)
+    pub fn take_cut(&self) -> u32 {
+        std::mem::take(&mut self.lock().cut)
     }
 
+    fn lock(&self) -> MutexGuard<'_, Queue> {
+        self.queue.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Queue {
     fn voice(&mut self) -> VoiceHandle {
         self.next_voice += 1;
         VoiceHandle(self.next_voice)

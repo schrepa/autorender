@@ -562,7 +562,7 @@ impl Mixer {
 pub(crate) fn mix(
     settings: Res<Audio>,
     (camera, poses, time): (Res<Camera>, Res<Poses>, Option<Res<TimeControl>>),
-    mut sounds: ResMut<Sounds>,
+    sounds: Res<Sounds>,
     sources: Query<(Entity, Ref<SoundSource>)>,
     mut stats: ResMut<AudioStats>,
     mut mixer: ResMut<Mixer>,
