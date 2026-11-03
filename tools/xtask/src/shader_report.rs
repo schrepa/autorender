@@ -21,6 +21,8 @@ const RGA_ARCHIVE: Option<(&str, &str)> = None;
 
 const TARGETS: [&str; 3] = ["gfx1100", "gfx1150", "gfx1201"];
 
+static RGA_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 struct Checked {
     name: String,
     module: naga::Module,
@@ -304,6 +306,12 @@ fn amd_report(program: &Path, spirv: &Path, stage: &str, folder: &Path, stem: &s
     for target in TARGETS {
         let isa = out.join(format!("{stem}.{target}.isa"));
         let analysis = out.join(format!("{stem}.{target}.csv"));
+        let temp = std::env::temp_dir().join(format!(
+            "rga-{}-{}",
+            std::process::id(),
+            RGA_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::create_dir_all(&temp);
         let output = Command::new(program)
             .args(["-s", "vk-spv-offline", "-c", target, "--isa"])
             .arg(&isa)
@@ -311,7 +319,11 @@ fn amd_report(program: &Path, spirv: &Path, stage: &str, folder: &Path, stem: &s
             .arg(&analysis)
             .arg(flag)
             .arg(spirv)
+            .env("TEMP", &temp)
+            .env("TMP", &temp)
+            .env("TMPDIR", &temp)
             .output();
+        let _ = std::fs::remove_dir_all(&temp);
         let result = match output {
             Ok(output) => {
                 let isa_file = produced(&out, &isa, target);
