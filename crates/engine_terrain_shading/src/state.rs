@@ -260,7 +260,10 @@ impl Atlas {
         missing: &mut Vec<(TileId, Option<u32>)>,
     ) {
         let id = (entry.terrain, key);
-        match (listed_tile(&entry.tiles, key), self.placed.get(&id).copied()) {
+        match (
+            listed_tile(&entry.tiles, key),
+            self.placed.get(&id).copied(),
+        ) {
             (None, None) => {
                 self.unplaced.remove(&id);
             }
@@ -413,7 +416,10 @@ pub(crate) fn place_tiles(
     if !tiles.is_changed()
         && capacity == atlas.capacity
         && (atlas.unplaced.is_empty() || !atlas.has_room())
-        && tiles.terrains.iter().all(|entry| attached(entry).is_empty())
+        && tiles
+            .terrains
+            .iter()
+            .all(|entry| attached(entry).is_empty())
     {
         return;
     }
@@ -775,7 +781,7 @@ pub(crate) fn color(
         {
             bakes.colors_gone.push(handle);
         }
-        let asked = match records.textures(&mut *assets, colors_set(&job)) {
+        let asked = match records.textures(&mut assets, colors_set(&job)) {
             Ok(handles) => handles.first().copied(),
             Err(error) => {
                 bakes
@@ -936,10 +942,7 @@ pub(crate) fn publish_heightfield(
     mut heightfield: ResMut<Heightfield>,
 ) {
     let leaf_indices = if heightfield.leaf_indices.is_empty() {
-        crate::terrain::meshlet_indices()
-            .into_iter()
-            .map(u32::from)
-            .collect()
+        Arc::from(crate::terrain::meshlet_indices())
     } else {
         Arc::clone(&heightfield.leaf_indices)
     };
@@ -1054,7 +1057,6 @@ pub(crate) fn count(
         coloring,
         failed_jobs: bakes.failures.count,
         latest_job_failure: bakes.failures.last.as_ref().map(|(_, error)| error.clone()),
-        ..stats.clone()
     };
     stats.set_if_neq(next);
 }

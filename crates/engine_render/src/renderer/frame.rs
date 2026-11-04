@@ -287,8 +287,8 @@ impl Renderer {
             .filter(|(fault, _)| fault.is_some())
             .filter_map(|(_, gate)| *gate)
             .collect();
-        let switches = super::install::switches_of(&run.machine, world, &faulted);
-        run.set_switches(switches);
+        run.set_switches(super::install::switches_of(&run.machine, world, &faulted));
+        warm_on_flip(run, &mut self.installing, &device, world);
         run.drop_unfilled();
         let viewed = match view {
             Some(view) => Viewed {
@@ -738,6 +738,28 @@ fn stat_counters(stats: &RenderStats) {
 
 #[cfg(not(feature = "profiling"))]
 fn stat_counters(_: &RenderStats) {}
+
+fn warm_on_flip(
+    run: &mut Run,
+    installing: &mut Option<Validation>,
+    device: &wgpu::Device,
+    world: &World,
+) {
+    let generation = world
+        .get_resource::<engine_registry::Gates>()
+        .map_or(0, engine_registry::Gates::generation);
+    if run.reached.generation == Some(generation) {
+        return;
+    }
+    if run.reached.generation.is_some() {
+        run.warm_reached(world);
+        return;
+    }
+    let scope = crate::gpu_calls::validation_scope(device);
+    run.warm_reached(world);
+    *installing = Some(Box::pin(scope.pop()));
+    run.release_off_parts(world);
+}
 
 fn piece_bytes(world: &World, layout: &[(usize, crate::pieces::PieceAt)], bytes: &mut Vec<u8>) {
     bytes.clear();

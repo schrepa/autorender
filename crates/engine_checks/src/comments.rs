@@ -19,7 +19,10 @@ pub fn check(repository: &Repository) -> Result<(), String> {
         let shader = path.ends_with(".wgsl");
         let script = SCRIPTS.iter().any(|extension| path.ends_with(extension));
         let shell = SHELLS.iter().any(|extension| path.ends_with(extension));
-        if !(rust || shader || script || shell) || !crate::files::ours(&path) {
+        if !(rust || shader || script || shell)
+            || !crate::files::ours(&path)
+            || !repository.ruled(&path)
+        {
             continue;
         }
         let Ok(source) = std::fs::read_to_string(root.join(&path)) else {

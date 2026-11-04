@@ -1005,13 +1005,7 @@ impl GlobalTransforms {
                     source.transform_added = transform_added;
                     source.marker_added = marker_added;
                     if let Some(state) = interpolation.as_deref_mut() {
-                        state.observe_source(
-                            count,
-                            source,
-                            local,
-                            local_changed,
-                            identity_changed,
-                        );
+                        state.observe_source(count, source, local, local_changed, identity_changed);
                     }
                     *local = pose;
                     if local_changed {

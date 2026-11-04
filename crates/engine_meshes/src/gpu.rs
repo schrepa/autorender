@@ -6,20 +6,20 @@ use engine_core::{
 use engine_places::probes::{ProbeCaptures, ProbeViews};
 use engine_places::shadows::{ShadowCasters, ShadowMaps};
 use engine_render::{
-    Bind, Buffer, ComputePipeline, Copied, DepthUse, DrawInput, Encode, GpuPart, Install,
-    Lifetime, MainView, Pass, Pipeline, Prepare, RenderPipeline, Resolve, Texture, VertexLayout,
-    ViewTarget, wgpu,
+    Bind, Buffer, ComputePipeline, Copied, DepthUse, DrawInput, Encode, GpuPart, Install, Lifetime,
+    MainView, Pass, Pipeline, Prepare, RenderPipeline, Resolve, Texture, VertexLayout, ViewTarget,
+    wgpu,
 };
 
 use crate::assets::MeshAssets;
 use crate::batches::BatchPlan;
 use crate::casters::CasterPlan;
+use crate::debug::RECORD_STREAM;
 use crate::drawn::WatchedSlot;
 use crate::order::{BatchLook, MeshPlan};
 use crate::presentation::{FrameState, PresentationTotals};
 use crate::retained::RetainedRender;
 use crate::settings::Impostors;
-use crate::debug::RECORD_STREAM;
 use crate::shaders::meshes::{cards, casters, debug, forward, presentation, pyramid, vertex};
 
 pub(crate) const FACES: usize = 6;
@@ -237,7 +237,9 @@ impl GpuPart for MeshesGpu {
         let pipelines = install_pipelines(cx)?;
         let inputs = Inputs {
             records: cx.draw_input(MainView, instances.records),
-            card_ids: presented.impostor_ids.map(|ids| cx.draw_input(MainView, ids)),
+            card_ids: presented
+                .impostor_ids
+                .map(|ids| cx.draw_input(MainView, ids)),
             fade_cards: cx.draw_input(MainView, presented.fade_cards),
             ids: presented.visible.map(|ids| cx.draw_input(MainView, ids)),
             args: presented.draws.map(|args| cx.draw_input(MainView, args)),
@@ -290,7 +292,10 @@ fn install_instances(cx: &mut Install<'_, MeshesGpu>) -> Result<Instances, Error
         still_frames: cx.buffer("still_frames", Lifetime::Kept),
     };
     cx.frame(slots::INSTANCE_POSES, Bind::Buffer(instances.poses))?;
-    cx.frame(slots::INSTANCE_PREVIOUS_POSES, Bind::Buffer(instances.previous_poses))?;
+    cx.frame(
+        slots::INSTANCE_PREVIOUS_POSES,
+        Bind::Buffer(instances.previous_poses),
+    )?;
     cx.frame(slots::INSTANCE_COLORS, Bind::Buffer(instances.colors))?;
     cx.frame(slots::INSTANCE_STILL, Bind::Buffer(instances.still_frames))?;
     cx.frame(cards::IMPOSTOR_RECORDS, Bind::Buffer(instances.impostors))?;
@@ -313,15 +318,28 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
     let scan = buffer("presentation_scan");
     let batches = buffer("presentation_batches");
     let batch_bases = buffer("presentation_batch_bases");
-    let draws = [buffer("presentation_draws"), buffer("presentation_draws_two")];
-    let visible = [buffer("presentation_visible_ids"), buffer("presentation_visible_ids_two")];
-    let impostor_ids = [buffer("presentation_impostor_ids"), buffer("presentation_impostor_ids_two")];
+    let draws = [
+        buffer("presentation_draws"),
+        buffer("presentation_draws_two"),
+    ];
+    let visible = [
+        buffer("presentation_visible_ids"),
+        buffer("presentation_visible_ids_two"),
+    ];
+    let impostor_ids = [
+        buffer("presentation_impostor_ids"),
+        buffer("presentation_impostor_ids_two"),
+    ];
     let lod_states = buffer("presentation_lod_states");
     let fade_cards = buffer("presentation_fading_cards");
     let counts = buffer("presentation_occlusion_counts");
     let totals = buffer("presentation_totals");
-    let faces = (0..FACES).map(|_| cx.buffer("presentation_frame_probe", Lifetime::Kept)).collect();
-    let face_draws = (0..FACES).map(|_| cx.buffer("presentation_draws_probe", Lifetime::Kept)).collect();
+    let faces = (0..FACES)
+        .map(|_| cx.buffer("presentation_frame_probe", Lifetime::Kept))
+        .collect();
+    let face_draws = (0..FACES)
+        .map(|_| cx.buffer("presentation_draws_probe", Lifetime::Kept))
+        .collect();
     let face_visible = (0..FACES)
         .map(|_| cx.buffer("presentation_visible_ids_probe", Lifetime::Kept))
         .collect();
@@ -423,7 +441,12 @@ fn compaction(
     cx: &mut Install<'_, MeshesGpu>,
     pass: Pass<MeshesGpu>,
     presented: &Presented,
-    (frame, visible, draws, impostors): (Buffer<MeshesGpu>, Buffer<MeshesGpu>, Buffer<MeshesGpu>, Buffer<MeshesGpu>),
+    (frame, visible, draws, impostors): (
+        Buffer<MeshesGpu>,
+        Buffer<MeshesGpu>,
+        Buffer<MeshesGpu>,
+        Buffer<MeshesGpu>,
+    ),
 ) -> Result<Compaction, Error> {
     use presentation as p;
     Ok(Compaction {
@@ -439,7 +462,10 @@ fn compaction(
         scan: cx.compute_pipeline(
             pass,
             p::SCAN_GROUPS,
-            &[(p::FRAME, Bind::Buffer(frame)), (p::SCAN, Bind::Buffer(presented.scan))],
+            &[
+                (p::FRAME, Bind::Buffer(frame)),
+                (p::SCAN, Bind::Buffer(presented.scan)),
+            ],
         )?,
         args: cx.compute_pipeline(
             pass,
@@ -556,7 +582,12 @@ fn install_computes(
         cx,
         at,
         presented,
-        (presented.frame, presented.visible[0], presented.draws[0], presented.impostor_ids[0]),
+        (
+            presented.frame,
+            presented.visible[0],
+            presented.draws[0],
+            presented.impostor_ids[0],
+        ),
     )?;
     let gather = |cx: &mut Install<'_, MeshesGpu>, pass, entry, frame| {
         cx.compute_pipeline(
@@ -577,7 +608,12 @@ fn install_computes(
         cx,
         late,
         presented,
-        (presented.frame_two, presented.visible[1], presented.draws[1], presented.impostor_ids[1]),
+        (
+            presented.frame_two,
+            presented.visible[1],
+            presented.draws[1],
+            presented.impostor_ids[1],
+        ),
     )?;
     let gather_two = gather(cx, late, p::GATHER_PHASE_TWO, presented.frame_two)?;
     let occlusion = cx.compute_pipeline(
@@ -630,7 +666,10 @@ fn install_computes(
                         layers: 0..1,
                     },
                 ),
-                (pyramid::EXTENT, Bind::Buffer(presented.extents[level as usize])),
+                (
+                    pyramid::EXTENT,
+                    Bind::Buffer(presented.extents[level as usize]),
+                ),
             ],
         )?);
     }
@@ -652,7 +691,12 @@ fn install_computes(
             cx,
             passes.probes,
             presented,
-            (frame, presented.face_visible[face], presented.face_draws[face], presented.impostor_ids[0]),
+            (
+                frame,
+                presented.face_visible[face],
+                presented.face_draws[face],
+                presented.impostor_ids[0],
+            ),
         )?);
     }
     let select = cx.compute_pipeline(
@@ -700,7 +744,11 @@ fn install_computes(
 }
 
 fn mesh_pipeline(
-    (vertex, fragment, debug): (engine_core::Entry, engine_core::Entry, Option<engine_core::Entry>),
+    (vertex, fragment, debug): (
+        engine_core::Entry,
+        engine_core::Entry,
+        Option<engine_core::Entry>,
+    ),
     (vertices, double_sided, mirrored): (&'static [VertexLayout], bool, bool),
     depth: DepthUse,
     writes: wgpu::ColorWrites,
@@ -822,6 +870,20 @@ fn install_pipelines(cx: &mut Install<'_, MeshesGpu>) -> Result<Pipelines, Error
         },
         &[],
     )?;
+    let [casters_pipelines, moving] = caster_pipelines(cx)?;
+    Ok(Pipelines {
+        prepass: Looked { looks: prepass },
+        opaque: Looked { looks: opaque },
+        card,
+        probe: Looked { looks: probe },
+        casters: casters_pipelines,
+        moving,
+    })
+}
+
+fn caster_pipelines(
+    cx: &mut Install<'_, MeshesGpu>,
+) -> Result<[[Pipeline<MeshesGpu, ShadowCasters>; 2]; 2], Error> {
     let caster = |cx: &mut Install<'_, MeshesGpu>, vertex, fragment| {
         cx.render_pipeline(
             ShadowCasters,
@@ -838,24 +900,25 @@ fn install_pipelines(cx: &mut Install<'_, MeshesGpu>) -> Result<Pipelines, Error
             &[],
         )
     };
-    let casters_pipelines = [
+    let still = [
         caster(cx, casters::VS_CASTER, None)?,
-        caster(cx, casters::VS_CASTER_MASKED, Some(casters::FS_CASTER_MASKED))?,
+        caster(
+            cx,
+            casters::VS_CASTER_MASKED,
+            Some(casters::FS_CASTER_MASKED),
+        )?,
     ];
     let moving = [
-        caster(cx, casters::VS_CASTER_MOVING, Some(casters::FS_CASTER_MOVING))?,
+        caster(
+            cx,
+            casters::VS_CASTER_MOVING,
+            Some(casters::FS_CASTER_MOVING),
+        )?,
         caster(
             cx,
             casters::VS_CASTER_MOVING_MASKED,
             Some(casters::FS_CASTER_MOVING_MASKED),
         )?,
     ];
-    Ok(Pipelines {
-        prepass: Looked { looks: prepass },
-        opaque: Looked { looks: opaque },
-        card,
-        probe: Looked { looks: probe },
-        casters: casters_pipelines,
-        moving,
-    })
+    Ok([still, moving])
 }

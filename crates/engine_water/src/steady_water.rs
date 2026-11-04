@@ -18,8 +18,8 @@ use engine_heightfield::tile::{
 };
 use engine_heightfield::{Bed, Layers, Pyramid, Reach, Stamp, TILE_QUADS, TILE_SAMPLES, TileKey};
 
-use crate::gpu::{LIVE_HELD, NO_WATER_SURFACE};
 pub use crate::gpu::{BLOCK_SIDE, COVER_POINTS, NO_BLOCK};
+use crate::gpu::{LIVE_HELD, NO_WATER_SURFACE};
 
 const LIVE_DRY: [f32; 3] = [NO_WATER_SURFACE, 0.0, 0.0];
 pub const MARGIN: f32 = 64.0;
@@ -32,7 +32,10 @@ const SAMPLES: usize = TILE_SAMPLES as usize;
 const ENTRY: f32 = 2.0;
 const SOURCE_LEAST: f32 = 0.01;
 
-const _: () = assert!(BLOCK_GROUND == BLOCK_CORNERS + 4 * BLOCK_CELLS);
+const _: () = assert!(
+    BLOCK_GROUND == BLOCK_CORNERS + 4 * BLOCK_CELLS,
+    "BLOCK_GROUND is not BLOCK_CORNERS + 4 * BLOCK_CELLS"
+);
 
 pub(crate) const REACHES: usize = Reach::Falls as usize + 1;
 

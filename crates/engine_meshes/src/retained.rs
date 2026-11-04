@@ -422,7 +422,13 @@ impl RetainedRender {
             )
         } else {
             let [r, g, b, _] = cube?.color;
-            (assets.cube_mesh(), None, None, [r, g, b, 1.0], Surface::MATTE)
+            (
+                assets.cube_mesh(),
+                None,
+                None,
+                [r, g, b, 1.0],
+                Surface::MATTE,
+            )
         };
         assets.mesh_lods(mesh)?;
         Some(Instance {

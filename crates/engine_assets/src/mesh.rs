@@ -33,6 +33,7 @@ pub struct Mesh {
     colors: Option<Box<[[f32; 4]]>>,
     uv1: Option<Box<[[f32; 2]]>>,
     lods: Option<Arc<MeshLods>>,
+    impostor: bool,
     identity: OnceLock<u128>,
 }
 
@@ -85,6 +86,7 @@ impl Mesh {
             colors: None,
             uv1: None,
             lods: None,
+            impostor: true,
             identity: OnceLock::new(),
         })
     }
@@ -95,7 +97,12 @@ impl Mesh {
             bytes.extend_from_slice(&(self.vertices.len() as u32).to_le_bytes());
             bytes.extend_from_slice(&(self.indices.len() as u32).to_le_bytes());
             for vertex in &self.vertices {
-                for value in vertex.position.iter().chain(&vertex.normal).chain(&vertex.uv) {
+                for value in vertex
+                    .position
+                    .iter()
+                    .chain(&vertex.normal)
+                    .chain(&vertex.uv)
+                {
                     bytes.extend_from_slice(&value.to_bits().to_le_bytes());
                 }
             }
@@ -122,6 +129,16 @@ impl Mesh {
 
     pub fn lods(&self) -> Option<&Arc<MeshLods>> {
         self.lods.as_ref()
+    }
+
+    #[must_use]
+    pub fn without_impostor(mut self) -> Self {
+        self.impostor = false;
+        self
+    }
+
+    pub fn takes_impostor(&self) -> bool {
+        self.impostor
     }
 
     pub fn with_colors(mut self, colors: Vec<[f32; 4]>) -> Result<Self, Error> {

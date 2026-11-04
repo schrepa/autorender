@@ -405,14 +405,11 @@ pub fn read_entry(
 ) -> Result<Arc<dyn TerrainLayer>, Error> {
     let name: String = input.get()?;
     let source: [u8; 32] = input.get()?;
-    let kind = kinds
-        .iter()
-        .find(|kind| kind.name == name)
-        .ok_or_else(|| {
-            engine_codec::invalid("$.layer")
-                .got(&name)
-                .variants(kinds.iter().map(|kind| kind.name))
-        })?;
+    let kind = kinds.iter().find(|kind| kind.name == name).ok_or_else(|| {
+        engine_codec::invalid("$.layer")
+            .got(&name)
+            .variants(kinds.iter().map(|kind| kind.name))
+    })?;
     if kind.source != source {
         return Err(engine_codec::invalid("$.source")
             .expected(Expected::Matching)

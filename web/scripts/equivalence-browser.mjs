@@ -3,9 +3,6 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { launchContext } from "./browser-launch.mjs";
-import { holdHeavyRun } from "./heavy-run.mjs";
-
-await holdHeavyRun("equivalence browser leg");
 
 const [planPath, resultPath] = process.argv.slice(2);
 if (!planPath || !resultPath) {

@@ -61,7 +61,11 @@ pub(crate) fn fly(
         return;
     }
     flight.yaw = (flight.yaw - input.look_right_pixels * SENSITIVITY) % std::f32::consts::TAU;
-    flight.pitch = clamp(flight.pitch - input.look_down_pixels * SENSITIVITY, -1.48, 1.48);
+    flight.pitch = clamp(
+        flight.pitch - input.look_down_pixels * SENSITIVITY,
+        -1.48,
+        1.48,
+    );
     let rotation = Quat::from_rotation_y(flight.yaw) * Quat::from_rotation_x(flight.pitch);
     let forward = rotation * -Vec3::Z;
     let right = rotation * Vec3::X;

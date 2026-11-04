@@ -1,8 +1,10 @@
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
+use toml_edit::Document;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DependencyKind {
@@ -69,10 +71,29 @@ fn slashed(path: &Path) -> String {
         .join("/")
 }
 
+fn free_games(packages: &[Package]) -> Result<Vec<String>, String> {
+    let mut free = Vec::new();
+    for package in packages
+        .iter()
+        .filter(|package| package.own() && package.engine["kind"] == "game")
+    {
+        let shown = package.manifest.display();
+        let text = fs::read_to_string(&package.manifest)
+            .map_err(|error| format!("cannot read {shown}: {error}"))?;
+        let manifest =
+            Document::parse(text).map_err(|error| format!("{shown} is not TOML: {error}"))?;
+        if manifest.as_item().get("lints").is_none() {
+            free.extend(package.file(""));
+        }
+    }
+    Ok(free)
+}
+
 pub struct Repository {
     pub root: PathBuf,
     pub workspace_root: PathBuf,
     pub packages: Vec<Package>,
+    free: Vec<String>,
 }
 
 impl Repository {
@@ -136,11 +157,20 @@ impl Repository {
             });
         }
         packages.sort_by(|first, second| first.name.cmp(&second.name));
+        let free = free_games(&packages)?;
         Ok(Self {
             root: root.to_path_buf(),
             workspace_root: PathBuf::from(metadata["workspace_root"].as_str().unwrap_or_default()),
             packages,
+            free,
         })
+    }
+
+    pub fn ruled(&self, path: &str) -> bool {
+        !self
+            .free
+            .iter()
+            .any(|folder| path.starts_with(folder.as_str()))
     }
 
     pub fn package(&self, name: &str) -> Option<&Package> {

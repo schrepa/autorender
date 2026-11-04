@@ -39,7 +39,7 @@ pub fn clients() -> &'static [Client] {
     })
 }
 
-fn read_clients() -> Result<Vec<Client>, String> {
+pub fn read_clients() -> Result<Vec<Client>, String> {
     let root = repository_root()?;
     let output = Command::new("cargo")
         .args(["metadata", "--format-version", "1", "--no-deps", "--locked"])
@@ -330,6 +330,12 @@ pub fn engine_commit() -> (&'static str, String) {
     ("ENGINE_COMMIT", commit.clone())
 }
 
+fn stamped(arguments: &[&str]) -> bool {
+    arguments
+        .windows(2)
+        .any(|pair| pair[0] == "--profile" && pair[1] != "dev")
+}
+
 pub fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String> {
     let record = serde_json::json!({
         "event": "running",
@@ -339,7 +345,7 @@ pub fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String>
     println!("{record}");
     let status = Command::new(program)
         .args(arguments)
-        .envs([engine_commit()])
+        .envs(stamped(arguments).then(engine_commit))
         .current_dir(root)
         .status()
         .map_err(|error| {

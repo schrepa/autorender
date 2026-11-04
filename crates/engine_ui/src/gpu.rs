@@ -48,10 +48,11 @@ impl Painter {
         match node.kind {
             UiKind::Image => {
                 let look = if flat.texture.is_some() {
+                    let part = node.image_rect;
                     Look {
                         texture: flat.texture,
                         color: if color[3] > 0.0 { color } else { NO_TINT },
-                        uv: node.image_rect,
+                        uv: [part.u, part.v, part.width, part.height],
                         ..frame
                     }
                 } else {
@@ -184,11 +185,13 @@ fn quad(vertex: Entry, fragment: Entry) -> RenderPipeline<'static> {
     }
 }
 
+type Drawn = (Option<Pipeline<UiGpu, Overlay>>, Range<u32>);
+
 pub(crate) struct UiGpu {
     solid: Pipeline<Self, Overlay>,
     image: Pipeline<Self, Overlay>,
     instances: Buffer<Self>,
-    drawn: Vec<(Option<Pipeline<Self, Overlay>>, Range<u32>)>,
+    drawn: Vec<Drawn>,
 }
 
 impl GpuPart for UiGpu {

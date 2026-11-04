@@ -30,7 +30,7 @@ impl Brick for AmbientOcclusionBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|ambient: Res<AmbientOcclusion>| ambient.enabled())
+            .when(|ambient: Res<AmbientOcclusion>| ambient.occludes())
             .settings::<AmbientOcclusion>()
             .stats::<AmbientOcclusionStats>()
             .piece::<AmbientPiece>()
@@ -51,7 +51,7 @@ fn publish_piece(
             ambient.radius,
             ambient.intensity,
             0.0,
-            if ambient.enabled() { 1.0 } else { 0.0 },
+            if ambient.occludes() { 1.0 } else { 0.0 },
         ],
         canopy: [occupancy.texel_share, 0.0, 0.0, 0.0],
     });
@@ -63,7 +63,7 @@ fn publish_stats(
     mut stats: ResMut<AmbientOcclusionStats>,
 ) {
     stats.set_if_neq(AmbientOcclusionStats {
-        active: ambient.enabled() && shown.owner.is_none(),
+        active: ambient.occludes() && shown.owner.is_none(),
     });
 }
 

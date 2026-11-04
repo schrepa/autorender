@@ -508,13 +508,43 @@ impl AppHost {
             self.set_input(input);
             self.deliver();
             let start = now_ms();
-            let report = self.engine.step_fixed(ticks)?;
+            let mut report = self.engine.step_fixed(1)?;
+            for _ in 1..ticks {
+                self.engine.start_frame();
+                self.keep_held();
+                report.fixed_steps += self.engine.step_fixed(1)?.fixed_steps;
+            }
             let simulation_ms = now_ms() - start;
             self.render_frame(width, height, simulation_ms, report, 1.0, None)?;
         }
         drop(profile);
         self.end_attribution();
         Ok(())
+    }
+
+    #[cfg(feature = "dev")]
+    fn keep_held(&mut self) {
+        let world = self.engine.app.world();
+        let moving = *world.resource::<MoveInput>();
+        let pointer = *world.resource::<engine_core::PointerInput>();
+        let axes = *world.resource::<engine_core::AxisInput>();
+        self.set_input(MoveInput {
+            look_right_pixels: 0.0,
+            look_down_pixels: 0.0,
+            ..moving
+        });
+        self.set_gathered(FrameInput {
+            pointer: engine_core::PointerInput {
+                delta_pixels: glam::Vec2::ZERO,
+                wheel_up_notches: 0.0,
+                wheel_right_notches: 0.0,
+                pressed: false,
+                released: false,
+                ..pointer
+            },
+            axes,
+            ..FrameInput::default()
+        });
     }
 
     #[cfg(feature = "dev")]

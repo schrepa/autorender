@@ -119,6 +119,7 @@ impl Bounds {
         .expanded(margin)
     }
 
+    #[must_use]
     pub fn union(self, other: Self) -> Self {
         Self {
             min: self.min.min(other.min),
@@ -130,6 +131,7 @@ impl Bounds {
         self.min.cmple(other.max).all() && other.min.cmple(self.max).all()
     }
 
+    #[must_use]
     pub fn expanded(self, margin: f32) -> Self {
         Self {
             min: self.min - Vec3::splat(margin),
@@ -137,6 +139,7 @@ impl Bounds {
         }
     }
 
+    #[must_use]
     pub fn swept(self, displacement: Vec3) -> Self {
         self.union(Self {
             min: self.min + displacement,

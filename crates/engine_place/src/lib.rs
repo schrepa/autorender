@@ -28,6 +28,8 @@ pub trait DrawPoint: Slot {
     const UBER_MATERIALS: bool = false;
 }
 
+type ReadMembers = fn(&World, &mut dyn FnMut(&dyn Any));
+
 #[derive(Clone, Copy)]
 pub struct PlaceDecl {
     name: &'static str,
@@ -35,7 +37,7 @@ pub struct PlaceDecl {
     wgsl: Option<&'static str>,
     smokes: &'static [Smoke],
     insert: fn(&mut World),
-    read: fn(&World, &mut dyn FnMut(&dyn Any)),
+    read: ReadMembers,
     ty: fn() -> TypeId,
 }
 

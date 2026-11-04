@@ -427,7 +427,7 @@ fn darkened(session: &mut dyn SmokeSession, after: &Value, day: &Value, look: &V
         "surface_light": { "preset": "night" },
         "grading": { "preset": "night" },
         "bloom": { "intensity": 0 },
-        "haze": { "reach": 0 },
+        "haze": { "enabled": false, "reach": 0 },
         "reflections": { "enabled": true },
         "highlights": { "capped": false },
         "sky_occlusion": { "strength": 0.5, "floor": 0.1 },
@@ -699,7 +699,12 @@ fn saved(session: &mut dyn SmokeSession, look: &Value, night: &Value) -> Result<
         json!([20.0, 0.25, 1.5, "interior"]),
         "lamp_light"
     );
-    let emitter = component(session, "agent-lamp", "particles_component", "inspects_emitter")?;
+    let emitter = component(
+        session,
+        "agent-lamp",
+        "particles_component",
+        "inspects_emitter",
+    )?;
     smoke_eq!(
         json!(number(&emitter["rate"])),
         json!(20.0),

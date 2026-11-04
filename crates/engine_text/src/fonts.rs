@@ -106,9 +106,13 @@ impl Fonts {
         let placement = image.placement;
         let coverage = match image.content {
             SwashContent::Mask => image.data,
-            SwashContent::SubpixelMask | SwashContent::Color => {
-                image.data.chunks_exact(4).map(|texel| texel[3]).collect()
-            }
+            SwashContent::SubpixelMask | SwashContent::Color => image
+                .data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|texel| texel[3])
+                .collect(),
         };
         Some(Raster {
             left: placement.left,

@@ -8,6 +8,7 @@ import { launchBrowserSession } from "./agent-browser.mjs";
 import { fingerprintSources, watchSources } from "./iteration-watch.mjs";
 import { IterationController } from "./iteration-controller.mjs";
 import { runBuild } from "./iteration-process.mjs";
+import { wasmImport } from "./wasm-alias.mjs";
 import { workspace } from "./workspace.mjs";
 
 const clients = JSON.parse(readFileSync(new URL("../src/generated/clients.json", import.meta.url), "utf8"));
@@ -124,7 +125,6 @@ export async function startIteration(values) {
         const previous = active;
         await bridge.replaceSession({
           session: candidate.session, url: candidate.url, build: candidate.build, execute: candidate.execute,
-          onTimeout: () => { browserStates.get(candidate).available = false; return candidate.close(); },
           validate: async () => {
             const matches = !cancellation.signal.aborted && (await fingerprintSources(workspace)).fingerprint === snapshot.fingerprint;
             if (!browserStates.get(candidate)?.available) throw new AgentError("activation_failed", "$", { expected: "live" });
@@ -158,7 +158,7 @@ export async function startIteration(values) {
     vite = await createServer({
       root: resolve(workspace, "web"), configFile: resolve(workspace, "web/vite.config.ts"),
       logLevel: "silent",
-      resolve: { alias: wasmNames.map(name => ({ find: `../pkg/${name}`, replacement: `virtual:iteration-${name}` })) },
+      resolve: { alias: wasmNames.map(name => ({ find: wasmImport(name), replacement: `virtual:iteration-${name}` })) },
       server: { host: "127.0.0.1", port: webPort, strictPort: true, hmr: false, watch: { ignored: ["**/pkg-iterations/**"] } },
       plugins: [{
         name: "immutable-development-builds",

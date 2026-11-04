@@ -197,7 +197,10 @@ fn grow(held: &mut u64, bytes: u64, room: u64) {
     }
 }
 
-fn component(dst_factor: wgpu::BlendFactor, operation: wgpu::BlendOperation) -> wgpu::BlendComponent {
+fn component(
+    dst_factor: wgpu::BlendFactor,
+    operation: wgpu::BlendOperation,
+) -> wgpu::BlendComponent {
     wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
         dst_factor,
@@ -344,7 +347,11 @@ impl ScatterGpu {
                 (PLAIN_STREAMS, draw::VS_OBJECT, draw::VS_OBJECT_FADING)
             };
             let (fragment, debug, masked_depth) = match (extended, masked) {
-                (false, false) => (draw::FS_OBJECT, draw::FS_DEBUG_OBJECT, draw::FS_MASKED_DEPTH),
+                (false, false) => (
+                    draw::FS_OBJECT,
+                    draw::FS_DEBUG_OBJECT,
+                    draw::FS_MASKED_DEPTH,
+                ),
                 (false, true) => (
                     draw::FS_OBJECT_PRETESTED,
                     draw::FS_DEBUG_OBJECT,
@@ -616,7 +623,9 @@ impl ScatterGpu {
         let sizes = state.sizes;
         cx.allocate_buffer(
             self.groups,
-            sizes.groups.max(size_of::<crate::layouts::CullGroup>() as u64),
+            sizes
+                .groups
+                .max(size_of::<crate::layouts::CullGroup>() as u64),
         );
         cx.allocate_buffer(self.views, sizes.views);
         cx.allocate_buffer(self.ids, sizes.ids);
@@ -856,10 +865,7 @@ impl ScatterGpu {
                 );
             }
             let layer = map as u32;
-            let mut draw = cx.render(
-                Attach::Colors(vec![(self.occupancy_map, layer)]),
-                None,
-            );
+            let mut draw = cx.render(Attach::Colors(vec![(self.occupancy_map, layer)]), None);
             if redraw {
                 draw.draw(
                     &pipelines.clear,
@@ -930,8 +936,14 @@ impl GpuPart for ScatterGpu {
         let linear = cx.sampler(SamplerDesc::LINEAR_CLAMP);
         cx.frame(faces::placed_tiles::PLACED_RECORDS, Bind::Buffer(records))?;
         cx.frame(faces::placed_tiles::PLACED_POSES, Bind::Buffer(poses))?;
-        cx.frame(faces::placed_tiles::PLACED_GROUPS, Bind::Buffer(placed_groups))?;
-        cx.frame(faces::placed_tiles::PLACED_FRAMES_SAMPLER, Bind::Sampler(linear))?;
+        cx.frame(
+            faces::placed_tiles::PLACED_GROUPS,
+            Bind::Buffer(placed_groups),
+        )?;
+        cx.frame(
+            faces::placed_tiles::PLACED_FRAMES_SAMPLER,
+            Bind::Sampler(linear),
+        )?;
         cx.frame(ambient::OCCUPANCY, Bind::Texture(occupancy_map))?;
         cx.frame(ambient::OCCUPANCY_SAMPLER, Bind::Sampler(linear))?;
         cx.frame(faces::far_cover::PLACED_FAR, Bind::Buffer(placed_far))?;

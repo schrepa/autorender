@@ -236,7 +236,11 @@ impl GpuPart for TraceGpu {
         if pass == self.reduce {
             for (reduction, written) in self.reductions.iter().zip(&self.reduced) {
                 let [width, height] = written.size;
-                let groups = [width.div_ceil(PYRAMID_GROUP), height.div_ceil(PYRAMID_GROUP), 1];
+                let groups = [
+                    width.div_ceil(PYRAMID_GROUP),
+                    height.div_ceil(PYRAMID_GROUP),
+                    1,
+                ];
                 cx.dispatch(reduction, Count::Groups(groups));
             }
             let terrains = self.world.terrains();

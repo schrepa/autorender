@@ -165,23 +165,26 @@ enum Source {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Axis {
+pub enum MoveDirection {
     Forward,
+    Back,
     Right,
+    Left,
     Up,
+    Down,
 }
 
-const MOVEMENT: &[(&str, Axis, bool)] = &[
-    ("KeyW", Axis::Forward, true),
-    ("ArrowUp", Axis::Forward, true),
-    ("KeyS", Axis::Forward, false),
-    ("ArrowDown", Axis::Forward, false),
-    ("KeyD", Axis::Right, true),
-    ("ArrowRight", Axis::Right, true),
-    ("KeyA", Axis::Right, false),
-    ("ArrowLeft", Axis::Right, false),
-    ("KeyE", Axis::Up, true),
-    ("KeyQ", Axis::Up, false),
+pub const MOVE_KEYS: &[(&str, MoveDirection)] = &[
+    ("KeyW", MoveDirection::Forward),
+    ("ArrowUp", MoveDirection::Forward),
+    ("KeyS", MoveDirection::Back),
+    ("ArrowDown", MoveDirection::Back),
+    ("KeyD", MoveDirection::Right),
+    ("ArrowRight", MoveDirection::Right),
+    ("KeyA", MoveDirection::Left),
+    ("ArrowLeft", MoveDirection::Left),
+    ("KeyE", MoveDirection::Up),
+    ("KeyQ", MoveDirection::Down),
 ];
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -201,7 +204,7 @@ pub struct InputGatherer {
     bits: [u32; KEYS.len()],
     menu: [u8; KEYS.len()],
     primary: usize,
-    movement: [(usize, Axis, bool); MOVEMENT.len()],
+    movement: Vec<(usize, MoveDirection)>,
     axes: Vec<(Source, usize, f32)>,
     yaw: f32,
     pitch: f32,
@@ -217,7 +220,11 @@ pub struct InputGatherer {
 }
 
 impl InputGatherer {
-    pub fn new(actions: &[(&str, u32)], axes: &[(&str, u32, f32)]) -> Result<Self, Error> {
+    pub fn new(
+        actions: &[(&str, u32)],
+        axes: &[(&str, u32, f32)],
+        move_keys: &[(&str, MoveDirection)],
+    ) -> Result<Self, Error> {
         let mut bits = [0; KEYS.len()];
         for (at, &(name, action)) in actions.iter().enumerate() {
             if action >= MAX_ACTIONS {
@@ -238,16 +245,12 @@ impl InputGatherer {
         for &(name, press) in MENU {
             menu[index(name).expect("menu_key_known")] |= press;
         }
-        let movement = std::array::from_fn(|entry| {
-            let (name, axis, way) = MOVEMENT[entry];
-            (index(name).expect("movement_key_known"), axis, way)
-        });
         Ok(Self {
             holds: [0; KEYS.len()],
             bits,
             menu,
             primary: index("MouseLeft").expect("mouse_left_known"),
-            movement,
+            movement: movement_keys(move_keys)?,
             axes: axis_sources(axes)?,
             yaw: 0.0,
             pitch: 0.0,
@@ -273,7 +276,7 @@ impl InputGatherer {
         let used = primary
             || self.bits[index] != 0
             || self.holds[index] > 0
-            || self.movement.iter().any(|&(key, _, _)| key == index)
+            || self.movement.iter().any(|&(key, _)| key == index)
             || self.axes.iter().any(|&(key, _, _)| key == source)
             || (menu_wanted && menu != 0);
         if down && self.holds[index] == 0 {
@@ -380,19 +383,21 @@ impl InputGatherer {
         ] = analog;
         let turn = PAD_LOOK_RATE * seconds;
         let unit = |value: f32| engine_core::math::clamp(value, -1.0, 1.0);
-        let axis = |axis: Axis| {
-            let way = |positive: bool| {
-                self.movement.iter().any(|&(index, along, way)| {
-                    along == axis && way == positive && self.holds[index] > 0
-                })
+        let axis = |positive: MoveDirection, negative: MoveDirection| {
+            let held = |wanted: MoveDirection| {
+                self.movement
+                    .iter()
+                    .any(|&(index, direction)| direction == wanted && self.holds[index] > 0)
             };
-            f32::from(u8::from(way(true))) - f32::from(u8::from(way(false)))
+            f32::from(u8::from(held(positive))) - f32::from(u8::from(held(negative)))
         };
         let input = FrameInput {
             state: MoveInput {
-                move_forward: unit(axis(Axis::Forward) + left_y),
-                move_right: unit(axis(Axis::Right) + left_x),
-                move_up: unit(axis(Axis::Up) + right_trigger - left_trigger),
+                move_forward: unit(axis(MoveDirection::Forward, MoveDirection::Back) + left_y),
+                move_right: unit(axis(MoveDirection::Right, MoveDirection::Left) + left_x),
+                move_up: unit(
+                    axis(MoveDirection::Up, MoveDirection::Down) + right_trigger - left_trigger,
+                ),
                 look_right_pixels: self.yaw + right_x * turn,
                 look_down_pixels: self.pitch - right_y * turn,
             },
@@ -443,6 +448,19 @@ impl InputGatherer {
 
 fn index(code: &str) -> Option<usize> {
     KEYS.iter().position(|&key| key == code)
+}
+
+fn movement_keys(keys: &[(&str, MoveDirection)]) -> Result<Vec<(usize, MoveDirection)>, Error> {
+    let mut movement = Vec::with_capacity(keys.len());
+    for (at, &(name, direction)) in keys.iter().enumerate() {
+        let key = index(name).ok_or_else(|| {
+            Error::new(ErrorCode::InvalidInput, format!("$.move_keys[{at}]"))
+                .got(name)
+                .variants(KEYS.iter().copied())
+        })?;
+        movement.push((key, direction));
+    }
+    Ok(movement)
 }
 
 fn axis_sources(axes: &[(&str, u32, f32)]) -> Result<Vec<(Source, usize, f32)>, Error> {

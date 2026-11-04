@@ -214,13 +214,15 @@ pub(crate) struct Allocated {
     pub(crate) view: wgpu::TextureView,
     pub(crate) size: wgpu::Extent3d,
     pub(crate) mips: u32,
-    pub(crate) slices: Vec<(
-        Range<u32>,
-        Range<u32>,
-        Option<wgpu::TextureViewDimension>,
-        wgpu::TextureView,
-    )>,
+    pub(crate) slices: Vec<SliceView>,
 }
+
+type SliceView = (
+    Range<u32>,
+    Range<u32>,
+    Option<wgpu::TextureViewDimension>,
+    wgpu::TextureView,
+);
 
 pub(crate) struct Made {
     pub(crate) label: &'static str,
@@ -312,11 +314,13 @@ pub(crate) struct Asked {
     pub(crate) deliver: fn(&mut World, u64, u32, &[u8]),
 }
 
+type Deliver = fn(&mut World, u64, u32, &[u8]);
+
 pub(crate) struct Slot {
     buffer: wgpu::Buffer,
     bytes: u64,
     state: Arc<AtomicU8>,
-    asked: Option<(u64, fn(&mut World, u64, u32, &[u8]))>,
+    asked: Option<(u64, Deliver)>,
     once: bool,
 }
 
@@ -441,6 +445,7 @@ pub(crate) struct Run {
     pub(crate) filled: Vec<Filled>,
     pub(crate) wanted_textures: Vec<TextureHandle>,
     pub(crate) switches: Vec<(u32, bool)>,
+    pub(crate) reached: Reached,
     pub(crate) placeholders: Vec<((Ty, u64), Placeholder)>,
     pub(crate) encoder: Option<wgpu::CommandEncoder>,
     pub(crate) open: Option<Open>,
@@ -468,6 +473,13 @@ pub(crate) struct Run {
     pub(crate) listed: Option<Vec<Compiled>>,
     pub(crate) up_front: u32,
     pub(crate) unlisted: u32,
+}
+
+#[derive(Default)]
+pub(crate) struct Reached {
+    pub(crate) generation: Option<u64>,
+    pub(crate) parts: Vec<bool>,
+    pub(crate) sides: [Vec<(u32, bool)>; 2],
 }
 
 pub(crate) enum Placeholder {
@@ -664,6 +676,58 @@ fn target_format(
     }
 }
 
+fn uniform_buffer(device: &wgpu::Device, label: &'static str, size: u64) -> wgpu::Buffer {
+    crate::memory::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some(label),
+            size,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        },
+    )
+}
+
+fn post_sampler(device: &wgpu::Device) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("engine/post-sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        ..Default::default()
+    })
+}
+
+fn stale_holders(machine: &Machine) -> Vec<Holder> {
+    (0..machine.variants.len())
+        .map(|variant| Holder::Frame(variant as u32))
+        .chain(
+            machine
+                .pipelines
+                .iter()
+                .enumerate()
+                .flat_map(|(pipeline, built)| {
+                    (0..built.groups.len())
+                        .map(move |group| Holder::Own(pipeline as u32, group as u32))
+                }),
+        )
+        .collect()
+}
+
+fn layer_sets_of(machine: &Machine) -> Vec<(Option<crate::Layer>, Arc<[SetFormat]>)> {
+    let mut layer_sets: Vec<(Option<crate::Layer>, Arc<[SetFormat]>)> =
+        vec![(None, Arc::from(set_formats(&machine.outputs, None)))];
+    for pass in &machine.declared.passes {
+        let layer = pass_layer(pass);
+        if !layer_sets.iter().any(|(known, _)| *known == layer) {
+            layer_sets.push((layer, Arc::from(set_formats(&machine.outputs, layer))));
+        }
+    }
+    layer_sets
+}
+
 impl Run {
     pub(crate) fn new(
         device: wgpu::Device,
@@ -672,41 +736,14 @@ impl Run {
         parts: Vec<Option<Box<dyn Installed>>>,
         assets: Assets,
     ) -> Self {
-        let buffer = |label, size, usage| {
-            crate::memory::buffer(
-                &device,
-                &wgpu::BufferDescriptor {
-                    label: Some(label),
-                    size,
-                    usage,
-                    mapped_at_creation: false,
-                },
-            )
-        };
-        let camera = buffer(
-            "engine/cameras",
-            CAMERA_STRIDE,
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        );
-        let post_buffer = buffer(
+        let camera = uniform_buffer(&device, "engine/cameras", CAMERA_STRIDE);
+        let post_buffer = uniform_buffer(
+            &device,
             "engine/post-uniform",
             size_of::<crate::shared::PostUniform>() as u64,
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
-        let linear = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("engine/post-sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            ..Default::default()
-        });
-        let pieces = buffer(
-            "engine/pieces",
-            crate::pieces::PIECE_ALIGN,
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        );
+        let linear = post_sampler(&device);
+        let pieces = uniform_buffer(&device, "engine/pieces", crate::pieces::PIECE_ALIGN);
         let samplers = machine
             .declared
             .samplers
@@ -733,33 +770,14 @@ impl Run {
             .map(|pipeline| pipeline.groups.iter().map(|_| Groups::fresh()).collect())
             .collect();
         let holders = Holders::of(&machine);
-        let stale = (0..machine.variants.len())
-            .map(|variant| Holder::Frame(variant as u32))
-            .chain(
-                machine
-                    .pipelines
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(pipeline, built)| {
-                        (0..built.groups.len())
-                            .map(move |group| Holder::Own(pipeline as u32, group as u32))
-                    }),
-            )
-            .collect();
+        let stale = stale_holders(&machine);
         let pass_decls = machine
             .declared
             .passes
             .iter()
             .map(|pass| Arc::new(pass.clone()))
             .collect();
-        let mut layer_sets: Vec<(Option<crate::Layer>, Arc<[SetFormat]>)> =
-            vec![(None, Arc::from(set_formats(&machine.outputs, None)))];
-        for pass in &machine.declared.passes {
-            let layer = pass_layer(pass);
-            if !layer_sets.iter().any(|(known, _)| *known == layer) {
-                layer_sets.push((layer, Arc::from(set_formats(&machine.outputs, layer))));
-            }
-        }
+        let layer_sets = layer_sets_of(&machine);
         Self {
             device,
             queue,
@@ -807,6 +825,7 @@ impl Run {
             filled: Vec::new(),
             wanted_textures: Vec::new(),
             switches: Vec::new(),
+            reached: Reached::default(),
             placeholders: Vec::new(),
             encoder: None,
             open: None,
@@ -861,26 +880,13 @@ impl Run {
                 }
             }
         }
-        self.listed = Some(keys.clone());
+        self.listed = Some(keys);
         self.unlisted = 0;
-        let mut created = 0;
-        for key in keys {
-            if key.pipeline as usize >= self.machine.pipelines.len() {
-                continue;
-            }
-            let before = self.compiled.len();
-            let _ = self.compile(
-                key.pipeline,
-                (&key.formats, key.depth),
-                (key.debug, key.main),
-                specialized(&key),
-            );
-            if self.compiled.len() > before {
-                created += 1;
-            }
+        let before = self.up_front;
+        if self.reached.generation.is_some() {
+            self.at_reached_switches(Self::compile_listed);
         }
-        self.up_front += created;
-        Ok(created)
+        Ok(self.up_front - before)
     }
 
     pub(crate) fn touch(&mut self, held: Held) {
@@ -1058,7 +1064,7 @@ impl Run {
             self.allocate(texture, size, mips);
             return;
         }
-        let previous = std::mem::replace(&mut self.textures[at], [None, None]);
+        let previous = std::mem::take(&mut self.textures[at]);
         self.sizes[at] = None;
         self.allocate(texture, size, mips);
         if levels == mips {
@@ -1131,8 +1137,8 @@ impl Run {
         };
         if range.start > range.end
             || range.end > *size
-            || range.start % 4 != 0
-            || range.end % 4 != 0
+            || !range.start.is_multiple_of(4)
+            || !range.end.is_multiple_of(4)
         {
             let error = fault(self.path("clear_buffer_range"), ErrorCode::OutOfRange);
             self.fault(error);
@@ -1263,7 +1269,7 @@ impl Run {
             self.fault(error);
             return;
         };
-        if offset + bytes.len() as u64 > *size || bytes.len() % 4 != 0 {
+        if offset + bytes.len() as u64 > *size || !bytes.len().is_multiple_of(4) {
             let error = fault(self.path("write"), ErrorCode::OutOfRange);
             self.fault(error);
             return;

@@ -225,10 +225,7 @@ impl Solids {
     }
 }
 
-pub(crate) fn sync_sources(
-    sources: Query<(Entity, Ref<SolidSource>)>,
-    mut solids: ResMut<Solids>,
-) {
+pub(crate) fn sync_sources(sources: Query<(Entity, Ref<SolidSource>)>, mut solids: ResMut<Solids>) {
     let moved = sources.iter().any(|(_, source)| source.is_changed())
         || !sources
             .iter()

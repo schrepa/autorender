@@ -96,10 +96,6 @@ pub fn verbs(world: &World) -> Result<Vec<(&'static str, Value)>, String> {
         .collect())
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
 pub fn generated(world: &World) -> Result<Generated, String> {
     let registry = registry(world)?;
     let mut problems = Vec::new();
@@ -147,10 +143,8 @@ pub fn generated(world: &World) -> Result<Generated, String> {
         all.extend(sections);
         all.insert("bricks".to_owned(), bricks_summary(registry));
     }
-    let scene_schema = engine_scene::SceneDocument::schema_json(
-        registry,
-        &engine_scene::SceneKinds::of(world),
-    );
+    let scene_schema =
+        engine_scene::SceneDocument::schema_json(registry, &engine_scene::SceneKinds::of(world));
     let queries = names(&schemas[Verb::Query.name()], &mut problems);
     let controls = names(&schemas[Verb::Control.name()], &mut problems);
     core_names(

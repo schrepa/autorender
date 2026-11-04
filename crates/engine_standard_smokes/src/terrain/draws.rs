@@ -77,7 +77,7 @@ fn streams(session: &mut dyn SmokeSession, settled: &Value) -> Checked<()> {
         "far_crates_place"
     );
     let mut presented = Value::Null;
-    for _ in 0..60 {
+    for _ in 0..WAIT_FRAMES {
         presented = present(session, 0.0)?;
         if number(&terrain(&presented)["placed_impostors"]) > 0.0 {
             break;

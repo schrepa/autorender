@@ -43,10 +43,7 @@ pub(crate) struct LiveProfile {
 }
 
 impl LiveProfile {
-    pub(crate) fn start<G: Game>(
-        host: &mut GameHost<G>,
-        folder: PathBuf,
-    ) -> engine::Result<Self> {
+    pub(crate) fn start<G: Game>(host: &mut GameHost<G>, folder: PathBuf) -> engine::Result<Self> {
         let threads = SampledThread::current("Main thread").into_iter().collect();
         let capture = DeepCapture::start(host, threads, engine::profiling::MAX_EVENTS)?;
         Ok(Self {
@@ -115,7 +112,7 @@ impl LiveProfile {
             stats.render_ms,
             f64::from(stats.resolution.gpu_ms.unwrap_or(-1.0)),
             stats.fixed_steps as f64,
-            f64::from(stats.dropped_seconds),
+            stats.dropped_seconds,
             (render.upload_bytes + render.mesh_upload_bytes + render.texture_upload_bytes) as f64,
             render.draw_calls as f64,
             render.pipelines_created as f64,
@@ -135,9 +132,9 @@ impl LiveProfile {
             .frames
             .iter()
             .filter(|frame| frame[INTERVAL] > limit)
-            .map(|frame| row(frame))
+            .map(row)
             .collect();
-        let frames: Vec<Value> = self.frames.iter().map(|frame| row(frame)).collect();
+        let frames: Vec<Value> = self.frames.iter().map(row).collect();
         let play = json!({
             "columns": COLUMNS,
             "median_interval_ms": median(&intervals),

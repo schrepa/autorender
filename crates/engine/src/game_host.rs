@@ -1,7 +1,8 @@
 use crate::app_host::AppHost;
 use crate::game::Game;
 use crate::host::{
-    FrameLoop, FramePhase, InputGatherer, JobId, JobOrder, JobScheduler, LevelLoad, LevelStep,
+    FrameInput, FrameLoop, FramePhase, InputGatherer, JobId, JobOrder, JobScheduler, LevelLoad,
+    LevelStep,
 };
 use engine_core::{
     ActionInput, BrickList, CookMode, CursorMode, Engine, ErrorCode, LevelProgress, LevelRequest,
@@ -30,7 +31,7 @@ impl<G: Game> GameHost<G> {
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> crate::Result<Self> {
         engine_panic::install();
-        let input = InputGatherer::new(G::ACTIONS, G::AXES)?;
+        let input = InputGatherer::new(G::ACTIONS, G::AXES, G::MOVE_KEYS)?;
         let mut game = None;
         let app = AppHost::launch(target, bricks, |engine| {
             game = Some(build(engine).map_err(Into::into)?);
@@ -181,7 +182,7 @@ impl<G: Game> GameHost<G> {
     pub fn frame(&mut self, timestamp: f64, width: u32, height: u32) -> crate::Result<()> {
         self.step_level();
         self.prepare_pipelines();
-        let input = self.input.take(timestamp);
+        let input = self.frame_input(timestamp);
         self.app.set_gathered(input);
         let engine = self.app.engine_mut();
         self.game.before_frame(engine);
@@ -197,6 +198,18 @@ impl<G: Game> GameHost<G> {
             input.state
         };
         self.app.frame(timestamp, width, height, state)
+    }
+
+    fn frame_input(&mut self, timestamp: f64) -> FrameInput {
+        #[cfg(feature = "dev")]
+        if self
+            .dev_pending
+            .as_ref()
+            .is_some_and(crate::dev_host::bridge::Pending::takes_agent_input)
+        {
+            return self.development.take_input();
+        }
+        self.input.take(timestamp)
     }
 
     pub fn animation_frame(
@@ -367,11 +380,15 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn suspend(&mut self) {
+        self.suspend_live();
+        #[cfg(feature = "dev")]
+        self.development.clear_input();
+    }
+
+    pub(crate) fn suspend_live(&mut self) {
         self.app.suspend();
         self.input.clear();
         self.frames.skip();
-        #[cfg(feature = "dev")]
-        self.development.clear_input();
     }
 
     pub fn reset_camera(&mut self) {

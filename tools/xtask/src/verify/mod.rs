@@ -262,7 +262,11 @@ fn smokes<'a>(root: &'a Path, merge: bool, selection: &Selection) -> Vec<Step<'a
     }
     if merge {
         runs.push(vec!["--native-profile".to_owned(), "dev".to_owned()]);
-        runs.push(vec!["--browser".to_owned()]);
+        runs.push(vec![
+            "meshes".to_owned(),
+            "shadow_tiles_settle".to_owned(),
+            "--browser".to_owned(),
+        ]);
     }
     for client in wanted.iter().filter(|client| client.folder != PLAYER) {
         runs.push(vec!["--project".to_owned(), client.folder.clone()]);

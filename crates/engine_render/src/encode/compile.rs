@@ -1,4 +1,176 @@
 use super::*;
+use crate::install::RenderDecl;
+use crate::machine::{BuiltPipeline, Stage};
+
+fn stage_switches(switches: &[(u32, bool)], stages: &[Stage]) -> Vec<(u32, bool)> {
+    switches
+        .iter()
+        .filter(|(id, _)| {
+            stages
+                .iter()
+                .any(|stage| stage.composed.switches.contains(id))
+        })
+        .copied()
+        .collect()
+}
+
+fn made_by_program(
+    pipelines: &[BuiltPipeline],
+    program_key: u64,
+    key: u64,
+) -> Option<wgpu::RenderPipeline> {
+    pipelines
+        .iter()
+        .filter(|other| other.program_key == program_key)
+        .find_map(|other| {
+            other
+                .made
+                .iter()
+                .find(|(known, _)| *known == key)
+                .map(|(_, made)| made.clone())
+        })
+}
+
+fn stage_constants(
+    stages: &[Stage],
+    switches: &[(u32, bool)],
+    material: &[(&str, f64)],
+) -> Vec<Vec<(String, f64)>> {
+    stages
+        .iter()
+        .map(|stage| {
+            let mut values: Vec<(String, f64)> = switches
+                .iter()
+                .filter(|(id, _)| stage.composed.switches.contains(id))
+                .map(|(id, on)| (id.to_string(), f64::from(u8::from(*on))))
+                .collect();
+            values.extend(
+                stage
+                    .composed
+                    .constants(material)
+                    .into_iter()
+                    .map(|(name, value)| (name.to_owned(), value)),
+            );
+            values
+        })
+        .collect()
+}
+
+fn vertex_layouts(vertices: &[VertexLayout]) -> Vec<Option<wgpu::VertexBufferLayout<'static>>> {
+    let mut layouts = Vec::new();
+    let mut meshes = 0;
+    for layout in vertices {
+        match layout {
+            VertexLayout::Mesh => {
+                layouts.push(if meshes == 0 {
+                    crate::mesh_arena::vertex_layout()
+                } else {
+                    crate::mesh_arena::extra_layout()
+                });
+                meshes += 1;
+            }
+            VertexLayout::Buffer(layout) => layouts.push(Some(layout.clone())),
+        }
+    }
+    layouts
+}
+
+fn depth_stencil_state(
+    format: wgpu::TextureFormat,
+    view_depth: bool,
+    depth: DepthUse,
+) -> wgpu::DepthStencilState {
+    let (write, compare, bias) = match depth {
+        DepthUse::None => (
+            false,
+            wgpu::CompareFunction::Always,
+            wgpu::DepthBiasState::default(),
+        ),
+        DepthUse::Test => (
+            false,
+            if view_depth {
+                wgpu::CompareFunction::GreaterEqual
+            } else {
+                wgpu::CompareFunction::LessEqual
+            },
+            wgpu::DepthBiasState::default(),
+        ),
+        DepthUse::Write { bias } => (
+            true,
+            if view_depth {
+                wgpu::CompareFunction::Greater
+            } else {
+                wgpu::CompareFunction::Less
+            },
+            bias,
+        ),
+        DepthUse::Overwrite => (
+            true,
+            wgpu::CompareFunction::Always,
+            wgpu::DepthBiasState::default(),
+        ),
+        DepthUse::Compare {
+            compare,
+            write,
+            bias,
+        } => (write, compare, bias),
+    };
+    wgpu::DepthStencilState {
+        format,
+        depth_write_enabled: Some(write),
+        depth_compare: Some(compare),
+        stencil: wgpu::StencilState::default(),
+        bias,
+    }
+}
+
+fn color_targets(
+    desc: &RenderDecl,
+    formats: &[Option<wgpu::TextureFormat>],
+    written: Option<&[u32]>,
+    (debug, main): (bool, bool),
+) -> Vec<Option<wgpu::ColorTargetState>> {
+    let add = wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    };
+    formats
+        .iter()
+        .enumerate()
+        .map(|(location, format)| {
+            let format = (*format)?;
+            let (blend, mask) = if debug {
+                let blend = (location == DEBUG_COUNT).then_some(wgpu::BlendState {
+                    color: add,
+                    alpha: add,
+                });
+                (blend, wgpu::ColorWrites::ALL)
+            } else {
+                match &desc.targets {
+                    Some(targets) => targets
+                        .get(location)
+                        .copied()
+                        .unwrap_or((None, wgpu::ColorWrites::empty())),
+                    None => (
+                        (!main || location == 0).then_some(desc.blend).flatten(),
+                        desc.writes,
+                    ),
+                }
+            };
+            let outputs = written.is_none_or(|written| written.contains(&(location as u32)));
+            Some(wgpu::ColorTargetState {
+                format,
+                blend: blend.filter(|_| blendable(format)),
+                write_mask: if outputs {
+                    mask
+                } else {
+                    wgpu::ColorWrites::empty()
+                },
+            })
+        })
+        .collect()
+}
 
 impl Run {
     fn part_label(&self, part: u32, entry: &str) -> String {
@@ -67,10 +239,17 @@ impl Run {
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
+    fn note_compiled(&mut self, compiled: Compiled) {
+        if self
+            .listed
+            .as_ref()
+            .is_some_and(|listed| !listed.contains(&compiled))
+        {
+            self.unlisted += 1;
+        }
+        self.compiled.push(compiled);
+    }
+
     #[expect(
         clippy::disallowed_methods,
         reason = "the machine keys every pipeline, which the pipeline list records"
@@ -92,17 +271,7 @@ impl Run {
         if debug && desc.debug.is_none() {
             return None;
         }
-        let switches: Vec<(u32, bool)> = self
-            .switches
-            .iter()
-            .filter(|(id, _)| {
-                built
-                    .stages
-                    .iter()
-                    .any(|stage| stage.composed.switches.contains(id))
-            })
-            .copied()
-            .collect();
+        let switches = stage_switches(&self.switches, &built.stages);
         let material: Vec<(&str, f64)> =
             variant.map_or_else(Vec::new, |(_, constants)| constants.to_vec());
         let specialized = built
@@ -121,44 +290,14 @@ impl Run {
         if let Some((_, made)) = built.made.iter().find(|(known, _)| *known == key) {
             return Some((key, made.clone()));
         }
-        let program_key = built.program_key;
-        let shared = self
-            .machine
-            .pipelines
-            .iter()
-            .filter(|other| other.program_key == program_key)
-            .find_map(|other| {
-                other
-                    .made
-                    .iter()
-                    .find(|(known, _)| *known == key)
-                    .map(|(_, made)| made.clone())
-            });
+        let shared = made_by_program(&self.machine.pipelines, built.program_key, key);
         if let Some(made) = shared {
             if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize) {
                 built.made.push((key, made.clone()));
             }
             return Some((key, made));
         }
-        let constants: Vec<Vec<(String, f64)>> = built
-            .stages
-            .iter()
-            .map(|stage| {
-                let mut values: Vec<(String, f64)> = switches
-                    .iter()
-                    .filter(|(id, _)| stage.composed.switches.contains(id))
-                    .map(|(id, on)| (id.to_string(), f64::from(u8::from(*on))))
-                    .collect();
-                values.extend(
-                    stage
-                        .composed
-                        .constants(&material)
-                        .into_iter()
-                        .map(|(name, value)| (name.to_owned(), value)),
-                );
-                values
-            })
-            .collect();
+        let constants = stage_constants(&built.stages, &switches, &material);
         let named: Vec<Vec<(&str, f64)>> = constants
             .iter()
             .map(|values| {
@@ -178,145 +317,51 @@ impl Run {
             1
         };
         let fragment_entry = if debug { desc.debug } else { desc.fragment };
-        let mut layouts: Vec<Option<wgpu::VertexBufferLayout<'static>>> = Vec::new();
-        let mut meshes = 0;
-        for layout in &desc.vertices {
-            match layout {
-                VertexLayout::Mesh => {
-                    layouts.push(if meshes == 0 {
-                        crate::mesh_arena::vertex_layout()
-                    } else {
-                        crate::mesh_arena::extra_layout()
-                    });
-                    meshes += 1;
-                }
-                VertexLayout::Buffer(layout) => layouts.push(Some(layout.clone())),
-            }
-        }
-        let view_depth = depth.is_some_and(|(_, view)| view);
-        let depth_stencil = depth.map(|(format, _)| {
-            let (write, compare, bias) = match desc.depth {
-                DepthUse::None => (
-                    false,
-                    wgpu::CompareFunction::Always,
-                    wgpu::DepthBiasState::default(),
-                ),
-                DepthUse::Test => (
-                    false,
-                    if view_depth {
-                        wgpu::CompareFunction::GreaterEqual
-                    } else {
-                        wgpu::CompareFunction::LessEqual
-                    },
-                    wgpu::DepthBiasState::default(),
-                ),
-                DepthUse::Write { bias } => (
-                    true,
-                    if view_depth {
-                        wgpu::CompareFunction::Greater
-                    } else {
-                        wgpu::CompareFunction::Less
-                    },
-                    bias,
-                ),
-                DepthUse::Overwrite => (
-                    true,
-                    wgpu::CompareFunction::Always,
-                    wgpu::DepthBiasState::default(),
-                ),
-                DepthUse::Compare {
-                    compare,
-                    write,
-                    bias,
-                } => (write, compare, bias),
-            };
-            wgpu::DepthStencilState {
-                format,
-                depth_write_enabled: Some(write),
-                depth_compare: Some(compare),
-                stencil: wgpu::StencilState::default(),
-                bias,
-            }
-        });
+        let layouts = vertex_layouts(&desc.vertices);
+        let depth_stencil =
+            depth.map(|(format, view)| depth_stencil_state(format, view, desc.depth));
         let fragment_stage = fragment_entry.and_then(|_| built.stages.get(fragment_at));
         let written = fragment_stage
             .zip(fragment_entry)
             .and_then(|(stage, entry)| fragment_locations(&stage.composed.text, entry.name()));
-        let add = wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::One,
-            dst_factor: wgpu::BlendFactor::One,
-            operation: wgpu::BlendOperation::Add,
-        };
-        let targets: Vec<Option<wgpu::ColorTargetState>> = formats
-            .iter()
-            .enumerate()
-            .map(|(location, format)| {
-                let format = (*format)?;
-                let (blend, mask) = if debug {
-                    let blend = (location == DEBUG_COUNT).then_some(wgpu::BlendState {
-                        color: add,
-                        alpha: add,
-                    });
-                    (blend, wgpu::ColorWrites::ALL)
-                } else {
-                    match &desc.targets {
-                        Some(targets) => targets
-                            .get(location)
-                            .copied()
-                            .unwrap_or((None, wgpu::ColorWrites::empty())),
-                        None => (
-                            (!main || location == 0).then_some(desc.blend).flatten(),
-                            desc.writes,
-                        ),
-                    }
-                };
-                let outputs = written
-                    .as_ref()
-                    .is_none_or(|written| written.contains(&(location as u32)));
-                Some(wgpu::ColorTargetState {
-                    format,
-                    blend: blend.filter(|_| blendable(format)),
-                    write_mask: if outputs {
-                        mask
-                    } else {
-                        wgpu::ColorWrites::empty()
-                    },
-                })
-            })
-            .collect();
-        let vertex_module = built.modules.first()?;
-        let fragment_module = fragment_entry.and_then(|_| built.modules.get(fragment_at));
+        let targets = color_targets(desc, formats, written.as_deref(), (debug, main));
+        let vertex_module = built
+            .stages
+            .first()?
+            .shader(&self.device, &mut self.machine.shaders);
+        let fragment_module =
+            fragment_stage.map(|stage| stage.shader(&self.device, &mut self.machine.shaders));
         let label = self.part_label(built.decl.part, desc.vertex.name());
-        let made = self
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(&label),
-                layout: Some(&built.layout),
-                vertex: wgpu::VertexState {
-                    module: vertex_module,
-                    entry_point: Some(desc.vertex.name()),
-                    compilation_options: options(0),
-                    buffers: &layouts,
-                },
-                primitive: desc.primitive,
-                depth_stencil,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: fragment_module.zip(fragment_entry).map(|(module, entry)| {
-                    wgpu::FragmentState {
-                        module,
-                        entry_point: Some(entry.name()),
-                        compilation_options: options(fragment_at),
-                        targets: &targets,
-                    }
-                }),
-                multiview_mask: None,
-                cache: None,
-            });
+        let made =
+            self.device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(&label),
+                    layout: Some(&built.layout),
+                    vertex: wgpu::VertexState {
+                        module: &vertex_module,
+                        entry_point: Some(desc.vertex.name()),
+                        compilation_options: options(0),
+                        buffers: &layouts,
+                    },
+                    primitive: desc.primitive,
+                    depth_stencil,
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: fragment_module.as_ref().zip(fragment_entry).map(
+                        |(module, entry)| wgpu::FragmentState {
+                            module,
+                            entry_point: Some(entry.name()),
+                            compilation_options: options(fragment_at),
+                            targets: &targets,
+                        },
+                    ),
+                    multiview_mask: None,
+                    cache: None,
+                });
         if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize) {
             built.made.push((key, made.clone()));
         }
         crate::pipelines::count(1);
-        let compiled = Compiled {
+        self.note_compiled(Compiled {
             pipeline,
             formats: formats.to_vec(),
             depth,
@@ -331,15 +376,7 @@ impl Run {
             } else {
                 Vec::new()
             },
-        };
-        if self
-            .listed
-            .as_ref()
-            .is_some_and(|listed| !listed.contains(&compiled))
-        {
-            self.unlisted += 1;
-        }
-        self.compiled.push(compiled);
+        });
         Some((key, made))
     }
 
@@ -406,11 +443,7 @@ impl Run {
     )]
     pub(super) fn compute_pipeline(&mut self, pipeline: u32) -> Option<wgpu::ComputePipeline> {
         let built = self.machine.pipelines.get(pipeline as usize)?;
-        let (Program::Compute(_), Some(module), Some(stage)) = (
-            &built.decl.program,
-            built.modules.first(),
-            built.stages.first(),
-        ) else {
+        let (Program::Compute(_), Some(stage)) = (&built.decl.program, built.stages.first()) else {
             return None;
         };
         let switches: Vec<(u32, bool)> = self
@@ -452,13 +485,14 @@ impl Run {
             .iter()
             .map(|(name, value)| (name.as_str(), *value))
             .collect();
+        let module = stage.shader(&self.device, &mut self.machine.shaders);
         let label = self.part_label(built.decl.part, stage.entry.name());
         let made = self
             .device
             .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(&label),
                 layout: Some(&built.layout),
-                module,
+                module: &module,
                 entry_point: Some(stage.entry.name()),
                 compilation_options: wgpu::PipelineCompilationOptions {
                     constants: &named,
@@ -473,8 +507,113 @@ impl Run {
         Some(made)
     }
 
+    fn part_reached(&self, part: u32) -> bool {
+        self.reached
+            .parts
+            .get(part as usize)
+            .copied()
+            .unwrap_or(true)
+    }
+
+    pub(crate) fn warm_reached(&mut self, world: &World) {
+        let gates = world.get_resource::<engine_registry::Gates>();
+        let in_play: Vec<engine_registry::GateId> = self
+            .gates
+            .iter()
+            .zip(&self.machine.declared.parts)
+            .filter(|(_, part)| part.turns_on_in_play)
+            .filter_map(|(gate, _)| *gate)
+            .collect();
+        let side = |forced: bool| -> Vec<(u32, bool)> {
+            self.machine
+                .switches
+                .iter()
+                .zip(&self.switches)
+                .map(|(&(id, gate), &(_, on))| {
+                    (id, if in_play.contains(&gate) { forced } else { on })
+                })
+                .collect()
+        };
+        self.reached = Reached {
+            generation: Some(gates.map_or(0, engine_registry::Gates::generation)),
+            parts: self
+                .gates
+                .iter()
+                .map(|gate| {
+                    gate.is_none_or(|gate| {
+                        in_play.contains(&gate) || gates.is_none_or(|gates| gates.on(gate))
+                    })
+                })
+                .collect(),
+            sides: [side(true), side(false)],
+        };
+        self.at_reached_switches(|run| {
+            run.warm(false);
+            run.compile_listed();
+        });
+    }
+
+    pub(super) fn at_reached_switches(&mut self, work: impl Fn(&mut Self)) {
+        let [on, off] = self.reached.sides.clone();
+        let differ = on != off;
+        let real = std::mem::replace(&mut self.switches, on);
+        work(self);
+        if differ {
+            self.switches = off;
+            work(self);
+        }
+        self.switches = real;
+    }
+
+    pub(crate) fn release_off_parts(&mut self, world: &World) {
+        let gates = world.get_resource::<engine_registry::Gates>();
+        for part in 0..self.gates.len() {
+            let on = self.gates[part].is_none_or(|gate| gates.is_some_and(|gates| gates.on(gate)));
+            if !on {
+                self.live[part] = false;
+                self.release_part(part as u32);
+            }
+        }
+    }
+
+    pub(super) fn compile_listed(&mut self) {
+        let Some(keys) = self.listed.take() else {
+            return;
+        };
+        let before = self.compiled.len();
+        for key in &keys {
+            let reached = self
+                .machine
+                .pipelines
+                .get(key.pipeline as usize)
+                .is_some_and(|built| self.part_reached(built.decl.part));
+            if reached {
+                let _ = self.compile(
+                    key.pipeline,
+                    (&key.formats, key.depth),
+                    (key.debug, key.main),
+                    specialized(key),
+                );
+            }
+        }
+        self.up_front += (self.compiled.len() - before) as u32;
+        self.listed = Some(keys);
+    }
+
+    pub(crate) fn make_all_shaders(&mut self) {
+        let machine = &mut self.machine;
+        for built in &machine.pipelines {
+            for stage in &built.stages {
+                stage.shader(&self.device, &mut machine.shaders);
+            }
+        }
+    }
+
     pub(crate) fn warm(&mut self, debug: bool) {
         for pipeline in 0..self.machine.pipelines.len() {
+            if !self.part_reached(self.machine.pipelines[pipeline].decl.part) {
+                continue;
+            }
             if matches!(
                 self.machine.pipelines[pipeline].decl.program,
                 Program::Compute(_)
@@ -487,7 +626,7 @@ impl Run {
                     continue;
                 };
                 let (lazy, shares) = (declared.name == crate::shared::DEBUG_VIEW, shared(declared));
-                if lazy && !debug {
+                if (lazy && !debug) || !self.part_reached(declared.part) {
                     continue;
                 }
                 let (formats, depth, main) = self.pass_formats(pass);

@@ -199,8 +199,7 @@ fn follow_tile(
     let origin = terrain.origin;
     let wanted = terrain.settled.held.get(&key);
     let keeps = terrain.white.get(&key).is_some_and(|spawned| {
-        spawned.origin == origin
-            && wanted.is_some_and(|(_, made)| made.record == spawned.record)
+        spawned.origin == origin && wanted.is_some_and(|(_, made)| made.record == spawned.record)
     });
     if keeps {
         return false;

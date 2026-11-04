@@ -7,9 +7,7 @@ import { AgentError, VERSION, MAX_BYTES, atMost, createBridge, failure, range, v
 import { launchBrowserSession } from "./agent-browser.mjs";
 import { launchNativeSession, nativeProgram } from "./agent-native.mjs";
 
-const generated = name => JSON.parse(readFileSync(new URL(`../src/generated/${name}.json`, import.meta.url), "utf8"));
-const protocol = generated("protocol");
-const coverage = generated("coverage");
+const protocol = JSON.parse(readFileSync(new URL("../src/generated/protocol.json", import.meta.url), "utf8"));
 const verbs = new Set((protocol.verbs ?? []).filter(verb => verb !== "check"));
 const reading = new Set(["describe", "inspect", "query"]);
 const commands = {
@@ -68,12 +66,12 @@ async function serve(values) {
   let owned;
   let bridge;
   let closing;
-  const shutdown = () => {
+  const shutdown = (answering = false) => {
     if (!closing) {
       process.removeListener("SIGINT", onSignal);
       process.removeListener("SIGTERM", onSignal);
       bridge?.markUnavailable();
-      bridge?.server.closeAllConnections();
+      if (!answering) bridge?.server.closeAllConnections();
       closing = Promise.allSettled([
         owned?.close(),
         bridge?.server.listening ? new Promise(resolveClose => bridge.server.close(resolveClose)) : Promise.resolve(),
@@ -95,11 +93,10 @@ async function serve(values) {
     if (closing) { await owned.close(); return; }
     bridge = createBridge({
       session: owned.session, url: owned.url,
-      onTimeout: () => owned.close(),
-      onClose: shutdown,
+      onClose: () => shutdown(),
       execute: (command, onRecord) => owned.execute(command, onRecord),
     });
-    owned.setInvalidated(() => bridge.markUnavailable());
+    owned.setInvalidated(() => { void shutdown(true); });
     await new Promise((resolveListen, reject) => {
       bridge.server.once("error", reject);
       bridge.server.listen(port, "127.0.0.1", resolveListen);
@@ -114,29 +111,6 @@ async function onlySession(endpoint) {
   const first = listed?.sessions?.[0]?.session;
   if (typeof first !== "string") throw new AgentError("invalid_arguments", "--session", { expected: "present" });
   return first;
-}
-
-function smokesOf(list, key, name) {
-  return coverage[list]?.find(entry => entry[key] === name)?.smokes ?? [];
-}
-
-function withSmokes(response, command) {
-  const result = response?.ok === true ? response.result : undefined;
-  if (command?.verb !== "describe" || !result) return response;
-  if (Array.isArray(result.bricks)) {
-    if (command.detail !== "full") return response;
-    for (const brick of result.bricks) {
-      for (const entry of brick.operations ?? []) entry.smokes = smokesOf("ops", "op", entry.name);
-      for (const entry of brick.settings ?? []) entry.smokes = smokesOf("sections", "section", entry.key);
-      for (const entry of brick.inspectors ?? []) entry.smokes = smokesOf("inspectors", "inspector", entry.name);
-    }
-    for (const type of result.types ?? []) type.smokes = smokesOf("inspectors", "inspector", type.name);
-  } else if (result.kind === "operation" || result.kind === "verb") {
-    result.smokes = smokesOf("ops", "op", result.name);
-  } else if (result.descriptor?.name) {
-    result.smokes = smokesOf("inspectors", "inspector", result.descriptor.name);
-  }
-  return response;
 }
 
 async function client(verb, values) {
@@ -161,10 +135,9 @@ async function client(verb, values) {
   if (Buffer.byteLength(body) > MAX_BYTES) throw new AgentError("request_too_large", "--json", { allowed: atMost(MAX_BYTES), got: Buffer.byteLength(body) });
   const mutation = !reading.has(request.command?.verb);
   const post = { method: "POST", headers: { "Content-Type": "application/json" }, body };
-  const response = request.command?.verb === "watch"
-    ? await stream(endpoint, { ...post, signal: AbortSignal.timeout(600_000) }, mutation)
-    : await fetchJson(endpoint, "/request", { ...post, signal: AbortSignal.timeout(120_000) }, mutation);
-  return withSmokes(response, request.command);
+  return request.command?.verb === "watch"
+    ? stream(endpoint, { ...post, signal: AbortSignal.timeout(600_000) }, mutation)
+    : fetchJson(endpoint, "/request", { ...post, signal: AbortSignal.timeout(120_000) }, mutation);
 }
 
 function unreachable(endpoint, error, mutation) {

@@ -70,6 +70,24 @@ pub(crate) struct Stage {
     pub(crate) composed: Arc<Composed>,
 }
 
+impl Stage {
+    pub(crate) fn shader(
+        &self,
+        device: &wgpu::Device,
+        shaders: &mut BTreeMap<usize, wgpu::ShaderModule>,
+    ) -> wgpu::ShaderModule {
+        shaders
+            .entry(Arc::as_ptr(&self.composed).addr())
+            .or_insert_with(|| {
+                device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(self.entry.name()),
+                    source: wgpu::ShaderSource::Wgsl(self.composed.text.as_str().into()),
+                })
+            })
+            .clone()
+    }
+}
+
 pub(crate) struct OwnGroup {
     pub(crate) index: u32,
     pub(crate) layout: wgpu::BindGroupLayout,
@@ -87,7 +105,6 @@ pub(crate) struct Ready {
 pub(crate) struct BuiltPipeline {
     pub(crate) decl: PipelineDecl,
     pub(crate) stages: Vec<Stage>,
-    pub(crate) modules: Vec<wgpu::ShaderModule>,
     pub(crate) layout: wgpu::PipelineLayout,
     pub(crate) groups: Vec<OwnGroup>,
     pub(crate) variant: u32,
@@ -135,6 +152,7 @@ pub(crate) struct Machine {
     pub(crate) graph: StaticGraph,
     pub(crate) ids: Ids,
     pub(crate) pipelines: Vec<BuiltPipeline>,
+    pub(crate) shaders: BTreeMap<usize, wgpu::ShaderModule>,
     pub(crate) frame_slots: BTreeMap<u32, FrameSlot>,
     pub(crate) frame_bound: BTreeMap<u32, Bound>,
     pub(crate) variants: Vec<FrameVariant>,
@@ -442,7 +460,7 @@ impl Machine {
         let variables: Vec<FrameVariable> = numbered
             .iter()
             .map(|(_, name, package, ty)| FrameVariable {
-                brick: *package,
+                brick: package,
                 name: Box::leak(name.clone().into_boxed_str()),
                 kind: class(*ty, name == crate::linker::CAMERA),
             })
@@ -812,15 +830,6 @@ impl Machine {
             }
             layout_key.hash(&mut hasher);
             let program_key = hasher.finish();
-            let modules = stages
-                .iter()
-                .map(|stage| {
-                    device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                        label: Some(stage.entry.name()),
-                        source: wgpu::ShaderSource::Wgsl(stage.composed.text.clone().into()),
-                    })
-                })
-                .collect();
             let mesh_slots = match &decl.program {
                 Program::Render(desc) => desc
                     .vertices
@@ -839,7 +848,6 @@ impl Machine {
             pipelines.push(BuiltPipeline {
                 decl,
                 stages,
-                modules,
                 layout,
                 groups,
                 variant,
@@ -890,6 +898,7 @@ impl Machine {
             graph,
             ids,
             pipelines,
+            shaders: BTreeMap::new(),
             frame_slots,
             frame_bound,
             variants,
@@ -1097,7 +1106,7 @@ fn graph_of(
     for (index, name) in crate::shared::DEBUG_TARGETS.iter().enumerate() {
         target(
             Target::Debug(index as u32),
-            *name,
+            name,
             true,
             Life::Output,
             &mut ids,

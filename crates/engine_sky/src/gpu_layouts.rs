@@ -1,7 +1,6 @@
 use engine_core::{GpuStruct, gpu_consts, gpu_struct};
 
-pub(crate) const CLOUD_SHADOW_BYTES: usize =
-    (CLOUD_SHADOW_CELLS * CLOUD_SHADOW_CELLS * 2) as usize;
+pub(crate) const CLOUD_SHADOW_BYTES: usize = (CLOUD_SHADOW_CELLS * CLOUD_SHADOW_CELLS * 2) as usize;
 pub(crate) const CLOUD_LIGHT_BYTES: usize =
     (LIGHT_TEXELS * LIGHT_TEXELS * (LIGHT_HEIGHTS - 1) * 4) as usize;
 

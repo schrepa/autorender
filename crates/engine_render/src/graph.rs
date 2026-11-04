@@ -275,41 +275,245 @@ fn follows_of(before: &[Bits]) -> Vec<Bits> {
         .collect()
 }
 
+fn nodes_of(passes: Vec<Declared>, width: usize) -> (Vec<Node>, Vec<Vec<PassId>>) {
+    let count = passes.len();
+    let mut nodes = Vec::with_capacity(count);
+    let mut after = Vec::with_capacity(count);
+    for declared in passes {
+        let mut reads = Bits::of(width);
+        let mut writes = Bits::of(width);
+        let mut current = Bits::of(width);
+        for resource in &declared.reads {
+            reads.insert(resource.index());
+        }
+        for resource in &declared.writes {
+            writes.insert(resource.index());
+        }
+        for resource in &declared.current {
+            current.insert(resource.index());
+        }
+        after.push(declared.after);
+        nodes.push(Node {
+            entry: declared.entry,
+            reads,
+            writes,
+            current,
+            colors: declared.colors,
+            depth: declared.depth,
+        });
+    }
+    (nodes, after)
+}
+
+fn view_bits(resources: &[ResourceEntry]) -> Bits {
+    let mut views = Bits::of(resources.len());
+    for (index, resource) in resources.iter().enumerate() {
+        if resource.view {
+            views.insert(index);
+        }
+    }
+    views
+}
+
+fn passes_before(
+    resources: &[ResourceEntry],
+    nodes: &[Node],
+    after: &[Vec<PassId>],
+    views: &Bits,
+) -> Vec<Bits> {
+    let count = nodes.len();
+    let mut before = vec![Bits::of(count); count];
+    let mut kept = Vec::new();
+    for (late, reader) in nodes.iter().enumerate() {
+        let reads = reader.reads_only();
+        let inputs = reader.inputs();
+        for (early, writer) in nodes.iter().enumerate() {
+            if early == late {
+                continue;
+            }
+            let outputs = writer.outputs();
+            for resource in outputs.intersect(&inputs).iter() {
+                let entry = &resources[resource];
+                if entry.view {
+                    let placed_earlier =
+                        reader.entry.layer.is_none() || writer.key(early) < reader.key(late);
+                    if placed_earlier {
+                        before[late].insert(early);
+                    } else if reads.contains(resource) {
+                        before[early].insert(late);
+                    }
+                } else if entry.life == Life::Previous {
+                    if reads.contains(resource) {
+                        before[early].insert(late);
+                    }
+                } else if reads.contains(resource) {
+                    if entry.life == Life::Kept && !reader.current.contains(resource) {
+                        kept.push((early, late));
+                    } else {
+                        before[late].insert(early);
+                    }
+                }
+            }
+            if reader.entry.layer.is_some() && writer.entry.layer.is_some() {
+                let shared_view = !reader
+                    .outputs()
+                    .intersect(&outputs)
+                    .intersect(views)
+                    .is_empty();
+                if shared_view && writer.key(early) < reader.key(late) {
+                    before[late].insert(early);
+                }
+            }
+        }
+        for pass in &after[late] {
+            before[late].insert(pass.index());
+        }
+    }
+    let follows = follows_of(&before);
+    for (early, late) in kept {
+        if !follows[early].contains(late) {
+            before[late].insert(early);
+        }
+    }
+    before
+}
+
+fn placed_order(nodes: &[Node], before: &[Bits]) -> Result<Vec<usize>, Error> {
+    let count = nodes.len();
+    let mut placed = Bits::of(count);
+    let mut order: Vec<usize> = Vec::with_capacity(count);
+    while order.len() < count {
+        let last = order.last().map(|&last| &nodes[last].entry);
+        let continues = |index: usize| {
+            let entry = &nodes[index].entry;
+            last.is_some_and(|last| {
+                entry.group.is_some()
+                    && entry.group == last.group
+                    && entry.package == last.package
+                    && entry.layer == last.layer
+            })
+        };
+        let next = (0..count)
+            .filter(|&index| !placed.contains(index) && before[index].without(&placed).is_empty())
+            .min_by_key(|&index| (!continues(index), nodes[index].key(index)));
+        let Some(next) = next else {
+            let stuck = (0..count)
+                .filter(|&index| !placed.contains(index))
+                .min_by_key(|&index| nodes[index].key(index))
+                .unwrap_or(0);
+            let waiting: Vec<String> = (0..count)
+                .filter(|&index| !placed.contains(index))
+                .map(|index| {
+                    let on: Vec<&str> = before[index]
+                        .without(&placed)
+                        .iter()
+                        .map(|earlier| nodes[earlier].entry.label)
+                        .collect();
+                    format!("{} after {}", nodes[index].entry.label, on.join("+"))
+                })
+                .collect();
+            return Err(refused(
+                ErrorCode::AmbiguousPasses,
+                format!("$.passes.{}", nodes[stuck].entry.label),
+            )
+            .got(waiting));
+        };
+        placed.insert(next);
+        order.push(next);
+    }
+    Ok(order)
+}
+
+fn reach_of(before: &[Bits], order: &[usize]) -> Vec<Bits> {
+    let mut reach = before.to_vec();
+    for &index in order {
+        let mut through = reach[index].clone();
+        for earlier in reach[index].iter().collect::<Vec<_>>() {
+            through = through.union(&reach[earlier]);
+        }
+        reach[index] = through;
+    }
+    reach
+}
+
+fn check_writers_ordered(
+    resources: &[ResourceEntry],
+    nodes: &[Node],
+    reach: &[Bits],
+    views: &Bits,
+) -> Result<(), Error> {
+    let count = nodes.len();
+    for first in 0..count {
+        for second in first + 1..count {
+            let shared = nodes[first]
+                .outputs()
+                .intersect(&nodes[second].outputs())
+                .without(views);
+            let Some(resource) = shared.first() else {
+                continue;
+            };
+            let ordered = reach[second].contains(first) || reach[first].contains(second);
+            if !ordered {
+                return Err(refused(
+                    ErrorCode::AmbiguousPasses,
+                    format!(
+                        "$.passes.{}.writes.{}[{}]",
+                        nodes[second].entry.label,
+                        resources[resource].label,
+                        nodes[first].entry.label
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_reads_written(
+    resources: &[ResourceEntry],
+    nodes: &[Node],
+    reach: &[Bits],
+) -> Result<(), Error> {
+    for (late, reader) in nodes.iter().enumerate() {
+        for resource in reader.reads_only().iter() {
+            if resources[resource].life != Life::Frame || resources[resource].view {
+                continue;
+            }
+            let written = (0..nodes.len()).any(|early| {
+                reach[late].contains(early) && nodes[early].outputs().contains(resource)
+            });
+            if !written {
+                return Err(refused(
+                    ErrorCode::ReadBeforeWrite,
+                    format!(
+                        "$.passes.{}.reads.{}",
+                        reader.entry.label, resources[resource].label
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn batches_of(nodes: &[Node], order: &[usize]) -> Vec<u8> {
+    let mut batches = Vec::with_capacity(order.len());
+    let mut positioned = false;
+    let mut last = 0;
+    for &index in order {
+        let node = &nodes[index];
+        let batch = node.batch(positioned).max(last);
+        positioned |= node.entry.layer.is_some();
+        last = batch;
+        batches.push(batch);
+    }
+    batches
+}
+
 impl StaticGraph {
     pub fn build(resources: Vec<ResourceEntry>, passes: Vec<Declared>) -> Result<Self, Error> {
-        let width = resources.len();
-        let count = passes.len();
-        let mut nodes = Vec::with_capacity(count);
-        let mut after = Vec::with_capacity(count);
-        for declared in passes {
-            let mut reads = Bits::of(width);
-            let mut writes = Bits::of(width);
-            let mut current = Bits::of(width);
-            for resource in &declared.reads {
-                reads.insert(resource.index());
-            }
-            for resource in &declared.writes {
-                writes.insert(resource.index());
-            }
-            for resource in &declared.current {
-                current.insert(resource.index());
-            }
-            after.push(declared.after);
-            nodes.push(Node {
-                entry: declared.entry,
-                reads,
-                writes,
-                current,
-                colors: declared.colors,
-                depth: declared.depth,
-            });
-        }
-        let mut views = Bits::of(width);
-        for (index, resource) in resources.iter().enumerate() {
-            if resource.view {
-                views.insert(index);
-            }
-        }
+        let (nodes, after) = nodes_of(passes, resources.len());
+        let views = view_bits(&resources);
         for node in &nodes {
             if node.entry.layer.is_none() && !node.outputs().intersect(&views).is_empty() {
                 return Err(refused(
@@ -318,155 +522,12 @@ impl StaticGraph {
                 ));
             }
         }
-        let mut before = vec![Bits::of(count); count];
-        let mut kept = Vec::new();
-        for (late, reader) in nodes.iter().enumerate() {
-            let reads = reader.reads_only();
-            let inputs = reader.inputs();
-            for (early, writer) in nodes.iter().enumerate() {
-                if early == late {
-                    continue;
-                }
-                let outputs = writer.outputs();
-                for resource in outputs.intersect(&inputs).iter() {
-                    let entry = &resources[resource];
-                    if entry.view {
-                        let placed_earlier = reader.entry.layer.is_none()
-                            || writer.key(early) < reader.key(late);
-                        if placed_earlier {
-                            before[late].insert(early);
-                        } else if reads.contains(resource) {
-                            before[early].insert(late);
-                        }
-                    } else if entry.life == Life::Previous {
-                        if reads.contains(resource) {
-                            before[early].insert(late);
-                        }
-                    } else if reads.contains(resource) {
-                        if entry.life == Life::Kept && !reader.current.contains(resource) {
-                            kept.push((early, late));
-                        } else {
-                            before[late].insert(early);
-                        }
-                    }
-                }
-                if reader.entry.layer.is_some() && writer.entry.layer.is_some() {
-                    let shared_view = !reader.outputs().intersect(&outputs).intersect(&views).is_empty();
-                    if shared_view && writer.key(early) < reader.key(late) {
-                        before[late].insert(early);
-                    }
-                }
-            }
-            for pass in &after[late] {
-                before[late].insert(pass.index());
-            }
-        }
-        let follows = follows_of(&before);
-        for (early, late) in kept {
-            if !follows[early].contains(late) {
-                before[late].insert(early);
-            }
-        }
-        let mut placed = Bits::of(count);
-        let mut order: Vec<usize> = Vec::with_capacity(count);
-        while order.len() < count {
-            let last = order.last().map(|&last| &nodes[last].entry);
-            let continues = |index: usize| {
-                let entry = &nodes[index].entry;
-                last.is_some_and(|last| {
-                    entry.group.is_some()
-                        && entry.group == last.group
-                        && entry.package == last.package
-                        && entry.layer == last.layer
-                })
-            };
-            let next = (0..count)
-                .filter(|&index| {
-                    !placed.contains(index) && before[index].without(&placed).is_empty()
-                })
-                .min_by_key(|&index| (!continues(index), nodes[index].key(index)));
-            let Some(next) = next else {
-                let stuck = (0..count)
-                    .filter(|&index| !placed.contains(index))
-                    .min_by_key(|&index| nodes[index].key(index))
-                    .unwrap_or(0);
-                let waiting: Vec<String> = (0..count)
-                    .filter(|&index| !placed.contains(index))
-                    .map(|index| {
-                        let on: Vec<&str> = before[index]
-                            .without(&placed)
-                            .iter()
-                            .map(|earlier| nodes[earlier].entry.label)
-                            .collect();
-                        format!("{} after {}", nodes[index].entry.label, on.join("+"))
-                    })
-                    .collect();
-                return Err(refused(
-                    ErrorCode::AmbiguousPasses,
-                    format!("$.passes.{}", nodes[stuck].entry.label),
-                )
-                .got(waiting));
-            };
-            placed.insert(next);
-            order.push(next);
-        }
-        let mut reach = before.clone();
-        for &index in &order {
-            let mut through = reach[index].clone();
-            for earlier in reach[index].iter().collect::<Vec<_>>() {
-                through = through.union(&reach[earlier]);
-            }
-            reach[index] = through;
-        }
-        for first in 0..count {
-            for second in first + 1..count {
-                let shared = nodes[first]
-                    .outputs()
-                    .intersect(&nodes[second].outputs())
-                    .without(&views);
-                let Some(resource) = shared.first() else {
-                    continue;
-                };
-                let ordered = reach[second].contains(first) || reach[first].contains(second);
-                if !ordered {
-                    return Err(refused(
-                        ErrorCode::AmbiguousPasses,
-                        format!(
-                            "$.passes.{}.writes.{}[{}]",
-                            nodes[second].entry.label,
-                            resources[resource].label,
-                            nodes[first].entry.label
-                        ),
-                    ));
-                }
-            }
-        }
-        for (late, reader) in nodes.iter().enumerate() {
-            for resource in reader.reads_only().iter() {
-                if resources[resource].life != Life::Frame || resources[resource].view {
-                    continue;
-                }
-                let written = (0..count).any(|early| {
-                    reach[late].contains(early) && nodes[early].outputs().contains(resource)
-                });
-                if !written {
-                    return Err(refused(
-                        ErrorCode::ReadBeforeWrite,
-                        format!("$.passes.{}.reads.{}", reader.entry.label, resources[resource].label),
-                    ));
-                }
-            }
-        }
-        let mut batches = Vec::with_capacity(count);
-        let mut positioned = false;
-        let mut last = 0;
-        for &index in &order {
-            let node = &nodes[index];
-            let batch = node.batch(positioned).max(last);
-            positioned |= node.entry.layer.is_some();
-            last = batch;
-            batches.push(batch);
-        }
+        let before = passes_before(&resources, &nodes, &after, &views);
+        let order = placed_order(&nodes, &before)?;
+        let reach = reach_of(&before, &order);
+        check_writers_ordered(&resources, &nodes, &reach, &views)?;
+        check_reads_written(&resources, &nodes, &reach)?;
+        let batches = batches_of(&nodes, &order);
         Ok(Self {
             resources,
             nodes,
@@ -504,11 +565,17 @@ impl StaticGraph {
                 .colors
                 .iter()
                 .filter_map(|&(resource, access)| {
-                    Some((resource, store_ops(access, needed.contains(resource.index()))?))
+                    Some((
+                        resource,
+                        store_ops(access, needed.contains(resource.index()))?,
+                    ))
                 })
                 .collect();
             let depth = node.depth.map(|(resource, access)| {
-                (resource, store_ops(access, needed.contains(resource.index())))
+                (
+                    resource,
+                    store_ops(access, needed.contains(resource.index())),
+                )
             });
             kept[at] = Some(Planned {
                 pass: PassId::new(index),
@@ -539,7 +606,8 @@ impl StaticGraph {
         for mut planned in kept.into_iter().flatten() {
             let node = &self.nodes[planned.pass.index()];
             let refused_read = node.required().without(&written).iter().find(|&resource| {
-                let unwritten = self.resources[resource].life == Life::Frame && !planned_writes.contains(resource);
+                let unwritten = self.resources[resource].life == Life::Frame
+                    && !planned_writes.contains(resource);
                 let elsewhere = self
                     .nodes
                     .iter()
@@ -550,15 +618,22 @@ impl StaticGraph {
             if let Some(resource) = refused_read {
                 return Err(refused(
                     ErrorCode::ReadBeforeWrite,
-                    format!("$.passes.{}.reads.{}", node.entry.label, self.resources[resource].label),
+                    format!(
+                        "$.passes.{}.reads.{}",
+                        node.entry.label, self.resources[resource].label
+                    ),
                 ));
             }
             for (resource, ops) in &mut planned.colors {
-                if let Some(&(_, access)) = node.colors.iter().find(|(known, _)| *known == *resource) {
+                if let Some(&(_, access)) =
+                    node.colors.iter().find(|(known, _)| *known == *resource)
+                {
                     ops.load = load_op(access, written.contains(resource.index()));
                 }
             }
-            if let (Some((resource, Some(ops))), Some((_, access))) = (planned.depth.as_mut(), node.depth) {
+            if let (Some((resource, Some(ops))), Some((_, access))) =
+                (planned.depth.as_mut(), node.depth)
+            {
                 ops.load = load_op(access, written.contains(resource.index()));
             }
             written = written.union(&node.outputs());

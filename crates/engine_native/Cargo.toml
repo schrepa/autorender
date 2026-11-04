@@ -8,7 +8,7 @@ autoexamples = false
 
 [features]
 default = []
-dev = ["engine/dev"]
+dev = ["engine/dev", "engine_profiler/load", "dep:gltf", "dep:naga", "dep:tiff", "dep:toml_edit", "dep:zip"]
 profiling = ["engine/profiling", "engine_profiler/profiling"]
 
 [dependencies]
@@ -22,6 +22,11 @@ winit.workspace = true
 gilrs.workspace = true
 pollster.workspace = true
 zstd.workspace = true
+gltf = { workspace = true, optional = true }
+naga = { workspace = true, optional = true, features = ["wgsl-in", "spv-out"] }
+tiff = { workspace = true, optional = true }
+toml_edit = { workspace = true, optional = true }
+zip = { workspace = true, optional = true }
 
 [lints]
 workspace = true

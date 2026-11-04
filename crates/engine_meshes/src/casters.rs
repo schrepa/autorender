@@ -121,7 +121,8 @@ impl CasterPlan {
             start += group.capacity;
         }
         self.starts.clear();
-        self.starts.extend(self.groups.iter().map(|group| group.start));
+        self.starts
+            .extend(self.groups.iter().map(|group| group.start));
         self.total = start;
         true
     }

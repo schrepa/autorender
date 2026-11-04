@@ -212,14 +212,7 @@ impl Groups {
                 let extended = residency
                     .mesh(asset.mesh.handle)
                     .is_some_and(ResidentMesh::extended);
-                let parts: Vec<(usize, PartLevels)> = asset
-                    .parts
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(part, rendered)| {
-                        Some((part, part_levels(residency, rendered, levels.len())?))
-                    })
-                    .collect();
+                let parts = resident_parts(residency, asset, levels.len());
                 let bounds = asset.mesh.mesh.bounds();
                 let proxy = asset
                     .shadow
@@ -365,7 +358,10 @@ impl Groups {
                 radius: radius * placed.scale,
                 group,
                 scale: placed.scale,
-                terrain: index | layer << LAYER_SHIFT | near << NEAR_LEVEL_SHIFT | rank << RANK_SHIFT,
+                terrain: index
+                    | layer << LAYER_SHIFT
+                    | near << NEAR_LEVEL_SHIFT
+                    | rank << RANK_SHIFT,
                 sink: placed.sink,
                 state: STATE_FRESH,
                 pad: [0; 3],
@@ -391,9 +387,7 @@ impl Groups {
             .iter()
             .filter_map(|placed| {
                 let &group = self.indices.get(&(terrain, usize::from(placed.asset)))?;
-                let Some(views) = impostors
-                    .get(group as usize)
-                    .filter(|views| views.framed())
+                let Some(views) = impostors.get(group as usize).filter(|views| views.framed())
                 else {
                     return Some((Vec3::ZERO, Vec3::ZERO));
                 };
@@ -424,7 +418,11 @@ fn impostor_asks(
     groups: &[DrawGroup],
     terrains: &[(Entity, Vec<Option<Resolved<'_>>>)],
 ) -> Vec<Option<ImpostorAsk>> {
-    let resolved = || terrains.iter().flat_map(|(_, assets)| assets.iter().flatten());
+    let resolved = || {
+        terrains
+            .iter()
+            .flat_map(|(_, assets)| assets.iter().flatten())
+    };
     groups
         .iter()
         .enumerate()
@@ -510,6 +508,19 @@ fn scatter_levels(residency: &AssetResidency, asset: &Resolved<'_>) -> Option<Le
     }
     let camera = levels.len() as u32;
     Some((levels, casters, meshes, errors, camera))
+}
+
+fn resident_parts(
+    residency: &AssetResidency,
+    asset: &Resolved<'_>,
+    levels: usize,
+) -> Vec<(usize, PartLevels)> {
+    asset
+        .parts
+        .iter()
+        .enumerate()
+        .filter_map(|(part, rendered)| Some((part, part_levels(residency, rendered, levels)?)))
+        .collect()
 }
 
 fn part_levels(

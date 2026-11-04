@@ -67,7 +67,10 @@ pub(crate) fn rasterized(view: &engine_core::View, offset: glam::Vec2, temporal:
         return view_projection;
     }
     let size = view.render_size();
-    jittered(view_projection, engine_render::jitter_clip(offset.to_array(), size.x, size.y))
+    jittered(
+        view_projection,
+        engine_render::jitter_clip(offset.to_array(), size.x, size.y),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -98,9 +101,9 @@ impl PresentationTotals {
 }
 
 fn word(bytes: &[u8], index: usize) -> u32 {
-    bytes
-        .get(index * 4..index * 4 + 4)
-        .map_or(0, |word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+    bytes.get(index * 4..index * 4 + 4).map_or(0, |word| {
+        u32::from_le_bytes([word[0], word[1], word[2], word[3]])
+    })
 }
 
 impl Readback for PresentationTotals {
@@ -390,13 +393,12 @@ impl DrawGroups {
         self.batch_staging.clear();
         self.batch_staging
             .extend(batches.iter().enumerate().map(|(index, batch)| {
-                let bounds = assets.mesh(batch.mesh).map_or(
-                    (Vec3::ZERO, Vec3::ZERO),
-                    |mesh| {
+                let bounds = assets
+                    .mesh(batch.mesh)
+                    .map_or((Vec3::ZERO, Vec3::ZERO), |mesh| {
                         let bounds = mesh.bounds();
                         (bounds.min(), bounds.max())
-                    },
-                );
+                    });
                 batch_record(
                     batch,
                     (residency.mesh(batch.mesh), bounds),
@@ -420,14 +422,17 @@ impl DrawGroups {
             let range = batch.instances.start as usize..batch.instances.end as usize;
             let base = self.candidate_staging.len() as u32;
             self.candidate_staging
-                .extend(ordered[range].iter().zip(base..).map(|(&(_, slot), position)| {
-                    CandidateData {
-                        slot,
-                        node: node(slot as usize),
-                        batch: index as u32,
-                        position,
-                    }
-                }));
+                .extend(
+                    ordered[range]
+                        .iter()
+                        .zip(base..)
+                        .map(|(&(_, slot), position)| CandidateData {
+                            slot,
+                            node: node(slot as usize),
+                            batch: index as u32,
+                            position,
+                        }),
+                );
         }
         let slots = self
             .candidate_staging
@@ -493,12 +498,7 @@ fn batch_record(
         },
         first_plane: if first_instance { capacity as u32 } else { 0 },
         lod_ranges: [lod(0).0, lod(0).1, lod(1).0, lod(1).1],
-        lod_errors: [
-            lod(0).2,
-            lod(1).2,
-            (1 + lods) as f32,
-            impostor,
-        ],
+        lod_errors: [lod(0).2, lod(1).2, (1 + lods) as f32, impostor],
         group,
         bounds_min: bounds.0.extend(0.0).to_array(),
         bounds_max: bounds.1.extend(0.0).to_array(),

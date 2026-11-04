@@ -8,6 +8,8 @@ import { launchContext } from "./browser-launch.mjs";
 import { recordReceived, recordSent } from "./exercised.mjs";
 import { workspace } from "./workspace.mjs";
 
+const FIRST_RENDER_MS = 300_000;
+
 const status = { verb: "query", name: "status" };
 
 async function compareCaptures(compare, requestBrowser, page) {
@@ -82,6 +84,9 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
   let initialNavigation = true;
   let captureNumber = 0;
   let watching;
+  let refuseLoad;
+  const loadRefused = new Promise((_, reject) => { refuseLoad = reject; });
+  loadRefused.catch(() => {});
   const listeners = [];
   const diagnostics = [];
 
@@ -127,12 +132,12 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
     recordReceived(response);
     return response;
   }
-  async function readyRequest(command) {
-    const deadline = Date.now() + 5000;
+  async function readyRequest(command, limit = 5000) {
+    const deadline = Date.now() + limit;
     while (true) {
       let timer;
       const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new AgentError("runtime_busy", "$", { allowed: atMost(5000) });
+      if (remaining <= 0) throw new AgentError("runtime_busy", "$", { allowed: atMost(limit) });
       let response;
       try {
         response = await Promise.race([
@@ -169,6 +174,12 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
     page = browser.page;
     listen(page, "pageerror", error => diagnostic("pageerror", String(error)));
     listen(page, "console", message => { if (["error", "warning"].includes(message.type())) diagnostic(message.type(), message.text()); });
+    listen(page, "response", response => {
+      if (response.status() < 400) return;
+      const failed = `${response.status()} ${response.url()}`;
+      diagnostic("http", failed);
+      if (["document", "script"].includes(response.request().resourceType())) refuseLoad(new AgentError("runtime_unavailable", "$", { expected: "live", got: failed }));
+    });
     listen(page, "framenavigated", frame => { if (!initialNavigation && frame === page.mainFrame()) invalidate(); });
     listen(page, "close", invalidate);
     listen(page, "crash", invalidate);
@@ -184,7 +195,10 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
     });
     await page.goto(url.href, { waitUntil: "domcontentloaded", timeout: 30_000 });
     try {
-      await page.waitForFunction(() => typeof window.__engineDev?.request === "function" || document.querySelector("#status")?.getAttribute("data-state") === "error", null, { timeout: 60_000 });
+      await Promise.race([
+        page.waitForFunction(() => typeof window.__engineDev?.request === "function" || document.querySelector("#status")?.getAttribute("data-state") === "error", null, { timeout: 60_000, polling: 500 }),
+        loadRefused,
+      ]);
       const identity = await page.evaluate(() => ({
         instance: window.__engineDev?.instance,
         build: window.__engineDev?.build ?? null,
@@ -196,8 +210,8 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
       build = identity.build;
       if (typeof instance !== "string" || !instance) throw new AgentError("missing_runtime_identity", "$", { expected: "id", got: instance ?? null });
       if (expectedBuild !== undefined && build !== expectedBuild) throw new AgentError("build_mismatch", "build", { allowed: variants([expectedBuild]), got: build });
-      await readyRequest({ verb: "control", name: "render" });
-      await readyRequest(status);
+      await readyRequest({ verb: "control", name: "render" }, FIRST_RENDER_MS);
+      await readyRequest(status, FIRST_RENDER_MS);
     } catch (error) {
       const shown = await page.locator("#status").textContent({ timeout: 1000 }).catch(() => "unavailable");
       throw new AgentError(error?.code ?? "runtime_unavailable", error?.path, { got: { error: refusal(error), status: shown, diagnostics: diagnostics.slice(-5) } });

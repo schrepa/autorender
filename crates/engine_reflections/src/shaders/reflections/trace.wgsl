@@ -45,7 +45,7 @@ const REFLECTION_TAPS: u32 = 8u;
 const REFLECTION_FACING: f32 = 0.05;
 const REFLECTION_END: f32 = 0.1;
 const REFLECTION_FADE: f32 = 0.2;
-const FLOAT_MAX: f32 = 3.4028235e38f;
+const FLOAT_MAX: f32 = 3.4028233e38f;
 
 fn nearest_depth_at(cell: vec2<i32>, mip: i32) -> f32 {
     if mip == 0 {

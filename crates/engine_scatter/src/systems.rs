@@ -3,8 +3,8 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetLibrary, AssetResidency, AssetUses, Cut, Detail, DeviceLimits, FrameTime, ImpostorAsks,
-    ImpostorPolicy, ImpostorRecord, ImpostorRecords, MaterialHandle, MeshHandle, Readback,
-    Spawner, TextureHandle, View,
+    ImpostorPolicy, ImpostorRecord, ImpostorRecords, MaterialHandle, MeshHandle, Readback, Spawner,
+    TextureHandle, View,
 };
 use engine_math::collections::HashMap;
 use engine_places::ground::{
@@ -156,9 +156,9 @@ pub(crate) struct ScatterFeedback {
 
 impl Readback for ScatterFeedback {
     fn arrived(&mut self, _frame: u64, _tag: u32, bytes: &[u8]) {
-        self.entries = bytes
-            .get(4..8)
-            .map_or(0, |word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]));
+        self.entries = bytes.get(4..8).map_or(0, |word| {
+            u32::from_le_bytes([word[0], word[1], word[2], word[3]])
+        });
     }
 }
 
@@ -241,7 +241,13 @@ fn resolve_all<'a>(
                 .placement
                 .iter()
                 .map(|asset| {
-                    resolve(asset, settings.look(asset.mesh), library, settings, &mut kept)
+                    resolve(
+                        asset,
+                        settings.look(asset.mesh),
+                        library,
+                        settings,
+                        &mut kept,
+                    )
                 })
                 .collect();
             (terrain.terrain, assets)
@@ -254,7 +260,10 @@ fn asset_uses(resolved: &ResolvedTerrains<'_>) -> AssetUses {
     let mut meshes: Vec<MeshHandle> = Vec::new();
     let mut materials: Vec<MaterialHandle> = Vec::new();
     let mut textures: Vec<TextureHandle> = Vec::new();
-    for asset in resolved.iter().flat_map(|(_, assets)| assets.iter().flatten()) {
+    for asset in resolved
+        .iter()
+        .flat_map(|(_, assets)| assets.iter().flatten())
+    {
         for mesh in asset.meshes() {
             if !meshes.contains(&mesh.handle) {
                 meshes.push(mesh.handle);
@@ -349,14 +358,16 @@ fn write_slots(state: &mut ScatterState) {
     state.objects = held;
 }
 
+type PlaceReads<'w> = (
+    Res<'w, TerrainTiles>,
+    Res<'w, ScatterSettings>,
+    Res<'w, AssetLibrary>,
+    Res<'w, AssetResidency>,
+    Res<'w, DeviceLimits>,
+);
+
 pub(crate) fn place_pool(
-    (tiles, settings, library, residency, limits): (
-        Res<TerrainTiles>,
-        Res<ScatterSettings>,
-        Res<AssetLibrary>,
-        Res<AssetResidency>,
-        Res<DeviceLimits>,
-    ),
+    (tiles, settings, library, residency, limits): PlaceReads<'_>,
     (detail, time): (Res<Detail>, Res<FrameTime>),
     mut far: ResMut<FarCoverTable>,
     mut state: ResMut<ScatterState>,
@@ -453,10 +464,7 @@ pub(crate) fn plan_cull(
     let plan = &mut state.plan;
     plan.maps.clear();
     plan.prepared = false;
-    plan.atlas = state
-        .impostors
-        .iter()
-        .any(|record| record.sphere[3] > 0.0);
+    plan.atlas = state.impostors.iter().any(|record| record.sphere[3] > 0.0);
     plan.cards = plan.atlas;
     plan.casts = maps.on;
     if state.resident == 0 {
@@ -525,8 +533,10 @@ pub(crate) fn plan_cull(
         fade: [state.fade, FADE_MARGIN, cards, spanned],
     });
     plan.card_args.clear();
-    plan.card_args
-        .resize(view_count as usize, [engine_render::IMPOSTOR_VERTICES, 0, 0, 0]);
+    plan.card_args.resize(
+        view_count as usize,
+        [engine_render::IMPOSTOR_VERTICES, 0, 0, 0],
+    );
     plan.card_args.push([0; 4]);
     plan.args.clear();
     for list in 0..lists {

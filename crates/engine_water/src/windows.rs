@@ -290,9 +290,10 @@ fn follow(
         return;
     }
     let reads = reads(state, first, (cells, cell));
-    let changed: Vec<[Vec2; 2]> = state.window.as_ref().map_or_else(Vec::new, |window| {
-        changed_squares(&window.reads, &reads)
-    });
+    let changed: Vec<[Vec2; 2]> = state
+        .window
+        .as_ref()
+        .map_or_else(Vec::new, |window| changed_squares(&window.reads, &reads));
     let low = Vec2::new(first[0] as f32, first[1] as f32) * cell;
     let mut window = WaterWindow {
         origin: (flat + low).to_array(),
@@ -414,7 +415,9 @@ fn read_at(state: &WaterTerrain, key: TileKey) -> WaterRead {
         state.held.get(&held)
     });
     let ready = tile.is_some_and(|tile| {
-        let held_back = state.resident(&key).is_some_and(|held| held.watered.is_some());
+        let held_back = state
+            .resident(&key)
+            .is_some_and(|held| held.watered.is_some());
         tile.face.key == key && state.settled.ready(key, tile.given.is_some() || held_back)
     });
     WaterRead {

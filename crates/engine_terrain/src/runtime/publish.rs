@@ -1,5 +1,5 @@
-use super::*;
 use super::ground_face::TerrainGround;
+use super::*;
 use engine_places::ground::{
     Ground, PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles,
 };
@@ -58,7 +58,11 @@ fn solids_of<'a>(
     assets: &'a AssetLibrary,
 ) -> impl Iterator<Item = Option<Solid>> + 'a {
     let owner = terrains.terrain(state.entity).unwrap_or(&state.terrain);
-    owner.surface.assets.iter().map(move |asset| asset.solid(assets))
+    owner
+        .surface
+        .assets
+        .iter()
+        .map(move |asset| asset.solid(assets))
 }
 
 fn placed_layers(rules: &Biomes) -> Vec<PlacedLayer> {
@@ -121,7 +125,11 @@ fn entry_of(
         surroundings: state.around.is_some(),
         steep: surface.rules.steep(),
         may_hole: state.current.may_hole(),
-        reach: state.ranges.iter().map(|range| range * LOAD_REACH).collect(),
+        reach: state
+            .ranges
+            .iter()
+            .map(|range| range * LOAD_REACH)
+            .collect(),
         recipe: state.recipe.as_ref().map(|recipe| recipe.key.hash()),
         edits: state.terrain.edits.iter().map(|edit| edit.stamp).collect(),
         solids: solids_of((terrains, state), assets).collect(),

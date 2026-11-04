@@ -203,7 +203,13 @@ impl TileAtlas {
             };
             let shades = shaded_elsewhere(id.1.level, entry.surroundings);
             if upload == Upload::Whole {
-                self.give_ground(cx, handles, &placing, shades, errors_of(&found, id, tile.stamp));
+                self.give_ground(
+                    cx,
+                    handles,
+                    &placing,
+                    shades,
+                    errors_of(&found, id, tile.stamp),
+                );
             }
             if shades {
                 self.shade(cx, handles, &placing, (atlas, bakes));
@@ -315,7 +321,7 @@ impl TileAtlas {
             }
             if let Some(beds) = &tile.river_beds {
                 rivers |= RIVER_BEDS;
-                for (plane, bed) in beds.chunks_exact(BED_SAMPLES).take(3).enumerate() {
+                for (plane, bed) in beds.as_chunks::<BED_SAMPLES>().0.iter().take(3).enumerate() {
                     write_river(cx, handles.rivers, (layer, plane as u32 + 1), bed);
                 }
             }
@@ -383,12 +389,7 @@ fn ancestor_job(
     control: bool,
 ) -> AncestorJob {
     let quads = engine_heightfield::TILE_QUADS as i32;
-    let first_of = |key: TileKey| {
-        [
-            i32::from(key.x) * quads - 1,
-            i32::from(key.z) * quads - 1,
-        ]
-    };
+    let first_of = |key: TileKey| [i32::from(key.x) * quads - 1, i32::from(key.z) * quads - 1];
     let (mut at, mut shift) = (key, 0);
     while let Some(parent) = entry.pyramid.parent(at) {
         (at, shift) = (parent, shift + 1);

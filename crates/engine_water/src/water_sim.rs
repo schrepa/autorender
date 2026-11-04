@@ -93,7 +93,8 @@ struct LivePool {
 impl LivePool {
     fn reset(&mut self, table_room: u32, room: u32) {
         self.table_room = table_room;
-        self.free = vec![table_room..room];
+        self.free.clear();
+        self.free.push(table_room..room);
         self.tiles.clear();
     }
 
@@ -161,7 +162,8 @@ impl LivePool {
             }
             let words = chunk_words(&water.live);
             let at = self.take(words)?;
-            self.tiles.insert(read.key, (at..at + words, Arc::clone(water)));
+            self.tiles
+                .insert(read.key, (at..at + words, Arc::clone(water)));
             chunks.push((at, Arc::clone(water)));
         }
         self.table.clear();
@@ -340,7 +342,7 @@ impl LiveSim {
         self.work.blocks = pooled;
         self.work.terrain = live.ground.unwrap_or(0);
         self.work.ready = current.ready;
-        self.work.drawn = current.ready.then(|| SimDrawn {
+        self.work.drawn = current.ready.then_some(SimDrawn {
             origin: window.origin,
             cell,
             cells,
@@ -450,7 +452,10 @@ impl SimWindow {
         if room_grown {
             self.room = entries.max(self.room).max(1).next_power_of_two();
         }
-        let placed = self.live.place(&window.reads, tiles).filter(|_| !room_grown);
+        let placed = self
+            .live
+            .place(&window.reads, tiles)
+            .filter(|_| !room_grown);
         let chunks = placed.unwrap_or_else(|| {
             let table_room = (tiles[2] * tiles[3]).max(1).next_power_of_two();
             let words = window

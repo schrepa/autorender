@@ -8,7 +8,7 @@ use engine_place::PlaceKind;
 use engine_registry::Registry;
 use serde_json::json;
 
-use crate::process::{WASM_TARGET, clients, project_option, run};
+use crate::process::{Client, Project, WASM_TARGET, project_option, read_clients, run};
 
 const USAGE: &str = "usage: cargo xtask new app --project DIR | new brick PART NAME";
 
@@ -95,7 +95,10 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
     let (Some(project), true) = (project, rest.is_empty()) else {
         return Err(USAGE.into());
     };
-    let project = project.trim_end_matches('/').to_owned();
+    let project = project
+        .trim_start_matches("./")
+        .trim_end_matches('/')
+        .to_owned();
     let name = project.rsplit('/').next().unwrap_or_default().to_owned();
     if !lowercase_words(&name, '-') || name.starts_with("engine") || name == "xtask" {
         return Err(json!({
@@ -111,15 +114,18 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
     let crate_dir = root.join(&project);
     let page = format!("{name}.html");
     let web = root.join("web/src").join(&name);
-    for taken in [crate_dir.clone(), root.join("web").join(&page), web.clone()] {
-        if taken.exists() {
-            return Err(format!("{} already exists", taken.display()));
+    if !Project::read(root, &project).is_ok_and(|found| found.package == name) {
+        for taken in [crate_dir.clone(), root.join("web").join(&page), web.clone()] {
+            if taken.exists() {
+                return Err(format!("{} already exists", taken.display()));
+            }
         }
     }
-    if clients()
-        .iter()
-        .any(|client| client.game.as_deref() == Some(name.as_str()) || client.wasm == wasm)
-    {
+    let named = |client: &Client| {
+        client.folder != project
+            && (client.game.as_deref() == Some(name.as_str()) || client.wasm == wasm)
+    };
+    if read_clients()?.iter().any(named) {
         return Err(format!("a client named {name} already exists"));
     }
     let mut files = Vec::new();
@@ -144,22 +150,20 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
         (web.join("main.ts"), page_entry(&wasm, &pascal)),
         (web.join("worker.ts"), worker_entry(&wasm)),
     ]);
+    files.retain(|(path, _)| !path.exists());
     write_files(root, &files)?;
     for member in ["", "/xtask"] {
         join_workspace(root, &format!("{project}{member}"))?;
     }
     join_dependencies(root, &name, &project)?;
-    for package in [name.as_str(), tool.as_str()] {
-        run(root, "cargo", &["check", "-p", package])?;
-    }
+    run(root, "cargo", &["run", "-p", &tool, "--", "schema"])?;
     run(
         root,
         "cargo",
         &["check", "-p", &name, "--target", WASM_TARGET],
     )?;
     run(root, "cargo", &["run", "-q", "-p", "kinds"])?;
-    run(root, "cargo", &["xtask", "schema"])?;
-    run(root, "cargo", &["run", "-p", &tool, "--", "schema"])?;
+    crate::authoring::write_generated(root)?;
     println!(
         "{}",
         json!({
@@ -200,10 +204,7 @@ publish.workspace = true
 
 [dependencies]
 engine_checks.workspace = true
-{name}.workspace = true
-
-[lints]
-workspace = true
+{name} = {{ workspace = true, features = ["dev"] }}
 
 [package.metadata.engine]
 kind = "tool"
@@ -595,11 +596,7 @@ struct Declared {
     layer: Option<String>,
 }
 
-fn declared(
-    root: &Path,
-    repository: &Repository,
-    part: &str,
-) -> Result<Option<Declared>, String> {
+fn declared(root: &Path, repository: &Repository, part: &str) -> Result<Option<Declared>, String> {
     let declaration = format!("const NAME: &'static str = \"{part}\";");
     for path in engine_checks::files::sources(root)? {
         if !path.ends_with(".rs") || !path.starts_with("crates/") {

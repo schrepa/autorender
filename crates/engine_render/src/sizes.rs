@@ -51,7 +51,8 @@ pub(crate) fn binding_sizes(text: &str) -> Vec<(u32, u32, u64)> {
             Token::Word("struct") => at = structure(&tokens, at, &mut items),
             Token::Word("alias") => {
                 let end = until(&tokens, at, &[';']);
-                if let (Some(&Token::Word(name)), Some(Token::Mark('='))) = (tokens.get(at + 1), tokens.get(at + 2))
+                if let (Some(&Token::Word(name)), Some(Token::Mark('='))) =
+                    (tokens.get(at + 1), tokens.get(at + 2))
                     && at + 3 <= end
                 {
                     items.aliases.insert(name, &tokens[at + 3..end]);
@@ -75,7 +76,9 @@ pub(crate) fn binding_sizes(text: &str) -> Vec<(u32, u32, u64)> {
                 }
                 at = next;
             }
-            Token::Mark('{') => at = closing(&tokens, at, ('{', '}')).map_or(tokens.len(), |end| end + 1),
+            Token::Mark('{') => {
+                at = closing(&tokens, at, ('{', '}')).map_or(tokens.len(), |end| end + 1)
+            }
             Token::Word(_) | Token::Number(_) | Token::Mark(_) => at += 1,
         }
         attributes = (None, None);
@@ -99,8 +102,8 @@ fn tokens(text: &str) -> Vec<Token<'_>> {
             at += next.len_utf8();
         } else if rest.starts_with("//") {
             at += rest.find('\n').unwrap_or(rest.len());
-        } else if rest.starts_with("/*") {
-            at += rest[2..].find("*/").map_or(rest.len(), |end| end + 4);
+        } else if let Some(comment) = rest.strip_prefix("/*") {
+            at += comment.find("*/").map_or(rest.len(), |end| end + 4);
         } else if next.is_ascii_alphabetic() || next == '_' {
             let end = rest
                 .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
@@ -109,7 +112,9 @@ fn tokens(text: &str) -> Vec<Token<'_>> {
             at += end;
         } else if next.is_ascii_digit() {
             let end = rest
-                .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_' || character == '.'))
+                .find(|character: char| {
+                    !(character.is_ascii_alphanumeric() || character == '_' || character == '.')
+                })
                 .unwrap_or(rest.len());
             found.push(Token::Number(&rest[..end]));
             at += end;
@@ -121,7 +126,10 @@ fn tokens(text: &str) -> Vec<Token<'_>> {
     found
 }
 
-fn attribute<'t>(tokens: &'t [Token<'t>], at: usize) -> (Option<&'t str>, Option<&'t [Token<'t>]>, usize) {
+fn attribute<'t>(
+    tokens: &'t [Token<'t>],
+    at: usize,
+) -> (Option<&'t str>, Option<&'t [Token<'t>]>, usize) {
     let Some(&Token::Word(name)) = tokens.get(at + 1) else {
         return (None, None, at + 1);
     };
@@ -185,13 +193,18 @@ fn split<'t>(tokens: &'t [Token<'t>]) -> Vec<&'t [Token<'t>]> {
 }
 
 fn structure<'t>(tokens: &'t [Token<'t>], at: usize, items: &mut Items<'t>) -> usize {
-    let (Some(&Token::Word(name)), Some(Token::Mark('{'))) = (tokens.get(at + 1), tokens.get(at + 2)) else {
+    let (Some(&Token::Word(name)), Some(Token::Mark('{'))) =
+        (tokens.get(at + 1), tokens.get(at + 2))
+    else {
         return at + 1;
     };
     let Some(end) = closing(tokens, at + 2, ('{', '}')) else {
         return tokens.len();
     };
-    let members: Option<Vec<Member<'t>>> = split(&tokens[at + 3..end]).into_iter().map(member).collect();
+    let members: Option<Vec<Member<'t>>> = split(&tokens[at + 3..end])
+        .into_iter()
+        .map(member)
+        .collect();
     if let Some(members) = members {
         items.structs.insert(name, members);
     }
@@ -211,7 +224,9 @@ fn member<'t>(tokens: &'t [Token<'t>]) -> Option<Member<'t>> {
         at = next;
     }
     match (tokens.get(at), tokens.get(at + 1), tokens.get(at + 2..)) {
-        (Some(Token::Word(_)), Some(Token::Mark(':')), Some(ty)) if !ty.is_empty() => Some(Member { align, size, ty }),
+        (Some(Token::Word(_)), Some(Token::Mark(':')), Some(ty)) if !ty.is_empty() => {
+            Some(Member { align, size, ty })
+        }
         _ => None,
     }
 }
@@ -227,7 +242,9 @@ fn variable<'t>(tokens: &'t [Token<'t>], at: usize) -> (Option<&'t [Token<'t>]>,
     let end = until(tokens, next, &[';', '=']);
     let after = until(tokens, next, &[';']) + 1;
     match (tokens.get(next), tokens.get(next + 1)) {
-        (Some(Token::Word(_)), Some(Token::Mark(':'))) if next + 2 < end => (Some(&tokens[next + 2..end]), after),
+        (Some(Token::Word(_)), Some(Token::Mark(':'))) if next + 2 < end => {
+            (Some(&tokens[next + 2..end]), after)
+        }
         _ => (None, after),
     }
 }
@@ -235,7 +252,9 @@ fn variable<'t>(tokens: &'t [Token<'t>], at: usize) -> (Option<&'t [Token<'t>]>,
 fn arguments<'t>(rest: &'t [Token<'t>]) -> Option<Vec<&'t [Token<'t>]>> {
     match (rest.first(), rest.last()) {
         (None, _) => Some(Vec::new()),
-        (Some(Token::Mark('<')), Some(Token::Mark('>'))) if rest.len() >= 2 => Some(split(&rest[1..rest.len() - 1])),
+        (Some(Token::Mark('<')), Some(Token::Mark('>'))) if rest.len() >= 2 => {
+            Some(split(&rest[1..rest.len() - 1]))
+        }
         _ => None,
     }
 }
@@ -265,7 +284,10 @@ fn scalar(arguments: &[&[Token<'_>]], suffix: &str) -> Option<u64> {
 }
 
 fn dimension(digit: Option<&str>) -> Option<u64> {
-    digit?.parse::<u64>().ok().filter(|count| (2..=4).contains(count))
+    digit?
+        .parse::<u64>()
+        .ok()
+        .filter(|count| (2..=4).contains(count))
 }
 
 fn shaped(name: &str, arguments: &[&[Token<'_>]]) -> Option<Layout> {
@@ -287,7 +309,10 @@ fn shaped(name: &str, arguments: &[&[Token<'_>]]) -> Option<Layout> {
 
 fn integer(text: &str) -> Option<i64> {
     let digits = text.strip_suffix(['u', 'i']).unwrap_or(text);
-    match digits.strip_prefix("0x").or_else(|| digits.strip_prefix("0X")) {
+    match digits
+        .strip_prefix("0x")
+        .or_else(|| digits.strip_prefix("0X"))
+    {
         Some(hex) => i64::from_str_radix(hex, 16).ok(),
         None => digits.parse().ok(),
     }
@@ -347,7 +372,9 @@ impl Items<'_> {
                 Some(value) => self.number(value, depth + 1)?,
                 None => natural.size,
             };
-            end = end.next_multiple_of(member_align).checked_add(member_size)?;
+            end = end
+                .next_multiple_of(member_align)
+                .checked_add(member_size)?;
             align = align.max(member_align);
         }
         Some(Layout {
@@ -378,7 +405,11 @@ impl Items<'_> {
             };
             *at += 1;
             let right = self.product(tokens, at, depth)?;
-            value = if adding { value.checked_add(right)? } else { value.checked_sub(right)? };
+            value = if adding {
+                value.checked_add(right)?
+            } else {
+                value.checked_sub(right)?
+            };
         }
     }
 

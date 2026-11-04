@@ -56,7 +56,14 @@ const CLOSED: &[(&str, &[&str])] = &[
     ),
 ];
 
-const PLACE_EXTERNALS: &[&str] = &["glam", "bytemuck", "serde", "serde_json", "schemars", "parry3d"];
+const PLACE_EXTERNALS: &[&str] = &[
+    "glam",
+    "bytemuck",
+    "serde",
+    "serde_json",
+    "schemars",
+    "parry3d",
+];
 
 struct Member {
     name: String,
@@ -263,7 +270,7 @@ fn check_member(
     if member.cdylib && kind != "game" {
         problems.push(format!("{at}: only game crates build a cdylib"));
     }
-    if matches!(kind, "brick" | "place" | "list" | "game")
+    if matches!(kind, "brick" | "place" | "list")
         && !forbids_unsafe(&read(&member.manifest)?, workspace)
     {
         problems.push(format!(

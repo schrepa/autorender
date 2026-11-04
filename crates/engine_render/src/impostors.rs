@@ -83,14 +83,6 @@ fn format_of(device: &wgpu::Device) -> AtlasFormat {
     }
 }
 
-fn family(format: AtlasFormat) -> Option<engine_textures::Family> {
-    match format {
-        AtlasFormat::Bc7 => Some(engine_textures::Family::Bc7),
-        AtlasFormat::Astc => Some(engine_textures::Family::Astc),
-        AtlasFormat::Rgba8 => None,
-    }
-}
-
 fn textures(format: AtlasFormat) -> [wgpu::TextureFormat; 4] {
     match format {
         AtlasFormat::Bc7 => BC7_FORMATS,

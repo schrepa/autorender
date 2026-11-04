@@ -481,10 +481,16 @@ fn instances(
         smoke_eq!(residency(session)?, initial.clone(), "shared_assets");
         let assets = query(session, "assets", json!({}))?["rendering"].clone();
         smoke_eq!(
-            json!([assets["draw_calls"], assets["meshes_stats"]["render_candidates"]]),
+            json!([
+                assets["draw_calls"],
+                assets["meshes_stats"]["render_candidates"]
+            ]),
             json!([
                 rendering["draw_calls"],
-                rendering["meshes_stats"]["render_candidates"].as_u64().unwrap_or(0) + parts
+                rendering["meshes_stats"]["render_candidates"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    + parts
             ]),
             "shared_assets_and_draws"
         );

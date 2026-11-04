@@ -302,6 +302,7 @@ impl Engine {
             .init_resource::<PointerInput>()
             .init_resource::<MenuInput>()
             .init_resource::<CursorMode>()
+            .init_resource::<ProvidedAssets>()
             .init_resource::<PresentationState>()
             .init_resource::<InterpolationState>()
             .init_resource::<TickCheck>()
@@ -340,8 +341,8 @@ impl Engine {
         for listed in list.listed() {
             registry.add(listed.record());
         }
-        for &package in list.left_out() {
-            registry.leave_out(package);
+        for left in list.left() {
+            registry.leave_out(&left.record());
         }
         let world = self.app.world_mut();
         world.insert_resource(JobListed::of(&jobs));
@@ -435,16 +436,20 @@ impl Engine {
         check_dev_ticks(ticks)?;
         self.finalize();
         self.clock.reset();
-        let delta_seconds = (f64::from(ticks) * self.clock.step_seconds()).min(0.25);
-        let stopped = self.time_rate() == 0.0;
-        let (ticks, game_seconds) = if stopped {
-            (0, 0.0)
-        } else {
-            (ticks, delta_seconds)
-        };
-        self.run_frame(ticks, delta_seconds, game_seconds);
+        let delta_seconds = self.clock.step_seconds();
+        let mut fixed_steps = 0;
+        for _ in 0..ticks {
+            let stopped = self.time_rate() == 0.0;
+            let (steps, game_seconds) = if stopped {
+                (0, 0.0)
+            } else {
+                (1, delta_seconds)
+            };
+            self.run_frame(steps, delta_seconds, game_seconds);
+            fixed_steps += steps;
+        }
         Ok(FrameReport {
-            fixed_steps: ticks,
+            fixed_steps,
             dropped_seconds: 0.0,
             interpolation: 0.0,
         })
@@ -545,6 +550,7 @@ impl Engine {
         }
         records::exchange(self.app.world_mut());
         jobs::exchange_orders(self.app.world_mut());
+        modify(self.app.world_mut(), ActionInput::begin_frame);
         {
             let _profile = engine_profile::span("ecs", "Presentation");
             self.app.world_mut().run_schedule(Presentation);
@@ -595,7 +601,7 @@ impl Engine {
             self.refresh_transforms();
         }
         interpolation::end_tick(self.app.world_mut());
-        modify(self.app.world_mut(), ActionInput::end_tick);
+        modify(self.app.world_mut(), ActionInput::hide_edges);
     }
 
     pub fn reset_clock(&mut self) {
@@ -627,6 +633,7 @@ impl Engine {
         self.refresh_transforms();
         interpolation::prepare(self.app.world_mut(), alpha);
         self.sync_view(aspect);
+        modify(self.app.world_mut(), ActionInput::hide_edges);
         Ok(RenderFrame {
             world: self.app.world(),
         })

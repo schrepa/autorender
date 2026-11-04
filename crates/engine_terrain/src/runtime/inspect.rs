@@ -140,7 +140,9 @@ impl Operation for TerrainInspect {
                 .and_then(|(_, scene)| Some((scene, scene.built.as_ref()?)))
         };
         let found = match request.terrain.as_deref() {
-            Some(name) => ids.entity(name).and_then(|entity| Some((entity, built(entity)?))),
+            Some(name) => ids
+                .entity(name)
+                .and_then(|entity| Some((entity, built(entity)?))),
             None => scenes
                 .iter()
                 .find_map(|(entity, _)| Some((entity, built(entity)?))),
@@ -357,10 +359,7 @@ impl Operation for TerrainLayerSweep {
     type Params = Res<'static, Terrains>;
     type Request = Self;
 
-    fn run(
-        terrains: SystemParamItem<'_, '_, Self::Params>,
-        request: Self,
-    ) -> Result<Value, Error> {
+    fn run(terrains: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<Value, Error> {
         let center = Vec2::new(
             coordinate(request.center[0], "$.center[0]")?,
             coordinate(request.center[1], "$.center[1]")?,
@@ -380,12 +379,7 @@ impl Operation for TerrainLayerSweep {
     }
 }
 
-fn layer_sweep(
-    terrains: &Terrains,
-    center: Vec2,
-    half_extent: f32,
-    samples: u32,
-) -> LayerSweep {
+fn layer_sweep(terrains: &Terrains, center: Vec2, half_extent: f32, samples: u32) -> LayerSweep {
     let (mut compared, mut worst, mut at) = (0_usize, 0.0_f32, None);
     for row in 0..samples {
         for column in 0..samples {

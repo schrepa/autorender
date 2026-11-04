@@ -369,9 +369,8 @@ impl DevTools {
             self.run(engine, context, call)
         });
         let reply = replied(observation, outcome);
-        encode(&reply, MAX_RESPONSE_BYTES).unwrap_or_else(|_| {
-            serde_json::to_string(&too_large(reply)).expect("reply_serializes")
-        })
+        encode(&reply, MAX_RESPONSE_BYTES)
+            .unwrap_or_else(|_| serde_json::to_string(&too_large(reply)).expect("reply_serializes"))
     }
 
     pub fn call(&self, engine: &mut Engine, context: Context<'_>, call: ToolCall<'_>) -> Value {

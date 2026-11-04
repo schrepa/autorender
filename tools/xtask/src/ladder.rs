@@ -795,7 +795,6 @@ pub fn ladder(root: &Path, arguments: &[String]) -> Result<(), String> {
         folder: &folder,
         passed: &options.passed,
     };
-    let heavy = crate::heavy::HeavyRun::hold("cargo xtask ladder")?;
     let mut runs = Vec::new();
     for place in 0..ladder.places.len() {
         for look in 0..ladder.looks.len() {
@@ -804,7 +803,6 @@ pub fn ladder(root: &Path, arguments: &[String]) -> Result<(), String> {
             }
         }
     }
-    drop(heavy);
     let sheets = contact_sheets(&out, &ladder, &runs)?;
     let path = out.join("report.json");
     let report = report(inputs, &ladder, &runs, &sheets);

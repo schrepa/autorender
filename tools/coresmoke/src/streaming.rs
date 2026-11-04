@@ -135,7 +135,10 @@ fn listing(world: &mut bevy_ecs::world::World) -> Result<Vec<(bool, Vec<TileKey>
                         .map_err(|_| unread())
                 })
                 .collect::<Result<_, _>>()?;
-            match (terrain["surroundings"].as_bool(), terrain["drawn"].as_bool()) {
+            match (
+                terrain["surroundings"].as_bool(),
+                terrain["drawn"].as_bool(),
+            ) {
                 (Some(surroundings), Some(drawn)) => Ok((surroundings, keys, drawn)),
                 _ => Err(unread()),
             }

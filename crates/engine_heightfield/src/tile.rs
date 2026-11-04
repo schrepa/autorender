@@ -609,7 +609,9 @@ impl Tile {
     }
 
     pub fn is_hole(&self, x: u32, z: u32) -> bool {
-        self.holes.as_deref().is_some_and(|bits| hole_at(bits, x, z))
+        self.holes
+            .as_deref()
+            .is_some_and(|bits| hole_at(bits, x, z))
     }
 
     fn cell(&self, local: Vec2) -> Option<(i32, i32, f32, f32)> {
@@ -671,6 +673,9 @@ const NO_RING: u8 = u8::MAX;
 const QUEUED: u8 = u8::MAX - 1;
 const STOPPED: u8 = u8::MAX - 2;
 
+type WaterWords<'a, W> = (&'a dyn Fn(f32) -> W, &'a dyn Fn(&RiverWater) -> W);
+type DryOrMixed<'a, W> = (W, &'a dyn Fn(&[usize], &[W]) -> W);
+
 pub fn water_rows<W>(
     lakes: &WaterGrid,
     river: &dyn Fn(usize, usize) -> Option<RiverWater>,
@@ -678,7 +683,7 @@ pub fn water_rows<W>(
     (xs, zs): (&[f32], &[f32]),
     shown: &dyn Fn(f32, f32) -> f32,
     (surface, words): (&mut [f32], &mut [W]),
-    (lake, flowing): (&dyn Fn(f32) -> W, &dyn Fn(&RiverWater) -> W),
+    (lake, flowing): WaterWords<'_, W>,
 ) {
     let stride = TILE_STRIDE as usize;
     let first = rows.start;
@@ -711,7 +716,7 @@ pub fn extend_water<W: Copy>(
     surface: &mut [f32],
     words: &mut [W],
     heights: &[f32],
-    (dry, mixed): (W, &dyn Fn(&[usize], &[W]) -> W),
+    (dry, mixed): DryOrMixed<'_, W>,
 ) {
     let stride = TILE_STRIDE as usize;
     let mut rings: Vec<u8> = surface
@@ -1116,8 +1121,12 @@ impl Generator {
                     let lake = self.lake_rows(budget);
                     let heights = std::mem::take(&mut self.heights);
                     self.stage = Stage::Failed;
-                    let tile =
-                        Tile::new(self.key, self.spacing, Arc::from(heights), self.holes.take())?;
+                    let tile = Tile::new(
+                        self.key,
+                        self.spacing,
+                        Arc::from(heights),
+                        self.holes.take(),
+                    )?;
                     let tile = match self.control.take() {
                         Some(control) => tile.with_control(control)?,
                         None => tile,

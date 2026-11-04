@@ -19,7 +19,8 @@ settings! {
 
 impl Culling {
     pub(crate) fn budget(&self) -> usize {
-        self.instances.map_or(usize::MAX, |instances| instances as usize)
+        self.instances
+            .map_or(usize::MAX, |instances| instances as usize)
     }
 }
 
@@ -146,9 +147,7 @@ pub(crate) fn mesh_stats(
     });
     let listed = counted(retained.listed_instances());
     let visible = gpu_visible.unwrap_or(listed);
-    let levels = last
-        .filter(|_| detail.enabled)
-        .map(|totals| totals.levels);
+    let levels = last.filter(|_| detail.enabled).map(|totals| totals.levels);
     let records = impostors.single().ok();
     let impostor_cut = records.map_or_else(Cut::default, |records| {
         Cut::of(records.asked, records.asked.saturating_sub(records.refused))

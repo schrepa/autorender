@@ -21,7 +21,9 @@ pub use flat::{DARK, LIGHT};
 
 const GENERATED: &[&str] = &[<SpriteInstance as engine_core::GpuStruct>::WGSL];
 
-#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct Sprite {
     pub sheet: TextureHandle,
     pub rect: [f32; 4],
@@ -164,7 +166,8 @@ impl GpuPart for SpritesGpu {
         cx.write(self.instances, 0, &self.staged);
         self.drawn.clear();
         for (sheet, range) in &self.runs {
-            self.drawn.push((cx.fill(&self.pipeline, &[*sheet]), range.clone()));
+            self.drawn
+                .push((cx.fill(&self.pipeline, &[*sheet]), range.clone()));
         }
     }
 }

@@ -63,6 +63,7 @@ impl ScheduleBuildPass for PlaceRules {
                 let Some(node) = graph.systems.get_mut(system) else {
                     continue;
                 };
+                let exclusive = node.is_exclusive();
                 let last = node.get_last_run();
                 let mut access = node.initialize(world);
                 node.set_last_run(last);
@@ -72,6 +73,9 @@ impl ScheduleBuildPass for PlaceRules {
                 }
                 self.rule
                     .check_into(brick, &name, &access, world, &mut problems);
+                if exclusive {
+                    self.rule.check_exclusive(brick, &name, &mut problems);
+                }
                 found.push((system, brick, access));
             }
         }
@@ -215,5 +219,6 @@ fn refusal(
         }
         _ => ErrorCode::InvalidValue,
     };
-    Error::new(code, format!("$.schedules.{label:?}")).got(error.to_string(graph, world))
+    let text = error.to_string(graph, world);
+    Error::new(code, format!("$.schedules.{label:?}")).got(text.lines().collect::<Vec<_>>())
 }

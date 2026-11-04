@@ -24,7 +24,9 @@ pub(crate) enum Sample {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Ty {
     Uniform,
-    Storage { write: bool },
+    Storage {
+        write: bool,
+    },
     Texture {
         sample: Sample,
         view: wgpu::TextureViewDimension,
@@ -47,7 +49,9 @@ impl Ty {
         };
         match self {
             Self::Uniform => buffer(wgpu::BufferBindingType::Uniform),
-            Self::Storage { write } => buffer(wgpu::BufferBindingType::Storage { read_only: !write }),
+            Self::Storage { write } => {
+                buffer(wgpu::BufferBindingType::Storage { read_only: !write })
+            }
             Self::Texture { sample, view } => wgpu::BindingType::Texture {
                 sample_type: match sample {
                     Sample::Float => wgpu::TextureSampleType::Float { filterable },
@@ -158,13 +162,22 @@ impl Linker {
     }
 
     pub(crate) fn add_source(&mut self, source: &'static Source) {
-        if self.sources.iter().any(|known| std::ptr::eq(*known, source)) {
+        if self
+            .sources
+            .iter()
+            .any(|known| std::ptr::eq(*known, source))
+        {
             return;
         }
         self.sources.push(source);
         for module in source.modules() {
             let generated = module.path().starts_with(GENERATED_ROOT);
-            self.add(module.path().to_owned(), source.package(), Cow::Borrowed(module.text()), generated);
+            self.add(
+                module.path().to_owned(),
+                source.package(),
+                Cow::Borrowed(module.text()),
+                generated,
+            );
             self.place_handed(module.path());
         }
         self.numbered = false;
@@ -178,7 +191,8 @@ impl Linker {
     }
 
     fn place_handed(&mut self, path: &str) {
-        let Some((_, package, parts)) = self.handed.iter().find(|(known, _, _)| known == path) else {
+        let Some((_, package, parts)) = self.handed.iter().find(|(known, _, _)| known == path)
+        else {
             return;
         };
         let package = *package;
@@ -189,7 +203,12 @@ impl Linker {
             .find(|module| module.path() == path)
             .map(|module| module.text());
         let text = handed_text(base, parts);
-        let once = self.modules.iter().filter(|module| module.path == path).count() == 1;
+        let once = self
+            .modules
+            .iter()
+            .filter(|module| module.path == path)
+            .count()
+            == 1;
         if !once || self.text(path) != Some(text.as_str()) {
             self.add_generated(path.to_owned(), package, text);
         }
@@ -202,7 +221,13 @@ impl Linker {
         self.composed.clear();
     }
 
-    fn add(&mut self, path: String, package: &'static str, text: Cow<'static, str>, generated: bool) {
+    fn add(
+        &mut self,
+        path: String,
+        package: &'static str,
+        text: Cow<'static, str>,
+        generated: bool,
+    ) {
         let declared = declarations(&text);
         self.modules.push(Module {
             path,
@@ -226,7 +251,10 @@ impl Linker {
     }
 
     pub(crate) fn paths(&self) -> Vec<String> {
-        self.modules.iter().map(|module| module.path.clone()).collect()
+        self.modules
+            .iter()
+            .map(|module| module.path.clone())
+            .collect()
     }
 
     pub(crate) fn declared(&self, var: Var) -> Option<&Declaration> {
@@ -262,7 +290,10 @@ impl Linker {
                 problems.push(Error::new(ErrorCode::ModuleOutsideBrick, path).got(module.package));
                 continue;
             }
-            match prefixes.iter().find(|(package, _)| *package == module.package) {
+            match prefixes
+                .iter()
+                .find(|(package, _)| *package == module.package)
+            {
                 Some((_, known)) if *known != first => {
                     problems.push(Error::new(ErrorCode::ModuleOutsideBrick, path).got(first));
                     continue;
@@ -277,12 +308,12 @@ impl Linker {
                 }
             }
             if !core
-                && let Some(declared) = module
-                    .declared
-                    .iter()
-                    .find(|declared| declared.group == 0 && CORE_BINDINGS.contains(&declared.name.as_str()))
+                && let Some(declared) = module.declared.iter().find(|declared| {
+                    declared.group == 0 && CORE_BINDINGS.contains(&declared.name.as_str())
+                })
             {
-                problems.push(Error::new(ErrorCode::BindingForeign, path.clone()).got(&declared.name));
+                problems
+                    .push(Error::new(ErrorCode::BindingForeign, path.clone()).got(&declared.name));
             }
             let found = hex_floats(&module.text);
             if !found.is_empty() {
@@ -290,7 +321,12 @@ impl Linker {
             }
             for imported in imports(&module.text) {
                 if !self.may_import(module, first, &imported, fills) {
-                    problems.push(Error::new(ErrorCode::ImportForeign, path.clone()).got(imported));
+                    let refused = Error::new(ErrorCode::ImportForeign, path.clone());
+                    problems.push(if imported.starts_with("generated::") {
+                        refused.nearest(format!("generated::{first}")).got(imported)
+                    } else {
+                        refused.got(imported)
+                    });
                 }
             }
         }
@@ -330,7 +366,12 @@ impl Linker {
         }
         ordered.sort_by(|first, second| {
             let core = |package: &str| package != CORE_PACKAGE;
-            (core(first.0), first.0, first.1, first.2).cmp(&(core(second.0), second.0, second.1, second.2))
+            (core(first.0), first.0, first.1, first.2).cmp(&(
+                core(second.0),
+                second.0,
+                second.1,
+                second.2,
+            ))
         });
         self.numbers.clear();
         let mut listed = Vec::with_capacity(ordered.len());
@@ -350,14 +391,18 @@ impl Linker {
                 listed.push((key.0, key.1, package, declared.ty));
             }
         }
-        listed.sort_by_key(|(path, name, _, _)| self.numbers.get(&(path.clone(), name.clone())).copied());
+        listed.sort_by_key(|(path, name, _, _)| {
+            self.numbers.get(&(path.clone(), name.clone())).copied()
+        });
         self.numbered = true;
         self.composed.clear();
         listed
     }
 
     pub(crate) fn binding_of(&self, path: &str, name: &str) -> Option<u32> {
-        self.numbers.get(&(path.to_owned(), name.to_owned())).copied()
+        self.numbers
+            .get(&(path.to_owned(), name.to_owned()))
+            .copied()
     }
 
     pub(crate) fn compose(&mut self, entry: Entry) -> Result<Arc<Composed>, Error> {
@@ -365,7 +410,11 @@ impl Linker {
         self.compose_named(path, &name)
     }
 
-    pub(crate) fn compose_named(&mut self, module: &str, entry: &str) -> Result<Arc<Composed>, Error> {
+    pub(crate) fn compose_named(
+        &mut self,
+        module: &str,
+        entry: &str,
+    ) -> Result<Arc<Composed>, Error> {
         self.link(module, Some(entry))
     }
 
@@ -416,7 +465,8 @@ impl Linker {
             ..Default::default()
         };
         let main = module_path(module).map_err(|error| failed(&error))?;
-        let mut result = wesl::compile(&main, &options, &resolver).map_err(|error| failed(&error))?;
+        let mut result =
+            wesl::compile(&main, &options, &resolver).map_err(|error| failed(&error))?;
         let order = |path: &wesl::syntax::ModulePath| {
             if *path == main {
                 return 0;
@@ -477,7 +527,9 @@ impl Linker {
             let Some(at) = text.find(&format!("fn {call}")) else {
                 continue;
             };
-            let end = text[at..].find('}').map_or(text.len(), |close| at + close + 1);
+            let end = text[at..]
+                .find('}')
+                .map_or(text.len(), |close| at + close + 1);
             text.replace_range(at..end, "");
             text = text.replace(&call, &format!("{arena}.{prefix}"));
         }
@@ -549,10 +601,18 @@ impl Linker {
         let declared = unit.global_declarations.iter().any(|declaration| {
             matches!(declaration.node(), GlobalDeclaration::Declaration(item) if item.ident.to_string() == name)
         });
-        declared || unit.imports.iter().any(|import| imports_name(&import.content, name))
+        declared
+            || unit
+                .imports
+                .iter()
+                .any(|import| imports_name(&import.content, name))
     }
 
-    pub(crate) fn unused(&mut self, composed: &[Arc<Composed>], roots: &[(String, String)]) -> Vec<Error> {
+    pub(crate) fn unused(
+        &mut self,
+        composed: &[Arc<Composed>],
+        roots: &[(String, String)],
+    ) -> Vec<Error> {
         let mut texts: Vec<(String, String)> = composed
             .iter()
             .map(|composed| (composed.module.clone(), composed.text.clone()))
@@ -566,7 +626,11 @@ impl Linker {
             }
         }
         let mut problems = Vec::new();
-        for module in self.modules.iter().filter(|module| !module.generated && module.package != CORE_PACKAGE) {
+        for module in self
+            .modules
+            .iter()
+            .filter(|module| !module.generated && module.package != CORE_PACKAGE)
+        {
             for item in items(&module.text) {
                 let root = roots
                     .iter()
@@ -605,9 +669,9 @@ fn imports_name(content: &wesl::syntax::ImportContent, name: &str) -> bool {
         wesl::syntax::ImportContent::Item(item) => {
             item.rename.as_ref().unwrap_or(&item.ident).to_string() == name
         }
-        wesl::syntax::ImportContent::Collection(imports) => {
-            imports.iter().any(|import| imports_name(&import.content, name))
-        }
+        wesl::syntax::ImportContent::Collection(imports) => imports
+            .iter()
+            .any(|import| imports_name(&import.content, name)),
     }
 }
 
@@ -640,8 +704,14 @@ fn mentioned(texts: &[(String, String)], path: &str, name: &str) -> bool {
 fn mentions(text: &str, ident: &str) -> bool {
     let word = |character: char| character.is_ascii_alphanumeric() || character == '_';
     text.match_indices(ident).any(|(at, _)| {
-        let before = text[..at].chars().next_back().is_none_or(|character| !word(character));
-        let after = text[at + ident.len()..].chars().next().is_none_or(|character| !word(character));
+        let before = text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|character| !word(character));
+        let after = text[at + ident.len()..]
+            .chars()
+            .next()
+            .is_none_or(|character| !word(character));
         before && after
     })
 }
@@ -658,7 +728,9 @@ fn items(text: &str) -> Vec<String> {
             GlobalDeclaration::Struct(item) => Some(item.ident.to_string()),
             GlobalDeclaration::Declaration(item) => Some(item.ident.to_string()),
             GlobalDeclaration::TypeAlias(item) => Some(item.ident.to_string()),
-            GlobalDeclaration::Void | GlobalDeclaration::ConstAssert(_) | GlobalDeclaration::Compound(_) => None,
+            GlobalDeclaration::Void
+            | GlobalDeclaration::ConstAssert(_)
+            | GlobalDeclaration::Compound(_) => None,
         })
         .collect()
 }
@@ -672,7 +744,9 @@ pub(crate) fn module_path(path: &str) -> Result<wesl::syntax::ModulePath, String
 fn defines_function(text: &str, name: &str) -> bool {
     let declaration = format!("fn {name}(");
     text.match_indices(&declaration).any(|(at, _)| {
-        at == 0 || !text[..at].ends_with(|character: char| character.is_ascii_alphanumeric() || character == '_')
+        at == 0
+            || !text[..at]
+                .ends_with(|character: char| character.is_ascii_alphanumeric() || character == '_')
     })
 }
 
@@ -738,7 +812,9 @@ fn imports(text: &str) -> Vec<String> {
         };
         let path: String = path
             .chars()
-            .take_while(|character| character.is_ascii_alphanumeric() || *character == '_' || *character == ':')
+            .take_while(|character| {
+                character.is_ascii_alphanumeric() || *character == '_' || *character == ':'
+            })
             .collect();
         let path = path.trim_end_matches(':').to_owned();
         if !path.is_empty() && !found.contains(&path) {

@@ -490,6 +490,8 @@ pub enum BrowserControl {
         samples: u32,
         #[serde(default)]
         mode: BenchmarkMode,
+        #[serde(default)]
+        script: Vec<BenchmarkInput>,
     },
     Step {
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TICKS)))]
@@ -729,6 +731,15 @@ pub enum BenchmarkMode {
     Step,
     Render,
     Present,
+    Paced,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BenchmarkInput {
+    pub at: u32,
+    pub input: serde_json::Map<String, serde_json::Value>,
 }
 
 fn default_warmup() -> u32 {

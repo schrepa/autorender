@@ -61,7 +61,8 @@ impl TerrainTables {
             .max(views.max(VIEWS as usize) as u32 * VIEW_WORDS);
         self.layers_room = self.layers_room.max(atlas.capacity.max(1));
         for &(id, layer, upload) in &atlas.uploads {
-            if upload == Upload::Whole && tile_of(tiles, id).is_some_and(|tile| tile.holes.is_some())
+            if upload == Upload::Whole
+                && tile_of(tiles, id).is_some_and(|tile| tile.holes.is_some())
             {
                 let room = (layer + 1).next_power_of_two().min(self.layers_room);
                 self.holes_room = self.holes_room.max(room);
@@ -181,7 +182,8 @@ impl TerrainTables {
             if u32::from(key.x) >= tiles_x || u32::from(key.z) >= tiles_z {
                 continue;
             }
-            let first = self.directory_base(index) + 4 * pyramid.levels() + tiles_below(pyramid, level);
+            let first =
+                self.directory_base(index) + 4 * pyramid.levels() + tiles_below(pyramid, level);
             let at = first + u32::from(key.z) * tiles_x + u32::from(key.x);
             let layer = atlas.layer_of(id, key).unwrap_or(NOT_RESIDENT);
             cx.write(handles.tables, u64::from(at) * 4, &[layer]);
@@ -277,14 +279,22 @@ impl TerrainTables {
         tile: &TileFace,
     ) {
         let at = self.hole_table + layer;
-        cx.write(handles.tables, u64::from(at) * 4, &[self.holes_of(layer, tile)]);
+        cx.write(
+            handles.tables,
+            u64::from(at) * 4,
+            &[self.holes_of(layer, tile)],
+        );
         if let Some(bits) = &tile.holes {
             let words: Vec<u32> = bits
                 .iter()
                 .flat_map(|word| [*word as u32, (word >> 32) as u32])
                 .take(HOLE_WORDS)
                 .collect();
-            cx.write(handles.tables, u64::from(self.hole_bits_at(layer)) * 4, &words);
+            cx.write(
+                handles.tables,
+                u64::from(self.hole_bits_at(layer)) * 4,
+                &words,
+            );
         }
     }
 

@@ -80,7 +80,10 @@ pub fn presentation_source() -> String {
         ("NODE_ACTIVE", engine_core::NODE_ACTIVE),
         ("NODE_PARENT_ACTIVE", engine_core::NODE_PARENT_ACTIVE),
         ("IMPOSTOR_VERTICES", crate::IMPOSTOR_VERTICES),
-        ("POSE_FLOATS", (size_of::<engine_core::NodePose>() / 4) as u32),
+        (
+            "POSE_FLOATS",
+            (size_of::<engine_core::NodePose>() / 4) as u32,
+        ),
     ] {
         unsigned(&mut source, name, value);
     }
@@ -90,7 +93,10 @@ pub fn presentation_source() -> String {
         ("MAX_PRODUCT_BOUND", bounds::MAX_PRODUCT_BOUND),
         ("COEFFICIENT_LIMIT", bounds::COEFFICIENT_LIMIT),
         ("MIN_LINEAR_SCALE", bounds::MIN_LINEAR_SCALE),
-        ("COMMON_DETERMINANT_MARGIN", bounds::COMMON_DETERMINANT_MARGIN),
+        (
+            "COMMON_DETERMINANT_MARGIN",
+            bounds::COMMON_DETERMINANT_MARGIN,
+        ),
         ("LINEAR_ROTATION_DOT", bounds::LINEAR_ROTATION_DOT_THRESHOLD),
     ] {
         float(&mut source, name, value);
@@ -136,7 +142,11 @@ pub fn math_source() -> String {
 
 pub fn view_source() -> String {
     let mut source = String::from(include_str!("frame/view.wgsl"));
-    float(&mut source, "DETAIL_ANISOTROPY", f32::from(crate::MATERIAL_ANISOTROPY));
+    float(
+        &mut source,
+        "DETAIL_ANISOTROPY",
+        f32::from(crate::MATERIAL_ANISOTROPY),
+    );
     source
 }
 

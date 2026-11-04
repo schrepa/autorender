@@ -10,10 +10,7 @@ pub fn validate_sources(root: &Path) -> Result<(), String> {
     if paths.is_empty() {
         return Err("no fixture scenes found in web/scripts/fixtures/*.scene.json".to_owned());
     }
-    let local = root.join("web/public/scenes");
-    if local.is_dir() {
-        paths.extend(scene_paths(&local)?);
-    }
+    paths.extend(project_scenes(root)?);
     let kinds = crate::bricks::standard_kinds().map_err(|error| error.to_string())?;
     for path in &paths {
         let display = path.strip_prefix(root).unwrap_or(path).display();
@@ -36,6 +33,20 @@ pub fn validate_sources(root: &Path) -> Result<(), String> {
         serde_json::json!({"event": "scenes_validated", "scenes": paths.len()})
     );
     Ok(())
+}
+
+fn project_scenes(root: &Path) -> Result<Vec<PathBuf>, String> {
+    Ok(crate::rules::repository(root)?
+        .own()
+        .flat_map(|package| {
+            package.engine["scenes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .map(move |scene| package.folder.join(scene))
+        })
+        .collect())
 }
 
 fn scene_paths(directory: &Path) -> Result<Vec<PathBuf>, String> {

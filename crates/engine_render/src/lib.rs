@@ -138,6 +138,7 @@ pub trait GpuPart: Sized + Send + Sync + 'static {
     type Reads: Read + 'static;
     const NAME: &'static str = "";
     const LAZY: bool = false;
+    const TURNS_ON_IN_PLAY: bool = false;
     const LABELS: &'static [&'static str] = &[];
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error>;
     fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>);
@@ -667,6 +668,7 @@ pub struct PassBuilder<'b, P> {
 }
 
 impl<P: GpuPart> PassBuilder<'_, P> {
+    #[must_use]
     pub fn at(self, layer: Layer) -> Self {
         if let Some(pass) = self.core.pass_mut(self.pass) {
             pass.layer = Some(layer);
@@ -674,6 +676,7 @@ impl<P: GpuPart> PassBuilder<'_, P> {
         self
     }
 
+    #[must_use]
     pub fn after(self, pass: Pass<P>) -> Self {
         if let Some(declared) = self.core.pass_mut(self.pass) {
             declared.after.push(pass.0);
@@ -697,6 +700,7 @@ impl<P: GpuPart> PassBuilder<'_, P> {
         self
     }
 
+    #[must_use]
     pub fn color(self, target: Texture<P>, access: Access) -> Self {
         if let Some(pass) = self.core.pass_mut(self.pass) {
             pass.colors.push((target.0, access));
@@ -704,6 +708,7 @@ impl<P: GpuPart> PassBuilder<'_, P> {
         self
     }
 
+    #[must_use]
     pub fn color_cleared(self, target: Texture<P>, clear: wgpu::Color) -> Self {
         if let Some(pass) = self.core.pass_mut(self.pass) {
             pass.colors.push((target.0, Access::Clear));
@@ -715,6 +720,7 @@ impl<P: GpuPart> PassBuilder<'_, P> {
         self
     }
 
+    #[must_use]
     pub fn depth(self, target: Texture<P>, access: Access) -> Self {
         if let Some(pass) = self.core.pass_mut(self.pass) {
             pass.depths.push((target.0, access));
@@ -722,6 +728,7 @@ impl<P: GpuPart> PassBuilder<'_, P> {
         self
     }
 
+    #[must_use]
     pub fn depth_cleared(self, target: Texture<P>, clear: f32) -> Self {
         if let Some(pass) = self.core.pass_mut(self.pass) {
             pass.depths.push((target.0, Access::Clear));

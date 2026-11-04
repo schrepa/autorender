@@ -13,7 +13,6 @@ use engine_checks::bench;
 use serde_json::{Value, json};
 
 use crate::Failure;
-use crate::heavy::HeavyRun;
 use crate::measure::{self, git};
 
 use judge::{Judged, Verdict, compare_digests, digest_parts, hashes, judge, run_problems};
@@ -350,10 +349,6 @@ fn judged<'a>(
     folder: &Path,
     leg: &Leg,
 ) -> Judged<'a> {
-    let _heavy = match HeavyRun::hold(&format!("cargo xtask equivalence: {}", cell.name)) {
-        Ok(held) => held,
-        Err(error) => return Judged::failed(cell, error),
-    };
     let rounds = if options.aa {
         options.repeat.unwrap_or(1)
     } else if cell.unstable.is_empty() {

@@ -111,7 +111,7 @@ record!(DrawnHead {
     changed,
 });
 
-fn headed<'a, T: Codec>(bytes: &'a [u8]) -> Result<(T, &'a [u8]), Error> {
+fn headed<T: Codec>(bytes: &[u8]) -> Result<(T, &[u8]), Error> {
     let mut reader = Reader::new(bytes);
     let head = reader.get()?;
     let at = bytes.len() - reader.left();
@@ -207,12 +207,7 @@ fn paint(water: &TileWater, ground: &Ground<'_>, before: Option<&TileWater>) -> 
                 continue;
             }
             let patch = pz * patches + px;
-            patch_texels(
-                ground,
-                (water, &mesh),
-                (px, pz),
-                (&mut surfaces, &mut info),
-            );
+            patch_texels(ground, (water, &mesh), (px, pz), (&mut surfaces, &mut info));
             let surface_bytes: &[u8] = bytemuck::cast_slice(&surfaces);
             let info_bytes: &[u8] = bytemuck::cast_slice(&info);
             texels.extend_from_slice(surface_bytes);
@@ -460,9 +455,8 @@ pub(crate) fn draw(
             continue;
         };
         let made = output.and_then(|bytes| {
-            landed(&bytes).map_err(|error| {
-                format!("{}: its output does not decode: {error}", DRAWN.name())
-            })
+            landed(&bytes)
+                .map_err(|error| format!("{}: its output does not decode: {error}", DRAWN.name()))
         });
         let frame = time.frame;
         match (made, drawing) {

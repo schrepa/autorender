@@ -5,7 +5,6 @@ use std::process::{Command, Stdio};
 use serde_json::{Value, json};
 
 use crate::Failure;
-use crate::heavy::HeavyRun;
 use crate::pipeline::QUICK;
 use crate::process::{Project, engine_commit, project_option, run};
 
@@ -96,8 +95,6 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), Failure> {
     let folder = root.join(COOKED);
     fs::create_dir_all(&folder)
         .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
-    let names: Vec<&str> = packs.iter().map(|pack| pack.name.as_str()).collect();
-    let _lock = HeavyRun::hold(&format!("cook {}", names.join(" ")))?;
     if check {
         check_packs(root, &packs)?;
     } else {

@@ -2,7 +2,9 @@ use bevy_ecs::prelude::*;
 use engine_core::{AssetLibrary, Camera, DeviceLimits, Error, View};
 use engine_places::ground::{Cover, TerrainTiles};
 use engine_places::probes::{MIRRORED, ProbeCaptures, ProbeView, ProbeViews};
-use engine_places::shadows::{CasterMap, CasterView, KeptRefresh, Refresh, ShadowCasters, ShadowMaps};
+use engine_places::shadows::{
+    CasterMap, CasterView, KeptRefresh, Refresh, ShadowCasters, ShadowMaps,
+};
 use engine_places::water::Waterline;
 use engine_render::{
     Attach, Bind, Buffer, ComputePipeline, Count, DebugShown, DepthUse, Draw, DrawInput, Encode,
@@ -344,10 +346,7 @@ impl GpuPart for TerrainGpu {
                 ancestors_pass,
                 ancestors::TILE_ANCESTORS,
                 &[
-                    (
-                        ancestors::ANCESTOR_JOBS,
-                        Bind::Buffer(h.control_ancestors),
-                    ),
+                    (ancestors::ANCESTOR_JOBS, Bind::Buffer(h.control_ancestors)),
                     (ancestors::ANCESTOR_TEXELS, Bind::Texture(h.control)),
                 ],
             )?,
@@ -355,10 +354,7 @@ impl GpuPart for TerrainGpu {
                 ancestors_pass,
                 ancestors::TILE_ANCESTORS,
                 &[
-                    (
-                        ancestors::ANCESTOR_JOBS,
-                        Bind::Buffer(h.normal_ancestors),
-                    ),
+                    (ancestors::ANCESTOR_JOBS, Bind::Buffer(h.normal_ancestors)),
                     (ancestors::ANCESTOR_TEXELS, Bind::Texture(h.normals)),
                 ],
             )?,
@@ -617,12 +613,8 @@ impl GpuPart for TerrainGpu {
             cx.run(self.passes.ancestors);
         }
         let view_list = view_uniforms(&views, &captures);
-        self.tables.prepare(
-            cx,
-            h,
-            (&tiles, &atlas, tiles.is_changed()),
-            view_list.len(),
-        );
+        self.tables
+            .prepare(cx, h, (&tiles, &atlas, tiles.is_changed()), view_list.len());
         self.tables.write_header(cx, h, atlas.now);
         self.tables.write_views(cx, h, &view_list);
         self.maps.prepare(cx, (&tiles, &assets));

@@ -168,6 +168,7 @@ pub(crate) struct PartInfo {
     pub(crate) package: &'static str,
     pub(crate) name: &'static str,
     pub(crate) lazy: bool,
+    pub(crate) turns_on_in_play: bool,
     pub(crate) labels: &'static [&'static str],
     pub(crate) owner: &'static str,
     pub(crate) profile: u16,
@@ -265,7 +266,12 @@ impl InstallCore {
 
     pub(crate) fn window(&mut self, buffer: u32, size: u64) {
         let part = self.part;
-        if let Some(declared) = self.declared.buffers.get_mut(buffer as usize).filter(|declared| declared.part == part) {
+        if let Some(declared) = self
+            .declared
+            .buffers
+            .get_mut(buffer as usize)
+            .filter(|declared| declared.part == part)
+        {
             declared.window = Some(size);
         }
     }
@@ -277,7 +283,12 @@ impl InstallCore {
     }
 
     pub(crate) fn sampler(&mut self, desc: SamplerDesc) -> u32 {
-        match self.declared.samplers.iter().position(|known| *known == desc) {
+        match self
+            .declared
+            .samplers
+            .iter()
+            .position(|known| *known == desc)
+        {
             Some(index) => index as u32,
             None => {
                 self.declared.samplers.push(desc);
@@ -450,12 +461,22 @@ impl InstallCore {
         (self.declared.inputs.len() - 1) as u32
     }
 
-    pub(crate) fn claim(&mut self, (point, uber): (TypeId, bool), name: &'static str, pass: u32) -> Result<(), Error> {
+    pub(crate) fn claim(
+        &mut self,
+        (point, uber): (TypeId, bool),
+        name: &'static str,
+        pass: u32,
+    ) -> Result<(), Error> {
         let path = self.path(&format!("claims.{name}"));
         if !self.fills.contains(&point) {
             return Err(Error::new(ErrorCode::PlaceNotFilled, path).got(self.package));
         }
-        if let Some(known) = self.declared.claims.iter().find(|claim| claim.point == point) {
+        if let Some(known) = self
+            .declared
+            .claims
+            .iter()
+            .find(|claim| claim.point == point)
+        {
             let owner = self.declared.parts[known.part as usize].package;
             return Err(Error::new(ErrorCode::SlotFilledTwice, path).got(owner));
         }

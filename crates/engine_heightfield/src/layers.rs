@@ -10,14 +10,15 @@ use crate::given::GivenRiver;
 use crate::grid::Pyramid;
 use crate::hydrology::HydrologyBake;
 use crate::layer::{
-    Below, ChangeMap, LayerKind, NoFiles, Place, SamplePoint, TerrainLayer, read_entry,
-    write_entry,
+    Below, ChangeMap, LayerKind, NoFiles, Place, SamplePoint, TerrainLayer, read_entry, write_entry,
 };
 use crate::noise::smooth;
 use crate::path::{Bridge, PathSample};
 use crate::rivers::Rivers;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Blend {
     #[default]
@@ -107,7 +108,10 @@ impl Stamp {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
-        let reach = [bound(-Layers::MAX_COORDINATE), bound(Layers::MAX_COORDINATE)];
+        let reach = [
+            bound(-Layers::MAX_COORDINATE),
+            bound(Layers::MAX_COORDINATE),
+        ];
         let spread = [bound(0.0), bound(Layers::MAX_COORDINATE)];
         for (index, &value) in self.center.iter().enumerate() {
             held(value, reach, format!("$.center[{index}]"))?;

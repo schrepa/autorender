@@ -1083,7 +1083,6 @@ pub(crate) fn measure_with(
             }
         }
     }
-    let heavy = crate::heavy::HeavyRun::hold(&format!("cargo xtask measure (task {task_id})"))?;
     let machine = Machine {
         backend: backend.to_owned(),
         timer_resolution_us: timer_resolution_us(),
@@ -1233,7 +1232,6 @@ pub(crate) fn measure_with(
             "unavailable": unavailable,
         }));
     }
-    drop(heavy);
     let (base, candidate) = (&builds[base_sha], &builds[candidate_sha]);
     let shaders_changed = base.shader_hash != candidate.shader_hash;
     let static_part = if spec["want"]["shader_report"] == true || shaders_changed {

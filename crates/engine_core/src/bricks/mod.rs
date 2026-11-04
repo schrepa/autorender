@@ -14,8 +14,8 @@ use bevy_ecs::system::{
 use bevy_ecs::world::World;
 use engine_registry::{
     BrickRecord, ExplainAsk, ExplainEntry, ExplainRecord, GateFn, Gates, JobList, MembersOf,
-    NamedField, OperationEntry, OperationScene, Registry, Removal, SceneEntity, SettingsEntry,
-    Settle, SpawnedBy, StatsEntry,
+    NamedField, OperationEntry, OperationScene, PlainSystems, Registry, Removal, SceneEntity,
+    SettingsEntry, Settle, SpawnedBy, StatsEntry,
 };
 use serde_json::Value;
 
@@ -82,7 +82,7 @@ impl Bricks<'_> {
     pub fn off_in<M>(
         &mut self,
         schedule: Schedule,
-        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + Send + Sync + 'static,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + PlainSystems<M>,
     ) -> &mut Self
     where
         M: 'static,
@@ -108,7 +108,7 @@ impl Bricks<'_> {
     pub fn systems<M>(
         &mut self,
         schedule: Schedule,
-        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + Send + Sync + 'static,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + PlainSystems<M>,
     ) -> &mut Self
     where
         M: 'static,
@@ -152,7 +152,7 @@ impl Bricks<'_> {
     pub fn piece<T: Resource<Mutability = Mutable> + Default + GpuStruct>(&mut self) -> &mut Self {
         const {
             assert!(
-                std::mem::size_of::<T>() % 16 == 0,
+                std::mem::size_of::<T>().is_multiple_of(16),
                 "a piece is not a multiple of 16 bytes"
             );
         }
@@ -260,7 +260,9 @@ where
     F: SystemParamFunction<M, In = (), Out = bool>,
     F::Param: Read,
 {
-    Box::new(IntoSystem::<(), bool, (IsFunctionSystem, M)>::into_system(gate))
+    Box::new(IntoSystem::<(), bool, (IsFunctionSystem, M)>::into_system(
+        gate,
+    ))
 }
 
 fn boxed_module(module: Module) -> Box<dyn Any + Send + Sync> {
@@ -335,8 +337,11 @@ fn run_explain<E: Explain>(world: &mut World, ask: &ExplainAsk<'_>) -> Option<Ex
 fn answer<O: Operation>(world: &mut World, request: O::Request) -> Result<Value, Error> {
     let mut state = SystemState::<O::Params>::new(world);
     let params = state.get_mut(world).map_err(|refused| {
-        Error::new(ErrorCode::MissingResource, format!("$.operations.{}", O::NAME))
-            .got(refused.to_string())
+        Error::new(
+            ErrorCode::MissingResource,
+            format!("$.operations.{}", O::NAME),
+        )
+        .got(refused.to_string())
     })?;
     let answer = O::run(params, request);
     state.apply(world);
@@ -424,7 +429,6 @@ pub struct BrickList {
     bricks: Vec<Listed>,
     left: Vec<Listed>,
     places: Vec<&'static [PlaceDecl]>,
-    left_out: Vec<&'static str>,
     core: Vec<fn(&mut Registry)>,
 }
 
@@ -441,8 +445,8 @@ impl BrickList {
         &self.places
     }
 
-    pub fn left_out(&self) -> &[&'static str] {
-        &self.left_out
+    pub fn left(&self) -> &[Listed] {
+        &self.left
     }
 
     pub fn core_places(&self) -> &[fn(&mut Registry)] {
@@ -450,9 +454,7 @@ impl BrickList {
     }
 
     pub fn contains(&self, package: &str) -> bool {
-        self.bricks
-            .iter()
-            .any(|listed| listed.package() == package)
+        self.bricks.iter().any(|listed| listed.package() == package)
     }
 
     pub fn jobs(&self) -> Vec<&'static JobKind> {
@@ -496,10 +498,6 @@ impl BrickList {
     #[must_use]
     fn leave(mut self, out: Vec<Listed>) -> Self {
         for listed in out {
-            let package = listed.package();
-            if !self.left_out.contains(&package) {
-                self.left_out.push(package);
-            }
             if !self
                 .left
                 .iter()
@@ -514,8 +512,6 @@ impl BrickList {
 
 impl Listing for BrickList {
     fn with<B: Brick>(mut self) -> Self {
-        let package = B::SOURCE.package();
-        self.left_out.retain(|&left| left != package);
         self.left
             .retain(|left| !std::ptr::eq(left.source, B::SOURCE));
         self.bricks.push(Listed::of::<B>());
@@ -580,8 +576,12 @@ read_tuples!(P0, P1, P2, P3, P4, P5, P6, P7, P8, P9, P10);
 read_tuples!(P0, P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11);
 read_tuples!(P0, P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11, P12);
 read_tuples!(P0, P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11, P12, P13);
-read_tuples!(P0, P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11, P12, P13, P14);
-read_tuples!(P0, P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11, P12, P13, P14, P15);
+read_tuples!(
+    P0, P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11, P12, P13, P14
+);
+read_tuples!(
+    P0, P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11, P12, P13, P14, P15
+);
 
 #[derive(SystemParam)]
 pub struct Joined<'w, L: List> {
@@ -766,7 +766,9 @@ fn marked<B: Brick, C: Component, T: Component + Default>(world: &mut World, ent
                 .collect()
         })
         .unwrap_or_default();
-    let registered = kinds.into_iter().any(|register| register(world) == component);
+    let registered = kinds
+        .into_iter()
+        .any(|register| register(world) == component);
     if !registered || world.get::<C>(entity).is_none() {
         foreign::<B>(world, entity);
         return;
@@ -893,8 +895,7 @@ fn holds<B: Brick, R: Resource>(world: &mut World) -> bool {
     let package = B::SOURCE.package();
     let holds = world
         .get_resource::<Registry>()
-        .and_then(|registry| registry.brick(package))
-        .is_some_and(|record| record.owns(TypeId::of::<R>()));
+        .is_some_and(|registry| registry.holds(package, TypeId::of::<R>()));
     if !holds {
         let name = std::any::type_name::<R>();
         let path = format!("$.bricks.{package}.spawner.{name}");

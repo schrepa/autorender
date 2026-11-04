@@ -142,5 +142,4 @@ impl TerrainLayer for Noise {
     fn row_cost(&self) -> u64 {
         NOISE_SAMPLE_COST
     }
-
 }

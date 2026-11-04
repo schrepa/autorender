@@ -94,8 +94,8 @@ async function readRequest(request) {
   catch { throw new AgentError("invalid_json", "$", { expected: "json" }); }
 }
 
-/** @param {{ session: string, url: string, build?: string, execute: (command: any, onRecord?: (record: any) => void) => any, onTimeout?: () => void, onClose: () => any, development?: () => any, initiallyUnavailable?: boolean, deadlineMs?: number, queueLimit?: number }} options */
-export function createBridge({ session, url, build, execute, onTimeout = () => {}, onClose, development, initiallyUnavailable = false, deadlineMs = 15_000, queueLimit = 16 }) {
+/** @param {{ session: string, url: string, build?: string, execute: (command: any, onRecord?: (record: any) => void) => any, onClose: () => any, development?: () => any, initiallyUnavailable?: boolean, deadlineMs?: number, queueLimit?: number }} options */
+export function createBridge({ session, url, build, execute, onClose, development, initiallyUnavailable = false, deadlineMs = 15_000, queueLimit = 16 }) {
   let startedAt = new Date().toISOString();
   const requestIds = new Set();
   const queue = [];
@@ -114,7 +114,7 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
           if (closed) throw new AgentError("session_closed", "$", { expected: "live" });
           if (item.replacement.validate && !await item.replacement.validate()) throw new AgentError("build_superseded", "$", { expected: "matching" });
           item.replacement.commit?.();
-          ({ session, url, build, execute, onTimeout = () => {} } = item.replacement);
+          ({ session, url, build, execute } = item.replacement);
           startedAt = new Date().toISOString();
           requestIds.clear();
           unavailable = false;
@@ -137,16 +137,19 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
           unavailable = true;
           closed = true;
           response = { ok: true, result: { state: "closing" } };
-        } else response = await Promise.race([
-          Promise.resolve().then(() => execute(item.request.command, item.onRecord)),
-          new Promise((_, reject) => {
-            timer = setTimeout(() => {
-              unavailable = true;
-              Promise.resolve().then(onTimeout).catch(() => {});
-              reject(new AgentError("command_timeout", "$", { allowed: atMost(remaining) }));
-            }, remaining);
-          }),
-        ]);
+        } else {
+          const { command } = item.request;
+          let expired = false;
+          response = await Promise.race([
+            Promise.resolve().then(() => execute(command, record => { if (!expired) item.onRecord?.(record); })),
+            new Promise((_, reject) => {
+              timer = setTimeout(() => {
+                expired = true;
+                reject(new AgentError("command_timeout", "$", { allowed: atMost(remaining), got: { verb: command.verb, name: command.name, running: true } }));
+              }, remaining);
+            }),
+          ]);
+        }
         if (!response || typeof response.ok !== "boolean") throw new AgentError("invalid_browser_response", "$", { expected: "object" });
         if (Buffer.byteLength(JSON.stringify(response)) > MAX_BYTES - 1024) throw new AgentError("response_too_large", "$", { allowed: atMost(MAX_BYTES - 1024) });
       } catch (error) { response = failure(error); }

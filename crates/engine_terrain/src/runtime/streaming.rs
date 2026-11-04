@@ -68,14 +68,7 @@ impl Terrains {
             }
             let target = std::mem::take(&mut state.target);
             let keep = std::mem::take(&mut state.keep);
-            let baking = load_tiles(
-                state,
-                &missing,
-                (&target, &keep, &[]),
-                &work,
-                frame,
-                asking,
-            );
+            let baking = load_tiles(state, &missing, (&target, &keep, &[]), &work, frame, asking);
             state.missing = missing
                 .into_iter()
                 .filter(|(key, _)| state.loads(key))
@@ -433,9 +426,7 @@ pub(crate) fn stream_terrains(
             && reach > 0.0
             && let Some(point) = globals.get(entity).and_then(|global| global.translation())
         {
-            streaming
-                .places
-                .push((point, engine_math::min(reach, 8.0)));
+            streaming.places.push((point, engine_math::min(reach, 8.0)));
         }
     }
     let present: Vec<(Entity, Terrain)> = scenes

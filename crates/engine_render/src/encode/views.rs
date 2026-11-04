@@ -71,11 +71,18 @@ impl Run {
     }
 
     pub(crate) fn write_post(&mut self) {
-        crate::gpu_calls::upload_buffer(&self.queue, &self.post_buffer, 0, bytemuck::bytes_of(&self.post));
+        crate::gpu_calls::upload_buffer(
+            &self.queue,
+            &self.post_buffer,
+            0,
+            bytemuck::bytes_of(&self.post),
+        );
     }
 
     pub(crate) fn write_pieces(&mut self, staged: &mut Vec<u8>) -> u64 {
-        let size = (staged.len() as u64).max(crate::pieces::PIECE_ALIGN).next_multiple_of(crate::pieces::PIECE_ALIGN);
+        let size = (staged.len() as u64)
+            .max(crate::pieces::PIECE_ALIGN)
+            .next_multiple_of(crate::pieces::PIECE_ALIGN);
         if self.pieces.size() != size {
             self.pieces = crate::memory::buffer(
                 &self.device,
@@ -96,13 +103,21 @@ impl Run {
 
     pub(crate) fn read_back(&mut self, asked: Asked) -> bool {
         let slots = self.readback_slots;
-        let free = asked.once || match self.rings.iter().find(|ring| ring.part == asked.part && ring.tag == asked.tag) {
-            Some(ring) => {
-                ring.kept() < slots
-                    || ring.slots.iter().any(|slot| !slot.once && slot.state.load(Ordering::Acquire) == 0)
-            }
-            None => true,
-        };
+        let free = asked.once
+            || match self
+                .rings
+                .iter()
+                .find(|ring| ring.part == asked.part && ring.tag == asked.tag)
+            {
+                Some(ring) => {
+                    ring.kept() < slots
+                        || ring
+                            .slots
+                            .iter()
+                            .any(|slot| !slot.once && slot.state.load(Ordering::Acquire) == 0)
+                }
+                None => true,
+            };
         if free {
             self.asked.push(asked);
         }
@@ -117,7 +132,11 @@ impl Run {
         }
         let generation = self.assets.materials.generation();
         let base = self.machine.pipelines.len() as u32;
-        if let Some(at) = self.filled.iter().position(|filled| filled.base == pipeline && filled.textures == textures && filled.generation == generation) {
+        if let Some(at) = self.filled.iter().position(|filled| {
+            filled.base == pipeline
+                && filled.textures == textures
+                && filled.generation == generation
+        }) {
             self.filled[at].used = self.frame;
             return base + at as u32;
         }
@@ -139,7 +158,14 @@ impl Run {
     pub(super) fn reads_direct(&self) -> bool {
         let index = self.pass as usize;
         self.machine.declared.passes.get(index).is_some_and(|pass| {
-            reads_depth_direct(pass, self.machine.depth_writes.get(index).copied().unwrap_or(true))
+            reads_depth_direct(
+                pass,
+                self.machine
+                    .depth_writes
+                    .get(index)
+                    .copied()
+                    .unwrap_or(true),
+            )
         })
     }
 
@@ -151,22 +177,38 @@ impl Run {
             .get(index as usize)
             .is_some_and(|output| output.layers.is_empty());
         let second = doubled && (self.parity == 1) == writing;
-        let list = if second { &self.previous_targets } else { &self.targets };
-        list.iter().find(|(known, _)| *known == target).map(|(_, made)| &made.view)
+        let list = if second {
+            &self.previous_targets
+        } else {
+            &self.targets
+        };
+        list.iter()
+            .find(|(known, _)| *known == target)
+            .map(|(_, made)| &made.view)
     }
 
     pub(super) fn view_of(&self, target: Target, writing: bool) -> Option<&wgpu::TextureView> {
         match target {
             Target::Canvas => self.canvas.as_ref(),
-            Target::Debug(index) => self.debug_targets.get(index as usize).map(|made| &made.view),
+            Target::Debug(index) => self
+                .debug_targets
+                .get(index as usize)
+                .map(|made| &made.view),
             Target::Output(index) => self.output_view(index, writing),
-            Target::Scene | Target::Depth | Target::Copy(..) => {
-                self.targets.iter().find(|(known, _)| *known == target).map(|(_, made)| &made.view)
-            }
+            Target::Scene | Target::Depth | Target::Copy(..) => self
+                .targets
+                .iter()
+                .find(|(known, _)| *known == target)
+                .map(|(_, made)| &made.view),
         }
     }
 
-    pub(crate) fn texture_view(&mut self, bound: &Bound, ty: Ty, reading: bool) -> Option<wgpu::TextureView> {
+    pub(crate) fn texture_view(
+        &mut self,
+        bound: &Bound,
+        ty: Ty,
+        reading: bool,
+    ) -> Option<wgpu::TextureView> {
         let parity = self.parity;
         let dimension = match ty {
             Ty::Texture { view, .. } | Ty::StorageTexture { view, .. } => Some(view),
@@ -174,7 +216,11 @@ impl Run {
         };
         match bound {
             Bound::Texture(texture) | Bound::Slice { texture, .. } => {
-                let index = if self.doubled(*texture) && reading { 1 - parity } else { parity };
+                let index = if self.doubled(*texture) && reading {
+                    1 - parity
+                } else {
+                    parity
+                };
                 let made = self.textures.get_mut(*texture as usize)?;
                 let made = match index {
                     1 if made[1].is_some() => made[1].as_mut()?,
@@ -182,9 +228,12 @@ impl Run {
                 };
                 let (mips, layers) = match bound {
                     Bound::Slice { mips, layers, .. } => (mips.clone(), layers.clone()),
-                    Bound::Texture(_) | Bound::Buffer(_) | Bound::Window { .. } | Bound::Sampler(_) | Bound::Target(_) | Bound::Asset => {
-                        (0..made.mips, 0..made.layers())
-                    }
+                    Bound::Texture(_)
+                    | Bound::Buffer(_)
+                    | Bound::Window { .. }
+                    | Bound::Sampler(_)
+                    | Bound::Target(_)
+                    | Bound::Asset => (0..made.mips, 0..made.layers()),
                 };
                 made.slice(&mips, &layers, dimension).cloned()
             }
@@ -209,32 +258,47 @@ impl Run {
 
     pub(super) fn binding_bytes(&self, pipeline: Option<usize>, group: u32, binding: u32) -> u64 {
         let needed = self.machine.binding_bytes.get(&(pipeline, group, binding));
-        needed.copied().unwrap_or(0).max(PLACEHOLDER_BYTES).next_multiple_of(16)
+        needed
+            .copied()
+            .unwrap_or(0)
+            .max(PLACEHOLDER_BYTES)
+            .next_multiple_of(16)
     }
 
     pub(super) fn resource(&mut self, bound: &Bound, ty: Ty, reading: bool) -> Resolved {
         match bound {
-            Bound::Buffer(buffer) => match self.buffers.get(*buffer as usize).and_then(Option::as_ref) {
-                Some((made, _)) => Resolved::Buffer(made.clone()),
-                None => Resolved::Placeholder(ty),
-            },
-            Bound::Window { buffer, size } => match self.buffers.get(*buffer as usize).and_then(Option::as_ref) {
-                Some((made, bytes)) if *bytes >= *size => Resolved::Dynamic(made.clone(), *size),
-                Some(_) | None => Resolved::Placeholder(ty),
-            },
+            Bound::Buffer(buffer) => {
+                match self.buffers.get(*buffer as usize).and_then(Option::as_ref) {
+                    Some((made, _)) => Resolved::Buffer(made.clone()),
+                    None => Resolved::Placeholder(ty),
+                }
+            }
+            Bound::Window { buffer, size } => {
+                match self.buffers.get(*buffer as usize).and_then(Option::as_ref) {
+                    Some((made, bytes)) if *bytes >= *size => {
+                        Resolved::Dynamic(made.clone(), *size)
+                    }
+                    Some(_) | None => Resolved::Placeholder(ty),
+                }
+            }
             Bound::Sampler(sampler) => match self.samplers.get(*sampler as usize) {
                 Some(made) => Resolved::Sampler(made.clone()),
                 None => Resolved::Placeholder(ty),
             },
-            Bound::Texture(_) | Bound::Slice { .. } | Bound::Target(_) => match self.texture_view(bound, ty, reading) {
-                Some(view) => Resolved::View(view),
-                None => Resolved::Placeholder(ty),
-            },
+            Bound::Texture(_) | Bound::Slice { .. } | Bound::Target(_) => {
+                match self.texture_view(bound, ty, reading) {
+                    Some(view) => Resolved::View(view),
+                    None => Resolved::Placeholder(ty),
+                }
+            }
             Bound::Asset => Resolved::Placeholder(ty),
         }
     }
 
-    #[expect(clippy::disallowed_methods, reason = "the machine binds groups by the linked declarations")]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the machine binds groups by the linked declarations"
+    )]
     pub(super) fn bind_group(
         &mut self,
         layout: &wgpu::BindGroupLayout,
@@ -244,9 +308,14 @@ impl Run {
         let mut keys: Vec<Option<(Ty, u64)>> = Vec::with_capacity(entries.len());
         for (binding, resolved) in &entries {
             let key = match resolved {
-                Resolved::Placeholder(ty @ (Ty::Uniform | Ty::Storage { .. })) => Some((*ty, self.binding_bytes(pipeline, group, *binding))),
+                Resolved::Placeholder(ty @ (Ty::Uniform | Ty::Storage { .. })) => {
+                    Some((*ty, self.binding_bytes(pipeline, group, *binding)))
+                }
                 Resolved::Placeholder(ty) => Some((*ty, 0)),
-                Resolved::Buffer(_) | Resolved::Dynamic(..) | Resolved::View(_) | Resolved::Sampler(_) => None,
+                Resolved::Buffer(_)
+                | Resolved::Dynamic(..)
+                | Resolved::View(_)
+                | Resolved::Sampler(_) => None,
             };
             if let Some(key) = key {
                 self.placeholder(key);
@@ -260,17 +329,25 @@ impl Run {
                 binding: *binding,
                 resource: match resolved {
                     Resolved::Buffer(buffer) => buffer.as_entire_binding(),
-                    Resolved::Dynamic(buffer, size) => wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(*size),
-                    }),
+                    Resolved::Dynamic(buffer, size) => {
+                        wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(*size),
+                        })
+                    }
                     Resolved::View(view) => wgpu::BindingResource::TextureView(view),
                     Resolved::Sampler(sampler) => wgpu::BindingResource::Sampler(sampler),
-                    Resolved::Placeholder(_) => match key.and_then(|key| self.placeholders.iter().find(|(known, _)| *known == key)) {
+                    Resolved::Placeholder(_) => match key
+                        .and_then(|key| self.placeholders.iter().find(|(known, _)| *known == key))
+                    {
                         Some((_, Placeholder::Buffer(buffer))) => buffer.as_entire_binding(),
-                        Some((_, Placeholder::Texture(view))) => wgpu::BindingResource::TextureView(view),
-                        Some((_, Placeholder::Sampler(sampler))) => wgpu::BindingResource::Sampler(sampler),
+                        Some((_, Placeholder::Texture(view))) => {
+                            wgpu::BindingResource::TextureView(view)
+                        }
+                        Some((_, Placeholder::Sampler(sampler))) => {
+                            wgpu::BindingResource::Sampler(sampler)
+                        }
                         None => self.camera.as_entire_binding(),
                     },
                 },
@@ -410,11 +487,17 @@ impl Run {
             depth_or_array_layers: 1,
         };
         if self.debug != self.debug_targets.is_empty()
-            && self.targets.first().is_some_and(|(_, made)| made.size == extent)
+            && self
+                .targets
+                .first()
+                .is_some_and(|(_, made)| made.size == extent)
         {
             return;
         }
-        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST;
+        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST;
         let device = self.device.clone();
         let made = |label: &'static str, format| {
             let made = Made {
@@ -426,14 +509,23 @@ impl Run {
             Allocated::new(&device, &made, extent, 1)
         };
         let mut targets = vec![
-            (Target::Scene, made("engine/scene", crate::machine::SCENE_FORMAT)),
+            (
+                Target::Scene,
+                made("engine/scene", crate::machine::SCENE_FORMAT),
+            ),
             (Target::Depth, made("engine/depth", DEPTH_FORMAT)),
         ];
         let mut previous = Vec::new();
         for (index, output) in self.machine.outputs.iter().enumerate() {
-            targets.push((Target::Output(index as u32), made(output.name, output.format)));
+            targets.push((
+                Target::Output(index as u32),
+                made(output.name, output.format),
+            ));
             if output.layers.is_empty() {
-                previous.push((Target::Output(index as u32), made(output.name, output.format)));
+                previous.push((
+                    Target::Output(index as u32),
+                    made(output.name, output.format),
+                ));
             }
         }
         for (target, _) in &self.machine.ids.targets {

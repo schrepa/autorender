@@ -255,8 +255,7 @@ fn cast_triangle(
     if let Some((_, p2, _)) = contact {
         let normal = triangle.normal().unwrap_or(Vec3::Y);
         if !options.stop_at_penetration
-            && displacement.dot(normal)
-                >= -1.0e-6 * engine_math::max(displacement.length(), 1.0)
+            && displacement.dot(normal) >= -1.0e-6 * engine_math::max(displacement.length(), 1.0)
         {
             return Ok(None);
         }

@@ -147,9 +147,9 @@ impl WorldTrace {
             .grids
             .iter()
             .filter(|&(key, grid)| {
-                current.get(key).is_none_or(|tile| {
-                    tile.slots != grid.slots || tile.identity != grid.identity
-                })
+                current
+                    .get(key)
+                    .is_none_or(|tile| tile.slots != grid.slots || tile.identity != grid.identity)
             })
             .map(|(key, _)| *key)
             .collect();

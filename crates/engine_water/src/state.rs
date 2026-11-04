@@ -392,7 +392,7 @@ pub(crate) struct WaterState {
 #[derive(Default)]
 pub(crate) struct SettleQueue {
     pub(crate) asked: Vec<crate::water_settle::SettleAsk>,
-    pub(crate) settled: Vec<(Vec<u8>, Result<Vec<u8>, String>)>,
+    pub(crate) settled: Vec<crate::water_settle::SettleMade>,
 }
 
 impl SettleQueue {
@@ -498,11 +498,9 @@ impl WaterSurface {
         let waters = terrains.iter().filter(|terrain| !terrain.surroundings);
         let mut before = std::mem::take(&mut served.terrains);
         for terrain in waters.clone() {
-            let found = before
-                .iter()
-                .position(|held| held.entity == terrain.entity);
-            let mut held = found
-                .map_or_else(|| SurfaceTerrain::of(terrain), |at| before.swap_remove(at));
+            let found = before.iter().position(|held| held.entity == terrain.entity);
+            let mut held =
+                found.map_or_else(|| SurfaceTerrain::of(terrain), |at| before.swap_remove(at));
             held.follow(terrain, found.is_none());
             served.terrains.push(held);
         }

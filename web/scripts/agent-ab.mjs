@@ -27,7 +27,7 @@ export async function runAb(session, values) {
   const samples = integer(values.samples, 60, 1, 600, "samples");
   const warmup = integer(values.warmup, 10, 0, 600, "warmup");
   const mode = values.mode ?? "present";
-  if (!["step", "render", "present"].includes(mode)) throw new AgentError("invalid_arguments", "--mode", { allowed: oneOf(["step", "render", "present"]), got: mode });
+  if (!["step", "render", "present", "paced"].includes(mode)) throw new AgentError("invalid_arguments", "--mode", { allowed: oneOf(["step", "render", "present", "paced"]), got: mode });
   const profile = values.profile === "on";
   const durationMs = integer(values["profile-ms"], 2000, 100, 5000, "profile-ms");
   const run = async command => {

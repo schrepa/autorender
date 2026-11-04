@@ -7,7 +7,6 @@ mod cook;
 mod development;
 mod equivalence;
 mod gate;
-mod heavy;
 mod importing;
 mod iteration_build;
 mod ladder;
@@ -77,7 +76,8 @@ fn execute() -> Result<(), Failure> {
     }
     let root = process::repository_root()?;
     if task == "dev" {
-        return Ok(pipeline::dev(&root, dev_port(&options)?)?);
+        let (port, game) = dev_options(&options)?;
+        return Ok(pipeline::dev(&root, port, game)?);
     }
     if task == "agent" {
         return development::agent(&root, &options);
@@ -175,16 +175,22 @@ fn execute() -> Result<(), Failure> {
 
 const DEV_PORT: u16 = 5173;
 
-fn dev_port(arguments: &[String]) -> Result<u16, String> {
-    match arguments {
-        [] => Ok(DEV_PORT),
-        [option, value] if option == "--port" => value
-            .parse::<u16>()
-            .ok()
-            .filter(|port| *port != 0)
-            .ok_or_else(|| "dev --port requires an integer from 1 to 65535".to_owned()),
-        _ => Err("usage: cargo xtask dev [--port N]".to_owned()),
+fn dev_options(arguments: &[String]) -> Result<(u16, Option<&str>), String> {
+    let (mut port, mut game) = (DEV_PORT, None);
+    for pair in arguments.chunks(2) {
+        match pair {
+            [option, value] if option == "--port" => {
+                port = value
+                    .parse::<u16>()
+                    .ok()
+                    .filter(|port| *port != 0)
+                    .ok_or("dev --port requires an integer from 1 to 65535")?;
+            }
+            [option, value] if option == "--game" => game = Some(value.as_str()),
+            _ => return Err("usage: cargo xtask dev [--port N] [--game NAME]".to_owned()),
+        }
     }
+    Ok((port, game))
 }
 
 fn commands() -> Vec<Command> {
@@ -205,7 +211,10 @@ fn authoring_commands() -> Vec<Command> {
         Command::new("profile", [CommandOption::flag("--attribution")]),
         Command::new(
             "dev",
-            [CommandOption::taking("--port", "N").defaults_to(DEV_PORT)],
+            [
+                CommandOption::taking("--port", "N").defaults_to(DEV_PORT),
+                CommandOption::taking("--game", process::game_names()),
+            ],
         ),
         Command::new(
             "agent iterate",

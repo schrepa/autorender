@@ -146,7 +146,8 @@ pub(super) fn mesh_view(
                         .iter()
                         .map(|&(_, indices, error)| LodLevelView { indices, error })
                         .collect(),
-                    impostor: impostor_resident(world, resident, mesh3d),
+                    impostor: impostor_resident(world, resident, mesh3d)
+                        .filter(|_| mesh.takes_impostor()),
                 })
             }),
         }

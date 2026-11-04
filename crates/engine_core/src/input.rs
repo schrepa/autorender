@@ -49,8 +49,12 @@ impl ActionInput {
         self.state.begin_tick();
     }
 
-    pub(crate) fn end_tick(&mut self) {
-        self.state.end_tick();
+    pub(crate) fn begin_frame(&mut self) {
+        self.state.begin_frame();
+    }
+
+    pub(crate) fn hide_edges(&mut self) {
+        self.state.hide_edges();
     }
 }
 

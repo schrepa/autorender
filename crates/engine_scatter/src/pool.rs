@@ -72,7 +72,11 @@ impl ScatterPool {
     }
 
     pub(crate) fn tiles(&self) -> Vec<(PoolKey, &Pooled)> {
-        let mut tiles: Vec<_> = self.tiles.iter().map(|(&key, pooled)| (key, pooled)).collect();
+        let mut tiles: Vec<_> = self
+            .tiles
+            .iter()
+            .map(|(&key, pooled)| (key, pooled))
+            .collect();
         tiles.sort_unstable_by_key(|(key, _)| *key);
         tiles
     }

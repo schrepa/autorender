@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, Spawner,
-    Surface, Transform,
+    AssetLibrary, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, Spawner, Surface,
+    Transform,
 };
 use engine_places::splines::SplineMesh;
 use glam::Vec3;
@@ -230,10 +230,6 @@ fn tube_section(width: f32) -> Mesh {
     Mesh::new(vertices, indices).expect("tunnel_mesh_valid")
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
 pub(crate) fn sync(
     terrains: Res<Terrains>,
     mut bridges: ResMut<TerrainBridges>,

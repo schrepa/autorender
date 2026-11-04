@@ -28,6 +28,7 @@ pub use engine_core::command_line;
 pub use engine_core::smoke_eq;
 
 mod games {
+    pub use crate::host::MoveDirection;
     pub use crate::resolution::{DynamicResolution, Resolution};
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, AxisId,
@@ -35,10 +36,10 @@ mod games {
         Filter, FixedTime, FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Grounding,
         InterpolateTransform, Listing, MakeSources, MakeTextures, Material, MaterialHandle,
         MenuInput, Mesh, Mesh3d, MeshHandle, MeshVertex, MoveInput, Parent, PointerInput,
-        PresentedTransforms, Projection, ProvidedAssets, ResolutionStats,
-        Sampler, Surface, Texture, TextureHandle, TextureRef, TextureSet, TextureSource,
-        TextureUsage, TopLayer, Transform, UvTransform, Wrap, edit_transform, math,
-        reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
+        PresentedTransforms, Projection, ProvidedAssets, ResolutionStats, Sampler, Surface,
+        Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage, TopLayer,
+        Transform, UvTransform, Wrap, edit_transform, math, reset_all_interpolation,
+        reset_interpolation, set_parent, set_parents, trim_cards,
     };
 }
 pub use games::*;
@@ -188,7 +189,7 @@ pub mod prelude {
         },
         system::{
             Command, Commands, EntityCommand, EntityCommands, In, IntoSystem, Local, ParamSet,
-            Populated, Query, Res, ResMut, Single, System,
+            Populated, Query, Res, ResMut, Single, System, SystemParam,
         },
         world::{EntityMut, EntityRef, EntityWorldMut, FromWorld, World},
     };

@@ -75,6 +75,24 @@ pub struct UiInsets {
     pub bottom: Option<f32>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UiImageRect {
+    pub u: f32,
+    pub v: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl UiImageRect {
+    pub const WHOLE: Self = Self {
+        u: 0.0,
+        v: 0.0,
+        width: 1.0,
+        height: 1.0,
+    };
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UiAction {
@@ -109,7 +127,7 @@ pub struct UiNode {
     pub text_align: TextAlign,
     pub bind: Option<String>,
     pub image: Option<String>,
-    pub image_rect: [f32; 4],
+    pub image_rect: UiImageRect,
     pub bar_value: f32,
     pub bar_color: [f32; 4],
     pub hover_color: Option<[f32; 4]>,
@@ -144,7 +162,7 @@ impl Default for UiNode {
             text_align: TextAlign::default(),
             bind: None,
             image: None,
-            image_rect: [0.0, 0.0, 1.0, 1.0],
+            image_rect: UiImageRect::WHOLE,
             bar_value: 0.0,
             bar_color: [1.0; 4],
             hover_color: None,

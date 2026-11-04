@@ -19,8 +19,8 @@ mod smokes;
 mod uploads;
 
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, ImpostorPolicy, Mesh3d, Rule, Runs, Schedule,
-    SceneComponents, Setting, Smoke, Source,
+    Brick, Bricks, ComponentKind, Error, ErrorCode, ImpostorPolicy, Mesh3d, Rule, Runs,
+    SceneComponents, Schedule, Setting, Smoke, Source,
 };
 use engine_places::meshes::{Cube, Instances, Tint};
 use engine_places::probes::ProbeViews;

@@ -3,17 +3,19 @@ import { resolve } from "node:path";
 import { createReadStream, existsSync, readdirSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import clients from "./src/generated/clients.json";
+import { wasmImport } from "./scripts/wasm-alias.mjs";
 
 const instrumented = new Map([["profiling", "profile"], ["attribution", "attribution"]]);
 const games = clients.flatMap(({ wasm, game, page }) => game && page ? [{ wasm, game, page }] : []);
 const publicFolder = resolve(import.meta.dirname, "public");
+const packIndex = resolve(publicFolder, "cooked/index.json");
 const ktx2 = existsSync(publicFolder)
   ? readdirSync(publicFolder, { recursive: true, encoding: "utf8" })
     .map(path => path.replaceAll("\\", "/")).filter(path => path.endsWith(".ktx2")).sort()
   : [];
 
 export default defineConfig(({ command, mode }) => ({
-  define: { __PUBLIC_KTX2__: JSON.stringify(ktx2) },
+  define: { __PUBLIC_KTX2__: JSON.stringify(ktx2), __PUBLIC_PACKS__: JSON.stringify(existsSync(packIndex)) },
   server: { watch: { ignored: ["**/public/scenes/**"] } },
   plugins: [{
     name: "explicit-scene-reload",
@@ -60,14 +62,21 @@ export default defineConfig(({ command, mode }) => ({
         } catch { response.statusCode = 404; response.end("Scene source not found"); }
       });
     },
+  }, {
+    name: "pack-index-restart",
+    configureServer(server) {
+      server.watcher.on("all", (event, path) => {
+        if ((event === "add" || event === "unlink") && resolve(path) === packIndex) void server.restart();
+      });
+    },
   }],
   resolve: {
     alias: instrumented.has(mode) ? games.map(({ wasm }) => ({
-      find: new RegExp(`^(?:\\.\\./)+pkg/${wasm}$`), replacement: resolve(import.meta.dirname, `pkg-${instrumented.get(mode)}/${wasm}.js`),
+      find: wasmImport(wasm), replacement: resolve(import.meta.dirname, `pkg-${instrumented.get(mode)}/${wasm}.js`),
     })) : command === "serve" ? clients.map(client => client.wasm).flatMap(name => [{
-      find: new RegExp(`^(?:\\.\\./)+pkg/${name}$`), replacement: resolve(import.meta.dirname, `pkg-dev/${name}.js`),
+      find: wasmImport(name), replacement: resolve(import.meta.dirname, `pkg-dev/${name}.js`),
     }, {
-      find: new RegExp(`^(?:\\.\\./)+pkg/${name}_bg\\.wasm\\?url$`), replacement: `${resolve(import.meta.dirname, `pkg-dev/${name}_bg.wasm`)}?url`,
+      find: wasmImport(name, "_bg\\.wasm\\?url"), replacement: `${resolve(import.meta.dirname, `pkg-dev/${name}_bg.wasm`)}?url`,
     }]) : [],
   },
   worker: { format: "es" },

@@ -5,7 +5,7 @@ use engine_dev::results::{
     WatchResult, result,
 };
 use engine_dev::{
-    BenchmarkMode, BrowserControl, CaptureRequest, DrawState, Effect, EntityFacts,
+    BenchmarkInput, BenchmarkMode, BrowserControl, CaptureRequest, DrawState, Effect, EntityFacts,
     ExplainQuestion, HostContext, Outcome, ProfileRequest, Step, ToolCall, WatchRequest, Watcher,
 };
 use engine_registry::{BrickCosts, ExplainAsk};
@@ -56,6 +56,13 @@ pub(crate) enum Pending {
     Watch(Box<WatchRun>),
 }
 
+impl Pending {
+    pub(crate) fn takes_agent_input(&self) -> bool {
+        matches!(self, Self::Frames { .. })
+            || matches!(self, Self::Benchmark(run) if matches!(run.mode, BenchmarkMode::Paced))
+    }
+}
+
 const LOSS_WAITS: u32 = 120;
 
 const PROBE_WAITS: u32 = 120;
@@ -90,9 +97,11 @@ pub(crate) struct WatchRun {
 #[derive(Debug)]
 pub(crate) struct BenchmarkRun {
     mode: BenchmarkMode,
+    script: Vec<BenchmarkInput>,
     warmup: u64,
     samples: u64,
     started: f64,
+    frame_started: f64,
     view: (u32, u32),
     previous: Option<f64>,
     unwaited: Option<Value>,
@@ -124,12 +133,26 @@ fn shown(alpha: Option<f64>) -> Call<'static> {
     }
 }
 
-fn benchmarked(mode: &BenchmarkMode) -> Call<'static> {
+fn benchmarked(mode: &BenchmarkMode) -> Option<Call<'static>> {
     match mode {
-        BenchmarkMode::Step => Call::Control("step", json!({ "ticks": 1 })),
-        BenchmarkMode::Present => Call::Control("present", json!({ "alpha": 0.5 })),
-        BenchmarkMode::Render => render(),
+        BenchmarkMode::Step => Some(Call::Control("step", json!({ "ticks": 1 }))),
+        BenchmarkMode::Present => Some(Call::Control("present", json!({ "alpha": 0.5 }))),
+        BenchmarkMode::Render => Some(render()),
+        BenchmarkMode::Paced => None,
     }
+}
+
+fn paced_start(previous: f64) -> f64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let wait = previous + crate::host::policy::FRAME_INTERVAL_MS - now_ms();
+        if wait > 0.0 {
+            std::thread::sleep(std::time::Duration::from_secs_f64(wait * 0.001));
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = previous;
+    now_ms()
 }
 
 fn failed_frame(code: ErrorCode, frame: u32, frames: u32, failed: &str) -> Error {
@@ -157,10 +180,7 @@ impl BenchmarkRun {
         {
             let mut fields = Vec::new();
             numbers(&stats, "", &mut fields);
-            if let Some((field, value)) = fields
-                .iter()
-                .find(|(_, value)| !value.is_finite() || *value < 0.0)
-            {
+            if let Some((field, value)) = fields.iter().find(|(_, value)| !value.is_finite()) {
                 let mut got = Map::new();
                 got.insert(field.clone(), json!(value));
                 return Err(Error::new(ErrorCode::InvalidMeasurement, "$")
@@ -383,7 +403,9 @@ impl<G: Game> GameHost<G> {
                 }
                 let refused = Error::new(ErrorCode::SourceIo, "$");
                 self.dev_refused(match outcome.failed {
-                    Some(failed) => serde_json::from_str(&failed).unwrap_or_else(|_| refused.got(failed)),
+                    Some(failed) => {
+                        serde_json::from_str(&failed).unwrap_or_else(|_| refused.got(failed))
+                    }
                     None => refused.expected(Expected::Present),
                 })
             }
@@ -576,7 +598,7 @@ impl<G: Game> GameHost<G> {
                 interval_ms,
                 capture,
             } => {
-                self.suspend();
+                self.suspend_live();
                 let pending = Pending::Frames {
                     count,
                     interval: interval_ms,
@@ -624,7 +646,8 @@ impl<G: Game> GameHost<G> {
                 warmup,
                 samples,
                 mode,
-            } => self.dev_benchmark_start((warmup, samples), mode, context),
+                script,
+            } => self.dev_benchmark_start((warmup, samples), (mode, script), context),
             other @ (BrowserControl::Present { .. }
             | BrowserControl::Culling { .. }
             | BrowserControl::Environment(_)
@@ -971,7 +994,7 @@ impl<G: Game> GameHost<G> {
     fn dev_benchmark_start(
         &mut self,
         (warmup, samples): (u32, u32),
-        mode: BenchmarkMode,
+        (mode, script): (BenchmarkMode, Vec<BenchmarkInput>),
         context: &HostContext,
     ) -> Step {
         if context.width == 0 || context.height == 0 {
@@ -988,11 +1011,16 @@ impl<G: Game> GameHost<G> {
         {
             return self.dev_refused(stopped(refused));
         }
+        if matches!(mode, BenchmarkMode::Paced) {
+            self.suspend_live();
+        }
         let run = BenchmarkRun {
             mode,
+            script,
             warmup: u64::from(warmup),
             samples: u64::from(samples),
             started,
+            frame_started: started,
             view: (context.width, context.height),
             previous: None,
             unwaited: None,
@@ -1024,6 +1052,10 @@ impl<G: Game> GameHost<G> {
                     .got(view(context, outcome.interrupted)),
             );
         }
+        if matches!(run.mode, BenchmarkMode::Paced) && run.ran > 0 {
+            run.end = self.dev_invoke(status(), context)["observation"].take();
+            run.unwaited = Some(self.stats_value());
+        }
         let done = match run.waited(outcome.now.unwrap_or_else(now_ms)) {
             Ok(done) => done,
             Err(error) => return self.dev_refused(error),
@@ -1031,7 +1063,24 @@ impl<G: Game> GameHost<G> {
         if done {
             return self.dev_benchmark_report(&run, context);
         }
-        let reply = self.dev_invoke(benchmarked(&run.mode), context);
+        for entry in run
+            .script
+            .iter()
+            .filter(|entry| u64::from(entry.at) == run.ran)
+        {
+            let taken = Call::Control("input", Value::Object(entry.input.clone()));
+            let taken = self.dev_invoke(taken, context);
+            if taken["ok"] != true {
+                return self.dev_refused(stopped(&taken));
+            }
+        }
+        let Some(call) = benchmarked(&run.mode) else {
+            run.ran += 1;
+            run.frame_started = paced_start(run.frame_started);
+            let timestamp = run.frame_started;
+            return self.dev_effect(Pending::Benchmark(run), Effect::Frame { timestamp });
+        };
+        let reply = self.dev_invoke(call, context);
         if reply["ok"] != true {
             return self.dev_refused(stopped(&reply));
         }
@@ -1043,9 +1092,13 @@ impl<G: Game> GameHost<G> {
     }
 
     fn dev_benchmark_report(&mut self, run: &BenchmarkRun, context: &HostContext) -> Step {
+        let cleared = self.dev_invoke(Call::Control("input", json!({})), context);
         let after = self.dev_invoke(query("assets"), context);
-        if after["ok"] != true {
-            return self.dev_refused(stopped(&after));
+        if let Some(refused) = [&cleared, &after]
+            .into_iter()
+            .find(|reply| reply["ok"] != true)
+        {
+            return self.dev_refused(stopped(refused));
         }
         let environment = HostEnvironment {
             canvas_width: run.view.0,

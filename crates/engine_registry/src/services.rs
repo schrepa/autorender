@@ -96,18 +96,27 @@ impl ViewState {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Edges {
+    pressed: u32,
+    released: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InputState {
     held: u32,
-    pending_pressed: u32,
-    pending_released: u32,
-    tick_pressed: u32,
-    tick_released: u32,
+    next_tick: Edges,
+    next_frame: Edges,
+    shown: Edges,
 }
 
 impl InputState {
     pub fn ingest(&mut self, held: u32, pressed: u32, released: u32) {
-        self.pending_pressed |= pressed | (held & !self.held);
-        self.pending_released |= released | (self.held & !held);
+        let pressed = pressed | (held & !self.held);
+        let released = released | (self.held & !held);
+        for edges in [&mut self.next_tick, &mut self.next_frame] {
+            edges.pressed |= pressed;
+            edges.released |= released;
+        }
         self.held = held;
     }
 
@@ -116,11 +125,11 @@ impl InputState {
     }
 
     pub fn just_pressed(&self, action: u8) -> bool {
-        self.tick_pressed & mask(action) != 0
+        self.shown.pressed & mask(action) != 0
     }
 
     pub fn just_released(&self, action: u8) -> bool {
-        self.tick_released & mask(action) != 0
+        self.shown.released & mask(action) != 0
     }
 
     pub fn clear(&mut self) {
@@ -128,13 +137,15 @@ impl InputState {
     }
 
     pub fn begin_tick(&mut self) {
-        self.tick_pressed = std::mem::take(&mut self.pending_pressed);
-        self.tick_released = std::mem::take(&mut self.pending_released);
+        self.shown = std::mem::take(&mut self.next_tick);
     }
 
-    pub fn end_tick(&mut self) {
-        self.tick_pressed = 0;
-        self.tick_released = 0;
+    pub fn begin_frame(&mut self) {
+        self.shown = std::mem::take(&mut self.next_frame);
+    }
+
+    pub fn hide_edges(&mut self) {
+        self.shown = Edges::default();
     }
 }
 

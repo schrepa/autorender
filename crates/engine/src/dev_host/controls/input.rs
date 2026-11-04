@@ -24,7 +24,11 @@ pub(super) fn batch(host: &mut DevHost, input: InputBatch) -> Result<Value, Erro
         (delta_x, "pointer_delta_pixels", bounds::TURN),
         (delta_y, "pointer_delta_pixels", bounds::TURN),
         (input.wheel_up_notches, "wheel_up_notches", bounds::TURN),
-        (input.wheel_right_notches, "wheel_right_notches", bounds::TURN),
+        (
+            input.wheel_right_notches,
+            "wheel_right_notches",
+            bounds::TURN,
+        ),
     ];
     let axes = input.axes.iter().map(|&axis| (axis, "axes", bounds::AXIS));
     for (value, field, rule) in fields.into_iter().chain(axes) {
@@ -45,10 +49,19 @@ pub(super) fn batch(host: &mut DevHost, input: InputBatch) -> Result<Value, Erro
         }
     }
     if let Some(gatherer) = &mut host.gatherer {
-        for key in host.input.keys.iter().filter(|key| !input.keys.contains(key)) {
+        for key in host
+            .input
+            .keys
+            .iter()
+            .filter(|key| !input.keys.contains(key))
+        {
             gatherer.key(key, false, true);
         }
-        for key in input.keys.iter().filter(|key| !host.input.keys.contains(key)) {
+        for key in input
+            .keys
+            .iter()
+            .filter(|key| !host.input.keys.contains(key))
+        {
             gatherer.key(key, true, true);
         }
     }
@@ -66,63 +79,74 @@ pub(super) fn step(
     (width, height): (u32, u32),
 ) -> Result<Value, Error> {
     engine_core::check_dev_ticks(ticks)?;
-    let gathered = host
-        .gatherer
-        .as_mut()
-        .map(|gatherer| gatherer.take(0.0))
-        .unwrap_or_default();
+    let input = host.take_input();
     let _ = app
         .engine
         .app
         .world_mut()
         .modify_resource(|actions: &mut ActionInput| {
-            actions.ingest(gathered.held, gathered.pressed, gathered.released);
+            actions.ingest(input.held, input.pressed, input.released);
         });
-    let input = MoveInput {
-        move_forward: host.input.forward + gathered.state.move_forward,
-        move_right: host.input.right + gathered.state.move_right,
-        move_up: host.input.up + gathered.state.move_up,
-        look_right_pixels: host.input.look_right_pixels,
-        look_down_pixels: host.input.look_down_pixels,
-    };
-    let mut axes = *gathered.axes.values();
-    for (axis, &value) in axes.iter_mut().zip(&host.input.axes) {
-        *axis += value;
-    }
-    let menu = |press: MenuPress| host.input.menu.contains(&press);
-    app.set_gathered(FrameInput {
-        pointer: PointerInput {
-            position_pixels: host.input.pointer_pixels.map(Vec2::from),
-            delta_pixels: Vec2::from(host.input.pointer_delta_pixels),
-            wheel_up_notches: host.input.wheel_up_notches,
-            wheel_right_notches: host.input.wheel_right_notches,
-            inside: host.input.pointer_pixels.is_some(),
-            held: gathered.pointer.held,
-            pressed: gathered.pointer.pressed,
-            released: gathered.pointer.released,
-        },
-        axes: AxisInput::of(axes),
-        menu: MenuInput {
-            up: gathered.menu.up || menu(MenuPress::Up),
-            down: gathered.menu.down || menu(MenuPress::Down),
-            left: gathered.menu.left || menu(MenuPress::Left),
-            right: gathered.menu.right || menu(MenuPress::Right),
-            accept: gathered.menu.accept || menu(MenuPress::Accept),
-            back: gathered.menu.back || menu(MenuPress::Back),
-            wanted: false,
-        },
-        ..FrameInput::default()
-    });
-    host.input.look_right_pixels = 0.0;
-    host.input.look_down_pixels = 0.0;
-    host.input.pointer_delta_pixels = [0.0; 2];
-    host.input.wheel_up_notches = 0.0;
-    host.input.wheel_right_notches = 0.0;
-    host.input.menu.clear();
-    app.dev_step(ticks, width, height, input)
+    app.set_gathered(input);
+    app.dev_step(ticks, width, height, input.state)
         .map_err(|error| Error::new(ErrorCode::RenderFailed, "$").got(error))?;
     Ok(result::step(StepResult {
         ticks,
         temporary: true,
     }))
+}
+
+impl DevHost {
+    pub(crate) fn take_input(&mut self) -> FrameInput {
+        let gathered = self
+            .gatherer
+            .as_mut()
+            .map(|gatherer| gatherer.take(0.0))
+            .unwrap_or_default();
+        let batch = &mut self.input;
+        let mut axes = *gathered.axes.values();
+        for (axis, &value) in axes.iter_mut().zip(&batch.axes) {
+            *axis += value;
+        }
+        let menu = |press: MenuPress| batch.menu.contains(&press);
+        let input = FrameInput {
+            state: MoveInput {
+                move_forward: batch.forward + gathered.state.move_forward,
+                move_right: batch.right + gathered.state.move_right,
+                move_up: batch.up + gathered.state.move_up,
+                look_right_pixels: batch.look_right_pixels,
+                look_down_pixels: batch.look_down_pixels,
+            },
+            held: gathered.held,
+            pressed: gathered.pressed,
+            released: gathered.released,
+            pointer: PointerInput {
+                position_pixels: batch.pointer_pixels.map(Vec2::from),
+                delta_pixels: Vec2::from(batch.pointer_delta_pixels),
+                wheel_up_notches: batch.wheel_up_notches,
+                wheel_right_notches: batch.wheel_right_notches,
+                inside: batch.pointer_pixels.is_some(),
+                held: gathered.pointer.held,
+                pressed: gathered.pointer.pressed,
+                released: gathered.pointer.released,
+            },
+            axes: AxisInput::of(axes),
+            menu: MenuInput {
+                up: gathered.menu.up || menu(MenuPress::Up),
+                down: gathered.menu.down || menu(MenuPress::Down),
+                left: gathered.menu.left || menu(MenuPress::Left),
+                right: gathered.menu.right || menu(MenuPress::Right),
+                accept: gathered.menu.accept || menu(MenuPress::Accept),
+                back: gathered.menu.back || menu(MenuPress::Back),
+                wanted: false,
+            },
+        };
+        batch.look_right_pixels = 0.0;
+        batch.look_down_pixels = 0.0;
+        batch.pointer_delta_pixels = [0.0; 2];
+        batch.wheel_up_notches = 0.0;
+        batch.wheel_right_notches = 0.0;
+        batch.menu.clear();
+        input
+    }
 }

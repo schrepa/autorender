@@ -273,7 +273,11 @@ pub(crate) struct ProbePixel;
 
 impl Operation for ProbePixel {
     const NAME: &'static str = "probe_pixel";
-    type Params = (Res<'static, View>, ResMut<'static, Probe>, ResMut<'static, DebugShown>);
+    type Params = (
+        Res<'static, View>,
+        ResMut<'static, Probe>,
+        ResMut<'static, DebugShown>,
+    );
     type Request = PixelRequest;
 
     fn run(

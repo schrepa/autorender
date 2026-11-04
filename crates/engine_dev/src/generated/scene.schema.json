@@ -1769,6 +1769,10 @@
     "SceneAmbientOcclusion": {
       "additionalProperties": false,
       "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
         "intensity": {
           "default": 0.800000011920929,
           "format": "float",
@@ -6528,6 +6532,34 @@
       ],
       "type": "string"
     },
+    "UiImageRect": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "format": "float",
+          "type": "number"
+        },
+        "u": {
+          "format": "float",
+          "type": "number"
+        },
+        "v": {
+          "format": "float",
+          "type": "number"
+        },
+        "width": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "u",
+        "v",
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
     "UiInsets": {
       "additionalProperties": false,
       "properties": {
@@ -6781,19 +6813,13 @@
           ]
         },
         "image_rect": {
-          "default": [
-            0.0,
-            0.0,
-            1.0,
-            1.0
-          ],
-          "items": {
-            "format": "float",
-            "type": "number"
-          },
-          "maxItems": 4,
-          "minItems": 4,
-          "type": "array"
+          "$ref": "#/$defs/UiImageRect",
+          "default": {
+            "height": 1.0,
+            "u": 0.0,
+            "v": 0.0,
+            "width": 1.0
+          }
         },
         "justify": {
           "$ref": "#/$defs/UiJustify",
@@ -6932,12 +6958,12 @@
             "hover_color": null,
             "id": null,
             "image": null,
-            "image_rect": [
-              0.0,
-              0.0,
-              1.0,
-              1.0
-            ],
+            "image_rect": {
+              "height": 1.0,
+              "u": 0.0,
+              "v": 0.0,
+              "width": 1.0
+            },
             "justify": "start",
             "kind": "panel",
             "margin": [

@@ -3,6 +3,8 @@ use engine_core::{BrickList, DeviceLimits, Engine, Error, ErrorCode};
 use engine_render::{Renderer, wgpu};
 use engine_scene::{SceneFiles, SceneInstance, SceneLookControl, SceneViewControl};
 
+use crate::host::{MOVE_KEYS, MoveDirection};
+
 pub fn engine(bricks: impl FnOnce(BrickList) -> BrickList) -> crate::Result<Engine> {
     listed(bricks(BrickList::default()))
 }
@@ -40,6 +42,8 @@ pub trait Game: 'static {
     const ACTIONS: &'static [(&'static str, u32)] = &[("Space", 0)];
 
     const AXES: &'static [(&'static str, u32, f32)] = &[];
+
+    const MOVE_KEYS: &'static [(&'static str, MoveDirection)] = MOVE_KEYS;
 
     fn before_frame(&mut self, _engine: &mut Engine) {}
 

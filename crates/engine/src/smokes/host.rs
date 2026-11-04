@@ -1,7 +1,8 @@
 use engine_core::{Runs, Smoke, SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::json;
 
-use crate::host::{InputGatherer, SceneLoad};
+use crate::host::{InputGatherer, MOVE_KEYS, MoveDirection, SceneLoad};
+use engine_registry::InputState;
 
 pub(super) const SMOKES: &[Smoke] = &[
     Smoke {
@@ -22,7 +23,7 @@ const PAD_UP: u32 = 1 << 12;
 const PAD_SOUTH: u32 = 1;
 
 fn input_keys(_: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
-    let built = InputGatherer::new(ACTIONS, AXES);
+    let built = InputGatherer::new(ACTIONS, AXES, MOVE_KEYS);
     smoke_eq!(built.is_ok(), true, "gatherer_builds");
     let Ok(mut keys) = built else {
         return Ok(());
@@ -32,7 +33,81 @@ fn input_keys(_: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     mouse_binding(&mut keys)?;
     axes(&mut keys)?;
     pad(&mut keys)?;
-    menu(&mut keys)
+    menu(&mut keys)?;
+    move_keys()?;
+    edges()
+}
+
+fn move_keys() -> Result<(), SmokeFailure> {
+    let built = InputGatherer::new(ACTIONS, AXES, &[("KeyW", MoveDirection::Forward)]);
+    smoke_eq!(built.is_ok(), true, "game_move_keys_build");
+    let Ok(mut keys) = built else {
+        return Ok(());
+    };
+    smoke_eq!(
+        keys.key("KeyE", true, false),
+        false,
+        "unlisted_move_key_stays_free"
+    );
+    smoke_eq!(keys.key("KeyW", true, false), true, "listed_move_key_used");
+    let state = keys.take(0.0).state;
+    smoke_eq!(
+        json!([state.move_forward, state.move_up]),
+        json!([1.0, 0.0]),
+        "only_listed_keys_move"
+    );
+    let unknown = InputGatherer::new(ACTIONS, AXES, &[("KeyNone", MoveDirection::Up)]);
+    smoke_eq!(
+        json!(unknown.err().map(|error| error.path)),
+        json!("$.move_keys[0]"),
+        "unknown_move_key_refused"
+    );
+    Ok(())
+}
+
+fn edges() -> Result<(), SmokeFailure> {
+    let shown = |state: &InputState| json!([state.just_pressed(0), state.just_released(0)]);
+    let mut state = InputState::default();
+    state.ingest(1, 1, 0);
+    state.begin_tick();
+    smoke_eq!(
+        shown(&state),
+        json!([true, false]),
+        "first_tick_sees_a_press"
+    );
+    state.hide_edges();
+    state.begin_tick();
+    smoke_eq!(shown(&state), json!([false, false]), "second_tick_does_not");
+    state.hide_edges();
+    state.begin_frame();
+    smoke_eq!(
+        shown(&state),
+        json!([true, false]),
+        "the_frame_sees_the_press"
+    );
+    state.hide_edges();
+    state.begin_frame();
+    smoke_eq!(
+        shown(&state),
+        json!([false, false]),
+        "the_next_frame_does_not"
+    );
+    state.hide_edges();
+    state.ingest(0, 0, 1);
+    state.begin_frame();
+    smoke_eq!(
+        shown(&state),
+        json!([false, true]),
+        "a_frame_without_ticks_sees_a_release"
+    );
+    state.hide_edges();
+    state.begin_tick();
+    smoke_eq!(
+        shown(&state),
+        json!([false, true]),
+        "the_tick_after_still_sees_it"
+    );
+    Ok(())
 }
 
 fn keyboard(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {

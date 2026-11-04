@@ -5,7 +5,6 @@ use std::process::{Command, Stdio};
 use serde_json::{Value, json};
 
 use crate::Failure;
-use crate::heavy::{HELD, HeavyRun};
 use crate::pipeline::QUICK;
 use crate::process::{Project, engine_commit, project_option, run};
 use crate::serve::Server;
@@ -66,7 +65,6 @@ pub fn smoke(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     } else {
         options.names.join(",")
     };
-    let _heavy = HeavyRun::hold(&format!("cargo xtask smoke {names}"))?;
     let records = if options.browser {
         browser(root, &project, &names)?
     } else {
@@ -116,8 +114,7 @@ fn browser(root: &Path, project: &Project, names: &str) -> Result<Vec<Value>, Fa
     let mut command = Command::new("node");
     command
         .args(["scripts/smoke-browser.mjs", &url, BROWSER_LIMIT_MS])
-        .current_dir(root.join("web"))
-        .env(HELD.0, HELD.1);
+        .current_dir(root.join("web"));
     let records = collect(command, "scripts/smoke-browser.mjs");
     drop(server);
     records

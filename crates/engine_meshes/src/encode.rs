@@ -41,14 +41,20 @@ impl MeshesGpu {
                 Count::Groups([(nodes.capacity as u32).div_ceil(CULL_GROUP), 1, 1]),
             );
             if !nodes.rows.is_empty() {
-                cx.dispatch(&computes.apply, Count::Groups([nodes.rows.len() as u32, 1, 1]));
+                cx.dispatch(
+                    &computes.apply,
+                    Count::Groups([nodes.rows.len() as u32, 1, 1]),
+                );
             }
         }
         for (level, &(start, end)) in nodes.level_ranges.iter().enumerate() {
             if end > start
                 && let Some(pipeline) = computes.compose.get(level)
             {
-                cx.dispatch(pipeline, Count::Groups([(end - start).div_ceil(PARENT_GROUP), 1, 1]));
+                cx.dispatch(
+                    pipeline,
+                    Count::Groups([(end - start).div_ceil(PARENT_GROUP), 1, 1]),
+                );
             }
         }
         let candidates = self.state.candidates;
@@ -82,7 +88,11 @@ impl MeshesGpu {
             };
             cx.dispatch(
                 pipeline,
-                Count::Groups([width.div_ceil(PYRAMID_GROUP), height.div_ceil(PYRAMID_GROUP), 1]),
+                Count::Groups([
+                    width.div_ceil(PYRAMID_GROUP),
+                    height.div_ceil(PYRAMID_GROUP),
+                    1,
+                ]),
             );
         }
         let candidates = self.state.candidates;
@@ -99,7 +109,10 @@ impl MeshesGpu {
         if !casters.runs || casters.candidates == 0 {
             return;
         }
-        cx.dispatch(&self.computes.select, Count::Groups([casters.candidates.div_ceil(CULL_GROUP), 1, 1]));
+        cx.dispatch(
+            &self.computes.select,
+            Count::Groups([casters.candidates.div_ceil(CULL_GROUP), 1, 1]),
+        );
         cx.dispatch(&self.computes.count_casters, Count::Groups([1, 1, 1]));
     }
 

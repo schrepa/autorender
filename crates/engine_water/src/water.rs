@@ -353,12 +353,7 @@ impl GpuPart for WaterGpu {
                     drawn.cell,
                     drawn.cells as f32,
                 ],
-                [
-                    drawn.datum,
-                    wrap_x as f32,
-                    wrap_z as f32,
-                    drawn.pool as f32,
-                ],
+                [drawn.datum, wrap_x as f32, wrap_z as f32, drawn.pool as f32],
                 [drawn.pixels, 0.0, 0.0, 0.0],
             )
         });

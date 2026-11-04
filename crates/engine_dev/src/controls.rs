@@ -1,11 +1,12 @@
 use crate::protocol::{
-    CaptureRequest, ExplainQuestion, MAX_WATCHED, ProfileRequest, WatchRequest, bounds,
+    BenchmarkInput, BenchmarkMode, CaptureRequest, ExplainQuestion, MAX_WATCHED, ProfileRequest,
+    WatchRequest, bounds,
 };
 use crate::results::{DebugMissingAssetResult, EnvironmentResult, ParentResult, result};
 use crate::{BrowserControl, EnvironmentControl, bounded};
 use bevy_ecs::prelude::World;
 use engine_core::{AssetLibrary, Camera, Engine, Mesh3d, Projection, glam::Vec3};
-use engine_registry::OperationScene;
+use engine_registry::{OperationScene, Registry};
 use engine_scene::{SceneEnvironment, SceneInstance};
 use engine_settings::{Error, ErrorCode, Expected};
 use serde_json::Value;
@@ -25,7 +26,10 @@ impl BrowserControl {
     pub fn validate(&self) -> Result<(), Error> {
         match self {
             Self::Benchmark {
-                warmup, samples, ..
+                warmup,
+                samples,
+                mode,
+                script,
             } => {
                 bounded(
                     *warmup,
@@ -39,6 +43,7 @@ impl BrowserControl {
                     ErrorCode::InvalidBenchmark,
                     "$.samples",
                 )?;
+                validated_script(mode, script, warmup + samples)?;
             }
             Self::Frames {
                 count, interval_ms, ..
@@ -108,6 +113,32 @@ impl BrowserControl {
         }
         Ok(())
     }
+}
+
+fn validated_script(
+    mode: &BenchmarkMode,
+    script: &[BenchmarkInput],
+    frames: u32,
+) -> Result<(), Error> {
+    if matches!(mode, BenchmarkMode::Render | BenchmarkMode::Present) && !script.is_empty() {
+        return Err(Error::new(ErrorCode::InvalidBenchmark, "$.script").expected(Expected::Absent));
+    }
+    for (index, entry) in script.iter().enumerate() {
+        if entry.at >= frames {
+            return Err(
+                Error::new(ErrorCode::InvalidBenchmark, format!("$.script[{index}].at"))
+                    .at_most(u64::from(frames - 1))
+                    .got(entry.at),
+            );
+        }
+        BrowserControl::parse("input", Value::Object(entry.input.clone()), true).map_err(
+            |error| Error {
+                path: format!("$.script[{index}].input"),
+                ..error
+            },
+        )?;
+    }
+    Ok(())
 }
 
 impl CaptureRequest {
@@ -288,6 +319,7 @@ fn environment(world: &mut World, control: &EnvironmentControl) -> Result<Value,
         }
         engine_settings::parse_json::<SceneEnvironment>(&Value::Object(merged).to_string())?
     } else {
+        stays_on(world, control, &before)?;
         control.sections()
     };
     let skipped = environment.apply_sections(world, "$")?;
@@ -306,6 +338,27 @@ fn environment(world: &mut World, control: &EnvironmentControl) -> Result<Value,
         after: pick(&after),
         skipped,
     }))
+}
+
+fn stays_on(world: &World, control: &EnvironmentControl, before: &Value) -> Result<(), Error> {
+    let Some(registry) = world.get_resource::<Registry>() else {
+        return Ok(());
+    };
+    for (key, value) in &control.sections {
+        let unnamed = value
+            .as_object()
+            .is_some_and(|fields| !fields.contains_key("enabled"));
+        let off_by_default = registry
+            .section(key)
+            .is_some_and(|section| section.default_value()["enabled"] == false);
+        if unnamed && off_by_default && before[key.as_str()]["enabled"] == true {
+            return Err(
+                Error::new(ErrorCode::MissingField, format!("$.{key}.enabled"))
+                    .expected(Expected::Present),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn overlay(base: &mut Value, patch: Value) {

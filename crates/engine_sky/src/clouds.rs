@@ -555,6 +555,58 @@ fn samplers(cx: &mut Install<'_, SkyGpu>) -> [Sampler<SkyGpu>; 2] {
     [dome, noise]
 }
 
+fn cloud_passes(
+    cx: &mut Install<'_, SkyGpu>,
+    environment: Pass<SkyGpu>,
+    (shadow_cells, shadows): (Buffer<SkyGpu>, Buffer<SkyGpu>),
+) -> [Pass<SkyGpu>; 6] {
+    let light_pass = cx
+        .pass("cloud_light")
+        .after(environment)
+        .label("engine/cloud-light")
+        .span("cloud_light")
+        .id();
+    let march_pass = cx
+        .pass("clouds")
+        .after(environment)
+        .after(light_pass)
+        .label("engine/cloud-march")
+        .span("clouds")
+        .id();
+    let shadow_pass = cx
+        .pass("cloud_shadows")
+        .after(march_pass)
+        .label("engine/cloud-shadows")
+        .span("cloud_shadows")
+        .id();
+    let shadow_copy = cx.copy(
+        "cloud_shadow_copy",
+        Copied::Buffer(shadow_cells),
+        Copied::Buffer(shadows),
+    );
+    let view_pass = cx
+        .pass("cloud_march")
+        .at(Layer::Over)
+        .label("engine/cloud-view")
+        .span("cloud_view")
+        .id();
+    let composite_pass = cx
+        .pass("cloud_composite")
+        .at(Layer::Over)
+        .after(view_pass)
+        .label("engine/cloud-composite")
+        .span("cloud_composite")
+        .id();
+    [
+        light_pass,
+        march_pass,
+        shadow_pass,
+        shadow_copy,
+        view_pass,
+        composite_pass,
+    ]
+}
+
 impl CloudPass {
     pub(crate) fn install(
         cx: &mut Install<'_, SkyGpu>,
@@ -562,13 +614,22 @@ impl CloudPass {
         environment: Pass<SkyGpu>,
     ) -> Result<Self, Error> {
         use crate::shaders::sky::{clouds, faces::cloud_shadows, light};
-        let noise_shape =
-            cx.texture("cloud_noise_shape", wgpu::TextureFormat::R8Unorm, Lifetime::Kept);
-        let noise_detail =
-            cx.texture("cloud_noise_detail", wgpu::TextureFormat::R8Unorm, Lifetime::Kept);
+        let noise_shape = cx.texture(
+            "cloud_noise_shape",
+            wgpu::TextureFormat::R8Unorm,
+            Lifetime::Kept,
+        );
+        let noise_detail = cx.texture(
+            "cloud_noise_detail",
+            wgpu::TextureFormat::R8Unorm,
+            Lifetime::Kept,
+        );
         let domes = cx.texture("cloud_domes", DOME_FORMAT, Lifetime::Kept);
-        let view_texture =
-            cx.texture("cloud_view", wgpu::TextureFormat::Rgba16Float, Lifetime::Kept);
+        let view_texture = cx.texture(
+            "cloud_view",
+            wgpu::TextureFormat::Rgba16Float,
+            Lifetime::Kept,
+        );
         let shadows = cx.buffer("cloud_shadows", Lifetime::Kept);
         let shadow_cells = cx.buffer("cloud_shadow_cells", Lifetime::Kept);
         let light_cells = cx.buffer("cloud_light", Lifetime::Kept);
@@ -580,43 +641,14 @@ impl CloudPass {
         cx.frame(light::SKY_DOMES, Bind::Texture(domes))?;
         cx.frame(light::SKY_CLOUD_SAMPLER, Bind::Sampler(dome_sampler))?;
         cx.frame(cloud_shadows::CLOUD_SHADOWS, Bind::Buffer(shadows))?;
-        let light_pass = cx
-            .pass("cloud_light")
-            .after(environment)
-            .label("engine/cloud-light")
-            .span("cloud_light")
-            .id();
-        let march_pass = cx
-            .pass("clouds")
-            .after(environment)
-            .after(light_pass)
-            .label("engine/cloud-march")
-            .span("clouds")
-            .id();
-        let shadow_pass = cx
-            .pass("cloud_shadows")
-            .after(march_pass)
-            .label("engine/cloud-shadows")
-            .span("cloud_shadows")
-            .id();
-        let shadow_copy = cx.copy(
-            "cloud_shadow_copy",
-            Copied::Buffer(shadow_cells),
-            Copied::Buffer(shadows),
-        );
-        let view_pass = cx
-            .pass("cloud_march")
-            .at(Layer::Over)
-            .label("engine/cloud-view")
-            .span("cloud_view")
-            .id();
-        let composite_pass = cx
-            .pass("cloud_composite")
-            .at(Layer::Over)
-            .after(view_pass)
-            .label("engine/cloud-composite")
-            .span("cloud_composite")
-            .id();
+        let [
+            light_pass,
+            march_pass,
+            shadow_pass,
+            shadow_copy,
+            view_pass,
+            composite_pass,
+        ] = cloud_passes(cx, environment, (shadow_cells, shadows));
         let noise = || {
             [
                 (clouds::CLOUDS, Bind::Buffer(uniform)),

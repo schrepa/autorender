@@ -518,6 +518,7 @@ fn install_with(
                         part: part.part,
                         name: part.name,
                         lazy: part.lazy,
+                        turns_on_in_play: part.turns_on_in_play,
                         labels: part.labels,
                         scope: part.scope,
                         install: part.install,
@@ -540,6 +541,7 @@ fn install_with(
             package: entry.package,
             name: entry.record.name,
             lazy: entry.record.lazy,
+            turns_on_in_play: entry.record.turns_on_in_play,
             labels: entry.record.labels,
             owner: entry
                 .brick
@@ -712,10 +714,6 @@ impl Renderer {
         self.resolver = installed
             .resolve
             .map(|(names, package)| (names.pass, package));
-        run.switches = switches_of(&run.machine, world, &[]);
-        let scope = crate::gpu_calls::validation_scope(&self.core.device);
-        run.warm(false);
-        self.installing = Some(Box::pin(scope.pop()));
         let mut stages: Vec<(&'static str, &'static str)> = Vec::new();
         self.spans = run
             .machine
@@ -779,6 +777,7 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     run.gates = installed.gates;
     run.switches = switches_of(&run.machine, world, &[]);
     run.warm(true);
+    run.make_all_shaders();
     match crate::platform::ready(scope.pop()) {
         Some(Some(error)) => Err(vec![failed_with("$.pipelines", error)]),
         Some(None) | None => Ok(listed),

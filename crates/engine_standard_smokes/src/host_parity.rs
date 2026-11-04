@@ -48,8 +48,28 @@ fn camera() -> Value {
 }
 
 fn accepted_cases() -> Vec<Case> {
+    let mut cases = frame_cases();
+    cases.extend(scene_cases());
+    cases
+}
+
+fn frame_cases() -> Vec<Case> {
     vec![
         ("status_answers", "query", named("status", json!({})), true),
+        (
+            "benchmark_paces",
+            "control",
+            named(
+                "benchmark",
+                json!({
+                    "mode": "paced",
+                    "warmup": 0,
+                    "samples": 2,
+                    "script": [{ "at": 0, "input": { "forward": 1 } }],
+                }),
+            ),
+            true,
+        ),
         ("describe_lists", "describe", json!({}), true),
         (
             "describe_frame_stats",
@@ -117,6 +137,11 @@ fn accepted_cases() -> Vec<Case> {
             ),
             true,
         ),
+    ]
+}
+
+fn scene_cases() -> Vec<Case> {
+    vec![
         (
             "culling_taken",
             "control",

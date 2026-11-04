@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use crate::{
     authoring,
     process::{
-        DEV_FEATURES, NPM, WASM_TARGET, client_crates, client_packages, run, verify_wasm_bindgen,
+        Client, DEV_FEATURES, NPM, WASM_TARGET, clients, game_names, run, verify_wasm_bindgen,
     },
 };
 
@@ -17,13 +17,39 @@ pub fn build(root: &Path) -> Result<(), String> {
 }
 
 pub fn prepare_dev(root: &Path) -> Result<(), String> {
+    prepare_clients(root, &clients().iter().collect::<Vec<_>>())
+}
+
+fn prepare_clients(root: &Path, selected: &[&Client]) -> Result<(), String> {
     authoring::validate_sources(root)?;
-    build_wasm(root, true, QUICK)?;
+    build_clients(root, selected, true, QUICK)?;
     install_web_dependencies(root)
 }
 
-pub fn dev(root: &Path, port: u16) -> Result<(), String> {
-    prepare_dev(root)?;
+fn of_game(game: &str) -> Result<Vec<&'static Client>, String> {
+    if !clients()
+        .iter()
+        .any(|client| client.game.as_deref() == Some(game))
+    {
+        return Err(serde_json::json!({
+            "code": "invalid_name",
+            "path": "--game",
+            "got": game,
+            "expected": game_names(),
+        })
+        .to_string());
+    }
+    Ok(clients()
+        .iter()
+        .filter(|client| client.game.as_deref().is_none_or(|own| own == game))
+        .collect())
+}
+
+pub fn dev(root: &Path, port: u16, game: Option<&str>) -> Result<(), String> {
+    match game {
+        Some(game) => prepare_clients(root, &of_game(game)?)?,
+        None => prepare_dev(root)?,
+    }
     let record = serde_json::json!({
         "event": "serving",
         "url": format!("http://127.0.0.1:{port}"),
@@ -53,9 +79,25 @@ pub(crate) fn build_wasm(
     development: bool,
     profile: &'static str,
 ) -> Result<(), String> {
+    build_clients(
+        root,
+        &clients().iter().collect::<Vec<_>>(),
+        development,
+        profile,
+    )
+}
+
+fn build_clients(
+    root: &Path,
+    selected: &[&Client],
+    development: bool,
+    profile: &'static str,
+) -> Result<(), String> {
     verify_wasm_bindgen(root)?;
     let mut arguments: Vec<&str> = vec!["build"];
-    arguments.extend(client_packages());
+    for client in selected {
+        arguments.extend(["-p", client.package.as_str()]);
+    }
     arguments.extend(["--target", WASM_TARGET, "--profile", profile, "--locked"]);
     if development {
         arguments.extend(["--features", DEV_FEATURES]);
@@ -66,7 +108,8 @@ pub(crate) fn build_wasm(
     } else {
         "web/pkg"
     };
-    for name in client_crates() {
+    for client in selected {
+        let name = client.wasm.as_str();
         let artifact = format!("target/{WASM_TARGET}/{profile}/{name}.wasm");
         let mut arguments = vec![
             artifact.as_str(),

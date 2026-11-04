@@ -33,7 +33,11 @@ impl Renderer {
     pub fn motion(&self, world: &World) -> bool {
         world
             .get_resource::<engine_registry::MembersOf<crate::ViewOutputs>>()
-            .is_some_and(|members| members.live().any(|output| MOTION_OUTPUTS.contains(&output.name)))
+            .is_some_and(|members| {
+                members
+                    .live()
+                    .any(|output| MOTION_OUTPUTS.contains(&output.name))
+            })
     }
 
     pub fn texture_sampling(&self) -> engine_core::TextureSampling {
@@ -110,7 +114,9 @@ impl Renderer {
             .split_first_chunk::<4>()
             .ok_or_else(|| broken(Expected::Present))?;
         let length = u32::from_le_bytes(*length) as usize;
-        let fixed = rest.get(..length).ok_or_else(|| broken(Expected::Present))?;
+        let fixed = rest
+            .get(..length)
+            .ok_or_else(|| broken(Expected::Present))?;
         let machine = &rest[length..];
         let mut created = self.core.pipeline_counts.create_listed(fixed)?;
         if let Some(run) = self.run.as_mut() {
@@ -121,7 +127,10 @@ impl Renderer {
 
     pub fn pipelines_listed(&self) -> (u32, u32) {
         let (up_front, unlisted) = self.core.pipeline_counts.listed();
-        let (made, missed) = self.run.as_ref().map_or((0, 0), |run| (run.up_front, run.unlisted));
+        let (made, missed) = self
+            .run
+            .as_ref()
+            .map_or((0, 0), |run| (run.up_front, run.unlisted));
         (up_front + made, unlisted + missed)
     }
 
@@ -131,7 +140,9 @@ impl Renderer {
                 .iter()
                 .enumerate()
                 .filter(|(_, fault)| fault.is_some())
-                .fold(0_u128, |bits, (at, _)| bits | 1_u128.checked_shl(at as u32).unwrap_or(0))
+                .fold(0_u128, |bits, (at, _)| {
+                    bits | 1_u128.checked_shl(at as u32).unwrap_or(0)
+                })
         });
         engine_core::Names {
             bits,
@@ -140,6 +151,9 @@ impl Renderer {
     }
 
     fn held_assets(&self) -> Option<&crate::encode::Assets> {
-        self.run.as_ref().map(|run| &run.assets).or(self.assets.as_ref())
+        self.run
+            .as_ref()
+            .map(|run| &run.assets)
+            .or(self.assets.as_ref())
     }
 }

@@ -18,6 +18,25 @@ pub trait RecordExt {
     fn record(&mut self) -> &mut BrickRecord;
 }
 
+#[diagnostic::on_unimplemented(
+    message = "`systems` takes plain systems and already runs them in the order given",
+    label = "pass the function or tuple itself, without `.chain()`, `.run_if()`, `.after()` or `.before()`",
+    note = "use `Bricks::within` for a condition; a later brick in the list runs after an earlier one"
+)]
+pub trait PlainSystems<M>: Send + Sync + 'static {}
+
+macro_rules! plain_markers {
+    ($last:ident) => {};
+    ($first:ident, $($rest:ident),+) => {
+        impl<T: Send + Sync + 'static, $first, $($rest),+> PlainSystems<($first, $($rest),+)> for T {}
+        plain_markers!($($rest),+);
+    };
+}
+
+plain_markers!(
+    M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20
+);
+
 pub(crate) struct ScopeEntry {
     pub(crate) parent: Option<Scope>,
     pub(crate) condition: Option<GateFn>,
@@ -233,10 +252,6 @@ impl BrickRecord {
         self.owned.iter().any(|owned| owned.type_id == type_id)
     }
 
-    pub fn owns_path(&self, path: &str) -> bool {
-        self.owner.is_some_and(|owner| within(path, owner))
-    }
-
     pub fn when(&mut self, condition: GateFn) {
         if self.scopes[Scope::BRICK.index()].condition.is_some() {
             let path = format!("$.bricks.{}.when", self.package);
@@ -271,7 +286,7 @@ impl BrickRecord {
     pub fn systems<M: 'static>(
         &mut self,
         schedule: InternedScheduleLabel,
-        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + Send + Sync + 'static,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + PlainSystems<M>,
     ) {
         self.systems.push(SystemsCall {
             scope: self.current,
@@ -284,7 +299,7 @@ impl BrickRecord {
     pub fn off_in<M: 'static>(
         &mut self,
         schedule: InternedScheduleLabel,
-        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + Send + Sync + 'static,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + PlainSystems<M>,
     ) {
         self.systems.push(SystemsCall {
             scope: Scope::BRICK,
@@ -408,15 +423,7 @@ pub(crate) fn owner_of(type_name: &'static str, package: &str) -> Option<&'stati
     let rest = type_name[segment.len()..].strip_prefix("::bricks::")?;
     let module = rest.split("::").next()?;
     let named = package.strip_suffix(module)?.strip_suffix('_')?;
-    if module.is_empty() || !is_package(segment, named) {
-        return None;
-    }
-    Some(&type_name[..type_name.len() - rest.len() + module.len()])
-}
-
-pub(crate) fn within(path: &str, owner: &str) -> bool {
-    path.strip_prefix(owner)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with("::"))
+    (!module.is_empty() && is_package(segment, named)).then_some(segment)
 }
 
 pub(crate) fn is_package(segment: &str, package: &str) -> bool {

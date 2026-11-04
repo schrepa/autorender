@@ -17,19 +17,17 @@ use sha2::{Digest, Sha256};
 
 use crate::{Error, ErrorCode, JobRef, List, Source, settings};
 
+type JobStart = fn(&[u8], &mut JobCx<'_>) -> Result<Box<dyn Job>, Error>;
+
 pub struct JobKind {
     name: &'static str,
     source: &'static Source,
-    start: fn(&[u8], &mut JobCx<'_>) -> Result<Box<dyn Job>, Error>,
+    start: JobStart,
     parity: RecordParity,
 }
 
 impl JobKind {
-    pub const fn new(
-        name: &'static str,
-        source: &'static Source,
-        start: fn(&[u8], &mut JobCx<'_>) -> Result<Box<dyn Job>, Error>,
-    ) -> Self {
+    pub const fn new(name: &'static str, source: &'static Source, start: JobStart) -> Self {
         Self {
             name,
             source,
@@ -155,7 +153,12 @@ impl JobCx<'_> {
 
 #[doc(hidden)]
 pub fn job_list(kinds: &[&'static JobKind]) -> Result<JobList, Error> {
-    let core: [&'static JobKind; 3] = [&TEXTURE_COOK, &MESH_LODS, &crate::assets::IMPOSTOR];
+    let core: [&'static JobKind; 4] = [
+        &TEXTURE_COOK,
+        &MESH_LODS,
+        &crate::assets::IMPOSTOR,
+        &crate::assets::IMPOSTOR_ASSEMBLY,
+    ];
     JobList::new(
         core.into_iter()
             .chain(kinds.iter().copied())
@@ -334,12 +337,16 @@ impl Jobs<'_, '_> {
 
     pub fn share(&mut self, bytes: Arc<[u8]>) -> RecordKey {
         let key = share_key(&bytes);
-        self.orders.orders.push(JobOrder::Share { key: key.0, bytes });
+        self.orders
+            .orders
+            .push(JobOrder::Share { key: key.0, bytes });
         key
     }
 
     pub fn share_as(&mut self, key: RecordKey, bytes: Arc<[u8]>) {
-        self.orders.orders.push(JobOrder::Share { key: key.0, bytes });
+        self.orders
+            .orders
+            .push(JobOrder::Share { key: key.0, bytes });
     }
 
     pub fn share_record(&mut self, ticket: &Ticket) -> RecordKey {
@@ -411,9 +418,11 @@ settings! {
     }
 }
 
-static TEXTURES: Source = Source::generated("engine_textures", false, crate::sources::TEXTURES, &[]);
+static TEXTURES: Source =
+    Source::generated("engine_textures", false, crate::sources::TEXTURES, &[]);
 
-static LODBUILD: Source = Source::generated("engine_lodbuild", false, crate::sources::LODBUILD, &[]);
+static LODBUILD: Source =
+    Source::generated("engine_lodbuild", false, crate::sources::LODBUILD, &[]);
 
 pub(crate) const TEXTURE_COOK_NAME: &str = "engine::texture_cook";
 
@@ -1096,9 +1105,10 @@ impl JobExchange {
 }
 
 pub(crate) fn exchange_orders(world: &mut World) {
-    let keep_frames = world
-        .get_resource::<JobSettings>()
-        .map_or_else(|| JobSettings::default().keep_frames, |jobs| jobs.keep_frames);
+    let keep_frames = world.get_resource::<JobSettings>().map_or_else(
+        || JobSettings::default().keep_frames,
+        |jobs| jobs.keep_frames,
+    );
     settle_orders(world, Some(keep_frames));
 }
 

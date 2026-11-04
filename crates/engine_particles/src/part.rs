@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{DeviceLimits, Entry, Error, View, gpu_struct};
 use engine_render::{
-    Access, Attach, Bind, Buffer, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Layer,
-    Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, ViewTarget, wgpu,
+    Access, Attach, Bind, Buffer, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Layer, Lifetime,
+    Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, ViewTarget, wgpu,
 };
 use glam::{Mat4, Vec3};
 

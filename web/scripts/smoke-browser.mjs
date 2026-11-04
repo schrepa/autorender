@@ -9,6 +9,22 @@ page.on("pageerror", error => { if (errors.length < 20) errors.push(String(error
 page.on("console", entry => { if (entry.type() === "error" && errors.length < 20) errors.push(entry.text().slice(0, 2000)); });
 let printed = 0;
 try {
+  await page.addInitScript(() => {
+    const device = /** @type {any} */ (globalThis).GPUDevice;
+    if (!device) return;
+    const refused = [], pending = [];
+    const create = device.prototype.createShaderModule;
+    device.prototype.createShaderModule = function (descriptor) {
+      const module = create.call(this, descriptor);
+      pending.push(module.getCompilationInfo().then(({ messages }) => {
+        for (const { type, message, lineNum, linePos } of messages) {
+          if (type === "error" && refused.length < 20) refused.push({ label: descriptor.label, message: message.slice(0, 2000), line: lineNum, column: linePos });
+        }
+      }, () => {}));
+      return module;
+    };
+    /** @type {any} */ (globalThis).__engineRefusedShaders = async () => { await Promise.all(pending); return refused; };
+  });
   await page.goto(url, { waitUntil: "domcontentloaded" });
   const until = Date.now() + Number(limit);
   for (;;) {
@@ -30,6 +46,11 @@ try {
       break;
     }
     await delay(250);
+  }
+  const refused = await page.evaluate(() => /** @type {any} */ (globalThis).__engineRefusedShaders?.() ?? []);
+  if (refused.length) {
+    console.error(JSON.stringify({ error: { code: "render_failed", path: "$.shaders" }, refused }));
+    process.exitCode = 1;
   }
 } finally {
   await close();

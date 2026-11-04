@@ -6,7 +6,8 @@ use engine_math::clamp;
 
 use super::{
     FLOOD, FORM, GRAIN, Generator, POWER, RATIO_STEP, RIVER_EDGE_FAR, RIVER_EDGE_STEP,
-    RIVER_EDGE_ZERO, SAMPLES, Stage, Tile, bed_at, from_half, on_triangle, river_meters, river_step,
+    RIVER_EDGE_ZERO, SAMPLES, Stage, Tile, bed_at, from_half, on_triangle, river_meters,
+    river_step,
 };
 use crate::hydrology::RIVER_FAR;
 use crate::{Bed, HydrologyBake as Hydrology, HydrologySample, Rivers, TILE_STRIDE};
@@ -123,7 +124,12 @@ impl Tile {
     }
 
     pub fn bed(&self, local: Vec2) -> Option<Bed> {
-        bed_at(self.river_beds.as_deref()?, &self.heights, self.spacing, local)
+        bed_at(
+            self.river_beds.as_deref()?,
+            &self.heights,
+            self.spacing,
+            local,
+        )
     }
 
     pub(crate) fn river_inputs(&self, x: i32, z: i32) -> RiverInputs {

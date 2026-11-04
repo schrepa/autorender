@@ -1,10 +1,10 @@
 mod gpu;
 
+pub(crate) use gpu::pose_rows;
 pub use gpu::{
     GpuCurrent, GpuPresentation, NO_PARENT, NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE,
     NODE_VALID, NodeInfo, NodePose, PoseRows,
 };
-pub(crate) use gpu::pose_rows;
 
 use crate::collections::HashSet;
 
@@ -242,10 +242,7 @@ impl FromWorld for PresentedTransforms {
 }
 
 impl PresentedTransforms {
-    pub fn gpu_presentation<'a>(
-        &'a self,
-        hierarchy: &'a GlobalTransforms,
-    ) -> GpuPresentation<'a> {
+    pub fn gpu_presentation<'a>(&'a self, hierarchy: &'a GlobalTransforms) -> GpuPresentation<'a> {
         self.gpu.view(hierarchy)
     }
 

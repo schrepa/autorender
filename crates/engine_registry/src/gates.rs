@@ -144,10 +144,12 @@ pub(crate) struct Off {
     pub(crate) system: BoxedSystem,
 }
 
+pub(crate) type GateReset = (GateId, fn(&mut World));
+
 pub struct GateDriver {
     gates: Box<[Gate]>,
     offs: Box<[Off]>,
-    resets: Box<[(GateId, fn(&mut World))]>,
+    resets: Box<[GateReset]>,
     refresh: Box<[fn(&mut World)]>,
     scratch: Vec<(GateId, bool)>,
     changed: Vec<(GateId, bool)>,
@@ -158,7 +160,7 @@ impl GateDriver {
     pub(crate) fn new(
         gates: Vec<Gate>,
         offs: Vec<Off>,
-        resets: Vec<(GateId, fn(&mut World))>,
+        resets: Vec<GateReset>,
         refresh: Vec<fn(&mut World)>,
     ) -> Self {
         Self {

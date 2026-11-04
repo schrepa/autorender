@@ -13,6 +13,7 @@ use serde_json::Value;
 
 use crate::gates::{GateId, Scope};
 use crate::members::{add_member, each_member, init_members, refresh_members};
+use crate::registry::MemberEach;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Owned {
@@ -65,16 +66,18 @@ impl Filled {
     }
 }
 
+type MemberAdd = fn(&mut World, Box<dyn Any + Send + Sync>, GateId, (&'static str, TypeId));
+
 pub struct JoinEntry {
     pub place: PlaceDecl,
     pub list: TypeId,
     pub scope: Scope,
     pub wgsl: Option<Box<dyn Any + Send + Sync>>,
     pub(crate) member: Option<Box<dyn Any + Send + Sync>>,
-    pub(crate) add: fn(&mut World, Box<dyn Any + Send + Sync>, GateId, (&'static str, TypeId)),
+    pub(crate) add: MemberAdd,
     pub(crate) init: fn(&mut World),
     pub(crate) refresh: fn(&mut World),
-    pub(crate) each: fn(&World, &mut dyn FnMut(&dyn Any)),
+    pub(crate) each: MemberEach,
 }
 
 impl JoinEntry {

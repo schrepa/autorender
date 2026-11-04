@@ -1,6 +1,8 @@
 import { engineFailure } from "../generated/errors";
 import { JOB_CACHE_MIB, MAX_JOB_CACHE_MIB } from "../generated/host";
 
+declare const __PUBLIC_PACKS__: boolean;
+
 const DIRECTORY = "engine-job-cache";
 const INDEX = "index.json";
 const SAVE_DELAY = 2000;
@@ -159,9 +161,21 @@ export class JobStore {
   }
 }
 
+async function packNames(): Promise<string[]> {
+  if (!__PUBLIC_PACKS__) return [];
+  const url = `${PACKS}index.json`;
+  const response = await fetch(url);
+  if (!response.ok) throw engineFailure({ code: "source_io", path: "$", got: { url, status: response.status } });
+  const listed: unknown = await response.json();
+  if (!Array.isArray(listed) || !listed.every(name => typeof name === "string")) throw engineFailure({ code: "invalid_value", path: "$", got: url });
+  return listed as string[];
+}
+
 async function openPacks(bindings: IndexBindings): Promise<Pack[]> {
-  const listed = await fetch(`${PACKS}index.json`).then(response => response.ok ? response.json() as Promise<unknown> : []).catch(() => []);
-  const names = Array.isArray(listed) ? listed.filter((name): name is string => typeof name === "string") : [];
+  const names = await packNames().catch((error: unknown): string[] => {
+    console.error(`The packs are left out: ${String(error)}`);
+    return [];
+  });
   const packs: Pack[] = [];
   for (const name of names) {
     const url = `${PACKS}${name}`;

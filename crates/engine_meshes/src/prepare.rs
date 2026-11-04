@@ -202,7 +202,10 @@ impl MeshesGpu {
         cx.allocate_buffer(instances.poses, capacity * size_of::<PoseData>() as u64);
         cx.allocate_buffer(instances.colors, capacity * size_of::<ColorData>() as u64);
         if temporal {
-            cx.allocate_buffer(instances.previous_poses, capacity * size_of::<PoseData>() as u64);
+            cx.allocate_buffer(
+                instances.previous_poses,
+                capacity * size_of::<PoseData>() as u64,
+            );
         } else {
             cx.allocate_buffer(instances.previous_poses, storage_bytes(0));
         }
@@ -242,12 +245,18 @@ impl MeshesGpu {
         cx.count_upload(color_bytes);
         state.colors_written = Some(retained.color_sequence());
         let (pose, color) = (size_of::<PoseData>() as u64, size_of::<ColorData>() as u64);
-        cx.memory("memory.gpu_temporal_bytes", if temporal { capacity * pose } else { 0 });
+        cx.memory(
+            "memory.gpu_temporal_bytes",
+            if temporal { capacity * pose } else { 0 },
+        );
         cx.memory(
             "memory.render_staging_capacity_bytes",
             (state.color_staging.capacity() * size_of::<ColorData>()) as u64,
         );
-        cx.memory("memory.gpu_instance_buffer_bytes", capacity * (pose + color));
+        cx.memory(
+            "memory.gpu_instance_buffer_bytes",
+            capacity * (pose + color),
+        );
     }
 
     fn prepare_pyramid(
@@ -379,9 +388,18 @@ impl MeshesGpu {
             inputs.composed_capacity = 0;
         }
         let capacity = inputs.capacity as u64;
-        cx.allocate_buffer(presented.locals, storage_bytes(2 * capacity * size_of::<NodePose>() as u64));
-        cx.allocate_buffer(presented.info, storage_bytes(capacity * size_of::<NodeInfo>() as u64));
-        cx.allocate_buffer(presented.authority, storage_bytes(capacity * size_of::<PoseRows>() as u64));
+        cx.allocate_buffer(
+            presented.locals,
+            storage_bytes(2 * capacity * size_of::<NodePose>() as u64),
+        );
+        cx.allocate_buffer(
+            presented.info,
+            storage_bytes(capacity * size_of::<NodeInfo>() as u64),
+        );
+        cx.allocate_buffer(
+            presented.authority,
+            storage_bytes(capacity * size_of::<PoseRows>() as u64),
+        );
         if parents != 0 && inputs.composed_capacity < inputs.capacity {
             inputs.composed_capacity = inputs.capacity;
         }
@@ -392,13 +410,21 @@ impl MeshesGpu {
         if parents > inputs.parent_capacity {
             inputs.parent_capacity = grow(parents);
         }
-        cx.allocate_buffer(presented.parents, storage_bytes(inputs.parent_capacity as u64 * 4));
+        cx.allocate_buffer(
+            presented.parents,
+            storage_bytes(inputs.parent_capacity as u64 * 4),
+        );
         for &level in &presented.levels {
             cx.allocate_buffer(level, 16);
         }
     }
 
-    fn ensure_groups(&mut self, (candidates, batches): (usize, usize), kept: Kept, cx: &mut Prepare<'_, Self>) {
+    fn ensure_groups(
+        &mut self,
+        (candidates, batches): (usize, usize),
+        kept: Kept,
+        cx: &mut Prepare<'_, Self>,
+    ) {
         let groups = &mut self.state.groups;
         let presented = &self.presented;
         if candidates > groups.capacity {
@@ -410,24 +436,48 @@ impl MeshesGpu {
         }
         let capacity = groups.capacity as u64;
         let scan_groups = capacity.div_ceil(u64::from(GROUP));
-        cx.allocate_buffer(presented.candidates, storage_bytes(capacity * size_of::<CandidateData>() as u64));
-        cx.allocate_buffer(presented.slot_candidates, storage_bytes(capacity * size_of::<CandidateData>() as u64));
-        cx.allocate_buffer(presented.scan, storage_bytes((capacity + 4 * (scan_groups + 1) + 1) * 4));
+        cx.allocate_buffer(
+            presented.candidates,
+            storage_bytes(capacity * size_of::<CandidateData>() as u64),
+        );
+        cx.allocate_buffer(
+            presented.slot_candidates,
+            storage_bytes(capacity * size_of::<CandidateData>() as u64),
+        );
+        cx.allocate_buffer(
+            presented.scan,
+            storage_bytes((capacity + 4 * (scan_groups + 1) + 1) * 4),
+        );
         let batch_capacity = groups.batch_capacity as u64;
-        cx.allocate_buffer(presented.batches, storage_bytes(batch_capacity * size_of::<BatchData>() as u64));
+        cx.allocate_buffer(
+            presented.batches,
+            storage_bytes(batch_capacity * size_of::<BatchData>() as u64),
+        );
         cx.allocate_buffer(presented.batch_bases, storage_bytes(batch_capacity * 16));
         let planes = u64::from(LOD_LEVELS);
         let args = (planes * batch_capacity + 1) * DRAW_ARGS_BYTES;
         let ids = planes * capacity * 4;
         let compactions = [true, kept.phase_two];
         for (index, wanted) in compactions.into_iter().enumerate() {
-            cx.allocate_buffer(presented.visible[index], storage_bytes(if wanted { ids } else { 0 }));
-            cx.allocate_buffer(presented.draws[index], storage_bytes(if wanted { args } else { 0 }));
+            cx.allocate_buffer(
+                presented.visible[index],
+                storage_bytes(if wanted { ids } else { 0 }),
+            );
+            cx.allocate_buffer(
+                presented.draws[index],
+                storage_bytes(if wanted { args } else { 0 }),
+            );
         }
         for face in 0..FACES {
             let wanted = kept.probe_faces;
-            cx.allocate_buffer(presented.face_visible[face], storage_bytes(if wanted { ids } else { 0 }));
-            cx.allocate_buffer(presented.face_draws[face], storage_bytes(if wanted { args } else { 0 }));
+            cx.allocate_buffer(
+                presented.face_visible[face],
+                storage_bytes(if wanted { ids } else { 0 }),
+            );
+            cx.allocate_buffer(
+                presented.face_draws[face],
+                storage_bytes(if wanted { args } else { 0 }),
+            );
         }
         let impostors = [kept.impostors, kept.impostors && kept.phase_two];
         for (index, wanted) in impostors.into_iter().enumerate() {
@@ -464,7 +514,10 @@ impl MeshesGpu {
         if state.groups.capacity > state.card_capacity {
             state.card_capacity = state.groups.capacity;
         }
-        cx.allocate_buffer(self.presented.lod_states, storage_bytes(state.fade_slots * 4));
+        cx.allocate_buffer(
+            self.presented.lod_states,
+            storage_bytes(state.fade_slots * 4),
+        );
         cx.allocate_buffer(
             self.presented.fade_cards,
             storage_bytes(16 + state.card_capacity as u64 * 8),
@@ -476,7 +529,12 @@ impl MeshesGpu {
         );
     }
 
-    fn upload_nodes(&mut self, gpu: &GpuPresentation<'_>, since: Option<u64>, cx: &mut Prepare<'_, Self>) -> u64 {
+    fn upload_nodes(
+        &mut self,
+        gpu: &GpuPresentation<'_>,
+        since: Option<u64>,
+        cx: &mut Prepare<'_, Self>,
+    ) -> u64 {
         let nodes = &mut self.state.nodes;
         let presented = &self.presented;
         nodes.plan_ranges(gpu, since);
@@ -484,8 +542,14 @@ impl MeshesGpu {
         if nodes.shift {
             nodes.stage_locals(gpu);
             if !nodes.rows.is_empty() {
-                cx.allocate_buffer(presented.node_staging, storage_bytes((nodes.staged.len() * 4) as u64));
-                cx.allocate_buffer(presented.node_ranges, storage_bytes((nodes.rows.len() * 16) as u64));
+                cx.allocate_buffer(
+                    presented.node_staging,
+                    storage_bytes((nodes.staged.len() * 4) as u64),
+                );
+                cx.allocate_buffer(
+                    presented.node_ranges,
+                    storage_bytes((nodes.rows.len() * 16) as u64),
+                );
                 cx.write(presented.node_staging, 0, &nodes.staged);
                 cx.write(presented.node_ranges, 0, &nodes.rows);
             }
@@ -493,7 +557,11 @@ impl MeshesGpu {
             nodes.rows.clear();
             let pose = size_of::<NodePose>();
             for range in &nodes.ranges[0] {
-                cx.write(presented.locals, (range.start * pose) as u64, &gpu.current[range.start..range.end]);
+                cx.write(
+                    presented.locals,
+                    (range.start * pose) as u64,
+                    &gpu.current[range.start..range.end],
+                );
             }
             let previous = (nodes.capacity * pose) as u64;
             for range in &nodes.ranges[1] {
@@ -584,7 +652,13 @@ impl MeshesGpu {
         (2 * groups.candidate_staging.len() * size_of::<CandidateData>()) as u64
     }
 
-    fn write_frame_uniform(&mut self, alpha: f32, view: &View, decided: &MeshPlan, cx: &mut Prepare<'_, Self>) {
+    fn write_frame_uniform(
+        &mut self,
+        alpha: f32,
+        view: &View,
+        decided: &MeshPlan,
+        cx: &mut Prepare<'_, Self>,
+    ) {
         let state = &mut self.state;
         let (planes, absolute) = frustum_uniform(view.view_projection);
         let bounded = absolute.iter().flatten().all(|value| {
@@ -613,7 +687,12 @@ impl MeshesGpu {
             occlusion: u32::from(state.occlusion),
             subpixel: u32::from(subpixel),
             view_projection: view.view_projection.to_cols_array_2d(),
-            viewport: [width as f32, height as f32, view.occlusion.unwrap_or(0) as f32, 0.0],
+            viewport: [
+                width as f32,
+                height as f32,
+                view.occlusion.unwrap_or(0) as f32,
+                0.0,
+            ],
             plane: state.groups.capacity as u32,
             lod_error: if unbudgeted { view.lod_error } else { 0.0 },
             watched: state.watched.unwrap_or(UNWATCHED),
@@ -630,12 +709,19 @@ impl MeshesGpu {
         state.frame = Some(uniform);
         if state.occlusion {
             uniform.mask = PHASE2;
-            cx.allocate_buffer(self.presented.frame_two, size_of::<PresentationFrame>() as u64);
+            cx.allocate_buffer(
+                self.presented.frame_two,
+                size_of::<PresentationFrame>() as u64,
+            );
             cx.write(self.presented.frame_two, 0, &[uniform]);
         }
     }
 
-    fn prepare_faces(&mut self, captures: &engine_places::probes::ProbeCaptures, cx: &mut Prepare<'_, Self>) {
+    fn prepare_faces(
+        &mut self,
+        captures: &engine_places::probes::ProbeCaptures,
+        cx: &mut Prepare<'_, Self>,
+    ) {
         self.state.faces.clear();
         let Some(base) = self.state.frame else {
             return;
@@ -684,15 +770,25 @@ impl MeshesGpu {
         if !draws.runs {
             return;
         }
-        cx.allocate_buffer(buffers.stillness, storage_bytes(plan.stillness_capacity as u64 * STILLNESS_BYTES));
+        cx.allocate_buffer(
+            buffers.stillness,
+            storage_bytes(plan.stillness_capacity as u64 * STILLNESS_BYTES),
+        );
         let starts = (ID_CAPACITIES * plan.id_capacity * 4) as u64;
-        cx.allocate_buffer(buffers.ids, storage_bytes(starts + (plan.arg_capacity * 4) as u64));
+        cx.allocate_buffer(
+            buffers.ids,
+            storage_bytes(starts + (plan.arg_capacity * 4) as u64),
+        );
         let args = (MAPS * plan.arg_capacity) as u64 * DRAW_ARGS_BYTES;
         cx.allocate_buffer(buffers.args, storage_bytes(args));
         cx.allocate_buffer(buffers.template, storage_bytes(args));
         cx.allocate_buffer(buffers.totals, storage_bytes(CASTER_TOTALS_BYTES));
         draws.groups.clear();
-        draws.groups.extend(plan.groups.iter().map(|group| (group.mesh, group.material, group.start)));
+        draws.groups.extend(
+            plan.groups
+                .iter()
+                .map(|group| (group.mesh, group.material, group.start)),
+        );
         draws.regions_in_args = plan.regions_in_args;
         draws.id_capacity = plan.id_capacity;
         cx.write(buffers.template, 0, &plan.template);
@@ -716,6 +812,11 @@ impl MeshesGpu {
             }],
         );
         cx.run(self.passes.casters);
-        cx.read_back::<CasterTotals>(CASTERS, buffers.totals, 0..CASTER_TOTALS_BYTES, AfterRead::Clear);
+        cx.read_back::<CasterTotals>(
+            CASTERS,
+            buffers.totals,
+            0..CASTER_TOTALS_BYTES,
+            AfterRead::Clear,
+        );
     }
 }

@@ -151,8 +151,11 @@ impl Haze {
             (haze_filter::MARCHED, Bind::Texture(marched)),
             (haze_filter::HAZE_HISTORY, Bind::Texture(history_texture)),
         ]);
-        let filtering =
-            cx.render_pipeline(filter_pass, &fullscreen(haze_filter::FS_HAZE_FILTER), &filtered)?;
+        let filtering = cx.render_pipeline(
+            filter_pass,
+            &fullscreen(haze_filter::FS_HAZE_FILTER),
+            &filtered,
+        )?;
         Ok(Self {
             marched,
             hazed,

@@ -108,6 +108,10 @@ fn check_node<'n>(node: &'n UiNode, path: &str, ids: &mut BTreeSet<&'n str>) -> 
         ("radius", node.radius),
         ("border_width", node.border_width),
         ("text_size", node.text_size),
+        ("image_rect.u", node.image_rect.u),
+        ("image_rect.v", node.image_rect.v),
+        ("image_rect.width", node.image_rect.width),
+        ("image_rect.height", node.image_rect.height),
     ];
     for (name, value) in sizes {
         check_size(value, &format!("{path}.{name}"))?;

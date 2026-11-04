@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest, Sha256};
-use toml_edit::{Document, Item};
+use toml_edit::{ArrayOfTables, Document, Item, Table, Value};
 
 const RESERVED: &[&str] = &["engine", "generated", "face", "place"];
 
@@ -78,7 +78,7 @@ pub fn emit() {
     let root = workspace_root(&manifest);
     let src = manifest.join("src");
     let bricks = src.join("bricks");
-    let hash = digest(&package, &manifest, &root, false, None);
+    let hash = digest(&package, &manifest, &root, false);
     let game = read(&manifest.join("Cargo.toml")).is_some_and(|item| kind(&item) == Some("game"));
 
     let mut code = String::new();
@@ -111,7 +111,7 @@ pub fn emit() {
     for module in modules {
         let inside = bricks.join(&module);
         let named = format!("{crate_name}_{module}");
-        let hash = digest(&named, &manifest, &root, false, Some(&inside));
+        let hash = digest(&named, &manifest, &root, false);
         let code = source_code(
             &named,
             game,
@@ -139,7 +139,10 @@ fn source_code(
     if prefix.is_some() {
         list(&shaders, &mut wgsl);
     }
-    wgsl.retain(|file| file.extension().is_some_and(|extension| extension == "wgsl"));
+    wgsl.retain(|file| {
+        file.extension()
+            .is_some_and(|extension| extension == "wgsl")
+    });
     wgsl.sort();
 
     let mut tree = Node::default();
@@ -162,7 +165,7 @@ fn source_code(
         node.entries = entries(&text);
         node.variables = variables(&text);
     }
-    if let Some(prefix) = &prefix {
+    if let Some(prefix) = prefix.as_ref().filter(|_| !wgsl.is_empty()) {
         let generated = generated_wgsl(folder, skipped);
         if !generated.is_empty() {
             texts.push_str(&format!(
@@ -201,38 +204,33 @@ pub fn emit_of(named: &[(&str, &str)]) {
             .and_then(Item::as_str)
             .unwrap_or_else(|| panic!("the workspace names no path for {package}"));
         let folder = normal(&root.join(path));
-        let hash = digest(package, &folder, &root, true, None);
-        code.push_str(&format!("pub(crate) const {constant}: [u8; 32] = {hash:?};\n"));
+        let hash = digest(package, &folder, &root, true);
+        code.push_str(&format!(
+            "pub(crate) const {constant}: [u8; 32] = {hash:?};\n"
+        ));
     }
     fs::write(out.join("sources.rs"), code).expect("OUT_DIR is writable");
 }
 
-fn digest(
-    package: &str,
-    manifest: &Path,
-    root: &Path,
-    every: bool,
-    inside: Option<&Path>,
-) -> [u8; 32] {
-    let own = normal(manifest);
+fn digest(package: &str, manifest: &Path, root: &Path, every: bool) -> [u8; 32] {
     let mut crates = BTreeSet::new();
-    crates.insert(own.clone());
+    crates.insert(normal(manifest));
     reach(manifest, root, &mut crates, every);
 
     let mut hash = Sha256::new();
     hash.update(package.as_bytes());
     hash.update([0]);
     for dir in &crates {
-        let src = match inside {
-            Some(inside) if *dir == own => inside.to_path_buf(),
-            Some(_) | None => dir.join("src"),
-        };
+        let src = dir.join("src");
         let mut files = Vec::new();
         list(&src, &mut files);
         files.push(dir.join("Cargo.toml"));
         files.sort();
         println!("cargo:rerun-if-changed={}", src.display());
-        println!("cargo:rerun-if-changed={}", dir.join("Cargo.toml").display());
+        println!(
+            "cargo:rerun-if-changed={}",
+            dir.join("Cargo.toml").display()
+        );
         for file in &files {
             hash.update(relative(root, file).as_bytes());
             hash.update([0]);
@@ -240,10 +238,84 @@ fn digest(
             hash.update([0]);
         }
     }
-    let lock = root.join("Cargo.lock");
-    println!("cargo:rerun-if-changed={}", lock.display());
-    hash.update(text_bytes(&lock));
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("Cargo.lock").display()
+    );
+    for locked in locked_externals(&crates, root) {
+        hash.update(locked.as_bytes());
+        hash.update([0]);
+    }
     hash.finalize().into()
+}
+
+fn locked_externals(crates: &BTreeSet<PathBuf>, root: &Path) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    let Some(lock) = read(&root.join("Cargo.lock")) else {
+        return found;
+    };
+    let Some(packages) = lock.get("package").and_then(Item::as_array_of_tables) else {
+        return found;
+    };
+    let workspace = read(&root.join("Cargo.toml"));
+    let members = workspace
+        .as_ref()
+        .and_then(|item| item.get("workspace")?.get("dependencies"));
+    let mut pending: Vec<&Table> = Vec::new();
+    for dir in crates {
+        let Some(manifest) = read(&dir.join("Cargo.toml")) else {
+            continue;
+        };
+        let name = manifest
+            .get("package")
+            .and_then(|package| package.get("name"))
+            .and_then(Item::as_str);
+        pending.extend(packages.iter().filter(|package| {
+            field(package, "source").is_none() && field(package, "name") == name
+        }));
+    }
+    while let Some(package) = pending.pop() {
+        let Some(dependencies) = package.get("dependencies").and_then(Item::as_array) else {
+            continue;
+        };
+        for dependency in dependencies.iter().filter_map(Value::as_str) {
+            let Some(entry) = locked_entry(packages, dependency) else {
+                continue;
+            };
+            let name = field(entry, "name").unwrap_or_default();
+            let member = members
+                .and_then(|members| members.get(name))
+                .is_some_and(|member| member.get("path").is_some());
+            if member {
+                continue;
+            }
+            let identity = ["name", "version", "source", "checksum"]
+                .map(|key| field(entry, key).unwrap_or_default())
+                .join(" ");
+            if found.insert(identity) {
+                pending.push(entry);
+            }
+        }
+    }
+    found
+}
+
+fn locked_entry<'a>(packages: &'a ArrayOfTables, dependency: &str) -> Option<&'a Table> {
+    let mut parts = dependency.split(' ');
+    let name = parts.next();
+    let version = parts.next();
+    let source = parts
+        .next()
+        .and_then(|source| source.strip_prefix('(')?.strip_suffix(')'));
+    packages.iter().find(|package| {
+        field(package, "name") == name
+            && (version.is_none() || field(package, "version") == version)
+            && (source.is_none() || field(package, "source") == source)
+    })
+}
+
+fn field<'a>(package: &'a Table, key: &str) -> Option<&'a str> {
+    package.get(key).and_then(Item::as_str)
 }
 
 fn var(name: &str) -> String {
@@ -306,7 +378,11 @@ fn kind(manifest: &Item) -> Option<&str> {
 fn dependency_tables(manifest: &Item) -> Vec<&Item> {
     let mut tables: Vec<&Item> = manifest.get("dependencies").into_iter().collect();
     if let Some(targets) = manifest.get("target").and_then(Item::as_table_like) {
-        tables.extend(targets.iter().filter_map(|(_, target)| target.get("dependencies")));
+        tables.extend(
+            targets
+                .iter()
+                .filter_map(|(_, target)| target.get("dependencies")),
+        );
     }
     tables
 }
@@ -507,7 +583,10 @@ fn generated_wgsl(folder: &Path, skipped: Option<&Path>) -> String {
                 consts_wgsl(body)
             };
             wgsl.push_str(&declared.unwrap_or_else(|| {
-                panic!("{}: the generated module cannot read this {name}!", file.display())
+                panic!(
+                    "{}: the generated module cannot read this {name}!",
+                    file.display()
+                )
             }));
         }
     }
@@ -609,7 +688,9 @@ fn wgsl_type(ty: &str) -> Option<String> {
 }
 
 fn named(ty: &str) -> bool {
-    ty.chars().next().is_some_and(|first| first.is_alphabetic() || first == '_')
+    ty.chars()
+        .next()
+        .is_some_and(|first| first.is_alphabetic() || first == '_')
         && ty.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
@@ -633,13 +714,21 @@ fn consts_wgsl(body: &str) -> Option<String> {
         }
         let known = value
             .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-            .filter(|word| word.starts_with(|character: char| character.is_ascii_alphabetic() || character == '_'))
+            .filter(|word| {
+                word.starts_with(|character: char| {
+                    character.is_ascii_alphabetic() || character == '_'
+                })
+            })
             .all(|word| declared.contains(&word));
         if !known {
             return None;
         }
         declared.push(name.trim());
-        wgsl.push_str(&format!("const {}: {} = {value};\n", name.trim(), ty.trim()));
+        wgsl.push_str(&format!(
+            "const {}: {} = {value};\n",
+            name.trim(),
+            ty.trim()
+        ));
     }
     Some(wgsl)
 }

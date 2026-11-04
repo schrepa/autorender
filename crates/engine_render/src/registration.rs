@@ -19,6 +19,7 @@ pub(crate) struct PartRecord {
     pub(crate) part: TypeId,
     pub(crate) name: &'static str,
     pub(crate) lazy: bool,
+    pub(crate) turns_on_in_play: bool,
     pub(crate) labels: &'static [&'static str],
     pub(crate) scope: Scope,
     pub(crate) install: InstallFn,
@@ -34,6 +35,7 @@ impl PartRecord {
                 P::NAME
             },
             lazy: P::LAZY,
+            turns_on_in_play: P::TURNS_ON_IN_PLAY,
             labels: P::LABELS,
             scope,
             install: install::<P>,
@@ -118,7 +120,10 @@ struct Held<P: GpuPart> {
     fresh: bool,
 }
 
-fn install<P: GpuPart>(world: &mut World, core: &mut InstallCore) -> Result<Box<dyn Installed>, Error> {
+fn install<P: GpuPart>(
+    world: &mut World,
+    core: &mut InstallCore,
+) -> Result<Box<dyn Installed>, Error> {
     let reads = SystemState::<P::Reads>::new(world);
     let part = P::install(&mut Install {
         core,

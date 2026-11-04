@@ -325,12 +325,8 @@ impl Shadings {
             if has || self.asked.contains_key(&key) || waits {
                 continue;
             }
-            let input = engine_codec::encode(&ShadingJob::of(
-                recipe,
-                &entry.pyramid,
-                &entry.edits,
-                key,
-            ));
+            let input =
+                engine_codec::encode(&ShadingJob::of(recipe, &entry.pyramid, &entry.edits, key));
             let record = RecordKey::of(&SHADING, &input);
             let made = self.made(key, record);
             let finer = if key.level > 1 {

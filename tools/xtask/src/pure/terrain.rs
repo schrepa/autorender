@@ -6,8 +6,7 @@ use engine_codec as codec;
 use engine_core::{JobRef, RecordKey};
 use engine_heightfield::layer::LayerKind;
 use engine_heightfield::tile::{
-    BiomeRules, Generator, StackView, TerrainRecipe, Tile, TileJob,
-    shaded_elsewhere,
+    BiomeRules, Generator, StackView, TerrainRecipe, Tile, TileJob, shaded_elsewhere,
 };
 use engine_heightfield::{
     Layers, Pyramid, Stamp, StampOp, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey,
@@ -52,11 +51,8 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let authored = &terrain.layers;
     let pyramid = terrain.pyramid;
     let mut worker = JobLog::new()?;
-    let kinds: Vec<&'static LayerKind> = worker
-        .list()
-        .members::<TerrainLayers>()
-        .copied()
-        .collect();
+    let kinds: Vec<&'static LayerKind> =
+        worker.list().members::<TerrainLayers>().copied().collect();
 
     let baked = engine_terrain::bake::bake_all(authored, &pyramid);
     let bytes = jobs::share_stack(&baked).to_vec();

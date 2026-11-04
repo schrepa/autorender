@@ -370,8 +370,7 @@ fn step(
                     match sources {
                         Some(Sources::Made(Ok(made))) => {
                             let input = engine_textures::cook_input(&made[index], family);
-                            let id =
-                                jobs.submit(JobRef::from(&TEXTURE_COOK), input, make_priority);
+                            let id = jobs.submit(JobRef::from(&TEXTURE_COOK), input, make_priority);
                             request.stage = Stage::Cooking(id);
                         }
                         Some(Sources::Made(Err(error))) => {

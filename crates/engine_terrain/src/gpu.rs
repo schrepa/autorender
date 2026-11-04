@@ -7,8 +7,23 @@ engine_core::gpu_consts! {
     pub const SURFACE_RIVER_EDGE_FAR: u32 = 65535;
 }
 
-const _: () = assert!(SURFACE_PATH_FAR == engine_heightfield::path::PATH_FAR);
-const _: () = assert!(SURFACE_RIVER_FAR == engine_heightfield::RIVER_FAR);
-const _: () = assert!(SURFACE_RIVER_EDGE_STEP == engine_heightfield::tile::RIVER_EDGE_STEP);
-const _: () = assert!(SURFACE_RIVER_EDGE_ZERO == engine_heightfield::tile::RIVER_EDGE_ZERO as u32);
-const _: () = assert!(SURFACE_RIVER_EDGE_FAR == engine_heightfield::tile::RIVER_EDGE_FAR as u32);
+const _: () = assert!(
+    SURFACE_PATH_FAR == engine_heightfield::path::PATH_FAR,
+    "SURFACE_PATH_FAR differs from the heightfield's PATH_FAR"
+);
+const _: () = assert!(
+    SURFACE_RIVER_FAR == engine_heightfield::RIVER_FAR,
+    "SURFACE_RIVER_FAR differs from the heightfield's RIVER_FAR"
+);
+const _: () = assert!(
+    SURFACE_RIVER_EDGE_STEP == engine_heightfield::tile::RIVER_EDGE_STEP,
+    "SURFACE_RIVER_EDGE_STEP differs from the heightfield's RIVER_EDGE_STEP"
+);
+const _: () = assert!(
+    SURFACE_RIVER_EDGE_ZERO == engine_heightfield::tile::RIVER_EDGE_ZERO as u32,
+    "SURFACE_RIVER_EDGE_ZERO differs from the heightfield's RIVER_EDGE_ZERO"
+);
+const _: () = assert!(
+    SURFACE_RIVER_EDGE_FAR == engine_heightfield::tile::RIVER_EDGE_FAR as u32,
+    "SURFACE_RIVER_EDGE_FAR differs from the heightfield's RIVER_EDGE_FAR"
+);

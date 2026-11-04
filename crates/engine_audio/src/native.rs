@@ -29,7 +29,7 @@ fn decibels(amplitude: f32) -> Decibels {
 }
 
 enum Sound {
-    Held(StaticSoundData),
+    Held(Box<StaticSoundData>),
     Streamed(Arc<[u8]>),
     Failed(String),
 }
@@ -187,7 +187,7 @@ impl Backend {
             StreamingSoundData::from_cursor(Cursor::new(Arc::clone(&bytes)))
                 .map(|_| Sound::Streamed(bytes))
         } else {
-            StaticSoundData::from_cursor(Cursor::new(bytes)).map(Sound::Held)
+            StaticSoundData::from_cursor(Cursor::new(bytes)).map(|data| Sound::Held(Box::new(data)))
         };
         let entry = decoded.unwrap_or_else(|failure| Sound::Failed(failure.to_string()));
         self.sounds.insert(sound, entry);

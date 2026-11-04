@@ -319,7 +319,12 @@ type SkySections<'w> = (
     Res<'w, SkyLighting>,
 );
 
-type SkyLights<'w> = (Res<'w, Sun>, Res<'w, SunPath>, Res<'w, Display>, Res<'w, Wind>);
+type SkyLights<'w> = (
+    Res<'w, Sun>,
+    Res<'w, SunPath>,
+    Res<'w, Display>,
+    Res<'w, Wind>,
+);
 
 type SkyFrame<'w> = (
     Res<'w, StaticTables>,
@@ -501,7 +506,11 @@ impl AirTables {
 
     fn upload(&self, cx: &mut Prepare<'_, SkyGpu>, tables: &SkyTables) {
         for (texture, texels, (width, height)) in [
-            (self.transmittance, &tables.transmittance, TRANSMITTANCE_SIZE),
+            (
+                self.transmittance,
+                &tables.transmittance,
+                TRANSMITTANCE_SIZE,
+            ),
             (self.multiple, &tables.multiple, MULTIPLE_SIZE),
         ] {
             cx.write_texture(
@@ -654,11 +663,7 @@ impl GpuPart for SkyGpu {
         })
     }
 
-    fn prepare(
-        &mut self,
-        reads: SystemParamItem<'_, '_, Self::Reads>,
-        cx: &mut Prepare<'_, Self>,
-    ) {
+    fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
         let (plan, tables, captures) = reads;
         self.tables.prepare(cx, (&plan.tables, tables.sky()));
         self.clouds

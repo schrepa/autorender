@@ -97,10 +97,7 @@ impl ExtraRules for SteepLayer {
         if self.slope[0] < self.slope[1] {
             Ok(())
         } else {
-            Err(InvalidSetting::new(
-                "slope",
-                engine_codec::Expected::Sorted,
-            ))
+            Err(InvalidSetting::new("slope", engine_codec::Expected::Sorted))
         }
     }
 }
@@ -174,6 +171,7 @@ pub struct Reads {
 }
 
 impl Reads {
+    #[must_use]
     pub fn and(self, other: Self) -> Self {
         Self {
             water: self.water || other.water,
@@ -533,12 +531,7 @@ fn fold(
 }
 
 impl Compiled {
-    pub fn from(
-        expr: &Expr,
-        path: &str,
-        depth: usize,
-        scope: &mut Scope,
-    ) -> Result<Self, Error> {
+    pub fn from(expr: &Expr, path: &str, depth: usize, scope: &mut Scope) -> Result<Self, Error> {
         if depth > MAX_EXPR_DEPTH {
             return Err(terrain_error(path)
                 .at_most(MAX_EXPR_DEPTH as u64)

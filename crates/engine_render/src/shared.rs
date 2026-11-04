@@ -351,15 +351,13 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
         body,
         "    out.depth = depth;\n    return out;\n}}\n\nstruct CompositeOut {{\n    @location(0) canvas: vec4<f32>,"
     );
-    let mut location = 1;
-    for output in outputs.iter().filter(|output| output.layers.is_empty()) {
+    for (location, output) in (1..).zip(outputs.iter().filter(|output| output.layers.is_empty())) {
         let _ = writeln!(
             body,
             "    @location({location}) {}: {},",
             output.name,
             output_type(output.format)
         );
-        location += 1;
     }
     let _ = writeln!(
         body,

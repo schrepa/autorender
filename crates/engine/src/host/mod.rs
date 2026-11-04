@@ -22,7 +22,7 @@ pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
 pub use engine_registry::JobList;
 pub use environment::{HostEnvironment, KNOWN_DIFFERENCES};
 pub use frame_loop::{FrameLoop, FramePhase};
-pub use input::{FrameInput, InputGatherer, KEYS};
+pub use input::{FrameInput, InputGatherer, KEYS, MOVE_KEYS, MoveDirection};
 pub(crate) use jobs::{Finished, JobScheduler};
 pub use jobs::{JobMessage, JobOrder};
 pub(crate) use level::{LevelLoad, LevelStep};

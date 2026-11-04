@@ -15,7 +15,6 @@ engine_core.workspace = true
 engine_place.workspace = true
 engine_registry.workspace = true
 engine_profile.workspace = true
-engine_textures.workspace = true
 bevy_ecs.workspace = true
 bytemuck.workspace = true
 glam.workspace = true

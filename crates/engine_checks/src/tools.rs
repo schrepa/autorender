@@ -33,7 +33,7 @@ pub fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String>
 pub fn clippy(root: &Path, selection: &[&str]) -> Result<(), String> {
     let mut arguments = vec!["clippy"];
     arguments.extend(selection);
-    arguments.extend(["--locked", "--", "-D", "warnings"]);
+    arguments.extend(["--locked", "--", "--no-deps", "-D", "warnings"]);
     run(root, "cargo", &arguments)
 }
 

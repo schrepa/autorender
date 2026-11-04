@@ -97,8 +97,14 @@ gpu_consts! {
     pub const DEBUG_SPAN_STEPS: f32 = 254.0;
 }
 
-const _: () = assert!(WATER_BLOCK == PATCH_QUADS + 3);
-const _: () = assert!(WATER_TILE_PATCHES == PATCHES_PER_TILE);
+const _: () = assert!(
+    WATER_BLOCK == PATCH_QUADS + 3,
+    "WATER_BLOCK is not PATCH_QUADS + 3"
+);
+const _: () = assert!(
+    WATER_TILE_PATCHES == PATCHES_PER_TILE,
+    "WATER_TILE_PATCHES differs from PATCHES_PER_TILE"
+);
 
 gpu_struct! {
     pub(crate) struct WaterUniform {

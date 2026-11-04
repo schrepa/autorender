@@ -2,6 +2,7 @@ use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -18,6 +19,8 @@ pub const RUN_FILES: &[&str] = &["bench"];
 const REMOVING: &str = "removing";
 
 const LOCK_POLL: Duration = Duration::from_secs(1);
+
+const OWNERLESS: Duration = Duration::from_secs(60);
 
 static USING: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
@@ -188,7 +191,7 @@ fn leased(root: &Path) -> BTreeSet<String> {
         if name == mine {
             continue;
         }
-        if crate::heavy::alive(pid) {
+        if alive(pid) {
             let listed = fs::read_to_string(&path)
                 .ok()
                 .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok());
@@ -260,12 +263,12 @@ impl Lock {
             };
             let held = holder();
             let stale = match held {
-                Some(pid) => !crate::heavy::alive(pid),
+                Some(pid) => !alive(pid),
                 None => fs::metadata(&path)
                     .and_then(|metadata| metadata.modified())
                     .ok()
                     .and_then(|made| made.elapsed().ok())
-                    .is_some_and(|age| age > crate::heavy::OWNERLESS),
+                    .is_some_and(|age| age > OWNERLESS),
             };
             if stale && holder() == held {
                 let _ = fs::remove_dir_all(&path);
@@ -288,5 +291,28 @@ impl Lock {
 impl Drop for Lock {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn alive(pid: u64) -> bool {
+    let listed = if cfg!(windows) {
+        Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+            .output()
+    } else {
+        Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "pid="])
+            .output()
+    };
+    match listed {
+        Ok(output) if cfg!(windows) => {
+            !output.status.success()
+                || String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\""))
+        }
+        Ok(output) => {
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout).trim() == pid.to_string()
+        }
+        Err(_) => true,
     }
 }

@@ -136,6 +136,8 @@ pub(crate) struct SettleWork {
     pub(crate) reads: Vec<Read>,
 }
 
+pub(crate) type SettleMade = (Vec<u8>, Result<Vec<u8>, String>);
+
 #[derive(Resource, Default)]
 pub struct SettleFeedback {
     waiting: VecDeque<SettleAsk>,
@@ -148,7 +150,7 @@ pub struct SettleFeedback {
     steps: u32,
     asked: BTreeMap<(u32, u64), (usize, u32)>,
     arrivals: Vec<(u64, u32, Vec<u8>)>,
-    made: Vec<(Vec<u8>, Result<Vec<u8>, String>)>,
+    made: Vec<SettleMade>,
     pub(crate) work: SettleWork,
 }
 

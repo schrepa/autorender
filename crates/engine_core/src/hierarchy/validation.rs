@@ -1,8 +1,8 @@
 use glam::{Mat3, Mat4, Vec3A, Vec4};
 
 use super::MAX_NORMAL_INVERSE_NORM;
-use crate::presentation_bounds::{COEFFICIENT_LIMIT, COMMON_DETERMINANT_MARGIN, MIN_LINEAR_SCALE};
 use crate::math;
+use crate::presentation_bounds::{COEFFICIENT_LIMIT, COMMON_DETERMINANT_MARGIN, MIN_LINEAR_SCALE};
 
 const DETERMINANT_MARGIN: f32 = 1.0 / 4096.0;
 const PROVEN_NORMAL_INVERSE_NORM: f32 = 6200.0;

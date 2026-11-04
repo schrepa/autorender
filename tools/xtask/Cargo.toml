@@ -7,7 +7,7 @@ publish.workspace = true
 
 [dependencies]
 zip.workspace = true
-engine_scene = { workspace = true, features = ["schema"] }
+engine_scene.workspace = true
 engine_dev.workspace = true
 base64.workspace = true
 engine_assets.workspace = true
@@ -25,7 +25,7 @@ engine_water.workspace = true
 engine_navigation.workspace = true
 engine_worker.workspace = true
 zstd.workspace = true
-engine_native.workspace = true
+engine_native = { workspace = true, features = ["dev"] }
 glam.workspace = true
 gltf.workspace = true
 png.workspace = true
@@ -34,12 +34,12 @@ naga = { workspace = true, features = ["wgsl-in", "spv-out"] }
 sha2.workspace = true
 engine_assetc.workspace = true
 engine_profiler = { workspace = true, features = ["load"] }
-engine = { workspace = true, features = ["schema", "dev"] }
+engine = { workspace = true, features = ["dev"] }
 engine_checks.workspace = true
 engine_place.workspace = true
 engine_registry.workspace = true
 engine_standard.workspace = true
-bevy_ecs = { workspace = true, features = ["debug"] }
+bevy_ecs.workspace = true
 serde_json.workspace = true
 toml_edit.workspace = true
 

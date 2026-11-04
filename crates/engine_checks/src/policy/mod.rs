@@ -19,7 +19,9 @@ pub fn check(repository: &Repository, rules: &Rules) -> Result<(), String> {
     let root = repository.root.as_path();
     let files: Vec<String> = crate::files::listed(root, &[])?
         .into_iter()
-        .filter(|path| !path.starts_with("vendor/") && root.join(path).is_file())
+        .filter(|path| {
+            !path.starts_with("vendor/") && repository.ruled(path) && root.join(path).is_file()
+        })
         .collect();
     let mut problems = Problems::default();
     let package_jsons: Vec<String> = files

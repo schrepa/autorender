@@ -223,9 +223,10 @@ impl Settled {
             .iter()
             .filter(|&&key| {
                 let single = self.single(key);
-                let current = self.summaries.get(&key).is_some_and(|made| {
-                    made.generation == self.generation && made.alone == single
-                });
+                let current = self
+                    .summaries
+                    .get(&key)
+                    .is_some_and(|made| made.generation == self.generation && made.alone == single);
                 !current && !self.failed.contains_key(&key)
             })
             .count() as u64;
@@ -600,9 +601,10 @@ fn key_settled(terrain: &mut WaterTerrain, recipe: [u8; 32], jobs: &mut Jobs) {
     let solids = Arc::clone(&terrain.solids);
     let relief = terrain.relief;
     let settled = &mut terrain.settled;
-    let same_solids = settled.keyed.as_ref().map(|keyed| {
-        Arc::ptr_eq(&keyed.solids, &solids) || *keyed.solids == *solids
-    });
+    let same_solids = settled
+        .keyed
+        .as_ref()
+        .map(|keyed| Arc::ptr_eq(&keyed.solids, &solids) || *keyed.solids == *solids);
     if let Some(keyed) = settled.keyed.as_mut()
         && same_solids == Some(true)
         && keyed.recipe == recipe
@@ -618,7 +620,10 @@ fn key_settled(terrain: &mut WaterTerrain, recipe: [u8; 32], jobs: &mut Jobs) {
             }
         }
     }
-    let identity = ((recipe, solids.to_vec()), (relief.to_le_bytes(), settled.cell));
+    let identity = (
+        (recipe, solids.to_vec()),
+        (relief.to_le_bytes(), settled.cell),
+    );
     let basis = RecordKey::shared(&engine_codec::encode(&identity)).hash();
     settled.keyed = Some(Keyed {
         recipe,
@@ -1314,7 +1319,12 @@ fn ask_waters(
     let cell = settled.cell;
     let mut waiting = 0;
     for (place, key) in wanted {
-        let reads = match wants(&terrain.settled, (&pyramid, key), (watered, near), cx.settles) {
+        let reads = match wants(
+            &terrain.settled,
+            (&pyramid, key),
+            (watered, near),
+            cx.settles,
+        ) {
             Wants::Here(reads) => reads,
             Wants::Coming => {
                 waiting += 1;

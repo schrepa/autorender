@@ -197,8 +197,10 @@ fn reset_player(world: &mut World, player: Player) {
     if world.get_entity(player.entity).is_err() {
         return;
     }
-    edit_transform(world, player.entity, |transform| transform.translation = player.spawn)
-        .expect("player_has_transform");
+    edit_transform(world, player.entity, |transform| {
+        transform.translation = player.spawn
+    })
+    .expect("player_has_transform");
     walks(world, player.entity).expect("player_walks");
     reset_interpolation(world, player.entity);
 }

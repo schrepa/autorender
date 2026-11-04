@@ -1,6 +1,6 @@
+use engine_core::{MaterialHandle, MeshHandle};
 use engine_places::probes::{ProbeView, ProbeViews};
 use engine_places::shadows::{CasterView, ShadowCasters};
-use engine_core::{MaterialHandle, MeshHandle};
 use engine_render::{Draw, MainView, MeshPass, Shape};
 
 use crate::casters::{map_factor, map_start};
@@ -132,9 +132,10 @@ impl MeshesGpu {
         if !self.state.faces.contains(&at.face) {
             return 0;
         }
-        let (Some(&args), Some(&ids)) =
-            (self.inputs.face_args.get(face), self.inputs.face_ids.get(face))
-        else {
+        let (Some(&args), Some(&ids)) = (
+            self.inputs.face_args.get(face),
+            self.inputs.face_ids.get(face),
+        ) else {
             return 0;
         };
         let mut drawn = 0;

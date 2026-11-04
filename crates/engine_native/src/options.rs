@@ -306,6 +306,27 @@ impl Default for HostOptions {
     }
 }
 
+fn job_cache(argument: &Argument, arguments: &mut Arguments) -> Result<CacheOptions, Error> {
+    let cache = arguments.value(argument)?;
+    Ok(match cache.as_str() {
+        "off" => CacheOptions::Off,
+        "verify" => CacheOptions::Verify,
+        mebibytes => CacheOptions::Keep {
+            budget: mebibytes
+                .parse::<u64>()
+                .ok()
+                .filter(|&mebibytes| mebibytes <= policy::MAX_JOB_CACHE_MIB)
+                .ok_or_else(|| {
+                    argument
+                        .invalid(&cache)
+                        .range(0.0, policy::MAX_JOB_CACHE_MIB as f64)
+                })?
+                * 1024
+                * 1024,
+        },
+    })
+}
+
 impl HostOptions {
     pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Self, Error> {
         let mut options = Self::default();
@@ -355,26 +376,7 @@ impl HostOptions {
                         })? as usize,
                 };
             }
-            "--jobcache" => {
-                let cache = arguments.value(argument)?;
-                self.jobs.cache = match cache.as_str() {
-                    "off" => CacheOptions::Off,
-                    "verify" => CacheOptions::Verify,
-                    mebibytes => CacheOptions::Keep {
-                        budget: mebibytes
-                            .parse::<u64>()
-                            .ok()
-                            .filter(|&mebibytes| mebibytes <= policy::MAX_JOB_CACHE_MIB)
-                            .ok_or_else(|| {
-                                argument
-                                    .invalid(&cache)
-                                    .range(0.0, policy::MAX_JOB_CACHE_MIB as f64)
-                            })?
-                            * 1024
-                            * 1024,
-                    },
-                };
-            }
+            "--jobcache" => self.jobs.cache = job_cache(argument, arguments)?,
             "--vsync" => self.vsync = arguments.switch(argument)?,
             "--view" => self.view = Some(arguments.value(argument)?),
             "--look" => self.look = Some(arguments.value(argument)?),

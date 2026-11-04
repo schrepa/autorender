@@ -164,8 +164,8 @@ fn words<const N: usize>(input: &[u8], kind: &JobKind) -> Result<[u32; N], Error
         );
     }
     let mut words = [0; N];
-    for (word, bytes) in words.iter_mut().zip(input.chunks_exact(4)) {
-        *word = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    for (word, bytes) in words.iter_mut().zip(input.as_chunks::<4>().0) {
+        *word = u32::from_le_bytes(*bytes);
     }
     Ok(words)
 }
@@ -204,7 +204,9 @@ fn start_cave(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
     making(input, |input| {
         let bits: [u32; CAVE_POINTS * 3] = words(input, &CAVE)?;
         let points: Vec<Vec3> = bits
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|point| {
                 Vec3::new(
                     f32::from_bits(point[0]),

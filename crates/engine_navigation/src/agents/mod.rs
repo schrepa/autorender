@@ -282,12 +282,10 @@ impl NavAgents {
                 search: Search::new(ends.0, ends.1, *options),
             });
         let mut unlimited = u64::MAX;
-        let found = asked.search.advance(
-            ground,
-            (&mut self.records, jobs),
-            &mut unlimited,
-            self.tick,
-        );
+        let found =
+            asked
+                .search
+                .advance(ground, (&mut self.records, jobs), &mut unlimited, self.tick);
         let Some((origin, found)) = found else {
             self.query = Some(asked);
             return NavQuery::Searching;

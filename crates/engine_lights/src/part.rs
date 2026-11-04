@@ -136,8 +136,8 @@ impl Readback for LightTotals {
             return;
         }
         let mut words = [0; 4];
-        for (word, read) in words.iter_mut().zip(bytes.chunks_exact(4)) {
-            *word = u32::from_le_bytes([read[0], read[1], read[2], read[3]]);
+        for (word, read) in words.iter_mut().zip(bytes.as_chunks::<4>().0) {
+            *word = u32::from_le_bytes(*read);
         }
         self.read = Some(words);
     }
@@ -246,7 +246,12 @@ impl LightsGpu {
         main.lights[1] = flags;
         main.offsets = self.offsets(0);
         self.headers[0] = main;
-        for (index, face) in captures.faces.iter().take(self.views as usize - 1).enumerate() {
+        for (index, face) in captures
+            .faces
+            .iter()
+            .take(self.views as usize - 1)
+            .enumerate()
+        {
             let lit = 1 + index as u32;
             let mut header = Clusters::new(
                 face.view,
@@ -277,6 +282,7 @@ impl GpuPart for LightsGpu {
     );
     const NAME: &'static str = "lights";
     const LAZY: bool = true;
+    const TURNS_ON_IN_PLAY: bool = true;
     const LABELS: &'static [&'static str] = &["engine/light-", "engine/lights"];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
@@ -358,13 +364,12 @@ impl GpuPart for LightsGpu {
         self.views = 1 + captures.faces.len().min(LIT_VIEWS as usize - 1) as u32;
         if self.views > self.arena {
             self.arena = self.views;
-            self.index_bytes = self
-                .index_bytes
-                .min(index_room(self.room, self.capacity, self.arena));
+            self.index_bytes =
+                self.index_bytes
+                    .min(index_room(self.room, self.capacity, self.arena));
         }
         self.staged.clear();
-        self.staged
-            .extend(list.lights.iter().map(LightInput::from));
+        self.staged.extend(list.lights.iter().map(LightInput::from));
         self.regions = self.staged.iter().any(|light| light.region != 0);
         let needed = totals.needed().max(count as u64 * 32);
         self.grow_indices(needed * 4);

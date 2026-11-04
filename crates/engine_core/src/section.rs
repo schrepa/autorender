@@ -30,15 +30,7 @@ pub trait Section:
 }
 
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 pub struct Cut {
     pub asked: u32,

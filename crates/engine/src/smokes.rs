@@ -158,6 +158,8 @@ impl<G: Game> Game for Played<G> {
 
     const AXES: &'static [(&'static str, u32, f32)] = G::AXES;
 
+    const MOVE_KEYS: &'static [(&'static str, crate::host::MoveDirection)] = G::MOVE_KEYS;
+
     fn before_frame(&mut self, engine: &mut Engine) {
         if let Self::Scene(game) = self {
             game.before_frame(engine);

@@ -243,7 +243,11 @@ impl DevTools {
                 Some(schema) => schema,
                 None => match kind.json_schema_in(&engine_core::SceneCx::of(world)) {
                     Value::Null => json!({ "type": "object" }),
-                    schema => schema,
+                    schema @ (Value::Bool(_)
+                    | Value::Number(_)
+                    | Value::String(_)
+                    | Value::Array(_)
+                    | Value::Object(_)) => schema,
                 },
             };
             let (has, read) = (kind.clone(), kind.clone());

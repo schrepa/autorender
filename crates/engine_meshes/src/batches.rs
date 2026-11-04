@@ -54,8 +54,10 @@ impl BatchPlan {
         self.changed = false;
         if !view_projection.is_finite() {
             self.invalidate();
-            return Err(Error::new(ErrorCode::RenderFailed, "$.snapshot.view_projection")
-                .expected(Expected::Finite));
+            return Err(
+                Error::new(ErrorCode::RenderFailed, "$.snapshot.view_projection")
+                    .expected(Expected::Finite),
+            );
         }
         if self.valid && !retained.changed() {
             return Ok(());
@@ -94,10 +96,16 @@ impl BatchPlan {
     fn rebuild(&mut self, retained: &RetainedRender) {
         let _profile = engine_core::profile::span("render", "batch_plan_rebuild");
         self.ordered.clear();
-        self.ordered.extend(retained.drawn().map(|(slot, instance)| {
-            let material = instance.material.map_or(0, |material| material.slot() as u64 + 1);
-            (((instance.mesh.slot() as u64) << 32) | material, slot as u32)
-        }));
+        self.ordered
+            .extend(retained.drawn().map(|(slot, instance)| {
+                let material = instance
+                    .material
+                    .map_or(0, |material| material.slot() as u64 + 1);
+                (
+                    ((instance.mesh.slot() as u64) << 32) | material,
+                    slot as u32,
+                )
+            }));
         self.ordered.sort_unstable();
         self.batches.clear();
         let instances = retained.instances();

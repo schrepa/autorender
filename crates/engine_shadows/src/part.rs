@@ -169,7 +169,11 @@ impl ShadowsGpu {
         }
         let display = view.display_size();
         let render = view.render_size();
-        cx.allocate(self.sky_open, extent(display.x.max(1), display.y.max(1), 1), 1);
+        cx.allocate(
+            self.sky_open,
+            extent(display.x.max(1), display.y.max(1), 1),
+            1,
+        );
         let within = |size: u32, whole: u32| size.clamp(1, whole.max(1));
         self.opened = Some((within(render.x, display.x), within(render.y, display.y)));
         cx.run(self.opening);
@@ -199,7 +203,10 @@ impl ShadowsGpu {
         let mask_bytes = plan.mark_bytes().max(4);
         cx.allocate_buffer(self.map_marks, 2 * mask_bytes);
         cx.allocate_buffer(self.depth_marks, mask_bytes);
-        cx.allocate_buffer(self.routes, (plan.routes.len().max(1) * size_of::<Route>()) as u64);
+        cx.allocate_buffer(
+            self.routes,
+            (plan.routes.len().max(1) * size_of::<Route>()) as u64,
+        );
         cx.allocate_buffer(self.cull, size_of::<CasterCull>() as u64);
         cx.allocate_buffer(self.sky_views, size_of::<SkyViews>() as u64);
     }
@@ -340,11 +347,16 @@ impl GpuPart for ShadowsGpu {
         self.allocate(&plan, cx);
         self.upload(&plan, cx);
         self.at.clear();
-        self.at.extend(maps.regions.iter().enumerate().map(|(index, region)| CasterView {
-            region: index as u32,
-            map: region.map,
-            refresh: region.refresh,
-        }));
+        self.at.extend(
+            maps.regions
+                .iter()
+                .enumerate()
+                .map(|(index, region)| CasterView {
+                    region: index as u32,
+                    map: region.map,
+                    refresh: region.refresh,
+                }),
+        );
         self.sky_layer = plan.sky_draw.map(|draw| draw.layer as u32);
         (self.composed, self.moving) = (plan.composes.len() as u32, plan.moving);
         if !self.at.is_empty() || self.composed > 0 {
@@ -402,7 +414,10 @@ impl GpuPart for ShadowsGpu {
         let mut drawn = 0;
         cx.span("shadow_regions");
         for at in self.at.iter().filter(|at| at.map == CasterMap::Region) {
-            let mut draw = cx.render(Attach::Depth(self.regions, Some(at.region)), Some(at.region));
+            let mut draw = cx.render(
+                Attach::Depth(self.regions, Some(at.region)),
+                Some(at.region),
+            );
             drawn += self.casters.draw(&mut draw, (), at);
         }
         if self.composed > 0 || self.moving > 0 {

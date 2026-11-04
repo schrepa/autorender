@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use engine_core::{impostor_level_rows, impostor_record_header};
+use engine_core::{impostor_assembly_input, impostor_level_rows};
 
 use super::*;
 
@@ -12,7 +12,6 @@ struct Region {
     offset: u64,
     rows: u32,
     stride: u32,
-    row: u32,
 }
 
 fn level_regions(shape: AtlasShape) -> (Vec<Region>, u64) {
@@ -20,12 +19,11 @@ fn level_regions(shape: AtlasShape) -> (Vec<Region>, u64) {
     let mut bytes = 0_u64;
     for _ in 0..4 {
         for level in 0..shape.levels() {
-            let (rows, stride, row) = impostor_level_rows(shape, level, ROW);
+            let (rows, stride, _) = impostor_level_rows(shape, level, ROW);
             regions.push(Region {
                 offset: bytes,
                 rows,
                 stride,
-                row,
             });
             bytes += u64::from(stride) * u64::from(rows);
         }
@@ -44,7 +42,6 @@ pub(super) struct Readback {
     identity: ImpostorIdentity,
     shape: AtlasShape,
     buffer: wgpu::Buffer,
-    regions: Vec<Region>,
     mapped: Rc<RefCell<Mapped>>,
 }
 
@@ -132,30 +129,24 @@ impl Atlas {
             identity,
             shape,
             buffer,
-            regions,
             mapped: Rc::new(RefCell::new(Mapped::Recorded)),
         });
     }
 
     pub(super) fn take_made(&mut self, out: &mut Vec<(ImpostorIdentity, Option<Vec<u8>>)>) {
-        let mut kept = Vec::with_capacity(self.readbacks.len());
-        for readback in std::mem::take(&mut self.readbacks) {
-            let read = match &*readback.mapped.borrow() {
-                Mapped::Read(bytes) => {
-                    Some(Some(self.assemble(readback.shape, &readback.regions, bytes)))
-                }
-                Mapped::Failed => Some(None),
-                Mapped::Recorded | Mapped::Mapping => None,
+        self.readbacks.retain(|readback| {
+            let read = match &mut *readback.mapped.borrow_mut() {
+                Mapped::Read(input) => Some(std::mem::take(input)),
+                Mapped::Failed => None,
+                Mapped::Recorded | Mapped::Mapping => return true,
             };
-            match read {
-                Some(bytes) => out.push((readback.identity, bytes)),
-                None => kept.push(readback),
-            }
-        }
-        self.readbacks = kept;
+            out.push((readback.identity, read));
+            false
+        });
     }
 
     pub(super) fn after_submit(&mut self) {
+        let format = self.format;
         for readback in &self.readbacks {
             if !matches!(*readback.mapped.borrow(), Mapped::Recorded) {
                 continue;
@@ -163,17 +154,18 @@ impl Atlas {
             *readback.mapped.borrow_mut() = Mapped::Mapping;
             let buffer = readback.buffer.clone();
             let mapped = Rc::clone(&readback.mapped);
+            let shape = readback.shape;
             readback.buffer.slice(..).map_async(
                 wgpu::MapMode::Read,
                 crate::platform::map_callback(move |result| {
                     let read = if result.is_ok() {
-                        let bytes = buffer
+                        let input = buffer
                             .slice(..)
                             .get_mapped_range()
                             .ok()
-                            .map(|view| view.to_vec());
+                            .map(|view| impostor_assembly_input(shape, format, ROW, &view));
                         buffer.unmap();
-                        bytes
+                        input
                     } else {
                         None
                     };
@@ -181,27 +173,5 @@ impl Atlas {
                 }),
             );
         }
-    }
-
-    fn assemble(&self, shape: AtlasShape, regions: &[Region], bytes: &[u8]) -> Vec<u8> {
-        let mut out = impostor_record_header(shape, self.format);
-        let levels = self.shape.levels() as usize;
-        for (index, region) in regions.iter().enumerate() {
-            let mut texels = Vec::with_capacity(region.row as usize * region.rows as usize);
-            for at in 0..region.rows {
-                let start = (region.offset + u64::from(at) * u64::from(region.stride)) as usize;
-                if let Some(row) = bytes.get(start..start + region.row as usize) {
-                    texels.extend_from_slice(row);
-                }
-            }
-            match family(self.format) {
-                None => out.extend_from_slice(&texels),
-                Some(family) => {
-                    let size = self.shape.size() >> (index % levels);
-                    out.extend_from_slice(&engine_textures::compress(size, size, &texels, family));
-                }
-            }
-        }
-        out
     }
 }

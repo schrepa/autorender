@@ -486,6 +486,17 @@ fn sky_rules(session: &mut dyn SmokeSession) -> Checked<()> {
         &json!("$.args.time_of_day.hours"),
         "hours_past_a_day_are_refused"
     );
+    let stopped = refuse(
+        session,
+        "control",
+        "environment",
+        json!({"time_of_day": {"hours": 12.0}}),
+    )?;
+    smoke_eq!(
+        &stopped["path"],
+        &json!("$.args.time_of_day.enabled"),
+        "leaving_a_running_clock_unnamed_is_refused"
+    );
     let off = environment(
         session,
         json!({"sky": {"enabled": false}, "time_of_day": {"enabled": false}}),

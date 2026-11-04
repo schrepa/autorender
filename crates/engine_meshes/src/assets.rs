@@ -14,8 +14,11 @@ pub(crate) struct MeshAssets;
 fn uses(assets: &AssetLibrary, plan: &BatchPlan) -> AssetUses {
     let mut meshes: Vec<MeshHandle> = plan.batches.iter().map(|batch| batch.mesh).collect();
     meshes.dedup();
-    let mut materials: Vec<MaterialHandle> =
-        plan.batches.iter().filter_map(|batch| batch.material).collect();
+    let mut materials: Vec<MaterialHandle> = plan
+        .batches
+        .iter()
+        .filter_map(|batch| batch.material)
+        .collect();
     materials.sort_unstable();
     materials.dedup();
     let mut textures: Vec<TextureHandle> = materials
@@ -39,14 +42,16 @@ fn asks(assets: &AssetLibrary, plan: &BatchPlan) -> ImpostorAsks {
             .batches
             .iter()
             .map(|batch| {
-                let triangles = assets
+                assets
                     .mesh(batch.mesh)
-                    .map_or(0, |mesh| mesh.indices().len() / 3);
-                (triangles >= IMPOSTOR_MIN_TRIANGLES).then(|| ImpostorAsk {
-                    mesh: batch.mesh,
-                    material: batch.material,
-                    parts: Vec::new(),
-                })
+                    .is_some_and(|mesh| {
+                        mesh.takes_impostor() && mesh.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES
+                    })
+                    .then(|| ImpostorAsk {
+                        mesh: batch.mesh,
+                        material: batch.material,
+                        parts: Vec::new(),
+                    })
             })
             .collect(),
     }

@@ -31,7 +31,7 @@ pub use jobs::{
     RecordParity, RecordStore, Shares,
 };
 pub use members::MembersOf;
-pub use record::{BrickRecord, RecordExt};
+pub use record::{BrickRecord, PlainSystems, RecordExt};
 pub use registry::{BrickId, BrickSet, Registry, settings};
 pub use scene::{
     AuthoredId, OperationScene, SceneEntity, SceneRead, SpawnedBy, authored_entity, authored_id,

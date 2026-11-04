@@ -463,20 +463,3 @@ pub(super) struct Judged<'a> {
     pub(super) base: Vec<Run>,
     pub(super) candidate: Vec<Run>,
 }
-
-impl<'a> Judged<'a> {
-    pub(super) fn failed(cell: &'a Cell, why: String) -> Self {
-        Self {
-            cell,
-            verdicts: cell
-                .keys()
-                .into_iter()
-                .map(|key| (key, Verdict::Unchecked(why.clone())))
-                .collect(),
-            changed: Vec::new(),
-            digests: Vec::new(),
-            base: Vec::new(),
-            candidate: Vec::new(),
-        }
-    }
-}

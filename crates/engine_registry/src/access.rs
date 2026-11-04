@@ -6,7 +6,7 @@ use engine_math::collections::HashMap;
 use engine_place::{Error, ErrorCode, PlaceKind};
 
 use crate::BrickId;
-use crate::record::{crate_segment, within};
+use crate::record::crate_segment;
 
 const CORE_CRATES: &[&str] = &[
     "bevy_ecs",
@@ -35,15 +35,26 @@ enum Catalogued {
 #[derive(Clone, Debug, Default)]
 pub struct AccessRule {
     packages: Vec<(&'static str, Option<&'static str>)>,
+    games: Vec<bool>,
     places: HashMap<TypeId, Catalogued>,
+    left_out: HashMap<TypeId, &'static str>,
 }
 
 impl AccessRule {
-    pub(crate) fn new(packages: Vec<(&'static str, Option<&'static str>)>) -> Self {
+    pub(crate) fn new(
+        packages: Vec<(&'static str, Option<&'static str>)>,
+        games: Vec<bool>,
+    ) -> Self {
         Self {
             packages,
+            games,
             places: HashMap::default(),
+            left_out: HashMap::default(),
         }
+    }
+
+    pub(crate) fn left_out(&mut self, type_id: TypeId, package: &'static str) {
+        self.left_out.insert(type_id, package);
     }
 
     pub(crate) fn place(&mut self, type_id: TypeId, kind: PlaceKind, filler: Option<BrickId>) {
@@ -62,6 +73,13 @@ impl AccessRule {
         match self.places.get(&slot) {
             Some(Catalogued::Slot(filler)) => *filler,
             Some(Catalogued::Shared) | None => None,
+        }
+    }
+
+    pub(crate) fn check_exclusive(&self, brick: BrickId, system: &str, problems: &mut Vec<Error>) {
+        let game = self.games.get(brick.index()).copied().unwrap_or(false);
+        if let (false, Some(&(package, _))) = (game, self.packages.get(brick.index())) {
+            problems.push(foreign(package, system, "bevy_ecs::world::World"));
         }
     }
 
@@ -90,19 +108,30 @@ impl AccessRule {
                 continue;
             };
             let name = info.name();
+            let path = format!("$.bricks.{package}.{system}.{}", &*name);
             if let Some(place) = info.type_id().and_then(|type_id| self.places.get(&type_id)) {
                 if let Catalogued::Slot(filler) = place
                     && write
                     && *filler != Some(brick)
                 {
-                    let path = format!("$.bricks.{package}.{system}.{}", &*name);
                     problems.push(Error::new(ErrorCode::PlaceNotFilled, path).got(package));
                 }
                 continue;
             }
-            if owner.is_some_and(|owner| within(&name, owner))
-                || CORE_CRATES.contains(&crate_segment(&name))
+            let own = owner.is_some_and(|owner| crate_segment(&name) == owner);
+            if own
+                && let Some(left) = info
+                    .type_id()
+                    .and_then(|type_id| self.left_out.get(&type_id))
             {
+                problems.push(
+                    Error::new(ErrorCode::MissingResource, path)
+                        .got(&*name)
+                        .nearest(*left),
+                );
+                continue;
+            }
+            if own || CORE_CRATES.contains(&crate_segment(&name)) {
                 continue;
             }
             problems.push(foreign(package, system, &name));
@@ -120,7 +149,7 @@ impl AccessRule {
         let Some(&(package, owner)) = self.packages.get(brick.index()) else {
             return;
         };
-        if owner.is_some_and(|owner| within(type_name, owner))
+        if owner.is_some_and(|owner| crate_segment(type_name) == owner)
             || (filled_slot && self.filler(type_id) == Some(brick))
         {
             return;

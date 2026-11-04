@@ -21,9 +21,9 @@ mod queries;
 mod startup;
 
 pub use attribution::GpuPassTimes;
-pub use install::{Installation, InstalledPart, InstalledPiece, install_noop};
 pub(crate) use display::Display;
 use display::DisplayFrame;
+pub use install::{Installation, InstalledPart, InstalledPiece, install_noop};
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::GpuMark;
 pub use startup::StartingRenderer;
@@ -94,7 +94,11 @@ impl Renderer {
             .passes
             .iter()
             .find(|known| known.group.unwrap_or(known.name) == pass || known.name == pass)?;
-        machine.declared.parts.get(declared.part as usize).map(|part| part.package)
+        machine
+            .declared
+            .parts
+            .get(declared.part as usize)
+            .map(|part| part.package)
     }
 
     pub fn readback_overflows(&self) -> u64 {

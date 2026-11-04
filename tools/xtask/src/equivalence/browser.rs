@@ -8,7 +8,6 @@ use super::matrix::Cell;
 use super::session::{Run, SETTINGS, Shot};
 use super::sides::{Side, checkout_tree};
 use crate::bench::Scene;
-use crate::heavy::HELD;
 use crate::measure::{self, git, read_json};
 use crate::process::Project;
 use crate::serve::Server;
@@ -153,7 +152,6 @@ pub(super) fn round(
         .arg("scripts/equivalence-browser.mjs")
         .arg(&plan)
         .arg(&result)
-        .env(HELD.0, HELD.1)
         .current_dir(root.join("web"))
         .status();
     match status {

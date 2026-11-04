@@ -81,6 +81,9 @@ pub fn check(
         let Some(path) = member.file("Cargo.toml") else {
             continue;
         };
+        if !repository.ruled(&path) {
+            continue;
+        }
         let manifest = parse(root, &path)?;
         check_member(
             &path,

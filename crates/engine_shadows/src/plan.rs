@@ -30,8 +30,10 @@ pub(crate) struct ShadowFeedback {
 impl Readback for ShadowFeedback {
     fn arrived(&mut self, frame: u64, tag: u32, bytes: &[u8]) {
         let words = bytes
-            .chunks_exact(4)
-            .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| u32::from_le_bytes(*word))
             .collect();
         self.arrived.push((frame, tag, words));
     }
@@ -66,7 +68,7 @@ impl ShadowFeedback {
     }
 }
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub(crate) struct ShadowPlan {
     clipmap: Clipmap,
     plan: ClipPlan,
@@ -87,32 +89,6 @@ pub(crate) struct ShadowPlan {
     pub(crate) table: Vec<u32>,
     pub(crate) revisions: Vec<u64>,
     pub(crate) mask_words: u32,
-}
-
-impl Default for ShadowPlan {
-    fn default() -> Self {
-        Self {
-            clipmap: Clipmap::default(),
-            plan: ClipPlan::default(),
-            key: None,
-            made: 0,
-            since: 0,
-            masks: Masks::default(),
-            sky: SkyMaps::default(),
-            sky_draw: None,
-            sky_view: None,
-            views: Vec::new(),
-            cameras: Vec::new(),
-            routes: Vec::new(),
-            levels: Vec::new(),
-            cull: CasterCull::default(),
-            composes: Vec::new(),
-            moving: 0,
-            table: Vec::new(),
-            revisions: Vec::new(),
-            mask_words: 0,
-        }
-    }
 }
 
 impl ShadowPlan {

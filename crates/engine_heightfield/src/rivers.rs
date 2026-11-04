@@ -149,7 +149,11 @@ fn along_rivers(rivers: &[River]) -> Vec<Vec<f32>> {
     rivers
         .iter()
         .map(|river| {
-            let points: Vec<Vec2> = river.points.iter().map(|&point| Vec2::from(point)).collect();
+            let points: Vec<Vec2> = river
+                .points
+                .iter()
+                .map(|&point| Vec2::from(point))
+                .collect();
             crate::hydraulics::distances(&points)
         })
         .collect()
@@ -298,6 +302,7 @@ impl Rivers {
         regions
     }
 
+    #[must_use]
     pub fn with_rivers(&self, rivers: Vec<River>) -> Self {
         Self {
             shifts: rivers.iter().map(shifts).collect(),

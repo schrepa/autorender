@@ -15,7 +15,7 @@ use crate::access::AccessRule;
 use crate::attribution::CORE_ROW;
 use crate::entries::{OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
 use crate::explain::ExplainEntry;
-use crate::gates::{Gate, GateDriver, GateId, Gates, Off, Scope, gate_off, gate_on};
+use crate::gates::{Gate, GateDriver, GateId, GateReset, Gates, Off, Scope, gate_off, gate_on};
 use crate::hooks::{Named, add_removal, add_settle};
 use crate::jobs::JobQueue;
 use crate::order::{self, PlaceRules};
@@ -47,6 +47,7 @@ pub struct Registry {
     bases: Vec<u32>,
     listed: Vec<&'static str>,
     left_out: Vec<&'static str>,
+    left_owned: Vec<(TypeId, &'static str)>,
     rule: AccessRule,
     named: Vec<Named>,
     eachers: Vec<(TypeId, MemberEach)>,
@@ -55,7 +56,9 @@ pub struct Registry {
     problems: Vec<Error>,
 }
 
-type MemberEach = fn(&World, &mut dyn FnMut(&dyn Any));
+pub(crate) type MemberEach = fn(&World, &mut dyn FnMut(&dyn Any));
+
+type ListRefresh = (TypeId, fn(&mut World));
 
 impl Registry {
     pub fn add(&mut self, mut record: BrickRecord) {
@@ -152,14 +155,29 @@ impl Registry {
         std::iter::once(CORE_ROW).chain(self.names()).collect()
     }
 
-    pub fn leave_out(&mut self, package: &'static str) {
-        if !self.left_out.contains(&package) && !self.has(package) {
+    pub fn leave_out(&mut self, record: &BrickRecord) {
+        let package = record.package;
+        if self.has(package) {
+            return;
+        }
+        if !self.left_out.contains(&package) {
             self.left_out.push(package);
         }
+        self.left_owned
+            .extend(record.owned().iter().map(|owned| (owned.type_id, package)));
     }
 
     pub fn left_out(&self) -> &[&'static str] {
         &self.left_out
+    }
+
+    pub fn holds(&self, package: &str, type_id: TypeId) -> bool {
+        let owner = self.brick(package).and_then(BrickRecord::owner);
+        owner.is_some()
+            && self
+                .bricks
+                .iter()
+                .any(|record| record.owner() == owner && record.owns(type_id))
     }
 
     pub fn report(&mut self, error: Error) {
@@ -568,6 +586,7 @@ impl Registry {
                 .iter()
                 .map(|record| (record.package, record.owner()))
                 .collect(),
+            self.bricks.iter().map(BrickRecord::game).collect(),
         );
         for decl in &self.catalog {
             let filler = match decl.kind() {
@@ -576,10 +595,16 @@ impl Registry {
             };
             rule.place(decl.type_id(), decl.kind(), filler);
         }
+        for &(type_id, package) in &self.left_owned {
+            if !self.bricks.iter().any(|record| record.owns(type_id)) {
+                rule.left_out(type_id, package);
+            }
+        }
         rule
     }
 
     fn check_owned(&mut self) {
+        let mut seen: Vec<(TypeId, &'static str)> = Vec::new();
         for (index, record) in self.bricks.iter().enumerate() {
             let brick = BrickId(index as u32);
             let piece = record.piece_entry().map(|piece| piece.type_id);
@@ -592,12 +617,23 @@ impl Registry {
                     filled_slot,
                     &mut self.problems,
                 );
+                match seen.iter().find(|(known, _)| *known == owned.type_id) {
+                    Some(&(_, first)) => {
+                        let path = format!("$.bricks.{}.registers.{}", record.package, owned.name);
+                        self.problems.push(
+                            Error::new(ErrorCode::NameTwice, path)
+                                .got(first)
+                                .nearest(record.package),
+                        );
+                    }
+                    None => seen.push((owned.type_id, record.package)),
+                }
             }
         }
     }
 
     fn join_members(&mut self, world: &mut World) -> Vec<fn(&mut World)> {
-        let mut lists: Vec<(TypeId, fn(&mut World))> = Vec::new();
+        let mut lists: Vec<ListRefresh> = Vec::new();
         for (index, record) in self.bricks.iter_mut().enumerate() {
             let base = self.bases[index];
             let (package, brick) = (record.package, record.brick());
@@ -798,7 +834,7 @@ impl Registry {
     fn driver(&mut self, world: &mut World, refresh: Vec<fn(&mut World)>) -> GateDriver {
         let mut gates: Vec<Gate> = Vec::new();
         let mut offs: Vec<Off> = Vec::new();
-        let mut resets: Vec<(GateId, fn(&mut World))> = Vec::new();
+        let mut resets: Vec<GateReset> = Vec::new();
         for (index, record) in self.bricks.iter_mut().enumerate() {
             let brick = BrickId(index as u32);
             let base = self.bases[index];

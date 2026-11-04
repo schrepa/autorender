@@ -42,11 +42,13 @@ impl Settle {
     }
 }
 
+type FieldNames = Box<dyn Fn(&World) -> Vec<&'static str> + Send + Sync>;
+
 pub struct NamedField {
     pub section: &'static str,
     pub field: &'static str,
     pub kept: &'static [&'static str],
-    pub(crate) names: Box<dyn Fn(&World) -> Vec<&'static str> + Send + Sync>,
+    pub(crate) names: FieldNames,
 }
 
 impl NamedField {
@@ -77,7 +79,7 @@ impl Named {
         let Some(Value::String(got)) = value.get(self.field) else {
             return Ok(());
         };
-        if self.variants.iter().any(|&variant| variant == got.as_str()) {
+        if self.variants.contains(&got.as_str()) {
             return Ok(());
         }
         Err(
