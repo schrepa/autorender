@@ -18,8 +18,10 @@ use engine_heightfield::tile::{
 };
 use engine_heightfield::{Bed, Layers, Pyramid, Reach, Stamp, TILE_QUADS, TILE_SAMPLES, TileKey};
 
+use crate::gpu::{LIVE_HELD, NO_WATER_SURFACE};
 pub use crate::gpu::{BLOCK_SIDE, COVER_POINTS, NO_BLOCK};
 
+const LIVE_DRY: [f32; 3] = [NO_WATER_SURFACE, 0.0, 0.0];
 pub const MARGIN: f32 = 64.0;
 pub const REGION_CELLS: u64 = 1 << 22;
 pub const BLOCK_CELLS: usize = (BLOCK_SIDE * BLOCK_SIDE) as usize;
@@ -105,19 +107,6 @@ record!(LiveWater {
 });
 
 impl LiveWater {
-    pub fn block(&self, x: i64, z: i64) -> Option<&[[f32; 3]]> {
-        let (column, row) = (x - self.first[0], z - self.first[1]);
-        let [columns, rows] = self.blocks.map(i64::from);
-        if column < 0 || row < 0 || column >= columns || row >= rows {
-            return None;
-        }
-        let at = self
-            .wet
-            .binary_search(&((row * columns + column) as u32))
-            .ok()?;
-        self.cells.get(at * BLOCK_CELLS..(at + 1) * BLOCK_CELLS)
-    }
-
     fn valid(&self) -> bool {
         let spanned = u64::from(self.blocks[0]) * u64::from(self.blocks[1]);
         self.cells.len() == self.wet.len() * BLOCK_CELLS
@@ -282,22 +271,16 @@ impl SteadyWater {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SettledKey {
-    pub recipe: [u8; 32],
+    pub basis: [u8; 32],
     pub key: TileKey,
     pub stamps: Vec<Stamp>,
-    pub solids: Vec<Option<Solid>>,
-    pub relief: [u8; 16],
-    pub cell: f32,
     pub tiles: [u32; 4],
 }
 
 record!(SettledKey {
-    recipe,
+    basis,
     key,
     stamps,
-    solids,
-    relief,
-    cell,
     tiles,
 });
 
@@ -1534,7 +1517,7 @@ impl SettleStart {
             wet: Vec::new(),
             cells: Vec::new(),
         };
-        let mut cells = [[f32::NAN; 3]; BLOCK_CELLS];
+        let mut cells = [LIVE_DRY; BLOCK_CELLS];
         for row in 0..blocks[1] {
             for column in 0..blocks[0] {
                 let corner = [
@@ -1553,7 +1536,7 @@ impl SettleStart {
                     let i = corner[0] + (k % BLOCK_SIDE as usize) as i64;
                     let j = corner[1] + (k / BLOCK_SIDE as usize) as i64;
                     let inside = (low[0]..high[0]).contains(&i) && (low[1]..high[1]).contains(&j);
-                    *held = [f32::NAN; 3];
+                    *held = LIVE_DRY;
                     if !inside {
                         continue;
                     }
@@ -1579,13 +1562,17 @@ impl SettleStart {
     ) -> Option<[f32; 3]> {
         let at = self.stored.at(i, j)?;
         if let Some(level) = ground.held(at) {
-            return Some([level + self.datum, f32::NAN, f32::NAN]);
+            return Some([level + self.datum, LIVE_HELD, 0.0]);
         }
         let Some(&[water, _, shares]) = means.get(at * CELL_MEANS..(at + 1) * CELL_MEANS) else {
             return None;
         };
         let wet = water[0] - ground.bed(at) > DRY && shares[0] >= WET_MOST;
-        wet.then_some([water[0] + self.datum, water[1], water[2]])
+        wet.then_some(if water[1].is_nan() {
+            [water[0] + self.datum, LIVE_HELD, 0.0]
+        } else {
+            [water[0] + self.datum, water[1], water[2]]
+        })
     }
 }
 

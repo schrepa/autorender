@@ -137,15 +137,14 @@ pub(crate) fn mesh_stats(
     frame: Res<engine_core::FrameTime>,
     mut stats: ResMut<MeshStats>,
 ) {
-    let snapshot = retained.snapshot();
     let last = totals.last();
     let budget = culling.budget();
-    let instance_count = batches.ordered_instances.len();
+    let instance_count = batches.ordered.len();
     let gpu_visible = last.map(|totals| totals.visible);
     let instances = gpu_visible.map_or(instance_count.min(budget) as u32, |visible| {
         visible.min(counted(budget))
     });
-    let listed = counted(snapshot.visible_instances);
+    let listed = counted(retained.listed_instances());
     let visible = gpu_visible.unwrap_or(listed);
     let levels = last
         .filter(|_| detail.enabled)
@@ -155,12 +154,12 @@ pub(crate) fn mesh_stats(
         Cut::of(records.asked, records.asked.saturating_sub(records.refused))
     });
     let next = MeshStats {
-        invalid_transforms: counted(snapshot.invalid_transforms),
-        render_candidates: counted(snapshot.render_candidates),
+        invalid_transforms: counted(retained.invalid_transforms()),
+        render_candidates: counted(retained.render_candidates()),
         visible_instances: visible,
         culled_instances: listed.saturating_sub(visible),
         dropped_instances: visible.saturating_sub(instances),
-        missing_assets: counted(snapshot.missing_assets),
+        missing_assets: counted(retained.missing_assets()),
         culling_enabled: culling.frustum,
         instances,
         gpu_visible,

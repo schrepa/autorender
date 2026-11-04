@@ -159,8 +159,7 @@ fn terrain_detail(p: vec2<f32>, size: f32, resolved: f32) -> f32 {
 }
 
 fn terrain_layer_fades(layer: u32) -> vec2<f32> {
-    let half = (table_fades(layer) >> ((layer % 2u) * 16u)) & 0xffffu;
-    return vec2<f32>(f32(half & 0xffu), f32(half >> 8u)) * (1.0 / 255.0);
+    return table_fades(layer);
 }
 
 fn terrain_level_gradient(local: vec2<f32>, level: u32) -> vec2<f32> {

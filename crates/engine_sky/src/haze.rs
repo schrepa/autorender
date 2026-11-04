@@ -104,7 +104,6 @@ pub(crate) struct Haze {
     marching: Pipeline<SkyGpu, Own>,
     filtering: Pipeline<SkyGpu, Own>,
     drawn: (u32, u32),
-    written: Option<HazeView>,
 }
 
 impl Haze {
@@ -164,13 +163,11 @@ impl Haze {
             marching,
             filtering,
             drawn: (0, 0),
-            written: None,
         })
     }
 
     pub(crate) fn prepare(&mut self, cx: &mut Prepare<'_, SkyGpu>, plan: &HazePlan) {
         let Some(size) = plan.size.filter(|_| plan.runs) else {
-            self.written = None;
             return;
         };
         let extent = wgpu::Extent3d {
@@ -183,10 +180,7 @@ impl Haze {
         }
         cx.allocate_buffer(self.uniform, size_of::<HazeView>() as u64);
         self.drawn = plan.drawn;
-        if self.written != Some(plan.uniform) {
-            cx.write(self.uniform, 0, &[plan.uniform]);
-            self.written = Some(plan.uniform);
-        }
+        cx.write(self.uniform, 0, &[plan.uniform]);
         cx.run(self.march_pass);
         cx.run(self.filter_pass);
     }

@@ -23,6 +23,7 @@ mod startup;
 pub use attribution::GpuPassTimes;
 pub use install::{Installation, InstalledPart, InstalledPiece, install_noop};
 pub(crate) use display::Display;
+use display::DisplayFrame;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::GpuMark;
 pub use startup::StartingRenderer;
@@ -59,6 +60,7 @@ pub(crate) struct Core {
 }
 
 pub struct Renderer {
+    surface: Option<DisplayFrame>,
     core: Core,
     run: Option<Run>,
     assets: Option<Assets>,
@@ -70,7 +72,6 @@ pub struct Renderer {
     installing: Option<Validation>,
     previous: Option<(Mat4, (u32, u32), u64)>,
     seconds: Option<f32>,
-    ran: Vec<&'static [&'static str]>,
     part_names: &'static [&'static str],
     linked: engine_core::LinkedStats,
     resolver: Option<(&'static str, &'static str)>,

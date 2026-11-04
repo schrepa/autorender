@@ -61,7 +61,6 @@ fn hover(state: &mut UiState, pointer: &PointerInput) {
         return;
     }
     state.hovered = hovered;
-    state.revision += 1;
     if hovered.is_some() {
         state.focused = hovered;
     }
@@ -75,16 +74,14 @@ fn press(
 ) {
     if pointer.pressed {
         state.pressed = state.hovered;
-        state.revision += 1;
     }
     if pointer.released {
         let pressed = state.pressed.take();
-        state.revision += 1;
         if let Some(at) = pressed.filter(|_| pressed == state.hovered) {
             activate(state, at, screens, events);
         }
-    } else if !pointer.held && state.pressed.take().is_some() {
-        state.revision += 1;
+    } else if !pointer.held {
+        state.pressed = None;
     }
 }
 
@@ -139,7 +136,6 @@ fn move_focus(state: &mut UiState, way: Vec2) {
     }
     if let Some((_, at)) = best {
         state.focused = Some(at);
-        state.revision += 1;
         state.reveal(at);
     }
 }

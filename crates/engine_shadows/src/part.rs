@@ -2,10 +2,9 @@ use bevy_ecs::prelude::*;
 use engine_core::{Error, View};
 use engine_places::shadows::{CasterMap, CasterView, SHADOW_REGIONS, ShadowCasters, ShadowMaps};
 use engine_render::{
-    Access, AfterRead, Attach, Bind, Buffer, CameraUniform, ComputePipeline, Count, DebugShown,
-    DepthUse, DrawInput, Draws, Encode, FULLSCREEN, GpuPart, Install, Layer, Lifetime, Own, Pass,
-    Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, VertexLayout, ViewTarget,
-    wgpu,
+    Access, AfterRead, Attach, Bind, Buffer, ComputePipeline, Count, DebugShown, DepthUse,
+    DrawInput, Draws, Encode, FULLSCREEN, GpuPart, Install, Layer, Lifetime, Own, Pass, Pipeline,
+    Prepare, RenderPipeline, SamplerDesc, Shape, Texture, VertexLayout, ViewTarget, wgpu,
 };
 
 use crate::constants::{LEVEL_WORDS, MARK_GROUP, SKY_LAYERS};
@@ -37,17 +36,6 @@ const COMPOSE_LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayo
 };
 const COMPOSE_VERTICES: &[VertexLayout] = &[VertexLayout::Buffer(COMPOSE_LAYOUT)];
 
-#[derive(Default)]
-struct Written {
-    cameras: Option<Vec<CameraUniform>>,
-    routes: Option<Vec<Route>>,
-    levels: Option<Vec<[u32; LEVEL_WORDS as usize]>>,
-    cull: Option<CasterCull>,
-    sky: Option<Box<SkyViews>>,
-    table: Vec<u64>,
-    compose_bytes: u64,
-}
-
 pub(crate) struct ShadowsGpu {
     maps: Pass<Self>,
     marks: Pass<Self>,
@@ -76,7 +64,8 @@ pub(crate) struct ShadowsGpu {
     marked: Option<[u32; 3]>,
     opened: Option<(u32, u32)>,
     made: Option<u64>,
-    written: Written,
+    written_table: Vec<u64>,
+    compose_bytes: u64,
 }
 
 fn compose_pipeline(
@@ -106,37 +95,21 @@ fn extent(width: u32, height: u32, layers: u32) -> wgpu::Extent3d {
 
 impl ShadowsGpu {
     fn upload(&mut self, plan: &ShadowPlan, cx: &mut Prepare<'_, Self>) {
-        if self.written.cameras.as_deref() != Some(plan.cameras.as_slice()) {
-            cx.cameras(&plan.cameras);
-            self.written.cameras = Some(plan.cameras.clone());
-        }
-        if self.written.routes.as_deref() != Some(plan.routes.as_slice()) {
-            cx.write(self.routes, 0, &plan.routes);
-            self.written.routes = Some(plan.routes.clone());
-        }
-        if self
-            .written
-            .cull
-            .is_none_or(|written| bytemuck::bytes_of(&written) != bytemuck::bytes_of(&plan.cull))
-        {
-            cx.write(self.cull, 0, &[plan.cull]);
-            self.written.cull = Some(plan.cull);
-        }
-        if self.written.sky.as_deref() != Some(&*plan.sky.uniform) {
-            cx.write(self.sky_views, 0, std::slice::from_ref(&*plan.sky.uniform));
-            self.written.sky = Some(plan.sky.uniform.clone());
-        }
+        cx.cameras(&plan.cameras);
+        cx.write(self.routes, 0, &plan.routes);
+        cx.write(self.cull, 0, &[plan.cull]);
+        cx.write(self.sky_views, 0, std::slice::from_ref(&*plan.sky.uniform));
         if !plan.composes.is_empty() {
             let bytes = std::mem::size_of_val(plan.composes.as_slice()) as u64;
-            self.written.compose_bytes = self.written.compose_bytes.max(bytes);
-            cx.allocate_buffer(self.composes, self.written.compose_bytes);
+            self.compose_bytes = self.compose_bytes.max(bytes);
+            cx.allocate_buffer(self.composes, self.compose_bytes);
             cx.write(self.composes, 0, &plan.composes);
         }
         let side = plan.side();
         let cells = (side * side) as usize;
-        self.written.table.resize(plan.revisions.len(), u64::MAX);
+        self.written_table.resize(plan.revisions.len(), u64::MAX);
         for (level, &revision) in plan.revisions.iter().enumerate() {
-            if self.written.table[level] == revision {
+            if self.written_table[level] == revision {
                 continue;
             }
             let Some(block) = plan.table.get(level * cells..(level + 1) * cells) else {
@@ -157,11 +130,9 @@ impl ShadowsGpu {
                 },
                 extent(side, side, 1),
             );
-            self.written.table[level] = revision;
+            self.written_table[level] = revision;
         }
-        if !plan.levels.is_empty()
-            && self.written.levels.as_deref() != Some(plan.levels.as_slice())
-        {
+        if !plan.levels.is_empty() {
             let count = plan.levels.len() as u32;
             cx.write_texture(
                 self.tiles,
@@ -178,7 +149,6 @@ impl ShadowsGpu {
                 },
                 extent(LEVEL_WORDS, count, 1),
             );
-            self.written.levels = Some(plan.levels.clone());
         }
     }
 
@@ -214,7 +184,6 @@ impl ShadowsGpu {
             for texture in [self.atlas, self.regions, self.tiles] {
                 cx.release(texture);
             }
-            self.written.levels = None;
         }
         let (width, height) = key.atlas.size();
         let side = key.region_side();
@@ -357,7 +326,8 @@ impl GpuPart for ShadowsGpu {
             marked: None,
             opened: None,
             made: None,
-            written: Written::default(),
+            written_table: Vec::new(),
+            compose_bytes: 0,
         })
     }
 
@@ -367,13 +337,6 @@ impl GpuPart for ShadowsGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         self.open_sky(&plan, &view, *shown, cx);
-        if cx.fresh() {
-            let table = std::mem::take(&mut self.written.table);
-            self.written = Written {
-                table,
-                ..Written::default()
-            };
-        }
         self.allocate(&plan, cx);
         self.upload(&plan, cx);
         self.at.clear();

@@ -1,5 +1,12 @@
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use super::*;
-use engine_places::ground::TileFace;
+use engine_places::ground::{TileChange, TileChangeKind, TileChanges, TileFace};
+
+const RECENT_CHANGES: usize = 4096;
+
+static STORES: AtomicU64 = AtomicU64::new(1);
 
 struct Resident {
     tile: Arc<Tile>,
@@ -52,7 +59,6 @@ fn face_of(
         control: tile.shared_control(),
         river_edges: tile.shared_river_edges(),
         river_beds: tile.shared_river_beds(),
-        rivers: tile.river_texels(),
         patch_bounds: tile.shared_patch_bounds(),
         patch_holes: *tile.patch_holes(),
         ground_errors: tile.ground_errors().shared_halves(),
@@ -66,22 +72,35 @@ pub(super) struct TileStore {
     pyramid: Pyramid,
     tiles: TileMap<Resident>,
     generation: Generation,
-    revision: u64,
     errors: Vec<f32>,
     cache: TileMap<CachedTile>,
     cached_bytes: u64,
+    recent: VecDeque<TileChange>,
+    end: u64,
+    faces: Arc<[TileFace]>,
+    changes: TileChanges,
+    kept: Arc<[(TileKey, engine_core::Stamp)]>,
+    tiles_moved: bool,
+    kept_moved: bool,
 }
 
 impl TileStore {
     pub(super) fn new(pyramid: Pyramid, generation: Generation) -> Self {
+        let end = STORES.fetch_add(1, Ordering::Relaxed) << 32;
         Self {
             pyramid,
             tiles: TileMap::default(),
             generation,
-            revision: 1,
             errors: vec![0.0; pyramid.levels() as usize],
             cache: TileMap::default(),
             cached_bytes: 0,
+            recent: VecDeque::new(),
+            end,
+            faces: Arc::from(Vec::new()),
+            changes: TileChanges::new(end, Arc::from(Vec::new())),
+            kept: Arc::from(Vec::new()),
+            tiles_moved: false,
+            kept_moved: false,
         }
     }
 
@@ -120,16 +139,54 @@ impl TileStore {
         self.tiles.iter().map(|(_, resident)| &resident.tile)
     }
 
-    pub(super) fn faces(&self) -> impl Iterator<Item = &TileFace> {
-        self.tiles.iter().map(|(_, resident)| &resident.face)
+    pub(super) fn faces(&self) -> &Arc<[TileFace]> {
+        &self.faces
     }
 
-    pub(super) fn revision(&self) -> u64 {
-        self.revision
+    pub(super) fn changes(&self) -> &TileChanges {
+        &self.changes
+    }
+
+    pub(super) fn kept_faces(&self) -> &Arc<[(TileKey, engine_core::Stamp)]> {
+        &self.kept
     }
 
     pub(super) fn errors(&self) -> &[f32] {
         &self.errors
+    }
+
+    pub(super) fn settle_tiles(&mut self) -> bool {
+        if !std::mem::take(&mut self.tiles_moved) {
+            return false;
+        }
+        self.faces = self
+            .tiles
+            .iter()
+            .map(|(_, resident)| resident.face.clone())
+            .collect();
+        self.changes = TileChanges::new(self.end, self.recent.iter().copied().collect());
+        true
+    }
+
+    pub(super) fn settle_kept(&mut self) -> bool {
+        if !std::mem::take(&mut self.kept_moved) {
+            return false;
+        }
+        self.kept = self
+            .cache
+            .iter()
+            .map(|(key, kept)| (key, kept.face.stamp))
+            .collect();
+        true
+    }
+
+    fn log(&mut self, key: TileKey, kind: TileChangeKind) {
+        if self.recent.len() == RECENT_CHANGES {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(TileChange { key, kind });
+        self.end += 1;
+        self.tiles_moved = true;
     }
 
     pub(super) fn arrive(&mut self, tile: Arc<Tile>, stamps: Arc<[Stamp]>) {
@@ -169,7 +226,7 @@ impl TileStore {
                 }
             }
         }
-        self.tiles.insert(
+        let held = self.tiles.insert(
             key,
             Resident {
                 tile,
@@ -178,12 +235,17 @@ impl TileStore {
                 face,
             },
         );
-        self.revision += 1;
+        let kind = if held.is_some() {
+            TileChangeKind::Replaced
+        } else {
+            TileChangeKind::Arrived
+        };
+        self.log(key, kind);
     }
 
     pub(super) fn leave(&mut self, key: &TileKey) -> Option<Left> {
         let resident = self.tiles.remove(key)?;
-        self.revision += 1;
+        self.log(*key, TileChangeKind::Left);
         Some(Left {
             current: resident.made == self.generation,
             tile: resident.tile,
@@ -205,10 +267,21 @@ impl TileStore {
         for key in self.cache.keys_where(|key, _| under(key)) {
             self.forget(key);
         }
-        for resident in self.tiles.values_mut() {
-            resident.face.current = resident.made == generation;
+        let mut flipped: Vec<TileKey> = self
+            .tiles
+            .values_mut()
+            .filter_map(|resident| {
+                let current = resident.made == generation;
+                (resident.face.current != current).then(|| {
+                    resident.face.current = current;
+                    resident.tile.key()
+                })
+            })
+            .collect();
+        flipped.sort_unstable();
+        for key in flipped {
+            self.log(key, TileChangeKind::Replaced);
         }
-        self.revision += 1;
     }
 
     pub(super) fn keep_in_memory(&mut self, left: Left, frame: u64) {
@@ -226,15 +299,13 @@ impl TileStore {
                 left: frame,
             },
         );
-    }
-
-    pub(super) fn kept_faces(&self) -> impl Iterator<Item = (TileKey, engine_core::Stamp)> + '_ {
-        self.cache.iter().map(|(key, kept)| (key, kept.face.stamp))
+        self.kept_moved = true;
     }
 
     pub(super) fn forget(&mut self, key: TileKey) {
         if let Some(cached) = self.cache.remove(&key) {
             self.cached_bytes -= cached.bytes;
+            self.kept_moved = true;
         }
     }
 
@@ -274,6 +345,7 @@ impl TileStore {
             }
             if let Some(cached) = self.cache.remove(&key) {
                 self.cached_bytes -= cached.bytes;
+                self.kept_moved = true;
                 work.upload(2 * TILE_ARRAY_BYTES);
                 let made = self.generation;
                 let face = TileFace {

@@ -43,6 +43,23 @@ impl TileShading {
         tiles
     }
 
+    pub(crate) fn ground_span(pyramid: &Pyramid, key: TileKey) -> (TileKey, TileKey) {
+        let scale = 1_i64 << key.level;
+        let [columns, rows] = pyramid.tiles(0);
+        let span = |at: u16, count: u32| {
+            let at = i64::from(at);
+            let first = (scale * at - (scale - 1)).max(0);
+            let last = (scale * at + 2 * (scale - 1)).min(i64::from(count) - 1);
+            (first as u16, last as u16)
+        };
+        let (first_x, last_x) = span(key.x, columns);
+        let (first_z, last_z) = span(key.z, rows);
+        (
+            TileKey::new(0, first_x, first_z),
+            TileKey::new(0, last_x, last_z),
+        )
+    }
+
     pub fn key(&self) -> TileKey {
         self.key
     }

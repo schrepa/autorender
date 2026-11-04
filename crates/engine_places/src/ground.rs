@@ -244,13 +244,70 @@ pub struct TileFace {
     pub control: Option<Arc<[u32]>>,
     pub river_edges: Option<Arc<[u16]>>,
     pub river_beds: Option<Arc<[u16]>>,
-    pub rivers: Option<Arc<[[u16; 4]]>>,
     pub patch_bounds: Arc<[[f32; 2]]>,
     pub patch_holes: [u64; 4],
     pub ground_errors: Arc<[u16]>,
     pub stamps: Arc<[engine_heightfield::Stamp]>,
     pub placed: Arc<[Placed]>,
     pub current: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TileChangeKind {
+    Arrived,
+    Replaced,
+    Left,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TileChange {
+    pub key: TileKey,
+    pub kind: TileChangeKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TilesSince<'a> {
+    Same,
+    Listed(&'a [TileChange]),
+    All,
+}
+
+#[derive(Clone, Debug)]
+pub struct TileChanges {
+    end: u64,
+    recent: Arc<[TileChange]>,
+}
+
+impl Default for TileChanges {
+    fn default() -> Self {
+        Self {
+            end: 0,
+            recent: Arc::from(Vec::new()),
+        }
+    }
+}
+
+impl TileChanges {
+    pub fn new(end: u64, recent: Arc<[TileChange]>) -> Self {
+        Self { end, recent }
+    }
+
+    pub fn end(&self) -> u64 {
+        self.end
+    }
+
+    pub fn since(&self, cursor: &mut u64) -> TilesSince<'_> {
+        let seen = *cursor;
+        *cursor = self.end;
+        let start = self.end - self.recent.len() as u64;
+        if seen == self.end {
+            TilesSince::Same
+        } else if seen < start || seen > self.end {
+            TilesSince::All
+        } else {
+            TilesSince::Listed(&self.recent[(seen - start) as usize..])
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -278,6 +335,7 @@ pub struct TerrainEntry {
     pub placement: Arc<[PlacedAsset]>,
     pub layers: Arc<[PlacedLayer]>,
     pub tiles: Arc<[TileFace]>,
+    pub changes: TileChanges,
     pub sample_offset: Vec2,
     pub kept: Arc<[(TileKey, Stamp)]>,
 }
@@ -358,20 +416,12 @@ impl Slot for Heightfield {
     const WGSL: Option<&'static str> = Some(include_str!("places/heightfield.wgsl"));
 }
 
-#[derive(Clone, Debug)]
-pub struct WorkEntry {
-    pub streamed: bool,
-    pub drawn: bool,
-    pub entry: TerrainEntry,
-}
-
 #[derive(Resource, Clone, Debug, Default)]
 pub struct GroundWork {
     pub slice: u64,
     pub millis: f64,
     pub end: f64,
     pub upload: u64,
-    pub entries: Arc<[WorkEntry]>,
 }
 
 impl Slot for GroundWork {
@@ -382,7 +432,6 @@ impl Slot for GroundWork {
 pub struct GroundBaking {
     pub lighting: u32,
     pub unbounced: u32,
-    pub shaded: u64,
 }
 
 impl Slot for GroundBaking {

@@ -1,5 +1,4 @@
-use bevy_ecs::entity::Entity;
-use glam::{Affine3A, Mat4, UVec2, Vec3};
+use glam::{Mat4, UVec2, Vec3};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrameFacts {
@@ -9,7 +8,6 @@ pub struct FrameFacts {
     pub display_size: UVec2,
     pub render_size: UVec2,
     pub pixel_ratio: f32,
-    pub submitted: bool,
 }
 
 impl Default for FrameFacts {
@@ -21,7 +19,6 @@ impl Default for FrameFacts {
             display_size: UVec2::new(1920, 1080),
             render_size: UVec2::new(1920, 1080),
             pixel_ratio: 1.0,
-            submitted: true,
         }
     }
 }
@@ -143,97 +140,4 @@ impl InputState {
 
 fn mask(action: u8) -> u32 {
     1_u32.checked_shl(u32::from(action)).unwrap_or(0)
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Indexed {
-    entity: Entity,
-    value: usize,
-}
-
-const EMPTY: Indexed = Indexed {
-    entity: Entity::PLACEHOLDER,
-    value: usize::MAX,
-};
-
-#[derive(Clone, Debug, Default)]
-struct EntityIndices {
-    entries: Vec<Indexed>,
-    occupied: Vec<u32>,
-}
-
-impl EntityIndices {
-    fn get(&self, entity: Entity) -> Option<usize> {
-        let entry = self.entries.get(entity.index_u32() as usize)?;
-        (entry.entity == entity).then_some(entry.value)
-    }
-
-    fn insert(&mut self, entity: Entity, value: usize) {
-        let slot = entity.index_u32() as usize;
-        if slot >= self.entries.len() {
-            self.entries.resize(slot + 1, EMPTY);
-        }
-        let entry = &mut self.entries[slot];
-        if entry.entity == Entity::PLACEHOLDER {
-            self.occupied.push(slot as u32);
-        }
-        *entry = Indexed { entity, value };
-    }
-
-    fn clear(&mut self) {
-        for slot in self.occupied.drain(..) {
-            self.entries[slot as usize] = EMPTY;
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct PoseTable {
-    entities: Vec<Entity>,
-    poses: Vec<Option<Affine3A>>,
-    indices: EntityIndices,
-}
-
-impl PoseTable {
-    pub fn of(&self, entity: Entity) -> Option<Affine3A> {
-        let index = self.indices.get(entity)?;
-        self.poses.get(index).copied().flatten()
-    }
-
-    pub fn set(&mut self, entity: Entity, pose: Option<Affine3A>) {
-        match self.indices.get(entity) {
-            Some(index) => self.poses[index] = pose,
-            None => {
-                self.indices.insert(entity, self.entities.len());
-                self.entities.push(entity);
-                self.poses.push(pose);
-            }
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.entities.clear();
-        self.poses.clear();
-        self.indices.clear();
-    }
-
-    pub fn reserve(&mut self, additional: usize) {
-        self.entities.reserve(additional);
-        self.poses.reserve(additional);
-    }
-
-    pub fn len(&self) -> usize {
-        self.entities.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entities.is_empty()
-    }
-
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = (Entity, Option<Affine3A>)> + '_ {
-        self.entities
-            .iter()
-            .copied()
-            .zip(self.poses.iter().copied())
-    }
 }

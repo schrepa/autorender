@@ -154,10 +154,6 @@ fn color_of(state: &UiState, at: u32, flat: &Flat) -> [f32; 4] {
 }
 
 pub(crate) fn stage(state: &mut UiState, max_rects: usize) {
-    if state.staged == state.revision {
-        return;
-    }
-    state.staged = state.revision;
     let mut painter = Painter {
         rects: std::mem::take(&mut state.rects),
         runs: std::mem::take(&mut state.runs),
@@ -192,7 +188,6 @@ pub(crate) struct UiGpu {
     solid: Pipeline<Self, Overlay>,
     image: Pipeline<Self, Overlay>,
     instances: Buffer<Self>,
-    written: Option<u64>,
     drawn: Vec<(Option<Pipeline<Self, Overlay>>, Range<u32>)>,
 }
 
@@ -221,7 +216,6 @@ impl GpuPart for UiGpu {
             solid,
             image,
             instances,
-            written: None,
             drawn: Vec::new(),
         })
     }
@@ -231,14 +225,11 @@ impl GpuPart for UiGpu {
         if state.rects.is_empty() {
             return;
         }
-        if cx.fresh() || self.written != Some(state.staged) {
-            cx.grow_buffer(
-                self.instances,
-                std::mem::size_of_val(state.rects.as_slice()) as u64,
-            );
-            cx.write(self.instances, 0, &state.rects);
-            self.written = Some(state.staged);
-        }
+        cx.grow_buffer(
+            self.instances,
+            std::mem::size_of_val(state.rects.as_slice()) as u64,
+        );
+        cx.write(self.instances, 0, &state.rects);
         for (texture, range) in &state.runs {
             let filled = (*texture).map(|sheet| cx.fill(&self.image, &[sheet]));
             self.drawn.push((filled, range.clone()));

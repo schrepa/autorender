@@ -2,16 +2,17 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::math::{max, min, sin_cos};
-use engine_core::{Camera, Projection, View};
+use engine_core::{Camera, DeviceLimits, Projection, View};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::{TILE_STRIDE, on_triangle, tile_cell};
-use engine_places::ground::{TerrainTiles, TileFace};
+use engine_places::ground::TerrainTiles;
 use engine_places::water::WaterObstacle;
 use glam::{Vec2, Vec3};
 
-use crate::gpu::SIM_TOUCHES;
+use crate::gpu::{SETUP_SOLID_ENTRIES, SIM_TOUCHES};
 use crate::shallow_water::{live_split, step_seconds};
 use crate::state::{WaterState, WaterTerrain};
+use crate::water_kernels::{Capacity, live_largest_bytes};
 use crate::{BLOCK_SIDE, Footprint, SteadyWater, TileWater, Water};
 
 pub const LIVE_PIXELS: f32 = 4.0;
@@ -21,7 +22,7 @@ const FOLLOW: f32 = 0.75;
 const PROBED: f32 = 32.0;
 const DATUM_DRIFT: f32 = 256.0;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct WaterWindow {
     pub origin: [f32; 2],
     pub first: [i64; 2],
@@ -32,16 +33,19 @@ pub struct WaterWindow {
     pub split: u32,
     pub snap: u32,
     pub datum: f32,
-    pub sources: Arc<[WaterSourceCell]>,
-    pub solids: Arc<[Footprint]>,
-    pub reads: Arc<[WaterRead]>,
+    pub sources: Vec<WaterSourceCell>,
+    pub solids: Vec<Footprint>,
+    pub reads: Vec<WaterRead>,
+    pub placed: ([i64; 2], u32),
+    pub placed_pixels: f32,
+    pub runs: bool,
 }
 
 #[derive(Clone, Debug)]
 pub struct WaterRead {
     pub key: TileKey,
     pub square: [Vec2; 2],
-    pub tile: Option<TileFace>,
+    pub tile: Option<(TileKey, engine_core::Stamp)>,
     pub water: Option<Arc<TileWater>>,
     pub settled: Option<Arc<SteadyWater>>,
     pub ready: bool,
@@ -50,11 +54,7 @@ pub struct WaterRead {
 impl WaterRead {
     pub fn same_tile(&self, other: &Self) -> bool {
         self.key == other.key
-            && match (&self.tile, &other.tile) {
-                (Some(a), Some(b)) => a.key == b.key && a.stamp == b.stamp,
-                (None, None) => true,
-                _ => false,
-            }
+            && self.tile == other.tile
             && alike(self.water.as_ref(), other.water.as_ref())
     }
 
@@ -69,53 +69,73 @@ fn alike<T>(a: Option<&Arc<T>>, b: Option<&Arc<T>>) -> bool {
     match (a, b) {
         (Some(a), Some(b)) => Arc::ptr_eq(a, b),
         (None, None) => true,
-        _ => false,
+        (Some(_), None) | (None, Some(_)) => false,
     }
 }
 
 impl WaterWindow {
-    pub fn middle(&self) -> Vec2 {
-        Vec2::from(self.origin) + Vec2::splat(0.5 * self.cells as f32 * self.cell)
+    pub fn square(&self) -> (Vec2, Vec2) {
+        let (first, cells) = self.placed;
+        let low = Vec2::from(self.origin)
+            + (Vec2::new(first[0] as f32, first[1] as f32)
+                - Vec2::new(self.first[0] as f32, self.first[1] as f32))
+                * self.cell;
+        (low, low + Vec2::splat(cells as f32 * self.cell))
     }
 
-    pub fn square(&self) -> (Vec2, Vec2) {
-        let low = Vec2::from(self.origin);
-        (low, low + Vec2::splat(self.cells as f32 * self.cell))
+    pub fn middle(&self) -> Vec2 {
+        self.square().0 + Vec2::splat(0.5 * self.placed.1 as f32 * self.cell)
     }
 
     pub fn blocks(&self) -> u32 {
         self.cells / BLOCK_SIDE
     }
 
-    #[must_use]
-    pub fn within(&self, cells: u32) -> Self {
+    fn within(&mut self, cells: u32) {
         let side = self.blocks();
         let kept = (cells / BLOCK_SIDE).clamp(1, side);
         let (shift, n) = ((side - kept) / 2 * BLOCK_SIDE, kept * BLOCK_SIDE);
         let follows = FOLLOW * self.snap as f32 * BLOCK_SIDE as f32 * self.cell;
-        let holds = |cells: u32| max(0.5 * cells as f32 * self.cell - follows, self.cell);
-        let sources = self
-            .sources
-            .iter()
-            .filter_map(|source| {
-                let (i, j) = (source.cell % self.cells, source.cell / self.cells);
-                let inside = i >= shift && j >= shift && i < shift + n && j < shift + n;
-                inside.then(|| WaterSourceCell {
-                    cell: (j - shift) * n + i - shift,
-                    ..*source
-                })
-            })
-            .collect();
-        Self {
-            origin: (Vec2::from(self.origin) + Vec2::splat(shift as f32 * self.cell)).to_array(),
-            first: [
-                self.first[0] + i64::from(shift),
-                self.first[1] + i64::from(shift),
-            ],
-            cells: n,
-            pixels: self.pixels * holds(self.cells) / holds(n),
-            sources,
-            ..self.clone()
+        let cell = self.cell;
+        let holds = |cells: u32| max(0.5 * cells as f32 * cell - follows, cell);
+        let was = self.cells;
+        self.sources.retain_mut(|source| {
+            let (i, j) = (source.cell % was, source.cell / was);
+            let inside = i >= shift && j >= shift && i < shift + n && j < shift + n;
+            if inside {
+                source.cell = (j - shift) * n + i - shift;
+            }
+            inside
+        });
+        self.origin = (Vec2::from(self.origin) + Vec2::splat(shift as f32 * cell)).to_array();
+        self.first = [
+            self.first[0] + i64::from(shift),
+            self.first[1] + i64::from(shift),
+        ];
+        self.cells = n;
+        self.pixels = self.pixels * holds(was) / holds(n);
+    }
+
+    fn fit(&mut self, binding: u64) {
+        let held = (self.sources.len(), self.solids.len());
+        let fits = |blocks: u32| largest_bytes(blocks, held) <= binding;
+        let side = self.blocks();
+        if fits(side) {
+            return;
+        }
+        let (mut low, mut high) = (0, side);
+        while low + 1 < high {
+            let middle = low + (high - low) / 2;
+            if fits(middle) {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        if low >= 1 && fits(low) {
+            self.within(low * BLOCK_SIDE);
+        } else {
+            self.runs = false;
         }
     }
 
@@ -166,12 +186,27 @@ pub fn live_steps(cell: f32) -> u32 {
     (LONGEST_FRAME / f64::from(step_seconds(cell))).ceil() as u32
 }
 
+fn largest_bytes(blocks: u32, (sources, solids): (usize, usize)) -> u64 {
+    let cells = blocks * BLOCK_SIDE;
+    let capacity = Capacity {
+        blocks: blocks * blocks,
+        mapped: blocks * blocks,
+        edges: 2 * cells,
+        sources: sources.max(1) as u32,
+    };
+    let inputs = (u64::from(capacity.sources) + 8 * u64::from(cells)) * 16;
+    let list = u64::from(SETUP_SOLID_ENTRIES) * solids as u64 + u64::from(capacity.blocks);
+    live_largest_bytes(capacity)
+        .max(inputs)
+        .max((list * 16).next_power_of_two())
+}
+
 pub(crate) fn place_water_windows(
     mut state: ResMut<WaterState>,
     camera: Res<Camera>,
     view: Res<View>,
     water: Res<Water>,
-    tiles: Res<TerrainTiles>,
+    (tiles, limits): (Res<TerrainTiles>, Res<DeviceLimits>),
 ) {
     let state = state.bypass_change_detection();
     let budget = water.live_budget;
@@ -196,11 +231,17 @@ pub(crate) fn place_water_windows(
         }
         let cell = live_cell(settled, terrain.pyramid.spacing(0));
         let reach = live_reach(cell, height, fov);
-        follow(terrain, (reach, cell, budget), eye);
+        let device = (limits.storage_room, limits.is_changed());
+        follow(terrain, (reach, cell, budget), eye, device);
     }
 }
 
-fn follow(state: &mut WaterTerrain, (reach, cell, budget): (f32, f32, u32), eye: Vec3) {
+fn follow(
+    state: &mut WaterTerrain,
+    (reach, cell, budget): (f32, f32, u32),
+    eye: Vec3,
+    (binding, refit): (u64, bool),
+) {
     let side = BLOCK_SIDE as f32;
     let snap_blocks = max((SNAP / (cell * side)).round(), 1.0);
     let snap = snap_blocks * side * cell;
@@ -217,13 +258,13 @@ fn follow(state: &mut WaterTerrain, (reach, cell, budget): (f32, f32, u32), eye:
     let flat = Vec2::new(state.origin.x, state.origin.z);
     let before = state
         .window
-        .clone()
+        .as_ref()
         .filter(|window| window.cell == cell && window.split == split);
-    let staying = before.as_ref().filter(|window| {
-        window.cells == cells && (eye - window.middle()).abs().max_element() <= FOLLOW * snap
+    let staying = before.filter(|window| {
+        window.placed.1 == cells && (eye - window.middle()).abs().max_element() <= FOLLOW * snap
     });
     let (first, datum) = if let Some(window) = staying {
-        (window.first, window.datum)
+        (window.placed.0, window.datum)
     } else {
         let at = ((eye - flat - Vec2::splat(0.5 * size)) / snap).round();
         let step = snap_blocks as i64 * i64::from(BLOCK_SIDE);
@@ -232,7 +273,7 @@ fn follow(state: &mut WaterTerrain, (reach, cell, budget): (f32, f32, u32), eye:
             return;
         };
         let lowest = lowest.floor();
-        let datum = before.as_ref().map_or(lowest, |window| {
+        let datum = before.map_or(lowest, |window| {
             if (lowest - window.datum).abs() <= DATUM_DRIFT {
                 window.datum
             } else {
@@ -241,20 +282,19 @@ fn follow(state: &mut WaterTerrain, (reach, cell, budget): (f32, f32, u32), eye:
         });
         (first, datum)
     };
-    let reads = reads(state, first, (cells, cell));
-    if let Some(window) = staying {
-        let read = window.reads.len() == reads.len()
-            && window
-                .reads
-                .iter()
-                .zip(&reads)
-                .all(|(held, read)| held.same(read));
-        if read && (window.asked, window.pixels) == (asked, pixels) {
-            return;
-        }
+    if let Some(window) = staying
+        && !refit
+        && (window.asked, window.placed_pixels) == (asked, pixels)
+        && !reads_moved(state, window)
+    {
+        return;
     }
+    let reads = reads(state, first, (cells, cell));
+    let changed: Vec<[Vec2; 2]> = state.window.as_ref().map_or_else(Vec::new, |window| {
+        changed_squares(&window.reads, &reads)
+    });
     let low = Vec2::new(first[0] as f32, first[1] as f32) * cell;
-    state.window = Some(Arc::new(WaterWindow {
+    let mut window = WaterWindow {
         origin: (flat + low).to_array(),
         first,
         cells,
@@ -264,17 +304,52 @@ fn follow(state: &mut WaterTerrain, (reach, cell, budget): (f32, f32, u32), eye:
         split,
         snap: snap_blocks as u32,
         datum,
-        sources: sources(state, (first, cells, cell)).into(),
-        solids: solids(state, (low, low + Vec2::splat(size))).into(),
-        reads: reads.into(),
-    }));
+        sources: sources(state, (first, cells, cell)),
+        solids: solids(state, (low, low + Vec2::splat(size))),
+        reads,
+        placed: (first, cells),
+        placed_pixels: pixels,
+        runs: true,
+    };
+    window.fit(binding);
+    state.window = Some(window);
+    state.window_moved = true;
+    state.window_changed.extend(changed);
+}
+
+fn reads_moved(state: &WaterTerrain, window: &WaterWindow) -> bool {
+    if !state.touched_all && state.touched.is_empty() {
+        return false;
+    }
+    let pyramid = &state.pyramid;
+    window.reads.iter().any(|read| {
+        let middle = 0.5 * (read.square[0] + read.square[1]);
+        let covered = state.touched_all
+            || state
+                .touched
+                .iter()
+                .any(|&key| pyramid.tile_at(u32::from(key.level), middle) == Some(key));
+        covered && !read.same(&read_at(state, read.key))
+    })
+}
+
+fn changed_squares(before: &[WaterRead], reads: &[WaterRead]) -> Vec<[Vec2; 2]> {
+    reads
+        .iter()
+        .filter(|read| {
+            before
+                .iter()
+                .any(|held| held.key == read.key && !held.same_tile(read))
+        })
+        .map(|read| read.square)
+        .collect()
 }
 
 fn sample_height(state: &WaterTerrain, local: Vec2) -> Option<f32> {
     let pyramid = &state.pyramid;
     (0..pyramid.levels()).find_map(|level| {
         let key = pyramid.tile_at(level, local)?;
-        let face = state.faces.iter().find(|face| face.key == key)?;
+        let face = &state.held.get(&key)?.face;
         let (i, j, fu, fv) = tile_cell(face.spacing, local - pyramid.tile_origin(key))?;
         let stride = TILE_STRIDE as i32;
         let height = |x: i32, z: i32| face.heights[((z + 1) * stride + x + 1) as usize];
@@ -323,36 +398,39 @@ fn reads(state: &WaterTerrain, first: [i64; 2], (cells, cell): (u32, f32)) -> Ve
     let mut reads = Vec::new();
     for z in range(low.y, high.y, rows) {
         for x in range(low.x, high.x, columns) {
-            let key = TileKey::new(0, x as u16, z as u16);
-            let corner = pyramid.tile_origin(key);
-            let middle = corner + Vec2::splat(0.5 * size);
-            let tile = (0..pyramid.levels()).find_map(|level| {
-                let held = pyramid.tile_at(level, middle)?;
-                state.faces.iter().find(|face| face.key == held).cloned()
-            });
-            let held_back = state.rewatered(key);
-            let ready = tile.as_ref().is_some_and(|tile| {
-                tile.key == key && state.settled.ready(key, tile.stamp, held_back)
-            });
-            let water = tile
-                .as_ref()
-                .and_then(|tile| state.resident(&tile.key))
-                .and_then(|held| held.water.clone());
-            reads.push(WaterRead {
-                key,
-                square: [corner, corner + Vec2::splat(size)],
-                tile,
-                water,
-                settled: state
-                    .settled
-                    .held
-                    .get(&key)
-                    .map(|(water, _)| Arc::clone(water)),
-                ready,
-            });
+            reads.push(read_at(state, TileKey::new(0, x as u16, z as u16)));
         }
     }
     reads
+}
+
+fn read_at(state: &WaterTerrain, key: TileKey) -> WaterRead {
+    let pyramid = &state.pyramid;
+    let size = pyramid.tile_size(0);
+    let corner = pyramid.tile_origin(key);
+    let middle = corner + Vec2::splat(0.5 * size);
+    let tile = (0..pyramid.levels()).find_map(|level| {
+        let held = pyramid.tile_at(level, middle)?;
+        state.held.get(&held)
+    });
+    let ready = tile.is_some_and(|tile| {
+        let held_back = state.resident(&key).is_some_and(|held| held.watered.is_some());
+        tile.face.key == key && state.settled.ready(key, tile.given.is_some() || held_back)
+    });
+    WaterRead {
+        key,
+        square: [corner, corner + Vec2::splat(size)],
+        tile: tile.map(|tile| (tile.face.key, tile.face.stamp)),
+        water: tile
+            .filter(|tile| tile.resident())
+            .and_then(|tile| tile.water.clone()),
+        settled: state
+            .settled
+            .held
+            .get(&key)
+            .map(|(water, _)| Arc::clone(water)),
+        ready,
+    }
 }
 
 fn solids(state: &WaterTerrain, (low, high): (Vec2, Vec2)) -> Vec<Footprint> {

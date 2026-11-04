@@ -168,13 +168,11 @@ pub(crate) struct LightsGpu {
     totals: Buffer<Self>,
     staged: Vec<LightInput>,
     headers: Vec<Clusters>,
-    written: Vec<Clusters>,
     room: u64,
     capacity: usize,
     index_bytes: u64,
     arena: u32,
     regions: bool,
-    stale: bool,
     count: u32,
     views: u32,
     epoch: u32,
@@ -188,8 +186,6 @@ impl LightsGpu {
         self.arena = 1;
         self.index_bytes = first_index_bytes(room);
         self.regions = false;
-        self.stale = true;
-        self.written.clear();
     }
 
     fn view_bytes(&self) -> u64 {
@@ -328,13 +324,11 @@ impl GpuPart for LightsGpu {
             totals,
             staged: Vec::new(),
             headers: vec![Clusters::default(); LIT_VIEWS as usize],
-            written: Vec::new(),
             room: 0,
             capacity: 1,
             index_bytes: first_index_bytes(0),
             arena: 1,
             regions: false,
-            stale: false,
             count: 0,
             views: 1,
             epoch: 0,
@@ -351,7 +345,6 @@ impl GpuPart for LightsGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         if view.debug() {
-            self.stale |= list.is_changed();
             return;
         }
         let room = limits.storage_room / 16 * 16;
@@ -359,10 +352,8 @@ impl GpuPart for LightsGpu {
             self.reset(totals.epoch, room);
         }
         let count = list.lights.len();
-        let mut grown = false;
         if count > self.capacity {
             self.capacity = count.next_power_of_two();
-            grown = true;
         }
         self.views = 1 + captures.faces.len().min(LIT_VIEWS as usize - 1) as u32;
         if self.views > self.arena {
@@ -371,14 +362,10 @@ impl GpuPart for LightsGpu {
                 .index_bytes
                 .min(index_room(self.room, self.capacity, self.arena));
         }
-        let upload = grown || self.stale || list.is_changed();
-        if upload {
-            self.staged.clear();
-            self.staged
-                .extend(list.lights.iter().map(LightInput::from));
-            self.regions = self.staged.iter().any(|light| light.region != 0);
-            self.stale = false;
-        }
+        self.staged.clear();
+        self.staged
+            .extend(list.lights.iter().map(LightInput::from));
+        self.regions = self.staged.iter().any(|light| light.region != 0);
         let needed = totals.needed().max(count as u64 * 32);
         self.grow_indices(needed * 4);
         cx.allocate_buffer(self.inputs, self.capacity as u64 * LIGHT_BYTES);
@@ -386,15 +373,12 @@ impl GpuPart for LightsGpu {
         cx.allocate_buffer(self.counts, u64::from(self.arena) * CLUSTERS * 4);
         cx.allocate_buffer(self.totals, u64::from(self.arena) * TOTALS_BYTES);
         cx.allocate_buffer(self.clusters, u64::from(LIT_VIEWS) * CLUSTER_BYTES);
-        if upload && !self.staged.is_empty() {
+        if !self.staged.is_empty() {
             cx.write(self.inputs, 0, &self.staged);
         }
         self.count = count as u32;
         self.place_headers(&settings, &view, &captures, lighting.highlights);
-        if self.written != self.headers {
-            cx.write(self.clusters, 0, &self.headers);
-            self.written.clone_from(&self.headers);
-        }
+        cx.write(self.clusters, 0, &self.headers);
         if count == 0 {
             return;
         }

@@ -30,7 +30,7 @@ struct Items<'t> {
 
 type Bound<'t> = (&'t [Token<'t>], &'t [Token<'t>], &'t [Token<'t>]);
 
-pub(crate) fn binding_size(text: &str, group: u32, binding: u32) -> Option<u64> {
+pub(crate) fn binding_sizes(text: &str) -> Vec<(u32, u32, u64)> {
     let tokens = tokens(text);
     let mut items = Items::default();
     let mut bound: Vec<Bound<'_>> = Vec::new();
@@ -80,13 +80,14 @@ pub(crate) fn binding_size(text: &str, group: u32, binding: u32) -> Option<u64> 
         }
         attributes = (None, None);
     }
-    bound.into_iter().find_map(|(found_group, found_binding, ty)| {
-        let same = items.number(found_group, 0)? == u64::from(group) && items.number(found_binding, 0)? == u64::from(binding);
-        if !same {
-            return None;
-        }
-        items.layout(ty, 0).map(|layout| layout.size)
-    })
+    bound
+        .into_iter()
+        .filter_map(|(group, binding, ty)| {
+            let group = u32::try_from(items.number(group, 0)?).ok()?;
+            let binding = u32::try_from(items.number(binding, 0)?).ok()?;
+            Some((group, binding, items.layout(ty, 0)?.size))
+        })
+        .collect()
 }
 
 fn tokens(text: &str) -> Vec<Token<'_>> {

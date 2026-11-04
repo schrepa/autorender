@@ -157,8 +157,6 @@ pub(crate) struct OccupancyWindows {
     windows: Vec<Option<Window>>,
     reference: f32,
     dirty: Vec<Cells>,
-    pub(crate) covers: Vec<Cover>,
-    pub(crate) covers_revision: u64,
     pub(crate) frames: Vec<MapFrame>,
     pub(crate) workgroups: u32,
     pub(crate) slots: u32,
@@ -206,11 +204,6 @@ impl OccupancyWindows {
             self.windows.clear();
         }
         self.size(maps);
-        if covers != self.covers.as_slice() {
-            self.covers = covers.to_vec();
-            self.covers_revision += 1;
-            self.windows.clear();
-        }
         self.slots = slots;
         self.workgroups = slots.div_ceil(OCCUPANCY_GROUP);
         if self.windows.first().copied().flatten().is_none()
@@ -356,10 +349,12 @@ impl OccupancyWindows {
         }
         self.dirty.clear();
         self.frames.clear();
-        self.covers.clear();
-        self.covers_revision += 1;
         self.resolution = 1;
         self.maps = 1;
+    }
+
+    pub(crate) fn redraw_all(&mut self) {
+        self.windows.clear();
     }
 
     pub(crate) fn place(

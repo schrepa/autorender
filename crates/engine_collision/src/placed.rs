@@ -1,166 +1,140 @@
-use bevy_ecs::prelude::{Entity, Query};
+use std::sync::Arc;
+
+use bevy_ecs::prelude::Entity;
 use engine_places::physics::{
-    ColliderShape, CollisionLayers, CollisionRay, PlacedPart, QueryFilter, RayHit, SensorFilter,
-    ShapeCastOptions, ShapeHit,
+    CollisionLayers, CollisionRay, PlacedPart, QueryFilter, RayHit, SensorFilter, ShapeCastOptions,
+    ShapeHit,
 };
-use engine_places::solids::{SolidShape, WorldSolid};
+use engine_places::solids::{Bounds, SolidField, WorldSolid};
 use glam::Vec3;
 
-use crate::bvh::Bvh;
-use crate::geometry::{AffineShape, Bounds, Narrow, intersects};
+use crate::geometry::{AffineShape, Narrow, intersects};
 use crate::types::Fault;
-use crate::world::Sources;
 
-#[derive(Clone, Copy)]
-struct Object {
-    entity: Entity,
-    part: PlacedPart,
-    layers: CollisionLayers,
-    affine: AffineShape,
-}
-
-#[derive(Default)]
-pub(crate) struct PlacedShapes {
-    objects: Vec<Object>,
-    bounds: Vec<Bounds>,
-    bvh: Bvh,
-}
-
-fn accepts(filter: QueryFilter, object: &Object) -> bool {
-    filter.exclude != Some(object.entity)
-        && filter.layers.interacts(object.layers)
+fn accepts(filter: QueryFilter, solid: &WorldSolid) -> bool {
+    filter.exclude != Some(solid.owner)
+        && filter
+            .layers
+            .interacts(CollisionLayers::new(solid.memberships, solid.filter))
         && filter.sensors != SensorFilter::Only
 }
 
-impl PlacedShapes {
-    pub(crate) fn len(&self) -> usize {
-        self.objects.len()
-    }
+fn candidates<'a>(
+    sources: &'a [Arc<SolidField>],
+    filter: QueryFilter,
+    test: impl Fn(Bounds) -> bool + Copy + 'a,
+) -> impl Iterator<Item = &'a WorldSolid> + 'a {
+    sources
+        .iter()
+        .flat_map(move |source| source.solids.query(test))
+        .filter(move |solid| accepts(filter, solid))
+}
 
-    pub(crate) fn sync(&mut self, sources: &Query<'_, '_, Sources>) -> bool {
-        let had = !self.objects.is_empty();
-        self.objects.clear();
-        self.collect(
-            sources
-                .iter()
-                .flat_map(|(_, source)| source.into_inner().field.solids()),
-        );
-        self.bounds.clear();
-        self.bounds
-            .extend(self.objects.iter().map(|object| object.affine.bounds));
-        self.bvh.rebuild(&self.bounds);
-        had || !self.objects.is_empty()
-    }
+fn shaped(solid: &WorldSolid) -> Option<(&WorldSolid, AffineShape)> {
+    Some((solid, AffineShape::new(solid.shape, solid.model).ok()?))
+}
 
-    fn collect<'a>(&mut self, solids: impl Iterator<Item = &'a WorldSolid>) {
-        for solid in solids {
-            let shape = match solid.shape {
-                SolidShape::Cuboid { half_extents } => ColliderShape::Cuboid { half_extents },
-                SolidShape::Sphere { radius } => ColliderShape::Sphere { radius },
-            };
-            let Ok(affine) = AffineShape::new(shape, solid.model) else {
-                continue;
-            };
-            self.objects.push(Object {
-                entity: solid.owner,
-                part: PlacedPart {
-                    layer: solid.layer,
-                    asset: solid.asset,
-                },
-                layers: CollisionLayers::new(solid.memberships, solid.filter),
-                affine,
-            });
-        }
-    }
-
-    pub(crate) fn ray(&self, ray: CollisionRay, filter: QueryFilter) -> Option<RayHit> {
-        let mut nearest: Option<RayHit> = None;
-        for index in self.bvh.query(|bounds| bounds.ray(ray)) {
-            let object = &self.objects[index];
-            if !accepts(filter, object) {
-                continue;
-            }
-            if let Some(hit) = hit(ray, object)
-                && nearest.is_none_or(|old| hit.distance < old.distance)
-            {
-                nearest = Some(hit);
-            }
-        }
-        nearest
-    }
-
-    pub(crate) fn ray_all(&self, ray: CollisionRay, filter: QueryFilter, output: &mut Vec<RayHit>) {
-        for index in self.bvh.query(|bounds| bounds.ray(ray)) {
-            let object = &self.objects[index];
-            if accepts(filter, object)
-                && let Some(hit) = hit(ray, object)
-            {
-                output.push(hit);
-            }
-        }
-    }
-
-    pub(crate) fn overlap(
-        &self,
-        shape: &AffineShape,
-        filter: QueryFilter,
-        output: &mut Vec<Entity>,
-    ) -> Result<(), Fault> {
-        for index in self.bvh.query(|bounds| bounds.overlaps(shape.bounds)) {
-            let object = &self.objects[index];
-            if !accepts(filter, object) || output.contains(&object.entity) {
-                continue;
-            }
-            if intersects(shape, &object.affine)? {
-                output.push(object.entity);
-            }
-        }
-        Ok(())
-    }
-
-    pub(crate) fn cast(
-        &self,
-        shape: &AffineShape,
-        displacement: Vec3,
-        filter: QueryFilter,
-        options: ShapeCastOptions,
-    ) -> Result<Option<ShapeHit>, Fault> {
-        let swept = shape
-            .bounds
-            .swept(displacement)
-            .expanded(options.target_distance);
-        let mut nearest: Option<ShapeHit> = None;
-        for index in self.bvh.query(|bounds| bounds.overlaps(swept)) {
-            let object = &self.objects[index];
-            if !accepts(filter, object) {
-                continue;
-            }
-            if let Some((fraction, point, normal, started_overlapping)) =
-                Narrow::cast(shape, &object.affine, displacement, options)?
-                && nearest.is_none_or(|old| fraction < old.fraction)
-            {
-                nearest = Some(ShapeHit {
-                    entity: object.entity,
-                    fraction,
-                    point,
-                    normal,
-                    started_overlapping,
-                    placed: Some(object.part),
-                });
-            }
-        }
-        Ok(nearest)
+fn part(solid: &WorldSolid) -> PlacedPart {
+    PlacedPart {
+        layer: solid.layer,
+        asset: solid.asset,
     }
 }
 
-fn hit(ray: CollisionRay, object: &Object) -> Option<RayHit> {
-    let (distance, normal, started_inside) = object.affine.ray(ray)?;
+pub(crate) fn ray(
+    sources: &[Arc<SolidField>],
+    ray: CollisionRay,
+    filter: QueryFilter,
+) -> Option<RayHit> {
+    let mut nearest: Option<RayHit> = None;
+    for (solid, affine) in
+        candidates(sources, filter, move |bounds| bounds.ray(ray)).filter_map(shaped)
+    {
+        if let Some(hit) = hit(ray, solid, affine)
+            && nearest.is_none_or(|old| hit.distance < old.distance)
+        {
+            nearest = Some(hit);
+        }
+    }
+    nearest
+}
+
+pub(crate) fn ray_all(
+    sources: &[Arc<SolidField>],
+    ray: CollisionRay,
+    filter: QueryFilter,
+    output: &mut Vec<RayHit>,
+) {
+    for (solid, affine) in
+        candidates(sources, filter, move |bounds| bounds.ray(ray)).filter_map(shaped)
+    {
+        if let Some(hit) = hit(ray, solid, affine) {
+            output.push(hit);
+        }
+    }
+}
+
+pub(crate) fn overlap(
+    sources: &[Arc<SolidField>],
+    shape: &AffineShape,
+    filter: QueryFilter,
+    output: &mut Vec<Entity>,
+) -> Result<(), Fault> {
+    let reach = shape.bounds;
+    for solid in candidates(sources, filter, move |bounds| bounds.overlaps(reach)) {
+        if output.contains(&solid.owner) {
+            continue;
+        }
+        let Some((_, affine)) = shaped(solid) else {
+            continue;
+        };
+        if intersects(shape, &affine)? {
+            output.push(solid.owner);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn cast(
+    sources: &[Arc<SolidField>],
+    shape: &AffineShape,
+    displacement: Vec3,
+    filter: QueryFilter,
+    options: ShapeCastOptions,
+) -> Result<Option<ShapeHit>, Fault> {
+    let swept = shape
+        .bounds
+        .swept(displacement)
+        .expanded(options.target_distance);
+    let mut nearest: Option<ShapeHit> = None;
+    for (solid, affine) in
+        candidates(sources, filter, move |bounds| bounds.overlaps(swept)).filter_map(shaped)
+    {
+        if let Some((fraction, point, normal, started_overlapping)) =
+            Narrow::cast(shape, &affine, displacement, options)?
+            && nearest.is_none_or(|old| fraction < old.fraction)
+        {
+            nearest = Some(ShapeHit {
+                entity: solid.owner,
+                fraction,
+                point,
+                normal,
+                started_overlapping,
+                placed: Some(part(solid)),
+            });
+        }
+    }
+    Ok(nearest)
+}
+
+fn hit(ray: CollisionRay, solid: &WorldSolid, affine: AffineShape) -> Option<RayHit> {
+    let (distance, normal, started_inside) = affine.ray(ray)?;
     Some(RayHit {
-        entity: object.entity,
+        entity: solid.owner,
         distance,
         point: ray.origin + ray.direction * distance,
         normal,
         started_inside,
-        placed: Some(object.part),
+        placed: Some(part(solid)),
     })
 }

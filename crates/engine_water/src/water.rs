@@ -319,8 +319,9 @@ impl GpuPart for WaterGpu {
         }
         cx.allocate_buffer(self.uniform, size_of::<WaterUniform>() as u64);
         self.settle.prepare(&feedback.work, cx);
-        self.blocks.prepare(&state.blocks, cx);
-        self.sim.prepare(&state.live.work, cx);
+        self.blocks
+            .prepare(&state.blocks, (&ground, &state.terrains), cx);
+        self.sim.prepare(&state.live, cx);
         self.particles.prepare(&state.particles, cx);
         let watering = water.enabled && !state.watered.is_empty();
         self.prepare_falls(&state, &ground, water.enabled, cx);
@@ -344,22 +345,21 @@ impl GpuPart for WaterGpu {
             return;
         }
         let running = state.live.work.drawn.as_ref().map(|drawn| {
-            let window = &drawn.window;
             let [wrap_x, wrap_z] = drawn.wrap;
             (
                 [
-                    window.origin[0],
-                    window.origin[1],
-                    window.cell,
-                    window.cells as f32,
+                    drawn.origin[0],
+                    drawn.origin[1],
+                    drawn.cell,
+                    drawn.cells as f32,
                 ],
                 [
-                    window.datum,
+                    drawn.datum,
                     wrap_x as f32,
                     wrap_z as f32,
                     drawn.pool as f32,
                 ],
-                [window.pixels, 0.0, 0.0, 0.0],
+                [drawn.pixels, 0.0, 0.0, 0.0],
             )
         });
         let [red, green, blue] = water.color;

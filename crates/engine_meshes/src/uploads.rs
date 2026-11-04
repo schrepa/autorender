@@ -1,8 +1,7 @@
 use bytemuck::{Pod, Zeroable};
-use engine_core::Stamp;
 use engine_render::{pack_color, pack_surface};
 
-use crate::retained::{Instance, RetainedRender};
+use crate::retained::Instance;
 
 pub(crate) type PoseData = engine_core::PoseRows;
 
@@ -14,7 +13,7 @@ pub(crate) struct ColorData {
     pub flags: u32,
 }
 
-fn color_data(instance: &Instance) -> ColorData {
+pub(crate) fn color_data(instance: &Instance) -> ColorData {
     ColorData {
         color: pack_color(instance.color),
         surface: pack_surface(instance.surface),
@@ -22,7 +21,7 @@ fn color_data(instance: &Instance) -> ColorData {
     }
 }
 
-pub(crate) const WRITE_CALL_BYTES: usize = 16 * 1024;
+const WRITE_CALL_BYTES: usize = 16 * 1024;
 
 pub(crate) fn whole_stream(changed: usize, len: usize) -> bool {
     changed * 4 >= len * 3
@@ -134,175 +133,4 @@ fn full(len: usize, ranges: &mut Vec<UploadRange>) -> bool {
         ranges.push(UploadRange { start: 0, end: len });
     }
     false
-}
-
-const MAX_WRITE_RANGES: usize = 32;
-
-#[derive(Default)]
-struct WritePlan {
-    ranges: [UploadRange; MAX_WRITE_RANGES],
-    count: usize,
-    fragmented: bool,
-}
-
-impl WritePlan {
-    fn clear(&mut self) {
-        self.count = 0;
-        self.fragmented = false;
-    }
-
-    fn changed(&mut self, position: usize, stride: usize) {
-        if self.fragmented {
-            return;
-        }
-        if self.count != 0 {
-            let range = &mut self.ranges[self.count - 1];
-            if position - range.end <= WRITE_CALL_BYTES.div_ceil(stride) {
-                range.end = position + 1;
-                return;
-            }
-        }
-        if self.count == MAX_WRITE_RANGES {
-            self.fragmented = true;
-            return;
-        }
-        self.ranges[self.count] = UploadRange {
-            start: position,
-            end: position + 1,
-        };
-        self.count += 1;
-    }
-
-    fn finish(&mut self, len: usize, stride: usize, force_full: bool) -> (bool, bool) {
-        let covered: usize = self.ranges().iter().map(|r| r.end - r.start).sum();
-        let fallback = !force_full
-            && (self.fragmented
-                || (self.count != 0
-                    && (whole_stream(covered, len)
-                        || covered * stride + (self.count - 1) * WRITE_CALL_BYTES
-                            >= len * stride)));
-        let full = len != 0 && (force_full || fallback);
-        if full {
-            self.ranges[0] = UploadRange { start: 0, end: len };
-            self.count = 1;
-        }
-        (full, fallback)
-    }
-
-    fn ranges(&self) -> &[UploadRange] {
-        &self.ranges[..self.count]
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct FrameKey {
-    identity: Stamp,
-    colors: u64,
-}
-
-#[derive(Default)]
-pub(crate) struct RetainedUploads {
-    committed: Option<FrameKey>,
-    pending: Option<FrameKey>,
-    stamps: Vec<u64>,
-    colors: WritePlan,
-}
-
-#[derive(Default)]
-pub(crate) struct PreparedRetained {
-    pub repacked: usize,
-    pub full_upload: bool,
-    pub fallback: bool,
-}
-
-impl RetainedUploads {
-    pub fn capacity_bytes(&self) -> usize {
-        size_of::<Self>() + self.stamps.capacity() * size_of::<u64>()
-    }
-
-    pub const fn range_scratch_bytes() -> usize {
-        size_of::<[UploadRange; MAX_WRITE_RANGES]>()
-    }
-
-    pub fn invalidate(&mut self) {
-        self.committed = None;
-        self.pending = None;
-    }
-
-    pub fn prepare(
-        &mut self,
-        retained: &RetainedRender,
-        colors: &mut Vec<ColorData>,
-    ) -> PreparedRetained {
-        self.prepare_records(
-            &retained.snapshot().instances,
-            FrameKey {
-                identity: retained.identity(),
-                colors: retained.color_revision(),
-            },
-            retained.color_changes(),
-            colors,
-        )
-    }
-
-    fn prepare_records(
-        &mut self,
-        instances: &[Instance],
-        key: FrameKey,
-        color_changes: &[u64],
-        colors: &mut Vec<ColorData>,
-    ) -> PreparedRetained {
-        self.colors.clear();
-        let previous = self.committed.take();
-        self.pending = Some(key);
-        let full = previous.is_none_or(|old| old.identity != key.identity);
-        let color_work = full || previous.is_none_or(|old| old.colors != key.colors);
-        let mut prepared = PreparedRetained::default();
-        if full {
-            colors.clear();
-            self.stamps.clear();
-            colors.reserve_exact(instances.len());
-            self.stamps.reserve_exact(colors.capacity());
-            for (index, source) in instances.iter().enumerate() {
-                colors.push(color_data(source));
-                self.stamps.push(color_changes[index]);
-            }
-            prepared.repacked = instances.len();
-        } else {
-            colors.truncate(instances.len());
-            self.stamps.truncate(instances.len());
-            self.stamps
-                .reserve_exact(colors.capacity().saturating_sub(self.stamps.len()));
-            if color_work {
-                for (index, stamp) in self.stamps.iter_mut().enumerate() {
-                    if *stamp != color_changes[index] {
-                        colors[index] = color_data(&instances[index]);
-                        *stamp = color_changes[index];
-                        self.colors.changed(index, size_of::<ColorData>());
-                        prepared.repacked += 1;
-                    }
-                }
-            }
-            for (index, source) in instances.iter().enumerate().skip(self.stamps.len()) {
-                colors.push(color_data(source));
-                self.stamps.push(color_changes[index]);
-                self.colors.changed(index, size_of::<ColorData>());
-                prepared.repacked += 1;
-            }
-        }
-        let (full_upload, fallback) =
-            self.colors
-                .finish(instances.len(), size_of::<ColorData>(), full);
-        prepared.full_upload = full_upload;
-        prepared.fallback = fallback;
-        prepared
-    }
-
-    pub fn color_ranges(&self) -> &[UploadRange] {
-        self.colors.ranges()
-    }
-
-    pub fn commit(&mut self) {
-        self.committed = self.pending.take();
-    }
 }

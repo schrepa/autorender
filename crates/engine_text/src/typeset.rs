@@ -22,7 +22,6 @@ struct Placing<'a> {
 
 pub(crate) struct State {
     fonts: Option<Fonts>,
-    scene_fonts: Vec<(Arc<[u8]>, Option<FontId>)>,
     shapes: Shapes,
     atlas: Atlas,
     queue: Vec<TextRun>,
@@ -39,7 +38,6 @@ impl Default for State {
     fn default() -> Self {
         Self {
             fonts: None,
-            scene_fonts: Vec::new(),
             shapes: Shapes::default(),
             atlas: Atlas::default(),
             queue: Vec::new(),
@@ -123,27 +121,12 @@ impl State {
         };
     }
 
-    fn label_font(&mut self, label: &Label) -> u32 {
-        let Some(bytes) = &label.bytes else {
-            return 0;
-        };
-        let known = self
-            .scene_fonts
-            .iter()
-            .find(|(held, _)| Arc::ptr_eq(held, bytes));
-        if let Some((_, font)) = known {
-            return font.map_or(0, |font| font.0);
-        }
-        let font = self
-            .fonts
-            .get_or_insert_with(Fonts::new)
-            .load(Arc::clone(bytes));
-        self.scene_fonts.push((Arc::clone(bytes), font));
-        font.map_or(0, |font| font.0)
+    pub(crate) fn load_font(&mut self, bytes: Arc<[u8]>) -> Option<FontId> {
+        self.fonts.get_or_insert_with(Fonts::new).load(bytes)
     }
 
-    fn label_placing<'l>(&mut self, label: &'l Label) -> Placing<'l> {
-        let font = self.label_font(label);
+    fn label_placing<'l>(&self, label: &'l Label) -> Placing<'l> {
+        let font = label.face.map_or(0, |font| font.0);
         Placing {
             text: &label.text,
             layout: Layout::of(self.ratio, font, label.size, label.max_width, label.align),

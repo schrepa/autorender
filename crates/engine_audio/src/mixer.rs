@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use bevy_ecs::prelude::*;
 use engine_core::math::clamp;
-use engine_core::{Camera, Poses, SceneIds, TimeControl};
+use engine_core::{Camera, GlobalTransforms, SceneIds, TimeControl};
 use engine_places::audio::{
     Bus, OneShot, SoundHandle, SoundOrder, SoundSource, Sounds, VoiceHandle,
 };
@@ -186,11 +186,9 @@ pub(crate) struct Mixer {
     handles: BTreeMap<SoundHandle, u32>,
     files: BTreeMap<(String, bool), Held>,
     ended: BTreeMap<Entity, Key>,
-    applied: [Option<(f32, bool)>; Bus::ALL.len()],
     disabled: bool,
     refused: bool,
     open_failed: bool,
-    dirty: bool,
     cut: u32,
     failures: u32,
     latest: Option<String>,
@@ -208,16 +206,13 @@ impl Drop for Mixer {
 }
 
 impl Mixer {
-    fn is_idle(&self) -> bool {
-        !self.dirty
-            && self.voices.is_empty()
-            && !self.stages.values().any(|stage| *stage == Stage::Decoding)
+    fn room(&self, limit: u32) -> bool {
+        !self.disabled && !self.refused && !self.open_failed && self.voices.len() < limit as usize
     }
 
     pub(crate) fn set_available(&mut self, available: bool) {
         self.refused = !available;
         self.open_failed = false;
-        self.dirty = true;
         if !available {
             self.shut();
         }
@@ -250,10 +245,7 @@ impl Mixer {
             return false;
         }
         match self.backend.open() {
-            Ok(()) => {
-                self.applied = [None; Bus::ALL.len()];
-                true
-            }
+            Ok(()) => true,
             Err(failure) => {
                 self.open_failed = true;
                 self.latest = Some(failure);
@@ -458,11 +450,8 @@ impl Mixer {
             return;
         }
         for bus in Bus::ALL {
-            let state = (settings.volume_of(bus), paused && pauses(bus));
-            if self.applied[bus.index()] != Some(state) {
-                self.applied[bus.index()] = Some(state);
-                self.backend.set_bus(bus, state.0, state.1);
-            }
+            self.backend
+                .set_bus(bus, settings.volume_of(bus), paused && pauses(bus));
         }
     }
 
@@ -491,7 +480,6 @@ impl Mixer {
     fn retire(&mut self, voice: Voice) {
         self.backend.stop(voice.id);
         self.discard(&voice);
-        self.dirty = true;
         match voice.owner {
             Owner::Source(entity, key) if !voice.play.looping => {
                 self.ended.insert(entity, key);
@@ -516,7 +504,7 @@ impl Mixer {
         }
     }
 
-    fn hear(&mut self, camera: &Camera, poses: &Poses) {
+    fn hear(&mut self, camera: &Camera, globals: &GlobalTransforms) {
         if !self.backend.opened() {
             return;
         }
@@ -533,7 +521,7 @@ impl Mixer {
                 continue;
             }
             let posed = match &voice.owner {
-                Owner::Source(entity, _) => poses.of(*entity),
+                Owner::Source(entity, _) => globals.pose(*entity),
                 Owner::Shot(_) => None,
             };
             if let Some(pose) = posed {
@@ -561,25 +549,19 @@ impl Mixer {
 
 pub(crate) fn mix(
     settings: Res<Audio>,
-    (camera, poses, time): (Res<Camera>, Res<Poses>, Option<Res<TimeControl>>),
+    (camera, globals, time): (Res<Camera>, Res<GlobalTransforms>, Option<Res<TimeControl>>),
     sounds: Res<Sounds>,
     sources: Query<(Entity, Ref<SoundSource>)>,
     mut stats: ResMut<AudioStats>,
     mut mixer: ResMut<Mixer>,
 ) {
-    if sources.is_empty() && sounds.is_idle() && mixer.is_idle() && !settings.is_changed() {
-        return;
-    }
+    let closed = !mixer.backend.opened();
     let limit = settings.max_voices;
     mixer.disabled = !settings.enabled;
     if mixer.disabled {
         mixer.shut();
     }
-    let dirty = mixer.dirty || settings.is_changed();
-    mixer.dirty = false;
-    if dirty {
-        mixer.prune();
-    }
+    mixer.prune();
     mixer.cut = mixer.cut.saturating_add(sounds.take_cut());
     for order in sounds.take_orders() {
         mixer.order(order, limit);
@@ -587,9 +569,10 @@ pub(crate) fn mix(
     for (entity, source) in &sources {
         if source.is_changed() {
             mixer.reconcile(entity, &source, limit);
-        } else if dirty
-            && source.looping
+        } else if source.looping
             && source.autoplay
+            && source.bytes.is_some()
+            && mixer.room(limit)
             && !mixer.voices.iter().any(|voice| voice.of_entity(entity))
         {
             mixer.begin(entity, &source, limit);
@@ -597,15 +580,17 @@ pub(crate) fn mix(
     }
     mixer.trim(limit);
     mixer.collect_decoded();
-    mixer.apply_buses(&settings, time.is_some_and(|time| time.paused));
+    let time_moved = time.as_ref().is_some_and(|time| time.is_changed());
+    if settings.is_changed() || time_moved || (closed && mixer.backend.opened()) {
+        mixer.apply_buses(&settings, time.is_some_and(|time| time.paused));
+    }
     mixer.advance();
-    mixer.hear(&camera, &poses);
+    mixer.hear(&camera, &globals);
     mixer.publish(&mut stats);
 }
 
 pub(crate) fn release(In(entity): In<Entity>, mut mixer: ResMut<Mixer>) {
     mixer.ended.remove(&entity);
-    mixer.dirty = true;
     if let Some(at) = mixer.voices.iter().position(|held| held.of_entity(entity)) {
         mixer.halt(at);
     }

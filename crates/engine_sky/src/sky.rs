@@ -76,12 +76,11 @@ type AirInputs = (Vec3, Vec3, f32, f64, [f32; 4]);
 #[derive(Default)]
 pub(crate) struct AirPlan {
     tables: Option<u64>,
-    view_key: Option<(u64, [u32; 20], [u32; 3], u32)>,
+    sun: Option<[u32; 3]>,
     last_seconds: Option<f64>,
     generation: u64,
     environment_height: i32,
     active: bool,
-    build_view: bool,
     pub(crate) built: u32,
 }
 
@@ -106,7 +105,6 @@ impl AirPlan {
         air: &mut SkyAir,
     ) -> bool {
         self.built = 0;
-        self.build_view = false;
         let uploaded = match tables {
             Some(tables) if settings.enabled && self.tables != Some(tables.id) => {
                 self.tables = Some(tables.id);
@@ -116,41 +114,24 @@ impl AirPlan {
             _ => false,
         };
         self.active = settings.enabled && self.tables.is_some();
-        let Some(uploaded_tables) = self.tables.filter(|_| self.active) else {
-            self.view_key = None;
+        if !self.active {
+            self.sun = None;
             return false;
-        };
+        }
         let height = max(eye.y + settings.altitude, 0.5);
         let elapsed = self
             .last_seconds
             .replace(seconds)
             .map_or(0.0, |last| max((seconds - last) as f32, 0.0));
         write_air(air, settings, (sun, exposure, height, elapsed, moon));
-        let (ozone, ground, radii) = (air.ozone, air.ground, air.radii);
-        let keyed: [u32; 20] = bytemuck::cast([
-            air.rayleigh,
-            air.mie,
-            [ozone[0], ozone[1], ozone[2], 0.0],
-            [ground[0], ground[1], ground[2], 0.0],
-            [radii[0], radii[1], 0.0, 0.0],
-        ]);
-        let view_key = (
-            uploaded_tables,
-            keyed,
-            sun.to_array().map(f32::to_bits),
-            height.to_bits(),
-        );
-        self.build_view = uploaded || self.view_key != Some(view_key);
-        if self.build_view {
-            self.built += 1;
-            let environment_height = (height / ENVIRONMENT_HEIGHT_STEP).floor() as i32;
-            let sun_moved = self.view_key.is_none_or(|key| key.2 != view_key.2);
-            if uploaded || sun_moved || environment_height != self.environment_height {
-                self.generation += 1;
-            }
-            self.environment_height = environment_height;
-            self.view_key = Some(view_key);
+        self.built += 1;
+        let sun_bits = sun.to_array().map(f32::to_bits);
+        let environment_height = (height / ENVIRONMENT_HEIGHT_STEP).floor() as i32;
+        if uploaded || self.sun != Some(sun_bits) || environment_height != self.environment_height {
+            self.generation += 1;
         }
+        self.environment_height = environment_height;
+        self.sun = Some(sun_bits);
         true
     }
 }
@@ -431,7 +412,6 @@ pub(crate) struct AirTables {
     deriving: ComputePipeline<SkyGpu>,
     copies: Vec<Pass<SkyGpu>>,
     uploaded: Option<u64>,
-    builds: bool,
 }
 
 impl AirTables {
@@ -482,7 +462,6 @@ impl AirTables {
             deriving,
             copies: Vec::new(),
             uploaded: None,
-            builds: false,
         })
     }
 
@@ -544,7 +523,6 @@ impl AirTables {
         cx: &mut Prepare<'_, SkyGpu>,
         (plan, tables): (&AirPlan, Option<&StaticTable<SkyTables>>),
     ) {
-        self.builds = false;
         cx.allocate(self.transmittance, extent(TRANSMITTANCE_SIZE), 1);
         cx.allocate(self.multiple, extent(MULTIPLE_SIZE), 1);
         cx.allocate(self.view, extent(VIEW_SIZE), 1);
@@ -552,15 +530,12 @@ impl AirTables {
         if !plan.active {
             return;
         }
-        let mut uploaded = false;
         if let Some(tables) = tables.filter(|tables| Some(tables.id) == plan.tables)
             && self.uploaded != plan.tables
         {
             self.upload(cx, &tables.table);
             self.uploaded = plan.tables;
-            uploaded = true;
         }
-        self.builds = plan.build_view || uploaded;
         cx.run(self.pass);
         let regions = [
             Vec::from(piece_regions()),
@@ -573,16 +548,14 @@ impl AirTables {
     }
 
     fn encode(&self, cx: &mut Encode<'_, SkyGpu>) -> u32 {
-        if self.builds {
-            let groups = |(width, height): (u32, u32)| {
-                [
-                    width.div_ceil(SKY_TABLE_GROUP),
-                    height.div_ceil(SKY_TABLE_GROUP),
-                    1,
-                ]
-            };
-            cx.dispatch(&self.building, Count::Groups(groups(VIEW_SIZE)));
-        }
+        cx.dispatch(
+            &self.building,
+            Count::Groups([
+                VIEW_SIZE.0.div_ceil(SKY_TABLE_GROUP),
+                VIEW_SIZE.1.div_ceil(SKY_TABLE_GROUP),
+                1,
+            ]),
+        );
         cx.dispatch(&self.deriving, Count::Groups([1, 1, 1]));
         0
     }

@@ -1,7 +1,7 @@
 use crate::collections::HashMap;
-use crate::interpolation::{InterpolationState, Observer};
+use crate::interpolation::{InterpolationState, Observer, pose_rows};
 use crate::ticks::{ChangeWindow, STAMP_BLOCK, ScanClock, consume_through};
-use crate::{InterpolateTransform, NodePose, Transform, entity_indices::EntityIndices};
+use crate::{InterpolateTransform, NodePose, PoseRows, Transform, entity_indices::EntityIndices};
 use bevy_ecs::change_detection::ContiguousRef;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;
@@ -17,7 +17,6 @@ mod validation;
 mod views;
 pub use global::GlobalTransform;
 pub(crate) use global::ValueIds;
-use validation::Certificate;
 
 pub const MAX_HIERARCHY_DEPTH: usize = 64;
 pub const MAX_TRANSFORM_NODES: usize = u32::MAX as usize - 1;
@@ -265,20 +264,6 @@ type TransformQuery = QueryState<(
 )>;
 type ChangedTransforms = SystemState<Query<'static, 'static, (Entity, Ref<'static, Transform>)>>;
 
-#[derive(Debug, Clone, Copy)]
-pub struct TransformIndex(pub(crate) usize);
-impl Default for TransformIndex {
-    fn default() -> Self {
-        Self(usize::MAX)
-    }
-}
-
-impl TransformIndex {
-    pub fn index(&self) -> usize {
-        self.0
-    }
-}
-
 const _: () = assert!(MAX_TRANSFORM_NODES < u32::MAX as usize, "indices_fit_u32");
 const _: () = assert!(MAX_HIERARCHY_DEPTH < u8::MAX as usize, "depths_fit_u8");
 const NO_NODE: u32 = u32::MAX;
@@ -298,15 +283,7 @@ pub(crate) struct Link {
     depth: u8,
     state: State,
     topology_valid: bool,
-    global: Global,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-enum Global {
-    Invalid,
-    Stored,
-    Deferred,
+    valid: bool,
 }
 
 impl Link {
@@ -317,7 +294,7 @@ impl Link {
         depth: 0,
         state: State::Pending,
         topology_valid: false,
-        global: Global::Invalid,
+        valid: false,
     };
 
     #[inline]
@@ -352,7 +329,7 @@ impl Link {
 
     #[inline]
     pub(crate) fn has_global(&self) -> bool {
-        self.global != Global::Invalid
+        self.valid
     }
 
     #[inline]
@@ -422,10 +399,8 @@ pub struct GlobalTransforms {
     sources: Vec<Source>,
     locals: Vec<NodePose>,
     local_revisions: Vec<u64>,
-    history_hints: Vec<u32>,
     links: Vec<Link>,
-    globals: Vec<Mat4>,
-    certificates: Vec<Certificate>,
+    globals: Vec<PoseRows>,
     revisions: Vec<u64>,
     indices: EntityIndices,
     order: Vec<usize>,
@@ -433,6 +408,7 @@ pub struct GlobalTransforms {
     path: Vec<usize>,
     dirty: Dirty,
     changes: ChangeLog,
+    moved: Moved,
     scans: ScanClock,
     incomplete: bool,
     limit: usize,
@@ -452,10 +428,8 @@ impl FromWorld for GlobalTransforms {
             sources: Vec::new(),
             locals: Vec::new(),
             local_revisions: Vec::new(),
-            history_hints: Vec::new(),
             links: Vec::new(),
             globals: Vec::new(),
-            certificates: Vec::new(),
             revisions: Vec::new(),
             indices: EntityIndices::default(),
             order: Vec::new(),
@@ -463,6 +437,7 @@ impl FromWorld for GlobalTransforms {
             path: Vec::new(),
             dirty: Dirty::default(),
             changes: ChangeLog::default(),
+            moved: Moved::default(),
             scans: ScanClock::default(),
             incomplete: true,
             limit: node_limit(world),
@@ -476,7 +451,6 @@ impl FromWorld for GlobalTransforms {
 #[derive(Default)]
 struct PropagationWork {
     evaluated: usize,
-    deferred: usize,
     written: usize,
     value_ids: ValueIds,
 }
@@ -568,22 +542,66 @@ impl ChangeLog {
     }
 }
 
+const MOVED_FLOOR: usize = 4096;
+
+pub enum TransformsSince<'a> {
+    Same,
+    Listed(&'a [Entity]),
+    All,
+}
+
+#[derive(Default)]
+struct Moved {
+    end: u64,
+    recent: Vec<Entity>,
+    limit: usize,
+}
+
+impl Moved {
+    fn forget(&mut self, nodes: usize) {
+        self.end += 1;
+        self.recent.clear();
+        self.limit = (nodes / 4).max(MOVED_FLOOR);
+    }
+
+    #[inline(always)]
+    fn push(&mut self, entity: Entity) {
+        if self.recent.len() == self.limit * 2 {
+            self.recent.drain(..self.limit);
+        }
+        self.recent.push(entity);
+        self.end += 1;
+    }
+
+    fn since(&self, seen: &mut u64) -> TransformsSince<'_> {
+        let start = self.end - self.recent.len() as u64;
+        let at = std::mem::replace(seen, self.end);
+        if at == self.end {
+            TransformsSince::Same
+        } else if at < start || at > self.end {
+            TransformsSince::All
+        } else {
+            TransformsSince::Listed(&self.recent[(at - start) as usize..])
+        }
+    }
+}
+
 struct Scan {
     topology_changed: bool,
     observed: usize,
 }
 
 struct Nodes<'a> {
+    entities: &'a [Entity],
     locals: &'a mut [NodePose],
-    history_hints: &'a mut [u32],
     links: &'a mut [Link],
-    globals: &'a mut [Mat4],
-    certificates: &'a mut [Certificate],
+    globals: &'a mut [PoseRows],
     revisions: &'a mut [u64],
     flags: &'a mut [bool],
     invalid_transforms: &'a mut usize,
     validity_epoch: &'a mut u64,
     changes: &'a mut ChangeLog,
+    moved: &'a mut Moved,
 }
 
 #[cold]
@@ -592,57 +610,62 @@ fn find_index(indices: &EntityIndices, entity: Entity) -> Option<usize> {
     indices.get(&entity).copied()
 }
 
-#[cfg_attr(not(feature = "attribution"), inline)]
-#[cfg_attr(feature = "attribution", inline(never))]
-fn deferred_global(links: &[Link], globals: &[Mat4], locals: &[NodePose], index: usize) -> Mat4 {
-    let parent = links[index].parent().map_or(Mat4::IDENTITY, |parent| {
-        debug_assert!(links[parent].global == Global::Stored, "parent_stored");
-        globals[parent]
-    });
-    parent * Transform::from_pose(&locals[index]).matrix()
+#[inline(always)]
+fn rows_matrix(rows: &PoseRows) -> Mat4 {
+    Mat4::from_cols(
+        Vec4::from_array(rows[0]),
+        Vec4::from_array(rows[1]),
+        Vec4::from_array(rows[2]),
+        Vec4::W,
+    )
+    .transpose()
+}
+
+#[inline(always)]
+fn same_rows_bits(left: &PoseRows, right: &PoseRows) -> bool {
+    left.as_flattened()
+        .iter()
+        .zip(right.as_flattened())
+        .fold(0, |difference, (left, right)| {
+            difference | (left.to_bits() ^ right.to_bits())
+        })
+        == 0
 }
 
 impl Nodes<'_> {
     #[inline(always)]
     fn trimmed(self, len: usize) -> Self {
         let Self {
+            entities,
             locals,
-            history_hints,
             links,
             globals,
-            certificates,
             revisions,
             flags,
             invalid_transforms,
             validity_epoch,
             changes,
+            moved,
         } = self;
         Self {
+            entities: &entities[..len],
             locals: &mut locals[..len],
-            history_hints: &mut history_hints[..len],
             links: &mut links[..len],
             globals: &mut globals[..len],
-            certificates: &mut certificates[..len],
             revisions: &mut revisions[..len],
             flags: &mut flags[..len],
             invalid_transforms,
             validity_epoch,
             changes,
+            moved,
         }
     }
 
     #[inline(always)]
     fn global(&self, index: usize) -> Option<Mat4> {
-        match self.links[index].global {
-            Global::Stored => Some(self.globals[index]),
-            Global::Deferred => Some(deferred_global(
-                self.links,
-                self.globals,
-                self.locals,
-                index,
-            )),
-            Global::Invalid => None,
-        }
+        self.links[index]
+            .valid
+            .then(|| rows_matrix(&self.globals[index]))
     }
 
     #[cfg_attr(not(feature = "attribution"), inline(always))]
@@ -660,39 +683,6 @@ impl Nodes<'_> {
         valid_global_matrix(matrix).then_some(matrix)
     }
 
-    #[cfg_attr(not(feature = "attribution"), inline(always))]
-    #[cfg_attr(feature = "attribution", inline(never))]
-    fn certified(&self, index: usize, local: &Transform) -> bool {
-        let link = &self.links[index];
-        if !link.topology_valid || link.has_children() {
-            return false;
-        }
-        let certificate = match link.parent() {
-            Some(parent) if self.links[parent].global == Global::Stored => {
-                &self.certificates[parent]
-            }
-            Some(_) => return false,
-            None => &Certificate::ROOT,
-        };
-        certificate.admits(local)
-    }
-
-    #[inline(always)]
-    fn settle(
-        &mut self,
-        index: usize,
-        local: &Transform,
-        work: &mut PropagationWork,
-        observer: &mut Option<Observer<'_>>,
-    ) -> bool {
-        if self.certified(index, local) {
-            self.defer(index, work, observer);
-            return true;
-        }
-        let next = self.derived_global(index, local);
-        self.commit(index, next, work, observer)
-    }
-
     #[inline(always)]
     fn update(
         &mut self,
@@ -701,38 +691,8 @@ impl Nodes<'_> {
         observer: &mut Option<Observer<'_>>,
     ) -> bool {
         let local = Transform::from_pose(&self.locals[index]);
-        self.settle(index, &local, work, observer)
-    }
-
-    #[cfg_attr(not(feature = "attribution"), inline(always))]
-    #[cfg_attr(feature = "attribution", inline(never))]
-    fn defer(
-        &mut self,
-        index: usize,
-        work: &mut PropagationWork,
-        observer: &mut Option<Observer<'_>>,
-    ) {
-        let link = &mut self.links[index];
-        let revision = &mut self.revisions[index];
-        let was_invalid = link.global == Global::Invalid;
-        if was_invalid {
-            *self.invalid_transforms -= 1;
-            *self.validity_epoch += 1;
-        }
-        if link.global != Global::Deferred {
-            link.global = Global::Deferred;
-        }
-        if (was_invalid || *revision == 0)
-            && let Some(observer) = observer
-        {
-            observer.observe_validity(self.history_hints[index], index, &self.locals[index], true);
-        }
-        self.flags[index] = false;
-        work.evaluated += 1;
-        work.deferred += 1;
-        *revision = work.value_ids.next();
-        work.written += 1;
-        self.changes.record(index);
+        let next = self.derived_global(index, &local);
+        self.commit(index, next, work, observer)
     }
 
     #[cfg_attr(not(feature = "attribution"), inline(always))]
@@ -747,12 +707,13 @@ impl Nodes<'_> {
         let link = &mut self.links[index];
         let global = &mut self.globals[index];
         let revision = &mut self.revisions[index];
-        let valid = next.is_some();
-        let before = link.global;
-        let validity_changed = (before != Global::Invalid) != valid;
+        let rows = next.map(pose_rows);
+        let valid = rows.is_some();
+        let validity_changed = link.valid != valid;
         let changed = validity_changed
-            || before == Global::Deferred
-            || next.is_some_and(|matrix| !same_finite_matrix_bits(*global, matrix));
+            || rows
+                .as_ref()
+                .is_some_and(|rows| !same_rows_bits(global, rows));
         if validity_changed {
             if valid {
                 *self.invalid_transforms -= 1;
@@ -760,28 +721,18 @@ impl Nodes<'_> {
                 *self.invalid_transforms += 1;
             }
             *self.validity_epoch += 1;
-        }
-        let after = if valid {
-            Global::Stored
-        } else {
-            Global::Invalid
-        };
-        if before != after {
-            link.global = after;
+            link.valid = valid;
         }
         if (validity_changed || *revision == 0)
             && let Some(observer) = observer
         {
-            observer.observe_validity(self.history_hints[index], index, &self.locals[index], valid);
+            observer.observe_validity(self.entities[index], &self.locals[index], valid);
         }
         let publish = changed || *revision == 0;
-        if let Some(matrix) = next {
-            if changed {
-                *global = matrix;
-            }
-            if publish && link.has_children() {
-                self.certificates[index] = Certificate::of(matrix);
-            }
+        if let Some(rows) = rows
+            && changed
+        {
+            *global = rows;
         }
         self.flags[index] = false;
         work.evaluated += 1;
@@ -789,6 +740,7 @@ impl Nodes<'_> {
             *revision = work.value_ids.next();
             work.written += 1;
             self.changes.record(index);
+            self.moved.push(self.entities[index]);
         }
         changed
     }
@@ -800,33 +752,18 @@ impl GlobalTransforms {
         Some(self.value_at(index))
     }
 
-    #[inline]
-    pub fn get_indexed(
-        &self,
-        entity: Entity,
-        hint: &mut TransformIndex,
-    ) -> Option<GlobalTransform> {
-        self.get_indexed_with_revision(entity, hint)
-            .map(|(value, _)| value)
+    pub fn get_with_revision(&self, entity: Entity) -> Option<(GlobalTransform, u64)> {
+        let index = *self.indices.get(&entity)?;
+        Some((self.value_at(index), self.revisions[index]))
     }
 
-    #[inline]
-    pub fn get_indexed_with_revision(
-        &self,
-        entity: Entity,
-        hint: &mut TransformIndex,
-    ) -> Option<(GlobalTransform, u64)> {
-        let index = if self
-            .sources
-            .get(hint.0)
-            .is_some_and(|source| source.entity == entity)
-        {
-            hint.0
-        } else {
-            *self.indices.get(&entity)?
-        };
-        hint.0 = index;
-        Some((self.value_at(index), self.revisions[index]))
+    pub fn pose(&self, entity: Entity) -> Option<glam::Affine3A> {
+        let index = *self.indices.get(&entity)?;
+        self.global(index).map(glam::Affine3A::from_mat4)
+    }
+
+    pub fn changes_since(&self, cursor: &mut u64) -> TransformsSince<'_> {
+        self.moved.since(cursor)
     }
 
     pub fn len(&self) -> usize {
@@ -848,22 +785,10 @@ impl GlobalTransforms {
     }
 
     #[inline]
-    pub(crate) fn revision_at(&self, index: usize) -> u64 {
-        self.revisions[index]
-    }
-
-    #[inline]
-    pub(crate) fn global(&self, index: usize) -> Option<Mat4> {
-        match self.links[index].global {
-            Global::Stored => Some(self.globals[index]),
-            Global::Deferred => Some(deferred_global(
-                &self.links,
-                &self.globals,
-                &self.locals,
-                index,
-            )),
-            Global::Invalid => None,
-        }
+    fn global(&self, index: usize) -> Option<Mat4> {
+        self.links[index]
+            .valid
+            .then(|| rows_matrix(&self.globals[index]))
     }
 
     pub(crate) fn children(&self, index: usize) -> impl Iterator<Item = usize> + '_ {
@@ -919,14 +844,13 @@ impl GlobalTransforms {
             indices,
             locals,
             local_revisions,
-            history_hints,
             links,
             globals,
-            certificates,
             revisions,
             dirty,
             report,
             changes,
+            moved,
             validity_epoch,
             ..
         } = self;
@@ -942,16 +866,16 @@ impl GlobalTransforms {
             &mut local_revisions[..len],
         );
         let mut nodes = Nodes {
+            entities: source_entities,
             locals,
-            history_hints,
             links,
             globals,
-            certificates,
             revisions,
             flags,
             invalid_transforms: &mut report.invalid_transforms,
             validity_epoch,
             changes,
+            moved,
         }
         .trimmed(len);
         let mut observer = interpolation
@@ -1000,21 +924,13 @@ impl GlobalTransforms {
                             sources[index].transform_added = transform_added.get();
                         }
                         if let Some(observer) = observer.as_mut() {
-                            let hint = &mut nodes.history_hints[index];
-                            let motion = !identity_changed
-                                && observer.observe_motion(*hint, index, local, &pose);
-                            if !motion
-                                && (*hint != u32::MAX || sources[index].marker_added.is_some())
-                            {
-                                observer.observe_source(
-                                    hint,
-                                    index,
-                                    &sources[index],
-                                    (local, &transform.to_pose()),
-                                    local_changed,
-                                    identity_changed,
-                                );
-                            }
+                            observer.observe_source(
+                                index,
+                                &sources[index],
+                                local,
+                                local_changed,
+                                identity_changed,
+                            );
                         }
                         *local = pose;
                     }
@@ -1027,7 +943,8 @@ impl GlobalTransforms {
                     if !link.has_children()
                         && link.parent().is_none_or(|parent| !nodes.flags[parent])
                     {
-                        nodes.settle(index, transform, work, &mut observer);
+                        let next = nodes.derived_global(index, transform);
+                        nodes.commit(index, next, work, &mut observer);
                         early += 1;
                     } else {
                         nodes.flags[index] = true;
@@ -1089,10 +1006,9 @@ impl GlobalTransforms {
                     source.marker_added = marker_added;
                     if let Some(state) = interpolation.as_deref_mut() {
                         state.observe_source(
-                            &mut self.history_hints[count],
                             count,
                             source,
-                            (local, &pose),
+                            local,
                             local_changed,
                             identity_changed,
                         );
@@ -1133,10 +1049,8 @@ impl GlobalTransforms {
         self.sources.clear();
         self.locals.clear();
         self.local_revisions.clear();
-        self.history_hints.clear();
         self.links.clear();
         self.globals.clear();
-        self.certificates.clear();
         self.revisions.clear();
         self.indices.clear();
         self.order.clear();
@@ -1147,10 +1061,8 @@ impl GlobalTransforms {
         self.sources.reserve_exact(admitted);
         self.locals.reserve_exact(admitted);
         self.local_revisions.reserve_exact(admitted);
-        self.history_hints.reserve_exact(admitted);
         self.links.reserve_exact(admitted);
         self.globals.reserve_exact(admitted);
-        self.certificates.reserve_exact(admitted);
         self.revisions.reserve_exact(admitted);
         self.order.reserve_exact(admitted);
         self.path.reserve_exact(admitted);
@@ -1170,13 +1082,11 @@ impl GlobalTransforms {
                 transform_added: transform.added().get(),
                 marker_added: marker.as_ref().map(|marker| marker.added().get()),
             };
-            let mut history_hint = u32::MAX;
             if let Some(state) = interpolation.as_deref_mut() {
                 state.observe_source(
-                    &mut history_hint,
                     self.sources.len(),
                     &source,
-                    (&transform.to_pose(), &transform.to_pose()),
+                    &transform.to_pose(),
                     false,
                     true,
                 );
@@ -1185,10 +1095,8 @@ impl GlobalTransforms {
             self.sources.push(source);
             self.locals.push(transform.to_pose());
             self.local_revisions.push(self.revision.wrapping_add(1));
-            self.history_hints.push(history_hint);
             self.links.push(Link::DETACHED);
-            self.globals.push(Mat4::IDENTITY);
-            self.certificates.push(Certificate::NONE);
+            self.globals.push(pose_rows(Mat4::IDENTITY));
             self.revisions.push(0);
         }
         self.indices.clear();
@@ -1236,6 +1144,7 @@ impl GlobalTransforms {
         self.dirty.flags.resize(self.links.len(), true);
         self.dirty.count = self.links.len();
         self.changes.reset(self.links.len());
+        self.moved.forget(self.links.len());
         report.invalid_transforms = report.transforms;
         self.report = report;
         self.validity_epoch += 1;
@@ -1250,32 +1159,32 @@ impl GlobalTransforms {
         let _profile = engine_profile::span("hierarchy", "evaluate_dirty");
         let dense = self.dirty.count >= self.dense_threshold();
         let Self {
+            entities,
             locals,
-            history_hints,
             links,
             globals,
-            certificates,
             revisions,
             order,
             path,
             dirty,
             report,
             changes,
+            moved,
             validity_epoch,
             ..
         } = self;
         let len = links.len();
         let mut nodes = Nodes {
+            entities,
             locals,
-            history_hints,
             links,
             globals,
-            certificates,
             revisions,
             flags: &mut dirty.flags,
             invalid_transforms: &mut report.invalid_transforms,
             validity_epoch,
             changes,
+            moved,
         }
         .trimmed(len);
         let mut observer = interpolation
@@ -1357,7 +1266,6 @@ impl GlobalTransforms {
             f64::from(scan.topology_changed),
         );
         engine_profile::counter("hierarchy.evaluated_nodes", work.evaluated as f64);
-        engine_profile::counter("hierarchy.deferred_globals", work.deferred as f64);
         engine_profile::counter("hierarchy.written_globals", work.written as f64);
         let completed_tick = world.read_change_tick();
         self.scans.scanned(completed_tick);
@@ -1376,20 +1284,6 @@ impl GlobalTransforms {
 #[inline]
 fn local_matrix(local: &Transform) -> Option<Mat4> {
     ((local.rotation.length_squared() - 1.0).abs() <= 1.0e-3).then(|| local.matrix())
-}
-
-#[inline(always)]
-pub(crate) fn same_finite_matrix_bits(left: Mat4, right: Mat4) -> bool {
-    debug_assert!(left.is_finite() && right.is_finite(), "matrices_finite");
-    let equal = left.x_axis.cmpeq(right.x_axis)
-        & left.y_axis.cmpeq(right.y_axis)
-        & left.z_axis.cmpeq(right.z_axis)
-        & left.w_axis.cmpeq(right.w_axis);
-    let signs = (left.x_axis.is_negative_bitmask() ^ right.x_axis.is_negative_bitmask())
-        | (left.y_axis.is_negative_bitmask() ^ right.y_axis.is_negative_bitmask())
-        | (left.z_axis.is_negative_bitmask() ^ right.z_axis.is_negative_bitmask())
-        | (left.w_axis.is_negative_bitmask() ^ right.w_axis.is_negative_bitmask());
-    equal.all() && signs == 0
 }
 
 pub fn propagate_transforms(world: &mut World) -> HierarchyReport {

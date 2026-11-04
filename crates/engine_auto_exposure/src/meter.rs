@@ -29,7 +29,6 @@ pub(crate) struct MeterGpu {
     uniform: Buffer<Self>,
     bins: Buffer<Self>,
     state: Buffer<Self>,
-    written: Option<ExposureUniform>,
     last_seconds: Option<f64>,
     last_camera: [u32; 16],
 }
@@ -123,7 +122,6 @@ impl GpuPart for MeterGpu {
             uniform,
             bins,
             state,
-            written: None,
             last_seconds: None,
             last_camera: [0; 16],
         })
@@ -141,7 +139,6 @@ impl GpuPart for MeterGpu {
                 ..ExposureState::default()
             };
             cx.write(self.state, 0, &[state]);
-            self.written = None;
             self.last_seconds = None;
             self.last_camera = [0; 16];
         }
@@ -162,10 +159,7 @@ impl GpuPart for MeterGpu {
         };
         let drawn = view.render_size().to_array();
         let values = ExposureUniform::of(&settings, &sun, &sky, authored, elapsed, drawn);
-        if self.written != Some(values) {
-            cx.write(self.uniform, 0, &[values]);
-            self.written = Some(values);
-        }
+        cx.write(self.uniform, 0, &[values]);
         cx.run(self.meter);
         cx.read_back::<ExposureFeedback>(STATE_READ, self.state, 0..STATE_BYTES, AfterRead::Keep);
     }

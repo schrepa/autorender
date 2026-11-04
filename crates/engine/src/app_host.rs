@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use engine_core::{
     BrickList, Engine, ErrorCode, FrameFacts, FrameReport, FrameStats, JobExchange, JobId, JobRef,
-    MenuInput, MoveInput, RecordExchange, WorkClock,
+    MenuInput, MoveInput, RecordExchange, RenderStats, WorkClock,
 };
 use engine_registry::Registry;
 use engine_render::{RenderTarget, Renderer};
@@ -86,7 +86,6 @@ pub(crate) struct AppHost {
     refresh_ms: Option<f64>,
     dynamic: crate::host::DynamicScale,
     gpu_ms: Option<f32>,
-    submitted: bool,
     #[cfg(feature = "profiling")]
     profile_frame: u64,
     #[cfg(any(feature = "dev", feature = "profiling"))]
@@ -131,7 +130,6 @@ impl AppHost {
             refresh_ms: None,
             dynamic: crate::host::DynamicScale::default(),
             gpu_ms: None,
-            submitted: true,
             #[cfg(feature = "profiling")]
             profile_frame: 0,
             #[cfg(any(feature = "dev", feature = "profiling"))]
@@ -610,6 +608,48 @@ impl AppHost {
                 world.resource::<engine_core::FixedTime>().tick,
             )
         };
+        let before_acquire = now_ms();
+        let acquired = self.renderer.acquire_frame()?;
+        let acquire_ms = now_ms() - before_acquire;
+        let (extraction_ms, draw_ms, rendered) = if acquired {
+            self.draw_frame((width, height), (render_width, render_height), alpha)?
+        } else {
+            (0.0, 0.0, RenderStats::default())
+        };
+        self.stats = FrameStats {
+            frame: frame_number,
+            tick,
+            simulation_ms,
+            extraction_ms,
+            render_ms: acquire_ms + draw_ms,
+            fixed_steps: report.fixed_steps,
+            dropped_seconds: self.stats.dropped_seconds + report.dropped_seconds,
+            pipelines_compiling: false,
+            pipelines_listed: 0,
+            pipelines_unlisted: 0,
+            loading: false,
+            resolution: self.resolution_stats((width, height)),
+            dynamic_resolution,
+            jobs: engine_core::JobStats::default(),
+            disabled_features: self.renderer.disabled_features(),
+            render: rendered,
+            bricks_cost: None,
+            bricks: std::collections::BTreeMap::new(),
+        };
+        self.pipeline_list.after_frame(
+            &mut self.engine,
+            &self.renderer,
+            self.stats.render.pipelines_created,
+        );
+        Ok(())
+    }
+
+    fn draw_frame(
+        &mut self,
+        (width, height): (u32, u32),
+        (render_width, render_height): (u32, u32),
+        alpha: f32,
+    ) -> Result<(f64, f64, RenderStats)> {
         let before_extraction = now_ms();
         let aspect = width.max(1) as f32 / height.max(1) as f32;
         self.engine.start_frame();
@@ -634,41 +674,16 @@ impl AppHost {
             display_size,
             render_size,
             pixel_ratio: self.pixel_ratio as f32,
-            submitted: self.submitted,
         };
         self.engine.set_frame(facts);
         let frame = self.engine.extract_frame(aspect, alpha)?;
         let after_extraction = now_ms();
-        let rendered = self.renderer.render_frame(frame);
-        self.submitted = rendered.as_ref().is_ok_and(|rendered| rendered.submitted);
-        let rendered = rendered?;
-        self.engine.rendered(rendered.submitted);
-        self.stats = FrameStats {
-            frame: frame_number,
-            tick,
-            simulation_ms,
-            extraction_ms: after_extraction - before_extraction,
-            render_ms: now_ms() - after_extraction,
-            fixed_steps: report.fixed_steps,
-            dropped_seconds: self.stats.dropped_seconds + report.dropped_seconds,
-            pipelines_compiling: false,
-            pipelines_listed: 0,
-            pipelines_unlisted: 0,
-            loading: false,
-            resolution: self.resolution_stats((width, height)),
-            dynamic_resolution,
-            jobs: engine_core::JobStats::default(),
-            disabled_features: self.renderer.disabled_features(),
-            render: rendered,
-            bricks_cost: None,
-            bricks: std::collections::BTreeMap::new(),
-        };
-        self.pipeline_list.after_frame(
-            &mut self.engine,
-            &self.renderer,
-            self.stats.render.pipelines_created,
-        );
-        Ok(())
+        let rendered = self.renderer.render_frame(frame)?;
+        Ok((
+            after_extraction - before_extraction,
+            now_ms() - after_extraction,
+            rendered,
+        ))
     }
 
     fn engine_loading(&self) -> bool {

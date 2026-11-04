@@ -130,7 +130,7 @@ impl Terrains {
         asking: &mut Asking<'_, '_, '_>,
     ) -> GroundWork {
         self.frame += 1;
-        self.sync_surroundings();
+        self.sync_surroundings(asking.kinds);
         let retired = std::mem::take(&mut self.retired);
         for ticket in retired.jobs {
             asking.jobs.cancel(ticket);
@@ -204,22 +204,27 @@ impl Terrains {
         let mut remaining = limit.map_or(usize::MAX, |limit| limit as usize);
         let frame = self.frame;
         for state in &mut self.entries {
-            state.streamed = false;
             if state.terrain.validate().is_err() {
                 continue;
             }
             let cutout = state.around.as_ref().map(|around| around.cutout);
             if cutout.is_some() && !settings.surroundings {
-                state.drawn = false;
+                state.show(false);
                 continue;
             }
             let pyramid = state.terrain.pyramid;
             let origin = state.terrain.origin;
             let ranges = LodRanges::new(&pyramid, settings.pixel_error, size.y as f32, fov);
-            state.ranges.clear();
-            state
-                .ranges
-                .extend((0..pyramid.levels()).map(|level| ranges.range(level)));
+            if !(0..pyramid.levels())
+                .map(|level| ranges.range(level))
+                .eq(state.ranges.iter().copied())
+            {
+                state.ranges.clear();
+                state
+                    .ranges
+                    .extend((0..pyramid.levels()).map(|level| ranges.range(level)));
+                state.stale.tiles = true;
+            }
             let Plan {
                 collision,
                 ordered,
@@ -280,7 +285,7 @@ impl Terrains {
             state.missing.clone_from(&missing);
             state.target.clone_from(&target);
             state.keep.clone_from(&keep);
-            state.update_materials(settings.gpu_materials, asking.kinds);
+            state.update_materials(settings.gpu_materials);
             share_recipe(state, asking.jobs, &mut self.stacks, &mut released);
             if load_tiles(
                 state,
@@ -293,7 +298,6 @@ impl Terrains {
                 stats.baking += 1;
                 continue;
             }
-            state.streamed = true;
             let missing = std::mem::take(&mut state.missing);
             state.missing = missing
                 .into_iter()
@@ -305,7 +309,7 @@ impl Terrains {
             stats.cached_bytes += state.store.cached_bytes();
             stats.prefetching_tiles += state.prefetched.len() as u32;
             stats.loading_tiles += state.dispatched.len() as u32;
-            state.drawn = settings.enabled && state.store.len() > 0;
+            state.show(settings.enabled && state.store.len() > 0);
             stats.fallback_tiles += fallback;
             if cutout.is_some() {
                 stats.surroundings_tiles += state.store.len() as u32;
@@ -372,7 +376,6 @@ impl Terrains {
             millis: clock.map_or(0.0, |clock| work.end - clock()),
             end: clock.map_or(0.0, |_| work.end),
             upload: work.upload.get(),
-            entries: Arc::default(),
         }
     }
 }
@@ -381,52 +384,6 @@ impl Terrains {
 pub(crate) struct TerrainStreaming {
     points: Vec<Vec3>,
     places: Vec<(Vec3, f32)>,
-    reliefs: Reliefs,
-}
-
-#[derive(Default)]
-struct Reliefs {
-    textures: HashMap<TextureHandle, u128>,
-}
-
-impl Reliefs {
-    fn of(&mut self, materials: &[SurfaceMaterial], assets: &AssetLibrary) -> u128 {
-        let mut bytes = Vec::with_capacity(32 * materials.len());
-        for look in materials {
-            for value in [look.depth, look.tiling, look.height_contrast] {
-                bytes.extend_from_slice(&value.to_le_bytes());
-            }
-            bytes.push(match look.projection {
-                SurfaceProjection::Top => 0,
-                SurfaceProjection::Biplanar => 1,
-            });
-            let map = look.material.and_then(|handle| {
-                let material = assets.material(handle)?;
-                Some(material.metallic_roughness_texture()?.texture)
-            });
-            let content = map.map_or(0, |handle| self.texture(handle, assets));
-            bytes.extend_from_slice(&content.to_le_bytes());
-        }
-        content_hash(&bytes)
-    }
-
-    fn texture(&mut self, handle: TextureHandle, assets: &AssetLibrary) -> u128 {
-        if let Some(&content) = self.textures.get(&handle) {
-            return content;
-        }
-        let Some(texture) = assets.texture(handle) else {
-            return 0;
-        };
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&texture.width().to_le_bytes());
-        bytes.extend_from_slice(&texture.height().to_le_bytes());
-        for level in texture.levels() {
-            bytes.extend_from_slice(level);
-        }
-        let content = content_hash(&bytes);
-        self.textures.insert(handle, content);
-        content
-    }
 }
 
 pub(crate) type StreamReads<'w> = (
@@ -437,7 +394,6 @@ pub(crate) type StreamReads<'w> = (
     Res<'w, CookMode>,
     Res<'w, DeviceLimits>,
     Res<'w, GlobalTransforms>,
-    Res<'w, AssetLibrary>,
     Res<'w, Records>,
 );
 
@@ -447,7 +403,7 @@ pub(crate) type StreamReads<'w> = (
 )]
 pub(crate) fn stream_terrains(
     settings: Res<TerrainSettings>,
-    (camera, view, time, clock, cooking, limits, globals, assets, records): StreamReads<'_>,
+    (camera, view, time, clock, cooking, limits, globals, records): StreamReads<'_>,
     kinds: Joined<TerrainLayers>,
     focus: Query<Entity, With<StreamingFocus>>,
     prefetch: Query<(Entity, &TerrainPrefetch)>,
@@ -486,26 +442,8 @@ pub(crate) fn stream_terrains(
         .iter()
         .filter_map(|(entity, scene)| Some((entity, scene.built.clone()?)))
         .collect();
-    let solids: Vec<(Entity, Vec<Option<Solid>>)> = present
-        .iter()
-        .map(|(entity, terrain)| {
-            let solids = terrain.surface.assets.iter();
-            (*entity, solids.map(|asset| asset.solid(&assets)).collect())
-        })
-        .collect();
-    let reliefs: Vec<(Entity, u128)> = present
-        .iter()
-        .map(|(entity, terrain)| {
-            (
-                *entity,
-                streaming.reliefs.of(&terrain.surface.materials, &assets),
-            )
-        })
-        .collect();
     let terrains = terrains.as_mut();
-    terrains.follow(present);
-    terrains.stand(&solids);
-    terrains.relieve(&reliefs);
+    terrains.follow(present, &kinds);
     let ahead = terrains.heading(eye, seconds);
     let mut asking = Asking {
         jobs: &mut jobs,
@@ -597,14 +535,14 @@ pub(crate) fn work_between_frames(
 }
 
 impl Terrains {
-    fn follow(&mut self, present: Vec<(Entity, Terrain)>) {
+    fn follow(&mut self, present: Vec<(Entity, Terrain)>, kinds: &[&'static LayerKind]) {
         let mut kept = Vec::with_capacity(self.entries.len());
         for state in std::mem::take(&mut self.entries) {
             if present.iter().any(|(entity, _)| *entity == state.entity) {
                 kept.push(state);
             } else {
                 state.retire(&mut self.retired);
-                self.epoch += 1;
+                self.stale = Stale::ALL;
             }
         }
         self.entries = kept;
@@ -616,13 +554,13 @@ impl Terrains {
             {
                 Some(state) => {
                     if !terrain.same(&state.terrain) {
-                        let old = std::mem::replace(state, TerrainState::new(entity, terrain));
+                        let old =
+                            std::mem::replace(state, TerrainState::new(entity, terrain, kinds));
                         old.retire(&mut self.retired);
                         self.loaded = false;
-                        self.epoch += 1;
                     } else {
                         if !Arc::ptr_eq(&terrain.edits, &state.terrain.edits) {
-                            state.edit(terrain.edits.clone());
+                            state.edit(terrain.edits.clone(), kinds);
                         }
                         state.terrain.rivers = terrain.rivers.clone();
                         state.terrain.surroundings = terrain.surroundings;
@@ -631,33 +569,15 @@ impl Terrains {
                         {
                             state.terrain.surface.assets = terrain.surface.assets;
                             state.terrain.surface.bridge = terrain.surface.bridge;
-                            state.standing += 1;
+                            state.stale.tiles = true;
+                            state.stale.ground = true;
                         }
                     }
                 }
                 None => {
-                    self.entries.push(TerrainState::new(entity, terrain));
+                    self.entries.push(TerrainState::new(entity, terrain, kinds));
                     self.loaded = false;
-                    self.epoch += 1;
                 }
-            }
-        }
-    }
-
-    fn stand(&mut self, solids: &[(Entity, Vec<Option<Solid>>)]) {
-        for state in &mut self.entries {
-            if let Some((_, found)) = solids.iter().find(|(entity, _)| *entity == state.entity)
-                && state.solids[..] != found[..]
-            {
-                state.solids = Arc::from(found.as_slice());
-            }
-        }
-    }
-
-    fn relieve(&mut self, reliefs: &[(Entity, u128)]) {
-        for state in &mut self.entries {
-            if let Some(&(_, relief)) = reliefs.iter().find(|(entity, _)| *entity == state.entity) {
-                state.relief = relief;
             }
         }
     }

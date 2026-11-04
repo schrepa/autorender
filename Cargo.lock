@@ -1593,6 +1593,7 @@ dependencies = [
  "engine_math",
  "engine_place",
  "glam 0.30.9",
+ "parry3d",
  "schemars",
  "serde",
  "serde_json",

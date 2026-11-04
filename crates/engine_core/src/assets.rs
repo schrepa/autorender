@@ -268,12 +268,11 @@ fn resident_mesh(mesh: &Mesh, lods: Option<&MeshLods>, arena: &mut Arena) -> Res
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Default)]
 struct Named {
     meshes: Vec<MeshHandle>,
     materials: BTreeSet<MaterialHandle>,
     textures: BTreeSet<TextureHandle>,
-    library: ((u64, u64), u64),
 }
 
 #[derive(Debug, Default)]
@@ -285,11 +284,10 @@ struct Table {
     generation: u64,
     materials_generation: u64,
     layout: u64,
-    named: Named,
 }
 
 impl Table {
-    fn settle(&mut self, named: Named, library: &AssetLibrary) {
+    fn settle(&mut self, named: &Named, library: &AssetLibrary) {
         let Some(arena) = self.arena.as_mut() else {
             return;
         };
@@ -356,7 +354,6 @@ impl Table {
             self.textures = textures;
             self.materials_generation = self.materials_generation.wrapping_add(1);
         }
-        self.named = named;
     }
 }
 
@@ -457,8 +454,6 @@ fn names(world: &mut World) -> Named {
             named.materials.extend(uses.materials.iter().copied());
             named.textures.extend(uses.textures.iter().copied());
         }
-        let library = world.resource::<AssetLibrary>();
-        named.library = (library.revision(), library.material_revision());
         named
     })
 }
@@ -471,9 +466,6 @@ fn settle_residency(world: &mut World) {
         return;
     }
     let named = names(world);
-    if world.resource::<AssetResidency>().table.named == named {
-        return;
-    }
     let Some(mut table) = world
         .modify_resource(|residency: &mut AssetResidency| std::mem::take(&mut residency.table))
         .ok()
@@ -481,7 +473,7 @@ fn settle_residency(world: &mut World) {
     else {
         return;
     };
-    table.settle(named, world.resource::<AssetLibrary>());
+    table.settle(&named, world.resource::<AssetLibrary>());
     let _ = world.modify_resource(|residency: &mut AssetResidency| residency.table = table);
 }
 
@@ -498,7 +490,6 @@ pub fn configure_assets(world: &mut World, arena: ArenaShape, atlas: AtlasDevice
         table.materials.clear();
         table.textures.clear();
         table.arena = Some(Arena::new(arena));
-        table.named = Named::default();
         table.generation = table.generation.wrapping_add(1);
         table.materials_generation = table.materials_generation.wrapping_add(1);
         table.layout += 1;

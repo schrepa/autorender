@@ -223,7 +223,7 @@ fn sun_passing(start: vec3<f32>) -> f32 {
 @compute @workgroup_size(CLOUD_GROUP, CLOUD_GROUP)
 fn shadow_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
     let cells = u32(clouds.shadow.w);
-    let row = clouds.shadow_rows.x + id.y * clouds.shadow_rows.y;
+    let row = id.y;
     if id.x * 2u >= cells || row >= cells {
         return;
     }

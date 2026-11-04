@@ -365,23 +365,7 @@ pub struct Tile {
     bounds: [f32; 2],
     patch_bounds: Arc<[[f32; 2]]>,
     patch_holes: [u64; 4],
-    patch_culling: Box<[PatchCulling]>,
 }
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct PatchCulling {
-    slope: [i16; 2],
-    spread: u16,
-    floors: [u8; 4],
-}
-
-engine_codec::record!(PatchCulling {
-    slope,
-    spread,
-    floors,
-});
-
-const SLOPE_STEPS: f32 = 256.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TileSample {
@@ -392,19 +376,6 @@ pub struct TileSample {
 
 impl Tile {
     pub fn new(
-        key: TileKey,
-        spacing: f32,
-        heights: Box<[f32]>,
-        holes: Option<Box<[u64]>>,
-    ) -> Option<Self> {
-        let mut tile = Self::shaped(key, spacing, Arc::from(heights), holes)?;
-        tile.patch_culling = (0..PATCHES_PER_TILE * PATCHES_PER_TILE)
-            .map(|index| tile.cull(index % PATCHES_PER_TILE, index / PATCHES_PER_TILE))
-            .collect();
-        Some(tile)
-    }
-
-    fn shaped(
         key: TileKey,
         spacing: f32,
         heights: Arc<[f32]>,
@@ -436,7 +407,6 @@ impl Tile {
             bounds: [0.0; 2],
             patch_bounds: Arc::default(),
             patch_holes: [0; 4],
-            patch_culling: Box::default(),
         };
         let mut patch_bounds = vec![[0.0; 2]; (PATCHES_PER_TILE * PATCHES_PER_TILE) as usize];
         let mut low = f32::INFINITY;
@@ -468,75 +438,6 @@ impl Tile {
         tile.bounds = [low, high];
         tile.patch_bounds = Arc::from(patch_bounds);
         Some(tile)
-    }
-
-    fn cull(&self, x: u32, z: u32) -> PatchCulling {
-        let patch = PATCH_QUADS as i32;
-        let (first_x, first_z) = (x as i32 * patch, z as i32 * patch);
-        let inverse = 1.0 / self.spacing;
-        let mut low = [f32::INFINITY; 2];
-        let mut high = [f32::NEG_INFINITY; 2];
-        let mut slopes = Vec::with_capacity((2 * patch * patch) as usize);
-        for cz in first_z..first_z + patch {
-            for cx in first_x..first_x + patch {
-                let a = self.height(cx, cz);
-                let b = self.height(cx + 1, cz);
-                let c = self.height(cx, cz + 1);
-                let d = self.height(cx + 1, cz + 1);
-                for slope in [
-                    [(b - a) * inverse, (c - a) * inverse],
-                    [(d - c) * inverse, (d - b) * inverse],
-                ] {
-                    low = [min(low[0], slope[0]), min(low[1], slope[1])];
-                    high = [max(high[0], slope[0]), max(high[1], slope[1])];
-                    slopes.push(slope);
-                }
-            }
-        }
-        let center = [0.5 * (low[0] + high[0]), 0.5 * (low[1] + high[1])];
-        let step = |value: f32| clamp((value * SLOPE_STEPS).round(), -32767.0, 32767.0) as i16;
-        let slope = center.map(step);
-        let held = [
-            f32::from(slope[0]) / SLOPE_STEPS,
-            f32::from(slope[1]) / SLOPE_STEPS,
-        ];
-        let spread = slopes.iter().fold(0.0_f32, |far, &[sx, sz]| {
-            let (dx, dz) = (sx - held[0], sz - held[1]);
-            max(far, (dx * dx + dz * dz).sqrt())
-        });
-        let spread = (spread * SLOPE_STEPS + 1.0).ceil();
-        let spread = if spread >= f32::from(u16::MAX) {
-            u16::MAX
-        } else {
-            spread as u16
-        };
-        let [patch_low, patch_high] = self.patch_bounds[(z * PATCHES_PER_TILE + x) as usize];
-        let range = patch_high - patch_low;
-        let half = patch / 2;
-        let mut floors = [0_u8; 4];
-        for (quarter, floor) in floors.iter_mut().enumerate() {
-            let (qx, qz) = (
-                first_x + (quarter as i32 % 2) * half,
-                first_z + (quarter as i32 / 2) * half,
-            );
-            let mut lowest = f32::INFINITY;
-            for sz in qz..=qz + half {
-                for sx in qx..=qx + half {
-                    lowest = min(lowest, self.height(sx, sz));
-                }
-            }
-            *floor = if range > 0.0 {
-                (clamp(((lowest - patch_low) / range * 255.0).floor(), 0.0, 255.0) as u8)
-                    .saturating_sub(1)
-            } else {
-                0
-            };
-        }
-        PatchCulling {
-            slope,
-            spread,
-            floors,
-        }
     }
 
     pub fn with_control(mut self, control: Box<[u32]>) -> Option<Self> {
@@ -621,12 +522,9 @@ impl Tile {
     }
 
     pub fn control_at(&self, x: i32, z: i32) -> Option<Control> {
-        let stride = TILE_STRIDE as i32;
-        let x = x.clamp(-1, stride - 2);
-        let z = z.clamp(-1, stride - 2);
         self.control
-            .as_ref()
-            .map(|control| Control::unpack(control[((z + 1) * stride + x + 1) as usize]))
+            .as_deref()
+            .map(|control| control_in(control, x, z))
     }
 
     #[inline]
@@ -697,23 +595,6 @@ impl Tile {
         self.patch_bounds[(z * PATCHES_PER_TILE + x) as usize]
     }
 
-    pub fn patch_slopes(&self, x: u32, z: u32) -> [f32; 3] {
-        let cull = self.patch_culling[(z * PATCHES_PER_TILE + x) as usize];
-        [
-            f32::from(cull.slope[0]) / SLOPE_STEPS,
-            f32::from(cull.slope[1]) / SLOPE_STEPS,
-            f32::from(cull.spread) / SLOPE_STEPS,
-        ]
-    }
-
-    pub fn patch_floors(&self, x: u32, z: u32) -> [f32; 4] {
-        let index = (z * PATCHES_PER_TILE + x) as usize;
-        let [low, high] = self.patch_bounds[index];
-        self.patch_culling[index]
-            .floors
-            .map(|floor| min(low + (high - low) * (f32::from(floor) / 255.0), high))
-    }
-
     pub fn patch_has_holes(&self, x: u32, z: u32) -> bool {
         let index = (z * PATCHES_PER_TILE + x) as usize;
         self.patch_holes[index / 64] & (1 << (index % 64)) != 0
@@ -736,35 +617,53 @@ impl Tile {
     }
 
     pub fn sample(&self, local: Vec2) -> Option<TileSample> {
-        let (i, j, fu, fv) = self.cell(local)?;
-        let corners = [
-            self.height(i, j),
-            self.height(i + 1, j),
-            self.height(i, j + 1),
-            self.height(i + 1, j + 1),
-        ];
-        let around: [[f32; 4]; 4] =
-            [-1, 0, 1, 2].map(|dz| [-1, 0, 1, 2].map(|dx| self.height(i + dx, j + dz)));
-        let gradient = |x: usize, z: usize| {
-            let [gx, gz] = smooth_gradient(
-                [0, 1, 2].map(|row| [0, 1, 2].map(|column| around[z + row][x + column])),
-                self.spacing,
-            );
-            Vec2::new(gx, gz)
-        };
-        let blend = |a: Vec2, b: Vec2, t: f32| a + (b - a) * t;
-        let slope = blend(
-            blend(gradient(0, 0), gradient(1, 0), fu),
-            blend(gradient(0, 1), gradient(1, 1), fu),
-            fv,
-        );
-        let normal = Vec3::new(-slope.x, 1.0, -slope.y).normalize();
-        Some(TileSample {
-            height: on_triangle(corners, fu, fv),
-            normal,
-            hole: self.is_hole(i as u32, j as u32),
-        })
+        sample_heights(&self.heights, self.holes.as_deref(), self.spacing, local)
     }
+}
+
+pub fn sample_heights(
+    heights: &[f32],
+    holes: Option<&[u64]>,
+    spacing: f32,
+    local: Vec2,
+) -> Option<TileSample> {
+    let (i, j, fu, fv) = tile_cell(spacing, local)?;
+    let stride = TILE_STRIDE as i32;
+    let height = |x: i32, z: i32| heights[((z + 1) * stride + x + 1) as usize];
+    let corners = [
+        height(i, j),
+        height(i + 1, j),
+        height(i, j + 1),
+        height(i + 1, j + 1),
+    ];
+    let around: [[f32; 4]; 4] =
+        [-1, 0, 1, 2].map(|dz| [-1, 0, 1, 2].map(|dx| height(i + dx, j + dz)));
+    let gradient = |x: usize, z: usize| {
+        let [gx, gz] = smooth_gradient(
+            [0, 1, 2].map(|row| [0, 1, 2].map(|column| around[z + row][x + column])),
+            spacing,
+        );
+        Vec2::new(gx, gz)
+    };
+    let blend = |a: Vec2, b: Vec2, t: f32| a + (b - a) * t;
+    let slope = blend(
+        blend(gradient(0, 0), gradient(1, 0), fu),
+        blend(gradient(0, 1), gradient(1, 1), fu),
+        fv,
+    );
+    let normal = Vec3::new(-slope.x, 1.0, -slope.y).normalize();
+    Some(TileSample {
+        height: on_triangle(corners, fu, fv),
+        normal,
+        hole: holes.is_some_and(|bits| hole_at(bits, i as u32, j as u32)),
+    })
+}
+
+pub fn control_in(control: &[u32], x: i32, z: i32) -> Control {
+    let stride = TILE_STRIDE as i32;
+    let x = x.clamp(-1, stride - 2);
+    let z = z.clamp(-1, stride - 2);
+    Control::unpack(control[((z + 1) * stride + x + 1) as usize])
 }
 
 pub const LAKE_REACH: u8 = 4;
@@ -1217,7 +1116,8 @@ impl Generator {
                     let lake = self.lake_rows(budget);
                     let heights = std::mem::take(&mut self.heights);
                     self.stage = Stage::Failed;
-                    let tile = Tile::new(self.key, self.spacing, heights, self.holes.take())?;
+                    let tile =
+                        Tile::new(self.key, self.spacing, Arc::from(heights), self.holes.take())?;
                     let tile = match self.control.take() {
                         Some(control) => tile.with_control(control)?,
                         None => tile,
@@ -1350,9 +1250,7 @@ impl engine_codec::Codec for Tile {
         let stride = TILE_STRIDE as usize;
         out.put(&self.key).put(&self.spacing);
         engine_codec::put_grid(out, &self.heights, stride);
-        out.put(&self.holes)
-            .put(&self.patch_culling)
-            .put(&self.control);
+        out.put(&self.holes).put(&self.control);
         for planes in [&self.river_edges, &self.river_beds] {
             match planes {
                 Some(planes) => {
@@ -1383,7 +1281,6 @@ impl engine_codec::Codec for Tile {
         let spacing = input.get()?;
         let heights = engine_codec::get_grid(input, stride)?;
         let holes = input.get()?;
-        let culling: Box<[PatchCulling]> = input.get()?;
         let control: Option<Box<[u32]>> = input.get()?;
         let mut rivers = [None, None];
         for planes in &mut rivers {
@@ -1405,11 +1302,7 @@ impl engine_codec::Codec for Tile {
         } else {
             None
         };
-        let mut tile = Self::shaped(key, spacing, heights, holes).ok_or_else(invalid)?;
-        if culling.len() != tile.patch_bounds.len() {
-            return Err(invalid());
-        }
-        tile.patch_culling = culling;
+        let mut tile = Self::new(key, spacing, heights, holes).ok_or_else(invalid)?;
         if let Some(control) = control {
             tile = tile.with_control(control).ok_or_else(invalid)?;
         }

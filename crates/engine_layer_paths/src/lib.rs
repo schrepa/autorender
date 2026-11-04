@@ -14,15 +14,14 @@ use std::sync::Arc;
 use engine_codec::{Reader, Writer};
 use engine_core::{Brick, Bricks, ErrorCode, Source, parse_value};
 use engine_heightfield::layer::{
-    self, Below, LayerBake, LayerFiles, LayerKind, Made, Row, TerrainLayer, maps,
+    self, Below, LayerFiles, LayerKind, Made, Row, TerrainLayer, maps,
 };
 use engine_heightfield::path::{Bridge, PathSample};
-use engine_heightfield::{Pyramid, StartTile};
+use engine_heightfield::{Layers, Pyramid, TileHeights};
 use engine_places::terrain::TerrainLayers;
 use glam::Vec2;
 use serde_json::Value;
 
-use crate::bake::PathWork;
 pub use crate::profile::{
     MASK_MARGIN, MAX_PATH_POINTS, PORTAL_HEIGHT, PROFILE_STEP, PathLayer, PathProfile, PathStats,
 };
@@ -145,11 +144,14 @@ impl TerrainLayer for TerrainPath {
         self.profile.is_none()
     }
 
-    fn bake(&self, _pyramid: &Pyramid, _tiles: StartTile) -> Option<Box<dyn LayerBake>> {
-        if !self.needs_bake() {
-            return None;
-        }
-        Some(Box::new(PathWork::start(&self.settings)))
+    fn bake(
+        &self,
+        below: &Arc<Layers>,
+        pyramid: &Pyramid,
+        _tiles: TileHeights,
+    ) -> Option<Arc<dyn TerrainLayer>> {
+        self.needs_bake()
+            .then(|| bake::path_stage(&self.settings, below, pyramid))
     }
 
     fn unbaked(&self) -> Option<Arc<dyn TerrainLayer>> {

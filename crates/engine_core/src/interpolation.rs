@@ -4,6 +4,7 @@ pub use gpu::{
     GpuCurrent, GpuPresentation, NO_PARENT, NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE,
     NODE_VALID, NodeInfo, NodePose, PoseRows,
 };
+pub(crate) use gpu::pose_rows;
 
 use crate::collections::HashSet;
 
@@ -125,7 +126,6 @@ struct Interval {
     previous_valid: bool,
     cancelled: bool,
     stable: bool,
-    scales_compatible: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -137,7 +137,7 @@ struct Identity {
 
 impl Interval {
     #[inline]
-    fn blends(&self, epoch: u64, active: bool) -> bool {
+    fn blends(&self, epoch: u64, active: bool, previous: &NodePose, current: &NodePose) -> bool {
         !active
             && epoch != 0
             && self.valid
@@ -145,7 +145,7 @@ impl Interval {
                 || (!self.cancelled
                     && self.previous_valid
                     && self.stable
-                    && self.scales_compatible))
+                    && compatible_scales(previous, current)))
     }
 
     fn cancel(&mut self, epoch: u64) {
@@ -212,12 +212,10 @@ pub struct PresentedTransforms {
     next_history: Vec<History>,
     next_intervals: Vec<Interval>,
     next_previous: Vec<NodePose>,
-    next_history_nodes: Vec<u32>,
     indices: EntityIndices,
     epoch: u64,
     active: bool,
     invalidated: Vec<usize>,
-    revision: u64,
     gpu: gpu::GpuInputs,
 }
 
@@ -234,12 +232,10 @@ impl FromWorld for PresentedTransforms {
             next_history: Vec::new(),
             next_intervals: Vec::new(),
             next_previous: Vec::new(),
-            next_history_nodes: Vec::new(),
             indices: EntityIndices::default(),
             epoch: 0,
             active: false,
             invalidated: Vec::new(),
-            revision: 0,
             gpu: gpu::GpuInputs::default(),
         }
     }
@@ -263,19 +259,12 @@ impl PresentedTransforms {
             history_nodes: &mut self.history_nodes,
             indices: &self.indices,
             invalidated: &mut self.invalidated,
-            revision: &mut self.revision,
-            observed: false,
             epoch: self.epoch,
             active: self.active,
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub(crate) fn reconcile(&mut self, world: &World, hierarchy: &HierarchyScratch) {
-        self.revision += 1;
         let count = self
             .history_query
             .iter(world)
@@ -289,7 +278,6 @@ impl PresentedTransforms {
             self.next_history.clear();
             self.next_intervals.clear();
             self.next_previous.clear();
-            self.next_history_nodes.clear();
             self.indices.clear();
             self.invalidated.clear();
             return;
@@ -313,7 +301,6 @@ impl PresentedTransforms {
                     &mut self.history[position],
                     &mut self.intervals[position],
                     &mut self.previous[position],
-                    self.history_nodes[position],
                     input,
                     self.epoch,
                     self.active,
@@ -326,26 +313,21 @@ impl PresentedTransforms {
                 self.next_history.clear();
                 self.next_intervals.clear();
                 self.next_previous.clear();
-                self.next_history_nodes.clear();
                 self.next_history.reserve_exact(count);
                 self.next_intervals.reserve_exact(count);
                 self.next_previous.reserve_exact(count);
-                self.next_history_nodes.reserve_exact(count);
                 self.next_history
                     .extend_from_slice(&self.history[..position]);
                 self.next_intervals
                     .extend_from_slice(&self.intervals[..position]);
                 self.next_previous
                     .extend_from_slice(&self.previous[..position]);
-                self.next_history_nodes
-                    .extend_from_slice(&self.history_nodes[..position]);
             }
-            let (mut history, mut interval, mut previous, node) = match self.indices.get(&input.0) {
+            let (mut history, mut interval, mut previous) = match self.indices.get(&input.0) {
                 Some(&index) => (
                     self.history[index],
                     self.intervals[index],
                     self.previous[index],
-                    self.history_nodes[index],
                 ),
                 None => initial_record(&input, self.epoch, hierarchy),
             };
@@ -353,7 +335,6 @@ impl PresentedTransforms {
                 &mut history,
                 &mut interval,
                 &mut previous,
-                node,
                 input,
                 self.epoch,
                 self.active,
@@ -362,22 +343,18 @@ impl PresentedTransforms {
             self.next_history.push(history);
             self.next_intervals.push(interval);
             self.next_previous.push(previous);
-            self.next_history_nodes.push(node);
         }
         if rebuilding {
             std::mem::swap(&mut self.history, &mut self.next_history);
             std::mem::swap(&mut self.intervals, &mut self.next_intervals);
             std::mem::swap(&mut self.previous, &mut self.next_previous);
-            std::mem::swap(&mut self.history_nodes, &mut self.next_history_nodes);
             self.next_history.clear();
             self.next_intervals.clear();
             self.next_previous.clear();
-            self.next_history_nodes.clear();
         } else {
             self.history.truncate(count);
             self.intervals.truncate(count);
             self.previous.truncate(count);
-            self.history_nodes.truncate(count);
         }
         let index_changed = rebuilding || count != previous_count;
         engine_profile::counter(
@@ -400,20 +377,25 @@ impl PresentedTransforms {
                 push_invalid(&mut self.invalidated, index);
             }
         }
-        self.history_nodes.fill(u32::MAX);
+        self.history_nodes.clear();
+        self.history_nodes.resize(self.history.len(), u32::MAX);
     }
 
     pub(crate) fn observe_source(
         &mut self,
-        hint: &mut u32,
         node: usize,
         source: &Source,
-        locals: (&NodePose, &NodePose),
+        previous_local: &NodePose,
         local_changed: bool,
         identity_changed: bool,
     ) {
-        self.observer()
-            .observe_source(hint, node, source, locals, local_changed, identity_changed);
+        self.observer().observe_source(
+            node,
+            source,
+            previous_local,
+            local_changed,
+            identity_changed,
+        );
     }
 
     fn counters(&self, state: &mut PresentationState) {
@@ -423,15 +405,11 @@ impl PresentedTransforms {
             * size_of::<History>()
             + (self.intervals.capacity() + self.next_intervals.capacity()) * size_of::<Interval>()
             + (self.previous.capacity() + self.next_previous.capacity()) * size_of::<NodePose>()
-            + (self.history_nodes.capacity() + self.next_history_nodes.capacity())
-                * size_of::<u32>();
+            + self.history_nodes.capacity() * size_of::<u32>();
         state.presentation_scratch_bytes = self.invalidated.capacity() * size_of::<usize>();
     }
 
     fn observe_invalid(&mut self) {
-        if !self.invalidated.is_empty() {
-            self.revision += 1;
-        }
         for index in self.invalidated.drain(..) {
             if let Some(record) = self.history.get_mut(index) {
                 record.invalidated = false;
@@ -451,81 +429,27 @@ pub(crate) struct Observer<'a> {
     history_nodes: &'a mut [u32],
     indices: &'a EntityIndices,
     invalidated: &'a mut Vec<usize>,
-    revision: &'a mut u64,
-    observed: bool,
     epoch: u64,
     active: bool,
 }
 
-impl Drop for Observer<'_> {
-    fn drop(&mut self) {
-        if self.observed {
-            *self.revision += 1;
-        }
-    }
-}
-
 impl Observer<'_> {
-    #[inline]
-    fn record_for(&mut self, hint: u32, node: usize, entity: Entity) -> Option<usize> {
-        if self.history_nodes.get(hint as usize) == Some(&(node as u32)) {
-            Some(hint as usize)
-        } else {
-            resolve_record(self.history_nodes, self.indices, node, entity)
-        }
-    }
-
-    #[cfg_attr(not(feature = "attribution"), inline(always))]
-    #[cfg_attr(feature = "attribution", inline(never))]
-    pub(crate) fn observe_motion(
-        &mut self,
-        hint: u32,
-        node: usize,
-        previous_local: &NodePose,
-        current: &NodePose,
-    ) -> bool {
-        let record = hint as usize;
-        if self.history_nodes.get(record) != Some(&(node as u32)) {
-            return false;
-        }
-        self.observed = true;
-        let interval = &mut self.intervals[record];
-        let previous = &mut self.previous[record];
-        if self.active {
-            begin_interval(
-                &mut self.history[record],
-                interval,
-                previous,
-                self.epoch,
-                previous_local,
-            );
-        } else {
-            interval.cancel(self.epoch);
-        }
-        interval.scales_compatible = compatible_scales(previous, current);
-        true
-    }
-
     #[cfg_attr(feature = "attribution", inline(never))]
     pub(crate) fn observe_source(
         &mut self,
-        hint: &mut u32,
         node: usize,
         source: &Source,
-        (previous_local, current): (&NodePose, &NodePose),
+        previous_local: &NodePose,
         local_changed: bool,
         identity_changed: bool,
     ) {
         let Some(marker_added) = source.marker_added else {
-            *hint = u32::MAX;
             return;
         };
-        self.observed = true;
-        let Some(index) = self.record_for(*hint, node, source.entity) else {
-            *hint = u32::MAX;
+        let Some(&index) = self.indices.get(&source.entity) else {
             return;
         };
-        *hint = index as u32;
+        self.history_nodes[index] = node as u32;
         let history = &mut self.history[index];
         let interval = &mut self.intervals[index];
         let previous = &mut self.previous[index];
@@ -556,48 +480,26 @@ impl Observer<'_> {
                 self.active,
             );
         }
-        interval.scales_compatible = compatible_scales(previous, current);
     }
 
     #[cfg_attr(feature = "attribution", inline(never))]
-    pub(crate) fn observe_validity(
-        &mut self,
-        hint: u32,
-        node: usize,
-        local: &NodePose,
-        valid: bool,
-    ) {
-        if self.history_nodes.get(hint as usize) != Some(&(node as u32)) {
+    pub(crate) fn observe_validity(&mut self, entity: Entity, local: &NodePose, valid: bool) {
+        let Some(&index) = self.indices.get(&entity) else {
             return;
-        }
-        let index = hint as usize;
+        };
         let history = &mut self.history[index];
         let interval = &mut self.intervals[index];
         let previous = &mut self.previous[index];
         if interval.valid == valid {
             return;
         }
-        self.observed = true;
         begin_interval(history, interval, previous, self.epoch, local);
-        interval.scales_compatible = compatible_scales(previous, local);
         if !valid && !history.invalidated {
             push_invalid(self.invalidated, index);
             history.invalidated = true;
         }
         interval.valid = valid;
     }
-}
-
-#[cold]
-fn resolve_record(
-    history_nodes: &mut [u32],
-    indices: &EntityIndices,
-    node: usize,
-    entity: Entity,
-) -> Option<usize> {
-    let index = *indices.get(&entity)?;
-    history_nodes[index] = node as u32;
-    Some(index)
 }
 
 type HistoryInput<'a> = (
@@ -619,7 +521,7 @@ fn initial_record(
     input: &HistoryInput<'_>,
     epoch: u64,
     hierarchy: &HierarchyScratch,
-) -> (History, Interval, NodePose, u32) {
+) -> (History, Interval, NodePose) {
     let identity = Identity {
         marker_added: input.1.added().get(),
         transform_added: input.2.added().get(),
@@ -641,17 +543,14 @@ fn initial_record(
         previous_valid: false,
         cancelled: true,
         stable: true,
-        scales_compatible: compatible_scales(&previous, &previous),
     };
-    (history, interval, previous, u32::MAX)
+    (history, interval, previous)
 }
 
-#[expect(clippy::too_many_arguments, reason = "history and record, apart")]
 fn observe_record(
     history: &mut History,
     interval: &mut Interval,
     previous: &mut NodePose,
-    node: u32,
     input: HistoryInput<'_>,
     epoch: u64,
     active: bool,
@@ -663,14 +562,8 @@ fn observe_record(
         transform_added: transform.added().get(),
         parent: parent.map(Parent::parent),
     };
-    let cached = Some(node as usize)
-        .filter(|&index| {
-            hierarchy
-                .sources()
-                .get(index)
-                .is_some_and(|source| source.entity == history.entity)
-        })
-        .or_else(|| hierarchy.node_index(history.entity))
+    let cached = hierarchy
+        .node_index(history.entity)
         .map(|index| hierarchy.locals()[index]);
     let current = transform.to_pose();
     if let Some(local) = &cached {
@@ -702,7 +595,6 @@ fn observe_record(
         );
     }
     interval.valid = valid;
-    interval.scales_compatible = compatible_scales(previous, &current);
 }
 
 #[expect(clippy::too_many_arguments, reason = "history and record, apart")]
@@ -760,7 +652,6 @@ pub(crate) fn begin_tick(world: &mut World) {
             }
         }
         state.active = true;
-        state.revision += 1;
         let hierarchy = world
             .get_resource::<HierarchyScratch>()
             .map(|hierarchy| hierarchy.revision());
@@ -773,7 +664,6 @@ pub(crate) fn end_tick(world: &mut World) {
     world.resource_scope(|world, mut state: Mut<InterpolationState>| {
         state.observe_invalid();
         state.active = false;
-        state.revision += 1;
         state.counters(&mut world.resource_mut::<PresentationState>());
     });
 }
@@ -807,7 +697,7 @@ pub fn reset_all_interpolation(world: &mut World) -> usize {
     for interval in &mut state.intervals {
         interval.cancel(epoch);
     }
-    state.revision += 1;
+    state.gpu.regather();
     state.history.len()
 }
 
@@ -833,7 +723,7 @@ fn reset_roots(world: &mut World, roots: &[Entity]) -> usize {
     world.resource_scope(|world, mut state: Mut<InterpolationState>| {
         let mut count = 0;
         let state = &mut *state;
-        state.revision += 1;
+        state.gpu.regather();
         let epoch = state.epoch;
         for (history, interval) in state.history.iter().zip(&mut state.intervals) {
             let mut cursor = Some(history.entity);

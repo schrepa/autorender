@@ -217,6 +217,12 @@ impl RecordKey {
     pub fn hex(&self) -> String {
         self.0.iter().map(|byte| format!("{byte:02x}")).collect()
     }
+
+    pub(crate) fn identity(&self) -> u128 {
+        let mut head = [0_u8; 16];
+        head.copy_from_slice(&self.0[..16]);
+        u128::from_le_bytes(head)
+    }
 }
 
 pub(crate) fn record_key(source: &[u8; 32], kind: &str, identity: &[u8]) -> RecordKey {
@@ -269,17 +275,11 @@ pub struct Jobs<'w, 's> {
 impl Jobs<'_, '_> {
     pub fn admit(&mut self, priority: u32) -> bool {
         let exchange = self.exchange.as_deref();
-        let [slots, urgent] = *self.orders.budget.get_or_insert_with(|| {
-            let (workers, running) = exchange.map_or((0, 0), |exchange| {
-                let admitted = exchange.admitted.load(Ordering::Relaxed);
-                (exchange.workers, exchange.running() + admitted)
-            });
-            let budget = JobBudget::of(workers, running);
-            [budget.slots, budget.urgent]
+        let (workers, running) = exchange.map_or((0, 0), |exchange| {
+            let admitted = exchange.admitted.load(Ordering::Relaxed);
+            (exchange.workers, exchange.running() + admitted)
         });
-        let mut budget = JobBudget { slots, urgent };
-        let admitted = budget.take(priority);
-        self.orders.budget = Some([budget.slots, budget.urgent]);
+        let admitted = JobBudget::of(workers, running).take(priority);
         if admitted {
             if let Some(exchange) = exchange {
                 exchange.admitted.fetch_add(1, Ordering::Relaxed);

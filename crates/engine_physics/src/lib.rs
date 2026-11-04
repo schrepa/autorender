@@ -6,7 +6,6 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod body;
-mod bounds;
 mod coupling;
 mod obstacles;
 mod settings;

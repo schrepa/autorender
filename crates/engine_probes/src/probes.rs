@@ -116,6 +116,12 @@ impl ProbeSlots {
         }
     }
 
+    fn count_again(&mut self) {
+        for slot in self.slots.iter_mut().flatten() {
+            slot.age = 0;
+        }
+    }
+
     fn next_face(
         &mut self,
         probes: &[RenderReflectionProbe],
@@ -133,8 +139,11 @@ impl ProbeSlots {
             self.capturing = Some((waiting, 0));
         }
         let (slot, face) = self.capturing?;
-        let probe = self.slots[slot].as_ref()?.probe;
-        Some((slot as u32 + 1, face, probe))
+        let held = self.slots[slot].as_ref()?;
+        if held.age < STILL_FRAMES {
+            return None;
+        }
+        Some((slot as u32 + 1, face, held.probe))
     }
 
     fn face_drawn(&mut self) -> bool {
@@ -190,39 +199,10 @@ impl ProbeSlots {
     }
 }
 
-#[derive(Default)]
-struct Stillness {
-    slots: u64,
-    counting: bool,
-    counted: u32,
-}
-
-impl Stillness {
-    fn ensure(&mut self, stillness: Option<bool>, capacity: u64) {
-        let slots = if stillness.is_some() { capacity } else { 0 };
-        if slots > self.slots || (slots == 0 && self.slots != 0) {
-            self.slots = slots;
-            self.counted = 0;
-        }
-        let counting = stillness == Some(true);
-        if counting && !self.counting {
-            self.counted = 0;
-        }
-        self.counting = counting;
-        if counting {
-            self.counted = (self.counted + 1).min(STILL_FRAMES);
-        }
-    }
-
-    fn settled(&self) -> bool {
-        self.counting && self.counted >= STILL_FRAMES
-    }
-}
-
 #[derive(Resource)]
 pub(crate) struct ProbeState {
     slots: ProbeSlots,
-    stillness: Stillness,
+    counted_capacity: u32,
     pub(crate) size: u32,
     pub(crate) cubes: u32,
     sky: u64,
@@ -248,7 +228,7 @@ impl Default for ProbeState {
                 changed: true,
                 ..ProbeSlots::default()
             },
-            stillness: Stillness::default(),
+            counted_capacity: 0,
             size: ReflectionProbeSettings::default().resolution,
             cubes: 1,
             sky: 0,
@@ -358,11 +338,10 @@ pub(crate) fn plan_captures(
     let present = sky.environment != 0;
     state.listed = !probes.is_empty();
     state.views = state.listed && present;
+    let counted = state.still;
     state.still = state.views && state.slots.waiting();
-    state.stillness.ensure(
-        state.views.then_some(state.still),
-        u64::from(instances.capacity),
-    );
+    let count_again = state.still && (!counted || instances.capacity > state.counted_capacity);
+    state.counted_capacity = if state.views { instances.capacity } else { 0 };
     let (cubes, most_cubes, lost, sky_changed) = if present {
         let most_cubes = (limits.texture_layers / FACES as u32).max(1);
         let lost = state.place(probes, settings.resolution, most_cubes);
@@ -375,6 +354,9 @@ pub(crate) fn plan_captures(
     state
         .slots
         .plan(probes, (cubes - 1) as usize, lost, sky_changed);
+    if count_again {
+        state.slots.count_again();
+    }
     if let Some(ready) = state.slots.changed_ready() {
         grid_words(&ready, &mut state.words);
         state.words_changed = true;
@@ -393,7 +375,7 @@ pub(crate) fn plan_captures(
     state.captures = !view.debug() && state.listed;
     if state.captures {
         state.slots.tick();
-        if state.stillness.settled() && present {
+        if state.still {
             drawn = state.capture(
                 probes,
                 (settings.faces_per_frame, instances.candidates != 0),

@@ -311,10 +311,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "revision": {
-          "default": "0",
-          "type": "string"
-        },
         "tick": {
           "default": "0",
           "type": "string"
@@ -606,12 +602,6 @@
             "kept": 0
           }
         },
-        "invalid": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "light_cut": {
           "$ref": "#/$defs/Cut",
           "default": {
@@ -832,12 +822,6 @@
     "ParticleStats": {
       "properties": {
         "drawn": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "invalid": {
           "default": 0,
           "format": "uint32",
           "minimum": 0,

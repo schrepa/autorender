@@ -38,11 +38,13 @@ impl Run {
         {
             return Some(at);
         }
-        let known = self.layouts.get(layout as usize)?;
-        let (formats, depth, debug, main) =
-            (known.formats.clone(), known.depth, known.debug, known.main);
         let specialized = variant.map(|variant| (variant.bits(), variant.constants()));
-        let (key, made) = self.compile(pipeline, (&formats, depth), (debug, main), specialized)?;
+        let (key, made) = self.compile(
+            pipeline,
+            (layout.formats(), layout.depth),
+            (layout.debug, layout.main),
+            specialized,
+        )?;
         self.rebuilt.compiles += 1;
         let built = self.machine.pipelines.get_mut(pipeline as usize)?;
         built.ready.push(Ready {

@@ -56,7 +56,7 @@ const CLOSED: &[(&str, &[&str])] = &[
     ),
 ];
 
-const PLACE_EXTERNALS: &[&str] = &["glam", "bytemuck", "serde", "serde_json", "schemars"];
+const PLACE_EXTERNALS: &[&str] = &["glam", "bytemuck", "serde", "serde_json", "schemars", "parry3d"];
 
 struct Member {
     name: String,

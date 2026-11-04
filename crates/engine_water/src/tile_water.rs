@@ -129,6 +129,24 @@ impl TileWater {
         &self.solids
     }
 
+    pub(crate) fn holding(&self) -> [u64; 4] {
+        self.held
+    }
+
+    pub(crate) fn from_parts(
+        surface: Box<[f32]>,
+        info: Box<[[u32; 2]]>,
+        held: [u64; 4],
+        solids: Box<[Footprint]>,
+    ) -> Self {
+        Self {
+            surface,
+            info,
+            held,
+            solids,
+        }
+    }
+
     pub fn patch_holds_water(&self, x: u32, z: u32) -> bool {
         let index = (z * PATCHES_PER_TILE + x) as usize;
         self.held[index / 64] & (1 << (index % 64)) != 0
@@ -630,15 +648,13 @@ impl BaseWater {
 }
 
 pub(crate) fn rewatered(
-    face: &TileFace,
+    (key, spacing, heights): (TileKey, f32, &[f32]),
     water: Option<&TileWater>,
     (layers, pyramid): (&Layers, &Pyramid),
     rivers: &Rivers,
     regions: &[(Vec2, Vec2)],
 ) -> Option<TileWater> {
     let (_, hydrology) = layers.hydrology_layer()?;
-    let key = face.key;
-    let spacing = face.spacing;
     let [xs, zs] = positions(layers, pyramid, key);
     let within = |values: &[f32], low: f32, high: f32| {
         values.partition_point(|&at| at < low)..values.partition_point(|&at| at <= high)
@@ -696,7 +712,7 @@ pub(crate) fn rewatered(
     TileWater::new(
         surface.into_boxed_slice(),
         info.into_boxed_slice(),
-        (&face.heights, spacing, tile_origin(key, spacing)),
+        (heights, spacing, tile_origin(key, spacing)),
         solids,
     )
 }

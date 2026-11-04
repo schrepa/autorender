@@ -12,9 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::tables::{NoiseTables, state_len};
-use crate::tile::{
-    COARSE_COST, GRID_STEP, NOISE_SAMPLE_COST, NoiseTile, QUARTER_WEIGHTS, interpolate,
-};
+use crate::tile::{GRID_STEP, NOISE_SAMPLE_COST, NoiseTile, QUARTER_WEIGHTS, interpolate};
 
 fields! {
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -145,7 +143,4 @@ impl TerrainLayer for Noise {
         NOISE_SAMPLE_COST
     }
 
-    fn point_cost(&self) -> u64 {
-        16 * COARSE_COST + NOISE_SAMPLE_COST
-    }
 }

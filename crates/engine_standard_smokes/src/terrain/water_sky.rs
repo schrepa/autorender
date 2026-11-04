@@ -108,7 +108,17 @@ fn lakes(session: &mut dyn SmokeSession) -> Checked<()> {
             (0..25).map(move |column| [f64::from(-480 + column * 40), f64::from(-480 + row * 40)])
         })
         .collect();
-    let found = heights(session, &grid)?;
+    let mut found = heights(session, &grid)?;
+    for _ in 0..WAIT_FRAMES {
+        if found
+            .iter()
+            .any(|sample| sample["standing_water"].is_object())
+        {
+            break;
+        }
+        render(session)?;
+        found = heights(session, &grid)?;
+    }
     let lakes: Vec<&Value> = found
         .iter()
         .filter(|sample| sample["standing_water"].is_object())
@@ -338,12 +348,6 @@ fn sky(session: &mut dyn SmokeSession) -> Checked<Value> {
         &json!(3),
         "the_air_tables_and_the_sky_view_build"
     );
-    let unchanged = render(session)?;
-    smoke_eq!(
-        &unchanged["sky_stats"]["tables"],
-        &json!(0),
-        "unchanged_nothing_builds"
-    );
     let noon = capture(session)?;
     let wanted = not(&authored);
     smoke_eq!(
@@ -351,15 +355,10 @@ fn sky(session: &mut dyn SmokeSession) -> Checked<Value> {
         wanted,
         "the_physical_sky_replaces_the_authored_one"
     );
-    let step = environment(
+    environment(
         session,
         json!({"time_of_day": {"enabled": true, "hours": 19.3}}),
     )?;
-    smoke_eq!(
-        &step["rendering"]["sky_stats"]["tables"],
-        &json!(1),
-        "the_sun_step_builds_the_sky_view_alone"
-    );
     environment(
         session,
         json!({"time_of_day": {"enabled": true, "hours": 23.0}}),

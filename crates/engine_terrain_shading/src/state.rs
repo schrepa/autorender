@@ -11,7 +11,7 @@ use engine_core::{
 use engine_heightfield::tile::shaded_elsewhere;
 use engine_places::ground::{
     GroundBaking, GroundTiles, Heightfield, HeldTile, Pyramid, TerrainEntry, TerrainTiles,
-    TileFace, TileKey,
+    TileFace, TileKey, TilesSince,
 };
 use engine_places::shadows::ShadowChanges;
 use engine_render::DebugShown;
@@ -31,8 +31,6 @@ const VIEW_PRIORITY: u32 = 0;
 const SKIRT_SPACINGS: f32 = 4.0;
 const MOST_PROBES: u32 = 512;
 const FEWEST_PROBES: u32 = 16;
-const ERROR_CELLS: usize = engine_heightfield::TILE_QUADS as usize / 2;
-const PEAK_MIPS: u32 = crate::gpu::SURFACE_ERROR_MIPS;
 
 pub(crate) type TileId = (Entity, TileKey);
 
@@ -144,21 +142,12 @@ pub(crate) struct TerrainBakes {
     pub(crate) lighting: Bake<TerrainLighting>,
     pub(crate) bounce: Bake<TerrainBounce>,
     pub(crate) flow: Shadings,
-    attached: HashMap<TileKey, (Stamp, Arc<TileShading>)>,
     pub(crate) colors: Colors,
 }
 
 impl TerrainBakes {
-    pub(crate) fn shading(&self, key: &TileKey) -> Option<&Arc<TileShading>> {
-        self.attached.get(key).map(|(_, shading)| shading)
-    }
-
-    pub(crate) fn attach(&mut self, tile: &TileFace, shading: Arc<TileShading>) {
-        self.attached.insert(tile.key, (tile.stamp, shading));
-    }
-
-    pub(crate) fn attached(&self) -> u32 {
-        self.attached.len() as u32
+    pub(crate) fn shading(&self, tile: &TileFace) -> Option<&Arc<TileShading>> {
+        self.flow.shown(tile)
     }
 
     fn unbounced(&self, settings: &TerrainShading, entry: &TerrainEntry) -> bool {
@@ -167,16 +156,6 @@ impl TerrainBakes {
             && !entry.surroundings
             && self.lighting.failed.is_none()
             && (bounce.asked.is_some() || (bounce.made.is_none() && bounce.failed.is_none()))
-    }
-
-    pub(crate) fn prune(&mut self, entry: &TerrainEntry) {
-        let faces: HashMap<TileKey, Stamp> = entry
-            .tiles
-            .iter()
-            .map(|tile| (tile.key, tile.stamp))
-            .collect();
-        self.attached
-            .retain(|key, (stamp, _)| faces.get(key).is_some_and(|face| *face == *stamp));
     }
 
     fn forget(
@@ -214,32 +193,34 @@ impl Bakes {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Upload {
-    Arrived,
-    Replaced,
-    Errors,
+    Whole,
+    Shaded,
+}
+
+#[derive(Clone, Copy)]
+struct PlacedTile {
+    stamp: Stamp,
+    low: f32,
+    high: f32,
+    control: bool,
 }
 
 #[derive(Resource, Default)]
 pub(crate) struct Atlas {
     pub(crate) slots: HashMap<TileId, u32>,
-    pub(crate) held: HashMap<TileId, TileFace>,
-    pub(crate) peaks: HashMap<TileId, Arc<[f32]>>,
+    placed: HashMap<TileId, PlacedTile>,
+    cursors: HashMap<Entity, u64>,
     pub(crate) arrivals: HashMap<TileId, f32>,
     pub(crate) surfaced: HashMap<TileId, f32>,
-    shadings: HashMap<TileId, Arc<TileShading>>,
-    pub(crate) holed: BTreeSet<TileId>,
     pub(crate) unplaced: BTreeSet<TileId>,
     pub(crate) free: Vec<u32>,
     pub(crate) next_layer: u32,
     pub(crate) capacity: u32,
-    pub(crate) dropped: u32,
     pub(crate) now: f32,
     pub(crate) uploads: Vec<(TileId, u32, Upload)>,
     pub(crate) vacated: Vec<u32>,
     pub(crate) changed: Vec<TileId>,
     pub(crate) ground_changes: Vec<(Vec3, Vec3, f32)>,
-    programs: HashMap<Entity, bool>,
-    synced: HashMap<Entity, Arc<[TileFace]>>,
 }
 
 impl Atlas {
@@ -247,8 +228,12 @@ impl Atlas {
         self.slots.get(&(terrain, key)).copied()
     }
 
-    pub(crate) fn tile(&self, terrain: Entity, key: TileKey) -> Option<&TileFace> {
-        self.held.get(&(terrain, key))
+    pub(crate) fn stamp_of(&self, id: TileId) -> Option<Stamp> {
+        self.placed.get(&id).map(|placed| placed.stamp)
+    }
+
+    pub(crate) fn tile<'a>(&self, entry: &'a TerrainEntry, key: TileKey) -> Option<&'a TileFace> {
+        listed_tile(&entry.tiles, key).filter(|_| !self.unplaced.contains(&(entry.terrain, key)))
     }
 
     fn release(&mut self, id: TileId) {
@@ -259,12 +244,48 @@ impl Atlas {
         self.free.push(layer);
         self.vacated.push(layer);
         self.changed.push(id);
-        self.held.remove(&id);
-        self.peaks.remove(&id);
+        self.placed.remove(&id);
         self.arrivals.remove(&id);
         self.surfaced.remove(&id);
-        self.shadings.remove(&id);
-        self.holed.remove(&id);
+    }
+
+    fn has_room(&self) -> bool {
+        !self.free.is_empty() || self.next_layer < self.capacity
+    }
+
+    fn follow_tile(
+        &mut self,
+        entry: &TerrainEntry,
+        key: TileKey,
+        missing: &mut Vec<(TileId, Option<u32>)>,
+    ) {
+        let id = (entry.terrain, key);
+        match (listed_tile(&entry.tiles, key), self.placed.get(&id).copied()) {
+            (None, None) => {
+                self.unplaced.remove(&id);
+            }
+            (None, Some(held)) => {
+                self.ground_changes
+                    .push(ground_box(entry, key, (held.low, held.high)));
+                self.release(id);
+            }
+            (Some(_), None) => missing.push((id, None)),
+            (Some(tile), Some(held)) if held.stamp == tile.stamp => {
+                let unsurfaced = !entry.surface_program
+                    && tile.control.is_none()
+                    && !shaded_elsewhere(key.level, entry.surroundings);
+                if unsurfaced && self.surfaced.remove(&id).is_some() {
+                    self.changed.push(id);
+                }
+            }
+            (Some(tile), Some(held)) => {
+                let stood = ground_box(entry, key, (held.low, held.high));
+                let stands = ground_box(entry, key, heights_of(tile));
+                self.ground_changes
+                    .push((stood.0.min(stands.0), stood.1.max(stands.1), stands.2));
+                missing.push((id, self.slots.get(&id).copied()));
+            }
+        }
     }
 
     fn place(
@@ -272,7 +293,7 @@ impl Atlas {
         id: TileId,
         tile: &TileFace,
         replaced: Option<u32>,
-        (shades, program, shading): (bool, bool, Option<&Arc<TileShading>>),
+        (shades, program, shading): (bool, bool, bool),
     ) -> bool {
         let arriving = replaced.is_none();
         let layer = match replaced.or_else(|| self.free.pop()) {
@@ -282,18 +303,16 @@ impl Atlas {
                 self.next_layer - 1
             }
             None => {
-                self.dropped += 1;
                 self.unplaced.insert(id);
                 return false;
             }
         };
         self.unplaced.remove(&id);
-        let before = self.held.get(&id).filter(|_| !arriving);
-        let heights = before.is_none_or(|held| held.heights != tile.heights);
-        let rivers = before.is_none_or(|held| {
-            held.river_edges != tile.river_edges || held.river_beds != tile.river_beds
-        });
-        let had_control = before.map(|held| held.control.is_some());
+        let had_control = self
+            .placed
+            .get(&id)
+            .filter(|_| !arriving)
+            .map(|held| held.control);
         if !shades {
             match (had_control, tile.control.is_some()) {
                 (_, false) if !program => {
@@ -312,100 +331,62 @@ impl Atlas {
             }
         }
         if shades {
-            let kept = !arriving && same_shading(self.shadings.get(&id), shading);
-            if !kept {
-                if shading.is_some() {
-                    self.surfaced.insert(id, self.now);
-                } else {
-                    self.surfaced.remove(&id);
-                }
+            if shading {
+                self.surfaced.insert(id, self.now);
+            } else {
+                self.surfaced.remove(&id);
             }
-            match shading {
-                Some(shading) => {
-                    self.shadings.insert(id, Arc::clone(shading));
-                }
-                None => {
-                    self.shadings.remove(&id);
-                }
-            }
-        } else if program && tile.control.is_none() && (heights || rivers) {
+        } else if program && tile.control.is_none() {
             self.surfaced.insert(id, self.now);
         }
-        if heights || !self.peaks.contains_key(&id) {
-            self.peaks.insert(id, peaks(&tile.heights));
-        }
+        let (low, high) = heights_of(tile);
         self.slots.insert(id, layer);
-        self.held.insert(id, tile.clone());
+        self.placed.insert(
+            id,
+            PlacedTile {
+                stamp: tile.stamp,
+                low,
+                high,
+                control: tile.control.is_some(),
+            },
+        );
         self.changed.push(id);
-        let upload = if arriving {
-            Upload::Arrived
-        } else {
-            Upload::Replaced
-        };
-        self.uploads.push((id, layer, upload));
-        if tile.holes.is_some() {
-            self.holed.insert(id);
-        } else {
-            self.holed.remove(&id);
-        }
+        self.uploads.push((id, layer, Upload::Whole));
         true
     }
 
-    pub(crate) fn top(&self, id: TileId) -> f32 {
-        self.peaks
-            .get(&id)
-            .map_or(-f32::MAX, |peaks| peaks_top(peaks))
+    fn show_shading(&mut self, id: TileId, layer: u32) {
+        self.surfaced.insert(id, self.now);
+        self.changed.push(id);
+        self.uploads.push((id, layer, Upload::Shaded));
     }
 }
 
-pub(crate) fn same_shading(a: Option<&Arc<TileShading>>, b: Option<&Arc<TileShading>>) -> bool {
-    match (a, b) {
-        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-        (None, None) => true,
-        (Some(_), None) | (None, Some(_)) => false,
-    }
+fn heights_of(tile: &TileFace) -> (f32, f32) {
+    (tile.bounds.0.y, tile.bounds.1.y)
 }
 
-pub(crate) fn peaks(heights: &[f32]) -> Arc<[f32]> {
-    let stride = crate::gpu::TILE_STRIDE as usize;
-    let height = |x: usize, z: usize| heights.get((z + 1) * stride + x + 1).copied();
-    let mut side = ERROR_CELLS;
-    let mut level: Vec<f32> = Vec::with_capacity(side * side);
-    for cell_z in 0..side {
-        for cell_x in 0..side {
-            let mut peak = -f32::MAX;
-            for z in 2 * cell_z..=2 * cell_z + 2 {
-                for x in 2 * cell_x..=2 * cell_x + 2 {
-                    peak = engine_math::max(peak, height(x, z).unwrap_or(peak));
-                }
-            }
-            level.push(peak);
-        }
-    }
-    let texels = ((4_usize.pow(PEAK_MIPS)) - 1) / 3;
-    let mut all = Vec::with_capacity(texels);
-    all.extend_from_slice(&level);
-    while side > 1 {
-        let half = side / 2;
-        let peak = |x: usize, z: usize| level[z * side + x];
-        let coarser: Vec<f32> = (0..half * half)
-            .map(|at| {
-                let (x, z) = (2 * (at % half), 2 * (at / half));
-                engine_math::max(
-                    engine_math::max(peak(x, z), peak(x + 1, z)),
-                    engine_math::max(peak(x, z + 1), peak(x + 1, z + 1)),
-                )
-            })
-            .collect();
-        all.extend_from_slice(&coarser);
-        level = coarser;
-        side = half;
-    }
-    Arc::from(all)
-}
-
-fn peaks_top(peaks: &[f32]) -> f32 {
-    peaks.last().copied().unwrap_or(-f32::MAX)
+fn tile_keys(atlas: &Atlas, entry: &TerrainEntry, since: TilesSince<'_>) -> Vec<TileKey> {
+    let mut keys: Vec<TileKey> = match since {
+        TilesSince::Same => Vec::new(),
+        TilesSince::Listed(changes) => changes.iter().map(|change| change.key).collect(),
+        TilesSince::All => entry
+            .tiles
+            .iter()
+            .map(|tile| tile.key)
+            .chain(
+                atlas
+                    .placed
+                    .keys()
+                    .chain(&atlas.unplaced)
+                    .filter(|(terrain, _)| *terrain == entry.terrain)
+                    .map(|&(_, key)| key),
+            )
+            .collect(),
+    };
+    keys.sort_unstable();
+    keys.dedup();
+    keys
 }
 
 pub(crate) fn place_tiles(
@@ -415,7 +396,6 @@ pub(crate) fn place_tiles(
     bakes: Res<Bakes>,
     mut atlas: ResMut<Atlas>,
     mut ground: ResMut<GroundTiles>,
-    mut baking: ResMut<GroundBaking>,
 ) {
     let atlas = &mut *atlas;
     atlas.now = time.elapsed_seconds as f32;
@@ -423,13 +403,18 @@ pub(crate) fn place_tiles(
     atlas.vacated.clear();
     atlas.changed.clear();
     atlas.ground_changes.clear();
-    let shaded = shaded_changes(atlas, &tiles, &bakes);
-    if !shaded.is_empty() {
-        baking.shaded += 1;
-    }
+    let attached = |entry: &TerrainEntry| {
+        bakes
+            .of(entry.terrain)
+            .map(|held| held.flow.attached())
+            .unwrap_or_default()
+    };
     let capacity = limits.texture_layers;
-    let unchanged = !tiles.is_changed() && capacity == atlas.capacity;
-    if unchanged && atlas.unplaced.is_empty() && shaded.is_empty() {
+    if !tiles.is_changed()
+        && capacity == atlas.capacity
+        && (atlas.unplaced.is_empty() || !atlas.has_room())
+        && tiles.terrains.iter().all(|entry| attached(entry).is_empty())
+    {
         return;
     }
     let tables: Vec<(Entity, u32)> = tiles
@@ -452,133 +437,75 @@ pub(crate) fn place_tiles(
         return;
     }
     atlas.capacity = capacity;
-    atlas.dropped = 0;
     let listed = |terrain: &Entity| tiles.terrains.iter().any(|entry| entry.terrain == *terrain);
-    let mut left: Vec<TileId> = atlas
-        .held
+    let mut gone: Vec<TileId> = atlas
+        .placed
         .keys()
-        .filter(|(terrain, key)| {
-            tiles
-                .terrains
-                .iter()
-                .find(|entry| entry.terrain == *terrain)
-                .is_none_or(|entry| listed_tile(&entry.tiles, *key).is_none())
-        })
+        .filter(|(terrain, _)| !listed(terrain))
         .copied()
         .collect();
-    left.sort_unstable();
-    for &id in &left {
-        if let Some(entry) = atlas.held.get(&id) {
-            let entry_terrain = tiles.terrains.iter().find(|held| held.terrain == id.0);
-            if let Some(terrain) = entry_terrain {
-                atlas.ground_changes.push(ground_box(terrain, entry));
-            }
-        }
+    gone.sort_unstable();
+    for id in gone {
         atlas.release(id);
     }
-    let mut missing: Vec<(TileId, Option<u32>)> =
-        atlas.unplaced.iter().map(|&id| (id, None)).collect();
+    atlas.unplaced.retain(|(terrain, _)| listed(terrain));
+    atlas.cursors.retain(|terrain, _| listed(terrain));
+    let mut missing: Vec<(TileId, Option<u32>)> = Vec::new();
     for entry in tiles.terrains.iter() {
-        for tile in entry.tiles.iter() {
-            let id = (entry.terrain, tile.key);
-            match atlas.held.get(&id) {
-                None => missing.push((id, None)),
-                Some(held) if held.stamp == tile.stamp && !shaded.contains(&id) => {}
-                Some(held) => {
-                    let same_ground = held.heights == tile.heights
-                        && held.holes == tile.holes
-                        && held.control == tile.control
-                        && held.river_edges == tile.river_edges
-                        && held.river_beds == tile.river_beds
-                        && !shaded.contains(&id);
-                    let layer = atlas.slots.get(&id).copied();
-                    let (stood, stands) = (ground_box(entry, held), ground_box(entry, tile));
-                    if held.heights != tile.heights || stood.0 != stands.0 || stood.1 != stands.1 {
-                        atlas.ground_changes.push((
-                            stood.0.min(stands.0),
-                            stood.1.max(stands.1),
-                            stands.2,
-                        ));
-                    }
-                    if same_ground {
-                        atlas.held.insert(id, tile.clone());
-                        if let Some(layer) = layer {
-                            atlas.uploads.push((id, layer, Upload::Errors));
-                        }
-                        continue;
-                    }
-                    atlas.slots.remove(&id);
-                    missing.push((id, layer));
-                }
-            }
+        let mut cursor = atlas.cursors.get(&entry.terrain).copied().unwrap_or(0);
+        let keys = tile_keys(atlas, entry, entry.changes.since(&mut cursor));
+        atlas.cursors.insert(entry.terrain, cursor);
+        for key in keys {
+            atlas.follow_tile(entry, key, &mut missing);
         }
     }
-    let stopped: Vec<Entity> = tiles
-        .terrains
-        .iter()
-        .filter(|entry| !entry.surface_program && atlas.programs.get(&entry.terrain) == Some(&true))
-        .map(|entry| entry.terrain)
-        .collect();
-    for terrain in stopped {
-        let Some(entry) = tiles.terrains.iter().find(|entry| entry.terrain == terrain) else {
-            continue;
-        };
-        for tile in entry.tiles.iter() {
-            let id = (terrain, tile.key);
-            let unsurfaced =
-                tile.control.is_none() && !shaded_elsewhere(tile.key.level, entry.surroundings);
-            if unsurfaced && atlas.surfaced.remove(&id).is_some() {
-                atlas.changed.push(id);
-            }
-        }
+    if atlas.has_room() {
+        missing.extend(atlas.unplaced.iter().map(|&id| (id, None)));
     }
-    atlas.programs.clear();
-    atlas.programs.extend(
-        tiles
-            .terrains
-            .iter()
-            .map(|entry| (entry.terrain, entry.surface_program)),
-    );
     missing.sort_unstable_by_key(|((terrain, key), _)| {
         (std::cmp::Reverse(key.level), *terrain, key.x, key.z)
     });
     missing.dedup_by_key(|(id, _)| *id);
-    for (id, replaced) in missing {
+    for &(id, replaced) in &missing {
         let Some(entry) = tiles.terrains.iter().find(|entry| entry.terrain == id.0) else {
             continue;
         };
         let Some(tile) = listed_tile(&entry.tiles, id.1) else {
             continue;
         };
-        if replaced.is_none() {
-            atlas.ground_changes.push(ground_box(entry, tile));
-        }
         let shades = shaded_elsewhere(id.1.level, entry.surroundings);
-        let shading = bakes.of(id.0).and_then(|held| held.shading(&id.1));
-        atlas.place(id, tile, replaced, (shades, entry.surface_program, shading));
+        let shading = bakes.of(id.0).and_then(|held| held.shading(tile)).is_some();
+        let placed = atlas.place(id, tile, replaced, (shades, entry.surface_program, shading));
+        if placed && replaced.is_none() {
+            atlas
+                .ground_changes
+                .push(ground_box(entry, id.1, heights_of(tile)));
+        }
     }
-    atlas.synced.retain(|terrain, _| listed(terrain));
     for entry in tiles.terrains.iter() {
-        atlas.synced.insert(entry.terrain, Arc::clone(&entry.tiles));
+        for &key in attached(entry) {
+            let id = (entry.terrain, key);
+            if let Some(layer) = atlas.layer_of(entry.terrain, key)
+                && !missing.iter().any(|&(placing, _)| placing == id)
+            {
+                atlas.show_shading(id, layer);
+            }
+        }
     }
-    let held: Vec<HeldTile> = {
-        let mut held: Vec<HeldTile> = atlas
-            .slots
-            .iter()
-            .filter_map(|(&(terrain, key), &layer)| {
-                let tile = atlas.held.get(&(terrain, key))?;
-                Some(HeldTile {
-                    terrain,
-                    key,
-                    stamp: tile.stamp,
-                    layer,
-                    top: atlas.top((terrain, key)),
-                })
+    let mut held: Vec<HeldTile> = atlas
+        .placed
+        .iter()
+        .filter_map(|(&(terrain, key), placed)| {
+            Some(HeldTile {
+                terrain,
+                key,
+                stamp: placed.stamp,
+                layer: atlas.layer_of(terrain, key)?,
+                top: placed.high,
             })
-            .collect();
-        held.sort_unstable_by_key(|tile| (tile.terrain, tile.key.level, tile.key.x, tile.key.z));
-        held
-    };
+        })
+        .collect();
+    held.sort_unstable_by_key(|tile| (tile.terrain, tile.key.level, tile.key.x, tile.key.z));
     let published = GroundTiles {
         held,
         layers: atlas.capacity,
@@ -587,39 +514,20 @@ pub(crate) fn place_tiles(
     ground.set_if_neq(published);
 }
 
-fn shaded_changes(atlas: &Atlas, tiles: &TerrainTiles, bakes: &Bakes) -> BTreeSet<TileId> {
-    let mut changed = BTreeSet::new();
-    for entry in tiles.terrains.iter() {
-        for tile in entry.tiles.iter() {
-            let id = (entry.terrain, tile.key);
-            if !shaded_elsewhere(tile.key.level, entry.surroundings)
-                || !atlas.slots.contains_key(&id)
-            {
-                continue;
-            }
-            let shading = bakes
-                .of(entry.terrain)
-                .and_then(|held| held.shading(&tile.key));
-            if !same_shading(shading, atlas.shadings.get(&id)) {
-                changed.insert(id);
-            }
-        }
-    }
-    changed
+pub(crate) fn listed_tile(tiles: &[TileFace], key: TileKey) -> Option<&TileFace> {
+    tiles
+        .binary_search_by_key(&key, |tile| tile.key)
+        .ok()
+        .map(|at| &tiles[at])
 }
 
-fn listed_tile(tiles: &[TileFace], key: TileKey) -> Option<&TileFace> {
-    tiles.iter().find(|tile| tile.key == key)
-}
-
-fn ground_box(terrain: &TerrainEntry, tile: &TileFace) -> (Vec3, Vec3, f32) {
+fn ground_box(terrain: &TerrainEntry, key: TileKey, (low, high): (f32, f32)) -> (Vec3, Vec3, f32) {
     let pyramid = terrain.pyramid;
-    let level = u32::from(tile.key.level);
-    let corner = pyramid.tile_origin(tile.key);
+    let level = u32::from(key.level);
+    let corner = pyramid.tile_origin(key);
     let size = pyramid.tile_size(level);
     let spacing = pyramid.spacing(level);
     let skirt = SKIRT_SPACINGS * spacing;
-    let (low, high) = (tile.bounds.0.y, tile.bounds.1.y);
     let reach = if level + 1 >= pyramid.levels() {
         f32::INFINITY
     } else {
@@ -672,7 +580,7 @@ pub(crate) fn probe_columns(pyramid: &Pyramid, settings: &TerrainShading) -> u32
     wanted.next_power_of_two().clamp(FEWEST_PROBES, MOST_PROBES)
 }
 
-pub(crate) fn tile_stamps(entry: &TerrainEntry, key: TileKey) -> Vec<engine_heightfield::Stamp> {
+fn tile_stamps(entry: &TerrainEntry, key: TileKey) -> Vec<engine_heightfield::Stamp> {
     entry
         .edits
         .iter()
@@ -801,13 +709,10 @@ pub(crate) fn bake(
         lighting += u32::from(held.lighting.asked.is_some());
         unbounced += u32::from(held.unbounced(&settings, entry));
     }
-    if baking.lighting != lighting || baking.unbounced != unbounced {
-        *baking = GroundBaking {
-            lighting,
-            unbounced,
-            ..*baking
-        };
-    }
+    baking.set_if_neq(GroundBaking {
+        lighting,
+        unbounced,
+    });
 }
 
 fn macro_texels(settings: &TerrainShading) -> u32 {
@@ -894,7 +799,6 @@ pub(crate) fn publish_piece(
     limits: Res<DeviceLimits>,
     shown: Res<DebugShown>,
     mut piece: ResMut<HorizonsPiece>,
-    mut published: Local<Vec<[f32; 4]>>,
 ) {
     let records = terrain_horizons::records(
         &tiles.terrains,
@@ -908,12 +812,8 @@ pub(crate) fn publish_piece(
         ),
         limits.texture_layers,
     );
-    let debug = [crate::debug::shown(&shown), 0, 0, 0];
-    if *published == records && piece.debug == debug && !piece.is_changed() {
-        return;
-    }
     let mut next = *piece;
-    next.debug = debug;
+    next.debug = [crate::debug::shown(&shown), 0, 0, 0];
     next.records = [[0.0; 4]; HORIZON_RECORDS as usize + 1];
     next.records[..records.len()].copy_from_slice(&records);
     let count = records.len() as u32 / crate::gpu::HORIZON_RECORD_VECTORS;
@@ -925,7 +825,6 @@ pub(crate) fn publish_piece(
     next.records[HORIZON_RECORDS as usize] =
         [count as f32, if bounces { 1.0 } else { 0.0 }, 0.0, 0.0];
     piece.set_if_neq(next);
-    *published = records;
 }
 
 pub(crate) const SURFACE_TOTALS: u32 = 0;
@@ -1131,7 +1030,7 @@ pub(crate) fn count(
         shadow_patches: drawn.shadow_patches,
         tiles: atlas.slots.len() as u32,
         tiles_dropped: engine_core::Cut::of(
-            atlas.slots.len() as u32 + atlas.dropped,
+            (atlas.slots.len() + atlas.unplaced.len()) as u32,
             atlas.slots.len() as u32,
         ),
         gpu_controls: drawn.gpu_controls,
@@ -1172,13 +1071,7 @@ pub(crate) fn forget(
         spawner.despawn(entity);
     }
     *atlas = Atlas::default();
-    if baking.lighting != 0 || baking.unbounced != 0 {
-        *baking = GroundBaking {
-            lighting: 0,
-            unbounced: 0,
-            ..*baking
-        };
-    }
+    baking.set_if_neq(GroundBaking::default());
     let bakes = &mut *bakes;
     let mut released = BTreeSet::new();
     for (_, held) in std::mem::take(&mut bakes.terrains) {

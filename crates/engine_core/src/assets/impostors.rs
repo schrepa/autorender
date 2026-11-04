@@ -1,15 +1,14 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use bevy_ecs::change_detection::{DetectChanges, Mut, Ref};
+use bevy_ecs::change_detection::Mut;
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Query, Res, SystemState};
 use bevy_ecs::world::World;
 use engine_assets::{
-    AlphaMode, AssetLibrary, Filter, Material, MaterialHandle, Mesh, MeshHandle, Texture,
-    TextureFormat, TextureHandle, TextureRef, Wrap,
+    AlphaMode, AssetLibrary, Filter, Material, MaterialHandle, MeshHandle, TextureRef, Wrap,
 };
 use glam::Vec3;
 
@@ -325,132 +324,62 @@ pub struct ImpostorRecords {
     pub live: u32,
 }
 
-#[derive(Default)]
-struct Contents {
-    meshes: HashMap<MeshHandle, u128>,
-    textures: HashMap<TextureHandle, u128>,
-}
-
-impl Contents {
-    fn mesh(&mut self, handle: MeshHandle, mesh: &Mesh) -> u128 {
-        *self.meshes.entry(handle).or_insert_with(|| {
-            let mut bytes = Vec::with_capacity(mesh.byte_len() + 16);
-            words(
-                &mut bytes,
-                &[mesh.vertices().len() as u32, mesh.indices().len() as u32],
-            );
-            for vertex in mesh.vertices() {
-                floats(&mut bytes, &vertex.position);
-                floats(&mut bytes, &vertex.normal);
-                floats(&mut bytes, &vertex.uv);
-            }
-            words(&mut bytes, mesh.indices());
-            bytes.push(u8::from(mesh.colors().is_some()));
-            for color in mesh.colors().unwrap_or_default() {
-                floats(&mut bytes, color);
-            }
-            bytes.push(u8::from(mesh.uv1().is_some()));
-            for uv in mesh.uv1().unwrap_or_default() {
-                floats(&mut bytes, uv);
-            }
-            content_hash(&bytes)
-        })
-    }
-
-    fn material<'a>(
-        &mut self,
-        material: Option<&Material>,
-        texture: impl Fn(TextureHandle) -> Option<&'a Texture>,
-    ) -> u128 {
-        let Some(material) = material else {
-            return 0;
+fn material_content(library: &AssetLibrary, material: Option<&Material>) -> u128 {
+    let Some(material) = material else {
+        return 0;
+    };
+    let mut bytes = Vec::with_capacity(256);
+    floats(&mut bytes, &material.color());
+    for map in material.maps() {
+        let Some(map) = map else {
+            bytes.push(0);
+            continue;
         };
-        let mut bytes = Vec::with_capacity(256);
-        floats(&mut bytes, &material.color());
-        for map in material.maps() {
-            let Some(map) = map else {
-                bytes.push(0);
-                continue;
-            };
+        bytes.push(1);
+        let texture = library
+            .texture(map.texture)
+            .map_or(0, |texture| texture.identity(content_hash));
+        bytes.extend_from_slice(&texture.to_le_bytes());
+        texture_ref(&mut bytes, &map);
+    }
+    let surface = material.surface();
+    floats(
+        &mut bytes,
+        &[
+            surface.roughness,
+            surface.metalness,
+            surface.emission,
+            surface.ripples,
+            material.normal_scale(),
+            material.occlusion_strength(),
+        ],
+    );
+    floats(&mut bytes, &material.emissive());
+    match material.alpha_mode() {
+        AlphaMode::Opaque => bytes.push(0),
+        AlphaMode::Mask { cutoff } => {
             bytes.push(1);
-            bytes.extend_from_slice(&self.texture(map.texture, &texture).to_le_bytes());
-            texture_ref(&mut bytes, &map);
+            floats(&mut bytes, &[cutoff]);
         }
-        let surface = material.surface();
-        floats(
-            &mut bytes,
-            &[
-                surface.roughness,
-                surface.metalness,
-                surface.emission,
-                surface.ripples,
-                material.normal_scale(),
-                material.occlusion_strength(),
-            ],
-        );
-        floats(&mut bytes, &material.emissive());
-        match material.alpha_mode() {
-            AlphaMode::Opaque => bytes.push(0),
-            AlphaMode::Mask { cutoff } => {
-                bytes.push(1);
-                floats(&mut bytes, &[cutoff]);
-            }
-        }
-        bytes.push(u8::from(material.is_double_sided()));
-        floats(&mut bytes, &[material.world_tiling().unwrap_or(-1.0)]);
-        match material.top_layer() {
-            Some(top) => {
-                bytes.push(1);
-                floats(&mut bytes, &top.color);
-                floats(&mut bytes, &[top.coverage, top.roughness]);
-            }
-            None => bytes.push(0),
-        }
-        match material.grounding() {
-            Some(grounding) => {
-                bytes.push(1);
-                floats(&mut bytes, &[grounding.height]);
-            }
-            None => bytes.push(0),
-        }
-        content_hash(&bytes)
     }
-
-    fn texture<'a>(
-        &mut self,
-        handle: TextureHandle,
-        texture: &impl Fn(TextureHandle) -> Option<&'a Texture>,
-    ) -> u128 {
-        if let Some(&content) = self.textures.get(&handle) {
-            return content;
+    bytes.push(u8::from(material.is_double_sided()));
+    floats(&mut bytes, &[material.world_tiling().unwrap_or(-1.0)]);
+    match material.top_layer() {
+        Some(top) => {
+            bytes.push(1);
+            floats(&mut bytes, &top.color);
+            floats(&mut bytes, &[top.coverage, top.roughness]);
         }
-        let Some(found) = texture(handle) else {
-            return 0;
-        };
-        let mut bytes = Vec::with_capacity(found.byte_len() + 12);
-        let format = match found.format() {
-            TextureFormat::Rgba8 => 0,
-            TextureFormat::Bc7 => 1,
-            TextureFormat::Etc2Rgba8 => 2,
-            TextureFormat::Astc4x4 => 3,
-        };
-        words(&mut bytes, &[found.width(), found.height(), format]);
-        for level in found.levels() {
-            bytes.extend_from_slice(level);
+        None => bytes.push(0),
+    }
+    match material.grounding() {
+        Some(grounding) => {
+            bytes.push(1);
+            floats(&mut bytes, &[grounding.height]);
         }
-        let content = content_hash(&bytes);
-        self.textures.insert(handle, content);
-        content
+        None => bytes.push(0),
     }
-
-    fn retain(
-        &mut self,
-        mut mesh: impl FnMut(MeshHandle) -> bool,
-        mut texture: impl FnMut(TextureHandle) -> bool,
-    ) {
-        self.meshes.retain(|&handle, _| mesh(handle));
-        self.textures.retain(|&handle, _| texture(handle));
-    }
+    content_hash(&bytes)
 }
 
 fn floats(bytes: &mut Vec<u8>, values: &[f32]) {
@@ -610,10 +539,6 @@ pub enum AtlasWork {
     DropTargets,
 }
 
-type SettleKey = (u64, u64, u64, ImpostorPolicyKey, bool, u64);
-
-type ImpostorPolicyKey = (bool, u32, Option<u32>);
-
 struct Book {
     shape: AtlasShape,
     layers: Layers,
@@ -626,10 +551,6 @@ struct Book {
     answers: HashMap<ImpostorIdentity, Option<Arc<[u8]>>>,
     baking: BTreeSet<ImpostorIdentity>,
     loaded: usize,
-    deferred: bool,
-    generation: u64,
-    contents: Contents,
-    key: Option<SettleKey>,
     work: Vec<(u64, AtlasWork)>,
 }
 
@@ -662,10 +583,6 @@ impl Book {
             answers: HashMap::default(),
             baking: BTreeSet::new(),
             loaded: 0,
-            deferred: false,
-            generation: 0,
-            contents: Contents::default(),
-            key: None,
             work: Vec::new(),
         }
     }
@@ -696,7 +613,6 @@ impl Book {
         self.supplied.clear();
         self.answers.clear();
         self.baking.clear();
-        self.generation += 1;
         self.push(cx, AtlasWork::Reset { shape });
     }
 
@@ -719,7 +635,6 @@ impl Book {
         self.supplied.clear();
         self.answers.clear();
         self.baking.clear();
-        self.generation += 1;
         self.push(cx, AtlasWork::Release);
     }
 
@@ -730,7 +645,6 @@ impl Book {
         material: impl Fn(MaterialHandle) -> Option<Material>,
     ) {
         let layers = &mut self.layers;
-        let before = self.baked.len();
         self.baked.retain(|key, baked| {
             let current = key.1.and_then(&material);
             let kept = keep(key) && baked.material == current;
@@ -739,9 +653,6 @@ impl Book {
             }
             kept
         });
-        if self.baked.len() != before {
-            self.generation += 1;
-        }
         let supplied = std::mem::take(&mut self.supplied);
         let asked = self.supplies.len();
         let dropped: Vec<ImpostorKey> = self
@@ -784,7 +695,6 @@ impl Book {
         if !cooking && budget.is_some_and(|budget| self.layers.live() > budget) {
             self.baked.clear();
             self.layers = Layers::default();
-            self.generation += 1;
         }
     }
 
@@ -834,7 +744,6 @@ impl Book {
             return Supplied::Coming;
         };
         if self.loaded >= LOAD_BUDGET && self.answers.get(&identity).is_some_and(Option::is_some) {
-            self.deferred = true;
             return Supplied::Coming;
         }
         let Some(answer) = self.answers.remove(&identity) else {
@@ -933,7 +842,6 @@ impl Book {
                 material: bake.material,
             },
         );
-        self.generation += 1;
     }
 
     fn bake(
@@ -984,14 +892,12 @@ impl Book {
                 cx.jobs.cancel(ticket);
             }
             self.answers.insert(identity, bytes);
-            self.generation += 1;
         }
     }
 
     fn answer(&mut self, identity: ImpostorIdentity, bytes: Option<Arc<[u8]>>) {
         self.baking.remove(&identity);
         self.answers.insert(identity, bytes);
-        self.generation += 1;
     }
 
     fn left(&self) -> u64 {
@@ -1067,7 +973,7 @@ type Inputs = (
     Res<'static, Records>,
     Res<'static, AssetLibrary>,
     Res<'static, AssetResidency>,
-    Query<'static, 'static, (Entity, Ref<'static, ImpostorAsks>)>,
+    Query<'static, 'static, (Entity, &'static ImpostorAsks)>,
 );
 
 #[derive(Resource)]
@@ -1132,27 +1038,12 @@ pub(super) fn settle_impostors(world: &mut World) {
     }
 }
 
-fn settle_key(book: &Book, frame: &Frame, (library, residency): Sources<'_>) -> SettleKey {
-    (
-        residency.generation(),
-        residency.materials_generation(),
-        book.generation,
-        (
-            frame.policy.enabled,
-            frame.policy.pixels.to_bits(),
-            frame.policy.max,
-        ),
-        frame.detail,
-        library.material_revision(),
-    )
-}
-
 fn settle_books(
     books: &mut ImpostorBooks,
     frame: &Frame,
     (jobs, records): (&mut Jobs<'_, '_>, &Records),
     sources: Sources<'_>,
-    asks: &Query<'_, '_, (Entity, Ref<'static, ImpostorAsks>)>,
+    asks: &Query<'_, '_, (Entity, &'static ImpostorAsks)>,
 ) -> Vec<(Entity, ImpostorRecords)> {
     let Some(device) = books.device else {
         return Vec::new();
@@ -1180,7 +1071,7 @@ fn settle_books(
             book.answer(identity, bytes.map(Arc::from));
         }
     }
-    let asked: Vec<(Entity, Ref<'_, ImpostorAsks>)> = asks.iter().collect();
+    let asked: Vec<(Entity, &ImpostorAsks)> = asks.iter().collect();
     if asked.is_empty() {
         return Vec::new();
     }
@@ -1192,17 +1083,7 @@ fn settle_books(
     }
     book.poll(&mut cx, records);
     book.loaded = 0;
-    if std::mem::take(&mut book.deferred) {
-        book.generation += 1;
-    }
-    if !asked.iter().any(|(_, asks)| asks.is_changed())
-        && book.key == Some(settle_key(book, frame, sources))
-    {
-        return Vec::new();
-    }
-    let written = settle(book, &mut cx, frame, sources, &asked);
-    book.key = Some(settle_key(book, frame, sources));
-    written
+    settle(book, &mut cx, frame, sources, &asked)
 }
 
 fn keep_key(residency: &AssetResidency) -> impl Fn(&ImpostorKey) -> bool + '_ {
@@ -1228,24 +1109,15 @@ fn retain_book(book: &mut Book, cx: &mut Supplying<'_, '_, '_>, sources: Sources
     book.retain(cx, keep_key(sources.1), current_material(sources));
 }
 
-fn retain_contents(book: &mut Book, residency: &AssetResidency) {
-    book.contents.retain(
-        |mesh| residency.resident(mesh),
-        |texture| residency.texture_resident(texture),
-    );
-}
-
 fn bake_of(
-    book: &mut Book,
     (library, residency): Sources<'_>,
     ask: &ImpostorAsk,
     material: Option<Material>,
 ) -> Option<Bake> {
     let mesh = library.mesh(ask.mesh)?;
-    let textures = |handle: TextureHandle| library.texture(handle).map(|texture| &**texture);
     let mut content = (
-        book.contents.mesh(ask.mesh, mesh),
-        book.contents.material(material.as_ref(), textures),
+        mesh.identity(content_hash),
+        material_content(library, material.as_ref()),
     );
     let bounds = mesh.bounds();
     let (mut low, mut high) = (bounds.min(), bounds.max());
@@ -1262,8 +1134,8 @@ fn bake_of(
             continue;
         };
         content = (
-            combined(content.0, book.contents.mesh(part_mesh, finest)),
-            combined(content.1, book.contents.material(Some(value), textures)),
+            combined(content.0, finest.identity(content_hash)),
+            combined(content.1, material_content(library, Some(value))),
         );
         let bounds = finest.bounds();
         low = low.min(bounds.min());
@@ -1297,7 +1169,7 @@ fn supply_ask(
     if let Some(resident) = book.record(key, material.as_ref()) {
         return Some(Supplied::Resident(resident));
     }
-    let bake = bake_of(book, sources, ask, material)?;
+    let bake = bake_of(sources, ask, material)?;
     Some(book.supply(cx, key, &bake, budget))
 }
 
@@ -1339,11 +1211,10 @@ fn settle(
     cx: &mut Supplying<'_, '_, '_>,
     frame: &Frame,
     sources: Sources<'_>,
-    asked: &[(Entity, Ref<'_, ImpostorAsks>)],
+    asked: &[(Entity, &ImpostorAsks)],
 ) -> Vec<(Entity, ImpostorRecords)> {
     book.fit(cx, AtlasShape::of(frame.policy.pixels));
     retain_book(book, cx, sources);
-    retain_contents(book, sources.1);
     let shown = frame.detail && frame.policy.enabled;
     if !shown {
         book.release(cx);
@@ -1357,7 +1228,7 @@ fn settle(
             book,
             cx,
             sources,
-            (&**asks, shown, frame.policy.max),
+            (*asks, shown, frame.policy.max),
             &mut settled,
         );
         book.drawn |= book.capacity > 0 && !settled.records.is_empty();

@@ -28,7 +28,6 @@ impl Brick for ScreensBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .resource::<Shown>()
             .join::<SceneComponents>(
                 ComponentKind::of::<Screen>("screen")
                     .schema(screen_schema)
@@ -43,11 +42,6 @@ impl Brick for ScreensBrick {
     }
 }
 
-#[derive(Resource, Default)]
-struct Shown {
-    top: Option<String>,
-}
-
 fn screen_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(Screen)).unwrap_or(Value::Null)
 }
@@ -56,17 +50,8 @@ fn screen_example() -> Value {
     json!({"name": "menu", "pauses": true})
 }
 
-fn follow_top(
-    screens: Res<Screens>,
-    declared: Query<&Screen>,
-    mut shown: ResMut<Shown>,
-    mut time: ResMut<TimeControl>,
-) {
-    if shown.top.as_deref() == screens.top() {
-        return;
-    }
-    shown.top = screens.top().map(str::to_owned);
-    if declared.is_empty() {
+fn follow_top(screens: Res<Screens>, declared: Query<&Screen>, mut time: ResMut<TimeControl>) {
+    if !screens.is_changed() || declared.is_empty() {
         return;
     }
     let top = screens.top();

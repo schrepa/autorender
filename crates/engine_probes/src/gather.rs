@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{GlobalTransforms, Nearest, TransformIndex, View};
+use engine_core::{GlobalTransforms, Nearest, View};
 use engine_places::probes::{Interior, ReflectionProbe};
 use glam::Vec3;
 
@@ -18,7 +18,6 @@ pub(crate) struct RenderReflectionProbe {
 pub(crate) struct ProbeList {
     pub(crate) list: Vec<RenderReflectionProbe>,
     pub(crate) cut: usize,
-    hints: Vec<TransformIndex>,
     candidates: Vec<(f32, RenderReflectionProbe)>,
     nearest: Nearest,
 }
@@ -35,17 +34,12 @@ pub(crate) fn gather_probes(
     gathered.cut = 0;
     let eye = view.detail_eye();
     gathered.candidates.clear();
-    for (position, (entity, probe)) in probes.iter().enumerate() {
+    for (entity, probe) in &probes {
         if !crate::component::valid(probe) {
             continue;
         }
-        if gathered.hints.len() <= position {
-            gathered
-                .hints
-                .resize(position + 1, TransformIndex::default());
-        }
         let Some(center) = globals
-            .get_indexed(entity, &mut gathered.hints[position])
+            .get(entity)
             .and_then(|pose| pose.matrix())
             .map(|matrix| matrix.w_axis.truncate())
             .filter(|center| center.is_finite())

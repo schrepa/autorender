@@ -77,14 +77,11 @@ impl Operation for MeshesListing {
         (retained, globals): SystemParamItem<'_, '_, Self::Params>,
         _: ListingRequest,
     ) -> Result<Value, Error> {
-        let snapshot = retained.snapshot();
         let instances: Vec<Value> = retained
-            .visible_indices()
-            .iter()
-            .filter_map(|&slot| {
-                let instance = snapshot.instances.get(slot)?;
+            .drawn()
+            .map(|(slot, instance)| {
                 let surface = instance.surface;
-                Some(json!({
+                json!({
                     "mesh": instance.mesh.slot() as u32,
                     "material": instance.material.map(|material| material.slot() as u32),
                     "model": retained.model(slot, &globals).to_cols_array(),
@@ -95,12 +92,12 @@ impl Operation for MeshesListing {
                         "emission": surface.emission,
                         "ripples": surface.ripples,
                     },
-                }))
+                })
             })
             .collect();
         Ok(json!({
             "instances": instances,
-            "missing": snapshot.missing_assets,
+            "missing": retained.missing_assets(),
         }))
     }
 }

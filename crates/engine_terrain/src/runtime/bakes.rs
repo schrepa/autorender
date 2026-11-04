@@ -1,13 +1,5 @@
 use super::*;
 
-pub(super) fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
-    if baked.unbaked().is_none() {
-        state.bridges = baked.bridges().into();
-        state.standing += 1;
-    }
-    state.baked = Some(baked);
-}
-
 pub(super) fn bake(
     state: &mut TerrainState,
     authored: &Arc<Layers>,
@@ -29,6 +21,7 @@ pub(super) fn bake(
         }
         .input();
         state.bake.asked = true;
+        state.stale.tiles = true;
         state.bake.drawn = Some(state.terrain.rivers.clone());
         state.bake.job = Some(asking.jobs.fetch(&BAKE, &input, priority));
         return true;
@@ -59,7 +52,7 @@ pub(super) fn bake(
         state.hydrology = HydrologyState::baked(water);
     }
     let before = state.baked.clone();
-    finish_bake(state, Arc::new(baked));
+    state.finish_bake(Arc::new(baked), kinds);
     state.redrawn(drawn, before.as_deref());
     false
 }

@@ -136,7 +136,7 @@ stats! {
 #[derive(Resource, Default)]
 pub struct NavAgents {
     searches: Vec<(Entity, Search)>,
-    queries: Vec<WalkQuery>,
+    query: Option<WalkQuery>,
     records: WalkRecords,
     cook: Vec<CookGraph>,
     turn: usize,
@@ -250,8 +250,6 @@ struct WalkQuery {
     search: Search,
 }
 
-const QUERIES: usize = 8;
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum NavQuery {
     Searching,
@@ -274,35 +272,26 @@ impl NavAgents {
     ) -> NavQuery {
         self.records
             .take(records, jobs, self.tick, &mut self.failures);
-        let at = match self
-            .queries
-            .iter()
-            .position(|query| query.ends == ends && query.options == *options)
-        {
-            Some(at) => at,
-            None => {
-                if self.queries.len() >= QUERIES {
-                    self.queries.remove(0);
-                }
-                self.queries.push(WalkQuery {
-                    ends,
-                    options: *options,
-                    search: Search::new(ends.0, ends.1, *options),
-                });
-                self.queries.len() - 1
-            }
-        };
+        let mut asked = self
+            .query
+            .take()
+            .filter(|query| query.ends == ends && query.options == *options)
+            .unwrap_or_else(|| WalkQuery {
+                ends,
+                options: *options,
+                search: Search::new(ends.0, ends.1, *options),
+            });
         let mut unlimited = u64::MAX;
-        let found = self.queries[at].search.advance(
+        let found = asked.search.advance(
             ground,
             (&mut self.records, jobs),
             &mut unlimited,
             self.tick,
         );
         let Some((origin, found)) = found else {
+            self.query = Some(asked);
             return NavQuery::Searching;
         };
-        self.queries.remove(at);
         match found {
             Some(mut path) => {
                 for point in &mut path.points {
@@ -321,7 +310,7 @@ impl NavAgents {
             }
         }
         self.searches.clear();
-        self.queries.clear();
+        self.query = None;
         self.records.clear(jobs);
     }
 }

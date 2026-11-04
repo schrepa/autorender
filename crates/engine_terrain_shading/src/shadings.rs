@@ -12,9 +12,9 @@ use engine_heightfield::tile::shaded_elsewhere;
 use engine_places::ground::{GroundWork, TerrainEntry, TerrainTiles, TileFace, TileKey};
 use glam::Vec2;
 
-use crate::jobs::{SHADING, ShadingJob, ShadingReads, shading_output};
+use crate::jobs::{SHADING, ShadingJob, shading_output};
 use crate::shading::TileShading;
-use crate::state::{Bakes, RETRY_AFTER, TerrainBakes, tile_stamps};
+use crate::state::{Bakes, RETRY_AFTER, TerrainBakes, listed_tile};
 
 const TILE_ARRAY_BYTES: u64 =
     (crate::gpu::TILE_STRIDE as u64) * (crate::gpu::TILE_STRIDE as u64) * 4;
@@ -29,12 +29,14 @@ struct Asked {
     phase: Phase,
     record: RecordKey,
     ticket: Ticket,
+    reads: Vec<RecordKey>,
 }
 
 struct Held {
     shading: Arc<TileShading>,
     record: RecordKey,
     ticket: Ticket,
+    shown: Option<engine_core::Stamp>,
 }
 
 #[derive(Clone, Copy)]
@@ -46,20 +48,32 @@ struct Want {
 
 #[derive(Default)]
 pub(crate) struct Shadings {
-    found: HashMap<TileKey, (ShadingJob, RecordKey)>,
-    found_for: Option<([u8; 32], Arc<[Stamp]>)>,
+    basis: Option<([u8; 32], Arc<[Stamp]>)>,
     arrived: HashMap<TileKey, RecordKey>,
     held: BTreeMap<TileKey, Held>,
     asked: BTreeMap<TileKey, Asked>,
     failed: HashMap<TileKey, u64>,
     missing: HashSet<RecordKey>,
     sharing: BTreeSet<RecordKey>,
+    attached: Vec<TileKey>,
+    attaching: bool,
     shaded: u32,
     cooking: bool,
     left: u64,
 }
 
 impl Shadings {
+    pub(crate) fn shown(&self, tile: &TileFace) -> Option<&Arc<TileShading>> {
+        self.held
+            .get(&tile.key)
+            .filter(|held| held.shown == Some(tile.stamp))
+            .map(|held| &held.shading)
+    }
+
+    pub(crate) fn attached(&self) -> &[TileKey] {
+        &self.attached
+    }
+
     pub(crate) fn counts(&self) -> (u32, u32) {
         (self.shaded, self.asked.len() as u32)
     }
@@ -82,54 +96,46 @@ impl Shadings {
         self.sharing
     }
 
-    fn has(&self, key: TileKey, record: RecordKey, held: bool) -> bool {
-        if held {
-            self.held
-                .get(&key)
-                .is_some_and(|held| held.record == record)
-        } else {
-            self.arrived.get(&key) == Some(&record)
-        }
-    }
-
     fn made(&self, key: TileKey, record: RecordKey) -> bool {
         key.level == 1
             || self.missing.contains(&record)
-            || (self.cooking && self.arrived.get(&key) != Some(&record))
+            || (self.cooking && !self.arrived.contains_key(&key))
     }
 
-    fn basis(&mut self, recipe: [u8; 32], edits: &Arc<[Stamp]>) {
-        let same = self.found_for.as_ref().is_some_and(|(held, stamps)| {
-            *held == recipe && (Arc::ptr_eq(stamps, edits) || stamps[..] == edits[..])
-        });
-        if !same {
-            self.found = HashMap::default();
+    fn rebase(&mut self, entry: &TerrainEntry, recipe: [u8; 32], jobs: &mut Jobs<'_, '_>) {
+        let same = self
+            .basis
+            .as_ref()
+            .is_some_and(|(held, stamps)| *held == recipe && stamps[..] == entry.edits[..]);
+        self.basis = Some((recipe, Arc::clone(&entry.edits)));
+        if same {
+            return;
         }
-        self.found_for = Some((recipe, Arc::clone(edits)));
-    }
-
-    fn record(&mut self, entry: &TerrainEntry, recipe: [u8; 32], key: TileKey) -> RecordKey {
-        if let Some((_, record)) = self.found.get(&key) {
-            return *record;
+        let record =
+            |key: TileKey| ShadingJob::of(recipe, &entry.pyramid, &entry.edits, key).record();
+        let stale: Vec<TileKey> = self
+            .asked
+            .iter()
+            .filter(|&(&key, asked)| asked.record != record(key))
+            .map(|(&key, _)| key)
+            .collect();
+        for key in stale {
+            if let Some(asked) = self.asked.remove(&key) {
+                jobs.cancel(asked.ticket);
+            }
         }
-        let read = TileShading::reads(&entry.pyramid, key);
-        let reads = if key.level == 1 {
-            ShadingReads::Tiles(
-                read.into_iter()
-                    .map(|at| (at, tile_stamps(entry, at)))
-                    .collect(),
-            )
-        } else {
-            ShadingReads::Shadings(
-                read.into_iter()
-                    .map(|at| (at, self.record(entry, recipe, at).hash()))
-                    .collect(),
-            )
-        };
-        let job = ShadingJob { recipe, key, reads };
-        let record = RecordKey::of(&SHADING, &engine_codec::encode(&job));
-        self.found.insert(key, (job, record));
-        record
+        let dropped: Vec<TileKey> = self
+            .held
+            .iter()
+            .filter(|&(&key, held)| held.record != record(key))
+            .map(|(&key, _)| key)
+            .collect();
+        for key in dropped {
+            if let Some(held) = self.held.remove(&key) {
+                jobs.cancel(held.ticket);
+            }
+        }
+        self.arrived.retain(|&key, arrived| *arrived == record(key));
     }
 
     fn take_arrived(
@@ -137,9 +143,10 @@ impl Shadings {
         records: &Records,
         jobs: &mut Jobs<'_, '_>,
         (failures, frame): (&mut JobFailures, u64),
-    ) {
+    ) -> bool {
         let kind = SHADING.name();
         let keys: Vec<TileKey> = self.asked.keys().copied().collect();
+        let mut took = false;
         for key in keys {
             let Some(output) = self
                 .asked
@@ -151,6 +158,7 @@ impl Shadings {
             let Some(asked) = self.asked.remove(&key) else {
                 continue;
             };
+            took = true;
             let bytes = match output {
                 Ok(bytes) => bytes,
                 Err(error) if asked.phase == Phase::Fetching && missing(&error) => {
@@ -174,6 +182,7 @@ impl Shadings {
                         shading: Arc::new(made),
                         record: asked.record,
                         ticket: asked.ticket,
+                        shown: None,
                     };
                     if let Some(before) = self.held.insert(key, held) {
                         jobs.cancel(before.ticket);
@@ -190,9 +199,10 @@ impl Shadings {
                 }
             }
         }
+        took
     }
 
-    fn wanted(&mut self, entry: &TerrainEntry, recipe: [u8; 32], eye: Vec2) -> Vec<Want> {
+    fn wanted(&self, entry: &TerrainEntry, recipe: [u8; 32], eye: Vec2) -> Vec<Want> {
         let pyramid = entry.pyramid;
         let levels = pyramid.levels();
         let size = pyramid.tile_size(0);
@@ -240,25 +250,16 @@ impl Shadings {
         let mut at = 0;
         while let Some(&want) = wants.get(at) {
             at += 1;
-            if want.key.level < 2 {
+            if want.key.level < 2 || self.arrived.contains_key(&want.key) {
                 continue;
             }
-            let record = self.record(entry, recipe, want.key);
-            if self.has(want.key, record, false) || !self.made(want.key, record) {
+            let record = ShadingJob::of(recipe, &pyramid, &entry.edits, want.key).record();
+            if !self.made(want.key, record) {
                 continue;
             }
-            let reads: Vec<TileKey> = match self.found.get(&want.key).map(|(job, _)| &job.reads) {
-                Some(ShadingReads::Shadings(reads)) => {
-                    reads.iter().map(|&(read, _)| read).collect()
-                }
-                Some(ShadingReads::Tiles(_)) | None => Vec::new(),
-            };
-            for read in reads {
+            for read in TileShading::reads(&pyramid, want.key) {
                 list(&mut wants, read, class, true);
             }
-        }
-        for want in &wants {
-            self.record(entry, recipe, want.key);
         }
         wants
     }
@@ -268,15 +269,11 @@ impl Shadings {
         for want in wants {
             wanted.insert(want.key, want.held);
         }
-        let found = &self.found;
-        let current = |key: &TileKey, record: RecordKey| {
-            found.get(key).is_some_and(|(_, now)| *now == record)
-        };
         let stale: Vec<TileKey> = self
             .asked
-            .iter()
-            .filter(|&(key, asked)| !wanted.contains_key(key) || !current(key, asked.record))
-            .map(|(&key, _)| key)
+            .keys()
+            .filter(|key| !wanted.contains_key(key))
+            .copied()
             .collect();
         for key in stale {
             if let Some(asked) = self.asked.remove(&key) {
@@ -285,12 +282,9 @@ impl Shadings {
         }
         let dropped: Vec<TileKey> = self
             .held
-            .iter()
-            .filter(|&(key, held)| {
-                let holding = wanted.get(key).copied().unwrap_or(false);
-                !(holding && current(key, held.record))
-            })
-            .map(|(&key, _)| key)
+            .keys()
+            .filter(|key| !wanted.get(key).copied().unwrap_or(false))
+            .copied()
             .collect();
         for key in dropped {
             if let Some(held) = self.held.remove(&key) {
@@ -303,9 +297,7 @@ impl Shadings {
             wants
                 .iter()
                 .filter(|want| {
-                    let record = found.get(&want.key).map(|(_, record)| *record);
-                    self.arrived.get(&want.key).copied() != record
-                        && !self.failed.contains_key(&want.key)
+                    !self.arrived.contains_key(&want.key) && !self.failed.contains_key(&want.key)
                 })
                 .count() as u64
         } else {
@@ -313,44 +305,53 @@ impl Shadings {
         };
     }
 
-    fn ask(&mut self, cx: &mut Follow<'_, '_, '_>, wants: &[Want], frame: u64) {
+    fn ask(
+        &mut self,
+        cx: &mut Follow<'_, '_, '_>,
+        wants: &[Want],
+        (entry, recipe, frame): (&TerrainEntry, [u8; 32], u64),
+    ) {
         for want in wants {
             let key = want.key;
-            let Some((job, record)) = self
-                .found
-                .get(&key)
-                .map(|(job, record)| (job.clone(), *record))
-            else {
-                continue;
-            };
             let waits = self
                 .failed
                 .get(&key)
                 .is_some_and(|&at| self.cooking || frame < at + RETRY_AFTER);
-            if self.has(key, record, want.held) || self.asked.contains_key(&key) || waits {
+            let has = if want.held {
+                self.held.contains_key(&key)
+            } else {
+                self.arrived.contains_key(&key)
+            };
+            if has || self.asked.contains_key(&key) || waits {
                 continue;
             }
+            let input = engine_codec::encode(&ShadingJob::of(
+                recipe,
+                &entry.pyramid,
+                &entry.edits,
+                key,
+            ));
+            let record = RecordKey::of(&SHADING, &input);
             let made = self.made(key, record);
-            let reads: Vec<(TileKey, RecordKey)> = match &job.reads {
-                ShadingReads::Shadings(reads) => reads
-                    .iter()
-                    .map(|&(at, hash)| (at, RecordKey::from_hash(hash)))
-                    .collect(),
-                ShadingReads::Tiles(_) => Vec::new(),
+            let finer = if key.level > 1 {
+                TileShading::reads(&entry.pyramid, key)
+            } else {
+                Vec::new()
             };
-            if made && !reads.iter().all(|&(at, read)| self.has(at, read, true)) {
-                if self.cooking && reads.iter().any(|(at, _)| self.failed.contains_key(at)) {
+            if made && !finer.iter().all(|at| self.held.contains_key(at)) {
+                if self.cooking && finer.iter().any(|at| self.failed.contains_key(at)) {
                     self.failed.insert(key, frame);
                 }
                 continue;
             }
-            let input = engine_codec::encode(&job);
+            let mut reads = Vec::new();
             let (phase, ticket) = if made {
-                for (at, read) in &reads {
+                for at in &finer {
                     let Some(held) = self.held.get(at) else {
                         continue;
                     };
-                    if self.sharing.insert(*read) && cx.shared.insert(*read) {
+                    reads.push(held.record);
+                    if self.sharing.insert(held.record) && cx.shared.insert(held.record) {
                         cx.jobs.share_record(&held.ticket);
                     }
                 }
@@ -367,29 +368,59 @@ impl Shadings {
                     phase,
                     record,
                     ticket,
+                    reads,
                 },
             );
         }
     }
 
     fn release_shares(&mut self, released: &mut Vec<RecordKey>) {
-        let mut reading: HashSet<RecordKey> = HashSet::default();
-        for (key, asked) in &self.asked {
-            if asked.phase != Phase::Making {
-                continue;
-            }
-            if let Some((job, _)) = self.found.get(key)
-                && let ShadingReads::Shadings(reads) = &job.reads
-            {
-                reading.extend(reads.iter().map(|&(_, read)| RecordKey::from_hash(read)));
-            }
-        }
+        let reading: HashSet<RecordKey> = self
+            .asked
+            .values()
+            .filter(|asked| asked.phase == Phase::Making)
+            .flat_map(|asked| asked.reads.iter().copied())
+            .collect();
         let shares: Vec<RecordKey> = self.sharing.iter().copied().collect();
         for key in shares {
             if !reading.contains(&key) {
                 self.sharing.remove(&key);
                 released.push(key);
             }
+        }
+    }
+
+    fn attach(&mut self, entry: &TerrainEntry, work: &mut Work) {
+        let Self {
+            held,
+            attached,
+            attaching,
+            shaded,
+            ..
+        } = self;
+        *attaching = false;
+        *shaded = 0;
+        let mut gave = false;
+        for (&key, made) in held.iter_mut() {
+            let Some(tile) = listed_tile(&entry.tiles, key) else {
+                continue;
+            };
+            if made.shown == Some(tile.stamp) {
+                *shaded += 1;
+                continue;
+            }
+            if !tile.current {
+                continue;
+            }
+            if gave && work.spent() {
+                *attaching = true;
+                continue;
+            }
+            gave = true;
+            work.upload = work.upload.saturating_sub(2 * TILE_ARRAY_BYTES);
+            made.shown = Some(tile.stamp);
+            attached.push(key);
+            *shaded += 1;
         }
     }
 }
@@ -436,6 +467,7 @@ pub(crate) fn shade(
 ) {
     let eye = view.detail_eye();
     let frame = time.frame;
+    let moved = tiles.is_changed();
     let mut work = Work {
         clock: clock.reading,
         end: clock.now().map_or(0.0, |now| now + ground.millis),
@@ -452,7 +484,6 @@ pub(crate) fn shade(
         let Some(held) = bakes.terrains.get_mut(&entry.terrain) else {
             continue;
         };
-        held.prune(entry);
         let mut cx = Follow {
             jobs: &mut jobs,
             records: &records,
@@ -462,7 +493,7 @@ pub(crate) fn shade(
             work: &mut work,
         };
         let local = Vec2::new(eye.x - entry.origin.x, eye.z - entry.origin.z);
-        follow(held, entry, &mut cx, (local, frame));
+        follow(held, entry, &mut cx, (local, frame, moved));
         if cook.cooking && !entry.surroundings && entry.recipe.is_some() {
             held.flow.cooking = true;
         }
@@ -482,7 +513,7 @@ fn follow(
     held: &mut TerrainBakes,
     entry: &TerrainEntry,
     cx: &mut Follow<'_, '_, '_>,
-    (eye, frame): (Vec2, u64),
+    (eye, frame, moved): (Vec2, u64, bool),
 ) {
     let Some(recipe) = entry.recipe.filter(|_| !entry.surroundings) else {
         let cooking = held.flow.cooking;
@@ -497,45 +528,20 @@ fn follow(
         return;
     };
     let flow = &mut held.flow;
-    flow.basis(recipe, &entry.edits);
-    flow.take_arrived(cx.records, cx.jobs, (&mut *cx.failures, frame));
-    let wants = flow.wanted(entry, recipe, eye);
-    flow.keep(cx.jobs, &wants);
-    flow.ask(cx, &wants, frame);
-    flow.release_shares(cx.released);
-    attach(held, entry, cx.work);
-}
-
-fn attach(held: &mut TerrainBakes, entry: &TerrainEntry, work: &mut Work) {
-    let mut resident: Vec<&TileFace> = entry
-        .tiles
-        .iter()
-        .filter(|tile| shaded_elsewhere(tile.key.level, false))
-        .collect();
-    resident.sort_unstable_by_key(|tile| tile.key);
-    let mut gave = false;
-    for tile in resident {
-        let flow = &held.flow;
-        let Some(made) = flow.held.get(&tile.key) else {
-            continue;
-        };
-        let current = flow
-            .found
-            .get(&tile.key)
-            .is_some_and(|(_, now)| *now == made.record);
-        let holds = held
-            .shading(&tile.key)
-            .is_some_and(|attached| Arc::ptr_eq(attached, &made.shading));
-        if holds || !current || !tile.current {
-            continue;
-        }
-        if gave && work.spent() {
-            break;
-        }
-        gave = true;
-        work.upload = work.upload.saturating_sub(2 * TILE_ARRAY_BYTES);
-        let shading = Arc::clone(&made.shading);
-        held.attach(tile, shading);
+    flow.attached.clear();
+    let moved = moved || flow.basis.is_none();
+    if moved {
+        flow.rebase(entry, recipe, cx.jobs);
     }
-    held.flow.shaded = held.attached();
+    let arrived = flow.take_arrived(cx.records, cx.jobs, (&mut *cx.failures, frame));
+    let dirty = moved || arrived || flow.cooking || !flow.failed.is_empty();
+    if dirty {
+        let wants = flow.wanted(entry, recipe, eye);
+        flow.keep(cx.jobs, &wants);
+        flow.ask(cx, &wants, (entry, recipe, frame));
+        flow.release_shares(cx.released);
+    }
+    if dirty || flow.attaching {
+        flow.attach(entry, cx.work);
+    }
 }

@@ -11,7 +11,6 @@ use serde::Serialize;
 pub const RIVER_STEP: f32 = 3.0;
 const RISER: f32 = 0.5;
 const BED_REACH: f32 = 1.0;
-const STRETCH: usize = 16;
 pub const BANK_SLOPE: f32 = 0.65;
 pub const BANK_REACH: f32 = 16.0;
 const BANK_ROUNDING: f32 = 1.5;
@@ -82,8 +81,85 @@ pub struct Station {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
+pub struct RiverNetwork {
+    pub into: Vec<Option<usize>>,
+    pub sources: Vec<Vec<usize>>,
+    pub order: Vec<usize>,
+}
+
+impl RiverNetwork {
+    pub fn new(rivers: &[River]) -> Self {
+        let count = rivers.len();
+        let mut into = vec![None; count];
+        for (index, river) in rivers.iter().enumerate() {
+            let (Some(&end), true) = (river.points.last(), river.points.len() >= 2) else {
+                continue;
+            };
+            let end = Vec2::from(end);
+            let mut nearest: Option<(f32, usize)> = None;
+            for (other, next) in rivers.iter().enumerate() {
+                if other == index || next.points.len() < 2 {
+                    continue;
+                }
+                let distance = end.distance(Vec2::from(next.points[0]));
+                if distance < 1.5 * RIVER_STEP && nearest.is_none_or(|(best, _)| distance < best) {
+                    nearest = Some((distance, other));
+                }
+            }
+            into[index] = nearest.map(|(_, other)| other);
+        }
+        let mut sources = vec![Vec::new(); count];
+        let mut waiting = vec![0_usize; count];
+        for (index, next) in into.iter().enumerate() {
+            if let Some(next) = *next {
+                sources[next].push(index);
+                waiting[next] += 1;
+            }
+        }
+        let mut order = Vec::with_capacity(count);
+        let mut ready: Vec<usize> = (0..count)
+            .rev()
+            .filter(|&index| waiting[index] == 0)
+            .collect();
+        while let Some(index) = ready.pop() {
+            order.push(index);
+            if let Some(next) = into[index] {
+                waiting[next] -= 1;
+                if waiting[next] == 0 {
+                    ready.push(next);
+                }
+            }
+        }
+        if order.len() < count {
+            let mut placed = vec![false; count];
+            for &index in &order {
+                placed[index] = true;
+            }
+            order.extend((0..count).filter(|&index| !placed[index]));
+        }
+        Self {
+            into,
+            sources,
+            order,
+        }
+    }
+}
+
+fn along_rivers(rivers: &[River]) -> Vec<Vec<f32>> {
+    rivers
+        .iter()
+        .map(|river| {
+            let points: Vec<Vec2> = river.points.iter().map(|&point| Vec2::from(point)).collect();
+            crate::hydraulics::distances(&points)
+        })
+        .collect()
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Rivers {
     pub rivers: Vec<River>,
+    network: RiverNetwork,
+    along: Vec<Vec<f32>>,
     shifts: Vec<Vec<f32>>,
     widest: f32,
     min: Vec2,
@@ -97,6 +173,8 @@ impl Rivers {
     pub fn new(rivers: Vec<River>) -> Self {
         let shifts = rivers.iter().map(shifts).collect();
         let widest = widest(&rivers);
+        let network = RiverNetwork::new(&rivers);
+        let along = along_rivers(&rivers);
         let mut low = Vec2::splat(f32::INFINITY);
         let mut high = Vec2::splat(f32::NEG_INFINITY);
         for river in &rivers {
@@ -108,6 +186,8 @@ impl Rivers {
         if rivers.iter().all(|river| river.points.len() < 2) {
             return Self {
                 rivers,
+                network,
+                along,
                 shifts,
                 widest,
                 ..Self::default()
@@ -137,6 +217,8 @@ impl Rivers {
         starts.push(segments.len() as u32);
         Self {
             rivers,
+            network,
+            along,
             shifts,
             widest,
             min: corner,
@@ -155,50 +237,12 @@ impl Rivers {
         self.rivers.len()
     }
 
-    pub fn differs_from(&self, other: &Self) -> Vec<(Vec2, Vec2)> {
-        let same_lines = self.rivers.len() == other.rivers.len()
-            && self
-                .rivers
-                .iter()
-                .zip(&other.rivers)
-                .all(|(a, b)| a.points == b.points);
-        if !same_lines {
-            let ((a, b), (c, d)) = (self.bounds(), other.bounds());
-            return vec![(a.min(c), b.max(d))];
-        }
-        let same = |a: &[f32], b: &[f32]| a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits());
-        let mut regions = Vec::new();
-        for (a, b) in self.rivers.iter().zip(&other.rivers) {
-            let count = a.points.len();
-            let mut first = 0;
-            while first + 1 < count {
-                let points = first..(first + STRETCH + 1).min(count);
-                first = points.end - 1;
-                let differs = [
-                    (&a.surface, &b.surface),
-                    (&a.half, &b.half),
-                    (&a.depth, &b.depth),
-                    (&a.speed, &b.speed),
-                ]
-                .iter()
-                .any(|(a, b)| !same(&a[points.clone()], &b[points.clone()]));
-                if !differs {
-                    continue;
-                }
-                let widest = a.half[points.clone()]
-                    .iter()
-                    .chain(&b.half[points.clone()])
-                    .fold(0.0, |m, &h| max(m, h));
-                let (mut low, mut high) =
-                    (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
-                for &point in &a.points[points] {
-                    low = low.min(Vec2::from(point));
-                    high = high.max(Vec2::from(point));
-                }
-                regions.push((low - Vec2::splat(widest), high + Vec2::splat(widest)));
-            }
-        }
-        regions
+    pub fn network(&self) -> &RiverNetwork {
+        &self.network
+    }
+
+    pub fn along(&self) -> &[Vec<f32>] {
+        &self.along
     }
 
     pub fn changes_from(&self, before: &Self) -> Vec<(Vec2, Vec2)> {
@@ -259,6 +303,8 @@ impl Rivers {
             shifts: rivers.iter().map(shifts).collect(),
             widest: widest(&rivers),
             rivers,
+            network: self.network.clone(),
+            along: self.along.clone(),
             min: self.min,
             columns: self.columns,
             rows: self.rows,

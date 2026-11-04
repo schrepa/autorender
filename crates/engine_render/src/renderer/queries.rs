@@ -131,7 +131,7 @@ impl Renderer {
                 .iter()
                 .enumerate()
                 .filter(|(_, fault)| fault.is_some())
-                .fold(0_u64, |bits, (at, _)| bits | 1_u64.checked_shl(at as u32).unwrap_or(0))
+                .fold(0_u128, |bits, (at, _)| bits | 1_u128.checked_shl(at as u32).unwrap_or(0))
         });
         engine_core::Names {
             bits,

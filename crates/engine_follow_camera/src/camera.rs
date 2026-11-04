@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Camera, Error, ErrorCode, FrameTime, MoveInput, Operation, Poses, Rule, Setting,
+    Camera, Error, ErrorCode, FrameTime, GlobalTransforms, MoveInput, Operation, Rule, Setting,
 };
 use engine_math::{clamp, exp, max, min, sin, sin_cos};
 use engine_places::physics::{
@@ -97,7 +97,7 @@ fn clear_reach(
 
 pub(crate) fn follow(
     (time, input, settings): (Res<FrameTime>, Res<MoveInput>, Res<FollowCamera>),
-    (poses, collision): (Res<Poses>, Res<Collision>),
+    (globals, collision): (Res<GlobalTransforms>, Res<Collision>),
     targets: Query<Entity, With<CameraTarget>>,
     mut orbit: ResMut<Orbit>,
     mut shake: ResMut<Shake>,
@@ -106,7 +106,7 @@ pub(crate) fn follow(
     let Some(entity) = targets.iter().min() else {
         return;
     };
-    let Some(pose) = poses.of(entity) else {
+    let Some(pose) = globals.pose(entity) else {
         return;
     };
     let goal = Vec3::from(pose.translation) + Vec3::Y * settings.height;

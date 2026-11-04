@@ -35,6 +35,13 @@ gpu_consts! {
     pub const CONTROL_GROUP: u32 = 8;
     pub const BOUNCE_GROUP: u32 = 8;
     pub const NORMALS_GROUP: u32 = 16;
+    pub const PEAKS_GROUP: u32 = 16;
+    pub const PEAKS_SIDE: u32 = 128;
+    pub const ANCESTORS_GROUP: u32 = 16;
+    pub const RIVER_EDGES: u32 = 1;
+    pub const RIVER_BEDS: u32 = 2;
+    pub const RIVER_PLANE_FAR: u32 = 0xffff;
+    pub const ARRIVAL_SECONDS: f32 = 0.4;
     pub const DEBUG_TILE_EDGE: u32 = 0x800;
     pub const DEBUG_PATCH_EDGE: u32 = 0x1000;
     pub const DEBUG_PATCH_SHIFT: u32 = 24;
@@ -44,7 +51,8 @@ gpu_consts! {
     pub const DEBUG_SHOWN_DETAIL: u32 = 4;
     pub const TABLE_TERRAINS: u32 = 0;
     pub const TABLE_VIEWS: u32 = 1;
-    pub const TABLE_HOLES: u32 = 2;
+    pub const TABLE_FADES: u32 = 2;
+    pub const TABLE_NOW: u32 = 3;
     pub const TERRAIN_WORDS: u32 = 44;
     pub const VIEW_WORDS: u32 = 36;
 }
@@ -89,12 +97,19 @@ const _: () = assert!(
     TERRAIN_WORDS as usize * 4 == size_of::<TerrainUniform>()
         && VIEW_WORDS as usize * 4 == size_of::<ViewUniform>()
         && TABLE_TERRAINS < TABLE_VIEWS
-        && TABLE_VIEWS < TABLE_HOLES,
+        && TABLE_VIEWS < TABLE_FADES
+        && TABLE_FADES < TABLE_NOW,
     "terrain_tables_hold_whole_records"
 );
 
 const _: () = assert!(
+    RIVER_PLANE_FAR == engine_heightfield::tile::RIVER_EDGE_FAR as u32,
+    "river_planes_mean_far_the_same"
+);
+
+const _: () = assert!(
     TILE_STRIDE == engine_heightfield::TILE_SAMPLES + 2
+        && PEAKS_SIDE == engine_heightfield::TILE_QUADS / 2
         && SURFACE_ERROR_MIPS == engine_heightfield::TILE_QUADS.trailing_zeros()
         && PATCH_GRID_VERTICES == PATCH_GRID * PATCH_GRID
         && SURFACE_MESHLET_VERTICES
@@ -202,5 +217,16 @@ gpu_struct! {
         pub spacing: f32,
         pub terrain: u32,
         pub pad: [u32; 2],
+    }
+}
+
+gpu_struct! {
+    pub struct AncestorJob {
+        pub layer: u32,
+        pub held_layer: u32,
+        pub shift: u32,
+        pub pad: u32,
+        pub first: [i32; 2],
+        pub held_first: [i32; 2],
     }
 }

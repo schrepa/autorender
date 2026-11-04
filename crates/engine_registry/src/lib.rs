@@ -36,4 +36,4 @@ pub use registry::{BrickId, BrickSet, Registry, settings};
 pub use scene::{
     AuthoredId, OperationScene, SceneEntity, SceneRead, SpawnedBy, authored_entity, authored_id,
 };
-pub use services::{FrameFacts, InputState, PoseTable, ViewState};
+pub use services::{FrameFacts, InputState, ViewState};

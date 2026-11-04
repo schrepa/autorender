@@ -89,7 +89,6 @@ pub(crate) struct Bounce {
     slots: Vec<Option<u32>>,
     windows: Vec<Option<BounceLevels>>,
     held: Vec<Option<Arc<TerrainBounce>>>,
-    means: Vec<Vec<u8>>,
     bases: Vec<[u32; 3]>,
     records: Vec<Vec<BounceTerrain>>,
     widest: [u32; MOST_LEVELS],
@@ -190,7 +189,6 @@ impl Bounce {
             slots: Vec::new(),
             windows: Vec::new(),
             held: Vec::new(),
-            means: Vec::new(),
             bases: Vec::new(),
             records: Vec::new(),
             widest: [0; MOST_LEVELS],
@@ -209,7 +207,6 @@ impl Bounce {
     fn release(&mut self) {
         self.maps = None;
         self.held.clear();
-        self.means.clear();
         self.bases.clear();
         self.records.clear();
     }
@@ -276,7 +273,6 @@ impl Bounce {
                 (Some(bounce), Some(current)) if Arc::ptr_eq(bounce, current) => {}
                 (Some(bounce), _) => {
                     write_ground(cx, self.ground, slot as usize, bounce);
-                    self.means[slot as usize] = means(bounce);
                     *held = Some(Arc::clone(bounce));
                     changed = true;
                 }
@@ -284,7 +280,6 @@ impl Bounce {
                 (None, current) => {
                     changed |= current.is_some();
                     *held = None;
-                    self.means[slot as usize].clear();
                 }
             }
         }
@@ -437,7 +432,6 @@ impl Bounce {
             );
             self.maps = Some((side, count));
             self.held = vec![None; count];
-            self.means = vec![Vec::new(); count];
         }
         true
     }
@@ -446,7 +440,7 @@ impl Bounce {
         let mut words: Vec<u32> = Vec::new();
         let mut probes: Vec<u8> = Vec::new();
         self.bases.clear();
-        for (held, means) in self.held.iter().zip(&self.means) {
+        for held in &self.held {
             let probe_base = (probes.len() / PROBE_BYTES) as u32;
             let count = held.as_ref().map_or(0, |bounce| bounce.probe_count());
             self.bases
@@ -454,7 +448,7 @@ impl Bounce {
             if let Some(bounce) = held {
                 words.extend(bounce.block_words());
                 probes.extend_from_slice(bounce.probe_bytes());
-                probes.extend_from_slice(means);
+                probes.extend_from_slice(bounce.means());
             }
         }
         cx.allocate_buffer(
@@ -566,7 +560,7 @@ pub(crate) fn windows(
             let bounce = bakes.of(terrain.terrain)?.bounce.made.as_ref()?;
             levels(terrain, (bounce, slot?), eye, settings).filter(|levels| {
                 let blocks = u64::from(bounce.texels());
-                let records = bounce.probe_bytes().len() + mean_bytes(bounce.probes);
+                let records = bounce.probe_bytes().len() + bounce.means().len();
                 let needs = [blocks * blocks * 4, records as u64, levels.scratch_bytes()];
                 let fits = needs.iter().zip(&room).all(|(need, left)| need <= left);
                 if fits {
@@ -638,73 +632,6 @@ fn levels(
 
 fn mean_offset(probes: u32, level: u32) -> u32 {
     (2..level).map(|finer| (probes >> finer).pow(2)).sum()
-}
-
-fn mean_bytes(probes: u32) -> usize {
-    let levels = (2..u32::BITS).take_while(|&level| probes >> level > 0);
-    levels
-        .map(|level| (probes >> level).pow(2) as usize)
-        .sum::<usize>()
-        * PROBE_BYTES
-}
-
-fn means(bounce: &TerrainBounce) -> Vec<u8> {
-    let records = bounce.probe_bytes();
-    let record = |index: usize| &records[index * PROBE_BYTES..(index + 1) * PROBE_BYTES];
-    let words = bounce.block_words();
-    let mut level = Vec::with_capacity(words.len() * PROBE_BYTES);
-    for word in words {
-        let first = (word >> 1) as usize;
-        if word & 1 == 0 {
-            level.extend_from_slice(record(first));
-        } else {
-            level.extend(mean_of([
-                record(first),
-                record(first + 1),
-                record(first + 2),
-                record(first + 3),
-            ]));
-        }
-    }
-    let mut out = Vec::with_capacity(mean_bytes(bounce.probes));
-    let mut side = bounce.texels() as usize;
-    while side > 1 {
-        let coarser = side / 2;
-        let at = |x: usize, z: usize| {
-            let index = z * side + x;
-            &level[index * PROBE_BYTES..(index + 1) * PROBE_BYTES]
-        };
-        let mut next = Vec::with_capacity(coarser * coarser * PROBE_BYTES);
-        for z in 0..coarser {
-            for x in 0..coarser {
-                next.extend(mean_of([
-                    at(2 * x, 2 * z),
-                    at(2 * x + 1, 2 * z),
-                    at(2 * x, 2 * z + 1),
-                    at(2 * x + 1, 2 * z + 1),
-                ]));
-            }
-        }
-        out.extend_from_slice(&next);
-        level = next;
-        side = coarser;
-    }
-    out
-}
-
-fn mean_of(four: [&[u8]; 4]) -> [u8; PROBE_BYTES] {
-    let mut mean = [0_u8; PROBE_BYTES];
-    for bin in 0..PROBE_BYTES / 2 {
-        let share = |record: &[u8]| u32::from(record[2 * bin]);
-        let filled: u32 = four.iter().map(|&record| share(record)).sum();
-        let coded: u32 = four
-            .iter()
-            .map(|&record| share(record) * u32::from(record[2 * bin + 1]))
-            .sum();
-        mean[2 * bin] = ((filled + 2) / 4) as u8;
-        mean[2 * bin + 1] = (coded + filled / 2).checked_div(filled).unwrap_or(0) as u8;
-    }
-    mean
 }
 
 fn write_ground(

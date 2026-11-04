@@ -735,7 +735,13 @@ impl Renderer {
                 }
             })
             .collect();
-        self.passes = Box::leak(installed.passes.into_boxed_slice());
+        let mut passes = installed.passes;
+        if let Some((names, _)) = installed.resolve
+            && !passes.contains(&names.pass)
+        {
+            passes.push(names.pass);
+        }
+        self.passes = Box::leak(passes.into_boxed_slice());
         self.linked = installed.linked;
         let names: Vec<&'static str> = run
             .machine
@@ -745,7 +751,6 @@ impl Renderer {
             .map(|part| part.name)
             .collect();
         self.part_names = Box::leak(names.into_boxed_slice());
-        self.ran.clear();
         self.plans.clear();
         self.run = Some(run);
         Ok(())

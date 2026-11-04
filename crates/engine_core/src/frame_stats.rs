@@ -45,9 +45,6 @@ pub struct RenderStats {
     pub resident_textures: u32,
     pub texture_upload_bytes: u64,
     pub resident_texture_bytes: u64,
-    #[serde(skip)]
-    #[cfg_attr(feature = "schema", schemars(skip))]
-    pub submitted: bool,
     pub pipelines: u32,
     pub pipelines_created: u32,
     pub render_passes: Names,
@@ -130,7 +127,7 @@ impl schemars::JsonSchema for LinkedStats {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Names {
-    pub bits: u64,
+    pub bits: u128,
     pub names: &'static [&'static str],
 }
 
@@ -140,7 +137,9 @@ impl Serialize for Names {
             self.names
                 .iter()
                 .enumerate()
-                .filter(|(index, _)| self.bits & (1 << index) != 0)
+                .filter(|(index, _)| {
+                    self.bits & 1_u128.checked_shl(*index as u32).unwrap_or(0) != 0
+                })
                 .map(|(_, name)| name),
         )
     }

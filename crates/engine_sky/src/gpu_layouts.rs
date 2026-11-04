@@ -17,7 +17,6 @@ gpu_struct! {
         pub zenith: [f32; 4],
         pub horizon: [f32; 4],
         pub shadow: [f32; 4],
-        pub shadow_rows: [u32; 4],
         pub light: [f32; 4],
         pub light_rows: [u32; 4],
         pub layers: [u32; 4],

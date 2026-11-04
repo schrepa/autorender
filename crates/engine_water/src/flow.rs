@@ -1,18 +1,22 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use engine_codec::record;
 use engine_math::{max, min};
 use glam::{Mat3, Vec2, Vec3};
 
-use engine_heightfield::hydraulics::{SHALLOWEST, TRICKLE, distances, friction_slope};
+use engine_heightfield::hydraulics::{SHALLOWEST, TRICKLE, friction_slope};
 use engine_heightfield::rivers::{RIVER_STEP, River, Rivers};
 
 pub const WEIR: f32 = 1.7;
 const RESTING: f32 = 0.35;
 const STACKED: f32 = 0.1;
-const MOVED: f32 = 0.05;
 const HELD_ROUNDS: usize = 6;
 const DRAINED: f32 = 1.0e-3;
 const DEEPEST: f32 = 40.0;
+const STRETCH: usize = 16;
+
+static RUNNINGS: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Block {
@@ -33,69 +37,131 @@ pub struct Pool {
     pub outflow: f32,
 }
 
-#[derive(Clone, Debug, Default)]
-struct Network {
-    into: Vec<Option<usize>>,
-    sources: Vec<Vec<usize>>,
-    order: Vec<usize>,
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Levels {
+    pub discharge: Vec<f32>,
+    pub half: Vec<f32>,
+    pub depth: Vec<f32>,
+    pub surface: Vec<f32>,
+    pub speed: Vec<f32>,
 }
 
-impl Network {
-    fn new(rivers: &[River]) -> Self {
-        let count = rivers.len();
-        let mut into = vec![None; count];
-        for (index, river) in rivers.iter().enumerate() {
-            let (Some(&end), true) = (river.points.last(), river.points.len() >= 2) else {
-                continue;
-            };
-            let end = Vec2::from(end);
-            let mut nearest: Option<(f32, usize)> = None;
-            for (other, next) in rivers.iter().enumerate() {
-                if other == index || next.points.len() < 2 {
-                    continue;
-                }
-                let distance = end.distance(Vec2::from(next.points[0]));
-                if distance < 1.5 * RIVER_STEP && nearest.is_none_or(|(best, _)| distance < best) {
-                    nearest = Some((distance, other));
-                }
-            }
-            into[index] = nearest.map(|(_, other)| other);
-        }
-        let mut sources = vec![Vec::new(); count];
-        let mut waiting = vec![0_usize; count];
-        for (index, next) in into.iter().enumerate() {
-            if let Some(next) = *next {
-                sources[next].push(index);
-                waiting[next] += 1;
-            }
-        }
-        let mut order = Vec::with_capacity(count);
-        let mut ready: Vec<usize> = (0..count)
-            .rev()
-            .filter(|&index| waiting[index] == 0)
-            .collect();
-        while let Some(index) = ready.pop() {
-            order.push(index);
-            if let Some(next) = into[index] {
-                waiting[next] -= 1;
-                if waiting[next] == 0 {
-                    ready.push(next);
-                }
-            }
-        }
-        if order.len() < count {
-            let mut placed = vec![false; count];
-            for &index in &order {
-                placed[index] = true;
-            }
-            order.extend((0..count).filter(|&index| !placed[index]));
-        }
-        Self {
-            into,
-            sources,
-            order,
+record!(Levels {
+    discharge,
+    half,
+    depth,
+    surface,
+    speed,
+});
+
+#[derive(Debug)]
+pub struct Running {
+    serial: u64,
+    rivers: Vec<(u32, Levels)>,
+}
+
+impl Running {
+    pub(crate) fn name(&self) -> [u8; 32] {
+        let mut name = [0; 32];
+        name[..8].copy_from_slice(&self.serial.to_le_bytes());
+        name
+    }
+
+    pub(crate) fn encoded(&self) -> Vec<u8> {
+        engine_codec::encode(&self.rivers)
+    }
+
+    fn river(&self, river: u32) -> Option<&Levels> {
+        let at = self
+            .rivers
+            .binary_search_by_key(&river, |&(index, _)| index)
+            .ok()?;
+        Some(&self.rivers[at].1)
+    }
+
+    fn compared<'a>(this: Option<&'a Self>, river: u32, line: &'a River) -> [&'a [f32]; 4] {
+        match this.and_then(|running| running.river(river)) {
+            Some(levels) => [
+                &levels.surface[..],
+                &levels.half[..],
+                &levels.depth[..],
+                &levels.speed[..],
+            ],
+            None => [
+                &line.surface[..],
+                &line.half[..],
+                &line.depth[..],
+                &line.speed[..],
+            ],
         }
     }
+
+    pub(crate) fn differs(
+        base: &Rivers,
+        to: Option<&Self>,
+        from: Option<&Self>,
+    ) -> Vec<(Vec2, Vec2)> {
+        let mut changed: Vec<u32> = [to, from]
+            .into_iter()
+            .flatten()
+            .flat_map(|running| running.rivers.iter().map(|&(river, _)| river))
+            .collect();
+        changed.sort_unstable();
+        changed.dedup();
+        let same = |a: &[f32], b: &[f32]| a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits());
+        let mut regions = Vec::new();
+        for river in changed {
+            let Some(line) = base.rivers().get(river as usize) else {
+                continue;
+            };
+            let (a, b) = (
+                Self::compared(to, river, line),
+                Self::compared(from, river, line),
+            );
+            let count = line.points.len();
+            let mut first = 0;
+            while first + 1 < count {
+                let points = first..(first + STRETCH + 1).min(count);
+                first = points.end - 1;
+                let differs = a.iter().zip(&b).any(|(a, b)| {
+                    match (a.get(points.clone()), b.get(points.clone())) {
+                        (Some(a), Some(b)) => !same(a, b),
+                        (Some(_), None) | (None, Some(_)) | (None, None) => true,
+                    }
+                });
+                if !differs {
+                    continue;
+                }
+                let widest = [a[1], b[1]]
+                    .iter()
+                    .filter_map(|half| half.get(points.clone()))
+                    .flatten()
+                    .fold(0.0, |m, &h| max(m, h));
+                let (mut low, mut high) =
+                    (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+                for &point in &line.points[points] {
+                    low = low.min(Vec2::from(point));
+                    high = high.max(Vec2::from(point));
+                }
+                regions.push((low - Vec2::splat(widest), high + Vec2::splat(widest)));
+            }
+        }
+        regions
+    }
+}
+
+pub(crate) fn rivers_over(base: &Rivers, running: Vec<(u32, Levels)>) -> Rivers {
+    let mut whole = base.rivers().to_vec();
+    for (river, levels) in running {
+        if let Some(line) = whole.get_mut(river as usize) {
+            line.discharge = levels.discharge;
+            line.half = levels.half;
+            line.depth = levels.depth;
+            line.surface = levels.surface;
+            line.speed = levels.speed;
+        }
+    }
+    base.with_rivers(whole)
 }
 
 fn spread(line: &River, point: usize, level: f32) -> f32 {
@@ -116,14 +182,11 @@ fn own_depth(line: &River, point: usize, discharge: f32) -> f32 {
 #[derive(Clone, Debug)]
 pub struct RiverFlow {
     base: Arc<Rivers>,
-    current: Arc<Rivers>,
-    network: Network,
-    along: Vec<Vec<f32>>,
+    running: Option<Arc<Running>>,
     blocks: Vec<Block>,
     pools: Vec<Pool>,
     last: Vec<Option<Vec<f32>>>,
     flows: Discharges,
-    shown: Vec<usize>,
 }
 
 type Discharges = Vec<Option<Vec<f32>>>;
@@ -140,26 +203,12 @@ const JAM: f32 = 0.3;
 
 impl RiverFlow {
     pub fn new(base: Arc<Rivers>) -> Self {
-        let rivers = base.rivers();
         Self {
-            network: Network::new(rivers),
-            along: rivers
-                .iter()
-                .map(|river| {
-                    let points: Vec<Vec2> = river
-                        .points
-                        .iter()
-                        .map(|&point| Vec2::from(point))
-                        .collect();
-                    distances(&points)
-                })
-                .collect(),
+            running: None,
             blocks: Vec::new(),
             pools: Vec::new(),
             last: Vec::new(),
             flows: Vec::new(),
-            shown: Vec::new(),
-            current: Arc::clone(&base),
             base,
         }
     }
@@ -168,8 +217,8 @@ impl RiverFlow {
         &self.base
     }
 
-    pub fn current(&self) -> &Arc<Rivers> {
-        &self.current
+    pub fn running(&self) -> Option<&Arc<Running>> {
+        self.running.as_ref()
     }
 
     pub fn blocks(&self) -> &[Block] {
@@ -194,7 +243,7 @@ impl RiverFlow {
     }
 
     pub fn still(&self) -> bool {
-        self.pools.is_empty() && Arc::ptr_eq(&self.base, &self.current)
+        self.pools.is_empty() && self.running.is_none()
     }
 
     pub fn block(&self, center: Vec3, axes: Mat3, round: bool) -> Option<Block> {
@@ -221,7 +270,11 @@ impl RiverFlow {
             )
         };
         let (bottom, top) = (center.y - rise, center.y + rise);
-        let surface = self.current.rivers()[river].surface[point];
+        let surface = self
+            .running
+            .as_ref()
+            .and_then(|running| running.river(station.river))
+            .map_or(line.surface[point], |levels| levels.surface[point]);
         if !(bottom < surface && top > bed) {
             return None;
         }
@@ -261,12 +314,7 @@ impl RiverFlow {
         }
         self.pools.sort_by_key(|pool| (pool.river, pool.point));
         if self.pools.is_empty() {
-            if Arc::ptr_eq(&self.base, &self.current) {
-                return false;
-            }
-            self.current = Arc::clone(&self.base);
-            self.shown.clear();
-            return true;
+            return self.running.take().is_some();
         }
         let drowned: Vec<bool> = self
             .pools
@@ -284,13 +332,21 @@ impl RiverFlow {
             .map(|river| river.as_ref().map(|river| river.surface.clone()))
             .collect();
         self.flows = flows;
-        self.publish(rivers)
+        self.running = Some(Arc::new(Running {
+            serial: RUNNINGS.fetch_add(1, Ordering::Relaxed),
+            rivers: rivers
+                .into_iter()
+                .enumerate()
+                .filter_map(|(river, levels)| Some((river as u32, levels?)))
+                .collect(),
+        }));
+        true
     }
 
     fn next(&self, river: usize, point: usize) -> (usize, usize) {
         if point + 1 < self.base.rivers()[river].points.len() {
             (river, point + 1)
-        } else if let Some(next) = self.network.into[river] {
+        } else if let Some(next) = self.base.network().into[river] {
             (next, 0)
         } else {
             (river, point)
@@ -400,8 +456,10 @@ impl RiverFlow {
         let rivers = self.base.rivers();
         let mut flows: Discharges = vec![None; rivers.len()];
         let mut leaving = vec![0.0_f32; rivers.len()];
-        for &river in &self.network.order {
-            let mut change: f32 = self.network.sources[river]
+        let base = Arc::clone(&self.base);
+        let network = base.network();
+        for &river in &network.order {
+            let mut change: f32 = network.sources[river]
                 .iter()
                 .map(|&source| leaving[source])
                 .sum();
@@ -459,13 +517,13 @@ impl RiverFlow {
                     break;
                 }
                 let run = if point + 1 < line.points.len() {
-                    self.along[river][point + 1] - self.along[river][point]
+                    self.base.along()[river][point + 1] - self.base.along()[river][point]
                 } else {
                     RIVER_STEP
                 };
                 total += 2.0 * spread(line, point, level) * run;
                 if point == 0 {
-                    for &source in &self.network.sources[river] {
+                    for &source in &self.base.network().sources[river] {
                         let last = rivers[source].points.len().saturating_sub(1);
                         walks.push((source, last));
                     }
@@ -523,11 +581,12 @@ impl RiverFlow {
         self.pools = pools;
     }
 
-    fn levels(&self, flows: &Discharges) -> Vec<Option<River>> {
+    fn levels(&self, flows: &Discharges) -> Vec<Option<Levels>> {
         let rivers = self.base.rivers();
-        let mut out: Vec<Option<River>> = vec![None; rivers.len()];
-        for &river in self.network.order.iter().rev() {
-            let outlet = self.network.into[river].and_then(|next| {
+        let network = self.base.network();
+        let mut out: Vec<Option<Levels>> = vec![None; rivers.len()];
+        for &river in network.order.iter().rev() {
+            let outlet = network.into[river].and_then(|next| {
                 let below = out[next].as_ref()?;
                 let level = below.surface[0];
                 (level > rivers[next].surface[0] + 1.0e-4).then_some(level)
@@ -576,7 +635,8 @@ impl RiverFlow {
                 .then(|| {
                     let above = point - 1;
                     let bed = line.bed[above];
-                    let run = self.along[river][point] - self.along[river][above];
+                    let along = &self.base.along()[river];
+                    let run = along[point] - along[above];
                     let discharge = carried(flows, river, line, above);
                     let mut level = here;
                     for _ in 0..HELD_ROUNDS {
@@ -591,7 +651,7 @@ impl RiverFlow {
         level
     }
 
-    fn standing(&self, river: usize, level: Vec<f32>, flows: &Discharges) -> River {
+    fn standing(&self, river: usize, level: Vec<f32>, flows: &Discharges) -> Levels {
         let line = &self.base.rivers()[river];
         let (mut half, mut depth, mut speed) =
             (line.half.clone(), line.depth.clone(), line.speed.clone());
@@ -605,56 +665,14 @@ impl RiverFlow {
             depth[point] = max(level[point] - line.bed[point], SHALLOWEST);
             speed[point] = discharge / (4.0 / 3.0 * max(half[point], 0.1) * depth[point]);
         }
-        River {
-            points: line.points.clone(),
+        Levels {
             discharge: flows[river]
                 .clone()
                 .unwrap_or_else(|| line.discharge.clone()),
             half,
             depth,
-            bed: line.bed.clone(),
             surface: level,
             speed,
-            falls: line.falls.clone(),
-            sheeted: line.sheeted.clone(),
-            reach: line.reach.clone(),
-            d50: line.d50.clone(),
-            d84: line.d84.clone(),
-            power: line.power.clone(),
-            flood: line.flood.clone(),
-            carved: line.carved.clone(),
-            cut: line.cut.clone(),
-            crest: line.crest.clone(),
-            knobs: line.knobs.clone(),
-            head: line.head,
-            given: line.given,
         }
-    }
-
-    fn publish(&mut self, rivers: Vec<Option<River>>) -> bool {
-        let shown = self.current.rivers();
-        let held: Vec<usize> = (0..rivers.len())
-            .filter(|&index| rivers[index].is_some())
-            .collect();
-        let moved = held.iter().chain(&self.shown).any(|&index| {
-            let now = rivers[index].as_ref().unwrap_or(&self.base.rivers()[index]);
-            let before = &shown[index];
-            now.surface
-                .iter()
-                .zip(&before.surface)
-                .chain(now.half.iter().zip(&before.half))
-                .any(|(a, b)| (a.is_finite() != b.is_finite()) || (a - b).abs() > MOVED)
-        });
-        if !moved {
-            return false;
-        }
-        self.shown = held;
-        let whole: Vec<River> = rivers
-            .into_iter()
-            .enumerate()
-            .map(|(index, river)| river.unwrap_or_else(|| self.base.rivers()[index].clone()))
-            .collect();
-        self.current = Arc::new(self.base.with_rivers(whole));
-        true
     }
 }

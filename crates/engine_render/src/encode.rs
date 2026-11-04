@@ -158,11 +158,19 @@ impl Groups {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct PassLayout {
-    formats: Vec<Option<wgpu::TextureFormat>>,
+    formats: [Option<wgpu::TextureFormat>; MOST_COLORS],
+    count: usize,
     depth: Option<(wgpu::TextureFormat, bool)>,
     debug: bool,
     main: bool,
+}
+
+impl PassLayout {
+    fn formats(&self) -> &[Option<wgpu::TextureFormat>] {
+        &self.formats[..self.count]
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -343,7 +351,7 @@ pub(crate) struct Set {
 pub(crate) struct Open {
     pub(crate) pass: wgpu::RenderPass<'static>,
     pub(crate) attachments: Vec<u64>,
-    pub(crate) layout: u32,
+    pub(crate) layout: PassLayout,
     pub(crate) offset: u32,
     pub(crate) shared: bool,
     pub(crate) layered: bool,
@@ -376,8 +384,6 @@ pub(crate) struct Queued {
 
 #[derive(Default)]
 pub(crate) struct Uploads {
-    pub(crate) cameras: Vec<u8>,
-    pub(crate) pieces: Option<Vec<u8>>,
     pub(crate) counted: u64,
     pub(crate) memory: Vec<(&'static str, u64)>,
 }
@@ -406,7 +412,6 @@ pub(crate) struct Run {
     pub(crate) stale: Vec<Holder>,
     pub(crate) rebuilt: Rebuilt,
     pub(crate) pass_decls: Vec<Arc<PassDecl>>,
-    pub(crate) layouts: Vec<PassLayout>,
     pub(crate) layer_sets: Vec<(Option<crate::Layer>, Arc<[SetFormat]>)>,
     pub(crate) spare: Spare,
     pub(crate) textures: Vec<[Option<Allocated>; 2]>,
@@ -437,7 +442,6 @@ pub(crate) struct Run {
     pub(crate) wanted_textures: Vec<TextureHandle>,
     pub(crate) switches: Vec<(u32, bool)>,
     pub(crate) placeholders: Vec<((Ty, u64), Placeholder)>,
-    pub(crate) sized: Vec<((Option<usize>, u32, u32), u64)>,
     pub(crate) encoder: Option<wgpu::CommandEncoder>,
     pub(crate) open: Option<Open>,
     pub(crate) computing: Option<(u32, wgpu::ComputePass<'static>)>,
@@ -457,7 +461,6 @@ pub(crate) struct Run {
     pub(crate) piece_layout: Vec<(usize, crate::pieces::PieceAt)>,
     pub(crate) post: crate::shared::PostUniform,
     pub(crate) post_buffer: wgpu::Buffer,
-    pub(crate) post_written: Option<crate::shared::PostUniform>,
     pub(crate) linear: wgpu::Sampler,
     pub(crate) drawn: u32,
     pub(crate) part_draws: Vec<u32>,
@@ -531,6 +534,7 @@ pub(crate) struct Spare {
     colors: Vec<(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)>,
     attachments: Vec<u64>,
     cameras: Vec<u8>,
+    pub(crate) pieces: Vec<u8>,
 }
 
 const TARGET_KEY: u64 = 1 << 62;
@@ -774,7 +778,6 @@ impl Run {
             stale,
             rebuilt: Rebuilt::default(),
             pass_decls,
-            layouts: Vec::new(),
             layer_sets,
             spare: Spare::default(),
             textures,
@@ -805,7 +808,6 @@ impl Run {
             wanted_textures: Vec::new(),
             switches: Vec::new(),
             placeholders: Vec::new(),
-            sized: Vec::new(),
             encoder: None,
             open: None,
             computing: None,
@@ -825,7 +827,6 @@ impl Run {
             piece_layout: Vec::new(),
             post: bytemuck::Zeroable::zeroed(),
             post_buffer,
-            post_written: None,
             linear,
             drawn: 0,
             part_draws: vec![0; count],

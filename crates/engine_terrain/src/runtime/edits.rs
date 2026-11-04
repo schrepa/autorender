@@ -327,7 +327,7 @@ fn edit_terrain(
                     ..error
                 }
             })?;
-            let before = terrains.layers(entity, kinds).ok_or_else(|| {
+            let before = terrains.layers(entity).ok_or_else(|| {
                 Error::new(ErrorCode::UnknownTerrain, "$.terrain").expected(Expected::Present)
             })?;
             let after = before.with_stamps(&[stamp], kinds).map_err(|error| Error {

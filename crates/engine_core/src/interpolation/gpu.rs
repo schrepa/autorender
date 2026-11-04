@@ -65,16 +65,14 @@ pub(crate) struct GpuInputs {
     identity: u64,
     sequence: u64,
     alpha: f32,
-    gathered: Option<(u64, u64, u64)>,
+    gathered: Option<u64>,
     current_stamps: Vec<u64>,
     previous: Vec<NodePose>,
     previous_stamps: Vec<u64>,
     epochs: Vec<[u32; 2]>,
     info: Vec<NodeInfo>,
     info_stamps: Vec<u64>,
-    authority: Vec<PoseRows>,
     authority_stamps: Vec<u64>,
-    authority_revisions: Vec<u64>,
     parents: Vec<u32>,
     levels: Vec<u32>,
     state: Vec<u8>,
@@ -110,9 +108,7 @@ impl Default for GpuInputs {
             epochs: Vec::new(),
             info: Vec::new(),
             info_stamps: Vec::new(),
-            authority: Vec::new(),
             authority_stamps: Vec::new(),
-            authority_revisions: Vec::new(),
             parents: Vec::new(),
             levels: Vec::new(),
             state: Vec::new(),
@@ -163,7 +159,7 @@ impl GpuInputs {
             previous_stamps: &self.previous_stamps,
             info: &self.info,
             info_stamps: &self.info_stamps,
-            authority: &self.authority,
+            authority: hierarchy.global_rows(),
             authority_stamps: &self.authority_stamps,
             parents: &self.parents,
             levels: &self.levels,
@@ -180,12 +176,10 @@ impl GpuInputs {
         self.previous.capacity() * size_of::<NodePose>()
             + self.epochs.capacity() * size_of::<[u32; 2]>()
             + self.info.capacity() * size_of::<NodeInfo>()
-            + self.authority.capacity() * size_of::<PoseRows>()
             + (self.current_stamps.capacity()
                 + self.previous_stamps.capacity()
                 + self.info_stamps.capacity()
-                + self.authority_stamps.capacity()
-                + self.authority_revisions.capacity())
+                + self.authority_stamps.capacity())
                 * size_of::<u64>()
             + (self.parents.capacity()
                 + self.levels.capacity()
@@ -212,6 +206,10 @@ impl GpuInputs {
         self.tick_begin_revision = hierarchy_revision;
     }
 
+    pub(super) fn regather(&mut self) {
+        self.last_epoch = None;
+    }
+
     fn reindex(&mut self, nodes: usize) {
         self.identity = NEXT_INPUT_STREAM.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         fn reset<T: Copy>(values: &mut Vec<T>, nodes: usize, value: T) {
@@ -223,11 +221,9 @@ impl GpuInputs {
         reset(&mut self.previous_stamps, nodes, 0);
         reset(&mut self.info_stamps, nodes, 0);
         reset(&mut self.authority_stamps, nodes, 0);
-        reset(&mut self.authority_revisions, nodes, u64::MAX);
         reset(&mut self.previous, nodes, [0.0; 10]);
         reset(&mut self.epochs, nodes, [NEVER; 2]);
         reset(&mut self.info, nodes, [u32::MAX; 2]);
-        reset(&mut self.authority, nodes, [[0.0; 4]; 3]);
         reset(&mut self.state, nodes, 0);
         reset(&mut self.queued, nodes, 0);
         self.queue_generation = 0;
@@ -265,38 +261,28 @@ impl InterpolationState {
 
     pub(super) fn gather_gpu(&mut self, hierarchy: &mut HierarchyScratch, alpha: f32) {
         self.gpu.alpha = alpha;
-        let key = (
-            hierarchy.topology_revision(),
-            hierarchy.revision(),
-            self.revision,
-        );
-        if self.gpu.gathered == Some(key) {
+        if self.gpu.gathered == Some(hierarchy.topology_revision())
+            && self.gpu.last_epoch == Some(self.epoch)
+            && self.gpu.last_revision == hierarchy.revision()
+        {
             engine_profile::counter("interpolation.gpu_gathered", 0.0);
             return;
         }
         let _profile = engine_profile::span("interpolation", "gather_gpu_inputs");
         let changes = hierarchy.take_changes();
-        self.gather_nodes(hierarchy, key, changes.as_deref());
+        self.gather_nodes(hierarchy, changes.as_deref());
         hierarchy.restore_changes(changes);
     }
 
-    fn gather_nodes(
-        &mut self,
-        hierarchy: &HierarchyScratch,
-        key: (u64, u64, u64),
-        changes: Option<&[u32]>,
-    ) {
+    fn gather_nodes(&mut self, hierarchy: &HierarchyScratch, changes: Option<&[u32]>) {
         let nodes = hierarchy.links().len();
-        let reindexed = self
-            .gpu
-            .gathered
-            .is_none_or(|(topology, ..)| topology != hierarchy.topology_revision())
-            || self.gpu.info.len() != nodes;
+        let topology = hierarchy.topology_revision();
+        let reindexed = self.gpu.gathered != Some(topology) || self.gpu.info.len() != nodes;
         if reindexed {
             self.gpu.reindex(nodes);
         }
-        self.gpu.gathered = Some(key);
-        self.gpu.current_version = (key.0, key.1);
+        self.gpu.gathered = Some(topology);
+        self.gpu.current_version = hierarchy.stamp();
         self.gpu.sequence += 1;
         let sequence = self.gpu.sequence;
         let epoch = self.epoch;
@@ -395,12 +381,10 @@ struct Records<'a> {
 
 struct Walk<'a> {
     pass: Pass,
-    hierarchy: &'a HierarchyScratch,
+    sources: &'a [Source],
     links: &'a [Link],
     locals: &'a [NodePose],
     local_revisions: &'a [u64],
-    history_hints: &'a [u32],
-    history_nodes: &'a [u32],
     intervals: &'a [Interval],
     record_previous: &'a [NodePose],
     indices: &'a EntityIndices,
@@ -410,9 +394,7 @@ struct Walk<'a> {
     epochs: &'a mut [[u32; 2]],
     infos: &'a mut [NodeInfo],
     info_stamps: &'a mut [u64],
-    authority: &'a mut [PoseRows],
     authority_stamps: &'a mut [u64],
-    authority_revisions: &'a mut [u64],
     state: &'a mut [u8],
     parent_scratch: &'a mut Vec<(u8, u32)>,
     changed: [usize; 4],
@@ -451,25 +433,18 @@ impl Walk<'_> {
         let inherited = parent.map_or(0, |parent| self.state[parent]);
         let valid = link.has_global();
         let current = &self.locals[index];
-        let hint = self.history_hints[index];
-        let record = if hint == u32::MAX {
-            None
-        } else if self.history_nodes.get(hint as usize) == Some(&(index as u32)) {
-            Some(hint as usize)
-        } else {
-            self.indices
-                .get(&self.hierarchy.sources()[index].entity)
-                .copied()
-        };
+        let source = &self.sources[index];
+        let record = source
+            .marker_added
+            .and_then(|_| self.indices.get(&source.entity).copied());
         let (own_snap, blends) = match record {
             Some(record) => {
-                let interval = &self.intervals[record];
-                debug_assert_eq!(
-                    interval.scales_compatible,
-                    compatible_scales(&self.record_previous[record], current),
-                    "scale_compatibility_current"
+                let blends = self.intervals[record].blends(
+                    pass.epoch,
+                    pass.active_tick,
+                    &self.record_previous[record],
+                    current,
                 );
-                let blends = interval.blends(pass.epoch, pass.active_tick);
                 (!blends, blends)
             }
             None => (false, false),
@@ -513,21 +488,14 @@ impl Walk<'_> {
                 self.stamp(0, index);
             }
             self.epochs[index] = [pass.this_epoch, previous_valid];
-            if authority_bit != 0 {
-                self.authority_revisions[index] = u64::MAX;
-                authority_bit = 0;
-            }
+            authority_bit = 0;
             if link.has_children() {
                 self.parent_scratch.push((link.depth(), index as u32));
             }
         } else {
             forget_published(&mut self.epochs[index]);
             if valid {
-                let revision = self.hierarchy.revision_at(index);
-                if self.authority_revisions[index] != revision || revision == u64::MAX {
-                    let matrix = self.hierarchy.global(index).expect("valid_node_global");
-                    self.authority[index] = pose_rows(matrix);
-                    self.authority_revisions[index] = revision;
+                if authority_bit == 0 {
                     self.authority_stamps[index] = pass.sequence;
                     self.stamp(3, index);
                 }
@@ -559,9 +527,7 @@ fn walk(
         epochs,
         info: infos,
         info_stamps,
-        authority,
         authority_stamps,
-        authority_revisions,
         state,
         parent_scratch,
         active,
@@ -582,12 +548,10 @@ fn walk(
     let record_count = records.history_nodes.len();
     let mut gather = Walk {
         pass,
-        hierarchy,
+        sources: &hierarchy.sources()[..nodes],
         links: &hierarchy.links()[..nodes],
         locals: &hierarchy.locals()[..nodes],
         local_revisions: &hierarchy.local_revisions()[..nodes],
-        history_hints: &hierarchy.history_hints()[..nodes],
-        history_nodes: records.history_nodes,
         intervals: &records.intervals[..record_count],
         record_previous: &records.previous[..record_count],
         indices: records.indices,
@@ -597,9 +561,7 @@ fn walk(
         epochs: &mut epochs[..nodes],
         infos: &mut infos[..nodes],
         info_stamps: &mut info_stamps[..nodes],
-        authority: &mut authority[..nodes],
         authority_stamps: &mut authority_stamps[..nodes],
-        authority_revisions: &mut authority_revisions[..nodes],
         state: &mut state[..nodes],
         parent_scratch,
         changed: [0; 4],

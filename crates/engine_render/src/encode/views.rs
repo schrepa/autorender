@@ -56,7 +56,6 @@ impl Run {
             );
             self.rebuilt.buffers += 1;
             self.touch(Held::Cameras);
-            self.uploads.cameras.clear();
         }
         let mut staged = std::mem::take(&mut self.spare.cameras);
         staged.clear();
@@ -66,30 +65,17 @@ impl Run {
             let raw = bytemuck::bytes_of(camera);
             staged[at..at + raw.len()].copy_from_slice(raw);
         }
-        if staged == self.uploads.cameras {
-            self.spare.cameras = staged;
-            return 0;
-        }
-        let main = size_of::<CameraUniform>();
-        let changed = self.uploads.cameras.get(..main) != staged.get(..main);
         crate::gpu_calls::upload_buffer(&self.queue, &self.camera, 0, &staged);
-        self.spare.cameras = std::mem::replace(&mut self.uploads.cameras, staged);
-        if changed { main as u64 } else { 0 }
+        self.spare.cameras = staged;
+        size_of::<CameraUniform>() as u64
     }
 
     pub(crate) fn write_post(&mut self) {
-        if self.post_written == Some(self.post) {
-            return;
-        }
         crate::gpu_calls::upload_buffer(&self.queue, &self.post_buffer, 0, bytemuck::bytes_of(&self.post));
-        self.post_written = Some(self.post);
     }
 
-    pub(crate) fn write_pieces(&mut self, bytes: Vec<u8>) -> u64 {
-        if self.uploads.pieces.as_ref() == Some(&bytes) {
-            return 0;
-        }
-        let size = (bytes.len() as u64).max(crate::pieces::PIECE_ALIGN).next_multiple_of(crate::pieces::PIECE_ALIGN);
+    pub(crate) fn write_pieces(&mut self, staged: &mut Vec<u8>) -> u64 {
+        let size = (staged.len() as u64).max(crate::pieces::PIECE_ALIGN).next_multiple_of(crate::pieces::PIECE_ALIGN);
         if self.pieces.size() != size {
             self.pieces = crate::memory::buffer(
                 &self.device,
@@ -103,10 +89,8 @@ impl Run {
             self.rebuilt.buffers += 1;
             self.touch(Held::Pieces);
         }
-        let mut staged = bytes.clone();
         staged.resize(size as usize, 0);
-        crate::gpu_calls::upload_buffer(&self.queue, &self.pieces, 0, &staged);
-        self.uploads.pieces = Some(bytes);
+        crate::gpu_calls::upload_buffer(&self.queue, &self.pieces, 0, staged);
         size
     }
 
@@ -223,24 +207,9 @@ impl Run {
         }
     }
 
-    pub(super) fn binding_bytes(&mut self, pipeline: Option<usize>, group: u32, binding: u32) -> u64 {
-        let key = (pipeline, group, binding);
-        if let Some((_, bytes)) = self.sized.iter().find(|(known, _)| *known == key) {
-            return *bytes;
-        }
-        let marker = format!("@binding({binding})");
-        let reach = match pipeline {
-            Some(at) => at..at + 1,
-            None => 0..self.machine.pipelines.len(),
-        };
-        let needed = reach
-            .filter_map(|at| self.machine.pipelines.get(at))
-            .flat_map(|built| built.stages.iter())
-            .filter(|stage| stage.composed.text.contains(&marker))
-            .find_map(|stage| crate::sizes::binding_size(&stage.composed.text, group, binding));
-        let bytes = needed.unwrap_or(0).max(PLACEHOLDER_BYTES).next_multiple_of(16);
-        self.sized.push((key, bytes));
-        bytes
+    pub(super) fn binding_bytes(&self, pipeline: Option<usize>, group: u32, binding: u32) -> u64 {
+        let needed = self.machine.binding_bytes.get(&(pipeline, group, binding));
+        needed.copied().unwrap_or(0).max(PLACEHOLDER_BYTES).next_multiple_of(16)
     }
 
     pub(super) fn resource(&mut self, bound: &Bound, ty: Ty, reading: bool) -> Resolved {

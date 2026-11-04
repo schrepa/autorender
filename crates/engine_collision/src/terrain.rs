@@ -1,13 +1,11 @@
 use std::cell::Cell;
-
-use bevy_ecs::prelude::{Entity, Query};
 use std::sync::Arc;
 
-use engine_places::ground::{TILE_QUADS, TILE_SAMPLES, TileKey};
+use bevy_ecs::prelude::Entity;
 use engine_places::physics::{
     CollisionLayers, CollisionRay, QueryFilter, RayHit, SensorFilter, ShapeCastOptions, ShapeHit,
 };
-use engine_places::solids::FieldSamples;
+use engine_places::solids::{Bounds, FieldTile, SolidField};
 use glam::Vec3;
 use parry3d::{
     bounding_volume::Aabb,
@@ -17,26 +15,14 @@ use parry3d::{
         epa::EPA,
         gjk::{self, CsoPoint, GJKResult, VoronoiSimplex},
     },
-    shape::{HeightField, HeightFieldCellStatus, Triangle},
-    utils::Array2,
+    shape::Triangle,
 };
 
-use crate::geometry::{AffineShape, Bounds, Support};
+use crate::geometry::{AffineShape, Support};
 use crate::types::Fault;
-use crate::world::Sources;
 
-struct Field {
-    entity: Entity,
-    key: TileKey,
-    samples: Arc<dyn FieldSamples>,
-    center: Vec3,
-    shape: Arc<HeightField>,
-    bounds: Bounds,
-}
-
-#[derive(Default)]
-pub(crate) struct TerrainFields {
-    fields: Vec<Field>,
+fn tiles(sources: &[Arc<SolidField>]) -> impl Iterator<Item = &Arc<FieldTile>> {
+    sources.iter().flat_map(|source| &source.fields)
 }
 
 fn accepts(filter: QueryFilter, entity: Entity) -> bool {
@@ -45,212 +31,156 @@ fn accepts(filter: QueryFilter, entity: Entity) -> bool {
         && filter.sensors != SensorFilter::Only
 }
 
-impl TerrainFields {
-    pub(crate) fn owners(&self) -> impl Iterator<Item = Entity> + '_ {
-        self.fields.iter().map(|field| field.entity)
-    }
+pub(crate) fn owners(sources: &[Arc<SolidField>]) -> impl Iterator<Item = Entity> + '_ {
+    tiles(sources).map(|field| field.owner)
+}
 
-    pub(crate) fn sync(&mut self, sources: &Query<'_, '_, Sources>) {
-        let mut kept = std::mem::take(&mut self.fields);
-        for patch in sources
-            .iter()
-            .flat_map(|(_, source)| source.into_inner().field.fields())
-        {
-            let (entity, key, origin) = (patch.owner, patch.key, patch.origin);
-            if let Some(position) = kept.iter().position(|field| {
-                field.entity == entity
-                    && field.key == key
-                    && (Arc::ptr_eq(&field.samples, &patch.samples)
-                        || field.samples.same(&*patch.samples))
-            }) {
-                let mut field = kept.swap_remove(position);
-                field.samples = patch.samples.clone();
-                self.fields.push(field);
-                continue;
-            }
-            let samples = TILE_SAMPLES as usize;
-            let spacing = patch.spacing;
-            let mut heights = Vec::with_capacity(samples * samples);
-            for x in 0..samples as i32 {
-                for z in 0..samples as i32 {
-                    heights.push(patch.samples.height(x, z));
-                }
-            }
-            let size = TILE_QUADS as f32 * spacing;
-            let mut shape = HeightField::new(
-                Array2::new(samples, samples, heights),
-                Vec3::new(size, 1.0, size),
-            );
-            for z in 0..TILE_QUADS {
-                for x in 0..TILE_QUADS {
-                    if patch.samples.hole(x, z) {
-                        shape.set_cell_status(
-                            z as usize,
-                            x as usize,
-                            HeightFieldCellStatus::CELL_REMOVED,
-                        );
-                    }
-                }
-            }
-            let corner = Vec3::new(
-                origin.x + f32::from(key.x) * size,
-                origin.y,
-                origin.z + f32::from(key.z) * size,
-            );
-            let [low, high] = patch.bounds;
-            self.fields.push(Field {
-                entity,
-                key,
-                samples: patch.samples.clone(),
-                center: corner + Vec3::new(size * 0.5, 0.0, size * 0.5),
-                shape: Arc::new(shape),
-                bounds: Bounds {
-                    min: Vec3::new(corner.x, origin.y + low, corner.z),
-                    max: Vec3::new(corner.x + size, origin.y + high, corner.z + size),
-                },
-            });
+pub(crate) fn ray(
+    sources: &[Arc<SolidField>],
+    ray: CollisionRay,
+    filter: QueryFilter,
+) -> Option<RayHit> {
+    let mut nearest: Option<RayHit> = None;
+    for field in tiles(sources) {
+        if !accepts(filter, field.owner) || !field.bounds().ray(ray) {
+            continue;
+        }
+        let local = Ray::new(ray.origin - field.center, ray.direction);
+        let Some(hit) = field
+            .shape()
+            .cast_local_ray_and_get_normal(&local, ray.max_distance, true)
+        else {
+            continue;
+        };
+        if !hit.time_of_impact.is_finite() {
+            continue;
+        }
+        let candidate = RayHit {
+            entity: field.owner,
+            distance: hit.time_of_impact,
+            point: ray.origin + ray.direction * hit.time_of_impact,
+            normal: hit.normal.try_normalize().unwrap_or(Vec3::Y),
+            started_inside: false,
+            placed: None,
+        };
+        if nearest.is_none_or(|old| candidate.distance < old.distance) {
+            nearest = Some(candidate);
         }
     }
+    nearest
+}
 
-    pub(crate) fn ray(&self, ray: CollisionRay, filter: QueryFilter) -> Option<RayHit> {
-        let mut nearest: Option<RayHit> = None;
-        for field in &self.fields {
-            if !accepts(filter, field.entity) || !field.bounds.ray(ray) {
-                continue;
-            }
-            let local = Ray::new(ray.origin - field.center, ray.direction);
-            let Some(hit) =
-                field
-                    .shape
-                    .cast_local_ray_and_get_normal(&local, ray.max_distance, true)
-            else {
-                continue;
-            };
-            if !hit.time_of_impact.is_finite() {
-                continue;
-            }
-            let candidate = RayHit {
-                entity: field.entity,
+pub(crate) fn ray_all(
+    sources: &[Arc<SolidField>],
+    ray: CollisionRay,
+    filter: QueryFilter,
+    output: &mut Vec<RayHit>,
+) {
+    for field in tiles(sources) {
+        if !accepts(filter, field.owner) || !field.bounds().ray(ray) {
+            continue;
+        }
+        let local = Ray::new(ray.origin - field.center, ray.direction);
+        if let Some(hit) = field
+            .shape()
+            .cast_local_ray_and_get_normal(&local, ray.max_distance, true)
+            .filter(|hit| hit.time_of_impact.is_finite())
+        {
+            output.push(RayHit {
+                entity: field.owner,
                 distance: hit.time_of_impact,
                 point: ray.origin + ray.direction * hit.time_of_impact,
                 normal: hit.normal.try_normalize().unwrap_or(Vec3::Y),
                 started_inside: false,
                 placed: None,
-            };
-            if nearest.is_none_or(|old| candidate.distance < old.distance) {
-                nearest = Some(candidate);
-            }
-        }
-        nearest
-    }
-
-    pub(crate) fn ray_all(&self, ray: CollisionRay, filter: QueryFilter, output: &mut Vec<RayHit>) {
-        for field in &self.fields {
-            if !accepts(filter, field.entity) || !field.bounds.ray(ray) {
-                continue;
-            }
-            let local = Ray::new(ray.origin - field.center, ray.direction);
-            if let Some(hit) = field
-                .shape
-                .cast_local_ray_and_get_normal(&local, ray.max_distance, true)
-                .filter(|hit| hit.time_of_impact.is_finite())
-            {
-                output.push(RayHit {
-                    entity: field.entity,
-                    distance: hit.time_of_impact,
-                    point: ray.origin + ray.direction * hit.time_of_impact,
-                    normal: hit.normal.try_normalize().unwrap_or(Vec3::Y),
-                    started_inside: false,
-                    placed: None,
-                });
-            }
+            });
         }
     }
+}
 
-    pub(crate) fn overlap(
-        &self,
-        shape: &AffineShape,
-        filter: QueryFilter,
-        output: &mut Vec<Entity>,
-    ) -> Result<(), Fault> {
-        for field in &self.fields {
-            if !accepts(filter, field.entity)
-                || output.contains(&field.entity)
-                || !field.bounds.overlaps(shape.bounds)
-            {
-                continue;
-            }
-            let mut result = Ok(false);
-            field.shape.map_elements_in_local_aabb(
-                &local_aabb(shape.bounds, field.center),
-                &mut |_, triangle| {
-                    if matches!(result, Ok(false)) {
-                        result = triangle_overlaps(shape, triangle, field.center);
-                    }
-                },
-            );
-            if result? {
-                output.push(field.entity);
-            }
+pub(crate) fn overlap(
+    sources: &[Arc<SolidField>],
+    shape: &AffineShape,
+    filter: QueryFilter,
+    output: &mut Vec<Entity>,
+) -> Result<(), Fault> {
+    for field in tiles(sources) {
+        if !accepts(filter, field.owner)
+            || output.contains(&field.owner)
+            || !field.bounds().overlaps(shape.bounds)
+        {
+            continue;
         }
-        Ok(())
+        let mut result = Ok(false);
+        field.shape().map_elements_in_local_aabb(
+            &local_aabb(shape.bounds, field.center),
+            &mut |_, triangle| {
+                if matches!(result, Ok(false)) {
+                    result = triangle_overlaps(shape, triangle, field.center);
+                }
+            },
+        );
+        if result? {
+            output.push(field.owner);
+        }
     }
+    Ok(())
+}
 
-    pub(crate) fn cast(
-        &self,
-        shape: &AffineShape,
-        displacement: Vec3,
-        filter: QueryFilter,
-        options: ShapeCastOptions,
-    ) -> Result<Option<ShapeHit>, Fault> {
-        let swept = shape
-            .bounds
-            .swept(displacement)
-            .expanded(options.target_distance);
-        let mut nearest: Option<ShapeHit> = None;
-        let mut epa = EPA::new();
-        for field in &self.fields {
-            if !accepts(filter, field.entity) || !field.bounds.overlaps(swept) {
-                continue;
-            }
-            let mut failure = None;
-            field.shape.map_elements_in_local_aabb(
-                &local_aabb(swept, field.center),
-                &mut |_, triangle| {
-                    if failure.is_some() {
-                        return;
-                    }
-                    match cast_triangle(
-                        &mut epa,
-                        shape,
-                        triangle,
-                        field.center,
-                        displacement,
-                        options,
-                    ) {
-                        Ok(Some((fraction, point, normal, started))) => {
-                            if nearest.is_none_or(|old| fraction < old.fraction) {
-                                nearest = Some(ShapeHit {
-                                    entity: field.entity,
-                                    fraction,
-                                    point,
-                                    normal,
-                                    started_overlapping: started,
-                                    placed: None,
-                                });
-                            }
+pub(crate) fn cast(
+    sources: &[Arc<SolidField>],
+    shape: &AffineShape,
+    displacement: Vec3,
+    filter: QueryFilter,
+    options: ShapeCastOptions,
+) -> Result<Option<ShapeHit>, Fault> {
+    let swept = shape
+        .bounds
+        .swept(displacement)
+        .expanded(options.target_distance);
+    let mut nearest: Option<ShapeHit> = None;
+    let mut epa = EPA::new();
+    for field in tiles(sources) {
+        if !accepts(filter, field.owner) || !field.bounds().overlaps(swept) {
+            continue;
+        }
+        let mut failure = None;
+        field.shape().map_elements_in_local_aabb(
+            &local_aabb(swept, field.center),
+            &mut |_, triangle| {
+                if failure.is_some() {
+                    return;
+                }
+                match cast_triangle(
+                    &mut epa,
+                    shape,
+                    triangle,
+                    field.center,
+                    displacement,
+                    options,
+                ) {
+                    Ok(Some((fraction, point, normal, started))) => {
+                        if nearest.is_none_or(|old| fraction < old.fraction) {
+                            nearest = Some(ShapeHit {
+                                entity: field.owner,
+                                fraction,
+                                point,
+                                normal,
+                                started_overlapping: started,
+                                placed: None,
+                            });
                         }
-                        Ok(None) => {}
-                        Err(error) => failure = Some(error),
                     }
-                },
-            );
-            if let Some(error) = failure {
-                return Err(error);
-            }
+                    Ok(None) => {}
+                    Err(error) => failure = Some(error),
+                }
+            },
+        );
+        if let Some(error) = failure {
+            return Err(error);
         }
-        Ok(nearest)
     }
+    Ok(nearest)
 }
 
 fn local_aabb(bounds: Bounds, center: Vec3) -> Aabb {

@@ -13,7 +13,7 @@ use engine_core::{
     Brick, Bricks, ComponentKind, Error, ErrorCode, Runs, SceneComponents, SceneCx, Schedule,
     Smoke, Source, View, gpu_struct, settings, stats,
 };
-use engine_places::text::{DEFAULT_TEXT_SIZE, Text, TextAlign};
+use engine_places::text::{DEFAULT_TEXT_SIZE, FontId, Text, TextAlign};
 use engine_render::{
     Bind, Buffer, DepthUse, Draw, GpuPart, Install, Layer, Lifetime, Overlay, Pipeline, Prepare,
     RenderBricks, RenderPipeline, Shape, Texture, wgpu,
@@ -71,6 +71,9 @@ pub struct Label {
     #[serde(skip)]
     #[schemars(skip)]
     bytes: Option<Arc<[u8]>>,
+    #[serde(skip)]
+    #[schemars(skip)]
+    face: Option<FontId>,
 }
 
 impl Default for Label {
@@ -87,6 +90,7 @@ impl Default for Label {
             align: TextAlign::Left,
             visible: true,
             bytes: None,
+            face: None,
         }
     }
 }
@@ -128,16 +132,21 @@ fn install(mut text: ResMut<Text>) {
     ensure(&mut text);
 }
 
-fn sync(text: Res<Text>, settings: Res<TextSettings>, view: Res<View>) {
-    if let Some(typesetter) = Typesetter::of(&text) {
-        typesetter.lock().sync(&settings, &view);
+fn sync(
+    (text, settings, view): (Res<Text>, Res<TextSettings>, Res<View>),
+    mut labels: Query<&mut Label>,
+    mut stats: ResMut<TextStats>,
+) {
+    let Some(typesetter) = Typesetter::of(&text) else {
+        return;
+    };
+    let mut state = typesetter.lock();
+    state.sync(&settings, &view);
+    for mut label in labels.iter_mut().filter(|label| label.bytes.is_some()) {
+        let bytes = label.bytes.take();
+        label.face = bytes.and_then(|bytes| state.load_font(bytes));
     }
-}
-
-fn publish(text: Res<Text>, mut stats: ResMut<TextStats>) {
-    if let Some(typesetter) = Typesetter::of(&text) {
-        stats.set_if_neq(typesetter.lock().stats());
-    }
+    stats.set_if_neq(state.stats());
 }
 
 pub struct TextBrick;
@@ -173,7 +182,6 @@ impl Brick for TextBrick {
             )
             .systems(Schedule::FixedPreSimulation, install)
             .systems(Schedule::FrameStart, (install, sync))
-            .systems(Schedule::Rendered, publish)
             .operation::<operations::TextMeasure>()
             .observation::<operations::TextRuns>()
             .generated(GENERATED)
@@ -186,7 +194,6 @@ struct TextGpu {
     instances: Buffer<Self>,
     atlas: Texture<Self>,
     staged: Vec<GlyphInstance>,
-    written: Vec<GlyphInstance>,
     drawn: u32,
 }
 
@@ -224,7 +231,6 @@ impl GpuPart for TextGpu {
             instances,
             atlas,
             staged: Vec::new(),
-            written: Vec::new(),
             drawn: 0,
         })
     }
@@ -241,7 +247,6 @@ impl GpuPart for TextGpu {
         let mut state = typesetter.lock();
         if cx.fresh() {
             state.forget_atlas();
-            self.written.clear();
         }
         state.frame(labels.iter(), &settings, &view, &mut self.staged);
         let uploads = state.take_uploads();
@@ -275,14 +280,11 @@ impl GpuPart for TextGpu {
         if self.staged.is_empty() {
             return;
         }
-        if self.staged != self.written {
-            cx.grow_buffer(
-                self.instances,
-                std::mem::size_of_val(self.staged.as_slice()) as u64,
-            );
-            cx.write(self.instances, 0, &self.staged);
-            self.written.clone_from(&self.staged);
-        }
+        cx.grow_buffer(
+            self.instances,
+            std::mem::size_of_val(self.staged.as_slice()) as u64,
+        );
+        cx.write(self.instances, 0, &self.staged);
         self.drawn = self.staged.len() as u32;
         cx.want_overlay();
     }

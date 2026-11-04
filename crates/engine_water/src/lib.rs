@@ -8,6 +8,7 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod debug;
+mod drawn;
 pub mod flow;
 mod flow_step;
 mod gpu;
@@ -42,7 +43,7 @@ use engine_render::{DebugModes, DebugShown, RenderBricks};
 
 pub(crate) use engine_codec as codec;
 pub(crate) use engine_heightfield::tile::Footprint;
-pub(crate) use engine_heightfield::{Layers, NARROWEST, Rivers, TileKey};
+pub(crate) use engine_heightfield::{Layers, NARROWEST, TileKey};
 
 pub use flow::{Block, Pool, RiverFlow, WEIR};
 pub use settings::Water;
@@ -56,8 +57,6 @@ pub use windows::{
 
 use state::{RiverBody, WaterState};
 use water_particles::ParticleTallies;
-use waterfalls::TerrainFalls;
-use white_water::TerrainWhiteWater;
 
 stats! {
     #[section("water_stats")]
@@ -102,6 +101,9 @@ impl Brick for WaterBrick {
         &jobs::PARTS,
         &jobs::STEADIED,
         &jobs::SETTLED,
+        &jobs::DRAWN,
+        &jobs::REWATER,
+        &jobs::REACH,
     ];
 
     fn register(bricks: &mut Bricks<'_>) {
@@ -112,8 +114,6 @@ impl Brick for WaterBrick {
             .resource::<WaterState>()
             .resource::<SettleFeedback>()
             .resource::<ParticleTallies>()
-            .resource::<TerrainFalls>()
-            .resource::<TerrainWhiteWater>()
             .piece::<gpu::WaterPiece>()
             .fill::<Waterline>(Some(shaders::water::faces::water::MODULE))
             .observation::<views::WaterFlowQuery>();
@@ -129,6 +129,7 @@ impl Brick for WaterBrick {
                     water_settle::hand_settles,
                     settled::request_settle,
                     rewater::rewater,
+                    drawn::draw,
                     water_settle::plan_settles,
                     water_blocks::place_blocks,
                     water_sim::plan_sim,
@@ -149,6 +150,7 @@ impl Brick for WaterBrick {
             )
             .systems(Schedule::FixedSimulation, flow_step::step)
             .off(despawn_water)
+            .off(drawn::stop_draws)
             .generated(gpu::GENERATED)
             .part::<water::WaterGpu>();
     }
@@ -235,7 +237,6 @@ fn publish_piece(shown: Res<DebugShown>, mut piece: ResMut<gpu::WaterPiece>) {
 
 fn despawn_water(
     owned: Query<Entity, With<RiverBody>>,
-    (mut falls, mut white): (ResMut<TerrainFalls>, ResMut<TerrainWhiteWater>),
     (mut state, mut feedback): (ResMut<WaterState>, ResMut<SettleFeedback>),
     mut stats: ResMut<WaterStats>,
     mut line: ResMut<Waterline>,
@@ -245,7 +246,7 @@ fn despawn_water(
     for entity in &owned {
         spawner.despawn(entity);
     }
-    for entity in falls.take().into_iter().chain(white.take()) {
+    for entity in state.take_emitters() {
         spawner.despawn(entity);
     }
     state.clear(&mut jobs);

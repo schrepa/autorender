@@ -1,5 +1,5 @@
 import package::place::heightfield::{TerrainUniform, TerrainView};
-import package::generated::terrain_shading::{TABLE_HOLES, TABLE_TERRAINS, TABLE_VIEWS, TERRAIN_WORDS, VIEW_WORDS};
+import package::generated::terrain_shading::{ARRIVAL_SECONDS, TABLE_FADES, TABLE_NOW, TABLE_TERRAINS, TABLE_VIEWS, TERRAIN_WORDS, VIEW_WORDS};
 
 @group(0) @binding(0) var<storage, read> terrain_tables: array<u32>;
 
@@ -30,6 +30,9 @@ fn table_view(index: u32) -> TerrainView {
             table_floats(at + 32u)));
 }
 
-fn table_fades(layer: u32) -> u32 {
-    return terrain_tables[terrain_tables[TABLE_HOLES] + layer / 2u];
+fn table_fades(layer: u32) -> vec2<f32> {
+    let at = terrain_tables[TABLE_FADES] + 2u * layer;
+    let began = vec2<f32>(bitcast<f32>(terrain_tables[at]), bitcast<f32>(terrain_tables[at + 1u]));
+    let since = max(vec2<f32>(bitcast<f32>(terrain_tables[TABLE_NOW])) - began, vec2<f32>(0.0));
+    return vec2<f32>(1.0) - min(since / ARRIVAL_SECONDS, vec2<f32>(1.0));
 }

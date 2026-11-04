@@ -105,7 +105,6 @@ fn within(budget: Option<u32>, limit: usize) -> usize {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct CollisionReport {
-    pub revision: u64,
     pub frame: u64,
     pub tick: u64,
     pub colliders: usize,
@@ -183,7 +182,6 @@ stats! {
     #[derive(Copy)]
     #[schemars(rename = "CollisionWorldView")]
     pub struct CollisionStats {
-        pub revision: Count,
         pub frame: Count,
         pub tick: Count,
         pub colliders: usize,
@@ -201,7 +199,6 @@ stats! {
 impl CollisionStats {
     pub(crate) fn of(report: &CollisionReport, config: &CollisionConfig) -> Self {
         Self {
-            revision: Count(report.revision),
             frame: Count(report.frame),
             tick: Count(report.tick),
             colliders: report.colliders,

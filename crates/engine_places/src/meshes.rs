@@ -11,7 +11,7 @@ pub const STILL_FRAMES: u32 = 16;
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct Instances {
-    pub slots: Vec<(Entity, u32)>,
+    pub slots: engine_math::collections::HashMap<Entity, u32>,
     pub capacity: u32,
     pub candidates: u32,
     pub casters: bool,
@@ -19,10 +19,7 @@ pub struct Instances {
 
 impl Instances {
     pub fn drawn(&self, entity: Entity) -> Option<u32> {
-        self.slots
-            .binary_search_by_key(&entity, |&(drawn, _)| drawn)
-            .ok()
-            .map(|index| self.slots[index].1)
+        self.slots.get(&entity).copied()
     }
 }
 

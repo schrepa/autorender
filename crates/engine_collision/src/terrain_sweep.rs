@@ -98,7 +98,7 @@ fn sweep(
     };
     let grounds: Vec<Entity> = collision
         .into_iter()
-        .flat_map(|collision| collision.terrain.owners())
+        .flat_map(CollisionWorld::ground_owners)
         .collect();
     let mut queried = 0;
     let mut level_zero = 0;

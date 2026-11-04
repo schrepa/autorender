@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
@@ -6,57 +6,27 @@ use engine_core::{
     CookMode, DeviceLimits, Error, FrameTime, IDLE_JOBS, JobFailures, Jobs, RecordKey, Records,
     Ticket, VIEW_JOBS, View, WorkClock, job_priority,
 };
-use engine_heightfield::tile::{Solid, TILE_STRIDE, TileJob};
-use engine_heightfield::{Pyramid, Stamp, TILE_QUADS, reaches};
+use engine_heightfield::tile::{Solid, TILE_STRIDE};
+use engine_heightfield::{Pyramid, TILE_QUADS, reaches};
 use engine_places::ground::GroundWork;
 use glam::Vec2;
 
-use crate::jobs::{PARTS, SETTLED, STEADIED, SteadiedJob, WaterJob, settled_share, summary_share};
-use crate::state::{RETRY_AFTER, SettleQueue, WaterState, WaterTerrain};
+use crate::drawn::{DrawAsk, is_dry};
+use crate::jobs::{
+    PARTS, REACH, ReachJob, SETTLED, STEADIED, SteadiedJob, WaterJob, WaterReach, WaterRegion,
+    settled_share, summary_share,
+};
+use crate::state::{Drawing, RETRY_AFTER, SettleQueue, WaterState, WaterTerrain};
 use crate::water_settle::SettleAsk;
 use crate::work::Work;
 use crate::{
-    Layers, SettleRegion, SettleStart, SettledKey, SteadyCell, SteadyWater, TileKey, TileWater,
-    Water, WaterPart,
+    Layers, SettleRegion, SettleStart, SettledKey, SteadyCell, SteadyWater, TileKey, Water,
+    WaterPart,
 };
 
 const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as u64) * 4;
 const SETTLED_TAG: u8 = 0;
 const SUMMARY_TAG: u8 = 1;
-
-pub fn settled_alike(handed: &[u8], made: &[u8]) -> bool {
-    let (Ok(handed), Ok(made)) = (
-        engine_codec::decode::<SteadyWater>(handed),
-        engine_codec::decode::<SteadyWater>(made),
-    ) else {
-        return false;
-    };
-    if handed.key != made.key || handed.first != made.first || handed.cells != made.cells {
-        return false;
-    }
-    let [columns, rows] = handed.cells;
-    let first = handed.first;
-    let (mut cells, mut wetness, mut wet, mut apart) = (0_u32, 0_u32, 0_u32, 0_u32);
-    for j in 0..i64::from(rows) {
-        for i in 0..i64::from(columns) {
-            let at = |water: &SteadyWater| match water.at(first[0] + i, first[1] + j) {
-                Some(SteadyCell::Held { level, .. }) => Some(level),
-                Some(SteadyCell::Flowing { surface, .. }) => Some(surface),
-                Some(SteadyCell::Dry) | None => None,
-            };
-            cells += 1;
-            match (at(&handed), at(&made)) {
-                (Some(a), Some(b)) => {
-                    wet += 1;
-                    apart += u32::from((a - b).abs() > 0.05);
-                }
-                (None, None) => {}
-                (Some(_), None) | (None, Some(_)) => wetness += 1,
-            }
-        }
-    }
-    wetness * 50 <= cells && apart * 100 <= wet.max(1)
-}
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Input {
@@ -79,16 +49,11 @@ enum Phase {
     Settling,
 }
 
-#[derive(Clone, PartialEq, Eq)]
-struct Keys {
-    region: Input,
-    alone: Input,
-}
-
 struct Asked {
     phase: Phase,
     record: Input,
     made: bool,
+    alone: bool,
 }
 
 impl Asked {
@@ -114,14 +79,8 @@ enum Part {
     Made(Arc<WaterPart>),
 }
 
-#[derive(Clone, PartialEq, Eq)]
-struct Reads {
-    tile: RecordKey,
-    settled: Vec<(TileKey, RecordKey)>,
-}
-
 enum Wants {
-    Here(Reads),
+    Here(Vec<(TileKey, RecordKey)>),
     Coming,
     Nothing,
 }
@@ -133,53 +92,83 @@ enum Found {
 }
 
 struct Watering {
-    reads: Reads,
+    reads: Vec<(TileKey, RecordKey)>,
     record: RecordKey,
     job: Option<Ticket>,
-    made: Option<Arc<Option<TileWater>>>,
+    made: Option<Arc<[u8]>>,
 }
 
-type Generation = (Option<[u8; 32]>, Arc<[Stamp]>);
-type Checked = (Generation, Arc<[Option<Solid>]>, u128);
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Made {
+    generation: u64,
+    alone: bool,
+    pub(crate) record: RecordKey,
+}
+
+struct Keyed {
+    recipe: [u8; 32],
+    solids: Arc<[Option<Solid>]>,
+    relief: u128,
+    basis: [u8; 32],
+}
+
+struct HeldReach {
+    watered: Arc<[TileKey]>,
+    regions: Arc<[WaterRegion]>,
+    of: Arc<[u32]>,
+}
+
+enum ReachPhase {
+    Asked(Ticket),
+    Failed(u64),
+    Held(HeldReach),
+}
+
+struct Reach {
+    wanted: ([u8; 32], f32),
+    phase: ReachPhase,
+}
+
+fn reach_input((recipe, cell): ([u8; 32], f32)) -> Vec<u8> {
+    engine_codec::encode(&ReachJob { recipe, cell })
+}
+
+impl Reach {
+    fn held(&self) -> Option<&HeldReach> {
+        match &self.phase {
+            ReachPhase::Held(held) => Some(held),
+            ReachPhase::Asked(_) | ReachPhase::Failed(_) => None,
+        }
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Settled {
     cell: f32,
-    watered: Option<(Arc<Layers>, Arc<[TileKey]>)>,
-    regions: Arc<[([u32; 4], Vec<TileKey>)]>,
-    checked: Option<Checked>,
-    records: BTreeMap<TileKey, Keys>,
-    pub(crate) held: BTreeMap<TileKey, (Arc<SteadyWater>, RecordKey)>,
-    shared: BTreeMap<TileKey, RecordKey>,
-    summaries: BTreeMap<TileKey, RecordKey>,
+    reach: Option<Reach>,
+    over: Option<Arc<Layers>>,
+    keyed: Option<Keyed>,
+    generation: u64,
+    pub(crate) held: BTreeMap<TileKey, (Arc<SteadyWater>, Made)>,
+    shared: BTreeMap<TileKey, Made>,
+    summaries: BTreeMap<TileKey, Made>,
     asked: BTreeMap<TileKey, Asked>,
     failed: BTreeMap<TileKey, u64>,
-    missing: HashSet<RecordKey>,
+    missing: BTreeSet<(TileKey, bool)>,
     making: Vec<Making>,
     parts: BTreeMap<TileKey, Part>,
-    tiles: BTreeMap<TileKey, (TileJob, RecordKey)>,
-    tiles_for: Option<Generation>,
     waters: BTreeMap<TileKey, Watering>,
     waters_failed: BTreeMap<TileKey, u64>,
-    given: BTreeMap<TileKey, (engine_core::Stamp, RecordKey)>,
     sharing: BTreeMap<(RecordKey, u8), RecordKey>,
-    revision: u64,
-    seen: Option<(u64, u64, Generation, bool)>,
-    deferred: bool,
     waters_waiting: u64,
     cooking: bool,
-    around: Option<Around>,
-    ask_seen: Option<(u64, u64, Generation, bool)>,
-    give_seen: Option<usize>,
-    give_more: bool,
-}
-
-#[derive(Clone)]
-struct Around {
-    seen: (u64, bool),
     near: Arc<[TileKey]>,
     kept: Arc<[TileKey]>,
     whole: Arc<[TileKey]>,
+    moved: bool,
+    ask_again: bool,
+    water_again: bool,
+    give_again: bool,
 }
 
 impl Settled {
@@ -187,15 +176,57 @@ impl Settled {
         (self.summaries.len() as u32, self.asked.len() as u32)
     }
 
+    pub(crate) fn stir(&mut self, moved: bool) {
+        self.moved |= moved;
+        self.ask_again |= moved;
+        self.water_again = true;
+        self.give_again = true;
+    }
+
+    fn changed(&mut self) {
+        self.ask_again = true;
+        self.water_again = true;
+    }
+
+    pub(crate) fn water_failed(&mut self, key: TileKey, frame: u64) {
+        self.waters.remove(&key);
+        self.waters_failed.insert(key, frame);
+        self.water_again = true;
+    }
+
+    fn held_reach(&self) -> Option<&HeldReach> {
+        self.reach.as_ref().and_then(Reach::held)
+    }
+
+    fn rect_of(&self, key: TileKey) -> Option<[u32; 4]> {
+        let reach = self.held_reach()?;
+        let at = reach.watered.binary_search(&key).ok()?;
+        let region = *reach.of.get(at)? as usize;
+        Some(reach.regions.get(region)?.tiles)
+    }
+
+    fn single(&self, key: TileKey) -> bool {
+        self.rect_of(key)
+            .is_some_and(|[_, _, columns, rows]| columns == 1 && rows == 1)
+    }
+
     pub(crate) fn left(&self) -> u64 {
-        let Some((_, watered)) = &self.watered else {
+        let Some(reach) = &self.reach else {
             return 0;
+        };
+        let watered = match &reach.phase {
+            ReachPhase::Asked(_) => return 1,
+            ReachPhase::Failed(_) => return 0,
+            ReachPhase::Held(held) => &held.watered,
         };
         let records = watered
             .iter()
             .filter(|&&key| {
-                let region = self.records.get(&key).map(|keys| keys.region.key);
-                self.summaries.get(&key).copied() != region && !self.failed.contains_key(&key)
+                let single = self.single(key);
+                let current = self.summaries.get(&key).is_some_and(|made| {
+                    made.generation == self.generation && made.alone == single
+                });
+                !current && !self.failed.contains_key(&key)
             })
             .count() as u64;
         let running = self
@@ -215,23 +246,24 @@ impl Settled {
         self.held.get(&key)?.0.at(i, j)
     }
 
-    pub(crate) fn ready(&self, key: TileKey, stamp: engine_core::Stamp, held_back: bool) -> bool {
+    pub(crate) fn ready(&self, key: TileKey, given: bool) -> bool {
         let watered = self
-            .watered
-            .as_ref()
-            .is_some_and(|(_, keys)| keys.binary_search(&key).is_ok());
+            .held_reach()
+            .is_some_and(|reach| reach.watered.binary_search(&key).is_ok());
         if !watered {
             return true;
         }
-        self.held.contains_key(&key)
-            && (held_back
-                || self
-                    .given
-                    .get(&key)
-                    .is_some_and(|(given, _)| *given == stamp))
+        self.held.contains_key(&key) && given
     }
 
     pub(crate) fn cancel_all(&mut self, jobs: &mut Jobs) {
+        if let Some(Reach {
+            phase: ReachPhase::Asked(ticket),
+            ..
+        }) = self.reach.take()
+        {
+            jobs.cancel(ticket);
+        }
         for (_, asked) in std::mem::take(&mut self.asked) {
             if let Phase::Fetching(ticket) = asked.phase {
                 jobs.cancel(ticket);
@@ -276,23 +308,19 @@ impl Settled {
         }
     }
 
-    fn wanted(&self, key: TileKey) -> Option<RecordKey> {
-        let keys = self.records.get(&key)?;
-        if self.cooking || !self.missing.contains(&keys.region.key) {
-            Some(keys.region.key)
-        } else {
-            Some(keys.alone.key)
-        }
+    fn wants_alone(&self, key: TileKey) -> bool {
+        self.single(key) || (!self.cooking && self.missing(key))
     }
 
-    fn fetched(&self, key: TileKey) -> Option<Input> {
-        let keys = self.records.get(&key)?;
-        if !self.missing.contains(&keys.region.key) {
-            Some(keys.region.clone())
-        } else if self.cooking || self.missing.contains(&keys.alone.key) {
+    fn fetched(&self, key: TileKey) -> Option<bool> {
+        self.keyed.as_ref()?;
+        let single = self.single(key);
+        if !self.missing(key) {
+            self.rect_of(key).map(|_| single)
+        } else if self.cooking || single || self.missing.contains(&(key, true)) {
             None
         } else {
-            Some(keys.alone.clone())
+            Some(true)
         }
     }
 
@@ -302,13 +330,13 @@ impl Settled {
         } else {
             self.summaries.get(&key)
         };
-        here.copied() == self.wanted(key)
+        here.is_some_and(|made| {
+            made.generation == self.generation && made.alone == self.wants_alone(key)
+        })
     }
 
     fn missing(&self, key: TileKey) -> bool {
-        self.records
-            .get(&key)
-            .is_some_and(|keys| self.missing.contains(&keys.region.key))
+        self.missing.contains(&(key, false))
     }
 
     fn found(&self, key: TileKey, whole: bool, (made, settles): (bool, bool)) -> Found {
@@ -317,15 +345,16 @@ impl Settled {
         } else {
             (self.summaries.get(&key), SUMMARY_TAG)
         };
-        if let Some(&record) = here
-            && let Some(&shared) = self.sharing.get(&(record, tag))
+        if let Some(here) = here
+            && let Some(&shared) = self.sharing.get(&(here.record, tag))
         {
             return Found::Here(shared);
         }
+        let known = self.keyed.is_some() && self.rect_of(key).is_some();
         let coming = !self.failed.contains_key(&key)
             && (self.asked.contains_key(&key)
                 || self.fetched(key).is_some()
-                || (made && settles && self.records.contains_key(&key)));
+                || (made && settles && known));
         if coming { Found::Coming } else { Found::Never }
     }
 
@@ -334,43 +363,38 @@ impl Settled {
             self.asked.remove(&key);
             self.failed.insert(key, frame);
         }
-        self.revision += 1;
+        self.changed();
     }
 }
 
-fn water_records(
-    terrain: &WaterTerrain,
-    recipe: [u8; 32],
-    (key, tiles): (TileKey, [u32; 4]),
-    cell: f32,
-) -> Keys {
-    let pyramid = terrain.pyramid;
-    let (low, high) = SettleRegion::alone(&pyramid, key, cell).bounds();
-    let mut settled = SettledKey {
-        recipe,
-        key,
-        stamps: terrain
-            .edits
-            .iter()
-            .copied()
-            .filter(|stamp| {
-                let radius = Vec2::splat(stamp.radius + stamp.falloff);
-                let center = Vec2::from(stamp.center);
-                let (from, to) = (center - radius, center + radius);
-                from.cmple(high).all() && to.cmpge(low).all()
-            })
-            .collect(),
-        solids: terrain.solids.to_vec(),
-        relief: terrain.relief.to_le_bytes(),
-        cell,
-        tiles,
+fn record_input(terrain: &WaterTerrain, key: TileKey, alone: bool) -> Option<Input> {
+    let settled = &terrain.settled;
+    let basis = settled.keyed.as_ref()?.basis;
+    let tiles = if alone {
+        [u32::from(key.x), u32::from(key.z), 1, 1]
+    } else {
+        settled.rect_of(key)?
     };
-    let region = Input::of(settled.identity());
-    settled.tiles = [u32::from(key.x), u32::from(key.z), 1, 1];
-    Keys {
-        region,
-        alone: Input::of(settled.identity()),
+    let (low, high) = SettleRegion::alone(&terrain.pyramid, key, settled.cell).bounds();
+    let stamps = terrain
+        .edits
+        .iter()
+        .copied()
+        .filter(|stamp| {
+            let radius = Vec2::splat(stamp.radius + stamp.falloff);
+            let center = Vec2::from(stamp.center);
+            let (from, to) = (center - radius, center + radius);
+            from.cmple(high).all() && to.cmpge(low).all()
+        })
+        .collect();
+    let identity = SettledKey {
+        basis,
+        key,
+        stamps,
+        tiles,
     }
+    .identity();
+    Some(Input::of(identity))
 }
 
 fn water_part(terrain: &WaterTerrain, recipe: [u8; 32], key: TileKey, cell: f32) -> WaterJob {
@@ -389,31 +413,13 @@ fn water_part(terrain: &WaterTerrain, recipe: [u8; 32], key: TileKey, cell: f32)
     }
 }
 
-fn generation(terrain: &WaterTerrain) -> Generation {
-    (terrain.recipe, Arc::clone(&terrain.edits))
-}
-
-fn settled_tile(terrain: &mut WaterTerrain, key: TileKey) -> Option<(TileJob, RecordKey)> {
-    let basis = generation(terrain);
-    if terrain.settled.tiles_for.as_ref() != Some(&basis) {
-        terrain.settled.tiles = BTreeMap::new();
-        terrain.settled.tiles_for = Some(basis);
-    }
-    if let Some(found) = terrain.settled.tiles.get(&key) {
-        return Some(found.clone());
-    }
-    let job = terrain.tile_job(key)?;
-    let record = RecordKey::of(&crate::jobs::TILE_WATER, &engine_codec::encode(&job));
-    terrain.settled.tiles.insert(key, (job.clone(), record));
-    Some((job, record))
-}
-
 pub(crate) struct Follow<'a, 'w, 's> {
     pub(crate) jobs: &'a mut Jobs<'w, 's>,
     pub(crate) records: &'a Records,
     pub(crate) work: &'a Work,
     pub(crate) failures: &'a mut JobFailures,
     pub(crate) queue: &'a mut SettleQueue,
+    pub(crate) draws: &'a mut Vec<DrawAsk>,
     pub(crate) settles: bool,
 }
 
@@ -423,85 +429,78 @@ pub(crate) fn follow(
     cx: &mut Follow<'_, '_, '_>,
     (eye, frame): (Vec2, u64),
 ) {
-    let Some((recipe, watered)) = refresh(terrain, water, cx.jobs) else {
+    let Some(recipe) = refresh(terrain, water, cx, frame) else {
         return;
     };
-    let seen = (terrain.revision, terrain.settled.cooking);
-    let moved = terrain
+    let Some(watered) = terrain
         .settled
-        .around
-        .as_ref()
-        .is_none_or(|around| around.seen != seen);
+        .held_reach()
+        .map(|reach| Arc::clone(&reach.watered))
+    else {
+        return;
+    };
+    let moved = std::mem::take(&mut terrain.settled.moved);
     if moved {
         let near: Vec<TileKey> =
             terrain.resident_keys(|key| key.level == 0 && watered.binary_search(key).is_ok());
         let kept: Arc<[TileKey]> = beside(&terrain.pyramid, &near, &watered).into();
-        let whole = if terrain.settled.cooking {
+        terrain.settled.whole = if terrain.settled.cooking {
             Arc::clone(&watered)
         } else {
             Arc::clone(&kept)
         };
-        terrain.settled.around = Some(Around {
-            seen,
-            near: near.into(),
-            kept,
-            whole,
-        });
+        terrain.settled.near = near.into();
+        terrain.settled.kept = kept;
     }
-    let Some(Around {
-        near, kept, whole, ..
-    }) = terrain.settled.around.clone()
-    else {
-        return;
-    };
+    let near = Arc::clone(&terrain.settled.near);
+    let kept = Arc::clone(&terrain.settled.kept);
+    let whole = Arc::clone(&terrain.settled.whole);
     take_arrived(terrain, cx, (&kept, &whole), frame);
-    let settled = &mut terrain.settled;
     if moved {
-        let held = settled.held.len();
-        settled
-            .held
-            .retain(|key, _| kept.binary_search(key).is_ok());
-        let mut gone = Vec::new();
-        settled.shared.retain(|key, record| {
-            let keep = whole.binary_search(key).is_ok();
+        let settled = &mut terrain.settled;
+        let mut dropped = Vec::new();
+        settled.held.retain(|key, _| {
+            let keep = kept.binary_search(key).is_ok();
             if !keep {
-                gone.push((*record, SETTLED_TAG));
+                dropped.push(*key);
             }
             keep
         });
-        if held != settled.held.len() || !gone.is_empty() {
-            settled.revision += 1;
+        let mut gone = Vec::new();
+        settled.shared.retain(|key, made| {
+            let keep = whole.binary_search(key).is_ok();
+            if !keep {
+                gone.push((made.record, SETTLED_TAG));
+            }
+            keep
+        });
+        if !dropped.is_empty() || !gone.is_empty() {
+            settled.changed();
         }
         for at in gone {
             settled.release(cx.jobs, at);
         }
-    }
-    let cooking = settled.cooking;
-    let leaving: Vec<TileKey> = settled
-        .asked
-        .iter()
-        .filter(|(key, asked)| asked.made && !cooking && near.binary_search(key).is_err())
-        .map(|(&key, _)| key)
-        .collect();
-    for key in leaving {
-        if let Some(asked) = settled.asked.remove(&key) {
-            settled.revision += 1;
-            if let Phase::Fetching(ticket) = asked.phase {
-                cx.jobs.cancel(ticket);
+        let cooking = settled.cooking;
+        let leaving: Vec<TileKey> = settled
+            .asked
+            .iter()
+            .filter(|(key, asked)| asked.made && !cooking && near.binary_search(key).is_err())
+            .map(|(&key, _)| key)
+            .collect();
+        for key in leaving {
+            if let Some(asked) = settled.asked.remove(&key) {
+                settled.changed();
+                if let Phase::Fetching(ticket) = asked.phase {
+                    cx.jobs.cancel(ticket);
+                }
             }
         }
+        for key in dropped {
+            terrain.touch(key);
+        }
     }
-    let seen = (
-        terrain.settled.revision,
-        terrain.revision,
-        generation(terrain),
-        cx.settles,
-    );
-    if cooking
-        || !terrain.settled.failed.is_empty()
-        || terrain.settled.ask_seen.as_ref() != Some(&seen)
-    {
-        terrain.settled.ask_seen = Some(seen);
+    let again = std::mem::take(&mut terrain.settled.ask_again);
+    if again || terrain.settled.cooking || !terrain.settled.failed.is_empty() {
         ask(terrain, cx, (recipe, &watered, &near, &whole), (eye, frame));
     }
     release_parts(&mut terrain.settled, cx.jobs);
@@ -530,117 +529,153 @@ fn beside(pyramid: &Pyramid, near: &[TileKey], watered: &[TileKey]) -> Vec<TileK
     tiles
 }
 
-fn refresh(
-    terrain: &mut WaterTerrain,
-    water: &Water,
-    jobs: &mut Jobs,
-) -> Option<([u8; 32], Arc<[TileKey]>)> {
-    let asking = (water.enabled && !terrain.surroundings).then_some(water);
-    let baked = Arc::clone(&terrain.baked);
-    let (Some(water), Some(recipe)) = (asking, terrain.recipe) else {
-        terrain.settled.cancel_all(jobs);
-        terrain.settled.release_all(jobs);
-        let cooking = terrain.settled.cooking;
-        terrain.settled = Settled {
-            cooking,
-            ..Settled::default()
-        };
-        return None;
-    };
-    let current = terrain.settled.cell == water.simulation_cell
-        && terrain
-            .settled
-            .watered
-            .as_ref()
-            .is_some_and(|(over, _)| Arc::ptr_eq(over, &baked));
-    if !current {
-        terrain.settled.cancel_all(jobs);
-        terrain.settled.release_all(jobs);
-        let pyramid = terrain.pyramid;
-        let watered: Arc<[TileKey]> = match terrain.settled.watered.take() {
-            Some((over, keys)) if Arc::ptr_eq(&over, &baked) => keys,
-            _ => crate::watered_tiles(&baked, &pyramid).into(),
-        };
-        let cell = water.simulation_cell;
-        let regions = crate::settle_regions(&baked, &pyramid, cell)
-            .into_iter()
-            .map(|tiles| {
-                let [x, z, columns, rows] = tiles;
-                let inside = |key: &&TileKey| {
-                    (x..x + columns).contains(&u32::from(key.x))
-                        && (z..z + rows).contains(&u32::from(key.z))
-                };
-                (
-                    tiles,
-                    watered.iter().filter(inside).copied().collect::<Vec<_>>(),
-                )
-            })
-            .filter(|(_, keys)| !keys.is_empty())
-            .collect();
-        let cooking = terrain.settled.cooking;
-        terrain.settled = Settled {
-            cell,
-            watered: Some((baked, watered)),
-            regions,
-            cooking,
-            ..Settled::default()
-        };
-    }
-    let watered = terrain
-        .settled
-        .watered
+fn reset(terrain: &mut WaterTerrain, jobs: &mut Jobs, reach: Option<Reach>) {
+    let settled = &mut terrain.settled;
+    settled.cancel_all(jobs);
+    settled.release_all(jobs);
+    let cell = reach
         .as_ref()
-        .map(|(_, keys)| keys.clone())?;
-    let checked = (
-        generation(terrain),
-        Arc::clone(&terrain.solids),
-        terrain.relief,
-    );
-    if terrain.settled.checked.as_ref() != Some(&checked) {
-        let cell = terrain.settled.cell;
-        let mut records = BTreeMap::new();
-        for (tiles, keys) in terrain.settled.regions.iter() {
-            for &key in keys {
-                records.insert(key, water_records(terrain, recipe, (key, *tiles), cell));
-            }
+        .filter(|reach| reach.held().is_some())
+        .map_or(0.0, |reach| reach.wanted.1);
+    *settled = Settled {
+        cell,
+        reach,
+        cooking: settled.cooking,
+        ..Settled::default()
+    };
+    for held in terrain.held.values_mut().chain(terrain.left.values_mut()) {
+        held.given = None;
+        if matches!(held.drawing, Some((_, Drawing::Given(_)))) {
+            held.drawing = None;
         }
-        let settled = &mut terrain.settled;
-        if settled
-            .checked
-            .as_ref()
-            .is_some_and(|(_, solids, _)| *solids != checked.1)
-        {
-            for (_, part) in std::mem::take(&mut settled.parts) {
-                if let Part::Asked(ticket) = part {
-                    jobs.cancel(ticket);
+    }
+    terrain.touch_all();
+}
+
+fn take_reach(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u64) {
+    let Some(reach) = terrain.settled.reach.as_mut() else {
+        return;
+    };
+    match &reach.phase {
+        ReachPhase::Asked(ticket) => {
+            let Some(output) = arrived(cx.records, ticket) else {
+                return;
+            };
+            let ReachPhase::Asked(ticket) =
+                std::mem::replace(&mut reach.phase, ReachPhase::Failed(frame))
+            else {
+                return;
+            };
+            cx.jobs.cancel(ticket);
+            let made = output.map_err(|error| error.to_string()).and_then(|bytes| {
+                engine_codec::decode::<WaterReach>(&bytes).map_err(|error| {
+                    format!("{}: its output does not decode: {error}", REACH.name())
+                })
+            });
+            match made {
+                Ok(made) => {
+                    reach.phase = ReachPhase::Held(HeldReach {
+                        watered: made.watered.into(),
+                        regions: made.regions.into(),
+                        of: made.of.into(),
+                    });
+                    terrain.settled.cell = reach.wanted.1;
+                    terrain.touch_all();
+                }
+                Err(error) => {
+                    cx.failures.record(frame, error);
                 }
             }
         }
-        settled.records = records;
-        settled.checked = Some(checked);
-        settled.revision += 1;
-        let records = &settled.records;
-        let stale: Vec<TileKey> = settled
-            .asked
-            .iter()
-            .filter(|(key, asked)| {
-                records.get(key).is_none_or(|keys| {
-                    asked.record.key != keys.region.key && asked.record.key != keys.alone.key
-                })
-            })
-            .map(|(&key, _)| key)
-            .collect();
-        for key in stale {
-            if let Some(Asked {
-                phase: Phase::Fetching(ticket),
-                ..
-            }) = settled.asked.remove(&key)
-            {
+        ReachPhase::Failed(at) if frame >= at + RETRY_AFTER => {
+            let input = reach_input(reach.wanted);
+            let ticket = cx.jobs.fetch(&REACH, &input, job_priority(VIEW_JOBS, 0));
+            reach.phase = ReachPhase::Asked(ticket);
+        }
+        ReachPhase::Failed(_) | ReachPhase::Held(_) => {}
+    }
+}
+
+fn key_settled(terrain: &mut WaterTerrain, recipe: [u8; 32], jobs: &mut Jobs) {
+    let solids = Arc::clone(&terrain.solids);
+    let relief = terrain.relief;
+    let settled = &mut terrain.settled;
+    let same_solids = settled.keyed.as_ref().map(|keyed| {
+        Arc::ptr_eq(&keyed.solids, &solids) || *keyed.solids == *solids
+    });
+    if let Some(keyed) = settled.keyed.as_mut()
+        && same_solids == Some(true)
+        && keyed.recipe == recipe
+        && keyed.relief == relief
+    {
+        keyed.solids = solids;
+        return;
+    }
+    if same_solids == Some(false) {
+        for (_, part) in std::mem::take(&mut settled.parts) {
+            if let Part::Asked(ticket) = part {
                 jobs.cancel(ticket);
             }
         }
     }
-    Some((recipe, watered))
+    let identity = ((recipe, solids.to_vec()), (relief.to_le_bytes(), settled.cell));
+    let basis = RecordKey::shared(&engine_codec::encode(&identity)).hash();
+    settled.keyed = Some(Keyed {
+        recipe,
+        solids,
+        relief,
+        basis,
+    });
+    settled.generation += 1;
+    settled.missing.clear();
+    for (_, asked) in std::mem::take(&mut settled.asked) {
+        if let Phase::Fetching(ticket) = asked.phase {
+            jobs.cancel(ticket);
+        }
+    }
+    settled.changed();
+}
+
+fn refresh(
+    terrain: &mut WaterTerrain,
+    water: &Water,
+    cx: &mut Follow<'_, '_, '_>,
+    frame: u64,
+) -> Option<[u8; 32]> {
+    let asking = (water.enabled && !terrain.surroundings).then_some(water);
+    let (Some(water), Some(recipe)) = (asking, terrain.recipe) else {
+        if terrain.settled.reach.is_some() {
+            reset(terrain, cx.jobs, None);
+        }
+        return None;
+    };
+    let wanted = (recipe, water.simulation_cell);
+    if terrain
+        .settled
+        .reach
+        .as_ref()
+        .is_none_or(|reach| reach.wanted != wanted)
+    {
+        let input = reach_input(wanted);
+        let ticket = cx.jobs.fetch(&REACH, &input, job_priority(VIEW_JOBS, 0));
+        let phase = ReachPhase::Asked(ticket);
+        reset(terrain, cx.jobs, Some(Reach { wanted, phase }));
+    }
+    take_reach(terrain, cx, frame);
+    terrain.settled.held_reach()?;
+    let baked = Arc::clone(&terrain.baked);
+    if terrain
+        .settled
+        .over
+        .as_ref()
+        .is_some_and(|over| !Arc::ptr_eq(over, &baked))
+    {
+        let reach = terrain.settled.reach.take();
+        reset(terrain, cx.jobs, reach);
+    }
+    terrain.settled.over = Some(baked);
+    key_settled(terrain, recipe, cx.jobs);
+    Some(recipe)
 }
 
 fn ask(
@@ -675,74 +710,85 @@ fn ask(
         .map(|&key| (nearness(key), key))
         .collect();
     making.sort_unstable();
-    let mut fetching: Vec<(u32, TileKey, Input)> = watered
+    let mut fetching: Vec<(u32, TileKey, bool)> = watered
         .iter()
         .filter(|&&key| !made(key) && !is_whole(key) && !settled.done(key, false) && waiting(key))
         .filter_map(|&key| Some((nearness(key), key, settled.fetched(key)?)))
         .collect();
-    fetching.sort_unstable_by_key(|(place, key, _)| (*place, *key));
-    let making: Vec<(u32, TileKey, Option<Input>)> = making
+    fetching.sort_unstable();
+    let making: Vec<(u32, TileKey, Option<bool>)> = making
         .into_iter()
         .map(|(place, key)| (place, key, settled.fetched(key)))
         .collect();
     let cell = settled.cell;
     let mut alone = Vec::new();
-    for (place, key, record) in making {
-        let Some(record) = record else {
-            if cx.settles && !cooking && is_near(key) && terrain.settled.records.contains_key(&key)
-            {
+    for (place, key, fetched) in making {
+        let Some(fetched) = fetched else {
+            if cx.settles && !cooking && is_near(key) {
                 alone.push((place, key));
             }
             continue;
         };
         let priority = job_priority(VIEW_JOBS, place);
-        let asked = Asked {
-            phase: Phase::Fetching(cx.jobs.fetch(&SETTLED, &record.bytes, priority)),
-            record,
-            made: made(key),
-        };
-        terrain.settled.asked.insert(key, asked);
+        fetch_record(terrain, cx, (key, fetched, made(key)), priority);
     }
     if cx.settles {
+        let generation = terrain.settled.generation;
         let regions: Vec<(SettleRegion, bool, u32)> = if cooking {
             cook_regions(terrain)
         } else {
             alone
                 .into_iter()
                 .map(|(place, key)| {
-                    let alone = terrain.settled.records.get(&key).map(|keys| keys.alone.key);
                     let warm = terrain
                         .settled
                         .held
                         .get(&key)
-                        .is_some_and(|(_, held)| Some(*held) != alone);
+                        .is_some_and(|(_, held)| held.generation != generation || !held.alone);
                     (SettleRegion::alone(&pyramid, key, cell), warm, place)
                 })
                 .collect()
         };
         let alone = !cooking;
         for (region, warm, place) in regions {
-            start_making(&mut terrain.settled, &pyramid, region, alone, (warm, place));
+            start_making(terrain, region, alone, (warm, place));
         }
         ask_parts(terrain, recipe, cx.jobs);
     }
-    for (place, key, record) in fetching {
+    for (place, key, fetched) in fetching {
         let priority = job_priority(IDLE_JOBS, place);
-        let asked = Asked {
-            phase: Phase::Fetching(cx.jobs.fetch(&SETTLED, &record.bytes, priority)),
-            record,
-            made: false,
-        };
-        terrain.settled.asked.insert(key, asked);
+        fetch_record(terrain, cx, (key, fetched, false), priority);
     }
+}
+
+fn fetch_record(
+    terrain: &mut WaterTerrain,
+    cx: &mut Follow<'_, '_, '_>,
+    (key, alone, made): (TileKey, bool, bool),
+    priority: u32,
+) {
+    let Some(record) = record_input(terrain, key, alone) else {
+        return;
+    };
+    let asked = Asked {
+        phase: Phase::Fetching(cx.jobs.fetch(&SETTLED, &record.bytes, priority)),
+        record,
+        made,
+        alone,
+    };
+    terrain.settled.asked.insert(key, asked);
 }
 
 fn cook_regions(terrain: &WaterTerrain) -> Vec<(SettleRegion, bool, u32)> {
     let pyramid = terrain.pyramid;
     let settled = &terrain.settled;
     let cell = settled.cell;
+    let Some(reach) = settled.held_reach() else {
+        return Vec::new();
+    };
     let mut ready = Vec::new();
-    for (rectangle, tiles) in settled.regions.iter() {
+    for region in reach.regions.iter() {
+        let (rectangle, tiles) = (region.tiles, &region.keys);
         let fetched = tiles.iter().all(|&key| {
             let fetching = settled.asked.get(&key).is_some_and(Asked::fetching);
             !fetching
@@ -762,7 +808,7 @@ fn cook_regions(terrain: &WaterTerrain) -> Vec<(SettleRegion, bool, u32)> {
             .collect();
         if fetched && !kept.is_empty() {
             ready.push((
-                SettleRegion::over(&pyramid, *rectangle, kept, cell),
+                SettleRegion::over(&pyramid, rectangle, kept, cell),
                 false,
                 0,
             ));
@@ -772,35 +818,33 @@ fn cook_regions(terrain: &WaterTerrain) -> Vec<(SettleRegion, bool, u32)> {
 }
 
 fn start_making(
-    settled: &mut Settled,
-    pyramid: &Pyramid,
+    terrain: &mut WaterTerrain,
     region: SettleRegion,
     alone: bool,
     (warm, place): (bool, u32),
 ) {
-    let mut records = Vec::with_capacity(region.kept.len());
+    let mut asking = Vec::with_capacity(region.kept.len());
     for &key in &region.kept {
-        let Some(keys) = settled.records.get(&key) else {
+        let alone = alone || terrain.settled.single(key);
+        let Some(record) = record_input(terrain, key, alone) else {
             return;
         };
-        records.push(if alone {
-            keys.alone.clone()
-        } else {
-            keys.region.clone()
-        });
+        asking.push((record, alone));
     }
-    for (&key, record) in region.kept.iter().zip(&records) {
+    let settled = &mut terrain.settled;
+    for (&key, (record, alone)) in region.kept.iter().zip(&asking) {
         let asked = Asked {
             phase: Phase::Starting,
             record: record.clone(),
             made: true,
+            alone: *alone,
         };
         settled.asked.insert(key, asked);
     }
-    let reached = region.reached(pyramid);
+    let reached = region.reached(&terrain.pyramid);
     settled.making.push(Making {
         region,
-        records,
+        records: asking.into_iter().map(|(record, _)| record).collect(),
         warm,
         reached,
         place,
@@ -897,11 +941,12 @@ fn take_arrived(
             cx.jobs.cancel(ticket);
         }
         let settled = &mut terrain.settled;
-        settled.revision += 1;
+        settled.changed();
+        let missed = (key, asked.alone && !settled.single(key));
         let bytes = match output {
             Ok(bytes) => bytes,
             Err(None) if fetched => {
-                settled.missing.insert(asked.record.key);
+                settled.missing.insert(missed);
                 continue;
             }
             Err(error) => {
@@ -912,13 +957,16 @@ fn take_arrived(
                 continue;
             }
         };
-        match arrive(
-            &mut terrain.settled,
-            cx.jobs,
-            (key, asked.record.key, bytes),
-            (kept, whole),
-        ) {
-            Ok(true) => {}
+        let made = Made {
+            generation: settled.generation,
+            alone: asked.alone,
+            record: asked.record.key,
+        };
+        match arrive(settled, cx.jobs, (key, made, bytes), (kept, whole)) {
+            Ok(true) => {
+                terrain.settled.missing.remove(&missed);
+                terrain.touch(key);
+            }
             Ok(false) => {
                 terrain.settled.failed.insert(key, frame);
             }
@@ -933,7 +981,7 @@ fn take_arrived(
 fn arrive(
     settled: &mut Settled,
     jobs: &mut Jobs,
-    (key, record, bytes): (TileKey, RecordKey, Arc<[u8]>),
+    (key, made, bytes): (TileKey, Made, Arc<[u8]>),
     (kept, whole): (&[TileKey], &[TileKey]),
 ) -> Result<bool, Error> {
     let unread = |error: Error| error.within(&format!("$.{}", SETTLED.name()));
@@ -949,33 +997,34 @@ fn arrive(
         None
     };
     settled.failed.remove(&key);
-    settled.missing.remove(&record);
-    if let Some(before) = settled.summaries.insert(key, record)
-        && before != record
+    let record = made.record;
+    if let Some(before) = settled.summaries.insert(key, made)
+        && before.record != record
     {
-        settled.release(jobs, (before, SUMMARY_TAG));
+        settled.release(jobs, (before.record, SUMMARY_TAG));
     }
     settled.share(jobs, (record, SUMMARY_TAG), || {
         (summary_share(record), Arc::from(&bytes[..length]))
     });
     if whole.binary_search(&key).is_ok() {
-        if let Some(before) = settled.shared.insert(key, record)
-            && before != record
+        if let Some(before) = settled.shared.insert(key, made)
+            && before.record != record
         {
-            settled.release(jobs, (before, SETTLED_TAG));
+            settled.release(jobs, (before.record, SETTLED_TAG));
         }
         settled.share(jobs, (record, SETTLED_TAG), || {
             (settled_share(record), Arc::clone(&bytes))
         });
     }
     if let Some(water) = held {
-        settled.held.insert(key, (water, record));
+        settled.held.insert(key, (water, made));
     }
     Ok(true)
 }
 
 fn take_parts(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u64) {
     let entity = terrain.entity;
+    let layers = Arc::clone(&terrain.baked);
     let settled = &mut terrain.settled;
     let mut broken = Vec::new();
     let keys: Vec<TileKey> = settled.parts.keys().copied().collect();
@@ -1008,9 +1057,6 @@ fn take_parts(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u6
     }
     let pyramid = terrain.pyramid;
     let settled = &mut terrain.settled;
-    let Some((layers, _)) = settled.watered.clone() else {
-        return;
-    };
     for making in std::mem::take(&mut settled.making) {
         if making.reached.iter().any(|key| broken.contains(key)) {
             settled.fail(&making.region.kept, frame);
@@ -1034,17 +1080,11 @@ fn take_parts(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u6
         match start {
             Ok(start) => {
                 for (&key, record) in making.region.kept.iter().zip(&making.records) {
-                    let starting = settled
-                        .asked
-                        .get(&key)
-                        .is_some_and(|asked| asked.starting() && asked.record.key == record.key);
-                    if starting {
-                        let asked = Asked {
-                            phase: Phase::Settling,
-                            record: record.clone(),
-                            made: true,
-                        };
-                        settled.asked.insert(key, asked);
+                    if let Some(asked) = settled.asked.get_mut(&key)
+                        && asked.starting()
+                        && asked.record.key == record.key
+                    {
+                        asked.phase = Phase::Settling;
                     }
                 }
                 cx.queue.asked.push(SettleAsk {
@@ -1071,30 +1111,15 @@ fn water_tiles(
     (watered, near): (&[TileKey], &[TileKey]),
     (eye, frame): (Vec2, u64),
 ) {
-    if terrain.recipe.is_none() {
-        return;
-    }
     let took = take_waters(terrain, cx, frame);
-    let seen = (
-        terrain.settled.revision,
-        terrain.revision,
-        generation(terrain),
-        terrain.settled.cooking,
-    );
-    let asks = terrain.settled.seen.as_ref() != Some(&seen) || terrain.settled.deferred;
+    let asks = std::mem::take(&mut terrain.settled.water_again);
     if asks {
-        terrain.settled.seen = Some(seen);
         ask_waters(terrain, cx, (watered, near), (eye, frame));
+        terrain.settled.water_again = !terrain.settled.waters_failed.is_empty();
     }
-    let faces = Some(Arc::as_ptr(&terrain.faces).cast::<u8>() as usize);
-    if took
-        || asks
-        || terrain.settled.give_more
-        || terrain.flow.is_some()
-        || terrain.settled.give_seen != faces
-    {
-        terrain.settled.give_seen = faces;
-        terrain.settled.give_more = give_waters(terrain, cx.work);
+    let gives = std::mem::take(&mut terrain.settled.give_again);
+    if took || asks || gives {
+        terrain.settled.give_again = give_waters(terrain, cx.work, cx.draws);
     }
 }
 
@@ -1132,21 +1157,19 @@ fn take_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u
             cx.jobs.cancel(ticket);
         }
         let made = output.map_err(|error| error.to_string()).and_then(|bytes| {
-            crate::jobs::steadied_output(&bytes).map_err(|error| {
+            is_dry(&bytes).map(|_| bytes).map_err(|error| {
                 format!("{}: its output does not decode: {error}", STEADIED.name())
             })
         });
         match made {
-            Ok(water) => {
+            Ok(bytes) => {
                 let resident = terrain.resident(&key).is_some();
                 if let Some(watering) = terrain.settled.waters.get_mut(&key) {
-                    watering.made = resident.then(|| Arc::new(water));
+                    watering.made = resident.then_some(bytes);
                 }
             }
             Err(error) => {
-                terrain.settled.waters.remove(&key);
-                terrain.settled.waters_failed.insert(key, frame);
-                terrain.settled.deferred = true;
+                terrain.settled.water_failed(key, frame);
                 cx.failures.record(frame, error);
             }
         }
@@ -1195,7 +1218,7 @@ fn watering(terrain: &WaterTerrain, (watered, near): (&[TileKey], &[TileKey])) -
 
 fn wants(
     settled: &Settled,
-    (pyramid, key, tile): (&Pyramid, TileKey, RecordKey),
+    (pyramid, key): (&Pyramid, TileKey),
     (watered, near): (&[TileKey], &[TileKey]),
     settles: bool,
 ) -> Wants {
@@ -1254,10 +1277,7 @@ fn wants(
         return Wants::Nothing;
     }
     reads.sort_unstable_by_key(|&(at, _)| at);
-    Wants::Here(Reads {
-        tile,
-        settled: reads,
-    })
+    Wants::Here(reads)
 }
 
 fn ask_waters(
@@ -1280,7 +1300,6 @@ fn ask_waters(
     settled
         .waters_failed
         .retain(|key, &mut at| frame < at + RETRY_AFTER && tiles.binary_search(key).is_ok());
-    settled.deferred = !settled.waters_failed.is_empty();
     let size = pyramid.tile_size(0);
     let mut wanted: Vec<(u32, TileKey)> = tiles
         .iter()
@@ -1295,15 +1314,7 @@ fn ask_waters(
     let cell = settled.cell;
     let mut waiting = 0;
     for (place, key) in wanted {
-        let Some((job, tile)) = settled_tile(terrain, key) else {
-            continue;
-        };
-        let reads = match wants(
-            &terrain.settled,
-            (&pyramid, key, tile),
-            (watered, near),
-            cx.settles,
-        ) {
+        let reads = match wants(&terrain.settled, (&pyramid, key), (watered, near), cx.settles) {
             Wants::Here(reads) => reads,
             Wants::Coming => {
                 waiting += 1;
@@ -1311,12 +1322,18 @@ fn ask_waters(
             }
             Wants::Nothing => continue,
         };
-        let settled = &mut terrain.settled;
-        if let Some(watering) = settled.waters.get(&key)
-            && watering.reads == reads
+        if terrain
+            .settled
+            .waters
+            .get(&key)
+            .is_some_and(|watering| watering.reads == reads)
         {
             continue;
         }
+        let Some(tile) = terrain.tile_job(key) else {
+            continue;
+        };
+        let settled = &mut terrain.settled;
         if let Some(Watering {
             job: Some(ticket), ..
         }) = settled.waters.remove(&key)
@@ -1325,10 +1342,9 @@ fn ask_waters(
         }
         let priority = job_priority(VIEW_JOBS, place);
         let input = SteadiedJob {
-            tile: job,
+            tile,
             cell,
             settled: reads
-                .settled
                 .iter()
                 .map(|&(at, shared)| (at, shared.hash()))
                 .collect(),
@@ -1349,34 +1365,24 @@ fn ask_waters(
     terrain.settled.waters_waiting = waiting;
 }
 
-fn give_waters(terrain: &mut WaterTerrain, work: &Work) -> bool {
-    let resident: Vec<TileKey> = terrain.resident_keys(|_| true);
-    let left = &terrain.left;
-    terrain
+fn give_waters(terrain: &mut WaterTerrain, work: &Work, draws: &mut Vec<DrawAsk>) -> bool {
+    let giving: Vec<(TileKey, Arc<[u8]>, RecordKey)> = terrain
         .settled
-        .given
-        .retain(|key, _| resident.binary_search(key).is_ok() || left.contains_key(key));
-    let settled = &terrain.settled;
-    type Giving = (TileKey, Arc<Option<TileWater>>, RecordKey);
-    let giving: Vec<Giving> = settled
         .waters
         .iter()
         .filter_map(|(&key, watering)| {
-            let water = watering.made.clone()?;
+            let bytes = watering.made.clone()?;
             let held = terrain.resident(&key)?;
-            let held_back = held.watered.is_some();
-            let over =
-                settled.tiles.get(&key).map(|(_, record)| *record) == Some(watering.reads.tile);
             let record = watering.record;
-            let holds = settled
-                .given
-                .get(&key)
-                .is_some_and(|(given, made)| *given == held.face.stamp && *made == record);
-            (held.face.current && !held_back && over && !holds).then_some((key, water, record))
+            let coming =
+                matches!(&held.drawing, Some((_, Drawing::Given(given))) if *given == record);
+            let holds = coming || held.given == Some(record);
+            (held.face.current && held.watered.is_none() && !holds).then_some((key, bytes, record))
         })
         .collect();
+    let entity = terrain.entity;
     let mut gave = false;
-    for (key, water, record) in giving {
+    for (key, bytes, record) in giving {
         if gave && (work.expired() || !work.uploads()) {
             return true;
         }
@@ -1385,11 +1391,22 @@ fn give_waters(terrain: &mut WaterTerrain, work: &Work) -> bool {
         let Some(held) = terrain.held.get_mut(&key) else {
             continue;
         };
-        held.hold(Option::clone(&water));
-        held.watered = None;
-        let stamp = held.face.stamp;
-        terrain.revision += 1;
-        terrain.settled.given.insert(key, (stamp, record));
+        if matches!(is_dry(&bytes), Ok(true)) {
+            held.water = None;
+            held.drawn = None;
+            held.watered = None;
+            held.given = Some(record);
+            held.drawing = None;
+            terrain.touch(key);
+        } else {
+            draws.push(DrawAsk {
+                terrain: entity,
+                key,
+                stamp: held.face.stamp,
+                record: bytes,
+                drawing: Drawing::Given(record),
+            });
+        }
     }
     false
 }
@@ -1411,19 +1428,27 @@ pub(crate) fn request_settle(
     let eye = view.detail_eye();
     let state = &mut *state;
     let work = Work::until(&clock, &ground, state.work_end);
+    let limits_changed = limits.is_changed();
     let mut cx = Follow {
         jobs: &mut jobs,
         records: &records,
         work: &work,
         failures: &mut state.failures,
         queue: &mut state.settling,
+        draws: &mut state.draw_asks,
         settles: limits.storage_room > 0,
     };
     let (mut settled_records, mut settling_records, mut settles_left) = (0, 0, 0_u64);
     for terrain in &mut state.terrains {
+        if limits_changed {
+            terrain.settled.stir(true);
+        }
         let watering = water.enabled && !terrain.surroundings;
         if cook.cooking && watering && terrain.recipe.is_some() {
-            terrain.settled.cooking = true;
+            if !terrain.settled.cooking {
+                terrain.settled.cooking = true;
+                terrain.settled.stir(true);
+            }
             settles_left += terrain.settled.left();
         }
         let local = Vec2::new(eye.x - terrain.origin.x, eye.z - terrain.origin.z);

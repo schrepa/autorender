@@ -1,61 +1,9 @@
 use super::*;
-use engine_core::Joined;
+use super::ground_face::TerrainGround;
 use engine_places::ground::{
-    GroundWork, PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles, WorkEntry,
+    Ground, PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles,
 };
-use engine_places::terrain::TerrainLayers;
 use engine_places::water::Hydrology;
-
-#[derive(Default, PartialEq)]
-pub(crate) struct Published {
-    epoch: u64,
-    revision: u64,
-    drawn: Vec<(Entity, bool, Option<[u8; 32]>, bool, bool)>,
-    reach: Vec<f32>,
-    detail: (u32, u32),
-    assets: ((u64, u64), u64),
-    held: Vec<(Arc<[TerrainEdit]>, Arc<[Option<Solid>]>, u128)>,
-    sampled: Vec<([u32; 2], usize)>,
-}
-
-impl Published {
-    fn of(
-        (terrains, settings): (&Terrains, &TerrainSettings),
-        assets: &AssetLibrary,
-        (into, every): (&mut Self, bool),
-    ) {
-        into.epoch = terrains.epoch;
-        into.revision = terrains.revision();
-        into.drawn.clear();
-        into.reach.clear();
-        into.held.clear();
-        into.sampled.clear();
-        for state in terrains
-            .entries
-            .iter()
-            .filter(|state| every || state.drawn)
-        {
-            into.drawn.push((
-                state.entity,
-                state.around.is_some(),
-                state.recipe.as_ref().map(|recipe| recipe.key.hash()),
-                surface_program(state),
-                terrains.bake_asked(state.entity),
-            ));
-            into.reach
-                .extend(state.ranges.iter().map(|range| range * LOAD_REACH));
-            into.held
-                .push((state.terrain.edits.clone(), state.solids.clone(), state.relief));
-            let offset = sample_offset(state);
-            into.sampled.push((
-                [offset.x.to_bits(), offset.y.to_bits()],
-                state.store.kept_tiles(),
-            ));
-        }
-        into.detail = (settings.pixel_error.to_bits(), settings.pinned_levels);
-        into.assets = (assets.revision(), assets.material_revision());
-    }
-}
 
 fn sample_offset(state: &TerrainState) -> Vec2 {
     state
@@ -81,6 +29,36 @@ fn maps_of(look: &SurfaceMaterial, assets: &AssetLibrary) -> Option<SurfaceMaps>
         normal: material.normal_texture().map(|map| map.texture),
         metallic_roughness: material.metallic_roughness_texture().map(|map| map.texture),
     })
+}
+
+fn relief_of(materials: &[SurfaceMaterial], assets: &AssetLibrary) -> u128 {
+    let mut bytes = Vec::with_capacity(32 * materials.len());
+    for look in materials {
+        for value in [look.depth, look.tiling, look.height_contrast] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        bytes.push(match look.projection {
+            SurfaceProjection::Top => 0,
+            SurfaceProjection::Biplanar => 1,
+        });
+        let map = look.material.and_then(|handle| {
+            let material = assets.material(handle)?;
+            Some(material.metallic_roughness_texture()?.texture)
+        });
+        let content = map
+            .and_then(|handle| assets.texture(handle))
+            .map_or(0, |texture| texture.identity(content_hash));
+        bytes.extend_from_slice(&content.to_le_bytes());
+    }
+    content_hash(&bytes)
+}
+
+fn solids_of<'a>(
+    (terrains, state): (&'a Terrains, &'a TerrainState),
+    assets: &'a AssetLibrary,
+) -> impl Iterator<Item = Option<Solid>> + 'a {
+    let owner = terrains.terrain(state.entity).unwrap_or(&state.terrain);
+    owner.surface.assets.iter().map(move |asset| asset.solid(assets))
 }
 
 fn placed_layers(rules: &Biomes) -> Vec<PlacedLayer> {
@@ -131,7 +109,7 @@ fn entry_entity(state: &TerrainState) -> Entity {
 
 fn entry_of(
     (terrains, state): (&Terrains, &TerrainState),
-    (settings, kinds): (&TerrainSettings, &[&'static LayerKind]),
+    settings: &TerrainSettings,
     assets: &AssetLibrary,
 ) -> TerrainEntry {
     let surface = &state.terrain.surface;
@@ -142,18 +120,18 @@ fn entry_of(
         cutout: state.around.as_ref().map(|around| around.cutout),
         surroundings: state.around.is_some(),
         steep: surface.rules.steep(),
-        may_hole: state.terrain.layers.may_hole(),
+        may_hole: state.current.may_hole(),
         reach: state.ranges.iter().map(|range| range * LOAD_REACH).collect(),
         recipe: state.recipe.as_ref().map(|recipe| recipe.key.hash()),
         edits: state.terrain.edits.iter().map(|edit| edit.stamp).collect(),
-        solids: state.solids.clone(),
-        relief: state.relief,
+        solids: solids_of((terrains, state), assets).collect(),
+        relief: relief_of(&surface.materials, assets),
         pinned_levels: settings.pinned_levels,
         pixel_error: settings.pixel_error,
         level_errors: Arc::from(state.store.errors()),
         surface_program: surface_program(state),
         baked: (state.around.is_none() && terrains.bake_asked(state.entity))
-            .then(|| terrains.layers(state.entity, kinds))
+            .then(|| terrains.layers(state.entity))
             .flatten(),
         macro_map: None,
         materials: Arc::from(surface.materials.as_slice()),
@@ -171,96 +149,86 @@ fn entry_of(
             })
             .collect(),
         layers: Arc::from(placed_layers(surface.rules.authored())),
-        tiles: state.store.faces().cloned().collect(),
+        tiles: Arc::clone(state.store.faces()),
+        changes: state.store.changes().clone(),
         sample_offset: sample_offset(state),
-        kept: state.store.kept_faces().collect(),
+        kept: Arc::clone(state.store.kept_faces()),
     }
 }
 
-#[derive(Default)]
-pub(crate) struct PublishedTiles {
-    last: Published,
-    seen: Published,
-    every_last: Published,
-    every_seen: Published,
-    every: Vec<TerrainEntry>,
-}
-
-pub(crate) fn publish_tiles(
-    (terrains, settings): (Res<Terrains>, Res<TerrainSettings>),
-    assets: Res<AssetLibrary>,
-    kinds: Joined<TerrainLayers>,
-    mut tiles: ResMut<TerrainTiles>,
-    mut ground: ResMut<GroundWork>,
-    mut published: Local<PublishedTiles>,
-) {
-    let published = &mut *published;
-    let changed = tiles.is_changed();
-    Published::of(
-        (&terrains, &settings),
-        &assets,
-        (&mut published.every_seen, true),
-    );
-    if published.every_seen != published.every_last
-        || published.every.len() != terrains.entries.len()
-        || changed
-    {
-        let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
-        published.every = terrains
-            .entries
+fn assets_hold(
+    (terrains, state): (&Terrains, &TerrainState),
+    entry: &TerrainEntry,
+    assets: &AssetLibrary,
+) -> bool {
+    let surface = &state.terrain.surface;
+    solids_of((terrains, state), assets).eq(entry.solids.iter().cloned())
+        && surface
+            .materials
             .iter()
-            .map(|state| entry_of((&terrains, state), (&settings, &kinds), &assets))
-            .collect();
-        std::mem::swap(&mut published.every_last, &mut published.every_seen);
-    }
-    ground.entries = terrains
+            .map(|look| maps_of(look, assets))
+            .eq(entry.maps.iter().copied())
+        && relief_of(&surface.materials, assets) == entry.relief
+}
+
+fn assets_moved(terrains: &Terrains, tiles: &TerrainTiles, assets: &AssetLibrary) -> bool {
+    terrains
         .entries
         .iter()
-        .zip(&published.every)
-        .map(|(state, entry)| WorkEntry {
-            streamed: state.streamed,
-            drawn: state.drawn,
-            entry: entry.clone(),
+        .filter(|state| state.drawn)
+        .any(|state| {
+            let entity = entry_entity(state);
+            tiles
+                .terrains
+                .iter()
+                .find(|entry| entry.terrain == entity)
+                .is_some_and(|entry| !assets_hold((terrains, state), entry, assets))
         })
-        .collect();
-    Published::of(
-        (&terrains, &settings),
-        &assets,
-        (&mut published.seen, false),
-    );
-    if published.seen == published.last && !changed {
-        return;
-    }
-    *tiles = TerrainTiles {
-        terrains: terrains
-            .entries
-            .iter()
-            .zip(&published.every)
-            .filter(|(state, _)| state.drawn)
-            .map(|(_, entry)| entry.clone())
-            .collect(),
-    };
-    std::mem::swap(&mut published.last, &mut published.seen);
 }
 
-pub(crate) fn publish_hydrology(
-    terrains: Res<Terrains>,
-    mut hydrology: ResMut<Hydrology>,
-    mut published: Local<Vec<(Entity, engine_core::Stamp)>>,
+pub(crate) fn publish_terrains(
+    (settings, assets): (Res<TerrainSettings>, Res<AssetLibrary>),
+    mut terrains: ResMut<Terrains>,
+    (mut tiles, mut ground): (ResMut<TerrainTiles>, ResMut<Ground>),
+    (mut hydrology, mut programs): (ResMut<Hydrology>, ResMut<SurfacePrograms>),
 ) {
-    let held = terrains.entries.iter().filter_map(|state| {
-        let (stamp, _) = state.hydrology.bake.as_ref()?;
-        state.around.is_none().then_some((state.entity, *stamp))
-    });
-    if held.clone().eq(published.iter().copied()) && !hydrology.is_changed() {
-        return;
+    let mut stale = std::mem::take(&mut terrains.stale);
+    for state in &mut terrains.entries {
+        stale = stale.with(std::mem::take(&mut state.stale));
+        let moved = state.store.settle_tiles();
+        let kept = state.store.settle_kept();
+        stale.tiles |= moved || kept;
+        stale.ground |= moved;
     }
-    published.clear();
-    published.extend(held);
-    hydrology.bakes = terrains
-        .entries
-        .iter()
-        .filter(|state| state.around.is_none())
-        .filter_map(|state| Some((state.entity, Arc::clone(&state.hydrology.bake.as_ref()?.1))))
-        .collect();
+    if stale.ground {
+        terrains.grounds += 1;
+    }
+    let terrains = &*terrains;
+    if stale.ground {
+        *ground = Ground(Arc::new(TerrainGround::of(terrains)));
+    }
+    if stale.tiles
+        || settings.is_changed()
+        || (assets.is_changed() && assets_moved(terrains, &tiles, &assets))
+    {
+        *tiles = TerrainTiles {
+            terrains: terrains
+                .entries
+                .iter()
+                .filter(|state| state.drawn)
+                .map(|state| entry_of((terrains, state), &settings, &assets))
+                .collect(),
+        };
+    }
+    if stale.water {
+        hydrology.bakes = terrains
+            .entries
+            .iter()
+            .filter(|state| state.around.is_none())
+            .filter_map(|state| Some((state.entity, Arc::clone(state.hydrology.bake.as_ref()?))))
+            .collect();
+    }
+    if stale.programs {
+        *programs = SurfacePrograms::of(terrains);
+    }
 }

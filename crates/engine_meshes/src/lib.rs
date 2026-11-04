@@ -19,12 +19,13 @@ mod smokes;
 mod uploads;
 
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, ImpostorPolicy, Rule, Runs, Schedule,
+    Brick, Bricks, ComponentKind, Error, ErrorCode, ImpostorPolicy, Mesh3d, Rule, Runs, Schedule,
     SceneComponents, Setting, Smoke, Source,
 };
-use engine_places::meshes::{Instances, Tint};
+use engine_places::meshes::{Cube, Instances, Tint};
 use engine_places::probes::ProbeViews;
 use engine_places::shadows::ShadowCasters;
+use engine_places::splines::SplineMesh;
 use engine_render::{Layer, MainView, RenderBricks};
 use serde_json::{Value, json};
 
@@ -89,7 +90,6 @@ impl Brick for MeshesBrick {
             .stats::<MeshStats>()
             .resource::<retained::RetainedRender>()
             .resource::<batches::BatchPlan>()
-            .resource::<order::DrawOrder>()
             .resource::<order::MeshPlan>()
             .resource::<casters::CasterPlan>()
             .resource::<presentation::PresentationTotals>()
@@ -108,6 +108,10 @@ impl Brick for MeshesBrick {
                     .example(tint_example),
                 None,
             )
+            .on_remove::<Mesh3d, _>(retained::source_removed)
+            .on_remove::<Cube, _>(retained::source_removed)
+            .on_remove::<Tint, _>(retained::source_removed)
+            .on_remove::<SplineMesh, _>(retained::source_removed)
             .systems(
                 Schedule::ViewSync,
                 (

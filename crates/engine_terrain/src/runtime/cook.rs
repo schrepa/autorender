@@ -53,7 +53,7 @@ impl Terrains {
     ) -> u32 {
         self.frame += 1;
         let frame = self.frame;
-        self.sync_surroundings();
+        self.sync_surroundings(asking.kinds);
         let mut released = Vec::new();
         let mut left = 0;
         for state in &mut self.entries {
@@ -61,7 +61,7 @@ impl Terrains {
             if state.terrain.validate().is_err() {
                 continue;
             }
-            state.update_materials(settings.gpu_materials, asking.kinds);
+            state.update_materials(settings.gpu_materials);
             if bake(state, &authored, asking, frame) {
                 left += 1;
                 continue;

@@ -7,6 +7,7 @@ use engine_math::collections::HashMap;
 use engine_places::ground::{Placed, TileKey};
 use glam::Vec3;
 
+use crate::groups::Groups;
 use crate::layouts::{
     DEAD, GroundData, NEAR_LEVEL_MASK, NEAR_LEVEL_SHIFT, PlacedRecord, PoseData, STATE_ADOPT,
     STATE_FRESH, SlotColor,
@@ -24,35 +25,50 @@ pub(crate) type PoolKey = (Entity, TileKey);
 pub(crate) struct Pooled {
     pub(crate) placed: Arc<[Placed]>,
     pub(crate) stamp: Stamp,
+    pub(crate) origin: Vec3,
     pub(crate) slots: Range<u32>,
+    bounds: Option<(Vec3, Vec3)>,
+    groups: Vec<(u32, u32)>,
+    far: u32,
+}
+
+impl Pooled {
+    pub(crate) fn identity(&self) -> u64 {
+        self.placed.as_ptr() as usize as u64
+    }
+}
+
+pub(crate) enum SlotWrite {
+    Objects(u32, TileObjects),
+    Dead(Range<u32>),
 }
 
 #[derive(Default)]
 pub(crate) struct ScatterPool {
-    pub(crate) poses: Vec<PoseData>,
-    pub(crate) colors: Vec<SlotColor>,
-    pub(crate) records: Vec<PlacedRecord>,
-    pub(crate) grounds: Vec<GroundData>,
     pub(crate) counts: Vec<u32>,
     pub(crate) far: u32,
+    pub(crate) end: u32,
+    pub(crate) writes: Vec<SlotWrite>,
     tiles: HashMap<PoolKey, Pooled>,
     free: Vec<Range<u32>>,
-    dirty: Vec<Range<u32>>,
-    counts_changed: bool,
     moved: Vec<(Vec3, Vec3)>,
     refilling: bool,
-    revision: u64,
 }
 
 impl ScatterPool {
     pub(crate) fn clear(&mut self, groups: usize) {
         *self = Self {
             counts: vec![0; groups],
-            counts_changed: true,
             refilling: true,
-            revision: self.revision + 1,
             ..Self::default()
         };
+    }
+
+    pub(crate) fn settle(&mut self) {
+        if !self.writes.is_empty() {
+            self.writes.clear();
+            self.refilling = false;
+        }
     }
 
     pub(crate) fn tiles(&self) -> Vec<(PoolKey, &Pooled)> {
@@ -61,24 +77,27 @@ impl ScatterPool {
         tiles
     }
 
-    pub(crate) fn revision(&self) -> u64 {
-        self.revision
-    }
-
     pub(crate) fn retain(&mut self, id: Entity, keep: impl Fn(TileKey, &Pooled) -> bool) {
         let mut freed = Vec::new();
         self.tiles.retain(|&(terrain, key), pooled| {
             if terrain != id || keep(key, pooled) {
                 return true;
             }
-            freed.push(pooled.slots.clone());
+            freed.push((
+                pooled.slots.clone(),
+                pooled.bounds,
+                std::mem::take(&mut pooled.groups),
+                pooled.far,
+            ));
             false
         });
-        for slots in freed {
-            let bounds = bounds(&self.records[slots.start as usize..slots.end as usize]);
+        for (slots, bounds, groups, far) in freed {
             self.moved.extend(bounds);
-            self.free_slots(slots);
-            self.revision += 1;
+            for (group, count) in groups {
+                self.counts[group as usize] -= count;
+            }
+            self.far -= far;
+            self.vacate(slots);
         }
     }
 
@@ -89,77 +108,75 @@ impl ScatterPool {
     pub(crate) fn insert(
         &mut self,
         (id, key): PoolKey,
-        (placed, stamp): (Arc<[Placed]>, Stamp),
-        objects: TileObjects,
+        (placed, stamp, origin): (Arc<[Placed]>, Stamp, Vec3),
+        mut objects: TileObjects,
     ) {
-        let (poses, colors, records, grounds) = objects;
-        let count = records.len() as u32;
+        let count = objects.2.len() as u32;
         if count == 0 {
             return;
         }
         let slots = self.allocate(count);
-        let range = slots.start as usize..slots.end as usize;
-        self.poses[range.clone()].copy_from_slice(&poses);
-        self.colors[range.clone()].copy_from_slice(&colors);
-        self.grounds[range.clone()].copy_from_slice(&grounds);
-        self.records[range.clone()].copy_from_slice(&records);
         let state = if self.refilling {
             STATE_ADOPT
         } else {
             STATE_FRESH
         };
-        for record in &mut self.records[range] {
+        let mut groups: Vec<(u32, u32)> = Vec::new();
+        let mut far = 0;
+        for record in &mut objects.2 {
             record.state = state;
+            far += u32::from(stands_far(record));
+            match groups.iter_mut().find(|(group, _)| *group == record.group) {
+                Some((_, held)) => *held += 1,
+                None => groups.push((record.group, 1)),
+            }
         }
-        for record in &records {
-            self.counts[record.group as usize] += 1;
-            self.far += u32::from(stands_far(record));
+        for &(group, held) in &groups {
+            self.counts[group as usize] += held;
         }
-        self.moved.extend(bounds(&records));
-        self.counts_changed = true;
-        self.mark(slots.clone());
+        self.far += far;
+        let reach = bounds(&objects.2);
+        self.moved.extend(reach);
+        self.writes.push(SlotWrite::Objects(slots.start, objects));
         self.tiles.insert(
             (id, key),
             Pooled {
                 placed,
                 stamp,
+                origin,
                 slots,
+                bounds: reach,
+                groups,
+                far,
             },
         );
-        self.revision += 1;
     }
 
-    pub(crate) fn take_changes(&mut self) -> (Vec<Range<u32>>, bool) {
-        (
-            std::mem::take(&mut self.dirty),
-            std::mem::take(&mut self.counts_changed),
-        )
-    }
-
-    pub(crate) fn uploaded(&mut self, slots: Range<u32>) {
-        for record in &mut self.records[slots.start as usize..slots.end as usize] {
-            record.state = STATE_ADOPT;
-        }
-        self.refilling = false;
+    pub(crate) fn whole<'a>(&'a self, groups: &'a Groups) -> impl Iterator<Item = SlotWrite> + 'a {
+        self.tiles()
+            .into_iter()
+            .map(move |((terrain, _), pooled)| {
+                SlotWrite::Objects(
+                    pooled.slots.start,
+                    adopted(groups.tile_objects(terrain, pooled.origin, &pooled.placed)),
+                )
+            })
+            .chain(self.free.iter().cloned().map(SlotWrite::Dead))
     }
 
     pub(crate) fn take_moved(&mut self) -> Vec<(Vec3, Vec3)> {
         std::mem::take(&mut self.moved)
     }
 
-    pub(crate) fn compact(&mut self) {
+    pub(crate) fn compact(&mut self, groups: &Groups) {
         if let Some(last) = self.free.last().cloned()
-            && last.end as usize == self.records.len()
+            && last.end == self.end
         {
             self.free.pop();
-            let end = last.start as usize;
-            self.poses.truncate(end);
-            self.colors.truncate(end);
-            self.records.truncate(end);
-            self.grounds.truncate(end);
+            self.end = last.start;
         }
         let freed: u32 = self.free.iter().map(|range| range.end - range.start).sum();
-        if freed <= 4096 || freed as usize * 2 <= self.records.len() {
+        if freed <= 4096 || u64::from(freed) * 2 <= u64::from(self.end) {
             return;
         }
         let free = &self.free;
@@ -188,18 +205,11 @@ impl ScatterPool {
         if self.free[at].is_empty() {
             self.free.remove(at);
         }
-        let (source, target) = (from.start as usize..from.end as usize, start as usize);
-        self.poses.copy_within(source.clone(), target);
-        self.colors.copy_within(source.clone(), target);
-        self.records.copy_within(source.clone(), target);
-        self.grounds.copy_within(source, target);
-        let moved = start as usize..start as usize + count as usize;
-        for record in &mut self.records[moved] {
-            record.state = STATE_ADOPT;
-        }
-        self.mark(start..start + count);
+        self.writes.push(SlotWrite::Objects(
+            start,
+            adopted(groups.tile_objects(key.0, pooled.origin, &pooled.placed)),
+        ));
         self.vacate(from);
-        self.revision += 1;
     }
 
     fn allocate(&mut self, count: u32) -> Range<u32> {
@@ -215,34 +225,13 @@ impl ScatterPool {
             }
             return start..start + count;
         }
-        let start = self.records.len() as u32;
-        let end = start as usize + count as usize;
-        self.poses.resize(end, [[0.0; 4]; 3]);
-        self.colors.resize(
-            end,
-            SlotColor {
-                color: [0; 2],
-                surface: 0,
-                flags: 0,
-            },
-        );
-        self.records.resize(end, dead());
-        self.grounds.resize(end, [0; 4]);
-        start..start + count
-    }
-
-    fn free_slots(&mut self, slots: Range<u32>) {
-        for record in &self.records[slots.start as usize..slots.end as usize] {
-            self.counts[record.group as usize] -= 1;
-            self.far -= u32::from(stands_far(record));
-        }
-        self.counts_changed = true;
-        self.vacate(slots);
+        let start = self.end;
+        self.end += count;
+        start..self.end
     }
 
     fn vacate(&mut self, slots: Range<u32>) {
-        self.records[slots.start as usize..slots.end as usize].fill(dead());
-        self.mark(slots.clone());
+        self.writes.push(SlotWrite::Dead(slots.clone()));
         let at = self.free.partition_point(|range| range.start < slots.start);
         self.free.insert(at, slots);
         if at + 1 < self.free.len() && self.free[at].end == self.free[at + 1].start {
@@ -254,25 +243,18 @@ impl ScatterPool {
             self.free.remove(at);
         }
     }
+}
 
-    fn mark(&mut self, slots: Range<u32>) {
-        let at = self.dirty.partition_point(|range| range.end < slots.start);
-        let reach = self.dirty[at..]
-            .iter()
-            .take_while(|range| range.start <= slots.end)
-            .count();
-        let joined = self.dirty[at..at + reach].iter().fold(slots, |all, range| {
-            all.start.min(range.start)..all.end.max(range.end)
-        });
-        self.dirty.drain(at..at + reach);
-        self.dirty.insert(at, joined);
+fn adopted(mut objects: TileObjects) -> TileObjects {
+    for record in &mut objects.2 {
+        record.state = STATE_ADOPT;
     }
+    objects
 }
 
 fn bounds(records: &[PlacedRecord]) -> Option<(Vec3, Vec3)> {
     records
         .iter()
-        .filter(|record| record.group != DEAD)
         .map(|record| {
             let center = Vec3::from(record.center);
             let reach = Vec3::new(record.radius, 2.0 * record.radius, record.radius);
@@ -282,10 +264,10 @@ fn bounds(records: &[PlacedRecord]) -> Option<(Vec3, Vec3)> {
 }
 
 fn stands_far(record: &PlacedRecord) -> bool {
-    record.group != DEAD && (record.terrain >> NEAR_LEVEL_SHIFT) & NEAR_LEVEL_MASK != 0
+    (record.terrain >> NEAR_LEVEL_SHIFT) & NEAR_LEVEL_MASK != 0
 }
 
-fn dead() -> PlacedRecord {
+pub(crate) fn dead() -> PlacedRecord {
     PlacedRecord {
         center: [0.0; 3],
         radius: 0.0,

@@ -20,7 +20,6 @@ const DOME_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DOME_ROLES: u32 = 3;
 const ENVIRONMENT_EVERY: u64 = 16;
 const SHADOW_EXTENT: f32 = 8192.0;
-const SHADOW_SLICES: u32 = 4;
 const LIGHT_EXTENT: f32 = 24_000.0;
 const LIGHT_RECENTER: f32 = 2_000.0;
 const LIGHT_ROWS: u32 = 48;
@@ -185,8 +184,6 @@ pub(crate) struct CloudPlan {
     recorded_generation: Option<u64>,
     ready: bool,
     job: Option<(usize, u32, u32)>,
-    shadow_stride: u32,
-    frame: u64,
     active: bool,
     shadowing: bool,
     pub(crate) rows: u32,
@@ -218,8 +215,6 @@ impl Default for CloudPlan {
             recorded_generation: None,
             ready: false,
             job: None,
-            shadow_stride: 1,
-            frame: 0,
             active: false,
             shadowing: false,
             rows: 0,
@@ -276,11 +271,6 @@ impl CloudPlan {
                 f32::from(u8::from(self.light.built >= LIGHT_TEXELS)),
             ]
         })
-    }
-
-    fn shadow_rows(&mut self) -> [u32; 4] {
-        self.shadow_stride = SHADOW_SLICES;
-        [(self.frame % u64::from(SHADOW_SLICES)) as u32, SHADOW_SLICES, 0, 0]
     }
 
     pub(crate) fn environment_key(&self) -> [f32; 4] {
@@ -355,7 +345,6 @@ impl CloudPlan {
         }
         let rows = size[1];
         let changed = self.marched.is_none_or(|marched| marched != *settings);
-        self.frame += 1;
         let target = self.roles[2];
         let origins = Origins::of(eye, surface);
         let (origin, at, first, count) = if fresh || changed || !self.ready {
@@ -395,7 +384,6 @@ impl CloudPlan {
         uniform.shadow = shadow_grid(eye).map_or([0.0; 4], |(first, cell)| {
             [first[0], first[1], cell, CLOUD_SHADOW_CELLS as f32]
         });
-        uniform.shadow_rows = self.shadow_rows();
         uniform.light_rows = self.plan_light(&uniform);
         uniform.light = self.light_uniform();
         uniform.layers = [target as u32 * DOME_LAYERS, 0, 0, 0];
@@ -480,7 +468,6 @@ struct CloudRun {
     light_rows: u32,
     width: u32,
     count: u32,
-    shadow_stride: u32,
     view: [u32; 2],
 }
 
@@ -780,7 +767,6 @@ impl CloudPass {
             self.run.light_rows = plan.light.job;
             self.run.width = size[0];
             self.run.count = count;
-            self.run.shadow_stride = plan.shadow_stride;
             if plan.light.job > 0 {
                 cx.run(self.light_pass);
             }
@@ -834,12 +820,11 @@ impl CloudPass {
                 ]),
             );
         } else if pass == self.shadow_pass {
-            let shadow_rows = CLOUD_SHADOW_CELLS.div_ceil(run.shadow_stride);
             cx.dispatch(
                 &self.shading,
                 Count::Groups([
                     (CLOUD_SHADOW_CELLS / 2).div_ceil(CLOUD_GROUP),
-                    shadow_rows.div_ceil(CLOUD_GROUP),
+                    CLOUD_SHADOW_CELLS.div_ceil(CLOUD_GROUP),
                     1,
                 ]),
             );
@@ -901,7 +886,6 @@ fn march_uniform(
         zenith: piece.zenith,
         horizon: piece.horizon,
         shadow: [0.0; 4],
-        shadow_rows: [0; 4],
         light: [0.0; 4],
         light_rows: [0; 4],
         layers: [0; 4],

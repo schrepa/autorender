@@ -34,9 +34,7 @@ pub(crate) struct Temporal {
 
 impl History {
     pub(crate) fn temporal(&mut self, view: &View) -> Option<Temporal> {
-        if let Some(drawn) = self.drawn.take()
-            && view.submitted()
-        {
+        if let Some(drawn) = self.drawn.take() {
             self.last = Some(drawn);
             self.frame = self.frame.wrapping_add(1);
         }

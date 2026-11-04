@@ -1,55 +1,41 @@
 use std::any::Any;
+use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::profile::{Aggregate, span};
 use engine_core::{
-    Error, FixedTime, FrameTime, GlobalTransforms, Section, Transform, TransformIndex,
+    Error, FixedTime, FrameTime, GlobalTransforms, Section, Transform, TransformsSince,
 };
 use engine_math::collections::HashMap;
 use engine_places::physics::{
     Collide, Collider, ColliderShape, Collision, CollisionRay, QueryFilter, RayHit, SensorEvent,
     SensorEventKind, SensorPair, ShapeCastOptions, ShapeHit,
 };
-use engine_places::solids::SolidSource;
+use engine_places::solids::{Bounds, Bvh, SolidField, SolidSource};
 use glam::{Mat4, Vec3};
 
 use crate::{
-    bvh::Bvh,
-    geometry::{AffineShape, Bounds, Narrow, intersects},
-    placed::PlacedShapes,
-    terrain::TerrainFields,
+    bvh::profiled,
+    geometry::{AffineShape, Narrow, intersects},
+    placed, terrain,
     types::*,
 };
 
 type ColliderData = (Entity, &'static Collider, Has<Transform>);
+type Edited<'w, 's> = Query<'w, 's, (), Changed<Collider>>;
+type Sources = &'static SolidSource;
 
-pub(crate) type Sources = (Entity, Ref<'static, SolidSource>);
-
-#[derive(Clone, Copy)]
-struct Input {
-    entity: Entity,
-    collider: Collider,
-    revision: Option<u64>,
-    hint: TransformIndex,
-    status: ColliderStatus,
-    entry: u32,
-}
-
-fn read_pose(
+fn read(
     globals: &GlobalTransforms,
-    entity: Entity,
-    has_local: bool,
-    hint: &mut TransformIndex,
-) -> (Option<Mat4>, Option<u64>) {
-    if !has_local {
-        return (None, None);
+    (entity, collider, local): (Entity, &Collider, bool),
+) -> Option<AffineShape> {
+    if !local {
+        return None;
     }
-    globals
-        .get_indexed_with_revision(entity, hint)
-        .map_or((None, None), |(pose, revision)| {
-            (pose.matrix(), Some(revision))
-        })
+    let matrix = globals.get(entity)?.matrix()?;
+    AffineShape::new(collider.shape(), matrix).ok()
 }
+
 #[derive(Clone, Copy)]
 struct Entry {
     entity: Entity,
@@ -57,42 +43,19 @@ struct Entry {
     affine: AffineShape,
 }
 
+#[derive(Default)]
 pub struct CollisionWorld {
     config: CollisionConfig,
-    inputs: Vec<Input>,
-    statuses: HashMap<Entity, ColliderStatus>,
+    held: HashMap<Entity, Option<u32>>,
     entries: Vec<Entry>,
-    previous_entries: Vec<Entry>,
     bounds: Vec<Bounds>,
     bvh: Bvh,
+    moved: u64,
     next_pairs: Vec<SensorPair>,
     report: CollisionReport,
     last_error: Option<Fault>,
-    sources: Vec<(Entity, u32)>,
+    sources: Vec<Arc<SolidField>>,
     pub(crate) sensors: SensorEvents,
-    pub(crate) terrain: TerrainFields,
-    pub(crate) placed: PlacedShapes,
-}
-
-impl Default for CollisionWorld {
-    fn default() -> Self {
-        Self {
-            config: CollisionConfig::default(),
-            inputs: Vec::new(),
-            statuses: HashMap::default(),
-            entries: Vec::new(),
-            previous_entries: Vec::new(),
-            bounds: Vec::new(),
-            bvh: Bvh::default(),
-            next_pairs: Vec::new(),
-            report: CollisionReport::default(),
-            last_error: None,
-            sources: Vec::new(),
-            sensors: SensorEvents::default(),
-            terrain: TerrainFields::default(),
-            placed: PlacedShapes::default(),
-        }
-    }
 }
 
 pub(crate) fn installed(collision: &mut Collision) -> &mut CollisionWorld {
@@ -113,7 +76,14 @@ impl CollisionWorld {
         CollisionStats::of(&self.report, &self.config)
     }
     pub(crate) fn collider_status(&self, entity: Entity) -> Option<ColliderStatus> {
-        self.statuses.get(&entity).copied()
+        self.held.get(&entity).map(|slot| match slot {
+            Some(_) => ColliderStatus::Active,
+            None => ColliderStatus::Invalid,
+        })
+    }
+
+    pub(crate) fn ground_owners(&self) -> impl Iterator<Item = Entity> + '_ {
+        terrain::owners(&self.sources)
     }
 
     fn ready(&self) -> Result<(), Fault> {
@@ -125,142 +95,91 @@ impl CollisionWorld {
     }
 
     fn sync_ground(&mut self, sources: &Query<'_, '_, Sources>) {
-        let same = self.sources.len() == sources.iter().len()
-            && sources
-                .iter()
-                .zip(&self.sources)
-                .all(|((entity, source), &(seen, changed))| {
-                    entity == seen && source.last_changed().get() == changed
-                });
-        if same {
-            return;
-        }
         self.sources.clear();
-        self.sources.extend(
-            sources
-                .iter()
-                .map(|(entity, source)| (entity, source.last_changed().get())),
-        );
-        self.terrain.sync(sources);
-        if self.placed.sync(sources) {
-            self.report.placed_colliders = self.placed.len();
-        }
+        self.sources
+            .extend(sources.iter().map(|source| Arc::clone(&source.field)));
+        self.report.placed_colliders = self
+            .sources
+            .iter()
+            .map(|source| source.solids.solids().len())
+            .sum();
     }
 
     fn refresh(
         &mut self,
         config: CollisionConfig,
-        frame: u64,
-        tick: u64,
-        colliders: &Query<'_, '_, ColliderData>,
+        (frame, tick): (u64, u64),
+        (colliders, edited): (&Query<'_, '_, ColliderData>, &Edited<'_, '_>),
         globals: &GlobalTransforms,
-    ) -> CollisionReport {
+    ) {
         let _profile = span("collision", "sync");
-        let count = colliders.iter().len();
         self.report.frame = frame;
         self.report.tick = tick;
+        let since = globals.changes_since(&mut self.moved);
+        let settled = (self.report.complete || self.last_error.is_some())
+            && config == self.config
+            && colliders.iter().len() == self.report.colliders
+            && edited.is_empty()
+            && match since {
+                TransformsSince::Same => true,
+                TransformsSince::Listed(moved) => self.sync_moved(moved, colliders, globals),
+                TransformsSince::All => false,
+            };
+        if !settled {
+            self.sync_all(config, colliders, globals);
+        }
+    }
+
+    fn sync_all(
+        &mut self,
+        config: CollisionConfig,
+        colliders: &Query<'_, '_, ColliderData>,
+        globals: &GlobalTransforms,
+    ) {
+        let _profile = span("collision", "cache_rebuild");
+        let count = colliders.iter().len();
         let limit = config.colliders();
         let admitted = count.min(limit);
-        let unchanged = self.report.revision != 0
-            && config == self.config
-            && count == self.report.colliders
-            && self.inputs.len() == admitted
-            && colliders.iter().take(limit).zip(&mut self.inputs).all(
-                |((entity, collider, local), old)| {
-                    old.entity == entity
-                        && old.collider == *collider
-                        && old.revision != Some(u64::MAX)
-                        && read_pose(globals, entity, local, &mut old.hint).1
-                            == old.revision
-                },
-            );
-        if unchanged {
-            return self.report;
-        }
-        let _rebuild = span("collision", "cache_rebuild");
-        let reuse = self.report.revision != 0 && config == self.config;
         self.config = config;
-        self.report.revision = self.report.revision.saturating_add(1);
         self.report.colliders = count;
         self.report.invalid_colliders = 0;
         self.report.overflow_colliders = count.saturating_sub(limit);
-        std::mem::swap(&mut self.entries, &mut self.previous_entries);
+        let held = std::mem::take(&mut self.held);
+        self.held.reserve(admitted);
         self.entries.clear();
         self.bounds.clear();
-        let mut statuses_changed = self.inputs.len() != admitted;
-        self.inputs.truncate(admitted);
-        self.inputs
-            .reserve_exact(admitted.saturating_sub(self.inputs.len()));
         self.entries.reserve_exact(admitted);
         self.bounds.reserve_exact(admitted);
         let configuration_valid = config.check().is_ok();
-        for (index, (entity, collider, local)) in colliders.iter().take(limit).enumerate() {
-            let previous = self
-                .inputs
-                .get(index)
-                .copied()
-                .filter(|old| old.entity == entity);
-            let mut hint = previous.map_or_else(TransformIndex::default, |old| old.hint);
-            let (matrix, revision) = read_pose(globals, entity, local, &mut hint);
-            let kept = previous
-                .filter(|old| {
-                    reuse
-                        && old.status == ColliderStatus::Active
-                        && old.collider == *collider
-                        && old.revision == revision
-                        && revision.is_some_and(|revision| revision != u64::MAX)
-                })
-                .and_then(|old| self.previous_entries.get(old.entry as usize))
-                .map(|entry| entry.affine);
-            let affine = kept.or_else(|| {
-                matrix
-                    .and_then(|matrix| AffineShape::new(collider.shape(), matrix).ok())
-                    .filter(|_| configuration_valid)
-            });
-            let entry = self.entries.len() as u32;
-            let status = if let Some(affine) = affine {
-                self.entries.push(Entry {
-                    entity,
-                    collider: *collider,
-                    affine,
+        let mut same_leaves = true;
+        for data in colliders.iter().take(limit) {
+            let (entity, collider, _) = data;
+            let slot = read(globals, data)
+                .filter(|_| configuration_valid)
+                .map(|affine| {
+                    self.bounds.push(affine.bounds);
+                    self.entries.push(Entry {
+                        entity,
+                        collider: *collider,
+                        affine,
+                    });
+                    (self.entries.len() - 1) as u32
                 });
-                self.bounds.push(affine.bounds);
-                ColliderStatus::Active
-            } else {
+            if slot.is_none() {
                 self.report.invalid_colliders += 1;
-                ColliderStatus::Invalid
-            };
-            let input = Input {
-                entity,
-                collider: *collider,
-                revision,
-                hint,
-                status,
-                entry: if status == ColliderStatus::Active {
-                    entry
-                } else {
-                    u32::MAX
-                },
-            };
-            if let Some(old) = self.inputs.get_mut(index) {
-                statuses_changed |= old.entity != entity || old.status != status;
-                *old = input;
-            } else {
-                statuses_changed = true;
-                self.inputs.push(input);
             }
+            same_leaves &= held.get(&entity) == Some(&slot);
+            self.held.insert(entity, slot);
         }
-        if statuses_changed {
-            self.statuses.clear();
-            self.statuses.reserve(admitted);
-            self.statuses
-                .extend(self.inputs.iter().map(|input| (input.entity, input.status)));
+        same_leaves &= held.len() == self.held.len();
+        {
+            let _profile = span("collision", "bvh_update");
+            self.bvh.update(&self.bounds, same_leaves);
         }
-        self.bvh.update(&self.bounds, !statuses_changed);
         self.report.active_colliders = self.entries.len();
-        self.report.bvh_nodes = self.bvh.len();
-        self.report.cache_bytes = self.inputs.capacity() * size_of::<Input>()
-            + (self.entries.capacity() + self.previous_entries.capacity()) * size_of::<Entry>()
+        self.report.bvh_nodes = self.bvh.node_count();
+        self.report.cache_bytes = self.held.capacity() * size_of::<(Entity, Option<u32>)>()
+            + self.entries.capacity() * size_of::<Entry>()
             + self.bounds.capacity() * size_of::<Bounds>()
             + self.bvh.bytes();
         self.report.complete = configuration_valid
@@ -273,7 +192,37 @@ impl CollisionWorld {
         } else {
             None
         };
-        self.report
+    }
+
+    fn sync_moved(
+        &mut self,
+        moved: &[Entity],
+        colliders: &Query<'_, '_, ColliderData>,
+        globals: &GlobalTransforms,
+    ) -> bool {
+        for &entity in moved {
+            let Some(&slot) = self.held.get(&entity) else {
+                continue;
+            };
+            let Ok(data) = colliders.get(entity) else {
+                return false;
+            };
+            match (slot, read(globals, data)) {
+                (Some(slot), Some(affine)) => {
+                    let slot = slot as usize;
+                    self.entries[slot].affine = affine;
+                    self.bounds[slot] = affine.bounds;
+                    self.bvh.move_leaf(slot, affine.bounds);
+                }
+                (None, None) => {}
+                (Some(_), None) | (None, Some(_)) => return false,
+            }
+        }
+        if self.bvh.degraded() {
+            let _profile = span("collision", "bvh_rebuild");
+            self.bvh.rebuild(&self.bounds);
+        }
+        true
     }
 
     fn nearest_ray(&self, ray: CollisionRay, filter: QueryFilter) -> Result<Option<RayHit>, Fault> {
@@ -307,9 +256,12 @@ impl CollisionWorld {
                 }
             }
         }
-        for hit in [self.placed.ray(ray, filter), self.terrain.ray(ray, filter)]
-            .into_iter()
-            .flatten()
+        for hit in [
+            placed::ray(&self.sources, ray, filter),
+            terrain::ray(&self.sources, ray, filter),
+        ]
+        .into_iter()
+        .flatten()
         {
             if nearest.is_none_or(|old| (hit.distance, hit.entity) < (old.distance, old.entity)) {
                 nearest = Some(hit);
@@ -361,9 +313,9 @@ impl CollisionWorld {
                 }
             }
         }
-        let placed = self.placed.cast(&shape, displacement, filter, options)?;
-        let terrain = self.terrain.cast(&shape, displacement, filter, options)?;
-        for hit in [placed, terrain].into_iter().flatten() {
+        let solid = placed::cast(&self.sources, &shape, displacement, filter, options)?;
+        let ground = terrain::cast(&self.sources, &shape, displacement, filter, options)?;
+        for hit in [solid, ground].into_iter().flatten() {
             if nearest.is_none_or(|old| (hit.fraction, hit.entity) < (old.fraction, old.entity)) {
                 nearest = Some(hit);
             }
@@ -402,10 +354,10 @@ impl CollisionWorld {
                 .enumerate()
                 .filter(|(_, entry)| entry.collider.is_sensor())
             {
-                for other in self
-                    .bvh
-                    .query_profiled(|bounds| bounds.overlaps(a.affine.bounds), &mut broad)
-                {
+                for other in profiled(
+                    self.bvh.query(|bounds| bounds.overlaps(a.affine.bounds)),
+                    &mut broad,
+                ) {
                     if index == other {
                         continue;
                     }
@@ -521,8 +473,8 @@ impl Collide for CollisionWorld {
                     });
                 }
             }
-            self.placed.ray_all(ray, filter, output);
-            self.terrain.ray_all(ray, filter, output);
+            placed::ray_all(&self.sources, ray, filter, output);
+            terrain::ray_all(&self.sources, ray, filter, output);
             if output.len() > limit {
                 return Err(Fault::ResultBudget);
             }
@@ -570,8 +522,8 @@ impl Collide for CollisionWorld {
                     output.push(entry.entity);
                 }
             }
-            self.placed.overlap(&shape, filter, output)?;
-            self.terrain.overlap(&shape, filter, output)?;
+            placed::overlap(&self.sources, &shape, filter, output)?;
+            terrain::overlap(&self.sources, &shape, filter, output)?;
             if output.len() > limit {
                 return Err(Fault::ResultBudget);
             }
@@ -613,7 +565,7 @@ fn candidates<'a>(
     broad: &'a mut Aggregate,
 ) -> impl Iterator<Item = Result<Entry, Fault>> + 'a {
     let mut count = 0;
-    bvh.query_profiled(test, broad).filter_map(move |index| {
+    profiled(bvh.query(test), broad).filter_map(move |index| {
         if let Err(error) = candidate(&mut count, limit) {
             return Some(Err(error));
         }
@@ -676,7 +628,7 @@ pub(crate) fn sync_ground(sources: Query<Sources>, mut collision: ResMut<Collisi
 }
 
 pub(crate) fn sync(
-    colliders: Query<ColliderData>,
+    (colliders, edited): (Query<ColliderData>, Edited),
     globals: Res<GlobalTransforms>,
     config: Res<CollisionConfig>,
     (frame, tick): (Res<FrameTime>, Res<FixedTime>),
@@ -684,12 +636,17 @@ pub(crate) fn sync(
     mut stats: ResMut<CollisionStats>,
 ) {
     let world = installed(&mut collision);
-    world.refresh(*config, frame.frame, tick.tick, &colliders, &globals);
+    world.refresh(
+        *config,
+        (frame.frame, tick.tick),
+        (&colliders, &edited),
+        &globals,
+    );
     stats.set_if_neq(world.stats());
 }
 
 pub(crate) fn refresh(
-    (sources, colliders): (Query<Sources>, Query<ColliderData>),
+    (sources, colliders, edited): (Query<Sources>, Query<ColliderData>, Edited),
     globals: Res<GlobalTransforms>,
     config: Res<CollisionConfig>,
     (frame, tick): (Res<FrameTime>, Res<FixedTime>),
@@ -698,7 +655,12 @@ pub(crate) fn refresh(
 ) {
     let world = installed(&mut collision);
     world.sync_ground(&sources);
-    world.refresh(*config, frame.frame, tick.tick, &colliders, &globals);
+    world.refresh(
+        *config,
+        (frame.frame, tick.tick),
+        (&colliders, &edited),
+        &globals,
+    );
     stats.set_if_neq(world.stats());
 }
 

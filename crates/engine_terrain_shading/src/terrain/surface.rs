@@ -58,7 +58,6 @@ pub(crate) struct SurfaceTrees {
     targets: [f32; 2],
     leaves_bytes: u64,
     indexed: bool,
-    uniforms_written: [Option<SubdivisionUniform>; SURFACE_SLOTS],
     frames: u64,
     shallow: u32,
     dropped: u32,
@@ -246,10 +245,7 @@ impl SurfaceTrees {
         };
         let (buffer, _) = handles.slots[slot];
         cx.allocate_buffer(buffer, SLOT);
-        if self.uniforms_written[slot] != Some(uniform) {
-            cx.write(buffer, 0, &[uniform]);
-            self.uniforms_written[slot] = Some(uniform);
-        }
+        cx.write(buffer, 0, &[uniform]);
         self.frame.push(Some(Subdivided {
             slot,
             terrain: index,

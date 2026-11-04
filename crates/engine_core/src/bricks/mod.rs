@@ -944,5 +944,4 @@ pub enum Schedule {
     BetweenFrames,
     Waiting,
     Stream,
-    Rendered,
 }

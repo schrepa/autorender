@@ -15,16 +15,54 @@ pub(super) const JUMP: f32 = 100.0;
 #[derive(Default)]
 pub(super) struct HydrologyState {
     pub(super) stats: Option<HydrologyStats>,
-    pub(super) bake: Option<(engine_core::Stamp, Arc<crate::HydrologyBake>)>,
+    pub(super) bake: Option<Arc<crate::HydrologyBake>>,
 }
 
 impl HydrologyState {
     pub(super) fn baked(water: &crate::HydrologyBake) -> Self {
         Self {
             stats: Some(water.stats),
-            bake: Some((engine_core::Stamp::next(), Arc::new(water.clone()))),
+            bake: Some(Arc::new(water.clone())),
         }
     }
+}
+
+#[derive(Clone, Copy, Default)]
+pub(super) struct Stale {
+    pub(super) tiles: bool,
+    pub(super) ground: bool,
+    pub(super) water: bool,
+    pub(super) programs: bool,
+}
+
+impl Stale {
+    pub(super) const ALL: Self = Self {
+        tiles: true,
+        ground: true,
+        water: true,
+        programs: true,
+    };
+
+    pub(super) fn with(self, other: Self) -> Self {
+        Self {
+            tiles: self.tiles || other.tiles,
+            ground: self.ground || other.ground,
+            water: self.water || other.water,
+            programs: self.programs || other.programs,
+        }
+    }
+}
+
+fn with_edits(
+    base: Arc<Layers>,
+    edits: &[TerrainEdit],
+    kinds: &[&'static LayerKind],
+) -> Arc<Layers> {
+    if edits.is_empty() {
+        return base;
+    }
+    let stamps: Vec<Stamp> = edits.iter().map(|edit| edit.stamp).collect();
+    base.with_stamps(&stamps, kinds).map_or(base, Arc::new)
 }
 
 pub(super) struct TerrainState {
@@ -33,17 +71,14 @@ pub(super) struct TerrainState {
     pub(super) store: TileStore,
     pub(super) failed: TileMap<u64>,
     pub(super) drawn: bool,
-    pub(super) streamed: bool,
     pub(super) collision: Vec<TileKey>,
-    pub(super) standing: u64,
-    pub(super) solids: Arc<[Option<Solid>]>,
-    pub(super) relief: u128,
     pub(super) ranges: Vec<f32>,
     pub(super) baked: Option<Arc<Layers>>,
     pub(super) baked_rivers: Arc<[TerrainRiver]>,
     pub(super) hydrology: HydrologyState,
     pub(super) bridges: Arc<[Bridge]>,
-    pub(super) edited: Option<(Arc<Layers>, Arc<Layers>)>,
+    pub(super) current: Arc<Layers>,
+    pub(super) stale: Stale,
     pub(super) around: Option<Around>,
     pub(super) missing: Vec<(TileKey, u32)>,
     pub(super) target: HashSet<TileKey>,
@@ -75,24 +110,21 @@ pub(super) struct Around {
 }
 
 impl TerrainState {
-    pub(super) fn new(entity: Entity, terrain: Terrain) -> Self {
+    pub(super) fn new(entity: Entity, terrain: Terrain, kinds: &[&'static LayerKind]) -> Self {
         Self {
             entity,
             store: TileStore::new(terrain.pyramid, Generation::of(&terrain.edits, &[], true)),
+            current: with_edits(terrain.layers.clone(), &terrain.edits, kinds),
             terrain,
             failed: TileMap::default(),
             drawn: false,
-            streamed: false,
             collision: Vec::new(),
-            standing: 0,
-            solids: Arc::from(Vec::new()),
-            relief: 0,
             ranges: Vec::new(),
             baked: None,
             baked_rivers: Arc::from(Vec::new()),
             hydrology: HydrologyState::default(),
             bridges: Arc::from(Vec::new()),
-            edited: None,
+            stale: Stale::ALL,
             around: None,
             missing: Vec::new(),
             target: HashSet::default(),
@@ -108,20 +140,34 @@ impl TerrainState {
         }
     }
 
-    pub(super) fn update_materials(&mut self, gpu: bool, kinds: &[&'static LayerKind]) {
-        let layers = self
+    pub(super) fn show(&mut self, drawn: bool) {
+        if self.drawn != drawn {
+            self.drawn = drawn;
+            self.stale.tiles = true;
+            self.stale.programs = true;
+        }
+    }
+
+    fn refresh_layers(&mut self, kinds: &[&'static LayerKind]) {
+        let base = self
             .baked
             .clone()
             .unwrap_or_else(|| self.terrain.layers.clone());
+        self.current = with_edits(base, &self.terrain.edits, kinds);
+    }
+
+    pub(super) fn update_materials(&mut self, gpu: bool) {
+        let layers = &self.current;
         let materials = if gpu && layers.unbaked().is_none() {
-            let layers = self.generation(layers, kinds);
             let current = self
                 .surface
                 .as_ref()
-                .is_some_and(|(held, _)| Arc::ptr_eq(held, &layers));
+                .is_some_and(|(held, _)| Arc::ptr_eq(held, layers));
             if !current {
-                let data = SurfaceData::new(&self.terrain.surface.rules, &layers).map(Arc::new);
-                self.surface = Some((layers, data));
+                let data = SurfaceData::new(&self.terrain.surface.rules, layers).map(Arc::new);
+                self.surface = Some((layers.clone(), data));
+                self.stale.tiles = true;
+                self.stale.programs = true;
             }
             self.surface.as_ref().is_none_or(|(_, data)| data.is_none())
         } else {
@@ -129,6 +175,8 @@ impl TerrainState {
         };
         if materials != self.materials {
             self.materials = materials;
+            self.stale.tiles = true;
+            self.stale.programs = true;
             self.store.invalidate(
                 Generation::of(&self.terrain.edits, &self.baked_rivers, materials),
                 |_| true,
@@ -165,7 +213,7 @@ impl TerrainState {
         })
     }
 
-    pub(super) fn edit(&mut self, edits: Arc<[TerrainEdit]>) {
+    pub(super) fn edit(&mut self, edits: Arc<[TerrainEdit]>, kinds: &[&'static LayerKind]) {
         let changed: Vec<Stamp> = edits
             .iter()
             .filter(|edit| !self.terrain.edits.contains(edit))
@@ -178,7 +226,9 @@ impl TerrainState {
             .map(|edit| edit.stamp)
             .collect();
         self.terrain.edits = edits;
-        self.edited = None;
+        self.refresh_layers(kinds);
+        self.stale.tiles = true;
+        self.stale.ground = true;
         if changed.is_empty() {
             return;
         }
@@ -243,28 +293,15 @@ impl TerrainState {
         }
     }
 
-    pub(super) fn generation(
-        &mut self,
-        base: Arc<Layers>,
-        kinds: &[&'static LayerKind],
-    ) -> Arc<Layers> {
-        if self.terrain.edits.is_empty() {
-            return base;
+    pub(super) fn finish_bake(&mut self, baked: Arc<Layers>, kinds: &[&'static LayerKind]) {
+        if baked.unbaked().is_none() {
+            self.bridges = baked.bridges().into();
         }
-        if let Some((over, edited)) = &self.edited
-            && Arc::ptr_eq(over, &base)
-        {
-            return edited.clone();
-        }
-        let stamps: Vec<Stamp> = self.terrain.edits.iter().map(|edit| edit.stamp).collect();
-        match base.with_stamps(&stamps, kinds) {
-            Ok(edited) => {
-                let edited = Arc::new(edited);
-                self.edited = Some((base, edited.clone()));
-                edited
-            }
-            Err(_) => base,
-        }
+        self.baked = Some(baked);
+        self.refresh_layers(kinds);
+        self.stale.tiles = true;
+        self.stale.ground = true;
+        self.stale.water = true;
     }
 
     pub(super) fn loads(&self, key: &TileKey) -> bool {
@@ -277,10 +314,6 @@ impl TerrainState {
         {
             self.store.keep_in_memory(left, frame);
         }
-    }
-
-    pub(super) fn revision(&self) -> u64 {
-        self.store.revision().wrapping_add(self.standing)
     }
 
     #[cfg(debug_assertions)]
@@ -321,7 +354,8 @@ pub struct Terrains {
     pub(super) restored: u64,
     pub(super) upload_left: u64,
     pub(super) between: u64,
-    pub(super) epoch: u64,
+    pub(super) stale: Stale,
+    pub(super) grounds: u64,
 }
 
 #[derive(Default)]

@@ -1,7 +1,7 @@
 use bevy_ecs::entity::Entity;
 
 use super::{GlobalTransforms, Link, Source};
-use crate::NodePose;
+use crate::{NodePose, PoseRows};
 
 impl GlobalTransforms {
     #[inline]
@@ -20,8 +20,8 @@ impl GlobalTransforms {
     }
 
     #[inline]
-    pub(crate) fn history_hints(&self) -> &[u32] {
-        &self.history_hints
+    pub(crate) fn global_rows(&self) -> &[PoseRows] {
+        &self.globals
     }
 
     #[inline]
@@ -35,7 +35,7 @@ impl GlobalTransforms {
     }
 
     #[inline]
-    pub(crate) fn node_index(&self, entity: Entity) -> Option<usize> {
+    pub fn node_index(&self, entity: Entity) -> Option<usize> {
         self.indices.get(&entity).copied()
     }
 

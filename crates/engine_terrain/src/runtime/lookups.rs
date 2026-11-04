@@ -2,8 +2,7 @@ use super::operations::{coordinate, reply};
 use super::*;
 use crate::{HydrologySample, PATH_FAR};
 use engine_core::bounds::MAX_POINTS;
-use engine_core::{Joined, Operation, SceneIds};
-use engine_places::terrain::TerrainLayers;
+use engine_core::{Operation, SceneIds};
 use engine_places::water::{WaterBody, WaterKind, WaterSample};
 use serde_json::Value;
 
@@ -19,17 +18,15 @@ impl Operation for TerrainHeightQuery {
     type Params = (
         Res<'static, Terrains>,
         SceneIds<'static, 'static>,
-        Joined<'static, TerrainLayers>,
         Query<'static, 'static, &'static WaterBody>,
     );
     type Request = Self;
 
     fn run(
-        (terrains, ids, kinds, bodies): SystemParamItem<'_, '_, Self::Params>,
+        (terrains, ids, bodies): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
-        let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
-        heights((&terrains, &ids, &kinds), &bodies, &request.points)
+        heights((&terrains, &ids), &bodies, &request.points)
     }
 }
 
@@ -135,7 +132,7 @@ fn water_at(bodies: &Query<'_, '_, &WaterBody>, point: Vec3) -> Option<WaterSamp
 }
 
 fn heights(
-    (terrains, ids, kinds): (&Terrains, &SceneIds<'_, '_>, &[&'static LayerKind]),
+    (terrains, ids): (&Terrains, &SceneIds<'_, '_>),
     bodies: &Query<'_, '_, &WaterBody>,
     points: &[[f64; 2]],
 ) -> Result<Value, Error> {
@@ -151,7 +148,7 @@ fn heights(
             let x = coordinate(point[0], &format!("$.points[{index}][0]"))?;
             let z = coordinate(point[1], &format!("$.points[{index}][1]"))?;
             Ok(terrains.sample(x, z).map(|sample| {
-                let found = terrains.layers(sample.terrain, kinds).and_then(|layers| {
+                let found = terrains.layers(sample.terrain).and_then(|layers| {
                     let terrain = terrains.terrain(sample.terrain)?;
                     let water = layers.hydrology()?;
                     let local = (x - terrain.origin.x, z - terrain.origin.z);
@@ -163,7 +160,7 @@ fn heights(
                         surface: water.surface,
                         depth: water.depth,
                     });
-                let path = terrains.layers(sample.terrain, kinds).and_then(|layers| {
+                let path = terrains.layers(sample.terrain).and_then(|layers| {
                     let terrain = terrains.terrain(sample.terrain)?;
                     let road = layers.path_at(x - terrain.origin.x, z - terrain.origin.z);
                     (road.distance < PATH_FAR).then_some(road.edge())

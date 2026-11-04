@@ -6,7 +6,7 @@ use engine_codec::{Error, ErrorCode, Expected, Reader, Writer};
 use glam::Vec2;
 use serde_json::Value;
 
-use crate::gather::StartTile;
+use crate::gather::TileHeights;
 use crate::{Bridge, GivenRiver, HeightImage, HydrologyBake, Layers, PathSample, Pyramid, TileKey};
 
 pub const TYPE_KEY: &str = "type";
@@ -121,10 +121,6 @@ pub trait TerrainLayer: Send + Sync + Debug + 'static {
         1
     }
 
-    fn point_cost(&self) -> u64 {
-        1
-    }
-
     fn may_hole(&self) -> bool {
         false
     }
@@ -141,7 +137,12 @@ pub trait TerrainLayer: Send + Sync + Debug + 'static {
         false
     }
 
-    fn bake(&self, _pyramid: &Pyramid, _tiles: StartTile) -> Option<Box<dyn LayerBake>> {
+    fn bake(
+        &self,
+        _below: &Arc<Layers>,
+        _pyramid: &Pyramid,
+        _tiles: TileHeights,
+    ) -> Option<Arc<dyn TerrainLayer>> {
         None
     }
 
@@ -220,15 +221,6 @@ pub trait LayerTile: Send {
     fn prepare(&mut self, budget: &mut u64) -> bool;
 
     fn apply_row(&mut self, below: Below<'_>, row: i32, at: &Row<'_>, heights: &mut [f32]);
-}
-
-pub trait LayerBake: Send {
-    fn advance(
-        &mut self,
-        below: &Arc<Layers>,
-        pyramid: &Pyramid,
-        budget: &mut u64,
-    ) -> Option<Arc<dyn TerrainLayer>>;
 }
 
 #[derive(Clone, Copy, Debug)]

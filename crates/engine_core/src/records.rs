@@ -204,14 +204,15 @@ impl RecordExchange {
             for (slot, family) in families {
                 asked.asked[slot] = true;
                 for (index, &handle) in asked.handles.iter().enumerate() {
+                    let key = asked.set.key(index, family);
                     self.requests.push(Request {
-                        key: asked.set.key(index, family),
+                        key,
                         make: Make::Texture {
                             batch,
                             index,
                             family,
                         },
-                        deliver: (family == shown).then(|| deliver_texture(handle, sampling)),
+                        deliver: (family == shown).then(|| deliver_texture(handle, sampling, key)),
                         stage: Stage::Asking,
                     });
                 }
@@ -283,7 +284,11 @@ fn family_slot(family: TextureFamily) -> usize {
         .unwrap_or(0)
 }
 
-fn deliver_texture(handle: TextureHandle, sampling: TextureSampling) -> DeliverRecord {
+fn deliver_texture(
+    handle: TextureHandle,
+    sampling: TextureSampling,
+    key: RecordKey,
+) -> DeliverRecord {
     Box::new(move |world, bytes| {
         let texture = engine_textures::decode(bytes)?;
         let texture = match sampling {
@@ -294,7 +299,7 @@ fn deliver_texture(handle: TextureHandle, sampling: TextureSampling) -> DeliverR
         };
         world
             .resource_mut::<AssetLibrary>()
-            .fill_texture(handle, texture)
+            .fill_texture(handle, texture.with_identity(key.identity()))
             .map_err(|error| error.to_string())
     })
 }

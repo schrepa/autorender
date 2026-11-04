@@ -2,8 +2,7 @@ use super::operations::{coordinate, reply, within};
 use super::*;
 use crate::layer::maps;
 use crate::{HydrologyBake, TerrainLayer};
-use engine_core::{Joined, Operation, SceneIds, bounds, stated};
-use engine_places::terrain::TerrainLayers;
+use engine_core::{Operation, SceneIds, bounds, stated};
 use serde_json::Value;
 
 pub const FALLS_SHOWN: usize = 16;
@@ -127,15 +126,13 @@ impl Operation for TerrainInspect {
         Res<'static, Terrains>,
         Query<'static, 'static, (Entity, &'static TerrainScene)>,
         SceneIds<'static, 'static>,
-        Joined<'static, TerrainLayers>,
     );
     type Request = Self;
 
     fn run(
-        (terrains, scenes, ids, kinds): SystemParamItem<'_, '_, Self::Params>,
+        (terrains, scenes, ids): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
-        let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
         let built = |entity: Entity| {
             scenes
                 .get(entity)
@@ -155,17 +152,12 @@ impl Operation for TerrainInspect {
                 None => error,
             });
         };
-        Ok(reply(terrain_view(
-            (&terrains, &kinds),
-            entity,
-            scene,
-            terrain,
-        )))
+        Ok(reply(terrain_view(&terrains, entity, scene, terrain)))
     }
 }
 
 fn terrain_view(
-    (terrains, kinds): (&Terrains, &[&'static LayerKind]),
+    terrains: &Terrains,
     entity: Entity,
     scene: &TerrainScene,
     terrain: &Terrain,
@@ -189,9 +181,9 @@ fn terrain_view(
     };
     let bakes = terrains.bakes(entity);
     if holds(|layer| layer.makes_water()) {
-        hydrology = Some(hydrology_view((terrains, kinds), entity));
+        hydrology = Some(hydrology_view(terrains, entity));
     }
-    if let Some(layers) = terrains.layers(entity, kinds) {
+    if let Some(layers) = terrains.layers(entity) {
         for (index, layer) in layers.layers().iter().enumerate() {
             if publishes(layer.as_ref(), maps::PATH) {
                 let stats = layer.stats();
@@ -213,7 +205,7 @@ fn terrain_view(
         }
     }
     if holds(|layer| publishes(layer, maps::WORN)) {
-        let stats = terrains.layers(entity, kinds).and_then(|layers| {
+        let stats = terrains.layers(entity).and_then(|layers| {
             layers
                 .layers()
                 .iter()
@@ -283,13 +275,10 @@ fn flow_view(found: &HydrologyBake) -> RiverFlowView {
     }
 }
 
-fn hydrology_view(
-    (terrains, kinds): (&Terrains, &[&'static LayerKind]),
-    entity: Entity,
-) -> HydrologyView {
+fn hydrology_view(terrains: &Terrains, entity: Entity) -> HydrologyView {
     let bakes = terrains.bakes(entity);
     let stats = bakes.hydrology;
-    let baked = terrains.layers(entity, kinds);
+    let baked = terrains.layers(entity);
     let found = baked.as_deref().and_then(Layers::hydrology);
     HydrologyView {
         baking: bakes.baking,
@@ -365,14 +354,13 @@ pub struct SweepWorst {
 
 impl Operation for TerrainLayerSweep {
     const NAME: &'static str = "terrain_layer_sweep";
-    type Params = (Res<'static, Terrains>, Joined<'static, TerrainLayers>);
+    type Params = Res<'static, Terrains>;
     type Request = Self;
 
     fn run(
-        (terrains, kinds): SystemParamItem<'_, '_, Self::Params>,
+        terrains: SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
-        let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
         let center = Vec2::new(
             coordinate(request.center[0], "$.center[0]")?,
             coordinate(request.center[1], "$.center[1]")?,
@@ -384,7 +372,7 @@ impl Operation for TerrainLayerSweep {
             "$.samples",
         )?;
         Ok(reply(layer_sweep(
-            (&terrains, &kinds),
+            &terrains,
             center,
             half_extent as f32,
             request.samples,
@@ -393,7 +381,7 @@ impl Operation for TerrainLayerSweep {
 }
 
 fn layer_sweep(
-    (terrains, kinds): (&Terrains, &[&'static LayerKind]),
+    terrains: &Terrains,
     center: Vec2,
     half_extent: f32,
     samples: u32,
@@ -411,7 +399,7 @@ fn layer_sweep(
             }
             let (Some(terrain), Some(stack)) = (
                 terrains.terrain(sample.terrain),
-                terrains.layers(sample.terrain, kinds),
+                terrains.layers(sample.terrain),
             ) else {
                 continue;
             };

@@ -11,7 +11,7 @@ use crate::body::{self, BodyProblem, BodyStatus};
 use crate::coupling::{self, AIR_SPIN, Form, Motion};
 use crate::obstacles::sorted;
 use crate::settings::{Physics, PhysicsStats};
-use crate::shapes::{BodyShape, body_shape};
+use crate::shapes::body_shape;
 use crate::solids::Solids;
 use crate::solver::Solver;
 use crate::statics::{Statics, groups};
@@ -26,7 +26,6 @@ struct Body {
     settings: RigidBody,
     shape: Collider,
     scale: Vec3,
-    form: Form,
     written: (Vec3, Quat),
     status: BodyStatus,
 }
@@ -55,8 +54,12 @@ fn body_type(motion: BodyMotion) -> rp::RigidBodyType {
     }
 }
 
-fn solver_collider(settings: &RigidBody, collider: Collider, shape: &BodyShape) -> rp::Collider {
-    rp::ColliderBuilder::new(shape.shape.clone())
+fn solver_collider(
+    settings: &RigidBody,
+    collider: Collider,
+    shape: &rp::SharedShape,
+) -> rp::Collider {
+    rp::ColliderBuilder::new(shape.clone())
         .density(settings.density)
         .friction(settings.friction)
         .restitution(settings.restitution)
@@ -66,12 +69,16 @@ fn solver_collider(settings: &RigidBody, collider: Collider, shape: &BodyShape) 
 }
 
 impl Body {
+    fn form(&self) -> Form {
+        Form::of(self.shape.shape(), self.scale)
+    }
+
     fn join(
         solver: &mut Solver,
         wanted: &Wanted,
         collider: Collider,
         pose: Transform,
-        shape: &BodyShape,
+        shape: &rp::SharedShape,
     ) -> Self {
         let settings = wanted.settings;
         let body = rp::RigidBodyBuilder::new(body_type(settings.motion))
@@ -90,7 +97,6 @@ impl Body {
             settings,
             shape: collider,
             scale: pose.scale,
-            form: Form::new(shape),
             written: (pose.translation, pose.rotation),
             status: BodyStatus::default(),
         }
@@ -116,7 +122,6 @@ impl Body {
                 self.collider,
                 solver_collider(&settings, collider, &shape),
             );
-            self.form = Form::new(&shape);
             self.shape = collider;
             self.scale = pose.scale;
         }
@@ -205,11 +210,12 @@ impl PhysicsWorld {
         let solver = self.solver.as_ref();
         self.bodies.iter().filter_map(move |body| {
             let rigid = solver?.bodies.get(body.handle)?;
+            let form = body.form();
             Some(WaterObstacle {
                 center: rigid.translation(),
                 axes: glam::Mat3::from_quat(*rigid.rotation())
-                    * glam::Mat3::from_diagonal(body.form.half),
-                round: body.form.round,
+                    * glam::Mat3::from_diagonal(form.half),
+                round: form.round,
                 velocity: rigid.linvel(),
             })
         })
@@ -428,7 +434,7 @@ fn push(
             around.wind,
             around.time.elapsed_seconds as f32,
             around.time.delta_seconds,
-            &body.form,
+            &body.form(),
             body.settings.drag,
             &motion,
             &mut samples,
@@ -455,7 +461,7 @@ fn write(bodies: &mut [Body], solver: &Solver, poses: &mut Query<'_, '_, BodyQue
         body.status = BodyStatus {
             problem: None,
             mass: rigid.mass(),
-            volume: body.form.volume,
+            volume: body.form().volume,
             velocity: rigid.linvel(),
             spin: rigid.angvel(),
             sleeping: rigid.is_sleeping(),

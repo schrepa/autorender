@@ -16,16 +16,14 @@ use std::sync::Arc;
 use engine_codec::{Codec, Reader, Writer};
 use engine_core::{Brick, Bricks, Error, ErrorCode, InvalidSetting, Source, parse_value};
 use engine_heightfield::layer::{
-    LayerBake, LayerFiles, LayerKind, Made, Place, TerrainLayer, maps, no_files, no_points,
-    same_as,
+    LayerFiles, LayerKind, Made, Place, TerrainLayer, maps, no_files, no_points, same_as,
 };
-use engine_heightfield::{GivenRiver, HydrologyBake, Pyramid, StartTile};
+use engine_heightfield::{GivenRiver, HydrologyBake, Layers, Pyramid, TileHeights};
 use engine_places::terrain::TerrainLayers;
 use glam::Vec2;
 use serde::Serialize;
 use serde_json::Value;
 
-pub use bake::HydrologyWork;
 pub use given::RiversLayer;
 pub use hydrology::HydrologyLayer;
 
@@ -102,10 +100,14 @@ impl TerrainLayer for HydrologyStage {
         self.baked.is_none()
     }
 
-    fn bake(&self, pyramid: &Pyramid, tiles: StartTile) -> Option<Box<dyn LayerBake>> {
-        self.needs_bake().then(|| {
-            Box::new(HydrologyWork::new(&self.layer, pyramid, tiles)) as Box<dyn LayerBake>
-        })
+    fn bake(
+        &self,
+        below: &Arc<Layers>,
+        pyramid: &Pyramid,
+        tiles: TileHeights,
+    ) -> Option<Arc<dyn TerrainLayer>> {
+        self.needs_bake()
+            .then(|| bake::hydrology_stage(&self.layer, below, pyramid, tiles))
     }
 
     fn unbaked(&self) -> Option<Arc<dyn TerrainLayer>> {

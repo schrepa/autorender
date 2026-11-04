@@ -750,17 +750,6 @@
       "direction": null
     },
     {
-      "name": "local_light_stats.invalid",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
       "name": "local_light_stats.light_cut.asked",
       "kind": "work",
       "rule": "shown",
@@ -1221,17 +1210,6 @@
       ],
       "unit": "count",
       "direction": null
-    },
-    {
-      "name": "particle_stats.invalid",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
     },
     {
       "name": "particle_stats.particle_cut.asked",

@@ -11,11 +11,11 @@ use engine_heightfield::tile::{
     Compiled, Expr, Input, Reads, RiverInputs, RowInputs, RowScratch, SampleShape, Scope, producer,
     read_map, terrain_error, unknown_map,
 };
-use engine_heightfield::{Gather, StartTile};
+use engine_heightfield::{Gather, TileHeights};
 
 use crate::codec::{Codec, Reader, Writer, get_grid, invalid, on_grid, put_grid};
 use crate::layer::{
-    Below, LayerBake, LayerFiles, LayerKind, Made, Place, Row, TerrainLayer, no_files, same_as,
+    Below, LayerFiles, LayerKind, Made, Place, Row, TerrainLayer, no_files, same_as,
 };
 use crate::{Blend, HydrologySample, Layers, MAX_LEVEL, PathSample, Pyramid};
 
@@ -272,19 +272,26 @@ impl TerrainLayer for ExpressionLayer {
         self.cost()
     }
 
-    fn point_cost(&self) -> u64 {
-        self.cost()
-    }
-
     fn needs_bake(&self) -> bool {
         self.shaped && self.shapes.is_none()
     }
 
-    fn bake(&self, pyramid: &Pyramid, tiles: StartTile) -> Option<Box<dyn LayerBake>> {
+    fn bake(
+        &self,
+        below: &Arc<Layers>,
+        pyramid: &Pyramid,
+        tiles: TileHeights,
+    ) -> Option<Arc<dyn TerrainLayer>> {
         let level = self.settings.level.filter(|_| self.needs_bake())?;
-        Some(Box::new(ShapeBake {
-            layer: self.clone(),
-            gather: Gather::new(level, pyramid, tiles),
+        let gather = Gather::new(level, below, pyramid, tiles);
+        let heights: Box<[f32]> = (gather.heights.iter())
+            .map(|&height| on_grid(height))
+            .collect();
+        let spacing = pyramid.spacing(gather.level);
+        let shapes = ShapeGrid::new(spacing, gather.width, heights);
+        Some(Arc::new(Self {
+            shapes: Some(Arc::new(shapes)),
+            ..self.clone()
         }))
     }
 
@@ -312,34 +319,6 @@ impl TerrainLayer for ExpressionLayer {
             }
             Some(_) | None => false,
         }
-    }
-}
-
-struct ShapeBake {
-    layer: ExpressionLayer,
-    gather: Gather,
-}
-
-impl LayerBake for ShapeBake {
-    fn advance(
-        &mut self,
-        below: &Arc<Layers>,
-        pyramid: &Pyramid,
-        budget: &mut u64,
-    ) -> Option<Arc<dyn TerrainLayer>> {
-        if !self.gather.advance(below, pyramid, budget) {
-            return None;
-        }
-        let heights: Box<[f32]> = (self.gather.heights.iter())
-            .map(|&height| on_grid(height))
-            .collect();
-        *budget = budget.saturating_sub(heights.len() as u64);
-        let spacing = pyramid.spacing(self.gather.level);
-        let shapes = ShapeGrid::new(spacing, self.gather.width, heights);
-        Some(Arc::new(ExpressionLayer {
-            shapes: Some(Arc::new(shapes)),
-            ..self.layer.clone()
-        }))
     }
 }
 

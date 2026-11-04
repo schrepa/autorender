@@ -128,7 +128,6 @@ export interface CollisionWorldView {
   limits: CollisionLimitsView;
   overflow_colliders: number;
   placed_colliders: number;
-  revision: string;
   tick: string;
 }
 
@@ -195,7 +194,6 @@ export interface JobStats {
 
 export interface LightStats {
   cluster_cut: Cut;
-  invalid: number;
   light_cut: Cut;
   shaded: number;
   visible: number | null;
@@ -235,7 +233,6 @@ export interface NavStats {
 
 export interface ParticleStats {
   drawn: number;
-  invalid: number;
   particle_cut: Cut;
 }
 

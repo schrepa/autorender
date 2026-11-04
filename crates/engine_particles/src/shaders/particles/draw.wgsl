@@ -9,8 +9,7 @@ import package::particles::weighted::{TransparentTargets, weighted_particle};
 
 @group(1) @binding(0) var<uniform> particles: Particles;
 @group(1) @binding(1) var<storage, read> emitters: array<Emitter>;
-@group(1) @binding(2) var<storage, read> owners: array<u32>;
-@group(1) @binding(3) var depth_texture: texture_depth_2d;
+@group(1) @binding(2) var depth_texture: texture_depth_2d;
 
 struct ParticleOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -35,10 +34,24 @@ fn hidden() -> ParticleOutput {
     return output;
 }
 
+fn owner_of(instance: u32) -> u32 {
+    var low = 0u;
+    var high = particles.listed.x;
+    while high - low > 1u {
+        let middle = (low + high) / 2u;
+        if emitters[middle].first <= instance {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    return low;
+}
+
 @vertex
 fn vs_particle(@builtin(vertex_index) vertex: u32,
         @builtin(instance_index) instance: u32) -> ParticleOutput {
-    let emitter = emitters[owners[instance]];
+    let emitter = emitters[owner_of(instance)];
     let lane = instance - emitter.first;
     let time = camera.position.w;
     let births = floor(time * emitter.rate);

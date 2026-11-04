@@ -1,34 +1,48 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetUses, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk, ImpostorAsks, ImpostorPolicy, Spawner,
+    AssetLibrary, AssetUses, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk, ImpostorAsks, ImpostorPolicy,
+    MaterialHandle, MeshHandle, Spawner, TextureHandle,
 };
 
 use crate::MeshesBrick;
 use crate::batches::BatchPlan;
-use crate::retained::RetainedRender;
 use crate::settings::Impostors;
 
 #[derive(Component)]
 pub(crate) struct MeshAssets;
 
-fn uses(plan: &BatchPlan) -> AssetUses {
+fn uses(assets: &AssetLibrary, plan: &BatchPlan) -> AssetUses {
+    let mut meshes: Vec<MeshHandle> = plan.batches.iter().map(|batch| batch.mesh).collect();
+    meshes.dedup();
+    let mut materials: Vec<MaterialHandle> =
+        plan.batches.iter().filter_map(|batch| batch.material).collect();
+    materials.sort_unstable();
+    materials.dedup();
+    let mut textures: Vec<TextureHandle> = materials
+        .iter()
+        .filter_map(|&handle| assets.material(handle))
+        .flat_map(|material| material.textures())
+        .collect();
+    textures.sort_unstable();
+    textures.dedup();
     AssetUses {
-        meshes: plan.mesh_handles().to_vec(),
-        materials: plan.material_handles().to_vec(),
-        textures: plan.texture_handles().to_vec(),
+        meshes,
+        materials,
+        textures,
     }
 }
 
-fn asks(retained: &RetainedRender, plan: &BatchPlan) -> ImpostorAsks {
-    let snapshot = retained.snapshot();
+fn asks(assets: &AssetLibrary, plan: &BatchPlan) -> ImpostorAsks {
     ImpostorAsks {
         hemisphere: false,
         asks: plan
             .batches
             .iter()
             .map(|batch| {
-                let source = &snapshot.meshes[batch.source_index].mesh;
-                (source.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES).then(|| ImpostorAsk {
+                let triangles = assets
+                    .mesh(batch.mesh)
+                    .map_or(0, |mesh| mesh.indices().len() / 3);
+                (triangles >= IMPOSTOR_MIN_TRIANGLES).then(|| ImpostorAsk {
                     mesh: batch.mesh,
                     material: batch.material,
                     parts: Vec::new(),
@@ -39,20 +53,18 @@ fn asks(retained: &RetainedRender, plan: &BatchPlan) -> ImpostorAsks {
 }
 
 pub(crate) fn publish_assets(
-    retained: Res<RetainedRender>,
+    assets: Res<AssetLibrary>,
     plan: Res<BatchPlan>,
     own: Query<(Entity, &AssetUses, &ImpostorAsks), With<MeshAssets>>,
     mut spawner: Spawner<MeshesBrick>,
-    mut published: Local<Option<u64>>,
 ) {
-    let key = plan.rebuilds();
-    if plan.refused.is_some() || (*published == Some(key) && own.single().is_ok()) {
+    let held = own.single();
+    if plan.refused.is_some() || (held.is_ok() && !plan.changed()) {
         return;
     }
-    *published = Some(key);
-    let used = uses(&plan);
-    let asked = asks(&retained, &plan);
-    match own.single() {
+    let used = uses(&assets, &plan);
+    let asked = asks(&assets, &plan);
+    match held {
         Ok((entity, held, held_asks)) => {
             if *held != used {
                 spawner.insert(entity, used);

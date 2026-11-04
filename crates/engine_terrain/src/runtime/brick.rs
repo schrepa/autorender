@@ -1,6 +1,5 @@
-use super::ground_face::publish_ground;
-use super::programs::{SurfaceEntry, SurfaceProgramGpu, publish_programs};
-use super::publish::{publish_hydrology, publish_tiles};
+use super::programs::{SurfaceEntry, SurfaceProgramGpu};
+use super::publish::publish_terrains;
 use super::solids::sync_solids;
 use super::*;
 use crate::expr_layer::EXPRESSION;
@@ -42,22 +41,18 @@ impl Brick for TerrainBrick {
             .generated(GENERATED)
             .systems(
                 Schedule::ViewSync,
-                (
-                    stream_terrains,
-                    sync_solids,
-                    publish_ground,
-                    publish_tiles,
-                    publish_hydrology,
-                    publish_programs,
-                ),
+                (stream_terrains, publish_terrains, sync_solids),
             )
             .systems(Schedule::ViewSync, settle_view)
             .systems(Schedule::Stream, bridges::sync)
             .systems(
                 Schedule::Waiting,
-                (stream_terrains, publish_ground, settle_waiting),
+                (stream_terrains, publish_terrains, settle_waiting),
             )
-            .systems(Schedule::BetweenFrames, (work_between_frames, publish_ground))
+            .systems(
+                Schedule::BetweenFrames,
+                (work_between_frames, publish_terrains),
+            )
             .operation::<TerrainEditControl>()
             .operation::<TerrainUndoControl>()
             .operation::<TerrainRedoControl>()

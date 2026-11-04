@@ -4,7 +4,7 @@ use engine_codec::{self as codec, Error, record};
 use engine_core::{ErrorCode, Job, JobCx, JobKind, RecordKey};
 use engine_heightfield::layer::LayerKind;
 use engine_heightfield::tile::{Generator, Recipe, Tile};
-use engine_heightfield::{Pyramid, Stamp, TILE_QUADS, TileKey};
+use engine_heightfield::{Pyramid, Stamp, TILE_QUADS, TileKey, reaches, reaches_span};
 use engine_places::terrain::TerrainLayers;
 
 use crate::bounce::{MAX_PROBES, TerrainBounce, bounce};
@@ -53,24 +53,36 @@ impl LightingJob {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum ShadingReads {
-    Tiles(Vec<(TileKey, Vec<Stamp>)>),
-    Shadings(Vec<(TileKey, [u8; 32])>),
-}
-
-codec::tagged!(ShadingReads {
-    0 => Tiles(tiles),
-    1 => Shadings(shadings),
-});
-
-#[derive(Clone, Debug, PartialEq)]
 pub struct ShadingJob {
     pub recipe: [u8; 32],
     pub key: TileKey,
-    pub reads: ShadingReads,
+    pub stamps: Vec<Stamp>,
 }
 
-record!(ShadingJob { recipe, key, reads });
+record!(ShadingJob {
+    recipe,
+    key,
+    stamps,
+});
+
+impl ShadingJob {
+    pub(crate) fn of(recipe: [u8; 32], pyramid: &Pyramid, stamps: &[Stamp], key: TileKey) -> Self {
+        let span = TileShading::ground_span(pyramid, key);
+        Self {
+            recipe,
+            key,
+            stamps: stamps
+                .iter()
+                .filter(|stamp| reaches_span(stamp, pyramid, span))
+                .copied()
+                .collect(),
+        }
+    }
+
+    pub(crate) fn record(&self) -> RecordKey {
+        RecordKey::of(&SHADING, &codec::encode(self))
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BounceJob {
@@ -269,28 +281,32 @@ fn start_shading(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error
     if !pyramid.contains(key) || reads.is_empty() {
         return Err(outside(key));
     }
-    match job.reads {
-        ShadingReads::Tiles(tiles)
-            if key.level == 1 && names(tiles.iter().map(|&(at, _)| at), &reads) =>
-        {
-            let surface = (recipe.layers.clone(), recipe.rules.clone(), kinds);
-            Ok(Box::new(ShadingMaking::from_ground(
-                surface, pyramid, key, tiles,
-            )))
-        }
-        ShadingReads::Shadings(shadings)
-            if key.level > 1 && names(shadings.iter().map(|&(at, _)| at), &reads) =>
-        {
-            let finer = shadings
-                .iter()
-                .map(|&(at, record)| shared_shading(cx, record, at))
-                .collect::<Result<Vec<_>, Error>>()?;
-            Ok(Box::new(ShadingMaking::from_finer(pyramid, key, finer)))
-        }
-        ShadingReads::Tiles(_) | ShadingReads::Shadings(_) => {
-            Err(Error::new(ErrorCode::InvalidValue, "$.reads"))
-        }
+    if key.level == 1 {
+        let tiles: Vec<(TileKey, Vec<Stamp>)> = reads
+            .into_iter()
+            .map(|at| {
+                let stamps = job
+                    .stamps
+                    .iter()
+                    .filter(|stamp| reaches(stamp, &pyramid, at))
+                    .copied()
+                    .collect();
+                (at, stamps)
+            })
+            .collect();
+        let surface = (recipe.layers.clone(), recipe.rules.clone(), kinds);
+        return Ok(Box::new(ShadingMaking::from_ground(
+            surface, pyramid, key, tiles,
+        )));
     }
+    let finer = reads
+        .into_iter()
+        .map(|at| {
+            let record = ShadingJob::of(job.recipe, &pyramid, &job.stamps, at).record();
+            shared_shading(cx, record.hash(), at)
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    Ok(Box::new(ShadingMaking::from_finer(pyramid, key, finer)))
 }
 
 fn shared_shading(cx: &JobCx<'_>, record: [u8; 32], key: TileKey) -> Result<TileShading, Error> {
@@ -303,10 +319,6 @@ fn shared_shading(cx: &JobCx<'_>, record: [u8; 32], key: TileKey) -> Result<Tile
         return Err(mismatched("$.reads", &shared.hex()));
     }
     Ok(shading)
-}
-
-fn names(named: impl Iterator<Item = TileKey>, reads: &[TileKey]) -> bool {
-    named.eq(reads.iter().copied())
 }
 
 pub(crate) struct GroundMaking {

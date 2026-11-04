@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Detail, DeviceLimits, Error, FrameTime, GlobalTransforms, ImpostorRecords,
-    MAX_HIERARCHY_DEPTH, PresentedTransforms, View,
+    AssetLibrary, AssetResidency, Detail, DeviceLimits, Error, FrameTime, GlobalTransforms,
+    ImpostorRecords, MAX_HIERARCHY_DEPTH, PresentedTransforms, View,
 };
 use engine_places::probes::{ProbeCaptures, ProbeViews};
 use engine_places::shadows::{ShadowCasters, ShadowMaps};
@@ -15,7 +15,7 @@ use crate::assets::MeshAssets;
 use crate::batches::BatchPlan;
 use crate::casters::CasterPlan;
 use crate::drawn::WatchedSlot;
-use crate::order::{BatchLook, DrawOrder, MeshPlan};
+use crate::order::{BatchLook, MeshPlan};
 use crate::presentation::{FrameState, PresentationTotals};
 use crate::retained::RetainedRender;
 use crate::settings::Impostors;
@@ -203,13 +203,14 @@ pub(crate) type MeshReads = (
         Query<'static, 'static, &'static ImpostorRecords, With<MeshAssets>>,
         Res<'static, WatchedSlot>,
         Res<'static, PresentationTotals>,
+        Res<'static, AssetResidency>,
     ),
 );
 
 pub(crate) type FrameReads = (
     Res<'static, RetainedRender>,
     Res<'static, BatchPlan>,
-    Res<'static, DrawOrder>,
+    Res<'static, AssetLibrary>,
     Res<'static, MeshPlan>,
     Res<'static, CasterPlan>,
     Res<'static, PresentedTransforms>,

@@ -1,4 +1,3 @@
-use std::ops::Range;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
@@ -16,13 +15,13 @@ use glam::Vec3;
 
 use crate::ScatterBrick;
 use crate::far_cover::FarCoverTable;
-use crate::groups::{Groups, Kept, Resolved, ScatterKey, resolve, scatter_key};
+use crate::groups::{Groups, Kept, Resolved, resolve};
 use crate::layouts::{
-    CanopyPiece, CullFrame, CullGroup, CullView, DEAD, DrawArgs, GroundData, LEVELS, PlacedRecord,
+    CanopyPiece, CullFrame, CullGroup, CullView, DrawArgs, GroundData, LEVELS, PlacedRecord,
     PoseData, SlotColor, draw_args,
 };
 use crate::occupancy::{OccupancyWindows, canopy, texel_share};
-use crate::pool::ScatterPool;
+use crate::pool::{Pooled, ScatterPool};
 use crate::settings::{FoliageSettings, OccupancySettings, ScatterSettings, ScatterStats};
 
 const FADE_MARGIN: f32 = 0.1;
@@ -91,24 +90,21 @@ pub(crate) struct GroupData {
 
 #[derive(Resource)]
 pub(crate) struct ScatterState {
-    key: Option<ScatterKey>,
     pub(crate) groups: Groups,
     pub(crate) pool: ScatterPool,
     pub(crate) objects: u32,
     pub(crate) resident: u32,
-    pub(crate) groups_revision: u64,
     pub(crate) group_data: GroupData,
     pub(crate) slot_bytes: [u64; 4],
     pub(crate) sizes: Sizes,
     pub(crate) room: u64,
     pub(crate) generation: u64,
-    pub(crate) dirty: Vec<Range<u32>>,
-    pub(crate) slots_revision: u64,
+    pub(crate) slot_sequence: u64,
+    pub(crate) whole: bool,
     pub(crate) left_objects: u32,
     pub(crate) moved: Vec<(Vec3, Vec3)>,
     pub(crate) restyled: bool,
     pub(crate) impostors: Vec<ImpostorRecord>,
-    pub(crate) impostors_revision: u64,
     pub(crate) impostor_live: u32,
     pub(crate) impostor_refused: u32,
     pub(crate) uses: AssetUses,
@@ -116,30 +112,29 @@ pub(crate) struct ScatterState {
     pub(crate) plan: CullPlan,
     presented: f32,
     kept: Kept,
-    changed: bool,
+    retake: bool,
+    refilled: bool,
+    covers_changed: bool,
 }
 
 impl Default for ScatterState {
     fn default() -> Self {
         Self {
-            key: None,
             groups: Groups::default(),
             pool: ScatterPool::default(),
             objects: 0,
             resident: 0,
-            groups_revision: 0,
             group_data: GroupData::default(),
             slot_bytes: SLOT_FIRST,
             sizes: Sizes::default(),
             room: u64::MAX,
             generation: 0,
-            dirty: Vec::new(),
-            slots_revision: 0,
+            slot_sequence: 0,
+            whole: false,
             left_objects: 0,
             moved: Vec::new(),
             restyled: false,
             impostors: Vec::new(),
-            impostors_revision: 0,
             impostor_live: 0,
             impostor_refused: 0,
             uses: AssetUses::default(),
@@ -147,7 +142,9 @@ impl Default for ScatterState {
             plan: CullPlan::default(),
             presented: 0.0,
             kept: Kept::default(),
-            changed: false,
+            retake: false,
+            refilled: false,
+            covers_changed: false,
         }
     }
 }
@@ -185,25 +182,26 @@ pub(crate) fn publish_foliage(settings: Res<FoliageSettings>, mut foliage: ResMu
 }
 
 pub(crate) fn take_impostors(
-    records: Query<&ImpostorRecords, With<Placements>>,
+    records: Query<Ref<ImpostorRecords>, With<Placements>>,
     mut state: ResMut<ScatterState>,
 ) {
     let state = &mut *state;
     let held = records.single().ok();
-    let fresh = held.map_or(&[][..], |held| held.records.as_slice());
-    let records: Vec<ImpostorRecord> = (0..state.groups.groups.len())
-        .map(|index| fresh.get(index).copied().unwrap_or_default())
-        .collect();
-    state.restyled = records != state.impostors;
-    if state.groups.take_impostors(&records) {
-        state.changed = true;
-    }
-    if state.restyled {
+    let arrived = held.as_ref().is_some_and(|held| held.is_changed());
+    state.restyled = false;
+    if std::mem::take(&mut state.retake) || arrived {
+        let fresh = held
+            .as_ref()
+            .map_or(&[][..], |held| held.records.as_slice());
+        let records: Vec<ImpostorRecord> = (0..state.groups.groups.len())
+            .map(|index| fresh.get(index).copied().unwrap_or_default())
+            .collect();
+        state.groups.take_impostors(&records);
+        state.restyled = records != state.impostors;
         state.impostors = records;
-        state.impostors_revision += 1;
     }
-    state.impostor_live = held.map_or(0, |held| held.live);
-    state.impostor_refused = held.map_or(0, |held| held.refused);
+    state.impostor_live = held.as_ref().map_or(0, |held| held.live);
+    state.impostor_refused = held.as_ref().map_or(0, |held| held.refused);
 }
 
 pub(crate) fn place_windows(
@@ -213,6 +211,9 @@ pub(crate) fn place_windows(
     mut piece: ResMut<CanopyPiece>,
     mut occupancy: ResMut<Occupancy>,
 ) {
+    if state.covers_changed {
+        windows.redraw_all();
+    }
     let lit = windows.place(
         &settings,
         view.detail_eye(),
@@ -325,40 +326,27 @@ fn set_groups(state: &mut ScatterState) {
         .filter(|(_, layout)| !layout.part)
         .map(|(group, _)| group.count)
         .sum();
-    state.groups_revision += 1;
 }
 
-fn write_slots(state: &mut ScatterState, dirty: Vec<Range<u32>>) {
-    let records = state.pool.records.len();
+fn write_slots(state: &mut ScatterState) {
+    let end = state.pool.end;
     let room = SLOT_STRIDES
         .iter()
         .map(|stride| state.room / stride)
         .min()
         .unwrap_or(0);
-    let held = records
-        .min(usize::try_from(room).unwrap_or(usize::MAX))
-        .min(u32::MAX as usize);
-    state.left_objects = (records - held).min(u32::MAX as usize) as u32;
+    let held = u64::from(end).min(room) as u32;
+    state.left_objects = end - held;
     let mut grown = false;
     for (bytes, stride) in state.slot_bytes.iter_mut().zip(SLOT_STRIDES) {
-        grown |= grow(bytes, held as u64 * stride, state.room);
+        grown |= grow(bytes, u64::from(held) * stride, state.room);
     }
     if grown {
         state.generation += 1;
     }
-    state.dirty = if grown {
-        std::iter::once(0..held as u32).collect()
-    } else {
-        dirty
-            .into_iter()
-            .map(|range| range.start.min(held as u32)..range.end.min(held as u32))
-            .filter(|range| !range.is_empty())
-            .collect()
-    };
-    if !state.dirty.is_empty() || grown || state.objects != held as u32 {
-        state.slots_revision += 1;
-    }
-    state.objects = held as u32;
+    state.whole = grown;
+    state.slot_sequence += 1;
+    state.objects = held;
 }
 
 pub(crate) fn place_pool(
@@ -379,9 +367,7 @@ pub(crate) fn place_pool(
         room => room,
     } / 16
         * 16;
-    for slots in std::mem::take(&mut state.dirty) {
-        state.pool.uploaded(slots);
-    }
+    state.pool.settle();
     let placing = tiles
         .terrains
         .iter()
@@ -397,25 +383,20 @@ pub(crate) fn place_pool(
         far.fill(&tiles.terrains, &resolved, &library);
     }
     state.uses = asset_uses(&resolved);
-    let key = scatter_key(&residency, &resolved);
-    let rebuilt = state.key.as_ref() != Some(&key);
-    let mut refill = false;
-    if rebuilt {
-        let mut groups = Groups::build(&residency, &resolved);
-        refill = !state.groups.same_objects(&groups);
-        if !refill {
-            for (layout, before) in groups.layouts.iter_mut().zip(&state.groups.layouts) {
-                layout.impostor = before.impostor;
-            }
+    let mut groups = Groups::build(&residency, &resolved);
+    let refill = !state.groups.same_objects(&groups);
+    if !refill {
+        for (layout, before) in groups.layouts.iter_mut().zip(&state.groups.layouts) {
+            layout.impostor = before.impostor;
         }
-        state.groups = groups;
-        if refill {
-            state.impostors = vec![ImpostorRecord::default(); state.groups.groups.len()];
-            state.impostors_revision += 1;
-            state.pool.clear(state.groups.groups.len());
-        }
-        state.key = Some(key);
-        state.changed = true;
+    }
+    state.covers_changed = state.groups.covers != groups.covers;
+    state.groups = groups;
+    state.refilled = refill;
+    if refill {
+        state.impostors = vec![ImpostorRecord::default(); state.groups.groups.len()];
+        state.retake = true;
+        state.pool.clear(state.groups.groups.len());
     }
     if refill || tiles.is_changed() {
         for terrain in tiles.terrains.iter() {
@@ -434,32 +415,26 @@ pub(crate) fn place_pool(
                 if tile.placed.is_empty() || state.pool.contains(terrain.terrain, tile.key) {
                     continue;
                 }
-                let objects = state.groups.tile_objects(terrain, tile);
+                let objects =
+                    state
+                        .groups
+                        .tile_objects(terrain.terrain, terrain.origin, &tile.placed);
                 state.pool.insert(
                     (terrain.terrain, tile.key),
-                    (Arc::clone(&tile.placed), tile.stamp),
+                    (Arc::clone(&tile.placed), tile.stamp, terrain.origin),
                     objects,
                 );
             }
         }
     }
-    state.pool.compact();
-    let (dirty, counts_changed) = state.pool.take_changes();
+    state.pool.compact(&state.groups);
     state.moved.clear();
     state.moved.extend(state.pool.take_moved());
-    write_slots(state, dirty);
-    if counts_changed || std::mem::take(&mut state.changed) {
-        let counts: Vec<u32> = state
-            .groups
-            .groups
-            .iter()
-            .map(|group| state.pool.counts[group.objects as usize])
-            .collect();
-        for (group, &count) in state.groups.groups.iter_mut().zip(&counts) {
-            group.count = count;
-        }
-        set_groups(state);
+    write_slots(state);
+    for group in &mut state.groups.groups {
+        group.count = state.pool.counts[group.objects as usize];
     }
+    set_groups(state);
     let seconds = time.elapsed_seconds as f32;
     let since = seconds - std::mem::replace(&mut state.presented, seconds);
     state.fade = if detail.fade_seconds > 0.0 && since < 1.0 {
@@ -593,91 +568,59 @@ pub(crate) fn mark_moved(state: Res<ScatterState>, mut windows: ResMut<Occupancy
     windows.moved(&state.moved);
 }
 
-type Boxes = Vec<([f32; 4], [f32; 3])>;
-
-fn impostor_boxes(state: &ScatterState, slots: Range<u32>) -> Vec<(Vec3, Vec3)> {
-    let pool = &state.pool;
-    slots
-        .map(|slot| {
-            let (Some(record), Some(pose)) = (
-                pool.records.get(slot as usize),
-                pool.poses.get(slot as usize),
-            ) else {
-                return (Vec3::ZERO, Vec3::ZERO);
-            };
-            if record.group == DEAD {
-                return (Vec3::ZERO, Vec3::ZERO);
-            }
-            let Some(views) = state
-                .impostors
-                .get(record.group as usize)
-                .filter(|views| views.framed())
-            else {
-                return (Vec3::ZERO, Vec3::ZERO);
-            };
-            let [x, y, z, _] = views.sphere;
-            let [half_x, half_y, half_z] = views.extent;
-            let middle = |row: [f32; 4]| row[0] * x + row[1] * y + row[2] * z + row[3];
-            let spread = |row: [f32; 4]| {
-                row[0].abs() * half_x + row[1].abs() * half_y + row[2].abs() * half_z
-            };
-            (
-                Vec3::new(middle(pose[0]), middle(pose[1]), middle(pose[2])),
-                Vec3::new(spread(pose[0]), spread(pose[1]), spread(pose[2])),
-            )
-        })
-        .collect()
+fn same_tile(tile: &PooledTile, pooled: &Pooled) -> bool {
+    tile.stamp == pooled.stamp && tile.slots == pooled.slots && tile.identity == pooled.identity()
 }
 
-pub(crate) fn publish_tiles(
-    state: Res<ScatterState>,
-    mut placed: ResMut<PlacedTiles>,
-    mut published: Local<Option<(u64, Boxes, u64)>>,
-) {
-    let revision = state.pool.revision();
-    let boxes: Boxes = state
+pub(crate) fn publish_tiles(state: Res<ScatterState>, mut placed: ResMut<PlacedTiles>) {
+    let boxes = state
         .impostors
         .iter()
-        .map(|record| (record.sphere, record.extent))
-        .collect();
-    if published
-        .as_ref()
-        .is_some_and(|(seen, held, _)| *seen == revision && *held == boxes)
-        && !placed.is_changed()
-    {
+        .map(|record| (record.sphere, record.extent));
+    if !placed.groups.iter().copied().eq(boxes.clone()) {
+        placed.groups = boxes.collect();
+    }
+    let tiles = state.pool.tiles();
+    let stale = state.restyled || state.refilled;
+    let current = !stale
+        && placed.tiles.len() == tiles.len()
+        && placed
+            .tiles
+            .iter()
+            .zip(&tiles)
+            .all(|(tile, &((terrain, key), pooled))| {
+                tile.terrain == terrain && tile.key == key && same_tile(tile, pooled)
+            });
+    if current {
         return;
     }
     let placed = &mut *placed;
-    let same_impostors = published
-        .as_ref()
-        .is_some_and(|(_, _, impostors)| *impostors == state.impostors_revision);
     let mut before = std::mem::take(&mut placed.tiles);
     placed
         .tiles
-        .extend(state.pool.tiles().into_iter().map(|((terrain, key), pooled)| {
-            let identity = pooled.placed.as_ptr() as usize as u64;
+        .extend(tiles.into_iter().map(|((terrain, key), pooled)| {
             let kept = before
                 .binary_search_by_key(&(terrain, key), |tile| (tile.terrain, tile.key))
                 .ok()
                 .map(|at| &mut before[at])
-                .filter(|tile| {
-                    same_impostors
-                        && tile.stamp == pooled.stamp
-                        && tile.slots == pooled.slots
-                        && tile.identity == identity
-                })
+                .filter(|tile| !stale && same_tile(tile, pooled))
                 .map(|tile| std::mem::take(&mut tile.impostors));
             PooledTile {
                 terrain,
                 key,
                 stamp: pooled.stamp,
                 slots: pooled.slots.clone(),
-                identity,
-                impostors: kept.unwrap_or_else(|| impostor_boxes(&state, pooled.slots.clone())),
+                identity: pooled.identity(),
+                impostors: kept.unwrap_or_else(|| {
+                    state.groups.tile_boxes(
+                        terrain,
+                        pooled.origin,
+                        &pooled.placed,
+                        &state.impostors,
+                    )
+                }),
             }
         }));
-    placed.groups.clone_from(&boxes);
-    *published = Some((revision, boxes, state.impostors_revision));
 }
 
 pub(crate) fn publish_changes(

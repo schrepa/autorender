@@ -20,13 +20,11 @@ const NORMAL_FORMAT: engine_render::wgpu::TextureFormat =
 const CONTROL_FORMAT: engine_render::wgpu::TextureFormat =
     engine_render::wgpu::TextureFormat::R32Uint;
 const RIVER_FORMAT: engine_render::wgpu::TextureFormat =
-    engine_render::wgpu::TextureFormat::Rgba16Uint;
+    engine_render::wgpu::TextureFormat::R16Uint;
 const IDS_FORMAT: engine_render::wgpu::TextureFormat = engine_render::wgpu::TextureFormat::Rg32Uint;
 
-const ARRIVAL_SECONDS: f32 = 0.4;
-
 const NO_HOLES: u32 = u32::MAX;
-const DIRECTORY_AT: u32 = crate::gpu::TABLE_HOLES + 1;
+const DIRECTORY_AT: u32 = crate::gpu::TABLE_NOW + 1;
 const HOLE_WORDS: usize = ((LAYER_SIZE - 2) * (LAYER_SIZE - 2)).div_ceil(32) as usize;
 
 pub(crate) fn reached(
@@ -38,31 +36,6 @@ pub(crate) fn reached(
         .into_iter()
         .filter(|(var, _)| cx.reaches(entry, *var))
         .collect()
-}
-
-fn widen(range: Range<usize>, index: usize) -> Range<usize> {
-    if range.is_empty() {
-        index..index + 1
-    } else {
-        range.start.min(index)..range.end.max(index + 1)
-    }
-}
-
-fn changed_run<T: bytemuck::Pod>(was: &[T], now: &[T]) -> Range<usize> {
-    let same = |a: &T, b: &T| bytemuck::bytes_of(a) == bytemuck::bytes_of(b);
-    let shared = now.len().min(was.len());
-    let Some(first) = (0..now.len()).find(|&at| at >= shared || !same(&now[at], &was[at])) else {
-        return 0..0;
-    };
-    let end = if now.len() > was.len() {
-        now.len()
-    } else {
-        (first..now.len())
-            .rev()
-            .find(|&at| !same(&now[at], &was[at]))
-            .map_or(first + 1, |at| at + 1)
-    };
-    first..end
 }
 
 pub(crate) struct FrameTerrain {

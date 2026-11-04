@@ -1,10 +1,9 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Cut, Expected, GlobalTransforms, InvalidSetting, Nearest, Poses, Rule, Setting, View, fields,
-    settings, stats,
+    Cut, Expected, GlobalTransforms, InvalidSetting, Nearest, Rule, View, fields, settings, stats,
 };
 use engine_places::lights::{
-    LightRegion, LocalLight, MAX_LIGHT_RANGE, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES, Spot,
+    LightRegion, LocalLight, MAX_LIGHT_RANGE, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES,
 };
 use engine_places::meshes::Instances;
 use glam::{Mat4, Vec3};
@@ -37,7 +36,6 @@ stats! {
     #[section("local_light_stats")]
     pub struct LightStats {
         pub shaded: u32,
-        pub invalid: u32,
         pub visible: Option<u32>,
         pub light_cut: Cut,
         pub cluster_cut: Cut,
@@ -81,27 +79,6 @@ pub(crate) fn spot_order(
             .nearest(inner_angle));
     }
     Ok(())
-}
-
-fn ruled<T: Setting>(value: &T, field: &'static str, rule: Option<Rule>) -> bool {
-    Setting::check(value, field, fields::same(rule)).is_ok()
-}
-
-fn valid(light: &LocalLight) -> bool {
-    ruled(&light.color, "color", light_rule("color"))
-        && ruled(&light.intensity, "intensity", light_rule("intensity"))
-        && ruled(&light.range, "range", light_rule("range"))
-        && ruled(&light.offset, "offset", light_rule("offset"))
-        && light.spot.is_none_or(|spot| valid_spot(&spot))
-        && ruled(&light.radius, "radius", light_rule("radius"))
-        && ruled(&light.length, "length", light_rule("length"))
-}
-
-fn valid_spot(spot: &Spot) -> bool {
-    ruled(&spot.direction, "direction", spot_rule("direction"))
-        && ruled(&spot.inner_angle, "inner_angle", spot_rule("inner_angle"))
-        && ruled(&spot.outer_angle, "outer_angle", spot_rule("outer_angle"))
-        && spot_order(spot.direction, spot.inner_angle, spot.outer_angle).is_ok()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -166,156 +143,70 @@ pub(crate) struct LightList {
 
 #[derive(Resource, Default)]
 pub(crate) struct LightGather {
-    scanned: bool,
-    count: usize,
-    settings: Option<LocalLightSettings>,
-    lights: Vec<(Entity, LocalLight, Option<u32>)>,
-    world_lights: Vec<usize>,
-    invalid: usize,
-    ranked: Vec<(f32, usize)>,
+    ranked: Vec<(f32, Entity)>,
     nearest: Nearest,
     cut: usize,
-    shown_invalid: usize,
 }
 
-impl LightGather {
-    fn rescan(
-        &mut self,
-        lights: &Query<'_, '_, (Entity, Ref<'static, LocalLight>)>,
-        instances: &Instances,
-    ) {
-        self.lights.clear();
-        self.world_lights.clear();
-        self.invalid = 0;
-        for (entity, light) in lights {
-            if !valid(&light) {
-                self.invalid += 1;
-                continue;
-            }
-            let slot = instances.drawn(entity);
-            if slot.is_none() {
-                self.world_lights.push(self.lights.len());
-            }
-            self.lights.push((entity, *light, slot));
-        }
-    }
-
-    fn publish(
-        &mut self,
-        settings: &LocalLightSettings,
-        (globals, poses): (&GlobalTransforms, &Poses),
-        eye: Vec3,
-        list: &mut Vec<RenderLight>,
-    ) {
-        let budget = settings
-            .max_lights
-            .map_or(usize::MAX, |budget| budget as usize);
-        list.clear();
-        if self.lights.len() > budget {
-            self.publish_nearest(settings, (globals, poses), eye, budget, list);
-            return;
-        }
-        let Self {
-            lights,
-            shown_invalid,
-            ..
-        } = self;
-        for (entity, light, slot) in lights.iter() {
-            let model = match slot {
-                Some(_) => None,
-                None => match poses.of(*entity) {
-                    Some(model) => Some(Mat4::from(model)),
-                    None => {
-                        *shown_invalid += 1;
-                        continue;
-                    }
-                },
-            };
-            list.push(RenderLight::new(light, settings.intensity, model, *slot));
-        }
-    }
-
-    fn publish_nearest(
-        &mut self,
-        settings: &LocalLightSettings,
-        (globals, poses): (&GlobalTransforms, &Poses),
-        eye: Vec3,
-        budget: usize,
-        list: &mut Vec<RenderLight>,
-    ) {
-        let Self {
-            lights,
-            ranked,
-            nearest,
-            cut,
-            shown_invalid,
-            ..
-        } = self;
-        ranked.clear();
-        for (index, (entity, light, _)) in lights.iter().enumerate() {
-            let Some(model) = globals.get(*entity).and_then(|pose| pose.matrix()) else {
-                continue;
-            };
-            let distance = model.transform_point3(light.offset).distance_squared(eye)
-                - light.range * light.range;
-            ranked.push((distance, index));
-        }
-        let kept = nearest.kept_in_order(ranked.iter().map(|&(distance, _)| distance), budget);
-        *cut = ranked.len() - kept.len();
-        *shown_invalid += lights.len() - ranked.len();
-        for position in kept {
-            let (entity, light, slot) = &lights[ranked[position].1];
-            let model = match slot {
-                Some(_) => None,
-                None => match poses.of(*entity) {
-                    Some(model) => Some(Mat4::from(model)),
-                    None => {
-                        *shown_invalid += 1;
-                        continue;
-                    }
-                },
-            };
-            list.push(RenderLight::new(light, settings.intensity, model, *slot));
-        }
-    }
+fn render_light(
+    (entity, light): (Entity, &LocalLight),
+    settings: &LocalLightSettings,
+    (instances, globals): (&Instances, &GlobalTransforms),
+) -> Option<RenderLight> {
+    let slot = instances.drawn(entity);
+    let model = match slot {
+        Some(_) => None,
+        None => Some(Mat4::from(globals.pose(entity)?)),
+    };
+    Some(RenderLight::new(light, settings.intensity, model, slot))
 }
 
 pub(crate) fn gather_lights(
     settings: Res<LocalLightSettings>,
-    lights: Query<(Entity, Ref<'static, LocalLight>)>,
-    instances: Res<Instances>,
-    (globals, poses): (Res<GlobalTransforms>, Res<Poses>),
+    lights: Query<(Entity, &'static LocalLight)>,
+    (instances, globals): (Res<Instances>, Res<GlobalTransforms>),
     view: Res<View>,
     mut gather: ResMut<LightGather>,
     mut list: ResMut<LightList>,
 ) {
-    let gather = &mut *gather;
-    gather.cut = 0;
-    gather.shown_invalid = 0;
-    let mut count = 0;
-    let mut changed = !gather.scanned
-        || instances.is_changed()
-        || gather.settings != Some(*settings);
-    for (_, light) in &lights {
-        count += 1;
-        changed |= light.is_changed();
-    }
-    changed |= count != gather.count;
-    if changed {
-        gather.rescan(&lights, &instances);
-        gather.count = count;
-        gather.settings = Some(*settings);
-        gather.scanned = true;
-    } else if gather.world_lights.is_empty()
-        && settings
-            .max_lights
-            .is_none_or(|budget| gather.lights.len() <= budget as usize)
-    {
-        gather.shown_invalid = gather.invalid;
+    let LightGather {
+        ranked,
+        nearest,
+        cut,
+    } = &mut *gather;
+    *cut = 0;
+    list.lights.clear();
+    let held = (&*instances, &*globals);
+    let budget = settings
+        .max_lights
+        .map_or(usize::MAX, |budget| budget as usize);
+    if lights.iter().len() <= budget {
+        let shown = lights
+            .iter()
+            .filter_map(|light| render_light(light, &settings, held));
+        list.lights.extend(shown);
         return;
     }
-    gather.shown_invalid = gather.invalid;
-    gather.publish(&settings, (&globals, &poses), view.detail_eye(), &mut list.lights);
+    let eye = view.detail_eye();
+    ranked.clear();
+    for (entity, light) in &lights {
+        let Some(model) = globals.pose(entity) else {
+            continue;
+        };
+        let distance =
+            model.transform_point3(light.offset).distance_squared(eye) - light.range * light.range;
+        ranked.push((distance, entity));
+    }
+    let kept = nearest.kept_in_order(ranked.iter().map(|&(distance, _)| distance), budget);
+    *cut = ranked.len() - kept.len();
+    for position in kept {
+        let entity = ranked[position].1;
+        if let Ok(light) = lights.get(entity)
+            && let Some(light) = render_light(light, &settings, held)
+        {
+            list.lights.push(light);
+        }
+    }
 }
 
 pub(crate) fn light_stats(
@@ -335,7 +226,6 @@ pub(crate) fn light_stats(
     let cut = gather.cut.min(u32::MAX as usize) as u32;
     stats.set_if_neq(LightStats {
         shaded: if lit { list.lights.len() as u32 } else { 0 },
-        invalid: gather.shown_invalid.min(u32::MAX as usize) as u32,
         visible: found.map(|(reached, _)| reached),
         light_cut: Cut::of(kept.saturating_add(cut), kept),
         cluster_cut: found.map_or_else(Cut::default, |(_, cut)| cut),

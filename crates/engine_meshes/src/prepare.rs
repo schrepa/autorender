@@ -1,5 +1,7 @@
 use bevy_ecs::system::SystemParamItem;
-use engine_core::{GpuPresentation, ImpostorRecord, NodeInfo, NodePose, PoseRows};
+use engine_core::{
+    GlobalTransforms, GpuPresentation, ImpostorRecord, NodeInfo, NodePose, PoseRows,
+};
 use engine_render::{AfterRead, CopyRegion, GpuPart, Prepare, mip_levels, pyramid_extents, wgpu};
 
 use crate::batches::BatchPlan;
@@ -9,13 +11,13 @@ use crate::layouts::{
     BatchData, COMPOSED_BYTES, CandidateData, CasterFrame, DRAW_ARGS_BYTES, GROUP, LOD_LEVELS,
     PHASE1, PHASE2, PROBE, PresentationFrame, UNWATCHED, VISIBLE,
 };
-use crate::order::{DrawOrder, MeshPlan};
+use crate::order::MeshPlan;
 use crate::presentation::{
-    CASTER_TOTALS_BYTES, CasterTotals, DrawnBatch, FADE_MARGIN, Kept, PresentationTotals,
-    TOTALS_BYTES, WATCHED, frustum_uniform, grow, rasterized, storage_bytes,
+    CASTER_TOTALS_BYTES, CasterTotals, FADE_MARGIN, Kept, PresentationTotals, TOTALS_BYTES,
+    UploadSources, WATCHED, frustum_uniform, grow, rasterized, storage_bytes,
 };
 use crate::retained::RetainedRender;
-use crate::uploads::{ColorData, PoseData, RetainedUploads};
+use crate::uploads::{ColorData, PoseData, UploadRange, color_data, listed_ranges};
 
 const TOTALS: u32 = 0;
 const CASTERS: u32 = 1;
@@ -45,7 +47,7 @@ impl MeshesGpu {
             (
                 retained,
                 plan,
-                order,
+                assets,
                 decided,
                 caster_plan,
                 presented,
@@ -59,7 +61,7 @@ impl MeshesGpu {
                 captures,
                 limits,
             ),
-            (records, watched, totals),
+            (records, watched, totals, residency),
         ): SystemParamItem<'_, '_, <Self as GpuPart>::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
@@ -67,17 +69,19 @@ impl MeshesGpu {
             cx.refuse(error.clone());
             return;
         }
-        self.copy_draws(&plan, &order);
-        let held = records.single().ok().map(|held| held.records.as_slice());
-        self.take_impostors(held);
-        self.write_impostors(held.unwrap_or_default(), cx);
+        self.state.draws.plan(&plan.batches, &assets, &residency);
+        let held = records
+            .single()
+            .ok()
+            .map_or(&[][..], |held| held.records.as_slice());
+        self.write_impostors(held, cx);
         self.state.casts = maps.on;
         self.state.groups.first_instance = limits.indirect_first_instance;
-        self.state.instance_count = plan.ordered_instances.len();
+        self.state.instance_count = plan.ordered.len();
         let temporal = view.temporal();
         self.prepare_instances(&retained, &plan, temporal, cx);
         let size = view.render_size();
-        let motion = self.prepare_motion(&retained, view.display_size(), temporal, cx);
+        let motion = self.prepare_motion(&plan, view.display_size(), temporal, cx);
         let fade = self.fade_share(time.elapsed_seconds as f32, detail.fade_seconds);
         let stillness = captures.views.then_some(captures.still);
         if !decided.occlusion_enabled {
@@ -110,6 +114,12 @@ impl MeshesGpu {
             &nodes,
             &culling,
             &decided,
+            UploadSources {
+                assets: &assets,
+                residency: &residency,
+                hierarchy: &hierarchy,
+                impostors: held,
+            },
             cx,
         );
         if engine_core::profile::active() {
@@ -121,18 +131,13 @@ impl MeshesGpu {
 
     fn prepare_motion(
         &mut self,
-        retained: &RetainedRender,
+        plan: &BatchPlan,
         size: glam::UVec2,
         temporal: bool,
         cx: &mut Prepare<'_, Self>,
     ) -> bool {
         let state = &mut self.state;
-        let key = (
-            retained.identity(),
-            retained.structure_revision(),
-            state.capacity_generation,
-            size,
-        );
+        let key = (plan.generation(), state.capacity_generation, size);
         let motion = temporal && state.motion_key == Some(key);
         state.motion_key = temporal.then_some(key);
         state.temporal = temporal;
@@ -160,48 +165,13 @@ impl MeshesGpu {
         }
     }
 
-    fn take_impostors(&mut self, records: Option<&[ImpostorRecord]>) {
-        let errors = &mut self.state.impostor_errors;
-        let fresh: Vec<f32> = (0..self.state.draws.batches.len())
-            .map(|index| {
-                records
-                    .and_then(|records| records.get(index))
-                    .map_or(0.0, ImpostorRecord::error)
-            })
-            .collect();
-        if *errors != fresh {
-            *errors = fresh;
-            self.state.impostor_generation += 1;
-        }
-        self.state.cards =
-            records.is_some_and(|records| records.iter().any(|record| record.sphere[3] > 0.0));
-    }
-
     fn write_impostors(&mut self, records: &[ImpostorRecord], cx: &mut Prepare<'_, Self>) {
+        self.state.cards = records.iter().any(|record| record.sphere[3] > 0.0);
         let bytes = (records.len().max(1) * size_of::<ImpostorRecord>()) as u64;
         cx.allocate_buffer(self.instances.impostors, bytes);
-        if self.state.impostor_records.as_slice() == records {
-            return;
-        }
         if !records.is_empty() {
             cx.write(self.instances.impostors, 0, records);
         }
-        self.state.impostor_records = records.to_vec();
-    }
-
-    fn copy_draws(&mut self, plan: &BatchPlan, order: &DrawOrder) {
-        let draws = &mut self.state.draws;
-        let generation = (plan.generation(), order.generation);
-        if draws.generation == Some(generation) {
-            return;
-        }
-        draws.generation = Some(generation);
-        draws.batches.clear();
-        draws.batches.extend(plan.batches.iter().map(DrawnBatch::of));
-        draws.order.clone_from(&order.order);
-        draws.masked.clone_from(&order.masked);
-        draws.looks.clone_from(&order.looks);
-        draws.metas.clone_from(&order.metas);
     }
 
     fn prepare_instances(
@@ -221,7 +191,7 @@ impl MeshesGpu {
             }
             state.capacity = plan.instance_capacity;
             state.capacity_generation += 1;
-            state.uploads.invalidate();
+            state.colors_written = None;
         }
         let capacity = state.capacity as u64;
         cx.allocate_buffer(instances.records, crate::debug::records_bytes());
@@ -236,27 +206,43 @@ impl MeshesGpu {
         } else {
             cx.allocate_buffer(instances.previous_poses, storage_bytes(0));
         }
-        if state.color_staging.capacity() < state.capacity {
+        let records = retained.instances();
+        let stride = size_of::<ColorData>();
+        let consecutive = state
+            .colors_written
+            .is_some_and(|last| last + 1 == retained.color_sequence());
+        state.color_ranges.clear();
+        if !consecutive && !records.is_empty() {
+            state.color_ranges.push(UploadRange {
+                start: 0,
+                end: records.len(),
+            });
+        } else if consecutive && !retained.color_writes().is_empty() {
+            listed_ranges(
+                retained.color_writes(),
+                records.len(),
+                stride,
+                &mut state.color_bits,
+                &mut state.color_ranges,
+            );
+        }
+        let mut color_bytes = 0;
+        for range in &state.color_ranges {
+            state.color_staging.clear();
             state
                 .color_staging
-                .reserve_exact(state.capacity - state.color_staging.len());
-        }
-        state.uploads.prepare(retained, &mut state.color_staging);
-        let mut color_bytes = 0;
-        for range in state.uploads.color_ranges() {
-            let records = &state.color_staging[range.start..range.end];
-            cx.write(instances.colors, (range.start * size_of::<ColorData>()) as u64, records);
-            color_bytes += std::mem::size_of_val(records) as u64;
+                .extend(records[range.start..range.end].iter().map(color_data));
+            cx.write(
+                instances.colors,
+                (range.start * stride) as u64,
+                &state.color_staging,
+            );
+            color_bytes += std::mem::size_of_val(state.color_staging.as_slice()) as u64;
         }
         cx.count_upload(color_bytes);
-        state.uploads.commit();
+        state.colors_written = Some(retained.color_sequence());
         let (pose, color) = (size_of::<PoseData>() as u64, size_of::<ColorData>() as u64);
         cx.memory("memory.gpu_temporal_bytes", if temporal { capacity * pose } else { 0 });
-        cx.memory("memory.render_upload_cache_bytes", state.uploads.capacity_bytes() as u64);
-        cx.memory(
-            "memory.render_upload_range_bytes",
-            RetainedUploads::range_scratch_bytes() as u64,
-        );
         cx.memory(
             "memory.render_staging_capacity_bytes",
             (state.color_staging.capacity() * size_of::<ColorData>()) as u64,
@@ -278,7 +264,6 @@ impl MeshesGpu {
         if pyramid.base != base || pyramid.count != count {
             pyramid.base = base;
             pyramid.count = count;
-            pyramid.drawn = (0, 0);
             cx.allocate(
                 self.presented.pyramid,
                 wgpu::Extent3d {
@@ -289,16 +274,12 @@ impl MeshesGpu {
                 count,
             );
         }
-        if pyramid.drawn != render {
-            pyramid.drawn = render;
-            let extents = pyramid_extents(render, count);
-            pyramid.written.clear();
-            for (level, extent) in extents.iter().enumerate() {
-                let buffer = self.presented.extents[level];
-                cx.allocate_buffer(buffer, 16);
-                cx.write(buffer, 0, extent);
-                pyramid.written.push((extent[0], extent[1]));
-            }
+        pyramid.written.clear();
+        for (level, extent) in pyramid_extents(render, count).iter().enumerate() {
+            let buffer = self.presented.extents[level];
+            cx.allocate_buffer(buffer, 16);
+            cx.write(buffer, 0, extent);
+            pyramid.written.push((extent[0], extent[1]));
         }
         count
     }
@@ -326,6 +307,7 @@ impl MeshesGpu {
         gpu: &GpuPresentation<'_>,
         view: &View,
         decided: &MeshPlan,
+        sources: UploadSources<'_>,
         cx: &mut Prepare<'_, Self>,
     ) -> Prepared {
         self.ensure_nodes(gpu.info.len(), gpu.parents.len(), cx);
@@ -334,7 +316,7 @@ impl MeshesGpu {
             probe_faces: view.stillness.is_some(),
             impostors: view.impostors && view.lod_error > 0.0,
         };
-        self.ensure_groups((plan.ordered_instances.len(), plan.batches.len()), kept, cx);
+        self.ensure_groups((plan.ordered.len(), plan.batches.len()), kept, cx);
         self.ensure_stillness(view.stillness, cx);
         self.ensure_fades(cx);
         let states = storage_bytes(self.state.fade_slots * 4);
@@ -348,7 +330,8 @@ impl MeshesGpu {
             self.state.nodes.shift = false;
             None
         };
-        let group_bytes = self.rebuild_groups(retained, plan, casters, gpu, cx);
+        let group_bytes = self.write_batches(plan, casters, &sources, cx)
+            + self.write_candidates(retained, plan, gpu, sources.hierarchy, cx);
         self.write_frame_uniform(gpu.alpha, view, decided, cx);
         cx.run(self.passes.presentation);
         if self.state.occlusion {
@@ -424,7 +407,6 @@ impl MeshesGpu {
         }
         if batches > groups.batch_capacity {
             groups.batch_capacity = batches.max(64).next_power_of_two();
-            groups.key = None;
         }
         let capacity = groups.capacity as u64;
         let scan_groups = capacity.div_ceil(u64::from(GROUP));
@@ -456,9 +438,6 @@ impl MeshesGpu {
         }
         cx.allocate_buffer(presented.counts, storage_bytes(16));
         cx.allocate_buffer(presented.totals, storage_bytes(TOTALS_BYTES));
-        if groups.kept != kept {
-            groups.key = None;
-        }
         groups.kept = kept;
     }
 
@@ -471,17 +450,9 @@ impl MeshesGpu {
         };
         if slots > still.slots || (slots == 0 && still.slots != 0) {
             still.slots = slots;
-            still.counted = 0;
         }
         cx.allocate_buffer(self.instances.still_frames, storage_bytes(still.slots * 8));
-        let counting = stillness == Some(true);
-        if counting && !still.counting {
-            still.counted = 0;
-        }
-        still.counting = counting;
-        if counting {
-            still.counted = (still.counted + 1).min(engine_places::meshes::STILL_FRAMES);
-        }
+        still.counting = stillness == Some(true);
     }
 
     fn ensure_fades(&mut self, cx: &mut Prepare<'_, Self>) {
@@ -558,48 +529,59 @@ impl MeshesGpu {
         bytes
     }
 
-    fn rebuild_groups(
+    fn write_batches(
         &mut self,
-        retained: &RetainedRender,
         plan: &BatchPlan,
         casters: &CasterPlan,
-        gpu: &GpuPresentation<'_>,
+        sources: &UploadSources<'_>,
         cx: &mut Prepare<'_, Self>,
     ) -> u64 {
         let groups = &mut self.state.groups;
-        let key = (
-            retained.identity(),
-            plan.generation(),
-            retained.source_revision(),
-            gpu.identity,
-            casters.generation,
-            self.state.draws.generation.map_or(0, |(_, order)| order),
-            self.state.impostor_generation,
+        groups.stage_batches(
+            &plan.batches,
+            sources.assets,
+            sources.residency,
+            (
+                |index| casters.batch_group(index),
+                |index| {
+                    sources
+                        .impostors
+                        .get(index)
+                        .map_or(0.0, ImpostorRecord::error)
+                },
+            ),
         );
+        if !groups.batch_staging.is_empty() {
+            cx.write(self.presented.batches, 0, &groups.batch_staging);
+        }
+        (groups.batch_staging.len() * size_of::<BatchData>()) as u64
+    }
+
+    fn write_candidates(
+        &mut self,
+        retained: &RetainedRender,
+        plan: &BatchPlan,
+        gpu: &GpuPresentation<'_>,
+        hierarchy: &GlobalTransforms,
+        cx: &mut Prepare<'_, Self>,
+    ) -> u64 {
+        let groups = &mut self.state.groups;
+        let key = (plan.generation(), gpu.identity);
         if groups.key == Some(key) {
             return 0;
         }
-        let errors = &self.state.impostor_errors;
-        groups.stage(
-            &plan.batches,
-            &plan.ordered_instances,
-            retained.slot_nodes(),
-            &self.state.draws.metas,
-            (
-                |index| casters.batch_group(index),
-                |index| errors.get(index).copied().unwrap_or(0.0),
-            ),
-        );
+        groups.key = Some(key);
+        groups.stage_candidates(&plan.batches, &plan.ordered, |slot| {
+            retained
+                .owner(slot)
+                .and_then(|owner| hierarchy.node_index(owner))
+                .map_or(u32::MAX, |node| node as u32)
+        });
         if !groups.candidate_staging.is_empty() {
             cx.write(self.presented.candidates, 0, &groups.candidate_staging);
             cx.write(self.presented.slot_candidates, 0, &groups.slot_staging);
         }
-        if !groups.batch_staging.is_empty() {
-            cx.write(self.presented.batches, 0, &groups.batch_staging);
-        }
-        groups.key = Some(key);
-        (2 * groups.candidate_staging.len() * size_of::<CandidateData>()
-            + groups.batch_staging.len() * size_of::<BatchData>()) as u64
+        (2 * groups.candidate_staging.len() * size_of::<CandidateData>()) as u64
     }
 
     fn write_frame_uniform(&mut self, alpha: f32, view: &View, decided: &MeshPlan, cx: &mut Prepare<'_, Self>) {
@@ -709,20 +691,12 @@ impl MeshesGpu {
         cx.allocate_buffer(buffers.args, storage_bytes(args));
         cx.allocate_buffer(buffers.template, storage_bytes(args));
         cx.allocate_buffer(buffers.totals, storage_bytes(CASTER_TOTALS_BYTES));
-        if draws.generation != Some(plan.generation) {
-            draws.generation = Some(plan.generation);
-            draws.groups.clear();
-            draws.groups.extend(plan.groups.iter().map(|group| (group.mesh, group.material, group.start)));
-            draws.masked.clone_from(&plan.masked);
-            draws.regions_in_args = plan.regions_in_args;
-            draws.id_capacity = plan.id_capacity;
-            if !plan.template.is_empty() {
-                cx.write(buffers.template, 0, &plan.template);
-            }
-            if !plan.starts.is_empty() {
-                cx.write(buffers.ids, starts, &plan.starts);
-            }
-        }
+        draws.groups.clear();
+        draws.groups.extend(plan.groups.iter().map(|group| (group.mesh, group.material, group.start)));
+        draws.regions_in_args = plan.regions_in_args;
+        draws.id_capacity = plan.id_capacity;
+        cx.write(buffers.template, 0, &plan.template);
+        cx.write(buffers.ids, starts, &plan.starts);
         let candidates = self.state.groups.count;
         draws.candidates = candidates;
         let frame = CasterFrame {

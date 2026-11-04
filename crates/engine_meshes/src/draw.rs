@@ -13,7 +13,7 @@ const FADE_CARDS_START: u64 = 16;
 
 impl MeshesGpu {
     pub(crate) fn draw_prepass(&self, _: &(), draw: &mut Draw<'_, Self, MainView>) -> u32 {
-        if self.state.instance_count == 0 || self.state.draws.masked.is_empty() {
+        if self.state.instance_count == 0 || !self.state.draws.masked {
             return 0;
         }
         self.draw_meshes(draw, PHASE_ONE, true)
@@ -31,7 +31,7 @@ impl MeshesGpu {
             return 0;
         }
         let mut drawn = 0;
-        if !self.state.draws.masked.is_empty() {
+        if self.state.draws.masked {
             drawn += self.draw_meshes(draw, PHASE_TWO, true);
         }
         drawn + self.draw_meshes(draw, PHASE_TWO, false) + self.draw_cards(draw, PHASE_TWO)
@@ -42,34 +42,31 @@ impl MeshesGpu {
     }
 
     fn draw_meshes(&self, draw: &mut Draw<'_, Self, MainView>, phase: usize, prepass: bool) -> u32 {
-        let draws = &self.state.draws;
-        let order = if prepass { &draws.masked } else { &draws.order };
         let records = self.inputs.records;
         let mut drawn = 0;
-        for &index in order {
-            let index = index as usize;
-            let (Some(batch), Some(&look)) = (draws.batches.get(index), draws.looks.get(index)) else {
+        for item in &self.state.draws.items {
+            if prepass && !item.look.masked {
                 continue;
-            };
+            }
             let pipeline = if prepass {
-                self.pipelines.prepass.of(look)
+                self.pipelines.prepass.of(item.look)
             } else {
-                self.pipelines.opaque.of(look)
+                self.pipelines.opaque.of(item.look)
             };
             let pass = MeshPass {
                 opaque: !prepass,
                 prepass,
                 ..MeshPass::default()
             };
-            let (mesh, material) = (batch.mesh, batch.material);
-            for level in 0..self.state.levels_of(index) {
-                if self.state.level_empty(index, level) {
+            let (mesh, material) = (item.mesh, item.material);
+            for level in 0..LOD_LEVELS as usize {
+                if item.levels & (1 << level) == 0 {
                     continue;
                 }
                 let (ids, args) =
                     self.state
                         .groups
-                        .draw_source(batch.instances.start, index, level);
+                        .draw_source(item.start, item.batch as usize, level);
                 draw.draw_timed_with(
                     pipeline,
                     (
@@ -140,22 +137,17 @@ impl MeshesGpu {
         else {
             return 0;
         };
-        let draws = &self.state.draws;
         let mut drawn = 0;
-        for &index in &draws.order {
-            let index = index as usize;
-            let (Some(batch), Some(&look)) = (draws.batches.get(index), draws.looks.get(index)) else {
-                continue;
-            };
+        for item in &self.state.draws.items {
             let (ids_offset, args_offset) =
                 self.state
                     .groups
-                    .draw_source(batch.instances.start, index, 0);
+                    .draw_source(item.start, item.batch as usize, 0);
             draw.draw(
-                self.pipelines.probe.of(look),
+                self.pipelines.probe.of(item.look),
                 Shape::MeshIndirect {
-                    mesh: batch.mesh,
-                    material: batch.material,
+                    mesh: item.mesh,
+                    material: item.material,
                     args,
                     offset: args_offset,
                     streams: &[(ids, ids_offset)],
@@ -188,7 +180,7 @@ impl MeshesGpu {
         let mut drawn = 0;
         for choice in [false, true] {
             for (index, &(mesh, material, group_start)) in casters.groups.iter().enumerate() {
-                if casters.masked.get(index).copied().unwrap_or(false) != choice {
+                if material.is_some() != choice {
                     continue;
                 }
                 let ids = if casters.regions_in_args {
@@ -200,7 +192,7 @@ impl MeshesGpu {
                     &set[usize::from(choice)],
                     Shape::MeshIndirect {
                         mesh,
-                        material: if choice { material } else { None },
+                        material,
                         args: self.inputs.caster_args,
                         offset: (map as u64 * groups + index as u64) * DRAW_ARGS_BYTES,
                         streams: &[(self.inputs.caster_ids, ids)],

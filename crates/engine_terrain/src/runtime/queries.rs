@@ -79,25 +79,11 @@ impl Terrains {
             .map(|state| &state.terrain)
     }
 
-    pub fn layers(&self, entity: Entity, kinds: &[&'static LayerKind]) -> Option<Arc<Layers>> {
-        let state = self
-            .entries
+    pub fn layers(&self, entity: Entity) -> Option<Arc<Layers>> {
+        self.entries
             .iter()
-            .find(|state| state.entity == entity && state.around.is_none())?;
-        let base = state
-            .baked
-            .clone()
-            .unwrap_or_else(|| state.terrain.layers.clone());
-        if state.terrain.edits.is_empty() {
-            return Some(base);
-        }
-        if let Some((over, edited)) = &state.edited
-            && Arc::ptr_eq(over, &base)
-        {
-            return Some(edited.clone());
-        }
-        let stamps: Vec<Stamp> = state.terrain.edits.iter().map(|edit| edit.stamp).collect();
-        Some(base.with_stamps(&stamps, kinds).map_or(base, Arc::new))
+            .find(|state| state.entity == entity && state.around.is_none())
+            .map(|state| state.current.clone())
     }
 
     pub fn route(
@@ -166,12 +152,5 @@ impl Terrains {
                 state.terrain.surface.bridge,
             )
         })
-    }
-
-    pub fn revision(&self) -> u64 {
-        self.entries
-            .iter()
-            .map(TerrainState::revision)
-            .fold(self.entries.len() as u64, u64::wrapping_add)
     }
 }

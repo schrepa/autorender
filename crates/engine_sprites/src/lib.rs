@@ -7,8 +7,8 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetUses, Brick, Bricks, ComponentKind, Error, Poses, Runs, SceneComponents, Schedule, Smoke,
-    Source, Spawner, TextureHandle, View, gpu_struct,
+    AssetUses, Brick, Bricks, ComponentKind, Error, GlobalTransforms, Runs, SceneComponents,
+    Schedule, Smoke, Source, Spawner, TextureHandle, View, gpu_struct,
 };
 use engine_render::{
     Bind, Buffer, DepthUse, Draw, GpuPart, Install, Layer, Lifetime, MainView, Pipeline, Prepare,
@@ -74,13 +74,13 @@ struct Sheets;
 
 fn publish_sheets(
     sprites: Query<(Entity, &Sprite)>,
-    poses: Res<Poses>,
+    globals: Res<GlobalTransforms>,
     own: Query<(Entity, &AssetUses), With<Sheets>>,
     mut spawner: Spawner<SpritesBrick>,
 ) {
     let mut textures: Vec<TextureHandle> = sprites
         .iter()
-        .filter(|(entity, _)| poses.of(*entity).is_some())
+        .filter(|(entity, _)| globals.pose(*entity).is_some())
         .map(|(_, sprite)| sprite.sheet)
         .collect();
     textures.sort_unstable();
@@ -112,8 +112,8 @@ struct SpritesGpu {
 
 impl GpuPart for SpritesGpu {
     type Reads = (
-        Query<'static, 'static, (Entity, Ref<'static, Sprite>)>,
-        Res<'static, Poses>,
+        Query<'static, 'static, (Entity, &'static Sprite)>,
+        Res<'static, GlobalTransforms>,
         Res<'static, View>,
     );
 
@@ -152,21 +152,16 @@ impl GpuPart for SpritesGpu {
 
     fn prepare(
         &mut self,
-        (sprites, poses, view): SystemParamItem<'_, '_, Self::Reads>,
+        (sprites, globals, view): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.flat.prepare(&view, cx);
-        if poses.is_changed()
-            || sprites.iter().count() != self.staged.len()
-            || sprites.iter().any(|(_, sprite)| sprite.is_changed())
-        {
-            stage(&sprites, &poses, &mut self.staged, &mut self.runs);
-            cx.allocate_buffer(
-                self.instances,
-                std::mem::size_of_val(self.staged.as_slice()) as u64,
-            );
-            cx.write(self.instances, 0, &self.staged);
-        }
+        stage(&sprites, &globals, &mut self.staged, &mut self.runs);
+        cx.allocate_buffer(
+            self.instances,
+            std::mem::size_of_val(self.staged.as_slice()) as u64,
+        );
+        cx.write(self.instances, 0, &self.staged);
         self.drawn.clear();
         for (sheet, range) in &self.runs {
             self.drawn.push((cx.fill(&self.pipeline, &[*sheet]), range.clone()));
@@ -194,8 +189,8 @@ impl SpritesGpu {
 }
 
 fn stage(
-    sprites: &Query<(Entity, Ref<'static, Sprite>)>,
-    poses: &Poses,
+    sprites: &Query<(Entity, &'static Sprite)>,
+    globals: &GlobalTransforms,
     staged: &mut Vec<SpriteInstance>,
     runs: &mut Vec<(TextureHandle, Range<u32>)>,
 ) {
@@ -204,7 +199,7 @@ fn stage(
     let mut sorted: Vec<(TextureHandle, SpriteInstance)> = sprites
         .iter()
         .filter_map(|(entity, sprite)| {
-            let pose = poses.of(entity)?;
+            let pose = globals.pose(entity)?;
             let place = [
                 pose.translation.x,
                 pose.translation.y,

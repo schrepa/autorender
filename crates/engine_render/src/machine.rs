@@ -78,7 +78,7 @@ pub(crate) struct OwnGroup {
 }
 
 pub(crate) struct Ready {
-    pub(crate) layout: u32,
+    pub(crate) layout: crate::encode::PassLayout,
     pub(crate) bits: Option<u32>,
     pub(crate) key: u64,
     pub(crate) made: wgpu::RenderPipeline,
@@ -142,6 +142,7 @@ pub(crate) struct Machine {
     pub(crate) view_copies: Vec<(Layer, ViewTarget)>,
     pub(crate) doubled: Vec<bool>,
     pub(crate) depth_writes: Vec<bool>,
+    pub(crate) binding_bytes: BTreeMap<(Option<usize>, u32, u32), u64>,
     pub(crate) linker: Linker,
 }
 
@@ -882,6 +883,7 @@ impl Machine {
                 Some((number, FrameSlot { ty: *ty, core }))
             })
             .collect();
+        let binding_bytes = binding_bytes_of(&pipelines);
         Some(Self {
             declared,
             outputs,
@@ -895,9 +897,25 @@ impl Machine {
             view_copies,
             doubled,
             depth_writes,
+            binding_bytes,
             linker,
         })
     }
+}
+
+fn binding_bytes_of(pipelines: &[BuiltPipeline]) -> BTreeMap<(Option<usize>, u32, u32), u64> {
+    let mut known = BTreeMap::new();
+    for (at, pipeline) in pipelines.iter().enumerate() {
+        for stage in &pipeline.stages {
+            for (group, binding, bytes) in crate::sizes::binding_sizes(&stage.composed.text) {
+                known.entry((Some(at), group, binding)).or_insert(bytes);
+                if group == 0 {
+                    known.entry((None, group, binding)).or_insert(bytes);
+                }
+            }
+        }
+    }
+    known
 }
 
 fn doubled_of(

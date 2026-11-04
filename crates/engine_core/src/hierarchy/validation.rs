@@ -2,88 +2,10 @@ use glam::{Mat3, Mat4, Vec3A, Vec4};
 
 use super::MAX_NORMAL_INVERSE_NORM;
 use crate::presentation_bounds::{COEFFICIENT_LIMIT, COMMON_DETERMINANT_MARGIN, MIN_LINEAR_SCALE};
-use crate::{Transform, math};
+use crate::math;
 
 const DETERMINANT_MARGIN: f32 = 1.0 / 4096.0;
 const PROVEN_NORMAL_INVERSE_NORM: f32 = 6200.0;
-
-const MARGIN_UP: f32 = 1.0 + 1.0 / 4096.0;
-const MARGIN_DOWN: f32 = 1.0 - 1.0 / 4096.0;
-const STRETCH: f32 = 1.002_02;
-const ROTATION_VOLUME: f32 = 0.9939;
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Certificate {
-    spread: f32,
-    volume: f32,
-    threshold: f32,
-    reach: f32,
-}
-
-impl Certificate {
-    pub(crate) const NONE: Self = Self {
-        spread: f32::NAN,
-        volume: f32::NAN,
-        threshold: f32::NAN,
-        reach: f32::NAN,
-    };
-
-    pub(crate) const ROOT: Self = Self {
-        spread: STRETCH * MARGIN_UP,
-        volume: ROTATION_VOLUME * (MARGIN_DOWN - 1.0 / 262_144.0) - 1.0 / 16_384.0,
-        threshold: (STRETCH * MARGIN_UP)
-            * (STRETCH * MARGIN_UP)
-            * (STRETCH * MARGIN_UP)
-            * (1.0 / 512.0 + 1.0 / 131_072.0)
-            * MARGIN_UP,
-        reach: (COEFFICIENT_LIMIT * MARGIN_DOWN / (STRETCH * MARGIN_UP))
-            * (COEFFICIENT_LIMIT * MARGIN_DOWN / (STRETCH * MARGIN_UP))
-            * MARGIN_DOWN,
-    };
-
-    #[cfg_attr(feature = "attribution", inline(never))]
-    pub(crate) fn of(matrix: Mat4) -> Self {
-        let (x, y, z) = (matrix.x_axis, matrix.y_axis, matrix.z_axis);
-        let rows = x * x + y * y + z * z;
-        let rho = Vec3A::from_vec4(rows).max_element().sqrt();
-        let rho3 = (rho * rho) * rho;
-        let spread = rho * (STRETCH * MARGIN_UP);
-        let determinant = Vec3A::from_vec4(x)
-            .dot(Vec3A::from_vec4(y).cross(Vec3A::from_vec4(z)))
-            .abs();
-        let volume =
-            ROTATION_VOLUME * (determinant * MARGIN_DOWN - rho3 / 262_144.0) - rho3 / 16_384.0;
-        let threshold = ((spread * spread) * spread) * (1.0 / 512.0 + 1.0 / 131_072.0) * MARGIN_UP;
-        let translation = Vec3A::from_vec4(matrix.w_axis).abs().max_element() * MARGIN_UP;
-        let room = (COEFFICIENT_LIMIT * MARGIN_DOWN - translation) / spread;
-        let certificate = Self {
-            spread,
-            volume,
-            threshold,
-            reach: (room * room) * MARGIN_DOWN,
-        };
-        if volume > 0.0 && room > 0.0 && threshold.is_finite() && spread.is_finite() {
-            certificate
-        } else {
-            Self::NONE
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn admits(&self, local: &Transform) -> bool {
-        let near_unit = (local.rotation.length_squared() - 1.0).abs() <= 1.0e-3;
-        let scale = Vec3A::from(local.scale).abs();
-        let largest = scale.max_element();
-        let product = (scale.x * scale.y) * scale.z;
-        let cube = (largest * largest) * largest;
-        let lower = product * self.volume;
-        near_unit
-            && lower >= (cube * self.threshold) * MARGIN_UP
-            && lower >= 1.0 / 67_108_864.0
-            && largest * self.spread <= COEFFICIENT_LIMIT * MARGIN_DOWN
-            && local.translation.length_squared() <= self.reach
-    }
-}
 
 #[cfg_attr(not(feature = "attribution"), inline(always))]
 #[cfg_attr(feature = "attribution", inline(never))]

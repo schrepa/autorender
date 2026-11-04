@@ -1,11 +1,11 @@
 use engine_core::math::clamp;
+use engine_places::physics::ColliderShape;
 use engine_places::water::{WaterBody, WaterSample};
 use engine_places::wind::Wind;
 use glam::{Quat, Vec3};
 
 use crate::body::BodyWater;
 use crate::settings::Physics;
-use crate::shapes::BodyShape;
 
 const MOST_CELLS: f32 = 6.0;
 pub(crate) const AIR_SPIN: f32 = 0.05;
@@ -22,8 +22,8 @@ pub(crate) struct Form {
 }
 
 impl Form {
-    pub fn new(shape: &BodyShape) -> Self {
-        let half = shape.half;
+    pub fn of(shape: ColliderShape, scale: Vec3) -> Self {
+        let half = shape.dimensions() * scale.abs();
         let least = half.min_element();
         let long = if half.x >= half.y && half.x >= half.z {
             0
@@ -32,17 +32,25 @@ impl Form {
         } else {
             2
         };
-        let cells = if shape.round {
-            [1; 3]
-        } else {
-            [0, 1, 2].map(|axis| clamp((2.0 * half[axis] / least).round(), 2.0, MOST_CELLS) as u8)
+        let (round, cells, volume) = match shape {
+            ColliderShape::Cuboid { .. } => (
+                false,
+                [0, 1, 2]
+                    .map(|axis| clamp((2.0 * half[axis] / least).round(), 2.0, MOST_CELLS) as u8),
+                8.0 * half.x * half.y * half.z,
+            ),
+            ColliderShape::Sphere { .. } => (
+                true,
+                [1; 3],
+                4.0 / 3.0 * std::f32::consts::PI * half.x * half.y * half.z,
+            ),
         };
         Self {
             half,
             cells,
             long,
-            round: shape.round,
-            volume: shape.volume,
+            round,
+            volume,
         }
     }
 

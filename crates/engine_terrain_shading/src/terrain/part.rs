@@ -17,7 +17,7 @@ use super::pipelines::{CASTER_BIAS, surface_primitive};
 use super::surface::SurfaceTrees;
 use super::tables::TerrainTables;
 use super::{IDS_FORMAT, SURFACE_SLOTS, TerrainFrame, reached};
-use crate::gpu::HEIGHT_FORMAT;
+use crate::gpu::{HEIGHT_FORMAT, SURFACE_ERROR_MIPS};
 use crate::settings::TerrainShading;
 use crate::state::{
     Atlas, Bakes, DrawnStats, PART_STATS, PartStats, SURFACE_TOTALS, SurfaceTotals,
@@ -57,6 +57,9 @@ pub(crate) struct Handles {
     pub(crate) grid: Buffer<TerrainGpu>,
     pub(crate) normal_jobs: Buffer<TerrainGpu>,
     pub(crate) control_jobs: Buffer<TerrainGpu>,
+    pub(crate) peak_jobs: Buffer<TerrainGpu>,
+    pub(crate) control_ancestors: Buffer<TerrainGpu>,
+    pub(crate) normal_ancestors: Buffer<TerrainGpu>,
     pub(crate) slots: [(Buffer<TerrainGpu>, Buffer<TerrainGpu>); SURFACE_SLOTS],
     pub(crate) control_sampler: Sampler<TerrainGpu>,
     pub(crate) linear: Sampler<TerrainGpu>,
@@ -65,6 +68,8 @@ pub(crate) struct Handles {
 struct Passes {
     normals: Pass<TerrainGpu>,
     control: Pass<TerrainGpu>,
+    peaks: Pass<TerrainGpu>,
+    ancestors: Pass<TerrainGpu>,
     clear_counters: Pass<TerrainGpu>,
     begin: Pass<TerrainGpu>,
     copy_args: Pass<TerrainGpu>,
@@ -77,6 +82,8 @@ struct Passes {
 struct Pipelines {
     normals: ComputePipeline<TerrainGpu>,
     control: ComputePipeline<TerrainGpu>,
+    peaks: [ComputePipeline<TerrainGpu>; SURFACE_ERROR_MIPS as usize],
+    ancestors: [ComputePipeline<TerrainGpu>; 2],
     begin: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
     decide: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
     apply: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
@@ -154,8 +161,8 @@ impl GpuPart for TerrainGpu {
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::terrain_shading::{
-            control, debug, draw, faces, field, horizons, normals, shadow, sky, subdivision,
-            surface, tables,
+            ancestors, control, debug, draw, faces, field, horizons, normals, peaks, shadow, sky,
+            subdivision, surface, tables,
         };
         let handles = Handles {
             heights: cx.texture("heights", HEIGHT_FORMAT, Lifetime::Kept),
@@ -180,6 +187,9 @@ impl GpuPart for TerrainGpu {
             grid: cx.buffer("grid_indices", Lifetime::Kept),
             normal_jobs: cx.buffer("normal_jobs", Lifetime::Kept),
             control_jobs: cx.buffer("control_jobs", Lifetime::Kept),
+            peak_jobs: cx.buffer("peak_jobs", Lifetime::Kept),
+            control_ancestors: cx.buffer("control_ancestors", Lifetime::Kept),
+            normal_ancestors: cx.buffer("normal_ancestors", Lifetime::Kept),
             slots: std::array::from_fn(|_| {
                 (
                     cx.buffer("subdivision", Lifetime::Kept),
@@ -243,6 +253,13 @@ impl GpuPart for TerrainGpu {
 
         let normals_pass = cx.pass("tile_normals").label("engine/terrain-normals").id();
         let control_pass = cx.pass("tile_control").label("engine/terrain-control").id();
+        let peaks_pass = cx.pass("tile_peaks").label("engine/terrain-peaks").id();
+        let ancestors_pass = cx
+            .pass("tile_ancestors")
+            .label("engine/terrain-ancestors")
+            .after(control_pass)
+            .after(normals_pass)
+            .id();
         let clear_counters = cx.clear("clear_surface_counters", h.counters);
         let begin = cx
             .pass("subdivision_begin")
@@ -250,6 +267,8 @@ impl GpuPart for TerrainGpu {
             .after(clear_counters)
             .after(control_pass)
             .after(normals_pass)
+            .after(peaks_pass)
+            .after(ancestors_pass)
             .id();
         let copy_args = cx.copy(
             "subdivision_args",
@@ -298,6 +317,52 @@ impl GpuPart for TerrainGpu {
                 (control::CONTROL_RIVERS, Bind::Texture(h.rivers)),
             ],
         )?;
+        let height_mip = |mip: u32| Bind::Slice {
+            texture: h.heights,
+            mips: mip..mip + 1,
+            layers: 0..u32::MAX,
+        };
+        let mut peaks_pipelines = Vec::with_capacity(SURFACE_ERROR_MIPS as usize);
+        for mip in 0..SURFACE_ERROR_MIPS {
+            let entry = if mip == 0 {
+                peaks::TILE_PEAKS_FIRST
+            } else {
+                peaks::TILE_PEAKS_DOWN
+            };
+            peaks_pipelines.push(cx.compute_pipeline(
+                peaks_pass,
+                entry,
+                &[
+                    (peaks::PEAK_LAYERS, Bind::Buffer(h.peak_jobs)),
+                    (peaks::PEAKS_IN, height_mip(mip)),
+                    (peaks::PEAKS_OUT, height_mip(mip + 1)),
+                ],
+            )?);
+        }
+        let ancestors_pipelines = [
+            cx.compute_pipeline(
+                ancestors_pass,
+                ancestors::TILE_ANCESTORS,
+                &[
+                    (
+                        ancestors::ANCESTOR_JOBS,
+                        Bind::Buffer(h.control_ancestors),
+                    ),
+                    (ancestors::ANCESTOR_TEXELS, Bind::Texture(h.control)),
+                ],
+            )?,
+            cx.compute_pipeline(
+                ancestors_pass,
+                ancestors::TILE_ANCESTORS,
+                &[
+                    (
+                        ancestors::ANCESTOR_JOBS,
+                        Bind::Buffer(h.normal_ancestors),
+                    ),
+                    (ancestors::ANCESTOR_TEXELS, Bind::Texture(h.normals)),
+                ],
+            )?,
+        ];
         let slot_binds = |slot: usize| {
             let (uniform, tree) = h.slots[slot];
             [
@@ -435,6 +500,8 @@ impl GpuPart for TerrainGpu {
             passes: Passes {
                 normals: normals_pass,
                 control: control_pass,
+                peaks: peaks_pass,
+                ancestors: ancestors_pass,
                 clear_counters,
                 begin,
                 copy_args,
@@ -446,6 +513,8 @@ impl GpuPart for TerrainGpu {
             pipelines: Pipelines {
                 normals: normals_pipeline,
                 control: control_pipeline,
+                peaks: std::array::from_fn(|mip| peaks_pipelines[mip]),
+                ancestors: ancestors_pipelines,
                 begin: to_array(begins),
                 decide: to_array(decides),
                 apply: to_array(applies),
@@ -489,6 +558,7 @@ impl GpuPart for TerrainGpu {
         self.render = (size.x, size.y);
         if tiles.terrains.is_empty() && atlas.slots.is_empty() {
             self.atlas.rest();
+            self.tables = TerrainTables::default();
             self.surface.rest();
             self.horizons.rest();
             self.drawn = false;
@@ -540,12 +610,21 @@ impl GpuPart for TerrainGpu {
         if self.atlas.control_jobs() > 0 {
             cx.run(self.passes.control);
         }
-        self.tables.write_directory(&tiles, &atlas);
-        self.tables.write_holes(&atlas);
-        let fades = self
-            .atlas
-            .fade((&atlas, &tiles), TerrainTables::fade_words(&atlas));
-        self.tables.write_fades(fades);
+        if self.atlas.peak_jobs() > 0 {
+            cx.run(self.passes.peaks);
+        }
+        if self.atlas.ancestor_jobs() > 0 {
+            cx.run(self.passes.ancestors);
+        }
+        let view_list = view_uniforms(&views, &captures);
+        self.tables.prepare(
+            cx,
+            h,
+            (&tiles, &atlas, tiles.is_changed()),
+            view_list.len(),
+        );
+        self.tables.write_header(cx, h, atlas.now);
+        self.tables.write_views(cx, h, &view_list);
         self.maps.prepare(cx, (&tiles, &assets));
         self.tables
             .write_palette(cx, h, (&tiles, &self.maps, &assets));
@@ -587,7 +666,6 @@ impl GpuPart for TerrainGpu {
         });
         self.drawn = held;
         if !held {
-            self.tables.flush(cx, h);
             self.surface.rest();
             self.frame = TerrainFrame::default();
             self.deferred = false;
@@ -624,9 +702,7 @@ impl GpuPart for TerrainGpu {
             ),
             &views,
         );
-        self.tables.write_terrains(self.patches.uniforms());
-        self.tables.write_views(view_uniforms(&views, &captures));
-        self.tables.flush(cx, h);
+        self.tables.write_terrains(cx, h, self.patches.uniforms());
         if self.surface.any() {
             cx.run(self.passes.clear_counters);
             cx.run(self.passes.begin);
@@ -676,6 +752,12 @@ impl GpuPart for TerrainGpu {
                 &self.pipelines.control,
                 Count::Groups(self.atlas.control_groups()),
             );
+        }
+        if pass == self.passes.peaks {
+            return self.atlas.peaks(cx, &self.pipelines.peaks);
+        }
+        if pass == self.passes.ancestors {
+            return self.atlas.ancestors(cx, &self.pipelines.ancestors);
         }
         if pass == self.passes.begin {
             let mut dispatched = 0;

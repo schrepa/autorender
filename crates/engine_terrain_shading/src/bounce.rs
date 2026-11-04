@@ -43,6 +43,7 @@ pub struct TerrainBounce {
     detailed: Box<[u8]>,
     records: Box<[u8]>,
     ground: Box<[u8]>,
+    means: Box<[u8]>,
 }
 
 impl Codec for TerrainBounce {
@@ -52,6 +53,7 @@ impl Codec for TerrainBounce {
         codec::put_planes(out, &self.detailed, blocks);
         codec::put_records(out, &self.records, PROBE_BYTES);
         codec::put_planes(out, &self.ground, blocks);
+        codec::put_records(out, &self.means, PROBE_BYTES);
     }
 
     fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
@@ -63,6 +65,7 @@ impl Codec for TerrainBounce {
         let detailed = codec::get_planes(input, blocks)?;
         let records = codec::get_records(input, PROBE_BYTES)?;
         let ground = codec::get_planes(input, blocks)?;
+        let means = codec::get_records(input, PROBE_BYTES)?;
         let held: usize = detailed
             .iter()
             .map(|&flag| if flag == 0 { 1 } else { 4 })
@@ -71,6 +74,7 @@ impl Codec for TerrainBounce {
             || detailed.iter().any(|&flag| flag > 1)
             || records.len() != held * PROBE_BYTES
             || ground.len() != GROUND_PLANES * blocks * blocks
+            || means.len() != mean_bytes(probes)
         {
             return Err(codec::invalid("$.bounce"));
         }
@@ -79,6 +83,7 @@ impl Codec for TerrainBounce {
             detailed,
             records,
             ground,
+            means,
         })
     }
 }
@@ -110,6 +115,10 @@ impl TerrainBounce {
 
     pub fn probe_count(&self) -> usize {
         self.records.len() / PROBE_BYTES
+    }
+
+    pub fn means(&self) -> &[u8] {
+        &self.means
     }
 
     pub fn ground_layers(&self) -> Vec<u8> {
@@ -332,12 +341,82 @@ pub fn bounce(
             }
         }
     }
-    TerrainBounce {
+    let mut made = TerrainBounce {
         probes,
         detailed: detailed.into_boxed_slice(),
         records: records.into_boxed_slice(),
         ground: surface_planes(ground, extent, surface, blocks),
+        means: Box::default(),
+    };
+    made.means = means(&made).into_boxed_slice();
+    made
+}
+
+fn mean_bytes(probes: u32) -> usize {
+    let levels = (2..u32::BITS).take_while(|&level| probes >> level > 0);
+    levels
+        .map(|level| (probes >> level).pow(2) as usize)
+        .sum::<usize>()
+        * PROBE_BYTES
+}
+
+fn means(bounce: &TerrainBounce) -> Vec<u8> {
+    let records = bounce.probe_bytes();
+    let record = |index: usize| &records[index * PROBE_BYTES..(index + 1) * PROBE_BYTES];
+    let words = bounce.block_words();
+    let mut level = Vec::with_capacity(words.len() * PROBE_BYTES);
+    for word in words {
+        let first = (word >> 1) as usize;
+        if word & 1 == 0 {
+            level.extend_from_slice(record(first));
+        } else {
+            level.extend(mean_of([
+                record(first),
+                record(first + 1),
+                record(first + 2),
+                record(first + 3),
+            ]));
+        }
     }
+    let mut out = Vec::with_capacity(mean_bytes(bounce.probes));
+    let mut side = bounce.texels() as usize;
+    while side > 1 {
+        let coarser = side / 2;
+        let at = |x: usize, z: usize| {
+            let index = z * side + x;
+            &level[index * PROBE_BYTES..(index + 1) * PROBE_BYTES]
+        };
+        let mut next = Vec::with_capacity(coarser * coarser * PROBE_BYTES);
+        for z in 0..coarser {
+            for x in 0..coarser {
+                next.extend(mean_of([
+                    at(2 * x, 2 * z),
+                    at(2 * x + 1, 2 * z),
+                    at(2 * x, 2 * z + 1),
+                    at(2 * x + 1, 2 * z + 1),
+                ]));
+            }
+        }
+        out.extend_from_slice(&next);
+        level = next;
+        side = coarser;
+    }
+    out
+}
+
+fn mean_of(four: [&[u8]; 4]) -> [u8; PROBE_BYTES] {
+    let mut mean = [0_u8; PROBE_BYTES];
+    for bin in 0..PROBE_BYTES / 2 {
+        let share = |record: &[u8]| u32::from(record[2 * bin]);
+        let filled: u32 = four.iter().map(|&record| share(record)).sum();
+        let coded: u32 = four
+            .iter()
+            .map(|&record| share(record) * u32::from(record[2 * bin + 1]))
+            .sum();
+        mean[2 * bin] = ((filled + 2) / 4) as u8;
+        mean[2 * bin + 1] = (coded + filled / 2).checked_div(filled).unwrap_or(0) as u8;
+    }
+    mean
 }
 
 fn surface_planes(

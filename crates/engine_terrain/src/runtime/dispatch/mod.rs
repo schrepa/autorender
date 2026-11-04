@@ -246,6 +246,8 @@ pub(crate) fn share_recipe(
     if let Some(old) = state.recipe.replace(shared) {
         released.push(old.key);
     }
+    state.stale.tiles = true;
+    state.stale.ground = true;
 }
 
 pub(super) fn release(

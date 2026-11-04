@@ -24,7 +24,6 @@ use engine_heightfield::{
     Blend, Bridge, GivenRiver, HydrologyBake, HydrologySample, HydrologyStats, Layers, PathSample,
 };
 
-pub use bake::TerrainBake;
 pub use engine_heightfield::grid::{
     MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey,
 };

@@ -71,7 +71,7 @@ impl Terrains {
         })
     }
 
-    pub(super) fn sync_surroundings(&mut self) {
+    pub(super) fn sync_surroundings(&mut self, kinds: &[&'static LayerKind]) {
         let mut wanted = Vec::new();
         for state in &mut self.entries {
             if state.around.is_some() {
@@ -112,7 +112,7 @@ impl Terrains {
                 kept.push(state);
             } else {
                 state.retire(&mut self.retired);
-                self.epoch += 1;
+                self.stale = Stale::ALL;
             }
         }
         self.entries = kept;
@@ -144,14 +144,13 @@ impl Terrains {
                 rivers: Arc::from(Vec::new()),
                 surroundings: None,
             };
-            let mut state = TerrainState::new(entity, terrain);
+            let mut state = TerrainState::new(entity, terrain, kinds);
             state.around = Some(Around {
                 base,
                 surroundings,
                 cutout,
             });
             self.entries.push(state);
-            self.epoch += 1;
         }
     }
 }

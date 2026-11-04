@@ -1,5 +1,5 @@
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_places::ground::{TerrainEntry, TerrainTiles, TileKey};
+use engine_places::ground::{TerrainEntry, TerrainTiles, TileFace, TileKey};
 use engine_places::probes::ProbeCaptures;
 use engine_places::shadows::ground_level;
 use engine_render::{Prepare, wgpu};
@@ -8,7 +8,7 @@ use glam::{DVec3, Mat4, Vec2, Vec3, Vec4};
 use super::part::{Handles, TerrainGpu, TerrainViews};
 use super::surface::SurfaceTrees;
 use super::tables::TerrainTables;
-use super::{FrameTerrain, NO_HOLES, TerrainFrame, changed_run};
+use super::{FrameTerrain, NO_HOLES, TerrainFrame};
 use crate::gpu::{
     PATCH_GRID as GRID, PATCH_GRID_VERTICES as GRID_VERTICES, PatchRecord, TerrainUniform,
     ViewUniform,
@@ -25,9 +25,7 @@ pub(crate) struct PatchDraws {
     index_count: u32,
     indexed: bool,
     records: Vec<PatchRecord>,
-    written: Vec<PatchRecord>,
     record_room: u64,
-    fresh: bool,
     uniforms: Vec<TerrainUniform>,
     kept_stack: Vec<(u32, u32, u32)>,
 }
@@ -75,7 +73,6 @@ impl PatchDraws {
             self.indexed = true;
         }
         let eye = views.eye.as_dvec3();
-        std::mem::swap(&mut self.records, &mut self.written);
         self.records.clear();
         self.uniforms.clear();
         let mut frame = TerrainFrame::default();
@@ -96,7 +93,7 @@ impl PatchDraws {
             let screen = ground_rect(views.camera, terrain, eye, uniform.relief[0]);
             frame.terrains.push(FrameTerrain {
                 terrain: index,
-                holes: atlas.holed.iter().any(|&(id, _)| id == terrain.terrain),
+                holes: terrain.may_hole,
                 maps: Vec::with_capacity(views.regions.len()),
                 screen,
             });
@@ -131,21 +128,13 @@ impl PatchDraws {
         if record_bytes > self.record_room {
             self.record_room =
                 (self.records.len() as u64).next_power_of_two() * size_of::<PatchRecord>() as u64;
-            self.fresh = true;
         }
         cx.allocate_buffer(
             handles.patches,
             self.record_room.max(size_of::<PatchRecord>() as u64),
         );
-        let run = if self.fresh {
-            0..self.records.len()
-        } else {
-            changed_run(&self.written, &self.records)
-        };
-        self.fresh = false;
-        if !run.is_empty() {
-            let offset = (run.start * size_of::<PatchRecord>()) as u64;
-            cx.write(handles.patches, offset, &self.records[run]);
+        if !self.records.is_empty() {
+            cx.write(handles.patches, 0, &self.records);
         }
         frame
     }
@@ -197,14 +186,14 @@ pub(super) struct TileRecord {
 }
 
 impl TileRecord {
-    pub(super) fn of(parts: &Layout<'_>, terrain: &TerrainEntry, key: TileKey) -> Option<Self> {
+    pub(super) fn of(parts: &Layout<'_>, terrain: &TerrainEntry, tile: &TileFace) -> Option<Self> {
+        let key = tile.key;
         let layer = parts.atlas.layer_of(terrain.terrain, key)?;
-        let holes = parts.tables.holes_of((terrain.terrain, key));
         Some(Self {
             key,
             layer,
             spacing: terrain.pyramid.spacing(u32::from(key.level)),
-            holes,
+            holes: parts.tables.holes_of(layer, tile),
             terrain: parts.index,
         })
     }
@@ -261,8 +250,7 @@ fn kept_patches(
             .sum();
         measured + pyramid.spacing(from)
     };
-    let held = |key: TileKey| parts.atlas.tile(terrain.terrain, key);
-    let mut shared: Option<(TileKey, Option<TileRecord>)> = None;
+    let held = |key: TileKey| parts.atlas.tile(terrain, key);
     while let Some((at, x, z)) = stack.pop() {
         let spacing = pyramid.spacing(at);
         let size = PATCH_QUADS as f32 * spacing;
@@ -293,15 +281,7 @@ fn kept_patches(
         if !visible(planes, min, max) {
             continue;
         }
-        let record = match shared {
-            Some((cached, record)) if cached == key => record,
-            _ => {
-                let record = TileRecord::of(parts, terrain, key);
-                shared = Some((key, record));
-                record
-            }
-        };
-        if let Some(record) = record {
+        if let Some(record) = TileRecord::of(parts, terrain, tile) {
             let index = (row * side + column) as usize;
             let holes = tile.patch_holes[index / 64] & (1 << (index % 64)) != 0;
             records.push(record.kept_record((column as u8, row as u8), holes, anchors));

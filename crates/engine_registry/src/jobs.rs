@@ -180,7 +180,6 @@ pub enum JobOrder {
 
 pub struct JobOrders {
     pub orders: Vec<JobOrder>,
-    pub budget: Option<[usize; 2]>,
     pub admitted: bool,
     owner: u32,
 }
@@ -192,7 +191,6 @@ impl FromWorld for JobOrders {
             .map_or(0, |mut queue| queue.owner());
         Self {
             orders: Vec::new(),
-            budget: None,
             admitted: false,
             owner,
         }
@@ -201,7 +199,6 @@ impl FromWorld for JobOrders {
 
 impl SystemBuffer for JobOrders {
     fn queue(&mut self, _: &SystemMeta, mut world: DeferredWorld) {
-        self.budget = None;
         self.admitted = false;
         if self.orders.is_empty() {
             return;

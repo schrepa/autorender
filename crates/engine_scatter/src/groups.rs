@@ -6,7 +6,7 @@ use engine_core::{
     Material, MaterialHandle, Mesh, MeshHandle, ResidentMesh, TextureHandle,
 };
 use engine_math::collections::HashMap;
-use engine_places::ground::{PlacedAsset, TerrainEntry, TileFace};
+use engine_places::ground::{Placed, PlacedAsset};
 use engine_render::{ground_data, pack_color, pack_surface};
 use glam::Vec3;
 
@@ -39,7 +39,6 @@ pub(crate) struct ResolvedMesh<'a> {
 pub(crate) struct ResolvedMaterial<'a> {
     pub(crate) handle: MaterialHandle,
     pub(crate) material: &'a Material,
-    pub(crate) version: u64,
 }
 
 pub(crate) struct ResolvedPart<'a> {
@@ -84,11 +83,9 @@ fn mesh_of(library: &AssetLibrary, handle: MeshHandle) -> Option<ResolvedMesh<'_
 }
 
 fn material_of(library: &AssetLibrary, handle: MaterialHandle) -> Option<ResolvedMaterial<'_>> {
-    library.material(handle).map(|material| ResolvedMaterial {
-        handle,
-        material,
-        version: library.material_version(handle).unwrap_or(0),
-    })
+    library
+        .material(handle)
+        .map(|material| ResolvedMaterial { handle, material })
 }
 
 pub(crate) fn resolve<'a>(
@@ -179,68 +176,6 @@ pub(crate) struct GroupLayout {
     pub(crate) impostor: (f32, u32),
     pub(crate) parts: u32,
     pub(crate) part: bool,
-}
-
-type PartKey = (MaterialHandle, u64, Vec<MeshHandle>);
-
-type AssetKey = (
-    MeshHandle,
-    MaterialHandle,
-    u64,
-    Vec<MeshHandle>,
-    Vec<bool>,
-    u32,
-    Vec<PartKey>,
-    Option<MeshHandle>,
-);
-
-pub(crate) type ScatterKey = (Vec<(Entity, Vec<Option<AssetKey>>)>, u64);
-
-pub(crate) fn scatter_key(
-    residency: &AssetResidency,
-    terrains: &[(Entity, Vec<Option<Resolved<'_>>>)],
-) -> ScatterKey {
-    let terrains = terrains
-        .iter()
-        .map(|(terrain, assets)| {
-            let assets = assets
-                .iter()
-                .map(|asset| {
-                    asset.as_ref().map(|asset| {
-                        let lods: Vec<MeshHandle> =
-                            asset.lods.iter().map(|(lod, _)| lod.handle).collect();
-                        let resident = asset
-                            .meshes()
-                            .map(|mesh| residency.resident(mesh.handle))
-                            .collect();
-                        let parts = asset
-                            .parts
-                            .iter()
-                            .map(|part| {
-                                (
-                                    part.material.handle,
-                                    part.material.version,
-                                    part.meshes.iter().map(|mesh| mesh.handle).collect(),
-                                )
-                            })
-                            .collect();
-                        (
-                            asset.mesh.handle,
-                            asset.material.handle,
-                            asset.material.version,
-                            lods,
-                            resident,
-                            asset.sway.to_bits(),
-                            parts,
-                            asset.shadow.as_ref().map(|proxy| proxy.handle),
-                        )
-                    })
-                })
-                .collect();
-            (*terrain, assets)
-        })
-        .collect();
-    (terrains, residency.generation())
 }
 
 #[derive(Default)]
@@ -395,8 +330,12 @@ impl Groups {
             })
     }
 
-    pub(crate) fn tile_objects(&self, terrain: &TerrainEntry, tile: &TileFace) -> TileObjects {
-        let placed = &tile.placed;
+    pub(crate) fn tile_objects(
+        &self,
+        terrain: Entity,
+        origin: Vec3,
+        placed: &[Placed],
+    ) -> TileObjects {
         let mut objects = (
             Vec::with_capacity(placed.len()),
             Vec::with_capacity(placed.len()),
@@ -405,15 +344,12 @@ impl Groups {
         );
         let index = self
             .terrains
-            .get(&terrain.terrain)
+            .get(&terrain)
             .copied()
             .unwrap_or(TERRAIN_INDEX)
             .min(TERRAIN_INDEX);
-        for placed in placed.iter() {
-            let Some(&group) = self
-                .indices
-                .get(&(terrain.terrain, usize::from(placed.asset)))
-            else {
+        for placed in placed {
+            let Some(&group) = self.indices.get(&(terrain, usize::from(placed.asset))) else {
                 continue;
             };
             let near = placed.near_level.map_or(0, |level| u32::from(level) + 1);
@@ -421,7 +357,7 @@ impl Groups {
             let rank = (engine_math::clamp(placed.rank, 0.0, 1.0) * RANK_MAX).round() as u32;
             let draw = &self.groups[group as usize];
             let (center, radius) = draw.sphere;
-            let model = placed.model(terrain.origin, placed.position[1]);
+            let model = placed.model(origin, placed.position[1]);
             objects.0.push(pose_rows(model));
             objects.1.push(draw.color);
             objects.2.push(PlacedRecord {
@@ -444,16 +380,42 @@ impl Groups {
         objects
     }
 
-    pub(crate) fn take_impostors(&mut self, records: &[ImpostorRecord]) -> bool {
-        let mut changed = false;
+    pub(crate) fn tile_boxes(
+        &self,
+        terrain: Entity,
+        origin: Vec3,
+        placed: &[Placed],
+        impostors: &[ImpostorRecord],
+    ) -> Vec<(Vec3, Vec3)> {
+        placed
+            .iter()
+            .filter_map(|placed| {
+                let &group = self.indices.get(&(terrain, usize::from(placed.asset)))?;
+                let Some(views) = impostors
+                    .get(group as usize)
+                    .filter(|views| views.framed())
+                else {
+                    return Some((Vec3::ZERO, Vec3::ZERO));
+                };
+                let pose = pose_rows(placed.model(origin, placed.position[1]));
+                let [x, y, z, _] = views.sphere;
+                let [half_x, half_y, half_z] = views.extent;
+                let middle = |row: [f32; 4]| row[0] * x + row[1] * y + row[2] * z + row[3];
+                let spread = |row: [f32; 4]| {
+                    row[0].abs() * half_x + row[1].abs() * half_y + row[2].abs() * half_z
+                };
+                Some((
+                    Vec3::new(middle(pose[0]), middle(pose[1]), middle(pose[2])),
+                    Vec3::new(spread(pose[0]), spread(pose[1]), spread(pose[2])),
+                ))
+            })
+            .collect()
+    }
+
+    pub(crate) fn take_impostors(&mut self, records: &[ImpostorRecord]) {
         for (index, (layout, record)) in self.layouts.iter_mut().zip(records).enumerate() {
-            let impostor = (record.error(), index as u32);
-            if layout.impostor != impostor {
-                layout.impostor = impostor;
-                changed = true;
-            }
+            layout.impostor = (record.error(), index as u32);
         }
-        changed
     }
 }
 

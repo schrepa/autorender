@@ -451,7 +451,7 @@ impl Run {
         let current = self.pass;
         self.group(current);
         let label = self.label_of(current).unwrap_or(pass.name);
-        let layout = self.pass_layout(
+        let layout = pass_layout(
             &colors,
             depth
                 .as_ref()
@@ -508,35 +508,6 @@ impl Run {
         colors.clear();
         self.spare.colors = colors;
         true
-    }
-
-    fn pass_layout(
-        &mut self,
-        colors: &[(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)],
-        depth: Option<(wgpu::TextureFormat, bool)>,
-        (debug, main): (bool, bool),
-    ) -> u32 {
-        let formats = || {
-            colors
-                .iter()
-                .map(|(_, view, format, _)| view.as_ref().map(|_| *format))
-        };
-        let found = self.layouts.iter().position(|known| {
-            known.depth == depth
-                && known.debug == debug
-                && known.main == main
-                && known.formats.iter().copied().eq(formats())
-        });
-        let at = found.unwrap_or_else(|| {
-            self.layouts.push(PassLayout {
-                formats: formats().collect(),
-                depth,
-                debug,
-                main,
-            });
-            self.layouts.len() - 1
-        });
-        at as u32
     }
 
     pub(super) fn mismatch(&mut self, name: &str) -> bool {
@@ -633,5 +604,23 @@ impl Run {
             }
             self.spare.attachments = std::mem::take(&mut open.attachments);
         }
+    }
+}
+
+fn pass_layout(
+    colors: &[(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)],
+    depth: Option<(wgpu::TextureFormat, bool)>,
+    (debug, main): (bool, bool),
+) -> PassLayout {
+    let mut formats = [None; MOST_COLORS];
+    for (format, (_, view, known, _)) in formats.iter_mut().zip(colors) {
+        *format = view.as_ref().map(|_| *known);
+    }
+    PassLayout {
+        formats,
+        count: colors.len().min(MOST_COLORS),
+        depth,
+        debug,
+        main,
     }
 }

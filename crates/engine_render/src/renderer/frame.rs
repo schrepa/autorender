@@ -12,9 +12,8 @@ use crate::machine::Target;
 use crate::profiling::{GpuProfiler, Span};
 
 const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
-const RAN_ORDERS: usize = 256;
 const OPAQUE_MESHES: &str = "opaque_meshes";
-const MEMORY: [&str; 17] = [
+const MEMORY: [&str; 15] = [
     "memory.gpu_shadow_bytes",
     "memory.gpu_post_bytes",
     "memory.gpu_environment_bytes",
@@ -24,8 +23,6 @@ const MEMORY: [&str; 17] = [
     "memory.gpu_transparent_bytes",
     "memory.gpu_temporal_bytes",
     "memory.gpu_presentation_bytes",
-    "memory.render_upload_cache_bytes",
-    "memory.render_upload_range_bytes",
     "memory.render_staging_capacity_bytes",
     "memory.gpu_instance_buffer_bytes",
     "memory.gpu_mesh_payload_bytes",
@@ -212,6 +209,17 @@ impl Renderer {
         mark_between(encoder, busy, None);
     }
 
+    pub fn acquire_frame(&mut self) -> Result<bool, Error> {
+        let _row = engine_profile::timed(engine_profile::row("render.acquire"));
+        self.check_health()?;
+        drop(self.surface.take());
+        if self.core.display.suspended || self.run.is_none() {
+            return Ok(false);
+        }
+        self.surface = self.core.display.acquire(&self.core.device)?;
+        Ok(self.surface.is_some())
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -219,7 +227,9 @@ impl Renderer {
     pub fn render_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, Error> {
         let _profile = engine_profile::span("render", "render_snapshot");
         let _row = engine_profile::timed(engine_profile::row("render.total"));
-        self.check_health()?;
+        let Some(surface) = self.surface.take() else {
+            return Ok(RenderStats::default());
+        };
         let world = frame.world();
         let view = world.get_resource::<View>();
         let debug = world
@@ -227,14 +237,6 @@ impl Renderer {
             .is_some_and(|shown| shown.owner.is_some());
         let temporal_frame = !debug && view.is_some_and(View::temporal);
         let region = self.core.display.plan_region(view.map(View::render_size));
-        if self.core.display.suspended {
-            return Ok(RenderStats::default());
-        }
-        let row_acquire = engine_profile::timed(engine_profile::row("render.acquire"));
-        let Some(surface) = self.core.display.acquire(&self.core.device)? else {
-            return Ok(RenderStats::default());
-        };
-        drop(row_acquire);
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
         };
@@ -391,8 +393,10 @@ impl Renderer {
         }
         let mut camera_bytes = run.write_cameras();
         run.write_post();
-        let bytes = piece_bytes(world, &run.piece_layout);
-        camera_bytes += run.write_pieces(bytes);
+        let mut pieces = std::mem::take(&mut run.spare.pieces);
+        piece_bytes(world, &run.piece_layout, &mut pieces);
+        camera_bytes += run.write_pieces(&mut pieces);
+        run.spare.pieces = pieces;
         run.refresh_groups();
         drop(profile_writes);
         drop(row_writes);
@@ -590,7 +594,7 @@ impl Renderer {
         self.core.profiler.submitted();
         surface.present(&self.core.queue);
         let pipelines_created = self.core.pipeline_counts.frame_submitted(&self.core.queue);
-        let render_passes = self.ran_passes(ran);
+        let render_passes = self.ran_passes(&ran);
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
         };
@@ -619,7 +623,6 @@ impl Renderer {
             resident_textures,
             texture_upload_bytes: texture_bytes,
             resident_texture_bytes,
-            submitted: true,
             pipelines: self.core.pipeline_counts.created(),
             pipelines_created,
             render_passes,
@@ -635,14 +638,9 @@ impl Renderer {
             engine_profile::counter("render.immediate_submissions", f64::from(immediate));
             engine_profile::counter("render.texture_mip_levels", f64::from(mip_levels));
             engine_profile::counter("render.camera_write_bytes", camera_bytes as f64);
-            engine_profile::counter(
-                "render.camera_upload_reused",
-                f64::from(u8::from(camera_bytes == 0)),
-            );
             for name in MEMORY {
                 let held = match name {
                     "memory.gpu_impostor_bytes" => run.assets.impostors.capacity_bytes(),
-                    "memory.render_upload_cache_bytes" => size_of::<Option<CameraUniform>>() as u64,
                     "memory.render_staging_capacity_bytes" => run.assets.meshes.staging_bytes(),
                     "memory.gpu_mesh_payload_bytes" => stats.resident_mesh_bytes,
                     "memory.gpu_mesh_arena_bytes" => run.assets.meshes.capacity_bytes(),
@@ -663,32 +661,16 @@ impl Renderer {
         Ok(stats)
     }
 
-    fn ran_passes(&mut self, ran: Vec<&'static str>) -> engine_core::Names {
-        let names = match self.ran.iter().find(|&&known| known == ran.as_slice()) {
-            Some(&known) => known,
-            None if self.ran.len() < RAN_ORDERS => {
-                let leaked: &'static [&'static str] = Box::leak(ran.into_boxed_slice());
-                self.ran.push(leaked);
-                leaked
-            }
-            None => {
-                let names = self.passes;
-                let bits = names
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, name)| ran.contains(name))
-                    .fold(0_u64, |bits, (at, _)| {
-                        bits | 1_u64.checked_shl(at as u32).unwrap_or(0)
-                    });
-                return engine_core::Names { bits, names };
-            }
-        };
-        engine_core::Names {
-            bits: 1_u64
-                .checked_shl(names.len() as u32)
-                .map_or(u64::MAX, |bit| bit - 1),
-            names,
-        }
+    fn ran_passes(&self, ran: &[&'static str]) -> engine_core::Names {
+        let names = self.passes;
+        let bits = names
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| ran.contains(name))
+            .fold(0_u128, |bits, (at, _)| {
+                bits | 1_u128.checked_shl(at as u32).unwrap_or(0)
+            });
+        engine_core::Names { bits, names }
     }
 }
 
@@ -757,9 +739,10 @@ fn stat_counters(stats: &RenderStats) {
 #[cfg(not(feature = "profiling"))]
 fn stat_counters(_: &RenderStats) {}
 
-fn piece_bytes(world: &World, layout: &[(usize, crate::pieces::PieceAt)]) -> Vec<u8> {
+fn piece_bytes(world: &World, layout: &[(usize, crate::pieces::PieceAt)], bytes: &mut Vec<u8>) {
+    bytes.clear();
     let Some(registry) = world.get_resource::<engine_registry::Registry>() else {
-        return Vec::new();
+        return;
     };
     let entries: Vec<_> = registry.pieces().map(|(_, entry)| entry).collect();
     let end = layout
@@ -767,7 +750,7 @@ fn piece_bytes(world: &World, layout: &[(usize, crate::pieces::PieceAt)]) -> Vec
         .map(|(_, at)| at.offset + at.size)
         .max()
         .unwrap_or(0);
-    let mut bytes = vec![0_u8; end as usize];
+    bytes.resize(end as usize, 0);
     for &(index, at) in layout {
         let Some(found) = entries.get(index).and_then(|entry| entry.bytes(world)) else {
             continue;
@@ -776,5 +759,4 @@ fn piece_bytes(world: &World, layout: &[(usize, crate::pieces::PieceAt)]) -> Vec
         let length = found.len().min(at.size as usize);
         bytes[start..start + length].copy_from_slice(&found[..length]);
     }
-    bytes
 }

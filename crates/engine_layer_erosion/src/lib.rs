@@ -14,14 +14,13 @@ use std::sync::Arc;
 use engine_codec::{Reader, Writer};
 use engine_core::{Brick, Bricks, ErrorCode, Source, parse_value};
 use engine_heightfield::layer::{
-    Below, ChangeMap, LayerBake, LayerFiles, LayerKind, Made, Row, TerrainLayer, maps, no_files,
-    no_points, same_as,
+    Below, ChangeMap, LayerFiles, LayerKind, Made, Row, TerrainLayer, maps, no_files, no_points,
+    same_as,
 };
-use engine_heightfield::{Pyramid, StartTile};
+use engine_heightfield::{Layers, Pyramid, TileHeights};
 use engine_places::terrain::TerrainLayers;
 use serde_json::Value;
 
-use crate::bake::ErosionWork;
 pub use crate::erosion::{Erosion, ErosionLayer, ErosionStats};
 
 pub struct LayerErosionBrick;
@@ -114,11 +113,14 @@ impl TerrainLayer for ErosionStage {
         self.baked.is_none()
     }
 
-    fn bake(&self, pyramid: &Pyramid, tiles: StartTile) -> Option<Box<dyn LayerBake>> {
-        if !self.needs_bake() {
-            return None;
-        }
-        Some(Box::new(ErosionWork::new(&self.layer, pyramid, tiles)))
+    fn bake(
+        &self,
+        below: &Arc<Layers>,
+        pyramid: &Pyramid,
+        tiles: TileHeights,
+    ) -> Option<Arc<dyn TerrainLayer>> {
+        self.needs_bake()
+            .then(|| bake::erosion_stage(&self.layer, below, pyramid, tiles))
     }
 
     fn unbaked(&self) -> Option<Arc<dyn TerrainLayer>> {

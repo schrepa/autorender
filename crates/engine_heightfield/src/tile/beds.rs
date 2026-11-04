@@ -122,28 +122,6 @@ impl Tile {
         self.river_beds.as_deref()
     }
 
-    pub fn river_texels(&self) -> Option<Arc<[[u16; 4]]>> {
-        let (edges, beds) = (self.river_edges.as_deref(), self.river_beds.as_deref());
-        if edges.is_none() && beds.is_none() {
-            return None;
-        }
-        let plane = |index: usize, at: usize, none: u16| {
-            beds.map_or(none, |beds| beds[index * SAMPLES + at])
-        };
-        Some(
-            (0..SAMPLES)
-                .map(|at| {
-                    [
-                        edges.map_or(RIVER_EDGE_FAR, |edges| edges[at]),
-                        plane(GRAIN, at, 0),
-                        plane(POWER, at, 0),
-                        plane(FLOOD, at, RIVER_EDGE_FAR),
-                    ]
-                })
-                .collect(),
-        )
-    }
-
     pub fn bed(&self, local: Vec2) -> Option<Bed> {
         bed_at(self.river_beds.as_deref()?, &self.heights, self.spacing, local)
     }

@@ -172,12 +172,6 @@ impl Sounds {
     }
 
     #[doc(hidden)]
-    pub fn is_idle(&self) -> bool {
-        let queue = self.lock();
-        queue.orders.is_empty() && queue.cut == 0
-    }
-
-    #[doc(hidden)]
     pub fn take_orders(&self) -> Vec<SoundOrder> {
         std::mem::take(&mut self.lock().orders)
     }

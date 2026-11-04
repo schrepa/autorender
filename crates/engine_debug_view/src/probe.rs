@@ -111,7 +111,7 @@ impl Probe {
                 instances
                     .slots
                     .iter()
-                    .find_map(|&(entity, slot)| (slot == object).then_some(entity))
+                    .find_map(|(&entity, &slot)| (slot == object).then_some(entity))
             });
         let probe = PixelProbe {
             pixel: [self.pixel.0, self.pixel.1],

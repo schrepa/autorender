@@ -1,4 +1,4 @@
-use super::{Global, GlobalTransforms, Link, MAX_HIERARCHY_DEPTH};
+use super::{GlobalTransforms, MAX_HIERARCHY_DEPTH};
 
 impl GlobalTransforms {
     pub(super) fn check(&self) {
@@ -7,10 +7,8 @@ impl GlobalTransforms {
             ("entities", self.entities.len()),
             ("locals", self.locals.len()),
             ("local revisions", self.local_revisions.len()),
-            ("history hints", self.history_hints.len()),
             ("links", self.links.len()),
             ("globals", self.globals.len()),
-            ("certificates", self.certificates.len()),
             ("revisions", self.revisions.len()),
             ("dirty flags", self.dirty.flags.len()),
             ("order", self.order.len()),
@@ -49,7 +47,7 @@ impl GlobalTransforms {
             );
             if !link.topology_valid() {
                 assert!(
-                    link.global == Global::Invalid && !link.has_children(),
+                    !link.has_global() && !link.has_children(),
                     "hierarchy_invalid_node_bare {index}"
                 );
                 continue;
@@ -70,15 +68,6 @@ impl GlobalTransforms {
                 "hierarchy_depth_cached {index} {} {depth}",
                 link.depth()
             );
-            if link.global == Global::Deferred {
-                assert!(
-                    !link.has_children()
-                        && link
-                            .parent()
-                            .is_none_or(|parent| self.links[parent].global == Global::Stored),
-                    "hierarchy_deferred_leaf {index}"
-                );
-            }
             let children = self.children(index).collect::<Vec<_>>();
             assert!(
                 children
@@ -99,11 +88,7 @@ impl GlobalTransforms {
             linked == parented,
             "hierarchy_links_match_parents {linked} {parented}"
         );
-        let invalid = self
-            .links
-            .iter()
-            .filter(|link: &&Link| link.global == Global::Invalid)
-            .count();
+        let invalid = self.links.iter().filter(|link| !link.has_global()).count();
         assert!(
             self.report.invalid_transforms == invalid + self.report.overflow_transforms,
             "hierarchy_invalid_counted {} {invalid} {}",

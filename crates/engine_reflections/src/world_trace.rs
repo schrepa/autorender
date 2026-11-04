@@ -21,7 +21,6 @@ pub(crate) struct TraceFrame<'a> {
     pub placed: &'a PlacedTiles,
     pub cover: &'a Cover,
     pub room: u64,
-    pub ground_changed: bool,
     pub placed_changed: bool,
 }
 
@@ -43,7 +42,7 @@ struct Reach {
 
 pub(crate) struct WorldTrace {
     terrains: u64,
-    written: Vec<TraceTerrain>,
+    listed: u32,
     placed: u64,
     words: Vec<u32>,
     dirty: Vec<Range<usize>>,
@@ -51,18 +50,14 @@ pub(crate) struct WorldTrace {
     free: Vec<Range<u32>>,
     layers: u32,
     boxes: Vec<([f32; 4], [f32; 3])>,
-    held: BTreeMap<TileId, u32>,
-    tops: BTreeMap<Entity, f32>,
-    known: bool,
     pooled: bool,
-    tabled: bool,
 }
 
 impl Default for WorldTrace {
     fn default() -> Self {
         Self {
             terrains: size_of::<TraceTerrain>() as u64,
-            written: Vec::new(),
+            listed: 0,
             placed: 16,
             words: Vec::new(),
             dirty: Vec::new(),
@@ -70,11 +65,7 @@ impl Default for WorldTrace {
             free: Vec::new(),
             layers: 0,
             boxes: Vec::new(),
-            held: BTreeMap::new(),
-            tops: BTreeMap::new(),
-            known: false,
             pooled: false,
-            tabled: false,
         }
     }
 }
@@ -103,10 +94,6 @@ impl WorldTrace {
         (terrains, placed): (Buffer<TraceGpu>, Buffer<TraceGpu>),
         frame: &TraceFrame<'_>,
     ) {
-        if !self.known || frame.ground_changed {
-            self.hold(frame.ground);
-            self.known = true;
-        }
         let groups = &frame.placed.groups;
         let rebuilt = *groups != self.boxes;
         if !self.pooled || frame.ground.layers != self.layers || rebuilt {
@@ -118,30 +105,15 @@ impl WorldTrace {
         if !self.pooled || frame.placed_changed {
             self.sync_grids(frame);
         }
-        if !self.tabled || frame.ground_changed {
-            self.write_layer_words();
-        }
         self.pooled = true;
-        self.tabled = true;
+        self.write_layer_words(frame.ground);
         let canopies = traced(frame.tiles, frame.ground).count() as u32 * CANOPY_WORDS;
         self.upload(cx, placed, (frame.room, canopies));
         self.write_terrains(cx, terrains, frame);
     }
 
     pub(crate) fn terrains(&self) -> u32 {
-        self.written.len() as u32
-    }
-
-    fn hold(&mut self, ground: &GroundTiles) {
-        self.held.clear();
-        self.tops.clear();
-        for tile in &ground.held {
-            self.held.insert((tile.terrain, tile.key), tile.layer);
-            self.tops
-                .entry(tile.terrain)
-                .and_modify(|top| *top = engine_core::math::max(*top, tile.top))
-                .or_insert(tile.top);
-        }
+        self.listed
     }
 
     fn lay_out(&mut self, layers: u32, rebuilt: bool) {
@@ -159,7 +131,6 @@ impl WorldTrace {
         self.free.clear();
         self.layers = layers;
         self.dirty = std::iter::once(0..self.words.len()).collect();
-        self.tabled = false;
         if rebuilt {
             self.pooled = false;
         }
@@ -224,7 +195,6 @@ impl WorldTrace {
         if freed > used {
             self.lay_out(self.layers, false);
         }
-        self.tabled = false;
     }
 
     fn place(&mut self, built: &[u32]) -> Range<u32> {
@@ -267,13 +237,15 @@ impl WorldTrace {
         }
     }
 
-    fn write_layer_words(&mut self) {
+    fn write_layer_words(&mut self, ground: &GroundTiles) {
         let count = self.layers;
         let layers = 0..count as usize;
         self.words[layers.clone()].fill(NO_PLACED);
-        for (key, grid) in &self.grids {
-            if let Some(layer) = self.held.get(key).copied().filter(|&layer| layer < count) {
-                self.words[layer as usize] = grid.words.start;
+        for tile in &ground.held {
+            if tile.layer < count
+                && let Some(grid) = self.grids.get(&(tile.terrain, tile.key))
+            {
+                self.words[tile.layer as usize] = grid.words.start;
             }
         }
         self.mark(layers);
@@ -311,7 +283,7 @@ impl WorldTrace {
         buffer: Buffer<TraceGpu>,
         frame: &TraceFrame<'_>,
     ) {
-        let mut records = Vec::with_capacity(self.written.len());
+        let mut records = Vec::with_capacity(self.listed as usize);
         let (first, last) = (
             TileKey::new(0, 0, 0),
             TileKey::new(u8::MAX, u16::MAX, u16::MAX),
@@ -323,10 +295,14 @@ impl WorldTrace {
         };
         let words = self.words.len() as u32;
         for (terrain, table) in traced(frame.tiles, frame.ground) {
-            let ground = self
-                .tops
-                .get(&terrain.terrain)
-                .map_or(-f32::MAX, |top| terrain.origin.y + top);
+            let ground = frame
+                .ground
+                .held
+                .iter()
+                .filter(|tile| tile.terrain == terrain.terrain)
+                .fold(-f32::MAX, |top, tile| {
+                    engine_core::math::max(top, terrain.origin.y + tile.top)
+                });
             let (levels, apron, highest) = self
                 .grids
                 .range((terrain.terrain, first)..=(terrain.terrain, last))
@@ -354,13 +330,10 @@ impl WorldTrace {
             self.terrains = size;
         }
         cx.allocate_buffer(buffer, self.terrains);
-        if records == self.written {
-            return;
-        }
         if !records.is_empty() {
             cx.write(buffer, 0, &records);
         }
-        self.written = records;
+        self.listed = records.len() as u32;
     }
 }
 

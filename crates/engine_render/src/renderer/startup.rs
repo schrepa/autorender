@@ -120,6 +120,7 @@ impl Renderer {
             pipeline_counts,
         };
         let renderer = Self {
+            surface: None,
             core,
             run: None,
             assets: Some(assets),
@@ -131,7 +132,6 @@ impl Renderer {
             installing: None,
             previous: None,
             seconds: None,
-            ran: Vec::new(),
             part_names: &[],
             linked: engine_core::LinkedStats::default(),
             resolver: None,

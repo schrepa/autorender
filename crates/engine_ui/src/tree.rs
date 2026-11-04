@@ -215,7 +215,6 @@ impl Flat {
 pub(crate) struct UiState {
     pub(crate) nodes: Vec<Flat>,
     pub(crate) metrics: [f32; 4],
-    pub(crate) revision: u64,
     pub(crate) hovered: Option<u32>,
     pub(crate) pressed: Option<u32>,
     pub(crate) focused: Option<u32>,
@@ -226,7 +225,6 @@ pub(crate) struct UiState {
     pub(crate) textures: Vec<TextureHandle>,
     pub(crate) rects: Vec<UiRect>,
     pub(crate) runs: Vec<(Option<TextureHandle>, Range<u32>)>,
-    pub(crate) staged: u64,
     pub(crate) rects_cut: u32,
     pub(crate) events: u32,
     seen: Vec<(Entity, u32)>,
@@ -357,7 +355,6 @@ impl UiState {
         self.stamps = facts.stamps;
         self.top = facts.top.map(str::to_owned);
         self.stale = true;
-        self.revision += 1;
         if facts.enabled {
             self.seen.extend(
                 roots
@@ -375,7 +372,7 @@ impl UiState {
                     .as_ref()
                     .and_then(|bytes| facts.text.0.register_font(bytes).ok());
                 self.shown_roots += 1;
-                self.flatten(root.root.clone(), None, font, facts);
+                self.flatten(&root.root, None, font, facts);
             }
         }
         self.textures.sort_unstable();
@@ -394,24 +391,24 @@ impl UiState {
 
     fn flatten(
         &mut self,
-        mut node: UiNode,
+        node: &UiNode,
         parent: Option<u32>,
         font: Option<FontId>,
         facts: &Facts<'_>,
     ) {
         if self.nodes.len() >= facts.max_nodes {
-            self.nodes_cut += weight(&node);
+            self.nodes_cut += weight(node);
             return;
         }
         let at = self.nodes.len() as u32;
-        let children = std::mem::take(&mut node.children);
-        let texture = texture_of(&node, facts.scene);
+        let texture = texture_of(node, facts.scene);
         self.textures.extend(texture);
-        self.nodes.push(Flat::of(node, parent, font, texture));
+        self.nodes
+            .push(Flat::of(without_children(node), parent, font, texture));
         if let Some(parent) = parent {
             self.nodes[parent as usize].children.push(at);
         }
-        for child in children {
+        for child in &node.children {
             self.flatten(child, Some(at), font, facts);
         }
     }
@@ -422,7 +419,6 @@ impl UiState {
             return;
         }
         self.values = revision;
-        self.revision += 1;
         self.missing = 0;
         let scale = self.metrics[3];
         for flat in &mut self.nodes {
@@ -547,7 +543,6 @@ impl UiState {
             ];
             flat.clip = clip;
         }
-        self.revision += 1;
     }
 }
 
@@ -580,6 +575,18 @@ fn meet(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
 
 fn weight(node: &UiNode) -> u32 {
     1 + node.children.iter().map(weight).sum::<u32>()
+}
+
+fn without_children(node: &UiNode) -> UiNode {
+    UiNode {
+        id: node.id.clone(),
+        text: node.text.clone(),
+        bind: node.bind.clone(),
+        image: node.image.clone(),
+        action: node.action.clone(),
+        children: Vec::new(),
+        ..*node
+    }
 }
 
 fn texture_of(node: &UiNode, scene: Option<&SceneContext>) -> Option<TextureHandle> {

@@ -85,7 +85,6 @@ pub(crate) struct Grid {
     read: u32,
     window: [i64; 2],
     pub(crate) generation: u64,
-    encoded: bool,
 }
 
 #[derive(Default)]
@@ -93,7 +92,6 @@ pub(crate) struct Particles {
     pub(crate) grid: Option<Grid>,
     last: Option<f64>,
     step: Option<u32>,
-    kept: Option<(Option<f64>, Option<u32>)>,
     generation: u64,
     pub(crate) frame: Option<ParticleFrame>,
 }
@@ -106,23 +104,14 @@ impl Particles {
         }
         self.last = None;
         self.step = None;
-        self.kept = None;
     }
 
     fn prepare(
         &mut self,
         (terrain, seen, limits): (u32, ParticleView, &DeviceLimits),
         (settings, ridden, wind, seconds): (&Water, f32, [f32; 2], f64),
-        submitted: bool,
     ) {
-        if let Some((last, step)) = self.kept.take().filter(|_| !submitted) {
-            (self.last, self.step) = (last, step);
-        }
-        self.kept = Some((self.last, self.step));
-        if let Some(grid) = self.grid.as_mut()
-            && std::mem::take(&mut grid.encoded)
-            && submitted
-        {
+        if let Some(grid) = self.grid.as_mut() {
             grid.held = Some(grid.window);
             grid.read ^= 1;
         }
@@ -151,7 +140,6 @@ impl Particles {
                 read: 0,
                 window: [0; 2],
                 generation: self.generation,
-                encoded: false,
             });
         }
         let Some(grid) = self.grid.as_mut() else {
@@ -206,7 +194,6 @@ impl Particles {
             eddies: [tick, ridden, 0.0, 0.0],
             terrain: [terrain, 0, 0, 0],
         });
-        grid.encoded = true;
     }
 
     pub(crate) fn shading(&self) -> [f32; 4] {
@@ -321,11 +308,10 @@ pub(crate) fn plan_particles(
         .work
         .drawn
         .as_ref()
-        .map_or(water.simulation_cell, |drawn| drawn.window.cell);
+        .map_or(water.simulation_cell, |drawn| drawn.cell);
     state.particles.prepare(
         (terrain, seen, &limits),
         (&water, ridden, wind.velocity, seconds),
-        view.submitted(),
     );
 }
 

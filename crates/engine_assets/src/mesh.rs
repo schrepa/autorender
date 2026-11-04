@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use engine_codec::{Error, ErrorCode, Expected};
 use glam::Vec3;
@@ -33,6 +33,7 @@ pub struct Mesh {
     colors: Option<Box<[[f32; 4]]>>,
     uv1: Option<Box<[[f32; 2]]>>,
     lods: Option<Arc<MeshLods>>,
+    identity: OnceLock<u128>,
 }
 
 impl Mesh {
@@ -84,6 +85,32 @@ impl Mesh {
             colors: None,
             uv1: None,
             lods: None,
+            identity: OnceLock::new(),
+        })
+    }
+
+    pub fn identity(&self, hash: impl FnOnce(&[u8]) -> u128) -> u128 {
+        *self.identity.get_or_init(|| {
+            let mut bytes = Vec::with_capacity(self.byte_len() + 16);
+            bytes.extend_from_slice(&(self.vertices.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&(self.indices.len() as u32).to_le_bytes());
+            for vertex in &self.vertices {
+                for value in vertex.position.iter().chain(&vertex.normal).chain(&vertex.uv) {
+                    bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+                }
+            }
+            for index in &self.indices {
+                bytes.extend_from_slice(&index.to_le_bytes());
+            }
+            bytes.push(u8::from(self.colors.is_some()));
+            for value in self.colors.iter().flatten().flatten() {
+                bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
+            bytes.push(u8::from(self.uv1.is_some()));
+            for value in self.uv1.iter().flatten().flatten() {
+                bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
+            hash(&bytes)
         })
     }
 
@@ -109,6 +136,7 @@ impl Mesh {
                 .got(colors[vertex]));
         }
         self.colors = Some(colors.into_boxed_slice());
+        self.identity = OnceLock::new();
         Ok(self)
     }
 
@@ -123,6 +151,7 @@ impl Mesh {
                 .got(uv1[vertex]));
         }
         self.uv1 = Some(uv1.into_boxed_slice());
+        self.identity = OnceLock::new();
         Ok(self)
     }
 

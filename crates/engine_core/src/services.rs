@@ -646,10 +646,6 @@ impl View {
         }
     }
 
-    pub fn submitted(&self) -> bool {
-        self.cameras.facts().submitted
-    }
-
     pub fn render_size(&self) -> glam::UVec2 {
         self.cameras.render_size()
     }
@@ -740,32 +736,6 @@ settings! {
         pub enabled: bool = true => any,
         pub pixel_error: f32 = 1.0 => range(0.25, 64.0),
         pub fade_seconds: f32 = 0.5 => range(0.0, 4.0),
-    }
-}
-
-#[derive(Resource)]
-#[component(immutable)]
-pub struct Poses {
-    presented: engine_registry::PoseTable,
-}
-
-impl Poses {
-    pub(crate) fn empty() -> Self {
-        Self {
-            presented: engine_registry::PoseTable::default(),
-        }
-    }
-
-    pub fn of(&self, entity: Entity) -> Option<glam::Affine3A> {
-        self.presented.of(entity)
-    }
-
-    pub(crate) fn take(&mut self) -> engine_registry::PoseTable {
-        std::mem::take(&mut self.presented)
-    }
-
-    pub(crate) fn hold(&mut self, presented: engine_registry::PoseTable) {
-        self.presented = presented;
     }
 }
 

@@ -73,9 +73,8 @@ pub use scene::*;
 pub use section::{Cut, Explain, Operation, RESERVED_REPLY_KEYS, Readback, Section};
 pub use services::{
     Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, PartFaults, Placed,
-    Placement, Poses, Prepared, Reach, SceneBuffers, SceneComponents, SceneContext, SceneCx,
-    SceneIds, ScenePath, View, ViewWind, WorkClock, WorkRemaining, scene_component,
-    scene_components,
+    Placement, Prepared, Reach, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneIds,
+    ScenePath, View, ViewWind, WorkClock, WorkRemaining, scene_component, scene_components,
 };
 pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
@@ -119,7 +118,7 @@ use engine_registry::{
 use interpolation::{InterpolationState, ResetWatch};
 use schedules::{
     BetweenFrames, FixedMove, FixedPostSimulation, FixedPreSimulation, FixedSimulation, FrameStart,
-    Presentation, Rendered, Stream, TransformPropagation, ViewSync, Waiting, WorldSync,
+    Presentation, Stream, TransformPropagation, ViewSync, Waiting, WorldSync,
 };
 
 pub const MAX_DEV_TICKS: u32 = 120;
@@ -244,19 +243,6 @@ fn publish_view(world: &mut World, aspect: f32, facts: FrameFacts) {
     });
 }
 
-fn publish_poses(world: &mut World) {
-    let Some(mut table) = world.modify_resource(Poses::take).ok().flatten() else {
-        return;
-    };
-    table.clear();
-    let globals = world.resource::<GlobalTransforms>();
-    table.reserve(globals.len());
-    for (entity, global) in globals.iter() {
-        table.set(entity, global.matrix().map(glam::Affine3A::from_mat4));
-    }
-    modify(world, |poses: &mut Poses| poses.hold(table));
-}
-
 impl Engine {
     pub fn new(config: EngineConfig) -> Self {
         let clock = FixedClock::new(config);
@@ -303,7 +289,6 @@ impl Engine {
             .insert_resource(Records::empty())
             .init_resource::<RecordExchange>()
             .insert_resource(View::empty())
-            .insert_resource(Poses::empty())
             .insert_resource(DeviceLimits::without_device(cores))
             .init_resource::<WorkClock>()
             .init_resource::<PartDraws>()
@@ -361,7 +346,7 @@ impl Engine {
         let world = self.app.world_mut();
         world.insert_resource(JobListed::of(&jobs));
         world.resource_mut::<JobExchange>().set_list(jobs);
-        let labels: [InternedScheduleLabel; 12] = Schedule::ALL.map(Schedule::label);
+        let labels: [InternedScheduleLabel; 11] = Schedule::ALL.map(Schedule::label);
         self.gates = Some(registry.install(world, &labels));
         let twice = world
             .get_resource::<MembersOf<SceneComponents>>()
@@ -489,25 +474,6 @@ impl Engine {
         let world = self.app.world_mut();
         if has_systems(world, FrameStart) {
             world.run_schedule(FrameStart);
-        }
-    }
-
-    pub fn rendered(&mut self, submitted: bool) {
-        self.finalize();
-        let world = self.app.world_mut();
-        if world.resource::<View>().submitted() != submitted {
-            modify(world, |view: &mut View| {
-                let state = view.state_mut();
-                let facts = FrameFacts {
-                    submitted,
-                    ..state.facts()
-                };
-                let (view_projection, eye) = (state.view_projection(), state.eye());
-                state.set(facts, view_projection, eye);
-            });
-        }
-        if has_systems(world, Rendered) {
-            world.run_schedule(Rendered);
         }
     }
 
@@ -681,7 +647,6 @@ impl Engine {
         let _profile = engine_profile::span("ecs", "ViewSync");
         let facts = self.facts.unwrap_or_else(|| self.viewport_facts());
         let world = self.app.world_mut();
-        publish_poses(world);
         publish_view(world, aspect, facts);
         world.run_schedule(ViewSync);
         assets::settle_assets(world);

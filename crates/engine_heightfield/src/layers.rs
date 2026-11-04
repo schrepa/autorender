@@ -629,10 +629,6 @@ impl Layers {
         }
     }
 
-    pub fn height_cost(&self) -> u64 {
-        self.layers().iter().map(|layer| layer.point_cost()).sum()
-    }
-
     pub fn sample_height(&self, pyramid: &Pyramid, level: u32, sample: [i64; 2]) -> f32 {
         let spacing = pyramid.spacing(level);
         let [dx, dz] = self.offset_samples(spacing);

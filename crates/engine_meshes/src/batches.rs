@@ -2,15 +2,12 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::Resource;
 use engine_codec::Expected;
-use engine_core::collections::HashMap;
-use engine_core::{Error, ErrorCode, MaterialHandle, MeshHandle, Stamp, TextureHandle};
+use engine_core::{Error, ErrorCode, MaterialHandle, MeshHandle};
+use glam::Mat4;
 
-use crate::retained::{RetainedRender, Snapshot};
+use crate::retained::RetainedRender;
 
-const UNMAPPED_BUCKET: u32 = u32::MAX;
 const INITIAL_CAPACITY: usize = 1_024;
-
-type GroupIds = HashMap<u64, u32>;
 
 pub(crate) fn capacity_for(needed: usize, limit: usize) -> usize {
     needed.max(INITIAL_CAPACITY).next_power_of_two().min(limit)
@@ -19,73 +16,21 @@ pub(crate) fn capacity_for(needed: usize, limit: usize) -> usize {
 #[derive(Debug, PartialEq)]
 pub struct DrawBatch {
     pub mesh: MeshHandle,
-    pub source_index: usize,
     pub material: Option<MaterialHandle>,
     pub instances: Range<u32>,
 }
 
-fn refused(path: impl Into<String>, expected: Expected) -> Error {
-    Error::new(ErrorCode::RenderFailed, path).expected(expected)
-}
-
-fn snapshot_camera() -> Error {
-    refused("$.snapshot.view_projection", Expected::Finite)
-}
-
-fn index_by_handle<H: Ord>(
-    indices: &mut Vec<usize>,
-    count: usize,
-    handle: impl Fn(usize) -> H,
-    field: &str,
-) -> Result<(), Error> {
-    indices.reserve_exact(count);
-    indices.extend(0..count);
-    indices.sort_unstable_by_key(|index| handle(*index));
-    for pair in indices.windows(2) {
-        if handle(pair[0]) == handle(pair[1]) {
-            return Err(refused(
-                format!("$.snapshot.{field}[{}]", pair[1]),
-                Expected::Unique,
-            ));
-        }
-    }
-    Ok(())
-}
-
 #[derive(Resource, Default)]
 pub struct BatchPlan {
-    pub ordered_instances: Vec<usize>,
+    pub ordered: Vec<(u64, u32)>,
     pub batches: Vec<DrawBatch>,
-    previous_order: Vec<usize>,
-    previous_batches: Vec<DrawBatch>,
     generation: u64,
-    rebuilds: u64,
-    source_indices: Vec<usize>,
-    material_source_indices: Vec<usize>,
-    texture_source_indices: Vec<usize>,
-    pub material_sources: Vec<usize>,
-    pub texture_sources: Vec<usize>,
-    mesh_handles: Vec<MeshHandle>,
-    material_handles: Vec<MaterialHandle>,
-    texture_handles: Vec<TextureHandle>,
-    instance_buckets: Vec<u32>,
-    bucket_cursors: Vec<usize>,
-    group_ids: GroupIds,
-    group_keys: Vec<u64>,
-    group_order: Vec<u32>,
-    used_material_sources: Vec<bool>,
-    used_texture_sources: Vec<bool>,
+    changed: bool,
     pub instance_limit: Option<usize>,
     pub instance_capacity: usize,
     pub capacity_grown: u64,
     pub refused: Option<Error>,
     valid: bool,
-    order_reused: bool,
-    retained_structure: Option<(Stamp, u64)>,
-    retained_sources: Option<(Stamp, u64)>,
-    slot_buckets: Vec<u32>,
-    slot_mapping_reused: bool,
-    key_resolutions: usize,
 }
 
 impl BatchPlan {
@@ -101,344 +46,75 @@ impl BatchPlan {
         }
     }
 
-    pub fn prepare_frame(&mut self, retained: &RetainedRender) -> Result<(), Error> {
-        let key = (retained.identity(), retained.structure_revision());
-        let source_key = (retained.identity(), retained.source_revision());
-        let snapshot = retained.snapshot();
-        self.key_resolutions = 0;
-        let reuse_slots = self.valid
-            && self.retained_sources == Some(source_key)
-            && self.slot_buckets.len() == snapshot.instances.len();
-        self.slot_mapping_reused = reuse_slots;
-        if reuse_slots && self.retained_structure == Some(key) {
-            if !snapshot.view_projection.is_finite() {
-                self.invalidate();
-                return Err(snapshot_camera());
-            }
-            self.order_reused = true;
-        } else {
-            self.valid = false;
-            if let Err(error) =
-                self.prepare_inner(snapshot, retained.visible_indices(), reuse_slots)
-            {
-                self.invalidate();
-                return Err(error);
-            }
-            self.retained_structure = Some(key);
-            self.retained_sources = Some(source_key);
+    pub(crate) fn prepare_frame(
+        &mut self,
+        retained: &RetainedRender,
+        view_projection: Mat4,
+    ) -> Result<(), Error> {
+        self.changed = false;
+        if !view_projection.is_finite() {
+            self.invalidate();
+            return Err(Error::new(ErrorCode::RenderFailed, "$.snapshot.view_projection")
+                .expected(Expected::Finite));
         }
-        self.record_stats();
+        if self.valid && !retained.changed() {
+            return Ok(());
+        }
+        let slots = retained.instances().len();
+        if let Some(limit) = self.instance_limit
+            && slots > limit
+        {
+            self.invalidate();
+            return Err(Error::new(ErrorCode::RenderFailed, "$.snapshot.instances")
+                .at_most(limit as u64)
+                .got(slots));
+        }
+        self.rebuild(retained);
         Ok(())
-    }
-
-    fn record_stats(&self) {
-        if engine_core::profile::active() {
-            engine_core::profile::counter(
-                "render.batch_order_reused",
-                if self.order_reused { 1.0 } else { 0.0 },
-            );
-            engine_core::profile::counter(
-                "render.batch_order_rebuilt",
-                if self.order_reused { 0.0 } else { 1.0 },
-            );
-            engine_core::profile::counter(
-                "render.batch_slot_mapping_reused",
-                f64::from(self.slot_mapping_reused),
-            );
-            engine_core::profile::counter(
-                "render.batch_key_resolutions",
-                self.key_resolutions as f64,
-            );
-            let group_scratch_bytes = (self.instance_buckets.capacity()
-                + self.slot_buckets.capacity()
-                + self.group_order.capacity())
-                * size_of::<u32>()
-                + self.group_keys.capacity() * size_of::<u64>()
-                + self.bucket_cursors.capacity() * size_of::<usize>();
-            let capacity_bytes = (self.ordered_instances.capacity()
-                + self.source_indices.capacity()
-                + self.material_source_indices.capacity()
-                + self.texture_source_indices.capacity()
-                + self.material_sources.capacity()
-                + self.texture_sources.capacity())
-                * size_of::<usize>()
-                + self.batches.capacity() * size_of::<DrawBatch>()
-                + self.mesh_handles.capacity() * size_of::<MeshHandle>()
-                + self.material_handles.capacity() * size_of::<MaterialHandle>()
-                + self.texture_handles.capacity() * size_of::<TextureHandle>()
-                + group_scratch_bytes;
-            engine_core::profile::counter(
-                "memory.batch_plan_capacity_bytes",
-                capacity_bytes as f64,
-            );
-            engine_core::profile::counter(
-                "memory.batch_group_scratch_bytes",
-                group_scratch_bytes as f64,
-            );
-        }
     }
 
     pub fn generation(&self) -> u64 {
         self.generation
     }
 
-    pub(crate) fn rebuilds(&self) -> u64 {
-        self.rebuilds
-    }
-
-    pub(crate) fn mesh_handles(&self) -> &[MeshHandle] {
-        &self.mesh_handles
-    }
-
-    pub(crate) fn material_handles(&self) -> &[MaterialHandle] {
-        &self.material_handles
-    }
-
-    pub(crate) fn texture_handles(&self) -> &[TextureHandle] {
-        &self.texture_handles
+    pub(crate) fn changed(&self) -> bool {
+        self.changed
     }
 
     fn invalidate(&mut self) {
-        self.generation += 1;
-        self.valid = false;
-        self.order_reused = false;
-        self.retained_structure = None;
-        self.retained_sources = None;
-        self.slot_mapping_reused = false;
-        self.key_resolutions = 0;
-        self.slot_buckets.clear();
-        self.group_ids.clear();
-        self.group_keys.clear();
-        self.instance_buckets.clear();
-        self.bucket_cursors.clear();
-        self.ordered_instances.clear();
-        self.batches.clear();
-        self.source_indices.clear();
-        self.material_source_indices.clear();
-        self.texture_source_indices.clear();
-        self.material_sources.clear();
-        self.texture_sources.clear();
-        self.mesh_handles.clear();
-        self.material_handles.clear();
-        self.texture_handles.clear();
-    }
-
-    fn prepare_inner(
-        &mut self,
-        snapshot: &Snapshot,
-        selected: &[usize],
-        reuse_slot_mapping: bool,
-    ) -> Result<(), Error> {
-        self.rebuilds += 1;
-        let instance_count = selected.len();
-        let profile_validation = engine_core::profile::span("render", "batch_source_validation");
-        self.source_indices.clear();
-        self.material_source_indices.clear();
-        self.texture_source_indices.clear();
-        self.material_sources.clear();
-        self.texture_sources.clear();
-        self.mesh_handles.clear();
-        self.material_handles.clear();
-        self.texture_handles.clear();
-        if let Some(limit) = self.instance_limit
-            && (snapshot.instances.len() > limit || instance_count > limit)
-        {
-            return Err(Error::new(ErrorCode::RenderFailed, "$.snapshot.instances")
-                .at_most(limit as u64)
-                .got(snapshot.instances.len().max(instance_count)));
-        }
-        if !snapshot.view_projection.is_finite() {
-            return Err(snapshot_camera());
-        }
-        drop(profile_validation);
-        let profile_sources = engine_core::profile::span("render", "batch_source_index");
-        index_by_handle(
-            &mut self.source_indices,
-            snapshot.meshes.len(),
-            |index| snapshot.meshes[index].handle,
-            "meshes",
-        )?;
-        self.mesh_handles.reserve_exact(snapshot.meshes.len());
-        self.mesh_handles.extend(
-            self.source_indices
-                .iter()
-                .map(|index| snapshot.meshes[*index].handle),
-        );
-        index_by_handle(
-            &mut self.material_source_indices,
-            snapshot.materials.len(),
-            |index| snapshot.materials[index].handle,
-            "materials",
-        )?;
-        index_by_handle(
-            &mut self.texture_source_indices,
-            snapshot.textures.len(),
-            |index| snapshot.textures[index].handle,
-            "textures",
-        )?;
-        for (index, source) in snapshot.materials.iter().enumerate() {
-            for handle in source.material.textures() {
-                if self
-                    .texture_source_indices
-                    .binary_search_by_key(&handle, |&index| snapshot.textures[index].handle)
-                    .is_err()
-                {
-                    return Err(refused(
-                        format!("$.snapshot.materials[{index}].textures"),
-                        Expected::Present,
-                    ));
-                }
-            }
-        }
-        drop(profile_sources);
-        if !reuse_slot_mapping {
-            self.group_ids.clear();
-            self.group_keys.clear();
-            self.slot_buckets.clear();
-            self.slot_buckets.reserve_exact(snapshot.instances.len());
-            self.slot_buckets
-                .resize(snapshot.instances.len(), UNMAPPED_BUCKET);
-        }
-        self.used_material_sources.clear();
-        self.used_material_sources
-            .resize(snapshot.materials.len(), false);
-        std::mem::swap(&mut self.ordered_instances, &mut self.previous_order);
-        std::mem::swap(&mut self.batches, &mut self.previous_batches);
-        self.group_instances(snapshot, selected)?;
-        if self.ordered_instances != self.previous_order || self.batches != self.previous_batches {
+        if self.valid {
             self.generation += 1;
+            self.changed = true;
         }
-        self.used_texture_sources.clear();
-        self.used_texture_sources
-            .resize(snapshot.textures.len(), false);
-        for &index in &self.material_source_indices {
-            let source = &snapshot.materials[index];
-            self.material_handles.push(source.handle);
-            if self.used_material_sources[index] {
-                self.material_sources.push(index);
-                for handle in source.material.textures() {
-                    if let Ok(rank) = self
-                        .texture_source_indices
-                        .binary_search_by_key(&handle, |&index| snapshot.textures[index].handle)
-                    {
-                        self.used_texture_sources[self.texture_source_indices[rank]] = true;
-                    }
-                }
-            }
-        }
-        for &index in &self.texture_source_indices {
-            self.texture_handles.push(snapshot.textures[index].handle);
-            if self.used_texture_sources[index] {
-                self.texture_sources.push(index);
-            }
-        }
-        self.order_reused = false;
-        self.valid = true;
-        Ok(())
-    }
-
-    fn group_instances(
-        &mut self,
-        snapshot: &Snapshot,
-        selected: &[usize],
-    ) -> Result<(), Error> {
-        let _profile = engine_core::profile::span("render", "batch_instance_group");
-        self.instance_buckets.clear();
-        self.instance_buckets.reserve_exact(selected.len());
-        for &slot in selected {
-            let instance = &snapshot.instances[slot];
-            let cached = self.slot_buckets[slot];
-            let group = if cached != UNMAPPED_BUCKET {
-                cached
-            } else {
-                let (mesh_rank, material_rank) = Self::source_ranks(
-                    snapshot,
-                    &self.source_indices,
-                    &self.material_source_indices,
-                    instance.mesh,
-                    instance.material,
-                )?;
-                self.key_resolutions += 1;
-                let key =
-                    ((mesh_rank as u64) << 31) | material_rank.map_or(0, |rank| rank as u64 + 1);
-                let next = self.group_keys.len() as u32;
-                let group = *self.group_ids.entry(key).or_insert(next);
-                if group == next {
-                    self.group_keys.push(key);
-                }
-                self.slot_buckets[slot] = group;
-                group
-            };
-            self.instance_buckets.push(group);
-        }
-        self.bucket_cursors.clear();
-        self.bucket_cursors.resize(self.group_keys.len(), 0);
-        for &group in &self.instance_buckets {
-            self.bucket_cursors[group as usize] += 1;
-        }
-        self.group_order.clear();
-        self.group_order.extend(
-            (0..self.group_keys.len() as u32)
-                .filter(|&group| self.bucket_cursors[group as usize] != 0),
-        );
-        self.group_order
-            .sort_unstable_by_key(|&group| self.group_keys[group as usize]);
+        self.valid = false;
+        self.ordered.clear();
         self.batches.clear();
-        self.batches.reserve_exact(self.group_order.len());
-        let mut start = 0;
-        {
-            let _profile_ranges = engine_core::profile::span("render", "batch_draw_ranges");
-            for &group in &self.group_order {
-                let count = &mut self.bucket_cursors[group as usize];
-                let end = start + *count;
-                *count = start;
-                let key = self.group_keys[group as usize];
-                let source_index = self.source_indices[((key >> 31) & 0x7fff_ffff) as usize];
-                let material_slot = (key & 0x7fff_ffff) as usize;
-                let material = if material_slot == 0 {
-                    None
-                } else {
-                    let index = self.material_source_indices[material_slot - 1];
-                    self.used_material_sources[index] = true;
-                    Some(snapshot.materials[index].handle)
-                };
-                self.batches.push(DrawBatch {
-                    mesh: snapshot.meshes[source_index].handle,
-                    source_index,
-                    material,
-                    instances: start as u32..end as u32,
-                });
-                start = end;
-            }
-        }
-        self.ordered_instances.clear();
-        self.ordered_instances.reserve_exact(selected.len());
-        self.ordered_instances.resize(selected.len(), 0);
-        for (&slot, &bucket) in selected.iter().zip(&self.instance_buckets) {
-            let cursor = &mut self.bucket_cursors[bucket as usize];
-            self.ordered_instances[*cursor] = slot;
-            *cursor += 1;
-        }
-        Ok(())
     }
 
-    fn source_ranks(
-        snapshot: &Snapshot,
-        mesh_indices: &[usize],
-        material_indices: &[usize],
-        mesh: MeshHandle,
-        material: Option<MaterialHandle>,
-    ) -> Result<(usize, Option<usize>), Error> {
-        let mesh_index = mesh_indices
-            .binary_search_by_key(&mesh, |&index| snapshot.meshes[index].handle)
-            .map_err(|_| refused("$.snapshot.meshes", Expected::Present))?;
-        let material_index = material
-            .map(|handle| {
-                material_indices
-                    .binary_search_by_key(&handle, |&index| snapshot.materials[index].handle)
-                    .map_err(|_| refused("$.snapshot.materials", Expected::Present))
-            })
-            .transpose()?;
-        Ok((mesh_index, material_index))
+    fn rebuild(&mut self, retained: &RetainedRender) {
+        let _profile = engine_core::profile::span("render", "batch_plan_rebuild");
+        self.ordered.clear();
+        self.ordered.extend(retained.drawn().map(|(slot, instance)| {
+            let material = instance.material.map_or(0, |material| material.slot() as u64 + 1);
+            (((instance.mesh.slot() as u64) << 32) | material, slot as u32)
+        }));
+        self.ordered.sort_unstable();
+        self.batches.clear();
+        let instances = retained.instances();
+        let mut start = 0;
+        for at in 1..=self.ordered.len() {
+            if at == self.ordered.len() || self.ordered[at].0 != self.ordered[start].0 {
+                let instance = &instances[self.ordered[start].1 as usize];
+                self.batches.push(DrawBatch {
+                    mesh: instance.mesh,
+                    material: instance.material,
+                    instances: start as u32..at as u32,
+                });
+                start = at;
+            }
+        }
+        self.generation += 1;
+        self.changed = true;
+        self.valid = true;
     }
 }

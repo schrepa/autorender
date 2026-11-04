@@ -1,7 +1,4 @@
-use std::sync::Arc;
-
 use bevy_ecs::prelude::*;
-use engine_core::collections::HashMap;
 use engine_core::math::{GRAVITY, clamp, max};
 use engine_core::{Spawner, Transform};
 use engine_heightfield::Fall;
@@ -11,16 +8,6 @@ use glam::Vec3;
 use crate::WaterBrick;
 use crate::shallow_water::DENSITY;
 use crate::state::WaterState;
-
-#[derive(Resource, Default)]
-pub(crate) struct TerrainFalls {
-    spawned: HashMap<Entity, Spawned>,
-}
-
-struct Spawned {
-    set: Arc<[Fall]>,
-    entities: Vec<Entity>,
-}
 
 const SPLASH_WATTS: f32 = 2.0e3;
 const SPLASH_RATE: [f32; 2] = [20.0, 600.0];
@@ -175,49 +162,24 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
     spawned
 }
 
-impl TerrainFalls {
-    pub(crate) fn take(&mut self) -> Vec<Entity> {
-        self.spawned
-            .drain()
-            .flat_map(|(_, spawned)| spawned.entities)
-            .collect()
-    }
-}
-
-pub(crate) fn sync(
-    state: Res<WaterState>,
-    mut falls: ResMut<TerrainFalls>,
-    mut spawner: Spawner<WaterBrick>,
-) {
-    let wanted: Vec<(Entity, Arc<[Fall]>, Vec3)> = state
-        .terrains
-        .iter()
-        .map(|terrain| (terrain.entity, terrain.falls.clone(), terrain.origin))
-        .collect();
-    let falls = falls.bypass_change_detection();
-    let mut stale = Vec::new();
-    falls.spawned.retain(|terrain, spawned| {
-        let keep = wanted
-            .iter()
-            .any(|(entity, wanted, _)| entity == terrain && Arc::ptr_eq(wanted, &spawned.set));
-        if !keep {
-            stale.append(&mut spawned.entities);
-        }
-        keep
-    });
-    for entity in stale {
+pub(crate) fn sync(mut state: ResMut<WaterState>, mut spawner: Spawner<WaterBrick>) {
+    let state = state.bypass_change_detection();
+    for entity in state.gone.drain(..) {
         spawner.despawn(entity);
     }
-    for (terrain, set, origin) in wanted {
-        if set.is_empty() || falls.spawned.contains_key(&terrain) {
+    for terrain in &mut state.terrains {
+        if !std::mem::take(&mut terrain.falls_fresh) {
             continue;
         }
-        let mut entities = Vec::with_capacity(3 * set.len());
-        for (index, fall) in set.iter().enumerate() {
-            for (transform, emitter) in emitters(fall, origin, index as u32) {
-                entities.push(spawner.spawn((transform, emitter)));
+        for entity in terrain.fall_entities.drain(..) {
+            spawner.despawn(entity);
+        }
+        for (index, fall) in terrain.falls.iter().enumerate() {
+            for (transform, emitter) in emitters(fall, terrain.origin, index as u32) {
+                terrain
+                    .fall_entities
+                    .push(spawner.spawn((transform, emitter)));
             }
         }
-        falls.spawned.insert(terrain, Spawned { set, entities });
     }
 }

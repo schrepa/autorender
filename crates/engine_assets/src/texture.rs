@@ -93,6 +93,7 @@ pub struct Texture {
     levels: Box<[Box<[u8]>]>,
     masked: bool,
     summary: OnceLock<TextureSummary>,
+    identity: OnceLock<u128>,
 }
 
 impl Texture {
@@ -158,7 +159,29 @@ impl Texture {
             levels: levels.into_iter().map(Vec::into_boxed_slice).collect(),
             masked: masked || format.is_compressed(),
             summary: OnceLock::new(),
+            identity: OnceLock::new(),
         })
+    }
+
+    pub fn identity(&self, hash: impl FnOnce(&[u8]) -> u128) -> u128 {
+        *self.identity.get_or_init(|| {
+            let mut bytes = Vec::new();
+            for value in [self.width, self.height, self.format as u32] {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            for level in &self.levels {
+                bytes.extend_from_slice(level);
+            }
+            hash(&bytes)
+        })
+    }
+
+    #[must_use]
+    pub fn with_identity(self, identity: u128) -> Self {
+        Self {
+            identity: OnceLock::from(identity),
+            ..self
+        }
     }
 
     #[must_use]

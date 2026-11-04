@@ -34,11 +34,12 @@ pub(super) struct WalkRecords {
     portals: BTreeMap<Vec<u8>, Kept<TilePortals>>,
     asked: Vec<Asked>,
     reads: u64,
+    held: (u32, u32),
 }
 
 impl WalkRecords {
     pub(super) fn held(&self) -> (u32, u32) {
-        (here(&self.grounds), here(&self.portals))
+        self.held
     }
 
     pub(super) fn take(
@@ -49,6 +50,7 @@ impl WalkRecords {
         failures: &mut JobFailures,
     ) {
         let mut grounds = 0;
+        let mut arrived = false;
         for asked in std::mem::take(&mut self.asked) {
             if asked.ground.is_some() && grounds >= GROUNDS_PER_TICK {
                 self.asked.push(asked);
@@ -64,6 +66,7 @@ impl WalkRecords {
                 ground,
             } = asked;
             jobs.cancel(ticket);
+            arrived = true;
             match ground {
                 Some(ground) => {
                     grounds += 1;
@@ -80,8 +83,11 @@ impl WalkRecords {
                 }
             }
         }
-        forget(&mut self.grounds, GROUNDS_KEPT, tick);
-        forget(&mut self.portals, PORTALS_KEPT, tick);
+        if arrived {
+            forget(&mut self.grounds, GROUNDS_KEPT, tick);
+            forget(&mut self.portals, PORTALS_KEPT, tick);
+            self.held = (here(&self.grounds), here(&self.portals));
+        }
     }
 
     pub(super) fn resolve(

@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
 use engine_core::collections::HashMap;
-use engine_places::ground::TileKey;
 use engine_places::physics::CollisionLayers;
+use engine_places::solids::FieldTile;
 use glam::Vec3;
 use parry3d::shape::Shape;
 use rapier3d::prelude as rp;
@@ -49,11 +49,7 @@ impl Hasher for EntityHasher {
 }
 
 struct Ground {
-    terrain: Entity,
-    key: TileKey,
-    field: Arc<parry3d::shape::HeightField>,
-    min: Vec3,
-    max: Vec3,
+    field: Arc<FieldTile>,
     handle: rp::ColliderHandle,
 }
 
@@ -97,7 +93,8 @@ impl Statics {
 
     pub fn grounded(&self, x: f32, z: f32) -> bool {
         self.ground.iter().any(|ground| {
-            x >= ground.min.x && x <= ground.max.x && z >= ground.min.z && z <= ground.max.z
+            let (min, max) = (ground.field.min, ground.field.max);
+            x >= min.x && x <= max.x && z >= min.z && z <= max.z
         })
     }
 
@@ -133,30 +130,25 @@ impl Statics {
 
     fn sync_ground(&mut self, solver: &mut Solver, solids: &Solids) {
         let mut kept = std::mem::take(&mut self.ground);
-        for solid in solids.ground() {
-            if let Some(index) = kept.iter().position(|ground| {
-                ground.terrain == solid.terrain
-                    && ground.key == solid.key
-                    && Arc::ptr_eq(&ground.field, &solid.shape)
-            }) {
+        for field in solids.ground() {
+            if let Some(index) = kept
+                .iter()
+                .position(|ground| Arc::ptr_eq(&ground.field, field))
+            {
                 self.ground.push(kept.swap_remove(index));
                 continue;
             }
-            let field: Arc<dyn Shape> = solid.shape.clone();
+            let shape: Arc<dyn Shape> = field.shape().clone();
             let handle = solver.add_solid(
                 fixed(
-                    rp::SharedShape(field),
-                    rp::Pose::from_translation(solid.center),
+                    rp::SharedShape(shape),
+                    rp::Pose::from_translation(field.center),
                     GROUND_FRICTION,
                 )
                 .build(),
             );
             self.ground.push(Ground {
-                terrain: solid.terrain,
-                key: solid.key,
-                field: solid.shape.clone(),
-                min: solid.min,
-                max: solid.max,
+                field: Arc::clone(field),
                 handle,
             });
         }

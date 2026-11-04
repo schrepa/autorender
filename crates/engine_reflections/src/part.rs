@@ -34,7 +34,7 @@ pub(crate) struct TraceGpu {
     downs: Vec<Pipeline<Self, Own>>,
     tracing: Pipeline<Self, Own>,
     world: WorldTrace,
-    changed: (bool, bool),
+    placed_changed: bool,
     count: u32,
     render: (u32, u32),
     drawn: [(u32, u32); SCENE_LEVELS as usize],
@@ -161,7 +161,7 @@ impl GpuPart for TraceGpu {
             downs,
             tracing,
             world: WorldTrace::default(),
-            changed: (false, false),
+            placed_changed: false,
             count: 0,
             render: (0, 0),
             drawn: [(0, 0); SCENE_LEVELS as usize],
@@ -176,14 +176,12 @@ impl GpuPart for TraceGpu {
     ) {
         if cx.fresh() {
             self.world.forget();
-            self.reduced.clear();
         }
-        self.changed.0 |= ground.is_changed();
-        self.changed.1 |= placed.is_changed();
+        self.placed_changed |= placed.is_changed();
         if view.debug() {
             return;
         }
-        let (ground_changed, placed_changed) = std::mem::take(&mut self.changed);
+        let placed_changed = std::mem::take(&mut self.placed_changed);
         self.world.prepare(
             cx,
             (self.terrains, self.placed),
@@ -193,7 +191,6 @@ impl GpuPart for TraceGpu {
                 placed: &placed,
                 cover: &cover,
                 room: limits.storage_room / 16 * 16,
-                ground_changed,
                 placed_changed,
             },
         );
@@ -213,15 +210,12 @@ impl GpuPart for TraceGpu {
         );
         let reductions = mip_levels(base.0, base.1).min(PYRAMID_LEVELS);
         cx.allocate(self.pyramid, extent(base.0, base.1), reductions);
-        let reduced = extents(self.render, reductions);
+        self.reduced = extents(self.render, reductions);
         for buffer in &self.extents {
             cx.allocate_buffer(*buffer, size_of::<PyramidExtent>() as u64);
         }
-        if reduced != self.reduced {
-            for (buffer, written) in self.extents.iter().zip(&reduced) {
-                cx.write(*buffer, 0, &[*written]);
-            }
-            self.reduced = reduced;
+        for (buffer, written) in self.extents.iter().zip(&self.reduced) {
+            cx.write(*buffer, 0, &[*written]);
         }
         cx.run(self.reduce);
         cx.copy(

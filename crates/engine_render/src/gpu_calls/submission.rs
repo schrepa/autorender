@@ -58,7 +58,6 @@ struct Threads {
     inbox: Option<mpsc::Sender<(u64, Handover)>>,
     workers: Vec<std::thread::JoinHandle<()>>,
     handed: Cell<u64>,
-    settled: Cell<u64>,
     turns: Arc<Turns>,
 }
 
@@ -86,7 +85,6 @@ impl Threads {
             inbox: Some(inbox),
             workers,
             handed: Cell::new(0),
-            settled: Cell::new(0),
             turns,
         })
     }
@@ -101,12 +99,8 @@ impl Threads {
     }
 
     fn settle(&self) {
-        let handed = self.handed.get();
-        if self.settled.replace(handed) == handed {
-            return;
-        }
         let _profile = engine_profile::span("render", "submission_wait");
-        drop(self.turns.reached(handed));
+        drop(self.turns.reached(self.handed.get()));
         crate::platform::run_arrived_maps();
     }
 }

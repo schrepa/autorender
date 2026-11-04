@@ -71,7 +71,7 @@ use engine_heightfield::tile::{
 use engine_heightfield::{covers, reaches};
 use engine_core::{
     AssetLibrary, Camera, Cut, Error, ErrorCode, Expected, ExtraRules, IDLE_JOBS, InvalidSetting,
-    JobFailures, Jobs, MaterialHandle, MeshHandle, Records, Rule, Setting, TextureHandle, Ticket,
-    URGENT_JOBS, VIEW_JOBS, content_hash, fields, job_output, job_priority, settings, stats,
+    JobFailures, Jobs, MaterialHandle, MeshHandle, Records, Rule, Setting, Ticket, URGENT_JOBS,
+    VIEW_JOBS, content_hash, fields, job_output, job_priority, settings, stats,
 };
 use engine_places::ground::{SurfaceMaterial, SurfaceProjection};

@@ -2,8 +2,9 @@ use super::*;
 use crate::codec;
 use crate::jobs::{GROUND_GRID, GroundIdentity};
 use engine_core::JobRef;
+use engine_heightfield::tile::{control_in, sample_heights};
 use engine_places::ground::{
-    Ground, GroundObstacle, GroundPoint, GroundQuery, GroundRead, GroundSource,
+    GroundObstacle, GroundPoint, GroundQuery, GroundRead, GroundSource, TileFace,
 };
 
 struct GroundTerrain {
@@ -12,7 +13,7 @@ struct GroundTerrain {
     pyramid: Pyramid,
     cutout: Option<(Vec2, Vec2)>,
     around: bool,
-    tiles: Vec<(TileKey, Arc<Tile>)>,
+    tiles: Arc<[TileFace]>,
     colliders: Vec<Option<PlacedCollider>>,
     walked: Option<Arc<[u8]>>,
 }
@@ -25,11 +26,7 @@ impl GroundTerrain {
             pyramid: state.terrain.pyramid,
             cutout: state.around.as_ref().map(|around| around.cutout),
             around: state.around.is_some(),
-            tiles: state
-                .store
-                .tiles()
-                .map(|tile| (tile.key(), Arc::clone(tile)))
-                .collect(),
+            tiles: Arc::clone(state.store.faces()),
             colliders: state
                 .terrain
                 .surface
@@ -41,11 +38,11 @@ impl GroundTerrain {
         }
     }
 
-    fn tile(&self, key: TileKey) -> Option<&Arc<Tile>> {
+    fn tile(&self, key: TileKey) -> Option<&TileFace> {
         self.tiles
-            .binary_search_by_key(&key, |(held, _)| *held)
+            .binary_search_by_key(&key, |held| held.key)
             .ok()
-            .map(|at| &self.tiles[at].1)
+            .map(|at| &self.tiles[at])
     }
 
     fn cut_out(&self, local: Vec2) -> bool {
@@ -62,16 +59,21 @@ impl GroundTerrain {
         (0..pyramid.levels()).find_map(|level| {
             let key = pyramid.tile_at(level, local)?;
             let tile = self.tile(key)?;
-            let sample = tile.sample(local - pyramid.tile_origin(key))?;
+            let sample = sample_heights(
+                &tile.heights,
+                tile.holes.as_deref(),
+                tile.spacing,
+                local - pyramid.tile_origin(key),
+            )?;
             Some((level, sample))
         })
     }
 
-    fn nearest(&self, level: u32, local: Vec2) -> Option<(&Arc<Tile>, [i32; 2])> {
+    fn nearest(&self, level: u32, local: Vec2) -> Option<(&TileFace, [i32; 2])> {
         let key = self.pyramid.tile_at(level, local)?;
         let tile = self.tile(key)?;
         let at = local - self.pyramid.tile_origin(key);
-        let spacing = tile.spacing();
+        let spacing = tile.spacing;
         Some((
             tile,
             [
@@ -123,7 +125,7 @@ impl TerrainGround {
                 .iter()
                 .map(|state| GroundTerrain::of(state, &terrains.stacks))
                 .collect(),
-            revision: terrains.revision(),
+            revision: terrains.grounds,
         }
     }
 }
@@ -136,7 +138,9 @@ impl GroundQuery for TerrainGround {
             let (level, sample) = terrain.sample(local)?;
             let material = terrain
                 .nearest(level, local)
-                .and_then(|(tile, [column, row])| tile.control_at(column, row))
+                .and_then(|(tile, [column, row])| {
+                    Some(control_in(tile.control.as_deref()?, column, row))
+                })
                 .map(|control| control.a);
             Some(GroundPoint {
                 height: origin.y + sample.height,
@@ -159,7 +163,7 @@ impl GroundQuery for TerrainGround {
         terrain
             .tiles
             .iter()
-            .flat_map(|(_, tile)| tile.placed().iter())
+            .flat_map(|tile| tile.placed.iter())
             .filter_map(|placed| {
                 let collider = terrain
                     .colliders
@@ -209,24 +213,4 @@ impl GroundQuery for TerrainGround {
     fn revision(&self) -> u64 {
         self.revision
     }
-}
-
-type GroundSeen = (u64, u64, Vec<Option<engine_core::RecordKey>>);
-
-pub(crate) fn publish_ground(
-    terrains: Res<Terrains>,
-    mut ground: ResMut<Ground>,
-    mut published: Local<Option<GroundSeen>>,
-) {
-    let recipes = terrains
-        .entries
-        .iter()
-        .map(|state| state.recipe.as_ref().map(|recipe| recipe.key))
-        .collect();
-    let seen = (terrains.epoch, terrains.revision(), recipes);
-    if published.as_ref() == Some(&seen) && !ground.is_changed() {
-        return;
-    }
-    *ground = Ground(Arc::new(TerrainGround::of(&terrains)));
-    *published = Some(seen);
 }

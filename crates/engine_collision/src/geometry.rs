@@ -1,6 +1,7 @@
 use std::cell::Cell;
 
 use engine_places::physics::{ColliderShape, CollisionRay, ShapeCastOptions};
+use engine_places::solids::Bounds;
 use glam::{DMat3, DVec3, Mat3, Mat4, Vec3};
 use parry3d::{
     math::Pose,
@@ -13,64 +14,6 @@ use parry3d::{
 };
 
 use crate::types::{Fault, check_collider_transform};
-
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct Bounds {
-    pub min: Vec3,
-    pub max: Vec3,
-}
-impl Bounds {
-    pub fn union(self, other: Self) -> Self {
-        Self {
-            min: self.min.min(other.min),
-            max: self.max.max(other.max),
-        }
-    }
-    pub fn overlaps(self, other: Self) -> bool {
-        self.min.cmple(other.max).all() && other.min.cmple(self.max).all()
-    }
-    pub fn expanded(self, margin: f32) -> Self {
-        Self {
-            min: self.min - Vec3::splat(margin),
-            max: self.max + Vec3::splat(margin),
-        }
-    }
-    pub fn swept(self, displacement: Vec3) -> Self {
-        self.union(Self {
-            min: self.min + displacement,
-            max: self.max + displacement,
-        })
-    }
-    pub fn center(self) -> Vec3 {
-        (self.min + self.max) * 0.5
-    }
-    pub fn surface_area(self) -> f32 {
-        let extent = self.max - self.min;
-        2.0 * (extent.x * extent.y + extent.y * extent.z + extent.z * extent.x)
-    }
-    pub fn ray(self, ray: CollisionRay) -> bool {
-        let mut near = 0.0_f64;
-        let mut far = f64::from(ray.max_distance);
-        for axis in 0..3 {
-            let origin = f64::from(ray.origin[axis]);
-            let direction = f64::from(ray.direction[axis]);
-            if direction == 0.0 {
-                if origin < f64::from(self.min[axis]) || origin > f64::from(self.max[axis]) {
-                    return false;
-                }
-            } else {
-                let a = (f64::from(self.min[axis]) - origin) / direction;
-                let b = (f64::from(self.max[axis]) - origin) / direction;
-                near = near.max(a.min(b));
-                far = far.min(a.max(b));
-                if near > far {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct AffineShape {
@@ -87,24 +30,7 @@ impl AffineShape {
         check_collider_transform(shape, matrix)?;
         let basis = Mat3::from_mat4(matrix) * Mat3::from_diagonal(shape.dimensions());
         let center = matrix.w_axis.truncate();
-        let half = match shape {
-            ColliderShape::Cuboid { .. } => {
-                basis.x_axis.abs() + basis.y_axis.abs() + basis.z_axis.abs()
-            }
-            ColliderShape::Sphere { .. } => {
-                let squared = basis.x_axis * basis.x_axis
-                    + basis.y_axis * basis.y_axis
-                    + basis.z_axis * basis.z_axis;
-                Vec3::new(squared.x.sqrt(), squared.y.sqrt(), squared.z.sqrt())
-            }
-        };
-        let margin =
-            16.0 * f32::EPSILON * engine_math::max((center.abs() + half).max_element(), 1.0);
-        let bounds = Bounds {
-            min: center - half,
-            max: center + half,
-        }
-        .expanded(margin);
+        let bounds = Bounds::of_shape(shape, center, basis);
         let (inner, outer) = ball_radii(shape, basis);
         Ok(Self {
             shape,

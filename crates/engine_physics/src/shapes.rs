@@ -6,13 +6,6 @@ use crate::solids::Solid;
 
 const SQUARE: f32 = 1.0e-4;
 
-pub(crate) struct BodyShape {
-    pub shape: SharedShape,
-    pub volume: f32,
-    pub half: Vec3,
-    pub round: bool,
-}
-
 fn sphere_points() -> impl Iterator<Item = Vec3> {
     (0..27).filter(|&index| index != 13).map(|index| {
         Vec3::new(
@@ -46,30 +39,15 @@ fn ellipsoid(radii: Vec3) -> Option<SharedShape> {
     SharedShape::convex_hull(&points)
 }
 
-pub(crate) fn body_shape(shape: ColliderShape, scale: Vec3) -> Option<BodyShape> {
+pub(crate) fn body_shape(shape: ColliderShape, scale: Vec3) -> Option<SharedShape> {
     let scale = scale.abs();
     if !scale.is_finite() || scale.min_element() < 1.0e-4 {
         return None;
     }
+    let half = shape.dimensions() * scale;
     match shape {
-        ColliderShape::Cuboid { half_extents } => {
-            let half = half_extents * scale;
-            Some(BodyShape {
-                shape: SharedShape::cuboid(half.x, half.y, half.z),
-                volume: 8.0 * half.x * half.y * half.z,
-                half,
-                round: false,
-            })
-        }
-        ColliderShape::Sphere { radius } => {
-            let radii = Vec3::splat(radius) * scale;
-            Some(BodyShape {
-                shape: ellipsoid(radii)?,
-                volume: 4.0 / 3.0 * std::f32::consts::PI * radii.x * radii.y * radii.z,
-                half: radii,
-                round: true,
-            })
-        }
+        ColliderShape::Cuboid { .. } => Some(SharedShape::cuboid(half.x, half.y, half.z)),
+        ColliderShape::Sphere { .. } => ellipsoid(half),
     }
 }
 

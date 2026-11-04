@@ -6,13 +6,12 @@ use engine_render::{
 };
 use glam::{Mat4, Vec3};
 
-use crate::emitters::{Emitter, Owners, Packed, same_instances};
+use crate::emitters::Packed;
 use crate::shaders::particles::{composite, draw, faces::transparency as face};
 
 const ACCUMULATED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const REVEALED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
 const EMITTERS_START: u64 = 128;
-const OWNERS_START: u64 = 4;
 const SHOWN_BYTES: u64 = 16;
 
 const ADD: wgpu::BlendComponent = wgpu::BlendComponent {
@@ -77,11 +76,12 @@ gpu_struct! {
         right: [f32; 4],
         up: [f32; 4],
         size: [f32; 4],
+        listed: [u32; 4],
     }
 }
 
 impl Particles {
-    fn new(view_projection: Mat4, width: u32, height: u32) -> Self {
+    fn new(view_projection: Mat4, width: u32, height: u32, listed: u32) -> Self {
         let axis = |row: usize| {
             view_projection
                 .row(row)
@@ -96,6 +96,7 @@ impl Particles {
             right: axis(0),
             up: axis(1),
             size: [width, height, 1.0 / width, 1.0 / height],
+            listed: [listed, 0, 0, 0],
         }
     }
 }
@@ -140,26 +141,6 @@ struct Counts {
     total: u32,
 }
 
-struct Held {
-    emitter_bytes: u64,
-    owner_bytes: u64,
-    uploaded: Vec<Emitter>,
-    packed: Option<u64>,
-    written: Option<Particles>,
-}
-
-impl Held {
-    fn new(room: u64) -> Self {
-        Self {
-            emitter_bytes: storage(EMITTERS_START.min(room)),
-            owner_bytes: storage(OWNERS_START.min(room)),
-            uploaded: Vec::new(),
-            packed: None,
-            written: None,
-        }
-    }
-}
-
 pub(crate) struct ParticlesGpu {
     accumulate: Pass<Self>,
     composite: Pass<Self>,
@@ -168,33 +149,26 @@ pub(crate) struct ParticlesGpu {
     shown: Buffer<Self>,
     uniform: Buffer<Self>,
     emitters: Buffer<Self>,
-    owners: Buffer<Self>,
     alpha: Pipeline<Self, Own>,
     mist: Pipeline<Self, Own>,
     additive: Pipeline<Self, Own>,
     compositing: Pipeline<Self, Own>,
     epoch: u64,
-    drawn: Option<bool>,
     targets: bool,
-    held: Option<Held>,
+    emitter_bytes: Option<u64>,
     drawing: Option<Counts>,
 }
 
 impl ParticlesGpu {
-    fn show(&mut self, drawn: bool, cx: &mut Prepare<'_, Self>) {
-        if self.drawn == Some(drawn) {
-            return;
-        }
-        self.drawn = Some(drawn);
+    fn show(&self, drawn: bool, cx: &mut Prepare<'_, Self>) {
         cx.allocate_buffer(self.shown, SHOWN_BYTES);
         cx.write(self.shown, 0, &[u32::from(drawn), 0, 0, 0]);
     }
 
     fn drop_held(&mut self, cx: &mut Prepare<'_, Self>) {
-        if self.held.take().is_some() {
+        if self.emitter_bytes.take().is_some() {
             cx.release_buffer(self.uniform);
             cx.release_buffer(self.emitters);
-            cx.release_buffer(self.owners);
         }
     }
 
@@ -207,27 +181,30 @@ impl ParticlesGpu {
 
     fn prepare_frame(
         &mut self,
-        (packed, owners, view): (&Packed, &Owners, &View),
+        (packed, view): (&Packed, &View),
         room: u64,
         cx: &mut Prepare<'_, Self>,
     ) -> Option<Counts> {
-        let held = self.held.get_or_insert_with(|| Held::new(room));
-        cx.allocate_buffer(self.uniform, size_of::<Particles>() as u64);
-        cx.allocate_buffer(self.emitters, held.emitter_bytes);
-        cx.allocate_buffer(self.owners, held.owner_bytes);
-        if held.packed != Some(packed.revision) {
-            pack(held, (packed, owners), room, (self.emitters, self.owners), cx);
-            held.packed = Some(packed.revision);
+        let held = self
+            .emitter_bytes
+            .get_or_insert(storage(EMITTERS_START.min(room)));
+        if let Some(size) = grown(*held, size_of_val(packed.records.as_slice()) as u64, room) {
+            *held = size;
         }
+        cx.allocate_buffer(self.uniform, size_of::<Particles>() as u64);
+        cx.allocate_buffer(self.emitters, *held);
         if packed.total == 0 {
             return None;
         }
+        cx.write(self.emitters, 0, &packed.records);
         let render = view.render_size();
-        let uniform = Particles::new(view.view_projection(), render.x, render.y);
-        if held.written != Some(uniform) {
-            cx.write(self.uniform, 0, &[uniform]);
-            held.written = Some(uniform);
-        }
+        let uniform = Particles::new(
+            view.view_projection(),
+            render.x,
+            render.y,
+            packed.records.len() as u32,
+        );
+        cx.write(self.uniform, 0, &[uniform]);
         Some(Counts {
             alpha: packed.alpha,
             mist: packed.mist,
@@ -236,44 +213,9 @@ impl ParticlesGpu {
     }
 }
 
-fn pack(
-    held: &mut Held,
-    (packed, owners): (&Packed, &Owners),
-    room: u64,
-    (emitters, owner_buffer): (Buffer<ParticlesGpu>, Buffer<ParticlesGpu>),
-    cx: &mut Prepare<'_, ParticlesGpu>,
-) {
-    if packed.total == 0 {
-        return;
-    }
-    let emitter_bytes = size_of_val(packed.records.as_slice()) as u64;
-    if let Some(size) = grown(held.emitter_bytes, emitter_bytes, room) {
-        held.emitter_bytes = size;
-        cx.allocate_buffer(emitters, size);
-        held.uploaded.clear();
-    }
-    let owner_bytes = u64::from(packed.total) * 4;
-    let owners_replaced = match grown(held.owner_bytes, owner_bytes, room) {
-        Some(size) => {
-            held.owner_bytes = size;
-            cx.allocate_buffer(owner_buffer, size);
-            true
-        }
-        None => false,
-    };
-    if owners_replaced || !same_instances(&packed.records, &held.uploaded) {
-        cx.write(owner_buffer, 0, &owners.owners);
-    }
-    if packed.records != held.uploaded {
-        cx.write(emitters, 0, &packed.records);
-        held.uploaded.clone_from(&packed.records);
-    }
-}
-
 impl GpuPart for ParticlesGpu {
     type Reads = (
         Res<'static, Packed>,
-        Res<'static, Owners>,
         Res<'static, View>,
         Res<'static, DeviceLimits>,
     );
@@ -284,7 +226,6 @@ impl GpuPart for ParticlesGpu {
         let shown = cx.buffer("transparent_drawn", Lifetime::Kept);
         let uniform = cx.buffer("particles", Lifetime::Kept);
         let emitters = cx.buffer("emitters", Lifetime::Kept);
-        let owners = cx.buffer("owners", Lifetime::Kept);
         cx.frame(face::TRANSPARENT_REVEALED, Bind::Texture(revealed))?;
         cx.frame(face::TRANSPARENT_DRAWN, Bind::Buffer(shown))?;
         let accumulate = cx
@@ -303,7 +244,6 @@ impl GpuPart for ParticlesGpu {
             [
                 (draw::PARTICLES, Bind::Buffer(uniform)),
                 (draw::EMITTERS, Bind::Buffer(emitters)),
-                (draw::OWNERS, Bind::Buffer(owners)),
                 (draw::DEPTH_TEXTURE, Bind::Target(ViewTarget::Depth)),
             ]
         };
@@ -351,28 +291,25 @@ impl GpuPart for ParticlesGpu {
             shown,
             uniform,
             emitters,
-            owners,
             alpha,
             mist,
             additive,
             compositing,
             epoch: 0,
-            drawn: None,
             targets: false,
-            held: None,
+            emitter_bytes: None,
             drawing: None,
         })
     }
 
     fn prepare(
         &mut self,
-        (packed, owners, view, limits): SystemParamItem<'_, '_, Self::Reads>,
+        (packed, view, limits): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.drawing = None;
         if self.epoch != packed.epoch {
             self.epoch = packed.epoch;
-            self.drawn = None;
             self.drop_held(cx);
             self.release_targets(cx);
         }
@@ -399,7 +336,7 @@ impl GpuPart for ParticlesGpu {
         cx.run(self.accumulate);
         cx.run(self.composite);
         let room = limits.storage_room / 16 * 16;
-        self.drawing = self.prepare_frame((&*packed, &*owners, &*view), room, cx);
+        self.drawing = self.prepare_frame((&*packed, &*view), room, cx);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

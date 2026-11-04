@@ -35,7 +35,6 @@ impl Brick for ParticlesBrick {
             .stats::<ParticleStats>()
             .resource::<emitters::Gather>()
             .resource::<emitters::Packed>()
-            .resource::<emitters::Owners>()
             .fill::<Transparency>(Some(shaders::particles::faces::transparency::MODULE))
             .join::<SceneComponents>(
                 ComponentKind::of::<ParticleEmitter>("particles")
