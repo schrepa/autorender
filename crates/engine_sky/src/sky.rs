@@ -373,7 +373,6 @@ pub(crate) fn plan_sky(
     plan.clouds.prepare(
         (&*clouds, tables.cloud_noise(), (eye, under.height), seconds),
         (&*sun, &plan.piece),
-        view.exact(),
     );
     plan.clouds.prepare_view(
         (&*clouds, eye, seconds),
@@ -416,7 +415,6 @@ pub(crate) fn plan_sky(
         eye,
         display: view.display_size(),
         render: view.render_size(),
-        displayed: view.display(),
     };
     plan.piece.haze = plan.haze.prepare(hazes, &haze_frame);
     plan.frame = if debug { None } else { plan.clouds.frame() };

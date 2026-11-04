@@ -1,70 +1,60 @@
-use engine_ambient_occlusion::AmbientOcclusionBrick;
-use engine_audio::AudioBrick;
-use engine_auto_exposure::AutoExposureBrick;
-use engine_bloom::BloomBrick;
-use engine_collision::CollisionBrick;
 use engine_core::Listing;
-use engine_debug_view::DebugViewBrick;
-use engine_dither::DitherBrick;
-use engine_ground_cover::GroundCoverBrick;
-use engine_grounding::GroundingBrick;
-use engine_layer_erosion::LayerErosionBrick;
-use engine_layer_heightmap::LayerHeightmapBrick;
-use engine_layer_hydrology::LayerHydrologyBrick;
-use engine_layer_noise::LayerNoiseBrick;
-use engine_layer_paths::LayerPathsBrick;
-use engine_layer_relief::LayerReliefBrick;
-use engine_layer_stamps::LayerStampsBrick;
-use engine_lighting::LightingModelBrick;
-use engine_lights::LightsBrick;
-use engine_meshes::MeshesBrick;
-use engine_navigation::NavigationBrick;
-use engine_particles::ParticlesBrick;
-use engine_physics::PhysicsBrick;
-use engine_probes::ReflectionProbesBrick;
-use engine_reflections::ReflectionsBrick;
-use engine_scatter::ScatterBrick;
-use engine_screens::ScreensBrick;
-use engine_shadows::ShadowsBrick;
-use engine_sky::SkyBrick;
-use engine_splines::SplinesBrick;
-use engine_sun::SunBrick;
-use engine_taa::TaaBrick;
-use engine_terrain::TerrainBrick;
-use engine_terrain_shading::TerrainShadingBrick;
-use engine_text::TextBrick;
-use engine_time_of_day::TimeOfDayBrick;
-use engine_tonemap::TonemapBrick;
-use engine_ui::UiBrick;
-use engine_water::WaterBrick;
-use engine_wind::WindBrick;
-use engine_world_streaming::WorldStreamingBrick;
 
-pub fn standard<L: Listing>(list: L) -> L {
-    list.with::<TerrainBrick>()
-        .with::<GroundingBrick>()
-        .with::<WindBrick>()
-        .with::<WorldStreamingBrick>()
-        .with::<NavigationBrick>()
+pub use engine_ambient_occlusion::AmbientOcclusionBrick;
+pub use engine_audio::AudioBrick;
+pub use engine_auto_exposure::AutoExposureBrick;
+pub use engine_bloom::BloomBrick;
+pub use engine_collision::CollisionBrick;
+pub use engine_debug_view::DebugViewBrick;
+pub use engine_dither::DitherBrick;
+pub use engine_ground_cover::GroundCoverBrick;
+pub use engine_grounding::GroundingBrick;
+pub use engine_layer_erosion::LayerErosionBrick;
+pub use engine_layer_heightmap::LayerHeightmapBrick;
+pub use engine_layer_hydrology::LayerHydrologyBrick;
+pub use engine_layer_noise::LayerNoiseBrick;
+pub use engine_layer_paths::LayerPathsBrick;
+pub use engine_layer_relief::LayerReliefBrick;
+pub use engine_layer_stamps::LayerStampsBrick;
+pub use engine_lighting::LightingModelBrick;
+pub use engine_lights::LightsBrick;
+pub use engine_meshes::MeshesBrick;
+pub use engine_navigation::NavigationBrick;
+pub use engine_particles::ParticlesBrick;
+pub use engine_physics::PhysicsBrick;
+pub use engine_probes::ReflectionProbesBrick;
+pub use engine_reflections::ReflectionsBrick;
+pub use engine_scatter::ScatterBrick;
+pub use engine_screens::ScreensBrick;
+pub use engine_shadows::ShadowsBrick;
+pub use engine_sky::SkyBrick;
+pub use engine_splines::SplinesBrick;
+pub use engine_sun::SunBrick;
+pub use engine_taa::TaaBrick;
+pub use engine_terrain::TerrainBrick;
+pub use engine_terrain_shading::TerrainShadingBrick;
+pub use engine_text::TextBrick;
+pub use engine_time_of_day::TimeOfDayBrick;
+pub use engine_tonemap::TonemapBrick;
+pub use engine_ui::UiBrick;
+pub use engine_water::WaterBrick;
+pub use engine_wind::WindBrick;
+pub use engine_world_streaming::WorldStreamingBrick;
+
+pub fn basics<L: Listing>(list: L) -> L {
+    list.with::<WindBrick>()
         .with::<TimeOfDayBrick>()
         .with::<CollisionBrick>()
         .with::<PhysicsBrick>()
         .with::<SunBrick>()
         .with::<LightingModelBrick>()
         .with::<MeshesBrick>()
-        .with::<TerrainShadingBrick>()
-        .with::<ScatterBrick>()
         .with::<ShadowsBrick>()
         .with::<LightsBrick>()
         .with::<SkyBrick>()
-        .with::<ReflectionProbesBrick>()
-        .with::<GroundCoverBrick>()
-        .with::<WaterBrick>()
         .with::<AmbientOcclusionBrick>()
-        .with::<ReflectionsBrick>()
         .with::<BloomBrick>()
         .with::<DitherBrick>()
-        .with::<ParticlesBrick>()
         .with::<TaaBrick>()
         .with::<AutoExposureBrick>()
         .with::<TonemapBrick>()
@@ -73,6 +63,22 @@ pub fn standard<L: Listing>(list: L) -> L {
         .with::<ScreensBrick>()
         .with::<TextBrick>()
         .with::<UiBrick>()
+        .places(engine_places::PLACES)
+}
+
+pub fn everything<L: Listing>(list: L) -> L {
+    basics(list)
+        .with::<TerrainBrick>()
+        .with::<TerrainShadingBrick>()
+        .with::<GroundingBrick>()
+        .with::<WorldStreamingBrick>()
+        .with::<NavigationBrick>()
+        .with::<ScatterBrick>()
+        .with::<GroundCoverBrick>()
+        .with::<WaterBrick>()
+        .with::<ReflectionProbesBrick>()
+        .with::<ReflectionsBrick>()
+        .with::<ParticlesBrick>()
         .with::<SplinesBrick>()
         .with::<LayerNoiseBrick>()
         .with::<LayerStampsBrick>()
@@ -81,5 +87,4 @@ pub fn standard<L: Listing>(list: L) -> L {
         .with::<LayerErosionBrick>()
         .with::<LayerHydrologyBrick>()
         .with::<LayerReliefBrick>()
-        .places(engine_places::PLACES)
 }

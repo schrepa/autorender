@@ -429,7 +429,6 @@ impl<G: Game> Headless<G> {
 
     pub fn request(&mut self, line: &str) -> Value {
         use engine_dev::Verb;
-        self.engine.complete_pending_tick();
         let reply = match engine_dev::Envelope::parse(line) {
             Err(error) => self.refused(json(&error)),
             Ok(envelope) => match envelope.verb {

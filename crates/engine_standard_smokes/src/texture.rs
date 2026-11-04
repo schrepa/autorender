@@ -114,7 +114,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
             "warm_upload_reuse"
         );
     }
-    control(session, "input", json!({"forward": 1, "held": 1}))?;
+    control(session, "input", json!({"forward": 1, "keys": ["Space"]}))?;
     control(session, "step", json!({"ticks": 6}))?;
     let input = ask(session, "inspect", json!({"component": "Input"}))?["value"].clone();
     smoke_eq!(

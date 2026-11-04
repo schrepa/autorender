@@ -675,14 +675,6 @@ impl View {
         self.cameras.detail_eye()
     }
 
-    pub fn display(&self) -> bool {
-        self.cameras.facts().display
-    }
-
-    pub fn exact(&self) -> bool {
-        self.cameras.facts().exact
-    }
-
     pub fn temporal(&self) -> bool {
         self.cameras.facts().temporal
     }

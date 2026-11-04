@@ -116,13 +116,12 @@ impl ScheduleBuildPass for PlaceRules {
         for &(first, then) in &*self.orders {
             for (early, _, early_access) in found.iter().filter(|(_, brick, _)| *brick == first) {
                 let lates = found.iter().filter(|(_, brick, access)| {
-                    *brick == then
-                        && !early_access
-                            .combined_access()
-                            .is_compatible(access.combined_access())
+                    *brick == then && !early_access.is_compatible(access)
                 });
                 for (late, _, _) in lates {
-                    flat.add_edge(*early, *late);
+                    if !reaches(flat.graph(), *late, *early) {
+                        flat.add_edge(*early, *late);
+                    }
                 }
             }
         }
@@ -132,6 +131,23 @@ impl ScheduleBuildPass for PlaceRules {
             .append(&mut problems);
         Ok(())
     }
+}
+
+fn reaches(graph: &DiGraph<SystemKey>, from: SystemKey, to: SystemKey) -> bool {
+    let mut stack = vec![from];
+    let mut seen = vec![from];
+    while let Some(node) = stack.pop() {
+        if node == to {
+            return true;
+        }
+        for next in graph.neighbors_directed(node, Direction::Outgoing) {
+            if !seen.contains(&next) {
+                seen.push(next);
+                stack.push(next);
+            }
+        }
+    }
+    false
 }
 
 fn systems_under(graph: &ScheduleGraph, set: SystemSetKey) -> Vec<SystemKey> {

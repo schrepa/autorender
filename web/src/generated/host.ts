@@ -78,6 +78,6 @@ export const CURSOR_MODES = {"captured":2,"drag":0,"free":1};
 
 export const IMAGE_FORMATS = ["png","jpeg","ktx2-rgba8"];
 
-export const HOST_SETTINGS = {"between":"on|off","pipeline":"on|off","terrain-clock":"wall|frames"};
+export const HOST_SETTINGS = {"between":"on|off","terrain-clock":"wall|frames"};
 
 export const HOST_OVERLAY = "set";

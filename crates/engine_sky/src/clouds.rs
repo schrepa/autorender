@@ -235,7 +235,7 @@ impl Default for CloudPlan {
 }
 
 impl CloudPlan {
-    fn plan_light(&mut self, uniform: &CloudUniform, whole: bool) -> [u32; 4] {
+    fn plan_light(&mut self, uniform: &CloudUniform) -> [u32; 4] {
         let [eye_x, _, eye_z, _] = uniform.eye;
         let [drift_x, drift_z, repeat, seed] = uniform.drift;
         let own = [eye_x + drift_x + seed, eye_z + drift_z - seed];
@@ -261,7 +261,7 @@ impl CloudPlan {
             self.light.built = 0;
         }
         let first = self.light.built;
-        let rows = if whole { LIGHT_TEXELS } else { LIGHT_ROWS }.min(LIGHT_TEXELS - first);
+        let rows = LIGHT_ROWS.min(LIGHT_TEXELS - first);
         self.light.built += rows;
         self.light.job = rows;
         [first, rows, 0, 0]
@@ -278,10 +278,9 @@ impl CloudPlan {
         })
     }
 
-    fn shadow_rows(&mut self, whole: bool) -> [u32; 4] {
-        let stride = if whole { 1 } else { SHADOW_SLICES };
-        self.shadow_stride = stride;
-        [(self.frame % u64::from(stride)) as u32, stride, 0, 0]
+    fn shadow_rows(&mut self) -> [u32; 4] {
+        self.shadow_stride = SHADOW_SLICES;
+        [(self.frame % u64::from(SHADOW_SLICES)) as u32, SHADOW_SLICES, 0, 0]
     }
 
     pub(crate) fn environment_key(&self) -> [f32; 4] {
@@ -321,7 +320,6 @@ impl CloudPlan {
         &mut self,
         (settings, noise, (eye, surface), seconds): CloudInputs<'_>,
         light: CloudLight<'_>,
-        whole: bool,
     ) {
         self.rows = 0;
         self.job = None;
@@ -360,7 +358,7 @@ impl CloudPlan {
         self.frame += 1;
         let target = self.roles[2];
         let origins = Origins::of(eye, surface);
-        let (origin, at, first, count) = if whole || fresh || changed || !self.ready {
+        let (origin, at, first, count) = if fresh || changed || !self.ready {
             let spare = (0..3).find(|&index| index != target).unwrap_or(0);
             self.roles = [target, target, spare];
             self.origins[target] = origins;
@@ -397,8 +395,8 @@ impl CloudPlan {
         uniform.shadow = shadow_grid(eye).map_or([0.0; 4], |(first, cell)| {
             [first[0], first[1], cell, CLOUD_SHADOW_CELLS as f32]
         });
-        uniform.shadow_rows = self.shadow_rows(whole);
-        uniform.light_rows = self.plan_light(&uniform, whole);
+        uniform.shadow_rows = self.shadow_rows();
+        uniform.light_rows = self.plan_light(&uniform);
         uniform.light = self.light_uniform();
         uniform.layers = [target as u32 * DOME_LAYERS, 0, 0, 0];
         self.uniform = uniform;

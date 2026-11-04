@@ -179,10 +179,6 @@ impl FixedClock {
         self.step_seconds
     }
 
-    pub(crate) fn accumulator_seconds(&self) -> f64 {
-        self.accumulator_seconds
-    }
-
     pub(crate) fn reset(&mut self) {
         self.accumulator_seconds = 0.0;
     }

@@ -369,7 +369,7 @@ pub(crate) fn place_pool(
         Res<AssetResidency>,
         Res<DeviceLimits>,
     ),
-    (detail, time, view): (Res<Detail>, Res<FrameTime>, Res<View>),
+    (detail, time): (Res<Detail>, Res<FrameTime>),
     mut far: ResMut<FarCoverTable>,
     mut state: ResMut<ScatterState>,
 ) {
@@ -461,17 +461,11 @@ pub(crate) fn place_pool(
         set_groups(state);
     }
     let seconds = time.elapsed_seconds as f32;
-    state.fade = match (!view.exact(), view.display()) {
-        (false, _) => -1.0,
-        (true, false) => 1.0,
-        (true, true) => {
-            let since = seconds - std::mem::replace(&mut state.presented, seconds);
-            if detail.fade_seconds > 0.0 && since < 1.0 {
-                engine_math::clamp(since / detail.fade_seconds, 0.0, 1.0)
-            } else {
-                1.0
-            }
-        }
+    let since = seconds - std::mem::replace(&mut state.presented, seconds);
+    state.fade = if detail.fade_seconds > 0.0 && since < 1.0 {
+        engine_math::clamp(since / detail.fade_seconds, 0.0, 1.0)
+    } else {
+        1.0
     };
 }
 
@@ -488,7 +482,7 @@ pub(crate) fn plan_cull(
         .impostors
         .iter()
         .any(|record| record.sphere[3] > 0.0);
-    plan.cards = !view.exact() && plan.atlas;
+    plan.cards = plan.atlas;
     plan.casts = maps.on;
     if state.resident == 0 {
         return;

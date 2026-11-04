@@ -455,10 +455,22 @@ impl HostOptions {
         let excludes = |option: &str| {
             Error::new(ErrorCode::InvalidArguments, option).expected(Expected::Absent)
         };
-        if (self.capture.is_some() || self.gpu_capture.is_some() || self.profile.is_some())
-            && self.offscreen.is_none()
-        {
+        if (self.capture.is_some() || self.gpu_capture.is_some()) && self.offscreen.is_none() {
             return Err(needs("--offscreen"));
+        }
+        if self.profile.is_some() && self.offscreen.is_none() {
+            let others = [
+                ("--frames", self.frames.is_some()),
+                ("--dev", self.dev),
+                ("--vendor", self.vendor.is_some()),
+                ("--cook", self.cook.is_some()),
+                ("--measure", self.measure.is_some()),
+                ("--flight", self.flight.is_some()),
+                ("--smoke", self.smoke.is_some()),
+            ];
+            if let Some((other, _)) = others.iter().find(|(_, given)| *given) {
+                return Err(excludes(other));
+            }
         }
         let profiling = [
             ("--profile", self.profile.is_some()),
@@ -534,13 +546,6 @@ impl HostOptions {
             return Ok(());
         }
         let build = move |engine: &mut Engine| self.shown(engine, build);
-        #[cfg(feature = "dev")]
-        if let Some(names) = &self.smoke {
-            if names == engine::smokes::LIST {
-                return Ok(());
-            }
-            return engine::smokes::select(&[], names).map(drop);
-        }
         self.start_tools()?;
         #[cfg(feature = "profiling")]
         if let (Some(Vendor::Nsight), Some(folder)) = (self.vendor, &self.vendor_dir) {
@@ -580,6 +585,7 @@ impl HostOptions {
                             frames,
                         }),
                         flight: self.flight,
+                        profile: self.profile.clone(),
                         ..Window::new(title)
                     },
                     bricks,
@@ -743,6 +749,10 @@ impl HostOptions {
         let size = self.size.unwrap_or((1280, 720));
         let pix = self.loads_pix().then(Pix::load).flatten();
         let started = Instant::now();
+        #[cfg(feature = "profiling")]
+        if self.profile.is_some() {
+            engine_profiler::sample_heap_from_launch();
+        }
         let mut game = Offscreen::launch(size, self.gpu, &self.jobs, bricks, build)?;
         self.settings.apply(game.host_mut())?;
         game.prepare(0.0)?;
@@ -860,7 +870,7 @@ fn shader_hash(bricks: impl FnOnce(BrickList) -> BrickList) -> engine::Result<St
         .collect())
 }
 
-fn program() -> String {
+pub(crate) fn program() -> String {
     std::env::current_exe()
         .ok()
         .and_then(|path| {

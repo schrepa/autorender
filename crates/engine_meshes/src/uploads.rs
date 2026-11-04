@@ -2,9 +2,9 @@ use bytemuck::{Pod, Zeroable};
 use engine_core::Stamp;
 use engine_render::{pack_color, pack_surface};
 
-use crate::retained::{Instance, PoseRows, RetainedRender};
+use crate::retained::{Instance, RetainedRender};
 
-pub(crate) type PoseData = PoseRows;
+pub(crate) type PoseData = engine_core::PoseRows;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 #[repr(C)]
@@ -197,7 +197,6 @@ impl WritePlan {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FrameKey {
     identity: Stamp,
-    poses: u64,
     colors: u64,
 }
 
@@ -205,27 +204,24 @@ struct FrameKey {
 pub(crate) struct RetainedUploads {
     committed: Option<FrameKey>,
     pending: Option<FrameKey>,
-    stamps: Vec<(u64, u64)>,
-    poses: WritePlan,
+    stamps: Vec<u64>,
     colors: WritePlan,
 }
 
 #[derive(Default)]
 pub(crate) struct PreparedRetained {
     pub repacked: usize,
-    pub poses_repacked: usize,
-    pub colors_repacked: usize,
     pub full_upload: bool,
     pub fallback: bool,
 }
 
 impl RetainedUploads {
     pub fn capacity_bytes(&self) -> usize {
-        size_of::<Self>() + self.stamps.capacity() * size_of::<(u64, u64)>()
+        size_of::<Self>() + self.stamps.capacity() * size_of::<u64>()
     }
 
     pub const fn range_scratch_bytes() -> usize {
-        2 * size_of::<[UploadRange; MAX_WRITE_RANGES]>()
+        size_of::<[UploadRange; MAX_WRITE_RANGES]>()
     }
 
     pub fn invalidate(&mut self) {
@@ -242,10 +238,8 @@ impl RetainedUploads {
             &retained.snapshot().instances,
             FrameKey {
                 identity: retained.identity(),
-                poses: retained.pose_revision(),
                 colors: retained.color_revision(),
             },
-            retained.pose_changes(),
             retained.color_changes(),
             colors,
         )
@@ -255,16 +249,13 @@ impl RetainedUploads {
         &mut self,
         instances: &[Instance],
         key: FrameKey,
-        pose_changes: &[u64],
         color_changes: &[u64],
         colors: &mut Vec<ColorData>,
     ) -> PreparedRetained {
-        self.poses.clear();
         self.colors.clear();
         let previous = self.committed.take();
         self.pending = Some(key);
         let full = previous.is_none_or(|old| old.identity != key.identity);
-        let pose_work = full || previous.is_none_or(|old| old.poses != key.poses);
         let color_work = full || previous.is_none_or(|old| old.colors != key.colors);
         let mut prepared = PreparedRetained::default();
         if full {
@@ -274,59 +265,37 @@ impl RetainedUploads {
             self.stamps.reserve_exact(colors.capacity());
             for (index, source) in instances.iter().enumerate() {
                 colors.push(color_data(source));
-                self.stamps
-                    .push((pose_changes[index], color_changes[index]));
+                self.stamps.push(color_changes[index]);
             }
             prepared.repacked = instances.len();
-            prepared.poses_repacked = instances.len();
-            prepared.colors_repacked = instances.len();
         } else {
             colors.truncate(instances.len());
             self.stamps.truncate(instances.len());
             self.stamps
                 .reserve_exact(colors.capacity().saturating_sub(self.stamps.len()));
-            if pose_work || color_work {
-                for (index, stamps) in self.stamps.iter_mut().enumerate() {
-                    let pose_changed = pose_work && stamps.0 != pose_changes[index];
-                    let color_changed = color_work && stamps.1 != color_changes[index];
-                    if pose_changed {
-                        stamps.0 = pose_changes[index];
-                        self.poses.changed(index, size_of::<PoseData>());
-                        prepared.poses_repacked += 1;
-                    }
-                    if color_changed {
+            if color_work {
+                for (index, stamp) in self.stamps.iter_mut().enumerate() {
+                    if *stamp != color_changes[index] {
                         colors[index] = color_data(&instances[index]);
-                        stamps.1 = color_changes[index];
+                        *stamp = color_changes[index];
                         self.colors.changed(index, size_of::<ColorData>());
-                        prepared.colors_repacked += 1;
+                        prepared.repacked += 1;
                     }
-                    prepared.repacked += usize::from(pose_changed || color_changed);
                 }
             }
             for (index, source) in instances.iter().enumerate().skip(self.stamps.len()) {
                 colors.push(color_data(source));
-                self.stamps
-                    .push((pose_changes[index], color_changes[index]));
-                self.poses.changed(index, size_of::<PoseData>());
+                self.stamps.push(color_changes[index]);
                 self.colors.changed(index, size_of::<ColorData>());
                 prepared.repacked += 1;
-                prepared.poses_repacked += 1;
-                prepared.colors_repacked += 1;
             }
         }
-        let (pose_full, pose_fallback) =
-            self.poses
-                .finish(instances.len(), size_of::<PoseData>(), full);
-        let (color_full, color_fallback) =
+        let (full_upload, fallback) =
             self.colors
                 .finish(instances.len(), size_of::<ColorData>(), full);
-        prepared.full_upload = pose_full || color_full;
-        prepared.fallback = pose_fallback || color_fallback;
+        prepared.full_upload = full_upload;
+        prepared.fallback = fallback;
         prepared
-    }
-
-    pub fn pose_ranges(&self) -> &[UploadRange] {
-        self.poses.ranges()
     }
 
     pub fn color_ranges(&self) -> &[UploadRange] {

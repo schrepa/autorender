@@ -104,21 +104,13 @@ pub(super) fn presentation_value(value: &PresentationState) -> Value {
 }
 
 pub(super) fn presentation_view(value: &PresentationState) -> PresentationStateView {
-    let (mode, alpha) = match value.mode() {
-        PresentationMode::Current => (PresentationModeView::Current, 1.0),
-        PresentationMode::Interpolated { alpha } => (PresentationModeView::Interpolated, alpha),
-    };
     PresentationStateView {
         frame: value.frame().map(|frame| frame.to_string()),
         tick: value.tick().map(|tick| tick.to_string()),
-        mode,
-        alpha,
-        gpu_pending: value.gpu_pending(),
+        alpha: value.alpha(),
         history_nodes: value.history_nodes(),
         history_capacity: value.history_capacity(),
         history_bytes: value.history_bytes(),
         presentation_scratch_bytes: value.presentation_scratch_bytes(),
-        presented_nodes: value.presented_nodes(),
-        presented_store_bytes: value.presented_store_bytes(),
     }
 }

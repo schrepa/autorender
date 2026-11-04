@@ -80,18 +80,19 @@ fn input_view(world: &World, _: Option<Entity>, _: &Context<'_>) -> Option<Value
         move_forward: input.move_forward,
         move_right: input.move_right,
         move_up: input.move_up,
-        look_yaw: input.look_yaw,
-        look_pitch: input.look_pitch,
+        look_right_pixels: input.look_right_pixels,
+        look_down_pixels: input.look_down_pixels,
         held: (0..32)
             .filter(|&index| {
                 ActionId::new(index as u8)
                     .is_some_and(|action| actions.is_some_and(|actions| actions.pressed(action)))
             })
             .collect(),
-        pointer: pointer.position.map(|position| position.to_array()),
-        pointer_delta: pointer.delta.to_array(),
+        pointer_pixels: pointer.position_pixels.map(|position| position.to_array()),
+        pointer_delta_pixels: pointer.delta_pixels.to_array(),
         pointer_inside: pointer.inside,
-        wheel: pointer.wheel.to_array(),
+        wheel_up_notches: pointer.wheel_up_notches,
+        wheel_right_notches: pointer.wheel_right_notches,
         axes: current::<AxisInput>(world).values().to_vec(),
         menu: pressed
             .iter()

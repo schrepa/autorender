@@ -3634,6 +3634,12 @@
         }
       }
     },
+    "haze": {
+      "enabled": true
+    },
+    "impostors": {
+      "enabled": true
+    },
     "local_lights": {
       "distance": 220.0,
       "intensity": 0.35

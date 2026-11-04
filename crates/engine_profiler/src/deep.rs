@@ -1,6 +1,7 @@
 use engine::collections::HashMap;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -18,7 +19,8 @@ use crate::sampler::{SampledThread, Sampler, Samples};
 const INTERVAL: Duration = Duration::from_millis(1);
 const HEAP_SAMPLES: usize = 65_536;
 const HEAP_FRAMES: usize = 48;
-const HEAP_STACKS: usize = 12;
+const HEAP_STACKS: usize = 24;
+const STACKS_PER_BRICK: usize = 30;
 const SPANS_PER_BRICK: usize = 15;
 const ALLOCATOR_FRAMES: &[&str] = &[
     "backtrace::",
@@ -40,6 +42,13 @@ struct HeapSample {
 }
 
 static HEAP: Mutex<Vec<HeapSample>> = Mutex::new(Vec::new());
+static FROM_LAUNCH: AtomicBool = AtomicBool::new(false);
+
+pub fn sample_heap_from_launch() {
+    HEAP.lock().unwrap_or_else(PoisonError::into_inner).clear();
+    FROM_LAUNCH.store(true, Ordering::Relaxed);
+    engine::profiling::sample_allocations(Some(sample_heap));
+}
 
 fn sample_heap(brick: u16, bytes: usize) {
     let mut frames = [0_u64; HEAP_FRAMES];
@@ -81,8 +90,10 @@ impl DeepCapture {
     ) -> Result<Self, Error> {
         host.profiling_start(max_events)?;
         let bricks = host.profile_bricks();
-        HEAP.lock().unwrap_or_else(PoisonError::into_inner).clear();
-        engine::profiling::sample_allocations(Some(sample_heap));
+        if !FROM_LAUNCH.swap(false, Ordering::Relaxed) {
+            HEAP.lock().unwrap_or_else(PoisonError::into_inner).clear();
+            engine::profiling::sample_allocations(Some(sample_heap));
+        }
         crate::counters::begin();
         let sampler = (!threads.is_empty())
             .then(|| Sampler::start(threads, INTERVAL, engine::host::now_ms))
@@ -96,6 +107,7 @@ impl DeepCapture {
         folder: &Path,
         stem: &str,
         context: Value,
+        play: Value,
     ) -> Result<ProfileFiles, Error> {
         let samples = self.sampler.map(Sampler::finish);
         engine::profiling::sample_allocations(None);
@@ -138,6 +150,10 @@ impl DeepCapture {
         summary["bricks"] = report["bricks"].clone();
         summary["heap_samples_by_brick"] = report["heap_samples_by_brick"].clone();
         summary["spans_by_brick"] = spans_by_brick(&report);
+        summary["gpu_memory"] = host.gpu_allocations();
+        if !play.is_null() {
+            summary["play"] = play;
+        }
         summary["files"] = json!({
             "report": files.report.display().to_string(),
             "firefox": files.firefox.display().to_string(),
@@ -522,21 +538,22 @@ fn heap_by_brick(samples: &[HeapSample], symbols: &Symbols, profiled: &[&'static
         .into_iter()
         .map(|(brick, (count, bytes, stacks))| (brick, count, bytes, stacks))
         .collect();
-    rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    rows.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(b.0)));
     json!({
         "every": engine::profiling::SAMPLE_EVERY,
+        "always_at_bytes": engine::profiling::ALWAYS_SAMPLED_BYTES,
         "bricks": rows
             .into_iter()
             .map(|(brick, count, bytes, stacks)| {
                 let mut stacks: Vec<(Vec<String>, (u64, u64))> = stacks.into_iter().collect();
-                stacks.sort_by(|a, b| b.1.0.cmp(&a.1.0).then_with(|| a.0.cmp(&b.0)));
+                stacks.sort_by(|a, b| b.1.1.cmp(&a.1.1).then_with(|| a.0.cmp(&b.0)));
                 json!({
                     "brick": brick,
                     "samples": count,
                     "sampled_bytes": bytes,
                     "stacks": stacks
                         .into_iter()
-                        .take(10)
+                        .take(STACKS_PER_BRICK)
                         .map(|(frames, (samples, bytes))| json!({
                             "samples": samples,
                             "sampled_bytes": bytes,

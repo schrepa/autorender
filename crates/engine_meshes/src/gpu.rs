@@ -91,7 +91,6 @@ pub(crate) struct Instances {
     pub previous_poses: Buffer<MeshesGpu>,
     pub colors: Buffer<MeshesGpu>,
     pub still_frames: Buffer<MeshesGpu>,
-    pub slots: Buffer<MeshesGpu>,
 }
 
 pub(crate) struct Presented {
@@ -131,9 +130,6 @@ pub(crate) struct CasterBuffers {
     pub args: Buffer<MeshesGpu>,
     pub template: Buffer<MeshesGpu>,
     pub totals: Buffer<MeshesGpu>,
-    pub listed: Buffer<MeshesGpu>,
-    pub listed_groups: Buffer<MeshesGpu>,
-    pub no_flags: Buffer<MeshesGpu>,
 }
 
 pub(crate) struct Computes {
@@ -152,7 +148,7 @@ pub(crate) struct Computes {
     pub probe: Vec<ComputePipeline<MeshesGpu>>,
     pub pyramid_first: ComputePipeline<MeshesGpu>,
     pub pyramid_down: Vec<ComputePipeline<MeshesGpu>>,
-    pub select: [ComputePipeline<MeshesGpu>; 2],
+    pub select: ComputePipeline<MeshesGpu>,
     pub count_casters: ComputePipeline<MeshesGpu>,
 }
 
@@ -182,7 +178,6 @@ pub(crate) struct Inputs {
     pub records: DrawInput<MeshesGpu, MainView>,
     pub card_ids: [DrawInput<MeshesGpu, MainView>; 2],
     pub fade_cards: DrawInput<MeshesGpu, MainView>,
-    pub slots: DrawInput<MeshesGpu, MainView>,
     pub ids: [DrawInput<MeshesGpu, MainView>; 2],
     pub args: [DrawInput<MeshesGpu, MainView>; 2],
     pub face_ids: Vec<DrawInput<MeshesGpu, ProbeViews>>,
@@ -243,7 +238,6 @@ impl GpuPart for MeshesGpu {
             records: cx.draw_input(MainView, instances.records),
             card_ids: presented.impostor_ids.map(|ids| cx.draw_input(MainView, ids)),
             fade_cards: cx.draw_input(MainView, presented.fade_cards),
-            slots: cx.draw_input(MainView, instances.slots),
             ids: presented.visible.map(|ids| cx.draw_input(MainView, ids)),
             args: presented.draws.map(|args| cx.draw_input(MainView, args)),
             face_ids: presented
@@ -293,7 +287,6 @@ fn install_instances(cx: &mut Install<'_, MeshesGpu>) -> Result<Instances, Error
         previous_poses: cx.buffer("previous_poses", Lifetime::Previous),
         colors: cx.buffer("colors", Lifetime::Kept),
         still_frames: cx.buffer("still_frames", Lifetime::Kept),
-        slots: cx.buffer("slots", Lifetime::Kept),
     };
     cx.frame(slots::INSTANCE_POSES, Bind::Buffer(instances.poses))?;
     cx.frame(slots::INSTANCE_PREVIOUS_POSES, Bind::Buffer(instances.previous_poses))?;
@@ -378,9 +371,6 @@ fn install_casters(cx: &mut Install<'_, MeshesGpu>) -> CasterBuffers {
         args: buffer("shadow_args"),
         template: buffer("shadow_args_template"),
         totals: buffer("shadow_counters"),
-        listed: buffer("shadow_casters"),
-        listed_groups: buffer("shadow_caster_groups"),
-        no_flags: buffer("shadow_no_flags"),
     }
 }
 
@@ -664,26 +654,20 @@ fn install_computes(
             (frame, presented.face_visible[face], presented.face_draws[face], presented.impostor_ids[0]),
         )?);
     }
-    let select_of = |cx: &mut Install<'_, MeshesGpu>, (candidates, groups, flags)| {
-        cx.compute_pipeline(
-            passes.casters,
-            casters::SELECT_CASTERS,
-            &[
-                (casters::SELECTION, Bind::Buffer(casters.select)),
-                (casters::CANDIDATES, Bind::Buffer(candidates)),
-                (casters::BATCHES, Bind::Buffer(groups)),
-                (casters::POSES, Bind::Buffer(instances.poses)),
-                (casters::FLAGS, Bind::Buffer(flags)),
-                (casters::STILLNESS, Bind::Buffer(casters.stillness)),
-                (casters::IDS, Bind::Buffer(casters.ids)),
-                (casters::ARGS, Bind::Buffer(casters.args)),
-            ],
-        )
-    };
-    let select = [
-        select_of(cx, (presented.candidates, presented.batches, presented.scan))?,
-        select_of(cx, (casters.listed, casters.listed_groups, casters.no_flags))?,
-    ];
+    let select = cx.compute_pipeline(
+        passes.casters,
+        casters::SELECT_CASTERS,
+        &[
+            (casters::SELECTION, Bind::Buffer(casters.select)),
+            (casters::CANDIDATES, Bind::Buffer(presented.candidates)),
+            (casters::BATCHES, Bind::Buffer(presented.batches)),
+            (casters::POSES, Bind::Buffer(instances.poses)),
+            (casters::FLAGS, Bind::Buffer(presented.scan)),
+            (casters::STILLNESS, Bind::Buffer(casters.stillness)),
+            (casters::IDS, Bind::Buffer(casters.ids)),
+            (casters::ARGS, Bind::Buffer(casters.args)),
+        ],
+    )?;
     let count_casters = cx.compute_pipeline(
         passes.casters,
         casters::COUNT_CASTERS,

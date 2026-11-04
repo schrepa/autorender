@@ -22,7 +22,6 @@ pub(crate) struct HazeFrame {
     pub(crate) eye: Vec3,
     pub(crate) display: UVec2,
     pub(crate) render: UVec2,
-    pub(crate) displayed: bool,
 }
 
 #[derive(Default)]
@@ -60,17 +59,14 @@ impl HazePlan {
             self.history = None;
         }
         self.drawn = (frame.render.x, frame.render.y);
-        self.kept = frame.displayed.then_some(History {
+        self.kept = Some(History {
             view_projection: frame.view_projection,
             eye: frame.eye,
             drawn: self.drawn,
         });
-        let (history, turn) = if self.kept.is_none() {
-            (None, 0.0)
-        } else {
-            let turn = (self.frames % 1024) as f32 * 0.618_034;
-            (self.history, turn - turn.floor())
-        };
+        let history = self.history;
+        let turn = (self.frames % 1024) as f32 * 0.618_034;
+        let turn = turn - turn.floor();
         let (width, height) = (frame.render.x as f32, frame.render.y as f32);
         let view_projection = frame.view_projection;
         let focal = view_projection.row(1).truncate().length();

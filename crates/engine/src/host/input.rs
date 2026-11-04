@@ -313,18 +313,18 @@ impl InputGatherer {
     }
 
     pub fn motion(&mut self, dx: f32, dy: f32) {
-        self.pointer.delta += Vec2::new(finite(dx), finite(dy));
+        self.pointer.delta_pixels += Vec2::new(finite(dx), finite(dy));
         self.look(dx, dy);
     }
 
     pub fn pointer(&mut self, x: f32, y: f32) {
         let position = Vec2::new(finite(x), finite(y));
         if self.pointer.inside
-            && let Some(last) = self.pointer.position
+            && let Some(last) = self.pointer.position_pixels
         {
-            self.pointer.delta += position - last;
+            self.pointer.delta_pixels += position - last;
         }
-        self.pointer.position = Some(position);
+        self.pointer.position_pixels = Some(position);
         self.pointer.inside = true;
     }
 
@@ -332,8 +332,9 @@ impl InputGatherer {
         self.pointer.inside = false;
     }
 
-    pub fn wheel(&mut self, dx: f32, dy: f32) {
-        self.pointer.wheel += Vec2::new(finite(dx), finite(dy));
+    pub fn wheel(&mut self, right_notches: f32, up_notches: f32) {
+        self.pointer.wheel_right_notches += finite(right_notches);
+        self.pointer.wheel_up_notches += finite(up_notches);
     }
 
     pub fn pad(&mut self, buttons: u32, [lx, ly, rx, ry, lt, rt]: [f32; 6]) {
@@ -392,8 +393,8 @@ impl InputGatherer {
                 move_forward: unit(axis(Axis::Forward) + left_y),
                 move_right: unit(axis(Axis::Right) + left_x),
                 move_up: unit(axis(Axis::Up) + right_trigger - left_trigger),
-                look_yaw: self.yaw + right_x * turn,
-                look_pitch: self.pitch - right_y * turn,
+                look_right_pixels: self.yaw + right_x * turn,
+                look_down_pixels: self.pitch - right_y * turn,
             },
             held: self.held,
             pressed: self.pressed,
@@ -407,8 +408,9 @@ impl InputGatherer {
         self.pressed = 0;
         self.released = 0;
         self.menu_pressed = 0;
-        self.pointer.delta = Vec2::ZERO;
-        self.pointer.wheel = Vec2::ZERO;
+        self.pointer.delta_pixels = Vec2::ZERO;
+        self.pointer.wheel_right_notches = 0.0;
+        self.pointer.wheel_up_notches = 0.0;
         self.pointer.pressed = false;
         self.pointer.released = false;
         input

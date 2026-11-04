@@ -118,8 +118,8 @@ pub(crate) fn follow(
         min(settings.pitch_min, settings.pitch_max),
         max(settings.pitch_min, settings.pitch_max),
     );
-    orbit.yaw = (orbit.yaw - input.look_yaw * SENSITIVITY) % std::f32::consts::TAU;
-    orbit.pitch = clamp(orbit.pitch - input.look_pitch * SENSITIVITY, low, high);
+    orbit.yaw = (orbit.yaw - input.look_right_pixels * SENSITIVITY) % std::f32::consts::TAU;
+    orbit.pitch = clamp(orbit.pitch - input.look_down_pixels * SENSITIVITY, low, high);
     orbit.focus = orbit.focus.lerp(goal, blend);
     let rotation = Quat::from_rotation_y(orbit.yaw) * Quat::from_rotation_x(orbit.pitch);
     let back = rotation * Vec3::Z * settings.distance;

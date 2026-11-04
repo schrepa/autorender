@@ -835,9 +835,6 @@ impl GlobalTransforms {
     pub fn is_empty(&self) -> bool {
         self.sources.is_empty()
     }
-    pub(crate) fn valid_count(&self) -> usize {
-        self.report.transforms - self.report.invalid_transforms
-    }
 
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (Entity, GlobalTransform)> + '_ {
         self.sources

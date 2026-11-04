@@ -79,8 +79,6 @@ pub(crate) struct AppHost {
     last_timestamp_ms: Option<f64>,
     stats: FrameStats,
     size: (u32, u32),
-    tick_pipelining: bool,
-    gpu_inputs_stale: bool,
     terrain_clock: TerrainClock,
     overlay: BTreeMap<String, serde_json::Value>,
     pipeline_list: crate::host::PipelineList,
@@ -93,20 +91,6 @@ pub(crate) struct AppHost {
     profile_frame: u64,
     #[cfg(any(feature = "dev", feature = "profiling"))]
     attribution: attribution::Attribution,
-}
-
-#[derive(Clone, Copy)]
-#[cfg_attr(
-    not(feature = "dev"),
-    expect(
-        dead_code,
-        reason = "only development controls submit exact frames and previews"
-    )
-)]
-enum FrameKind {
-    Display { alpha: f32, interval: Option<f64> },
-    Exact,
-    Preview { alpha: f32 },
 }
 
 #[inline(never)]
@@ -140,8 +124,6 @@ impl AppHost {
             last_timestamp_ms: None,
             stats: FrameStats::default(),
             size: (0, 0),
-            tick_pipelining: true,
-            gpu_inputs_stale: false,
             terrain_clock: TerrainClock::Wall,
             overlay: BTreeMap::new(),
             pipeline_list: crate::host::PipelineList::default(),
@@ -174,7 +156,6 @@ impl AppHost {
             .map_or((0, false), |jobs| (jobs.workers(), jobs.verifying()));
         wire(&mut engine, &self.renderer, jobs, self.terrain_clock);
         self.pipeline_list = crate::host::PipelineList::default();
-        self.gpu_inputs_stale = false;
         let replaced = std::mem::replace(&mut self.engine, engine);
         if let Err(error) = self.claim_passes() {
             panic!("{error}");
@@ -224,17 +205,6 @@ impl AppHost {
         });
     }
 
-    pub fn set_tick_pipelining(&mut self, enabled: bool) {
-        self.tick_pipelining = enabled;
-        if !enabled {
-            self.engine.complete_pending_tick();
-        }
-    }
-
-    pub fn tick_pipelining(&self) -> bool {
-        self.tick_pipelining
-    }
-
     pub fn set_pixel_ratio(&mut self, ratio: f64) {
         self.pixel_ratio = if ratio.is_finite() && ratio > 0.0 {
             ratio
@@ -273,7 +243,7 @@ impl AppHost {
 
     fn size_frame(
         &mut self,
-        kind: FrameKind,
+        interval: Option<f64>,
         (width, height): (u32, u32),
     ) -> (engine_core::DynamicResolutionStats, (u32, u32)) {
         let timing = self.renderer.take_frame_time();
@@ -281,14 +251,6 @@ impl AppHost {
             self.gpu_ms = Some(ms as f32);
         }
         let (resolution, dynamic) = self.resolution_settings();
-        let FrameKind::Display { interval, .. } = kind else {
-            let stats = engine_core::DynamicResolutionStats {
-                active: false,
-                scale: 1.0,
-                budget_ms: 0.0,
-            };
-            return (stats, (width, height));
-        };
         self.adapt_resolution(&dynamic, timing, interval);
         let scale = self.dynamic.scale(&dynamic);
         let (render_width, render_height) = crate::host::render_size(
@@ -520,17 +482,9 @@ impl AppHost {
                 height,
                 simulation_ms,
                 report,
-                FrameKind::Display {
-                    alpha: report.interpolation,
-                    interval,
-                },
+                report.interpolation,
+                interval,
             )?;
-            if self.tick_pipelining {
-                let start = now_ms();
-                if self.engine.run_ahead(delta) {
-                    self.stats.simulation_ms += now_ms() - start;
-                }
-            }
         }
         drop(profile);
         self.end_attribution();
@@ -552,14 +506,13 @@ impl AppHost {
         let profile = engine_profile::span("cpu", "host.step");
         {
             let _core = attribution::core_scope();
-            self.engine.complete_pending_tick();
             self.last_timestamp_ms = None;
             self.set_input(input);
             self.deliver();
             let start = now_ms();
             let report = self.engine.step_fixed(ticks)?;
             let simulation_ms = now_ms() - start;
-            self.render_frame(width, height, simulation_ms, report, FrameKind::Exact)?;
+            self.render_frame(width, height, simulation_ms, report, 1.0, None)?;
         }
         drop(profile);
         self.end_attribution();
@@ -574,7 +527,7 @@ impl AppHost {
         {
             let _core = attribution::core_scope();
             self.deliver();
-            self.render_frame(width, height, 0.0, FrameReport::default(), FrameKind::Exact)?;
+            self.render_frame(width, height, 0.0, FrameReport::default(), 1.0, None)?;
         }
         self.end_attribution();
         Ok(())
@@ -582,26 +535,13 @@ impl AppHost {
 
     #[cfg(feature = "dev")]
     pub fn dev_present(&mut self, alpha: f32, width: u32, height: u32) -> Result<()> {
-        if !alpha.is_finite() || !(0.0..=1.0).contains(&alpha) {
-            return Err(Error::new(ErrorCode::InvalidPresentationAlpha, "$.alpha")
-                .range(0.0, 1.0)
-                .got(alpha));
-        }
         self.begin_attribution();
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
         {
             let _core = attribution::core_scope();
-            self.engine.complete_pending_tick();
-            self.engine.reveal_ticks_ahead();
             self.deliver();
-            self.render_frame(
-                width,
-                height,
-                0.0,
-                FrameReport::default(),
-                FrameKind::Preview { alpha },
-            )?;
+            self.render_frame(width, height, 0.0, FrameReport::default(), alpha, None)?;
         }
         self.end_attribution();
         Ok(())
@@ -620,8 +560,8 @@ impl AppHost {
             move_forward: bounded(input.move_forward, 1.0),
             move_right: bounded(input.move_right, 1.0),
             move_up: bounded(input.move_up, 1.0),
-            look_yaw: bounded(input.look_yaw, crate::host::policy::LOOK_LIMIT),
-            look_pitch: bounded(input.look_pitch, crate::host::policy::LOOK_LIMIT),
+            look_right_pixels: bounded(input.look_right_pixels, crate::host::policy::LOOK_LIMIT),
+            look_down_pixels: bounded(input.look_down_pixels, crate::host::policy::LOOK_LIMIT),
         });
     }
 
@@ -647,7 +587,8 @@ impl AppHost {
         height: u32,
         simulation_ms: f64,
         report: FrameReport,
-        kind: FrameKind,
+        alpha: f32,
+        interval: Option<f64>,
     ) -> Result<()> {
         if self.size != (width, height) {
             self.renderer.resize(width, height);
@@ -661,7 +602,7 @@ impl AppHost {
                 });
         }
         let (dynamic_resolution, (render_width, render_height)) =
-            self.size_frame(kind, (width, height));
+            self.size_frame(interval, (width, height));
         let (frame_number, tick) = {
             let world = self.engine.app.world();
             (
@@ -671,15 +612,6 @@ impl AppHost {
         };
         let before_extraction = now_ms();
         let aspect = width.max(1) as f32 / height.max(1) as f32;
-        let gpu = match kind {
-            FrameKind::Display { .. } | FrameKind::Preview { .. } => true,
-            FrameKind::Exact => false,
-        };
-        if gpu && self.gpu_inputs_stale {
-            self.engine.complete_pending_tick();
-            self.engine.reveal_ticks_ahead();
-        }
-        let display = matches!(kind, FrameKind::Display { .. });
         self.engine.start_frame();
         let world = self.engine.app.world();
         let shown = world
@@ -689,16 +621,14 @@ impl AppHost {
         let debug = shown.next_debug;
         let post = self.renderer.post(world);
         let display_size = self.display_size((width, height));
-        let render_size = if display && !debug && !shown.next_whole && post {
+        let render_size = if !debug && !shown.next_whole && post {
             glam::UVec2::new(render_width, render_height)
                 .clamp(glam::UVec2::ONE, display_size.max(glam::UVec2::ONE))
         } else {
             display_size
         };
         let facts = FrameFacts {
-            display,
-            exact: !gpu,
-            temporal: display && gpu && !debug && post && self.renderer.motion(world),
+            temporal: !debug && post && self.renderer.motion(world),
             capture: shown.next_whole,
             debug,
             display_size,
@@ -707,23 +637,11 @@ impl AppHost {
             submitted: self.submitted,
         };
         self.engine.set_frame(facts);
-        let frame = match kind {
-            FrameKind::Display { alpha, .. } | FrameKind::Preview { alpha } => {
-                self.engine.extract_gpu_frame(aspect, alpha)?
-            }
-            FrameKind::Exact => self.engine.extract_frame(aspect),
-        };
+        let frame = self.engine.extract_frame(aspect, alpha)?;
         let after_extraction = now_ms();
-        let rendered = if let FrameKind::Display { .. } = kind {
-            self.renderer.render_display_frame(frame)
-        } else {
-            self.renderer.render_frame(frame)
-        };
+        let rendered = self.renderer.render_frame(frame);
         self.submitted = rendered.as_ref().is_ok_and(|rendered| rendered.submitted);
         let rendered = rendered?;
-        if frame.gpu().is_some() {
-            self.gpu_inputs_stale = !rendered.submitted;
-        }
         self.engine.rendered(rendered.submitted);
         self.stats = FrameStats {
             frame: frame_number,

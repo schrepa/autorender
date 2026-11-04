@@ -67,7 +67,7 @@ fn accepted_cases() -> Vec<Case> {
         (
             "input_taken",
             "control",
-            named("input", json!({ "forward": 1, "yaw": 0.25 })),
+            named("input", json!({ "forward": 1, "look_right_pixels": 0.25 })),
             true,
         ),
         (

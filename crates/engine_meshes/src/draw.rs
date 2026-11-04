@@ -44,7 +44,6 @@ impl MeshesGpu {
     fn draw_meshes(&self, draw: &mut Draw<'_, Self, MainView>, phase: usize, prepass: bool) -> u32 {
         let draws = &self.state.draws;
         let order = if prepass { &draws.masked } else { &draws.order };
-        let gpu = self.state.frame.is_some();
         let records = self.inputs.records;
         let mut drawn = 0;
         for &index in order {
@@ -63,26 +62,6 @@ impl MeshesGpu {
                 ..MeshPass::default()
             };
             let (mesh, material) = (batch.mesh, batch.material);
-            if !gpu {
-                draw.draw_timed_with(
-                    pipeline,
-                    (
-                        Shape::Mesh {
-                            mesh,
-                            material,
-                            instances: batch.instances.clone(),
-                            streams: &[
-                                (self.inputs.slots, 0),
-                                (records, self.record(DrawKind::Mesh, 0)),
-                            ],
-                        },
-                        pass,
-                    ),
-                    || draw_label((mesh, material), (phase, None), prepass),
-                );
-                drawn += 1;
-                continue;
-            }
             for level in 0..self.state.levels_of(index) {
                 if self.state.level_empty(index, level) {
                     continue;
@@ -106,7 +85,7 @@ impl MeshesGpu {
                         },
                         pass,
                     ),
-                    || draw_label((mesh, material), (phase, Some(level)), prepass),
+                    || draw_label((mesh, material), (phase, level), prepass),
                 );
                 drawn += 1;
             }
@@ -115,7 +94,7 @@ impl MeshesGpu {
     }
 
     fn draw_cards(&self, draw: &mut Draw<'_, Self, MainView>, phase: usize) -> u32 {
-        if !self.state.cards || self.state.frame.is_none() {
+        if !self.state.cards {
             return 0;
         }
         let records = (
@@ -236,17 +215,12 @@ impl MeshesGpu {
 
 fn draw_label(
     (mesh, material): (MeshHandle, Option<MaterialHandle>),
-    (phase, level): (usize, Option<usize>),
+    (phase, level): (usize, usize),
     prepass: bool,
 ) -> String {
     let material =
         material.map_or_else(|| "none".to_owned(), |material| material.slot().to_string());
     let mesh = mesh.slot();
     let stage = if prepass { " depth pre-pass" } else { "" };
-    match level {
-        Some(level) => {
-            format!("mesh {mesh} material {material} phase {phase} level {level}{stage}")
-        }
-        None => format!("mesh {mesh} material {material} phase {phase}{stage}"),
-    }
+    format!("mesh {mesh} material {material} phase {phase} level {level}{stage}")
 }

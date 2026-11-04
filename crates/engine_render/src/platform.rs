@@ -276,36 +276,6 @@ pub fn run_arrived_maps() {
     }
 }
 
-pub fn write_mapped<'a>(
-    slice: wgpu::BufferSlice<'_>,
-    writes: impl IntoIterator<Item = (usize, &'a [u8])>,
-) -> bool {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let Ok(view) = slice.get_mapped_range() else {
-            return false;
-        };
-        let target = view.as_uint8array();
-        for (offset, bytes) in writes {
-            target
-                .subarray(offset as u32, (offset + bytes.len()) as u32)
-                .copy_from(bytes);
-        }
-        true
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let Ok(mut view) = slice.get_mapped_range_mut() else {
-            return false;
-        };
-        for (offset, bytes) in writes {
-            view.slice(offset..offset + bytes.len())
-                .copy_from_slice(bytes);
-        }
-        true
-    }
-}
-
 pub async fn yield_now() {
     #[cfg(target_arch = "wasm32")]
     {

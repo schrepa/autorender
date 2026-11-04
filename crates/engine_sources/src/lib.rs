@@ -79,11 +79,13 @@ pub fn emit() {
     let src = manifest.join("src");
     let bricks = src.join("bricks");
     let hash = digest(&package, &manifest, &root, false, None);
+    let game = read(&manifest.join("Cargo.toml")).is_some_and(|item| kind(&item) == Some("game"));
 
     let mut code = String::new();
     code.push_str("extern crate engine_ecs as bevy_ecs;\n");
     code.push_str(&source_code(
         &package,
+        game,
         hash,
         &src,
         Some(&bricks),
@@ -112,6 +114,7 @@ pub fn emit() {
         let hash = digest(&named, &manifest, &root, false, Some(&inside));
         let code = source_code(
             &named,
+            game,
             hash,
             &inside,
             None,
@@ -123,6 +126,7 @@ pub fn emit() {
 
 fn source_code(
     package: &str,
+    game: bool,
     hash: [u8; 32],
     folder: &Path,
     skipped: Option<&Path>,
@@ -171,7 +175,7 @@ fn source_code(
     let mut code = String::new();
     code.push_str(&format!(
         "pub(crate) static SOURCE: ::engine_core::Source = \
-         ::engine_core::Source::generated({package:?}, {hash:?}, &[\n{texts}]);\n"
+         ::engine_core::Source::generated({package:?}, {game}, {hash:?}, &[\n{texts}]);\n"
     ));
     code.push_str("pub(crate) mod shaders {\n");
     code.push_str(

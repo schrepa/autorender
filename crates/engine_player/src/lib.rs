@@ -24,7 +24,7 @@ use engine_standard_smokes::StandardSmokesBrick;
 pub use player::{ScenePlayer, listed};
 
 pub fn bricks<L: Listing>(list: L) -> L {
-    engine_standard::standard(list)
+    engine_standard::everything(list)
         .with::<FlyCameraBrick>()
         .with::<bricks::walk::PlayerWalkBrick>()
         .with::<StandardSmokesBrick>()

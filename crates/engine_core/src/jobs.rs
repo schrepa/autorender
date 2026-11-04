@@ -411,9 +411,9 @@ settings! {
     }
 }
 
-static TEXTURES: Source = Source::generated("engine_textures", crate::sources::TEXTURES, &[]);
+static TEXTURES: Source = Source::generated("engine_textures", false, crate::sources::TEXTURES, &[]);
 
-static LODBUILD: Source = Source::generated("engine_lodbuild", crate::sources::LODBUILD, &[]);
+static LODBUILD: Source = Source::generated("engine_lodbuild", false, crate::sources::LODBUILD, &[]);
 
 pub(crate) const TEXTURE_COOK_NAME: &str = "engine::texture_cook";
 

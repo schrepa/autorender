@@ -18,7 +18,7 @@ impl Game for Template {
 }
 
 pub fn bricks<L: Listing>(list: L) -> L {
-    engine_standard::standard(list)
+    engine_standard::basics(list)
         .with::<FlyCameraBrick>()
         .with::<TurningBrick>()
 }
@@ -70,18 +70,4 @@ pub fn build(engine: &mut Engine) -> engine::Result<Template> {
     Ok(Template)
 }
 
-engine::export_game!(
-    pub struct TemplateGame(Template);
-);
-
-engine_worker::export_worker!(bricks);
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-impl TemplateGame {
-    pub async fn create(
-        canvas: web_sys::HtmlCanvasElement,
-    ) -> Result<TemplateGame, wasm_bindgen::JsValue> {
-        Self::launch(canvas, bricks, build).await
-    }
-}
+engine::game!(pub struct TemplateGame(Template), "Template", bricks, build);

@@ -57,6 +57,8 @@ impl Cut {
     }
 }
 
+pub const RESERVED_REPLY_KEYS: [&str; 4] = ["observation", "paused", "source", "rendering"];
+
 pub trait Operation: Send + Sync + 'static {
     const NAME: &'static str;
     const CONTROL: bool = true;

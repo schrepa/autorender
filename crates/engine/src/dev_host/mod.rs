@@ -22,6 +22,7 @@ impl RendererFacts for Facts<'_> {
 #[derive(Default)]
 pub(crate) struct DevHost {
     pub(crate) tools: DevTools,
+    pub(crate) gatherer: Option<crate::host::InputGatherer>,
     input: InputBatch,
 }
 
@@ -30,17 +31,13 @@ struct InputBatch {
     forward: f32,
     right: f32,
     up: f32,
-    yaw: f32,
-    pitch: f32,
-    held: u32,
-    pressed: u32,
-    released: u32,
-    pointer: Option<[f32; 2]>,
-    pointer_delta: [f32; 2],
-    pointer_held: bool,
-    pointer_pressed: bool,
-    pointer_released: bool,
-    wheel: [f32; 2],
+    look_right_pixels: f32,
+    look_down_pixels: f32,
+    keys: Vec<String>,
+    pointer_pixels: Option<[f32; 2]>,
+    pointer_delta_pixels: [f32; 2],
+    wheel_up_notches: f32,
+    wheel_right_notches: f32,
     axes: Vec<f32>,
     menu: Vec<engine_dev::MenuPress>,
 }
@@ -71,6 +68,9 @@ enum Done {
 impl DevHost {
     pub fn clear_input(&mut self) {
         self.input = InputBatch::default();
+        if let Some(gatherer) = &mut self.gatherer {
+            gatherer.clear();
+        }
     }
 
     pub fn submits_frame(
@@ -139,7 +139,6 @@ impl DevHost {
             Ok(envelope) => envelope,
             Err(error) => return Handled::Reply(self.refusal(app, scene, &error)),
         };
-        app.engine.complete_pending_tick();
         let answered = match envelope.verb {
             Verb::Describe | Verb::Inspect | Verb::Query => {
                 return Handled::Reply(match ToolCall::of(&envelope) {
@@ -169,7 +168,6 @@ impl DevHost {
         size: (u32, u32),
         paused: bool,
     ) -> Value {
-        app.engine.complete_pending_tick();
         match call {
             Call::Tool(call) => self.tool(app, scene, call),
             Call::Control(name, args) => {

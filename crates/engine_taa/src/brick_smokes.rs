@@ -6,12 +6,9 @@ use crate::temporal::PASS;
 
 const SIDE: usize = 12;
 const FRAME_MS: f64 = 1000.0 / 60.0;
-const QUIET_FRAMES: u32 = 13;
-const SETTLE_LIMIT: u32 = 600;
 const SECTION: &str = "temporal_antialiasing";
 const STATS: &str = "temporal_antialiasing_stats";
 const DITHER: &str = "dither";
-const SHADOWS: &str = "shadow_stats";
 const PAINTS: [[f32; 4]; 4] = [
     [0.85, 0.35, 0.2, 1.0],
     [0.25, 0.6, 0.85, 1.0],
@@ -162,46 +159,6 @@ fn taa_defaults(enabled: bool) -> Value {
     })
 }
 
-fn sha(reply: &Value) -> Value {
-    reply["result"]["artifact"]["sha256"].clone()
-}
-
-fn settled(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
-    let (mut calm, mut shadows) = (0, Value::Null);
-    for _ in 0..SETTLE_LIMIT {
-        let reply = control(session, "render", json!({}), "renders_until_settled")?;
-        shadows = reply["result"]["rendering"][SHADOWS].clone();
-        let idle = |field: &str| shadows[field].as_u64() == Some(0);
-        let still = shadows.is_null()
-            || (shadows["tile_cut"]["cut"].as_u64() == Some(0)
-                && idle("tiles_drawn")
-                && idle("sky_drawn"));
-        calm = if still { calm + 1 } else { 0 };
-        if calm >= QUIET_FRAMES {
-            return Ok(());
-        }
-    }
-    let wanted = json!({ "quiet_frames": QUIET_FRAMES });
-    smoke_eq!(
-        seen(calm >= QUIET_FRAMES, shadows, &wanted),
-        wanted,
-        "exact_frames_settle"
-    );
-    Ok(())
-}
-
-fn exact(session: &mut dyn SmokeSession, check: &'static str) -> Asked {
-    settled(session)?;
-    let reply = accepted(session, "capture", json!({}), check)?;
-    let wanted = json!({ "artifact": { "sha256": "string" } });
-    smoke_eq!(
-        seen(sha(&reply).is_string(), reply["result"].clone(), &wanted),
-        wanted,
-        "capture_keeps_artifact"
-    );
-    Ok(sha(&reply))
-}
-
 pub(crate) fn temporal_antialiasing(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     grid(session)?;
     let still = json!({ "haze": { "spread": 0.0 } });
@@ -209,7 +166,6 @@ pub(crate) fn temporal_antialiasing(session: &mut dyn SmokeSession) -> Result<()
     let inspect = "inspects_temporal_antialiasing";
     let value = inspected(session, SECTION, inspect)?;
     smoke_eq!(value, taa_defaults(false), "off_by_default");
-    let without = exact(session, "captures_without_taa")?;
     let on = json!({ "temporal_antialiasing": { "enabled": true } });
     let reply = control(session, "environment", on.clone(), "turns_taa_on")?;
     smoke_eq!(
@@ -217,8 +173,6 @@ pub(crate) fn temporal_antialiasing(session: &mut dyn SmokeSession) -> Result<()
         json!(["temporal_antialiasing"]),
         "settings_controlled"
     );
-    let with = exact(session, "captures_with_taa")?;
-    smoke_eq!(with, without, "captures_independent_of_setting");
     let rendering = frames(session, 90, "runs_temporal_frames")?;
     smoke_eq!(active(&rendering), json!(true), "ordinary_frames_resolve");
     let resolving = json!(PASS.pass);
@@ -266,10 +220,7 @@ pub(crate) fn temporal_antialiasing(session: &mut dyn SmokeSession) -> Result<()
     let rendering = frames(session, 30, "runs_temporal_frames_again")?;
     smoke_eq!(active(&rendering), json!(true), "resolves_again");
     dither(session)?;
-    sturdier(session)?;
-    let after = exact(session, "captures_after_taa")?;
-    smoke_eq!(after, with, "captures_exact_after_temporal_frames");
-    Ok(())
+    sturdier(session)
 }
 
 fn dither(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {

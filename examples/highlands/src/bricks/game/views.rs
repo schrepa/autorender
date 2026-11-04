@@ -114,8 +114,8 @@ fn hold_standing_eye(
         input.move_forward,
         input.move_right,
         input.move_up,
-        input.look_yaw,
-        input.look_pitch,
+        input.look_right_pixels,
+        input.look_down_pixels,
     ]
     .into_iter()
     .any(|amount| amount != 0.0);

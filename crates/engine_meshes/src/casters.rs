@@ -7,7 +7,7 @@ use engine_places::shadows::{CasterMap, Refresh, Region, ShadowChanges, ShadowMa
 
 use crate::MeshesBrick;
 use crate::batches::BatchPlan;
-use crate::layouts::{BatchData, CandidateData, MOVING_MAP, MOVING_PAIRS, SKY_MAP};
+use crate::layouts::{MOVING_MAP, MOVING_PAIRS, SKY_MAP};
 use crate::order::MeshPlan;
 use crate::retained::RetainedRender;
 
@@ -29,12 +29,6 @@ pub(crate) fn map_factor(map: usize) -> u32 {
     } else {
         1
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Source {
-    Listed,
-    Presented,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -107,9 +101,6 @@ pub(crate) struct CasterPlan {
     pub masked: Vec<bool>,
     pub total: u32,
     pub batch_groups: Vec<u32>,
-    pub source: Option<Source>,
-    pub listed: Vec<CandidateData>,
-    pub records: Vec<BatchData>,
     pub template: Vec<u32>,
     pub starts: Vec<u32>,
     pub id_capacity: usize,
@@ -119,7 +110,7 @@ pub(crate) struct CasterPlan {
     pub maps: Vec<Option<usize>>,
     pub generation: u64,
     groups_generation: u64,
-    key: Option<(u8, engine_core::Stamp, u64)>,
+    key: Option<(engine_core::Stamp, u64)>,
     draws_key: Option<(u64, u64, bool)>,
     draws: Vec<CasterDraw>,
     levels: Vec<u8>,
@@ -134,8 +125,6 @@ impl CasterPlan {
         self.groups.clear();
         self.masked.clear();
         self.batch_groups.clear();
-        self.listed.clear();
-        self.records.clear();
         self.starts.clear();
         self.total = 0;
         self.key = None;
@@ -144,23 +133,7 @@ impl CasterPlan {
     }
 
     fn plan(&mut self, retained: &RetainedRender, batches: &BatchPlan) -> bool {
-        let gpu = retained.gpu();
-        let (source, key) = if gpu {
-            (
-                Source::Presented,
-                (0, retained.identity(), retained.source_revision()),
-            )
-        } else {
-            (
-                Source::Listed,
-                (
-                    1,
-                    retained.identity(),
-                    retained.caster_revision().max(retained.source_revision()),
-                ),
-            )
-        };
-        self.source = Some(source);
+        let key = (retained.identity(), retained.source_revision());
         if self.key == Some(key) {
             return false;
         }
@@ -200,66 +173,21 @@ impl CasterPlan {
             counts[index as usize] += count;
             index
         };
-        if gpu {
-            for batch in &batches.batches {
-                let count = batch.instances.end - batch.instances.start;
-                let group = add(
-                    &mut self.groups,
-                    key(batch.mesh, batch.material),
-                    batch.source_index,
-                    count,
-                );
-                self.batch_groups.push(group);
-            }
-        } else {
-            let sources: HashMap<MeshHandle, usize> = snapshot
-                .meshes
-                .iter()
-                .enumerate()
-                .map(|(index, source)| (source.handle, index))
-                .collect();
-            self.listed.clear();
-            for &slot in retained.casters() {
-                let instance = &snapshot.instances[slot];
-                let Some(&source_index) = sources.get(&instance.mesh) else {
-                    continue;
-                };
-                let group = add(
-                    &mut self.groups,
-                    key(instance.mesh, instance.material),
-                    source_index,
-                    1,
-                );
-                self.listed.push(CandidateData {
-                    slot: slot as u32,
-                    node: 0,
-                    batch: group,
-                    position: 0,
-                });
-            }
+        for batch in &batches.batches {
+            let count = batch.instances.end - batch.instances.start;
+            let group = add(
+                &mut self.groups,
+                key(batch.mesh, batch.material),
+                batch.source_index,
+                count,
+            );
+            self.batch_groups.push(group);
         }
         let mut start = 0;
-        self.records.clear();
         for (group, count) in self.groups.iter_mut().zip(&counts) {
             group.start = start;
             group.capacity = *count;
             start += count;
-            let mesh = &snapshot.meshes[group.source_index].mesh;
-            let bounds = mesh.bounds();
-            self.records.push(BatchData {
-                start: group.start,
-                count: *count,
-                index_count: mesh.indices().len() as u32,
-                first_index: 0,
-                base_vertex: 0,
-                first_instance: 0,
-                first_plane: 0,
-                lod_ranges: [0; 4],
-                lod_errors: [0.0, 0.0, 1.0, 0.0],
-                group: self.records.len() as u32,
-                bounds_min: bounds.min().extend(0.0).to_array(),
-                bounds_max: bounds.max().extend(0.0).to_array(),
-            });
         }
         self.masked
             .extend(self.groups.iter().map(|group| group.material.is_some()));
@@ -384,8 +312,7 @@ pub(crate) fn plan_casters(
         changed = true;
     }
     let slots = retained.snapshot().instances.len();
-    let classify = plan.source == Some(Source::Presented);
-    let grown = plan.outputs(if classify { slots } else { 0 }, limits.indirect_first_instance);
+    let grown = plan.outputs(slots, limits.indirect_first_instance);
     if plan.template(&errors(&maps), grown || changed) {
         changed = true;
     }

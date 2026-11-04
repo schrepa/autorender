@@ -46,7 +46,7 @@ settings! {
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneImpostors")]
     pub struct Impostors {
-        pub enabled: bool = true => any,
+        pub enabled: bool = false => any,
         pub pixels: f32 = 128.0 => range(8.0, 4096.0),
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max: Option<u32> = None => budget,
@@ -118,23 +118,6 @@ fn counted(value: usize) -> u32 {
     value.min(u32::MAX as usize) as u32
 }
 
-fn plain_triangles(batches: &BatchPlan, residency: &AssetResidency) -> u32 {
-    let triangles: u64 = batches
-        .batches
-        .iter()
-        .map(|batch| {
-            u64::from(batch.instances.end - batch.instances.start)
-                * u64::from(
-                    residency
-                        .mesh(batch.mesh)
-                        .map_or(0, |mesh| mesh.index_count())
-                        / 3,
-                )
-        })
-        .sum();
-    triangles.min(u64::from(u32::MAX)) as u32
-}
-
 #[expect(
     clippy::too_many_arguments,
     reason = "the stats join the retained counters, the plan, the residency and both readbacks"
@@ -155,27 +138,15 @@ pub(crate) fn mesh_stats(
     mut stats: ResMut<MeshStats>,
 ) {
     let snapshot = retained.snapshot();
-    let gpu = plan.gpu;
-    let last = totals.last().filter(|_| gpu);
+    let last = totals.last();
     let budget = culling.budget();
     let instance_count = batches.ordered_instances.len();
     let gpu_visible = last.map(|totals| totals.visible);
-    let instances = match gpu_visible {
-        Some(visible) if gpu => visible.min(counted(budget)),
-        None if gpu => instance_count.min(budget) as u32,
-        _ => instance_count as u32,
-    };
+    let instances = gpu_visible.map_or(instance_count.min(budget) as u32, |visible| {
+        visible.min(counted(budget))
+    });
     let listed = counted(snapshot.visible_instances);
-    let (visible, culled, dropped) = if gpu {
-        let visible = gpu_visible.unwrap_or(listed);
-        (
-            visible,
-            listed.saturating_sub(visible),
-            visible.saturating_sub(instances),
-        )
-    } else {
-        (listed, 0, counted(snapshot.dropped_instances))
-    };
+    let visible = gpu_visible.unwrap_or(listed);
     let levels = last
         .filter(|_| detail.enabled)
         .map(|totals| totals.levels);
@@ -187,20 +158,15 @@ pub(crate) fn mesh_stats(
         invalid_transforms: counted(snapshot.invalid_transforms),
         render_candidates: counted(snapshot.render_candidates),
         visible_instances: visible,
-        culled_instances: culled,
-        dropped_instances: dropped,
+        culled_instances: listed.saturating_sub(visible),
+        dropped_instances: visible.saturating_sub(instances),
         missing_assets: counted(snapshot.missing_assets),
         culling_enabled: culling.frustum,
         instances,
         gpu_visible,
-        triangles: if gpu {
-            last.map(|totals| totals.triangles)
-        } else {
-            Some(plain_triangles(&batches, &residency))
-        },
+        triangles: last.map(|totals| totals.triangles),
         read_back_age: totals
             .age(frame.frame)
-            .filter(|_| gpu)
             .map(|age| age.min(u64::from(u32::MAX)) as u32),
         level_of_detail: DetailStats {
             lod0_instances: levels.map(|levels| levels[0]),
@@ -215,13 +181,13 @@ pub(crate) fn mesh_stats(
             impostor_cut,
         },
         occlusion_culling: CullingStats {
-            active: gpu && plan.occlusion,
+            active: plan.occlusion,
             instances: last
                 .filter(|_| occlusion.enabled)
                 .map(|totals| totals.occluded),
         },
         subpixel_culling: CullingStats {
-            active: gpu && plan.subpixel,
+            active: plan.subpixel,
             instances: last
                 .filter(|_| subpixel.enabled)
                 .map(|totals| totals.subpixel),

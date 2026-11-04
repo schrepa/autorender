@@ -54,7 +54,10 @@ pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
     for frame in 0..FRAMES {
         *engine.app.world_mut().resource_mut::<Camera>() = camera(frame);
         engine.advance(1.0 / 60.0);
-        let world = engine.extract_frame(ASPECT).world();
+        let world = engine
+            .extract_frame(ASPECT, 1.0)
+            .map_err(|error| format!("extract_frame: {error}"))?
+            .world();
         let mut line = format!("{frame}: {}", stats(world)?);
         for (surroundings, mut keys, drawn) in listing(engine.app.world_mut())? {
             keys.sort_unstable();
@@ -175,7 +178,7 @@ fn load() -> Result<Engine, String> {
     let path = root.join(FIXTURE);
     let source = std::fs::read_to_string(&path)
         .map_err(|error| format!("cannot read {FIXTURE}: {error}"))?;
-    let mut engine = engine::engine(engine_standard::standard::<BrickList>)
+    let mut engine = engine::engine(engine_standard::everything::<BrickList>)
         .map_err(|error| error.to_string())?;
     let kinds = SceneKinds::of(engine.app.world());
     let document = SceneDocument::from_json(&source).map_err(|error| error.to_string())?;

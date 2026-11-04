@@ -41,6 +41,7 @@ impl<G: Game> GameHost<G> {
         #[cfg(feature = "dev")]
         let development = {
             let mut development = crate::dev_host::DevHost::default();
+            development.gatherer = Some(input.clone());
             G::inspectors(&mut crate::game::Inspectors::new(&mut development.tools));
             development
         };
@@ -264,8 +265,8 @@ impl<G: Game> GameHost<G> {
         self.input.pointer_left();
     }
 
-    pub fn wheel(&mut self, dx: f32, dy: f32) {
-        self.input.wheel(dx, dy);
+    pub fn wheel(&mut self, right_notches: f32, up_notches: f32) {
+        self.input.wheel(right_notches, up_notches);
     }
 
     pub fn pad(&mut self, buttons: u32, axes: [f32; 6]) {
@@ -388,10 +389,6 @@ impl<G: Game> GameHost<G> {
         Ok(())
     }
 
-    pub fn set_tick_pipelining(&mut self, enabled: bool) {
-        self.app.set_tick_pipelining(enabled);
-    }
-
     pub fn set_setting(&mut self, key: &str, value: serde_json::Value) -> crate::Result<()> {
         self.app.set_setting(key, value)
     }
@@ -420,6 +417,11 @@ impl<G: Game> GameHost<G> {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn stop_debugger_capture(&mut self) -> crate::Result<()> {
         self.app.renderer.stop_debugger_capture()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn gpu_allocations(&self) -> serde_json::Value {
+        self.app.renderer.gpu_allocations()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -458,10 +460,6 @@ impl<G: Game> GameHost<G> {
 
     pub fn stats(&self) -> String {
         self.app.stats_json()
-    }
-
-    pub fn tick_pipelining(&self) -> bool {
-        self.app.tick_pipelining()
     }
 }
 

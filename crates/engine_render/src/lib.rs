@@ -52,7 +52,6 @@ mod mipmaps;
 mod platform;
 mod profiling;
 mod renderer;
-mod staging;
 mod targets;
 
 pub use gpu_data::{
@@ -81,7 +80,6 @@ pub use renderer::{
 pub use shaders::FULLSCREEN;
 #[doc(hidden)]
 pub use shaders::core_modules;
-pub use staging::MIN_STAGED_BYTES;
 
 pub const IMPOSTOR_VERTICES: u32 = 6;
 
@@ -385,12 +383,6 @@ pub enum Shape<'a, P, S> {
         indices: Option<DrawInput<P, S>>,
         args: DrawInput<P, S>,
         offset: u64,
-    },
-    Mesh {
-        mesh: MeshHandle,
-        material: Option<MaterialHandle>,
-        instances: Range<u32>,
-        streams: &'a [(DrawInput<P, S>, u64)],
     },
     MeshIndirect {
         mesh: MeshHandle,
@@ -838,17 +830,6 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.grow_buffer(buffer.0, bytes);
     }
 
-    pub fn write_staged<T: bytemuck::Pod>(
-        &mut self,
-        buffer: Buffer<P>,
-        records: &[T],
-        ranges: &[Range<usize>],
-    ) -> bool {
-        let stride = size_of::<T>();
-        self.core
-            .write_staged(buffer.0, (bytemuck::cast_slice(records), stride), ranges)
-    }
-
     pub fn count_upload(&mut self, bytes: u64) {
         self.core.uploads.counted += bytes;
     }
@@ -1166,17 +1147,6 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
                 indices: indices.map(|input| input.0),
                 args: args.0,
                 offset,
-            },
-            Shape::Mesh {
-                mesh,
-                material,
-                instances,
-                streams: given,
-            } => encode::RawShape::Mesh {
-                mesh,
-                material,
-                instances,
-                streams: streams(given),
             },
             Shape::MeshIndirect {
                 mesh,

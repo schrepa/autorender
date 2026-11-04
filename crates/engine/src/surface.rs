@@ -11,7 +11,7 @@ macro_rules! __game_surface {
                 fn motion(dx: f32, dy: f32);
                 fn pointer(x: f32, y: f32);
                 fn pointer_left();
-                fn wheel(dx: f32, dy: f32);
+                fn wheel(right_notches: f32, up_notches: f32);
                 fn pad(buttons: u32, axes: Vec<f32>);
                 fn clear_input();
                 fn animation_frame(timestamp: f64, width: u32, height: u32) -> Result<u32, $crate::__private::JsValue>;
@@ -34,14 +34,12 @@ macro_rules! __game_surface {
                 fn take_level_request() -> Option<String>;
                 fn report_level(done: u32, total: u32);
                 fn fail_level(message: &str);
-                fn set_tick_pipelining(enabled: bool);
                 fn set_pixel_ratio(ratio: f64);
                 fn set_setting(key: &str, value: &str) -> Result<(), $crate::__private::JsValue>;
                 fn apply_host_settings(query: &str) -> Result<(), $crate::__private::JsValue>;
             }
             always_ref {
                 fn stats() -> String as Json<FrameStats>;
-                fn tick_pipelining() -> bool;
                 fn cursor_mode() -> u32;
                 fn job_hash() -> Vec<u8>;
                 fn distribution(values: Vec<f64>) -> String as Json<Option<Distribution>>;
@@ -62,6 +60,48 @@ macro_rules! __game_surface {
                 fn profiling_status() -> String;
             }
         }
+    };
+}
+
+#[macro_export]
+macro_rules! game {
+    ($vis:vis struct $name:ident($game:ty), $title:literal, $bricks:path, $build:path) => {
+        $crate::export_game!($vis struct $name($game););
+
+        $crate::__worker::export_worker!($bricks);
+
+        #[cfg(target_arch = "wasm32")]
+        #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
+        impl $name {
+            pub async fn create(
+                canvas: $crate::__private::web_sys::HtmlCanvasElement,
+            ) -> Result<$name, $crate::__private::JsValue> {
+                Self::launch(canvas, $bricks, $build).await
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        pub fn native(arguments: impl Iterator<Item = String>) -> ::std::process::ExitCode {
+            ::engine_native::main($title, arguments, $bricks, $build)
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! game_main {
+    ($run:path) => {
+        #[cfg(not(target_arch = "wasm32"))]
+        fn main() -> ::std::process::ExitCode {
+            $run(::std::env::args().skip(1))
+        }
+
+        #[cfg(all(feature = "profiling", not(target_arch = "wasm32")))]
+        #[global_allocator]
+        static ALLOCATOR: $crate::profiling::TrackingAllocator<::std::alloc::System> =
+            $crate::profiling::TrackingAllocator::new(::std::alloc::System);
+
+        #[cfg(target_arch = "wasm32")]
+        fn main() {}
     };
 }
 

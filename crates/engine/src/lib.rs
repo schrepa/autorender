@@ -35,7 +35,7 @@ mod games {
         Filter, FixedTime, FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Grounding,
         InterpolateTransform, Listing, MakeSources, MakeTextures, Material, MaterialHandle,
         MenuInput, Mesh, Mesh3d, MeshHandle, MeshVertex, MoveInput, Parent, PointerInput,
-        PresentedTransform, PresentedTransforms, Projection, ProvidedAssets, ResolutionStats,
+        PresentedTransforms, Projection, ProvidedAssets, ResolutionStats,
         Sampler, Surface, Texture, TextureHandle, TextureRef, TextureSet, TextureSource,
         TextureUsage, TopLayer, Transform, UvTransform, Wrap, edit_transform, math,
         reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
@@ -121,6 +121,9 @@ fn add_module(modules: &mut Vec<ShaderModule>, path: &'static str, source: &'sta
         modules.push(ShaderModule { path, source });
     }
 }
+
+#[doc(hidden)]
+pub use engine_worker as __worker;
 
 #[cfg(target_arch = "wasm32")]
 pub mod browser;

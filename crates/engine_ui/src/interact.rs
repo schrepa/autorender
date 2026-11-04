@@ -54,7 +54,7 @@ fn activate(
 
 fn hover(state: &mut UiState, pointer: &PointerInput) {
     let hovered = pointer
-        .position
+        .position_pixels
         .filter(|_| pointer.inside)
         .and_then(|point| state.top_at(point, UiKind::Button));
     if hovered == state.hovered {
@@ -145,12 +145,12 @@ fn move_focus(state: &mut UiState, way: Vec2) {
 }
 
 fn wheel(state: &mut UiState, pointer: &PointerInput) {
-    let turn = pointer.wheel.x + pointer.wheel.y;
+    let turn = pointer.wheel_right_notches + pointer.wheel_up_notches;
     if turn == 0.0 {
         return;
     }
     let list = pointer
-        .position
+        .position_pixels
         .filter(|_| pointer.inside)
         .and_then(|point| state.top_at(point, UiKind::List));
     if let Some(list) = list {

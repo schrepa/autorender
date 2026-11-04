@@ -14,7 +14,7 @@ use crate::profiling::{GpuProfiler, Span};
 const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
 const RAN_ORDERS: usize = 256;
 const OPAQUE_MESHES: &str = "opaque_meshes";
-const MEMORY: [&str; 18] = [
+const MEMORY: [&str; 17] = [
     "memory.gpu_shadow_bytes",
     "memory.gpu_post_bytes",
     "memory.gpu_environment_bytes",
@@ -27,7 +27,6 @@ const MEMORY: [&str; 18] = [
     "memory.render_upload_cache_bytes",
     "memory.render_upload_range_bytes",
     "memory.render_staging_capacity_bytes",
-    "memory.gpu_pose_staging_bytes",
     "memory.gpu_instance_buffer_bytes",
     "memory.gpu_mesh_payload_bytes",
     "memory.gpu_mesh_arena_bytes",
@@ -124,14 +123,6 @@ fn camera_of(
 }
 
 impl Renderer {
-    pub fn render_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, Error> {
-        self.render(frame, false)
-    }
-
-    pub fn render_display_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, Error> {
-        self.render(frame, true)
-    }
-
     pub fn deliver(&mut self, world: &mut World) {
         let Some(run) = self.run.as_mut() else {
             return;
@@ -225,17 +216,16 @@ impl Renderer {
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
-    fn render(&mut self, frame: RenderFrame<'_>, display: bool) -> Result<RenderStats, Error> {
+    pub fn render_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, Error> {
         let _profile = engine_profile::span("render", "render_snapshot");
         let _row = engine_profile::timed(engine_profile::row("render.total"));
         self.check_health()?;
-        let gpu_mode = frame.gpu().is_some();
         let world = frame.world();
         let view = world.get_resource::<View>();
         let debug = world
             .get_resource::<crate::DebugShown>()
             .is_some_and(|shown| shown.owner.is_some());
-        let temporal_frame = display && gpu_mode && !debug && view.is_some_and(View::temporal);
+        let temporal_frame = !debug && view.is_some_and(View::temporal);
         let region = self.core.display.plan_region(view.map(View::render_size));
         if self.core.display.suspended {
             return Ok(RenderStats::default());
@@ -605,7 +595,6 @@ impl Renderer {
             return Ok(RenderStats::default());
         };
         run.assets.impostors.after_submit();
-        run.queued.staging.after_submit();
         run.map_readbacks();
         crate::platform::poll(&device);
         drop(profile_submit);
@@ -646,7 +635,6 @@ impl Renderer {
             engine_profile::counter("render.immediate_submissions", f64::from(immediate));
             engine_profile::counter("render.texture_mip_levels", f64::from(mip_levels));
             engine_profile::counter("render.camera_write_bytes", camera_bytes as f64);
-            engine_profile::counter("render.gpu_presentation", f64::from(u8::from(gpu_mode)));
             engine_profile::counter(
                 "render.camera_upload_reused",
                 f64::from(u8::from(camera_bytes == 0)),
@@ -656,7 +644,6 @@ impl Renderer {
                     "memory.gpu_impostor_bytes" => run.assets.impostors.capacity_bytes(),
                     "memory.render_upload_cache_bytes" => size_of::<Option<CameraUniform>>() as u64,
                     "memory.render_staging_capacity_bytes" => run.assets.meshes.staging_bytes(),
-                    "memory.gpu_pose_staging_bytes" => run.queued.staging.capacity_bytes(),
                     "memory.gpu_mesh_payload_bytes" => stats.resident_mesh_bytes,
                     "memory.gpu_mesh_arena_bytes" => run.assets.meshes.capacity_bytes(),
                     "memory.gpu_texture_payload_bytes" => stats.resident_texture_bytes,

@@ -99,8 +99,7 @@ impl MeshesGpu {
         if !casters.runs || casters.candidates == 0 {
             return;
         }
-        let select = &self.computes.select[usize::from(casters.listed)];
-        cx.dispatch(select, Count::Groups([casters.candidates.div_ceil(CULL_GROUP), 1, 1]));
+        cx.dispatch(&self.computes.select, Count::Groups([casters.candidates.div_ceil(CULL_GROUP), 1, 1]));
         cx.dispatch(&self.computes.count_casters, Count::Groups([1, 1, 1]));
     }
 

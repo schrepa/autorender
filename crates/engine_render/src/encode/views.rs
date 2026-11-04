@@ -440,7 +440,9 @@ impl Run {
             height: size.1.max(1),
             depth_or_array_layers: 1,
         };
-        if self.targets.first().is_some_and(|(_, made)| made.size == extent) {
+        if self.debug != self.debug_targets.is_empty()
+            && self.targets.first().is_some_and(|(_, made)| made.size == extent)
+        {
             return;
         }
         let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST;
@@ -476,6 +478,7 @@ impl Run {
         self.previous_targets = previous;
         self.debug_targets = DEBUG_FORMATS
             .iter()
+            .filter(|_| self.debug)
             .map(|format| made("engine/debug-target", *format))
             .collect();
         self.rebuilt.textures += 1;

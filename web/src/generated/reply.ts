@@ -308,19 +308,13 @@ export interface PresentResult {
   temporary: boolean;
 }
 
-export type PresentationModeView = "current" | "interpolated";
-
 export interface PresentationStateView {
   alpha: number;
   frame?: string | null;
-  gpu_pending: boolean;
   history_bytes: number;
   history_capacity: number;
   history_nodes: number;
-  mode: PresentationModeView;
   presentation_scratch_bytes: number;
-  presented_nodes: number;
-  presented_store_bytes: number;
   tick?: string | null;
 }
 

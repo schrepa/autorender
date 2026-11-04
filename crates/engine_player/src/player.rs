@@ -147,8 +147,8 @@ pub fn listed(
     without: &str,
     path: &str,
 ) -> Result<impl FnOnce(BrickList) -> BrickList + use<>, Error> {
-    let standard = engine_standard::standard(BrickList::default());
-    let names: Vec<&'static str> = standard
+    let everything = engine_standard::everything(BrickList::default());
+    let names: Vec<&'static str> = everything
         .listed()
         .iter()
         .map(|listed| listed.package())

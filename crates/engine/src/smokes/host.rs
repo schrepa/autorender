@@ -48,13 +48,13 @@ fn keyboard(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
     keys.look(120.0, 40.0);
     let turned = keys.take(0.0).state;
     smoke_eq!(
-        json!([turned.look_yaw, turned.look_pitch]),
+        json!([turned.look_right_pixels, turned.look_down_pixels]),
         json!([120.0, 40.0]),
         "drag_turns"
     );
     let after = keys.take(0.0).state;
     smoke_eq!(
-        json!([after.look_yaw, after.look_pitch]),
+        json!([after.look_right_pixels, after.look_down_pixels]),
         json!([0.0, 0.0]),
         "turns_apply_once"
     );
@@ -89,9 +89,9 @@ fn pointer(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
     let moved = keys.take(0.0).pointer;
     smoke_eq!(
         json!([
-            moved.position.map(|position| position.to_array()),
-            moved.delta.to_array(),
-            moved.wheel.to_array(),
+            moved.position_pixels.map(|position| position.to_array()),
+            moved.delta_pixels.to_array(),
+            [moved.wheel_right_notches, moved.wheel_up_notches],
             moved.inside
         ]),
         json!([[13.0, 24.0], [3.0, 4.0], [0.0, 2.0], true]),
@@ -99,7 +99,10 @@ fn pointer(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
     );
     let still = keys.take(0.0).pointer;
     smoke_eq!(
-        json!([still.delta.to_array(), still.wheel.to_array()]),
+        json!([
+            still.delta_pixels.to_array(),
+            [still.wheel_right_notches, still.wheel_up_notches]
+        ]),
         json!([[0.0, 0.0], [0.0, 0.0]]),
         "pointer_motion_covers_one_frame"
     );
@@ -113,9 +116,9 @@ fn pointer(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
     let captured = keys.take(0.0);
     smoke_eq!(
         json!([
-            captured.pointer.delta.to_array(),
-            captured.state.look_yaw,
-            captured.state.look_pitch
+            captured.pointer.delta_pixels.to_array(),
+            captured.state.look_right_pixels,
+            captured.state.look_down_pixels
         ]),
         json!([[5.0, 6.0], 5.0, 6.0]),
         "motion_looks"
@@ -126,9 +129,9 @@ fn pointer(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
     let cleared = keys.take(0.0).pointer;
     smoke_eq!(
         json!([
-            cleared.position.is_none(),
-            cleared.delta.to_array(),
-            cleared.wheel.to_array()
+            cleared.position_pixels.is_none(),
+            cleared.delta_pixels.to_array(),
+            [cleared.wheel_right_notches, cleared.wheel_up_notches]
         ]),
         json!([true, [0.0, 0.0], [0.0, 0.0]]),
         "pointer_clears"
@@ -218,13 +221,13 @@ fn pad(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
     keys.pad(0, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
     let moved = keys.take(1000.0).state;
     smoke_eq!(
-        json!([moved.move_forward, moved.move_up, moved.look_yaw]),
+        json!([moved.move_forward, moved.move_up, moved.look_right_pixels]),
         json!([1.0, 1.0, 600.0]),
         "pads_merge_and_move"
     );
     let unplugged = keys.take(2000.0).state;
     smoke_eq!(
-        json!([unplugged.move_forward, unplugged.look_yaw]),
+        json!([unplugged.move_forward, unplugged.look_right_pixels]),
         json!([0.0, 0.0]),
         "pad_needs_polling"
     );

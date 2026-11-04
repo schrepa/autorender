@@ -515,34 +515,27 @@ pub enum BrowserControl {
         up: f32,
         #[serde(default)]
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
-        yaw: f32,
+        look_right_pixels: f32,
         #[serde(default)]
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
-        pitch: f32,
+        look_down_pixels: f32,
         #[serde(default)]
-        held: u32,
-        #[serde(default)]
-        pressed: u32,
-        #[serde(default)]
-        released: u32,
+        keys: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(
             not(target_arch = "wasm32"),
             schemars(with = "[f32; 2]", transform = stated(bounds::COORDINATE))
         )]
-        pointer: Option<[f32; 2]>,
+        pointer_pixels: Option<[f32; 2]>,
         #[serde(default)]
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
-        pointer_delta: [f32; 2],
-        #[serde(default)]
-        pointer_held: bool,
-        #[serde(default)]
-        pointer_pressed: bool,
-        #[serde(default)]
-        pointer_released: bool,
+        pointer_delta_pixels: [f32; 2],
         #[serde(default)]
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
-        wheel: [f32; 2],
+        wheel_up_notches: f32,
+        #[serde(default)]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
+        wheel_right_notches: f32,
         #[serde(default)]
         #[cfg_attr(
             not(target_arch = "wasm32"),

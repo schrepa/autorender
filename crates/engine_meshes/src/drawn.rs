@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode, Expected, FrameTime, Operation, PresentedTransforms, SceneIds};
+use engine_core::{Error, ErrorCode, Expected, FrameTime, GlobalTransforms, Operation, SceneIds};
 use engine_places::meshes::Instances;
 use serde_json::{Value, json};
 
@@ -70,11 +70,11 @@ pub(crate) struct MeshesListing;
 
 impl Operation for MeshesListing {
     const NAME: &'static str = "meshes_listing";
-    type Params = (Res<'static, RetainedRender>, Res<'static, PresentedTransforms>);
+    type Params = (Res<'static, RetainedRender>, Res<'static, GlobalTransforms>);
     type Request = ListingRequest;
 
     fn run(
-        (retained, presented): SystemParamItem<'_, '_, Self::Params>,
+        (retained, globals): SystemParamItem<'_, '_, Self::Params>,
         _: ListingRequest,
     ) -> Result<Value, Error> {
         let snapshot = retained.snapshot();
@@ -87,7 +87,7 @@ impl Operation for MeshesListing {
                 Some(json!({
                     "mesh": instance.mesh.slot() as u32,
                     "material": instance.material.map(|material| material.slot() as u32),
-                    "model": retained.model(slot, &presented).to_cols_array(),
+                    "model": retained.model(slot, &globals).to_cols_array(),
                     "color": instance.color,
                     "surface": {
                         "roughness": surface.roughness,
@@ -100,7 +100,6 @@ impl Operation for MeshesListing {
             .collect();
         Ok(json!({
             "instances": instances,
-            "dropped": snapshot.dropped_instances,
             "missing": snapshot.missing_assets,
         }))
     }

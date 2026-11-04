@@ -44,6 +44,7 @@ mod os {
 }
 
 const MAX_FRAMES: usize = 256;
+const MAX_SAMPLES: usize = 600_000;
 
 pub fn method() -> Option<&'static str> {
     os::METHOD
@@ -142,7 +143,7 @@ fn run(
             };
             let time_ms = clock();
             let depth = os::sample(open, thread.bounds, &mut frames);
-            if depth == 0 {
+            if depth == 0 || out.samples.len() >= MAX_SAMPLES {
                 out.missed += 1;
                 continue;
             }

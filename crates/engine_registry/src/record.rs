@@ -35,6 +35,7 @@ pub(crate) struct SystemsCall {
 
 pub struct BrickRecord {
     pub package: &'static str,
+    game: bool,
     pub entries: Vec<Box<dyn Any + Send + Sync>>,
     pub render: Vec<Box<dyn Any + Send + Sync>>,
     brick: TypeId,
@@ -70,6 +71,7 @@ impl BrickRecord {
         let type_name = std::any::type_name::<B>();
         Self {
             package,
+            game: false,
             entries: Vec::new(),
             render: Vec::new(),
             brick: TypeId::of::<B>(),
@@ -103,6 +105,14 @@ impl BrickRecord {
 
     pub fn brick(&self) -> TypeId {
         self.brick
+    }
+
+    pub fn set_game(&mut self, game: bool) {
+        self.game = game;
+    }
+
+    pub fn game(&self) -> bool {
+        self.game
     }
 
     pub fn type_name(&self) -> &'static str {

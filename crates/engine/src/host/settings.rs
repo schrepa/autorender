@@ -90,8 +90,6 @@ macro_rules! settings {
 }
 
 settings! {
-    pipeline: bool = "pipeline",
-        ["on" => Some(true), "off" => Some(false)] => set_tick_pipelining;
     between: bool = "between",
         ["on" => Some(true), "off" => Some(false)] => set_between_frames;
     terrain_clock: TerrainClock = "terrain-clock",

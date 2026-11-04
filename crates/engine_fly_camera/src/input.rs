@@ -179,7 +179,7 @@ pub(crate) fn input_camera(session: &mut dyn SmokeSession) -> Result<(), SmokeFa
     let still = camera(session)?;
     let drift = dot(moved(&forward, &still), moved(&forward, &still)).sqrt();
     check!(drift < 1e-3, "release_stops", json!(drift), json!(1e-3));
-    steps(session, json!({ "yaw": 120, "pitch": 40 }), 10)?;
+    steps(session, json!({ "look_right_pixels": 120, "look_down_pixels": 40 }), 10)?;
     let turned = camera(session)?;
     let cosine = dot(direction(&still), direction(&turned));
     let turn = if cosine < 1.0 { cosine.acos() } else { 0.0 };

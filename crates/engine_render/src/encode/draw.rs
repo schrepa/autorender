@@ -124,8 +124,7 @@ impl Run {
             self.fill_groups(pipeline, filled);
         }
         let variant = match &shape {
-            RawShape::Mesh { mesh, material, .. }
-            | RawShape::MeshIndirect { mesh, material, .. } => {
+            RawShape::MeshIndirect { mesh, material, .. } => {
                 let Some(variant) = self.mesh_variant(point, *mesh, *material, pass) else {
                     return;
                 };
@@ -275,42 +274,6 @@ impl Run {
                     }
                     None => timed_draw(render, timed, |render| render.draw_indirect(args, offset)),
                 }
-            }
-            RawShape::Mesh {
-                mesh,
-                material,
-                instances,
-                streams,
-            } => {
-                let Some(draw) = assets.meshes.draw(mesh) else {
-                    return;
-                };
-                let group = match material {
-                    Some(handle) => assets.materials.group(handle),
-                    None => Some(assets.materials.binding(None).0),
-                };
-                let Some(group) = group else { return };
-                if open.set.material != Some(material) {
-                    render.set_bind_group(1, group, &[]);
-                    open.set.material = Some(material);
-                    open.set.own[1] = None;
-                }
-                render.set_vertex_buffer(0, draw.vertices.slice(..));
-                if mesh_slots > 1
-                    && let Some(extras) = draw.extras
-                {
-                    render.set_vertex_buffer(1, extras.slice(..));
-                }
-                for (at, (stream, start)) in streams.listed().iter().enumerate() {
-                    if let Some(buffer) = input(*stream) {
-                        render.set_vertex_buffer(mesh_slots + at as u32, buffer.slice(*start..));
-                    }
-                }
-                render.set_index_buffer(draw.indices.slice(..), wgpu::IndexFormat::Uint32);
-                let (first, base, count) = (draw.first_index, draw.base_vertex, draw.index_count);
-                timed_draw(render, timed, |render| {
-                    render.draw_indexed(first..first + count, base, instances)
-                });
             }
             RawShape::MeshIndirect {
                 mesh,

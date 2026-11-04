@@ -542,11 +542,9 @@ impl GpuPart for TerrainGpu {
         }
         self.tables.write_directory(&tiles, &atlas);
         self.tables.write_holes(&atlas);
-        let fades = self.atlas.fade(
-            (&atlas, &tiles),
-            !view.exact(),
-            TerrainTables::fade_words(&atlas),
-        );
+        let fades = self
+            .atlas
+            .fade((&atlas, &tiles), TerrainTables::fade_words(&atlas));
         self.tables.write_fades(fades);
         self.maps.prepare(cx, (&tiles, &assets));
         self.tables

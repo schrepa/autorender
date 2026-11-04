@@ -340,7 +340,21 @@ fn answer<O: Operation>(world: &mut World, request: O::Request) -> Result<Value,
     })?;
     let answer = O::run(params, request);
     state.apply(world);
-    answer
+    let answer = answer?;
+    let path = format!("$.operations.{}", O::NAME);
+    match answer.as_object() {
+        Some(fields) => {
+            if let Some(key) = crate::RESERVED_REPLY_KEYS
+                .iter()
+                .find(|key| fields.contains_key(**key))
+            {
+                return Err(Error::new(ErrorCode::InvalidValue, format!("{path}.{key}")).got(*key));
+            }
+        }
+        None if answer.is_null() => {}
+        None => return Err(Error::new(ErrorCode::InvalidValue, path).got(answer)),
+    }
+    Ok(answer)
 }
 
 pub trait Listing: Sized {
@@ -395,6 +409,7 @@ impl Listed {
 fn record_of<B: Brick>() -> BrickRecord {
     let source = B::SOURCE;
     let mut record = BrickRecord::new::<B>(source.package(), source.hash(), B::SMOKES);
+    record.set_game(source.game());
     if let Some(first) = source.modules().first() {
         let path = first.path();
         record.shader_prefix(path.split("::").next().unwrap_or(path));

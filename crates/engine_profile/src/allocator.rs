@@ -14,6 +14,7 @@ use crate::bricks::{
 };
 
 pub const SAMPLE_EVERY: u32 = 1021;
+pub const ALWAYS_SAMPLED_BYTES: usize = 65_536;
 const CALIBRATION_BLOCK: Layout = Layout::new::<[u64; 8]>();
 
 static AVAILABLE: AtomicBool = AtomicBool::new(false);
@@ -116,7 +117,7 @@ fn counted(brick: u16, bytes: usize) {
             left == 0
         })
         .unwrap_or(false);
-    if !due
+    if !(due || bytes >= ALWAYS_SAMPLED_BYTES)
         || SAMPLING_HERE
             .try_with(|here| here.replace(true))
             .unwrap_or(true)

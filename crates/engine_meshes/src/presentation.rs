@@ -199,19 +199,12 @@ pub(crate) struct NodeInputs {
 }
 
 impl NodeInputs {
-    pub(crate) fn holds(&self, gpu: &GpuPresentation<'_>) -> bool {
-        gpu.hold
-            && self
-                .uploaded
-                .is_some_and(|(identity, _)| identity == gpu.identity)
-    }
-
-    pub(crate) fn gather(&mut self, gpu: &GpuPresentation<'_>, held: bool) -> Option<(Option<u64>, bool)> {
+    pub(crate) fn gather(&mut self, gpu: &GpuPresentation<'_>) -> Option<(Option<u64>, bool)> {
         let since = match self.uploaded {
             Some((identity, sequence)) if identity == gpu.identity => Some(sequence),
             _ => None,
         };
-        if held || since == Some(gpu.sequence) {
+        if since == Some(gpu.sequence) {
             return None;
         }
         let mut shift = false;
@@ -456,7 +449,6 @@ pub(crate) struct CasterDraws {
     pub id_capacity: usize,
     pub generation: Option<u64>,
     pub candidates: u32,
-    pub listed: bool,
     pub runs: bool,
 }
 
@@ -465,12 +457,8 @@ pub(crate) struct FrameState {
     pub capacity: usize,
     pub capacity_grown: Option<u64>,
     pub capacity_generation: u64,
-    pub slot_capacity: usize,
-    pub slot_staging: Vec<u32>,
-    pub slot_revision: Option<(Stamp, u64)>,
     pub color_staging: Vec<ColorData>,
     pub uploads: RetainedUploads,
-    pub gpu_frame: bool,
     pub temporal: bool,
     pub motion_key: Option<(Stamp, u64, u64, glam::UVec2)>,
     pub presented_seconds: f32,

@@ -32,6 +32,31 @@ impl Renderer {
         Ok(())
     }
 
+    pub fn gpu_allocations(&self) -> serde_json::Value {
+        let Some(report) = self.core.device.generate_allocator_report() else {
+            return serde_json::Value::Null;
+        };
+        let mut named = std::collections::BTreeMap::<&str, (u64, u64)>::new();
+        for allocation in &report.allocations {
+            let (count, bytes) = named.entry(allocation.name.as_str()).or_default();
+            *count += 1;
+            *bytes += allocation.size;
+        }
+        let mut rows: Vec<(&str, (u64, u64))> = named.into_iter().collect();
+        rows.sort_by(|a, b| b.1.1.cmp(&a.1.1).then_with(|| a.0.cmp(b.0)));
+        serde_json::json!({
+            "reserved_bytes": report.total_reserved_bytes,
+            "allocated_bytes": report.total_allocated_bytes,
+            "blocks": report.blocks.len(),
+            "allocations": rows
+                .iter()
+                .map(|(name, (count, bytes))| {
+                    serde_json::json!({ "name": name, "count": count, "bytes": bytes })
+                })
+                .collect::<Vec<_>>(),
+        })
+    }
+
     pub fn wait_for_gpu(&self) -> Result<(), Error> {
         self.core
             .device

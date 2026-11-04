@@ -5,32 +5,12 @@ use bevy_ecs::system::SystemChangeTick;
 use engine_core::collections::HashMap;
 use engine_core::{
     AlphaMode, AssetLibrary, GlobalTransforms, MAX_TRANSFORM_NODES, Material, MaterialBinding,
-    MaterialHandle, Mesh, Mesh3d, MeshHandle, PresentationState, PresentedTransforms,
-    ScanClock, Stamp, Surface, TextureHandle, Transform, TransformIndex,
+    MaterialHandle, Mesh, Mesh3d, MeshHandle, ScanClock, Stamp, Surface, TextureHandle, Transform,
+    TransformIndex,
 };
 use engine_places::meshes::{Cube, Instances, Tint};
 use engine_places::splines::SplineMesh;
 use glam::Mat4;
-
-use crate::settings::Culling;
-
-pub(crate) type PoseRows = [[f32; 4]; 3];
-
-pub(crate) const IDENTITY_ROWS: PoseRows = [
-    [1.0, 0.0, 0.0, 0.0],
-    [0.0, 1.0, 0.0, 0.0],
-    [0.0, 0.0, 1.0, 0.0],
-];
-
-#[inline]
-pub(crate) fn pose_rows(model: Mat4) -> PoseRows {
-    let rows = model.transpose();
-    [
-        rows.x_axis.to_array(),
-        rows.y_axis.to_array(),
-        rows.z_axis.to_array(),
-    ]
-}
 
 fn draw_class(material: &Material) -> (bool, bool, bool) {
     (
@@ -148,7 +128,6 @@ impl SourceKey {
 
 #[derive(Clone, Copy)]
 struct SlotFrame {
-    pose_revision: u64,
     mesh: u32,
     material: u32,
     source: SourceKey,
@@ -156,7 +135,6 @@ struct SlotFrame {
 
 impl SlotFrame {
     const NEW: Self = Self {
-        pose_revision: 0,
         mesh: NO_SOURCE,
         material: NO_SOURCE,
         source: SourceKey::UNKNOWN,
@@ -175,7 +153,6 @@ pub(crate) struct Snapshot {
     pub textures: Vec<SourceTexture>,
     pub render_candidates: usize,
     pub visible_instances: usize,
-    pub dropped_instances: usize,
     pub missing_assets: usize,
     pub invalid_transforms: usize,
 }
@@ -445,9 +422,7 @@ pub(crate) struct RetainedRender {
     identity: Stamp,
     sequence: u64,
     structure_revision: u64,
-    pose_revision: u64,
     color_revision: u64,
-    caster_revision: u64,
     snapshot: Snapshot,
     owners: Vec<Option<Entity>>,
     frames: Vec<SlotFrame>,
@@ -455,19 +430,15 @@ pub(crate) struct RetainedRender {
     free: Vec<usize>,
     query_slots: Vec<Option<(Entity, usize)>>,
     visible: Vec<usize>,
-    casters: Vec<usize>,
     hints: Vec<TransformIndex>,
     pose_indices: Vec<u32>,
-    pose_changes: Vec<u64>,
-    pose_rows: Vec<PoseRows>,
     color_changes: Vec<u64>,
     asset_revision: Option<(u64, u64)>,
     material_revision: Option<u64>,
     sources: Sources,
     scans: ScanClock,
     missing_sources: usize,
-    gpu: bool,
-    gpu_topology: Option<u64>,
+    topology: Option<u64>,
     tint_count: Option<usize>,
 }
 
@@ -477,9 +448,7 @@ impl Default for RetainedRender {
             identity: Stamp::next(),
             sequence: 0,
             structure_revision: 0,
-            pose_revision: 0,
             color_revision: 0,
-            caster_revision: 0,
             snapshot: Snapshot::default(),
             owners: Vec::new(),
             frames: Vec::new(),
@@ -487,19 +456,15 @@ impl Default for RetainedRender {
             free: Vec::new(),
             query_slots: Vec::new(),
             visible: Vec::new(),
-            casters: Vec::new(),
             hints: Vec::new(),
             pose_indices: Vec::new(),
-            pose_changes: Vec::new(),
-            pose_rows: Vec::new(),
             color_changes: Vec::new(),
             asset_revision: None,
             material_revision: None,
             sources: Sources::default(),
             scans: ScanClock::default(),
             missing_sources: 0,
-            gpu: false,
-            gpu_topology: None,
+            topology: None,
             tint_count: None,
         }
     }
@@ -509,64 +474,46 @@ impl Default for RetainedRender {
 struct Pass {
     structure_changed: bool,
     sources_changed: bool,
-    casters_changed: bool,
     submitted: usize,
-    casters: usize,
     seen: usize,
     resolved: usize,
-    poses: usize,
     colors: usize,
 }
 
 struct Inputs<'a, 'w, 's> {
     query: &'a RenderQuery<'w, 's>,
     globals: &'a GlobalTransforms,
-    presented: &'a PresentedTransforms,
     assets: &'a AssetLibrary,
     cube_mesh: MeshHandle,
-    budget: usize,
     unbuilt: usize,
 }
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "the retained pass reads the scene's drawable entities and the presentation"
+    reason = "the retained pass reads the scene's drawable entities and the assets"
 )]
 pub(crate) fn retain_instances(
     (query, splines): (RenderQuery, UnbuiltSplines),
     changes: SourceChanges,
     (tints, ticks): (Query<(), With<Tint>>, SystemChangeTick),
     globals: Res<GlobalTransforms>,
-    presented: Res<PresentedTransforms>,
-    presentation: Res<PresentationState>,
     assets: Res<AssetLibrary>,
     view: Res<engine_core::View>,
-    culling: Res<Culling>,
     mut retained: ResMut<RetainedRender>,
     mut instances: ResMut<Instances>,
     mut published: Local<Option<(Stamp, u64, u64)>>,
 ) {
-    let gpu = presentation.gpu_pending();
     let tint_count = tints.iter().len();
-    let stamps_changed = gpu && (retained.tint_count != Some(tint_count) || !changes.is_empty());
-    if gpu {
-        retained.tint_count = Some(tint_count);
-    }
+    let stamps_changed = retained.tint_count != Some(tint_count) || !changes.is_empty();
+    retained.tint_count = Some(tint_count);
     let inputs = Inputs {
         query: &query,
         globals: &globals,
-        presented: &presented,
         assets: &assets,
         cube_mesh: assets.cube_mesh(),
-        budget: culling.budget(),
         unbuilt: splines.iter().filter(|mesh3d| unbuilt(mesh3d)).count(),
     };
-    retained.prepare(
-        &inputs,
-        view.view_projection(),
-        (gpu, stamps_changed),
-        ticks,
-    );
+    retained.prepare(&inputs, view.view_projection(), stamps_changed, ticks);
     let key = (
         retained.identity,
         retained.snapshot.source_revision,
@@ -599,10 +546,6 @@ impl RetainedRender {
         self.snapshot.source_revision
     }
 
-    pub(crate) fn pose_revision(&self) -> u64 {
-        self.pose_revision
-    }
-
     pub(crate) fn color_revision(&self) -> u64 {
         self.color_revision
     }
@@ -611,38 +554,14 @@ impl RetainedRender {
         &self.visible
     }
 
-    pub(crate) fn model(&self, slot: usize, presented: &PresentedTransforms) -> Mat4 {
+    pub(crate) fn model(&self, slot: usize, globals: &GlobalTransforms) -> Mat4 {
         self.owners
             .get(slot)
             .copied()
             .flatten()
-            .and_then(|entity| presented.get(entity))
-            .and_then(|pose| pose.matrix())
+            .and_then(|entity| globals.get(entity))
+            .and_then(|global| global.matrix())
             .unwrap_or(Mat4::IDENTITY)
-    }
-
-    pub(crate) fn casters(&self) -> &[usize] {
-        if self.gpu {
-            &self.visible
-        } else {
-            &self.casters
-        }
-    }
-
-    pub(crate) fn caster_revision(&self) -> u64 {
-        if self.gpu {
-            self.structure_revision
-        } else {
-            self.caster_revision
-        }
-    }
-
-    pub(crate) fn pose_changes(&self) -> &[u64] {
-        &self.pose_changes
-    }
-
-    pub(crate) fn pose_rows(&self) -> &[PoseRows] {
-        &self.pose_rows
     }
 
     pub(crate) fn slot_nodes(&self) -> &[u32] {
@@ -651,10 +570,6 @@ impl RetainedRender {
 
     pub(crate) fn color_changes(&self) -> &[u64] {
         &self.color_changes
-    }
-
-    pub(crate) fn gpu(&self) -> bool {
-        self.gpu
     }
 
     fn drawn_slots(&self) -> Vec<(Entity, u32)> {
@@ -707,7 +622,6 @@ impl RetainedRender {
                 self.snapshot.sourced[index] = false;
                 self.hints[index] = TransformIndex::default();
                 self.pose_indices[index] = u32::MAX;
-                self.pose_changes[index] = 0;
                 self.color_changes[index] = 0;
                 index
             } else {
@@ -737,8 +651,6 @@ impl RetainedRender {
             self.snapshot.instances.reserve_exact(capacity - index);
             self.hints.reserve_exact(capacity - index);
             self.pose_indices.reserve_exact(capacity - index);
-            self.pose_changes.reserve_exact(capacity - index);
-            self.pose_rows.reserve_exact(capacity - index);
             self.color_changes.reserve_exact(capacity - index);
         }
         self.owners.push(Some(entity));
@@ -752,8 +664,6 @@ impl RetainedRender {
         });
         self.hints.push(TransformIndex::default());
         self.pose_indices.push(u32::MAX);
-        self.pose_changes.push(0);
-        self.pose_rows.push(IDENTITY_ROWS);
         self.color_changes.push(0);
         index
     }
@@ -772,16 +682,11 @@ impl RetainedRender {
         &mut self,
         inputs: &Inputs<'_, '_, '_>,
         view_projection: Mat4,
-        (gpu, stamps_changed): (bool, bool),
+        stamps_changed: bool,
         ticks: SystemChangeTick,
     ) {
         let _profile = engine_core::profile::span("cpu", "extraction_retained_updates_culling");
         self.sequence = self.sequence.saturating_add(1);
-        if self.gpu && !gpu {
-            for frame in &mut self.frames {
-                frame.pose_revision = 0;
-            }
-        }
         let scan_tick = ticks.this_run();
         let aged = self.scans.aged(scan_tick);
         self.scans.scanned(scan_tick);
@@ -801,9 +706,7 @@ impl RetainedRender {
         self.material_revision = Some(material_revision);
         self.snapshot.view_projection = view_projection;
         let total = inputs.query.iter().len() - inputs.unbuilt;
-        if gpu
-            && self.gpu
-            && self.gpu_topology == Some(inputs.globals.topology_revision())
+        if self.topology == Some(inputs.globals.topology_revision())
             && !aged
             && !assets_changed
             && !stamps_changed
@@ -815,7 +718,7 @@ impl RetainedRender {
             return;
         }
         engine_core::profile::counter("extraction.gpu_structure_reused", 0.0);
-        self.begin_pass(total, gpu, inputs.budget);
+        self.begin_pass(total);
         let mut pass = Pass {
             structure_changed: assets_changed,
             sources_changed: assets_changed,
@@ -860,13 +763,9 @@ impl RetainedRender {
                 );
                 self.apply_source(index, resolved, &mut pass);
             }
-            if gpu {
-                self.list_candidate(entity, index, inputs.globals, &mut pass);
-            } else {
-                self.list_presented(entity, index, inputs, &mut pass);
-            }
+            self.list_candidate(entity, index, inputs.globals, &mut pass);
         }
-        self.finish_pass(pass, assets_changed, gpu, inputs.globals.topology_revision());
+        self.finish_pass(pass, assets_changed, inputs.globals.topology_revision());
     }
 
     fn refresh_replaced(&mut self, inputs: &Inputs<'_, '_, '_>, replaced: &[MaterialHandle]) -> bool {
@@ -921,23 +820,21 @@ impl RetainedRender {
         true
     }
 
-    fn begin_pass(&mut self, total: usize, gpu: bool, budget: usize) {
+    fn begin_pass(&mut self, total: usize) {
         let hint_count = total.min(MAX_TRANSFORM_NODES);
         if self.query_slots.capacity() < hint_count {
             self.query_slots
                 .reserve_exact(hint_count.saturating_sub(self.query_slots.len()));
         }
         self.query_slots.resize(hint_count, None);
-        let output_bound = if gpu { total } else { total.min(budget) }.min(MAX_TRANSFORM_NODES);
-        if self.visible.capacity() < output_bound {
+        if self.visible.capacity() < hint_count {
             self.visible
-                .reserve_exact(output_bound.saturating_sub(self.visible.len()));
+                .reserve_exact(hint_count.saturating_sub(self.visible.len()));
         }
         self.snapshot.render_candidates = total;
         self.snapshot.visible_instances = 0;
         self.snapshot.invalid_transforms = 0;
         self.snapshot.missing_assets = 0;
-        self.snapshot.dropped_instances = 0;
         self.sources.mesh_used.fill(false);
         self.sources.material_used.fill(false);
         let visited_words = (self.owners.len() + total)
@@ -1027,53 +924,6 @@ impl RetainedRender {
     }
 
     #[inline]
-    fn list_presented(
-        &mut self,
-        entity: Entity,
-        index: usize,
-        inputs: &Inputs<'_, '_, '_>,
-        pass: &mut Pass,
-    ) {
-        let pose = inputs.presented.get_indexed(entity, &mut self.hints[index]);
-        let Some((model, pose_revision)) =
-            pose.and_then(|pose| Some((pose.matrix()?, pose.revision())))
-        else {
-            self.snapshot.invalid_transforms += 1;
-            return;
-        };
-        self.pose_indices[index] = self.hints[index].index() as u32;
-        let frame = &mut self.frames[index];
-        let pose_changed =
-            frame.pose_revision != pose_revision || pose_revision == 0 || pose_revision == u64::MAX;
-        if pose_changed {
-            frame.pose_revision = pose_revision;
-            self.pose_changes[index] = self.sequence;
-            self.pose_rows[index] = pose_rows(model);
-            pass.poses += 1;
-        }
-        if frame.mesh == NO_SOURCE {
-            self.snapshot.missing_assets += 1;
-            return;
-        }
-        if let Some(previous) = self.casters.get_mut(pass.casters) {
-            pass.casters_changed |= *previous != index;
-            *previous = index;
-        } else {
-            self.casters.push(index);
-            pass.casters_changed = true;
-        }
-        pass.casters += 1;
-        let frame = *frame;
-        self.snapshot.visible_instances += 1;
-        if pass.submitted == inputs.budget {
-            self.snapshot.dropped_instances += 1;
-            return;
-        }
-        self.submit(index, pass);
-        self.mark_used(frame);
-    }
-
-    #[inline]
     fn submit(&mut self, index: usize, pass: &mut Pass) {
         if let Some(previous) = self.visible.get_mut(pass.submitted) {
             pass.structure_changed |= *previous != index;
@@ -1093,19 +943,12 @@ impl RetainedRender {
         }
     }
 
-    fn finish_pass(&mut self, mut pass: Pass, assets_changed: bool, gpu: bool, topology: u64) {
+    fn finish_pass(&mut self, mut pass: Pass, assets_changed: bool, topology: u64) {
         if pass.submitted != self.visible.len() {
             self.visible.truncate(pass.submitted);
             pass.structure_changed = true;
         }
-        if !gpu && pass.casters != self.casters.len() {
-            self.casters.truncate(pass.casters);
-            pass.casters_changed = true;
-        }
         let sequence = self.sequence;
-        if pass.casters_changed {
-            self.caster_revision = sequence;
-        }
         if pass.seen != self.snapshot.entities.len() {
             self.free
                 .reserve_exact(self.owners.len().saturating_sub(self.free.len()));
@@ -1130,14 +973,10 @@ impl RetainedRender {
         if pass.sources_changed || published == Published::Sources {
             self.snapshot.source_revision = sequence;
         }
-        if pass.poses != 0 {
-            self.pose_revision = sequence;
-        }
         if pass.colors != 0 {
             self.color_revision = sequence;
         }
-        self.gpu = gpu;
-        self.gpu_topology = gpu.then_some(topology);
+        self.topology = Some(topology);
         self.missing_sources = self.snapshot.missing_assets;
     }
 }

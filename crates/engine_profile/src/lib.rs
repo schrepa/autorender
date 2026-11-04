@@ -24,7 +24,7 @@ mod collector;
 mod rows;
 #[cfg(feature = "enabled")]
 pub use allocator::{
-    AllocationSnapshot, SAMPLE_EVERY, TrackingAllocator, allocation_snapshot, sample_allocations,
+    ALWAYS_SAMPLED_BYTES, AllocationSnapshot, SAMPLE_EVERY, TrackingAllocator, allocation_snapshot, sample_allocations,
 };
 #[cfg(feature = "bricks")]
 pub use bricks::{

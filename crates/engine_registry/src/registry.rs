@@ -142,7 +142,7 @@ impl Registry {
         }
     }
 
-    pub fn order(&mut self, first: &'static str, then: &'static str) {
+    fn order(&mut self, first: &'static str, then: &'static str) {
         if !self.orders.contains(&(first, then)) {
             self.orders.push((first, then));
         }
@@ -438,6 +438,7 @@ impl Registry {
         if !world.contains_resource::<JobQueue>() {
             world.init_resource::<JobQueue>();
         }
+        self.order_games();
         self.order_schedules(world, schedules);
         self.add_systems(world);
         let driver = self.driver(world, refresh);
@@ -679,6 +680,29 @@ impl Registry {
             }
         }
         Gates::new(parents, bricks)
+    }
+
+    fn order_games(&mut self) {
+        let games: Vec<&'static str> = self
+            .listed
+            .iter()
+            .copied()
+            .filter(|&package| self.brick(package).is_some_and(BrickRecord::game))
+            .collect();
+        let engine: Vec<&'static str> = self
+            .bricks
+            .iter()
+            .filter(|record| !record.game())
+            .map(|record| record.package)
+            .collect();
+        for (at, &game) in games.iter().enumerate() {
+            for &brick in &engine {
+                self.order(brick, game);
+            }
+            for &later in &games[at + 1..] {
+                self.order(game, later);
+            }
+        }
     }
 
     fn order_schedules(&self, world: &mut World, schedules: &[InternedScheduleLabel]) {

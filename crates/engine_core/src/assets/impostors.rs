@@ -16,8 +16,8 @@ use glam::Vec3;
 use super::AssetResidency;
 use crate::collections::{HashMap, HashSet};
 use crate::{
-    CookMode, Detail, Error, ErrorCode, Job, JobCx, JobKind, Jobs, PresentationState, Records,
-    Slot, Source, Ticket, VIEW_JOBS, content_hash, job_priority,
+    CookMode, Detail, Error, ErrorCode, Job, JobCx, JobKind, Jobs, Records, Slot, Source, Ticket,
+    VIEW_JOBS, content_hash, job_priority,
 };
 
 pub const IMPOSTOR_MIN_TRIANGLES: usize = 64;
@@ -274,7 +274,7 @@ fn identity(shape: AtlasShape, format: AtlasFormat, content: (u128, u128)) -> Im
     bytes
 }
 
-static RENDER: Source = Source::generated("engine_render", crate::sources::RENDER, &[]);
+static RENDER: Source = Source::generated("engine_render", false, crate::sources::RENDER, &[]);
 
 #[doc(hidden)]
 pub static IMPOSTOR: JobKind = JobKind::new("engine::impostor", &RENDER, made_on_the_gpu);
@@ -293,7 +293,7 @@ pub struct ImpostorPolicy {
 impl Default for ImpostorPolicy {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             pixels: 128.0,
             max: None,
         }
@@ -610,7 +610,7 @@ pub enum AtlasWork {
     DropTargets,
 }
 
-type SettleKey = (u64, u64, u64, ImpostorPolicyKey, bool, bool, u64);
+type SettleKey = (u64, u64, u64, ImpostorPolicyKey, bool, u64);
 
 type ImpostorPolicyKey = (bool, u32, Option<u32>);
 
@@ -1077,7 +1077,6 @@ struct Frame {
     policy: ImpostorPolicy,
     detail: bool,
     cooking: bool,
-    gpu: bool,
 }
 
 type Sources<'a> = (&'a AssetLibrary, &'a AssetResidency);
@@ -1096,7 +1095,6 @@ pub(super) fn settle_impostors(world: &mut World) {
             .unwrap_or_default(),
         detail: world.resource::<Detail>().enabled,
         cooking: world.resource::<CookMode>().cooking,
-        gpu: world.resource::<PresentationState>().gpu_pending(),
     };
     if !world.contains_resource::<ImpostorInputs>() {
         let state = SystemState::<Inputs>::new(world);
@@ -1145,7 +1143,6 @@ fn settle_key(book: &Book, frame: &Frame, (library, residency): Sources<'_>) -> 
             frame.policy.max,
         ),
         frame.detail,
-        frame.gpu,
         library.material_revision(),
     )
 }
@@ -1350,7 +1347,7 @@ fn settle(
     let shown = frame.detail && frame.policy.enabled;
     if !shown {
         book.release(cx);
-    } else if frame.gpu {
+    } else {
         book.enforce_budget(frame.policy.max, cx.cooking);
     }
     let mut written = Vec::with_capacity(asked.len());
@@ -1360,7 +1357,7 @@ fn settle(
             book,
             cx,
             sources,
-            (&**asks, shown && frame.gpu, frame.policy.max),
+            (&**asks, shown, frame.policy.max),
             &mut settled,
         );
         book.drawn |= book.capacity > 0 && !settled.records.is_empty();

@@ -523,6 +523,7 @@ fn candidate(source: &Value) -> Value {
     let mut candidate = source.clone();
     candidate["revision"] = json!(number(&source["revision"]) as u64 + 1);
     candidate["environment"] = json!({
+        "haze": { "enabled": true },
         "sun": { "preset": "dusk" },
         "sky_light": { "preset": "dusk" },
         "surface_light": { "preset": "dusk" },

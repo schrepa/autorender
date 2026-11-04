@@ -372,7 +372,6 @@ pub(crate) struct Queued {
     pub(crate) cleared: Vec<u32>,
     pub(crate) ending: Vec<(Copied, Copied, Vec<crate::CopyRegion>)>,
     pub(crate) immediate: u32,
-    pub(crate) staging: crate::staging::StagingRing,
 }
 
 #[derive(Default)]
@@ -496,12 +495,6 @@ pub(crate) enum RawShape {
         indices: Option<u32>,
         args: u32,
         offset: u64,
-    },
-    Mesh {
-        mesh: MeshHandle,
-        material: Option<MaterialHandle>,
-        instances: Range<u32>,
-        streams: Streams,
     },
     MeshIndirect {
         mesh: MeshHandle,
@@ -1275,41 +1268,6 @@ impl Run {
             return;
         }
         crate::gpu_calls::upload_buffer(&self.queue, made, offset, bytes);
-    }
-
-    pub(crate) fn write_staged(
-        &mut self,
-        buffer: u32,
-        (bytes, stride): (&[u8], usize),
-        ranges: &[Range<usize>],
-    ) -> bool {
-        let Some(Some((made, size))) = self.buffers.get(buffer as usize) else {
-            let error = fault(self.path("write_staged"), ErrorCode::InvalidValue);
-            self.fault(error);
-            return false;
-        };
-        let reach = ranges
-            .iter()
-            .map(|range| range.end * stride)
-            .max()
-            .unwrap_or(0);
-        if reach as u64 > *size || reach > bytes.len() || stride % 4 != 0 {
-            let error = fault(self.path("write_staged"), ErrorCode::OutOfRange);
-            self.fault(error);
-            return false;
-        }
-        let made = made.clone();
-        let device = &self.device;
-        let encoder = self.queued.before.get_or_insert_with(|| {
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("engine/pose-staging-copies"),
-            })
-        });
-        let staged = self
-            .queued
-            .staging
-            .record(device, encoder, &made, (bytes, stride), ranges);
-        staged == crate::staging::Staged::Recorded
     }
 
     fn written_texture(&self, texture: u32) -> Option<&Allocated> {

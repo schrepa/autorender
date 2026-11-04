@@ -230,7 +230,7 @@ impl<G: Game> Offscreen<G> {
         stem: &str,
         context: Value,
     ) -> engine::Result<engine_profiler::ProfileFiles> {
-        capture.finish(&mut self.host, folder, stem, context)
+        capture.finish(&mut self.host, folder, stem, context, Value::Null)
     }
 
     pub fn exchange_jobs(&mut self) {

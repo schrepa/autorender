@@ -70,7 +70,7 @@ pub use nearest::Nearest;
 pub use provided::*;
 pub use records::*;
 pub use scene::*;
-pub use section::{Cut, Explain, Operation, Readback, Section};
+pub use section::{Cut, Explain, Operation, RESERVED_REPLY_KEYS, Readback, Section};
 pub use services::{
     Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, PartFaults, Placed,
     Placement, Poses, Prepared, Reach, SceneBuffers, SceneComponents, SceneContext, SceneCx,
@@ -148,46 +148,17 @@ pub struct Engine {
     gates: Option<GateDriver>,
     facts: Option<FrameFacts>,
     finalized: bool,
-    tick_ahead: TickAhead,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TickAhead {
-    None,
-    InFlight,
-    Hidden { gathered: bool },
-    Revealed,
-}
-
-impl TickAhead {
-    fn presents_previous(self) -> Option<bool> {
-        match self {
-            Self::InFlight => Some(false),
-            Self::Hidden { gathered } => Some(gathered),
-            Self::None | Self::Revealed => None,
-        }
-    }
 }
 
 #[doc(hidden)]
 #[derive(Clone, Copy)]
 pub struct RenderFrame<'a> {
     world: &'a World,
-    gpu: bool,
 }
 
 impl<'a> RenderFrame<'a> {
     pub fn world(self) -> &'a World {
         self.world
-    }
-
-    pub fn gpu(self) -> Option<GpuPresentation<'a>> {
-        if !self.gpu {
-            return None;
-        }
-        let poses = self.world.get_resource::<PresentedTransforms>()?;
-        let hierarchy = self.world.get_resource::<GlobalTransforms>()?;
-        Some(poses.gpu_presentation(hierarchy))
     }
 }
 
@@ -278,22 +249,10 @@ fn publish_poses(world: &mut World) {
         return;
     };
     table.clear();
-    let pose = |matrix: Option<glam::Mat4>| matrix.map(glam::Affine3A::from_mat4);
-    match world.resource::<PresentationState>().mode() {
-        PresentationMode::Interpolated { .. } => {
-            let globals = world.resource::<GlobalTransforms>();
-            table.reserve(globals.len());
-            for (entity, global) in globals.iter() {
-                table.set(entity, pose(global.matrix()));
-            }
-        }
-        PresentationMode::Current => {
-            let presented = world.resource::<PresentedTransforms>();
-            table.reserve(presented.len());
-            for (entity, transform) in presented.iter() {
-                table.set(entity, pose(transform.matrix()));
-            }
-        }
+    let globals = world.resource::<GlobalTransforms>();
+    table.reserve(globals.len());
+    for (entity, global) in globals.iter() {
+        table.set(entity, global.matrix().map(glam::Affine3A::from_mat4));
     }
     modify(world, |poses: &mut Poses| poses.hold(table));
 }
@@ -373,7 +332,6 @@ impl Engine {
             gates: None,
             facts: None,
             finalized: false,
-            tick_ahead: TickAhead::None,
         }
     }
 
@@ -477,9 +435,6 @@ impl Engine {
         self.finalize();
         let delta_seconds = clock::sanitize_delta(delta_seconds);
         let rate = self.time_rate();
-        if rate == 0.0 {
-            self.forget_ticks_ahead();
-        }
         let report = self.clock.advance(delta_seconds * rate);
         let shown = delta_seconds.min(0.25);
         self.run_frame(report.fixed_steps, shown, shown * rate);
@@ -494,7 +449,6 @@ impl Engine {
     pub fn step_fixed(&mut self, ticks: u32) -> Result<FrameReport, Error> {
         check_dev_ticks(ticks)?;
         self.finalize();
-        self.forget_ticks_ahead();
         self.clock.reset();
         let delta_seconds = (f64::from(ticks) * self.clock.step_seconds()).min(0.25);
         let stopped = self.time_rate() == 0.0;
@@ -612,23 +566,7 @@ impl Engine {
     fn run_frame(&mut self, fixed_steps: u32, delta_seconds: f64, game_seconds: f64) {
         let _profile = engine_profile::span("cpu", "simulation_frame");
         self.run_gates();
-        let mut fixed_steps = fixed_steps;
-        if fixed_steps > 0 {
-            match self.tick_ahead {
-                TickAhead::None => {}
-                TickAhead::InFlight => {
-                    self.finish_pending_tick();
-                    fixed_steps -= 1;
-                }
-                TickAhead::Hidden { .. } | TickAhead::Revealed => {
-                    self.tick_ahead = TickAhead::None;
-                    fixed_steps -= 1;
-                }
-            }
-        }
-        if self.tick_ahead != TickAhead::InFlight {
-            self.refresh_transforms();
-        }
+        self.refresh_transforms();
         modify(self.app.world_mut(), |frame: &mut FrameTime| {
             frame.delta_seconds = delta_seconds as f32;
             frame.elapsed_seconds += delta_seconds;
@@ -645,69 +583,9 @@ impl Engine {
             let _profile = engine_profile::span("ecs", "Presentation");
             self.app.world_mut().run_schedule(Presentation);
         }
-        if self.tick_ahead != TickAhead::InFlight {
-            self.refresh_transforms();
-        }
+        self.refresh_transforms();
         self.app.world_mut().clear_trackers();
         self.check_gate_ticks();
-    }
-
-    pub fn run_ahead(&mut self, predicted_delta_seconds: f64) -> bool {
-        self.finalize();
-        let rate = self.time_rate();
-        if rate == 0.0 {
-            return false;
-        }
-        let in_flight = match self.tick_ahead {
-            TickAhead::None => false,
-            TickAhead::InFlight => true,
-            TickAhead::Hidden { .. } | TickAhead::Revealed => return false,
-        };
-        let predicted = clock::sanitize_delta(predicted_delta_seconds).min(0.25) * rate;
-        let accumulator = self.clock.accumulator_seconds();
-        let step = self.clock.step_seconds();
-        if in_flight {
-            if accumulator + predicted * 1.25 < step {
-                return false;
-            }
-            self.complete_pending_tick();
-            let _profile = engine_profile::span("cpu", "gather_ahead");
-            let gathered = interpolation::gather_ahead(self.app.world_mut());
-            self.tick_ahead = TickAhead::Hidden { gathered };
-            return true;
-        }
-        if accumulator + predicted * 2.25 < step {
-            return false;
-        }
-        let _profile = engine_profile::span("cpu", "fixed_tick_begin");
-        self.begin_fixed_tick();
-        self.tick_ahead = TickAhead::InFlight;
-        true
-    }
-
-    pub fn complete_pending_tick(&mut self) {
-        if self.tick_ahead == TickAhead::InFlight {
-            self.finish_pending_tick();
-            self.tick_ahead = TickAhead::Hidden { gathered: false };
-        }
-    }
-
-    fn forget_ticks_ahead(&mut self) {
-        self.complete_pending_tick();
-        self.tick_ahead = TickAhead::None;
-    }
-
-    pub fn reveal_ticks_ahead(&mut self) {
-        if let TickAhead::Hidden { .. } = self.tick_ahead {
-            self.tick_ahead = TickAhead::Revealed;
-        }
-    }
-
-    pub fn tick_completed_ahead(&self) -> bool {
-        matches!(
-            self.tick_ahead,
-            TickAhead::Hidden { .. } | TickAhead::Revealed
-        )
     }
 
     pub fn gpu_current(&self) -> Option<GpuCurrent<'_>> {
@@ -717,19 +595,8 @@ impl Engine {
             .gpu_current(world.get_resource::<GlobalTransforms>()?)
     }
 
-    fn finish_pending_tick(&mut self) {
-        let _profile = engine_profile::span("cpu", "fixed_tick_end");
-        self.tick_ahead = TickAhead::None;
-        self.finish_fixed_tick();
-    }
-
     fn run_fixed_tick(&mut self) {
         let _profile = engine_profile::span("cpu", "fixed_tick");
-        self.begin_fixed_tick();
-        self.finish_fixed_tick();
-    }
-
-    fn begin_fixed_tick(&mut self) {
         interpolation::begin_tick(self.app.world_mut());
         let step = self.clock.step_seconds();
         modify(self.app.world_mut(), |time: &mut FixedTime| {
@@ -753,9 +620,6 @@ impl Engine {
             self.app.world_mut().run_schedule(FixedSimulation);
         }
         self.resets.snap(self.app.world_mut());
-    }
-
-    fn finish_fixed_tick(&mut self) {
         self.refresh_transforms();
         if has_systems(self.app.world(), FixedPostSimulation) {
             {
@@ -769,7 +633,6 @@ impl Engine {
     }
 
     pub fn reset_clock(&mut self) {
-        self.forget_ticks_ahead();
         self.clock.reset();
         let world = self.app.world_mut();
         reset_all_interpolation(world);
@@ -788,39 +651,18 @@ impl Engine {
         self.app.world().resource::<PresentationState>()
     }
 
-    pub fn extract_frame(&mut self, aspect: f32) -> RenderFrame<'_> {
+    pub fn extract_frame(&mut self, aspect: f32, alpha: f32) -> Result<RenderFrame<'_>, Error> {
         let _profile = engine_profile::span("cpu", "extraction");
+        interpolation::check_alpha(alpha)?;
         self.finalize();
-        self.complete_pending_tick();
         self.run_gates();
-        self.mark_presented_time(None);
+        self.mark_presented_time(alpha);
         self.sync_world();
         self.refresh_transforms();
-        interpolation::prepare(self.app.world_mut());
-        self.sync_view(aspect, true);
-        RenderFrame {
-            world: self.app.world(),
-            gpu: false,
-        }
-    }
-
-    pub fn extract_gpu_frame(&mut self, aspect: f32, alpha: f32) -> Result<RenderFrame<'_>, Error> {
-        let _profile = engine_profile::span("cpu", "extraction");
-        PresentationMode::Interpolated { alpha }.validate()?;
-        self.finalize();
-        self.run_gates();
-        self.mark_presented_time(Some(alpha));
-        if let Some(gathered) = self.tick_ahead.presents_previous() {
-            interpolation::present_gpu_fraction(self.app.world_mut(), alpha, gathered);
-        } else {
-            self.sync_world();
-            self.refresh_transforms();
-            interpolation::prepare_gpu(self.app.world_mut(), alpha);
-        }
-        self.sync_view(aspect, false);
+        interpolation::prepare(self.app.world_mut(), alpha);
+        self.sync_view(aspect);
         Ok(RenderFrame {
             world: self.app.world(),
-            gpu: true,
         })
     }
 
@@ -835,12 +677,9 @@ impl Engine {
         self.app.world_mut().run_schedule(WorldSync);
     }
 
-    fn sync_view(&mut self, aspect: f32, exact: bool) {
+    fn sync_view(&mut self, aspect: f32) {
         let _profile = engine_profile::span("ecs", "ViewSync");
-        let facts = FrameFacts {
-            exact,
-            ..self.facts.unwrap_or_else(|| self.viewport_facts())
-        };
+        let facts = self.facts.unwrap_or_else(|| self.viewport_facts());
         let world = self.app.world_mut();
         publish_poses(world);
         publish_view(world, aspect, facts);
@@ -858,18 +697,12 @@ impl Engine {
         }
     }
 
-    fn mark_presented_time(&mut self, alpha: Option<f32>) {
-        let step = self.clock.step_seconds();
-        let behind = alpha.map_or(0.0, |alpha| (1.0 - f64::from(alpha)) * step);
-        let ahead = if self.tick_ahead.presents_previous().is_some() {
-            step
-        } else {
-            0.0
-        };
+    fn mark_presented_time(&mut self, alpha: f32) {
+        let behind = (1.0 - f64::from(alpha)) * self.clock.step_seconds();
         let world = self.app.world_mut();
         let fixed = world.resource::<FixedTime>().elapsed_seconds;
         modify(world, |frame: &mut FrameTime| {
-            frame.presented_seconds = fixed - behind - ahead;
+            frame.presented_seconds = fixed - behind;
         });
     }
 

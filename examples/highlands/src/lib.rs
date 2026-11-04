@@ -25,7 +25,7 @@ pub use land::RockMaps;
 pub use options::{Options, controls, parameters};
 
 pub fn bricks<L: Listing>(list: L) -> L {
-    engine_standard::standard(list)
+    engine_standard::everything(list)
         .with::<FlyCameraBrick>()
         .with::<bricks::pond::PondBrick>()
         .with::<bricks::game::HighlandsBrick>()

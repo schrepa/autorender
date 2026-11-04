@@ -3,8 +3,7 @@ use engine_core::collections::HashMap;
 use engine_core::glam::{Quat, Vec3};
 use engine_core::{
     Engine, GlobalTransforms, InterpolateTransform, Listing, Material, MaterialHandle, Mesh,
-    Mesh3d, MeshHandle, Parent, PresentedTransforms, Schedule, Transform, reset_interpolation,
-    set_parent, set_parents,
+    Mesh3d, MeshHandle, Parent, Schedule, Transform, reset_interpolation, set_parent, set_parents,
 };
 use engine_meshes::MeshesBrick;
 use engine_places::meshes::{Cube, Tint};
@@ -398,9 +397,8 @@ fn rebuild(
 
 struct Frame {
     globals: HashMap<Entity, Option<[u32; 16]>>,
-    presented: HashMap<Entity, Option<[u32; 16]>>,
     instances: Vec<String>,
-    counts: [usize; 3],
+    counts: [usize; 2],
 }
 
 fn bits(matrix: engine_core::glam::Mat4) -> [u32; 16] {
@@ -408,16 +406,14 @@ fn bits(matrix: engine_core::glam::Mat4) -> [u32; 16] {
 }
 
 fn frame(engine: &mut Engine) -> Result<Frame, String> {
-    let world = engine.extract_frame(ASPECT).world();
+    let world = engine
+        .extract_frame(ASPECT, 1.0)
+        .map_err(|error| format!("extract_frame: {error}"))?
+        .world();
     let globals = world
         .resource::<GlobalTransforms>()
         .iter()
         .map(|(entity, global)| (entity, global.matrix().map(bits)))
-        .collect();
-    let presented = world
-        .resource::<PresentedTransforms>()
-        .iter()
-        .map(|(entity, pose)| (entity, pose.matrix().map(bits)))
         .collect();
     let retained = engine::host::run_operation(engine.app.world_mut(), RETAINED, json!({}))
         .map_err(|error| format!("{RETAINED}: {error}"))?;
@@ -437,8 +433,7 @@ fn frame(engine: &mut Engine) -> Result<Frame, String> {
     };
     Ok(Frame {
         globals,
-        presented,
-        counts: [instances.len(), count("dropped")?, count("missing")?],
+        counts: [instances.len(), count("missing")?],
         instances,
     })
 }
@@ -452,35 +447,30 @@ fn readable(bits: &Option<[u32; 16]>) -> String {
 
 fn differences(living: &Frame, fresh: &Frame, map: &HashMap<Entity, Entity>) -> Vec<Value> {
     let mut found = Vec::new();
-    for (what, living, fresh) in [
-        ("world_matrix", &living.globals, &fresh.globals),
-        ("presented_matrix", &living.presented, &fresh.presented),
-    ] {
-        if living.len() != fresh.len() {
+    if living.globals.len() != fresh.globals.len() {
+        found.push(json!({
+            "part": "world_matrix",
+            "check": "entity_count",
+            "living": living.globals.len(),
+            "fresh": fresh.globals.len(),
+        }));
+    }
+    for (entity, value) in &living.globals {
+        let other = map.get(entity).and_then(|entity| fresh.globals.get(entity));
+        if other != Some(value) {
+            let other = other.map_or_else(|| "none".to_owned(), readable);
             found.push(json!({
-                "part": what,
-                "check": "entity_count",
-                "living": living.len(),
-                "fresh": fresh.len(),
+                "part": "world_matrix",
+                "entity": format!("{entity:?}"),
+                "living": readable(value),
+                "fresh": other,
             }));
-        }
-        for (entity, value) in living {
-            let other = map.get(entity).and_then(|entity| fresh.get(entity));
-            if other != Some(value) {
-                let other = other.map_or_else(|| "none".to_owned(), readable);
-                found.push(json!({
-                    "part": what,
-                    "entity": format!("{entity:?}"),
-                    "living": readable(value),
-                    "fresh": other,
-                }));
-            }
         }
     }
     if living.counts != fresh.counts {
         found.push(json!({
             "part": "snapshot_counts",
-            "fields": ["instances", "dropped", "missing"],
+            "fields": ["instances", "missing"],
             "living": living.counts,
             "fresh": fresh.counts,
         }));
@@ -582,7 +572,9 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
             ("after", tick),
         );
         let Some((mut engine, _, map)) = fresh else {
-            living.extract_frame(ASPECT);
+            living
+                .extract_frame(ASPECT, 1.0)
+                .map_err(|error| format!("extract_frame: {error}"))?;
             continue;
         };
         checks += 1;

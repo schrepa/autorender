@@ -219,7 +219,7 @@ fn clouds(session: &mut dyn SmokeSession) -> Checked<()> {
     smoke_eq!(
         &clouded["cloud_stats"]["rows"],
         &json!(256),
-        "exact_frames_march_the_whole_dome"
+        "a_new_layer_marches_the_whole_dome"
     );
     let read = inspect(session, "clouds")?;
     let wanted = json!(0.6);
@@ -372,7 +372,8 @@ fn sky(session: &mut dyn SmokeSession) -> Checked<Value> {
         "the_night_sky_shows_its_stars"
     );
     let haze = inspect(session, "haze")?;
-    smoke_eq!(&haze["enabled"], &json!(true), "haze_is_on");
+    smoke_eq!(&haze["enabled"], &json!(false), "haze_is_off_by_default");
+    environment(session, json!({"haze": {"enabled": true}}))?;
     environment(
         session,
         json!({"night_sky": {"stars": 0.0, "moon": 0.0, "cirrus": 0.0}}),

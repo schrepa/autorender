@@ -68,6 +68,7 @@ fn document(hiker: bool) -> Value {
         ],
         "meshes": [{"id": "cube", "source": {"kind": "cube"}}, ball()],
         "environment": {
+            "impostors": {"enabled": true},
             "ground_cover": {"looks": {"meadow": {"density": 60.0}}},
             "scatter": {"looks": [{"mesh": "cube", "lods": [{"mesh": "cube", "error": 0.0625}], "sway": 0.5}]},
         },

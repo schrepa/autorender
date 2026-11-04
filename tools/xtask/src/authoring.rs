@@ -66,7 +66,7 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
     let repository = crate::rules::repository(root)?;
     let bricks = engine_checks::bricks::bricks_json(
         repository,
-        engine_standard::standard,
+        engine_standard::everything,
         &mut crate::bricks::standard_engine().map_err(|error| error.to_string())?,
     )?;
     let engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;

@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -13,6 +14,8 @@ use winit::window::WindowId;
 use crate::host_error;
 use crate::input::Input;
 use crate::jobs::{JobOptions, JobPool};
+#[cfg(feature = "profiling")]
+use crate::live::LiveProfile;
 
 #[derive(Clone, Debug)]
 pub struct Window {
@@ -24,6 +27,7 @@ pub struct Window {
     pub settings: HostSettings,
     pub measure: Option<Measure>,
     pub flight: Option<Flight>,
+    pub profile: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -66,6 +70,7 @@ impl Window {
             settings: HostSettings::default(),
             measure: None,
             flight: None,
+            profile: None,
         }
     }
 }
@@ -121,6 +126,8 @@ struct Running<G: Game> {
     tracked: usize,
     steps: u32,
     render_size: (u32, u32),
+    #[cfg(feature = "profiling")]
+    profile: Option<LiveProfile>,
 }
 
 impl<'a, G: Game> App<'a, G> {
@@ -129,6 +136,10 @@ impl<'a, G: Game> App<'a, G> {
         event_loop: &ActiveEventLoop,
         (bricks, build): Build<'a, G>,
     ) -> engine::Result<Running<G>> {
+        #[cfg(feature = "profiling")]
+        if self.options.profile.is_some() {
+            engine_profiler::sample_heap_from_launch();
+        }
         let attributes = winit::window::Window::default_attributes()
             .with_title(&self.options.title)
             .with_active(self.options.flight.is_none());
@@ -164,6 +175,11 @@ impl<'a, G: Game> App<'a, G> {
         if self.options.measure.is_none() && self.options.flight.is_none() {
             self.input.connect_pads();
         }
+        #[cfg(feature = "profiling")]
+        let profile = match &self.options.profile {
+            Some(folder) => Some(LiveProfile::start(&mut host, folder.clone())?),
+            None => None,
+        };
         Ok(Running {
             window,
             host,
@@ -179,6 +195,8 @@ impl<'a, G: Game> App<'a, G> {
             tracked: 0,
             steps: 0,
             render_size: (0, 0),
+            #[cfg(feature = "profiling")]
+            profile,
         })
     }
 }
@@ -205,6 +223,10 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
         let Some(running) = &mut self.running else {
             return;
         };
+        #[cfg(feature = "profiling")]
+        if let Some(profile) = &mut running.profile {
+            profile.noted(&event);
+        }
         if self.options.flight.is_some()
             && matches!(
                 event,
@@ -270,6 +292,10 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                     }
                 };
                 self.input.apply_cursor(&running.host, &running.window);
+                #[cfg(feature = "profiling")]
+                if let Some(profile) = &mut running.profile {
+                    profile.frame(phase, start.elapsed(), &running.host);
+                }
                 if phase == FramePhase::Idle {
                     return;
                 }
@@ -298,7 +324,21 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
             && let Some(running) = &mut self.running
             && self.options.flight.is_none()
         {
+            #[cfg(feature = "profiling")]
+            if let Some(profile) = &mut running.profile {
+                profile.motion(delta);
+            }
             Input::motion(&mut running.host, delta);
+        }
+    }
+
+    #[cfg(feature = "profiling")]
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        if let Some(running) = &mut self.running
+            && let Some(profile) = running.profile.take()
+            && let Err(error) = profile.finish(&mut running.host)
+        {
+            self.outcome = Err(error);
         }
     }
 }

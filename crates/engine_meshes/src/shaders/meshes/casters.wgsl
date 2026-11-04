@@ -4,7 +4,7 @@ import package::face::caster_routes::{caster_box, caster_in_region, caster_in_sk
     caster_regions, caster_span, mark_caster, outside_route, route};
 import package::face::wind::{slot_sway, wind_sway};
 import package::generated::meshes::{BatchData as Batch, CULL_GROUP, CandidateData as Candidate,
-    CasterFrame, MOVING_MAP, MOVING_PAIRS, SKY_MAP, STILLNESS};
+    CasterFrame, MOVING_MAP, MOVING_PAIRS, SKY_MAP};
 import package::meshes::presentation::{Rows, VALID};
 import package::meshes::slots::{instance_colors, instance_poses};
 
@@ -116,8 +116,7 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let candidate = candidates[id.x];
-    let classify = (selection.mode & STILLNESS) != 0u;
-    if classify && (flags[candidate.position] & VALID) == 0u {
+    if (flags[candidate.position] & VALID) == 0u {
         return;
     }
     let pose = poses[candidate.slot];
@@ -134,43 +133,39 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     let bounds = caster_box(world_center, world_half);
     let low = bounds[0];
     let high = bounds[1];
-    var moving = true;
-    var kept = false;
-    if classify {
-        let key = pose_key(pose, batch.group);
-        let state = stillness[candidate.slot];
-        var count = state.y & 0xffu;
-        var leveled = state.y & LEVELED;
-        var footprint = state.zw;
-        var restless = state.y & RESTLESS;
-        var keep_after = select(KEEP_AFTER, KEEP_AFTER_RESTLESS, restless != 0u);
-        if state.x == key {
-            count = min(count + 1u, 255u);
-        } else {
-            if count >= keep_after && leveled != 0u {
-                mark_tiles(footprint_corner(footprint.x), footprint_corner(footprint.y), false,
-                    0u, 0u);
-                restless = RESTLESS;
-                keep_after = KEEP_AFTER_RESTLESS;
-            }
-            count = 0u;
-            leveled = 0u;
+    let key = pose_key(pose, batch.group);
+    let state = stillness[candidate.slot];
+    var count = state.y & 0xffu;
+    var leveled = state.y & LEVELED;
+    var footprint = state.zw;
+    var restless = state.y & RESTLESS;
+    var keep_after = select(KEEP_AFTER, KEEP_AFTER_RESTLESS, restless != 0u);
+    if state.x == key {
+        count = min(count + 1u, 255u);
+    } else {
+        if count >= keep_after && leveled != 0u {
+            mark_tiles(footprint_corner(footprint.x), footprint_corner(footprint.y), false,
+                0u, 0u);
+            restless = RESTLESS;
+            keep_after = KEEP_AFTER_RESTLESS;
         }
-        if count == keep_after {
-            mark_tiles(low.xy, high.xy, false, 0u, 0u);
-        }
-        moving = count < select(MOVING_UNTIL, MOVING_UNTIL_RESTLESS, restless != 0u);
-        kept = count >= keep_after;
-        if kept {
-            leveled = LEVELED;
-            footprint = vec2<u32>(
-                footprint_word(vec2<i32>(floor(low.xy / FOOTPRINT_UNIT))),
-                footprint_word(vec2<i32>(ceil(high.xy / FOOTPRINT_UNIT))));
-        }
-        let packed = count | leveled | restless;
-        if state.x != key || state.y != packed || any(state.zw != footprint) {
-            stillness[candidate.slot] = vec4<u32>(key, packed, footprint);
-        }
+        count = 0u;
+        leveled = 0u;
+    }
+    if count == keep_after {
+        mark_tiles(low.xy, high.xy, false, 0u, 0u);
+    }
+    let moving = count < select(MOVING_UNTIL, MOVING_UNTIL_RESTLESS, restless != 0u);
+    let kept = count >= keep_after;
+    if kept {
+        leveled = LEVELED;
+        footprint = vec2<u32>(
+            footprint_word(vec2<i32>(floor(low.xy / FOOTPRINT_UNIT))),
+            footprint_word(vec2<i32>(ceil(high.xy / FOOTPRINT_UNIT))));
+    }
+    let packed = count | leveled | restless;
+    if state.x != key || state.y != packed || any(state.zw != footprint) {
+        stillness[candidate.slot] = vec4<u32>(key, packed, footprint);
     }
     if kept {
         for (var region = 0u; region < caster_regions(); region++) {
@@ -182,7 +177,7 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     if moving {
         mark_tiles(low.xy, high.xy, true, batch.group, candidate.slot);
     }
-    if (kept || !classify) && caster_in_sky(world_center, world_half) {
+    if kept && caster_in_sky(world_center, world_half) {
         append(SKY_MAP, batch.group, candidate.slot);
     }
 }

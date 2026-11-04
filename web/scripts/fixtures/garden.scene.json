@@ -1,6 +1,11 @@
 {
   "id": "crystal-garden",
   "revision": 5,
+  "environment": {
+    "haze": {
+      "enabled": true
+    }
+  },
   "camera": {
     "position": [
       17,

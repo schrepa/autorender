@@ -51,7 +51,6 @@ pub struct GpuPresentation<'a> {
     pub stamped: [usize; 4],
     pub stamped_nodes: [Option<&'a [u32]>; 4],
     pub current_version: (u64, u64),
-    pub hold: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -89,8 +88,6 @@ pub(crate) struct GpuInputs {
     stamped: [usize; 4],
     stamped_lists: [Vec<u32>; 4],
     current_version: (u64, u64),
-    hold: bool,
-    unpresented: Option<u64>,
     active: Vec<u32>,
     next_active: Vec<u32>,
     active_listed: bool,
@@ -129,8 +126,6 @@ impl Default for GpuInputs {
             stamped: [0; 4],
             stamped_lists: Default::default(),
             current_version: (0, 0),
-            hold: false,
-            unpresented: None,
             active: Vec::new(),
             next_active: Vec::new(),
             active_listed: false,
@@ -178,7 +173,6 @@ impl GpuInputs {
                 (list.len() == self.stamped[stream]).then_some(list.as_slice())
             }),
             current_version: self.current_version,
-            hold: self.hold,
         }
     }
 
@@ -216,34 +210,6 @@ impl GpuInputs {
 
     pub(super) fn begin_tick(&mut self, hierarchy_revision: Option<u64>) {
         self.tick_begin_revision = hierarchy_revision;
-    }
-
-    pub(super) fn set_alpha(&mut self, alpha: f32, hold: bool) {
-        self.alpha = alpha;
-        self.hold = hold;
-        if !hold {
-            self.presented();
-        }
-    }
-
-    pub(super) fn presented(&mut self) {
-        self.unpresented = None;
-    }
-
-    pub(super) fn gathered_ahead(&mut self, prior: u64) {
-        self.unpresented = Some(prior);
-    }
-
-    pub(super) fn sequence(&self) -> u64 {
-        self.sequence
-    }
-
-    pub(super) fn shift_sequence(&self) -> u64 {
-        self.shift_sequence
-    }
-
-    pub(super) fn alpha(&self) -> f32 {
-        self.alpha
     }
 
     fn reindex(&mut self, nodes: usize) {
@@ -297,16 +263,8 @@ impl InterpolationState {
         })
     }
 
-    pub(super) fn gathered_topology(&self, hierarchy: &HierarchyScratch) -> bool {
-        self.gpu
-            .gathered
-            .is_some_and(|(topology, ..)| topology == hierarchy.topology_revision())
-            && self.gpu.info.len() == hierarchy.links().len()
-    }
-
     pub(super) fn gather_gpu(&mut self, hierarchy: &mut HierarchyScratch, alpha: f32) {
         self.gpu.alpha = alpha;
-        self.gpu.hold = false;
         let key = (
             hierarchy.topology_revision(),
             hierarchy.revision(),
@@ -343,9 +301,7 @@ impl InterpolationState {
         let sequence = self.gpu.sequence;
         let epoch = self.epoch;
         let first_of_epoch = self.gpu.last_epoch != Some(epoch);
-        let superseded = self.gpu.unpresented.take();
-        let shift = superseded.is_none()
-            && first_of_epoch
+        let shift = first_of_epoch
             && self
                 .gpu
                 .last_epoch
@@ -354,8 +310,6 @@ impl InterpolationState {
         self.gpu.shift = shift;
         if shift {
             self.gpu.shift_sequence = sequence;
-        } else if let Some(prior) = superseded {
-            self.gpu.shift_sequence = prior;
         }
         let pass = Pass {
             sequence,

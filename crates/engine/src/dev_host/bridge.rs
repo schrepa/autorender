@@ -953,10 +953,11 @@ impl<G: Game> GameHost<G> {
                 .as_object_mut()
                 .map(std::mem::take)
                 .unwrap_or_default();
-            result.insert("observation".into(), observation);
-            result.insert("paused".into(), json!(context.paused));
-            result.insert("source".into(), json!(context.source));
-            result.insert("rendering".into(), rendering);
+            let [observed, paused, source, rendered] = engine_core::RESERVED_REPLY_KEYS;
+            result.insert(observed.into(), observation);
+            result.insert(paused.into(), json!(context.paused));
+            result.insert(source.into(), json!(context.source));
+            result.insert(rendered.into(), rendering);
             reply["result"] = Value::Object(result);
         }
         Step::Reply(reply)

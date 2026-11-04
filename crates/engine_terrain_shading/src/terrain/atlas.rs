@@ -42,7 +42,7 @@ pub(crate) struct TileAtlas {
     pub(crate) controls: u32,
     fades: Vec<u32>,
     fades_dirty: Range<usize>,
-    faded_with: Option<(bool, f32)>,
+    faded_with: Option<f32>,
     moving: BTreeSet<TileId>,
 }
 
@@ -374,14 +374,11 @@ impl TileAtlas {
     pub(super) fn fade(
         &mut self,
         (atlas, tiles): (&Atlas, &TerrainTiles),
-        fades: bool,
         count: u32,
     ) -> (&[u32], Range<usize>) {
         let whole = self.fades.len() != count as usize
-            || self
-                .faded_with
-                .is_none_or(|(faded, then)| faded != fades || atlas.now < then);
-        self.faded_with = Some((fades, atlas.now));
+            || self.faded_with.is_none_or(|then| atlas.now < then);
+        self.faded_with = Some(atlas.now);
         self.fades_dirty = 0..0;
         let mut touched: Vec<TileId> = Vec::new();
         if whole {
@@ -400,12 +397,12 @@ impl TileAtlas {
             touched.dedup();
         }
         for key in touched {
-            self.refade((atlas, tiles), key, fades);
+            self.refade((atlas, tiles), key);
         }
         (&self.fades, self.fades_dirty.clone())
     }
 
-    fn refade(&mut self, (atlas, tiles): (&Atlas, &TerrainTiles), key: TileId, fades: bool) {
+    fn refade(&mut self, (atlas, tiles): (&Atlas, &TerrainTiles), key: TileId) {
         let Some(&layer) = atlas.slots.get(&key) else {
             self.moving.remove(&key);
             return;
@@ -415,7 +412,7 @@ impl TileAtlas {
             .iter()
             .find(|entry| entry.terrain == key.0)
             .is_some_and(|entry| shaded_elsewhere(key.1.level, entry.surroundings));
-        let (normals, materials) = fades_of(atlas, &key, fades, shaded);
+        let (normals, materials) = fades_of(atlas, &key, shaded);
         let timed = atlas.surfaced.contains_key(&key);
         let normals_move = normals > 0.0 && (timed || !shaded);
         if normals_move || (materials > 0.0 && timed) {
@@ -445,19 +442,18 @@ fn fade_since(now: f32, at: f32) -> f32 {
     1.0 - engine_math::min(since / ARRIVAL_SECONDS, 1.0)
 }
 
-fn fades_of(atlas: &Atlas, key: &TileId, fades: bool, shaded: bool) -> (f32, f32) {
-    let materials = match atlas.surfaced.get(key) {
-        None => 1.0,
-        Some(&at) if fades => fade_since(atlas.now, at),
-        Some(_) => 0.0,
-    };
+fn fades_of(atlas: &Atlas, key: &TileId, shaded: bool) -> (f32, f32) {
+    let materials = atlas
+        .surfaced
+        .get(key)
+        .map_or(1.0, |&at| fade_since(atlas.now, at));
     if shaded {
         return (materials, materials);
     }
-    let normals = match atlas.arrivals.get(key) {
-        Some(&at) if fades => fade_since(atlas.now, at),
-        _ => 0.0,
-    };
+    let normals = atlas
+        .arrivals
+        .get(key)
+        .map_or(0.0, |&at| fade_since(atlas.now, at));
     (normals, materials)
 }
 

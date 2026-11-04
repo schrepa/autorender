@@ -167,7 +167,7 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     var shown = SHOWN_NONE;
     var previous = SHOWN_NONE;
     var progress = FADED;
-    if frame.eye.w <= 0.0 || frame.fade.x < 0.0 {
+    if frame.eye.w <= 0.0 {
         if !hidden {
             shown = shown_at(record, group, retires, rank, away);
         }

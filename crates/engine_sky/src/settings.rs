@@ -33,7 +33,7 @@ settings! {
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneHaze")]
     pub struct Haze {
-        pub enabled: bool = true => any,
+        pub enabled: bool = false => any,
         pub visibility: f32 = 0.0 => at_least(0.0),
         pub strength: f32 = 0.7 => range(0.0, 4.0),
         pub forward: f32 = 0.6 => range(0.0, 0.95),

@@ -4,7 +4,7 @@ use engine_registry::Registry;
 use engine_scene::{SceneDocument, SceneKinds};
 
 pub fn standard_engine() -> Result<Engine, Error> {
-    engine::engine(engine_standard::standard::<BrickList>)
+    engine::engine(engine_standard::everything::<BrickList>)
 }
 
 pub fn standard_kinds() -> Result<SceneKinds, Error> {

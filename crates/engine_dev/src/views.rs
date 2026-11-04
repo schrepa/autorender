@@ -6,13 +6,14 @@ pub struct InputView {
     pub move_forward: f32,
     pub move_right: f32,
     pub move_up: f32,
-    pub look_yaw: f32,
-    pub look_pitch: f32,
+    pub look_right_pixels: f32,
+    pub look_down_pixels: f32,
     pub held: Vec<u32>,
-    pub pointer: Option<[f32; 2]>,
-    pub pointer_delta: [f32; 2],
+    pub pointer_pixels: Option<[f32; 2]>,
+    pub pointer_delta_pixels: [f32; 2],
     pub pointer_inside: bool,
-    pub wheel: [f32; 2],
+    pub wheel_up_notches: f32,
+    pub wheel_right_notches: f32,
     pub axes: Vec<f32>,
     pub menu: Vec<crate::MenuPress>,
     pub menu_wanted: bool,
@@ -63,26 +64,14 @@ pub struct InterpolateTransformView {
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum PresentationModeView {
-    Current,
-    Interpolated,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct PresentationStateView {
     pub frame: Option<String>,
     pub tick: Option<String>,
-    pub mode: PresentationModeView,
     pub alpha: f32,
-    pub gpu_pending: bool,
     pub history_nodes: usize,
     pub history_capacity: usize,
     pub history_bytes: usize,
     pub presentation_scratch_bytes: usize,
-    pub presented_nodes: usize,
-    pub presented_store_bytes: usize,
 }
 
 #[derive(Serialize)]

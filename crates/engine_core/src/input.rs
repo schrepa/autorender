@@ -60,8 +60,8 @@ pub struct MoveInput {
     pub move_forward: f32,
     pub move_right: f32,
     pub move_up: f32,
-    pub look_yaw: f32,
-    pub look_pitch: f32,
+    pub look_right_pixels: f32,
+    pub look_down_pixels: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -103,9 +103,10 @@ impl AxisInput {
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 #[component(immutable)]
 pub struct PointerInput {
-    pub position: Option<Vec2>,
-    pub delta: Vec2,
-    pub wheel: Vec2,
+    pub position_pixels: Option<Vec2>,
+    pub delta_pixels: Vec2,
+    pub wheel_up_notches: f32,
+    pub wheel_right_notches: f32,
     pub inside: bool,
     pub held: bool,
     pub pressed: bool,

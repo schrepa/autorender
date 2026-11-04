@@ -10,6 +10,8 @@ pub mod files;
 mod input;
 mod job_cache;
 mod jobs;
+#[cfg(feature = "profiling")]
+mod live;
 mod measure;
 mod offscreen;
 mod options;
@@ -34,8 +36,8 @@ pub(crate) use engine::DYNAMIC_RESOLUTION;
 pub fn main<G: engine::Game, E: Into<engine::Error>>(
     title: &str,
     arguments: impl Iterator<Item = String>,
-    bricks: impl FnOnce(engine::BrickList) -> engine::BrickList,
-    build: impl FnOnce(&mut engine::Engine) -> Result<G, E>,
+    bricks: impl Fn(engine::BrickList) -> engine::BrickList,
+    build: impl Fn(&mut engine::Engine) -> Result<G, E>,
 ) -> ExitCode {
     let arguments: Vec<String> = arguments.collect();
     if let Some(help) = engine::command_line::help(&arguments, &options()) {
@@ -43,7 +45,13 @@ pub fn main<G: engine::Game, E: Into<engine::Error>>(
         return ExitCode::SUCCESS;
     }
     match HostOptions::parse(arguments) {
-        Ok(options) => exit(options.run(title, bricks, build)),
+        Ok(options) => {
+            #[cfg(feature = "dev")]
+            if let Some(names) = &options.smoke {
+                return smoke::of_game(&options, names, &bricks, &build);
+            }
+            exit(options.run(title, bricks, build))
+        }
         Err(error) => {
             let record = serde_json::json!({"event": "arguments_rejected", "error": error});
             eprintln!("{record}");

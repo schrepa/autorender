@@ -53,7 +53,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         wanted,
         "shaded_has_no_view_pass"
     );
-    let before = exact(session)?;
+    let before = settled(session)?;
     let shown = views(session, &shaded)?;
     let off = environment(session, json!({"debug_view": {"view": "off"}}))?;
     smoke_eq!(
@@ -74,7 +74,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         wanted,
         "off_creates_nothing"
     );
-    smoke_eq!(exact(session)?, before.clone(), "off_is_exact");
+    smoke_eq!(settled(session)?, before.clone(), "off_restores_the_image");
     let unknown = refuse(
         session,
         "control",
@@ -93,7 +93,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         "unknown_view_refused"
     );
     probes(session, &again.0)?;
-    smoke_eq!(exact(session)?, before, "probe_keeps_image");
+    smoke_eq!(settled(session)?, before, "probe_keeps_image");
     let wanted = json!(VIEWS);
     smoke_eq!(
         seen(shown.len() == VIEWS.len(), json!(shown), &wanted),
@@ -384,7 +384,7 @@ fn capture(session: &mut dyn SmokeSession) -> Result<(Value, Value), SmokeFailur
     Ok((captured["rendering"].clone(), image))
 }
 
-fn exact(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
+fn settled(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
     let mut previous = Value::Null;
     for _ in 0..20 {
         let captured = ask(session, "capture", json!({"alpha": 0}))?;
@@ -398,7 +398,7 @@ fn exact(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
     smoke_eq!(
         seen(false, json!(previous), &wanted),
         wanted,
-        "exact_captures_agree"
+        "captures_settle"
     );
     Ok(previous)
 }

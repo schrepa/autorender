@@ -36,7 +36,7 @@ shader_modules! {
     "engine::post::levels" = "post/levels.wgsl";
 }
 
-pub static CORE: Source = Source::generated(crate::linker::CORE_PACKAGE, [0; 32], TEXTS);
+pub static CORE: Source = Source::generated(crate::linker::CORE_PACKAGE, false, [0; 32], TEXTS);
 
 pub const FULLSCREEN: engine_core::Entry =
     engine_core::Entry::generated(Module::generated(&CORE, 0), "vs_fullscreen");

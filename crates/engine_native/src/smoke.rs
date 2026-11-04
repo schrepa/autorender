@@ -60,6 +60,21 @@ pub fn run<G: Game>(
     }
 }
 
+pub fn of_game<G: Game, E: Into<engine::Error>>(
+    options: &HostOptions,
+    names: &str,
+    bricks: &dyn Fn(BrickList) -> BrickList,
+    build: &dyn Fn(&mut Engine) -> Result<G, E>,
+) -> ExitCode {
+    let list = bricks(BrickList::default());
+    let entries = match engine::smokes::registered(&list) {
+        Ok(entries) => entries,
+        Err(error) => return crate::exit(Err(error)),
+    };
+    let build = |_: Option<&str>, engine: &mut Engine| build(engine).map_err(Into::into);
+    run::<G>(options, names, &entries, &list, &build, &|session| session)
+}
+
 struct Runner<'a, G: Game> {
     options: &'a HostOptions,
     bricks: &'a BrickList,

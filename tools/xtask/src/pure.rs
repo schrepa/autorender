@@ -106,7 +106,7 @@ pub(crate) struct JobLog {
 impl JobLog {
     pub fn new() -> Result<Self, String> {
         let list = Arc::new(
-            engine_worker::job_list(engine_standard::standard::<BrickList>)
+            engine_worker::job_list(engine_standard::everything::<BrickList>)
                 .map_err(|error| error.to_string())?,
         );
         Ok(Self {

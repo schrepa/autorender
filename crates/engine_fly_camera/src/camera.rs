@@ -38,8 +38,8 @@ fn steered(input: &MoveInput) -> bool {
         input.move_forward,
         input.move_right,
         input.move_up,
-        input.look_yaw,
-        input.look_pitch,
+        input.look_right_pixels,
+        input.look_down_pixels,
     ]
     .iter()
     .any(|&value| value != 0.0)
@@ -60,8 +60,8 @@ pub(crate) fn fly(
     if settings.steered_only && !steered(&input) {
         return;
     }
-    flight.yaw = (flight.yaw - input.look_yaw * SENSITIVITY) % std::f32::consts::TAU;
-    flight.pitch = clamp(flight.pitch - input.look_pitch * SENSITIVITY, -1.48, 1.48);
+    flight.yaw = (flight.yaw - input.look_right_pixels * SENSITIVITY) % std::f32::consts::TAU;
+    flight.pitch = clamp(flight.pitch - input.look_down_pixels * SENSITIVITY, -1.48, 1.48);
     let rotation = Quat::from_rotation_y(flight.yaw) * Quat::from_rotation_x(flight.pitch);
     let forward = rotation * -Vec3::Z;
     let right = rotation * Vec3::X;

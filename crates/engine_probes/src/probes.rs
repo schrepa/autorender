@@ -356,16 +356,13 @@ pub(crate) fn plan_captures(
     let state = &mut *state;
     let probes = gathered.list.as_slice();
     let present = sky.environment != 0;
-    let gpu = !view.exact();
     state.listed = !probes.is_empty();
     state.views = state.listed && present;
     state.still = state.views && state.slots.waiting();
-    if gpu {
-        state.stillness.ensure(
-            state.views.then_some(state.still),
-            u64::from(instances.capacity),
-        );
-    }
+    state.stillness.ensure(
+        state.views.then_some(state.still),
+        u64::from(instances.capacity),
+    );
     let (cubes, most_cubes, lost, sky_changed) = if present {
         let most_cubes = (limits.texture_layers / FACES as u32).max(1);
         let lost = state.place(probes, settings.resolution, most_cubes);
@@ -393,7 +390,7 @@ pub(crate) fn plan_captures(
     let counted = |count: u64| count.min(u64::from(u32::MAX)) as u32;
     let probe_cut = Cut::of(counted(asked), counted(kept));
     let mut drawn = 0;
-    state.captures = gpu && !view.debug() && state.listed;
+    state.captures = !view.debug() && state.listed;
     if state.captures {
         state.slots.tick();
         if state.stillness.settled() && present {

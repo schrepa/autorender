@@ -70,7 +70,6 @@ pub(crate) struct DrawOrder {
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct MeshPlan {
-    pub gpu: bool,
     pub culling: bool,
     pub occlusion_enabled: bool,
     pub occlusion: bool,
@@ -183,9 +182,7 @@ pub(crate) fn plan_draws(
         order.planned = Some(key);
         order_draws(&retained, (&assets, &residency), plan, &mut order);
     }
-    let gpu = retained.gpu();
-    let (planes, absolute) =
-        frustum_uniform(rasterized(&view, resolve.offset, gpu && view.temporal()));
+    let (planes, absolute) = frustum_uniform(rasterized(&view, resolve.offset, view.temporal()));
     let bounded = absolute.iter().flatten().all(|value| {
         value.is_finite() && *value <= engine_core::presentation_bounds::MAX_COEFFICIENT
     }) && planes.iter().flatten().all(|value| value.is_finite());
@@ -193,10 +190,9 @@ pub(crate) fn plan_draws(
     let candidates = plan.ordered_instances.len();
     let unbudgeted = frustum && culling.budget() >= candidates;
     decided.set_if_neq(MeshPlan {
-        gpu,
         culling: culling.frustum,
         occlusion_enabled: occlusion.enabled,
-        occlusion: gpu && occlusion.enabled && unbudgeted && candidates != 0,
+        occlusion: occlusion.enabled && unbudgeted && candidates != 0,
         subpixel_enabled: subpixel.enabled,
         subpixel: subpixel.enabled && unbudgeted && candidates != 0,
         budget: culling.budget().min(u32::MAX as usize) as u32,

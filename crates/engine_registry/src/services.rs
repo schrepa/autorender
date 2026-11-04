@@ -3,8 +3,6 @@ use glam::{Affine3A, Mat4, UVec2, Vec3};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrameFacts {
-    pub display: bool,
-    pub exact: bool,
     pub temporal: bool,
     pub capture: bool,
     pub debug: bool,
@@ -17,8 +15,6 @@ pub struct FrameFacts {
 impl Default for FrameFacts {
     fn default() -> Self {
         Self {
-            display: false,
-            exact: true,
             temporal: false,
             capture: false,
             debug: false,
