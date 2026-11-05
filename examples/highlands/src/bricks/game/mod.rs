@@ -56,6 +56,7 @@ impl Brick for HighlandsBrick {
                     content::publish,
                 ),
             )
+            .systems(Schedule::FixedPreSimulation, bodies::wait_for_ground)
             .systems(Schedule::WorldSync, views::look);
     }
 }

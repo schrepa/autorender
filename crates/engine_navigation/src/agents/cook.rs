@@ -16,11 +16,14 @@ impl NavAgents {
         (records, jobs): (&Records, &mut Jobs),
     ) -> u64 {
         let mut left = 0;
-        for (_, agent, _, transform) in agents.iter() {
+        for (_, agent, walk, transform) in agents.iter() {
+            if walk.status == NavStatus::Refused {
+                continue;
+            }
             let at = Vec2::new(transform.translation.x, transform.translation.z);
             match ground_source(ground, at, at) {
                 GroundRead::Ready(walked) => {
-                    let gait = options(&sanitized(agent)).gait(&walked.source.pyramid);
+                    let gait = options(agent).gait(&walked.source.pyramid);
                     if !self.cook.iter().any(|graph| {
                         graph.walked.source.ground == walked.source.ground && graph.gait == gait
                     }) {
@@ -33,7 +36,7 @@ impl NavAgents {
                         });
                     }
                 }
-                GroundRead::Waiting => left += 1,
+                GroundRead::NotLoaded => left += 1,
                 GroundRead::Off => {}
             }
         }

@@ -279,9 +279,10 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     observed.check(count > 0, || "no tile has portals".into());
 
     let route = (Vec2::new(212.0, 262.0), Vec2::new(412.0, 262.0));
-    let obstacles = [GroundObstacle {
-        center: Vec2::new(312.0, 262.0),
-        radius: 12.0,
+    let (boulder, boulder_radius) = (Vec2::new(312.0, 262.0), 12.0);
+    let obstacles = [GroundObstacle::Circle {
+        center: boulder,
+        radius: boulder_radius,
     }];
     let walked = |slice: u64| graph.walk(&pyramid, route, &obstacles, slice);
     let whole = codec::encode(&walked(u64::MAX)?);
@@ -295,8 +296,8 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     });
     observed.check(
         found.points.iter().all(|point| {
-            Vec2::new(point[0], point[2]).distance(obstacles[0].center)
-                >= obstacles[0].radius + NavOptions::default().radius - 1.0
+            Vec2::new(point[0], point[2]).distance(boulder)
+                >= boulder_radius + NavOptions::default().radius - 1.0
         }),
         || "the walk crosses the boulder".into(),
     );

@@ -135,6 +135,12 @@ impl Error {
     }
 
     #[must_use]
+    pub fn got_whole(mut self, value: impl Serialize) -> Self {
+        self.detail.got = Some(serde_json::to_value(value).unwrap_or(Value::Null));
+        self
+    }
+
+    #[must_use]
     pub fn nearest(mut self, value: impl Serialize) -> Self {
         self.detail.nearest = Some(given(value));
         self

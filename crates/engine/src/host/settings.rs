@@ -1,5 +1,6 @@
 use bevy_ecs::prelude::World;
 use engine_core::{Error, ErrorCode, SceneContext};
+use engine_registry::SettingsEntry;
 use engine_settings::Expected;
 use serde_json::Value;
 
@@ -128,10 +129,29 @@ fn not_object(section: &str) -> Error {
     Error::new(ErrorCode::InvalidType, format!("$.{section}")).expected(Expected::Object)
 }
 
-fn unknown_field(key: &str, field: &str, fields: &serde_json::Map<String, Value>) -> Error {
-    Error::new(ErrorCode::UnknownField, format!("$.{key}"))
+fn known_field(entry: &SettingsEntry, key: &str, field: &str) -> Result<(), Error> {
+    let schema = entry.schema();
+    let fields = schema.get("properties").and_then(Value::as_object);
+    if fields.is_some_and(|fields| fields.contains_key(field)) {
+        return Ok(());
+    }
+    Err(Error::new(ErrorCode::UnknownField, format!("$.{key}"))
         .got(field)
-        .variants(fields.keys().cloned())
+        .variants(fields.into_iter().flatten().map(|(name, _)| name.as_str())))
+}
+
+fn set_agreeing(
+    world: &mut World,
+    entry: &SettingsEntry,
+    value: &Value,
+    before: &Value,
+) -> Result<(), Error> {
+    entry.set(world, value)?;
+    let Err(refused) = engine_registry::check_sections(world) else {
+        return Ok(());
+    };
+    entry.set(world, before)?;
+    Err(refused)
 }
 
 pub fn has_setting(world: &World, key: &str) -> bool {
@@ -142,19 +162,18 @@ pub fn has_setting(world: &World, key: &str) -> bool {
 pub fn apply_setting(world: &mut World, key: &str, value: &Value) -> Result<(), Error> {
     let (section, field) = split(key);
     let entry = engine_registry::settings(world, section)?;
-    let Some(field) = field else {
-        return scoped(world, |world| entry.set(world, value));
-    };
     scoped(world, |world| {
-        let mut current = entry.current(world);
+        let before = entry.current(world);
+        let Some(field) = field else {
+            return set_agreeing(world, &entry, value, &before);
+        };
+        known_field(&entry, key, field)?;
+        let mut current = before.clone();
         let Some(fields) = current.as_object_mut() else {
             return Err(not_object(section));
         };
-        if !fields.contains_key(field) {
-            return Err(unknown_field(key, field, fields));
-        }
         fields.insert(field.to_owned(), value.clone());
-        entry.set(world, &current)
+        set_agreeing(world, &entry, &current, &before)
     })
 }
 
@@ -171,14 +190,14 @@ pub fn reset_setting(world: &mut World, key: &str) -> Result<(), Error> {
         let Some(fields) = current.as_object_mut() else {
             return Err(not_object(section));
         };
+        known_field(&entry, key, field)?;
         match defaults.get(field) {
             Some(default) => {
                 fields.insert(field.to_owned(), default.clone());
             }
-            None if fields.contains_key(field) => {
+            None => {
                 fields.remove(field);
             }
-            None => return Err(unknown_field(key, field, fields)),
         }
         entry.set(world, &current)
     })

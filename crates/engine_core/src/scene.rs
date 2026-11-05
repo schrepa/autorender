@@ -153,21 +153,11 @@ fn default_fov() -> f32 {
     55.0_f32.to_radians()
 }
 
-fn kept(value: f32, min: f32, max: f32, default: f32) -> f32 {
-    if value.is_finite() {
-        crate::math::clamp(value, min, max)
-    } else {
-        default
-    }
-}
-
-fn kept_point(value: Vec3, default: Vec3) -> Vec3 {
-    let reach = Camera::REACH;
-    Vec3::new(
-        kept(value.x, -reach, reach, default.x),
-        kept(value.y, -reach, reach, default.y),
-        kept(value.z, -reach, reach, default.z),
-    )
+#[derive(Resource, Clone, Debug, Default, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct CameraRefusals {
+    pub count: u64,
+    pub latest: Option<String>,
 }
 
 fn within(value: f32, min: f32, max: f32) -> bool {
@@ -231,53 +221,8 @@ impl Camera {
         Ok(())
     }
 
-    #[doc(hidden)]
-    #[must_use]
-    pub fn sanitized(self) -> Self {
-        let defaults = Self::default();
-        let reach = Self::REACH;
-        let projection = match self.projection {
-            Projection::Perspective {
-                vertical_fov_radians,
-            } => Projection::Perspective {
-                vertical_fov_radians: kept(
-                    vertical_fov_radians,
-                    Self::MIN_FOV_DEGREES.to_radians(),
-                    Self::MAX_FOV_DEGREES.to_radians(),
-                    default_fov(),
-                ),
-            },
-            Projection::Orthographic { height } => Projection::Orthographic {
-                height: kept(height, Self::MIN_DEPTH, reach, 1.0),
-            },
-        };
-        let mut sanitized = Self {
-            position: kept_point(self.position, defaults.position),
-            target: kept_point(self.target, defaults.target),
-            near: kept(self.near, Self::MIN_DEPTH, reach, defaults.near),
-            far: kept(self.far, Self::MIN_DEPTH, reach, defaults.far),
-            projection,
-        };
-        if (sanitized.target - sanitized.position).length_squared()
-            < Self::MIN_DEPTH * Self::MIN_DEPTH
-        {
-            let step = if sanitized.position.z - 1.0 >= -reach {
-                Vec3::NEG_Z
-            } else {
-                Vec3::Z
-            };
-            sanitized.target = sanitized.position + step;
-        }
-        if sanitized.far - sanitized.near < Self::MIN_DEPTH {
-            let depth = defaults.far - defaults.near;
-            sanitized.far = crate::math::min(sanitized.near + depth, reach);
-            sanitized.near = crate::math::min(sanitized.near, sanitized.far - depth);
-        }
-        sanitized
-    }
-
     pub fn eye(&self) -> Vec3 {
-        self.sanitized().position
+        self.position
     }
 
     pub fn view_projection(&self, aspect: f32) -> Mat4 {
@@ -302,7 +247,7 @@ impl Camera {
             near,
             far,
             projection,
-        } = self.sanitized();
+        } = *self;
         let direction = (target - position).try_normalize().unwrap_or(Vec3::NEG_Z);
         let up = if direction.dot(Vec3::Y).abs() > 0.999 {
             Vec3::Z

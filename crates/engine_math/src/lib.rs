@@ -12,6 +12,15 @@ pub mod collections;
 
 pub const REDUCTION_LIMIT: f32 = 12_866.0;
 
+const SIGN: u32 = 0x8000_0000;
+const ONE: u32 = 0x3f80_0000;
+const INFINITY: u32 = 0x7f80_0000;
+const TAN_PI_8: f32 = 0.414_213_57;
+const A1: f32 = -3.333_295e-1;
+const A2: f32 = 1.997_771_1e-1;
+const A3: f32 = -1.387_768_5e-1;
+const A4: f32 = 8.053_744_6e-2;
+
 #[doc(hidden)]
 pub mod lanes {
     pub const SHIFTER: f32 = 12_582_912.0;
@@ -59,6 +68,45 @@ pub fn sin(x: f32) -> f32 {
 #[inline]
 pub fn cos(x: f32) -> f32 {
     sin_cos(x).1
+}
+
+#[inline]
+fn all_if(on: bool) -> u32 {
+    u32::from(on).wrapping_neg()
+}
+
+#[inline]
+fn pick(mask: u32, on: u32, off: u32) -> u32 {
+    off ^ ((off ^ on) & mask)
+}
+
+#[inline]
+pub fn atan2(y: f32, x: f32) -> f32 {
+    use core::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+    let (y_bits, x_bits) = (y.to_bits(), x.to_bits());
+    let (along, across) = (y_bits & !SIGN, x_bits & !SIGN);
+    let steep = all_if(along > across);
+    let wide = pick(steep, along, across);
+    let thin = pick(steep, across, along);
+    let endless = all_if(thin == INFINITY) & all_if(wide == INFINITY);
+    let empty = all_if(wide == 0);
+    let ratio =
+        f32::from_bits(pick(endless, ONE, thin)) / f32::from_bits(pick(endless | empty, ONE, wide));
+    let far = all_if(ratio > TAN_PI_8);
+    let t = f32::from_bits(pick(
+        far,
+        ((ratio - 1.0) / (ratio + 1.0)).to_bits(),
+        ratio.to_bits(),
+    ));
+    let z = t * t;
+    let near = f32::from_bits(FRAC_PI_4.to_bits() & far)
+        + (t + t * z * (A1 + z * (A2 + z * (A3 + z * A4))));
+    let right = f32::from_bits(FRAC_PI_2.to_bits() & steep)
+        + f32::from_bits(near.to_bits() ^ (steep & SIGN));
+    let back = (x_bits >> 31).wrapping_neg();
+    let half =
+        f32::from_bits(PI.to_bits() & back) + f32::from_bits(right.to_bits() ^ (back & SIGN));
+    f32::from_bits(half.to_bits() ^ (y_bits & SIGN))
 }
 
 #[inline]

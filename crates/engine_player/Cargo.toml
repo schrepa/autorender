@@ -17,6 +17,7 @@ kind = "game"
 page = "player.html"
 game = "player"
 native = "engine-player-native"
+engine_rules = true
 
 [features]
 default = []

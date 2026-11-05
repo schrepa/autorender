@@ -30,10 +30,34 @@ pub fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String>
     }
 }
 
-pub fn clippy(root: &Path, selection: &[&str]) -> Result<(), String> {
+pub fn clippy(repository: &Repository, packages: &[&str], options: &[&str]) -> Result<(), String> {
+    let root = repository.root.as_path();
+    let (free, strict): (Vec<&str>, Vec<&str>) = packages
+        .iter()
+        .copied()
+        .partition(|package| repository.free(package));
+    if !strict.is_empty() {
+        let mut arguments = vec!["clippy"];
+        for package in &strict {
+            arguments.extend(["-p", *package]);
+        }
+        arguments.extend(options);
+        arguments.extend(["--locked", "--", "--no-deps", "-D", "warnings"]);
+        run(root, "cargo", &arguments)?;
+    }
+    clippy_free(root, &free, options)
+}
+
+pub fn clippy_free(root: &Path, packages: &[&str], options: &[&str]) -> Result<(), String> {
+    if packages.is_empty() {
+        return Ok(());
+    }
     let mut arguments = vec!["clippy"];
-    arguments.extend(selection);
-    arguments.extend(["--locked", "--", "--no-deps", "-D", "warnings"]);
+    for package in packages {
+        arguments.extend(["-p", *package]);
+    }
+    arguments.extend(options);
+    arguments.extend(["--locked", "--", "--no-deps"]);
     run(root, "cargo", &arguments)
 }
 

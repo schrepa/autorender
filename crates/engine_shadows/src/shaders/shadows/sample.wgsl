@@ -1,6 +1,7 @@
 import package::engine::view::{DetailLevel, PI, detail_across, detail_level, fade_noise};
 import package::generated::pieces::shadows::piece;
-import package::generated::shadows::{LEVEL_BAND, LEVEL_WINDOW, SHADOW_APRON};
+import package::generated::shadows::{LEVEL_BAND, LEVEL_BEFORE, LEVEL_WINDOW, SHADOW_APRON,
+    TILE_OLD_SUN};
 import package::place::sun_blockers::SunAt;
 
 @group(0) @binding(0) var shadow_atlas: texture_depth_2d;
@@ -55,9 +56,16 @@ fn plane_visibility(depths: vec4<f32>, point: MapPoint) -> f32 {
     return mix(mix(lit.w, lit.z, f.x), mix(lit.x, lit.y, f.x), f.y);
 }
 
+fn rows_turn(rows: array<vec4<f32>, 3>, way: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(dot(rows[0].xyz, way), dot(rows[1].xyz, way), dot(rows[2].xyz, way));
+}
+
+fn rows_place(rows: array<vec4<f32>, 3>, world: vec3<f32>) -> vec3<f32> {
+    return rows_turn(rows, world) + vec3<f32>(rows[0].w, rows[1].w, rows[2].w);
+}
+
 fn light_space(world: vec3<f32>) -> vec3<f32> {
-    return vec3<f32>(dot(piece().light[0].xyz, world),
-        dot(piece().light[1].xyz, world), dot(piece().light[2].xyz, world));
+    return rows_place(piece().light, world);
 }
 
 fn shadow_level(world: vec3<f32>) -> DetailLevel {
@@ -82,6 +90,10 @@ fn level_window(level: u32) -> vec4<f32> {
 
 fn level_band(level: u32) -> vec4<f32> {
     return level_words(level_row(level), LEVEL_BAND);
+}
+
+fn level_before(level: u32) -> vec4<f32> {
+    return level_words(level_row(level), LEVEL_BEFORE);
 }
 
 struct LevelPoint {
@@ -109,11 +121,11 @@ fn level_at(window: vec4<f32>, band: vec4<f32>, light: vec3<f32>) -> LevelPoint 
     return point;
 }
 
-fn level_slots(level: u32, point: LevelPoint) -> vec2<u32> {
+fn level_slots(level: u32, point: LevelPoint) -> vec3<u32> {
     let side = u32(piece().atlas.x);
     let entry = textureLoad(shadow_tiles, vec2<u32>(point.cell.x, level * side + point.cell.y),
         0).r;
-    return vec2<u32>(entry & 0xffffu, entry >> 16u);
+    return vec3<u32>(entry & (TILE_OLD_SUN - 1u), entry >> 16u, entry & TILE_OLD_SUN);
 }
 
 fn slot_texel(slot: u32, across: vec2<f32>) -> vec2<f32> {
@@ -164,26 +176,43 @@ fn crown_spread(level: u32, window: vec4<f32>, band: vec4<f32>, light: vec3<f32>
     return lit;
 }
 
+fn lifted_space(rows: array<vec4<f32>, 3>, level: u32, band: vec4<f32>, sun: SunAt) -> vec3<f32> {
+    let up = vec3<f32>(rows[0].y, rows[1].y, rows[2].y);
+    return rows_place(rows, sun.world + sun.normal * band.z) + up * level_lift(level, sun);
+}
+
 fn level_visibility(level: u32, sun: SunAt, spread: bool) -> f32 {
     let window = level_window(level);
-    let band = level_band(level);
-    let up = vec3<f32>(piece().light[0].y, piece().light[1].y,
-        piece().light[2].y);
-    let light = light_space(sun.world + sun.normal * band.z) + up * level_lift(level, sun);
-    let at = level_at(window, band, light);
+    var band = level_band(level);
+    var rows = piece().light;
+    var light = lifted_space(rows, level, band, sun);
+    var at = level_at(window, band, light);
     if !at.inside {
         return -1.0;
     }
-    let slots = level_slots(level, at);
+    var slots = level_slots(level, at);
     if slots.x == 0u {
         return -1.0;
+    }
+    if slots.z != 0u {
+        band = level_before(level);
+        rows = piece().before;
+        light = lifted_space(rows, level, band, sun);
+        at = level_at(window, band, light);
+        if !at.inside {
+            return -1.0;
+        }
+        slots = level_slots(level, at);
+        if slots.z == 0u {
+            return -1.0;
+        }
     }
     var point: MapPoint;
     point.texel = slot_texel(slots.x - 1u, at.across);
     point.depth = at.depth;
     let per_world = vec3<f32>(1.0, 1.0, band.y);
-    point.slope = texel_slope(vec4<f32>(light_space(sun.world_dx) * per_world, 0.0),
-        vec4<f32>(light_space(sun.world_dy) * per_world, 0.0), vec2<f32>(1.0, -1.0) / window.w,
+    point.slope = texel_slope(vec4<f32>(rows_turn(rows, sun.world_dx) * per_world, 0.0),
+        vec4<f32>(rows_turn(rows, sun.world_dy) * per_world, 0.0), vec2<f32>(1.0, -1.0) / window.w,
         band.w);
     point.soft = crown_softness(sun.softness, band.y);
     var visible = plane_visibility(atlas_depths(point), point);

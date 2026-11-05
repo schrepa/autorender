@@ -1,10 +1,11 @@
 // @ts-check
 import { randomUUID } from "node:crypto";
 import { createReadStream, readFileSync } from "node:fs";
-import { access, mkdir, lstat, realpath, rm, stat, open } from "node:fs/promises";
+import { access, mkdir, lstat, readFile, realpath, rm, stat, open } from "node:fs/promises";
 import { resolve, dirname, relative } from "node:path";
 import { AgentError, createBridge, failure, range, variants } from "./agent-protocol.mjs";
 import { launchBrowserSession } from "./agent-browser.mjs";
+import { running } from "./browser-launch.mjs";
 import { fingerprintSources, watchSources } from "./iteration-watch.mjs";
 import { IterationController } from "./iteration-controller.mjs";
 import { runBuild } from "./iteration-process.mjs";
@@ -23,6 +24,18 @@ function port(value, fallback, name) {
   return Number(text);
 }
 
+async function claimLock(path) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await open(path, "wx"); }
+    catch (error) { if (error.code !== "EEXIST") throw error; }
+    const text = await readFile(path, "utf8").catch(() => "");
+    let owner;
+    try { owner = JSON.parse(text).pid; } catch {}
+    if (attempt > 0 || !Number.isSafeInteger(owner) || owner <= 0 || running(owner)) throw new AgentError("watch_locked", path, { expected: "absent", got: owner ?? text });
+    await rm(path, { force: true });
+  }
+}
+
 export async function startIteration(values) {
   for (const key of Object.keys(values)) if (!OPTIONS.includes(key)) throw new AgentError("invalid_arguments", `--${key}`, { allowed: variants(OPTIONS.map(name => `--${name}`)), got: `--${key}` });
   const webPort = port(values["web-port"], 5174, "--web-port");
@@ -37,12 +50,7 @@ export async function startIteration(values) {
   if (relative(outputRoot, await realpath(outputRoot)) !== "") throw new AgentError("unsafe_output_path", outputRoot, { expected: "path" });
   const lockPath = resolve(outputRoot, ".watch.lock");
   const watch = randomUUID();
-  let lock;
-  try { lock = await open(lockPath, "wx"); }
-  catch (error) {
-    if (error.code === "EEXIST") throw new AgentError("watch_locked", lockPath, { expected: "absent" });
-    throw error;
-  }
+  const lock = await claimLock(lockPath);
   await lock.writeFile(JSON.stringify({ pid: process.pid, watch, web_port: webPort, bridge_port: bridgePort }));
   const cancellation = new AbortController();
   const owned = new Set();
@@ -98,7 +106,8 @@ export async function startIteration(values) {
     })();
     return shutdownPromise;
   }
-  const stopSignal = () => { void shutdown().catch(error => { process.stderr.write(`${error}\n`); process.exitCode = 1; }); };
+  const stopped = error => { process.stderr.write(`${error}\n`); process.exitCode = 1; };
+  const stopSignal = () => { void shutdown().catch(stopped); };
   process.once("SIGINT", stopSignal);
   process.once("SIGTERM", stopSignal);
 
@@ -124,7 +133,7 @@ export async function startIteration(values) {
       promote: async (candidate, snapshot, commit) => {
         const previous = active;
         await bridge.replaceSession({
-          session: candidate.session, url: candidate.url, build: candidate.build, execute: candidate.execute,
+          session: candidate.session, url: candidate.url, build: candidate.build, execute: candidate.execute, activity: candidate.activity,
           validate: async () => {
             const matches = !cancellation.signal.aborted && (await fingerprintSources(workspace)).fingerprint === snapshot.fingerprint;
             if (!browserStates.get(candidate)?.available) throw new AgentError("activation_failed", "$", { expected: "live" });
@@ -149,12 +158,13 @@ export async function startIteration(values) {
     bridge = createBridge({
       session: randomUUID(), url: baseUrl, initiallyUnavailable: true,
       execute: () => { throw new AgentError("session_unavailable", "$", { expected: "live" }); },
-      onClose: shutdown,
+      onClose: () => shutdown().catch(stopped).finally(() => process.exit()),
       development: () => ({ watch, game, web_url: baseUrl, bridge_url: `http://127.0.0.1:${bridgePort}`, runtime_state: active ? (browserStates.get(active)?.available ? "ready" : "unavailable") : "none", watcher_error: watcherError ?? null, ...controller.status() }),
     });
     await new Promise((resolveListen, reject) => { bridge.server.once("error", reject); bridge.server.listen(bridgePort, "127.0.0.1", resolveListen); });
     cancellation.signal.throwIfAborted();
     const { createServer } = await import("vite");
+    process.env.ENGINE_GAME = game;
     vite = await createServer({
       root: resolve(workspace, "web"), configFile: resolve(workspace, "web/vite.config.ts"),
       logLevel: "silent",

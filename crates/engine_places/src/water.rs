@@ -6,6 +6,8 @@ use engine_place::{Slot, Stamp};
 use glam::{Mat3, Vec3};
 use serde::Serialize;
 
+use crate::ground::GroundRead;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaterTileErrors {
     pub terrain: Entity,
@@ -85,7 +87,7 @@ impl Slot for WaterFlow {
 }
 
 pub trait WaterQuery: Send + Sync + 'static {
-    fn water(&self, point: Vec3) -> Option<WaterSample>;
+    fn water(&self, point: Vec3) -> GroundRead<Option<WaterSample>>;
 
     fn reaches(&self) -> Vec<(Vec3, Vec3)> {
         Vec::new()

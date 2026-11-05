@@ -2,7 +2,7 @@ use std::any::Any;
 
 use bevy_ecs::prelude::{Component, Entity, Resource};
 use engine_place::{Error, ErrorCode, InterpolateTransform, Slot};
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 pub const MIN_COLLIDER_EXTENT: f32 = 1.0e-4;
@@ -323,6 +323,20 @@ pub struct ShapeHit {
     pub placed: Option<PlacedPart>,
 }
 
+pub const SLIDE_STEPS: usize = 4;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Slid {
+    pub position: Vec3,
+    pub hits: [Option<ShapeHit>; SLIDE_STEPS],
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SlideHit {
+    pub mover: Option<Entity>,
+    pub hit: ShapeHit,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SensorPair {
     pub first: Entity,
@@ -386,11 +400,23 @@ pub trait Collide: Any + Send + Sync + 'static {
         options: ShapeCastOptions,
     ) -> Result<Option<ShapeHit>, Error>;
 
+    fn slide(
+        &self,
+        shape: ColliderShape,
+        matrix: Mat4,
+        motion: Vec3,
+        filter: QueryFilter,
+    ) -> Result<Slid, Error>;
+
+    fn slide_hits(&self) -> Vec<SlideHit>;
+
     fn events(&self) -> &[SensorEvent];
 
     fn pairs(&self) -> &[SensorPair];
 
     fn colliders(&self) -> Option<usize>;
+
+    fn holds(&self, at: Vec2) -> bool;
 }
 
 struct NoCollision;
@@ -432,6 +458,23 @@ impl Collide for NoCollision {
         Ok(None)
     }
 
+    fn slide(
+        &self,
+        _: ColliderShape,
+        matrix: Mat4,
+        motion: Vec3,
+        _: QueryFilter,
+    ) -> Result<Slid, Error> {
+        Ok(Slid {
+            position: matrix.w_axis.truncate() + motion,
+            hits: [None; SLIDE_STEPS],
+        })
+    }
+
+    fn slide_hits(&self) -> Vec<SlideHit> {
+        Vec::new()
+    }
+
     fn events(&self) -> &[SensorEvent] {
         &[]
     }
@@ -442,6 +485,10 @@ impl Collide for NoCollision {
 
     fn colliders(&self) -> Option<usize> {
         None
+    }
+
+    fn holds(&self, _: Vec2) -> bool {
+        false
     }
 }
 

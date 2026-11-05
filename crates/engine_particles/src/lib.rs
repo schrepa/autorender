@@ -13,7 +13,7 @@ mod scene;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, ComponentKind, GpuStruct, SceneComponents, Schedule, Source};
-use engine_places::particles::{ParticleEmitter, Transparency};
+use engine_places::particles::{ParticleBursts, ParticleEmitter, Transparency};
 use engine_render::RenderBricks;
 
 pub use emitters::{ParticleSettings, ParticleStats};
@@ -36,6 +36,7 @@ impl Brick for ParticlesBrick {
             .resource::<emitters::Gather>()
             .resource::<emitters::Packed>()
             .fill::<Transparency>(Some(shaders::particles::faces::transparency::MODULE))
+            .fill::<ParticleBursts>(None)
             .join::<SceneComponents>(
                 ComponentKind::of::<ParticleEmitter>("particles")
                     .check(scene::check_emitter)
@@ -49,6 +50,7 @@ impl Brick for ParticlesBrick {
                 (emitters::gather_emitters, emitters::particle_stats),
             )
             .off(emitters::forget)
+            .off_in(Schedule::ViewSync, emitters::drop_bursts)
             .generated(GENERATED)
             .part::<part::ParticlesGpu>();
     }

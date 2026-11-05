@@ -490,6 +490,7 @@ fn install_with(
     let core_fills = vec![
         TypeId::of::<crate::MainView>(),
         TypeId::of::<crate::Overlay>(),
+        TypeId::of::<crate::OverlayStack>(),
     ];
     let mut listed: Vec<Listed> = vec![
         Listed {
@@ -613,7 +614,7 @@ fn install_with(
     if let Some(Some(error)) = crate::platform::ready(scope.pop()) {
         problems.push(failed_with("$.pipelines", error));
     }
-    let Some(mut machine) = machine else {
+    let Some(mut machine) = machine.filter(|_| problems.is_empty()) else {
         return Err(problems);
     };
     let composed: Vec<std::sync::Arc<crate::linker::Composed>> = machine
@@ -667,6 +668,7 @@ impl Renderer {
         registry.places(crate::shared::PLACES);
         registry.fill_core::<crate::MainView>();
         registry.fill_core::<crate::Overlay>();
+        registry.fill_core::<crate::OverlayStack>();
         registry.core_settings(SettingsEntry::of::<crate::RenderSettings>(
             crate::RenderSettings::KEY,
             check_render,

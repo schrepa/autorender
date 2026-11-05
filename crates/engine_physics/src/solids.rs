@@ -117,6 +117,7 @@ pub(crate) struct Solids {
     count: usize,
     limit: Option<usize>,
     moved: u64,
+    disabled: u64,
 }
 
 impl Solids {
@@ -257,7 +258,9 @@ pub(crate) fn sync_colliders(
     };
     let solids = &mut *solids;
     let since = globals.changes_since(&mut solids.moved);
+    let disabled = std::mem::replace(&mut solids.disabled, globals.switches().disabled);
     let settled = solids.limit == Some(limit)
+        && disabled == solids.disabled
         && solids.count == colliders.iter().len()
         && edited.is_empty()
         && match since {

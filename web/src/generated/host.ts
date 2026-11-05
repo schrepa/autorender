@@ -44,19 +44,11 @@ export const JOB_CACHE_MIB = 1024;
 
 export const MAX_JOB_CACHE_MIB = 9999999;
 
-export const MAX_ACTIONS = 32;
-
 export const LOOK_LIMIT = 1000.0;
 
 export const WHEEL_PIXELS = 100.0;
 
 export const BENCHMARK_LIMIT_MS = 10000;
-
-export const MAX_PIXEL_RATIO = 1.5;
-
-export const MAX_VIEW_WIDTH = 2560;
-
-export const MAX_VIEW_HEIGHT = 1440;
 
 export const DYNAMIC_STEP = 0.03125;
 

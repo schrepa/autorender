@@ -1,9 +1,11 @@
+use std::collections::BTreeSet;
+
 use engine_core::{
     AxisId, AxisInput, Error, ErrorCode, Expected, MenuInput, MoveInput, PointerInput,
 };
 use glam::Vec2;
 
-use super::policy::{LOOK_LIMIT, MAX_ACTIONS};
+use super::policy::LOOK_LIMIT;
 
 pub const KEYS: &[&str] = &[
     "Space",
@@ -135,27 +137,36 @@ const PAD_BUTTONS: [(&str, u32); 14] = [
 const STICK_DEAD_ZONE: f32 = 0.15;
 const PAD_LOOK_RATE: f32 = 600.0;
 
-const MENU_UP: u8 = 1;
-const MENU_DOWN: u8 = 1 << 1;
-const MENU_LEFT: u8 = 1 << 2;
-const MENU_RIGHT: u8 = 1 << 3;
-const MENU_ACCEPT: u8 = 1 << 4;
-const MENU_BACK: u8 = 1 << 5;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuKey {
+    Up,
+    Down,
+    Left,
+    Right,
+    Accept,
+    Back,
+}
 
-const MENU: &[(&str, u8)] = &[
-    ("ArrowUp", MENU_UP),
-    ("PadUp", MENU_UP),
-    ("ArrowDown", MENU_DOWN),
-    ("Tab", MENU_DOWN),
-    ("PadDown", MENU_DOWN),
-    ("ArrowLeft", MENU_LEFT),
-    ("PadLeft", MENU_LEFT),
-    ("ArrowRight", MENU_RIGHT),
-    ("PadRight", MENU_RIGHT),
-    ("Enter", MENU_ACCEPT),
-    ("PadSouth", MENU_ACCEPT),
-    ("Escape", MENU_BACK),
-    ("PadEast", MENU_BACK),
+impl MenuKey {
+    const fn bit(self) -> u8 {
+        1 << self as u8
+    }
+}
+
+pub const MENU_KEYS: &[(&str, MenuKey)] = &[
+    ("ArrowUp", MenuKey::Up),
+    ("PadUp", MenuKey::Up),
+    ("ArrowDown", MenuKey::Down),
+    ("Tab", MenuKey::Down),
+    ("PadDown", MenuKey::Down),
+    ("ArrowLeft", MenuKey::Left),
+    ("PadLeft", MenuKey::Left),
+    ("ArrowRight", MenuKey::Right),
+    ("PadRight", MenuKey::Right),
+    ("Enter", MenuKey::Accept),
+    ("PadSouth", MenuKey::Accept),
+    ("Escape", MenuKey::Back),
+    ("PadEast", MenuKey::Back),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,12 +198,12 @@ pub const MOVE_KEYS: &[(&str, MoveDirection)] = &[
     ("KeyQ", MoveDirection::Down),
 ];
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct FrameInput {
     pub state: MoveInput,
-    pub held: u32,
-    pub pressed: u32,
-    pub released: u32,
+    pub held: BTreeSet<u32>,
+    pub pressed: BTreeSet<u32>,
+    pub released: BTreeSet<u32>,
     pub pointer: PointerInput,
     pub axes: AxisInput,
     pub menu: MenuInput,
@@ -201,16 +212,16 @@ pub struct FrameInput {
 #[derive(Clone, Debug)]
 pub struct InputGatherer {
     holds: [u8; KEYS.len()],
-    bits: [u32; KEYS.len()],
+    actions: Vec<Vec<u32>>,
     menu: [u8; KEYS.len()],
     primary: usize,
     movement: Vec<(usize, MoveDirection)>,
     axes: Vec<(Source, usize, f32)>,
     yaw: f32,
     pitch: f32,
-    held: u32,
-    pressed: u32,
-    released: u32,
+    held: BTreeSet<u32>,
+    pressed: BTreeSet<u32>,
+    released: BTreeSet<u32>,
     menu_pressed: u8,
     pointer: PointerInput,
     pad_buttons: u32,
@@ -224,39 +235,29 @@ impl InputGatherer {
         actions: &[(&str, u32)],
         axes: &[(&str, u32, f32)],
         move_keys: &[(&str, MoveDirection)],
+        menu_keys: &[(&str, MenuKey)],
     ) -> Result<Self, Error> {
-        let mut bits = [0; KEYS.len()];
+        let mut bound = vec![Vec::new(); KEYS.len()];
         for (at, &(name, action)) in actions.iter().enumerate() {
-            if action >= MAX_ACTIONS {
-                return Err(
-                    Error::new(ErrorCode::InvalidInput, format!("$.actions[{at}]"))
-                        .at_most(u64::from(MAX_ACTIONS - 1))
-                        .got(action),
-                );
-            }
             let index = index(name).ok_or_else(|| {
                 Error::new(ErrorCode::InvalidInput, format!("$.actions[{at}]"))
                     .got(name)
                     .variants(KEYS.iter().copied())
             })?;
-            bits[index] |= 1 << action;
-        }
-        let mut menu = [0; KEYS.len()];
-        for &(name, press) in MENU {
-            menu[index(name).expect("menu_key_known")] |= press;
+            bound[index].push(action);
         }
         Ok(Self {
             holds: [0; KEYS.len()],
-            bits,
-            menu,
+            actions: bound,
+            menu: menu_table(menu_keys)?,
             primary: index("MouseLeft").expect("mouse_left_known"),
             movement: movement_keys(move_keys)?,
             axes: axis_sources(axes)?,
             yaw: 0.0,
             pitch: 0.0,
-            held: 0,
-            pressed: 0,
-            released: 0,
+            held: BTreeSet::new(),
+            pressed: BTreeSet::new(),
+            released: BTreeSet::new(),
             menu_pressed: 0,
             pointer: PointerInput::default(),
             pad_buttons: 0,
@@ -274,7 +275,7 @@ impl InputGatherer {
         let source = Source::Key(index);
         let primary = index == self.primary;
         let used = primary
-            || self.bits[index] != 0
+            || !self.actions[index].is_empty()
             || self.holds[index] > 0
             || self.movement.iter().any(|&(key, _)| key == index)
             || self.axes.iter().any(|&(key, _, _)| key == source)
@@ -285,12 +286,12 @@ impl InputGatherer {
         if !used {
             return false;
         }
-        let bit = self.bits[index];
+        let actions = &self.actions[index];
         let holds = &mut self.holds[index];
         if down {
             if *holds == 0 {
-                self.held |= bit;
-                self.pressed |= bit;
+                self.held.extend(actions);
+                self.pressed.extend(actions);
                 self.pointer.held |= primary;
                 self.pointer.pressed |= primary;
             }
@@ -298,8 +299,10 @@ impl InputGatherer {
         } else if *holds > 0 {
             *holds -= 1;
             if *holds == 0 {
-                self.held &= !bit;
-                self.released |= bit;
+                for action in actions {
+                    self.held.remove(action);
+                }
+                self.released.extend(actions);
                 self.pointer.held &= !primary;
                 self.pointer.released |= primary;
             }
@@ -356,9 +359,9 @@ impl InputGatherer {
         self.holds = [0; KEYS.len()];
         self.yaw = 0.0;
         self.pitch = 0.0;
-        self.held = 0;
-        self.pressed = 0;
-        self.released = 0;
+        self.held.clear();
+        self.pressed.clear();
+        self.released.clear();
         self.menu_pressed = 0;
         self.pointer = PointerInput::default();
         self.pad_buttons = 0;
@@ -401,17 +404,15 @@ impl InputGatherer {
                 look_right_pixels: self.yaw + right_x * turn,
                 look_down_pixels: self.pitch - right_y * turn,
             },
-            held: self.held,
-            pressed: self.pressed,
-            released: self.released,
+            held: self.held.clone(),
+            pressed: std::mem::take(&mut self.pressed),
+            released: std::mem::take(&mut self.released),
             pointer: self.pointer,
             axes: AxisInput::of(self.axis_values(&analog)),
             menu: menu_input(self.menu_pressed),
         };
         self.yaw = 0.0;
         self.pitch = 0.0;
-        self.pressed = 0;
-        self.released = 0;
         self.menu_pressed = 0;
         self.pointer.delta_pixels = Vec2::ZERO;
         self.pointer.wheel_right_notches = 0.0;
@@ -463,6 +464,19 @@ fn movement_keys(keys: &[(&str, MoveDirection)]) -> Result<Vec<(usize, MoveDirec
     Ok(movement)
 }
 
+fn menu_table(keys: &[(&str, MenuKey)]) -> Result<[u8; KEYS.len()], Error> {
+    let mut menu = [0; KEYS.len()];
+    for (at, &(name, press)) in keys.iter().enumerate() {
+        let key = index(name).ok_or_else(|| {
+            Error::new(ErrorCode::InvalidInput, format!("$.menu_keys[{at}]"))
+                .got(name)
+                .variants(KEYS.iter().copied())
+        })?;
+        menu[key] |= press.bit();
+    }
+    Ok(menu)
+}
+
 fn axis_sources(axes: &[(&str, u32, f32)]) -> Result<Vec<(Source, usize, f32)>, Error> {
     let mut sources = Vec::with_capacity(axes.len());
     for (at, &(name, axis, scale)) in axes.iter().enumerate() {
@@ -507,14 +521,14 @@ fn finite(value: f32) -> f32 {
 }
 
 fn menu_input(pressed: u8) -> MenuInput {
-    let has = |press: u8| pressed & press != 0;
+    let has = |key: MenuKey| pressed & key.bit() != 0;
     MenuInput {
-        up: has(MENU_UP),
-        down: has(MENU_DOWN),
-        left: has(MENU_LEFT),
-        right: has(MENU_RIGHT),
-        accept: has(MENU_ACCEPT),
-        back: has(MENU_BACK),
+        up: has(MenuKey::Up),
+        down: has(MenuKey::Down),
+        left: has(MenuKey::Left),
+        right: has(MenuKey::Right),
+        accept: has(MenuKey::Accept),
+        back: has(MenuKey::Back),
         wanted: false,
     }
 }

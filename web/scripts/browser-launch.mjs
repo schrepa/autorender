@@ -25,7 +25,7 @@ const FOLDERS = 16;
 const held = new Set();
 process.once("exit", () => { for (const lock of held) rmSync(lock, { force: true }); });
 
-function running(pid) {
+export function running(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; }
 }

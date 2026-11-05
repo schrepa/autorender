@@ -103,10 +103,10 @@ fn rests(session: &mut dyn SmokeSession) -> Checked<()> {
         "sinks"
     );
     let stats = inspect(session, "physics_stats")?;
-    let expected = json!({"bodies": 2, "held": 0, "solids": 2});
+    let expected = json!({"bodies": 2, "solids": 2});
     smoke_eq!(
         shown(
-            stats["bodies"] == 2 && stats["held"] == 0 && number(&stats["solids"]) >= 2.0,
+            stats["bodies"] == 2 && number(&stats["solids"]) >= 2.0,
             &stats,
             &expected
         ),

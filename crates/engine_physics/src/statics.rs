@@ -91,13 +91,6 @@ impl Statics {
         self.ground.len() + self.placed.len() + self.colliders.len()
     }
 
-    pub fn grounded(&self, x: f32, z: f32) -> bool {
-        self.ground.iter().any(|ground| {
-            let (min, max) = (ground.field.min, ground.field.max);
-            x >= min.x && x <= max.x && z >= min.z && z <= max.z
-        })
-    }
-
     pub fn sync(
         &mut self,
         solver: &mut Solver,

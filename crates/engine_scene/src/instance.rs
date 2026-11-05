@@ -6,8 +6,8 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::world::{World, WorldId};
 use engine_assets::SceneAssets;
 use engine_core::{
-    AssetLibrary, Error, MaterialHandle, Mesh3d, MeshHandle, ProvidedAssets, SceneContext,
-    TextureHandle, Transform, propagate_transforms, set_parents,
+    AssetLibrary, Error, EvenDisabled, MaterialHandle, Mesh3d, MeshHandle, ProvidedAssets,
+    SceneContext, TextureHandle, Transform, propagate_transforms, set_parents,
 };
 use engine_registry::{OperationScene, SceneEntity};
 
@@ -273,7 +273,7 @@ impl SceneInstance {
             kept.extend(current.entities.values().copied());
         }
         let streamed: Vec<Entity> = world
-            .query::<(Entity, &SceneEntity)>()
+            .query_filtered::<(Entity, &SceneEntity), EvenDisabled>()
             .iter(world)
             .filter(|(entity, authored)| authored.scene_id == self.id && !kept.contains(entity))
             .map(|(entity, _)| entity)

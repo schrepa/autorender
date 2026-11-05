@@ -93,7 +93,7 @@ fn settle(ground: Res<Ground>, mut query: GroundedQuery) {
         if !stale {
             continue;
         }
-        let sample = ground.sample(position);
+        let sample = ground.point(position).solid();
         if let Some(height) = sample.map(|sample| sample.height + grounded.offset)
             && transform.translation.y != height
         {

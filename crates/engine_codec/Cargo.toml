@@ -10,7 +10,6 @@ default = []
 schema = []
 
 [dependencies]
-engine_math.workspace = true
 glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true

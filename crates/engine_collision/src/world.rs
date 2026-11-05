@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use bevy_ecs::prelude::*;
 use engine_core::profile::{Aggregate, span};
@@ -8,11 +8,11 @@ use engine_core::{
 };
 use engine_math::collections::HashMap;
 use engine_places::physics::{
-    Collide, Collider, ColliderShape, Collision, CollisionRay, QueryFilter, RayHit, SensorEvent,
-    SensorEventKind, SensorPair, ShapeCastOptions, ShapeHit,
+    Collide, Collider, ColliderShape, Collision, CollisionRay, QueryFilter, RayHit, SLIDE_STEPS,
+    SensorEvent, SensorEventKind, SensorPair, ShapeCastOptions, ShapeHit, Slid, SlideHit,
 };
 use engine_places::solids::{Bounds, Bvh, SolidField, SolidSource};
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 
 use crate::{
     bvh::profiled,
@@ -20,6 +20,9 @@ use crate::{
     placed, terrain,
     types::*,
 };
+
+const SKIN: f32 = 0.002;
+const STOPPED: f32 = 1.0e-10;
 
 type ColliderData = (Entity, &'static Collider, Has<Transform>);
 type Edited<'w, 's> = Query<'w, 's, (), Changed<Collider>>;
@@ -51,10 +54,12 @@ pub struct CollisionWorld {
     bounds: Vec<Bounds>,
     bvh: Bvh,
     moved: u64,
+    disabled: u64,
     next_pairs: Vec<SensorPair>,
     report: CollisionReport,
     last_error: Option<Fault>,
     sources: Vec<Arc<SolidField>>,
+    hits: Mutex<Vec<SlideHit>>,
     pub(crate) sensors: SensorEvents,
 }
 
@@ -116,8 +121,10 @@ impl CollisionWorld {
         self.report.frame = frame;
         self.report.tick = tick;
         let since = globals.changes_since(&mut self.moved);
+        let disabled = std::mem::replace(&mut self.disabled, globals.switches().disabled);
         let settled = (self.report.complete || self.last_error.is_some())
             && config == self.config
+            && disabled == self.disabled
             && colliders.iter().len() == self.report.colliders
             && edited.is_empty()
             && match since {
@@ -332,6 +339,11 @@ impl CollisionWorld {
     }
 
     fn detect(&mut self, tick: u64) {
+        self.report.slide_hits = self
+            .hits
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len();
         let mut events = std::mem::take(&mut self.sensors);
         self.detect_into(&mut events, tick);
         self.sensors = events;
@@ -548,12 +560,62 @@ impl Collide for CollisionWorld {
             .map_err(Fault::error)
     }
 
+    fn slide(
+        &self,
+        shape: ColliderShape,
+        matrix: Mat4,
+        motion: Vec3,
+        filter: QueryFilter,
+    ) -> Result<Slid, Error> {
+        let options = ShapeCastOptions {
+            stop_at_penetration: false,
+            target_distance: 0.0,
+        };
+        let mut pose = matrix;
+        let mut at = matrix.w_axis.truncate();
+        let mut left = motion;
+        let mut hits = [None; SLIDE_STEPS];
+        for found in &mut hits {
+            if left.length_squared() < STOPPED {
+                break;
+            }
+            pose.w_axis = at.extend(1.0);
+            let Some(hit) = self.cast_shape(shape, pose, left, filter, options)? else {
+                at += left;
+                break;
+            };
+            at += left * hit.fraction + hit.normal * SKIN;
+            left *= 1.0 - hit.fraction;
+            left -= hit.normal * left.dot(hit.normal);
+            *found = Some(hit);
+            self.hits
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(SlideHit {
+                    mover: filter.exclude,
+                    hit,
+                });
+        }
+        Ok(Slid { position: at, hits })
+    }
+
+    fn slide_hits(&self) -> Vec<SlideHit> {
+        self.hits
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     fn events(&self) -> &[SensorEvent] {
         &self.sensors.events
     }
 
     fn pairs(&self) -> &[SensorPair] {
         &self.sensors.pairs
+    }
+
+    fn holds(&self, at: Vec2) -> bool {
+        self.sources.iter().any(|source| source.holds(at))
     }
 }
 
@@ -621,6 +683,14 @@ impl SensorEvents {
     pub(crate) fn error(&self) -> Option<Error> {
         self.error.map(Fault::error)
     }
+}
+
+pub(crate) fn clear_hits(mut collision: ResMut<Collision>) {
+    installed(&mut collision)
+        .hits
+        .get_mut()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
 }
 
 pub(crate) fn sync_ground(sources: Query<Sources>, mut collision: ResMut<Collision>) {

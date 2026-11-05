@@ -30,6 +30,7 @@ pub struct TextRun {
     pub max_width: Option<f32>,
     pub align: TextAlign,
     pub clip: Option<[f32; 4]>,
+    pub step: Option<u32>,
 }
 
 impl Default for TextRun {
@@ -43,6 +44,7 @@ impl Default for TextRun {
             max_width: None,
             align: TextAlign::Left,
             clip: None,
+            step: None,
         }
     }
 }

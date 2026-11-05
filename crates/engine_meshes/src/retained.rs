@@ -4,9 +4,9 @@ use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
     AssetLibrary, GlobalTransforms, Material, MaterialBinding, MaterialHandle, Mesh3d, MeshHandle,
-    Surface, Transform,
+    Shown, Surface, Switches, Transform,
 };
-use engine_places::meshes::{Cube, Instances, Tint};
+use engine_places::meshes::{Cube, FirstPersonLayer, Instances, Tint};
 use engine_places::splines::SplineMesh;
 use glam::Mat4;
 
@@ -14,16 +14,19 @@ type RenderQuery<'w, 's> = Query<
     'w,
     's,
     (
+        Entity,
         Has<Transform>,
         Option<&'static Cube>,
         Option<&'static Mesh3d>,
         Option<&'static Tint>,
         Has<SplineMesh>,
+        Option<&'static FirstPersonLayer>,
     ),
-    Or<(With<Cube>, With<Mesh3d>)>,
+    (Or<(With<Cube>, With<Mesh3d>)>, Shown),
 >;
 
-type UnbuiltSplines<'w, 's> = Query<'w, 's, &'static Mesh3d, (With<SplineMesh>, Without<Cube>)>;
+type UnbuiltSplines<'w, 's> =
+    Query<'w, 's, &'static Mesh3d, (With<SplineMesh>, Without<Cube>, Shown)>;
 
 type SourceChanges<'w, 's> = Query<
     'w,
@@ -34,6 +37,7 @@ type SourceChanges<'w, 's> = Query<
         Changed<Cube>,
         Changed<Tint>,
         Changed<SplineMesh>,
+        Changed<FirstPersonLayer>,
     )>,
 >;
 
@@ -68,6 +72,13 @@ pub(crate) struct Instance {
     pub material: Option<MaterialHandle>,
     pub color: [f32; 4],
     pub surface: Surface,
+    pub flags: u32,
+}
+
+impl Instance {
+    pub(crate) fn first_person(&self) -> bool {
+        self.flags != 0
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -188,6 +199,7 @@ pub(crate) struct RetainedRender {
     asset_revision: Option<(u64, u64)>,
     material_revision: Option<u64>,
     topology: Option<u64>,
+    switches: Switches,
     color_writes: Vec<u32>,
     color_sequence: u64,
     changed: bool,
@@ -227,6 +239,7 @@ pub(crate) fn retain_instances(
         retained.refresh(entity, &inputs, &mut instances);
     }
     let topology_moved = retained.settle_topology(&inputs, &mut instances);
+    retained.settle_switches(&inputs, &mut instances);
     retained.render_candidates =
         query.iter().len() - splines.iter().filter(|mesh3d| unbuilt(mesh3d)).count();
     if retained.changed || assets_moved || topology_moved {
@@ -373,13 +386,42 @@ impl RetainedRender {
         true
     }
 
+    fn settle_switches(
+        &mut self,
+        inputs: &Inputs<'_, '_, '_>,
+        instances: &mut ResMut<'_, Instances>,
+    ) {
+        let switches = inputs.globals.switches();
+        if self.switches == switches {
+            return;
+        }
+        self.switches = switches;
+        for slot in 0..self.owners.len() {
+            if let Some(entity) = self.owners[slot]
+                && !inputs.query.contains(entity)
+            {
+                self.forget(entity, instances);
+            }
+        }
+        self.homeless
+            .retain(|&entity| inputs.query.contains(entity));
+        self.unresolved
+            .retain(|&entity| inputs.query.contains(entity));
+        for (entity, ..) in inputs.query.iter() {
+            if !instances.slots.contains_key(&entity) {
+                self.refresh(entity, inputs, instances);
+            }
+        }
+    }
+
     fn refresh(
         &mut self,
         entity: Entity,
         inputs: &Inputs<'_, '_, '_>,
         instances: &mut ResMut<'_, Instances>,
     ) {
-        let Ok((has_transform, cube, mesh3d, tint, spline)) = inputs.query.get(entity) else {
+        let Ok((_, has_transform, cube, mesh3d, tint, spline, layer)) = inputs.query.get(entity)
+        else {
             self.forget(entity, instances);
             return;
         };
@@ -394,7 +436,7 @@ impl RetainedRender {
             return;
         }
         self.homeless.remove(&entity);
-        let Some(next) = self.resolve(inputs.assets, cube, mesh3d, tint) else {
+        let Some(next) = self.resolve(inputs.assets, cube, mesh3d, tint, layer) else {
             self.release(entity, instances);
             self.unresolved.insert(entity);
             return;
@@ -410,6 +452,7 @@ impl RetainedRender {
         cube: Option<&Cube>,
         mesh3d: Option<&Mesh3d>,
         tint: Option<&Tint>,
+        layer: Option<&FirstPersonLayer>,
     ) -> Option<Instance> {
         let (mesh, source, material, color, surface) = if let Some(mesh3d) = mesh3d {
             let held = self.materials.resolve(assets, mesh3d.material)?;
@@ -437,6 +480,7 @@ impl RetainedRender {
             material,
             color: tint.map_or(color, |tint| tint.apply(color)),
             surface,
+            flags: layer.map_or(0, FirstPersonLayer::slot_flags),
         })
     }
 
@@ -463,10 +507,14 @@ impl RetainedRender {
 
     fn apply(&mut self, slot: usize, fresh: bool, next: Instance) {
         let record = &mut self.instances[slot];
-        self.changed |= fresh || record.mesh != next.mesh || record.material != next.material;
+        self.changed |= fresh
+            || record.mesh != next.mesh
+            || record.material != next.material
+            || record.first_person() != next.first_person();
         let restyled = fresh
             || record.color.map(f32::to_bits) != next.color.map(f32::to_bits)
-            || surface_bits(record.surface) != surface_bits(next.surface);
+            || surface_bits(record.surface) != surface_bits(next.surface)
+            || record.flags != next.flags;
         *record = next;
         if restyled {
             self.color_writes.push(slot as u32);

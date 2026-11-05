@@ -2,7 +2,7 @@ use std::sync::{Arc, OnceLock};
 
 use bevy_ecs::prelude::{Component, Entity};
 use engine_math::max;
-use glam::{Mat3, Mat4, Vec3};
+use glam::{Mat3, Mat4, Vec2, Vec3};
 use parry3d::shape::{HeightField, HeightFieldCellStatus};
 use parry3d::utils::Array2;
 
@@ -62,6 +62,10 @@ impl FieldTile {
 
     pub fn shape(&self) -> &Arc<HeightField> {
         self.shape.get_or_init(|| Arc::new(self.build()))
+    }
+
+    pub fn holds(&self, at: Vec2) -> bool {
+        at.x >= self.min.x && at.x <= self.max.x && at.y >= self.min.z && at.y <= self.max.z
     }
 
     fn build(&self) -> HeightField {
@@ -432,6 +436,17 @@ impl SolidTree {
 pub struct SolidField {
     pub fields: Vec<Arc<FieldTile>>,
     pub solids: Arc<SolidTree>,
+    pub areas: Vec<(Vec2, Vec2)>,
+}
+
+impl SolidField {
+    pub fn holds(&self, at: Vec2) -> bool {
+        self.fields.iter().any(|field| field.holds(at))
+            || self
+                .areas
+                .iter()
+                .any(|&(low, high)| at.cmpge(low).all() && at.cmple(high).all())
+    }
 }
 
 #[derive(Component, Clone, Default)]

@@ -6,12 +6,12 @@ use engine_render::{
 };
 use glam::{Mat4, Vec3};
 
-use crate::emitters::Packed;
+use crate::emitters::{Emitter, Packed};
 use crate::shaders::particles::{composite, draw, faces::transparency as face};
 
 const ACCUMULATED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const REVEALED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
-const EMITTERS_START: u64 = 128;
+const EMITTERS_START: u64 = size_of::<Emitter>() as u64;
 const SHOWN_BYTES: u64 = 16;
 
 const ADD: wgpu::BlendComponent = wgpu::BlendComponent {

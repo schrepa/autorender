@@ -1,5 +1,5 @@
 use engine_core::{Error, ErrorCode, ExtraRules, InvalidSetting, Reach, Setting, fields};
-use engine_places::particles::{MAX_SPREAD_DEGREES, ParticleBlend, ParticleEmitter};
+use engine_places::particles::{MAX_SPREAD_DEGREES, ParticleBlend, ParticleEmitter, ParticleShape};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -19,6 +19,18 @@ pub enum SceneParticleBlend {
     Mist,
 }
 
+impl Setting for SceneParticleShape {}
+
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SceneParticleShape {
+    Box,
+    #[default]
+    Ball,
+}
+
 fn default_emitter() -> SceneEmitter {
     SceneEmitter::from(&ParticleEmitter::default())
 }
@@ -30,30 +42,43 @@ fields! {
     pub struct SceneEmitter {
         pub rate: f32 = default_emitter().rate
             => same(emitter_rule("rate")),
+        pub offset: [f32; 3] = default_emitter().offset
+            => same(emitter_rule("offset")),
+        pub emitting: bool = default_emitter().emitting => any,
         pub lifetime: f32 = default_emitter().lifetime
             => same(emitter_rule("lifetime")),
+        pub lifetime_spread: f32 = default_emitter().lifetime_spread
+            => same(emitter_rule("lifetime_spread")),
         pub speed: f32 = default_emitter().speed
             => same(emitter_rule("speed")),
+        pub speed_spread: f32 = default_emitter().speed_spread
+            => same(emitter_rule("speed_spread")),
         pub direction: [f32; 3] = default_emitter().direction
             => same(emitter_rule("direction")),
         pub spread_degrees: f32 = default_emitter().spread_degrees
             => range(0.0, MAX_SPREAD_DEGREES),
         pub acceleration: [f32; 3] = default_emitter().acceleration
             => same(emitter_rule("acceleration")),
+        pub shape: SceneParticleShape = default_emitter().shape => any,
+        pub extent: [f32; 3] = default_emitter().extent
+            => same(emitter_rule("extent")),
         pub size: [f32; 2] = default_emitter().size
             => same(emitter_rule("size")),
+        pub size_spread: f32 = default_emitter().size_spread
+            => same(emitter_rule("size_spread")),
         pub color: [[f32; 4]; 2] = default_emitter().color
             => same(emitter_rule("color")),
-        pub emission: f32 = default_emitter().emission
-            => same(emitter_rule("emission")),
+        pub fade_in: f32 = default_emitter().fade_in
+            => same(emitter_rule("fade_in")),
+        pub brightness: f32 = default_emitter().brightness
+            => same(emitter_rule("brightness")),
         pub blend: SceneParticleBlend = default_emitter().blend => any,
         pub stretch: f32 = default_emitter().stretch
             => same(emitter_rule("stretch")),
-        pub offset: [f32; 3] = default_emitter().offset
-            => same(emitter_rule("offset")),
-        pub radius: f32 = default_emitter().radius
-            => same(emitter_rule("radius")),
         pub seed: u32 = default_emitter().seed => any,
+        pub formula: u32 = default_emitter().formula => any,
+        pub params: [f32; 8] = default_emitter().params
+            => same(emitter_rule("params")),
     }
 }
 
@@ -65,27 +90,37 @@ impl ExtraRules for SceneEmitter {
 
 impl From<&ParticleEmitter> for SceneEmitter {
     fn from(emitter: &ParticleEmitter) -> Self {
+        let look = &emitter.look;
         Self {
             rate: emitter.rate,
-            lifetime: emitter.lifetime,
-            speed: emitter.speed,
-            direction: emitter.direction.to_array(),
-            spread_degrees: emitter
-                .authored_degrees
-                .unwrap_or(emitter.spread.to_degrees()),
-            acceleration: emitter.acceleration.to_array(),
-            size: emitter.size,
-            color: emitter.color,
-            emission: emitter.emission,
-            blend: match emitter.blend {
+            offset: emitter.offset.to_array(),
+            emitting: emitter.emitting,
+            lifetime: look.lifetime,
+            lifetime_spread: look.lifetime_spread,
+            speed: look.speed,
+            speed_spread: look.speed_spread,
+            direction: look.direction.to_array(),
+            spread_degrees: look.authored_degrees.unwrap_or(look.spread.to_degrees()),
+            acceleration: look.acceleration.to_array(),
+            shape: match look.shape {
+                ParticleShape::Box => SceneParticleShape::Box,
+                ParticleShape::Ball => SceneParticleShape::Ball,
+            },
+            extent: look.extent.to_array(),
+            size: look.size,
+            size_spread: look.size_spread,
+            color: look.color,
+            fade_in: look.fade_in,
+            brightness: look.brightness,
+            blend: match look.blend {
                 ParticleBlend::Alpha => SceneParticleBlend::Alpha,
                 ParticleBlend::Additive => SceneParticleBlend::Additive,
                 ParticleBlend::Mist => SceneParticleBlend::Mist,
             },
-            stretch: emitter.stretch,
-            offset: emitter.offset.to_array(),
-            radius: emitter.radius,
-            seed: emitter.seed,
+            stretch: look.stretch,
+            seed: look.seed,
+            formula: look.formula,
+            params: look.params,
         }
     }
 }
@@ -101,12 +136,17 @@ pub(crate) fn emitter_reach(
     reach: &Reach<'_>,
     extend: &mut dyn FnMut(f32),
 ) {
+    let look = &emitter.look;
+    let shape = match look.shape {
+        ParticleShape::Box => look.extent.length(),
+        ParticleShape::Ball => look.extent.max_element(),
+    };
     extend(
         reach.from
             + emitter.offset.length()
-            + emitter.radius
-            + emitter.speed * emitter.lifetime
-            + 0.5 * emitter.acceleration.length() * emitter.lifetime * emitter.lifetime,
+            + shape
+            + look.speed * look.lifetime
+            + 0.5 * look.acceleration.length() * look.lifetime * look.lifetime,
     );
 }
 

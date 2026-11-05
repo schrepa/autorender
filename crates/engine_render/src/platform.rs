@@ -7,7 +7,7 @@ pub fn failed(path: &str) -> Error {
 }
 
 pub fn failed_with(path: &str, error: impl fmt::Display) -> Error {
-    failed(path).got(error.to_string())
+    failed(path).got_whole(error.to_string())
 }
 
 #[cfg(not(target_arch = "wasm32"))]

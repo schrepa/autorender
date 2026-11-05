@@ -239,6 +239,7 @@ impl Published {
                 .map(|(_, field)| Arc::clone(field))
                 .collect(),
             solids: Arc::new(SolidTree::new(solids)),
+            areas: Vec::new(),
         }))
     }
 }

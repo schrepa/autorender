@@ -251,13 +251,9 @@ impl AppHost {
         let (resolution, dynamic) = self.resolution_settings();
         self.adapt_resolution(&dynamic, timing, interval);
         let scale = self.dynamic.scale(&dynamic);
-        let (render_width, render_height) = crate::host::render_size(
-            (width, height),
-            self.pixel_ratio,
-            f64::from(resolution.scale),
-            scale,
-        )
-        .unwrap_or((width, height));
+        let (render_width, render_height) =
+            crate::host::render_size((width, height), self.pixel_ratio, &resolution, scale)
+                .unwrap_or((width, height));
         let stats = engine_core::DynamicResolutionStats {
             active: dynamic.enabled,
             scale: scale as f32,
@@ -533,7 +529,7 @@ impl AppHost {
             look_down_pixels: 0.0,
             ..moving
         });
-        self.set_gathered(FrameInput {
+        self.set_gathered(&FrameInput {
             pointer: engine_core::PointerInput {
                 delta_pixels: glam::Vec2::ZERO,
                 wheel_up_notches: 0.0,
@@ -593,7 +589,7 @@ impl AppHost {
         });
     }
 
-    pub(crate) fn set_gathered(&mut self, input: FrameInput) {
+    pub(crate) fn set_gathered(&mut self, input: &FrameInput) {
         let world = self.engine.app.world_mut();
         let wanted = world.resource::<MenuInput>().wanted;
         world.insert_resource(input.pointer);
@@ -654,6 +650,7 @@ impl AppHost {
             render_ms: acquire_ms + draw_ms,
             fixed_steps: report.fixed_steps,
             dropped_seconds: self.stats.dropped_seconds + report.dropped_seconds,
+            cut_seconds: self.stats.cut_seconds + report.cut_seconds,
             pipelines_compiling: false,
             pipelines_listed: 0,
             pipelines_unlisted: 0,
@@ -661,6 +658,7 @@ impl AppHost {
             resolution: self.resolution_stats((width, height)),
             dynamic_resolution,
             jobs: engine_core::JobStats::default(),
+            camera_refusals: engine_core::CameraRefusals::default(),
             disabled_features: self.renderer.disabled_features(),
             render: rendered,
             bricks_cost: None,
@@ -766,6 +764,10 @@ impl AppHost {
                 .get_resource::<JobExchange>()
                 .map(JobExchange::stats)
                 .unwrap_or_default(),
+            camera_refusals: world
+                .get_resource::<engine_core::CameraRefusals>()
+                .cloned()
+                .unwrap_or_default(),
             bricks: world
                 .get_resource::<Registry>()
                 .map(|registry| registry.frame_stats(world))
@@ -786,6 +788,6 @@ impl AppHost {
             .app
             .world_mut()
             .insert_resource(MoveInput::default());
-        self.set_gathered(FrameInput::default());
+        self.set_gathered(&FrameInput::default());
     }
 }

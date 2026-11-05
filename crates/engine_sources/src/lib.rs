@@ -9,6 +9,7 @@ use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 use toml_edit::{ArrayOfTables, Document, Item, Table, Value};
+use wgsl_parse::syntax::TranslationUnit;
 
 const RESERVED: &[&str] = &["engine", "generated", "face", "place"];
 
@@ -102,6 +103,11 @@ pub fn emit() {
         .filter(|name| !scratch(name))
         .collect();
     modules.sort();
+    let mut shaders = shader_files(&src.join("shaders"));
+    for module in &modules {
+        shaders.extend(shader_files(&bricks.join(module).join("shaders")));
+    }
+    parse_shaders(&root, &out, &shaders);
     if modules.is_empty() {
         return;
     }
@@ -124,6 +130,68 @@ pub fn emit() {
     }
 }
 
+pub fn parse_folder(folder: &str) {
+    let manifest = PathBuf::from(var("CARGO_MANIFEST_DIR"));
+    let out = PathBuf::from(var("OUT_DIR"));
+    let folder = manifest.join(folder);
+    println!("cargo:rerun-if-changed={}", folder.display());
+    parse_shaders(&workspace_root(&manifest), &out, &shader_files(&folder));
+}
+
+fn shader_files(shaders: &Path) -> Vec<PathBuf> {
+    let mut wgsl = Vec::new();
+    list(shaders, &mut wgsl);
+    wgsl.retain(|file| {
+        file.extension()
+            .is_some_and(|extension| extension == "wgsl")
+    });
+    wgsl.sort();
+    wgsl
+}
+
+fn parse_shaders(root: &Path, out: &Path, files: &[PathBuf]) {
+    let texts: Vec<(String, String)> = files
+        .iter()
+        .map(|file| {
+            let text = fs::read_to_string(file).expect("a WGSL file");
+            (relative(root, file), text)
+        })
+        .collect();
+    let mut hash = Sha256::new();
+    for (path, text) in &texts {
+        hash.update(path.as_bytes());
+        hash.update([0]);
+        hash.update(text.as_bytes());
+        hash.update([0]);
+    }
+    let hash: [u8; 32] = hash.finalize().into();
+    let stamp = out.join("shaders.parsed");
+    if fs::read(&stamp).is_ok_and(|parsed| parsed == hash) {
+        return;
+    }
+    let mut parsed = true;
+    for (path, text) in &texts {
+        if let Err(error) = text.parse::<TranslationUnit>() {
+            let (line, column) = line_column(text, error.span.start);
+            println!("cargo::error={path}:{line}:{column}: {}", error.error);
+            parsed = false;
+        }
+    }
+    if parsed {
+        fs::write(stamp, hash).expect("OUT_DIR is writable");
+    }
+}
+
+fn line_column(text: &str, at: usize) -> (usize, usize) {
+    let before = &text.as_bytes()[..at.min(text.len())];
+    let lines = before.iter().filter(|byte| **byte == b'\n').count();
+    let start = before
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |found| found + 1);
+    (lines + 1, before.len() - start + 1)
+}
+
 fn source_code(
     package: &str,
     game: bool,
@@ -134,16 +202,7 @@ fn source_code(
 ) -> String {
     let shaders = folder.join("shaders");
     let prefix = prefix(&shaders);
-
-    let mut wgsl = Vec::new();
-    if prefix.is_some() {
-        list(&shaders, &mut wgsl);
-    }
-    wgsl.retain(|file| {
-        file.extension()
-            .is_some_and(|extension| extension == "wgsl")
-    });
-    wgsl.sort();
+    let wgsl = shader_files(&shaders);
 
     let mut tree = Node::default();
     let mut texts = String::new();

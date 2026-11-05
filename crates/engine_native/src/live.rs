@@ -10,7 +10,7 @@ use winit::event::WindowEvent;
 
 const HITCH_OVER_MEDIAN: f64 = 1.5;
 const INTERVAL: usize = 1;
-const COLUMNS: [&str; 18] = [
+const COLUMNS: [&str; 19] = [
     "at_ms",
     "interval_ms",
     "busy_ms",
@@ -20,6 +20,7 @@ const COLUMNS: [&str; 18] = [
     "gpu_ms",
     "fixed_steps",
     "dropped_seconds",
+    "cut_seconds",
     "upload_bytes",
     "draw_calls",
     "pipelines_created",
@@ -113,6 +114,7 @@ impl LiveProfile {
             f64::from(stats.resolution.gpu_ms.unwrap_or(-1.0)),
             stats.fixed_steps as f64,
             stats.dropped_seconds,
+            stats.cut_seconds,
             (render.upload_bytes + render.mesh_upload_bytes + render.texture_upload_bytes) as f64,
             render.draw_calls as f64,
             render.pipelines_created as f64,

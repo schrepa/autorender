@@ -1,29 +1,9 @@
-use engine_core::{Expected, InvalidSetting, settings};
-use engine_places::lighting::LightPreset;
+use bevy_ecs::world::World;
+use engine_core::{Error, ErrorCode, Expected, InvalidSetting, members_in, settings};
+use engine_places::sun::SunClocks;
 use glam::Vec3;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct SunValues {
-    pub(crate) sun_direction: Vec3,
-    pub(crate) sun_color: Vec3,
-}
-
-fn sun_for(preset: LightPreset) -> SunValues {
-    let (sun_direction, sun_color) = match preset {
-        LightPreset::Day => (Vec3::new(0.55, 0.75, 0.35), Vec3::new(2.3, 2.1, 1.75)),
-        LightPreset::GoldenHour => (Vec3::new(0.82, 0.45, 0.1), Vec3::new(2.6, 1.6, 0.85)),
-        LightPreset::Dusk => (Vec3::new(0.9, 0.07, 0.4), Vec3::new(2.2, 0.85, 0.5)),
-        LightPreset::Night => (Vec3::new(-0.35, 0.6, -0.45), Vec3::new(0.35, 0.45, 0.85)),
-    };
-    SunValues {
-        sun_direction,
-        sun_color,
-    }
-}
-
-fn vec3_or(authored: Option<[f32; 3]>, preset: Vec3) -> Vec3 {
-    authored.map_or(preset, Vec3::from_array)
-}
+const UNAUTHORED: Vec3 = Vec3::new(0.55, 0.75, 0.35);
 
 settings! {
     #[section("sun")]
@@ -32,11 +12,8 @@ settings! {
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneSun")]
     pub struct Sunlight {
-        pub preset: LightPreset = LightPreset::GoldenHour => any,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub sun_direction: Option<[f32; 3]> = None => finite,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub sun_color: Option<[f32; 3]> = None => at_least(0.0),
     }
 }
 
@@ -50,11 +27,21 @@ fn check_direction(sun: &Sunlight) -> Result<(), InvalidSetting> {
 }
 
 impl Sunlight {
-    pub(crate) fn values(&self) -> SunValues {
-        let preset = sun_for(self.preset);
-        SunValues {
-            sun_direction: vec3_or(self.sun_direction, preset.sun_direction),
-            sun_color: vec3_or(self.sun_color, preset.sun_color),
-        }
+    pub(crate) fn direction(&self) -> Vec3 {
+        self.sun_direction.map_or(UNAUTHORED, Vec3::from_array)
     }
+}
+
+pub(crate) fn direction_without_clock(world: &World) -> Result<(), Error> {
+    let authored = world
+        .get_resource::<Sunlight>()
+        .is_some_and(|sun| sun.sun_direction.is_some());
+    let clocks = members_in::<SunClocks>(world);
+    if authored && clocks.iter().any(|runs| runs(world)) {
+        return Err(
+            Error::new(ErrorCode::InvalidEnvironment, "$.sun.sun_direction")
+                .expected(Expected::Absent),
+        );
+    }
+    Ok(())
 }

@@ -14,7 +14,7 @@ mod scene;
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, JobKind, SceneComponents, Schedule, Source};
 
-pub use agents::{NavAgents, NavQuery, NavStats, Navigation, SceneNavAgent};
+pub use agents::{NavAgents, NavQuery, NavStats, Navigation, ObstacleColliders, SceneNavAgent};
 pub use dev::{
     GroundKey, NavAgentQuery, NavAgentRow, NavAgentView, NavAgentsQuery, NavAgentsView,
     NavGoControl, NavGoResult, NavPathQuery, NavPathResult, WalkResult,

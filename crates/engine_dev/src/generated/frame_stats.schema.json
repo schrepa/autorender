@@ -148,6 +148,25 @@
       ],
       "type": "object"
     },
+    "CameraRefusals": {
+      "properties": {
+        "count": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "latest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "count"
+      ],
+      "type": "object"
+    },
     "CellStats": {
       "properties": {
         "cells": {
@@ -306,6 +325,12 @@
           "type": "integer"
         },
         "placed_colliders": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "slide_hits": {
           "default": 0,
           "format": "uint",
           "minimum": 0,
@@ -768,6 +793,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "collision_errors": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "cooking": {
           "default": 0,
           "format": "uint32",
@@ -781,6 +812,12 @@
           "type": "integer"
         },
         "portals": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "refused": {
           "default": 0,
           "format": "uint32",
           "minimum": 0,
@@ -858,7 +895,7 @@
           "minimum": 0,
           "type": "integer"
         },
-        "held": {
+        "problems": {
           "default": 0,
           "format": "uint32",
           "minimum": 0,
@@ -1113,6 +1150,11 @@
     },
     "SkyStats": {
       "properties": {
+        "exposure": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
         "tables": {
           "default": 0,
           "format": "uint32",
@@ -1784,11 +1826,18 @@
         }
       ]
     },
+    "camera_refusals": {
+      "$ref": "#/$defs/CameraRefusals"
+    },
     "cloud_stats": {
       "$ref": "#/$defs/CloudStats"
     },
     "collision_stats": {
       "$ref": "#/$defs/CollisionWorldView"
+    },
+    "cut_seconds": {
+      "format": "double",
+      "type": "number"
     },
     "disabled_features": {
       "items": {
@@ -2032,6 +2081,7 @@
     "render_ms",
     "fixed_steps",
     "dropped_seconds",
+    "cut_seconds",
     "pipelines_compiling",
     "pipelines_listed",
     "pipelines_unlisted",
@@ -2039,6 +2089,7 @@
     "resolution",
     "dynamic_resolution",
     "jobs",
+    "camera_refusals",
     "disabled_features",
     "draw_calls",
     "upload_bytes",

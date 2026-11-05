@@ -21,10 +21,10 @@ stats! {
     pub struct PhysicsStats {
         pub bodies: u32,
         pub awake: u32,
-        pub held: u32,
         pub wet: u32,
         pub solids: u32,
         pub contacts: u32,
         pub water_samples: u32,
+        pub problems: u32,
     }
 }

@@ -12,6 +12,7 @@ pub struct FrameStats {
     pub render_ms: f64,
     pub fixed_steps: u32,
     pub dropped_seconds: f64,
+    pub cut_seconds: f64,
     pub pipelines_compiling: bool,
     pub pipelines_listed: u32,
     pub pipelines_unlisted: u32,
@@ -19,6 +20,7 @@ pub struct FrameStats {
     pub resolution: ResolutionStats,
     pub dynamic_resolution: DynamicResolutionStats,
     pub jobs: crate::JobStats,
+    pub camera_refusals: crate::CameraRefusals,
     pub disabled_features: Names,
     #[serde(flatten)]
     pub render: RenderStats,

@@ -5,7 +5,7 @@ use engine_core::{
 };
 use engine_places::shadows::SHADOW_REGIONS;
 
-use crate::constants::SHADOW_APRON;
+use crate::constants::{SHADOW_APRON, TILE_OLD_SUN};
 
 const LOW_SUN: f32 = 0.1;
 
@@ -20,6 +20,7 @@ const MOVING_FRAMES: u32 = 8;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct LightBasis {
     pub rows: [Vec3; 3],
+    pub shift: Vec3,
 }
 
 impl LightBasis {
@@ -34,15 +35,21 @@ impl LightBasis {
         let up = right.cross(away);
         Self {
             rows: [right, up, away],
+            shift: Vec3::ZERO,
         }
     }
 
     pub(crate) fn apply(&self, point: Vec3) -> Vec3 {
-        Vec3::new(
-            self.rows[0].dot(point),
-            self.rows[1].dot(point),
-            self.rows[2].dot(point),
-        )
+        self.shift
+            + Vec3::new(
+                self.rows[0].dot(point),
+                self.rows[1].dot(point),
+                self.rows[2].dot(point),
+            )
+    }
+
+    pub(crate) fn words(&self) -> [[f32; 4]; 3] {
+        [0, 1, 2].map(|row| self.rows[row].extend(self.shift[row]).to_array())
     }
 
     pub(crate) fn sine(&self) -> f32 {
@@ -76,9 +83,9 @@ impl MapRegion {
         let sz = 1.0 / (z1 - z0);
         let row = |axis: Vec3, scale: f32, offset: f32| (axis * scale).extend(-offset * scale);
         Mat4::from_cols(
-            row(basis.rows[0], sx, (x0 + x1) * 0.5),
-            row(basis.rows[1], sy, (y0 + y1) * 0.5),
-            row(basis.rows[2], sz, z0),
+            row(basis.rows[0], sx, (x0 + x1) * 0.5 - basis.shift.x),
+            row(basis.rows[1], sy, (y0 + y1) * 0.5 - basis.shift.y),
+            row(basis.rows[2], sz, z0 - basis.shift.z),
             Vec4::W,
         )
         .transpose()
@@ -124,6 +131,7 @@ struct ClipLevel {
     origin: [i32; 2],
     depth: f32,
     half_depth: f32,
+    before: [f32; 2],
     cells: Vec<Cell>,
     live: Vec<u16>,
 }
@@ -183,6 +191,7 @@ pub(crate) struct ClipStats {
 #[derive(Debug, Default)]
 pub(crate) struct Clipmap {
     basis: Option<LightBasis>,
+    before: Option<LightBasis>,
     settings: Option<ClipSettings>,
     side: u32,
     levels: Vec<ClipLevel>,
@@ -201,10 +210,16 @@ fn entry(slot: Option<u16>, moving: Option<u32>) -> u32 {
 }
 
 impl Clipmap {
-    pub(crate) fn place(&mut self, basis: LightBasis, eye: Vec3, settings: ClipSettings) -> bool {
-        let restart = self.basis != Some(basis) || self.settings != Some(settings);
+    pub(crate) fn place(
+        &mut self,
+        sun: LightBasis,
+        eye: Vec3,
+        settings: ClipSettings,
+    ) -> (LightBasis, bool) {
+        let restart = self.settings != Some(settings);
         if restart {
-            self.basis = Some(basis);
+            self.basis = Some(sun);
+            self.before = Some(sun);
             self.settings = Some(settings);
             self.side = (LEVEL_TEXELS / settings.tile_texels).max(1);
             let cells = (self.side * self.side) as usize;
@@ -216,6 +231,12 @@ impl Clipmap {
             self.moving.clear();
         }
         self.frame += 1;
+        let held = self.basis.unwrap_or(sun);
+        let basis = if held.rows == sun.rows || self.old_sun_wanted() {
+            held
+        } else {
+            self.turn(held, sun, eye)
+        };
         let light = basis.apply(eye);
         let rise = basis.rows[1].y.abs();
         let sine = basis.sine();
@@ -236,11 +257,13 @@ impl Clipmap {
                 origin: target,
                 depth: light.z,
                 half_depth,
+                before: [light.z - half_depth, light.z + half_depth],
                 cells: vec![Cell::default(); cells],
                 live: Vec::new(),
             };
             match self.levels.get(index) {
                 Some(level) if (light.z - level.depth).abs() <= 0.5 * width => {
+                    self.levels[index].half_depth = half_depth;
                     self.scroll(index, target);
                 }
                 Some(_) => {
@@ -252,7 +275,48 @@ impl Clipmap {
                 None => self.levels.push(fresh()),
             }
         }
-        restart
+        (basis, restart)
+    }
+
+    fn old_sun_wanted(&self) -> bool {
+        let (frame, cells) = (self.frame, (self.side * self.side) as usize);
+        self.levels.iter().enumerate().any(|(level, clip)| {
+            clip.live.iter().map(|&cell| usize::from(cell)).any(|cell| {
+                clip.cells[cell].marked_at(frame)
+                    && self.table[level * cells + cell] & TILE_OLD_SUN != 0
+            })
+        })
+    }
+
+    fn turn(&mut self, held: LightBasis, sun: LightBasis, eye: Vec3) -> LightBasis {
+        let basis = LightBasis {
+            shift: held.apply(eye) - sun.apply(eye),
+            ..sun
+        };
+        self.basis = Some(basis);
+        self.before = Some(held);
+        for level in &mut self.levels {
+            level.before = [
+                level.depth - level.half_depth,
+                level.depth + level.half_depth,
+            ];
+        }
+        let (frame, cells) = (self.frame, (self.side * self.side) as usize);
+        for slot in 0..self.owners.len() {
+            let Some((level, cell)) = self.owners[slot] else {
+                continue;
+            };
+            let (level, cell) = (level as usize, cell as usize);
+            let tile = &mut self.levels[level].cells[cell];
+            if !tile.marked_at(frame) {
+                self.release(level, cell);
+            } else if tile.drawn {
+                tile.dirty = true;
+                let kept = self.table[level * cells + cell] | TILE_OLD_SUN;
+                self.set_entry(level, cell, kept);
+            }
+        }
+        basis
     }
 
     fn scroll(&mut self, index: usize, target: [i32; 2]) {
@@ -611,7 +675,8 @@ impl Clipmap {
                 out.moving.push(MovingTile { level, tile, index });
                 self.moving.push((level, cell));
                 let slot = self.owners.len() as u32 + u32::from(index);
-                self.set_entry(level, cell, entry(held.slot, Some(slot)));
+                let still = self.table[level * cells + cell] & 0xffff;
+                self.set_entry(level, cell, still | entry(None, Some(slot)));
             }
         }
         self.order = order;
@@ -634,6 +699,16 @@ impl Clipmap {
                 level.depth + level.half_depth,
             ]
         })
+    }
+
+    pub(crate) fn band_before(&self, level: usize) -> [f32; 2] {
+        self.levels
+            .get(level)
+            .map_or([0.0; 2], |level| level.before)
+    }
+
+    pub(crate) fn before(&self) -> Option<LightBasis> {
+        self.before
     }
 
     pub(crate) fn window(&self, level: usize) -> [f32; 4] {

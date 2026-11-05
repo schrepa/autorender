@@ -3,23 +3,23 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { open } from "node:fs/promises";
-import { AgentError, VERSION, MAX_BYTES, atMost, createBridge, failure, range, variants } from "./agent-protocol.mjs";
+import { AgentError, VERSION, MAX_BYTES, atMost, checkTimeout, createBridge, failure, range, variants } from "./agent-protocol.mjs";
 import { launchBrowserSession } from "./agent-browser.mjs";
 import { launchNativeSession, nativeProgram } from "./agent-native.mjs";
 
 const protocol = JSON.parse(readFileSync(new URL("../src/generated/protocol.json", import.meta.url), "utf8"));
 const verbs = new Set((protocol.verbs ?? []).filter(verb => verb !== "check"));
 const reading = new Set(["describe", "inspect", "query"]);
+const verbOptions = ["port", "session", "file", "json", "id", "timeout-ms", "rendering"];
 const commands = {
   iterate: { options: ["web-port", "port", "game", "browser"] },
   serve: { options: ["url", "port", "browser", "native", "args", "profiling"] },
   ab: { options: ["native", "args", "url", "browser", "a", "b", "rounds", "samples", "warmup", "mode", "profile", "profile-ms"] },
   sessions: { options: ["port"] },
   development: { options: ["port"] },
-  request: { options: ["port", "session", "file", "json", "id"] },
-  help: { options: [] },
+  request: { options: verbOptions },
+  help: { options: ["schema"] },
 };
-const verbOptions = ["port", "session", "file", "json", "id"];
 
 function options(args) {
   const result = {};
@@ -93,8 +93,9 @@ async function serve(values) {
     if (closing) { await owned.close(); return; }
     bridge = createBridge({
       session: owned.session, url: owned.url,
-      onClose: () => shutdown(),
+      onClose: () => shutdown().then(() => process.exit()),
       execute: (command, onRecord) => owned.execute(command, onRecord),
+      activity: () => owned.activity?.(),
     });
     owned.setInvalidated(() => { void shutdown(true); });
     await new Promise((resolveListen, reject) => {
@@ -113,6 +114,14 @@ async function onlySession(endpoint) {
   return first;
 }
 
+function requestOptions(values) {
+  if (values.rendering !== undefined && values.rendering !== "off") throw new AgentError("invalid_arguments", "--rendering", { allowed: variants(["off"]), got: values.rendering });
+  return {
+    ...(values["timeout-ms"] === undefined ? {} : { timeout_ms: Number(values["timeout-ms"]) }),
+    ...(values.rendering === undefined ? {} : { rendering: false }),
+  };
+}
+
 async function client(verb, values) {
   checkOptions(values, verb in commands ? commands[verb].options : verbOptions);
   const endpoint = `http://127.0.0.1:${portValue(values.port)}`;
@@ -123,21 +132,23 @@ async function client(verb, values) {
   const data = values.file ? await readJson(values.file) : values.json ? JSON.parse(values.json) : {};
   let request;
   if (verb === "request" && data.version !== undefined) {
-    request = data;
+    request = { ...data, ...requestOptions(values) };
     if (values.session && values.session !== request.session) throw new AgentError("session_mismatch", "--session", { expected: "matching", got: request.session });
     if (values.id && values.id !== request.id) throw new AgentError("invalid_request_id", "--id", { expected: "matching", got: request.id });
   } else {
     const session = values.session ?? await onlySession(endpoint);
     const command = verb === "request" ? data : { ...data, verb };
-    request = { version: VERSION, id: values.id ?? randomUUID(), session, command };
+    request = { version: VERSION, id: values.id ?? randomUUID(), session, command, ...requestOptions(values) };
   }
+  checkTimeout(request.timeout_ms);
   const body = JSON.stringify(request);
   if (Buffer.byteLength(body) > MAX_BYTES) throw new AgentError("request_too_large", "--json", { allowed: atMost(MAX_BYTES), got: Buffer.byteLength(body) });
   const mutation = !reading.has(request.command?.verb);
   const post = { method: "POST", headers: { "Content-Type": "application/json" }, body };
+  const waited = (request.timeout_ms ?? 0) + 5_000;
   return request.command?.verb === "watch"
-    ? stream(endpoint, { ...post, signal: AbortSignal.timeout(600_000) }, mutation)
-    : fetchJson(endpoint, "/request", { ...post, signal: AbortSignal.timeout(120_000) }, mutation);
+    ? stream(endpoint, { ...post, signal: AbortSignal.timeout(Math.max(600_000, waited)) }, mutation)
+    : fetchJson(endpoint, "/request", { ...post, signal: AbortSignal.timeout(Math.max(120_000, waited)) }, mutation);
 }
 
 function unreachable(endpoint, error, mutation) {
@@ -184,19 +195,28 @@ async function stream(endpoint, options, mutation) {
   return last ?? failure(new AgentError("invalid_browser_response", "$", { expected: "present" }));
 }
 
-async function main() {
-  const [verb, ...args] = process.argv.slice(2);
-  const values = options(args);
-  if (verb === "help") {
-    checkOptions(values, commands.help.options);
-    console.log(JSON.stringify({
-      version: VERSION, ok: true,
-      verbs: protocol.verbs, queries: protocol.queries, controls: protocol.controls,
+function help([asked, ...rest]) {
+  if (rest.length) throw new AgentError("invalid_arguments", rest[0], { expected: "absent", got: rest[0] });
+  const reply = { version: VERSION, ok: true };
+  if (asked === undefined) return { ...reply, verbs: protocol.verbs, commands: Object.keys(commands), more: ["help VERB", "help COMMAND", "help --schema"] };
+  if (asked === "--schema") {
+    return {
+      ...reply,
+      verbs: protocol.verbs, queries: protocol.queries, controls: [...protocol.controls, "close"],
       commands: Object.fromEntries(Object.entries(commands).map(([name, { options }]) => [name, options])),
       verb_options: verbOptions,
-    }));
-    return;
+    };
   }
+  if (asked in commands) return { ...reply, command: asked, options: commands[asked].options };
+  if (!protocol.verbs.includes(asked)) throw new AgentError("unknown_variant", "help", { allowed: variants([...protocol.verbs, ...Object.keys(commands), "--schema"]), got: asked });
+  const names = { query: protocol.queries, control: [...protocol.controls, "close"] };
+  return { ...reply, verb: asked, options: asked === "check" ? ["json", "file"] : verbOptions, ...(asked in names ? { names: names[asked] } : {}) };
+}
+
+async function main() {
+  const [verb, ...args] = process.argv.slice(2);
+  if (verb === "help") { console.log(JSON.stringify(help(args))); return; }
+  const values = options(args);
   if (verb === "serve") { await serve(values); return; }
   if (verb === "ab") {
     checkOptions(values, commands.ab.options);

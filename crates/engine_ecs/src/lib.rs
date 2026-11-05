@@ -2,7 +2,8 @@ pub mod prelude {
     pub use bevy_ecs::change_detection::{DetectChanges, DetectChangesMut, Mut, Ref, Res, ResMut};
     pub use bevy_ecs::component::Component;
     pub use bevy_ecs::entity::Entity;
-    pub use bevy_ecs::query::{Added, Changed, Has, Or, With, Without};
+    pub use bevy_ecs::entity_disabling::Disabled;
+    pub use bevy_ecs::query::{Added, Allow, Changed, Has, Or, With, Without};
     pub use bevy_ecs::resource::Resource;
     pub use bevy_ecs::system::{In, Local, Query, SystemParam, SystemParamItem};
 }

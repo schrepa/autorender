@@ -331,14 +331,15 @@ fn sky(session: &mut dyn SmokeSession) -> Checked<Value> {
         session,
         eye([0.0, 60.0, 0.0], [300.0, 200.0, 200.0], 4000.0),
     )?;
-    let authored = capture(session)?;
+    environment(session, json!({"sky": {"enabled": false}}))?;
+    let bare = capture(session)?;
     let mut lit = environment(
         session,
         json!({"sky": {"enabled": true}, "time_of_day": {"enabled": true, "hours": 12.0}}),
     )?;
     let mut first = lit["rendering"].take();
     for _ in 0..COMPILE_FRAMES {
-        if first["sky_stats"]["tables"] != 0 {
+        if first["sky_stats"]["tables"] == 3 {
             break;
         }
         first = render(session)?;
@@ -349,11 +350,11 @@ fn sky(session: &mut dyn SmokeSession) -> Checked<Value> {
         "the_air_tables_and_the_sky_view_build"
     );
     let noon = capture(session)?;
-    let wanted = not(&authored);
+    let wanted = not(&bare);
     smoke_eq!(
-        seen(authored != noon, noon.clone(), &wanted),
+        seen(bare != noon, noon.clone(), &wanted),
         wanted,
-        "the_physical_sky_replaces_the_authored_one"
+        "the_physical_sky_shows"
     );
     environment(
         session,
@@ -455,6 +456,17 @@ fn exposure(session: &mut dyn SmokeSession, starry: &Value) -> Checked<()> {
 }
 
 fn sky_rules(session: &mut dyn SmokeSession) -> Checked<()> {
+    let stopped = refuse(
+        session,
+        "control",
+        "environment",
+        json!({"haze": {"reach": 100.0}}),
+    )?;
+    smoke_eq!(
+        &stopped["path"],
+        &json!("$.args.haze.enabled"),
+        "leaving_running_haze_unnamed_is_refused"
+    );
     environment(
         session,
         json!({
@@ -486,17 +498,6 @@ fn sky_rules(session: &mut dyn SmokeSession) -> Checked<()> {
         &json!("$.args.time_of_day.hours"),
         "hours_past_a_day_are_refused"
     );
-    let stopped = refuse(
-        session,
-        "control",
-        "environment",
-        json!({"time_of_day": {"hours": 12.0}}),
-    )?;
-    smoke_eq!(
-        &stopped["path"],
-        &json!("$.args.time_of_day.enabled"),
-        "leaving_a_running_clock_unnamed_is_refused"
-    );
     let off = environment(
         session,
         json!({"sky": {"enabled": false}, "time_of_day": {"enabled": false}}),
@@ -517,7 +518,10 @@ fn horizons(session: &mut dyn SmokeSession) -> Checked<Value> {
         &current["shadows"],
         json!({"levels": 1, "finest_texel": 0.005}),
     );
-    let moved = environment(session, json!({"sun": sun, "shadows": shadows}))?;
+    let moved = environment(
+        session,
+        json!({"sun": sun, "time_of_day": {"enabled": false}, "shadows": shadows}),
+    )?;
     smoke_eq!(
         terrain(&moved["rendering"])["horizons"].clone(),
         json!(2),
@@ -600,21 +604,15 @@ fn bounce(session: &mut dyn SmokeSession) -> Checked<()> {
 }
 
 fn aerial(session: &mut dyn SmokeSession, current: &Value) -> Checked<()> {
-    let clear_air = with(
-        &current["sky_light"],
-        json!({"aerial_start": 0.0, "aerial_density": 0.0}),
-    );
+    let clear_air = with(&current["sky"], json!({"enabled": true, "aerial": 0.0}));
     environment(
         session,
-        json!({"terrain": fast(), "terrain_shading": {}, "sky_light": clear_air}),
+        json!({"terrain": fast(), "terrain_shading": {}, "sky": clear_air}),
     )?;
     settle(session)?;
     let clear = capture(session)?;
-    let thick_air = with(
-        &current["sky_light"],
-        json!({"aerial_start": 0.0, "aerial_density": 0.004}),
-    );
-    environment(session, json!({ "sky_light": thick_air }))?;
+    let thick_air = with(&current["sky"], json!({"enabled": true, "aerial": 100.0}));
+    environment(session, json!({ "sky": thick_air }))?;
     settle(session)?;
     let hazed = capture(session)?;
     let wanted = not(&clear);
@@ -625,7 +623,7 @@ fn aerial(session: &mut dyn SmokeSession, current: &Value) -> Checked<()> {
     );
     let restored = json!({
         "sun": current["sun"],
-        "sky_light": current["sky_light"],
+        "sky": current["sky"],
         "shadows": current["shadows"],
     });
     environment(session, restored)?;

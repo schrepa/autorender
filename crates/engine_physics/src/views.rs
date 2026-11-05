@@ -17,7 +17,6 @@ struct RigidBodyView {
     velocity: [f32; 3],
     spin: [f32; 3],
     sleeping: bool,
-    held: bool,
     water: Option<BodyWater>,
 }
 
@@ -51,7 +50,9 @@ impl Operation for PhysicsBody {
             return Ok(Value::Null);
         };
         let status = physics.status(entity);
-        let simulated = status.is_some_and(|status| status.problem.is_none());
+        let simulated = status
+            .as_ref()
+            .is_some_and(|status| status.problem.is_none());
         let status = status.unwrap_or_default();
         let view = RigidBodyView {
             body: *body,
@@ -62,7 +63,6 @@ impl Operation for PhysicsBody {
             velocity: status.velocity.to_array(),
             spin: status.spin.to_array(),
             sleeping: status.sleeping,
-            held: status.held,
             water: status.water,
         };
         Ok(json!(view))

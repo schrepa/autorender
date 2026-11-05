@@ -1,5 +1,6 @@
 use engine_core::math::{GRAVITY, max, min};
-use engine_heightfield::Fall;
+use engine_heightfield::{Fall, Pyramid};
+use engine_places::ground::GroundRead;
 use engine_places::water::{WaterKind, WaterSample};
 use glam::{Vec2, Vec3};
 
@@ -8,11 +9,17 @@ use crate::state::SurfaceTerrain;
 
 const SHEET: f32 = 1.0;
 
-pub(crate) fn water_at(terrains: &[SurfaceTerrain], point: Vec3) -> Option<WaterSample> {
-    terrains.iter().find_map(|terrain| {
+pub(crate) fn water_at(
+    terrains: &[SurfaceTerrain],
+    baking: &[(Vec3, Pyramid)],
+    point: Vec3,
+) -> GroundRead<Option<WaterSample>> {
+    let mut answer = GroundRead::Off;
+    for terrain in terrains {
         let origin = terrain.origin;
         let local = point - origin;
-        let held = water_point(terrain, Vec2::new(local.x, local.z)).map(|water| WaterSample {
+        let read = water_point(terrain, Vec2::new(local.x, local.z));
+        let held = read.ready().flatten().map(|water| WaterSample {
             kind: if water.lake {
                 WaterKind::Lake
             } else {
@@ -23,19 +30,34 @@ pub(crate) fn water_at(terrains: &[SurfaceTerrain], point: Vec3) -> Option<Water
             velocity: [water.flow.x, 0.0, water.flow.y],
             foam: water.state.breaking,
         });
-        [held, fall(&terrain.falls, local)]
+        let found = [held, fall(&terrain.falls, local)]
             .into_iter()
             .flatten()
-            .max_by(|a, b| a.surface.total_cmp(&b.surface))
-            .map(|sample| WaterSample {
+            .max_by(|a, b| a.surface.total_cmp(&b.surface));
+        if let Some(sample) = found {
+            return GroundRead::Ready(Some(WaterSample {
                 surface: sample.surface + origin.y,
                 ..sample
-            })
-    })
+            }));
+        }
+        match read {
+            GroundRead::NotLoaded => answer = GroundRead::NotLoaded,
+            GroundRead::Ready(_) if answer == GroundRead::Off => answer = GroundRead::Ready(None),
+            GroundRead::Ready(_) | GroundRead::Off => {}
+        }
+    }
+    let waits = baking.iter().any(|&(origin, pyramid)| {
+        let local = point - origin;
+        pyramid.tile_at(0, Vec2::new(local.x, local.z)).is_some()
+    });
+    if waits { GroundRead::NotLoaded } else { answer }
 }
 
-fn water_point(terrain: &SurfaceTerrain, local: Vec2) -> Option<WaterPoint> {
+fn water_point(terrain: &SurfaceTerrain, local: Vec2) -> GroundRead<Option<WaterPoint>> {
     let pyramid = &terrain.pyramid;
+    if pyramid.tile_at(0, local).is_none() {
+        return GroundRead::Off;
+    }
     (0..pyramid.levels())
         .find_map(|level| {
             let key = pyramid.tile_at(level, local)?;
@@ -43,7 +65,7 @@ fn water_point(terrain: &SurfaceTerrain, local: Vec2) -> Option<WaterPoint> {
             let local = local - pyramid.tile_origin(key);
             crate::tile_water::point(face, water.as_deref(), local)
         })
-        .flatten()
+        .map_or(GroundRead::NotLoaded, GroundRead::Ready)
 }
 
 fn fall(falls: &[Fall], point: Vec3) -> Option<WaterSample> {

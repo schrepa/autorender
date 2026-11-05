@@ -14,6 +14,7 @@ use crate::retained::RetainedRender;
 pub(crate) const MAPS: usize = SKY_MAP as usize + 1;
 pub(crate) const ID_CAPACITIES: usize = MAPS - 1 + MOVING_PAIRS as usize;
 pub(crate) const STILLNESS_BYTES: u64 = 16;
+const NO_GROUP: u32 = u32::MAX;
 
 pub(crate) fn map_start(map: usize, capacity: usize) -> usize {
     if map <= MOVING_MAP as usize {
@@ -92,6 +93,10 @@ impl CasterPlan {
         self.batch_groups.clear();
         let mut plain: Option<(MeshHandle, u32)> = None;
         for batch in &batches.batches {
+            if batch.first_person {
+                self.batch_groups.push(NO_GROUP);
+                continue;
+            }
             let masked = batch.material.filter(|&material| {
                 assets
                     .material(material)

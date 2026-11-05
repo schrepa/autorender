@@ -1,12 +1,13 @@
 use std::path::Path;
 
 use engine_checks::stages::Stage;
+use engine_checks::tools::clippy_free;
 
 use crate::{
     authoring,
     pipeline::{QUICK, build_wasm, install_web_dependencies},
-    process::{DEV_FEATURES, NPM, WASM_TARGET, client_packages, clients, run},
-    rules::{RULES, repository},
+    process::{DEV_FEATURES, NPM, WASM_TARGET, clients, run},
+    rules::{RULES, repository, warnings_allowed},
 };
 
 pub(crate) const LINT: &[Stage<Path>] = &[
@@ -78,7 +79,7 @@ pub(crate) const LINT: &[Stage<Path>] = &[
     Stage {
         name: "clippy",
         needs: &[],
-        run: |root| clippy(root, &["--workspace", "--all-targets"]),
+        run: clippy_workspace,
     },
     Stage {
         name: "clippy native dev",
@@ -156,37 +157,69 @@ fn clippy(root: &Path, selection: &[&str]) -> Result<(), String> {
     run(root, "cargo", &arguments)
 }
 
-fn clippy_native(root: &Path, wanted: &[&str]) -> Result<(), String> {
-    let games: Vec<&str> = clients()
+fn clippy_workspace(root: &Path) -> Result<(), String> {
+    let free = warnings_allowed(root)?;
+    let mut selection = vec!["--workspace", "--all-targets"];
+    for package in &free {
+        selection.extend(["--exclude", *package]);
+    }
+    clippy(root, &selection)?;
+    clippy_free(root, &free, &["--all-targets"])
+}
+
+fn features_of(packages: &[&str], wanted: &[&str]) -> String {
+    packages
         .iter()
-        .filter(|client| client.native.is_some())
-        .map(|client| client.package.as_str())
-        .collect();
-    let features: Vec<String> = ["engine_native"]
-        .into_iter()
-        .chain(games.iter().copied())
         .flat_map(|package| {
             wanted
                 .iter()
                 .map(move |feature| format!("{package}/{feature}"))
         })
-        .collect();
-    let features = features.join(",");
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn clippy_native(root: &Path, wanted: &[&str]) -> Result<(), String> {
+    let free = warnings_allowed(root)?;
+    let (free_games, games): (Vec<&str>, Vec<&str>) = clients()
+        .iter()
+        .filter(|client| client.native.is_some())
+        .map(|client| client.package.as_str())
+        .partition(|game| free.contains(game));
+    let mut featured = vec!["engine_native"];
+    featured.extend(&games);
+    let features = features_of(&featured, wanted);
     let mut selection = vec!["-p", "engine_native", "-p", "engine_profiler"];
     for game in &games {
         selection.extend(["-p", *game]);
     }
     selection.extend(["--all-targets", "--features", features.as_str()]);
-    clippy(root, &selection)
+    clippy(root, &selection)?;
+    let features = features_of(&free_games, wanted);
+    clippy_free(
+        root,
+        &free_games,
+        &["--all-targets", "--features", features.as_str()],
+    )
 }
 
 fn clippy_wasm(root: &Path, development: bool) -> Result<(), String> {
-    let mut selection: Vec<&str> = client_packages().collect();
+    let free = warnings_allowed(root)?;
+    let (free_clients, strict): (Vec<&str>, Vec<&str>) = clients()
+        .iter()
+        .map(|client| client.package.as_str())
+        .partition(|package| free.contains(package));
+    let mut options = vec!["--target", WASM_TARGET];
     if development {
-        selection.extend(["--features", DEV_FEATURES]);
+        options.extend(["--features", DEV_FEATURES]);
     }
-    selection.extend(["--target", WASM_TARGET]);
-    clippy(root, &selection)
+    let mut selection: Vec<&str> = Vec::new();
+    for package in &strict {
+        selection.extend(["-p", *package]);
+    }
+    selection.extend(&options);
+    clippy(root, &selection)?;
+    clippy_free(root, &free_clients, &options)
 }
 
 fn web_check(root: &Path, script: &str) -> Result<(), String> {

@@ -12,7 +12,7 @@ impl Reports {
         self.fatal.get_or_insert_with(|| {
             failed("$.device")
                 .expected(Expected::Live)
-                .got((format!("{reason:?}"), message))
+                .got_whole((format!("{reason:?}"), message))
         });
     }
 
@@ -70,14 +70,14 @@ impl Renderer {
                         }
                         let saved = run.part;
                         run.part = part as u32;
-                        let error = failed("$.gpu").got(&message);
+                        let error = failed("$.gpu").got_whole(&message);
                         run.fault(error);
                         run.part = saved;
                     }
                     (Some(_) | None, _) => {
                         reports
                             .fatal
-                            .get_or_insert_with(|| failed("$.gpu").got(message));
+                            .get_or_insert_with(|| failed("$.gpu").got_whole(message));
                     }
                 }
             }
@@ -109,14 +109,25 @@ impl Renderer {
     #[cfg(feature = "dev")]
     pub fn inject_fault(&mut self, feature: &str) -> Result<(), Error> {
         let Some(run) = self.run.as_mut() else {
-            return Err(Error::new(engine_core::ErrorCode::UnknownVariant, "$.feature").got(feature));
+            return Err(
+                Error::new(engine_core::ErrorCode::UnknownVariant, "$.feature").got(feature),
+            );
         };
         let parts = &run.machine.declared.parts;
-        let Some(index) = parts.iter().position(|known| known.lazy && known.name == feature) else {
-            let names: Vec<&str> = parts.iter().filter(|known| known.lazy).map(|known| known.name).collect();
-            return Err(Error::new(engine_core::ErrorCode::UnknownVariant, "$.feature")
-                .got(feature)
-                .variants(names));
+        let Some(index) = parts
+            .iter()
+            .position(|known| known.lazy && known.name == feature)
+        else {
+            let names: Vec<&str> = parts
+                .iter()
+                .filter(|known| known.lazy)
+                .map(|known| known.name)
+                .collect();
+            return Err(
+                Error::new(engine_core::ErrorCode::UnknownVariant, "$.feature")
+                    .got(feature)
+                    .variants(names),
+            );
         };
         let saved = run.part;
         run.part = index as u32;

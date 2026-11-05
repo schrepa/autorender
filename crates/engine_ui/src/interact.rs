@@ -1,4 +1,5 @@
 use bevy_ecs::prelude::*;
+use engine_core::math::max;
 use engine_core::{MenuInput, PointerInput, Screens};
 use engine_places::ui::{UiAction, UiEvents, UiKind};
 use glam::Vec2;
@@ -20,10 +21,8 @@ pub(crate) fn run(
             activate(state, at, screens, events);
         }
     }
-    if state.buttons {
-        hover(state, pointer);
-        press(state, pointer, screens, events);
-    }
+    hover(state, pointer);
+    press(state, pointer, screens, events);
     if state.wanting {
         navigate(state, menu, screens, events);
     }
@@ -52,18 +51,20 @@ fn activate(
     }
 }
 
-fn hover(state: &mut UiState, pointer: &PointerInput) {
-    let hovered = pointer
+fn spot(state: &UiState, pointer: &PointerInput) -> Option<Vec2> {
+    let ratio = max(state.metrics[2], f32::EPSILON);
+    pointer
         .position_pixels
         .filter(|_| pointer.inside)
-        .and_then(|point| state.top_at(point, UiKind::Button));
-    if hovered == state.hovered {
-        return;
-    }
-    state.hovered = hovered;
-    if hovered.is_some() {
-        state.focused = hovered;
-    }
+        .map(|at| at / ratio)
+}
+
+pub(crate) fn over(state: &UiState, pointer: &PointerInput) -> bool {
+    spot(state, pointer).is_some_and(|point| state.over(point))
+}
+
+fn hover(state: &mut UiState, pointer: &PointerInput) {
+    state.hovered = spot(state, pointer).and_then(|point| state.top_at(point, UiKind::Button));
 }
 
 fn press(
@@ -145,10 +146,7 @@ fn wheel(state: &mut UiState, pointer: &PointerInput) {
     if turn == 0.0 {
         return;
     }
-    let list = pointer
-        .position_pixels
-        .filter(|_| pointer.inside)
-        .and_then(|point| state.top_at(point, UiKind::List));
+    let list = spot(state, pointer).and_then(|point| state.top_at(point, UiKind::List));
     if let Some(list) = list {
         let scale = state.metrics[3];
         state.scroll_by(list, -turn * WHEEL_STEP * scale);

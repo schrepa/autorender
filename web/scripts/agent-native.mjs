@@ -20,15 +20,15 @@ const clients = JSON.parse(readFileSync(new URL("../src/generated/clients.json",
 export function nativeProgram(name, { profiling = false } = {}) {
   const client = clients.find(client => client.native && (client.package === name || client.native === name));
   if (!client) return resolve(name);
-  const [chosen, features] = profiling ? ["profiling", "dev,profiling"] : ["release", "dev"];
+  const [chosen, features] = profiling ? ["profiling", "dev,profiling"] : ["quick", "dev"];
   const profile = process.env.ENGINE_NATIVE_PROFILE || chosen;
-  const env = profiling && process.platform === "linux"
-    ? { ...process.env, RUSTFLAGS: `${process.env.RUSTFLAGS ?? ""} -Cforce-frame-pointers=yes`.trim() }
-    : process.env;
+  const target = resolve(workspace, "target", "agent");
+  const env = { ...process.env, CARGO_TARGET_DIR: target };
+  if (profiling && process.platform === "linux") env.RUSTFLAGS = `${process.env.RUSTFLAGS ?? ""} -Cforce-frame-pointers=yes`.trim();
   execFileSync("cargo", ["build", "-q", "-p", client.package, "--bin", client.native, "--profile", profile, "--features", features],
     { cwd: workspace, env, stdio: ["ignore", "ignore", "inherit"] });
   const folder = profile === "dev" ? "debug" : profile;
-  return resolve(workspace, "target", folder, process.platform === "win32" ? `${client.native}.exe` : client.native);
+  return resolve(target, folder, process.platform === "win32" ? `${client.native}.exe` : client.native);
 }
 
 async function pruneSessions(root) {
@@ -196,6 +196,11 @@ export async function launchNativeSession({ program, args = [], session = random
       const response = await request(command);
       if (!response?.ok) throw new AgentError(response?.error?.code ?? "runtime_unavailable", response?.error?.path, detailOf(response?.error));
       if (response.result?.paused !== true) throw new AgentError("runtime_not_paused", "$", { expected: "paused" });
+    }
+    const compiled = Date.now() + READY_TIMEOUT_MS;
+    while ((await request(status))?.result?.rendering?.pipelines_compiling === true) {
+      if (Date.now() > compiled) throw new AgentError("runtime_busy", "$", { allowed: atMost(READY_TIMEOUT_MS), got: { pipelines_compiling: true } });
+      await delay(50);
     }
     const owned = {
       session, url: `native:${relative(workspace, program).split(sep).join("/")}`, instance: identity.instance, build: identity.build ?? null,

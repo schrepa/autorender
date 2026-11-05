@@ -16,7 +16,7 @@ use crate::entity_indices::EntityIndices;
 use crate::{
     FixedTime, FrameTime, GlobalTransforms, InterpolateTransform, MAX_HIERARCHY_DEPTH,
     MAX_TRANSFORM_NODES, Parent, Transform,
-    hierarchy::{HierarchyScratch, Source, same_pose_bits},
+    hierarchy::{HierarchyScratch, SeesDisabled, Source, same_pose_bits},
 };
 
 pub(crate) fn track_markers(world: &mut World) {
@@ -30,7 +30,7 @@ type ResetQuery = SystemState<
     Query<
         'static,
         'static,
-        (Entity, Ref<'static, InterpolateTransform>),
+        (Entity, Ref<'static, InterpolateTransform>, SeesDisabled),
         Changed<InterpolateTransform>,
     >,
 >;
@@ -54,8 +54,8 @@ impl ResetWatch {
             self.moved.extend(
                 changed
                     .iter()
-                    .filter(|(_, marker)| !marker.is_added())
-                    .map(|(entity, _)| entity),
+                    .filter(|(_, marker, _)| !marker.is_added())
+                    .map(|(entity, _, _)| entity),
             );
         }
         if !self.moved.is_empty() {
@@ -200,6 +200,7 @@ type HistoryQuery = QueryState<(
     Ref<'static, InterpolateTransform>,
     Ref<'static, Transform>,
     Option<&'static Parent>,
+    SeesDisabled,
 )>;
 
 #[derive(Resource)]
@@ -504,6 +505,7 @@ type HistoryInput<'a> = (
     Ref<'a, InterpolateTransform>,
     Ref<'a, Transform>,
     Option<&'a Parent>,
+    (bool, bool),
 );
 
 fn push_invalid(indices: &mut Vec<usize>, index: usize) {
@@ -553,7 +555,7 @@ fn observe_record(
     active: bool,
     hierarchy: &HierarchyScratch,
 ) {
-    let (_, marker, transform, parent) = input;
+    let (_, marker, transform, parent, _) = input;
     let identity = Identity {
         marker_added: marker.added().get(),
         transform_added: transform.added().get(),

@@ -7,6 +7,9 @@ settings! {
     #[schemars(rename = "SceneResolution")]
     pub struct Resolution {
         pub scale: f32 = 1.0 => range(0.25, 2.0),
+        pub max_pixel_ratio: f32 = 1.5 => above(0.0),
+        pub max_width: u32 = 2560 => at_least(1),
+        pub max_height: u32 = 1440 => at_least(1),
     }
 }
 

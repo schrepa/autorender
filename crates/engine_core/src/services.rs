@@ -14,7 +14,9 @@ use glam::{Mat4, Vec3};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
-use crate::{Aabb, Camera, Error, ErrorCode, Expected, List, Mesh, Operation, Slot, settings};
+use crate::{
+    Aabb, Camera, Error, ErrorCode, EvenDisabled, Expected, List, Mesh, Operation, Slot, settings,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
@@ -538,7 +540,7 @@ pub fn scene_component(world: &World, key: &str) -> Option<ComponentKind> {
 #[derive(SystemParam)]
 pub struct SceneIds<'w, 's> {
     scene: Option<Res<'w, OperationScene>>,
-    entities: Query<'w, 's, (Entity, &'static SceneEntity)>,
+    entities: Query<'w, 's, (Entity, &'static SceneEntity), EvenDisabled>,
 }
 
 impl SceneIds<'_, '_> {

@@ -337,6 +337,15 @@ fn stamped(arguments: &[&str]) -> bool {
 }
 
 pub fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String> {
+    run_with(root, program, arguments, &[])
+}
+
+pub fn run_with(
+    root: &Path,
+    program: &str,
+    arguments: &[&str],
+    environment: &[(&str, &str)],
+) -> Result<(), String> {
     let record = serde_json::json!({
         "event": "running",
         "program": program,
@@ -346,6 +355,7 @@ pub fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String>
     let status = Command::new(program)
         .args(arguments)
         .envs(stamped(arguments).then(engine_commit))
+        .envs(environment.iter().copied())
         .current_dir(root)
         .status()
         .map_err(|error| {

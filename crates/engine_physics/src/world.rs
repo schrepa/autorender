@@ -1,10 +1,9 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Filled, FixedTime, InterpolateTransform, Parent, Transform};
-use engine_places::ground::Ground;
 use engine_places::physics::{BodyMotion, BodyPush, Collider, RigidBody};
 use engine_places::water::{WaterBody, WaterObstacle};
 use engine_places::wind::Wind;
-use glam::{Quat, Vec2, Vec3};
+use glam::{Quat, Vec3};
 use rapier3d::prelude as rp;
 
 use crate::body::{self, BodyProblem, BodyStatus};
@@ -36,13 +35,25 @@ pub(crate) struct Wanted {
     collider: Option<Collider>,
     pose: Option<Transform>,
     root: bool,
+    refused: Option<BodyProblem>,
+}
+
+impl Wanted {
+    fn ready(&self) -> Result<(Collider, Transform), BodyProblem> {
+        match (self.root, self.collider, self.pose, &self.refused) {
+            (false, _, _, _) => Err(BodyProblem::NotRoot),
+            (true, None, _, _) => Err(BodyProblem::NoCollider),
+            (true, Some(_), None, _) => Err(BodyProblem::NoTransform),
+            (true, Some(_), Some(_), Some(problem)) => Err(problem.clone()),
+            (true, Some(collider), Some(pose), None) => Ok((collider, pose)),
+        }
+    }
 }
 
 struct Surroundings<'a> {
     settings: &'a Physics,
     time: &'a FixedTime,
     wind: Option<&'a Wind>,
-    ground: &'a Ground,
     solids: &'a Solids,
     waters: &'a [&'a WaterBody],
 }
@@ -189,13 +200,13 @@ impl PhysicsWorld {
             .bodies
             .binary_search_by_key(&entity, |body| body.entity)
         {
-            return Some(self.bodies[index].status);
+            return Some(self.bodies[index].status.clone());
         }
         self.problems
             .iter()
-            .find(|(held, _)| *held == entity)
-            .map(|&(_, problem)| BodyStatus {
-                problem: Some(problem),
+            .find(|(found, _)| *found == entity)
+            .map(|(_, problem)| BodyStatus {
+                problem: Some(problem.clone()),
                 ..BodyStatus::default()
             })
     }
@@ -236,23 +247,15 @@ impl PhysicsWorld {
         wanted.sort_unstable_by_key(|wanted| wanted.entity);
         let settings = around.settings;
         let time = around.time;
-        let ready =
-            |wanted: &Wanted| wanted.root && wanted.collider.is_some() && wanted.pose.is_some();
-        if self.solver.is_none() && !wanted.iter().any(ready) {
+        if self.solver.is_none() && wanted.iter().all(|wanted| wanted.ready().is_err()) {
             self.problems = wanted
                 .iter()
-                .map(|wanted| {
-                    let problem = if !wanted.root {
-                        BodyProblem::NotRoot
-                    } else if wanted.collider.is_none() {
-                        BodyProblem::NoCollider
-                    } else {
-                        BodyProblem::NoTransform
-                    };
-                    (wanted.entity, problem)
-                })
+                .filter_map(|wanted| Some((wanted.entity, wanted.ready().err()?)))
                 .collect();
-            self.stats = PhysicsStats::default();
+            self.stats = PhysicsStats {
+                problems: self.problems.len() as u32,
+                ..PhysicsStats::default()
+            };
             return;
         }
         let solver = self.solver.get_or_insert_with(Solver::default);
@@ -260,7 +263,10 @@ impl PhysicsWorld {
         if self.bodies.is_empty() {
             self.solver = None;
             self.statics = Statics::default();
-            self.stats = PhysicsStats::default();
+            self.stats = PhysicsStats {
+                problems: self.problems.len() as u32,
+                ..PhysicsStats::default()
+            };
             return;
         }
         for entity in moved {
@@ -277,7 +283,6 @@ impl PhysicsWorld {
                     .is_ok()
             });
         }
-        hold(&mut self.bodies, &self.statics, solver, around.ground);
         let samples = push(&mut self.bodies, solver, around, pushes);
         {
             let _profile = engine_core::profile::span("physics", "solve");
@@ -293,15 +298,13 @@ impl PhysicsWorld {
         self.stats = PhysicsStats {
             bodies: self.bodies.len() as u32,
             awake: count(|body| {
-                body.settings.motion == BodyMotion::Dynamic
-                    && !body.status.sleeping
-                    && !body.status.held
+                body.settings.motion == BodyMotion::Dynamic && !body.status.sleeping
             }),
-            held: count(|body| body.status.held),
             wet: count(|body| body.status.water.is_some()),
             solids: self.statics.len() as u32,
             contacts: solver.contacts() as u32,
             water_samples: samples,
+            problems: self.problems.len() as u32,
         };
     }
 }
@@ -320,12 +323,10 @@ fn join(
             solver.remove_body(left.handle);
         }
         let held = old.next_if(|body| body.entity == wanted.entity);
-        let ready = match (wanted.root, wanted.collider, wanted.pose) {
-            (false, _, _) => Err(BodyProblem::NotRoot),
-            (true, None, _) => Err(BodyProblem::NoCollider),
-            (true, Some(_), None) => Err(BodyProblem::NoTransform),
-            (true, Some(collider), Some(pose)) => Ok((collider, pose)),
-        };
+        let ready = wanted.ready();
+        if let (Err(_), Some(body)) = (&ready, &held) {
+            solver.remove_body(body.handle);
+        }
         let followed = ready.and_then(|(collider, pose)| match held {
             Some(mut body) => match body.follow(solver, wanted, collider, pose) {
                 Ok(teleported) => {
@@ -359,7 +360,6 @@ fn join(
 fn reach(bodies: &[Body], solver: &Solver) -> Option<(Vec3, Vec3)> {
     bodies
         .iter()
-        .filter(|body| !body.status.held)
         .filter_map(|body| {
             let bounds = solver.colliders.get(body.collider)?.compute_aabb();
             let ahead = solver.bodies.get(body.handle)?.linvel() * AHEAD;
@@ -371,31 +371,14 @@ fn reach(bodies: &[Body], solver: &Solver) -> Option<(Vec3, Vec3)> {
         .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
 }
 
-fn hold(bodies: &mut [Body], statics: &Statics, solver: &mut Solver, ground: &Ground) {
-    for body in bodies {
-        let Some(rigid) = solver.bodies.get_mut(body.handle) else {
-            continue;
-        };
-        let at = rigid.translation();
-        let held = body.settings.motion == BodyMotion::Dynamic
-            && !statics.grounded(at.x, at.z)
-            && ground.sample(Vec2::new(at.x, at.z)).is_some();
-        if held != body.status.held {
-            rigid.set_enabled(!held);
-            body.status.held = held;
-        }
-    }
-}
-
 fn asked_push(rigid: &mut rp::RigidBody, mut asked: Mut<'_, BodyPush>) {
     if *asked == BodyPush::default() {
         return;
     }
-    let kept = body::sanitized_push(*asked);
-    rigid.add_force(Vec3::from_array(kept.force), true);
-    rigid.add_torque(Vec3::from_array(kept.torque), true);
-    rigid.apply_impulse(Vec3::from_array(kept.impulse), true);
-    rigid.apply_torque_impulse(Vec3::from_array(kept.angular_impulse), true);
+    rigid.add_force(Vec3::from_array(asked.force), true);
+    rigid.add_torque(Vec3::from_array(asked.torque), true);
+    rigid.apply_impulse(Vec3::from_array(asked.impulse), true);
+    rigid.apply_torque_impulse(Vec3::from_array(asked.angular_impulse), true);
     if asked.impulse != [0.0; 3] || asked.angular_impulse != [0.0; 3] {
         asked.impulse = [0.0; 3];
         asked.angular_impulse = [0.0; 3];
@@ -416,7 +399,7 @@ fn push(
         };
         rigid.reset_forces(false);
         rigid.reset_torques(false);
-        if body.settings.motion != BodyMotion::Dynamic || body.status.held {
+        if body.settings.motion != BodyMotion::Dynamic {
             body.status.water = None;
             continue;
         }
@@ -465,7 +448,6 @@ fn write(bodies: &mut [Body], solver: &Solver, poses: &mut Query<'_, '_, BodyQue
             velocity: rigid.linvel(),
             spin: rigid.angvel(),
             sleeping: rigid.is_sleeping(),
-            held: body.status.held,
             water: body.status.water,
         };
         if body.settings.motion != BodyMotion::Dynamic {
@@ -492,7 +474,6 @@ pub(crate) fn step(
     time: Res<FixedTime>,
     wind: Res<Wind>,
     wind_on: Filled<Wind>,
-    ground: Res<Ground>,
     solids: Res<Solids>,
     waters: Query<&WaterBody>,
     mut poses: Query<BodyQuery>,
@@ -506,10 +487,11 @@ pub(crate) fn step(
         .iter()
         .map(|(entity, rigid, collider, pose, parented)| Wanted {
             entity,
-            settings: body::sanitized(*rigid),
+            settings: *rigid,
             collider: collider.copied(),
             pose: pose.copied(),
             root: !parented,
+            refused: body::refused(rigid, pushes.get(entity).ok()),
         })
         .collect();
     if wanted.is_empty() && physics.idle() {
@@ -520,7 +502,6 @@ pub(crate) fn step(
         settings: &settings,
         time: &time,
         wind: wind_on.on().then_some(&*wind),
-        ground: &ground,
         solids: &solids,
         waters: &waters,
     };

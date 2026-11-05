@@ -1,5 +1,5 @@
 import package::face::sky_cloud_shadows::cloud_shadow;
-import package::sky::air::{air_light, fog, height_depth, marched_reach};
+import package::sky::air::{air_light, height_depth, marched_reach};
 import package::sky::environment::{environment_maps, environment_sampler};
 import package::sky::piece::sky_piece;
 
@@ -14,38 +14,21 @@ fn sky_above(normal: vec3<f32>) -> vec3<f32> {
 
 fn atmospheric(light: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3<f32>)
         -> vec4<f32> {
+    let depth = height_depth(eye, point, sky_piece.aerial.y, sky_piece.aerial.z);
+    if !(depth > 0.0) {
+        return vec4<f32>(light, 0.0);
+    }
     let air_lit = air_light(direction);
     let ray = point - eye;
     let distance = length(ray);
     let reached = eye + ray * (min(marched_reach(), distance) / max(distance, 1.0e-6));
-    let fogged = fog(eye, point);
-    var color = light;
-    if fogged != 0.0 {
-        color = mix(light, air_lit.fog, fogged) + air_lit.fog_sun * (fogged - fog(eye, reached));
-    }
-    var covered = fogged;
-    if sky_piece.aerial.y > 0.0 {
-        let depth = height_depth(eye, point, sky_piece.aerial.x, sky_piece.aerial.y,
-            sky_piece.aerial.z);
-        if depth != 0.0 {
-            let air = 1.0 - exp(-depth);
-            let marched = 1.0 - exp(-height_depth(eye, reached, sky_piece.aerial.x,
-                sky_piece.aerial.y, sky_piece.aerial.z));
-            color = mix(color, air_lit.air, air) + air_lit.air_sun * (air - marched);
-            covered = fogged + (1.0 - fogged) * air;
-        }
-    }
-    return vec4<f32>(color, covered);
+    let air = 1.0 - exp(-depth);
+    let marched = 1.0 - exp(-height_depth(eye, reached, sky_piece.aerial.y, sky_piece.aerial.z));
+    return vec4<f32>(mix(light, air_lit.air, air) + air_lit.air_sun * (air - marched), air);
 }
 
 fn atmospheric_cover(eye: vec3<f32>, point: vec3<f32>) -> f32 {
-    let fogged = fog(eye, point);
-    if sky_piece.aerial.y <= 0.0 {
-        return fogged;
-    }
-    let depth = height_depth(eye, point, sky_piece.aerial.x, sky_piece.aerial.y,
-        sky_piece.aerial.z);
-    return fogged + (1.0 - fogged) * (1.0 - exp(-depth));
+    return 1.0 - exp(-height_depth(eye, point, sky_piece.aerial.y, sky_piece.aerial.z));
 }
 
 fn cloud_passing(world: vec3<f32>) -> f32 {
@@ -72,10 +55,10 @@ fn ambient() -> f32 {
     return sky_piece.zenith.w;
 }
 
-fn sunlight(authored: vec3<f32>) -> vec3<f32> {
-    return select(authored, sky_piece.sun_light.rgb, sky_piece.state.y != 0.0);
+fn sunlight() -> vec3<f32> {
+    return sky_piece.sun_light.rgb;
 }
 
 fn adapted_exposure(authored: f32) -> f32 {
-    return select(authored, sky_piece.horizon.w, sky_piece.state.y != 0.0);
+    return sky_piece.horizon.w;
 }

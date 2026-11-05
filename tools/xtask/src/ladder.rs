@@ -146,7 +146,7 @@ fn read_ladder(path: &Path) -> Result<(Ladder, Value), String> {
         .ok_or_else(|| wrong("project names the game crate's folder every run starts"))?;
     let looks = list("looks")
         .and_then(|looks| looks.iter().map(name).collect::<Option<Vec<_>>>())
-        .ok_or_else(|| wrong("looks lists the lighting presets each place is seen under"))?;
+        .ok_or_else(|| wrong("looks lists the scene looks each place is seen under"))?;
     let distances = list("distances")
         .and_then(|distances| {
             distances

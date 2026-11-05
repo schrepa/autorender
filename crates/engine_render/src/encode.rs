@@ -23,6 +23,7 @@ mod compile;
 mod copies;
 mod draw;
 mod passes;
+mod resources;
 mod views;
 
 pub(crate) type FrameCore = Run;
@@ -1022,24 +1023,25 @@ impl Run {
         if self.sizes[at] == Some((size, mips)) && same {
             return;
         }
+        let dimension = self
+            .dimensions
+            .get(at)
+            .copied()
+            .unwrap_or(wgpu::TextureDimension::D2);
         let mut usage = texture_usage(&self.machine, texture);
         if format.is_some() {
-            if mips > 1 {
-                usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
-            }
             usage &= wanted
                 .guaranteed_format_features(self.device.features())
                 .allowed_usages;
+        }
+        if mips > 1 && crate::mipmaps::drawn(wanted, dimension) {
+            usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
         }
         let made = Made {
             label: decl.label,
             format: wanted,
             usage,
-            dimension: self
-                .dimensions
-                .get(at)
-                .copied()
-                .unwrap_or(wgpu::TextureDimension::D2),
+            dimension,
         };
         let doubled = self.doubled(texture);
         for held in self.textures[at].iter().flatten() {
@@ -1179,29 +1181,6 @@ impl Run {
         }
     }
 
-    pub(crate) fn mipmaps(&mut self, texture: u32, layers: Range<u32>) {
-        let Some(made) = self
-            .written_texture(texture)
-            .map(|made| made.texture.clone())
-        else {
-            let error = fault(self.path("mipmaps"), ErrorCode::InvalidValue);
-            self.fault(error);
-            return;
-        };
-        let device = &self.device;
-        let encoder = self.queued.before.get_or_insert_with(|| {
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("engine/part-mips"),
-            })
-        });
-        for layer in layers {
-            self.assets
-                .materials
-                .mips()
-                .record_layer(device, encoder, &made, layer);
-        }
-    }
-
     pub(crate) fn deliver_bytes(
         &mut self,
         tag: u32,
@@ -1250,17 +1229,6 @@ impl Run {
         self.buffers[at] = Some((made, bytes));
         self.rebuilt.buffers += 1;
         self.touch(Held::Buffer(buffer));
-    }
-
-    pub(crate) fn grow_buffer(&mut self, buffer: u32, bytes: u64) {
-        let held = self
-            .buffers
-            .get(buffer as usize)
-            .and_then(Option::as_ref)
-            .map(|(_, known)| *known);
-        if held.is_none_or(|known| known < bytes) {
-            self.allocate_buffer(buffer, bytes.max(16).next_power_of_two());
-        }
     }
 
     pub(crate) fn write(&mut self, buffer: u32, offset: u64, bytes: &[u8]) {

@@ -3,6 +3,8 @@ use std::sync::OnceLock;
 
 use engine_checks::{Errors, Exceptions, Repository, Rules};
 
+use crate::scaffold::TEMPLATE_CRATE;
+
 pub const RULES: Rules = Rules {
     exceptions: Exceptions {
         long_files: &[
@@ -44,4 +46,13 @@ pub fn repository(root: &Path) -> Result<&'static Repository, String> {
         .get_or_init(|| Repository::read(root))
         .as_ref()
         .map_err(Clone::clone)
+}
+
+pub fn warnings_allowed(root: &Path) -> Result<Vec<&'static str>, String> {
+    let repository = repository(root)?;
+    Ok(repository
+        .own()
+        .map(|package| package.name.as_str())
+        .filter(|name| *name != TEMPLATE_CRATE && repository.free(name))
+        .collect())
 }

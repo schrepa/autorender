@@ -46,6 +46,7 @@ pub const NOT_WORK: &[&str] = &[
     "render_ms",
     "resolution.gpu_ms",
     "bricks_cost.measuring_ms",
+    "camera_refusals.latest",
     "collision_stats.frame",
     "collision_stats.tick",
     "static_tables.latest_job_failure",

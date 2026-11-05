@@ -1,5 +1,5 @@
 import package::generated::sky::{EYE_LAYER, MIRROR_LAYER};
-import package::sky::air::{behind_clouds, cloud_dome_direction, cloud_dome_uv, haze};
+import package::sky::air::{behind_clouds, cloud_dome_direction, cloud_dome_uv};
 import package::sky::common::air_sky;
 import package::sky::piece::sky_piece;
 
@@ -8,15 +8,8 @@ import package::sky::piece::sky_piece;
 @group(0) @binding(0) var sky_domes: texture_2d_array<f32>;
 @group(0) @binding(0) var sky_cloud_sampler: sampler;
 
-fn physical_sky() -> bool {
-    return sky_piece.state.x > 0.5;
-}
-
 fn sky_air_light(direction: vec3<f32>) -> vec3<f32> {
-    if physical_sky() {
-        return air_sky(sky_view_table, sky_table_sampler, direction);
-    }
-    return haze(direction);
+    return air_sky(sky_view_table, sky_table_sampler, direction);
 }
 
 fn dome_at(uv: vec2<f32>, layer: u32) -> vec4<f32> {

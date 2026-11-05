@@ -7,15 +7,14 @@
       "id": "components", "revision": 7,
       "camera": {"position": [0, 4, 12], "target": [0, 1, 0], "fov_degrees": 50, "near": 0.1, "far": 400},
       "environment": {
-        "sun": {"preset": "dusk"},
-        "sky_light": {"preset": "dusk", "fog_density": 0.002, "aerial_density": 0.0001},
-        "surface_light": {"preset": "dusk"},
-        "grading": {"preset": "dusk", "contrast": 1.1},
+        "sky": {"ambient": 0.65, "aerial": 1.5},
+        "surface_light": {"rim": 0.6, "emission": 1.0},
+        "grading": {"exposure": 0.95, "contrast": 1.1},
         "shadows": {"levels": 12},
         "bloom": {"intensity": 0.4},
         "haze": {"forward": 0.7, "reach": 200, "spread": 0.4, "size": 50},
         "clouds": {"enabled": true},
-        "time_of_day": {"enabled": true}
+        "time_of_day": {"enabled": true, "hours": 19.0}
       },
       "textures": [{"id": "checker", "width": 2, "height": 2, "rgba8": "/////wAAAP8AAAD//////w=="}],
       "materials": [
@@ -89,7 +88,7 @@
     {"rule": "invalid_nav_agent", "path": "$.entities[1].nav_agent", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "nav_agent": {}}]}},
     {"rule": "invalid_grounded", "path": "$.entities[1].grounded", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "grounded": {}}]}},
     {"rule": "invalid_rigid_body", "path": "$.entities[1].rigid_body", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "rigid_body": {}}]}},
-    {"rule": "section_unlisted", "path": "$.entities[0].prefetch", "stage": "instantiate", "world": "engine", "skipped": true, "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "prefetch": {}}]}},
+    {"rule": "section_unlisted", "path": "$.entities[0].prefetch", "stage": "instantiate", "world": "engine", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "prefetch": {}}]}},
     {"rule": "missing_asset_library", "path": "$", "stage": "instantiate", "world": "bare", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": []}},
     {"rule": "asset_budget_exceeded", "path": "$.meshes[0]", "stage": "instantiate", "world": "no meshes", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "entities": []}},
     {"rule": "hierarchy_install_failed", "path": "$.entities", "stage": "instantiate", "world": "one node", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p"}]}}

@@ -1,6 +1,7 @@
 import package::engine::mesh::declarations::{AffinePose as PoseRows, AffineVertexInput,
     TemporalOutput, slot_fade, slot_index, slot_moved};
-import package::engine::mesh::vertex::{origin_key, output_color, pose_matrix, transform_vertex};
+import package::engine::mesh::vertex::{first_person, first_person_clip, first_person_previous,
+    origin_key, output_color, pose_matrix, transform_vertex};
 import package::engine::view::{camera, detail_across};
 import package::face::wind::{slot_sway, wind_sway};
 import package::meshes::slots::{instance_colors, instance_poses, instance_previous_poses};
@@ -53,6 +54,10 @@ fn affine_temporal(input: AffineVertexInput, pose: AffinePose, previous: AffineP
     output.world_v = vertex.world_v;
     output.material = vertex.material;
     output.previous = shown.xyw;
+    if first_person(material.flags) {
+        output.clip_position = first_person_clip(vertex.clip_position, material.flags);
+        output.previous = first_person_previous(shown, material.flags);
+    }
     return output;
 }
 

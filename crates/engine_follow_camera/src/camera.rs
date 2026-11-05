@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     Camera, Error, ErrorCode, FrameTime, GlobalTransforms, MoveInput, Operation, Rule, Setting,
 };
-use engine_math::{clamp, exp, max, min, sin, sin_cos};
+use engine_math::{atan2, clamp, exp, max, min, sin, sin_cos};
 use engine_places::physics::{
     ColliderShape, Collision, QueryFilter, SensorFilter, ShapeCastOptions,
 };
@@ -30,7 +30,7 @@ impl Orbit {
     fn start(&mut self, camera: &Camera, focus: Vec3) {
         let direction = (camera.target - camera.position).normalize_or_zero();
         self.started = true;
-        self.yaw = (-direction.x).atan2(-direction.z);
+        self.yaw = atan2(-direction.x, -direction.z);
         self.pitch = direction.y.asin();
         self.focus = focus;
         self.reach = 1.0;

@@ -36,6 +36,7 @@ engine_reflections.workspace = true
 engine_bloom.workspace = true
 engine_dither.workspace = true
 engine_particles.workspace = true
+engine_animation.workspace = true
 engine_taa.workspace = true
 engine_auto_exposure.workspace = true
 engine_tonemap.workspace = true

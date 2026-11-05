@@ -6,8 +6,8 @@ import package::engine::presentation::{COEFFICIENT_LIMIT, COMMON_DETERMINANT_MAR
     NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID, NO_PARENT, POSE_FLOATS,
     ROUNDING_MARGIN};
 import package::generated::meshes::{ARGS_GROUP, BatchData as Batch, CULL_GROUP,
-    CandidateData as Candidate, GROUP, LOD_LEVELS, LOD_STATE, PARENT_GROUP, PHASE1, PHASE2,
-    PROBE, PresentationFrame as Frame, UNWATCHED, VISIBLE};
+    CandidateData as Candidate, FIRST_PERSON_BATCH, GROUP, LOD_LEVELS, LOD_STATE, PARENT_GROUP,
+    PHASE1, PHASE2, PROBE, PresentationFrame as Frame, UNWATCHED, VISIBLE};
 import package::meshes::screen_cull::{F32_MAX, covers_no_pixel, hidden};
 import package::meshes::slots::{instance_poses, instance_still};
 import package::place::instances::{MOVED_SLOT, STILL_FRAMES};
@@ -305,10 +305,11 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         poses[candidate.slot] = matrix_rows(model);
         let batch = batches[candidate.batch];
-        if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz) {
+        let first_person = batch.bounds_max.w == FIRST_PERSON_BATCH;
+        if first_person || !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz) {
             visible |= VISIBLE;
         }
-        if (visible & VISIBLE) != 0u && frame.subpixel != 0u
+        if (visible & VISIBLE) != 0u && frame.subpixel != 0u && !first_person
                 && covers_no_pixel(frame.view_projection * model, batch.bounds_min.xyz,
                     batch.bounds_max.xyz, frame.viewport.xy) {
             visible = (visible & ~VISIBLE) | SUBPIXEL;
@@ -502,7 +503,7 @@ fn probe_cull(@builtin(global_invocation_id) id: vec3<u32>) {
     var flags = scan[candidate.position] & ~PROBE;
     let batch = batches[candidate.batch];
     let still = instance_still[candidate.slot].y >= STILL_FRAMES;
-    if (flags & VALID) != 0u && still && batch.bounds_max.w != 1.0 {
+    if (flags & VALID) != 0u && still && batch.bounds_max.w != FIRST_PERSON_BATCH {
         let model = rows_matrix(slot_rows(candidate.slot));
         if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz)
                 && !(frame.subpixel != 0u && covers_no_pixel(frame.view_projection * model,

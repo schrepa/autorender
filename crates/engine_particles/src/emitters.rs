@@ -5,9 +5,10 @@ use engine_core::{
     fields, gpu_struct, settings, stats,
 };
 use engine_places::particles::{
-    MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleEmitter,
+    MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleBursts, ParticleEmitter,
+    ParticleLook, ParticleShape, QueuedBurst,
 };
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 
 settings! {
     #[section("particles")]
@@ -38,51 +39,78 @@ gpu_struct! {
         speed: f32,
         acceleration: [f32; 3],
         spread: f32,
+        extent: [f32; 3],
+        ball: u32,
+        rotation: [f32; 4],
         start_color: [f32; 4],
         end_color: [f32; 4],
         size: [f32; 2],
-        emission: f32,
+        brightness: f32,
         stretch: f32,
-        radius: f32,
+        speed_spread: f32,
+        size_spread: f32,
+        lifetime_spread: f32,
+        fade_in: f32,
+        start: f32,
+        stop: f32,
         seed: u32,
         first: u32,
         count: u32,
+        formula: u32,
+        pad: [u32; 2],
+        params: [f32; 8],
     }
 }
 
+#[derive(Clone, Copy)]
 struct RenderEmitter {
     origin: Vec3,
     velocity: Vec3,
     direction: Vec3,
-    emitter: ParticleEmitter,
+    rotation: Quat,
+    look: ParticleLook,
+    rate: f32,
+    start: f32,
+    stop: f32,
     count: u32,
 }
 
 impl Emitter {
     fn new(emitter: &RenderEmitter, first: u32) -> Self {
-        let settings = &emitter.emitter;
+        let look = &emitter.look;
         Self {
             origin: emitter.origin.to_array(),
-            rate: settings.rate,
+            rate: emitter.rate,
             velocity: emitter.velocity.to_array(),
-            lifetime: settings.lifetime,
+            lifetime: look.lifetime,
             direction: emitter.direction.to_array(),
-            speed: settings.speed,
-            acceleration: settings.acceleration.to_array(),
+            speed: look.speed,
+            acceleration: look.acceleration.to_array(),
             spread: engine_core::math::cos(engine_core::math::clamp(
-                settings.spread,
+                look.spread,
                 0.0,
                 std::f32::consts::PI,
             )),
-            start_color: settings.color[0],
-            end_color: settings.color[1],
-            size: settings.size,
-            emission: settings.emission,
-            stretch: settings.stretch,
-            radius: settings.radius,
-            seed: settings.seed,
+            extent: look.extent.to_array(),
+            ball: u32::from(look.shape == ParticleShape::Ball),
+            rotation: emitter.rotation.to_array(),
+            start_color: look.color[0],
+            end_color: look.color[1],
+            size: look.size,
+            brightness: look.brightness,
+            stretch: look.stretch,
+            speed_spread: look.speed_spread,
+            size_spread: look.size_spread,
+            lifetime_spread: look.lifetime_spread,
+            fade_in: look.fade_in,
+            start: emitter.start,
+            stop: emitter.stop,
+            seed: look.seed,
             first,
             count: emitter.count,
+            formula: look.formula,
+            pad: [0; 2],
+            params: look.params,
         }
     }
 }
@@ -94,10 +122,13 @@ pub(crate) fn emitter_rule(field: &str) -> Option<Rule> {
         "speed" => Some(fields::range(-10_000.0, 10_000.0)),
         "direction" | "acceleration" | "offset" => Some(fields::range(-1.0e6, 1.0e6)),
         "spread" => Some(fields::range(0.0, MAX_SPREAD_DEGREES.to_radians())),
-        "size" | "radius" => Some(fields::range(0.0, 10_000.0)),
-        "color" => Some(fields::range(0.0, 1.0)),
-        "emission" => Some(fields::range(0.0, 64.0)),
+        "size" | "extent" => Some(fields::range(0.0, 10_000.0)),
+        "color" | "speed_spread" | "size_spread" | "lifetime_spread" | "fade_in" => {
+            Some(fields::range(0.0, 1.0))
+        }
+        "brightness" => Some(fields::above_to(0.0, 64.0)),
         "stretch" => Some(fields::range(0.0, 10.0)),
+        "params" => Some(fields::finite()),
         _ => None,
     }
 }
@@ -121,11 +152,35 @@ pub(crate) fn emitter_extra(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct Stopped {
+    at: f32,
+    resumed: Option<f32>,
+}
+
+struct Candidate {
+    distance: f32,
+    entity: Option<Entity>,
+    emitter: RenderEmitter,
+}
+
+fn rotation_of(model: Mat4) -> Quat {
+    let (_, rotation, _) = model.to_scale_rotation_translation();
+    if rotation.is_finite() {
+        rotation
+    } else {
+        Quat::IDENTITY
+    }
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct Gather {
     motion: HashMap<Entity, (Vec3, f32, Vec3, u64)>,
+    stops: HashMap<Entity, Stopped>,
+    bursts: Vec<(QueuedBurst, f32)>,
+    bursts_taken: u32,
     extraction: u64,
-    candidates: Vec<(f32, Entity, Mat4, ParticleEmitter)>,
+    candidates: Vec<Candidate>,
     nearest: Nearest,
     list: Vec<RenderEmitter>,
     cut: usize,
@@ -143,28 +198,124 @@ pub(crate) struct Packed {
 }
 
 impl Gather {
+    fn stopped(&mut self, entity: Entity, emitting: bool, time: f32) -> Option<Stopped> {
+        if emitting {
+            let stopped = self.stops.get_mut(&entity)?;
+            stopped.resumed = stopped.resumed.or(Some(time));
+            return Some(*stopped);
+        }
+        let at = if self.motion.contains_key(&entity) {
+            time
+        } else {
+            f32::MIN
+        };
+        let stopped = self
+            .stops
+            .entry(entity)
+            .or_insert(Stopped { at, resumed: None });
+        if stopped.resumed.is_some() {
+            *stopped = Stopped { at, resumed: None };
+        }
+        Some(*stopped)
+    }
+
+    fn steady(
+        &mut self,
+        (entity, emitter): (Entity, &ParticleEmitter),
+        model: Mat4,
+        eye: Vec3,
+        time: f32,
+    ) -> Option<Candidate> {
+        let stopped = self.stopped(entity, emitter.emitting, time);
+        if stopped.is_some_and(|stopped| {
+            stopped.resumed.is_none() && time - stopped.at > emitter.look.lifetime
+        }) {
+            return None;
+        }
+        let (stop, start) = stopped.map_or((f32::MAX, 0.0), |stopped| {
+            (stopped.at, stopped.resumed.unwrap_or(f32::MAX))
+        });
+        let origin = model.transform_point3(emitter.offset);
+        Some(Candidate {
+            distance: origin.distance_squared(eye),
+            entity: Some(entity),
+            emitter: RenderEmitter {
+                origin,
+                velocity: Vec3::ZERO,
+                direction: model
+                    .transform_vector3(emitter.look.direction)
+                    .try_normalize()
+                    .unwrap_or(Vec3::Y),
+                rotation: rotation_of(model),
+                look: emitter.look,
+                rate: emitter.rate,
+                start,
+                stop,
+                count: emitter.capacity(),
+            },
+        })
+    }
+
+    fn gather_bursts(&mut self, bursts: &ParticleBursts, eye: Vec3, time: f32) -> u64 {
+        for mut burst in bursts.take_bursts() {
+            self.bursts_taken = self.bursts_taken.wrapping_add(1);
+            burst.look.seed = burst.look.seed.wrapping_add(self.bursts_taken);
+            self.bursts.push((burst, time));
+        }
+        self.bursts.retain(|(burst, start)| {
+            let age = time - *start;
+            burst.count > 0 && age >= 0.0 && age < burst.look.lifetime
+        });
+        let mut wanted = 0_u64;
+        for (burst, start) in &self.bursts {
+            let count = burst.count.min(MAX_EMITTER_PARTICLES);
+            wanted += u64::from(count);
+            self.candidates.push(Candidate {
+                distance: burst.at.distance_squared(eye),
+                entity: None,
+                emitter: RenderEmitter {
+                    origin: burst.at,
+                    velocity: Vec3::ZERO,
+                    direction: burst.look.direction.try_normalize().unwrap_or(Vec3::Y),
+                    rotation: Quat::IDENTITY,
+                    look: burst.look,
+                    rate: 0.0,
+                    start: *start,
+                    stop: f32::MAX,
+                    count,
+                },
+            });
+        }
+        wanted
+    }
+
     fn fill(
         &mut self,
         settings: &ParticleSettings,
-        emitters: &Query<'_, '_, (Entity, &'static ParticleEmitter)>,
+        emitters: &Query<'_, '_, (Entity, &'static ParticleEmitter), engine_core::Shown>,
+        bursts: &ParticleBursts,
         globals: &GlobalTransforms,
         eye: Vec3,
         time: f32,
     ) {
         self.list.clear();
-        self.cut = 0;
+        self.cut = bursts.take_cut() as usize;
         self.candidates.clear();
+        self.stops.retain(|entity, _| emitters.contains(*entity));
         let mut wanted = 0_u64;
         for (entity, emitter) in emitters.iter() {
             let Some(model) = globals.pose(entity).map(Mat4::from) else {
                 continue;
             };
-            wanted += u64::from(emitter.capacity());
-            let distance = model.transform_point3(emitter.offset).distance_squared(eye);
-            self.candidates.push((distance, entity, model, *emitter));
+            if let Some(candidate) = self.steady((entity, emitter), model, eye, time) {
+                wanted += u64::from(candidate.emitter.count);
+                self.candidates.push(candidate);
+            }
         }
+        wanted += self.gather_bursts(bursts, eye, time);
         let budget = settings.max_particles.map(u64::from);
         let mut total = 0_u64;
+        let mut steady = 0_usize;
         self.extraction += 1;
         let extraction = self.extraction;
         let Self {
@@ -177,51 +328,51 @@ impl Gather {
         } = self;
         let candidates = &*candidates;
         let mut emit = |position: usize| {
-            let (_, entity, model, emitter) = candidates[position];
-            let count = emitter.capacity();
+            let Candidate {
+                entity,
+                mut emitter,
+                ..
+            } = candidates[position];
+            let count = emitter.count;
             if budget.is_some_and(|budget| total + u64::from(count) > budget) {
                 *cut += count as usize;
                 return;
             }
             total += u64::from(count);
-            let origin = model.transform_point3(emitter.offset);
-            let velocity = match motion.get(&entity) {
-                Some(&(last, at, velocity, _)) => {
-                    let elapsed = time - at;
-                    if elapsed > 1.0e-4 && elapsed < 0.5 {
-                        (origin - last) / elapsed
-                    } else if elapsed.abs() <= 1.0e-4 {
-                        velocity
-                    } else {
-                        Vec3::ZERO
+            if let Some(entity) = entity {
+                let origin = emitter.origin;
+                let velocity = match motion.get(&entity) {
+                    Some(&(last, at, velocity, _)) => {
+                        let elapsed = time - at;
+                        if elapsed > 1.0e-4 && elapsed < 0.5 {
+                            (origin - last) / elapsed
+                        } else if elapsed.abs() <= 1.0e-4 {
+                            velocity
+                        } else {
+                            Vec3::ZERO
+                        }
                     }
+                    None => Vec3::ZERO,
+                };
+                motion.insert(entity, (origin, time, velocity, extraction));
+                steady += 1;
+                if velocity.is_finite() {
+                    emitter.velocity = velocity;
                 }
-                None => Vec3::ZERO,
-            };
-            motion.insert(entity, (origin, time, velocity, extraction));
-            list.push(RenderEmitter {
-                origin,
-                velocity: if velocity.is_finite() {
-                    velocity
-                } else {
-                    Vec3::ZERO
-                },
-                direction: model
-                    .transform_vector3(emitter.direction)
-                    .try_normalize()
-                    .unwrap_or(Vec3::Y),
-                emitter,
-                count,
-            });
+            }
+            list.push(emitter);
         };
         if budget.is_some_and(|budget| wanted > budget) {
             nearest
-                .nearest_first(candidates.iter().map(|candidate| candidate.0), usize::MAX)
+                .nearest_first(
+                    candidates.iter().map(|candidate| candidate.distance),
+                    usize::MAX,
+                )
                 .for_each(&mut emit);
         } else {
             (0..candidates.len()).for_each(&mut emit);
         }
-        if motion.len() > list.len() {
+        if motion.len() > steady {
             motion.retain(|_, motion| motion.3 == extraction);
         }
     }
@@ -229,8 +380,13 @@ impl Gather {
 
 pub(crate) fn gather_emitters(
     settings: Res<ParticleSettings>,
-    emitters: Query<(Entity, &'static ParticleEmitter)>,
-    (globals, view, time): (Res<GlobalTransforms>, Res<View>, Res<FrameTime>),
+    emitters: Query<(Entity, &'static ParticleEmitter), engine_core::Shown>,
+    (globals, view, time, bursts): (
+        Res<GlobalTransforms>,
+        Res<View>,
+        Res<FrameTime>,
+        Res<ParticleBursts>,
+    ),
     mut gather: ResMut<Gather>,
     mut packed: ResMut<Packed>,
 ) {
@@ -238,6 +394,7 @@ pub(crate) fn gather_emitters(
     gather.fill(
         &settings,
         &emitters,
+        &bursts,
         &globals,
         view.detail_eye(),
         time.game_elapsed_seconds as f32,
@@ -262,6 +419,11 @@ pub(crate) fn particle_stats(
         drawn,
         particle_cut: Cut::of(drawn.saturating_add(cut), drawn),
     });
+}
+
+pub(crate) fn drop_bursts(bursts: Res<ParticleBursts>) {
+    drop(bursts.take_bursts());
+    bursts.take_cut();
 }
 
 pub(crate) fn forget(
@@ -290,7 +452,7 @@ fn pack_emitters(emitters: &[RenderEmitter], records: &mut Vec<Emitter>) -> (u32
     ] {
         for emitter in emitters
             .iter()
-            .filter(|emitter| emitter.emitter.blend == blend)
+            .filter(|emitter| emitter.look.blend == blend)
         {
             if u64::from(first) + u64::from(emitter.count) > u64::from(u32::MAX) {
                 cut += u64::from(emitter.count);

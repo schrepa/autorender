@@ -165,10 +165,9 @@ impl<'a, G: Game> App<'a, G> {
         )))?);
         host.set_pixel_ratio(window.scale_factor());
         host.set_refresh_interval(refresh_interval(&window));
-        host.set_setting(
-            crate::DYNAMIC_RESOLUTION,
-            self.options.measure.is_none().into(),
-        )?;
+        if self.options.measure.is_some() {
+            host.set_setting(crate::DYNAMIC_RESOLUTION, false.into())?;
+        }
         self.options.settings.apply(&mut host)?;
         let mut jobs = self.options.jobs.pool(false);
         jobs.attach(&mut host);
@@ -275,9 +274,11 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                 Input::wheel(&mut running.host, delta, running.window.scale_factor());
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let position = position.to_logical::<f64>(running.window.scale_factor());
-                self.input
-                    .cursor(&mut running.host, (position.x, position.y));
+                self.input.cursor(
+                    &mut running.host,
+                    (position.x, position.y),
+                    running.window.scale_factor(),
+                );
             }
             WindowEvent::CursorLeft { .. } => running.host.pointer_left(),
             WindowEvent::RedrawRequested => {

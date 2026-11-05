@@ -26,7 +26,7 @@ fn water_at(bodies: &Query<&WaterBody>, eye: Vec3) -> Option<WaterSample> {
         if found.is_some_and(|(precedence, _)| precedence >= body.precedence) {
             continue;
         }
-        if let Some(sample) = body.shape.water(eye) {
+        if let Some(sample) = body.shape.water(eye).ready().flatten() {
             found = Some((body.precedence, sample));
         }
     }
@@ -39,6 +39,7 @@ fn surface_under(ground: &Ground, bodies: &Query<&WaterBody>, eye: Vec3) -> Opti
         return Some(water.surface);
     }
     ground
-        .sample(Vec2::new(eye.x, eye.z))
+        .point(Vec2::new(eye.x, eye.z))
+        .solid()
         .map(|ground| ground.height)
 }

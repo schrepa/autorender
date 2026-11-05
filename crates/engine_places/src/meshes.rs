@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{Component, Entity, Resource};
-use engine_math::clamp;
+use engine_math::{clamp, sin_cos};
 use engine_place::Slot;
 use serde::{Deserialize, Serialize};
 
@@ -63,5 +63,23 @@ impl Tint {
 impl Default for Tint {
     fn default() -> Self {
         Self::WHITE
+    }
+}
+
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
+pub struct FirstPersonLayer {
+    pub fov_degrees: Option<f32>,
+}
+
+impl FirstPersonLayer {
+    pub fn slot_flags(&self) -> u32 {
+        let focal = self
+            .fov_degrees
+            .filter(|fov| (1.0..=179.0).contains(fov))
+            .map_or(0.0, |fov| {
+                let (sine, cosine) = sin_cos(fov.to_radians() * 0.5);
+                cosine / sine
+            });
+        (-1.0 - focal).to_bits()
     }
 }

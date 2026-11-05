@@ -1,7 +1,7 @@
 use glam::Vec4;
 
 pub use engine_heightfield::hydraulics::GRAVITY;
-pub use engine_math::{REDUCTION_LIMIT, clamp, cos, exp, ln, max, min, pow, sin, sin_cos};
+pub use engine_math::{REDUCTION_LIMIT, atan2, clamp, cos, exp, ln, max, min, pow, sin, sin_cos};
 
 pub fn half(bits: u16) -> f32 {
     let sign = if bits & 0x8000 == 0 { 1.0 } else { -1.0 };

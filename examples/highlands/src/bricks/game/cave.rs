@@ -130,7 +130,7 @@ pub(crate) fn open(
         at(44.0, -5.0, fall * 18.0 + fall * 16.0),
         at(58.0, 0.0, fall * 18.0 + fall * 22.0),
     ];
-    let facing = Quat::from_rotation_y((-uphill.x).atan2(-uphill.y));
+    let facing = Quat::from_rotation_y(math::atan2(-uphill.x, -uphill.y));
     let framing: Vec<(Transform, MeshHandle)> = [
         (4.0, 0.0, 1.5, 10.0, 0),
         (-1.0, 10.0, -1.5, 7.0, 1),

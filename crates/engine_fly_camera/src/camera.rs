@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Camera, FrameTime, MoveInput};
-use engine_math::clamp;
+use engine_math::{atan2, clamp};
 use glam::{Quat, Vec3};
 
 use crate::FlyCamera;
@@ -29,7 +29,7 @@ impl Flight {
 
     fn from_camera(camera: &Camera) -> Self {
         let direction = (camera.target - camera.position).normalize_or_zero();
-        Self::new((-direction.x).atan2(-direction.z), direction.y.asin())
+        Self::new(atan2(-direction.x, -direction.z), direction.y.asin())
     }
 }
 

@@ -1,3 +1,4 @@
+const FIRST_PERSON_DEPTH: f32 = 0.00390625;
 const TAU: f32 = 6.2831853;
 
 fn maximum_abs(value: vec3<f32>) -> f32 {

@@ -6,7 +6,8 @@ import clients from "./src/generated/clients.json";
 import { wasmImport } from "./scripts/wasm-alias.mjs";
 
 const instrumented = new Map([["profiling", "profile"], ["attribution", "attribution"]]);
-const games = clients.flatMap(({ wasm, game, page }) => game && page ? [{ wasm, game, page }] : []);
+const selected = process.env.ENGINE_GAME;
+const games = clients.flatMap(({ wasm, game, page }) => game && page && (!selected || game === selected) ? [{ wasm, game, page }] : []);
 const publicFolder = resolve(import.meta.dirname, "public");
 const packIndex = resolve(publicFolder, "cooked/index.json");
 const ktx2 = existsSync(publicFolder)

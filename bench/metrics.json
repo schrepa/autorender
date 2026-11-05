@@ -145,6 +145,17 @@
       "direction": null
     },
     {
+      "name": "camera_refusals.count",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
       "name": "cloud_stats.rows",
       "kind": "work",
       "rule": "shown",
@@ -319,6 +330,28 @@
       ],
       "unit": "count",
       "direction": null
+    },
+    {
+      "name": "collision_stats.slide_hits",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "cut_seconds",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "s",
+      "direction": "lower"
     },
     {
       "name": "disabled_features",
@@ -1113,6 +1146,17 @@
       "direction": null
     },
     {
+      "name": "navigation_stats.collision_errors",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
       "name": "navigation_stats.cooking",
       "kind": "work",
       "rule": "shown",
@@ -1144,6 +1188,17 @@
       ],
       "unit": "count",
       "direction": null
+    },
+    {
+      "name": "navigation_stats.refused",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
     },
     {
       "name": "navigation_stats.searching",
@@ -1278,15 +1333,15 @@
       "direction": null
     },
     {
-      "name": "physics_stats.held",
+      "name": "physics_stats.problems",
       "kind": "work",
-      "rule": "shown",
+      "rule": "not-above",
       "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
       "unit": "count",
-      "direction": null
+      "direction": "lower"
     },
     {
       "name": "physics_stats.solids",
@@ -1869,6 +1924,17 @@
         "native"
       ],
       "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "sky_stats.exposure",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame_late",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "multiplier",
       "direction": null
     },
     {

@@ -17,6 +17,7 @@ pub(crate) fn capacity_for(needed: usize, limit: usize) -> usize {
 pub struct DrawBatch {
     pub mesh: MeshHandle,
     pub material: Option<MaterialHandle>,
+    pub first_person: bool,
     pub instances: Range<u32>,
 }
 
@@ -102,7 +103,9 @@ impl BatchPlan {
                     .material
                     .map_or(0, |material| material.slot() as u64 + 1);
                 (
-                    ((instance.mesh.slot() as u64) << 32) | material,
+                    ((instance.mesh.slot() as u64) << 32)
+                        | (material << 1)
+                        | u64::from(instance.first_person()),
                     slot as u32,
                 )
             }));
@@ -116,6 +119,7 @@ impl BatchPlan {
                 self.batches.push(DrawBatch {
                     mesh: instance.mesh,
                     material: instance.material,
+                    first_person: instance.first_person(),
                     instances: start as u32..at as u32,
                 });
                 start = at;

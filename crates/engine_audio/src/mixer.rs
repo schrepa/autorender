@@ -578,6 +578,13 @@ pub(crate) fn mix(
             mixer.begin(entity, &source, limit);
         }
     }
+    for at in (0..mixer.voices.len()).rev() {
+        if let Owner::Source(entity, _) = &mixer.voices[at].owner
+            && !sources.contains(*entity)
+        {
+            mixer.halt(at);
+        }
+    }
     mixer.trim(limit);
     mixer.collect_decoded();
     let time_moved = time.as_ref().is_some_and(|time| time.is_changed());

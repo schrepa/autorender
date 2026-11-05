@@ -1,8 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Error, FrameTime, View};
-use engine_math::{clamp, max};
+use engine_math::max;
 use engine_places::sky::{ADAPTATION_MOST, ADAPTATION_POWER, NOON_LIGHT, SkyLight};
-use engine_places::sun::Sun;
 use engine_places::tonemap::Display;
 use engine_render::{
     AfterRead, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime, Pass,
@@ -19,9 +18,6 @@ const UNIFORM_BYTES: u64 = size_of::<ExposureUniform>() as u64;
 const BIN_BYTES: u64 = EXPOSURE_BINS as u64 * 4;
 const STATE_READ: u32 = 0;
 
-const DUSK: f32 = 0.069_756;
-const NIGHT: f32 = 0.241_922;
-
 pub(crate) struct MeterGpu {
     meter: Pass<Self>,
     metering: ComputePipeline<Self>,
@@ -36,7 +32,6 @@ pub(crate) struct MeterGpu {
 impl ExposureUniform {
     fn of(
         settings: &AutoExposure,
-        sun: &Sun,
         sky: &SkyLight,
         authored: f32,
         elapsed: f32,
@@ -47,15 +42,10 @@ impl ExposureUniform {
         } else {
             0.0
         };
-        let below = -sun.direction[1];
-        let night = clamp((below - DUSK) / (NIGHT - DUSK), 0.0, 1.0);
-        let night = night * night * (3.0 - 2.0 * night);
-        let most = ADAPTATION_MOST.log2();
-        let most = most + (settings.night - most) * night;
         Self {
             frame: [authored, elapsed, settings.strength, settings.compensation],
             reach: [
-                settings.brighten * (1.0 - night),
+                settings.brighten,
                 settings.darken,
                 settings.to_darker,
                 settings.to_brighter,
@@ -66,7 +56,12 @@ impl ExposureUniform {
                 settings.center,
                 settings.sky,
             ],
-            day: [noon, sky.adaptation * ADAPTATION_POWER, most, 0.0],
+            day: [
+                noon,
+                sky.adaptation * ADAPTATION_POWER,
+                ADAPTATION_MOST.log2(),
+                0.0,
+            ],
             drawn: [drawn[0] as f32, drawn[1] as f32, 0.0, 0.0],
         }
     }
@@ -75,7 +70,6 @@ impl ExposureUniform {
 impl GpuPart for MeterGpu {
     type Reads = (
         Res<'static, AutoExposure>,
-        Res<'static, Sun>,
         Res<'static, SkyLight>,
         Res<'static, Display>,
         Res<'static, FrameTime>,
@@ -128,7 +122,7 @@ impl GpuPart for MeterGpu {
     }
 
     fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
-        let (settings, sun, sky, display, time, view) = reads;
+        let (settings, sky, display, time, view) = reads;
         cx.allocate_buffer(self.uniform, UNIFORM_BYTES);
         cx.allocate_buffer(self.bins, BIN_BYTES);
         cx.allocate_buffer(self.state, STATE_BYTES);
@@ -158,7 +152,7 @@ impl GpuPart for MeterGpu {
             elapsed
         };
         let drawn = view.render_size().to_array();
-        let values = ExposureUniform::of(&settings, &sun, &sky, authored, elapsed, drawn);
+        let values = ExposureUniform::of(&settings, &sky, authored, elapsed, drawn);
         cx.write(self.uniform, 0, &[values]);
         cx.run(self.meter);
         cx.read_back::<ExposureFeedback>(STATE_READ, self.state, 0..STATE_BYTES, AfterRead::Keep);

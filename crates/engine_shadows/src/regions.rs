@@ -4,7 +4,7 @@ use engine_places::shadows::{CasterMap, KeptRefresh, Refresh, Region as MapView,
 use engine_render::CameraUniform;
 
 use crate::atlas::AtlasLayout;
-use crate::constants::{LEVEL_BAND, LEVEL_WINDOW, LEVEL_WORDS, SKY_REFRESH};
+use crate::constants::{LEVEL_BAND, LEVEL_BEFORE, LEVEL_WINDOW, LEVEL_WORDS, SKY_REFRESH};
 use crate::gpu_layouts::{CasterCull, ComposeData, Route, ShadowPiece};
 use crate::shadow_fit::{ClipPlan, Clipmap, LightBasis, MapRegion, Region, region_tiles};
 use crate::sky::SkyDraw;
@@ -67,12 +67,15 @@ impl FrameRegions<'_> {
 
     pub(crate) fn views(&self, sky: Option<&SkyDraw>, out: &mut Vec<MapView>) {
         out.clear();
+        let shift = self.basis.shift;
         for region in &self.plan.regions {
+            let [x0, y0, x1, y1] = region.rect;
+            let rect = [x0 - shift.x, y0 - shift.y, x1 - shift.x, y1 - shift.y];
             out.push(MapView {
                 view: self.region_clip(region),
                 map: CasterMap::Region,
                 refresh: Refresh::Kept(KeptRefresh {
-                    planes: planes(self.basis.rows, region.rect, region.depth[1]),
+                    planes: planes(self.basis.rows, rect, region.depth[1] - shift.z),
                     texel: region.texel,
                 }),
             });
@@ -109,7 +112,11 @@ impl FrameRegions<'_> {
         out.clear();
         out.resize(SKY_VIEW as usize + 1, CameraUniform::default());
         for (index, region) in self.plan.regions.iter().enumerate() {
-            out[index] = view(self.region_clip(region), [wind[0], wind[1], 0.0, 0.0], [0.0; 4]);
+            out[index] = view(
+                self.region_clip(region),
+                [wind[0], wind[1], 0.0, 0.0],
+                [0.0; 4],
+            );
         }
         out[MOVING_VIEW as usize] = view(Mat4::IDENTITY, gusting, viewer.to_array());
         if let Some((clip, written)) = sky {
@@ -175,7 +182,6 @@ impl FrameRegions<'_> {
     }
 
     pub(crate) fn cull(&self, sky: Option<&SkyDraw>) -> CasterCull {
-        let row = |axis: Vec3| axis.extend(0.0).to_array();
         let mut regions = [[0.0; 4]; REGIONS];
         let mut region_depths = [[0.0; 4]; REGIONS];
         for (index, region) in self.plan.regions.iter().enumerate() {
@@ -184,7 +190,7 @@ impl FrameRegions<'_> {
         }
         let (width, height) = self.layout.size();
         let mut cull = CasterCull {
-            light: self.basis.rows.map(row),
+            light: self.basis.words(),
             regions,
             region_depths,
             counts: [
@@ -217,7 +223,8 @@ impl FrameRegions<'_> {
         let (width, height) = self.layout.size();
         let levels = self.clipmap.len();
         ShadowPiece {
-            light: self.basis.rows.map(|row| row.extend(0.0).to_array()),
+            light: self.basis.words(),
+            before: self.clipmap.before().unwrap_or(self.basis).words(),
             state: [1.0, crown_depth, shown as f32, 0.0],
             level_state: [
                 levels as f32,
@@ -239,18 +246,22 @@ impl FrameRegions<'_> {
         out.clear();
         for level in 0..self.clipmap.len() {
             let texel = self.clipmap.texel(level);
-            let [near, far] = self.clipmap.band(level);
-            let depth = engine_core::math::max(far - near, 1.0e-6);
-            let band = [
-                near,
-                1.0 / depth,
-                texel * NORMAL_OFFSET_TEXELS,
-                SLOPE_LIMIT_TEXELS * texel / depth,
-            ];
+            let band = |[near, far]: [f32; 2]| {
+                let depth = engine_core::math::max(far - near, 1.0e-6);
+                [
+                    near,
+                    1.0 / depth,
+                    texel * NORMAL_OFFSET_TEXELS,
+                    SLOPE_LIMIT_TEXELS * texel / depth,
+                ]
+                .map(f32::to_bits)
+            };
             let mut words = [0; LEVEL_WORDS as usize];
             words[LEVEL_WINDOW as usize..][..4]
                 .copy_from_slice(&self.clipmap.window(level).map(f32::to_bits));
-            words[LEVEL_BAND as usize..][..4].copy_from_slice(&band.map(f32::to_bits));
+            words[LEVEL_BAND as usize..][..4].copy_from_slice(&band(self.clipmap.band(level)));
+            words[LEVEL_BEFORE as usize..][..4]
+                .copy_from_slice(&band(self.clipmap.band_before(level)));
             out.push(words);
         }
     }

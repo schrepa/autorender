@@ -1,7 +1,9 @@
+use std::collections::BTreeSet;
+
 use engine_core::{Runs, Smoke, SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::json;
 
-use crate::host::{InputGatherer, MOVE_KEYS, MoveDirection, SceneLoad};
+use crate::host::{InputGatherer, MENU_KEYS, MOVE_KEYS, MoveDirection, SceneLoad};
 use engine_registry::InputState;
 
 pub(super) const SMOKES: &[Smoke] = &[
@@ -23,7 +25,7 @@ const PAD_UP: u32 = 1 << 12;
 const PAD_SOUTH: u32 = 1;
 
 fn input_keys(_: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
-    let built = InputGatherer::new(ACTIONS, AXES, MOVE_KEYS);
+    let built = InputGatherer::new(ACTIONS, AXES, MOVE_KEYS, MENU_KEYS);
     smoke_eq!(built.is_ok(), true, "gatherer_builds");
     let Ok(mut keys) = built else {
         return Ok(());
@@ -39,7 +41,12 @@ fn input_keys(_: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
 }
 
 fn move_keys() -> Result<(), SmokeFailure> {
-    let built = InputGatherer::new(ACTIONS, AXES, &[("KeyW", MoveDirection::Forward)]);
+    let built = InputGatherer::new(
+        ACTIONS,
+        AXES,
+        &[("KeyW", MoveDirection::Forward)],
+        MENU_KEYS,
+    );
     smoke_eq!(built.is_ok(), true, "game_move_keys_build");
     let Ok(mut keys) = built else {
         return Ok(());
@@ -56,7 +63,7 @@ fn move_keys() -> Result<(), SmokeFailure> {
         json!([1.0, 0.0]),
         "only_listed_keys_move"
     );
-    let unknown = InputGatherer::new(ACTIONS, AXES, &[("KeyNone", MoveDirection::Up)]);
+    let unknown = InputGatherer::new(ACTIONS, AXES, &[("KeyNone", MoveDirection::Up)], MENU_KEYS);
     smoke_eq!(
         json!(unknown.err().map(|error| error.path)),
         json!("$.move_keys[0]"),
@@ -68,7 +75,9 @@ fn move_keys() -> Result<(), SmokeFailure> {
 fn edges() -> Result<(), SmokeFailure> {
     let shown = |state: &InputState| json!([state.just_pressed(0), state.just_released(0)]);
     let mut state = InputState::default();
-    state.ingest(1, 1, 0);
+    let first = BTreeSet::from([0]);
+    let none = BTreeSet::new();
+    state.ingest(&first, &first, &none);
     state.begin_tick();
     smoke_eq!(
         shown(&state),
@@ -93,7 +102,7 @@ fn edges() -> Result<(), SmokeFailure> {
         "the_next_frame_does_not"
     );
     state.hide_edges();
-    state.ingest(0, 0, 1);
+    state.ingest(&none, &none, &first);
     state.begin_frame();
     smoke_eq!(
         shown(&state),
@@ -142,8 +151,8 @@ fn keyboard(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
     keys.key("Space", true, false);
     let pressed = keys.take(0.0);
     smoke_eq!(
-        json!([pressed.held & 1, pressed.pressed & 1]),
-        json!([1, 1]),
+        json!([pressed.held, pressed.pressed]),
+        json!([[0], [0]]),
         "actions_press"
     );
     keys.key("KeyW", true, false);
@@ -151,7 +160,7 @@ fn keyboard(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
     let blurred = keys.take(0.0);
     smoke_eq!(
         json!([blurred.state.move_forward, blurred.held]),
-        json!([0.0, 0]),
+        json!([0.0, []]),
         "blur_releases"
     );
     Ok(())
@@ -226,7 +235,7 @@ fn mouse_binding(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
     let pressed = keys.take(0.0);
     smoke_eq!(
         json!([pressed.held, pressed.pressed]),
-        json!([2, 2]),
+        json!([[1], [1]]),
         "mouse_presses_action"
     );
     smoke_eq!(
@@ -239,7 +248,7 @@ fn mouse_binding(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
     let released = keys.take(0.0);
     smoke_eq!(
         json!([released.held, released.released]),
-        json!([0, 2]),
+        json!([[], [1]]),
         "mouse_releases_action"
     );
     smoke_eq!(

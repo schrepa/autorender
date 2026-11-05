@@ -85,9 +85,9 @@ pub(super) fn step(
         .app
         .world_mut()
         .modify_resource(|actions: &mut ActionInput| {
-            actions.ingest(input.held, input.pressed, input.released);
+            actions.ingest(&input.held, &input.pressed, &input.released);
         });
-    app.set_gathered(input);
+    app.set_gathered(&input);
     app.dev_step(ticks, width, height, input.state)
         .map_err(|error| Error::new(ErrorCode::RenderFailed, "$").got(error))?;
     Ok(result::step(StepResult {

@@ -49,13 +49,6 @@ impl ExtraRules for MotionDetail {
             Err(InvalidSetting::new("fastest", Expected::Above))
         }
     }
-
-    fn sanitize_extra(self) -> Self {
-        Self {
-            fastest: engine_math::max(self.fastest, self.speed),
-            ..self
-        }
-    }
 }
 
 impl MotionDetail {

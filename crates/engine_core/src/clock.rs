@@ -3,14 +3,13 @@ use bevy_ecs::system::SystemParamItem;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{AssetBudget, Error, Operation};
+use crate::{AssetBudget, Error, Operation, settings};
 
 pub const MAX_TIME_SCALE: f32 = 8.0;
 
 #[derive(Debug, Clone, Copy)]
 pub struct EngineConfig {
     pub fixed_hz: f64,
-    pub max_fixed_steps: u32,
     pub asset_budget: AssetBudget,
     pub max_transform_nodes: usize,
 }
@@ -19,10 +18,20 @@ impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             fixed_hz: 60.0,
-            max_fixed_steps: 5,
             asset_budget: AssetBudget::default(),
             max_transform_nodes: crate::MAX_TRANSFORM_NODES,
         }
+    }
+}
+
+settings! {
+    #[section("frame_limits")]
+    #[derive(Copy)]
+    #[serde(deny_unknown_fields)]
+    #[schemars(rename = "SceneFrameLimits")]
+    pub struct FrameLimits {
+        pub max_fixed_steps: u32 = 5 => range(1, 1000),
+        pub max_frame_seconds: f64 = 0.25 => above(0.0),
     }
 }
 
@@ -144,6 +153,7 @@ pub struct FixedTime {
 pub struct FrameReport {
     pub fixed_steps: u32,
     pub dropped_seconds: f64,
+    pub cut_seconds: f64,
     pub interpolation: f32,
 }
 
@@ -158,7 +168,6 @@ pub(crate) fn sanitize_delta(delta_seconds: f64) -> f64 {
 pub(crate) struct FixedClock {
     step_seconds: f64,
     accumulator_seconds: f64,
-    max_fixed_steps: u32,
 }
 
 impl FixedClock {
@@ -171,7 +180,6 @@ impl FixedClock {
         Self {
             step_seconds: 1.0 / hz,
             accumulator_seconds: 0.0,
-            max_fixed_steps: config.max_fixed_steps.clamp(1, 1000),
         }
     }
 
@@ -183,7 +191,7 @@ impl FixedClock {
         self.accumulator_seconds = 0.0;
     }
 
-    pub(crate) fn advance(&mut self, delta_seconds: f64) -> FrameReport {
+    pub(crate) fn advance(&mut self, delta_seconds: f64, max_fixed_steps: u32) -> FrameReport {
         let previous_remainder = self.accumulator_seconds;
         let incoming_steps = delta_seconds / self.step_seconds;
         let fractional_seconds = if incoming_steps.is_finite() {
@@ -194,7 +202,7 @@ impl FixedClock {
         let accumulated_fraction = previous_remainder + fractional_seconds;
         let available_steps =
             incoming_steps.floor() + (accumulated_fraction / self.step_seconds).floor();
-        let fixed_steps = available_steps.min(f64::from(self.max_fixed_steps)) as u32;
+        let fixed_steps = available_steps.min(f64::from(max_fixed_steps)) as u32;
         self.accumulator_seconds = accumulated_fraction % self.step_seconds;
         let dropped_seconds = if available_steps > f64::from(fixed_steps) {
             (delta_seconds - f64::from(fixed_steps) * self.step_seconds + previous_remainder
@@ -207,6 +215,7 @@ impl FixedClock {
         FrameReport {
             fixed_steps,
             dropped_seconds,
+            cut_seconds: 0.0,
             interpolation: crate::math::min(interpolation, f32::from_bits(1.0_f32.to_bits() - 1)),
         }
     }

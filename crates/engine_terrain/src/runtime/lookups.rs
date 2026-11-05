@@ -128,7 +128,8 @@ impl Operation for TerrainRouteQuery {
 fn water_at(bodies: &Query<'_, '_, &WaterBody>, point: Vec3) -> Option<WaterSample> {
     let mut held: Vec<&WaterBody> = bodies.iter().collect();
     held.sort_by_key(|body| std::cmp::Reverse(body.precedence));
-    held.iter().find_map(|body| body.shape.water(point))
+    held.iter()
+        .find_map(|body| body.shape.water(point).ready().flatten())
 }
 
 fn heights(

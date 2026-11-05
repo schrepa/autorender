@@ -51,22 +51,24 @@ impl GroundTerrain {
         })
     }
 
-    fn sample(&self, local: Vec2) -> Option<(u32, TileSample)> {
-        if self.cut_out(local) {
-            return None;
-        }
+    fn sample(&self, local: Vec2) -> GroundRead<(u32, TileSample)> {
         let pyramid = &self.pyramid;
-        (0..pyramid.levels()).find_map(|level| {
-            let key = pyramid.tile_at(level, local)?;
-            let tile = self.tile(key)?;
-            let sample = sample_heights(
-                &tile.heights,
-                tile.holes.as_deref(),
-                tile.spacing,
-                local - pyramid.tile_origin(key),
-            )?;
-            Some((level, sample))
-        })
+        if self.cut_out(local) || pyramid.tile_at(0, local).is_none() {
+            return GroundRead::Off;
+        }
+        (0..pyramid.levels())
+            .find_map(|level| {
+                let key = pyramid.tile_at(level, local)?;
+                let tile = self.tile(key)?;
+                let sample = sample_heights(
+                    &tile.heights,
+                    tile.holes.as_deref(),
+                    tile.spacing,
+                    local - pyramid.tile_origin(key),
+                )?;
+                Some((level, sample))
+            })
+            .map_or(GroundRead::NotLoaded, GroundRead::Ready)
     }
 
     fn nearest(&self, level: u32, local: Vec2) -> Option<(&TileFace, [i32; 2])> {
@@ -131,25 +133,34 @@ impl TerrainGround {
 }
 
 impl GroundQuery for TerrainGround {
-    fn point(&self, at: Vec2) -> Option<GroundPoint> {
-        self.terrains.iter().find_map(|terrain| {
+    fn point(&self, at: Vec2) -> GroundRead<GroundPoint> {
+        let mut answer = GroundRead::Off;
+        for terrain in &self.terrains {
             let origin = terrain.origin;
             let local = Vec2::new(at.x - origin.x, at.y - origin.z);
-            let (level, sample) = terrain.sample(local)?;
+            let (level, sample) = match terrain.sample(local) {
+                GroundRead::Ready(found) => found,
+                GroundRead::NotLoaded => {
+                    answer = GroundRead::NotLoaded;
+                    continue;
+                }
+                GroundRead::Off => continue,
+            };
             let material = terrain
                 .nearest(level, local)
                 .and_then(|(tile, [column, row])| {
                     Some(control_in(tile.control.as_deref()?, column, row))
                 })
                 .map(|control| control.a);
-            Some(GroundPoint {
+            return GroundRead::Ready(GroundPoint {
                 height: origin.y + sample.height,
                 normal: sample.normal,
                 level,
                 hole: sample.hole,
                 material,
-            })
-        })
+            });
+        }
+        answer
     }
 
     fn obstacles(&self, ground: Entity) -> Vec<GroundObstacle> {
@@ -176,7 +187,7 @@ impl GroundQuery for TerrainGround {
                         engine_math::max(half_extents[0], half_extents[2])
                     }
                 };
-                Some(GroundObstacle {
+                Some(GroundObstacle::Circle {
                     center: Vec2::new(placed.position[0], placed.position[2]),
                     radius: reach * placed.scale,
                 })
@@ -193,7 +204,7 @@ impl GroundQuery for TerrainGround {
             return GroundRead::Off;
         };
         let Some(identity) = terrain.walked.clone() else {
-            return GroundRead::Waiting;
+            return GroundRead::NotLoaded;
         };
         GroundRead::Ready(GroundSource {
             ground: terrain.entity,

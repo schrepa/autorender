@@ -5,7 +5,8 @@ use engine_core::math::{clamp, max, min};
 use engine_core::{CursorMode, SceneContext, TextureHandle, View};
 use engine_places::text::{FontId, Text, TextRun};
 use engine_places::ui::{
-    UiAlign, UiDirection, UiInsets, UiJustify, UiKind, UiLength, UiNode, UiRoot, UiValue, UiValues,
+    UiAction, UiAlign, UiDirection, UiInsets, UiJustify, UiKind, UiLength, UiNode, UiRoot, UiValue,
+    UiValues,
 };
 use glam::Vec2;
 use taffy::{
@@ -63,19 +64,29 @@ pub(crate) struct Flat {
     pub(crate) fill: f32,
     pub(crate) at: [f32; 4],
     pub(crate) clip: Option<[f32; 4]>,
+    pub(crate) step: u32,
+    root: Entity,
     font: Option<FontId>,
     children: Vec<u32>,
     rect: [f32; 4],
     measured: [f32; 2],
     scroll: f32,
     extent: f32,
-    unbound: bool,
+    offset: [f32; 2],
+    unbound: u32,
+}
+
+struct Bound {
+    text: bool,
+    moved: bool,
+    image: bool,
 }
 
 impl Flat {
     fn of(
         node: UiNode,
         parent: Option<u32>,
+        root: Entity,
         font: Option<FontId>,
         texture: Option<TextureHandle>,
     ) -> Self {
@@ -93,13 +104,16 @@ impl Flat {
             fill,
             at: [0.0; 4],
             clip: None,
+            step: 0,
+            root,
             font,
             children: Vec::new(),
             rect: [0.0; 4],
             measured: [0.0; 2],
             scroll: 0.0,
             extent: 0.0,
-            unbound: false,
+            offset: [0.0; 2],
+            unbound: 0,
         }
     }
 
@@ -108,38 +122,106 @@ impl Flat {
     }
 
     fn missing(&self) -> u32 {
-        u32::from(self.unbound)
-            + u32::from(self.node.kind == UiKind::Image && self.texture.is_none())
+        self.unbound + u32::from(self.node.kind == UiKind::Image && self.texture.is_none())
     }
 
-    fn bind(&mut self, values: &UiValues) -> bool {
-        let Some(name) = self.node.bind.as_deref() else {
+    fn bind(&mut self, values: &UiValues, scene: Option<&SceneContext>) -> Bound {
+        self.unbound = 0;
+        self.bind_color(values);
+        Bound {
+            text: self.bind_value(values),
+            moved: self.bind_offset(values),
+            image: self.bind_image(values, scene),
+        }
+    }
+
+    fn bind_value(&mut self, values: &UiValues) -> bool {
+        let Some(name) = self.node.bind.value.as_deref() else {
             return false;
         };
         let value = values.get(name);
         match self.node.kind {
             UiKind::Bar => {
-                let number = match value {
-                    Some(UiValue::Number(number)) => Some(number),
-                    Some(UiValue::Text(_)) | None => None,
-                };
-                self.unbound = number.is_none();
-                self.fill = unit(number.unwrap_or(self.node.bar_value));
+                if let Some(UiValue::Number(number)) = value {
+                    self.fill = unit(number);
+                } else {
+                    self.unbound += 1;
+                    self.fill = unit(self.node.bar_value);
+                }
                 false
             }
             UiKind::Label | UiKind::Button => {
-                self.unbound = value.is_none();
-                let text = match value {
-                    Some(UiValue::Text(text)) => text,
-                    Some(UiValue::Number(number)) => number.to_string(),
-                    None if self.node.text.is_empty() => name.to_owned(),
-                    None => self.node.text.clone(),
-                };
+                let shown = shown_text(value);
+                self.unbound += u32::from(shown.is_none());
+                let text = shown.unwrap_or_else(|| {
+                    if self.node.text.is_empty() {
+                        name.to_owned()
+                    } else {
+                        self.node.text.clone()
+                    }
+                });
                 let changed = text != self.text;
                 self.text = text;
                 changed
             }
             UiKind::Panel | UiKind::Image | UiKind::List => false,
+        }
+    }
+
+    fn bind_offset(&mut self, values: &UiValues) -> bool {
+        let Some(name) = self.node.bind.offset.as_deref() else {
+            return false;
+        };
+        if let Some(UiValue::Offset(offset)) = values.get(name)
+            && finite(&offset)
+        {
+            let moved = offset != self.offset;
+            self.offset = offset;
+            moved
+        } else {
+            self.unbound += 1;
+            false
+        }
+    }
+
+    fn bind_color(&mut self, values: &UiValues) {
+        let Some(name) = self.node.bind.color.as_deref() else {
+            return;
+        };
+        if let Some(UiValue::Color(color)) = values.get(name)
+            && finite(&color)
+        {
+            match self.node.kind {
+                UiKind::Label => self.node.text_color = color,
+                UiKind::Bar => self.node.bar_color = color,
+                UiKind::Panel | UiKind::Image | UiKind::Button | UiKind::List => {
+                    self.node.color = color;
+                }
+            }
+        } else {
+            self.unbound += 1;
+        }
+    }
+
+    fn bind_image(&mut self, values: &UiValues, scene: Option<&SceneContext>) -> bool {
+        if self.node.kind != UiKind::Image {
+            return false;
+        }
+        let Some(name) = self.node.bind.image.as_deref() else {
+            return false;
+        };
+        if let Some(UiValue::Image { image, rect }) = values.get(name)
+            && finite(&[rect.u, rect.v, rect.width, rect.height])
+        {
+            self.node.image = Some(image);
+            self.node.image_rect = rect;
+            let texture = texture_of(&self.node, scene);
+            let changed = texture != self.texture;
+            self.texture = texture;
+            changed
+        } else {
+            self.unbound += u32::from(self.texture.is_some());
+            false
         }
     }
 
@@ -182,6 +264,7 @@ impl Flat {
             max_width: (width > 0.0).then_some(width),
             align: self.node.text_align,
             clip: self.clip,
+            step: Some(self.step),
         }
     }
 
@@ -206,9 +289,24 @@ impl Flat {
         inside(self.at, point) && self.clip.is_none_or(|clip| inside(clip, point))
     }
 
+    fn solid(&self) -> bool {
+        let node = &self.node;
+        !matches!(node.kind, UiKind::Panel | UiKind::Label)
+            || node.color[3] > 0.0
+            || (node.border_width > 0.0 && node.border_color[3] > 0.0)
+    }
+
     pub(crate) fn center(&self) -> Vec2 {
         Vec2::new(self.at[0] + self.at[2] * 0.5, self.at[1] + self.at[3] * 0.5)
     }
+}
+
+struct Mark {
+    root: Entity,
+    id: Option<String>,
+    kind: UiKind,
+    action: Option<UiAction>,
+    path: Vec<usize>,
 }
 
 #[derive(Resource, Default)]
@@ -219,20 +317,20 @@ pub(crate) struct UiState {
     pub(crate) pressed: Option<u32>,
     pub(crate) focused: Option<u32>,
     pub(crate) pending: Vec<String>,
-    pub(crate) buttons: bool,
+    pub(crate) menu: bool,
     pub(crate) wanting: bool,
     pub(crate) held_cursor: Option<CursorMode>,
     pub(crate) textures: Vec<TextureHandle>,
     pub(crate) rects: Vec<UiRect>,
-    pub(crate) runs: Vec<(Option<TextureHandle>, Range<u32>)>,
+    pub(crate) runs: Vec<(u32, Option<TextureHandle>, Range<u32>)>,
     pub(crate) rects_cut: u32,
     pub(crate) events: u32,
+    pub(crate) shown_roots: u32,
     seen: Vec<(Entity, u32)>,
     stamps: [u32; 2],
     top: Option<String>,
     values: u64,
     stale: bool,
-    shown_roots: u32,
     nodes_cut: u32,
     layouts: u32,
     missing: u32,
@@ -282,6 +380,12 @@ impl UiState {
             .iter()
             .rposition(|flat| flat.node.kind == kind && flat.under(point))
             .map(|at| at as u32)
+    }
+
+    pub(crate) fn over(&self, point: Vec2) -> bool {
+        self.nodes
+            .iter()
+            .any(|flat| flat.solid() && flat.under(point))
     }
 
     pub(crate) fn scroll_by(&mut self, at: u32, by: f32) {
@@ -343,13 +447,50 @@ impl UiState {
             })
     }
 
+    fn mark(&self, at: u32) -> Mark {
+        let flat = &self.nodes[at as usize];
+        let mut path = Vec::new();
+        let mut child = at;
+        while let Some(parent) = self.nodes[child as usize].parent {
+            let siblings = &self.nodes[parent as usize].children;
+            path.extend(siblings.iter().position(|&sibling| sibling == child));
+            child = parent;
+        }
+        Mark {
+            root: flat.root,
+            id: flat.node.id.clone(),
+            kind: flat.node.kind,
+            action: flat.node.action.clone(),
+            path,
+        }
+    }
+
+    fn find(&self, mark: &Mark) -> Option<u32> {
+        let at = if mark.id.is_some() {
+            self.nodes
+                .iter()
+                .position(|flat| flat.root == mark.root && flat.node.id == mark.id)?
+        } else {
+            let start = self.nodes.iter().position(|flat| flat.root == mark.root)?;
+            mark.path.iter().rev().try_fold(start, |at, &step| {
+                let child = self.nodes[at].children.get(step)?;
+                Some(*child as usize)
+            })?
+        };
+        let node = &self.nodes[at].node;
+        (node.kind == mark.kind && (mark.id.is_some() || node.action == mark.action))
+            .then_some(at as u32)
+    }
+
     fn rebuild(&mut self, roots: &Roots<'_, '_>, facts: &Facts<'_>) {
+        let held = [self.hovered, self.pressed, self.focused].map(|at| at.map(|at| self.mark(at)));
+        let scrolled: Vec<(Mark, f32)> = (0..self.nodes.len() as u32)
+            .filter(|&at| self.nodes[at as usize].scroll != 0.0)
+            .map(|at| (self.mark(at), self.nodes[at as usize].scroll))
+            .collect();
         self.nodes.clear();
         self.seen.clear();
-        self.textures.clear();
-        self.hovered = None;
-        self.pressed = None;
-        self.focused = None;
+        self.menu = false;
         self.shown_roots = 0;
         self.nodes_cut = 0;
         self.stamps = facts.stamps;
@@ -365,34 +506,50 @@ impl UiState {
                 .iter()
                 .filter(|(_, root)| root.screen.is_none() || root.screen.as_deref() == facts.top)
                 .collect();
-            shown.sort_by_key(|(entity, _)| *entity);
-            for (_, root) in shown {
+            shown.sort_by_key(|(entity, root)| (root.order, *entity));
+            self.menu = shown.iter().any(|(_, root)| root.menu);
+            for (entity, root) in shown {
                 let font = root
                     .bytes
                     .as_ref()
                     .and_then(|bytes| facts.text.0.register_font(bytes).ok());
+                let first = self.nodes.len();
+                self.flatten(&root.root, None, entity, font, facts);
+                for flat in &mut self.nodes[first..] {
+                    flat.step = self.shown_roots;
+                }
                 self.shown_roots += 1;
-                self.flatten(&root.root, None, font, facts);
             }
         }
-        self.textures.sort_unstable();
-        self.textures.dedup();
-        self.buttons = self
-            .nodes
-            .iter()
-            .any(|flat| flat.node.kind == UiKind::Button);
+        [self.hovered, self.pressed, self.focused] =
+            held.map(|mark| mark.and_then(|mark| self.find(&mark)));
+        for (mark, scroll) in scrolled {
+            if let Some(at) = self.find(&mark) {
+                self.nodes[at as usize].scroll = scroll;
+            }
+        }
         self.values = facts.values.revision();
         self.missing = 0;
         for flat in &mut self.nodes {
-            flat.bind(facts.values);
+            flat.bind(facts.values, facts.scene);
             self.missing += flat.missing();
         }
+        self.list_textures();
+    }
+
+    fn list_textures(&mut self) {
+        self.textures.clear();
+        self.textures
+            .extend(self.nodes.iter().filter_map(|flat| flat.texture));
+        self.textures.sort_unstable();
+        self.textures.dedup();
     }
 
     fn flatten(
         &mut self,
         node: &UiNode,
         parent: Option<u32>,
+        root: Entity,
         font: Option<FontId>,
         facts: &Facts<'_>,
     ) {
@@ -402,14 +559,13 @@ impl UiState {
         }
         let at = self.nodes.len() as u32;
         let texture = texture_of(node, facts.scene);
-        self.textures.extend(texture);
-        self.nodes
-            .push(Flat::of(without_children(node), parent, font, texture));
+        let flat = Flat::of(without_children(node), parent, root, font, texture);
+        self.nodes.push(flat);
         if let Some(parent) = parent {
             self.nodes[parent as usize].children.push(at);
         }
         for child in &node.children {
-            self.flatten(child, Some(at), font, facts);
+            self.flatten(child, Some(at), root, font, facts);
         }
     }
 
@@ -421,15 +577,25 @@ impl UiState {
         self.values = revision;
         self.missing = 0;
         let scale = self.metrics[3];
+        let (mut moved, mut images) = (false, false);
         for flat in &mut self.nodes {
-            if flat.bind(facts.values) {
+            let bound = flat.bind(facts.values, facts.scene);
+            if bound.text {
                 let size = flat.fit(facts.text, scale);
                 let fixed = !matches!(flat.node.width, UiLength::Auto)
                     && !matches!(flat.node.height, UiLength::Auto);
                 self.stale |= !fixed && size != flat.measured;
                 flat.measured = size;
             }
+            moved |= bound.moved;
+            images |= bound.image;
             self.missing += flat.missing();
+        }
+        if moved {
+            self.place();
+        }
+        if images {
+            self.list_textures();
         }
     }
 
@@ -536,8 +702,8 @@ impl UiState {
             });
             let flat = &mut self.nodes[at];
             flat.at = [
-                flat.rect[0] + shift[0],
-                flat.rect[1] + shift[1],
+                flat.rect[0] + shift[0] + flat.offset[0],
+                flat.rect[1] + shift[1] + flat.offset[1],
                 flat.rect[2],
                 flat.rect[3],
             ];
@@ -551,6 +717,18 @@ fn unit(value: f32) -> f32 {
         clamp(value, 0.0, 1.0)
     } else {
         0.0
+    }
+}
+
+fn finite(numbers: &[f32]) -> bool {
+    numbers.iter().all(|number| number.is_finite())
+}
+
+fn shown_text(value: Option<UiValue>) -> Option<String> {
+    match value {
+        Some(UiValue::Text(text)) => Some(text),
+        Some(UiValue::Number(number)) => Some(number.to_string()),
+        Some(UiValue::Offset(_) | UiValue::Color(_) | UiValue::Image { .. }) | None => None,
     }
 }
 

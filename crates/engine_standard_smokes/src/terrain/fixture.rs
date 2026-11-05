@@ -58,6 +58,15 @@ fn document(hiker: bool) -> Value {
     if hiker {
         entities.push(json!({"id": "hiker", "mesh": "cube", "material": "plain",
             "nav_agent": {"speed": 6.0, "offset": 0.5}, "transform": {"translation": [20.0, 31.0, 20.0]}}));
+        let solid = |half_extents: [f32; 3]| json!({"shape": {"kind": "cuboid", "half_extents": half_extents}, "memberships": 2, "filter": 2});
+        entities.extend([
+            json!({"id": "body", "nav_agent": {"speed": 6.0, "offset": 0.5}, "collider": solid([0.4; 3]),
+                "transform": {"translation": [-25.0, 30.5, -25.0]}}),
+            json!({"id": "ghost", "nav_agent": {"speed": 6.0, "offset": 0.5},
+                "transform": {"translation": [-25.0, 30.5, -22.0]}}),
+            json!({"id": "wall", "collider": solid([1.0, 10.0, 8.0]),
+                "transform": {"translation": [0.0, 30.0, -25.0]}}),
+        ]);
     }
     json!({
         "id": "terrain-fixture", "revision": 1,

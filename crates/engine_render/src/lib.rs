@@ -1253,6 +1253,27 @@ impl DrawPoint for Overlay {
     type Args = ();
 }
 
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OverlaySteps {
+    pub count: u32,
+}
+
+impl Slot for OverlaySteps {
+    const NAME: &'static str = "overlay_steps";
+}
+
+#[derive(Resource, Default)]
+pub struct OverlayStack;
+
+impl Slot for OverlayStack {
+    const NAME: &'static str = "overlay_stack";
+}
+
+impl DrawPoint for OverlayStack {
+    type Layer = Layer;
+    type Args = Option<u32>;
+}
+
 pub struct Output {
     pub name: &'static str,
     pub format: wgpu::TextureFormat,

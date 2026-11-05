@@ -28,7 +28,7 @@ impl StandingEye {
         let (yaw_sin, yaw_cos) = math::sin_cos(yaw.to_radians());
         let (pitch_sin, pitch_cos) = math::sin_cos(pitch.to_radians());
         let ground = ground
-            .and_then(|ground| ground.sample(Vec2::new(x, z)))
+            .and_then(|ground| ground.point(Vec2::new(x, z)).solid())
             .map_or(0.0, |ground| ground.height);
         Self {
             x,
@@ -123,7 +123,8 @@ fn hold_standing_eye(
         views.standing = None;
         return;
     }
-    let Some(found) = ground.and_then(|ground| ground.sample(Vec2::new(standing.x, standing.z)))
+    let Some(found) =
+        ground.and_then(|ground| ground.point(Vec2::new(standing.x, standing.z)).solid())
     else {
         return;
     };

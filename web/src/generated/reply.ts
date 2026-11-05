@@ -229,6 +229,7 @@ export interface NavAgentView {
   length: number;
   next: number;
   points: number;
+  refused?: string | null;
   searched: number;
   searched_for?: number[] | null;
   status: NavStatus;
@@ -237,11 +238,13 @@ export interface NavAgentView {
 export interface NavAgentsView {
   agents: number;
   arrived: number;
+  collision_errors: number;
   failed_jobs: number;
   first: NavAgentRow[];
   grounds: number;
   latest_job_failure?: string | null;
   portals: number;
+  refused: number;
   searching: number;
   unreachable: number;
   waiting: number;
@@ -249,7 +252,7 @@ export interface NavAgentsView {
   work: number;
 }
 
-export type NavStatus = "idle" | "searching" | "walking" | "arrived" | "unreachable";
+export type NavStatus = "idle" | "searching" | "walking" | "arrived" | "unreachable" | "refused";
 
 export interface Observation {
   frame?: string | null;

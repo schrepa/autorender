@@ -896,15 +896,6 @@
       },
       "type": "object"
     },
-    "LightPreset": {
-      "enum": [
-        "day",
-        "golden_hour",
-        "dusk",
-        "night"
-      ],
-      "type": "string"
-    },
     "MacroCauses": {
       "additionalProperties": false,
       "properties": {
@@ -1876,13 +1867,6 @@
           "default": false,
           "type": "boolean"
         },
-        "night": {
-          "default": 1.0,
-          "format": "float",
-          "maximum": 16.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
         "skip_bright": {
           "default": 0.05000000074505806,
           "format": "float",
@@ -2367,6 +2351,13 @@
           "$ref": "#/$defs/SceneParticleBlend",
           "default": "alpha"
         },
+        "brightness": {
+          "default": 1.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 64.0,
+          "type": "number"
+        },
         "color": {
           "default": [
             [
@@ -2413,18 +2404,51 @@
           "minItems": 3,
           "type": "array"
         },
-        "emission": {
-          "default": 1.0,
+        "emitting": {
+          "default": true,
+          "type": "boolean"
+        },
+        "extent": {
+          "default": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "fade_in": {
+          "default": 0.0,
           "format": "float",
-          "maximum": 64.0,
+          "maximum": 1.0,
           "minimum": 0.0,
           "type": "number"
+        },
+        "formula": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "lifetime": {
           "default": 2.0,
           "exclusiveMinimum": 0.0,
           "format": "float",
           "maximum": 60.0,
+          "type": "number"
+        },
+        "lifetime_spread": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
           "type": "number"
         },
         "offset": {
@@ -2443,12 +2467,24 @@
           "minItems": 3,
           "type": "array"
         },
-        "radius": {
-          "default": 0.0,
-          "format": "float",
-          "maximum": 10000.0,
-          "minimum": 0.0,
-          "type": "number"
+        "params": {
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 8,
+          "minItems": 8,
+          "type": "array"
         },
         "rate": {
           "default": 20.0,
@@ -2462,6 +2498,10 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "shape": {
+          "$ref": "#/$defs/SceneParticleShape",
+          "default": "ball"
         },
         "size": {
           "default": [
@@ -2478,11 +2518,25 @@
           "minItems": 2,
           "type": "array"
         },
+        "size_spread": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
         "speed": {
           "default": 1.0,
           "format": "float",
           "maximum": 10000.0,
           "minimum": -10000.0,
+          "type": "number"
+        },
+        "speed_spread": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
           "type": "number"
         },
         "spread_degrees": {
@@ -2619,6 +2673,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneFoliage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frame_limits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneFrameLimits"
             },
             {
               "type": "null"
@@ -2825,16 +2889,6 @@
             }
           ]
         },
-        "sky_light": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneSkyLight"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "sky_occlusion": {
           "anyOf": [
             {
@@ -3013,26 +3067,46 @@
       },
       "type": "object"
     },
+    "SceneFrameLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "max_fixed_steps": {
+          "default": 5,
+          "format": "uint32",
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_frame_seconds": {
+          "default": 0.25,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
     "SceneGrading": {
       "additionalProperties": false,
       "properties": {
         "contrast": {
+          "default": 1.100000023841858,
           "format": "float",
           "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
+          "type": "number"
         },
         "exposure": {
+          "default": 1.0,
           "format": "float",
           "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
+          "type": "number"
         },
         "highlight_tint": {
+          "default": [
+            1.0399999618530273,
+            1.0,
+            0.9599999785423279
+          ],
           "items": {
             "format": "float",
             "minimum": 0.0,
@@ -3040,24 +3114,20 @@
           },
           "maxItems": 3,
           "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "preset": {
-          "$ref": "#/$defs/LightPreset",
-          "default": "golden_hour"
+          "type": "array"
         },
         "saturation": {
+          "default": 1.0499999523162842,
           "format": "float",
           "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
+          "type": "number"
         },
         "shadow_tint": {
+          "default": [
+            0.949999988079071,
+            0.9800000190734863,
+            1.059999942779541
+          ],
           "items": {
             "format": "float",
             "minimum": 0.0,
@@ -3065,18 +3135,13 @@
           },
           "maxItems": 3,
           "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
+          "type": "array"
         },
         "vibrance": {
+          "default": 0.15000000596046448,
           "format": "float",
           "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
+          "type": "number"
         }
       },
       "type": "object"
@@ -3199,13 +3264,6 @@
           "default": 0.10000000149011612,
           "format": "float",
           "maximum": 100.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "sun_size": {
-          "default": 0.27000001072883606,
-          "format": "float",
-          "maximum": 10.0,
           "minimum": 0.0,
           "type": "number"
         }
@@ -3618,6 +3676,12 @@
           "default": true,
           "type": "boolean"
         },
+        "obstacle_layers": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "samples_per_tick": {
           "default": 32768,
           "format": "uint32",
@@ -3999,6 +4063,13 @@
       ],
       "type": "string"
     },
+    "SceneParticleShape": {
+      "enum": [
+        "box",
+        "ball"
+      ],
+      "type": "string"
+    },
     "SceneParticles": {
       "additionalProperties": false,
       "properties": {
@@ -4195,6 +4266,24 @@
     "SceneResolution": {
       "additionalProperties": false,
       "properties": {
+        "max_height": {
+          "default": 1440,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_pixel_ratio": {
+          "default": 1.5,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "max_width": {
+          "default": 2560,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
         "scale": {
           "default": 1.0,
           "format": "float",
@@ -4374,6 +4463,12 @@
           "minimum": 0.0,
           "type": "number"
         },
+        "ambient": {
+          "default": 1.0,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
         "atmosphere_height": {
           "default": 100.0,
           "format": "float",
@@ -4382,7 +4477,7 @@
           "type": "number"
         },
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "ground_albedo": {
@@ -4488,141 +4583,6 @@
           "maximum": 10.0,
           "minimum": 0.01,
           "type": "number"
-        }
-      },
-      "type": "object"
-    },
-    "SceneSkyLight": {
-      "additionalProperties": false,
-      "properties": {
-        "aerial_color": {
-          "items": {
-            "format": "float",
-            "minimum": 0.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "aerial_density": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "aerial_falloff": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "aerial_glow": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "aerial_start": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "ambient": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "fog_density": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "fog_falloff": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "fog_max": {
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "fog_start": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "ground": {
-          "items": {
-            "format": "float",
-            "minimum": 0.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "horizon": {
-          "items": {
-            "format": "float",
-            "minimum": 0.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "preset": {
-          "$ref": "#/$defs/LightPreset",
-          "default": "golden_hour"
-        },
-        "zenith": {
-          "items": {
-            "format": "float",
-            "minimum": 0.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
         }
       },
       "type": "object"
@@ -4807,23 +4767,6 @@
     "SceneSun": {
       "additionalProperties": false,
       "properties": {
-        "preset": {
-          "$ref": "#/$defs/LightPreset",
-          "default": "golden_hour"
-        },
-        "sun_color": {
-          "items": {
-            "format": "float",
-            "minimum": 0.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
         "sun_direction": {
           "items": {
             "format": "float",
@@ -4877,32 +4820,22 @@
       "additionalProperties": false,
       "properties": {
         "emission": {
+          "default": 0.5,
           "format": "float",
           "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "preset": {
-          "$ref": "#/$defs/LightPreset",
-          "default": "golden_hour"
+          "type": "number"
         },
         "rim": {
+          "default": 0.20000000298023224,
           "format": "float",
           "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
+          "type": "number"
         },
         "specular": {
+          "default": 1.0,
           "format": "float",
           "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
+          "type": "number"
         }
       },
       "type": "object"
@@ -5699,7 +5632,7 @@
           "type": "number"
         },
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "hours": {
@@ -6525,6 +6458,40 @@
       ],
       "type": "string"
     },
+    "UiBind": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "offset": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "UiDirection": {
       "enum": [
         "column",
@@ -6706,11 +6673,13 @@
           "type": "number"
         },
         "bind": {
-          "default": null,
-          "type": [
-            "string",
-            "null"
-          ]
+          "$ref": "#/$defs/UiBind",
+          "default": {
+            "color": null,
+            "image": null,
+            "offset": null,
+            "value": null
+          }
         },
         "border_color": {
           "default": [
@@ -6922,6 +6891,15 @@
             "null"
           ]
         },
+        "menu": {
+          "default": false,
+          "type": "boolean"
+        },
+        "order": {
+          "default": 0,
+          "format": "int32",
+          "type": "integer"
+        },
         "root": {
           "$ref": "#/$defs/UiNode",
           "default": {
@@ -6935,7 +6913,12 @@
               1.0
             ],
             "bar_value": 0.0,
-            "bind": null,
+            "bind": {
+              "color": null,
+              "image": null,
+              "offset": null,
+              "value": null
+            },
             "border_color": [
               0.0,
               0.0,

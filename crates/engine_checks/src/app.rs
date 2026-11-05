@@ -80,24 +80,24 @@ const STAGES: &[Stage<App>] = &[
         name: "clippy",
         needs: &[],
         run: |app| {
-            let mut selection = Vec::new();
-            for package in app.repository.own() {
-                selection.extend(["-p", package.name.as_str()]);
-            }
-            selection.push("--all-targets");
-            crate::tools::clippy(&app.repository.root, &selection)
+            let packages: Vec<&str> = app
+                .repository
+                .own()
+                .map(|package| package.name.as_str())
+                .collect();
+            crate::tools::clippy(&app.repository, &packages, &["--all-targets"])
         },
     },
     Stage {
         name: "clippy wasm",
         needs: &[],
         run: |app| {
-            let mut selection = Vec::new();
-            for project in app.repository.projects() {
-                selection.extend(["-p", project.name.as_str()]);
-            }
-            selection.extend(["--target", WASM_TARGET]);
-            crate::tools::clippy(&app.repository.root, &selection)
+            let projects: Vec<&str> = app
+                .repository
+                .projects()
+                .map(|project| project.name.as_str())
+                .collect();
+            crate::tools::clippy(&app.repository, &projects, &["--target", WASM_TARGET])
         },
     },
 ];
@@ -143,11 +143,7 @@ fn run<G: 'static, E: Display + 'static>(
     let app = App {
         repository: Repository::read(root)?,
         list,
-        build: Box::new(move |engine| {
-            build(engine)
-                .map(drop)
-                .map_err(|error| error.to_string())
-        }),
+        build: Box::new(move |engine| build(engine).map(drop).map_err(|error| error.to_string())),
     };
     match arguments.iter().map(String::as_str).collect::<Vec<_>>()[..] {
         ["verify"] | ["verify", "--level", "pr" | "merge"] => stages::run(&app, STAGES),

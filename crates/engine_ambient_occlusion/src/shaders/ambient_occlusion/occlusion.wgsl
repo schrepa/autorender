@@ -1,5 +1,5 @@
 import package::engine::math::TAU;
-import package::engine::screen_points::{depth_normal, world_at};
+import package::engine::screen_points::{depth_normal, occluder_at, world_at};
 import package::engine::post::frame::post;
 import package::generated::pieces::ambient_occlusion::piece;
 
@@ -45,7 +45,7 @@ fn ambient_visibility(pixel: vec2<i32>, p: vec3<f32>, normal: vec3<f32>, distanc
         let d = SPIRAL[i];
         let offset = vec2<f32>(d.x * turn.x - d.y * turn.y, d.x * turn.y + d.y * turn.x)
             * (fraction * pixels);
-        let probe = world_at(clamp(pixel + vec2<i32>(round(offset)), vec2<i32>(0), last));
+        let probe = occluder_at(clamp(pixel + vec2<i32>(round(offset)), vec2<i32>(0), last));
         let v = probe.xyz - p;
         let vv = dot(v, v);
         let falloff = max(radius2 - vv, 0.0);

@@ -5,7 +5,7 @@ use engine_core::math::max;
 use engine_core::{Entry, Error, TextureHandle};
 use engine_places::ui::UiKind;
 use engine_render::{
-    Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Overlay, Pipeline, Prepare,
+    Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, OverlayStack, Pipeline, Prepare,
     RenderPipeline, SamplerDesc, Shape, wgpu,
 };
 
@@ -27,7 +27,7 @@ struct Look {
 
 struct Painter {
     rects: Vec<UiRect>,
-    runs: Vec<(Option<TextureHandle>, Range<u32>)>,
+    runs: Vec<(u32, Option<TextureHandle>, Range<u32>)>,
     cut: u32,
     limit: usize,
     metrics: [f32; 4],
@@ -126,12 +126,13 @@ impl Painter {
             uv: look.uv,
             clip,
         });
-        if let Some((texture, range)) = self.runs.last_mut()
+        if let Some((step, texture, range)) = self.runs.last_mut()
+            && *step == flat.step
             && *texture == look.texture
         {
             range.end = at + 1;
         } else {
-            self.runs.push((look.texture, at..at + 1));
+            self.runs.push((flat.step, look.texture, at..at + 1));
         }
     }
 }
@@ -185,11 +186,11 @@ fn quad(vertex: Entry, fragment: Entry) -> RenderPipeline<'static> {
     }
 }
 
-type Drawn = (Option<Pipeline<UiGpu, Overlay>>, Range<u32>);
+type Drawn = (u32, Option<Pipeline<UiGpu, OverlayStack>>, Range<u32>);
 
 pub(crate) struct UiGpu {
-    solid: Pipeline<Self, Overlay>,
-    image: Pipeline<Self, Overlay>,
+    solid: Pipeline<Self, OverlayStack>,
+    image: Pipeline<Self, OverlayStack>,
     instances: Buffer<Self>,
     drawn: Vec<Drawn>,
 }
@@ -202,12 +203,12 @@ impl GpuPart for UiGpu {
         let instances = cx.buffer("instances", Lifetime::Kept);
         let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
         let solid = cx.render_pipeline(
-            Overlay,
+            OverlayStack,
             &quad(draw::VS_RECT, draw::FS_RECT),
             &[(draw::INSTANCES, Bind::Buffer(instances))],
         )?;
         let image = cx.render_pipeline(
-            Overlay,
+            OverlayStack,
             &quad(draw::VS_RECT, draw::FS_IMAGE),
             &[
                 (draw::INSTANCES, Bind::Buffer(instances)),
@@ -233,17 +234,22 @@ impl GpuPart for UiGpu {
             std::mem::size_of_val(state.rects.as_slice()) as u64,
         );
         cx.write(self.instances, 0, &state.rects);
-        for (texture, range) in &state.runs {
+        for (step, texture, range) in &state.runs {
             let filled = (*texture).map(|sheet| cx.fill(&self.image, &[sheet]));
-            self.drawn.push((filled, range.clone()));
+            self.drawn.push((*step, filled, range.clone()));
         }
         cx.want_overlay();
     }
 }
 
 impl UiGpu {
-    pub(crate) fn draw_rects(&self, _: &(), draw: &mut Draw<'_, Self, Overlay>) -> u32 {
-        for (filled, range) in &self.drawn {
+    pub(crate) fn draw_rects(
+        &self,
+        step: &Option<u32>,
+        draw: &mut Draw<'_, Self, OverlayStack>,
+    ) -> u32 {
+        let mut drawn = 0;
+        for (_, filled, range) in self.drawn.iter().filter(|(at, ..)| Some(*at) == *step) {
             draw.draw(
                 filled.as_ref().unwrap_or(&self.solid),
                 Shape::Pulled {
@@ -251,7 +257,8 @@ impl UiGpu {
                     instances: range.clone(),
                 },
             );
+            drawn += 1;
         }
-        self.drawn.len() as u32
+        drawn
     }
 }

@@ -21,7 +21,7 @@ use engine_core::{
 };
 use engine_places::text::Text;
 use engine_places::ui::{UiEvents, UiLength, UiNode, UiRoot, UiValues};
-use engine_render::{Layer, Overlay, RenderBricks};
+use engine_render::{Layer, OverlayStack, OverlaySteps, RenderBricks};
 use serde_json::{Value, json};
 
 use gpu::UiGpu;
@@ -146,6 +146,7 @@ fn root_schema() -> Value {
 fn root_example() -> Value {
     json!({
         "screen": "menu",
+        "menu": true,
         "root": {
             "kind": "panel",
             "absolute": { "left": 16.0, "top": 16.0 },
@@ -184,6 +185,10 @@ fn follow(
     if !events.names().is_empty() {
         events.clear();
     }
+    let pointer = PointerInput {
+        inside: pointer.inside && *cursor != CursorMode::Captured,
+        ..*pointer
+    };
     interact::run(&mut state, &pointer, &menu, &mut screens, &mut events);
     let facts = Facts::of(
         &text,
@@ -194,7 +199,7 @@ fn follow(
         screens.top(),
     );
     state.sync(&roots, &facts);
-    let wanted = state.buttons;
+    let wanted = state.menu;
     if wanted != state.wanting {
         state.wanting = wanted;
         menu.wanted = wanted;
@@ -205,6 +210,10 @@ fn follow(
             *cursor = previous;
         }
     }
+    let over = interact::over(&state, &pointer);
+    if events.pointer_over() != over {
+        events.set_pointer_over(over);
+    }
     stats.set_if_neq(state.stats());
 }
 
@@ -213,6 +222,7 @@ fn present(
     screens: Res<Screens>,
     mut state: ResMut<UiState>,
     mut stats: ResMut<UiStats>,
+    mut stack: ResMut<OverlaySteps>,
 ) {
     if state.is_idle() && (roots.is_empty() || !settings.enabled) {
         return;
@@ -229,6 +239,9 @@ fn present(
     gpu::stage(&mut state, settings.max_rects as usize);
     state.queue_text(&text);
     stats.set_if_neq(state.stats());
+    stack.set_if_neq(OverlaySteps {
+        count: state.shown_roots,
+    });
 }
 
 #[derive(Component)]
@@ -281,6 +294,7 @@ impl Brick for UiBrick {
             .resource::<UiState>()
             .fill::<UiValues>(None)
             .fill::<UiEvents>(None)
+            .fill::<OverlaySteps>(None)
             .join::<SceneComponents>(
                 ComponentKind::of::<UiRoot>("ui")
                     .check(check_root)
@@ -295,6 +309,6 @@ impl Brick for UiBrick {
             .operation::<operations::UiPress>()
             .observation::<operations::UiTree>()
             .generated(GENERATED)
-            .draws::<UiGpu, Overlay>(Layer::Opaque, UiGpu::draw_rects);
+            .draws::<UiGpu, OverlayStack>(Layer::Opaque, UiGpu::draw_rects);
     }
 }

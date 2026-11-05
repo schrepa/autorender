@@ -8,7 +8,7 @@ use glam::UVec2;
 
 use crate::atlas::{Atlas, Slot, Upload};
 use crate::fonts::{Fonts, Layout, Shapes};
-use crate::{GlyphInstance, Label, TextSettings, TextStats};
+use crate::{GlyphInstance, GlyphRange, Label, TextSettings, TextStats};
 
 struct Placing<'a> {
     text: &'a str,
@@ -85,6 +85,7 @@ impl State {
         settings: &TextSettings,
         view: &View,
         staged: &mut Vec<GlyphInstance>,
+        ranges: &mut Vec<GlyphRange>,
     ) {
         self.sync(settings, view);
         self.frame += 1;
@@ -101,10 +102,12 @@ impl State {
                 self.place(&placing, display, staged, &mut cut);
                 runs += 1;
             }
+            extend_ranges(ranges, None, staged.len());
             let shown = std::mem::take(&mut self.shown);
             for run in shown.iter().filter(|run| !run.text.is_empty()) {
                 let placing = self.run_placing(run);
                 self.place(&placing, display, staged, &mut cut);
+                extend_ranges(ranges, run.step, staged.len());
                 runs += 1;
             }
             self.shown = shown;
@@ -208,6 +211,21 @@ impl State {
         }
         self.queued = queued;
         self.queue.push(run);
+    }
+}
+
+fn extend_ranges(ranges: &mut Vec<GlyphRange>, step: Option<u32>, end: usize) {
+    let end = end as u32;
+    let start = ranges.last().map_or(0, |(_, range)| range.end);
+    if start == end {
+        return;
+    }
+    if let Some((held, range)) = ranges.last_mut()
+        && *held == step
+    {
+        range.end = end;
+    } else {
+        ranges.push((step, start..end));
     }
 }
 

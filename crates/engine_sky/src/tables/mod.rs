@@ -238,7 +238,7 @@ struct Wants {
 impl Wants {
     fn of(clouds: Clouds, sky: Sky) -> Self {
         Self {
-            clouds: clouds.enabled && clouds.coverage > 0.0,
+            clouds: sky.enabled && clouds.enabled && clouds.coverage > 0.0,
             sky: sky.enabled.then_some(Air {
                 rayleigh: sky.rayleigh,
                 rayleigh_height: sky.rayleigh_height,
@@ -255,12 +255,8 @@ impl Wants {
 
     fn identities(&self) -> [Option<Vec<Vec<u8>>>; 2] {
         [
-            self.clouds.then(|| {
-                clouds::parts()
-                    .iter()
-                    .map(clouds::Part::identity)
-                    .collect()
-            }),
+            self.clouds
+                .then(|| clouds::parts().iter().map(clouds::Part::identity).collect()),
             self.sky.map(|air| vec![air.identity()]),
         ]
     }

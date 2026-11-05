@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::Resource;
+use bevy_ecs::world::World;
 use engine_math::sin_cos;
-use engine_place::{Slot, gpu_struct};
+use engine_place::{List, Slot, gpu_struct};
 use glam::{Mat3, Quat, Vec3};
 
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
@@ -71,18 +72,23 @@ impl Slot for SunPath {
     const NAME: &'static str = "sun_path";
 }
 
+pub struct SunClocks;
+
+impl List for SunClocks {
+    const NAME: &'static str = "sun_clocks";
+    type Member = fn(&World) -> bool;
+}
+
 gpu_struct! {
     #[derive(Resource)]
     pub struct Sun {
         pub direction: [f32; 4],
-        pub color: [f32; 4],
     }
 }
 
 impl Sun {
     pub const NONE: Self = Self {
         direction: [0.0, 1.0, 0.0, 0.0],
-        color: [0.0, 0.0, 0.0, 0.0],
     };
 }
 

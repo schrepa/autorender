@@ -339,7 +339,6 @@
           "Interior",
           "JobSettings",
           "Label",
-          "LightPreset",
           "MacroCauses",
           "MeshSource",
           "NavAgent",
@@ -376,6 +375,7 @@
           "SceneEnvironment",
           "SceneFilter",
           "SceneFoliage",
+          "SceneFrameLimits",
           "SceneGrading",
           "SceneGroundCover",
           "SceneGrounding",
@@ -396,6 +396,7 @@
           "SceneOcclusionCulling",
           "SceneOccupancy",
           "SceneParticleBlend",
+          "SceneParticleShape",
           "SceneParticles",
           "ScenePhysics",
           "ScenePrefab",
@@ -407,7 +408,6 @@
           "SceneScreen",
           "SceneShadows",
           "SceneSky",
-          "SceneSkyLight",
           "SceneSkyOcclusion",
           "SceneSound",
           "SceneSpline",
@@ -448,6 +448,7 @@
           "TextSettings",
           "UiAction",
           "UiAlign",
+          "UiBind",
           "UiDirection",
           "UiImageRect",
           "UiInsets",
@@ -513,6 +514,7 @@
           "dynamic_resolution",
           "exposure_stats",
           "foliage",
+          "frame_limits",
           "grading",
           "ground_cover",
           "ground_cover_stats",
@@ -552,7 +554,6 @@
           "shadow_stats",
           "shadows",
           "sky",
-          "sky_light",
           "sky_occlusion",
           "sky_stats",
           "sound",
@@ -673,9 +674,9 @@
     }
   },
   "scenes": {
-    "document components": "be65477a7f2594c6",
+    "document components": "822b544eeafba3ef",
     "document components counts": {
-      "bytes": 7796,
+      "bytes": 7745,
       "entities": 9,
       "materials": 3,
       "meshes": 3,
@@ -683,9 +684,9 @@
       "streamed": 2,
       "textures": 1
     },
-    "document garden": "cf8d80cd6a1e3306",
+    "document garden": "4feea2bd1e300696",
     "document garden counts": {
-      "bytes": 95392,
+      "bytes": 95458,
       "entities": 30,
       "materials": 9,
       "meshes": 6,
@@ -1275,7 +1276,7 @@
       "steepest": 0.016481399536132812,
       "tunnels": 1
     },
-    "bakes": "89cdc0665918ae83",
+    "bakes": "d3cbbe92f4037345",
     "bounce": {
       "blocks": 1024,
       "detailed blocks": 474,
@@ -1299,7 +1300,7 @@
       ],
       "texels": 65536
     },
-    "pack": "c1560ea5e416a66c",
+    "pack": "91ccb373f9e12573",
     "pack records": 46,
     "portals 0/0/0": "fb26e1b9f5bd9fd8",
     "portals 0/0/1": "29e88506dde27d87",

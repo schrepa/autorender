@@ -19,6 +19,7 @@ gpu_struct! {
     #[derive(Resource)]
     pub struct ShadowPiece {
         pub light: [[f32; 4]; 3],
+        pub before: [[f32; 4]; 3],
         pub state: [f32; 4],
         pub level_state: [f32; 4],
         pub atlas: [f32; 4],

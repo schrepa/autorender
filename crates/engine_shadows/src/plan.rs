@@ -115,9 +115,8 @@ impl ShadowPlan {
         let made = self.key != Some(key);
         self.key = Some(key);
         self.made += u64::from(made);
-        let basis = LightBasis::toward(sun);
-        let restarted = self.clipmap.place(
-            basis,
+        let (basis, restarted) = self.clipmap.place(
+            LightBasis::toward(sun),
             eye,
             ClipSettings {
                 levels: key.levels,

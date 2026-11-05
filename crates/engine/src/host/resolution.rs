@@ -1,17 +1,23 @@
-use crate::resolution::DynamicResolution;
+use crate::resolution::{DynamicResolution, Resolution};
 
 use super::policy::{
     DYNAMIC_AIM, DYNAMIC_LOWER_FRAMES, DYNAMIC_OVER, DYNAMIC_PROBE_FRAMES, DYNAMIC_RAISE_FRAMES,
-    DYNAMIC_STEP, DYNAMIC_UNDER, MAX_PIXEL_RATIO, MAX_VIEW_HEIGHT, MAX_VIEW_WIDTH,
+    DYNAMIC_STEP, DYNAMIC_UNDER,
 };
 
-pub fn view_size(width: f64, height: f64, pixel_ratio: f64, scale: f64) -> Option<(u32, u32)> {
+pub fn view_size(
+    width: f64,
+    height: f64,
+    pixel_ratio: f64,
+    settings: &Resolution,
+) -> Option<(u32, u32)> {
     if !(width > 0.0 && height > 0.0 && width.is_finite() && height.is_finite()) {
         return None;
     }
-    let scale = (known(pixel_ratio).min(MAX_PIXEL_RATIO) * known(scale))
-        .min(f64::from(MAX_VIEW_WIDTH) / width)
-        .min(f64::from(MAX_VIEW_HEIGHT) / height);
+    let ratio = known(pixel_ratio).min(f64::from(settings.max_pixel_ratio));
+    let scale = (ratio * known(f64::from(settings.scale)))
+        .min(f64::from(settings.max_width) / width)
+        .min(f64::from(settings.max_height) / height);
     let physical = |logical: f64| (logical * scale).round().max(1.0) as u32;
     Some((physical(width), physical(height)))
 }
@@ -27,7 +33,7 @@ fn known(value: f64) -> f64 {
 pub fn render_size(
     (width, height): (u32, u32),
     pixel_ratio: f64,
-    scale: f64,
+    settings: &Resolution,
     dynamic: f64,
 ) -> Option<(u32, u32)> {
     if width == 0 || height == 0 {
@@ -38,7 +44,7 @@ pub fn render_size(
         f64::from(width) / ratio,
         f64::from(height) / ratio,
         ratio,
-        scale,
+        settings,
     )?;
     let dynamic = known(dynamic);
     let scaled = |policy: u32, display: u32| {

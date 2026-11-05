@@ -14,7 +14,7 @@ const USAGE: &str = "usage: cargo xtask new app --project DIR | new brick PART N
 
 const APP_TEMPLATE: &str = "crates/engine/examples/app_template";
 
-const TEMPLATE_CRATE: &str = "app_template";
+pub(crate) const TEMPLATE_CRATE: &str = "app_template";
 
 const TEMPLATE_KIND: &str = "kind = \"game\"\n";
 

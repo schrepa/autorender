@@ -12,11 +12,14 @@ use std::convert::Infallible;
 mod global;
 #[cfg(debug_assertions)]
 mod invariants;
+mod switches;
 pub(crate) mod tracking;
 mod validation;
 mod views;
 pub use global::GlobalTransform;
 pub(crate) use global::ValueIds;
+pub(crate) use switches::SeesDisabled;
+pub use switches::{DisabledByParent, EvenDisabled, Hidden, HiddenByParent, Shown, Switches};
 
 pub const MAX_HIERARCHY_DEPTH: usize = 64;
 pub const MAX_TRANSFORM_NODES: usize = u32::MAX as usize - 1;
@@ -119,7 +122,7 @@ pub fn set_parents(world: &mut World, changes: &[(Entity, Option<Entity>)]) -> R
     if changes.len() > limit {
         return Err(over(changes.len()));
     }
-    let mut query = world.query::<(Entity, &Transform, Option<&Parent>)>();
+    let mut query = world.query::<(Entity, &Transform, Option<&Parent>, SeesDisabled)>();
     let count = query.iter(world).len();
     if count > limit {
         return Err(over(count));
@@ -141,7 +144,7 @@ pub fn set_parents(world: &mut World, changes: &[(Entity, Option<Entity>)]) -> R
     }
     let mut nodes = Vec::with_capacity(count);
     let mut indices = HashMap::with_capacity_and_hasher(count, Default::default());
-    for (entity, _, parent) in query.iter(world) {
+    for (entity, _, parent, _) in query.iter(world) {
         indices.insert(entity, nodes.len());
         nodes.push(RelationshipNode {
             entity,
@@ -261,8 +264,10 @@ type TransformQuery = QueryState<(
     Ref<'static, Transform>,
     Option<&'static Parent>,
     Option<Ref<'static, InterpolateTransform>>,
+    SeesDisabled,
 )>;
-type ChangedTransforms = SystemState<Query<'static, 'static, (Entity, Ref<'static, Transform>)>>;
+type ChangedTransforms =
+    SystemState<Query<'static, 'static, (Entity, Ref<'static, Transform>, SeesDisabled)>>;
 
 const _: () = assert!(MAX_TRANSFORM_NODES < u32::MAX as usize, "indices_fit_u32");
 const _: () = assert!(MAX_HIERARCHY_DEPTH < u8::MAX as usize, "depths_fit_u8");
@@ -395,6 +400,8 @@ fn complete_parents_first<N: ParentLinked, E>(
 pub struct GlobalTransforms {
     query: TransformQuery,
     changed_query: Option<ChangedTransforms>,
+    switch_query: switches::SwitchQuery,
+    switches: Switches,
     entities: Vec<Entity>,
     sources: Vec<Source>,
     locals: Vec<NodePose>,
@@ -424,6 +431,8 @@ impl FromWorld for GlobalTransforms {
         Self {
             query: world.query(),
             changed_query: Some(SystemState::new(world)),
+            switch_query: world.query_filtered(),
+            switches: Switches::default(),
             entities: Vec::new(),
             sources: Vec::new(),
             locals: Vec::new(),
@@ -882,7 +891,7 @@ impl GlobalTransforms {
             .as_deref_mut()
             .map(InterpolationState::observer);
         let query = changed_query.get(world).expect("transform_query_read_only");
-        for (entities, transforms) in query.contiguous_iter().expect("transform_dense_storage") {
+        for (entities, transforms, _) in query.contiguous_iter().expect("transform_dense_storage") {
             let (transforms, ticks) = ContiguousRef::split(transforms);
             let window = ChangeWindow::new(ticks.last_run(), ticks.this_run());
             let (changed, added) = (ticks.changed(), ticks.added());
@@ -978,7 +987,7 @@ impl GlobalTransforms {
         let mut metadata = 0;
         let mut checked = 0;
         let mut observed = 0;
-        for (entity, transform, parent, marker) in self.query.iter(world) {
+        for (entity, transform, parent, marker, _) in self.query.iter(world) {
             metadata += 1;
             if count < self.limit {
                 let Some(source) = self.sources.get_mut(count) else {
@@ -1064,7 +1073,7 @@ impl GlobalTransforms {
         self.dirty.flags.reserve_exact(admitted);
         self.dirty.seeds.reserve_exact(admitted.div_ceil(2));
         let mut report = HierarchyReport::default();
-        for (entity, transform, parent, marker) in self.query.iter(world) {
+        for (entity, transform, parent, marker, _) in self.query.iter(world) {
             report.transforms += 1;
             if self.links.len() == self.limit {
                 report.overflow_transforms += 1;
@@ -1252,6 +1261,7 @@ impl GlobalTransforms {
         if self.dirty.count != 0 {
             self.evaluate_dirty(&mut work, &mut interpolation);
         }
+        self.settle_switches(world, scan.topology_changed);
         if scan.topology_changed || scan.observed != 0 || work.evaluated != 0 {
             self.revision = self.revision.wrapping_add(1);
         }

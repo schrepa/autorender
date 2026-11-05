@@ -102,6 +102,15 @@ pub enum UiAction {
     Emit(String),
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct UiBind {
+    pub value: Option<String>,
+    pub offset: Option<String>,
+    pub color: Option<String>,
+    pub image: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct UiNode {
@@ -125,7 +134,7 @@ pub struct UiNode {
     pub text_size: f32,
     pub text_color: [f32; 4],
     pub text_align: TextAlign,
-    pub bind: Option<String>,
+    pub bind: UiBind,
     pub image: Option<String>,
     pub image_rect: UiImageRect,
     pub bar_value: f32,
@@ -160,7 +169,7 @@ impl Default for UiNode {
             text_size: DEFAULT_TEXT_SIZE,
             text_color: [1.0; 4],
             text_align: TextAlign::default(),
-            bind: None,
+            bind: UiBind::default(),
             image: None,
             image_rect: UiImageRect::WHOLE,
             bar_value: 0.0,
@@ -180,6 +189,8 @@ impl Default for UiNode {
 #[serde(default, deny_unknown_fields)]
 pub struct UiRoot {
     pub screen: Option<String>,
+    pub menu: bool,
+    pub order: i32,
     pub font: Option<String>,
     pub root: UiNode,
     #[serde(skip)]
@@ -192,6 +203,9 @@ pub struct UiRoot {
 pub enum UiValue {
     Text(String),
     Number(f32),
+    Offset([f32; 2]),
+    Color([f32; 4]),
+    Image { image: String, rect: UiImageRect },
 }
 
 #[derive(Default)]
@@ -218,6 +232,24 @@ impl UiValues {
         self.set(name, UiValue::Number(number));
     }
 
+    pub fn set_offset(&self, name: &str, offset: [f32; 2]) {
+        self.set(name, UiValue::Offset(offset));
+    }
+
+    pub fn set_color(&self, name: &str, color: [f32; 4]) {
+        self.set(name, UiValue::Color(color));
+    }
+
+    pub fn set_image(&self, name: &str, image: &str, rect: UiImageRect) {
+        self.set(
+            name,
+            UiValue::Image {
+                image: image.to_owned(),
+                rect,
+            },
+        );
+    }
+
     pub fn get(&self, name: &str) -> Option<UiValue> {
         self.lock().held.get(name).cloned()
     }
@@ -242,6 +274,7 @@ impl UiValues {
 #[derive(Resource, Default)]
 pub struct UiEvents {
     names: Vec<String>,
+    pointer_over: bool,
 }
 
 impl Slot for UiEvents {
@@ -257,6 +290,10 @@ impl UiEvents {
         &self.names
     }
 
+    pub fn pointer_over(&self) -> bool {
+        self.pointer_over
+    }
+
     #[doc(hidden)]
     pub fn emit(&mut self, name: &str) {
         self.names.push(name.to_owned());
@@ -265,5 +302,10 @@ impl UiEvents {
     #[doc(hidden)]
     pub fn clear(&mut self) {
         self.names.clear();
+    }
+
+    #[doc(hidden)]
+    pub fn set_pointer_over(&mut self, over: bool) {
+        self.pointer_over = over;
     }
 }

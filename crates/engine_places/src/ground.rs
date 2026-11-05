@@ -28,16 +28,38 @@ pub struct GroundPoint {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GroundObstacle {
-    pub center: Vec2,
-    pub radius: f32,
+pub enum GroundObstacle {
+    Circle {
+        center: Vec2,
+        radius: f32,
+    },
+    Box {
+        center: Vec2,
+        half_extents: Vec2,
+        unit_axis: Vec2,
+    },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GroundRead<T> {
     Ready(T),
-    Waiting,
+    NotLoaded,
     Off,
+}
+
+impl<T> GroundRead<T> {
+    pub fn ready(self) -> Option<T> {
+        match self {
+            Self::Ready(value) => Some(value),
+            Self::NotLoaded | Self::Off => None,
+        }
+    }
+}
+
+impl GroundRead<GroundPoint> {
+    pub fn solid(self) -> Option<GroundPoint> {
+        self.ready().filter(|point| !point.hole)
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -61,7 +83,7 @@ impl std::fmt::Debug for GroundSource {
 }
 
 pub trait GroundQuery: Send + Sync + 'static {
-    fn point(&self, at: Vec2) -> Option<GroundPoint>;
+    fn point(&self, at: Vec2) -> GroundRead<GroundPoint>;
 
     fn obstacles(&self, ground: Entity) -> Vec<GroundObstacle>;
 
@@ -75,8 +97,8 @@ pub trait GroundQuery: Send + Sync + 'static {
 struct NoGround;
 
 impl GroundQuery for NoGround {
-    fn point(&self, _: Vec2) -> Option<GroundPoint> {
-        None
+    fn point(&self, _: Vec2) -> GroundRead<GroundPoint> {
+        GroundRead::Off
     }
 
     fn obstacles(&self, _: Entity) -> Vec<GroundObstacle> {
@@ -100,12 +122,8 @@ impl GroundQuery for NoGround {
 pub struct Ground(pub Arc<dyn GroundQuery>);
 
 impl Ground {
-    pub fn point(&self, at: Vec2) -> Option<GroundPoint> {
+    pub fn point(&self, at: Vec2) -> GroundRead<GroundPoint> {
         self.0.point(at)
-    }
-
-    pub fn sample(&self, at: Vec2) -> Option<GroundPoint> {
-        self.0.point(at).filter(|point| !point.hole)
     }
 
     pub fn revision(&self) -> u64 {
@@ -331,6 +349,7 @@ pub struct TerrainEntry {
     pub level_errors: Arc<[f32]>,
     pub surface_program: bool,
     pub baked: Option<Arc<engine_heightfield::Layers>>,
+    pub baking: bool,
     pub macro_map: Option<TextureHandle>,
     pub materials: Arc<[SurfaceMaterial]>,
     pub maps: Arc<[Option<SurfaceMaps>]>,

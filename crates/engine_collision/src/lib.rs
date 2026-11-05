@@ -50,8 +50,9 @@ impl Brick for CollisionBrick {
             )
             .systems(
                 Schedule::FixedPreSimulation,
-                (world::sync_ground, world::sync),
+                (world::clear_hits, world::sync_ground, world::sync),
             )
+            .systems(Schedule::FrameStart, world::clear_hits)
             .systems(
                 Schedule::FixedPostSimulation,
                 (world::sync_ground, world::sync, world::detect),

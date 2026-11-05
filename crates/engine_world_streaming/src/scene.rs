@@ -6,7 +6,7 @@ use engine_core::__private::schemars::{JsonSchema, Schema};
 use engine_core::{
     ComponentKind, Error, ErrorCode, Expected, InvalidSetting, MAX_HIERARCHY_DEPTH as MAX_DEPTH,
     MAX_ID_BYTES, Placed, Placement, Rule, SceneContext, ScenePath, Section, Setting, Transform,
-    fields, is_id, parse_value_at, state, valid_global_matrix,
+    fields, is_id, math, parse_value_at, state, valid_global_matrix,
 };
 use engine_places::ground::Grounded;
 use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
@@ -232,7 +232,7 @@ impl StreamedAlong {
                         .got(self.every));
                 }
                 let point = from + along * (next - walked) + along.perp() * self.offset;
-                spots.push((point, -along.y.atan2(along.x)));
+                spots.push((point, -math::atan2(along.y, along.x)));
                 next += self.every;
             }
             walked += length;

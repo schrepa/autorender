@@ -3,8 +3,10 @@ export interface FrameStats {
   audio_stats: AudioStats;
   bloom_stats: BloomStats;
   bricks_cost: BrickCosts | null;
+  camera_refusals: CameraRefusals;
   cloud_stats: CloudStats;
   collision_stats: CollisionWorldView;
+  cut_seconds: number;
   disabled_features: string[];
   draw_calls: number;
   dropped_seconds: number;
@@ -94,6 +96,11 @@ export interface BrickCosts {
   rows: BrickCost[];
 }
 
+export interface CameraRefusals {
+  count: number;
+  latest: string | null;
+}
+
 export interface CellStats {
   cells: number;
   despawned: number;
@@ -128,6 +135,7 @@ export interface CollisionWorldView {
   limits: CollisionLimitsView;
   overflow_colliders: number;
   placed_colliders: number;
+  slide_hits: number;
   tick: string;
 }
 
@@ -221,9 +229,11 @@ export interface MeshStats {
 export interface NavStats {
   agents: number;
   arrived: number;
+  collision_errors: number;
   cooking: number;
   grounds: number;
   portals: number;
+  refused: number;
   searching: number;
   unreachable: number;
   waiting: number;
@@ -240,7 +250,7 @@ export interface PhysicsStats {
   awake: number;
   bodies: number;
   contacts: number;
-  held: number;
+  problems: number;
   solids: number;
   water_samples: number;
   wet: number;
@@ -293,6 +303,7 @@ export interface ShadowStats {
 }
 
 export interface SkyStats {
+  exposure: number;
   tables: number;
 }
 

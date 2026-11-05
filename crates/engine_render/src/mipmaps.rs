@@ -1,6 +1,15 @@
 use crate::bindings::MIPMAPS;
 use crate::shaders::entry::mipmaps;
 
+const FORMATS: [wgpu::TextureFormat; 2] = [
+    wgpu::TextureFormat::Rgba8UnormSrgb,
+    wgpu::TextureFormat::Rgba8Unorm,
+];
+
+pub(crate) fn drawn(format: wgpu::TextureFormat, dimension: wgpu::TextureDimension) -> bool {
+    dimension == wgpu::TextureDimension::D2 && FORMATS.contains(&format)
+}
+
 pub struct MipGenerator {
     pipelines: [wgpu::RenderPipeline; 2],
     layout: crate::pipelines::GroupLayout,
@@ -12,11 +21,7 @@ impl MipGenerator {
         let layout = crate::pipelines::layout(device, &MIPMAPS);
         let pipeline_layout =
             crate::pipelines::layout_of(device, &crate::pipeline_layouts::MIPMAP_PIPELINES);
-        let pipelines = [
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-            wgpu::TextureFormat::Rgba8Unorm,
-        ]
-        .map(|format| {
+        let pipelines = FORMATS.map(|format| {
             crate::pipelines::fullscreen(
                 device,
                 &crate::pipelines::Fullscreen {

@@ -103,7 +103,8 @@ impl Texture {
         if let Some(pixel) = pixels.iter().position(|pixel| pixel[3] != 255) {
             return Err(invalid(format!("$.rgba8[{}]", pixel * 4 + 3))
                 .expected(Expected::Opaque)
-                .got(pixels[pixel][3]));
+                .got(pixels[pixel][3])
+                .nearest("Texture::from_rgba"));
         }
         Ok(texture)
     }

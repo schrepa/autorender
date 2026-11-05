@@ -22,7 +22,7 @@ use engine_places::probes::ProbeViews;
 use engine_places::sky::{EnvironmentLayers, SkyLight};
 use engine_render::{Layer, MainView, PostLight, RenderBricks};
 
-pub use settings::{Clouds, Haze, NightSky, Sky, SkyLighting, SkyLightingValues};
+pub use settings::{Clouds, Haze, NightSky, Sky};
 
 #[derive(Resource, Default)]
 struct CloudShadows;
@@ -44,11 +44,11 @@ impl Brick for SkyBrick {
             .settings::<Sky>()
             .settings::<Haze>()
             .settings::<NightSky>()
-            .settings::<SkyLighting>()
             .stats::<views::StaticTablesView>()
             .stats::<views::CloudStats>()
             .stats::<views::SkyStats>()
             .stats::<views::HazeStats>()
+            .resource::<views::SkyExposure>()
             .resource::<tables::StaticTables>()
             .resource::<under_eye::SurfaceUnderEye>()
             .resource::<sky::SkyPlan>()
@@ -82,8 +82,8 @@ impl Brick for SkyBrick {
     }
 }
 
-fn casts_cloud_shadows(clouds: Res<Clouds>) -> bool {
-    clouds.enabled && clouds.coverage > 0.0 && clouds.shadows > 0.0
+fn casts_cloud_shadows(sky: Res<Sky>, clouds: Res<Clouds>) -> bool {
+    sky.enabled && clouds.enabled && clouds.coverage > 0.0 && clouds.shadows > 0.0
 }
 
 fn publish_sky_light(sky: Res<Sky>, plan: Res<sky::SkyPlan>, mut light: ResMut<SkyLight>) {

@@ -1,6 +1,7 @@
 use engine_core::Listing;
 
 pub use engine_ambient_occlusion::AmbientOcclusionBrick;
+pub use engine_animation::{AnimationBrick, ImportShared, Model, import_glb};
 pub use engine_audio::AudioBrick;
 pub use engine_auto_exposure::AutoExposureBrick;
 pub use engine_bloom::BloomBrick;

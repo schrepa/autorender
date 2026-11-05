@@ -40,7 +40,10 @@ export class BrowserInput {
     }, options);
     canvas.addEventListener("pointermove", event => {
       if (this.locked) { this.game?.motion(event.movementX, event.movementY); return; }
-      if (event.isPrimary) this.game?.pointer(event.offsetX, event.offsetY);
+      if (event.isPrimary) {
+        const ratio = window.devicePixelRatio || 1;
+        this.game?.pointer(event.offsetX * ratio, event.offsetY * ratio);
+      }
       if (this.dragging !== event.pointerId) return;
       this.game?.look(event.clientX - this.x, event.clientY - this.y);
       this.x = event.clientX; this.y = event.clientY;

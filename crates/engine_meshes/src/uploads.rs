@@ -17,7 +17,7 @@ pub(crate) fn color_data(instance: &Instance) -> ColorData {
     ColorData {
         color: pack_color(instance.color),
         surface: pack_surface(instance.surface),
-        flags: 0,
+        flags: instance.flags,
     }
 }
 

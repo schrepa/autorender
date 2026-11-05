@@ -22,7 +22,7 @@ use engine_core::{
     Brick, Bricks, ComponentKind, Error, ErrorCode, ImpostorPolicy, Mesh3d, Rule, Runs,
     SceneComponents, Schedule, Setting, Smoke, Source,
 };
-use engine_places::meshes::{Cube, Instances, Tint};
+use engine_places::meshes::{Cube, FirstPersonLayer, Instances, Tint};
 use engine_places::probes::ProbeViews;
 use engine_places::shadows::ShadowCasters;
 use engine_places::splines::SplineMesh;
@@ -111,6 +111,7 @@ impl Brick for MeshesBrick {
             .on_remove::<Mesh3d, _>(retained::source_removed)
             .on_remove::<Cube, _>(retained::source_removed)
             .on_remove::<Tint, _>(retained::source_removed)
+            .on_remove::<FirstPersonLayer, _>(retained::source_removed)
             .on_remove::<SplineMesh, _>(retained::source_removed)
             .systems(
                 Schedule::ViewSync,

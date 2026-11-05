@@ -50,7 +50,9 @@ impl SceneEnvironment {
     }
 
     pub fn value(&self, key: &str) -> Option<&Value> {
-        self.sections.get(key).filter(|value| key != STREAMED && !value.is_null())
+        self.sections
+            .get(key)
+            .filter(|value| key != STREAMED && !value.is_null())
     }
 
     pub fn check(&self, world: &World, path: &str) -> Result<(), Error> {
@@ -93,13 +95,27 @@ impl SceneEnvironment {
         crate::loading::within(context.as_ref(), || {
             self.check_in(world.get_resource::<Registry>(), path)?;
             let skipped = self.unlisted(world, path);
+            let chose_left_out = world
+                .get_resource::<Registry>()
+                .is_some_and(|registry| !registry.left_out().is_empty());
+            if let Some(first) = skipped.first().filter(|_| !chose_left_out) {
+                return Err(first.clone());
+            }
+            let mut before = Vec::new();
             for key in self.keys() {
                 let Some(section) = listed(world, key) else {
                     continue;
                 };
+                before.push((section, section.current(world)));
                 section.set_at(world, &self.sections[key], &format!("{path}.{key}"))?;
             }
-            Ok(skipped)
+            let Err(refused) = engine_registry::check_sections(world) else {
+                return Ok(skipped);
+            };
+            for (section, value) in &before {
+                section.set_at(world, value, &format!("{path}.{}", section.key))?;
+            }
+            Err(refused.within(path))
         })
     }
 
@@ -125,7 +141,7 @@ impl SceneEnvironment {
                 None => section.reset(world),
             }
         }
-        Ok(())
+        engine_registry::check_sections(world).map_err(|refused| refused.within(path))
     }
 }
 
@@ -174,9 +190,12 @@ pub fn section_schemas(
     definitions: &mut serde_json::Map<String, Value>,
 ) -> serde_json::Map<String, Value> {
     let mut properties = serde_json::Map::new();
-    for section in registry.sections().filter(|section| section.key != STREAMED) {
-        let mut schema = serde_json::to_value(registry.section_schema(section.key))
-            .expect("schema_serializes");
+    for section in registry
+        .sections()
+        .filter(|section| section.key != STREAMED)
+    {
+        let mut schema =
+            serde_json::to_value(registry.section_schema(section.key)).expect("schema_serializes");
         let Some(fields) = schema.as_object_mut() else {
             continue;
         };

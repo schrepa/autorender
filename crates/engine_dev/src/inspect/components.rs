@@ -82,12 +82,7 @@ fn input_view(world: &World, _: Option<Entity>, _: &Context<'_>) -> Option<Value
         move_up: input.move_up,
         look_right_pixels: input.look_right_pixels,
         look_down_pixels: input.look_down_pixels,
-        held: (0..32)
-            .filter(|&index| {
-                ActionId::new(index as u8)
-                    .is_some_and(|action| actions.is_some_and(|actions| actions.pressed(action)))
-            })
-            .collect(),
+        held: actions.map_or_else(Vec::new, |actions| actions.held().collect()),
         pointer_pixels: pointer.position_pixels.map(|position| position.to_array()),
         pointer_delta_pixels: pointer.delta_pixels.to_array(),
         pointer_inside: pointer.inside,

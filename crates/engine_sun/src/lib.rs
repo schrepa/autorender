@@ -21,6 +21,7 @@ impl Brick for SunBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<Sunlight>()
+            .section_rule(light::direction_without_clock)
             .piece::<Sun>()
             .fill::<Sun>(Some(shaders::sun::faces::sun::MODULE))
             .systems(Schedule::ViewSync, publish_sun);
@@ -28,10 +29,11 @@ impl Brick for SunBrick {
 }
 
 fn publish_sun(light: Res<Sunlight>, path: Res<SunPath>, mut sun: ResMut<Sun>) {
-    let values = light.values();
-    let direction = path.direction.unwrap_or(values.sun_direction).normalize();
+    let direction = path
+        .direction
+        .unwrap_or_else(|| light.direction())
+        .normalize();
     sun.set_if_neq(Sun {
         direction: direction.extend(0.0).to_array(),
-        color: values.sun_color.extend(0.0).to_array(),
     });
 }

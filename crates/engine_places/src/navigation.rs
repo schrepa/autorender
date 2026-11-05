@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::ground::HeightHeld;
 
-#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[require(NavWalk, HeightHeld, InterpolateTransform)]
 #[serde(default, deny_unknown_fields)]
 pub struct NavAgent {
@@ -44,11 +46,13 @@ pub enum NavStatus {
     Walking,
     Arrived,
     Unreachable,
+    Refused,
 }
 
 #[derive(Component, Clone, Debug, Default)]
 pub struct NavWalk {
     pub status: NavStatus,
+    pub refused: Option<String>,
     pub destination: Option<[f32; 2]>,
     pub points: Vec<Vec3>,
     pub next: usize,

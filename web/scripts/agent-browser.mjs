@@ -211,7 +211,11 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
       if (typeof instance !== "string" || !instance) throw new AgentError("missing_runtime_identity", "$", { expected: "id", got: instance ?? null });
       if (expectedBuild !== undefined && build !== expectedBuild) throw new AgentError("build_mismatch", "build", { allowed: variants([expectedBuild]), got: build });
       await readyRequest({ verb: "control", name: "render" }, FIRST_RENDER_MS);
-      await readyRequest(status, FIRST_RENDER_MS);
+      const compiled = Date.now() + FIRST_RENDER_MS;
+      while ((await readyRequest(status, FIRST_RENDER_MS)).result.rendering?.pipelines_compiling === true) {
+        if (Date.now() > compiled) throw new AgentError("runtime_busy", "$", { allowed: atMost(FIRST_RENDER_MS), got: { pipelines_compiling: true } });
+        await delay(50);
+      }
     } catch (error) {
       const shown = await page.locator("#status").textContent({ timeout: 1000 }).catch(() => "unavailable");
       throw new AgentError(error?.code ?? "runtime_unavailable", error?.path, { got: { error: refusal(error), status: shown, diagnostics: diagnostics.slice(-5) } });
@@ -222,6 +226,10 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
     const owned = {
       session, url: url.href, instance, build, close, setInvalidated,
       page,
+      async activity() {
+        const waiting = await Promise.race([page.evaluate(() => window.__engineDev?.waitingOnGpu()).catch(() => undefined), delay(1000)]);
+        return typeof waiting === "boolean" ? { waiting_on_gpu: waiting } : {};
+      },
       async execute(command, onRecord) {
         if (command.verb === "describe" && command.name === "ProfileCapture") {
           if (Object.keys(command).some(key => !["verb", "name"].includes(key))) throw new AgentError("unknown_field", "$", { allowed: variants(["verb", "name"]) });

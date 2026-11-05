@@ -7,14 +7,13 @@
 
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-mod light;
 mod tonemap;
 
 use engine_core::{Brick, Bricks, Schedule, Source};
 use engine_places::tonemap::Display;
 use engine_render::PostTone;
 
-pub use light::Grading;
+pub use tonemap::Grading;
 
 pub struct TonemapBrick;
 

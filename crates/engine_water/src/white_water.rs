@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use engine_core::math::{GRAVITY, clamp, max};
 use engine_core::{RecordKey, Spawner, Transform};
 use engine_heightfield::{Fall, TileKey};
-use engine_places::particles::{ParticleBlend, ParticleEmitter};
+use engine_places::particles::{ParticleBlend, ParticleEmitter, ParticleLook, ParticleShape};
 use glam::{Vec2, Vec3};
 
 use crate::state::{WaterState, WaterTerrain};
@@ -143,20 +143,23 @@ fn emitters(site: &Site, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
         at(0.05),
         ParticleEmitter {
             rate: clamp(site.power / SPRAY_WATTS, SPRAY_RATE[0], SPRAY_RATE[1]),
-            lifetime: flight,
-            speed,
-            direction,
-            spread: 0.6,
-            acceleration: Vec3::new(0.0, -GRAVITY, 0.0),
-            size: [0.03, 0.08],
-            color: [[0.9, 0.93, 0.97, 0.55], [0.94, 0.96, 1.0, 0.0]],
-            emission: 1.0,
-            blend: ParticleBlend::Alpha,
-            stretch: 0.04,
-            offset: Vec3::ZERO,
-            radius: site.reach,
-            seed: seed ^ 0x27d4_eb2f,
-            authored_degrees: None,
+            look: ParticleLook {
+                lifetime: flight,
+                speed,
+                direction,
+                spread: 0.6,
+                acceleration: Vec3::new(0.0, -GRAVITY, 0.0),
+                shape: ParticleShape::Ball,
+                extent: Vec3::splat(site.reach),
+                size: [0.03, 0.08],
+                color: [[0.9, 0.93, 0.97, 0.55], [0.94, 0.96, 1.0, 0.0]],
+                brightness: 1.0,
+                blend: ParticleBlend::Alpha,
+                stretch: 0.04,
+                seed: seed ^ 0x27d4_eb2f,
+                ..ParticleLook::default()
+            },
+            ..ParticleEmitter::default()
         },
     )];
     if site.power >= MIST_POWER {
@@ -165,20 +168,23 @@ fn emitters(site: &Site, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
             at(0.4),
             ParticleEmitter {
                 rate: clamp(site.power / MIST_WATTS, MIST_RATE[0], MIST_RATE[1]),
-                lifetime: 4.0,
-                speed: clamp(0.15 * site.flow.length(), 0.3, 1.0),
-                direction: Vec3::Y,
-                spread: 1.2,
-                acceleration: Vec3::new(0.0, 0.2, 0.0),
-                size: [puffs, 3.0 * puffs],
-                color: [[0.94, 0.96, 1.0, 0.16], [1.0, 1.0, 1.0, 0.0]],
-                emission: 1.0,
-                blend: ParticleBlend::Mist,
-                stretch: 0.0,
-                offset: Vec3::ZERO,
-                radius: site.reach,
-                seed: seed ^ 0x1656_67b1,
-                authored_degrees: None,
+                look: ParticleLook {
+                    lifetime: 4.0,
+                    speed: clamp(0.15 * site.flow.length(), 0.3, 1.0),
+                    direction: Vec3::Y,
+                    spread: 1.2,
+                    acceleration: Vec3::new(0.0, 0.2, 0.0),
+                    shape: ParticleShape::Ball,
+                    extent: Vec3::splat(site.reach),
+                    size: [puffs, 3.0 * puffs],
+                    color: [[0.94, 0.96, 1.0, 0.16], [1.0, 1.0, 1.0, 0.0]],
+                    brightness: 1.0,
+                    blend: ParticleBlend::Mist,
+                    stretch: 0.0,
+                    seed: seed ^ 0x1656_67b1,
+                    ..ParticleLook::default()
+                },
+                ..ParticleEmitter::default()
             },
         ));
     }

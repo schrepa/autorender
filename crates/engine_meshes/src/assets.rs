@@ -45,7 +45,9 @@ fn asks(assets: &AssetLibrary, plan: &BatchPlan) -> ImpostorAsks {
                 assets
                     .mesh(batch.mesh)
                     .is_some_and(|mesh| {
-                        mesh.takes_impostor() && mesh.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES
+                        !batch.first_person
+                            && mesh.takes_impostor()
+                            && mesh.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES
                     })
                     .then(|| ImpostorAsk {
                         mesh: batch.mesh,

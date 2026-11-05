@@ -9,7 +9,6 @@ settings! {
         pub enabled: bool = false => any,
         pub strength: f32 = 1.0 => range(0.0, 1.0),
         pub compensation: f32 = 0.0 => range(-8.0, 8.0),
-        pub night: f32 = 1.0 => range(0.0, 16.0),
         pub brighten: f32 = 3.0 => range(0.0, 16.0),
         pub darken: f32 = 1.0 => range(0.0, 16.0),
         pub to_brighter: f32 = 0.5 => range(0.0, 60.0),

@@ -216,7 +216,7 @@ pub(crate) fn place_water_windows(
         .find(|entry| !entry.surroundings && entry.baked.is_some())
         .map(|entry| entry.terrain);
     let height = view.display_size().y;
-    let fov = match camera.sanitized().projection {
+    let fov = match camera.projection {
         Projection::Perspective {
             vertical_fov_radians,
         } => vertical_fov_radians,

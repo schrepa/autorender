@@ -273,6 +273,6 @@ fn faces_pass(
 }
 
 fn sky(light: &EnvironmentLight, clouds: [f32; 4], air: [f32; 4]) -> [[f32; 4]; 7] {
-    let [sun, sun_color, zenith, horizon, ground] = *light;
-    [sun, sun_color, zenith, horizon, ground, clouds, air]
+    let [sun, sun_light, zenith, horizon, ground] = *light;
+    [sun, sun_light, zenith, horizon, ground, clouds, air]
 }

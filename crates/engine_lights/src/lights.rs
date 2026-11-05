@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Cut, Expected, GlobalTransforms, InvalidSetting, Nearest, Rule, View, fields, settings, stats,
+    Cut, Expected, GlobalTransforms, InvalidSetting, Nearest, Rule, Shown, View, fields, settings,
+    stats,
 };
 use engine_places::lights::{
     LightRegion, LocalLight, MAX_LIGHT_RANGE, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES,
@@ -163,7 +164,7 @@ fn render_light(
 
 pub(crate) fn gather_lights(
     settings: Res<LocalLightSettings>,
-    lights: Query<(Entity, &'static LocalLight)>,
+    lights: Query<(Entity, &'static LocalLight), Shown>,
     (instances, globals): (Res<Instances>, Res<GlobalTransforms>),
     view: Res<View>,
     mut gather: ResMut<LightGather>,

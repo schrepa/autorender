@@ -16,7 +16,7 @@ const UNATTRIBUTED: &str = "unattributed";
 const SETTLE_RENDERS: usize = 240;
 const LIGHT: [(&str, &str); 4] = [
     ("sun", "inspects_sun"),
-    ("sky_light", "inspects_sky_light"),
+    ("time_of_day", "inspects_time_of_day"),
     ("surface_light", "inspects_surface_light"),
     ("grading", "inspects_grading"),
 ];
@@ -299,7 +299,7 @@ fn listed(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         .collect();
     for name in [
         "sun",
-        "sky_light",
+        "time_of_day",
         "surface_light",
         "grading",
         "shadows",
@@ -422,10 +422,9 @@ fn looked(session: &mut dyn SmokeSession, after: &Value, day: &Value) -> Asked {
 
 fn darkened(session: &mut dyn SmokeSession, after: &Value, day: &Value, look: &Value) -> Asked {
     let args = json!({
-        "sun": { "preset": "night" },
-        "sky_light": { "preset": "night" },
-        "surface_light": { "preset": "night" },
-        "grading": { "preset": "night" },
+        "time_of_day": { "hours": 23.0 },
+        "surface_light": { "rim": 0.8, "emission": 1.0 },
+        "grading": { "exposure": 1.35 },
         "bloom": { "intensity": 0 },
         "haze": { "enabled": false, "reach": 0 },
         "reflections": { "enabled": true },
@@ -446,10 +445,9 @@ fn darkened(session: &mut dyn SmokeSession, after: &Value, day: &Value, look: &V
                 "haze",
                 "highlights",
                 "reflections",
-                "sky_light",
                 "sky_occlusion",
-                "sun",
-                "surface_light"
+                "surface_light",
+                "time_of_day"
             ]
         ]),
         "night_changes_sections"
@@ -524,10 +522,9 @@ fn candidate(source: &Value) -> Value {
     candidate["revision"] = json!(number(&source["revision"]) as u64 + 1);
     candidate["environment"] = json!({
         "haze": { "enabled": true },
-        "sun": { "preset": "dusk" },
-        "sky_light": { "preset": "dusk" },
-        "surface_light": { "preset": "dusk" },
-        "grading": { "preset": "dusk" },
+        "time_of_day": { "hours": 19.0 },
+        "surface_light": { "rim": 0.6, "emission": 1.0 },
+        "grading": { "exposure": 0.95 },
         "ambient_occlusion": { "intensity": 0 },
     });
     if let Some(entities) = candidate["entities"].as_array_mut() {

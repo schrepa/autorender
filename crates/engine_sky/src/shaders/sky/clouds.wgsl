@@ -132,9 +132,6 @@ fn sun_depth(p: vec3<f32>) -> f32 {
 }
 
 fn sunlight_at(p: vec3<f32>) -> vec3<f32> {
-    if clouds.eye.w < 0.5 {
-        return clouds.sun_color.rgb;
-    }
     let height = sky_air.radii.w + (p.y - clouds.eye.y) * 0.001;
     return sunlight_over(cloud_transmittance, cloud_table_sampler,
         (p.xz - clouds.eye.xz) * 0.001, height, clouds.sun.xyz);

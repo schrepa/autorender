@@ -1,6 +1,8 @@
 [
   "crates/engine_ambient_occlusion/build.rs",
   "crates/engine_ambient_occlusion/src/**/*.wgsl",
+  "crates/engine_animation/build.rs",
+  "crates/engine_animation/src/**/*.wgsl",
   "crates/engine_auto_exposure/build.rs",
   "crates/engine_auto_exposure/src/**/*.wgsl",
   "crates/engine_bloom/build.rs",

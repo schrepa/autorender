@@ -463,27 +463,12 @@ pub trait ExtraRules: Sized {
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         Ok(())
     }
-
-    #[must_use]
-    fn sanitize_extra(self) -> Self {
-        self
-    }
 }
 
 pub trait Setting: Clone {
     fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
         assert_eq!(rule, Rule::Any, "type_takes_any_only {field}");
         Ok(())
-    }
-
-    #[must_use]
-    fn kept(self, rule: Rule, default: Self) -> Self {
-        let _ = (rule, default);
-        self
-    }
-
-    fn usable(&self) -> bool {
-        true
     }
 }
 
@@ -508,32 +493,6 @@ impl Setting for f32 {
         } else {
             Err(InvalidSetting::broken(field, rule).got(Bound::bound(value)))
         }
-    }
-
-    fn kept(self, rule: Rule, default: Self) -> Self {
-        if !self.is_finite() && rule != Rule::Any {
-            return default;
-        }
-        match rule {
-            Rule::Range(min, max) => engine_math::clamp(self, min as f32, max as f32),
-            Rule::AboveTo(min, max) if self > min as f32 => engine_math::min(self, max as f32),
-            Rule::Above(min) | Rule::AboveTo(min, _) if self <= min as f32 => default,
-            Rule::AtLeast(min) => engine_math::max(self, min as f32),
-            Rule::AtMost(max) => engine_math::min(self, max as f32),
-            Rule::Any
-            | Rule::Finite
-            | Rule::AboveTo(..)
-            | Rule::Above(_)
-            | Rule::Budget
-            | Rule::PowerOfTwo(..)
-            | Rule::Multiple(..)
-            | Rule::Id
-            | Rule::Count(..) => self,
-        }
-    }
-
-    fn usable(&self) -> bool {
-        self.is_finite()
     }
 }
 
@@ -585,10 +544,6 @@ macro_rules! whole_settings {
                         .nearest(whole_kept(value, rule)))
                 }
             }
-
-            fn kept(self, rule: Rule, _: Self) -> Self {
-                whole_kept(u64::from(self), rule).min(u64::from(<$ty>::MAX)) as $ty
-            }
         }
     )*};
 }
@@ -598,10 +553,6 @@ whole_settings!(u8, u16, u32, u64);
 impl Setting for usize {
     fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
         (*self as u64).check(field, rule)
-    }
-
-    fn kept(self, rule: Rule, _: Self) -> Self {
-        whole_kept(self as u64, rule) as usize
     }
 }
 
@@ -626,10 +577,6 @@ impl Setting for f64 {
         } else {
             Err(InvalidSetting::broken(field, rule).got(value))
         }
-    }
-
-    fn usable(&self) -> bool {
-        self.is_finite()
     }
 }
 
@@ -661,19 +608,6 @@ impl<T: Setting> Setting for Option<T> {
         self.as_ref()
             .map_or(Ok(()), |value| value.check(field, rule))
     }
-
-    fn kept(self, rule: Rule, default: Self) -> Self {
-        match (self, default) {
-            (Some(value), Some(default)) => Some(value.kept(rule, default)),
-            (Some(value), None) if value.usable() => Some(value.clone().kept(rule, value)),
-            (Some(_), None) => None,
-            (None, _) => None,
-        }
-    }
-
-    fn usable(&self) -> bool {
-        self.as_ref().is_none_or(Setting::usable)
-    }
 }
 
 impl<T: Setting, const N: usize> Setting for [T; N] {
@@ -684,18 +618,6 @@ impl<T: Setting, const N: usize> Setting for [T; N] {
                 .map_err(|invalid| invalid.indexed(field, index))?;
         }
         Ok(())
-    }
-
-    fn kept(self, rule: Rule, default: Self) -> Self {
-        let mut defaults = default.into_iter();
-        self.map(|value| {
-            let default = defaults.next().expect("arrays_same_length");
-            value.kept(rule, default)
-        })
-    }
-
-    fn usable(&self) -> bool {
-        self.iter().all(Setting::usable)
     }
 }
 
@@ -715,35 +637,11 @@ impl<T: Setting> Setting for Vec<T> {
         }
         Ok(())
     }
-
-    fn kept(self, rule: Rule, _: Self) -> Self {
-        if let Rule::Count(_, max) = rule {
-            let mut kept = self;
-            kept.truncate(max as usize);
-            return kept;
-        }
-        self.into_iter()
-            .filter(Setting::usable)
-            .map(|value| value.clone().kept(rule, value))
-            .collect()
-    }
-
-    fn usable(&self) -> bool {
-        self.iter().all(Setting::usable)
-    }
 }
 
 impl Setting for Vec3 {
     fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
         self.to_array().check(field, rule)
-    }
-
-    fn kept(self, rule: Rule, default: Self) -> Self {
-        Self::from_array(self.to_array().kept(rule, default.to_array()))
-    }
-
-    fn usable(&self) -> bool {
-        self.is_finite()
     }
 }
 
@@ -785,17 +683,6 @@ macro_rules! fields {
                 $crate::fields::ExtraRules::check_extra(self)
             }
 
-            pub fn sanitized(self) -> Self {
-                let defaults = Self::default();
-                $crate::fields::ExtraRules::sanitize_extra(Self {
-                    $($field: $crate::fields::Setting::kept(
-                        self.$field,
-                        $crate::fields::$rule($($($arg),*)?),
-                        defaults.$field,
-                    ),)*
-                })
-            }
-
             pub fn rule_of(field: &str) -> Option<$crate::fields::Rule> {
                 match field {
                     $(stringify!($field) => Some($crate::fields::$rule($($($arg),*)?)),)*
@@ -819,10 +706,6 @@ macro_rules! fields {
                 _: $crate::fields::Rule,
             ) -> Result<(), $crate::fields::InvalidSetting> {
                 self.validate().map_err(|invalid| invalid.within(field))
-            }
-
-            fn kept(self, _: $crate::fields::Rule, _: Self) -> Self {
-                self.sanitized()
             }
         }
     };

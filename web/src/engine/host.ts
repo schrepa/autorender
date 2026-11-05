@@ -375,7 +375,6 @@ async function start() {
   const created = await options.create(canvas, lifecycle.signal);
   if (disposed) { created.free(); return; }
   game = created;
-  created.set_setting("dynamic_resolution.enabled", "true");
   created.apply_host_settings(location.search);
   created.set_preparation(preparing);
   connectInput();

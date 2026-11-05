@@ -9,7 +9,7 @@ use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{NavAgents, NavOptions, NavQuery, NavStats};
+use crate::{NavAgents, NavOptions, NavQuery, NavStats, ObstacleColliders};
 
 const COORDINATE: Rule = Rule::Range(-1.0e6, 1.0e6);
 const FIRST_AGENTS: usize = 16;
@@ -23,6 +23,7 @@ pub struct NavAgentView {
     #[schemars(with = "crate::SceneNavAgent")]
     pub agent: NavAgent,
     pub status: NavStatus,
+    pub refused: Option<String>,
     pub searched_for: Option<[f32; 2]>,
     pub length: f32,
     pub points: usize,
@@ -39,6 +40,8 @@ pub struct NavAgentsView {
     pub walking: u32,
     pub arrived: u32,
     pub unreachable: u32,
+    pub refused: u32,
+    pub collision_errors: u32,
     pub work: u64,
     pub grounds: u32,
     pub portals: u32,
@@ -74,6 +77,7 @@ fn agent_view(agent: &NavAgent, walk: Option<&NavWalk>, at: Option<&Transform>) 
     NavAgentView {
         agent,
         status: walk.status,
+        refused: walk.refused.clone(),
         searched_for: walk.destination,
         length: walk.length,
         points: walk.points.len(),
@@ -172,6 +176,8 @@ impl Operation for NavAgentsQuery {
             walking: stats.walking,
             arrived: stats.arrived,
             unreachable: stats.unreachable,
+            refused: stats.refused,
+            collision_errors: stats.collision_errors,
             work: stats.work,
             grounds: stats.grounds,
             portals: stats.portals,
@@ -295,11 +301,12 @@ impl Operation for NavPathQuery {
         SceneIds<'static, 'static>,
         ResMut<'static, NavAgents>,
         Jobs<'static, 'static>,
+        ObstacleColliders<'static, 'static>,
     );
     type Request = Self;
 
     fn run(
-        (ground, filled, records, ids, mut navigation, mut jobs): SystemParamItem<
+        (ground, filled, records, ids, mut navigation, mut jobs, colliders): SystemParamItem<
             '_,
             '_,
             Self::Params,
@@ -307,7 +314,7 @@ impl Operation for NavPathQuery {
         request: Self,
     ) -> Result<Value, Error> {
         walk(
-            (&*ground, filled.listed(), &*records, &ids),
+            ((&*ground, &colliders), filled.listed(), &*records, &ids),
             (&mut *navigation, &mut jobs),
             request,
         )
@@ -334,7 +341,12 @@ fn out_of_range(invalid: InvalidSetting, path: &str) -> Error {
 }
 
 fn walk(
-    (ground, listed, records, ids): (&Ground, bool, &Records, &SceneIds),
+    ((ground, colliders), listed, records, ids): (
+        (&Ground, &ObstacleColliders),
+        bool,
+        &Records,
+        &SceneIds,
+    ),
     (navigation, jobs): (&mut NavAgents, &mut Jobs),
     NavPathQuery { from, to, options }: NavPathQuery,
 ) -> Result<Value, Error> {
@@ -355,10 +367,10 @@ fn walk(
     }
     let terrain = match ground.0.source(from, to) {
         GroundRead::Ready(source) => Some(ground_key(ids, source.ground)),
-        GroundRead::Waiting => None,
+        GroundRead::NotLoaded => None,
         GroundRead::Off => return Err(Error::new(ErrorCode::UnknownTerrain, "$")),
     };
-    let found = navigation.query(ground, (records, jobs), (from, to), &options);
+    let found = navigation.query((ground, colliders), (records, jobs), (from, to), &options);
     let round = |value: f32| (f64::from(value) * 100.0).round() / 100.0;
     Ok(json!(NavPathResult {
         terrain,

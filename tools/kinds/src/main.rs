@@ -56,6 +56,8 @@ const CLOSED: &[(&str, &[&str])] = &[
     ),
 ];
 
+const ENGINE_GAMES: &[&str] = &["engine_player", "highlands"];
+
 const PLACE_EXTERNALS: &[&str] = &[
     "glam",
     "bytemuck",
@@ -71,6 +73,7 @@ struct Member {
     dir: PathBuf,
     manifest: PathBuf,
     kind: Option<String>,
+    engine_rules: Value,
     cdylib: bool,
     dependencies: Vec<Dependency>,
 }
@@ -187,6 +190,7 @@ fn member(root: &Path, package: &Value) -> Member {
         kind: package["metadata"]["engine"]["kind"]
             .as_str()
             .map(str::to_owned),
+        engine_rules: package["metadata"]["engine"]["engine_rules"].clone(),
         cdylib,
         dependencies: package["dependencies"]
             .as_array()
@@ -269,6 +273,14 @@ fn check_member(
     }
     if member.cdylib && kind != "game" {
         problems.push(format!("{at}: only game crates build a cdylib"));
+    }
+    if !member.engine_rules.is_null() && (kind != "game" || member.engine_rules != true) {
+        problems.push(format!(
+            "{at}: engine_rules is true on a game crate or absent"
+        ));
+    }
+    if ENGINE_GAMES.contains(&member.name.as_str()) && member.engine_rules != true {
+        problems.push(format!("{at}: an engine game needs engine_rules = true"));
     }
     if matches!(kind, "brick" | "place" | "list")
         && !forbids_unsafe(&read(&member.manifest)?, workspace)

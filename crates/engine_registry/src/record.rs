@@ -4,6 +4,7 @@ use bevy_ecs::component::Mutable;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::{InternedScheduleLabel, IntoScheduleConfigs, ScheduleConfigs};
 use bevy_ecs::system::{BoxedSystem, ScheduleSystem};
+use bevy_ecs::world::World;
 use engine_place::{Error, ErrorCode, GpuStruct, List, PlaceDecl, Slot, Smoke};
 
 use crate::entries::{
@@ -13,6 +14,8 @@ use crate::explain::ExplainEntry;
 use crate::gates::{GateFn, Scope};
 use crate::hooks::{NamedField, Removal, Settle};
 use crate::jobs::JobMember;
+
+pub type SectionRule = fn(&World) -> Result<(), Error>;
 
 pub trait RecordExt {
     fn record(&mut self) -> &mut BrickRecord;
@@ -71,6 +74,7 @@ pub struct BrickRecord {
     pub(crate) joins: Vec<JoinEntry>,
     owned: Vec<Owned>,
     settings: Vec<SettingsEntry>,
+    section_rules: Vec<SectionRule>,
     stats: Vec<StatsEntry>,
     operations: Vec<OperationEntry>,
     explainers: Vec<ExplainEntry>,
@@ -111,6 +115,7 @@ impl BrickRecord {
             joins: Vec::new(),
             owned: Vec::new(),
             settings: Vec::new(),
+            section_rules: Vec::new(),
             stats: Vec::new(),
             operations: Vec::new(),
             explainers: Vec::new(),
@@ -203,6 +208,10 @@ impl BrickRecord {
 
     pub fn settings_entries(&self) -> &[SettingsEntry] {
         &self.settings
+    }
+
+    pub fn section_rules(&self) -> &[SectionRule] {
+        &self.section_rules
     }
 
     pub fn stats_entries(&self) -> &[StatsEntry] {
@@ -339,6 +348,10 @@ impl BrickRecord {
         }
         self.own(entry.owned());
         self.settings.push(entry);
+    }
+
+    pub fn section_rule(&mut self, rule: SectionRule) {
+        self.section_rules.push(rule);
     }
 
     pub fn stats(&mut self, mut entry: StatsEntry) {

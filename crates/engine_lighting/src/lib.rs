@@ -51,7 +51,6 @@ fn publish_piece(
     sky: Res<SkyLight>,
     mut piece: ResMut<LightingPiece>,
 ) {
-    let surface = surface.values();
     piece.set_if_neq(LightingPiece {
         model: [surface.rim, surface.emission, surface.specular, 0.0],
         highlights: sized_highlights(&highlights, &sky),
@@ -71,11 +70,6 @@ fn sized_highlights(highlights: &Highlights, sky: &SkyLight) -> [f32; 4] {
             [0.0; 4]
         };
     }
-    let radius = if sky.on {
-        sky.sun_size
-    } else {
-        highlights.sun_size
-    };
-    let (sine, cosine) = engine_math::sin_cos(radius.to_radians());
+    let (sine, cosine) = engine_math::sin_cos(sky.sun_size.to_radians());
     [cosine, sine, cap, highlights.light_radius]
 }

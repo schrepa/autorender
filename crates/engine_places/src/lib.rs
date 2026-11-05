@@ -18,6 +18,7 @@ macro_rules! contract {
     }};
 }
 
+pub mod animation;
 pub mod audio;
 pub mod exposure;
 pub mod ground;
@@ -193,6 +194,7 @@ fn is_zero(value: &f32) -> bool {
 
 pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<sun::SunPath>(),
+    PlaceDecl::list::<sun::SunClocks>(),
     PlaceDecl::slot::<sun::Sun>(),
     PlaceDecl::slot::<sky::SkyLight>(),
     PlaceDecl::slot::<sky::EnvironmentLayers>(),
@@ -214,7 +216,10 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<meshes::Instances>(),
     PlaceDecl::component::<meshes::Cube>("cube"),
     PlaceDecl::component::<meshes::Tint>("tint"),
+    PlaceDecl::component::<meshes::FirstPersonLayer>("first_person_layer"),
     PlaceDecl::slot::<particles::Transparency>(),
+    PlaceDecl::slot::<particles::ParticleFormula>(),
+    PlaceDecl::slot::<particles::ParticleBursts>(),
     PlaceDecl::component::<particles::ParticleEmitter>("particle_emitter"),
     PlaceDecl::slot::<ground::Ground>(),
     PlaceDecl::slot::<ground::TerrainTiles>(),
@@ -235,6 +240,8 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::component::<ground::GroundedAt>("grounded_at"),
     PlaceDecl::component::<navigation::NavAgent>("nav_agent"),
     PlaceDecl::component::<navigation::NavWalk>("nav_walk"),
+    PlaceDecl::component::<animation::Animator>("animator"),
+    PlaceDecl::component::<animation::Attachment>("attachment"),
     PlaceDecl::slot::<water::Waterline>(),
     PlaceDecl::slot::<water::WaterObstacles>(),
     PlaceDecl::slot::<water::WaterFlow>(),

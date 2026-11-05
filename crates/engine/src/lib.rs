@@ -28,17 +28,17 @@ pub use engine_core::command_line;
 pub use engine_core::smoke_eq;
 
 mod games {
-    pub use crate::host::MoveDirection;
+    pub use crate::host::{MenuKey, MoveDirection};
     pub use crate::resolution::{DynamicResolution, Resolution};
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, AxisId,
         AxisInput, BrickList, Camera, CursorMode, DynamicResolutionStats, Engine, EngineConfig,
-        Filter, FixedTime, FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Grounding,
-        InterpolateTransform, Listing, MakeSources, MakeTextures, Material, MaterialHandle,
-        MenuInput, Mesh, Mesh3d, MeshHandle, MeshVertex, MoveInput, Parent, PointerInput,
-        PresentedTransforms, Projection, ProvidedAssets, ResolutionStats, Sampler, Surface,
-        Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage, TopLayer,
-        Transform, UvTransform, Wrap, edit_transform, math, reset_all_interpolation,
+        Filter, FixedTime, FrameLimits, FrameReport, FrameTime, GlobalTransform, GlobalTransforms,
+        Grounding, Hidden, InterpolateTransform, Listing, MakeSources, MakeTextures, Material,
+        MaterialHandle, MenuInput, Mesh, Mesh3d, MeshHandle, MeshVertex, MoveInput, Parent,
+        PointerInput, PresentedTransforms, Projection, ProvidedAssets, ResolutionStats, Sampler,
+        Surface, Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage,
+        TopLayer, Transform, UvTransform, Wrap, edit_transform, math, reset_all_interpolation,
         reset_interpolation, set_parent, set_parents, trim_cards,
     };
 }

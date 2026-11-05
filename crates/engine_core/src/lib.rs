@@ -146,6 +146,7 @@ pub struct Engine {
     resets: ResetWatch,
     gates: Option<GateDriver>,
     facts: Option<FrameFacts>,
+    good_camera: Camera,
     finalized: bool,
 }
 
@@ -191,6 +192,7 @@ fn has_systems(world: &World, label: impl ScheduleLabel) -> bool {
 fn core_entries(registry: &mut Registry) {
     registry.core_settings(bricks::settings_entry::<Detail>());
     registry.core_settings(bricks::settings_entry::<JobSettings>());
+    registry.core_settings(bricks::settings_entry::<FrameLimits>());
     registry.core_operation(OperationEntry::of::<
         <services::ViewControl as Operation>::Params,
     >(
@@ -257,6 +259,7 @@ impl Engine {
         app.world_mut()
             .resource_mut::<Schedules>()
             .remove(bevy_app::First);
+        hierarchy::tracking::track_switches(app.world_mut());
         interpolation::track_markers(app.world_mut());
         app.add_observer(refuse_bevy_hierarchy);
         app.add_observer(note_tick_check);
@@ -276,10 +279,12 @@ impl Engine {
             })
             .init_resource::<FrameTime>()
             .init_resource::<TimeControl>()
+            .init_resource::<FrameLimits>()
             .init_resource::<Screens>()
             .init_resource::<LevelRequest>()
             .init_resource::<LevelProgress>()
             .init_resource::<Camera>()
+            .init_resource::<CameraRefusals>()
             .init_resource::<Detail>()
             .init_resource::<JobSettings>()
             .init_resource::<CookMode>()
@@ -317,6 +322,7 @@ impl Engine {
             resets,
             gates: None,
             facts: None,
+            good_camera: Camera::default(),
             finalized: false,
         }
     }
@@ -421,10 +427,16 @@ impl Engine {
         self.finalize();
         let delta_seconds = clock::sanitize_delta(delta_seconds);
         let rate = self.time_rate();
-        let report = self.clock.advance(delta_seconds * rate);
-        let shown = delta_seconds.min(0.25);
+        let limits = *self.app.world().resource::<FrameLimits>();
+        let report = self
+            .clock
+            .advance(delta_seconds * rate, limits.max_fixed_steps);
+        let shown = delta_seconds.min(limits.max_frame_seconds);
         self.run_frame(report.fixed_steps, shown, shown * rate);
-        report
+        FrameReport {
+            cut_seconds: delta_seconds - shown,
+            ..report
+        }
     }
 
     fn time_rate(&self) -> f64 {
@@ -451,6 +463,7 @@ impl Engine {
         Ok(FrameReport {
             fixed_steps,
             dropped_seconds: 0.0,
+            cut_seconds: 0.0,
             interpolation: 0.0,
         })
     }
@@ -555,9 +568,26 @@ impl Engine {
             let _profile = engine_profile::span("ecs", "Presentation");
             self.app.world_mut().run_schedule(Presentation);
         }
+        self.keep_camera();
         self.refresh_transforms();
         self.app.world_mut().clear_trackers();
         self.check_gate_ticks();
+    }
+
+    fn keep_camera(&mut self) {
+        let world = self.app.world_mut();
+        let camera = *world.resource::<Camera>();
+        match camera.check() {
+            Ok(()) => self.good_camera = camera,
+            Err(error) => {
+                let good = self.good_camera;
+                modify(world, |held: &mut Camera| *held = good);
+                modify(world, |refusals: &mut CameraRefusals| {
+                    refusals.count += 1;
+                    refusals.latest = Some(error.path);
+                });
+            }
+        }
     }
 
     pub fn gpu_current(&self) -> Option<GpuCurrent<'_>> {
@@ -652,6 +682,7 @@ impl Engine {
 
     fn sync_view(&mut self, aspect: f32) {
         let _profile = engine_profile::span("ecs", "ViewSync");
+        self.keep_camera();
         let facts = self.facts.unwrap_or_else(|| self.viewport_facts());
         let world = self.app.world_mut();
         publish_view(world, aspect, facts);

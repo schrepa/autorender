@@ -7,8 +7,11 @@ const MAX_REQUEST_IDS = 65_536;
 const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,96}$/;
 
 const DETAIL = ["expected", "allowed", "nearest", "got"];
-const MAX_GOT = 256;
-const REQUEST_FIELDS = ["version", "id", "session", "command"];
+const MAX_GOT = 4096;
+const REQUEST_FIELDS = ["version", "id", "session", "command", "timeout_ms", "rendering"];
+const CLOSE_FIELDS = ["verb", "name", "version", "args"];
+const FETCH_HEADERS_LIMIT_MS = 300_000;
+export const MAX_TIMEOUT_MS = FETCH_HEADERS_LIMIT_MS - 5_000;
 
 export class AgentError extends Error {
   /**
@@ -64,6 +67,22 @@ export function closing(command) {
   return command?.verb === "control" && command?.name === "close";
 }
 
+function checkClose(command) {
+  const unknown = Object.keys(command).find(key => !CLOSE_FIELDS.includes(key));
+  if (unknown) throw new AgentError("invalid_command", `command.${unknown}`, { allowed: variants(CLOSE_FIELDS), got: unknown });
+  const { version, args } = command;
+  if (version !== undefined && version !== VERSION) throw new AgentError("unsupported_version", "command.version", { allowed: variants([VERSION]), got: version });
+  if (args !== undefined && (!args || typeof args !== "object" || Array.isArray(args) || Object.keys(args).length)) {
+    throw new AgentError("invalid_command", "command.args", { expected: "absent", got: args });
+  }
+}
+
+export function checkTimeout(value) {
+  if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > MAX_TIMEOUT_MS)) {
+    throw new AgentError("invalid_request", "timeout_ms", { allowed: range(1, MAX_TIMEOUT_MS), got: value });
+  }
+}
+
 function envelope(request, session, response) {
   return { ...response, version: VERSION, id: typeof request?.id === "string" && ID_PATTERN.test(request.id) ? request.id : null, session };
 }
@@ -79,6 +98,8 @@ function validate(request, session) {
   for (const key of Object.keys(request)) {
     if (!REQUEST_FIELDS.includes(key)) throw new AgentError("invalid_request", key, { allowed: variants(REQUEST_FIELDS), got: key });
   }
+  checkTimeout(request.timeout_ms);
+  if (request.rendering !== undefined && request.rendering !== false) throw new AgentError("invalid_request", "rendering", { allowed: variants([false]), got: request.rendering });
 }
 
 async function readRequest(request) {
@@ -94,8 +115,8 @@ async function readRequest(request) {
   catch { throw new AgentError("invalid_json", "$", { expected: "json" }); }
 }
 
-/** @param {{ session: string, url: string, build?: string, execute: (command: any, onRecord?: (record: any) => void) => any, onClose: () => any, development?: () => any, initiallyUnavailable?: boolean, deadlineMs?: number, queueLimit?: number }} options */
-export function createBridge({ session, url, build, execute, onClose, development, initiallyUnavailable = false, deadlineMs = 15_000, queueLimit = 16 }) {
+/** @param {{ session: string, url: string, build?: string, execute: (command: any, onRecord?: (record: any) => void) => any, activity?: () => any, onClose: () => any, development?: () => any, initiallyUnavailable?: boolean, deadlineMs?: number, queueLimit?: number }} options */
+export function createBridge({ session, url, build, execute, activity, onClose, development, initiallyUnavailable = false, deadlineMs = 15_000, queueLimit = 16 }) {
   let startedAt = new Date().toISOString();
   const requestIds = new Set();
   const queue = [];
@@ -103,18 +124,43 @@ export function createBridge({ session, url, build, execute, onClose, developmen
   let unavailable = initiallyUnavailable;
   let replacing = false;
   let closed = false;
+  let carrying;
+
+  const answer = (request, response, acceptedSession = session, acceptedBuild = build) =>
+    envelope(request, acceptedSession, { ...response, ...(acceptedBuild === undefined ? {} : { build: acceptedBuild }) });
+
+  const carried = () => carrying && { verb: carrying.command.verb, name: carrying.command.name, running_ms: Date.now() - carrying.started };
+
+  function carry(command, onRecord) {
+    const reply = Promise.resolve().then(() => execute(command, onRecord));
+    const entry = { command, started: Date.now(), finished: undefined };
+    const finish = () => { if (carrying === entry) carrying = undefined; };
+    entry.finished = reply.then(finish, finish);
+    carrying = entry;
+    return reply;
+  }
+
+  async function overdue(command, limit) {
+    const { verb, name } = command;
+    const state = carrying?.command === command
+      ? { running: true, running_ms: Date.now() - carrying.started }
+      : { running: false, behind: carried() };
+    return new AgentError("command_timeout", "timeout_ms", { allowed: atMost(limit), got: { verb, name, ...state, ...await activity?.() } });
+  }
 
   async function pump() {
     if (running) return;
     running = true;
     while (queue.length) {
       const item = queue.shift();
+      clearTimeout(item.expiry);
       if (item.replacement) {
         try {
           if (closed) throw new AgentError("session_closed", "$", { expected: "live" });
           if (item.replacement.validate && !await item.replacement.validate()) throw new AgentError("build_superseded", "$", { expected: "matching" });
           item.replacement.commit?.();
-          ({ session, url, build, execute } = item.replacement);
+          ({ session, url, build, execute, activity } = item.replacement);
+          carrying = undefined;
           startedAt = new Date().toISOString();
           requestIds.clear();
           unavailable = false;
@@ -128,33 +174,25 @@ export function createBridge({ session, url, build, execute, onClose, developmen
       let timer;
       let response;
       try {
-        const closes = closing(item.request.command) && onClose;
-        if (unavailable && !closes) throw new AgentError("session_unavailable", "$", { expected: "live" });
-        const remaining = item.deadline - Date.now();
-        if (remaining <= 0) throw new AgentError("queue_timeout", "$", { allowed: atMost(deadlineMs) });
-        if (closes) {
-          if (Object.keys(item.request.command).some(key => !["verb", "name"].includes(key))) throw new AgentError("invalid_command", "command.args", { expected: "absent" });
-          unavailable = true;
-          closed = true;
-          response = { ok: true, result: { state: "closing" } };
-        } else {
-          const { command } = item.request;
-          let expired = false;
-          response = await Promise.race([
-            Promise.resolve().then(() => execute(command, record => { if (!expired) item.onRecord?.(record); })),
-            new Promise((_, reject) => {
-              timer = setTimeout(() => {
-                expired = true;
-                reject(new AgentError("command_timeout", "$", { allowed: atMost(remaining), got: { verb: command.verb, name: command.name, running: true } }));
-              }, remaining);
-            }),
-          ]);
-        }
+        const { command } = item.request;
+        let expired = false;
+        const limit = new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            expired = true;
+            void overdue(command, item.limit).then(reject, reject);
+          }, item.deadline - Date.now());
+          timer.unref();
+        });
+        if (carrying) await Promise.race([carrying.finished, limit]);
+        if (expired) await limit;
+        if (unavailable) throw new AgentError("session_unavailable", "$", { expected: "live" });
+        response = await Promise.race([carry(command, record => { if (!expired) item.onRecord?.(record); }), limit]);
         if (!response || typeof response.ok !== "boolean") throw new AgentError("invalid_browser_response", "$", { expected: "object" });
+        if (item.request.rendering === false && response.result) delete response.result.rendering;
         if (Buffer.byteLength(JSON.stringify(response)) > MAX_BYTES - 1024) throw new AgentError("response_too_large", "$", { allowed: atMost(MAX_BYTES - 1024) });
       } catch (error) { response = failure(error); }
       finally { clearTimeout(timer); }
-      item.resolve(envelope(item.request, acceptedSession, { ...response, ...(acceptedBuild === undefined ? {} : { build: acceptedBuild }) }));
+      item.resolve(answer(item.request, response, acceptedSession, acceptedBuild));
     }
     running = false;
   }
@@ -165,11 +203,25 @@ export function createBridge({ session, url, build, execute, onClose, developmen
     const closes = closing(request.command) && onClose;
     if (unavailable && !closes) throw new AgentError("session_unavailable", "$", { expected: "live" });
     if (requestIds.has(request.id)) throw new AgentError("duplicate_request", "id", { expected: "unique", got: request.id });
-    if (requestIds.size >= MAX_REQUEST_IDS && !closes) throw new AgentError("session_request_limit", "$", { allowed: atMost(MAX_REQUEST_IDS) });
+    if (closes) {
+      checkClose(request.command);
+      unavailable = true;
+      closed = true;
+      return Promise.resolve(answer(request, { ok: true, result: { state: "closing" } }));
+    }
+    if (requestIds.size >= MAX_REQUEST_IDS) throw new AgentError("session_request_limit", "$", { allowed: atMost(MAX_REQUEST_IDS) });
     if (queue.length + Number(running) >= queueLimit) throw new AgentError("queue_full", "$", { allowed: atMost(queueLimit) });
     requestIds.add(request.id);
+    const limit = request.timeout_ms ?? deadlineMs;
     return new Promise(resolve => {
-      queue.push({ request, onRecord, deadline: Date.now() + deadlineMs, resolve });
+      const item = { request, onRecord, limit, deadline: Date.now() + limit, resolve, expiry: undefined };
+      item.expiry = setTimeout(() => {
+        queue.splice(queue.indexOf(item), 1);
+        const { verb, name } = request.command;
+        resolve(answer(request, failure(new AgentError("queue_timeout", "timeout_ms", { allowed: atMost(limit), got: { verb, name, running: false, behind: carried() } }))));
+      }, limit);
+      item.expiry.unref();
+      queue.push(item);
       void pump();
     });
   }
@@ -218,7 +270,7 @@ export function createBridge({ session, url, build, execute, onClose, developmen
       }
       const result = await submit(parsed);
       if (closing(parsed.command) && result.ok && onClose) {
-        response.once("finish", () => { Promise.resolve().then(onClose).catch(() => {}); });
+        response.once("close", () => { Promise.resolve().then(onClose).catch(() => {}); });
       }
       send(response, 200, result);
     } catch (error) {

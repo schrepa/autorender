@@ -170,7 +170,9 @@ impl Along {
 }
 
 fn water_at(waters: &[&WaterBody], point: Vec3) -> Option<WaterSample> {
-    waters.iter().find_map(|body| body.shape.water(point))
+    waters
+        .iter()
+        .find_map(|body| body.shape.water(point).ready().flatten())
 }
 
 #[expect(

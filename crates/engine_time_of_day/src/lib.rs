@@ -6,11 +6,12 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use bevy_ecs::prelude::*;
+use bevy_ecs::world::World;
 use glam::Vec3;
 
 use engine_core::{Brick, Bricks, FrameTime, Schedule, Source, settings};
 use engine_math::{max, sin_cos};
-use engine_places::sun::{SunPath, north_axis, star_turn, stepped_hours};
+use engine_places::sun::{SunClocks, SunPath, north_axis, star_turn, stepped_hours};
 
 settings! {
     #[section("time_of_day")]
@@ -18,7 +19,7 @@ settings! {
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneTimeOfDay")]
     pub struct TimeOfDay {
-        pub enabled: bool = false => any,
+        pub enabled: bool = true => any,
         pub hours: f32 = 15.0 => range(0.0, 24.0),
         pub speed: f32 = 0.0 => range(0.0, 24.0),
         pub step: f32 = 2.0 => range(0.1, 60.0),
@@ -110,6 +111,12 @@ fn publish_path(settings: Res<TimeOfDay>, mut day: ResMut<DayTime>, mut path: Re
 
 pub struct TimeOfDayBrick;
 
+fn clock_runs(world: &World) -> bool {
+    world
+        .get_resource::<TimeOfDay>()
+        .is_some_and(|day| day.enabled)
+}
+
 impl Brick for TimeOfDayBrick {
     const SOURCE: &'static Source = &SOURCE;
 
@@ -119,6 +126,7 @@ impl Brick for TimeOfDayBrick {
             .settings::<TimeOfDay>()
             .resource::<DayTime>()
             .fill::<SunPath>(None)
+            .join::<SunClocks>(clock_runs as fn(&World) -> bool, None)
             .systems(Schedule::Presentation, advance_time_of_day)
             .systems(Schedule::ViewSync, publish_path);
     }

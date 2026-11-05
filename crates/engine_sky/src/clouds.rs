@@ -146,14 +146,9 @@ fn upload_noise(
     upload_volume(cx, detail, DETAIL_SIZE, &detail_levels);
 }
 
-pub(crate) fn cloud_regions() -> [CopyRegion; 3] {
+pub(crate) fn cloud_regions() -> [CopyRegion; 2] {
     let at = |offset: usize| offset as u64;
     [
-        CopyRegion::Bytes {
-            from: crate::sky::DERIVED_SUN * 16,
-            to: at(std::mem::offset_of!(CloudUniform, sun_color)),
-            size: 12,
-        },
         CopyRegion::Bytes {
             from: crate::sky::DERIVED_ZENITH * 16,
             to: at(std::mem::offset_of!(CloudUniform, zenith)),
@@ -898,7 +893,7 @@ fn march_uniform(
     let drift = |speed: f32| ((f64::from(speed) * at) % wrap) as f32;
     let seed = (f64::from(settings.seed) * 7919.0 % wrap) as f32;
     CloudUniform {
-        eye: origin.extend(piece.state[0]).to_array(),
+        eye: origin.extend(0.0).to_array(),
         mirror: [0.0; 4],
         layer: [
             settings.base,
@@ -914,7 +909,6 @@ fn march_uniform(
         ],
         dome: [0; 4],
         sun: sun.direction,
-        sun_color: sun.color,
         zenith: piece.zenith,
         horizon: piece.horizon,
         shadow: [0.0; 4],

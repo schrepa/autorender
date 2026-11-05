@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use engine_core::{Error, ErrorCode, InvalidSetting, Rule, Setting};
 use engine_places::physics::{BodyPush, RigidBody};
 use engine_places::water::WaterKind;
@@ -28,13 +30,14 @@ const PUSH_RULES: [(&str, Rule); 4] = [
     ("angular_impulse", PUSH),
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum BodyProblem {
     NoCollider,
     NotRoot,
     NoTransform,
     BadScale,
+    BadValue(Cow<'static, str>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -44,7 +47,7 @@ pub(crate) struct BodyWater {
     pub current: [f32; 3],
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct BodyStatus {
     pub problem: Option<BodyProblem>,
     pub mass: f32,
@@ -52,7 +55,6 @@ pub(crate) struct BodyStatus {
     pub velocity: Vec3,
     pub spin: Vec3,
     pub sleeping: bool,
-    pub held: bool,
     pub water: Option<BodyWater>,
 }
 
@@ -81,18 +83,11 @@ pub(crate) fn body_example() -> Value {
     json!({})
 }
 
-pub(crate) fn sanitized(body: RigidBody) -> RigidBody {
-    let defaults = RigidBody::default();
-    RigidBody {
-        motion: body.motion,
-        density: body.density.kept(DENSITY, defaults.density),
-        friction: body.friction.kept(FRICTION, defaults.friction),
-        restitution: body.restitution.kept(RESTITUTION, defaults.restitution),
-        drag: body.drag.kept(DRAG, defaults.drag),
-        velocity: body.velocity.kept(MOTION, defaults.velocity),
-        spin: body.spin.kept(MOTION, defaults.spin),
-        fast: body.fast,
-    }
+pub(crate) fn refused(body: &RigidBody, push: Option<&BodyPush>) -> Option<BodyProblem> {
+    ruled(body)
+        .and_then(|()| push.map_or(Ok(()), push_ruled))
+        .err()
+        .map(|invalid| BodyProblem::BadValue(invalid.field))
 }
 
 fn push_ruled(push: &BodyPush) -> Result<(), InvalidSetting> {
@@ -116,14 +111,4 @@ pub(crate) fn push_schema() -> Value {
 
 pub(crate) fn push_example() -> Value {
     json!({"force": [0.0, 500.0, 0.0]})
-}
-
-pub(crate) fn sanitized_push(push: BodyPush) -> BodyPush {
-    let none = [0.0; 3];
-    BodyPush {
-        force: push.force.kept(PUSH, none),
-        torque: push.torque.kept(PUSH, none),
-        impulse: push.impulse.kept(PUSH, none),
-        angular_impulse: push.angular_impulse.kept(PUSH, none),
-    }
 }

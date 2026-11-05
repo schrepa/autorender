@@ -10,7 +10,9 @@ use engine_heightfield::tile::{Solid, TileJob};
 use engine_heightfield::{
     ErrorPyramid, Fall, HydrologyBake, Layers, Pyramid, Rivers, Stamp, TileKey, reaches,
 };
-use engine_places::ground::{GroundWork, TerrainEntry, TerrainTiles, TileFace, TilesSince};
+use engine_places::ground::{
+    GroundRead, GroundWork, TerrainEntry, TerrainTiles, TileFace, TilesSince,
+};
 use engine_places::water::{WaterBody, WaterQuery, WaterSample, WaterTileErrors, Waterline};
 use glam::{Vec2, Vec3};
 
@@ -369,6 +371,7 @@ impl WaterTerrain {
 #[derive(Resource, Default)]
 pub(crate) struct WaterState {
     pub(crate) terrains: Vec<WaterTerrain>,
+    pub(crate) baking: Vec<(Vec3, Pyramid)>,
     pub(crate) watered: Vec<Entity>,
     pub(crate) surface: Arc<WaterSurface>,
     pub(crate) draw_asks: Vec<DrawAsk>,
@@ -418,6 +421,7 @@ impl WaterState {
         for mut terrain in std::mem::take(&mut self.terrains) {
             terrain.drop_asks(jobs);
         }
+        self.baking.clear();
         self.watered.clear();
         self.surface = Arc::default();
         self.draw_asks.clear();
@@ -484,6 +488,7 @@ impl SurfaceTerrain {
 #[derive(Default)]
 struct Served {
     terrains: Vec<SurfaceTerrain>,
+    baking: Vec<(Vec3, Pyramid)>,
     rivers: Vec<(Vec3, Vec3)>,
     live: Vec<(Vec3, Vec3)>,
 }
@@ -492,9 +497,11 @@ struct Served {
 pub(crate) struct WaterSurface(RwLock<Served>);
 
 impl WaterSurface {
-    fn follow(&self, terrains: &[WaterTerrain]) {
+    fn follow(&self, terrains: &[WaterTerrain], baking: &[(Vec3, Pyramid)]) {
         let mut served = self.0.write().unwrap_or_else(PoisonError::into_inner);
         let served = &mut *served;
+        served.baking.clear();
+        served.baking.extend_from_slice(baking);
         let waters = terrains.iter().filter(|terrain| !terrain.surroundings);
         let mut before = std::mem::take(&mut served.terrains);
         for terrain in waters.clone() {
@@ -531,9 +538,9 @@ impl WaterSurface {
 }
 
 impl WaterQuery for WaterSurface {
-    fn water(&self, point: Vec3) -> Option<WaterSample> {
+    fn water(&self, point: Vec3) -> GroundRead<Option<WaterSample>> {
         let served = self.0.read().unwrap_or_else(PoisonError::into_inner);
-        crate::water_source::water_at(&served.terrains, point)
+        crate::water_source::water_at(&served.terrains, &served.baking, point)
     }
 
     fn reaches(&self) -> Vec<(Vec3, Vec3)> {
@@ -558,12 +565,16 @@ pub(crate) fn follow(
     state.work_end = work.end();
     state.dropped = false;
     let mut before = std::mem::take(&mut state.terrains);
+    state.baking.clear();
     for entry in tiles.terrains.iter() {
         let Some(baked) = entry
             .baked
             .clone()
             .filter(|baked| baked.hydrology().is_some())
         else {
+            if entry.baking {
+                state.baking.push((entry.origin, entry.pyramid));
+            }
             continue;
         };
         let kept = before
@@ -677,5 +688,5 @@ pub(crate) fn publish_bodies(
             },
         ));
     }
-    state.surface.follow(&state.terrains);
+    state.surface.follow(&state.terrains, &state.baking);
 }

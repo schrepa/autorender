@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use engine_core::math::{GRAVITY, clamp, max};
 use engine_core::{Spawner, Transform};
 use engine_heightfield::Fall;
-use engine_places::particles::{ParticleBlend, ParticleEmitter};
+use engine_places::particles::{ParticleBlend, ParticleEmitter, ParticleLook, ParticleShape};
 use glam::Vec3;
 
 use crate::WaterBrick;
@@ -41,6 +41,29 @@ fn jets(fall: &Fall) -> Vec<(usize, usize, f32)> {
     found
 }
 
+fn jet(flight: Vec3, speed: f32, seconds: f32, width: f32, seed: u32) -> ParticleEmitter {
+    ParticleEmitter {
+        rate: 30.0 + 10.0 * width,
+        look: ParticleLook {
+            lifetime: seconds,
+            speed,
+            direction: flight.normalize_or(Vec3::X),
+            spread: 0.2,
+            acceleration: Vec3::new(0.0, -GRAVITY, 0.0),
+            shape: ParticleShape::Ball,
+            extent: Vec3::splat(0.45 * width),
+            size: [0.05, 0.12],
+            color: [[0.9, 0.93, 0.97, 0.6], [0.94, 0.96, 1.0, 0.15]],
+            brightness: 1.0,
+            blend: ParticleBlend::Alpha,
+            stretch: 0.04,
+            seed,
+            ..ParticleLook::default()
+        },
+        ..ParticleEmitter::default()
+    }
+}
+
 fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmitter)> {
     let width = fall.width;
     let at = |point: Vec3| Transform {
@@ -57,26 +80,8 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
         let (reach, drop) = (flight.length(), max(top.y - bottom.y, 0.1));
         let speed = max(reach * (GRAVITY / (2.0 * drop)).sqrt(), 0.5);
         let seconds = (2.0 * drop / GRAVITY).sqrt();
-        spawned.push((
-            at(top),
-            ParticleEmitter {
-                rate: 30.0 + 10.0 * width,
-                lifetime: seconds,
-                speed,
-                direction: flight.normalize_or(Vec3::X),
-                spread: 0.2,
-                acceleration: Vec3::new(0.0, -GRAVITY, 0.0),
-                size: [0.05, 0.12],
-                color: [[0.9, 0.93, 0.97, 0.6], [0.94, 0.96, 1.0, 0.15]],
-                emission: 1.0,
-                blend: ParticleBlend::Alpha,
-                stretch: 0.04,
-                offset: Vec3::ZERO,
-                radius: 0.45 * width,
-                seed: seed.wrapping_mul(97).wrapping_add(number as u32),
-                authored_degrees: None,
-            },
-        ));
+        let key = seed.wrapping_mul(97).wrapping_add(number as u32);
+        spawned.push((at(top), jet(flight, speed, seconds, width, key)));
         landings.push((bottom, drop, landing_speed, sky(landing)));
     }
     let last = fall.path.len() - 1;
@@ -102,60 +107,69 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
             at(landed),
             ParticleEmitter {
                 rate: clamp(power / SPLASH_WATTS, SPLASH_RATE[0], SPLASH_RATE[1]),
-                lifetime: 1.4,
-                speed: clamp(landing_speed * 0.4, 2.0, 9.0),
-                direction: Vec3::Y,
-                spread: 0.9,
-                acceleration: Vec3::new(0.0, -GRAVITY, 0.0),
-                size: [0.06, 0.16],
-                color: [lit([0.92, 0.95, 0.98, 0.65]), lit([0.95, 0.97, 1.0, 0.0])],
-                emission: 1.0,
-                blend: ParticleBlend::Alpha,
-                stretch: 0.05,
-                offset: Vec3::ZERO,
-                radius: 0.35 * width,
-                seed: key.wrapping_mul(31) ^ 0x5bd1_e995,
-                authored_degrees: None,
+                look: ParticleLook {
+                    lifetime: 1.4,
+                    speed: clamp(landing_speed * 0.4, 2.0, 9.0),
+                    direction: Vec3::Y,
+                    spread: 0.9,
+                    acceleration: Vec3::new(0.0, -GRAVITY, 0.0),
+                    shape: ParticleShape::Ball,
+                    extent: Vec3::splat(0.35 * width),
+                    size: [0.06, 0.16],
+                    color: [lit([0.92, 0.95, 0.98, 0.65]), lit([0.95, 0.97, 1.0, 0.0])],
+                    brightness: 1.0,
+                    blend: ParticleBlend::Alpha,
+                    stretch: 0.05,
+                    seed: key.wrapping_mul(31) ^ 0x5bd1_e995,
+                    ..ParticleLook::default()
+                },
+                ..ParticleEmitter::default()
             },
         ));
         spawned.push((
             at(landed + Vec3::Y * 0.5),
             ParticleEmitter {
                 rate: clamp(power / BURST_WATTS, BURST_RATE[0], BURST_RATE[1]),
-                lifetime: 1.6,
-                speed: clamp(landing_speed * 0.3, 2.0, 6.0),
-                direction: Vec3::Y,
-                spread: 1.45,
-                acceleration: Vec3::new(0.0, 0.6, 0.0),
-                size: [1.5 * puffs, 5.0 * puffs],
-                color: [lit([0.94, 0.96, 1.0, 0.25]), lit([1.0, 1.0, 1.0, 0.0])],
-                emission: 1.0,
-                blend: ParticleBlend::Mist,
-                stretch: 0.0,
-                offset: Vec3::ZERO,
-                radius: 0.3 * width,
-                seed: key.wrapping_mul(7) ^ 0x2c1b_3c6d,
-                authored_degrees: None,
+                look: ParticleLook {
+                    lifetime: 1.6,
+                    speed: clamp(landing_speed * 0.3, 2.0, 6.0),
+                    direction: Vec3::Y,
+                    spread: 1.45,
+                    acceleration: Vec3::new(0.0, 0.6, 0.0),
+                    shape: ParticleShape::Ball,
+                    extent: Vec3::splat(0.3 * width),
+                    size: [1.5 * puffs, 5.0 * puffs],
+                    color: [lit([0.94, 0.96, 1.0, 0.25]), lit([1.0, 1.0, 1.0, 0.0])],
+                    brightness: 1.0,
+                    blend: ParticleBlend::Mist,
+                    stretch: 0.0,
+                    seed: key.wrapping_mul(7) ^ 0x2c1b_3c6d,
+                    ..ParticleLook::default()
+                },
+                ..ParticleEmitter::default()
             },
         ));
         spawned.push((
             at(landed + Vec3::Y * 1.5),
             ParticleEmitter {
                 rate: clamp(power / MIST_WATTS, MIST_RATE[0], MIST_RATE[1]),
-                lifetime: 6.0,
-                speed: clamp(landing_speed * 0.12, 0.5, 2.5),
-                direction: Vec3::Y,
-                spread: 1.3,
-                acceleration: Vec3::new(0.0, 0.3, 0.0),
-                size: [4.0 * puffs, 11.0 * puffs],
-                color: [lit([0.94, 0.96, 1.0, 0.3]), lit([1.0, 1.0, 1.0, 0.0])],
-                emission: 1.0,
-                blend: ParticleBlend::Mist,
-                stretch: 0.0,
-                offset: Vec3::ZERO,
-                radius: 0.5 * width,
-                seed: key ^ 0x9e37_79b9,
-                authored_degrees: None,
+                look: ParticleLook {
+                    lifetime: 6.0,
+                    speed: clamp(landing_speed * 0.12, 0.5, 2.5),
+                    direction: Vec3::Y,
+                    spread: 1.3,
+                    acceleration: Vec3::new(0.0, 0.3, 0.0),
+                    shape: ParticleShape::Ball,
+                    extent: Vec3::splat(0.5 * width),
+                    size: [4.0 * puffs, 11.0 * puffs],
+                    color: [lit([0.94, 0.96, 1.0, 0.3]), lit([1.0, 1.0, 1.0, 0.0])],
+                    brightness: 1.0,
+                    blend: ParticleBlend::Mist,
+                    stretch: 0.0,
+                    seed: key ^ 0x9e37_79b9,
+                    ..ParticleLook::default()
+                },
+                ..ParticleEmitter::default()
             },
         ));
     }

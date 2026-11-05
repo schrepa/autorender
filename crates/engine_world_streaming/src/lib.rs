@@ -29,8 +29,8 @@ use serde::Serialize;
 
 use engine_core::math::{max, min};
 use engine_core::{
-    Brick, Bricks, Camera, FrameTime, GlobalTransforms, Runs, SceneContext, Schedule, Smoke,
-    Source, Spawner, settings, stats,
+    Brick, Bricks, Camera, EvenDisabled, FrameTime, GlobalTransforms, Runs, SceneContext, Schedule,
+    Smoke, Source, Spawner, settings, stats,
 };
 use engine_places::streaming::StreamingFocus;
 
@@ -403,7 +403,7 @@ type FocusQuery<'w, 's> = Query<'w, 's, Entity, With<StreamingFocus>>;
 pub(crate) fn stream_cells(
     (settings, camera, frame, globals): StreamReads<'_>,
     (scene, context): SceneReads<'_>,
-    (focus, live): (FocusQuery<'_, '_>, Query<Entity>),
+    (focus, live): (FocusQuery<'_, '_>, Query<Entity, EvenDisabled>),
     mut cells: ResMut<WorldCells>,
     mut tracked: ResMut<WorldChanges>,
     mut published: ResMut<CellStats>,

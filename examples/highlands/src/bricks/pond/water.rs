@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::Spawner;
-use engine_places::ground::Ground;
+use engine_places::ground::{Ground, GroundRead};
 use engine_places::water::{WaterBody, WaterKind, WaterQuery, WaterSample};
 use glam::{Vec2, Vec3};
 
@@ -19,22 +19,29 @@ struct PondWater {
 }
 
 impl WaterQuery for PondWater {
-    fn water(&self, point: Vec3) -> Option<WaterSample> {
+    fn water(&self, point: Vec3) -> GroundRead<Option<WaterSample>> {
         let surface = self
             .ponds
             .iter()
             .filter(|pond| pond.holds(point.x, point.z))
             .map(|pond| pond.surface)
-            .reduce(engine_core::math::max)?;
-        let ground = self.ground.sample(Vec2::new(point.x, point.z))?;
+            .reduce(engine_core::math::max);
+        let Some(surface) = surface else {
+            return GroundRead::Ready(None);
+        };
+        let ground = match self.ground.point(Vec2::new(point.x, point.z)) {
+            GroundRead::Ready(ground) => ground,
+            GroundRead::NotLoaded => return GroundRead::NotLoaded,
+            GroundRead::Off => return GroundRead::Off,
+        };
         let depth = surface - ground.height;
-        (depth > 0.0).then_some(WaterSample {
+        GroundRead::Ready((depth > 0.0 && !ground.hole).then_some(WaterSample {
             kind: WaterKind::Lake,
             surface,
             depth,
             velocity: [0.0; 3],
             foam: 0.0,
-        })
+        }))
     }
 }
 

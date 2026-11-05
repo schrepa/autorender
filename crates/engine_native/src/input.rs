@@ -55,7 +55,12 @@ impl Input {
         host.key(code, down);
     }
 
-    pub(crate) fn cursor<G: Game>(&mut self, host: &mut GameHost<G>, position: (f64, f64)) {
+    pub(crate) fn cursor<G: Game>(
+        &mut self,
+        host: &mut GameHost<G>,
+        position: (f64, f64),
+        scale: f64,
+    ) {
         if host.cursor_mode() == CursorMode::Captured {
             self.cursor = None;
             return;
@@ -63,7 +68,10 @@ impl Input {
         if let Some((x, y)) = self.cursor
             && self.dragging
         {
-            host.look((position.0 - x) as f32, (position.1 - y) as f32);
+            host.look(
+                ((position.0 - x) / scale) as f32,
+                ((position.1 - y) / scale) as f32,
+            );
         }
         self.cursor = Some(position);
         host.pointer(position.0 as f32, position.1 as f32);

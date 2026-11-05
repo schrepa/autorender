@@ -905,3 +905,14 @@ pub fn settings(world: &World, key: &str) -> Result<SettingsEntry, Error> {
         .and_then(|registry| registry.section(key).copied())
         .ok_or_else(|| Error::new(ErrorCode::UnknownValue, format!("$.settings.{key}")).got(key))
 }
+
+pub fn check_sections(world: &World) -> Result<(), Error> {
+    let Some(registry) = world.get_resource::<Registry>() else {
+        return Ok(());
+    };
+    registry
+        .bricks
+        .iter()
+        .flat_map(|record| record.section_rules())
+        .try_for_each(|rule| rule(world))
+}

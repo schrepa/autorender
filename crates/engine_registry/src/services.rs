@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use glam::{Mat4, UVec2, Vec3};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -95,41 +97,50 @@ impl ViewState {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Edges {
-    pressed: u32,
-    released: u32,
+    pressed: BTreeSet<u32>,
+    released: BTreeSet<u32>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InputState {
-    held: u32,
+    held: BTreeSet<u32>,
     next_tick: Edges,
     next_frame: Edges,
     shown: Edges,
 }
 
 impl InputState {
-    pub fn ingest(&mut self, held: u32, pressed: u32, released: u32) {
-        let pressed = pressed | (held & !self.held);
-        let released = released | (self.held & !held);
+    pub fn ingest(
+        &mut self,
+        held: &BTreeSet<u32>,
+        pressed: &BTreeSet<u32>,
+        released: &BTreeSet<u32>,
+    ) {
+        let rose = held.difference(&self.held);
+        let fell = self.held.difference(held);
         for edges in [&mut self.next_tick, &mut self.next_frame] {
-            edges.pressed |= pressed;
-            edges.released |= released;
+            edges.pressed.extend(pressed.iter().chain(rose.clone()));
+            edges.released.extend(released.iter().chain(fell.clone()));
         }
-        self.held = held;
+        self.held.clone_from(held);
     }
 
-    pub fn pressed(&self, action: u8) -> bool {
-        self.held & mask(action) != 0
+    pub fn pressed(&self, action: u32) -> bool {
+        self.held.contains(&action)
     }
 
-    pub fn just_pressed(&self, action: u8) -> bool {
-        self.shown.pressed & mask(action) != 0
+    pub fn held(&self) -> impl Iterator<Item = u32> {
+        self.held.iter().copied()
     }
 
-    pub fn just_released(&self, action: u8) -> bool {
-        self.shown.released & mask(action) != 0
+    pub fn just_pressed(&self, action: u32) -> bool {
+        self.shown.pressed.contains(&action)
+    }
+
+    pub fn just_released(&self, action: u32) -> bool {
+        self.shown.released.contains(&action)
     }
 
     pub fn clear(&mut self) {
@@ -147,8 +158,4 @@ impl InputState {
     pub fn hide_edges(&mut self) {
         self.shown = Edges::default();
     }
-}
-
-fn mask(action: u8) -> u32 {
-    1_u32.checked_shl(u32::from(action)).unwrap_or(0)
 }

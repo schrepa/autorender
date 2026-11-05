@@ -15,6 +15,7 @@ gpu_consts! {
     pub const MOVING_PAIRS: u32 = 8;
     pub const LOD_STATE: u32 = 1 << 31;
     pub const UNWATCHED: u32 = u32::MAX;
+    pub const FIRST_PERSON_BATCH: f32 = 1.0;
 }
 
 pub(crate) const DRAW_ARGS_BYTES: u64 = 20;

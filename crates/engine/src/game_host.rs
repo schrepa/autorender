@@ -31,7 +31,7 @@ impl<G: Game> GameHost<G> {
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> crate::Result<Self> {
         engine_panic::install();
-        let input = InputGatherer::new(G::ACTIONS, G::AXES, G::MOVE_KEYS)?;
+        let input = InputGatherer::new(G::ACTIONS, G::AXES, G::MOVE_KEYS, G::MENU_KEYS)?;
         let mut game = None;
         let app = AppHost::launch(target, bricks, |engine| {
             game = Some(build(engine).map_err(Into::into)?);
@@ -183,14 +183,14 @@ impl<G: Game> GameHost<G> {
         self.step_level();
         self.prepare_pipelines();
         let input = self.frame_input(timestamp);
-        self.app.set_gathered(input);
+        self.app.set_gathered(&input);
         let engine = self.app.engine_mut();
         self.game.before_frame(engine);
         let _ = engine
             .app
             .world_mut()
             .modify_resource(|actions: &mut ActionInput| {
-                actions.ingest(input.held, input.pressed, input.released);
+                actions.ingest(&input.held, &input.pressed, &input.released);
             });
         let state = if engine.app.world().resource::<MenuInput>().wanted {
             MoveInput::default()

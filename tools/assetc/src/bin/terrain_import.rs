@@ -3,9 +3,9 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use engine_core::command_line::{self, CommandOption};
-use engine_layer_hydrology::RiversLayer;
 use engine_heightfield::GivenRiver;
 use engine_heightfield::given::{MAX_CREDIT, MAX_GIVEN_RIVERS, MAX_PRECISION};
+use engine_layer_hydrology::RiversLayer;
 use serde_json::{Value, json};
 use tiff::decoder::{Decoder, DecodingResult, Limits};
 use tiff::tags::Tag;
@@ -44,8 +44,7 @@ fn command_options() -> Vec<CommandOption> {
         CommandOption::taking("--attribution", "TEXT"),
         CommandOption::taking("--sea", "N").in_unit("m"),
         CommandOption::taking("--rivers", "FILE"),
-        CommandOption::taking("--river-precision", format!("0-{MAX_PRECISION}"))
-            .in_unit("m"),
+        CommandOption::taking("--river-precision", format!("0-{MAX_PRECISION}")).in_unit("m"),
         CommandOption::taking("--river-attribution", "TEXT"),
         CommandOption::taking("INPUT", "PATH...").required(),
         CommandOption::flag("--help"),
@@ -823,8 +822,7 @@ fn run() -> Result<(), String> {
                     precision: options
                         .river_precision
                         .unwrap_or(spacing)
-                        .min(f64::from(MAX_PRECISION))
-                        as f32,
+                        .min(f64::from(MAX_PRECISION)) as f32,
                     attribution: options.river_attribution.clone(),
                 };
                 layer
@@ -1233,12 +1231,6 @@ fn scene(
     if let Some(attribution) = &options.attribution {
         heightmap["attribution"] = json!(attribution);
     }
-    let environment = json!({
-        "sun": {"preset": "golden_hour"},
-        "sky_light": {"preset": "golden_hour"},
-        "surface_light": {"preset": "golden_hour"},
-        "grading": {"preset": "golden_hour"},
-    });
     let tiles = (size / 256.0) as u32;
     let mut layers = vec![heightmap];
     if options.detail > 0.0 {
@@ -1280,6 +1272,5 @@ fn scene(
                 "surface": {"materials": surface_materials, "biomes": biomes},
             },
         }],
-        "environment": environment,
     })
 }

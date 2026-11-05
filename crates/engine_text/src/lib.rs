@@ -6,17 +6,18 @@ mod operations;
 mod smokes;
 mod typeset;
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
     Brick, Bricks, ComponentKind, Error, ErrorCode, Runs, SceneComponents, SceneCx, Schedule,
-    Smoke, Source, View, gpu_struct, settings, stats,
+    Shown, Smoke, Source, View, gpu_struct, settings, stats,
 };
 use engine_places::text::{DEFAULT_TEXT_SIZE, FontId, Text, TextAlign};
 use engine_render::{
-    Bind, Buffer, DepthUse, Draw, GpuPart, Install, Layer, Lifetime, Overlay, Pipeline, Prepare,
-    RenderBricks, RenderPipeline, Shape, Texture, wgpu,
+    Bind, Buffer, DepthUse, Draw, GpuPart, Install, Layer, Lifetime, OverlayStack, Pipeline,
+    Prepare, RenderBricks, RenderPipeline, Shape, Texture, wgpu,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -54,6 +55,8 @@ gpu_struct! {
         pub color: [f32; 4],
     }
 }
+
+pub(crate) type GlyphRange = (Option<u32>, Range<u32>);
 
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -185,21 +188,21 @@ impl Brick for TextBrick {
             .operation::<operations::TextMeasure>()
             .observation::<operations::TextRuns>()
             .generated(GENERATED)
-            .draws::<TextGpu, Overlay>(Layer::Over, TextGpu::draw_glyphs);
+            .draws::<TextGpu, OverlayStack>(Layer::Over, TextGpu::draw_glyphs);
     }
 }
 
 struct TextGpu {
-    pipeline: Pipeline<Self, Overlay>,
+    pipeline: Pipeline<Self, OverlayStack>,
     instances: Buffer<Self>,
     atlas: Texture<Self>,
     staged: Vec<GlyphInstance>,
-    drawn: u32,
+    ranges: Vec<GlyphRange>,
 }
 
 impl GpuPart for TextGpu {
     type Reads = (
-        Query<'static, 'static, &'static Label>,
+        Query<'static, 'static, &'static Label, Shown>,
         Res<'static, Text>,
         Res<'static, TextSettings>,
         Res<'static, View>,
@@ -210,7 +213,7 @@ impl GpuPart for TextGpu {
         let instances = cx.buffer("instances", Lifetime::Kept);
         let atlas = cx.texture("atlas", wgpu::TextureFormat::R8Unorm, Lifetime::Kept);
         let pipeline = cx.render_pipeline(
-            Overlay,
+            OverlayStack,
             &RenderPipeline {
                 vertex: draw::VS_TEXT,
                 fragment: Some(draw::FS_TEXT),
@@ -231,7 +234,7 @@ impl GpuPart for TextGpu {
             instances,
             atlas,
             staged: Vec::new(),
-            drawn: 0,
+            ranges: Vec::new(),
         })
     }
 
@@ -240,7 +243,7 @@ impl GpuPart for TextGpu {
         (labels, text, settings, view): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.drawn = 0;
+        self.ranges.clear();
         let Some(typesetter) = Typesetter::of(&text) else {
             return;
         };
@@ -248,7 +251,13 @@ impl GpuPart for TextGpu {
         if cx.fresh() {
             state.forget_atlas();
         }
-        state.frame(labels.iter(), &settings, &view, &mut self.staged);
+        state.frame(
+            labels.iter(),
+            &settings,
+            &view,
+            &mut self.staged,
+            &mut self.ranges,
+        );
         let uploads = state.take_uploads();
         if self.staged.is_empty() && uploads.is_empty() {
             return;
@@ -285,23 +294,23 @@ impl GpuPart for TextGpu {
             std::mem::size_of_val(self.staged.as_slice()) as u64,
         );
         cx.write(self.instances, 0, &self.staged);
-        self.drawn = self.staged.len() as u32;
         cx.want_overlay();
     }
 }
 
 impl TextGpu {
-    fn draw_glyphs(&self, _: &(), draw: &mut Draw<'_, Self, Overlay>) -> u32 {
-        if self.drawn == 0 {
-            return 0;
+    fn draw_glyphs(&self, step: &Option<u32>, draw: &mut Draw<'_, Self, OverlayStack>) -> u32 {
+        let mut drawn = 0;
+        for (_, glyphs) in self.ranges.iter().filter(|(held, _)| held == step) {
+            draw.draw(
+                &self.pipeline,
+                Shape::Pulled {
+                    vertices: 0..6,
+                    instances: glyphs.clone(),
+                },
+            );
+            drawn += 1;
         }
-        draw.draw(
-            &self.pipeline,
-            Shape::Pulled {
-                vertices: 0..6,
-                instances: 0..self.drawn,
-            },
-        );
-        1
+        drawn
     }
 }

@@ -3,7 +3,8 @@ use std::{fs, path::Path};
 use crate::{
     authoring,
     process::{
-        Client, DEV_FEATURES, NPM, WASM_TARGET, clients, game_names, run, verify_wasm_bindgen,
+        Client, DEV_FEATURES, NPM, WASM_TARGET, clients, game_names, run, run_with,
+        verify_wasm_bindgen,
     },
 };
 
@@ -56,7 +57,7 @@ pub fn dev(root: &Path, port: u16, game: Option<&str>) -> Result<(), String> {
         "iterate": "cargo xtask agent iterate",
     });
     println!("{record}");
-    run(
+    run_with(
         root,
         NPM,
         &[
@@ -71,6 +72,7 @@ pub fn dev(root: &Path, port: u16, game: Option<&str>) -> Result<(), String> {
             &port.to_string(),
             "--strictPort",
         ],
+        game.map(|game| ("ENGINE_GAME", game)).as_slice(),
     )
 }
 

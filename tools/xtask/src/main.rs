@@ -224,7 +224,13 @@ fn authoring_commands() -> Vec<Command> {
                 CommandOption::taking("--port", "N"),
             ],
         ),
-        Command::new("agent help", []),
+        Command::new(
+            "agent help",
+            [
+                CommandOption::taking("VERB", verbs.clone()),
+                CommandOption::flag("--schema"),
+            ],
+        ),
         Command::new(
             "agent",
             [
@@ -232,6 +238,8 @@ fn authoring_commands() -> Vec<Command> {
                 CommandOption::taking("--session", "S"),
                 CommandOption::taking("--json", "JSON"),
                 CommandOption::taking("--file", "PATH"),
+                CommandOption::taking("--timeout-ms", "MS").in_unit("ms"),
+                CommandOption::taking("--rendering", "off"),
             ],
         ),
         Command::new(

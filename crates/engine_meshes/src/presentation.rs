@@ -6,7 +6,7 @@ use engine_core::{
 use glam::{Mat4, Vec3};
 
 use crate::batches::DrawBatch;
-use crate::layouts::{BatchData, CandidateData, LOD_LEVELS};
+use crate::layouts::{BatchData, CandidateData, FIRST_PERSON_BATCH, LOD_LEVELS};
 use crate::order::BatchLook;
 use crate::uploads::{ColorData, UploadRange, changed_ranges, listed_ranges, whole_stream};
 
@@ -485,6 +485,11 @@ fn batch_record(
                 (first_index + offset, count, error)
             })
     };
+    let kind = if batch.first_person {
+        FIRST_PERSON_BATCH
+    } else {
+        0.0
+    };
     BatchData {
         start: batch.instances.start,
         count: batch.instances.end - batch.instances.start,
@@ -501,7 +506,7 @@ fn batch_record(
         lod_errors: [lod(0).2, lod(1).2, (1 + lods) as f32, impostor],
         group,
         bounds_min: bounds.0.extend(0.0).to_array(),
-        bounds_max: bounds.1.extend(0.0).to_array(),
+        bounds_max: bounds.1.extend(kind).to_array(),
     }
 }
 

@@ -27,17 +27,6 @@ impl ExtraRules for CoverLook {
             Err(InvalidSetting::new("height", Expected::Sorted))
         }
     }
-
-    fn sanitize_extra(self) -> Self {
-        let [low, high] = self.height;
-        Self {
-            height: [
-                engine_core::math::min(low, high),
-                engine_core::math::max(low, high),
-            ],
-            ..self
-        }
-    }
 }
 
 settings! {

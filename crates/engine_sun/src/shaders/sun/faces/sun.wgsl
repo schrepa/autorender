@@ -6,5 +6,5 @@ fn sun_direction() -> vec3<f32> {
 }
 
 fn sun_color() -> vec3<f32> {
-    return sunlight(piece().color.rgb);
+    return sunlight();
 }

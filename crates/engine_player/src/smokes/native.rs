@@ -161,10 +161,9 @@ fn lit(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         "capture_holds_image"
     );
     let night = json!({
-        "sun": { "preset": "night" },
-        "sky_light": { "preset": "night" },
-        "surface_light": { "preset": "night" },
-        "grading": { "preset": "night" },
+        "time_of_day": { "hours": 23.0 },
+        "surface_light": { "rim": 0.8, "emission": 1.0 },
+        "grading": { "exposure": 1.35 },
     });
     environment(session, night, "night_falls")?;
     let dark = accepted(session, "capture", json!({}), "captures_night")?;

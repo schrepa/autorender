@@ -8,7 +8,7 @@ use std::ops::Range;
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetUses, Brick, Bricks, ComponentKind, Error, GlobalTransforms, Runs, SceneComponents,
-    Schedule, Smoke, Source, Spawner, TextureHandle, View, gpu_struct,
+    Schedule, Shown, Smoke, Source, Spawner, TextureHandle, View, gpu_struct,
 };
 use engine_render::{
     Bind, Buffer, DepthUse, Draw, GpuPart, Install, Layer, Lifetime, MainView, Pipeline, Prepare,
@@ -114,7 +114,7 @@ struct SpritesGpu {
 
 impl GpuPart for SpritesGpu {
     type Reads = (
-        Query<'static, 'static, (Entity, &'static Sprite)>,
+        Query<'static, 'static, (Entity, &'static Sprite), Shown>,
         Res<'static, GlobalTransforms>,
         Res<'static, View>,
     );
@@ -192,7 +192,7 @@ impl SpritesGpu {
 }
 
 fn stage(
-    sprites: &Query<(Entity, &'static Sprite)>,
+    sprites: &Query<(Entity, &'static Sprite), Shown>,
     globals: &GlobalTransforms,
     staged: &mut Vec<SpriteInstance>,
     runs: &mut Vec<(TextureHandle, Range<u32>)>,

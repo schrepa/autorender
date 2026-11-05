@@ -3,6 +3,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use engine_checks::Repository;
+use engine_checks::tools::clippy_free;
 
 use crate::Failure;
 use crate::measure::git;
@@ -218,7 +219,7 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     ran.outcome
 }
 
-fn quick<'a>(root: &'a Path, selection: &Selection) -> Vec<Step<'a>> {
+fn quick<'a>(root: &'a Path, selection: &Selection) -> Result<Vec<Step<'a>>, String> {
     let mut steps = Vec::new();
     for stage in crate::lint::LINT
         .iter()
@@ -226,13 +227,22 @@ fn quick<'a>(root: &'a Path, selection: &Selection) -> Vec<Step<'a>> {
     {
         steps.push(Step::new(stage.name, move || Ok((stage.run)(root)?)));
     }
-    if !selection.affected.is_empty() {
+    let free: Vec<&'static str> = crate::rules::warnings_allowed(root)?
+        .into_iter()
+        .filter(|package| selection.affects(package))
+        .collect();
+    if selection.affected.len() > free.len() {
         let mut arguments = vec!["clippy".to_owned()];
         if selection.everything {
             arguments.push("--workspace".into());
+            for package in &free {
+                arguments.extend(["--exclude".to_owned(), (*package).to_owned()]);
+            }
         } else {
             for package in &selection.affected {
-                arguments.extend(["-p".to_owned(), package.clone()]);
+                if !free.contains(&package.as_str()) {
+                    arguments.extend(["-p".to_owned(), package.clone()]);
+                }
             }
         }
         arguments.extend(CLIPPY.map(str::to_owned));
@@ -242,12 +252,18 @@ fn quick<'a>(root: &'a Path, selection: &Selection) -> Vec<Step<'a>> {
             Ok(crate::process::run(root, "cargo", &arguments)?)
         }));
     }
+    if !free.is_empty() {
+        let name = format!("cargo clippy {} --all-targets", free.join(" "));
+        steps.push(Step::new(name, move || {
+            Ok(clippy_free(root, &free, &["--all-targets"])?)
+        }));
+    }
     if selection.affects(TOOLS) {
         steps.push(Step::new("pure (every corpus)", move || {
             crate::pure::pure(root, &[])
         }));
     }
-    steps
+    Ok(steps)
 }
 
 fn smokes<'a>(root: &'a Path, merge: bool, selection: &Selection) -> Vec<Step<'a>> {
@@ -286,7 +302,7 @@ fn steps<'a>(
     selection: &Selection,
 ) -> Result<Vec<Step<'a>>, String> {
     if level == Level::Quick {
-        return Ok(quick(root, selection));
+        return quick(root, selection);
     }
     let merge = level == Level::Merge;
     let tools = selection.affects(TOOLS);

@@ -110,7 +110,7 @@ fn sweep(
         for column in 0..samples {
             let unit = Vec2::new(column as f32, row as f32) / (samples - 1) as f32 * 2.0 - 1.0;
             let point = center + unit * half_extent;
-            let Some(sample) = ground.point(point) else {
+            let Some(sample) = ground.point(point).ready() else {
                 continue;
             };
             queried += 1;

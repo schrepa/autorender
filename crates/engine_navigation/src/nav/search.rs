@@ -19,6 +19,7 @@ pub struct WalkSearch {
     ends: [Vec2; 2],
     pub(super) tiles: Option<[TileKey; 2]>,
     obstacles: BTreeMap<TileKey, Vec<GroundObstacle>>,
+    clearance: f32,
     stands: BTreeMap<TileKey, Arc<[bool]>>,
     stage: Stage,
     pub(super) wants: Vec<Want>,
@@ -64,6 +65,7 @@ impl WalkSearch {
             ends: [from, to],
             tiles,
             obstacles: bin(obstacles, options.radius, pyramid, gait.level),
+            clearance: options.radius,
             stands: BTreeMap::new(),
             stage: Stage::Ends,
             wants: Vec::new(),
@@ -153,16 +155,16 @@ impl WalkSearch {
         let corner = position(first, self.spacing);
         let last = (SIDE - 1) as f32;
         for obstacle in self.obstacles.get(&ground.key).into_iter().flatten() {
-            let reach = obstacle.radius;
-            let lowest = ((obstacle.center - Vec2::splat(reach) - corner) / self.spacing).floor();
-            let highest = ((obstacle.center + Vec2::splat(reach) - corner) / self.spacing).ceil();
+            let (center, reach) = center_and_reach(obstacle, self.clearance);
+            let lowest = ((center - reach - corner) / self.spacing).floor();
+            let highest = ((center + reach - corner) / self.spacing).ceil();
             if highest.x < 0.0 || highest.y < 0.0 || lowest.x > last || lowest.y > last {
                 continue;
             }
             for row in max(lowest.y, 0.0) as usize..=min(highest.y, last) as usize {
                 for column in max(lowest.x, 0.0) as usize..=min(highest.x, last) as usize {
                     let sample = [first[0] + column as i64, first[1] + row as i64];
-                    if position(sample, self.spacing).distance(obstacle.center) <= reach {
+                    if blocks(obstacle, position(sample, self.spacing), self.clearance) {
                         stands[row * SIDE + column] = false;
                     }
                 }
@@ -316,12 +318,12 @@ fn bin(
     let [columns, rows] = pyramid.tiles(level);
     let mut bins: BTreeMap<TileKey, Vec<GroundObstacle>> = BTreeMap::new();
     for obstacle in obstacles {
-        let reach = obstacle.radius + radius;
-        if !(reach.is_finite() && obstacle.center.is_finite()) {
+        let (center, reach) = center_and_reach(&obstacle, radius);
+        if !(reach.is_finite() && center.is_finite()) {
             continue;
         }
-        let low = ((obstacle.center - Vec2::splat(reach + spacing)) / size).floor();
-        let high = ((obstacle.center + Vec2::splat(reach)) / size).floor();
+        let low = ((center - (reach + Vec2::splat(spacing))) / size).floor();
+        let high = ((center + reach) / size).floor();
         let span = |low: f32, high: f32, count: u32| {
             let last = (count - 1) as f32;
             max(low, 0.0) as u16..=min(high, last) as u16
@@ -333,14 +335,47 @@ fn bin(
             for x in span(low.x, high.x, columns) {
                 bins.entry(TileKey::new(level as u8, x, z))
                     .or_default()
-                    .push(GroundObstacle {
-                        center: obstacle.center,
-                        radius: reach,
-                    });
+                    .push(obstacle);
             }
         }
     }
     bins
+}
+
+fn center_and_reach(obstacle: &GroundObstacle, clearance: f32) -> (Vec2, Vec2) {
+    match *obstacle {
+        GroundObstacle::Circle { center, radius } => (center, Vec2::splat(radius + clearance)),
+        GroundObstacle::Box {
+            center,
+            half_extents,
+            unit_axis,
+        } => {
+            let (along, across) = (unit_axis.x.abs(), unit_axis.y.abs());
+            let reach = Vec2::new(
+                along * half_extents.x + across * half_extents.y,
+                across * half_extents.x + along * half_extents.y,
+            );
+            (center, reach + Vec2::splat(clearance))
+        }
+    }
+}
+
+fn blocks(obstacle: &GroundObstacle, at: Vec2, clearance: f32) -> bool {
+    match *obstacle {
+        GroundObstacle::Circle { center, radius } => at.distance(center) <= radius + clearance,
+        GroundObstacle::Box {
+            center,
+            half_extents,
+            unit_axis,
+        } => {
+            let to = at - center;
+            let beyond = Vec2::new(
+                max(to.dot(unit_axis).abs() - half_extents.x, 0.0),
+                max(to.dot(unit_axis.perp()).abs() - half_extents.y, 0.0),
+            );
+            beyond.length() <= clearance
+        }
+    }
 }
 
 pub(super) fn tiles_holding(pyramid: &Pyramid, level: u32, sample: Sample) -> Vec<TileKey> {

@@ -1,18 +1,14 @@
+use std::collections::BTreeSet;
+
 use bevy_ecs::prelude::Resource;
 use glam::Vec2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ActionId(u8);
+pub struct ActionId(u32);
 
 impl ActionId {
-    pub const COUNT: u32 = u32::BITS;
-
-    pub const fn new(index: u8) -> Option<Self> {
-        if (index as u32) < Self::COUNT {
-            Some(Self(index))
-        } else {
-            None
-        }
+    pub const fn new(index: u32) -> Self {
+        Self(index)
     }
 }
 
@@ -27,6 +23,10 @@ impl ActionInput {
         self.state.pressed(action.0)
     }
 
+    pub fn held(&self) -> impl Iterator<Item = u32> {
+        self.state.held()
+    }
+
     pub fn just_pressed(&self, action: ActionId) -> bool {
         self.state.just_pressed(action.0)
     }
@@ -36,7 +36,12 @@ impl ActionInput {
     }
 
     #[doc(hidden)]
-    pub fn ingest(&mut self, held: u32, pressed: u32, released: u32) {
+    pub fn ingest(
+        &mut self,
+        held: &BTreeSet<u32>,
+        pressed: &BTreeSet<u32>,
+        released: &BTreeSet<u32>,
+    ) {
         self.state.ingest(held, pressed, released);
     }
 

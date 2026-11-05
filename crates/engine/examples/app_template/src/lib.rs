@@ -23,18 +23,9 @@ pub fn bricks<L: Listing>(list: L) -> L {
         .with::<TurningBrick>()
 }
 
-const DAY: [&str; 4] = [
-    "sun.preset",
-    "sky_light.preset",
-    "surface_light.preset",
-    "grading.preset",
-];
-
 pub fn build(engine: &mut Engine) -> engine::Result<Template> {
     let world = engine.app.world_mut();
-    for key in DAY {
-        engine::host::apply_setting(world, key, &serde_json::json!("day"))?;
-    }
+    engine::host::apply_setting(world, engine::DYNAMIC_RESOLUTION, &serde_json::json!(true))?;
     let (mesh, ground, block) = {
         let mut assets = world.resource_mut::<AssetLibrary>();
         (

@@ -1058,6 +1058,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_animation"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_ecs",
+ "engine_places",
+ "engine_render",
+ "engine_sources",
+ "glam 0.30.9",
+ "gltf",
+ "png",
+ "schemars",
+ "serde",
+ "serde_json",
+ "zune-jpeg",
+]
+
+[[package]]
 name = "engine_assetc"
 version = "0.1.0"
 dependencies = [
@@ -1150,7 +1168,6 @@ dependencies = [
 name = "engine_codec"
 version = "0.1.0"
 dependencies = [
- "engine_math",
  "glam 0.30.9",
  "schemars",
  "serde",
@@ -1597,6 +1614,7 @@ dependencies = [
  "engine_heightfield",
  "engine_math",
  "engine_place",
+ "engine_sources",
  "glam 0.30.9",
  "parry3d",
  "schemars",
@@ -1811,6 +1829,7 @@ version = "0.1.0"
 dependencies = [
  "sha2",
  "toml_edit",
+ "wgsl-parse",
 ]
 
 [[package]]
@@ -1846,6 +1865,7 @@ name = "engine_standard"
 version = "0.1.0"
 dependencies = [
  "engine_ambient_occlusion",
+ "engine_animation",
  "engine_audio",
  "engine_auto_exposure",
  "engine_bloom",

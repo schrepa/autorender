@@ -85,15 +85,10 @@ fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     }
     let direction = ray / ray_length;
     let jitter = fract(pixel_noise(position.xy) + sky_piece.haze.x);
-    let fog_most = -log(max(1.0 - sky_piece.fog.w, 1.0e-6));
     var through = 1.0;
-    var fogged = 0.0;
     var sunlit = 0.0;
-    var fog_sky = 0.0;
     var air_sky = 0.0;
     var mean_through = 1.0;
-    var mean_fogged = 0.0;
-    var mean_fog_sky = 0.0;
     var mean_air_sky = 0.0;
     for (var index = 0u; index < HAZE_STEPS; index++) {
         let first = f32(index) / f32(HAZE_STEPS);
@@ -102,48 +97,31 @@ fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         let far = reach * next * next;
         let point = eye_world(direction * mix(near, far, jitter));
         let height = max(point.y, -1000.0);
-        let fog_mean = sky_piece.fog.y * exp(-sky_piece.fog.z * height)
-            * max(far - max(near, sky_piece.fog.x), 0.0);
-        let air_mean = sky_piece.aerial.y * exp(-sky_piece.aerial.z * height)
-            * max(far - max(near, sky_piece.aerial.x), 0.0);
-        if !(fog_mean + air_mean > 0.0) {
+        let air_mean = sky_piece.aerial.y * exp(-sky_piece.aerial.z * height) * (far - near);
+        if !(air_mean > 0.0) {
             continue;
         }
-        let drifted = haze_density(point);
-        let fog_step = min(fog_mean * drifted, max(fog_most - fogged, 0.0));
-        let air_step = air_mean * drifted;
-        fogged += fog_step;
-        let step_depth = fog_step + air_step;
-        if step_depth > 0.0 {
-            let covered = haze_covered(step_depth);
-            let scattered = through * covered / step_depth;
+        let air_step = air_mean * haze_density(point);
+        if air_step > 0.0 {
+            let covered = haze_covered(air_step);
+            let scattered = through * covered;
             var visible = cloud_passing(point);
             if visible > 0.0 {
                 visible *= air_shadow(point);
             }
-            sunlit += scattered * step_depth * visible;
-            let sky_seen = scattered * haze_seen(point);
-            fog_sky += sky_seen * fog_step;
-            air_sky += sky_seen * air_step;
+            sunlit += scattered * visible;
+            air_sky += scattered * haze_seen(point);
             through *= 1.0 - covered;
         }
-        let mean_fog_step = min(fog_mean, max(fog_most - mean_fogged, 0.0));
-        mean_fogged += mean_fog_step;
-        let mean_depth = mean_fog_step + air_mean;
-        if mean_depth > 0.0 {
-            let covered = haze_covered(mean_depth);
-            let scattered = mean_through * covered / mean_depth;
-            mean_fog_sky += scattered * mean_fog_step;
-            mean_air_sky += scattered * air_mean;
-            mean_through *= 1.0 - covered;
-        }
+        let mean_covered = haze_covered(air_mean);
+        mean_air_sky += mean_through * mean_covered;
+        mean_through *= 1.0 - mean_covered;
     }
     let forward = sky_piece.haze_march.y;
     let cosine = dot(direction, sun_direction());
     let denominator = 1.0 + forward * forward - 2.0 * forward * cosine;
     let phase = (1.0 - forward * forward) / (4.0 * PI * denominator * sqrt(denominator));
     let sun = sun_color() * (PI * phase * sunlit);
-    let lights = air_light(direction);
-    let sky_light = lights.fog * (fog_sky - mean_fog_sky) + lights.air * (air_sky - mean_air_sky);
+    let sky_light = air_light(direction).air * (air_sky - mean_air_sky);
     return vec4<f32>(sun + sky_light, inverse);
 }

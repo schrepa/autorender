@@ -1,6 +1,8 @@
-import package::engine::math::{TAU, pcg, unit};
+import package::engine::math::{pcg, unit};
+import package::engine::particles::{Particle, ParticleIn, standard};
 import package::engine::view::camera;
 import package::face::lighting::sun_visibility;
+import package::face::particle_formula::custom_particle;
 import package::face::sky::{ambient, atmospheric, atmospheric_cover, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
@@ -20,12 +22,6 @@ struct ParticleOutput {
     @location(4) @interpolate(flat) center: vec4<f32>,
     @location(5) @interpolate(flat) key: f32,
     @location(6) @interpolate(flat) sunlit: f32,
-}
-
-fn basis(axis: vec3<f32>) -> mat2x3<f32> {
-    let helper = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(axis.x) > 0.9);
-    let u = normalize(cross(axis, helper));
-    return mat2x3<f32>(u, cross(axis, u));
 }
 
 fn hidden() -> ParticleOutput {
@@ -54,36 +50,44 @@ fn vs_particle(@builtin(vertex_index) vertex: u32,
     let emitter = emitters[owner_of(instance)];
     let lane = instance - emitter.first;
     let time = camera.position.w;
-    let births = floor(time * emitter.rate);
-    if births < f32(lane) {
-        return hidden();
+    var k = lane;
+    var age = time - emitter.start;
+    if emitter.rate > 0.0 {
+        let births = floor(time * emitter.rate);
+        if births < f32(lane) {
+            return hidden();
+        }
+        let latest = u32(births);
+        k = latest - (latest - lane) % emitter.count;
+        let born = f32(k) / emitter.rate;
+        if born > emitter.stop && born < emitter.start {
+            return hidden();
+        }
+        age = time - born;
     }
-    let latest = u32(births);
-    let k = latest - (latest - lane) % emitter.count;
-    let age = time - f32(k) / emitter.rate;
-    if age < 0.0 || age > emitter.lifetime {
-        return hidden();
-    }
-    let life = age / emitter.lifetime;
     let seed = pcg(emitter.seed ^ pcg(k));
-    let r0 = unit(seed);
-    let r1 = unit(pcg(seed + 1u));
-    let r2 = unit(pcg(seed + 2u));
-    let r3 = unit(pcg(seed + 3u));
-    let r4 = unit(pcg(seed + 4u));
-    let cos_theta = mix(1.0, emitter.spread, r0);
-    let sin_theta = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
-    let phi = r1 * TAU;
-    let across = basis(emitter.direction);
-    let direction = emitter.direction * cos_theta
-        + (across[0] * cos(phi) + across[1] * sin(phi)) * sin_theta;
-    let ball = normalize(vec3<f32>(r2, r3, r4) * 2.0 - 1.0 + vec3<f32>(1.0e-4))
-        * (emitter.radius * pow(r4, 1.0 / 3.0));
-    let launch = direction * (emitter.speed * (0.75 + 0.5 * r2));
-    let position = emitter.origin + ball - emitter.velocity * age + launch * age
-        + emitter.acceleration * (0.5 * age * age);
-    let velocity = launch + emitter.acceleration * age;
-    let size = mix(emitter.size.x, emitter.size.y, life) * (0.8 + 0.4 * r3);
+    let own = emitter.lifetime * (1.0 - unit(pcg(seed + 6u)) * emitter.lifetime_spread);
+    if age < 0.0 || age > own {
+        return hidden();
+    }
+    let life = age / own;
+    let input = ParticleIn(seed, age, life, own, emitter.origin, emitter.velocity,
+        emitter.direction, emitter.speed, emitter.speed_spread, emitter.acceleration,
+        emitter.spread, emitter.ball != 0u, emitter.extent, emitter.rotation, emitter.size,
+        emitter.size_spread, emitter.start_color, emitter.end_color, emitter.fade_in,
+        emitter.brightness, emitter.params);
+    var particle: Particle;
+    if emitter.formula == 0u {
+        particle = standard(input);
+    } else {
+        particle = custom_particle(emitter.formula, input);
+    }
+    if particle.hidden {
+        return hidden();
+    }
+    let position = particle.position;
+    let velocity = particle.velocity;
+    let size = particle.size;
     let corners = array<vec2<f32>, 4>(
         vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, 1.0),
     );
@@ -103,8 +107,7 @@ fn vs_particle(@builtin(vertex_index) vertex: u32,
     let world = position + along_x * corner.x + along_y * corner.y;
     var output: ParticleOutput;
     output.clip_position = camera.view_projection * vec4<f32>(world, 1.0);
-    let color = mix(emitter.start_color, emitter.end_color, life);
-    output.color = vec4<f32>(color.rgb * emitter.emission, color.a);
+    output.color = particle.color;
     output.corner = corner;
     output.world = world;
     output.softness = max(size, 0.05);

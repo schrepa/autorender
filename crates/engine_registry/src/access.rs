@@ -65,6 +65,12 @@ impl AccessRule {
         self.places.insert(type_id, catalogued);
     }
 
+    pub(crate) fn package(&self, brick: BrickId) -> Option<&'static str> {
+        self.packages
+            .get(brick.index())
+            .map(|&(package, _)| package)
+    }
+
     pub fn catalogued(&self, type_id: TypeId) -> bool {
         self.places.contains_key(&type_id)
     }

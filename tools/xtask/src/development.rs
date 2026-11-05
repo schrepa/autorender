@@ -44,13 +44,9 @@ pub fn verbs() -> Result<Value, String> {
 }
 
 fn agent_help(root: &Path, arguments: &[String]) -> Result<(), String> {
-    if let Some(argument) = arguments.first() {
-        return Err(format!(
-            "agent help takes no arguments; received {argument:?}"
-        ));
-    }
     let output = Command::new("node")
         .args(["web/scripts/agent.mjs", "help"])
+        .args(arguments)
         .current_dir(root)
         .output()
         .map_err(|error| format!("cannot start the agent client: {error}"))?;
@@ -59,8 +55,21 @@ fn agent_help(root: &Path, arguments: &[String]) -> Result<(), String> {
         .rev()
         .find_map(|line| serde_json::from_str(line).ok())
         .unwrap_or_else(|| json!({ "version": PROTOCOL_VERSION, "ok": true }));
-    help["verbs"] = verbs()?;
+    match arguments {
+        [asked] if asked == "--schema" => help["verbs"] = verbs()?,
+        [asked] if help["verb"] == asked.as_str() => {
+            let rows = verbs()?;
+            let row = rows
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["verb"] == asked.as_str()));
+            help["request"] = row.map_or(Value::Null, |row| row["request"].clone());
+        }
+        _ => {}
+    }
     println!("{help}");
+    if help["ok"] == false {
+        return Err("agent help refused its request; see its JSON result".into());
+    }
     Ok(())
 }
 

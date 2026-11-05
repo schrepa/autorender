@@ -10,8 +10,9 @@ fn overlaps(rectangle: vec4<f32>, low: vec3<f32>, high: vec3<f32>, depth: f32) -
 }
 
 fn caster_box(center: vec3<f32>, half: vec3<f32>) -> array<vec3<f32>, 2> {
-    let light_center = vec3<f32>(dot(caster_cull.light[0].xyz, center),
-        dot(caster_cull.light[1].xyz, center), dot(caster_cull.light[2].xyz, center));
+    let light_center = vec3<f32>(dot(caster_cull.light[0].xyz, center) + caster_cull.light[0].w,
+        dot(caster_cull.light[1].xyz, center) + caster_cull.light[1].w,
+        dot(caster_cull.light[2].xyz, center) + caster_cull.light[2].w);
     let light_half = vec3<f32>(dot(abs(caster_cull.light[0].xyz), half),
         dot(abs(caster_cull.light[1].xyz), half), dot(abs(caster_cull.light[2].xyz), half));
     return array<vec3<f32>, 2>(light_center - light_half, light_center + light_half);

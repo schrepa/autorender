@@ -1,7 +1,7 @@
 use bevy_ecs::component::ComponentId;
 use bevy_ecs::query::FilteredAccessSet;
 use bevy_ecs::resource::Resource;
-use bevy_ecs::schedule::graph::{DiGraph, Direction};
+use bevy_ecs::schedule::graph::{Dag, DiGraph, DiGraphToposortError, Direction};
 use bevy_ecs::schedule::passes::AutoInsertApplyDeferredPass;
 use bevy_ecs::schedule::{
     FlattenedDependencies, InternedScheduleLabel, InternedSystemSet, LogLevel, NodeId, Schedule,
@@ -13,12 +13,20 @@ use bevy_ecs::world::World;
 use bevy_platform::hash::FixedHasher;
 use engine_place::{Error, ErrorCode};
 use indexmap::IndexSet;
+use serde_json::{Map, Value, json};
 
 use crate::BrickId;
 use crate::access::AccessRule;
 
+type Found = (SystemKey, BrickId, FilteredAccessSet);
+
+type Forced = (SystemKey, SystemKey, ComponentId);
+
 #[derive(Resource, Default)]
 pub(crate) struct PlaceProblems(pub(crate) Vec<Error>);
+
+#[derive(Resource, Default)]
+struct PlaceCycles(Vec<(InternedScheduleLabel, Value)>);
 
 #[derive(Clone, Debug)]
 pub(crate) struct PlaceRules {
@@ -51,7 +59,7 @@ impl ScheduleBuildPass for PlaceRules {
         mut flat: FlattenedDependencies<'_>,
     ) -> Result<(), ScheduleBuildError> {
         let mut problems: Vec<Error> = Vec::new();
-        let mut found: Vec<(SystemKey, BrickId, FilteredAccessSet)> = Vec::new();
+        let mut found: Vec<Found> = Vec::new();
         for &(set, brick) in &*self.bricks {
             let Some(key) = graph.system_sets.get_key(set) else {
                 continue;
@@ -89,33 +97,9 @@ impl ScheduleBuildPass for PlaceRules {
             let path = format!("$.schedules.{:?}.{}", self.schedule, &*name);
             problems.push(Error::new(ErrorCode::UnownedSystem, path).got(&*name));
         }
-        for &(slot, filler) in &*self.slots {
-            let Some(filler) = filler else {
-                continue;
-            };
-            let writers = found.iter().filter(|(_, brick, access)| {
-                *brick == filler && access.combined_access().has_write(slot)
-            });
-            for (writer, _, _) in writers {
-                let readers = found.iter().filter(|(_, brick, access)| {
-                    *brick != filler && access.combined_access().has_read(slot)
-                });
-                for (reader, _, _) in readers {
-                    flat.add_edge(*writer, *reader);
-                }
-            }
-        }
-        for &first in &*self.firsts {
-            let writes = |access: &FilteredAccessSet| access.combined_access().has_write(first);
-            let reads = |access: &FilteredAccessSet| access.combined_access().has_read(first);
-            for (writer, writing, _) in found.iter().filter(|(_, _, access)| writes(access)) {
-                let readers = found.iter().filter(|(_, reading, access)| {
-                    reading != writing && !writes(access) && reads(access)
-                });
-                for (reader, _, _) in readers {
-                    flat.add_edge(*writer, *reader);
-                }
-            }
+        let forced = self.forced(&found);
+        for &(writer, reader, _) in &forced {
+            flat.add_edge(writer, reader);
         }
         for &(first, then) in &*self.orders {
             for (early, _, early_access) in found.iter().filter(|(_, brick, _)| *brick == first) {
@@ -129,12 +113,148 @@ impl ScheduleBuildPass for PlaceRules {
                 }
             }
         }
+        if let Some(DiGraphToposortError::Cycle(cycles)) = flat.toposort().err() {
+            let facts = self.cycle_facts(&cycles, flat.graph(), &found, &forced, graph, world);
+            world
+                .get_resource_or_init::<PlaceCycles>()
+                .0
+                .push((self.schedule, facts));
+        }
         world
             .get_resource_or_init::<PlaceProblems>()
             .0
             .append(&mut problems);
         Ok(())
     }
+}
+
+impl PlaceRules {
+    fn forced(&self, found: &[Found]) -> Vec<Forced> {
+        let mut forced = Vec::new();
+        for &(slot, filler) in &*self.slots {
+            let Some(filler) = filler else {
+                continue;
+            };
+            let writers = found.iter().filter(|(_, brick, access)| {
+                *brick == filler && access.combined_access().has_write(slot)
+            });
+            for (writer, _, _) in writers {
+                let readers = found.iter().filter(|(_, brick, access)| {
+                    *brick != filler && access.combined_access().has_read(slot)
+                });
+                for (reader, _, _) in readers {
+                    forced.push((*writer, *reader, slot));
+                }
+            }
+        }
+        for &first in &*self.firsts {
+            let writes = |access: &FilteredAccessSet| access.combined_access().has_write(first);
+            let reads = |access: &FilteredAccessSet| access.combined_access().has_read(first);
+            for (writer, writing, _) in found.iter().filter(|(_, _, access)| writes(access)) {
+                let readers = found.iter().filter(|(_, reading, access)| {
+                    reading != writing && !writes(access) && reads(access)
+                });
+                for (reader, _, _) in readers {
+                    forced.push((*writer, *reader, first));
+                }
+            }
+        }
+        forced
+    }
+
+    fn cycle_facts(
+        &self,
+        cycles: &[Vec<SystemKey>],
+        flat: &DiGraph<SystemKey>,
+        found: &[Found],
+        forced: &[Forced],
+        graph: &ScheduleGraph,
+        world: &World,
+    ) -> Value {
+        let name = |system: SystemKey| {
+            graph
+                .systems
+                .get(system)
+                .map(|node| node.name().to_string())
+        };
+        let mut steps: Vec<Value> = Vec::new();
+        for cycle in cycles {
+            for (&first, &then) in cycle.iter().zip(cycle.iter().cycle().skip(1)) {
+                let place = forced
+                    .iter()
+                    .find(|&&(writer, reader, _)| (writer, reader) == (first, then))
+                    .and_then(|&(_, _, place)| world.components().get_info(place))
+                    .map(|info| info.name().to_string());
+                let step = match place {
+                    Some(place) => json!({
+                        "first": name(first),
+                        "then": name(then),
+                        "writer_before_reader": place,
+                    }),
+                    None => json!({
+                        "first": name(first),
+                        "then": name(then),
+                        "listed_in": owner(found, first).and_then(|brick| self.rule.package(brick)),
+                    }),
+                };
+                if !steps.contains(&step) {
+                    steps.push(step);
+                }
+            }
+        }
+        let system_order = match listing(flat, found, forced) {
+            Some((order, moved)) => {
+                let mut listed = Map::new();
+                for brick in moved {
+                    let systems: Vec<Option<String>> = order
+                        .iter()
+                        .filter(|system| owner(found, **system) == Some(brick))
+                        .map(|system| name(*system))
+                        .collect();
+                    let package = self.rule.package(brick).unwrap_or_default();
+                    listed.insert(package.to_owned(), json!(systems));
+                }
+                Value::Object(listed)
+            }
+            None => json!("no_order_fixes_this"),
+        };
+        json!({ "steps": steps, "brick_order": "no_effect", "system_order": system_order })
+    }
+}
+
+fn owner(found: &[Found], system: SystemKey) -> Option<BrickId> {
+    found
+        .iter()
+        .find(|(known, _, _)| *known == system)
+        .map(|(_, brick, _)| *brick)
+}
+
+fn listing(
+    flat: &DiGraph<SystemKey>,
+    found: &[Found],
+    forced: &[Forced],
+) -> Option<(Vec<SystemKey>, Vec<BrickId>)> {
+    let mut kept: Dag<SystemKey> = Dag::new();
+    for (system, _, _) in found {
+        kept.add_node(*system);
+    }
+    for &(writer, reader, _) in forced {
+        kept.add_edge(writer, reader);
+    }
+    kept.toposort().ok()?;
+    let mut moved: Vec<BrickId> = Vec::new();
+    for (before, after) in flat.all_edges() {
+        let Some(brick) = owner(found, before).filter(|&brick| owner(found, after) == Some(brick))
+        else {
+            continue;
+        };
+        if !reaches(kept.graph(), after, before) {
+            kept.add_edge(before, after);
+        } else if !moved.contains(&brick) {
+            moved.push(brick);
+        }
+    }
+    Some((kept.toposort().ok()?.to_vec(), moved))
 }
 
 fn reaches(graph: &DiGraph<SystemKey>, from: SystemKey, to: SystemKey) -> bool {
@@ -201,6 +321,7 @@ pub(crate) fn build(world: &mut World, labels: &[InternedScheduleLabel]) -> Vec<
         .map(|place| place.0)
         .unwrap_or_default();
     problems.append(&mut refused);
+    world.remove_resource::<PlaceCycles>();
     problems
 }
 
@@ -220,5 +341,17 @@ fn refusal(
         _ => ErrorCode::InvalidValue,
     };
     let text = error.to_string(graph, world);
-    Error::new(code, format!("$.schedules.{label:?}")).got(text.lines().collect::<Vec<_>>())
+    let lines = text.lines().collect::<Vec<_>>();
+    let refused = Error::new(code, format!("$.schedules.{label:?}"));
+    let facts = world
+        .get_resource::<PlaceCycles>()
+        .and_then(|cycles| cycles.0.iter().find(|(schedule, _)| *schedule == label));
+    match facts {
+        Some((_, facts)) => {
+            let mut got = facts.clone();
+            got["cycles"] = json!(lines);
+            refused.got(got)
+        }
+        None => refused.got(lines),
+    }
 }

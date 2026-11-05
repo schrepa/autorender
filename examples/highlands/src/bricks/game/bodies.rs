@@ -5,8 +5,8 @@ use engine_core::{
     AssetLibrary, Camera, Error, Material, Mesh, Mesh3d, MeshHandle, Spawner, Transform, math,
 };
 use engine_heightfield::RIVER_STEP;
-use engine_places::ground::TerrainTiles;
-use engine_places::physics::{Collider, RigidBody};
+use engine_places::ground::{Ground, TerrainTiles};
+use engine_places::physics::{BodyMotion, Collider, Collision, RigidBody};
 use engine_places::streaming::StreamingFocus;
 use engine_places::water::{Hydrology, WaterBody, WaterSample};
 use glam::{Quat, Vec2, Vec3};
@@ -104,7 +104,28 @@ fn site(hydrology: &Hydrology, tiles: &TerrainTiles, eye: Vec3) -> Option<Site> 
 fn water_in(waters: &Query<&WaterBody>, point: Vec3) -> Option<WaterSample> {
     let mut held: Vec<&WaterBody> = waters.iter().collect();
     held.sort_by_key(|body| Reverse(body.precedence));
-    held.iter().find_map(|body| body.shape.water(point))
+    held.iter()
+        .find_map(|body| body.shape.water(point).ready().flatten())
+}
+
+pub(crate) fn wait_for_ground(
+    (ground, collision): (Res<Ground>, Res<Collision>),
+    mut waiting: Local<Vec<Entity>>,
+    mut bodies: Query<(Entity, &Transform, &mut RigidBody)>,
+) {
+    waiting.retain(|&entity| bodies.contains(entity));
+    for (entity, place, mut body) in &mut bodies {
+        let at = Vec2::new(place.translation.x, place.translation.z);
+        let unloaded = !collision.0.holds(at) && ground.point(at).solid().is_some();
+        let paused = waiting.contains(&entity);
+        if unloaded && !paused && body.motion == BodyMotion::Dynamic {
+            body.motion = BodyMotion::Kinematic;
+            waiting.push(entity);
+        } else if paused && !unloaded {
+            body.motion = BodyMotion::Dynamic;
+            waiting.retain(|&held| held != entity);
+        }
+    }
 }
 
 pub(crate) fn place(
@@ -163,7 +184,7 @@ fn build(
     let water_at = |point: usize| water + site.bed[point] - site.bed[at];
     let bed = site.bed[at];
     let span = 2.0 * site.half[at] + 4.0;
-    let yaw = Quat::from_rotation_y((-side.y).atan2(side.x));
+    let yaw = Quat::from_rotation_y(math::atan2(-side.y, side.x));
     for log in 0..DAM_LOGS {
         let height = bed + DAM_LOG * (log as f32 + 0.5);
         let top = water + CREST;

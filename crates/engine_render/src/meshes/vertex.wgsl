@@ -1,4 +1,4 @@
-import package::engine::math::maximum_abs;
+import package::engine::math::{FIRST_PERSON_DEPTH, maximum_abs};
 import package::engine::view::{camera, stable_normalize};
 import package::engine::mesh::declarations::{AffinePose, VertexOutput};
 
@@ -48,4 +48,31 @@ fn transform_vertex(position: vec3<f32>, encoded_normal: vec2<f32>, color: vec2<
     output.world_v = vec4<f32>(world_position.xyz, uv.y);
     output.material = vec4<u32>(color, surface, 0u);
     return output;
+}
+
+fn first_person(flags: u32) -> bool {
+    return bitcast<f32>(flags) < 0.0;
+}
+
+fn first_person_scale(rise: vec3<f32>, flags: u32) -> f32 {
+    let focal = -bitcast<f32>(flags) - 1.0;
+    if focal <= 0.0 {
+        return 1.0;
+    }
+    return focal / length(rise);
+}
+
+fn first_person_clip(clip: vec4<f32>, flags: u32) -> vec4<f32> {
+    let lens = camera.view_projection;
+    let rise = vec3<f32>(lens[0].y, lens[1].y, lens[2].y)
+        - camera.jitter.y * vec3<f32>(lens[0].w, lens[1].w, lens[2].w);
+    let center = camera.jitter.xy * clip.w;
+    let across = (clip.xy - center) * first_person_scale(rise, flags) + center;
+    return vec4<f32>(across, mix(clip.w, clip.z, FIRST_PERSON_DEPTH), clip.w);
+}
+
+fn first_person_previous(shown: vec4<f32>, flags: u32) -> vec3<f32> {
+    let lens = camera.previous_view_projection;
+    let rise = vec3<f32>(lens[0].y, lens[1].y, lens[2].y);
+    return vec3<f32>(shown.xy * first_person_scale(rise, flags), shown.w);
 }

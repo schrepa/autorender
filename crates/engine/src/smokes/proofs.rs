@@ -67,11 +67,15 @@ pub(super) fn outdoor(bricks: BrickList) -> BrickList {
 }
 
 pub(super) fn room_listed(registry: &Registry) -> bool {
-    ROOM_KEPT.iter().all(|package| registry.id(package).is_some())
+    ROOM_KEPT
+        .iter()
+        .all(|package| registry.id(package).is_some())
 }
 
 pub(super) fn outdoor_listed(registry: &Registry) -> bool {
-    OUTDOOR_KEPT.iter().all(|package| registry.id(package).is_some())
+    OUTDOOR_KEPT
+        .iter()
+        .all(|package| registry.id(package).is_some())
 }
 
 fn opened(session: &mut dyn SmokeSession, document: &Value) -> Checked<Value> {
@@ -113,7 +117,11 @@ fn lit_room(session: &mut dyn SmokeSession) -> Checked<()> {
         "room_lists"
     );
     let nobody = linked["nobody"].as_array().cloned().unwrap_or_default();
-    smoke_eq!(nobody.contains(&json!("sky")), true, "room_sky_from_contract");
+    smoke_eq!(
+        nobody.contains(&json!("sky")),
+        true,
+        "room_sky_from_contract"
+    );
     let shadows = settled(session, "shadow_stats", "draws")?;
     smoke_eq!(
         json!({"active": shadows["active"], "drawn": number(&shadows["draws"]) > 0.0}),
@@ -147,7 +155,11 @@ fn outdoor_without_trees(session: &mut dyn SmokeSession) -> Checked<()> {
     });
     smoke_eq!(named, false, "outdoor_lists_leave_scatter_out");
     let faces = linked["faces"].as_object().cloned().unwrap_or_default();
-    smoke_eq!(faces.contains_key("occupancy"), false, "outdoor_no_occupancy_face");
+    smoke_eq!(
+        faces.contains_key("occupancy"),
+        false,
+        "outdoor_no_occupancy_face"
+    );
     Ok(())
 }
 
@@ -155,7 +167,7 @@ fn room_scene() -> Value {
     json!({
         "id": "lit-room", "revision": 1,
         "camera": {"position": [0, 3, 9], "target": [0, 1, 0], "fov_degrees": 60, "near": 0.1, "far": 200},
-        "environment": {"sun": {"preset": "day"}},
+        "environment": {"time_of_day": {"enabled": false}, "sun": {"sun_direction": [0.55, 0.75, 0.35]}},
         "materials": [
             {"id": "wall", "color": [0.7, 0.7, 0.68, 1]},
             {"id": "glow", "color": [1, 1, 1, 1]},

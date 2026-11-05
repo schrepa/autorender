@@ -457,6 +457,15 @@ impl HostOptions {
         let excludes = |option: &str| {
             Error::new(ErrorCode::InvalidArguments, option).expected(Expected::Absent)
         };
+        if self.dev {
+            let unused = [
+                ("--capture", self.capture.is_some()),
+                ("--offscreen", self.offscreen.is_some()),
+            ];
+            if let Some((option, _)) = unused.iter().find(|(_, given)| *given) {
+                return Err(excludes(option));
+            }
+        }
         if (self.capture.is_some() || self.gpu_capture.is_some()) && self.offscreen.is_none() {
             return Err(needs("--offscreen"));
         }

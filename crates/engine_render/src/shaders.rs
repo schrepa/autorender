@@ -27,6 +27,7 @@ shader_modules! {
     "engine::noise" = "noise.wgsl";
     "engine::view" = "frame/view.wgsl";
     "engine::shading" = "shading.wgsl";
+    "engine::particles" = "particles.wgsl";
     "engine::mesh::declarations" = "meshes/declarations.wgsl";
     "engine::mesh::vertex" = "meshes/vertex.wgsl";
     "engine::impostor_bake" = "impostors/bake.wgsl";

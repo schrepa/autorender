@@ -15,7 +15,7 @@ use bevy_ecs::world::World;
 use engine_registry::{
     BrickRecord, ExplainAsk, ExplainEntry, ExplainRecord, GateFn, Gates, JobList, MembersOf,
     NamedField, OperationEntry, OperationScene, PlainSystems, Registry, Removal, SceneEntity,
-    SettingsEntry, Settle, SpawnedBy, StatsEntry,
+    SectionRule, SettingsEntry, Settle, SpawnedBy, StatsEntry,
 };
 use serde_json::Value;
 
@@ -125,6 +125,11 @@ impl Bricks<'_> {
     #[track_caller]
     pub fn settings<S: Section + Resource<Mutability = Immutable>>(&mut self) -> &mut Self {
         self.record.settings(settings_entry::<S>());
+        self
+    }
+
+    pub fn section_rule(&mut self, rule: SectionRule) -> &mut Self {
+        self.record.section_rule(rule);
         self
     }
 
@@ -357,7 +362,11 @@ fn answer<O: Operation>(world: &mut World, request: O::Request) -> Result<Value,
             }
         }
         None if answer.is_null() => {}
-        None => return Err(Error::new(ErrorCode::InvalidValue, path).got(answer)),
+        None => {
+            return Err(Error::new(ErrorCode::InvalidValue, path)
+                .expected(crate::Expected::Object)
+                .got(answer));
+        }
     }
     Ok(answer)
 }
@@ -603,6 +612,13 @@ impl<L: List> Joined<'_, L> {
 
     pub fn every(&self) -> impl Iterator<Item = (std::any::TypeId, u32, &L::Member)> + '_ {
         self.members.iter().flat_map(|members| members.every())
+    }
+}
+
+pub fn members_in<L: List>(world: &World) -> &[L::Member] {
+    match world.get_resource::<MembersOf<L>>() {
+        Some(members) => members.all(),
+        None => &[],
     }
 }
 
