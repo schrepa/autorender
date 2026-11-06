@@ -72,6 +72,8 @@ pub struct PresentationStateView {
     pub history_capacity: usize,
     pub history_bytes: usize,
     pub presentation_scratch_bytes: usize,
+    pub blended_nodes: usize,
+    pub largest_blend_distance: f32,
 }
 
 #[derive(Serialize)]

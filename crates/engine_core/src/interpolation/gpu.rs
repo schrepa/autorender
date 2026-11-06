@@ -93,6 +93,7 @@ pub(crate) struct GpuInputs {
     queue_generation: u32,
     buckets: Vec<Vec<u32>>,
     visited: usize,
+    blend: (usize, f32),
 }
 
 impl Default for GpuInputs {
@@ -129,6 +130,7 @@ impl Default for GpuInputs {
             queue_generation: 0,
             buckets: Vec::new(),
             visited: 0,
+            blend: (0, 0.0),
         }
     }
 }
@@ -204,6 +206,10 @@ impl GpuInputs {
 
     pub(super) fn begin_tick(&mut self, hierarchy_revision: Option<u64>) {
         self.tick_begin_revision = hierarchy_revision;
+    }
+
+    pub(super) fn blend(&self) -> (usize, f32) {
+        self.blend
     }
 
     pub(super) fn regather(&mut self) {
@@ -400,6 +406,7 @@ struct Walk<'a> {
     changed: [usize; 4],
     lists: &'a mut [Vec<u32>; 4],
     list_limit: usize,
+    blend: &'a mut (usize, f32),
 }
 
 impl Walk<'_> {
@@ -468,10 +475,8 @@ impl Walk<'_> {
         if active {
             let [published, mut previous_valid] = self.epochs[index];
             let published_last = published != NEVER && published == pass.this_epoch.wrapping_sub(1);
-            if pass.shift && published_last {
-                previous_valid = pass.this_epoch;
-            }
-            if blend && previous_valid != pass.this_epoch {
+            let shifted = pass.shift && published_last && previous_valid != pass.this_epoch;
+            if blend && (shifted || previous_valid != pass.this_epoch) {
                 let record = record.expect("blend_history_present");
                 self.previous[index] = *previous_pose(
                     &self.record_previous[record],
@@ -479,9 +484,22 @@ impl Walk<'_> {
                     pass.epoch,
                     current,
                 );
-                self.previous_stamps[index] = pass.sequence;
+                if !shifted {
+                    self.previous_stamps[index] = pass.sequence;
+                    self.stamp(1, index);
+                }
+            }
+            if shifted || blend {
                 previous_valid = pass.this_epoch;
-                self.stamp(1, index);
+            }
+            if blend {
+                let previous = &self.previous[index];
+                let distance = (0..3)
+                    .map(|axis| (current[axis] - previous[axis]).powi(2))
+                    .sum::<f32>()
+                    .sqrt();
+                self.blend.0 += 1;
+                self.blend.1 = crate::math::max(self.blend.1, distance);
             }
             if published == NEVER || moved {
                 self.current_stamps[index] = pass.sequence;
@@ -538,8 +556,10 @@ fn walk(
         buckets,
         visited,
         stamped_lists,
+        blend,
         ..
     } = gpu;
+    *blend = (0, 0.0);
     parent_scratch.clear();
     next_active.clear();
     for list in stamped_lists.iter_mut() {
@@ -567,6 +587,7 @@ fn walk(
         changed: [0; 4],
         lists: stamped_lists,
         list_limit: nodes / 4,
+        blend,
     };
     let limit = nodes / SPARSE_SHARE;
     let Some(changes) = sparse else {

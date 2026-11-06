@@ -313,10 +313,12 @@ export interface PresentResult {
 
 export interface PresentationStateView {
   alpha: number;
+  blended_nodes: number;
   frame?: string | null;
   history_bytes: number;
   history_capacity: number;
   history_nodes: number;
+  largest_blend_distance: number;
   presentation_scratch_bytes: number;
   tick?: string | null;
 }

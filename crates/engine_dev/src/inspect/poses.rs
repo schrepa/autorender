@@ -112,5 +112,7 @@ pub(super) fn presentation_view(value: &PresentationState) -> PresentationStateV
         history_capacity: value.history_capacity(),
         history_bytes: value.history_bytes(),
         presentation_scratch_bytes: value.presentation_scratch_bytes(),
+        blended_nodes: value.blended_nodes(),
+        largest_blend_distance: value.largest_blend_distance(),
     }
 }

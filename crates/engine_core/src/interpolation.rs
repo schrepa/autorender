@@ -85,6 +85,8 @@ pub struct PresentationState {
     history_capacity: usize,
     history_bytes: usize,
     presentation_scratch_bytes: usize,
+    blended_nodes: usize,
+    largest_blend_distance: f32,
 }
 
 impl PresentationState {
@@ -108,6 +110,12 @@ impl PresentationState {
     }
     pub fn presentation_scratch_bytes(&self) -> usize {
         self.presentation_scratch_bytes
+    }
+    pub fn blended_nodes(&self) -> usize {
+        self.blended_nodes
+    }
+    pub fn largest_blend_distance(&self) -> f32 {
+        self.largest_blend_distance
     }
 }
 
@@ -680,6 +688,7 @@ pub(crate) fn prepare(world: &mut World, alpha: f32) {
         state.alpha = alpha;
         state.frame = frame;
         state.tick = tick;
+        (state.blended_nodes, state.largest_blend_distance) = interpolation.gpu.blend();
         interpolation.counters(&mut state);
     });
 }
