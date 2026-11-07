@@ -74,7 +74,6 @@ pub(crate) enum Held {
     Cameras,
     Pieces,
     Atlas,
-    Post,
 }
 
 #[derive(Default)]
@@ -146,7 +145,6 @@ impl Holders {
             Held::Cameras => &self.cameras,
             Held::Pieces => &self.pieces,
             Held::Atlas => &self.atlas,
-            Held::Post => &self.post,
         }
     }
 
@@ -734,6 +732,32 @@ fn layer_sets_of(machine: &Machine) -> Vec<(Option<engine_core::AttachPoint>, Ar
     layer_sets
 }
 
+type TextureTables = (
+    Vec<[Option<Allocated>; 2]>,
+    Vec<wgpu::TextureDimension>,
+    Vec<Option<(wgpu::Extent3d, u32)>>,
+);
+
+fn texture_tables(machine: &Machine) -> TextureTables {
+    let declared = &machine.declared.textures;
+    let textures = declared.iter().map(|_| [None, None]).collect();
+    let dimensions = (0..declared.len())
+        .map(|texture| texture_dimension(machine, texture as u32))
+        .collect();
+    let sizes = declared.iter().map(|_| None).collect();
+    (textures, dimensions, sizes)
+}
+
+fn fresh_groups(machine: &Machine) -> (Vec<Groups>, Vec<Vec<Groups>>) {
+    let frame_groups = machine.variants.iter().map(|_| Groups::fresh()).collect();
+    let own_groups = machine
+        .pipelines
+        .iter()
+        .map(|pipeline| pipeline.groups.iter().map(|_| Groups::fresh()).collect())
+        .collect();
+    (frame_groups, own_groups)
+}
+
 impl Run {
     pub(crate) fn new(
         (device, queue, limits): (
@@ -760,25 +784,11 @@ impl Run {
             .map(|desc| sampler_of(&device, desc))
             .collect();
         let count = parts.len();
-        let textures = machine
-            .declared
-            .textures
-            .iter()
-            .map(|_| [None, None])
-            .collect();
-        let dimensions = (0..machine.declared.textures.len())
-            .map(|texture| texture_dimension(&machine, texture as u32))
-            .collect();
-        let sizes = machine.declared.textures.iter().map(|_| None).collect();
+        let (textures, dimensions, sizes) = texture_tables(&machine);
         let buffers = machine.declared.buffers.iter().map(|_| None).collect();
         let runs = Bits::of(machine.graph.passes());
         let ran = Bits::of(machine.graph.passes());
-        let frame_groups = machine.variants.iter().map(|_| Groups::fresh()).collect();
-        let own_groups = machine
-            .pipelines
-            .iter()
-            .map(|pipeline| pipeline.groups.iter().map(|_| Groups::fresh()).collect())
-            .collect();
+        let (frame_groups, own_groups) = fresh_groups(&machine);
         let holders = Holders::of(&machine);
         let view_holders = holders.of_view(&machine);
         let (view_passes, main_passes) = views::view_passes(&machine);
@@ -934,7 +944,6 @@ impl Run {
                     Held::Cameras => "cameras",
                     Held::Pieces => "pieces",
                     Held::Atlas => "impostors",
-                    Held::Post => "post",
                 };
                 self.rebuilt.reasons.push(reason);
             }
@@ -1441,75 +1450,6 @@ impl Run {
 
 pub(crate) type TimedDraw<'t> = Option<(&'t GpuProfiler, &'t mut dyn FnMut() -> String)>;
 
-fn timed_draw(
-    render: &mut wgpu::RenderPass<'static>,
-    timed: TimedDraw<'_>,
-    draw: impl FnOnce(&mut wgpu::RenderPass<'static>),
-) {
-    let Some((timer, label)) = timed else {
-        draw(render);
-        return;
-    };
-    let began = timer.begin_draw(render, label);
-    draw(render);
-    timer.end_draw(render, began);
-}
-
-fn blendable(format: wgpu::TextureFormat) -> bool {
-    format
-        .sample_type(None, None)
-        .is_some_and(|sample| matches!(sample, wgpu::TextureSampleType::Float { filterable: true }))
-}
-
-fn fragment_outputs<'a>(text: &'a str, entry: &str) -> Option<&'a str> {
-    let at = text.find(&format!("fn {entry}("))?;
-    let rest = &text[at..];
-    let (arrow, brace) = (rest.find("->")?, rest.find('{')?);
-    if arrow > brace {
-        return None;
-    }
-    let returns = rest[arrow + 2..brace].trim();
-    if returns.starts_with('@') {
-        return Some(returns);
-    }
-    let name: String = returns
-        .chars()
-        .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
-        .collect();
-    let start = text.find(&format!("struct {name} {{"))?;
-    let body = &text[start..];
-    Some(&body[..body.find('}')?])
-}
-
-fn fragment_locations(text: &str, entry: &str) -> Option<Vec<u32>> {
-    fragment_outputs(text, entry).map(locations)
-}
-
-fn fragment_kinds(text: &str, entry: &str) -> Option<Vec<(u32, wgpu::TextureSampleType)>> {
-    let outputs = fragment_outputs(text, entry)?;
-    let kinds = outputs.match_indices("@location(").map(|(at, _)| {
-        let field = &outputs[at..];
-        let field = &field[..field.find(',').unwrap_or(field.len())];
-        if field.contains("u32") {
-            wgpu::TextureSampleType::Uint
-        } else if field.contains("i32") {
-            wgpu::TextureSampleType::Sint
-        } else {
-            wgpu::TextureSampleType::Float { filterable: true }
-        }
-    });
-    Some(locations(outputs).into_iter().zip(kinds).collect())
-}
-
-fn locations(text: &str) -> Vec<u32> {
-    text.match_indices("@location(")
-        .filter_map(|(at, found)| {
-            let after = &text[at + found.len()..];
-            after[..after.find(')')?].trim().parse().ok()
-        })
-        .collect()
-}
-
 pub(crate) enum Resolved {
     Buffer(wgpu::Buffer),
     Dynamic(wgpu::Buffer, u64),
@@ -1531,116 +1471,4 @@ pub(crate) enum AttachRaw {
 pub(crate) enum CountRaw {
     Groups([u32; 3]),
     Indirect(u32, u64),
-}
-
-fn color_ops(ops: Ops) -> wgpu::Operations<wgpu::Color> {
-    wgpu::Operations {
-        load: match ops.load {
-            Load::Clear(Clear::Color([r, g, b, a])) => {
-                wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a })
-            }
-            Load::Clear(Clear::Depth(_)) | Load::Load => wgpu::LoadOp::Load,
-        },
-        store: if ops.store {
-            wgpu::StoreOp::Store
-        } else {
-            wgpu::StoreOp::Discard
-        },
-    }
-}
-
-fn depth_ops(ops: Ops) -> wgpu::Operations<f32> {
-    wgpu::Operations {
-        load: match ops.load {
-            Load::Clear(Clear::Depth(depth)) => wgpu::LoadOp::Clear(depth),
-            Load::Clear(Clear::Color(_)) | Load::Load => wgpu::LoadOp::Load,
-        },
-        store: if ops.store {
-            wgpu::StoreOp::Store
-        } else {
-            wgpu::StoreOp::Discard
-        },
-    }
-}
-
-fn placeholder(device: &wgpu::Device, (ty, bytes): (Ty, u64)) -> Placeholder {
-    use crate::linker::Sample;
-    let buffer = |usage| {
-        Placeholder::Buffer(crate::memory::buffer(
-            device,
-            &wgpu::BufferDescriptor {
-                label: Some("engine/placeholder"),
-                size: bytes.max(PLACEHOLDER_BYTES),
-                usage,
-                mapped_at_creation: false,
-            },
-        ))
-    };
-    match ty {
-        Ty::Uniform => buffer(wgpu::BufferUsages::UNIFORM),
-        Ty::Storage { .. } => buffer(wgpu::BufferUsages::STORAGE),
-        Ty::Sampler => {
-            Placeholder::Sampler(device.create_sampler(&wgpu::SamplerDescriptor::default()))
-        }
-        Ty::Comparison => Placeholder::Sampler(device.create_sampler(&wgpu::SamplerDescriptor {
-            compare: Some(wgpu::CompareFunction::LessEqual),
-            ..Default::default()
-        })),
-        Ty::Texture { sample, view } => {
-            let format = match sample {
-                Sample::Float => wgpu::TextureFormat::Rgba8Unorm,
-                Sample::Depth => DEPTH_FORMAT,
-                Sample::Uint => wgpu::TextureFormat::R32Uint,
-                Sample::Sint => wgpu::TextureFormat::R32Sint,
-            };
-            placeholder_texture(device, format, view, wgpu::TextureUsages::TEXTURE_BINDING)
-        }
-        Ty::StorageTexture { format, view, .. } => {
-            placeholder_texture(device, format, view, wgpu::TextureUsages::STORAGE_BINDING)
-        }
-    }
-}
-
-fn placeholder_texture(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-    view: wgpu::TextureViewDimension,
-    usage: wgpu::TextureUsages,
-) -> Placeholder {
-    let layers = match view {
-        wgpu::TextureViewDimension::Cube | wgpu::TextureViewDimension::CubeArray => 6,
-        wgpu::TextureViewDimension::D1
-        | wgpu::TextureViewDimension::D2
-        | wgpu::TextureViewDimension::D2Array
-        | wgpu::TextureViewDimension::D3 => 1,
-    };
-    let dimension = match view {
-        wgpu::TextureViewDimension::D3 => wgpu::TextureDimension::D3,
-        wgpu::TextureViewDimension::D1 => wgpu::TextureDimension::D1,
-        wgpu::TextureViewDimension::D2
-        | wgpu::TextureViewDimension::D2Array
-        | wgpu::TextureViewDimension::Cube
-        | wgpu::TextureViewDimension::CubeArray => wgpu::TextureDimension::D2,
-    };
-    let texture = crate::memory::texture(
-        device,
-        &wgpu::TextureDescriptor {
-            label: Some("engine/placeholder"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: layers,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension,
-            format,
-            usage,
-            view_formats: &[],
-        },
-    );
-    Placeholder::Texture(texture.create_view(&wgpu::TextureViewDescriptor {
-        dimension: Some(view),
-        ..Default::default()
-    }))
 }

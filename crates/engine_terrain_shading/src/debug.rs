@@ -28,7 +28,7 @@ const _: () = {
         let mut other = 0;
         while other < record.len() {
             assert!(
-                ours[at].mask() & record[other].mask() == 0,
+                (ours[at].mask() << ours[at].at) & (record[other].mask() << record[other].at) == 0,
                 "terrain_debug_bits_sit_beside_the_debug_record"
             );
             other += 1;

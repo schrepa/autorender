@@ -18,6 +18,8 @@ pub(super) fn device_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
         max_dynamic_storage_buffers_per_pipeline_layout: required.dynamic_storage_buffers,
         max_uniform_buffer_binding_size: crate::pipeline_layouts::UNIFORM_BINDING_BYTES,
         max_texture_array_layers: adapter.max_texture_array_layers,
+        max_color_attachments: adapter.max_color_attachments,
+        max_color_attachment_bytes_per_sample: adapter.max_color_attachment_bytes_per_sample,
         ..wgpu::Limits::downlevel_defaults()
     }
 }
@@ -129,7 +131,6 @@ impl Renderer {
         self.surface = None;
         self.run = None;
         self.installing = None;
-        self.previous = None;
         self.plans = PlanCache::default();
         self.core.display.configure(&device, period);
         self.core.profiler = GpuProfiler::new(features, f64::from(period));

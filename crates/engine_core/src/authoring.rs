@@ -308,10 +308,9 @@ pub(crate) fn run_component(world: &mut World, request: Value) -> Result<Value, 
             .variants(scene_components(world).map(ComponentKind::key))
     })?;
     let context = world.get_resource::<SceneContext>().cloned();
-    let set = || author(world, &kind, node, &value);
     match &context {
-        Some(context) => context.scope(set),
-        None => set(),
+        Some(context) => context.scope(|| author(world, &kind, node, &value)),
+        None => author(world, &kind, node, &value),
     }?;
     let value = kind.value(world, node).unwrap_or(Value::Null);
     Ok(json!({ "entity": entity, "key": key, "value": value }))

@@ -546,7 +546,7 @@ impl Library<'_> {
         let handle = match self.shared.material(self.assets, &built) {
             Some(handle) => handle,
             None => {
-                let handle = self.assets.insert_material(built)?;
+                let handle = self.assets.insert_material(built.clone())?;
                 self.shared.materials.push((built, handle));
                 handle
             }

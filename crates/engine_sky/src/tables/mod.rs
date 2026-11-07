@@ -67,7 +67,7 @@ impl Failures {
 enum Part {
     Asked(Interest<RecordKey>),
     Arrived,
-    Failed(Interest<RecordKey>),
+    Failed { _held: Interest<RecordKey> },
 }
 
 struct TableState<T> {
@@ -114,7 +114,7 @@ impl<T: Assembly> TableState<T> {
         for part in &mut self.parts {
             let output = match &*part {
                 Part::Asked(interest) => records.get(interest),
-                Part::Arrived | Part::Failed(_) => None,
+                Part::Arrived | Part::Failed { .. } => None,
             };
             let Some(output) = output else {
                 continue;
@@ -128,7 +128,7 @@ impl<T: Assembly> TableState<T> {
             let asked = std::mem::replace(part, Part::Arrived);
             if let (Err(error), Part::Asked(interest)) = (taken, asked) {
                 failures.record(error);
-                *part = Part::Failed(interest);
+                *part = Part::Failed { _held: interest };
             }
         }
         if !self.parts.is_empty()

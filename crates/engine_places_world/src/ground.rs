@@ -137,6 +137,7 @@ pub struct TerrainEntry {
     pub level_errors: Arc<[f32]>,
     pub surface_program: bool,
     pub baked: Option<Arc<engine_heightfield::Layers>>,
+    pub baking: bool,
     pub macro_map: Option<TextureHandle>,
     pub materials: Arc<[SurfaceMaterial]>,
     pub maps: Arc<[Option<SurfaceMaps>]>,

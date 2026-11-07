@@ -1,5 +1,86 @@
 {
   "$defs": {
+    "Allowed": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "range",
+              "type": "string"
+            },
+            "max": {
+              "format": "double",
+              "type": "number"
+            },
+            "min": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "min",
+            "max"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "at_most",
+              "type": "string"
+            },
+            "max": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "max"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "at_least",
+              "type": "string"
+            },
+            "min": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "min"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "variants",
+              "type": "string"
+            },
+            "values": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "values"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "AmbientOcclusionStats": {
       "properties": {
         "active": {
@@ -148,22 +229,32 @@
       ],
       "type": "object"
     },
-    "CameraRefusals": {
+    "BudgetUse": {
       "properties": {
-        "count": {
+        "asked": {
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
-        "latest": {
-          "type": [
-            "string",
-            "null"
-          ]
+        "by": {
+          "type": "string"
+        },
+        "cut": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spent": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
-        "count"
+        "by",
+        "asked",
+        "spent",
+        "cut"
       ],
       "type": "object"
     },
@@ -330,12 +421,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "slide_hits": {
-          "default": 0,
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
         "tick": {
           "default": "0",
           "type": "string"
@@ -468,6 +553,89 @@
       ],
       "type": "object"
     },
+    "Error": {
+      "properties": {
+        "allowed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Allowed"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "expected": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Expected"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "got": true,
+        "nearest": true,
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "path"
+      ],
+      "type": "object"
+    },
+    "ErrorCode": {
+      "type": "string"
+    },
+    "Expected": {
+      "enum": [
+        "number",
+        "integer",
+        "string",
+        "boolean",
+        "object",
+        "array",
+        "id",
+        "path",
+        "file",
+        "entity",
+        "unique",
+        "present",
+        "absent",
+        "finite",
+        "normalized",
+        "sorted",
+        "nonzero",
+        "above",
+        "power_of_two",
+        "multiple",
+        "json",
+        "utf8",
+        "uri",
+        "base64",
+        "image",
+        "paused",
+        "running",
+        "gpu",
+        "live",
+        "non_empty",
+        "readable",
+        "writable",
+        "matching",
+        "supported",
+        "acyclic",
+        "opaque",
+        "triangles",
+        "invertible"
+      ],
+      "type": "string"
+    },
     "ExposureStats": {
       "properties": {
         "active": {
@@ -479,12 +647,23 @@
           "format": "int32",
           "type": "integer"
         },
+        "settling": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "stops": {
           "default": 0,
           "format": "int32",
           "type": "integer"
         },
         "view": {
+          "default": 0,
+          "format": "int32",
+          "type": "integer"
+        },
+        "wanted": {
           "default": 0,
           "format": "int32",
           "type": "integer"
@@ -655,15 +834,6 @@
     },
     "MeshStats": {
       "properties": {
-        "casters": {
-          "default": null,
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
         "culled_instances": {
           "default": 0,
           "format": "uint32",
@@ -723,15 +893,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "moving_casters": {
-          "default": null,
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
         "occlusion_culling": {
           "$ref": "#/$defs/CullingStats",
           "default": {
@@ -740,6 +901,15 @@
           }
         },
         "read_back_age": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "refused_views": {
           "default": null,
           "format": "uint32",
           "minimum": 0,
@@ -762,6 +932,15 @@
           }
         },
         "triangles": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "views": {
           "default": null,
           "format": "uint32",
           "minimum": 0,
@@ -895,6 +1074,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "dropped_asks": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "problems": {
           "default": 0,
           "format": "uint32",
@@ -920,6 +1105,65 @@
           "type": "integer"
         }
       },
+      "type": "object"
+    },
+    "Progress": {
+      "properties": {
+        "done": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "done",
+        "total"
+      ],
+      "type": "object"
+    },
+    "Readiness": {
+      "properties": {
+        "compiling": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/Error"
+              }
+            ],
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "loading": {
+          "$ref": "#/$defs/Progress"
+        },
+        "settling": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "loading",
+        "compiling",
+        "settling",
+        "failed"
+      ],
       "type": "object"
     },
     "ReflectionProbeStats": {
@@ -1239,6 +1483,12 @@
         "active": {
           "default": false,
           "type": "boolean"
+        },
+        "settling": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -1414,6 +1664,14 @@
             "kept": 0
           }
         },
+        "trace_pool": {
+          "$ref": "#/$defs/Cut",
+          "default": {
+            "asked": 0,
+            "cut": 0,
+            "kept": 0
+          }
+        },
         "triangles": {
           "default": 0,
           "format": "uint32",
@@ -1473,10 +1731,6 @@
             "string",
             "null"
           ]
-        },
-        "loading": {
-          "default": false,
-          "type": "boolean"
         },
         "loading_tiles": {
           "default": 0,
@@ -1747,12 +2001,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "looks_left": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "particle_texels": {
           "default": 0,
           "format": "uint32",
@@ -1784,6 +2032,12 @@
           "type": "integer"
         },
         "settling_records": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "squares_left": {
           "default": 0,
           "format": "uint32",
           "minimum": 0,
@@ -1838,8 +2092,11 @@
         }
       ]
     },
-    "camera_refusals": {
-      "$ref": "#/$defs/CameraRefusals"
+    "budget": {
+      "items": {
+        "$ref": "#/$defs/BudgetUse"
+      },
+      "type": "array"
     },
     "cloud_stats": {
       "$ref": "#/$defs/CloudStats"
@@ -1931,9 +2188,6 @@
       ],
       "type": "object"
     },
-    "loading": {
-      "type": "boolean"
-    },
     "local_light_stats": {
       "$ref": "#/$defs/LightStats"
     },
@@ -1959,9 +2213,6 @@
       "minimum": 0,
       "type": "integer"
     },
-    "pipelines_compiling": {
-      "type": "boolean"
-    },
     "pipelines_created": {
       "format": "uint32",
       "minimum": 0,
@@ -1985,11 +2236,19 @@
         "null"
       ]
     },
+    "readiness": {
+      "$ref": "#/$defs/Readiness"
+    },
     "reflection_probes_stats": {
       "$ref": "#/$defs/ReflectionProbeStats"
     },
     "reflections_stats": {
       "$ref": "#/$defs/ReflectionsStats"
+    },
+    "refused_views": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
     },
     "render_ms": {
       "format": "double",
@@ -2094,14 +2353,14 @@
     "fixed_steps",
     "dropped_seconds",
     "cut_seconds",
-    "pipelines_compiling",
     "pipelines_listed",
     "pipelines_unlisted",
-    "loading",
+    "readiness",
+    "budget",
     "resolution",
     "dynamic_resolution",
     "jobs",
-    "camera_refusals",
+    "refused_views",
     "disabled_features",
     "draw_calls",
     "upload_bytes",

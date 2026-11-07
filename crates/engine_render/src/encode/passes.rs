@@ -692,3 +692,33 @@ fn pass_layout(
         main,
     }
 }
+
+fn color_ops(ops: Ops) -> wgpu::Operations<wgpu::Color> {
+    wgpu::Operations {
+        load: match ops.load {
+            Load::Clear(Clear::Color([r, g, b, a])) => {
+                wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a })
+            }
+            Load::Clear(Clear::Depth(_)) | Load::Load => wgpu::LoadOp::Load,
+        },
+        store: if ops.store {
+            wgpu::StoreOp::Store
+        } else {
+            wgpu::StoreOp::Discard
+        },
+    }
+}
+
+fn depth_ops(ops: Ops) -> wgpu::Operations<f32> {
+    wgpu::Operations {
+        load: match ops.load {
+            Load::Clear(Clear::Depth(depth)) => wgpu::LoadOp::Clear(depth),
+            Load::Clear(Clear::Color(_)) | Load::Load => wgpu::LoadOp::Load,
+        },
+        store: if ops.store {
+            wgpu::StoreOp::Store
+        } else {
+            wgpu::StoreOp::Discard
+        },
+    }
+}

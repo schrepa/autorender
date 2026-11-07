@@ -56,6 +56,18 @@ fn stage_constants(
         .collect()
 }
 
+fn named_constants(constants: &[Vec<(String, f64)>]) -> Vec<Vec<(&str, f64)>> {
+    constants
+        .iter()
+        .map(|values| {
+            values
+                .iter()
+                .map(|(name, value)| (name.as_str(), *value))
+                .collect()
+        })
+        .collect()
+}
+
 fn vertex_layouts(vertices: &[VertexLayout]) -> Vec<Option<wgpu::VertexBufferLayout<'static>>> {
     let mut layouts = Vec::new();
     let mut meshes = 0;
@@ -363,12 +375,7 @@ impl Run {
             .filter(|_| specialized)
             .map_or_else(Vec::new, |keyed| keyed.constants().to_vec());
         let mut hasher = DefaultHasher::new();
-        formats.hash(&mut hasher);
-        depth.hash(&mut hasher);
-        debug.hash(&mut hasher);
-        main.hash(&mut hasher);
-        switches.hash(&mut hasher);
-        bits.hash(&mut hasher);
+        (formats, depth, debug, main, &switches, bits).hash(&mut hasher);
         let key = hasher.finish();
         if let Some((_, made)) = built.made.iter().find(|(known, _)| *known == key) {
             return Some((key, made.clone()));
@@ -381,15 +388,7 @@ impl Run {
             return Some((key, made));
         }
         let constants = stage_constants(&built.stages, &switches, &material);
-        let named: Vec<Vec<(&str, f64)>> = constants
-            .iter()
-            .map(|values| {
-                values
-                    .iter()
-                    .map(|(name, value)| (name.as_str(), *value))
-                    .collect()
-            })
-            .collect();
+        let named = named_constants(&constants);
         let options = |stage: usize| wgpu::PipelineCompilationOptions {
             constants: named.get(stage).map_or(&[][..], Vec::as_slice),
             zero_initialize_workgroup_memory: true,
@@ -829,4 +828,59 @@ impl Run {
             .map(|format| vec![Some(format); count])
             .collect()
     }
+}
+
+fn blendable(format: wgpu::TextureFormat) -> bool {
+    format
+        .sample_type(None, None)
+        .is_some_and(|sample| matches!(sample, wgpu::TextureSampleType::Float { filterable: true }))
+}
+
+fn fragment_outputs<'a>(text: &'a str, entry: &str) -> Option<&'a str> {
+    let at = text.find(&format!("fn {entry}("))?;
+    let rest = &text[at..];
+    let (arrow, brace) = (rest.find("->")?, rest.find('{')?);
+    if arrow > brace {
+        return None;
+    }
+    let returns = rest[arrow + 2..brace].trim();
+    if returns.starts_with('@') {
+        return Some(returns);
+    }
+    let name: String = returns
+        .chars()
+        .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+        .collect();
+    let start = text.find(&format!("struct {name} {{"))?;
+    let body = &text[start..];
+    Some(&body[..body.find('}')?])
+}
+
+fn fragment_locations(text: &str, entry: &str) -> Option<Vec<u32>> {
+    fragment_outputs(text, entry).map(locations)
+}
+
+fn fragment_kinds(text: &str, entry: &str) -> Option<Vec<(u32, wgpu::TextureSampleType)>> {
+    let outputs = fragment_outputs(text, entry)?;
+    let kinds = outputs.match_indices("@location(").map(|(at, _)| {
+        let field = &outputs[at..];
+        let field = &field[..field.find(',').unwrap_or(field.len())];
+        if field.contains("u32") {
+            wgpu::TextureSampleType::Uint
+        } else if field.contains("i32") {
+            wgpu::TextureSampleType::Sint
+        } else {
+            wgpu::TextureSampleType::Float { filterable: true }
+        }
+    });
+    Some(locations(outputs).into_iter().zip(kinds).collect())
+}
+
+fn locations(text: &str) -> Vec<u32> {
+    text.match_indices("@location(")
+        .filter_map(|(at, found)| {
+            let after = &text[at + found.len()..];
+            after[..after.find(')')?].trim().parse().ok()
+        })
+        .collect()
 }

@@ -18,6 +18,8 @@ use glam::{Mat4, Vec3, Vec4};
 
 use crate::shaders;
 
+type SharedParts<'a> = BTreeMap<(MeshHandle, Option<u64>), Vec<(&'a Rig, &'a RigPart, u32, usize)>>;
+
 pub(crate) const SKIN: DrawKind = DrawKind("skin");
 
 engine_core::gpu_consts! {
@@ -385,8 +387,7 @@ impl SkinningGpu {
         held.slots.clear();
         held.reaches.clear();
         let reaches = &mut held.reaches;
-        let mut shared: BTreeMap<(MeshHandle, Option<u64>), Vec<(&Rig, &RigPart, u32, usize)>> =
-            BTreeMap::new();
+        let mut shared: SharedParts<'_> = BTreeMap::new();
         let mut rest: Vec<RestVertex> = Vec::new();
         let mut owners: Vec<u32> = Vec::new();
         let mut palette = 0_u64;

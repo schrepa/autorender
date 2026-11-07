@@ -8,8 +8,8 @@ enum Health {
     Live,
     Failed(Error),
     Lost(Error),
-    Faulted(Error),
-    Recovering(Error),
+    Faulted,
+    Recovering,
     Recovered,
 }
 
@@ -36,24 +36,24 @@ enum Change {
 impl Health {
     fn after(&mut self, change: Change) {
         *self = match (std::mem::take(self), change) {
-            (Self::Live | Self::Recovering(_) | Self::Recovered, Change::Failed(error)) => {
+            (Self::Live | Self::Recovering | Self::Recovered, Change::Failed(error)) => {
                 Self::Failed(error)
             }
             (
-                Self::Live | Self::Failed(_) | Self::Recovering(_) | Self::Recovered,
+                Self::Live | Self::Failed(_) | Self::Recovering | Self::Recovered,
                 Change::Lost(error),
             ) => Self::Lost(error),
-            (Self::Lost(error), Change::BricksFaulted) => Self::Faulted(error),
-            (Self::Faulted(error), Change::Recovering) => Self::Recovering(error),
-            (Self::Recovering(_), Change::Recovered) => Self::Recovered,
+            (Self::Lost(_), Change::BricksFaulted) => Self::Faulted,
+            (Self::Faulted, Change::Recovering) => Self::Recovering,
+            (Self::Recovering, Change::Recovered) => Self::Recovered,
             (Self::Recovered, Change::Settled) => Self::Live,
-            (state @ (Self::Failed(_) | Self::Lost(_) | Self::Faulted(_)), Change::Failed(_))
-            | (state @ (Self::Lost(_) | Self::Faulted(_)), Change::Lost(_))
+            (state @ (Self::Failed(_) | Self::Lost(_) | Self::Faulted), Change::Failed(_))
+            | (state @ (Self::Lost(_) | Self::Faulted), Change::Lost(_))
             | (
                 state @ (Self::Live
                 | Self::Failed(_)
-                | Self::Faulted(_)
-                | Self::Recovering(_)
+                | Self::Faulted
+                | Self::Recovering
                 | Self::Recovered),
                 Change::BricksFaulted,
             )
@@ -61,7 +61,7 @@ impl Health {
                 state @ (Self::Live
                 | Self::Failed(_)
                 | Self::Lost(_)
-                | Self::Recovering(_)
+                | Self::Recovering
                 | Self::Recovered),
                 Change::Recovering,
             )
@@ -69,7 +69,7 @@ impl Health {
                 state @ (Self::Live
                 | Self::Failed(_)
                 | Self::Lost(_)
-                | Self::Faulted(_)
+                | Self::Faulted
                 | Self::Recovered),
                 Change::Recovered,
             )
@@ -77,8 +77,8 @@ impl Health {
                 state @ (Self::Live
                 | Self::Failed(_)
                 | Self::Lost(_)
-                | Self::Faulted(_)
-                | Self::Recovering(_)),
+                | Self::Faulted
+                | Self::Recovering),
                 Change::Settled,
             ) => state,
         };
@@ -89,8 +89,8 @@ impl Health {
             Self::Failed(error) => Some(error),
             Self::Live
             | Self::Lost(_)
-            | Self::Faulted(_)
-            | Self::Recovering(_)
+            | Self::Faulted
+            | Self::Recovering
             | Self::Recovered => None,
         }
     }
@@ -100,8 +100,8 @@ impl Health {
             Self::Live => DeviceHealth::Live,
             Self::Failed(_) => DeviceHealth::Failed,
             Self::Lost(_) => DeviceHealth::Lost,
-            Self::Faulted(_) => DeviceHealth::Faulted,
-            Self::Recovering(_) => DeviceHealth::Recovering,
+            Self::Faulted => DeviceHealth::Faulted,
+            Self::Recovering => DeviceHealth::Recovering,
             Self::Recovered => DeviceHealth::Recovered,
         }
     }
@@ -218,14 +218,14 @@ impl Renderer {
             .ok()
             .map(|reports| reports.health.clone());
         match state {
-            Some(Health::Faulted(_)) => {
+            Some(Health::Faulted) => {
                 self.recovering = Some(Box::pin(super::startup::open(
                     self.core.display.instance(),
                     self.core.display.power_preference(),
                 )));
                 self.change(Change::Recovering);
             }
-            Some(Health::Recovering(_)) => {
+            Some(Health::Recovering) => {
                 let Some(opening) = self.recovering.as_mut() else {
                     return;
                 };
@@ -270,8 +270,8 @@ impl Renderer {
                 Health::Lost(error) => Some(error.clone()),
                 Health::Live
                 | Health::Failed(_)
-                | Health::Faulted(_)
-                | Health::Recovering(_)
+                | Health::Faulted
+                | Health::Recovering
                 | Health::Recovered => None,
             });
         let Some(error) = lost else {

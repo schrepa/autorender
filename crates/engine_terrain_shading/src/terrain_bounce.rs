@@ -225,25 +225,7 @@ impl Bounce {
     ) -> bool {
         if !self.framed {
             self.framed = true;
-            cx.allocate_buffer(self.frame, size_of::<BounceFrame>() as u64);
-            cx.write(
-                self.frame,
-                0,
-                &[BounceFrame {
-                    bins: bin_moments(),
-                }],
-            );
-            for stand_in in self.stand_ins {
-                cx.allocate(
-                    stand_in,
-                    wgpu::Extent3d {
-                        width: 1,
-                        height: 1,
-                        depth_or_array_layers: 1,
-                    },
-                    1,
-                );
-            }
+            self.first_frame(cx);
         }
         self.widest = [0; MOST_LEVELS];
         self.relit = 0;
@@ -351,6 +333,28 @@ impl Bounce {
         let scratch_bytes = u64::from(scratch) * SCRATCH_PROBE_BYTES;
         cx.allocate_buffer(self.scratch, scratch_bytes.next_power_of_two().max(16));
         self.relights()
+    }
+
+    fn first_frame(&self, cx: &mut Prepare<'_, TerrainGpu>) {
+        cx.allocate_buffer(self.frame, size_of::<BounceFrame>() as u64);
+        cx.write(
+            self.frame,
+            0,
+            &[BounceFrame {
+                bins: bin_moments(),
+            }],
+        );
+        for stand_in in self.stand_ins {
+            cx.allocate(
+                stand_in,
+                wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                1,
+            );
+        }
     }
 
     fn place(

@@ -1,3 +1,8 @@
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
+
 mod asks;
 mod budget;
 mod drawn;

@@ -348,7 +348,7 @@ impl Linker {
             "place" => module.package == CORE_PACKAGE || fills(module.package, second),
             "generated" => match second {
                 "pieces" => segments.next() == Some(own),
-                "targets" | "composite" | "passes" => true,
+                "targets" | "composite" | "passes" | "kinds" | "applied" => true,
                 _ => second == own,
             },
             _ => first == own,
@@ -661,7 +661,13 @@ fn handed_text(base: Option<&str>, parts: &[Part]) -> String {
     for &(name, part) in parts {
         let declared = match name {
             Some(name) => declares_struct(&text, name),
-            None => base.is_some() || text.contains(part),
+            None => {
+                let listed = items(part);
+                let known = items(&text);
+                text.contains(part)
+                    || (listed.is_empty() && base.is_some())
+                    || (!listed.is_empty() && listed.iter().all(|item| known.contains(item)))
+            }
         };
         if !declared {
             text.push_str(part);

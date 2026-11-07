@@ -307,7 +307,7 @@ impl Groups {
                     groups.push(DrawGroup {
                         meshes: part_meshes,
                         material: rendered.material.handle,
-                        source: *rendered.material.material,
+                        source: rendered.material.material.clone(),
                         extended,
                         color,
                         sphere,

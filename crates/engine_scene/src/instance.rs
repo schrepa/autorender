@@ -343,7 +343,7 @@ impl SceneDocument {
                     entities: entities.clone(),
                     authored_later: false,
                 });
-                then(world, &*entities)
+                then(world, &entities)
             });
         let done = match landed {
             Ok(done) => done,

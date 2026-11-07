@@ -83,7 +83,7 @@ impl GlobalTransforms {
             self.words[index] = next;
             self.packed[index] = next.pack();
             if before.mobility != next.mobility {
-                self.moved_static.remove(&self.entities[index]);
+                self.static_moves.moved.remove(&self.entities[index]);
             }
             if rebuilt {
                 continue;
@@ -153,10 +153,10 @@ impl GlobalTransforms {
     }
 
     pub fn moved_static(&self) -> impl ExactSizeIterator<Item = Entity> + '_ {
-        self.moved_static.iter().copied()
+        self.static_moves.moved.iter().copied()
     }
 
     pub fn static_moves_since(&self, cursor: &mut Cursor) -> Events<'_, Entity> {
-        self.static_moves.events(cursor)
+        self.static_moves.feed.events(cursor)
     }
 }

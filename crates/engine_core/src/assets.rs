@@ -13,7 +13,7 @@ pub use impostors::*;
 #[derive(Component, Clone, Debug, Default)]
 pub struct AssetUses {
     assets: Vec<Asset>,
-    held: Vec<Interest<Asset>>,
+    _held: Vec<Interest<Asset>>,
 }
 
 impl AssetUses {
@@ -21,7 +21,10 @@ impl AssetUses {
         assets.sort_unstable();
         assets.dedup();
         let held = assets.iter().map(|&asset| residency.hold(asset)).collect();
-        Self { assets, held }
+        Self {
+            assets,
+            _held: held,
+        }
     }
 
     pub fn assets(&self) -> &[Asset] {

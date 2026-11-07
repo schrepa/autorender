@@ -352,10 +352,6 @@ impl MeshesGpu {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the presentation joins the plan, the hierarchy and the view"
-    )]
     fn prepare_presentation(
         &mut self,
         table: &DrawnTable,

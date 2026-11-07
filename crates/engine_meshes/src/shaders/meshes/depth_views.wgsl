@@ -5,12 +5,9 @@ import package::engine::surface::opacity_cut;
 import package::engine::view::{camera, detail_across};
 import package::meshes::slots::{instance_colors, instance_poses};
 
-fn project(world: vec3<f32>, clamped: bool) -> vec4<f32> {
+fn project(world: vec3<f32>) -> vec4<f32> {
     let clip = camera.view_projection * vec4<f32>(world, 1.0);
-    if clamped {
-        return vec4<f32>(clip.xy, max(clip.z, 0.0), clip.w);
-    }
-    return clip;
+    return vec4<f32>(clip.xy, max(clip.z, 0.0), clip.w);
 }
 
 fn slot_world(slot: u32, position: vec3<f32>) -> vec3<f32> {
@@ -32,13 +29,7 @@ fn slot_world(slot: u32, position: vec3<f32>) -> vec3<f32> {
 @vertex
 fn vs_depth_view(@location(0) position: vec3<f32>, @location(2) drawn: u32)
         -> @builtin(position) vec4<f32> {
-    return project(slot_world(slot_index(drawn), position), false);
-}
-
-@vertex
-fn vs_depth_view_clamped(@location(0) position: vec3<f32>, @location(2) drawn: u32)
-        -> @builtin(position) vec4<f32> {
-    return project(slot_world(slot_index(drawn), position), true);
+    return project(slot_world(slot_index(drawn), position));
 }
 
 struct MaskedOutput {
@@ -46,10 +37,10 @@ struct MaskedOutput {
     @location(0) uv_alpha: vec3<f32>,
 }
 
-fn masked(position: vec3<f32>, uv: vec2<f32>, drawn: u32, clamped: bool) -> MaskedOutput {
+fn masked(position: vec3<f32>, uv: vec2<f32>, drawn: u32) -> MaskedOutput {
     let slot = slot_index(drawn);
     var output: MaskedOutput;
-    output.clip = project(slot_world(slot, position), clamped);
+    output.clip = project(slot_world(slot, position));
     output.uv_alpha = vec3<f32>(uv, unpack2x16unorm(instance_colors[slot].color.y).y);
     return output;
 }
@@ -57,13 +48,7 @@ fn masked(position: vec3<f32>, uv: vec2<f32>, drawn: u32, clamped: bool) -> Mask
 @vertex
 fn vs_depth_view_masked(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>,
         @location(2) drawn: u32) -> MaskedOutput {
-    return masked(position, uv, drawn, false);
-}
-
-@vertex
-fn vs_depth_view_masked_clamped(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>,
-        @location(2) drawn: u32) -> MaskedOutput {
-    return masked(position, uv, drawn, true);
+    return masked(position, uv, drawn);
 }
 
 @fragment

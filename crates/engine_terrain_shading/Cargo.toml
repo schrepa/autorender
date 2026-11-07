@@ -23,8 +23,8 @@ serde_json.workspace = true
 [build-dependencies]
 engine_sources.workspace = true
 
-[lints.rust]
-unsafe_code = "forbid"
+[lints]
+workspace = true
 
 [package.metadata.engine]
 kind = "brick"

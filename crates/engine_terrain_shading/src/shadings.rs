@@ -491,7 +491,7 @@ pub(crate) fn shade(
             failures: &mut bakes.failures,
             shared: &mut shared,
             released: &mut released,
-            budget: &mut *budget,
+            budget: &mut budget,
         };
         let local = Vec2::new(eye.x - entry.origin.x, eye.z - entry.origin.z);
         follow(held, entry, &mut cx, (local, frame, moved));

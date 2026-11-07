@@ -126,7 +126,7 @@ impl WorldChanges {
 
 enum Load {
     Unloaded,
-    Loaded(Vec<Interest<usize>>),
+    Loaded { _held: Vec<Interest<usize>> },
 }
 
 struct Cell {
@@ -187,7 +187,7 @@ impl Cell {
 
     fn loaded(&self) -> bool {
         match self.load {
-            Load::Loaded(_) => true,
+            Load::Loaded { .. } => true,
             Load::Unloaded => false,
         }
     }
@@ -382,12 +382,12 @@ impl WorldCells {
             let coming = cell.distance <= range;
             if !settings.frozen {
                 match cell.load {
-                    Load::Loaded(_) if leaving => cell.load = Load::Unloaded,
+                    Load::Loaded { .. } if leaving => cell.load = Load::Unloaded,
                     Load::Unloaded if coming => {
                         let asked = cell.items.iter().map(|&item| spawns.ask(item)).collect();
-                        cell.load = Load::Loaded(asked);
+                        cell.load = Load::Loaded { _held: asked };
                     }
-                    Load::Loaded(_) | Load::Unloaded => {}
+                    Load::Loaded { .. } | Load::Unloaded => {}
                 }
             }
             if cell.waiting(spawns) {

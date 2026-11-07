@@ -12,7 +12,7 @@ pub const RULES: Rules = Rules {
             ("crates/engine_water/src/steady_water.rs", 2360),
             ("tools/lodbuild/src/simplify.rs", 2009),
         ],
-        wide_structs: &[("crates/engine_scatter/src/gpu.rs", "ScatterGpu", 34)],
+        wide_structs: &[],
         unsafe_files: &[
             "crates/engine_profile/src/allocator.rs",
             "crates/engine_profiler/src/counters.rs",

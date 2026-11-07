@@ -276,9 +276,11 @@ impl Reset {
 
 pub type Despawn = fn(&mut World, &[Entity]);
 
+type Turn = fn(&mut World);
+
 #[derive(Default)]
 pub(crate) struct Turning {
-    pub(crate) resources: Vec<(fn(&mut World), fn(&mut World))>,
+    pub(crate) resources: Vec<(Turn, Turn)>,
     pub(crate) settings: Vec<fn(&mut World)>,
     pub(crate) slots: Vec<fn(&mut World)>,
     pub(crate) joins: Vec<fn(&mut World, GateId)>,

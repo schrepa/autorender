@@ -11,6 +11,10 @@ pub(crate) type Deliver = fn(&mut World, u32, Readback<&[u8]>);
 pub(crate) enum Reader {
     Part { part: u32, tag: u32 },
     FrameTimer,
+    #[cfg_attr(
+        not(feature = "profiling"),
+        expect(dead_code, reason = "only profiling builds read GPU spans")
+    )]
     Profiler(u32),
     Impostor(u32),
 }

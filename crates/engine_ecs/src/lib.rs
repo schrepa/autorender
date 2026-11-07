@@ -1,3 +1,8 @@
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
+
 pub mod prelude {
     pub use bevy_ecs::change_detection::{DetectChanges, DetectChangesMut, Mut, Ref, Res, ResMut};
     pub use bevy_ecs::component::Component;
@@ -41,6 +46,11 @@ pub mod component {
         DefaultCloneBehaviorSpecialization, DefaultCloneBehaviorViaClone, Immutable, Mutable,
         RequiredComponentsRegistrator, StorageType,
     };
+}
+
+#[doc(hidden)]
+pub mod entity {
+    pub use bevy_ecs::entity::{Entity, EntityMapper, MapEntities};
 }
 
 #[doc(hidden)]

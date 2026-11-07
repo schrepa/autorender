@@ -1,9 +1,9 @@
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fmt;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use engine_math::collections::HashMap;
 use serde::{Serialize, Serializer};
 
 use crate::Error;
@@ -155,7 +155,7 @@ pub struct Requests<K: Clone, V> {
 impl<K: Clone, V> Default for Requests<K, V> {
     fn default() -> Self {
         Self {
-            entries: HashMap::new(),
+            entries: HashMap::default(),
             changes: Arc::new(Mutex::new(Vec::new())),
             tickets: 0,
             now: 0.0,

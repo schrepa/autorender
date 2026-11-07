@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::ops::Range;
 
@@ -527,9 +527,7 @@ impl DrawnTable {
                 return Some(DrawnState::Waiting);
             }
         }
-        let Some(geometry) = drawn.geometry else {
-            return None;
-        };
+        let geometry = drawn.geometry?;
         let Some(mesh) = cx.library.mesh(geometry) else {
             return Some(DrawnState::Waiting);
         };
@@ -656,7 +654,8 @@ impl DrawnTable {
     }
 
     fn rebuild(&mut self, library: &AssetLibrary) {
-        let mut canonical: HashMap<MaterialBinding, MaterialHandle> = HashMap::new();
+        let mut canonical: crate::collections::HashMap<MaterialBinding, MaterialHandle> =
+            crate::collections::HashMap::default();
         let keys: Vec<Option<(BatchKey, Option<MaterialHandle>)>> = self
             .owners
             .iter()

@@ -39,6 +39,7 @@ pub(crate) struct PlaceRules {
     pub(crate) slots: Box<[(ComponentId, Option<BrickId>)]>,
     pub(crate) firsts: Box<[ComponentId]>,
     pub(crate) orders: Box<[(BrickId, BrickId)]>,
+    pub(crate) shared: Box<[ComponentId]>,
     pub(crate) rule: AccessRule,
 }
 
@@ -118,6 +119,26 @@ impl ScheduleBuildPass for PlaceRules {
                 for (late, _, _) in lates {
                     if !reaches(flat.graph(), *late, *early) {
                         flat.add_edge(*early, *late);
+                    }
+                }
+            }
+        }
+        for &value in &*self.shared {
+            let mut users: Vec<(BrickId, SystemKey, bool)> = found
+                .iter()
+                .filter(|(_, _, access)| access.combined_access().has_read(value))
+                .map(|(system, brick, access)| {
+                    (*brick, *system, access.combined_access().has_write(value))
+                })
+                .collect();
+            users.sort_by_key(|(brick, _, _)| brick.index());
+            for (at, &(brick, early, writes)) in users.iter().enumerate() {
+                let lates = users[at + 1..]
+                    .iter()
+                    .filter(|(later, _, late_writes)| *later != brick && (writes || *late_writes));
+                for &(_, late, _) in lates {
+                    if !reaches(flat.graph(), late, early) {
+                        flat.add_edge(early, late);
                     }
                 }
             }
@@ -348,14 +369,18 @@ fn refusal(
     graph: &ScheduleGraph,
     world: &World,
 ) -> Error {
-    let code = match error {
-        ScheduleBuildError::DependencySort(_) | ScheduleBuildError::FlatDependencySort(_) => {
-            ErrorCode::PlaceCycle
-        }
-        ScheduleBuildError::Elevated(ScheduleBuildWarning::Ambiguity(_)) => {
-            ErrorCode::ScheduleAmbiguity
-        }
-        _ => ErrorCode::InvalidValue,
+    let code = if matches!(
+        error,
+        ScheduleBuildError::DependencySort(_) | ScheduleBuildError::FlatDependencySort(_)
+    ) {
+        ErrorCode::PlaceCycle
+    } else if matches!(
+        error,
+        ScheduleBuildError::Elevated(ScheduleBuildWarning::Ambiguity(_))
+    ) {
+        ErrorCode::ScheduleAmbiguity
+    } else {
+        ErrorCode::InvalidValue
     };
     let text = error.to_string(graph, world);
     let lines = text.lines().collect::<Vec<_>>();

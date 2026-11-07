@@ -1,6 +1,7 @@
 use engine_core::{
     CookMode, Engine, JobExchange, JobId, MISSING_RECORD, RecordKey, URGENT_JOBS, job_priority,
 };
+use engine_registry::Registry;
 use engine_render::Renderer;
 use sha2::{Digest, Sha256};
 

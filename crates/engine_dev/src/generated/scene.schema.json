@@ -127,6 +127,43 @@
       ],
       "type": "string"
     },
+    "Camera": {
+      "additionalProperties": false,
+      "properties": {
+        "far": {
+          "format": "float",
+          "type": "number"
+        },
+        "near": {
+          "format": "float",
+          "type": "number"
+        },
+        "projection": {
+          "$ref": "#/$defs/Projection"
+        }
+      },
+      "required": [
+        "near",
+        "far",
+        "projection"
+      ],
+      "type": "object"
+    },
+    "Clear": {
+      "enum": [
+        "all",
+        "depth_only",
+        "nothing"
+      ],
+      "type": "string"
+    },
+    "Clock": {
+      "enum": [
+        "game",
+        "real"
+      ],
+      "type": "string"
+    },
     "CollisionConfig": {
       "properties": {
         "enabled": {
@@ -177,6 +214,12 @@
             "integer",
             "null"
           ]
+        },
+        "sensor_feed": {
+          "default": 1024,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -258,6 +301,119 @@
           "maximum": 64.0,
           "minimum": 0.25,
           "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "DrawnForm": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "layers": {
+          "$ref": "#/$defs/Layers",
+          "default": 1
+        },
+        "material": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mesh": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "order": {
+          "default": 0,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "passes": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "type": "object"
+        },
+        "projection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DrawnProjection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "receives_shadows": {
+          "default": true,
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/InstanceValues",
+          "default": {
+            "emission": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "floats": [],
+            "tint": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "type": "object"
+    },
+    "DrawnProjection": {
+      "properties": {
+        "depth_scale": {
+          "format": "float",
+          "type": "number"
+        },
+        "vertical_fov": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "vertical_fov",
+        "depth_scale"
+      ],
+      "type": "object"
+    },
+    "DrawnSettings": {
+      "properties": {
+        "changes": {
+          "default": 16384,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "instance_floats": {
+          "default": 16,
+          "format": "uint32",
+          "maximum": 1024,
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -523,6 +679,54 @@
       ],
       "type": "object"
     },
+    "FeedSettings": {
+      "properties": {
+        "impostor_work": {
+          "default": 64,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "mesh_residency": {
+          "default": 4096,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "transforms": {
+          "default": 16384,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "FrameBudgetSettings": {
+      "properties": {
+        "loading_work_ms": {
+          "default": 50.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.1,
+          "type": "number"
+        },
+        "upload_bytes": {
+          "default": 16777216,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "work_ms": {
+          "default": 4.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.1,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
     "GivenRiver": {
       "additionalProperties": false,
       "properties": {
@@ -771,6 +975,49 @@
       },
       "type": "object"
     },
+    "InstanceValues": {
+      "additionalProperties": false,
+      "properties": {
+        "emission": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "floats": {
+          "default": [],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "tint": {
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "Interior": {
       "additionalProperties": false,
       "properties": {
@@ -791,17 +1038,6 @@
         "sky",
         "sun"
       ],
-      "type": "object"
-    },
-    "JobSettings": {
-      "properties": {
-        "keep_frames": {
-          "default": 120,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
       "type": "object"
     },
     "Label": {
@@ -895,6 +1131,11 @@
         }
       },
       "type": "object"
+    },
+    "Layers": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
     },
     "MacroCauses": {
       "additionalProperties": false,
@@ -1093,6 +1334,32 @@
         }
       ]
     },
+    "Mobility": {
+      "enum": [
+        "static",
+        "moving"
+      ],
+      "type": "string"
+    },
+    "Mover": {
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "$ref": "#/$defs/MoverId"
+        },
+        "pace": {
+          "$ref": "#/$defs/Pace"
+        }
+      },
+      "required": [
+        "by",
+        "pace"
+      ],
+      "type": "object"
+    },
+    "MoverId": {
+      "type": "string"
+    },
     "NavAgent": {
       "additionalProperties": false,
       "properties": {
@@ -1129,13 +1396,6 @@
           "minimum": 0.0,
           "type": "number"
         },
-        "offset": {
-          "default": 0.0,
-          "format": "float",
-          "maximum": 10000.0,
-          "minimum": -10000.0,
-          "type": "number"
-        },
         "radius": {
           "default": 0.4000000059604645,
           "format": "float",
@@ -1156,6 +1416,42 @@
           "maximum": 10000.0,
           "minimum": 1.0,
           "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "Node": {
+      "additionalProperties": false,
+      "properties": {
+        "active": {
+          "default": true,
+          "type": "boolean"
+        },
+        "clock": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Clock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mobility": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Mobility"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "visible": {
+          "default": true,
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -1265,6 +1561,13 @@
         "wavelength"
       ],
       "type": "object"
+    },
+    "Pace": {
+      "enum": [
+        "tick",
+        "frame"
+      ],
+      "type": "string"
     },
     "PathLayer": {
       "properties": {
@@ -1528,6 +1831,52 @@
       ],
       "type": "object"
     },
+    "Projection": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Perspective": {
+              "properties": {
+                "vertical_fov_radians": {
+                  "format": "float",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "vertical_fov_radians"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Perspective"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Orthographic": {
+              "properties": {
+                "height": {
+                  "format": "float",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "height"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Orthographic"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Ramp": {
       "additionalProperties": false,
       "properties": {
@@ -1547,6 +1896,34 @@
         "map",
         "from",
         "to"
+      ],
+      "type": "object"
+    },
+    "Rect": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "format": "float",
+          "type": "number"
+        },
+        "width": {
+          "format": "float",
+          "type": "number"
+        },
+        "x": {
+          "format": "float",
+          "type": "number"
+        },
+        "y": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
       ],
       "type": "object"
     },
@@ -1753,7 +2130,9 @@
     "SceneAlphaMode": {
       "enum": [
         "opaque",
-        "mask"
+        "mask",
+        "blend",
+        "additive"
       ],
       "type": "string"
     },
@@ -1915,6 +2294,10 @@
     "SceneBloom": {
       "additionalProperties": false,
       "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
         "intensity": {
           "default": 0.6000000238418579,
           "format": "float",
@@ -1934,39 +2317,7 @@
     "SceneBodyPush": {
       "additionalProperties": false,
       "properties": {
-        "angular_impulse": {
-          "default": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "items": {
-            "format": "float",
-            "maximum": 1000000000.0,
-            "minimum": -1000000000.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": "array"
-        },
         "force": {
-          "default": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "items": {
-            "format": "float",
-            "maximum": 1000000000.0,
-            "minimum": -1000000000.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": "array"
-        },
-        "impulse": {
           "default": [
             0.0,
             0.0,
@@ -2229,6 +2580,14 @@
         }
       ]
     },
+    "SceneCull": {
+      "enum": [
+        "back",
+        "front",
+        "none"
+      ],
+      "type": "string"
+    },
     "SceneCulling": {
       "additionalProperties": false,
       "properties": {
@@ -2283,6 +2642,24 @@
           "type": "string"
         }
       },
+      "type": "object"
+    },
+    "SceneDepthBias": {
+      "additionalProperties": false,
+      "properties": {
+        "constant": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "slope": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "constant",
+        "slope"
+      ],
       "type": "object"
     },
     "SceneDither": {
@@ -2659,6 +3036,16 @@
             }
           ]
         },
+        "drawn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DrawnSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "dynamic_resolution": {
           "anyOf": [
             {
@@ -2669,10 +3056,30 @@
             }
           ]
         },
+        "feeds": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FeedSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "foliage": {
           "anyOf": [
             {
               "$ref": "#/$defs/SceneFoliage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frame_budget": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FrameBudgetSettings"
             },
             {
               "type": "null"
@@ -2733,16 +3140,6 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneImpostors"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "jobs": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/JobSettings"
             },
             {
               "type": "null"
@@ -2899,6 +3296,16 @@
             }
           ]
         },
+        "streamed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneStreamed"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "subpixel_culling": {
           "anyOf": [
             {
@@ -3032,13 +3439,6 @@
     "SceneFoliage": {
       "additionalProperties": false,
       "properties": {
-        "crown_depth": {
-          "default": 2.0,
-          "format": "float",
-          "maximum": 8.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
         "ground_blend": {
           "default": 0.4000000059604645,
           "format": "float",
@@ -3175,21 +3575,6 @@
           ]
         }
       },
-      "type": "object"
-    },
-    "SceneGrounding": {
-      "additionalProperties": false,
-      "properties": {
-        "height": {
-          "exclusiveMinimum": 0.0,
-          "format": "float",
-          "maximum": 10000.0,
-          "type": "number"
-        }
-      },
-      "required": [
-        "height"
-      ],
       "type": "object"
     },
     "SceneHaze": {
@@ -3482,7 +3867,33 @@
             "null"
           ]
         },
-        "double_sided": {
+        "cull": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneCull"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depth_bias": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneDepthBias"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depth_test": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "depth_write": {
           "type": [
             "boolean",
             "null"
@@ -3511,27 +3922,17 @@
             }
           ]
         },
-        "foliage": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "grounding": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneGrounding"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "id": {
           "maxLength": 64,
           "minLength": 1,
           "pattern": "^[A-Za-z0-9_.-]+$",
           "type": "string"
+        },
+        "lighting": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "metallic_roughness_texture": {
           "anyOf": [
@@ -3597,6 +3998,15 @@
             "null"
           ]
         },
+        "slots": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
         "surface": {
           "anyOf": [
             {
@@ -3617,22 +4027,22 @@
             }
           ]
         },
-        "top": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneTopLayer"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "world_tiling": {
-          "exclusiveMinimum": 0.0,
+        "transmission": {
           "format": "float",
-          "maximum": 10000.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "type": [
             "number",
+            "null"
+          ]
+        },
+        "values": {
+          "additionalProperties": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": [
+            "object",
             "null"
           ]
         }
@@ -3675,6 +4085,24 @@
         "enabled": {
           "default": true,
           "type": "boolean"
+        },
+        "grounds_per_tick": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "kept_grounds": {
+          "default": 64,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kept_portals": {
+          "default": 8192,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "obstacle_layers": {
           "default": 0,
@@ -3767,10 +4195,30 @@
             }
           ]
         },
+        "camera": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Camera"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "collider": {
           "anyOf": [
             {
               "$ref": "#/$defs/SceneCollider"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "drawn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DrawnForm"
             },
             {
               "type": "null"
@@ -3821,6 +4269,16 @@
             "null"
           ]
         },
+        "mover": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Mover"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "name": {
           "default": "",
           "maxLength": 128,
@@ -3830,6 +4288,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/NavAgent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "node": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Node"
             },
             {
               "type": "null"
@@ -3952,24 +4420,6 @@
             }
           ]
         },
-        "tint": {
-          "anyOf": [
-            {
-              "items": {
-                "format": "float",
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              "maxItems": 4,
-              "minItems": 4,
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "transform": {
           "$ref": "#/$defs/SceneTransform",
           "default": {
@@ -3994,6 +4444,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/UiRoot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "view": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ViewForm"
             },
             {
               "type": "null"
@@ -4199,12 +4659,6 @@
         "enabled": {
           "default": true,
           "type": "boolean"
-        },
-        "faces_per_frame": {
-          "default": 1,
-          "format": "uint32",
-          "minimum": 1,
-          "type": "integer"
         },
         "max_probes": {
           "format": "uint32",
@@ -4415,13 +4869,6 @@
           "default": 256,
           "format": "uint32",
           "minimum": 0,
-          "type": "integer"
-        },
-        "redraw_budget": {
-          "default": 32,
-          "format": "uint32",
-          "maximum": 4096,
-          "minimum": 1,
           "type": "integer"
         },
         "tile_texels": {
@@ -4754,6 +5201,24 @@
       },
       "type": "object"
     },
+    "SceneStreamed": {
+      "additionalProperties": false,
+      "properties": {
+        "along": {
+          "items": {
+            "$ref": "#/$defs/SceneAlong"
+          },
+          "type": "array"
+        },
+        "streamed": {
+          "items": {
+            "$ref": "#/$defs/SceneObject"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "SceneSubpixelCulling": {
       "additionalProperties": false,
       "properties": {
@@ -4793,13 +5258,6 @@
           "type": "number"
         },
         "metalness": {
-          "default": 0.0,
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "ripples": {
           "default": 0.0,
           "format": "float",
           "maximum": 1.0,
@@ -4892,6 +5350,12 @@
         "collision": {
           "type": "boolean"
         },
+        "edits": {
+          "items": {
+            "$ref": "#/$defs/SceneTerrainEdit"
+          },
+          "type": "array"
+        },
         "layers": {
           "items": {
             "$ref": "#/$defs/SceneTerrainLayer"
@@ -4905,6 +5369,13 @@
           },
           "maxItems": 3,
           "minItems": 3,
+          "type": "array"
+        },
+        "rivers": {
+          "items": {
+            "$ref": "#/$defs/SceneTerrainRiver"
+          },
+          "maxItems": 4096,
           "type": "array"
         },
         "spacing": {
@@ -5016,6 +5487,22 @@
       },
       "required": [
         "shape"
+      ],
+      "type": "object"
+    },
+    "SceneTerrainEdit": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "stamp": {
+          "$ref": "#/$defs/Stamp"
+        }
+      },
+      "required": [
+        "id",
+        "stamp"
       ],
       "type": "object"
     },
@@ -5312,6 +5799,22 @@
       },
       "type": "object"
     },
+    "SceneTerrainRiver": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "river": {
+          "$ref": "#/$defs/GivenRiver"
+        }
+      },
+      "required": [
+        "id",
+        "river"
+      ],
+      "type": "object"
+    },
     "SceneTerrainSettings": {
       "additionalProperties": false,
       "properties": {
@@ -5335,13 +5838,6 @@
         "gpu_materials": {
           "default": true,
           "type": "boolean"
-        },
-        "loading_work_ms": {
-          "default": 50.0,
-          "format": "float",
-          "maximum": 1000.0,
-          "minimum": 0.1,
-          "type": "number"
         },
         "max_tiles": {
           "format": "uint32",
@@ -5375,28 +5871,15 @@
           "minimum": 1.0,
           "type": "number"
         },
-        "samples_per_frame": {
-          "default": 24576,
-          "format": "uint32",
-          "minimum": 1,
-          "type": "integer"
-        },
         "surroundings": {
           "default": true,
           "type": "boolean"
         },
-        "upload_bytes": {
-          "default": 8388608,
+        "tile_feed": {
+          "default": 4096,
           "format": "uint32",
           "minimum": 1,
           "type": "integer"
-        },
-        "work_ms": {
-          "default": 4.0,
-          "format": "float",
-          "maximum": 1000.0,
-          "minimum": 0.1,
-          "type": "number"
         }
       },
       "type": "object"
@@ -5680,42 +6163,6 @@
       },
       "type": "object"
     },
-    "SceneTopLayer": {
-      "additionalProperties": false,
-      "properties": {
-        "color": {
-          "items": {
-            "format": "float",
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": "array"
-        },
-        "coverage": {
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "roughness": {
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "color",
-        "coverage"
-      ],
-      "type": "object"
-    },
     "SceneTransform": {
       "additionalProperties": false,
       "properties": {
@@ -5985,6 +6432,12 @@
           "format": "uint32",
           "maximum": 4000000,
           "minimum": 1024,
+          "type": "integer"
+        },
+        "tile_feed": {
+          "default": 4096,
+          "format": "uint32",
+          "minimum": 1,
           "type": "integer"
         }
       },
@@ -6367,6 +6820,12 @@
         "sun_shadows": {
           "default": true,
           "type": "boolean"
+        },
+        "tile_feed": {
+          "default": 4096,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -6992,6 +7451,12 @@
           "default": true,
           "type": "boolean"
         },
+        "events": {
+          "default": 256,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
         "max_nodes": {
           "default": 4096,
           "format": "uint32",
@@ -7015,17 +7480,54 @@
         }
       },
       "type": "object"
+    },
+    "ViewForm": {
+      "additionalProperties": false,
+      "properties": {
+        "camera": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "clear": {
+          "$ref": "#/$defs/Clear",
+          "default": "all"
+        },
+        "layers": {
+          "$ref": "#/$defs/Layers",
+          "default": 4294967295
+        },
+        "order": {
+          "default": 0,
+          "format": "int32",
+          "type": "integer"
+        },
+        "texture": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "viewport": {
+          "$ref": "#/$defs/Rect",
+          "default": {
+            "height": 1.0,
+            "width": 1.0,
+            "x": 0.0,
+            "y": 0.0
+          }
+        }
+      },
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
-    "along": {
-      "items": {
-        "$ref": "#/$defs/SceneAlong"
-      },
-      "type": "array"
-    },
     "camera": {
       "$ref": "#/$defs/SceneCamera",
       "default": {
@@ -7094,12 +7596,6 @@
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
-    },
-    "streamed": {
-      "items": {
-        "$ref": "#/$defs/SceneObject"
-      },
-      "type": "array"
     },
     "textures": {
       "items": {

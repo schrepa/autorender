@@ -453,7 +453,7 @@ impl DrawGroups {
     pub(crate) fn stage_candidates(
         &mut self,
         batches: &[DrawBatch],
-        ordered: &[(u64, u32)],
+        ordered: &[u32],
         node: impl Fn(usize) -> u32,
     ) {
         let candidates = ordered.len();
@@ -467,7 +467,7 @@ impl DrawGroups {
                     ordered[range]
                         .iter()
                         .zip(base..)
-                        .map(|(&(_, slot), position)| CandidateData {
+                        .map(|(&slot, position)| CandidateData {
                             slot,
                             node: node(slot as usize),
                             batch: index as u32,

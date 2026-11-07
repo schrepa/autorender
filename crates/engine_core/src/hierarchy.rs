@@ -410,6 +410,18 @@ fn complete_parents_first<N, E>(
     Ok(())
 }
 
+struct StaticMoves {
+    moved: BTreeSet<Entity>,
+    feed: Feed<Entity>,
+}
+
+impl StaticMoves {
+    fn record(&mut self, entity: Entity) {
+        self.moved.insert(entity);
+        self.feed.push(entity);
+    }
+}
+
 #[derive(Resource)]
 pub struct GlobalTransforms {
     query: TransformQuery,
@@ -435,8 +447,7 @@ pub struct GlobalTransforms {
     words_revision: u64,
     woken: Vec<Entity>,
     asleep: Vec<Entity>,
-    moved_static: BTreeSet<Entity>,
-    static_moves: Feed<Entity>,
+    static_moves: StaticMoves,
     scans: ScanClock,
     incomplete: bool,
     limit: usize,
@@ -477,8 +488,10 @@ impl FromWorld for GlobalTransforms {
             words_revision: 0,
             woken: Vec::new(),
             asleep: Vec::new(),
-            moved_static: BTreeSet::new(),
-            static_moves: Feed::new(feed),
+            static_moves: StaticMoves {
+                moved: BTreeSet::new(),
+                feed: Feed::new(feed),
+            },
             scans: ScanClock::default(),
             incomplete: true,
             limit: node_limit(world),
@@ -698,7 +711,7 @@ impl GlobalTransforms {
     pub(crate) fn resize_changes(&mut self, size: usize) {
         self.changes.resize(size);
         self.word_changes.resize(size);
-        self.static_moves.resize(size);
+        self.static_moves.feed.resize(size);
     }
 
     pub fn len(&self) -> usize {
@@ -780,7 +793,6 @@ impl GlobalTransforms {
             report,
             changes,
             words,
-            moved_static,
             static_moves,
             ..
         } = self;
@@ -856,8 +868,7 @@ impl GlobalTransforms {
                     local_revisions[index] = next_revision;
                     nodes.changes.push(index as u32);
                     if nodes.words[index].mobility == Mobility::Static {
-                        moved_static.insert(entity);
-                        static_moves.push(entity);
+                        static_moves.record(entity);
                     }
                     if nodes.asleep(index) {
                         continue;
@@ -928,8 +939,7 @@ impl GlobalTransforms {
                 checked += 1;
                 if local_changed {
                     if self.words[count].mobility == Mobility::Static {
-                        self.moved_static.insert(entity);
-                        self.static_moves.push(entity);
+                        self.static_moves.record(entity);
                     }
                     self.dirty.mark(count, threshold);
                 }
@@ -955,8 +965,7 @@ impl GlobalTransforms {
             if self.words[index].mobility == Mobility::Static
                 && !same_pose_bits(&self.locals[index], &transform.to_pose())
             {
-                self.moved_static.insert(entity);
-                self.static_moves.push(entity);
+                self.static_moves.record(entity);
             }
         }
         self.asleep.clear();
@@ -967,36 +976,8 @@ impl GlobalTransforms {
                 .filter(|(_, word)| !word.active)
                 .map(|(&entity, _)| entity),
         );
-        self.declared.clear();
-        self.words.clear();
-        self.packed.clear();
-        self.entities.clear();
-        self.sources.clear();
-        self.locals.clear();
-        self.local_revisions.clear();
-        self.links.clear();
-        self.globals.clear();
-        self.revisions.clear();
-        self.indices.clear();
-        self.order.clear();
-        self.path.clear();
-        self.dirty.clear();
         let admitted = self.query.iter(world).len().min(self.limit);
-        self.entities.reserve_exact(admitted);
-        self.sources.reserve_exact(admitted);
-        self.locals.reserve_exact(admitted);
-        self.local_revisions.reserve_exact(admitted);
-        self.links.reserve_exact(admitted);
-        self.globals.reserve_exact(admitted);
-        self.revisions.reserve_exact(admitted);
-        self.declared.reserve_exact(admitted);
-        self.words.reserve_exact(admitted);
-        self.packed.reserve_exact(admitted);
-        self.order.reserve_exact(admitted);
-        self.path.reserve_exact(admitted);
-        self.dirty.flags.clear();
-        self.dirty.flags.reserve_exact(admitted);
-        self.dirty.seeds.reserve_exact(admitted.div_ceil(2));
+        self.empty_tables(admitted);
         let mut report = HierarchyReport::default();
         for (entity, transform, parent) in self.query.iter(world) {
             report.transforms += 1;
@@ -1068,10 +1049,44 @@ impl GlobalTransforms {
         self.dirty.count = self.links.len();
         self.changes.replace();
         let indices = &self.indices;
-        self.moved_static.retain(|entity| indices.get(entity).is_some());
+        self.static_moves
+            .moved
+            .retain(|entity| indices.get(entity).is_some());
         report.invalid_transforms = report.transforms;
         self.report = report;
         self.topology_revision = work.value_ids.next();
+    }
+
+    fn empty_tables(&mut self, admitted: usize) {
+        self.declared.clear();
+        self.words.clear();
+        self.packed.clear();
+        self.entities.clear();
+        self.sources.clear();
+        self.locals.clear();
+        self.local_revisions.clear();
+        self.links.clear();
+        self.globals.clear();
+        self.revisions.clear();
+        self.indices.clear();
+        self.order.clear();
+        self.path.clear();
+        self.dirty.clear();
+        self.entities.reserve_exact(admitted);
+        self.sources.reserve_exact(admitted);
+        self.locals.reserve_exact(admitted);
+        self.local_revisions.reserve_exact(admitted);
+        self.links.reserve_exact(admitted);
+        self.globals.reserve_exact(admitted);
+        self.revisions.reserve_exact(admitted);
+        self.declared.reserve_exact(admitted);
+        self.words.reserve_exact(admitted);
+        self.packed.reserve_exact(admitted);
+        self.order.reserve_exact(admitted);
+        self.path.reserve_exact(admitted);
+        self.dirty.flags.clear();
+        self.dirty.flags.reserve_exact(admitted);
+        self.dirty.seeds.reserve_exact(admitted.div_ceil(2));
     }
 
     fn evaluate_dirty(&mut self, work: &mut PropagationWork) {

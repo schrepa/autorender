@@ -145,8 +145,7 @@ pub fn pose_admitted(m: Mat4) -> bool {
     let (x, y, z) = (m.x_axis.truncate(), m.y_axis.truncate(), m.z_axis.truncate());
     let scale = max(largest(x), max(largest(y), largest(z)));
     let determinant = x.dot(y.cross(z));
-    scale >= bounds::MIN_LINEAR_SCALE
-        && scale <= bounds::COEFFICIENT_LIMIT
+    (bounds::MIN_LINEAR_SCALE..=bounds::COEFFICIENT_LIMIT).contains(&scale)
         && largest(m.w_axis.truncate()) <= bounds::COEFFICIENT_LIMIT
         && determinant.abs() >= bounds::COMMON_DETERMINANT_MARGIN * ((scale * scale) * scale)
 }
@@ -286,6 +285,12 @@ impl Reads {
     }
 }
 
+#[derive(Default)]
+struct Seen {
+    tick: Cursor,
+    frame: Cursor,
+}
+
 #[derive(Resource)]
 pub struct DrawnPoses {
     topology: Option<Revision>,
@@ -310,8 +315,7 @@ pub struct DrawnPoses {
     mark: u32,
     buckets: Vec<Vec<u32>>,
     whole: bool,
-    tick_seen: Cursor,
-    frame_seen: Cursor,
+    seen: Seen,
     last_revision: u64,
     changes: Feed<u32>,
     alpha: f32,
@@ -350,8 +354,7 @@ impl FromWorld for DrawnPoses {
             mark: 0,
             buckets: Vec::new(),
             whole: true,
-            tick_seen: Cursor::default(),
-            frame_seen: Cursor::default(),
+            seen: Seen::default(),
             last_revision: 0,
             changes: Feed::new(size),
             alpha: 1.0,
@@ -777,7 +780,7 @@ impl DrawnPoses {
         }
         self.next_mark();
         let moved = std::mem::take(&mut self.moving);
-        match globals.changes_since(&mut self.tick_seen) {
+        match globals.changes_since(&mut self.seen.tick) {
             Since::Same => {}
             Since::Listed(listed) => {
                 for &index in listed {
@@ -875,7 +878,7 @@ impl DrawnPoses {
         self.index(globals);
         self.apply_fresh(globals);
         self.next_mark();
-        let listed = match globals.changes_since(&mut self.frame_seen) {
+        let listed = match globals.changes_since(&mut self.seen.frame) {
             Since::Same => &[][..],
             Since::Listed(listed) => listed,
             Since::All => {

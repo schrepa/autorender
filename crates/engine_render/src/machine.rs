@@ -1348,6 +1348,7 @@ fn graph_of(
         .filter(|(_, pass)| crate::shared::composites(pass))
         .map(|(index, _)| PassId::new(index))
         .collect();
+    let mut overlays: Vec<PassId> = Vec::new();
     for (at, pass) in declared.passes.iter().enumerate() {
         let Some(canvas) = canvas.filter(|_| pass.layer == Some(AttachPoint::Overlay)) else {
             continue;
@@ -1356,7 +1357,8 @@ fn graph_of(
             0,
             (canvas, GraphAccess::Draw(Clear::Color(crate::graph::BLACK))),
         );
-        passes[at].after.extend(screens.iter().copied());
+        passes[at].after.extend(screens.iter().chain(&overlays).copied());
+        overlays.push(PassId::new(at));
     }
     for &(layer, view) in &copied {
         let (Some(copy), Some(from)) = (

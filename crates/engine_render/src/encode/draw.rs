@@ -388,7 +388,8 @@ impl Run {
                     timestamp_writes: None,
                 })
                 .forget_lifetime();
-            self.recording.transition(Step::Compute(current, begun));
+            self.recording
+                .transition(Step::Compute(current, Box::new(begun)));
         }
         let offset = self.camera_slot * CAMERA_STRIDE as u32;
         let Self {
@@ -439,4 +440,18 @@ impl Run {
         }
         1
     }
+}
+
+fn timed_draw(
+    render: &mut wgpu::RenderPass<'static>,
+    timed: TimedDraw<'_>,
+    draw: impl FnOnce(&mut wgpu::RenderPass<'static>),
+) {
+    let Some((timer, label)) = timed else {
+        draw(render);
+        return;
+    };
+    let began = timer.begin_draw(render, label);
+    draw(render);
+    timer.end_draw(render, began);
 }

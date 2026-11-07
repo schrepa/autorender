@@ -120,7 +120,13 @@ fn type_of(schema: &Value) -> String {
             "boolean" => "boolean".to_owned(),
             "string" => "string".to_owned(),
             "null" => "null".to_owned(),
-            "array" => format!("{}[]", type_of(&schema["items"])),
+            "array" => match schema["prefixItems"].as_array() {
+                Some(items) => {
+                    let items: Vec<String> = items.iter().map(type_of).collect();
+                    format!("[{}]", items.join(", "))
+                }
+                None => format!("{}[]", type_of(&schema["items"])),
+            },
             "object" if schema.get("properties").is_none() => {
                 match schema.get("additionalProperties") {
                     Some(values) if values.is_object() => {

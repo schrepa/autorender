@@ -150,10 +150,6 @@ impl MaterialStore {
         self.synced = None;
     }
 
-    pub(crate) fn table(&self) -> &'static Table {
-        self.table
-    }
-
     pub(crate) fn bake_layout(&self) -> PipelineLayout {
         self.bake
     }

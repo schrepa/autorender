@@ -837,7 +837,7 @@ impl Book {
                 .jobs
                 .fetch(&IMPOSTOR, &identity, job_priority(VIEW_JOBS, 0));
             let supply = Supply {
-                material: bake.material,
+                material: bake.material.clone(),
                 interest: self.answers.ask(identity),
                 fetch: Some(fetch),
                 since: cx.now,
@@ -942,7 +942,7 @@ impl Book {
             key,
             Baked {
                 record,
-                material: bake.material,
+                material: bake.material.clone(),
             },
         );
     }
@@ -1024,8 +1024,10 @@ pub struct ImpostorBooks {
     missed: bool,
     read: Vec<(ImpostorIdentity, Option<Vec<u8>>)>,
     assembling: Vec<(JobId, ImpostorIdentity)>,
-    made: Vec<(ImpostorIdentity, Option<Result<Arc<[u8]>, Error>>)>,
+    made: Vec<(ImpostorIdentity, Made)>,
 }
+
+type Made = Option<Result<Arc<[u8]>, Error>>;
 
 impl Default for ImpostorBooks {
     fn default() -> Self {

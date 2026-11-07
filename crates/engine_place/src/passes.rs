@@ -188,14 +188,12 @@ pub fn never(_: DrawKind) -> bool {
 pub struct PassDepth {
     pub bias: i32,
     pub slope: f32,
-    pub clamped: bool,
 }
 
 impl PassDepth {
     pub const PLAIN: Self = Self {
         bias: 0,
         slope: 0.0,
-        clamped: false,
     };
 }
 

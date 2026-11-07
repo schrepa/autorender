@@ -153,6 +153,14 @@ fn joined(held: &mut CellWords, more: CellWords) {
 
 type Looks = Vec<[Pipeline<ScatterGpu, Scene>; 2]>;
 
+type DrawBuffers = (
+    Buffer<ScatterGpu>,
+    Buffer<ScatterGpu>,
+    Buffer<ScatterGpu>,
+    Buffer<ScatterGpu>,
+    Buffer<ScatterGpu>,
+);
+
 enum Joined {
     Lit {
         looks: Looks,
@@ -519,13 +527,7 @@ impl ScatterGpu {
     fn scene_pipelines(
         cx: &mut Install<'_, Self>,
         (poses, colors, grounds): (Buffer<Self>, Buffer<Self>, Buffer<Self>),
-        (ids, draws, records, cards, card_args): (
-            Buffer<Self>,
-            Buffer<Self>,
-            Buffer<Self>,
-            Buffer<Self>,
-            Buffer<Self>,
-        ),
+        (ids, draws, records, cards, card_args): DrawBuffers,
     ) -> Result<Vec<ScenePipelines>, Error> {
         let listed: Vec<ScenePass> = cx
             .passes()
@@ -1084,10 +1086,6 @@ impl GpuPart for ScatterGpu {
         Res<'static, AssetResidency>,
     );
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::scatter::{ambient, cull, faces, snap};
         let snap_uniform = cx.buffer("snap", Lifetime::Kept);

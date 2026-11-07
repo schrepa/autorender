@@ -168,6 +168,10 @@ impl GpuPart for TerrainGpu {
     );
     const NAME: &'static str = "terrain";
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::terrain_shading::{
             ancestors, control, debug, draw, faces, field, horizons, normals, peaks, shadow, sky,
@@ -567,6 +571,10 @@ impl GpuPart for TerrainGpu {
         })
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn prepare(
         &mut self,
         (lists, neighbors, frame, (limits, assets)): SystemParamItem<'_, '_, Self::Reads>,

@@ -241,7 +241,7 @@ impl GpuPart for WaterGpu {
         let count_leaves = cx.pass("water_leaf_args").id();
         let foam_pass = cx
             .pass("water_foam")
-            .at(AttachPoint::Sky)
+            .at(AttachPoint::Opaque)
             .after(particles_gpu.after())
             .color(foam_texture, Access::Clear)
             .label("engine/water-foam")

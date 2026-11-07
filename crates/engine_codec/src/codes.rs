@@ -45,8 +45,19 @@ impl serde::Serialize for ErrorCode {
 impl<'de> serde::Deserialize<'de> for ErrorCode {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
-        Self::named(&name).ok_or_else(|| serde::de::Error::unknown_variant(&name, Self::NAMES))
+        Ok(Self::named(&name).unwrap_or_else(|| ErrorCode::Brick(interned(&name))))
     }
+}
+
+fn interned(name: &str) -> &'static str {
+    static NAMES: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    let mut names = NAMES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(&known) = names.iter().find(|&&known| known == name) {
+        return known;
+    }
+    let held: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    names.push(held);
+    held
 }
 
 #[cfg(feature = "schema")]

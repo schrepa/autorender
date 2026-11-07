@@ -59,11 +59,8 @@ pub const FS_DEBUG_VIEW: engine_core::Entry = engine_core::Entry::generated(
 );
 
 pub(crate) fn core_module(path: &str) -> Module {
-    let index = TEXTS
-        .iter()
-        .position(|text| text.path() == path)
-        .expect("core_module_listed");
-    Module::generated(&CORE, index as u32)
+    let index = TEXTS.iter().position(|text| text.path() == path);
+    Module::generated(&CORE, index.unwrap_or_else(|| panic!("core_module_listed {path}")) as u32)
 }
 
 pub const PRESENTATION_MODULE: &str = "engine::presentation";

@@ -6,7 +6,7 @@ use bevy_ecs::prelude::*;
 use engine_core::math::clamp;
 use engine_core::{
     Error, ErrorCode, FrameTime, GlobalTransforms, Interest, Pause, Poses, PrimaryView, Request,
-    Requests, SceneIds, Ticket, fault_of,
+    Requests, SceneIds, Spawner, Ticket,
 };
 use engine_places_rendering::audio::{
     Bus, OneShot, SoundHandle, SoundOrder, SoundSource, Sounds, VoiceHandle,
@@ -620,7 +620,7 @@ pub(crate) fn mix(
     ),
     sounds: Res<Sounds>,
     sources: Query<(Entity, Ref<SoundSource>)>,
-    (mut stats, mut mixer, mut commands): (ResMut<AudioStats>, ResMut<Mixer>, Commands),
+    (mut stats, mut mixer, mut spawner): (ResMut<AudioStats>, ResMut<Mixer>, Spawner<AudioBrick>),
 ) {
     let was = mixer.device;
     let closed = !mixer.backend.opened();
@@ -671,7 +671,7 @@ pub(crate) fn mix(
     mixer.publish(&mut stats);
     if was != Device::Failed && mixer.device == Device::Failed {
         let error = Error::new(AUDIO_FAILED, "$.audio.device").got(mixer.latest.clone());
-        commands.queue(move |world: &mut World| fault_of::<AudioBrick>(world, error));
+        spawner.fault(error);
     }
 }
 

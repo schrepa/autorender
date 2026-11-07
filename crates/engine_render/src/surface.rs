@@ -364,89 +364,7 @@ impl MaterialLayout {
         for (index, name) in self.values.iter().enumerate() {
             let _ = writeln!(source, "const VALUE_{}: u32 = {index}u;", upper(name));
         }
-        let _ = write!(
-            source,
-            "
-fn alpha_test() -> bool {{
-    return draw_state_alpha_test(DRAW_STATE);
-}}
-
-fn fade_list() -> bool {{
-    return draw_state_fading(DRAW_STATE);
-}}
-
-fn fixed_material() -> bool {{
-    return draw_state_fixed(DRAW_STATE);
-}}
-
-fn map_present(index: u32) -> bool {{
-    if fixed_material() {{
-        return ((MATERIAL_MAPS >> index) & 1u) != 0u;
-    }}
-    return {RECORD}.maps[index * 2u].w != 0.0;
-}}
-
-fn map_uv(index: u32, uv0: vec2<f32>, uv1: vec2<f32>) -> vec2<f32> {{
-    let second = {RECORD}.maps[index * 2u + 1u].w != 0.0;
-    let point = vec3<f32>(select(uv0, uv1, second), 1.0);
-    return vec2<f32>(dot({RECORD}.maps[index * 2u].xyz, point),
-        dot({RECORD}.maps[index * 2u + 1u].xyz, point));
-}}
-
-fn map_gradient(index: u32, d0: vec2<f32>, d1: vec2<f32>) -> vec2<f32> {{
-    let second = {RECORD}.maps[index * 2u + 1u].w != 0.0;
-    let change = vec3<f32>(select(d0, d1, second), 0.0);
-    return vec2<f32>(dot({RECORD}.maps[index * 2u].xyz, change),
-        dot({RECORD}.maps[index * 2u + 1u].xyz, change));
-}}
-
-fn material_value(index: u32) -> f32 {{
-    return {RECORD}.values[index / 4u][index % 4u];
-}}
-
-fn material_module(slot: u32) -> u32 {{
-    if fixed_material() {{
-        let word = select(MATERIAL_SLOTS_LOW, MATERIAL_SLOTS_HIGH, slot >= SLOTS_PER_WORD);
-        return (word >> ((slot % SLOTS_PER_WORD) * SLOT_BITS)) & ((1u << SLOT_BITS) - 1u);
-    }}
-    return {RECORD}.modules[slot / 4u][slot % 4u];
-}}
-
-fn material_model() -> u32 {{
-    if fixed_material() {{
-        return MATERIAL_MODEL;
-    }}
-    return {RECORD}.choice.x;
-}}
-
-fn material_alpha() -> u32 {{
-    if fixed_material() {{
-        return draw_state_alpha(DRAW_STATE);
-    }}
-    return {RECORD}.choice.y;
-}}
-
-fn alpha_cutoff() -> f32 {{
-    return {RECORD}.params.z;
-}}
-
-fn normal_scale() -> f32 {{
-    return {RECORD}.params.x;
-}}
-
-fn occlusion_strength() -> f32 {{
-    return {RECORD}.params.y;
-}}
-
-fn emissive_factor() -> vec3<f32> {{
-    return {RECORD}.emissive.rgb;
-}}
-
-fn transmission_factor() -> f32 {{
-    return {RECORD}.emissive.w;
-}}
-"
-        );
+        material_functions(&mut source);
         source
     }
 
@@ -493,7 +411,7 @@ fn transmission_factor() -> f32 {{
             if full && !modules.is_empty() {
                 let _ = writeln!(
                     body,
-                    "    let module = material_module(SLOT_{});",
+                    "    let picked = material_module(SLOT_{});",
                     upper(name)
                 );
                 for (index, (_, _, path)) in modules.iter().enumerate() {
@@ -504,7 +422,7 @@ fn transmission_factor() -> f32 {{
                     );
                     let _ = writeln!(
                         body,
-                        "    if module == {id}u {{\n        return {name}_{id}({args});\n    }}"
+                        "    if picked == {id}u {{\n        return {name}_{id}({args});\n    }}"
                     );
                 }
             }
@@ -563,8 +481,7 @@ fn transmission_factor() -> f32 {{
     }
 
     pub(crate) fn table(&self) -> (&'static Table, PipelineLayout) {
-        static TABLES: Mutex<Vec<(Vec<&'static str>, usize, &'static Table, PipelineLayout)>> =
-            Mutex::new(Vec::new());
+        static TABLES: Mutex<Vec<MadeTable>> = Mutex::new(Vec::new());
         let size = self.record_bytes();
         let mut tables = TABLES
             .lock()
@@ -755,4 +672,92 @@ pub fn material_state(material: Option<&Material>) -> u32 {
     material
         .map_or(DrawState::PLAIN, |material| draw_of(material.render_state()))
         .pack()
+}
+
+type MadeTable = (Vec<&'static str>, usize, &'static Table, PipelineLayout);
+
+fn material_functions(source: &mut String) {
+    let _ = write!(
+        source,
+        "
+fn alpha_test() -> bool {{
+    return draw_state_alpha_test(DRAW_STATE);
+}}
+
+fn fade_list() -> bool {{
+    return draw_state_fading(DRAW_STATE);
+}}
+
+fn fixed_material() -> bool {{
+    return draw_state_fixed(DRAW_STATE);
+}}
+
+fn map_present(index: u32) -> bool {{
+    if fixed_material() {{
+        return ((MATERIAL_MAPS >> index) & 1u) != 0u;
+    }}
+    return {RECORD}.maps[index * 2u].w != 0.0;
+}}
+
+fn map_uv(index: u32, uv0: vec2<f32>, uv1: vec2<f32>) -> vec2<f32> {{
+    let second = {RECORD}.maps[index * 2u + 1u].w != 0.0;
+    let point = vec3<f32>(select(uv0, uv1, second), 1.0);
+    return vec2<f32>(dot({RECORD}.maps[index * 2u].xyz, point),
+        dot({RECORD}.maps[index * 2u + 1u].xyz, point));
+}}
+
+fn map_gradient(index: u32, d0: vec2<f32>, d1: vec2<f32>) -> vec2<f32> {{
+    let second = {RECORD}.maps[index * 2u + 1u].w != 0.0;
+    let change = vec3<f32>(select(d0, d1, second), 0.0);
+    return vec2<f32>(dot({RECORD}.maps[index * 2u].xyz, change),
+        dot({RECORD}.maps[index * 2u + 1u].xyz, change));
+}}
+
+fn material_value(index: u32) -> f32 {{
+    return {RECORD}.values[index / 4u][index % 4u];
+}}
+
+fn material_module(slot: u32) -> u32 {{
+    if fixed_material() {{
+        let word = select(MATERIAL_SLOTS_LOW, MATERIAL_SLOTS_HIGH, slot >= SLOTS_PER_WORD);
+        return (word >> ((slot % SLOTS_PER_WORD) * SLOT_BITS)) & ((1u << SLOT_BITS) - 1u);
+    }}
+    return {RECORD}.modules[slot / 4u][slot % 4u];
+}}
+
+fn material_model() -> u32 {{
+    if fixed_material() {{
+        return MATERIAL_MODEL;
+    }}
+    return {RECORD}.choice.x;
+}}
+
+fn material_alpha() -> u32 {{
+    if fixed_material() {{
+        return draw_state_alpha(DRAW_STATE);
+    }}
+    return {RECORD}.choice.y;
+}}
+
+fn alpha_cutoff() -> f32 {{
+    return {RECORD}.params.z;
+}}
+
+fn normal_scale() -> f32 {{
+    return {RECORD}.params.x;
+}}
+
+fn occlusion_strength() -> f32 {{
+    return {RECORD}.params.y;
+}}
+
+fn emissive_factor() -> vec3<f32> {{
+    return {RECORD}.emissive.rgb;
+}}
+
+fn transmission_factor() -> f32 {{
+    return {RECORD}.emissive.w;
+}}
+"
+    );
 }

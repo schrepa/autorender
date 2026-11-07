@@ -885,6 +885,14 @@ impl Registry {
             .iter()
             .filter_map(|&(first, then)| Some((self.id(first)?, self.id(then)?)))
             .collect();
+        let shared: Box<[ComponentId]> = self
+            .catalog
+            .iter()
+            .filter(|decl| decl.kind() != PlaceKind::Slot)
+            .map(PlaceDecl::type_id)
+            .chain(self.movers.map(|rule| rule.transform))
+            .filter_map(|type_id| world.components().get_id(type_id))
+            .collect();
         let mut all = world.get_resource_or_init::<Schedules>();
         for &schedule in schedules {
             let rules = PlaceRules {
@@ -893,6 +901,7 @@ impl Registry {
                 slots: slots.clone(),
                 firsts: firsts.clone(),
                 orders: orders.clone(),
+                shared: shared.clone(),
                 rule: self.rule.clone(),
             };
             order::order(all.entry(schedule), rules);
@@ -970,7 +979,7 @@ impl Registry {
             rule.catalogued(type_id).then(|| {
                 catalog
                     .iter()
-                    .find(|decl| decl.type_id() == type_id)
+                    .find(|decl| PlaceDecl::type_id(decl) == type_id)
                     .and_then(PlaceDecl::reset)
             })
         };

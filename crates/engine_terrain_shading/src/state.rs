@@ -493,7 +493,11 @@ impl Atlas {
             }
             (Some(tile), Some(held)) => {
                 let (low, high) = heights_of(tile);
-                shadows.push(ground_box(entry, key, (held.low.min(low), held.high.max(high))));
+                let (low, high) = (
+                    engine_core::math::min(held.low, low),
+                    engine_core::math::max(held.high, high),
+                );
+                shadows.push(ground_box(entry, key, (low, high)));
                 missing.push((id, self.slots.get(&id).copied()));
             }
         }
@@ -957,8 +961,7 @@ pub(crate) fn publish_piece(
     tiles: Res<TerrainTiles>,
     ground: Res<GroundTiles>,
     bakes: Res<Bakes>,
-    view: Res<PrimaryView>,
-    limits: Res<DeviceLimits>,
+    (view, limits): (Res<PrimaryView>, Res<DeviceLimits>),
     shown: Res<DebugShown>,
     mut piece: ResMut<HorizonsPiece>,
 ) {
@@ -1009,8 +1012,10 @@ impl Readable for SurfaceTotals {
         self.written = read.written;
         let words: Vec<u32> = read
             .value
-            .chunks_exact(4)
-            .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| u32::from_le_bytes(*word))
             .collect();
         let args = crate::gpu::SUBDIVISION_ARGS as usize;
         let mut sums = [0_u32; 4];

@@ -425,7 +425,7 @@ impl InputGatherer {
 
     pub fn take(&mut self, seconds: f32) -> FrameInput {
         self.take_pad_buttons();
-        let seconds = finite(seconds).max(0.0);
+        let seconds = engine_core::math::max(finite(seconds), 0.0);
         let analog = std::mem::take(&mut self.analog);
         let [
             left_x,

@@ -433,7 +433,7 @@ pub(crate) fn work_between_frames(
     remaining.report(terrains.work_between_frames(
         (clock.reading, milliseconds),
         &mut asking,
-        &mut *budget,
+        &mut budget,
     ));
 }
 

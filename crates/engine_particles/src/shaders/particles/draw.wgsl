@@ -3,14 +3,13 @@ import package::engine::math::{pcg, unit};
 import package::engine::surfaces::SURFACE_SOLID;
 import package::engine::view::camera;
 import package::face::lighting::sun_visibility;
-import package::face::particle_formula::custom_particle;
+import package::face::particle_formula::{Particle, ParticleIn, custom_particle};
 import package::face::sky::{ambient, atmospheric, atmospheric_cover, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
 import package::generated::particles::{Emitter, NO_SLOT, Particles};
 import package::particles::standard::standard;
 import package::particles::weighted::{TransparentTargets, weighted_particle};
-import package::place::particle_formula::{Particle, ParticleIn};
 
 @group(1) @binding(0) var<uniform> particles: Particles;
 @group(1) @binding(1) var<storage, read> emitters: array<Emitter>;

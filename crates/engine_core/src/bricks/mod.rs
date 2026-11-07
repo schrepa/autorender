@@ -721,6 +721,11 @@ impl<B: Brick> Spawner<'_, '_, B> {
         self.set_parents(vec![(child, parent)]);
     }
 
+    pub fn fault(&mut self, error: Error) {
+        self.commands
+            .queue(move |world: &mut World| engine_registry::fault_of::<B>(world, error));
+    }
+
     pub fn set_parents(&mut self, changes: Vec<(Entity, Option<Entity>)>) {
         self.commands
             .queue(move |world: &mut World| parented::<B>(world, &changes));

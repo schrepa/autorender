@@ -1,3 +1,8 @@
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
+
 use std::fmt::Write as _;
 
 use proc_macro::TokenStream;
@@ -207,13 +212,13 @@ fn discriminant(variant: &Variant) -> Result<Option<u32>, Error> {
     let Some((_, expr)) = &variant.discriminant else {
         return Ok(None);
     };
-    match expr {
-        Expr::Lit(literal) => match &literal.lit {
-            Lit::Int(value) => value.base10_parse::<u32>().map(Some),
-            _ => Err(Error::new_spanned(expr, "a gpu_bits value is a whole number")),
-        },
-        _ => Err(Error::new_spanned(expr, "a gpu_bits value is a whole number")),
-    }
+    let Expr::Lit(literal) = expr else {
+        return Err(Error::new_spanned(expr, "a gpu_bits value is a whole number"));
+    };
+    let Lit::Int(value) = &literal.lit else {
+        return Err(Error::new_spanned(expr, "a gpu_bits value is a whole number"));
+    };
+    value.base10_parse::<u32>().map(Some)
 }
 
 fn mask(width: u32) -> u32 {

@@ -1,5 +1,5 @@
 import package::engine::math::{TAU, pcg, unit};
-import package::place::particle_formula::{Particle, ParticleIn};
+import package::face::particle_formula::{Particle, ParticleIn};
 
 fn basis(axis: vec3<f32>) -> mat2x3<f32> {
     let helper = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(axis.x) > 0.9);

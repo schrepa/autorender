@@ -218,18 +218,18 @@ impl State {
             axis(1, screen.y, shaped.height),
         ];
         let bounds = bounds_of(run.clip, ratio, display);
-        for glyph in &shaped.glyphs {
+        for shaped_glyph in &shaped.glyphs {
             if staged.len() >= limit {
                 *cut += 1;
                 continue;
             }
-            let Some(slot) = atlas.slot(glyph.key, fonts) else {
+            let Some(slot) = atlas.slot(shaped_glyph.key, fonts) else {
                 *cut += 1;
                 continue;
             };
             let at = [
-                origin[0] + glyph.x + slot.left,
-                origin[1] + glyph.y - slot.top,
+                origin[0] + shaped_glyph.x + slot.left,
+                origin[1] + shaped_glyph.y - slot.top,
             ];
             staged.extend(glyph(slot, at, bounds, run.color, screen));
         }

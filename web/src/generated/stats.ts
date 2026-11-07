@@ -3,7 +3,7 @@ export interface FrameStats {
   audio_stats: AudioStats;
   bloom_stats: BloomStats;
   bricks_cost: BrickCosts | null;
-  camera_refusals: CameraRefusals;
+  budget: BudgetUse[];
   cloud_stats: CloudStats;
   collision_stats: CollisionWorldView;
   cut_seconds: number;
@@ -20,7 +20,6 @@ export interface FrameStats {
   instances: number;
   jobs: JobStats;
   linked: { faces: Record<string, string>; lists: Record<string, string[]>; nobody: string[] };
-  loading: boolean;
   local_light_stats: LightStats;
   mesh_upload_bytes: number;
   meshes_stats: MeshStats;
@@ -28,13 +27,14 @@ export interface FrameStats {
   particle_stats: ParticleStats;
   physics_stats: PhysicsStats;
   pipelines: number;
-  pipelines_compiling: boolean;
   pipelines_created: number;
   pipelines_listed: number;
   pipelines_unlisted: number;
   read_back_age: number | null;
+  readiness: Readiness;
   reflection_probes_stats: ReflectionProbeStats;
   reflections_stats: ReflectionsStats;
+  refused_views: number;
   render_ms: number;
   render_passes: string[];
   resident_mesh_bytes: number;
@@ -59,6 +59,8 @@ export interface FrameStats {
   water_stats: WaterStats;
   world_streaming_stats: CellStats;
 }
+
+export type Allowed = { kind: "range"; max: number; min: number } | { kind: "at_most"; max: number } | { kind: "at_least"; min: number } | { kind: "variants"; values: string[] };
 
 export interface AmbientOcclusionStats {
   active: boolean;
@@ -96,9 +98,11 @@ export interface BrickCosts {
   rows: BrickCost[];
 }
 
-export interface CameraRefusals {
-  count: number;
-  latest: string | null;
+export interface BudgetUse {
+  asked: number;
+  by: string;
+  cut: number;
+  spent: number;
 }
 
 export interface CellStats {
@@ -165,11 +169,26 @@ export interface DynamicResolutionStats {
   scale: number;
 }
 
+export interface Error {
+  allowed: Allowed | null;
+  code: ErrorCode;
+  expected: Expected | null;
+  got: unknown;
+  nearest: unknown;
+  path: string;
+}
+
+export type ErrorCode = string;
+
+export type Expected = "number" | "integer" | "string" | "boolean" | "object" | "array" | "id" | "path" | "file" | "entity" | "unique" | "present" | "absent" | "finite" | "normalized" | "sorted" | "nonzero" | "above" | "power_of_two" | "multiple" | "json" | "utf8" | "uri" | "base64" | "image" | "paused" | "running" | "gpu" | "live" | "non_empty" | "readable" | "writable" | "matching" | "supported" | "acyclic" | "opaque" | "triangles" | "invertible";
+
 export interface ExposureStats {
   active: boolean;
   metered: number;
+  settling: number;
   stops: number;
   view: number;
+  wanted: number;
 }
 
 export interface GroundCoverStats {
@@ -207,7 +226,6 @@ export interface LightStats {
 }
 
 export interface MeshStats {
-  casters: number | null;
   culled_instances: number;
   culling_enabled: boolean;
   dropped_instances: number;
@@ -216,12 +234,13 @@ export interface MeshStats {
   invalid_transforms: number;
   level_of_detail: DetailStats;
   missing_assets: number;
-  moving_casters: number | null;
   occlusion_culling: CullingStats;
   read_back_age: number | null;
+  refused_views: number | null;
   render_candidates: number;
   subpixel_culling: CullingStats;
   triangles: number | null;
+  views: number | null;
   visible_instances: number;
 }
 
@@ -254,6 +273,18 @@ export interface PhysicsStats {
   solids: number;
   water_samples: number;
   wet: number;
+}
+
+export interface Progress {
+  done: number;
+  total: number;
+}
+
+export interface Readiness {
+  compiling: number;
+  failed: [string, Error][];
+  loading: Progress;
+  settling: number;
 }
 
 export interface ReflectionProbeStats {
@@ -325,6 +356,7 @@ export interface StaticTablesView {
 
 export interface TemporalAntialiasingStats {
   active: boolean;
+  settling: number;
 }
 
 export interface TerrainShadingStats {
@@ -355,6 +387,7 @@ export interface TerrainShadingStats {
   surface_slots: Cut;
   tiles: number;
   tiles_dropped: Cut;
+  trace_pool: Cut;
   triangles: number;
 }
 
@@ -367,7 +400,6 @@ export interface TerrainStats {
   failed_jobs: number;
   fallback_tiles: number;
   latest_job_failure: string | null;
-  loading: boolean;
   loading_tiles: number;
   missing_tiles: number;
   pending: number;
@@ -418,13 +450,13 @@ export interface WaterStats {
   live_setup: number;
   live_steps: number;
   live_waiting: number;
-  looks_left: number;
   particle_texels: number;
   particles_born: number;
   rewatered_tiles: number;
   settled_records: number;
   settles_left: number;
   settling_records: number;
+  squares_left: number;
   stale_water_tiles: number;
   touches: number;
   wave_particles: number;

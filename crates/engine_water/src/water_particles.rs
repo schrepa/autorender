@@ -325,10 +325,22 @@ pub(crate) struct ParticlesGpu {
     splat_pipeline: ComputePipeline<WaterGpu>,
     look: ComputePipeline<WaterGpu>,
     down: Vec<ComputePipeline<WaterGpu>>,
+    history: History,
+    running: Option<(u32, u32)>,
+}
+
+struct History {
     sized: Option<(ParticleSizes, f32)>,
     grid: GridState,
     planned: Option<([i32; 2], u32)>,
-    running: Option<(u32, u32)>,
+}
+
+impl History {
+    const FRESH: Self = Self {
+        sized: None,
+        grid: GridState::Fresh,
+        planned: None,
+    };
 }
 
 #[derive(Clone, Copy)]
@@ -491,9 +503,7 @@ impl ParticlesGpu {
             splat_pipeline,
             look,
             down,
-            sized: None,
-            grid: GridState::Fresh,
-            planned: None,
+            history: History::FRESH,
             running: None,
         })
     }
@@ -524,9 +534,7 @@ impl ParticlesGpu {
         self.running = None;
         cx.allocate_buffer(self.frame, size_of::<ParticleFrame>() as u64);
         let (Some(grid), Some(frame)) = (particles.grid.as_ref(), particles.frame.as_ref()) else {
-            self.sized = None;
-            self.grid = GridState::Fresh;
-            self.planned = None;
+            self.history = History::FRESH;
             for buffer in [self.lattice, self.pool, self.counts, self.splat] {
                 cx.allocate_buffer(buffer, 256);
             }
@@ -549,11 +557,15 @@ impl ParticlesGpu {
         } = grid.sizes;
         let points = grid.points;
         let sized = Some((grid.sizes, grid.texel));
-        let ran = self.planned.take().filter(|_| cx.ran(self.splat_pass));
-        let resized = self.sized != sized;
+        let ran = self
+            .history
+            .planned
+            .take()
+            .filter(|_| cx.ran(self.splat_pass));
+        let resized = self.history.sized != sized;
         if resized {
-            self.sized = sized;
-            self.grid = GridState::Fresh;
+            self.history.sized = sized;
+            self.history.grid = GridState::Fresh;
             let area = u64::from(texels) * u64::from(texels);
             let pooled = u64::from(pools[0]) + u64::from(pools[1]);
             let sites = u64::from(points) * u64::from(points);
@@ -585,13 +597,13 @@ impl ParticlesGpu {
             );
         }
         if !resized && let Some((held, read)) = ran {
-            self.grid = GridState::Running {
+            self.history.grid = GridState::Running {
                 held,
                 read: read ^ 1,
             };
         }
         let mut frame = *frame;
-        let (held, read, fresh) = match self.grid {
+        let (held, read, fresh) = match self.history.grid {
             GridState::Running { held, read } => (held, read, false),
             GridState::Fresh => ([frame.window[0], frame.window[1]], 0, true),
         };
@@ -599,7 +611,7 @@ impl ParticlesGpu {
         frame.window[3] = held[1];
         frame.flags[0] = u32::from(fresh);
         frame.pool[2] = read;
-        self.planned = Some(([frame.window[0], frame.window[1]], read));
+        self.history.planned = Some(([frame.window[0], frame.window[1]], read));
         cx.write(self.frame, 0, &[frame]);
         self.running = Some((points.div_ceil(PARTICLE_SIDE), texels));
         let args = u64::from(PARTICLE_ARGS) * 4;

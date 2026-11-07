@@ -39,9 +39,11 @@ pub(crate) struct Ownership {
     pub(crate) needs: Vec<Vec<BrickId>>,
 }
 
+type ResetFn = fn(&mut World);
+
 pub(crate) struct Values<'a> {
     pub(crate) bricks: &'a [BrickRecord],
-    pub(crate) catalogued: &'a dyn Fn(TypeId) -> Option<Option<fn(&mut World)>>,
+    pub(crate) catalogued: &'a dyn Fn(TypeId) -> Option<Option<ResetFn>>,
     pub(crate) dropped: &'a [Vec<TypeId>],
 }
 

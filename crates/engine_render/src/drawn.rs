@@ -43,8 +43,10 @@ fn drawn_shown(slot: u32) -> bool {
 }
 ";
 
-const CULL: &str = "import package::engine::drawn::drawn_records;
+const CULL_IMPORTS: &str = "import package::engine::drawn::drawn_records;
+";
 
+const CULL: &str = "
 @group(2) @binding(0) var<storage, read> cull_views: array<CullView>;
 @group(2) @binding(1) var<storage, read_write> cull_bits: array<u32>;
 
@@ -90,7 +92,8 @@ pub(crate) fn source() -> String {
 }
 
 pub(crate) fn cull_source() -> String {
-    let mut source = String::from(CullView::WGSL);
+    let mut source = String::from(CULL_IMPORTS);
+    source.push_str(CullView::WGSL);
     source.push_str(CULL);
     source
 }

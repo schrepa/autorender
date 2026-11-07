@@ -1,7 +1,9 @@
 #![deny(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
+    clippy::cast_possible_wrap,
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
 )]
 
 mod codes;

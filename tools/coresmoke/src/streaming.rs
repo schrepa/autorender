@@ -2,7 +2,8 @@ use std::path::Path;
 
 use engine_core::glam::Vec3;
 use engine_core::{
-    BrickList, Camera, Engine, Projection, Transform, edit_transform, main_camera, place_camera,
+    BrickList, Camera, Engine, Projection, Readiness, Transform, edit_transform, main_camera,
+    place_camera,
 };
 use engine_registry::Registry;
 use engine_scene::{SceneDocument, SceneKinds};
@@ -15,7 +16,7 @@ const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const FRAMES: u32 = 400;
 const LISTING: &str = "terrain_listing";
 const SECTIONS: [&str; 3] = ["terrain_stats", "water_stats", "terrain_shading_stats"];
-const FIELDS: [&str; 30] = [
+const FIELDS: [&str; 29] = [
     "terrains",
     "resident_tiles",
     "loading_tiles",
@@ -45,7 +46,6 @@ const FIELDS: [&str; 30] = [
     "falls",
     "white_water",
     "surroundings_tiles",
-    "loading",
 ];
 
 pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
@@ -121,6 +121,10 @@ fn stats(world: &bevy_ecs::world::World) -> Result<Value, String> {
             .ok_or_else(|| format!("no terrain stats section holds {field}"))?;
         fields.insert(field.to_owned(), value.clone());
     }
+    let readiness = world
+        .get_resource::<Readiness>()
+        .ok_or("the engine holds no readiness")?;
+    fields.insert("loading".to_owned(), json!(readiness.loading));
     Ok(Value::Object(fields))
 }
 

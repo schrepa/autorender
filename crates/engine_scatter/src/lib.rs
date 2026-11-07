@@ -37,7 +37,15 @@ const GROUNDED: [SurfaceSlot; 4] = [
 
 pub(crate) const WIND: &str = "wind";
 
-const LOOKS: [(&str, Module, &[SurfaceSlot], &[&str], f32); 4] = [
+type Look = (
+    &'static str,
+    Module,
+    &'static [SurfaceSlot],
+    &'static [&'static str],
+    f32,
+);
+
+const LOOKS: [Look; 4] = [
     ("grounded", shaders::scatter::grounded::MODULE, &GROUNDED, &[], 0.0),
     (
         "foliage",

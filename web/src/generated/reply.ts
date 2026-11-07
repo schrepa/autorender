@@ -257,7 +257,7 @@ export type NavStatus = "idle" | "searching" | "walking" | "arrived" | "unreacha
 
 export interface Observation {
   frame?: string | null;
-  presentation: PresentationStateView;
+  presentation: PresentationState;
   scene?: SceneObservation | null;
   tick?: string | null;
 }
@@ -312,17 +312,20 @@ export interface PresentResult {
   temporary: boolean;
 }
 
-export interface PresentationStateView {
-  alpha: number;
+export interface PresentationState {
   blended_nodes: number;
-  frame?: string | null;
-  history_bytes: number;
-  history_capacity: number;
-  history_nodes: number;
+  bytes: number;
+  composed: number;
+  frame?: number | null;
+  fresh: number;
   largest_blend_distance: number;
-  presentation_scratch_bytes: number;
-  tick?: string | null;
+  moving: number;
+  nodes: number;
+  presented: Presented;
+  tick?: number | null;
 }
+
+export type Presented = { kind: "tick" } | { alpha: number; kind: "between" } | { alpha: number; kind: "paced" };
 
 export interface ProbeResult {
   entity?: AuthoredEntity | null;
@@ -378,7 +381,7 @@ export interface StatusResult {
   fixed_delta_seconds?: number | null;
   inspectors: number;
   limits: StatusLimits;
-  presentation: PresentationStateView;
+  presentation: PresentationState;
   world_entities: number;
 }
 

@@ -4,7 +4,7 @@ pub(crate) enum Recording {
     Idle,
     Encoding(wgpu::CommandEncoder),
     Rendering(Box<Open>, wgpu::CommandEncoder),
-    Computing(u32, wgpu::ComputePass<'static>, wgpu::CommandEncoder),
+    Computing(u32, Box<wgpu::ComputePass<'static>>, wgpu::CommandEncoder),
 }
 
 impl Recording {
@@ -35,7 +35,7 @@ impl Recording {
 
     pub(crate) fn computing(&mut self, pass: u32) -> Option<&mut wgpu::ComputePass<'static>> {
         match self {
-            Self::Computing(known, computing, _) if *known == pass => Some(computing),
+            Self::Computing(known, computing, _) if *known == pass => Some(&mut **computing),
             Self::Idle | Self::Encoding(_) | Self::Rendering(..) | Self::Computing(..) => None,
         }
     }
@@ -75,7 +75,7 @@ impl Recording {
 
 pub(crate) enum Step {
     Render(Box<Open>),
-    Compute(u32, wgpu::ComputePass<'static>),
+    Compute(u32, Box<wgpu::ComputePass<'static>>),
     EndRender,
     EndPass,
     Take,

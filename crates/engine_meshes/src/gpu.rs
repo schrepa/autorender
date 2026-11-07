@@ -377,17 +377,18 @@ fn install_passes(cx: &mut Install<'_, MeshesGpu>, instances: &Instances) -> Pas
         Copied::Buffer(instances.poses),
         Copied::Buffer(instances.previous_poses),
     );
+    let views = cx.pass("view_cull").after(presentation).id();
     let occlusion = cx
         .pass("occlusion_test")
         .at(AttachPoint::Opaque)
         .after(presentation)
+        .after(views)
         .id();
     let occluded = cx
         .pass("occluded")
         .at(AttachPoint::Opaque)
         .after(occlusion)
         .id();
-    let views = cx.pass("view_cull").after(presentation).id();
     let blended = cx
         .pass("blended_sort")
         .at(AttachPoint::Transparent)
@@ -898,14 +899,6 @@ fn depth_view_pipelines(
     scene: Scene,
     depth: PassDepth,
 ) -> Result<[Pipeline<MeshesGpu, Scene>; 2], Error> {
-    let (plain, masked) = if depth.clamped {
-        (
-            depth_views::VS_DEPTH_VIEW_CLAMPED,
-            depth_views::VS_DEPTH_VIEW_MASKED_CLAMPED,
-        )
-    } else {
-        (depth_views::VS_DEPTH_VIEW, depth_views::VS_DEPTH_VIEW_MASKED)
-    };
     let bias = wgpu::DepthBiasState {
         constant: depth.bias,
         slope_scale: depth.slope,
@@ -928,8 +921,12 @@ fn depth_view_pipelines(
         )
     };
     Ok([
-        pipeline(cx, plain, None)?,
-        pipeline(cx, masked, Some(depth_views::FS_DEPTH_VIEW_MASKED))?,
+        pipeline(cx, depth_views::VS_DEPTH_VIEW, None)?,
+        pipeline(
+            cx,
+            depth_views::VS_DEPTH_VIEW_MASKED,
+            Some(depth_views::FS_DEPTH_VIEW_MASKED),
+        )?,
     ])
 }
 

@@ -1364,8 +1364,7 @@ fn give_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>) -> bool 
 pub(crate) fn request_settle(
     water: Res<Water>,
     view: Res<PrimaryView>,
-    time: Res<FrameTime>,
-    records: Res<Records>,
+    (time, records): (Res<FrameTime>, Res<Records>),
     (limits, cook): (Res<DeviceLimits>, Res<CookMode>),
     mut budget: ResMut<FrameBudget>,
     mut jobs: Jobs,
@@ -1377,7 +1376,7 @@ pub(crate) fn request_settle(
     let mut cx = Follow {
         jobs: &mut jobs,
         records: &records,
-        budget: &mut *budget,
+        budget: &mut budget,
         failures: &mut state.failures,
         queue: &mut state.settling,
         settles: limits.storage_room > 0,

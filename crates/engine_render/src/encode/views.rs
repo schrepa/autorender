@@ -811,3 +811,85 @@ pub(super) fn view_passes(machine: &Machine) -> (Bits, Bits) {
     }
     (passes, main)
 }
+
+fn placeholder(device: &wgpu::Device, (ty, bytes): (Ty, u64)) -> Placeholder {
+    use crate::linker::Sample;
+    let buffer = |usage| {
+        Placeholder::Buffer(crate::memory::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("engine/placeholder"),
+                size: bytes.max(PLACEHOLDER_BYTES),
+                usage,
+                mapped_at_creation: false,
+            },
+        ))
+    };
+    match ty {
+        Ty::Uniform => buffer(wgpu::BufferUsages::UNIFORM),
+        Ty::Storage { .. } => buffer(wgpu::BufferUsages::STORAGE),
+        Ty::Sampler => {
+            Placeholder::Sampler(device.create_sampler(&wgpu::SamplerDescriptor::default()))
+        }
+        Ty::Comparison => Placeholder::Sampler(device.create_sampler(&wgpu::SamplerDescriptor {
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        })),
+        Ty::Texture { sample, view } => {
+            let format = match sample {
+                Sample::Float => wgpu::TextureFormat::Rgba8Unorm,
+                Sample::Depth => DEPTH_FORMAT,
+                Sample::Uint => wgpu::TextureFormat::R32Uint,
+                Sample::Sint => wgpu::TextureFormat::R32Sint,
+            };
+            placeholder_texture(device, format, view, wgpu::TextureUsages::TEXTURE_BINDING)
+        }
+        Ty::StorageTexture { format, view, .. } => {
+            placeholder_texture(device, format, view, wgpu::TextureUsages::STORAGE_BINDING)
+        }
+    }
+}
+
+fn placeholder_texture(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    view: wgpu::TextureViewDimension,
+    usage: wgpu::TextureUsages,
+) -> Placeholder {
+    let layers = match view {
+        wgpu::TextureViewDimension::Cube | wgpu::TextureViewDimension::CubeArray => 6,
+        wgpu::TextureViewDimension::D1
+        | wgpu::TextureViewDimension::D2
+        | wgpu::TextureViewDimension::D2Array
+        | wgpu::TextureViewDimension::D3 => 1,
+    };
+    let dimension = match view {
+        wgpu::TextureViewDimension::D3 => wgpu::TextureDimension::D3,
+        wgpu::TextureViewDimension::D1 => wgpu::TextureDimension::D1,
+        wgpu::TextureViewDimension::D2
+        | wgpu::TextureViewDimension::D2Array
+        | wgpu::TextureViewDimension::Cube
+        | wgpu::TextureViewDimension::CubeArray => wgpu::TextureDimension::D2,
+    };
+    let texture = crate::memory::texture(
+        device,
+        &wgpu::TextureDescriptor {
+            label: Some("engine/placeholder"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: layers,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension,
+            format,
+            usage,
+            view_formats: &[],
+        },
+    );
+    Placeholder::Texture(texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(view),
+        ..Default::default()
+    }))
+}

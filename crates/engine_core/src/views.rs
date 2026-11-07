@@ -66,8 +66,8 @@ impl ViewFacts {
     fn device(&self, pixel: Vec2) -> Vec2 {
         let [x, y, width, height] = self.pixels.map(|value| value as f32);
         Vec2::new(
-            (pixel.x - x) / width.max(1.0) * 2.0 - 1.0,
-            1.0 - (pixel.y - y) / height.max(1.0) * 2.0,
+            (pixel.x - x) / crate::math::max(width, 1.0) * 2.0 - 1.0,
+            1.0 - (pixel.y - y) / crate::math::max(height, 1.0) * 2.0,
         )
     }
 
@@ -121,7 +121,7 @@ impl ViewFacts {
             "forward": self.forward.to_array(),
             "history": self.history,
             "debug": self.debug,
-            "jitter": self.jitter.map(Vec2::to_array),
+            "jitter": self.jitter.map(|jitter| jitter.to_array()),
         })
     }
 }
@@ -448,7 +448,8 @@ fn slab(origin: Vec3, direction: Vec3, low: Vec3, high: Vec3) -> Option<f32> {
     let second = (high - origin) * inverse;
     let near = first.min(second).max_element();
     let far = first.max(second).min_element();
-    (far >= near.max(0.0) && far.is_finite()).then_some(near.max(0.0))
+    let near = crate::math::max(near, 0.0);
+    (far >= near && far.is_finite()).then_some(near)
 }
 
 impl Picking<'_, '_> {

@@ -44,5 +44,5 @@ fn sunlight() -> vec3<f32> {
 }
 
 fn light_level(sun: vec3<f32>) -> f32 {
-    return max(sun.y, 0.0);
+    return 1.0;
 }

@@ -351,11 +351,13 @@ pub(crate) struct WaterState {
 #[derive(Default)]
 pub(crate) struct SettleQueue {
     pub(crate) asked: Vec<crate::water_settle::SettleAsk>,
-    pub(crate) settled: Vec<(Vec<u8>, Result<Arc<[u8]>, String>)>,
+    pub(crate) settled: Vec<(Vec<u8>, SettleMade)>,
 }
 
+pub(crate) type SettleMade = Result<Arc<[u8]>, String>;
+
 impl SettleQueue {
-    pub(crate) fn made(&self, input: &[u8]) -> Option<Result<Arc<[u8]>, String>> {
+    pub(crate) fn made(&self, input: &[u8]) -> Option<SettleMade> {
         self.settled
             .iter()
             .find(|(held, _)| held[..] == *input)

@@ -113,6 +113,10 @@ pub(crate) struct SimFlags {
 
 #[gpu_bits]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "the variants name the debug views water_depth to water_roughness"
+)]
 pub(crate) enum Shown {
     WaterDepth = 0,
     WaterSpeed = 1,

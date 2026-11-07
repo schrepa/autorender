@@ -169,7 +169,10 @@ impl Page {
                 }
             });
         });
-        source.set_onended(Some(on_end.as_ref().unchecked_ref()));
+        web_sys::AudioScheduledSourceNode::set_onended(
+            &source,
+            Some(on_end.as_ref().unchecked_ref()),
+        );
         source.start()?;
         self.voices.insert(
             voice,
@@ -271,7 +274,7 @@ impl Backend {
         PAGE.with_borrow_mut(|page| {
             let now = page.now();
             if let Some(voice) = page.voices.remove(&voice) {
-                voice.source.set_onended(None);
+                web_sys::AudioScheduledSourceNode::set_onended(&voice.source, None);
                 glide(&voice.gain.gain(), 0.0, now);
                 let _ = web_sys::AudioScheduledSourceNode::stop_with_when(
                     &voice.source,

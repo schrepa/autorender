@@ -895,7 +895,7 @@ pub(crate) struct SettleGpu {
     slots: SlotHandles,
     setup: SetupHandles,
     kernels: Kernels,
-    raising: ComputePipeline<WaterGpu>,
+    raise_pipeline: ComputePipeline<WaterGpu>,
     raise: Pass<WaterGpu>,
     pass: Pass<WaterGpu>,
     layout: Option<Layout>,
@@ -940,12 +940,12 @@ impl SettleGpu {
             .id();
         let kernels = Kernels::install(cx, pass, &slots)?;
         let bound = crate::water::reached(cx, &[setup::SETUP_RAISE], setup_handles.bound(&slots));
-        let raising = cx.compute_pipeline(raise, setup::SETUP_RAISE, &bound)?;
+        let raise_pipeline = cx.compute_pipeline(raise, setup::SETUP_RAISE, &bound)?;
         Ok(Self {
             slots,
             setup: setup_handles,
             kernels,
-            raising,
+            raise_pipeline,
             raise,
             pass,
             layout: None,
@@ -1052,7 +1052,7 @@ impl SettleGpu {
         if pass == self.raise {
             if self.raised > 0 {
                 let [groups_x, groups_z] = grid(self.raised);
-                cx.dispatch(&self.raising, Count::Groups([groups_x, groups_z, 1]));
+                cx.dispatch(&self.raise_pipeline, Count::Groups([groups_x, groups_z, 1]));
             }
             return true;
         }

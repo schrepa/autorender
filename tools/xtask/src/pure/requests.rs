@@ -40,6 +40,10 @@ const UNREACHED: &[(&str, &str)] = &[
     ("activation_not_committed", WATCH),
     ("ambiguous_passes", APP_BUILD),
     ("attachment_limit", APP_BUILD),
+    (
+        "audio_failed",
+        "the mixer answers it when a sound does not decode or the audio device fails (crates/engine_audio/src/mixer.rs); the corpora play no sound",
+    ),
     ("benchmark_failed", PAGE),
     ("benchmark_interrupted", PAGE),
     ("benchmark_timeout", PAGE),

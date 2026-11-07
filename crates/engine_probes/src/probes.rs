@@ -376,10 +376,7 @@ impl ProbeState {
         let face_bytes = u64::from(self.size) * u64::from(self.size) * FACE_TEXEL_BYTES;
         let mut used = [false; FACES];
         let mut drawn = 0;
-        loop {
-            let Some((cube, face, probe)) = self.slots.next_face(probes) else {
-                break;
-            };
+        while let Some((cube, face, probe)) = self.slots.next_face(probes) {
             if used[face] {
                 break;
             }

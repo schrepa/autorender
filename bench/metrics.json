@@ -112,6 +112,83 @@
       "direction": null
     },
     {
+      "name": "audio_stats.decode_failures",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "audio_stats.decoding",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "audio_stats.device",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "boolean",
+      "direction": null
+    },
+    {
+      "name": "audio_stats.latest_failure",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "text",
+      "direction": null
+    },
+    {
+      "name": "audio_stats.sounds_loaded",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "audio_stats.voices",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "audio_stats.voices_cut",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "bloom_stats.active",
       "kind": "work",
       "rule": "equal",
@@ -135,6 +212,83 @@
     },
     {
       "name": "bricks_cost.rows",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "budget",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "list",
+      "direction": null
+    },
+    {
+      "name": "readiness.compiling",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "readiness.failed",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "list",
+      "direction": null
+    },
+    {
+      "name": "readiness.loading.done",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "readiness.loading.total",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "readiness.settling",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "reflection_probes_stats.waiting",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -311,17 +465,6 @@
     },
     {
       "name": "collision_stats.placed_colliders",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "collision_stats.revision",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -747,17 +890,6 @@
         "native"
       ],
       "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "loading",
-      "kind": "work",
-      "rule": "false",
-      "statistic": "any_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "boolean",
       "direction": null
     },
     {
@@ -1410,17 +1542,6 @@
       "direction": null
     },
     {
-      "name": "pipelines_compiling",
-      "kind": "work",
-      "rule": "false",
-      "statistic": "any_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "boolean",
-      "direction": null
-    },
-    {
       "name": "pipelines_created",
       "kind": "work",
       "rule": "shown",
@@ -1817,6 +1938,39 @@
       "direction": null
     },
     {
+      "name": "shadow_stats.level_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadow_stats.level_cut.cut",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadow_stats.level_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "shadow_stats.moving_cut.asked",
       "kind": "work",
       "rule": "shown",
@@ -1840,6 +1994,39 @@
     },
     {
       "name": "shadow_stats.moving_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadow_stats.moving_slot_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadow_stats.moving_slot_cut.cut",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadow_stats.moving_slot_cut.kept",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1939,6 +2126,17 @@
     },
     {
       "name": "shadow_stats.tiles_resident",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadow_stats.tiles_waiting",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2642,6 +2840,72 @@
       "direction": null
     },
     {
+      "name": "text_stats.atlas_resets",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "text_stats.failed_fonts",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "text_stats.fonts",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "text_stats.glyphs_cut",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "text_stats.glyphs_drawn",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "text_stats.runs",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "texture_upload_bytes",
       "kind": "work",
       "rule": "shown",
@@ -2657,6 +2921,83 @@
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame_or_absent",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "ui_stats.events",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "ui_stats.layouts",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "ui_stats.missing_bindings",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "ui_stats.nodes",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "ui_stats.rects_cut",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "ui_stats.rects_drawn",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "ui_stats.roots",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],

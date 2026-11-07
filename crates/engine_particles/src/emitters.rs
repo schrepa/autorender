@@ -443,16 +443,18 @@ pub(crate) fn keep_rows(
     }
 }
 
+type GatherFrame<'w> = (
+    Res<'w, GlobalTransforms>,
+    Res<'w, DrawnPoses>,
+    Res<'w, PrimaryView>,
+    Res<'w, FrameTime>,
+    Res<'w, ParticleBursts>,
+);
+
 pub(crate) fn gather_emitters(
     settings: Res<ParticleSettings>,
     (emitters, table): (Query<&'static ParticleEmitter>, Res<DrawnTable>),
-    (globals, poses, view, time, bursts): (
-        Res<GlobalTransforms>,
-        Res<DrawnPoses>,
-        Res<PrimaryView>,
-        Res<FrameTime>,
-        Res<ParticleBursts>,
-    ),
+    (globals, poses, view, time, bursts): GatherFrame<'_>,
     mut gather: ResMut<Gather>,
     mut packed: ResMut<Packed>,
 ) {

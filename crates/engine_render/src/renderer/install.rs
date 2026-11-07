@@ -144,6 +144,21 @@ fn wgsl_of(wgsl: Option<&(dyn std::any::Any + Send + Sync)>) -> Option<&Module> 
     wgsl.and_then(|wgsl| wgsl.downcast_ref::<Module>())
 }
 
+fn add_face_sources(registry: &Registry, linker: &mut Linker) {
+    for (_, record) in registry.iter() {
+        for filled in record.fills() {
+            if let Some(module) = wgsl_of(filled.wgsl.as_deref()) {
+                linker.add_source(module.source());
+            }
+        }
+        for joined in record.joins() {
+            if let Some(module) = wgsl_of(joined.wgsl.as_deref()) {
+                linker.add_source(module.source());
+            }
+        }
+    }
+}
+
 fn faces(
     registry: &Registry,
     linker: &mut Linker,
@@ -158,18 +173,7 @@ fn faces(
         .filter(|decl| decl.wgsl().is_some())
         .collect();
     catalog.sort_by_key(|decl| decl.name());
-    for (_, record) in registry.iter() {
-        for filled in record.fills() {
-            if let Some(module) = wgsl_of(filled.wgsl.as_deref()) {
-                linker.add_source(module.source());
-            }
-        }
-        for joined in record.joins() {
-            if let Some(module) = wgsl_of(joined.wgsl.as_deref()) {
-                linker.add_source(module.source());
-            }
-        }
-    }
+    add_face_sources(registry, linker);
     for decl in catalog {
         let Some(source) = decl.wgsl() else { continue };
         let name = decl.name();
@@ -1062,7 +1066,8 @@ fn same_shape(old: &crate::install::Declared, new: &crate::install::Declared) ->
 fn adopt(run: &mut Run, kept: Kept, world: &mut World) {
     (run.frame, run.asked_frame) = kept.frames;
     run.readbacks = kept.readbacks;
-    run.installed.fill(run.written().next());
+    let next = run.written().next();
+    run.installed.fill(next);
     if !same_shape(&kept.declared, &run.machine.declared) {
         return;
     }

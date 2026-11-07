@@ -1,11 +1,11 @@
 {
   "caches": {
     "caches checks": 50,
-    "caches entities": 2167,
+    "caches entities": 2138,
     "caches mismatches": 0,
     "terrain frames": 400,
-    "terrain last frame": "399: {\"baking\":0,\"bounced\":1,\"bouncing\":0,\"bridges\":3,\"cached_bytes\":1141728,\"cached_tiles\":4,\"colored\":0,\"coloring\":2,\"fallback_tiles\":0,\"falls\":0,\"lighting\":0,\"lit\":2,\"loading\":false,\"loading_tiles\":0,\"missing_tiles\":0,\"prefetching_tiles\":0,\"resident_tiles\":48,\"restored_tiles\":12,\"rewatered_tiles\":0,\"settled_records\":0,\"settling_records\":5,\"shaded_tiles\":5,\"shading_records\":0,\"stale_water_tiles\":0,\"surroundings_tiles\":31,\"terrains\":1,\"tile_cut\":{\"asked\":46,\"cut\":0,\"kept\":46},\"tunnels\":1,\"waiting_tiles\":0,\"white_water\":0} | terrain tiles 854854a0fbb2ae0d drawn true | surroundings tiles a2eadb7ccd455bc5 drawn true",
-    "terrain trace": "4b14d1bc9b532f81"
+    "terrain last frame": "399: {\"baking\":0,\"bounced\":1,\"bouncing\":0,\"bridges\":3,\"cached_bytes\":1141728,\"cached_tiles\":4,\"colored\":0,\"coloring\":2,\"fallback_tiles\":0,\"falls\":0,\"lighting\":0,\"lit\":2,\"loading\":{\"done\":0,\"total\":0},\"loading_tiles\":0,\"missing_tiles\":0,\"prefetching_tiles\":0,\"resident_tiles\":48,\"restored_tiles\":12,\"rewatered_tiles\":0,\"settled_records\":0,\"settling_records\":5,\"shaded_tiles\":5,\"shading_records\":0,\"stale_water_tiles\":0,\"surroundings_tiles\":31,\"terrains\":1,\"tile_cut\":{\"asked\":46,\"cut\":0,\"kept\":46},\"tunnels\":1,\"waiting_tiles\":0,\"white_water\":0} | terrain tiles 854854a0fbb2ae0d drawn true | surroundings tiles a2eadb7ccd455bc5 drawn true",
+    "terrain trace": "49c570e9d857c51a"
   },
   "gltf": {
     "gltf prefab": {
@@ -16,7 +16,7 @@
       "meshes": 2,
       "textures": 1
     },
-    "gltf prefab document": "4f60e874978f548e",
+    "gltf prefab document": "f943072100d6f0c6",
     "gltf prefab file prop/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
     "gltf prefab file prop/node1.p0.f11bc280da7c.bin": "f11bc280da7c472e",
     "gltf prefab file prop/node1.p1.fc2cf9b9803f.bin": "fc2cf9b9803ffa4b",
@@ -28,7 +28,7 @@
       "meshes": 2,
       "textures": 1
     },
-    "gltf scene document": "e489c92a24b714d4",
+    "gltf scene document": "33695d8a21e816fb",
     "gltf scene file prop/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
     "gltf scene file prop/node1.p0.f11bc280da7c.bin": "f11bc280da7c472e",
     "gltf scene file prop/node1.p1.fc2cf9b9803f.bin": "fc2cf9b9803ffa4b"
@@ -323,34 +323,50 @@
           "Blend",
           "BodyMotion",
           "Bus",
+          "Camera",
+          "Clear",
+          "Clock",
           "CollisionConfig",
           "Cover",
           "Detail",
+          "DrawnForm",
+          "DrawnProjection",
+          "DrawnSettings",
           "ErosionLayer",
           "Expr",
           "ExpressionSettings",
           "Facing",
           "FarPlacement",
+          "FeedSettings",
+          "FrameBudgetSettings",
           "GivenRiver",
           "Grounded",
           "HeightmapSettings",
           "HummocksLayer",
           "HydrologyLayer",
+          "InstanceValues",
           "Interior",
-          "JobSettings",
           "Label",
+          "Layers",
           "MacroCauses",
           "MeshSource",
+          "Mobility",
+          "Mover",
+          "MoverId",
           "NavAgent",
+          "Node",
           "NoiseLayer",
           "NoiseMask",
+          "Pace",
           "PathLayer",
           "PlacedLod",
           "PlacedLook",
           "PlacedPart",
           "PlacementChoice",
           "PlacementLayer",
+          "Projection",
           "Ramp",
+          "Rect",
           "Remap",
           "RenderSettings",
           "RiversLayer",
@@ -413,6 +429,7 @@
           "SceneSound",
           "SceneSpline",
           "SceneSpot",
+          "SceneStreamed",
           "SceneSubpixelCulling",
           "SceneSun",
           "SceneSurface",
@@ -422,9 +439,11 @@
           "SceneTerrain",
           "SceneTerrainAsset",
           "SceneTerrainCollider",
+          "SceneTerrainEdit",
           "SceneTerrainLayer",
           "SceneTerrainMaterial",
           "SceneTerrainMotionDetail",
+          "SceneTerrainRiver",
           "SceneTerrainSettings",
           "SceneTerrainSurface",
           "SceneTexture",
@@ -457,7 +476,8 @@
           "UiLength",
           "UiNode",
           "UiRoot",
-          "UiSettings"
+          "UiSettings",
+          "ViewForm"
         ]
       },
       "code": "unknown_definition",
@@ -484,15 +504,22 @@
       "allowed": {
         "kind": "variants",
         "values": [
+          "Bricks",
           "Camera",
           "DrawnMesh",
           "Environment",
+          "FrameBudget",
           "GlobalTransform",
           "Hierarchy",
           "Input",
           "Jobs",
+          "Level",
+          "MeshLevels",
           "NodeWord",
+          "Ownership",
           "PresentationState",
+          "Readiness",
+          "Records",
           "Transform",
           "ambient_occlusion",
           "ambient_occlusion_stats",
@@ -502,6 +529,7 @@
           "bloom",
           "bloom_stats",
           "body_push",
+          "camera",
           "cloud_stats",
           "clouds",
           "collider",
@@ -511,9 +539,13 @@
           "debug_view",
           "detail",
           "dither",
+          "drawn",
+          "drawn_component",
           "dynamic_resolution",
           "exposure_stats",
+          "feeds",
           "foliage",
+          "frame_budget",
           "frame_limits",
           "grading",
           "ground_cover",
@@ -523,7 +555,6 @@
           "haze_stats",
           "highlights",
           "impostors",
-          "jobs",
           "light",
           "local_light_stats",
           "local_lights",
@@ -579,6 +610,7 @@
           "ui",
           "ui_component",
           "ui_stats",
+          "view",
           "water",
           "water_stats",
           "wind",
@@ -605,6 +637,7 @@
           "distribution",
           "time_state",
           "moves",
+          "views",
           "audio_voices",
           "raycast",
           "overlap",
@@ -676,14 +709,13 @@
     }
   },
   "scenes": {
-    "document components": "822b544eeafba3ef",
+    "document components": "5cef6848b7c8d675",
     "document components counts": {
-      "bytes": 7745,
+      "bytes": 7946,
       "entities": 9,
       "materials": 3,
       "meshes": 3,
       "prefabs": 1,
-      "streamed": 2,
       "textures": 1
     },
     "document garden": "4feea2bd1e300696",
@@ -693,7 +725,6 @@
       "materials": 9,
       "meshes": 6,
       "prefabs": 1,
-      "streamed": 0,
       "textures": 1
     },
     "document minimal": "508776c4ee5977f1",
@@ -703,17 +734,15 @@
       "materials": 0,
       "meshes": 0,
       "prefabs": 0,
-      "streamed": 0,
       "textures": 0
     },
-    "document terrain": "c650c559d37acf58",
+    "document terrain": "789ea1baed2b3671",
     "document terrain counts": {
-      "bytes": 23480,
+      "bytes": 23508,
       "entities": 5,
       "materials": 2,
       "meshes": 2,
       "prefabs": 0,
-      "streamed": 0,
       "textures": 1
     },
     "refusal asset_budget_exceeded at $.meshes[0]": {
@@ -883,10 +912,10 @@
       "got": 1,
       "path": "$.entities[0].spline.points"
     },
-    "refusal invalid_streamed at $.streamed[0].terrain": {
+    "refusal invalid_streamed at $.environment.streamed.streamed[0].terrain": {
       "code": "invalid_streamed",
       "expected": "absent",
-      "path": "$.streamed[0].terrain"
+      "path": "$.environment.streamed.streamed[0].terrain"
     },
     "refusal invalid_terrain at $.entities[0].terrain.layers": {
       "code": "invalid_terrain",
@@ -914,6 +943,16 @@
       "got": "../outside.png",
       "path": "$.textures[0].uri"
     },
+    "refusal invalid_value at $.entities[0].drawn.values.tint[0]": {
+      "allowed": {
+        "kind": "range",
+        "max": 1.0,
+        "min": 0.0
+      },
+      "code": "invalid_value",
+      "got": 2.0,
+      "path": "$.entities[0].drawn.values.tint[0]"
+    },
     "refusal invalid_value at $.entities[0].tags": {
       "allowed": {
         "kind": "at_most",
@@ -923,16 +962,6 @@
       "expected": "array",
       "got": 17,
       "path": "$.entities[0].tags"
-    },
-    "refusal invalid_value at $.entities[0].tint[0]": {
-      "allowed": {
-        "kind": "range",
-        "max": 1.0,
-        "min": 0.0
-      },
-      "code": "invalid_value",
-      "got": 2.0,
-      "path": "$.entities[0].tint[0]"
     },
     "refusal invalid_value at $.prefabs[0].entities": {
       "allowed": {
@@ -987,19 +1016,25 @@
       "got": "inner",
       "path": "$.prefabs[1].entities[0].prefab"
     },
-    "refusal out_of_range at $.along[0].every": {
+    "refusal out_of_range at $.environment.streamed.along[0].every": {
       "allowed": {
         "kind": "at_most",
         "max": 10000
       },
       "code": "out_of_range",
       "got": 0.009999999776482582,
-      "path": "$.along[0].every"
+      "path": "$.environment.streamed.along[0].every"
     },
     "refusal section_unlisted at $.entities[0].prefetch": {
       "allowed": {
         "kind": "variants",
-        "values": []
+        "values": [
+          "node",
+          "mover",
+          "camera",
+          "view",
+          "drawn"
+        ]
       },
       "code": "section_unlisted",
       "got": "prefetch",
@@ -1027,8 +1062,6 @@
           "meshes",
           "prefabs",
           "entities",
-          "streamed",
-          "along",
           "views",
           "looks"
         ]
@@ -1278,7 +1311,7 @@
       "steepest": 0.016481399536132812,
       "tunnels": 1
     },
-    "bakes": "d3cbbe92f4037345",
+    "bakes": "05c3e7e588137cbf",
     "bounce": {
       "blocks": 1024,
       "detailed blocks": 474,
@@ -1302,7 +1335,7 @@
       ],
       "texels": 65536
     },
-    "pack": "91ccb373f9e12573",
+    "pack": "bf7aca3f4e622560",
     "pack records": 46,
     "portals 0/0/0": "fb26e1b9f5bd9fd8",
     "portals 0/0/1": "29e88506dde27d87",
@@ -1411,7 +1444,7 @@
     },
     "textures data with height": {
       "astc": {
-        "hash": "f9fd62eab28ad2e9",
+        "hash": "a124efbbe2ae70a9",
         "psnr by level": [
           41.4,
           37.1,
@@ -1423,7 +1456,7 @@
         ]
       },
       "bc7": {
-        "hash": "63fe571b5d80a070",
+        "hash": "c3d5968ae59fae71",
         "psnr by level": [
           43.2,
           39.7,
@@ -1463,7 +1496,7 @@
     },
     "textures normal map": {
       "astc": {
-        "hash": "bdaa3704bd4677e9",
+        "hash": "31130f7eb738f4e8",
         "psnr by level": [
           32.0,
           27.9,
@@ -1475,7 +1508,7 @@
         ]
       },
       "bc7": {
-        "hash": "e6945da30deba3f4",
+        "hash": "2b9a9768762d9b2d",
         "psnr by level": [
           36.4,
           30.6,

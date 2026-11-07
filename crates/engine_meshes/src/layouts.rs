@@ -60,7 +60,7 @@ pub(crate) struct CardFrames {
 
 gpu_consts! {
     pub const LOD_LEVELS: u32 = 3;
-    pub const LOD_FADED: u32 = <LodFade as GpuBits>::FIELDS[2].mask();
+    pub const LOD_FADED: u32 = 65535;
     pub const NO_NODE: u32 = u32::MAX;
     pub const CULL_GROUP: u32 = 256;
     pub const GROUP: u32 = 64;
@@ -69,6 +69,11 @@ gpu_consts! {
     pub const BLEND_GROUP: u32 = 64;
     pub const UNWATCHED: u32 = u32::MAX;
 }
+
+const _: () = assert!(
+    LOD_FADED == <LodFade as GpuBits>::FIELDS[2].mask(),
+    "lod_faded_is_the_progress_mask"
+);
 
 gpu_struct! {
     pub(crate) struct BlendedView {

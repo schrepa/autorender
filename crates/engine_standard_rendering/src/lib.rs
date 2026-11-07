@@ -1,3 +1,8 @@
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
+
 use engine_core::Listing;
 
 pub use engine_ambient_occlusion::AmbientOcclusionBrick;
