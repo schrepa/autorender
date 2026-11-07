@@ -1,24 +1,8 @@
 use super::*;
 
 impl Run {
-    pub(crate) fn cameras(&mut self, views: &[CameraUniform]) {
-        let base = self.cameras.len() as u32;
-        self.cameras.extend_from_slice(views);
-        self.views.push((self.part, base, views.len() as u32));
-    }
-
-    pub(crate) fn drop_cameras(&mut self, main: &[CameraUniform]) {
-        self.cameras.clear();
-        self.cameras.extend_from_slice(main);
-        self.views.clear();
-    }
-
-    pub(crate) fn view_offset(&self, part: u32, view: Option<u32>) -> Option<u32> {
-        let Some(view) = view else {
-            return Some(self.camera_slot * CAMERA_STRIDE as u32);
-        };
-        let (_, base, count) = self.views.iter().rev().find(|(known, _, _)| *known == part)?;
-        (view < *count).then(|| (base + view) * CAMERA_STRIDE as u32)
+    pub(crate) fn view_offset(&self, view: Option<&OwnedDraw>) -> u32 {
+        view.map_or(self.camera_slot, |view| view.slot) * CAMERA_STRIDE as u32
     }
 
     pub(crate) fn write_cameras(&mut self) -> u64 {
@@ -51,7 +35,7 @@ impl Run {
 
     pub(crate) fn write_post(&mut self) {
         self.queue
-            .write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&self.post));
+            .write_buffer(&self.set().post_buffer, 0, bytemuck::bytes_of(&self.post));
     }
 
     pub(crate) fn write_pieces(&mut self, staged: &mut Vec<u8>) -> u64 {
@@ -141,10 +125,11 @@ impl Run {
             .get(index as usize)
             .is_some_and(|output| output.layers.is_empty());
         let second = doubled && (self.parity == 1) == writing;
+        let set = self.set();
         let list = if second {
-            &self.previous_targets
+            &set.previous_targets
         } else {
-            &self.targets
+            &set.targets
         };
         list.iter()
             .find(|(known, _)| *known == target)
@@ -155,15 +140,12 @@ impl Run {
         match target {
             Target::Canvas => self.canvas.as_ref(),
             Target::Debug(index) => self
+                .set()
                 .debug_targets
                 .get(index as usize)
                 .map(|made| &made.view),
             Target::Output(index) => self.output_view(index, writing),
-            Target::Scene | Target::Depth | Target::Copy(..) => self
-                .targets
-                .iter()
-                .find(|(known, _)| *known == target)
-                .map(|(_, made)| &made.view),
+            Target::Scene | Target::Depth | Target::Copy(..) => self.set().target(target),
         }
     }
 
@@ -185,7 +167,10 @@ impl Run {
                 } else {
                     parity
                 };
-                let made = self.textures.get_mut(*texture as usize)?;
+                let made = self
+                    .texture_tables_mut(*texture)
+                    .textures
+                    .get_mut(*texture as usize)?;
                 let made = match index {
                     1 if made[1].is_some() => made[1].as_mut()?,
                     _ => made[0].as_mut()?,
@@ -231,14 +216,12 @@ impl Run {
 
     pub(super) fn resource(&mut self, bound: &Bound, ty: Ty, reading: bool) -> Resolved {
         match bound {
-            Bound::Buffer(buffer) => {
-                match self.buffers.get(*buffer as usize).and_then(Option::as_ref) {
-                    Some((made, _)) => Resolved::Buffer(made.clone()),
-                    None => Resolved::Placeholder(ty),
-                }
-            }
+            Bound::Buffer(buffer) => match self.buffer_held(*buffer) {
+                Some((made, _)) => Resolved::Buffer(made.clone()),
+                None => Resolved::Placeholder(ty),
+            },
             Bound::Window { buffer, size } => {
-                match self.buffers.get(*buffer as usize).and_then(Option::as_ref) {
+                match self.buffer_held(*buffer) {
                     Some((made, bytes)) if *bytes >= *size => {
                         Resolved::Dynamic(made.clone(), *size)
                     }
@@ -330,12 +313,13 @@ impl Run {
             self.atlas_generation = Some(atlas);
             self.touch(Held::Atlas);
         }
-        if self.stale.is_empty() {
+        if self.stale.is_empty() && self.set().stale.is_empty() {
             return;
         }
         let saved_pass = self.pass;
         let saved_parity = self.parity;
-        let stale = std::mem::take(&mut self.stale);
+        let mut stale = std::mem::take(&mut self.stale);
+        stale.append(&mut self.set_mut().stale);
         self.rebuilt.groups += stale.len() as u32;
         for holder in stale {
             match holder {
@@ -372,8 +356,22 @@ impl Run {
             }
             let layout = self.machine.variants[variant].layout.clone();
             let group = self.bind_group(&layout, (None, 0), resolved);
-            self.frame_groups[variant].made[parity] = Some(group);
+            self.keep_group(Holder::Frame(variant as u32), parity, group);
         }
+    }
+
+    fn keep_group(&mut self, holder: Holder, parity: usize, group: wgpu::BindGroup) {
+        let made = if self.sets.holders.contains(&holder) {
+            self.set_mut().groups.entry(holder).or_default()
+        } else {
+            match holder {
+                Holder::Frame(variant) => &mut self.frame_groups[variant as usize].made,
+                Holder::Own(pipeline, at) => {
+                    &mut self.own_groups[pipeline as usize][at as usize].made
+                }
+            }
+        };
+        made[parity] = Some(group);
     }
 
     fn rebuild_own(&mut self, pipeline: usize, group: usize) {
@@ -393,7 +391,7 @@ impl Run {
                 .clone();
             let index = self.machine.pipelines[pipeline].groups[group].index;
             let made = self.bind_group(&layout, (Some(pipeline), index), resolved);
-            self.own_groups[pipeline][group].made[parity] = Some(made);
+            self.keep_group(Holder::Own(pipeline as u32, group as u32), parity, made);
         }
         for filled in &mut self.filled {
             if filled.base as usize == pipeline {
@@ -430,7 +428,7 @@ impl Run {
                 }
                 None => Resolved::Placeholder(ty),
             },
-            Some(CoreFrame::Post) => Resolved::Buffer(self.post_buffer.clone()),
+            Some(CoreFrame::Post) => Resolved::Buffer(self.set().post_buffer.clone()),
             Some(CoreFrame::Linear) => Resolved::Sampler(self.linear.clone()),
             Some(CoreFrame::Target(target)) => match self.view_of(*target, false) {
                 Some(view) => Resolved::View(view.clone()),
@@ -448,13 +446,14 @@ impl Run {
             depth_or_array_layers: 1,
         };
         let split = self.canvas_rect.is_some();
-        let held = self
+        let set = self.set();
+        let held = set
             .targets
             .iter()
             .any(|(target, made)| *target == Target::Canvas && made.texture.format() == self.canvas_format);
-        if self.debug != self.debug_targets.is_empty()
+        if self.debug != set.debug_targets.is_empty()
             && split == held
-            && self
+            && set
                 .targets
                 .first()
                 .is_some_and(|(_, made)| made.size == extent)
@@ -505,133 +504,85 @@ impl Run {
         if split {
             targets.push((Target::Canvas, made("engine/view-canvas", self.canvas_format)));
         }
-        self.targets = targets;
-        self.previous_targets = previous;
-        self.debug_targets = DEBUG_FORMATS
+        let debug_targets = DEBUG_FORMATS
             .iter()
             .filter(|_| self.debug)
             .map(|format| made("engine/debug-target", *format))
             .collect();
+        let set = self.set_mut();
+        set.targets = targets;
+        set.previous_targets = previous;
+        set.debug_targets = debug_targets;
         self.rebuilt.textures += 1;
         self.touch(Held::Targets);
     }
 
-    pub(crate) fn park(&mut self, view: bevy_ecs::entity::Entity) -> Option<usize> {
-        if self.resident.is_none_or(|resident| resident == view) {
-            self.resident = Some(view);
-            return None;
-        }
-        if let Some(at) = self.parked.iter().position(|state| state.view == view) {
-            return Some(at);
-        }
-        let (textures, buffers) = view_resources(&self.machine);
-        self.parked.push(ViewState {
-            view,
-            targets: Vec::new(),
-            previous_targets: Vec::new(),
-            debug_targets: Vec::new(),
-            textures: textures.iter().map(|_| [None, None]).collect(),
-            sizes: textures.iter().map(|_| None).collect(),
-            buffers: buffers.iter().map(|_| None).collect(),
-            post_buffer: uniform_buffer(
-                &self.device,
-                "engine/post-uniform",
-                size_of::<crate::shared::PostUniform>() as u64,
-            ),
-            groups: self
-                .view_holders
-                .iter()
-                .map(|holder| (*holder, [None, None]))
-                .collect(),
-            stale: self.view_holders.clone(),
-            ran: Bits::of(self.machine.graph.passes()),
-        });
-        Some(self.parked.len() - 1)
-    }
-
-    pub(crate) fn settle_views(&mut self, main: bevy_ecs::entity::Entity, listed: &[bevy_ecs::entity::Entity]) {
-        if self.resident.is_some_and(|resident| resident != main)
-            && let Some(at) = self.parked.iter().position(|state| state.view == main)
+    pub(crate) fn settle_sets(&mut self, listed: &[bevy_ecs::entity::Entity]) {
+        let main = listed
+            .first()
+            .copied()
+            .unwrap_or(bevy_ecs::entity::Entity::PLACEHOLDER);
+        if !self.sets.list.iter().any(|set| set.view == main)
+            && let Some(set) = self
+                .sets
+                .list
+                .iter_mut()
+                .find(|set| !listed.contains(&set.view))
         {
-            self.swap_view(at);
-            if let (Some(state), Some(resident)) = (self.parked.get_mut(at), self.resident) {
-                state.view = resident;
-            }
+            set.view = main;
         }
-        self.resident = Some(main);
         let machine = &self.machine;
-        self.parked.retain_mut(|state| {
-            let kept = listed.contains(&state.view);
+        self.sets.list.retain_mut(|set| {
+            let kept = listed.contains(&set.view);
             if !kept {
-                state.release(machine);
+                set.release(machine, None);
             }
             kept
         });
+        self.sets.at = usize::MAX;
+        self.select(main);
     }
 
-    pub(crate) fn swap_view(&mut self, at: usize) {
-        let mut parked = std::mem::take(&mut self.parked);
-        if let Some(state) = parked.get_mut(at) {
-            self.exchange(state);
-        }
-        self.parked = parked;
-    }
-
-    fn exchange(&mut self, state: &mut ViewState) {
-        std::mem::swap(&mut self.targets, &mut state.targets);
-        std::mem::swap(&mut self.previous_targets, &mut state.previous_targets);
-        std::mem::swap(&mut self.debug_targets, &mut state.debug_targets);
-        std::mem::swap(&mut self.post_buffer, &mut state.post_buffer);
-        std::mem::swap(&mut self.ran, &mut state.ran);
-        let (textures, buffers) = view_resources(&self.machine);
-        for (slot, texture) in textures.into_iter().enumerate() {
-            std::mem::swap(&mut self.textures[texture as usize], &mut state.textures[slot]);
-            std::mem::swap(&mut self.sizes[texture as usize], &mut state.sizes[slot]);
-        }
-        for (slot, buffer) in buffers.into_iter().enumerate() {
-            std::mem::swap(&mut self.buffers[buffer as usize], &mut state.buffers[slot]);
-        }
-        for (holder, made) in &mut state.groups {
-            let held = match *holder {
-                Holder::Frame(variant) => &mut self.frame_groups[variant as usize].made,
-                Holder::Own(pipeline, group) => {
-                    &mut self.own_groups[pipeline as usize][group as usize].made
-                }
-            };
-            std::mem::swap(held, made);
-        }
-        let incoming = std::mem::take(&mut state.stale);
-        for holder in &self.view_holders {
-            if self.stale.remove(holder) {
-                state.stale.insert(*holder);
+    pub(crate) fn select(&mut self, view: bevy_ecs::entity::Entity) -> usize {
+        let at = match self.sets.list.iter().position(|set| set.view == view) {
+            Some(at) => at,
+            None => {
+                let set = ViewSet::new(&self.device, &self.machine, view, &self.sets.holders);
+                self.sets.list.push(set);
+                self.sets.list.len() - 1
             }
-        }
-        self.stale.extend(incoming);
-        let view_holders = &self.view_holders;
-        for filled in &mut self.filled {
-            let held = view_holders
-                .iter()
-                .any(|holder| matches!(holder, Holder::Own(pipeline, _) if *pipeline == filled.base));
-            if held {
-                filled.groups.clear();
-            }
-        }
-    }
-
-    pub(crate) fn carry(&mut self, from: Option<usize>, current: Option<usize>) -> bool {
-        let source = match (from, current) {
-            (Some(at), _) | (None, Some(at)) => match self.parked.get(at) {
-                Some(state) => &state.targets,
-                None => return false,
-            },
-            (None, None) => return false,
         };
-        let pairs: Vec<(&Allocated, &Allocated)> = [Target::Scene, Target::Depth]
+        if at != self.sets.at {
+            let holders = &self.sets.holders;
+            for filled in &mut self.filled {
+                let held = holders
+                    .iter()
+                    .any(|holder| matches!(holder, Holder::Own(pipeline, _) if *pipeline == filled.base));
+                if held {
+                    filled.groups.clear();
+                }
+            }
+            self.sets.at = at;
+        }
+        at
+    }
+
+    pub(crate) fn carry(&mut self, from: usize) -> bool {
+        let at = self.sets.at;
+        let (Some(source), Some(current)) = (self.sets.list.get(from), self.sets.list.get(at))
+        else {
+            return false;
+        };
+        if from == at {
+            return false;
+        }
+        let pairs: Vec<(wgpu::Texture, wgpu::Texture, wgpu::Extent3d)> = [Target::Scene, Target::Depth]
             .iter()
             .filter_map(|target| {
-                let from = source.iter().find(|(known, _)| known == target)?;
-                let to = self.targets.iter().find(|(known, _)| known == target)?;
-                (from.1.size == to.1.size).then_some((&from.1, &to.1))
+                let from = source.targets.iter().find(|(known, _)| known == target)?;
+                let to = current.targets.iter().find(|(known, _)| known == target)?;
+                (from.1.size == to.1.size)
+                    .then(|| (from.1.texture.clone(), to.1.texture.clone(), to.1.size))
             })
             .collect();
         if pairs.len() != 2 {
@@ -640,121 +591,140 @@ impl Run {
         let Some(encoder) = self.recording.encoder() else {
             return false;
         };
-        for (from, to) in pairs {
-            encoder.copy_texture_to_texture(
-                from.texture.as_image_copy(),
-                to.texture.as_image_copy(),
-                to.size,
-            );
+        for (from, to, size) in pairs {
+            encoder.copy_texture_to_texture(from.as_image_copy(), to.as_image_copy(), size);
         }
         true
     }
 
-    pub(crate) fn canvas_in(&mut self) {
+    pub(crate) fn copy_canvas(&mut self, inward: bool) {
         let (Some(rect), Some(canvas)) = (self.canvas_rect, self.canvas_texture.as_ref()) else {
             return;
         };
-        let Some((_, held)) = self.targets.iter().find(|(target, _)| *target == Target::Canvas)
+        let Some((_, held)) = self.sets.list[self.sets.at]
+            .targets
+            .iter()
+            .find(|(target, _)| *target == Target::Canvas)
         else {
             return;
         };
         let Some(encoder) = self.recording.encoder() else {
             return;
         };
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: canvas,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: rect[0],
-                    y: rect[1],
-                    z: 0,
-                },
-                aspect: wgpu::TextureAspect::All,
+        let placed = wgpu::TexelCopyTextureInfo {
+            texture: canvas,
+            mip_level: 0,
+            origin: wgpu::Origin3d {
+                x: rect[0],
+                y: rect[1],
+                z: 0,
             },
-            held.texture.as_image_copy(),
-            held.size,
-        );
-    }
-
-    pub(crate) fn canvas_out(&mut self) {
-        let (Some(rect), Some(canvas)) = (self.canvas_rect, self.canvas_texture.as_ref()) else {
-            return;
+            aspect: wgpu::TextureAspect::All,
         };
-        let Some((_, held)) = self.targets.iter().find(|(target, _)| *target == Target::Canvas)
-        else {
-            return;
+        let (from, to) = if inward {
+            (placed, held.texture.as_image_copy())
+        } else {
+            (held.texture.as_image_copy(), placed)
         };
-        let Some(encoder) = self.recording.encoder() else {
-            return;
-        };
-        encoder.copy_texture_to_texture(
-            held.texture.as_image_copy(),
-            wgpu::TexelCopyTextureInfo {
-                texture: canvas,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: rect[0],
-                    y: rect[1],
-                    z: 0,
-                },
-                aspect: wgpu::TextureAspect::All,
-            },
-            held.size,
-        );
+        encoder.copy_texture_to_texture(from, to, held.size);
     }
 
     pub(crate) fn view_canvas(&self) -> Option<wgpu::TextureView> {
-        self.targets
-            .iter()
-            .find(|(target, _)| *target == Target::Canvas)
-            .map(|(_, made)| made.view.clone())
+        self.set()
+            .target(Target::Canvas)
+            .cloned()
             .or_else(|| self.canvas.clone())
     }
 }
 
-pub(crate) struct ViewState {
+#[derive(Default)]
+pub(crate) struct Tables {
+    pub(crate) textures: Vec<[Option<Allocated>; 2]>,
+    pub(crate) sizes: Vec<Option<(wgpu::Extent3d, u32)>>,
+    pub(crate) buffers: Vec<Option<(wgpu::Buffer, u64)>>,
+}
+
+impl Tables {
+    pub(crate) fn of(machine: &Machine) -> Self {
+        Self {
+            textures: machine.declared.textures.iter().map(|_| [None, None]).collect(),
+            sizes: machine.declared.textures.iter().map(|_| None).collect(),
+            buffers: machine.declared.buffers.iter().map(|_| None).collect(),
+        }
+    }
+}
+
+pub(crate) struct ViewSet {
     pub(crate) view: bevy_ecs::entity::Entity,
-    targets: Vec<(Target, Allocated)>,
-    previous_targets: Vec<(Target, Allocated)>,
-    debug_targets: Vec<Allocated>,
-    textures: Vec<[Option<Allocated>; 2]>,
-    sizes: Vec<Option<(wgpu::Extent3d, u32)>>,
-    buffers: Vec<Option<(wgpu::Buffer, u64)>>,
-    post_buffer: wgpu::Buffer,
-    groups: Vec<(Holder, [Option<wgpu::BindGroup>; 2])>,
+    pub(crate) targets: Vec<(Target, Allocated)>,
+    pub(crate) previous_targets: Vec<(Target, Allocated)>,
+    pub(crate) debug_targets: Vec<Allocated>,
+    pub(crate) tables: Tables,
+    pub(crate) post_buffer: wgpu::Buffer,
+    pub(crate) groups: std::collections::BTreeMap<Holder, [Option<wgpu::BindGroup>; 2]>,
     pub(crate) stale: std::collections::BTreeSet<Holder>,
     pub(crate) ran: Bits,
 }
 
-impl ViewState {
-    pub(crate) fn release_part(&mut self, machine: &Machine, part: u32) {
-        let (textures, buffers) = view_resources(machine);
-        for (slot, texture) in textures.into_iter().enumerate() {
-            if machine.declared.textures[texture as usize].part == part {
-                for made in self.textures[slot].iter().flatten() {
-                    crate::memory::release_any(&made.texture);
-                }
-                self.textures[slot] = [None, None];
-                self.sizes[slot] = None;
-            }
+impl ViewSet {
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        machine: &Machine,
+        view: bevy_ecs::entity::Entity,
+        holders: &std::collections::BTreeSet<Holder>,
+    ) -> Self {
+        Self {
+            view,
+            targets: Vec::new(),
+            previous_targets: Vec::new(),
+            debug_targets: Vec::new(),
+            tables: Tables::of(machine),
+            post_buffer: uniform_buffer(
+                device,
+                "engine/post-uniform",
+                size_of::<crate::shared::PostUniform>() as u64,
+            ),
+            groups: std::collections::BTreeMap::new(),
+            stale: holders.clone(),
+            ran: Bits::of(machine.graph.passes()),
         }
-        for (slot, buffer) in buffers.into_iter().enumerate() {
-            if machine.declared.buffers[buffer as usize].part == part
-                && let Some((made, _)) = self.buffers[slot].take()
-            {
-                crate::memory::release_buffer(&made);
-            }
-        }
-        self.stale
-            .extend(self.groups.iter().map(|(holder, _)| *holder));
     }
 
-    fn release(&mut self, machine: &Machine) {
-        for part in 0..machine.declared.parts.len() as u32 {
-            self.release_part(machine, part);
-        }
+    pub(crate) fn target(&self, target: Target) -> Option<&wgpu::TextureView> {
+        self.targets
+            .iter()
+            .find(|(known, _)| *known == target)
+            .map(|(_, made)| &made.view)
     }
+
+    pub(crate) fn release(&mut self, machine: &Machine, part: Option<u32>) {
+        let owned = |owner: u32| part.is_none_or(|part| owner == part);
+        for (texture, made) in self.tables.textures.iter_mut().enumerate() {
+            if owned(machine.declared.textures[texture].part) {
+                for held in made.iter().flatten() {
+                    crate::memory::release_any(&held.texture);
+                }
+                *made = [None, None];
+                self.tables.sizes[texture] = None;
+            }
+        }
+        for (buffer, made) in self.tables.buffers.iter_mut().enumerate() {
+            if owned(machine.declared.buffers[buffer].part)
+                && let Some((held, _)) = made.take()
+            {
+                crate::memory::release_buffer(&held);
+            }
+        }
+        self.stale.extend(self.groups.keys().copied());
+    }
+}
+
+pub(crate) struct Sets {
+    pub(crate) list: Vec<ViewSet>,
+    pub(crate) at: usize,
+    pub(crate) holders: std::collections::BTreeSet<Holder>,
+    pub(crate) passes: Bits,
+    pub(crate) main: Bits,
 }
 
 fn view_resources(machine: &Machine) -> (Vec<u32>, Vec<u32>) {

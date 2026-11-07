@@ -14,11 +14,12 @@ mod typeset;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
+use bevy_ecs::world::World;
 use engine_core::{
     AttachPoint, Attributes, Brick, Bricks, ColorPass, ComponentKind, DrawKind, Drawn, DrawnPoses,
     DrawnTable, Error, ErrorCode, GlobalTransforms, KindDecl, PassName, PassViews, PrimaryView,
-    Runs, SceneComponents, SceneCx, Schedule, SlotSet, Smoke, Source, Writes, gpu_struct, never,
-    settings, stats,
+    Runs, SceneComponents, SceneCx, SceneForm, Schedule, SlotSet, Smoke, Source, Writes,
+    gpu_struct, never, settings, stats,
 };
 use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Glyph, Text, TextAlign};
 use engine_render::{
@@ -175,6 +176,60 @@ fn label_example() -> Value {
     })
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct WorldText(pub Label);
+
+impl WorldText {
+    pub fn bundle(self, node: Entity) -> (Label, Drawn) {
+        (self.0, Drawn::procedural(TEXT, node))
+    }
+}
+
+fn in_world(world: &World, entity: Entity) -> bool {
+    world.get::<Drawn>(entity).is_some_and(|drawn| drawn.kind == TEXT)
+}
+
+impl SceneForm for WorldText {
+    type Component = Label;
+
+    fn insert(self, world: &mut World, entity: Entity) -> Result<(), Error> {
+        let held = world.get::<Drawn>(entity).cloned();
+        let (label, row) = self.bundle(entity);
+        let drawn = held.map_or(row, |held| Drawn {
+            kind: TEXT,
+            geometry: None,
+            material: None,
+            node: entity,
+            ..held
+        });
+        world.entity_mut(entity).insert((label, drawn));
+        Ok(())
+    }
+
+    fn read(world: &World, entity: Entity) -> Option<Self> {
+        world
+            .get::<Label>(entity)
+            .filter(|_| in_world(world, entity))
+            .cloned()
+            .map(Self)
+    }
+
+    fn remove(world: &mut World, entity: Entity) {
+        if in_world(world, entity) {
+            world.entity_mut(entity).remove::<(Label, Drawn)>();
+        }
+    }
+}
+
+fn world_text_example() -> Value {
+    json!({
+        "text": "Hello",
+        "size": 18.0,
+        "pivot": [0.5, 0.5],
+    })
+}
+
 fn install(mut text: ResMut<Text>) {
     ensure(&mut text);
 }
@@ -227,6 +282,15 @@ impl Brick for TextBrick {
                     .files(label_files)
                     .schema(label_schema)
                     .example(label_example),
+                None,
+            )
+            .join::<SceneComponents>(
+                ComponentKind::form::<WorldText>("world_text")
+                    .check(|text, path| check_label(&text.0, path))
+                    .prepare(|text, cx, path| prepare_label(text.0, cx, path).map(WorldText))
+                    .files(|text| label_files(&text.0))
+                    .schema(label_schema)
+                    .example(world_text_example),
                 None,
             )
             .systems(Schedule::FixedPreSimulation, install)
@@ -476,7 +540,7 @@ impl GpuPart for TextGpu {
         if pass != self.pass {
             return 0;
         }
-        let mut draw = cx.render(Attach::Declared, None);
+        let mut draw = cx.render(Attach::Declared);
         draw.draw(
             &self.pipeline,
             Shape::Pulled {

@@ -317,7 +317,7 @@ impl GpuPart for UiGpu {
     }
 
     fn encode(&mut self, _: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        let mut draw = cx.render(Attach::Declared, None);
+        let mut draw = cx.render(Attach::Declared);
         for (pipeline, range) in &self.drawn {
             draw.draw(
                 pipeline,

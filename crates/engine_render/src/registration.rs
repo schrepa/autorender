@@ -91,6 +91,7 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
     pub(crate) fn retyped<'r>(raw: &'r mut RawDraw<'_>) -> Draw<'r, P, S> {
         Draw {
             raw: raw.reborrow(),
+            view: None,
             part: PhantomData,
         }
     }

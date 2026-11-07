@@ -70,15 +70,15 @@ pub use engine_place::{
     Cursor, CursorView, DepthPass, DrawKind, Drawn, DrawnProjection, Error, ErrorCode, Events,
     Feed, FeedView, FrameBudget, GeometryHandle, GpuStruct, InstanceValues, Interest, JobRef,
     KindDecl, Layers, Level, LevelView, List, MaterialHandle, MeshHandle, Mobility, Moment,
-    Mover, MoverId, Node, NodeId, NodeWord, PASS_BITS, Pace, Pass, PassBit, PassDepth, PassEntry,
-    PassMask, PassName, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring, Runs,
+    Mover, MoverId, Node, NodeId, NodeWord, PASS_BITS, Pace, Pass, PassBit, PassCull, PassEntry,
+    PassMask, PassName, PassRaster, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring, Runs,
     ScenePass, ScenePasses, Since, Slot, SlotSet, Smoke,
     SmokeFailure, SmokeSession,
     Stamp, StoreId, TargetName, TextureHandle, Ticket, Writes, every, gpu_consts, never,
     smoke_check, smoke_eq,
 };
 pub use engine_place::{
-    Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory,
+    Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory, ViewLayer,
 };
 pub use engine_registry::{
     AuthoredId, ExplainAsk, ExplainRecord, FrameFacts, RecordParity, fault_of,

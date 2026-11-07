@@ -71,7 +71,7 @@ impl GpuPart for LitGpu {
     }
 
     fn encode(&mut self, _pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        let mut draw = cx.render(Attach::Declared, None);
+        let mut draw = cx.render(Attach::Declared);
         draw.within(self.drawn);
         draw.draw(
             &self.pipeline,

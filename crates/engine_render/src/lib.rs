@@ -26,7 +26,6 @@ mod bindings;
 mod draws;
 mod drawn;
 mod encode;
-mod fixed_linker;
 mod frame_group;
 mod gpu_calls;
 mod gpu_data;
@@ -37,7 +36,6 @@ mod install;
 mod linker;
 mod machine;
 mod pieces;
-mod pipeline_layouts;
 mod pipelines;
 mod places;
 mod pyramid;
@@ -748,6 +746,7 @@ impl<P: GpuPart> Install<'_, P> {
             blend: desc.blend,
             writes: desc.writes,
             targets,
+            samples: 1,
         });
         let pipeline = self
             .core
@@ -936,7 +935,7 @@ impl<P: GpuPart> Prepare<'_, P> {
     }
 
     pub fn ran(&self, pass: Pass<P>) -> bool {
-        self.core.ran.contains(pass.0 as usize)
+        self.core.set().ran.contains(pass.0 as usize)
     }
 
     pub fn view_index(&self) -> u32 {
@@ -1073,10 +1072,6 @@ impl<P: GpuPart> Prepare<'_, P> {
         }
     }
 
-    pub fn cameras(&mut self, views: &[CameraUniform]) {
-        self.core.cameras(views);
-    }
-
     pub fn fill<S>(
         &mut self,
         pipeline: &Pipeline<P, S>,
@@ -1171,41 +1166,49 @@ impl<P: GpuPart> Encode<'_, P> {
         self.core.clear_buffer(buffer.0);
     }
 
-    pub fn render(&mut self, attach: Attach<P>, view: Option<u32>) -> Draw<'_, P, Own> {
-        let raw = match attach {
-            Attach::Declared => encode::AttachRaw::Declared,
-            Attach::Depth(texture, layer) => encode::AttachRaw::Depth(texture.0, layer),
-            Attach::Color(texture, layer) => {
-                encode::AttachRaw::Color(texture.0, 0, layer.unwrap_or(0)..layer.unwrap_or(0) + 1)
-            }
-            Attach::ColorMip(texture, mip, layer) => {
-                encode::AttachRaw::Color(texture.0, mip, layer..layer + 1)
-            }
-            Attach::ColorDepth(color, layer, depth) => {
-                encode::AttachRaw::ColorDepth(color.0, layer, depth.0)
-            }
-            Attach::Layers {
-                texture,
-                mip,
-                layers,
-            } => encode::AttachRaw::Color(texture.0, mip, layers),
-            Attach::Colors(colors) => encode::AttachRaw::Colors(
-                colors
-                    .iter()
-                    .map(|(texture, layer)| (texture.0, *layer))
-                    .collect(),
-            ),
-        };
+    pub fn render(&mut self, attach: Attach<P>) -> Draw<'_, P, Own> {
         self.core.open_encode_span(self.timer);
-        if !self.core.begin_render(raw, view) {
+        if !self.core.begin_render(raw_attach(&attach), None) {
             self.core.end_render();
         }
         self.core.point = None;
         let part = self.core.part;
         Draw {
             raw: RawDraw::new(&mut *self.core, part, self.timer),
+            view: None,
             part: PhantomData,
         }
+    }
+
+    pub fn view(&mut self, target: &Attach<P>, local: u32) -> Option<Draw<'_, P, Own>> {
+        let view = self.core.owned_views(local..local + 1).pop()?;
+        self.open_view(target, view)
+    }
+
+    pub fn views(&mut self, own: &P, target: &Attach<P>, views: Range<u32>) -> u32 {
+        let mut drawn = 0;
+        for view in self.core.owned_views(views) {
+            if let Some(mut draw) = self.open_view(target, view) {
+                drawn += draw.scene(own);
+            }
+        }
+        drawn
+    }
+
+    fn open_view(&mut self, target: &Attach<P>, view: encode::OwnedDraw) -> Option<Draw<'_, P, Own>> {
+        self.core.open_encode_span(self.timer);
+        if !self.core.begin_render(raw_attach(target), Some(&view)) {
+            self.core.end_render();
+            return None;
+        }
+        self.core.point = None;
+        self.core.view_rect(view.rect);
+        let part = self.core.part;
+        Some(Draw {
+            raw: RawDraw::new(&mut *self.core, part, self.timer),
+            view: Some(view),
+            part: PhantomData,
+        })
     }
 
     pub fn dispatch(&mut self, pipeline: &ComputePipeline<P>, count: Count<P>) -> u32 {
@@ -1230,6 +1233,7 @@ impl<P: GpuPart> Encode<'_, P> {
 
 pub struct Draw<'e, P, S> {
     raw: RawDraw<'e>,
+    view: Option<encode::OwnedDraw>,
     part: PhantomData<fn() -> (P, S)>,
 }
 
@@ -1360,11 +1364,43 @@ impl<P: GpuPart> Draw<'_, P, Own> {
     }
 }
 
+fn raw_attach<P>(attach: &Attach<P>) -> encode::AttachRaw {
+    match attach {
+        Attach::Declared => encode::AttachRaw::Declared,
+        Attach::Depth(texture, layer) => encode::AttachRaw::Depth(texture.0, *layer),
+        Attach::Color(texture, layer) => {
+            let layer = layer.unwrap_or(0);
+            encode::AttachRaw::Color(texture.0, 0, layer..layer + 1)
+        }
+        Attach::ColorMip(texture, mip, layer) => {
+            encode::AttachRaw::Color(texture.0, *mip, *layer..*layer + 1)
+        }
+        Attach::ColorDepth(color, layer, depth) => {
+            encode::AttachRaw::ColorDepth(color.0, *layer, depth.0)
+        }
+        Attach::Layers {
+            texture,
+            mip,
+            layers,
+        } => encode::AttachRaw::Color(texture.0, *mip, layers.clone()),
+        Attach::Colors(colors) => encode::AttachRaw::Colors(
+            colors
+                .iter()
+                .map(|(texture, layer)| (texture.0, *layer))
+                .collect(),
+        ),
+    }
+}
+
 impl<P: GpuPart> Draw<'_, P, Own> {
-    pub fn scene(&mut self, own: &P, view: Option<u32>) -> u32 {
+    pub fn scene(&mut self, own: &P) -> u32 {
+        let view = self.view;
         let run = self.raw.run();
-        run.reset_scissor();
-        let Some(scene) = run.scene_draw(view) else {
+        match &view {
+            Some(view) => run.view_rect(view.rect),
+            None => run.reset_scissor(),
+        }
+        let Some(scene) = run.scene_draw(view.as_ref()) else {
             return 0;
         };
         let members = run.scene_members();

@@ -4459,6 +4459,16 @@
               "type": "null"
             }
           ]
+        },
+        "world_text": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Label"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [

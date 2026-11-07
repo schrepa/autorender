@@ -758,12 +758,12 @@ impl MeshesGpu {
                 continue;
             };
             let drawn = self.scenes.iter().filter(|scene| scene.name == pass).any(|scene| {
-                matches!(scene.drawing, Drawing::DepthViews { .. } | Drawing::Views { .. })
+                matches!(scene.drawing, Drawing::Views { .. })
             });
-            if !drawn {
+            if !drawn || !view.draws {
                 continue;
             }
-            let index = global as u32 - views.owned(pass).map_or(0, |owned| owned.start);
+            let index = view.local;
             {
                 let (Some(base), detailed) = (base, view.detail > 0.0) else {
                     continue;

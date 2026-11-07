@@ -9,8 +9,8 @@ import package::engine::standard::{base_texel, emissive_texel};
 import package::engine::surface::{masked_out, opacity_cut, surface_point};
 import package::engine::view::stable_normalize;
 
-@group(2) @binding(15) var<uniform> impostor_bake: ImpostorBake;
-@group(2) @binding(16) var impostor_shade: texture_depth_2d;
+@group(2) @binding(0) var<uniform> impostor_bake: ImpostorBake;
+@group(2) @binding(1) var impostor_shade: texture_depth_2d;
 
 fn bake_hemisphere() -> bool {
     return impostor_flags_hemisphere(impostor_bake.flags.x);

@@ -1,9 +1,49 @@
+const BRICK_CODE_BYTES: usize = 48;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BrickCode {
+    bytes: [u8; BRICK_CODE_BYTES],
+    len: u8,
+}
+
+impl BrickCode {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a brick code name holds at most BRICK_CODE_BYTES bytes"
+    )]
+    const fn new(name: &str) -> Option<BrickCode> {
+        let name = name.as_bytes();
+        if name.len() > BRICK_CODE_BYTES {
+            return None;
+        }
+        let mut bytes = [0; BRICK_CODE_BYTES];
+        bytes.split_at_mut(name.len()).0.copy_from_slice(name);
+        Some(BrickCode {
+            bytes,
+            len: name.len() as u8,
+        })
+    }
+
+    pub const fn as_str(&self) -> &str {
+        match std::str::from_utf8(self.bytes.split_at(self.len as usize).0) {
+            Ok(name) => name,
+            Err(_) => "",
+        }
+    }
+}
+
+impl std::fmt::Debug for BrickCode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.as_str(), formatter)
+    }
+}
+
 macro_rules! error_codes {
     ($($variant:ident => $code:literal,)*) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         pub enum ErrorCode {
             $($variant,)*
-            Brick(&'static str),
+            Brick(BrickCode),
         }
 
         impl ErrorCode {
@@ -13,10 +53,17 @@ macro_rules! error_codes {
 
             pub const NAMES: &'static [&'static str] = &[$($code,)*];
 
-            pub const fn as_str(self) -> &'static str {
+            pub const fn as_str(&self) -> &str {
                 match self {
                     $(ErrorCode::$variant => $code,)*
-                    ErrorCode::Brick(code) => code,
+                    ErrorCode::Brick(code) => code.as_str(),
+                }
+            }
+
+            pub const fn brick(name: &str) -> ErrorCode {
+                match BrickCode::new(name) {
+                    Some(code) => ErrorCode::Brick(code),
+                    None => panic!("a brick error code name is longer than BRICK_CODE_BYTES"),
                 }
             }
 
@@ -45,19 +92,10 @@ impl serde::Serialize for ErrorCode {
 impl<'de> serde::Deserialize<'de> for ErrorCode {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
-        Ok(Self::named(&name).unwrap_or_else(|| ErrorCode::Brick(interned(&name))))
+        Ok(Self::named(&name).unwrap_or_else(|| {
+            BrickCode::new(&name).map_or(ErrorCode::CodeTooLong, ErrorCode::Brick)
+        }))
     }
-}
-
-fn interned(name: &str) -> &'static str {
-    static NAMES: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
-    let mut names = NAMES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(&known) = names.iter().find(|&&known| known == name) {
-        return known;
-    }
-    let held: &'static str = Box::leak(name.to_owned().into_boxed_str());
-    names.push(held);
-    held
 }
 
 #[cfg(feature = "schema")]
@@ -88,6 +126,7 @@ error_codes! {
     UnsupportedVersion => "unsupported_version",
     UnsupportedCommand => "unsupported_command",
     InvalidUtf8 => "invalid_utf8",
+    CodeTooLong => "code_too_long",
     InvalidName => "invalid_name",
     InvalidPage => "invalid_page",
     InvalidPath => "invalid_path",
@@ -148,7 +187,6 @@ error_codes! {
     InvalidEnvironment => "invalid_environment",
 
     MissingPlugin => "missing_plugin",
-    DuplicateBrick => "duplicate_brick",
 
     PauseRequired => "pause_required",
     CommandBusy => "command_busy",
@@ -237,7 +275,6 @@ error_codes! {
     PassMismatch => "pass_mismatch",
     ShaderLink => "shader_link",
     UnknownModule => "unknown_module",
-    UnknownBinding => "unknown_binding",
     ImportForeign => "import_foreign",
     PlaceUnlisted => "place_unlisted",
     BindingForeign => "binding_foreign",

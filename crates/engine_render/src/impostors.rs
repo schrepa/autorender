@@ -6,10 +6,9 @@
 pub(crate) mod bake;
 mod records;
 
-pub(crate) use bake::ImpostorBake;
+pub(crate) use bake::{ImpostorBake, ImpostorBakes};
 
 use bevy_ecs::world::World;
-use engine_core::collections::HashMap;
 use engine_core::glam::Vec3;
 use engine_core::{
     AtlasDevice, AtlasFormat, AtlasShape, AtlasWork, Cursor, Events, FrameId,
@@ -17,12 +16,11 @@ use engine_core::{
     MeshHandle,
 };
 
-use crate::bindings::IMPOSTOR_BAKE;
+use crate::encode::Compiler;
 use crate::materials::{MaterialLook, MaterialStore};
 use crate::mesh_arena::{GpuMeshes, MeshDraw};
 use crate::mipmaps::MipGenerator;
 use crate::readback::{Arrival, Readbacks};
-use crate::shaders::{Entry, Stage};
 
 const FORMATS: [wgpu::TextureFormat; 4] = [
     wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -104,22 +102,17 @@ pub(crate) fn atlas_device(device: &wgpu::Device) -> AtlasDevice {
     }
 }
 
-fn bake_entries(extended: bool, shade: bool) -> (Entry, Entry) {
-    let entry = |name, stage| Entry {
-        module: BAKE_MODULE,
-        name,
-        stage,
-    };
+fn bake_entries(extended: bool, shade: bool) -> (&'static str, &'static str) {
     let vertex = if extended {
-        entry("vs_impostor_bake_extended", Stage::Vertex)
+        "vs_impostor_bake_extended"
     } else {
-        entry("vs_impostor_bake", Stage::Vertex)
+        "vs_impostor_bake"
     };
     let fragment = match (extended, shade) {
-        (false, false) => entry("fs_impostor_bake", Stage::Fragment),
-        (true, false) => entry("fs_impostor_bake_extended", Stage::Fragment),
-        (false, true) => entry("fs_impostor_shade", Stage::Fragment),
-        (true, true) => entry("fs_impostor_shade_extended", Stage::Fragment),
+        (false, false) => "fs_impostor_bake",
+        (true, false) => "fs_impostor_bake_extended",
+        (false, true) => "fs_impostor_shade",
+        (true, true) => "fs_impostor_shade_extended",
     };
     (vertex, fragment)
 }
@@ -155,7 +148,6 @@ struct BakeSource<'a> {
     extended: bool,
     group: &'a wgpu::BindGroup,
     look: MaterialLook,
-    layout: crate::pipeline_layouts::PipelineLayout,
     bounds: (Vec3, Vec3),
     parts: Vec<BakePart<'a>>,
 }
@@ -171,38 +163,6 @@ struct BakePart<'a> {
 struct BakeKey {
     look: MaterialLook,
     extended: bool,
-}
-
-struct ImpostorPipelines {
-    bake_layout: crate::pipelines::GroupLayout,
-    bake_pipeline_layout: Option<(&'static str, wgpu::PipelineLayout)>,
-    bake_pipelines: HashMap<BakeKey, wgpu::RenderPipeline>,
-    shade_pipelines: HashMap<BakeKey, wgpu::RenderPipeline>,
-    sampler: wgpu::Sampler,
-    no_shade: Option<wgpu::TextureView>,
-}
-
-impl ImpostorPipelines {
-    fn new(device: &wgpu::Device) -> Self {
-        let bake_layout = crate::pipelines::layout(device, &IMPOSTOR_BAKE);
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("engine/impostor-sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            ..Default::default()
-        });
-        Self {
-            bake_layout,
-            bake_pipeline_layout: None,
-            bake_pipelines: HashMap::default(),
-            shade_pipelines: HashMap::default(),
-            sampler,
-            no_shade: None,
-        }
-    }
 }
 
 struct Atlas {
@@ -349,7 +309,7 @@ pub(crate) enum FrameResource<'a> {
 }
 
 pub(crate) struct Impostors {
-    pipelines: ImpostorPipelines,
+    sampler: wgpu::Sampler,
     atlas: Option<Atlas>,
     unbaked: Vec<ImpostorIdentity>,
     cursor: Cursor,
@@ -375,8 +335,17 @@ impl Impostors {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("engine/impostor-sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
         Self {
-            pipelines: ImpostorPipelines::new(device),
+            sampler,
             atlas: None,
             unbaked: Vec::new(),
             cursor: Cursor::default(),
@@ -404,7 +373,7 @@ impl Impostors {
 
     pub(crate) fn frame_resource(&self, name: &str) -> Option<FrameResource<'_>> {
         if name == "impostor_sampler" {
-            return Some(FrameResource::Sampler(&self.pipelines.sampler));
+            return Some(FrameResource::Sampler(&self.sampler));
         }
         let Some(arrays) = self.atlas.as_ref().and_then(|atlas| atlas.arrays.as_ref()) else {
             return matches!(name, "impostor_albedo" | "impostor_atlas")
@@ -427,7 +396,7 @@ impl Impostors {
         queue: &crate::gpu_calls::Queue,
         world: &World,
         (meshes, materials): (&GpuMeshes, &MaterialStore),
-        encoder: &mut Option<wgpu::CommandEncoder>,
+        (encoder, compiler): (&mut Option<wgpu::CommandEncoder>, &mut Compiler<'_>),
         (readbacks, written): (&mut Readbacks, FrameId),
     ) {
         let Some(books) = world.get_resource::<ImpostorBooks>() else {
@@ -492,7 +461,7 @@ impl Impostors {
                         device,
                         encoder: &mut *encoder,
                         mips: materials.mips(),
-                        pipelines: &mut self.pipelines,
+                        compiler: &mut *compiler,
                         readbacks: (&mut *readbacks, written, self.serial),
                     };
                     atlas.bake(gpu, &source, *identity, *hemisphere);
@@ -553,16 +522,15 @@ fn bake_source<'a>(
         extended: gpu.extended,
         group,
         look,
-        layout: materials.bake_layout(),
         bounds,
         parts: baked,
     })
 }
 
-struct BakeGpu<'a> {
+struct BakeGpu<'a, 'r> {
     device: &'a wgpu::Device,
     encoder: &'a mut Option<wgpu::CommandEncoder>,
     mips: &'a MipGenerator,
-    pipelines: &'a mut ImpostorPipelines,
+    compiler: &'a mut Compiler<'r>,
     readbacks: (&'a mut Readbacks, FrameId, u32),
 }

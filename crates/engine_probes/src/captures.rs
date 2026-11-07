@@ -199,7 +199,6 @@ impl GpuPart for ProbesGpu {
         }
         if !self.drawn.is_empty() {
             cx.allocate(self.depth, extent(state.size, 1), 1);
-            cx.cameras(&state.cameras);
         }
         if state.captures {
             cx.run(self.captures);
@@ -230,12 +229,11 @@ impl GpuPart for ProbesGpu {
             cx.span("probe_captures");
         }
         let mut drawn = 0;
-        for (view, &layer) in self.drawn.iter().enumerate() {
-            let view = view as u32;
-            let mut draw = cx.render(
-                Attach::ColorDepth(self.radiance, Some(layer), self.depth),
-                Some(view),
-            );
+        let target = Attach::ColorDepth(self.radiance, None, self.depth);
+        for face in 0..FACES as u32 {
+            let Some(mut draw) = cx.view(&target, face) else {
+                continue;
+            };
             draw.draw(
                 &self.backdrop,
                 Shape::Pulled {
@@ -243,7 +241,7 @@ impl GpuPart for ProbesGpu {
                     instances: 0..1,
                 },
             );
-            drawn += draw.scene(self, Some(view));
+            drawn += draw.scene(self);
         }
         drawn
     }
@@ -306,14 +304,11 @@ fn faces_pass(
     pipeline: &Pipeline<ProbesGpu, Own>,
     item: u32,
 ) {
-    let mut draw = cx.render(
-        Attach::Layers {
-            texture,
-            mip,
-            layers: first..first + FACES_PER_PASS,
-        },
-        None,
-    );
+    let mut draw = cx.render(Attach::Layers {
+        texture,
+        mip,
+        layers: first..first + FACES_PER_PASS,
+    });
     draw.draw(
         pipeline,
         Shape::Pulled {

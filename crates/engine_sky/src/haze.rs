@@ -209,7 +209,7 @@ impl Haze {
         } else {
             &self.filtering
         };
-        let mut draw = cx.render(Attach::Declared, None);
+        let mut draw = cx.render(Attach::Declared);
         draw.within(self.drawn);
         draw.draw(
             pipeline,

@@ -1,12 +1,12 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Cursor, Cut, DeviceLimits, Events, FrameBudget, FrameTime, GlobalTransforms, Mobility,
-    PassName, PrimaryView, Readable, Readback, OwnedView, OwnedViews, Spawner, StoreId,
+    Camera, Clear, Cursor, Cut, DeviceLimits, Events, FrameBudget, GlobalTransforms, Mobility,
+    Mover, Moves, Node, OwnedView, OwnedViews, Pace, PassName, PrimaryView, Readable, Readback,
+    Spawner, StoreId, Transform, ViewLayer, mover_of,
 };
 use engine_math as math;
 use engine_places_rendering::probes::{ProbeCaptures, ProbeFace};
 use engine_places_rendering::sky::SkyLight;
-use engine_render::CameraUniform;
 use glam::{Mat4, Vec3, Vec4};
 
 use crate::gather::{ProbeList, RenderReflectionProbe};
@@ -287,7 +287,6 @@ pub(crate) struct ProbeState {
     pub(crate) timed: bool,
     pub(crate) faces: Vec<ProbeFace>,
     pub(crate) drawn: Vec<u32>,
-    pub(crate) cameras: Vec<CameraUniform>,
     pub(crate) finished: Option<(u32, u32)>,
     pub(crate) taken: Vec<(usize, u64)>,
     words: Vec<[u32; 4]>,
@@ -315,7 +314,6 @@ impl Default for ProbeState {
             timed: false,
             faces: Vec::new(),
             drawn: Vec::new(),
-            cameras: Vec::new(),
             finished: None,
             taken: Vec::new(),
             words: Vec::new(),
@@ -367,12 +365,7 @@ impl ProbeState {
         }
     }
 
-    fn capture(
-        &mut self,
-        probes: &[RenderReflectionProbe],
-        budget: &mut FrameBudget,
-        seconds: f32,
-    ) -> u32 {
+    fn capture(&mut self, probes: &[RenderReflectionProbe], budget: &mut FrameBudget) -> u32 {
         let face_bytes = u64::from(self.size) * u64::from(self.size) * FACE_TEXEL_BYTES;
         let mut used = [false; FACES];
         let mut drawn = 0;
@@ -385,20 +378,12 @@ impl ProbeState {
                 break;
             }
             used[face] = true;
-            let view = face_view_projection(probe.center, face);
-            let index = self.faces.len() as u32;
             self.faces.push(ProbeFace {
                 face: face as u32,
                 center: probe.center,
-                view,
+                view: face_view_projection(probe.center, face),
             });
             self.drawn.push(self.set * FACES as u32 + face as u32);
-            self.cameras.push(probe_camera(
-                view,
-                probe.center,
-                seconds,
-                (self.size, 1 + index),
-            ));
             drawn += 1;
             if let Some(held) = self.slots.capturing()
                 && !self.taken.contains(&held)
@@ -424,7 +409,6 @@ pub(crate) fn plan_captures(
     view: Res<PrimaryView>,
     sky: Res<SkyLight>,
     (globals, mut budget): (Res<GlobalTransforms>, ResMut<FrameBudget>),
-    time: Res<FrameTime>,
     gathered: Res<ProbeList>,
     mut acks: ResMut<ProbeAcks>,
     mut state: ResMut<ProbeState>,
@@ -455,7 +439,6 @@ pub(crate) fn plan_captures(
     }
     state.faces.clear();
     state.drawn.clear();
-    state.cameras.clear();
     state.taken.clear();
     state.finished = None;
     state.timed = false;
@@ -467,7 +450,7 @@ pub(crate) fn plan_captures(
     let mut drawn = 0;
     state.captures = !view.debug() && state.listed;
     if state.captures && state.views {
-        drawn = state.capture(probes, &mut budget, time.elapsed as f32);
+        drawn = state.capture(probes, &mut budget);
     }
     state.stats = ReflectionProbeStats {
         ready: state.slots.ready(),
@@ -484,21 +467,83 @@ pub(crate) fn plan_captures(
 #[derive(Component)]
 pub(crate) struct CaptureViews;
 
-fn capture_views(state: &ProbeState) -> OwnedViews {
+#[derive(Component)]
+pub(crate) struct ProbeCamera;
+
+type Lenses<'w, 's> = Query<'w, 's, &'static mut Camera, With<ProbeCamera>>;
+
+fn capture_views(state: &ProbeState, cameras: &[Entity]) -> OwnedViews {
     OwnedViews {
         pass: ProbePass::NAME,
-        views: state
-            .faces
-            .iter()
-            .map(|face| OwnedView {
-                view_projection: face.view.to_cols_array_2d(),
-                planes: None,
-                eye: face.center.to_array(),
-                size: [state.size, state.size],
-                detail: 0.0,
-                takes: Some(Mobility::Static),
+        views: (0_u32..)
+            .zip(cameras)
+            .map(|(face, &camera)| {
+                let captured = state.faces.iter().position(|known| known.face == face);
+                let center = captured
+                    .and_then(|at| state.faces.get(at))
+                    .map_or(Vec3::ZERO, |known| known.center);
+                OwnedView {
+                    camera,
+                    target: ViewLayer {
+                        layer: captured
+                            .and_then(|at| state.drawn.get(at))
+                            .copied()
+                            .unwrap_or(0),
+                        rect: [0, 0, state.size, state.size],
+                    },
+                    clear: Clear::All,
+                    passes: None,
+                    draws: captured.is_some(),
+                    planes: None,
+                    eye: center.to_array(),
+                    detail: 0.0,
+                    takes: Some(Mobility::Static),
+                }
             })
             .collect(),
+    }
+}
+
+fn place_cameras(
+    faces: &[ProbeFace],
+    pool: &mut Vec<Entity>,
+    (spawner, moves, lenses): (
+        &mut Spawner<'_, '_, ReflectionProbesBrick>,
+        &mut Moves<'_, '_, ReflectionProbesBrick>,
+        &mut Lenses<'_, '_>,
+    ),
+) {
+    for face in 0..FACES {
+        let captured = faces.iter().find(|known| known.face as usize == face);
+        let (center, clip) = captured.map_or_else(
+            || (Vec3::ZERO, face_view_projection(Vec3::ZERO, face)),
+            |known| (known.center, known.view),
+        );
+        let Some(&node) = pool.get(face) else {
+            pool.push(spawner.spawn((
+                ProbeCamera,
+                Node::default(),
+                Transform::from_translation(center),
+                Camera::fitted(clip, center),
+                Mover {
+                    by: mover_of::<ReflectionProbesBrick>(),
+                    pace: Pace::Frame,
+                },
+            )));
+            continue;
+        };
+        if captured.is_none() {
+            continue;
+        }
+        if let Some(mut transform) = moves.get_mut(node)
+            && transform.translation != center
+        {
+            transform.translation = center;
+        }
+        let origin = moves.local(node).map_or(center, |transform| transform.translation);
+        if let Ok(mut lens) = lenses.get_mut(node) {
+            lens.set_if_neq(Camera::fitted(clip, origin));
+        }
     }
 }
 
@@ -509,6 +554,7 @@ pub(crate) fn publish_captures(
     mut stats: ResMut<ReflectionProbeStats>,
     mut published: Query<&mut OwnedViews, With<CaptureViews>>,
     mut spawner: Spawner<ReflectionProbesBrick>,
+    (mut pool, mut moves, mut lenses): (Local<Vec<Entity>>, Moves<ReflectionProbesBrick>, Lenses),
 ) {
     let state = &mut *state;
     if std::mem::take(&mut state.words_changed) {
@@ -519,7 +565,12 @@ pub(crate) fn publish_captures(
         captures.faces.clone_from(&state.faces);
         captures.size = state.size;
     }
-    let views = capture_views(state);
+    place_cameras(
+        &state.faces,
+        &mut pool,
+        (&mut spawner, &mut moves, &mut lenses),
+    );
+    let views = capture_views(state, &pool);
     match published.single_mut() {
         Ok(mut held) => {
             held.set_if_neq(views);
@@ -548,32 +599,6 @@ fn face_view_projection(center: Vec3, face: usize) -> Mat4 {
     let row = |axis: Vec3| axis.extend(-axis.dot(center));
     let view = Mat4::from_cols(row(right), row(up), row(back), Vec4::W).transpose();
     Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, CAPTURE_FAR, CAPTURE_NEAR) * view
-}
-
-fn probe_camera(
-    view_projection: Mat4,
-    position: Vec3,
-    seconds: f32,
-    (size, view): (u32, u32),
-) -> CameraUniform {
-    let columns = view_projection.to_cols_array_2d();
-    CameraUniform {
-        view_projection: columns,
-        previous_view_projection: columns,
-        inverse_view_projection: view_projection.inverse().to_cols_array_2d(),
-        position: position.extend(seconds).to_array(),
-        jitter: [0.0; 4],
-        options: [1.0, pixel_angle(view_projection, size), 0.0, 0.0],
-        previous: [0.0, 0.0, 0.0, seconds],
-        region: [size as f32, size as f32, 1.0, 1.0],
-        detail: position.extend(0.0).to_array(),
-        view: [view, 0, 0, 0],
-    }
-}
-
-fn pixel_angle(view_projection: Mat4, height: u32) -> f32 {
-    let row = view_projection.row(1).truncate().length() * height.max(1) as f32;
-    2.0 / math::max(row, 1.0e-12)
 }
 
 fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>) {

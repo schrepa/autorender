@@ -28,7 +28,6 @@ impl Stages {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sample {
     Float,
-    Depth,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

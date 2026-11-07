@@ -658,6 +658,18 @@ fn install_with(
             brick: None,
             fills: Vec::new(),
         },
+        Listed {
+            record: core_part::<crate::mipmaps::Mipmaps>(),
+            package: CORE_PACKAGE,
+            brick: None,
+            fills: Vec::new(),
+        },
+        Listed {
+            record: core_part::<crate::impostors::ImpostorBakes>(),
+            package: CORE_PACKAGE,
+            brick: None,
+            fills: Vec::new(),
+        },
     ];
     let mut draws: Vec<&KindDraw> = Vec::new();
     for (brick, record) in registry.iter() {
@@ -764,7 +776,7 @@ fn install_with(
             passes.push(name);
         }
     }
-    let limits = crate::pipeline_layouts::StageLimits::of(&device.limits());
+    let limits = crate::pipelines::StageLimits::of(&device.limits());
     let scope = crate::gpu_calls::validation_scope(device);
     let machine = Machine::build(
         device,
@@ -772,7 +784,7 @@ fn install_with(
         declared,
         outputs,
         switches,
-        (&limits, material.table().0),
+        (&limits, material.table()),
         &mut problems,
     );
     if let Some(Some(error)) = crate::platform::ready(scope.pop()) {
@@ -966,9 +978,8 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
 struct Kept {
     declared: crate::install::Declared,
     parts: Vec<Option<Box<dyn Installed>>>,
-    textures: Vec<[Option<crate::encode::Allocated>; 2]>,
-    sizes: Vec<Option<(wgpu::Extent3d, u32)>>,
-    buffers: Vec<Option<(wgpu::Buffer, u64)>>,
+    tables: crate::encode::Tables,
+    view: crate::encode::Tables,
     filled: Vec<crate::encode::Filled>,
     frames: (u64, u64),
     installed: Vec<engine_core::FrameId>,
@@ -980,9 +991,8 @@ fn kept_of(run: Run) -> (Assets, Kept) {
         assets,
         machine,
         parts,
-        textures,
-        sizes,
-        buffers,
+        tables,
+        sets,
         filled,
         frame,
         asked_frame,
@@ -990,12 +1000,18 @@ fn kept_of(run: Run) -> (Assets, Kept) {
         readbacks,
         ..
     } = run;
+    let at = sets.at;
+    let view = sets
+        .list
+        .into_iter()
+        .nth(at)
+        .map(|set| set.tables)
+        .unwrap_or_default();
     let kept = Kept {
         declared: machine.declared,
         parts,
-        textures,
-        sizes,
-        buffers,
+        tables,
+        view,
         filled,
         frames: (frame, asked_frame),
         installed,
@@ -1078,9 +1094,8 @@ fn adopt(run: &mut Run, kept: Kept, world: &mut World) {
             *slot = Some(held);
         }
     }
-    run.textures = kept.textures;
-    run.sizes = kept.sizes;
-    run.buffers = kept.buffers;
+    run.tables = kept.tables;
+    run.set_mut().tables = kept.view;
     run.filled = kept
         .filled
         .into_iter()

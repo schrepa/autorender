@@ -410,7 +410,7 @@ impl GpuPart for ParticlesGpu {
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        let mut draw = cx.render(Attach::Declared, None);
+        let mut draw = cx.render(Attach::Declared);
         if pass == self.composite {
             draw.draw(
                 &self.compositing,
@@ -420,6 +420,6 @@ impl GpuPart for ParticlesGpu {
                 },
             );
         }
-        draw.scene(self, None)
+        draw.scene(self)
     }
 }

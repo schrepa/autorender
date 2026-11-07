@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 use crate::{
     AssetLibrary, Camera, Clear, ColorSpace, DRAWN_UNBOUNDED, Detail, Drawn, DrawnPoses, DrawnTable, Error,
     ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Jitter, Layers, Mobility, Operation,
-    OwnedViews, PrimaryView, Target, View, ViewCut, ViewHistory, take_asks,
+    OwnedView, OwnedViews, PassBit, PassMask, PassViews, PrimaryView, ScenePasses, Target, View,
+    ViewCut, ViewHistory, ViewLayer, take_asks,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -129,13 +130,19 @@ impl ViewFacts {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DrawnView {
     pub owner: Option<&'static str>,
+    pub local: u32,
     pub view_projection: Mat4,
     pub planes: Option<[[f32; 4]; 6]>,
+    pub position: Vec3,
     pub eye: Vec3,
     pub size: UVec2,
     pub detail: f32,
     pub takes: Option<Mobility>,
     pub layers: Layers,
+    pub target: ViewLayer,
+    pub clear: Clear,
+    pub passes: PassMask,
+    pub draws: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -388,6 +395,27 @@ pub(crate) fn settle_owned(world: &mut World) {
         .map(|mut query| query.iter(world).cloned().collect())
         .unwrap_or_default();
     published.sort_by_key(|views| views.pass);
+    let passes = world.get_resource::<ScenePasses>();
+    let every = passes.map_or(PassMask::NONE, |passes| {
+        passes
+            .listed()
+            .iter()
+            .filter(|listed| listed.pass.views != PassViews::Owned)
+            .filter_map(|listed| listed.bit)
+            .fold(PassMask::NONE, |mask, bit| mask.set(bit, true))
+    });
+    let placed: Vec<Vec<DrawnView>> = published
+        .iter()
+        .map(|listed| {
+            let owner = passes
+                .and_then(|passes| passes.bit(listed.pass))
+                .map_or(PassMask::NONE, PassBit::mask);
+            (0_u32..)
+                .zip(&listed.views)
+                .map(|(local, view)| owned_view(world, (listed.pass, local, owner), view))
+                .collect()
+        })
+        .collect();
     let Some(mut views) = world.get_resource_mut::<Views>() else {
         return;
     };
@@ -397,33 +425,72 @@ pub(crate) fn settle_owned(world: &mut World) {
         .enumerate()
         .map(|(index, facts)| DrawnView {
             owner: None,
+            local: index as u32,
             view_projection: facts.view_projection,
             planes: None,
+            position: facts.eye,
             eye: detail_eye.filter(|_| index == 0).unwrap_or(facts.eye),
             size: facts.render,
             detail,
             takes: None,
             layers: facts.layers,
+            target: ViewLayer {
+                layer: 0,
+                rect: facts.pixels,
+            },
+            clear: facts.clear,
+            passes: every,
+            draws: true,
         })
         .collect();
     let mut owned = Vec::with_capacity(published.len());
-    for listed in &published {
-        let base = drawn.len() as u32;
-        drawn.extend(listed.views.iter().map(|view| DrawnView {
-            owner: Some(listed.pass),
-            view_projection: Mat4::from_cols_array_2d(&view.view_projection),
-            planes: view.planes,
-            eye: Vec3::from_array(view.eye),
-            size: UVec2::from_array(view.size),
-            detail: view.detail,
-            takes: view.takes,
-            layers: Layers::ALL,
-        }));
-        owned.push((listed.pass, base, listed.views.len() as u32));
+    for (listed, placed) in published.iter().zip(placed) {
+        owned.push((listed.pass, drawn.len() as u32, placed.len() as u32));
+        drawn.extend(placed);
     }
     if views.drawn != drawn || views.owned != owned {
         views.drawn = drawn;
         views.owned = owned;
+    }
+}
+
+fn owned_view(
+    world: &World,
+    (owner, local, pass): (&'static str, u32, PassMask),
+    view: &OwnedView,
+) -> DrawnView {
+    let [_, _, width, height] = view.target.rect;
+    let aspect = width.max(1) as f32 / height.max(1) as f32;
+    let lens = world.get::<Camera>(view.camera).copied();
+    let pose = world
+        .get::<crate::Transform>(view.camera)
+        .map(crate::Transform::matrix)
+        .and_then(eye_of);
+    let placed = lens
+        .zip(pose)
+        .map(|(lens, (position, forward, up))| {
+            (
+                lens.clip(aspect) * Mat4::look_to_rh(position, forward, up),
+                position,
+            )
+        })
+        .filter(|(view_projection, _)| view_projection.is_finite());
+    let (view_projection, position) = placed.unwrap_or((Mat4::ZERO, Vec3::ZERO));
+    DrawnView {
+        owner: Some(owner),
+        local,
+        view_projection,
+        planes: view.planes,
+        position,
+        eye: Vec3::from_array(view.eye),
+        size: UVec2::new(width, height),
+        detail: view.detail,
+        takes: view.takes,
+        layers: Layers::ALL,
+        target: view.target,
+        clear: view.clear,
+        passes: view.passes.unwrap_or(pass),
+        draws: view.draws && placed.is_some(),
     }
 }
 

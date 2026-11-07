@@ -406,7 +406,7 @@ impl GpuPart for WaterGpu {
             return 0;
         }
         if pass == self.foam_pass {
-            let mut draw = cx.render(Attach::Color(self.foam, None), None);
+            let mut draw = cx.render(Attach::Color(self.foam, None));
             self.particles.draw_foam(&mut draw, &self.foaming);
         }
         0

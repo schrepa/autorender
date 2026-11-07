@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn device_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
-    let required = crate::pipeline_layouts::REQUIRED_LIMITS;
+    let required = crate::pipelines::REQUIRED_LIMITS;
     wgpu::Limits {
         max_buffer_size: adapter.max_buffer_size,
         max_storage_buffer_binding_size: adapter.max_storage_buffer_binding_size,
@@ -16,7 +16,7 @@ pub(super) fn device_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
         max_storage_textures_per_shader_stage: required.storage_textures,
         max_dynamic_uniform_buffers_per_pipeline_layout: required.dynamic_uniform_buffers,
         max_dynamic_storage_buffers_per_pipeline_layout: required.dynamic_storage_buffers,
-        max_uniform_buffer_binding_size: crate::pipeline_layouts::UNIFORM_BINDING_BYTES,
+        max_uniform_buffer_binding_size: crate::pipelines::UNIFORM_BINDING_BYTES,
         max_texture_array_layers: adapter.max_texture_array_layers,
         max_color_attachments: adapter.max_color_attachments,
         max_color_attachment_bytes_per_sample: adapter.max_color_attachment_bytes_per_sample,
@@ -134,7 +134,7 @@ impl Renderer {
         self.plans = PlanCache::default();
         self.core.display.configure(&device, period);
         self.core.profiler = GpuProfiler::new(features, f64::from(period));
-        self.core.ledger = crate::pipelines::Ledger::new(&device, self.core.display.format());
+        self.core.ledger = crate::pipelines::Ledger::default();
         self.core.limits = super::install::device_limits(
             &device.limits(),
             device.features(),
@@ -189,7 +189,7 @@ impl Renderer {
         let assets = new_assets(&device, &queue);
         let validation = Box::pin(scope.pop());
         let profiler = GpuProfiler::new(required_features, f64::from(queue.get_timestamp_period()));
-        let ledger = crate::pipelines::Ledger::new(&device, display.format());
+        let ledger = crate::pipelines::Ledger::default();
         let core = Core {
             device,
             queue,

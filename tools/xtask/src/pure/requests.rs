@@ -59,6 +59,10 @@ const UNREACHED: &[(&str, &str)] = &[
     ("build_worker_unavailable", WATCH),
     ("capture_failed", BRIDGE),
     ("capture_requires_pause", BRIDGE),
+    (
+        "code_too_long",
+        "reading an error whose code names more bytes than a brick code holds answers it (crates/engine_codec/src/codes.rs)",
+    ),
     ("collision_candidate_budget", COLLISION),
     ("collision_incomplete_world", COLLISION),
     ("collision_invalid_cast", COLLISION),
@@ -73,10 +77,6 @@ const UNREACHED: &[(&str, &str)] = &[
     ("command_timeout", BRIDGE),
     ("comment", CHECKS),
     ("content_type", BRIDGE),
-    (
-        "duplicate_brick",
-        "the no-op install refuses two bricks that bind one name in a group (crates/engine_render/src/bindings/groups.rs)",
-    ),
     ("duplicate_request", BRIDGE),
     ("error_type", CHECKS),
     ("exception_unused", CHECKS),
@@ -169,7 +169,6 @@ const UNREACHED: &[(&str, &str)] = &[
     ("source_symlink", WATCH),
     ("source_type", WATCH),
     ("struct_too_wide", CHECKS),
-    ("unknown_binding", LINKER),
     ("unknown_module", LINKER),
     (
         "unknown_value",

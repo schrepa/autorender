@@ -102,39 +102,19 @@ impl Renderer {
     }
 
     pub fn pipeline_list(&self) -> Vec<u8> {
-        let fixed = self.core.ledger.list();
-        let mut record = (fixed.len() as u32).to_le_bytes().to_vec();
-        record.extend(fixed);
-        if let Some(run) = self.run.as_ref() {
-            record.extend(run.listing());
-        }
-        record
+        self.run.as_ref().map(Run::listing).unwrap_or_default()
     }
 
     pub fn create_listed_pipelines(&mut self, record: &[u8]) -> Result<u32, Error> {
-        let broken = |expected: Expected| failed("$.pipelines").expected(expected);
-        let (length, rest) = record
-            .split_first_chunk::<4>()
-            .ok_or_else(|| broken(Expected::Present))?;
-        let length = u32::from_le_bytes(*length) as usize;
-        let fixed = rest
-            .get(..length)
-            .ok_or_else(|| broken(Expected::Present))?;
-        let machine = &rest[length..];
-        let mut created = self.core.ledger.create_listed(fixed)?;
-        if let Some(run) = self.run.as_mut() {
-            created += run.create_listed(machine)?;
-        }
-        Ok(created)
+        self.run
+            .as_mut()
+            .map_or(Ok(0), |run| run.create_listed(record))
     }
 
     pub fn pipelines_listed(&self) -> (u32, u32) {
-        let (up_front, unlisted) = self.core.ledger.listed();
-        let (made, missed) = self
-            .run
+        self.run
             .as_ref()
-            .map_or((0, 0), |run| (run.up_front, run.unlisted));
-        (up_front + made, unlisted + missed)
+            .map_or((0, 0), |run| (run.up_front, run.unlisted))
     }
 
     pub fn disabled_features(&self, world: &World) -> engine_core::Names {

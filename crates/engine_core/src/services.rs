@@ -167,6 +167,10 @@ pub trait SceneForm: Clone + Serialize + DeserializeOwned + Send + Sync + 'stati
     fn insert(self, world: &mut World, entity: Entity) -> Result<(), Error>;
 
     fn read(world: &World, entity: Entity) -> Option<Self>;
+
+    fn remove(world: &mut World, entity: Entity) {
+        remove_component::<Self::Component>(world, entity);
+    }
 }
 
 impl ComponentKind {
@@ -180,7 +184,7 @@ impl ComponentKind {
                 value: form_value::<F>,
                 prepared: prepared_component::<F>,
                 insert: insert_form::<F>,
-                remove: remove_component::<F::Component>,
+                remove: F::remove,
                 placement: Placement::Anywhere,
                 check: None,
                 placed: None,

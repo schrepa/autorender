@@ -7,7 +7,6 @@ use engine_core::{
 };
 
 use crate::bindings::{Sample, Sampling, Stages, Table, View, sampler, texture, uniform_of};
-use crate::pipeline_layouts::{PipelineLayout, REQUIRED_LIMITS};
 
 pub const MATERIALS_MODULE: &str = "engine::materials";
 pub const SLOTS_MODULE: &str = "engine::slots";
@@ -54,10 +53,6 @@ impl DrawState {
         no_depth_test: false,
         no_depth_write: false,
     };
-
-    pub(crate) fn constants(self) -> [(&'static str, f64); 1] {
-        [("DRAW_STATE", f64::from(self.pack()))]
-    }
 }
 
 const SLOT_BITS: u32 = 4;
@@ -480,17 +475,17 @@ impl MaterialLayout {
         source
     }
 
-    pub(crate) fn table(&self) -> (&'static Table, PipelineLayout) {
+    pub(crate) fn table(&self) -> &'static Table {
         static TABLES: Mutex<Vec<MadeTable>> = Mutex::new(Vec::new());
         let size = self.record_bytes();
         let mut tables = TABLES
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((_, _, table, layout)) = tables
+        if let Some((_, _, table)) = tables
             .iter()
-            .find(|(maps, bytes, _, _)| *maps == self.maps && *bytes == size)
+            .find(|(maps, bytes, _)| *maps == self.maps && *bytes == size)
         {
-            return (table, *layout);
+            return table;
         }
         let number = tables.len();
         let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
@@ -519,18 +514,8 @@ impl MaterialLayout {
             label: leak(format!("engine/material-layout-{number}")),
             bindings: Box::leak(bindings.into_boxed_slice()),
         }));
-        let groups: &'static [&'static Table] = Box::leak(Box::new([
-            &crate::bindings::EMPTY,
-            table,
-            &crate::bindings::IMPOSTOR_BAKE,
-        ]));
-        let layout = PipelineLayout {
-            label: leak(format!("engine/impostor-bake-pipelines-{number}")),
-            groups,
-            limits: REQUIRED_LIMITS,
-        };
-        tables.push((self.maps.clone(), size, table, layout));
-        (table, layout)
+        tables.push((self.maps.clone(), size, table));
+        table
     }
 
     pub(crate) fn record(&self, handle: MaterialHandle, material: &Material) -> (Vec<u32>, Vec<Error>) {
@@ -674,7 +659,7 @@ pub fn material_state(material: Option<&Material>) -> u32 {
         .pack()
 }
 
-type MadeTable = (Vec<&'static str>, usize, &'static Table, PipelineLayout);
+type MadeTable = (Vec<&'static str>, usize, &'static Table);
 
 fn material_functions(source: &mut String) {
     let _ = write!(

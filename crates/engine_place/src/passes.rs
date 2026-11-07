@@ -184,23 +184,34 @@ pub fn never(_: DrawKind) -> bool {
     false
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PassDepth {
-    pub bias: i32,
-    pub slope: f32,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PassCull {
+    Material,
+    None,
+    Front,
 }
 
-impl PassDepth {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PassRaster {
+    pub bias: i32,
+    pub slope: f32,
+    pub clamp_near: bool,
+    pub cull: PassCull,
+}
+
+impl PassRaster {
     pub const PLAIN: Self = Self {
         bias: 0,
         slope: 0.0,
+        clamp_near: false,
+        cull: PassCull::Material,
     };
 }
 
 pub trait PassName: 'static {
     const NAME: &'static str;
     const PASS: Pass;
-    const DEPTH: PassDepth = PassDepth::PLAIN;
+    const RASTER: PassRaster = PassRaster::PLAIN;
 }
 
 pub struct DepthPass;
@@ -246,7 +257,7 @@ impl PassName for BlendedPass {
 pub struct PassEntry {
     pub name: &'static str,
     pub pass: Pass,
-    pub depth: PassDepth,
+    pub raster: PassRaster,
 }
 
 impl PassEntry {
@@ -254,7 +265,7 @@ impl PassEntry {
         Self {
             name: N::NAME,
             pass: N::PASS,
-            depth: N::DEPTH,
+            raster: N::RASTER,
         }
     }
 }
@@ -304,7 +315,7 @@ pub struct ScenePass {
     pub name: &'static str,
     pub brick: &'static str,
     pub pass: Pass,
-    pub depth: PassDepth,
+    pub raster: PassRaster,
     pub bit: Option<PassBit>,
 }
 
@@ -360,7 +371,7 @@ impl ScenePasses {
                 name: entry.name,
                 brick,
                 pass: entry.pass,
-                depth: entry.depth,
+                raster: entry.raster,
                 bit,
             });
         }

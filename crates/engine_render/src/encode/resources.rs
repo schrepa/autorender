@@ -19,22 +19,26 @@ impl Run {
             self.fault(error);
             return;
         }
-        let device = &self.device;
-        let encoder = self.queued.before.get_or_insert_with(|| {
+        let device = self.device.clone();
+        let mut encoder = self.queued.before.take().unwrap_or_else(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("engine/part-mips"),
             })
         });
+        let (mut compiler, assets, _) = self.split();
         for layer in layers {
-            self.assets
-                .materials
-                .mips()
-                .record_layer(device, encoder, &made, layer);
+            assets.materials.mips().record(
+                (&device, &mut encoder),
+                &mut compiler,
+                &made,
+                Some(layer),
+            );
         }
+        self.queued.before = Some(encoder);
     }
 
     pub(crate) fn grow_buffer(&mut self, buffer: u32, bytes: u64) -> Allocation {
-        let Some(held) = self.buffers.get_mut(buffer as usize) else {
+        let Some(held) = self.buffer_tables_mut(buffer).buffers.get_mut(buffer as usize) else {
             return Allocation::Fresh;
         };
         if held.as_ref().is_some_and(|(_, known)| *known >= bytes) {
@@ -45,8 +49,8 @@ impl Run {
         let Some((old, kept)) = previous else {
             return allocation;
         };
-        let copied = match self.buffers.get(buffer as usize) {
-            Some(Some((new, _))) => {
+        let copied = match self.buffer_held(buffer) {
+            Some((new, _)) => {
                 let mut encoder =
                     self.device
                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -56,7 +60,7 @@ impl Run {
                 self.queue.submit_now([encoder.finish()]);
                 Allocation::Kept
             }
-            Some(None) | None => Allocation::Fresh,
+            None => Allocation::Fresh,
         };
         crate::memory::release_buffer(&old);
         copied

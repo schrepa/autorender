@@ -35,12 +35,6 @@ impl MeshesGpu {
                 }
                 self.draw_meshes(draw, streams, looks, (PHASE_ONE, true))
             }
-            Drawing::DepthViews { pipelines, streams } => {
-                let Some(slot) = self.state.view_slot(scene.pass.name(), scene.view) else {
-                    return 0;
-                };
-                self.draw_depth_views(draw, streams, pipelines, slot)
-            }
             Drawing::Views { looks, streams } => {
                 let Some(slot) = self.state.view_slot(scene.pass.name(), scene.view) else {
                     return 0;
@@ -176,34 +170,6 @@ impl MeshesGpu {
                 let (ids, args) = self.state.groups.view_source(slot, item, level);
                 draw.draw(
                     looks.of(item.look),
-                    Shape::MeshIndirect {
-                        mesh: item.mesh,
-                        material: item.material,
-                        args: streams.args,
-                        offset: args,
-                        streams: &[(streams.ids, ids)],
-                    },
-                );
-                drawn += 1;
-            }
-        }
-        drawn
-    }
-
-    fn draw_depth_views(
-        &self,
-        draw: &mut Draw<'_, Self, Scene>,
-        streams: &ViewStreams,
-        pipelines: &[Pipeline<Self, Scene>; 2],
-        slot: &ViewSlot,
-    ) -> u32 {
-        let mut drawn = 0;
-        for item in &self.state.draws.items {
-            let masked = item.look.masked;
-            for level in slot.levels(item.levels) {
-                let (ids, args) = self.state.groups.view_source(slot, item, level);
-                draw.draw(
-                    &pipelines[usize::from(masked)],
                     Shape::MeshIndirect {
                         mesh: item.mesh,
                         material: item.material,

@@ -1,6 +1,10 @@
-use crate::bindings::MIPMAPS;
-use crate::shaders::entry::mipmaps;
+use engine_core::{Entry, Error, Var};
 
+use crate::encode::Compiler;
+use crate::install::{Bound, Program, RenderDecl, Scoped};
+
+const MODULE: &str = "engine::mipmaps";
+const GROUP: u32 = 2;
 const FORMATS: [wgpu::TextureFormat; 2] = [
     wgpu::TextureFormat::Rgba8UnormSrgb,
     wgpu::TextureFormat::Rgba8Unorm,
@@ -10,31 +14,47 @@ pub(crate) fn drawn(format: wgpu::TextureFormat, dimension: wgpu::TextureDimensi
     dimension == wgpu::TextureDimension::D2 && FORMATS.contains(&format)
 }
 
+pub(crate) struct Mipmaps {
+    pipeline: u32,
+}
+
+impl crate::GpuPart for Mipmaps {
+    type Reads = ();
+    const NAME: &'static str = "mipmaps";
+
+    fn install(cx: &mut crate::Install<'_, Self>) -> Result<Self, Error> {
+        let module = crate::shaders::core_module(MODULE);
+        let pipeline = cx.core.pipeline(
+            Scoped::Outside(Self::NAME),
+            Program::Render(RenderDecl {
+                vertex: Entry::generated(module, "vs_mip"),
+                fragment: Some(Entry::generated(module, "fs_mip")),
+                debug: None,
+                vertices: Vec::new(),
+                primitive: wgpu::PrimitiveState::default(),
+                depth: crate::DepthUse::None,
+                blend: None,
+                writes: wgpu::ColorWrites::ALL,
+                targets: None,
+                samples: 1,
+            }),
+            vec![
+                (Var::generated(module, "source"), Bound::Asset),
+                (Var::generated(module, "source_sampler"), Bound::Asset),
+            ],
+        )?;
+        Ok(Self { pipeline })
+    }
+
+    fn prepare(&mut self, (): (), _cx: &mut crate::Prepare<'_, Self>) {}
+}
+
 pub struct MipGenerator {
-    pipelines: [wgpu::RenderPipeline; 2],
-    layout: crate::pipelines::GroupLayout,
     sampler: wgpu::Sampler,
 }
 
 impl MipGenerator {
     pub fn new(device: &wgpu::Device) -> Self {
-        let layout = crate::pipelines::layout(device, &MIPMAPS);
-        let pipeline_layout =
-            crate::pipelines::layout_of(device, &crate::pipeline_layouts::MIPMAP_PIPELINES);
-        let pipelines = FORMATS.map(|format| {
-            crate::pipelines::fullscreen(
-                device,
-                &crate::pipelines::Fullscreen {
-                    label: "engine/texture-mips",
-                    layout: &pipeline_layout,
-                    vertex: mipmaps::vs_mip,
-                    fragment: mipmaps::fs_mip,
-                    constants: &[],
-                    targets: &[Some(format.into())],
-                    depth: None,
-                },
-            )
-        });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/texture-mip-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -43,39 +63,25 @@ impl MipGenerator {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        Self {
-            pipelines,
-            layout,
-            sampler,
-        }
+        Self { sampler }
     }
 
-    pub fn record(
+    pub(crate) fn record(
         &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        texture: &wgpu::Texture,
-    ) -> u32 {
-        self.record_views(device, encoder, texture, None)
-    }
-
-    pub fn record_layer(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        texture: &wgpu::Texture,
-        layer: u32,
-    ) -> u32 {
-        self.record_views(device, encoder, texture, Some(layer))
-    }
-
-    fn record_views(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
+        (device, encoder): (&wgpu::Device, &mut wgpu::CommandEncoder),
+        compiler: &mut Compiler<'_>,
         texture: &wgpu::Texture,
         layer: Option<u32>,
     ) -> u32 {
+        let Some(pipeline) = compiler.part::<Mipmaps>().map(|mipmaps| mipmaps.pipeline) else {
+            return 0;
+        };
+        let made = compiler
+            .compile(pipeline, (&[Some(texture.format())], None), (false, false), None)
+            .map(|(_, made)| made);
+        let (Some(made), Some(layout)) = (made, compiler.group_layout(pipeline, GROUP)) else {
+            return 0;
+        };
         let levels = texture.mip_level_count();
         let views: Vec<wgpu::TextureView> = (0..levels)
             .map(|level| {
@@ -91,14 +97,19 @@ impl MipGenerator {
             })
             .collect();
         for pair in views.windows(2) {
-            let group = crate::pipelines::group(
+            let group = crate::pipelines::bind_group(
                 device,
                 "engine/texture-mip-group",
-                &MIPMAPS,
-                &self.layout,
+                &layout,
                 &[
-                    ("source", crate::pipelines::view(&pair[0])),
-                    ("source_sampler", crate::pipelines::sampler(&self.sampler)),
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: crate::pipelines::view(&pair[0]),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: crate::pipelines::sampler(&self.sampler),
+                    },
                 ],
             );
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -117,8 +128,8 @@ impl MipGenerator {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipelines[usize::from(!texture.format().is_srgb())]);
-            pass.set_bind_group(0, &group, &[]);
+            pass.set_pipeline(&made);
+            pass.set_bind_group(GROUP, &group, &[]);
             pass.draw(0..3, 0..1);
         }
         levels - 1

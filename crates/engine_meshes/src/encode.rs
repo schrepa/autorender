@@ -121,7 +121,7 @@ impl MeshesGpu {
             return 0;
         }
         let occluded = &self.occluded;
-        let mut draw = cx.render(Attach::Declared, None);
+        let mut draw = cx.render(Attach::Declared);
         let mut drawn = 0;
         if self.state.draws.masked {
             drawn += self.draw_meshes(

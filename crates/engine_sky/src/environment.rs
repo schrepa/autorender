@@ -208,14 +208,11 @@ fn faces_pass(
     pipeline: &Pipeline<SkyGpu, Own>,
     item: u32,
 ) {
-    let mut draw = cx.render(
-        Attach::Layers {
-            texture,
-            mip,
-            layers: first..first + FACES_PER_PASS,
-        },
-        None,
-    );
+    let mut draw = cx.render(Attach::Layers {
+        texture,
+        mip,
+        layers: first..first + FACES_PER_PASS,
+    });
     draw.draw(
         pipeline,
         Shape::Pulled {

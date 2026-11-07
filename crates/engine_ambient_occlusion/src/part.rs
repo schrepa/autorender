@@ -102,7 +102,7 @@ impl GpuPart for AmbientGpu {
         } else {
             &self.filter_pipeline
         };
-        let mut draw = cx.render(Attach::Declared, None);
+        let mut draw = cx.render(Attach::Declared);
         draw.within(self.drawn);
         draw.draw(
             pipeline,

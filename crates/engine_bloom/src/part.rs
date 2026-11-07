@@ -115,7 +115,7 @@ impl GpuPart for BloomGpu {
 
 impl BloomGpu {
     fn draw(&self, cx: &mut Encode<'_, Self>, level: u32, pipeline: &Pipeline<Self, Own>) {
-        let mut draw = cx.render(Attach::ColorMip(self.levels, level, 0), None);
+        let mut draw = cx.render(Attach::ColorMip(self.levels, level, 0));
         draw.within(self.drawn[level as usize]);
         draw.draw(
             pipeline,

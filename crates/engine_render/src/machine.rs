@@ -248,6 +248,7 @@ pub(crate) fn decl_in_pass(decl: &PipelineDecl, index: u32, pass: &PassDecl) -> 
     match decl.scope {
         Scoped::Pass(own) => own == index,
         Scoped::Scene(name) => scene_member(name, decl.part, pass),
+        Scoped::Outside(_) => false,
     }
 }
 
@@ -446,7 +447,7 @@ impl Machine {
         outputs: Vec<OutputDecl>,
         switches: Vec<(u32, engine_registry::GateId)>,
         (limits, material_table): (
-            &crate::pipeline_layouts::StageLimits,
+            &crate::pipelines::StageLimits,
             &'static crate::bindings::Table,
         ),
         problems: &mut Vec<Error>,
@@ -587,11 +588,12 @@ impl Machine {
                 .collect();
             let pass = match decl.scope {
                 Scoped::Pass(pass) => pass,
-                Scoped::Scene(_) => u32::MAX - decl.part,
+                Scoped::Scene(_) | Scoped::Outside(_) => u32::MAX - decl.part,
             };
             reaches.push(Reach {
                 label,
                 pass,
+                alone: matches!(decl.scope, Scoped::Outside(_)),
                 own_groups: groups,
                 own,
                 reached: frame_reached,
@@ -1199,6 +1201,7 @@ fn graph_of(
         for input in &declared.inputs {
             let (scoped, member) = match input.scope {
                 Scoped::Pass(own) => (own == index as u32, false),
+                Scoped::Outside(_) => (false, false),
                 Scoped::Scene(name) => (
                     scene_member(name, input.part, pass),
                     !shared(pass) && input.part != pass.part,

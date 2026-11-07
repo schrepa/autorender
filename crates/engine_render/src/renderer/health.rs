@@ -159,11 +159,7 @@ impl Renderer {
             }
             Some(Poll::Pending) | None => {}
         }
-        let linked = self.core.ledger.take_errors();
         if let Ok(mut reports) = self.core.health.lock() {
-            if let Some(error) = linked.into_iter().next() {
-                reports.health.after(Change::Failed(error));
-            }
             for message in std::mem::take(&mut reports.messages) {
                 let named = self
                     .run

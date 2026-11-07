@@ -21,8 +21,8 @@ mod smokes;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, Brick, Bricks, DrawKind, Pass, PassDepth, PassName, PassViews, Runs, Schedule,
-    SlotSet, Smoke, Source, Writes, never,
+    AttachPoint, Brick, Bricks, DrawKind, Pass, PassCull, PassName, PassRaster, PassViews, Runs,
+    Schedule, SlotSet, Smoke, Source, Writes, never,
 };
 use engine_places_rendering::lighting::SunBlockers;
 use engine_places_rendering::shadows::{CasterRoutes, SHADOW_PASS, ShadowMaps};
@@ -41,9 +41,11 @@ impl PassName for ShadowPass {
         at: AttachPoint::Depth,
         takes: casts,
     };
-    const DEPTH: PassDepth = PassDepth {
+    const RASTER: PassRaster = PassRaster {
         bias: 1,
         slope: 0.0,
+        clamp_near: true,
+        cull: PassCull::None,
     };
 }
 

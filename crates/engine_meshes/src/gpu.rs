@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, AssetResidency, BlendedPass, ColorPass, DepthPass, Detail, DeviceLimits,
-    DrawnPoses, DrawnTable, Error, FrameTime, GlobalTransforms, ImpostorRecords,
-    MAX_HIERARCHY_DEPTH, PassDepth, PassName, PassViews, PrimaryView, ScenePass, Views,
+    AssetLibrary, AssetResidency, Detail, DeviceLimits, DrawnPoses, DrawnTable, Error, FrameTime,
+    GlobalTransforms, ImpostorRecords, MAX_HIERARCHY_DEPTH, PassViews, PrimaryView, ScenePass,
+    Views,
 };
 use engine_render::{
     AttachPoint, Bind, Buffer, ComputePipeline, Copied, DepthUse, DrawInput, Encode, GpuPart,
@@ -19,7 +19,7 @@ use crate::order::{BatchLook, MeshPlan};
 use crate::presentation::{FrameState, PresentationTotals};
 use crate::settings::Impostors;
 use crate::shaders::meshes::{
-    blended, cards, debug, depth_views, forward, presentation, pyramid, vertex,
+    blended, cards, debug, forward, presentation, pyramid, vertex,
 };
 
 pub(crate) const PYRAMID_LEVELS: usize = 16;
@@ -179,10 +179,6 @@ pub(crate) enum Drawing {
     Depth {
         looks: Looked<Pipeline<MeshesGpu, Scene>>,
         streams: Streams<Scene>,
-    },
-    DepthViews {
-        pipelines: [Pipeline<MeshesGpu, Scene>; 2],
-        streams: ViewStreams,
     },
     Views {
         looks: [Looked<Pipeline<MeshesGpu, Scene>>; 2],
@@ -842,30 +838,41 @@ fn blended_looks(
 fn view_looks(
     cx: &mut Install<'_, MeshesGpu>,
     scene: Scene,
-    mirrored: bool,
+    (mirrored, lit): (bool, bool),
 ) -> Result<Looked<Pipeline<MeshesGpu, Scene>>, Error> {
     let mut looks = Vec::with_capacity(8);
     for index in 0..8_usize {
-        let (_, double_sided, extended) = look_of(index);
-        let (vertex, streams, shown) = if extended {
+        let (masked, double_sided, extended) = look_of(index);
+        let (vertex, streams, shown, depth) = if extended {
             (
                 vertex::VS_VIEW_EXTENDED,
                 EXTENDED_VIEW_STREAMS,
                 forward::FS_VIEW_EXTENDED,
+                forward::FS_MASKED_DEPTH_EXTENDED,
             )
         } else {
-            (vertex::VS_VIEW, VIEW_STREAMS, forward::FS_VIEW)
+            (
+                vertex::VS_VIEW,
+                VIEW_STREAMS,
+                forward::FS_VIEW,
+                forward::FS_MASKED_DEPTH,
+            )
         };
-        looks.push(cx.render_pipeline(
-            scene,
-            &mesh_pipeline(
-                (vertex, shown, None),
-                (streams, double_sided, mirrored),
-                WRITE,
-                wgpu::ColorWrites::ALL,
-            ),
-            &[],
-        )?);
+        let writes = if lit {
+            wgpu::ColorWrites::ALL
+        } else {
+            wgpu::ColorWrites::empty()
+        };
+        let mut pipeline = mesh_pipeline(
+            (vertex, if lit { shown } else { depth }, None),
+            (streams, double_sided, mirrored),
+            WRITE,
+            writes,
+        );
+        if !lit && !masked {
+            pipeline.fragment = None;
+        }
+        looks.push(cx.render_pipeline(scene, &pipeline, &[])?);
     }
     Ok(Looked { looks })
 }
@@ -892,42 +899,6 @@ fn card_pipeline<S: Scope<MeshesGpu>>(
         },
         &[],
     )
-}
-
-fn depth_view_pipelines(
-    cx: &mut Install<'_, MeshesGpu>,
-    scene: Scene,
-    depth: PassDepth,
-) -> Result<[Pipeline<MeshesGpu, Scene>; 2], Error> {
-    let bias = wgpu::DepthBiasState {
-        constant: depth.bias,
-        slope_scale: depth.slope,
-        clamp: 0.0,
-    };
-    let pipeline = |cx: &mut Install<'_, MeshesGpu>, vertex, fragment| {
-        cx.render_pipeline(
-            scene,
-            &RenderPipeline {
-                vertex,
-                fragment,
-                debug: None,
-                vertices: VIEW_STREAMS,
-                primitive: wgpu::PrimitiveState::default(),
-                depth: DepthUse::Write { bias },
-                blend: None,
-                writes: wgpu::ColorWrites::empty(),
-            },
-            &[],
-        )
-    };
-    Ok([
-        pipeline(cx, depth_views::VS_DEPTH_VIEW, None)?,
-        pipeline(
-            cx,
-            depth_views::VS_DEPTH_VIEW_MASKED,
-            Some(depth_views::FS_DEPTH_VIEW_MASKED),
-        )?,
-    ])
 }
 
 fn streams<S: Scope<MeshesGpu> + Copy>(
@@ -961,19 +932,8 @@ fn install_scenes(
     let mut scenes = Vec::with_capacity(listed.len());
     for listed in listed {
         let scene = Scene::named(listed.name);
-        let owned = listed.pass.views == PassViews::Owned;
-        let drawing = if listed.name == ColorPass::NAME {
-            Drawing::Lit {
-                looks: lit_looks(cx, scene)?,
-                card: card_pipeline(cx, scene)?,
-                streams: streams(cx, scene, (instances, presented), 0),
-            }
-        } else if listed.name == DepthPass::NAME {
-            Drawing::Depth {
-                looks: depth_looks(cx, scene)?,
-                streams: streams(cx, scene, (instances, presented), 0),
-            }
-        } else if listed.name == BlendedPass::NAME {
+        let lit = listed.pass.reads.base_color;
+        let drawing = if listed.pass.at == AttachPoint::Transparent {
             Drawing::Blended {
                 looks: blended_looks(cx, scene)?,
                 streams: BlendedStreams {
@@ -982,24 +942,28 @@ fn install_scenes(
                     records: cx.draw_input(scene, instances.records),
                 },
             }
-        } else if owned && !listed.pass.reads.base_color {
-            Drawing::DepthViews {
-                pipelines: depth_view_pipelines(cx, scene, listed.depth)?,
+        } else if listed.pass.views == PassViews::Owned {
+            Drawing::Views {
+                looks: [
+                    view_looks(cx, scene, (false, lit))?,
+                    view_looks(cx, scene, (true, lit))?,
+                ],
                 streams: ViewStreams {
                     ids: cx.draw_input(scene, presented.view_visible),
                     args: cx.draw_input(scene, presented.view_draws),
                 },
             }
-        } else if owned {
-            Drawing::Views {
-                looks: [view_looks(cx, scene, false)?, view_looks(cx, scene, true)?],
-                streams: ViewStreams {
-                    ids: cx.draw_input(scene, presented.view_visible),
-                    args: cx.draw_input(scene, presented.view_draws),
-                },
+        } else if lit {
+            Drawing::Lit {
+                looks: lit_looks(cx, scene)?,
+                card: card_pipeline(cx, scene)?,
+                streams: streams(cx, scene, (instances, presented), 0),
             }
         } else {
-            continue;
+            Drawing::Depth {
+                looks: depth_looks(cx, scene)?,
+                streams: streams(cx, scene, (instances, presented), 0),
+            }
         };
         scenes.push(ScenePipelines {
             name: listed.name,

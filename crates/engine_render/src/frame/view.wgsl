@@ -15,6 +15,16 @@ struct Camera {
 }
 @group(0) @binding(0) var<uniform> camera: Camera;
 
+override PASS_CLAMP_NEAR: bool = false;
+
+fn view_clip(world: vec3<f32>) -> vec4<f32> {
+    let clip = camera.view_projection * vec4<f32>(world, 1.0);
+    if PASS_CLAMP_NEAR {
+        return vec4<f32>(clip.xy, max(clip.z, 0.0), clip.w);
+    }
+    return clip;
+}
+
 const PI: f32 = 3.14159265;
 
 fn eye_world(relative: vec3<f32>) -> vec3<f32> {

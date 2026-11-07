@@ -202,14 +202,14 @@ impl GpuPart for TraceGpu {
         }
         if pass == self.chain {
             for ((level, down), drawn) in (0..self.count).zip(&self.downs).zip(self.drawn) {
-                let mut draw = cx.render(Attach::ColorMip(self.levels, level + 1, 0), None);
+                let mut draw = cx.render(Attach::ColorMip(self.levels, level + 1, 0));
                 draw.within(drawn);
                 draw.draw(down, TRIANGLE);
             }
             return 0;
         }
         if pass == self.reflect {
-            let mut draw = cx.render(Attach::Declared, None);
+            let mut draw = cx.render(Attach::Declared);
             draw.within(self.render);
             draw.draw(&self.tracing, TRIANGLE);
         }

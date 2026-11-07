@@ -927,7 +927,7 @@ impl CloudPass {
                 ]),
             );
         } else if pass == self.composite_pass {
-            let mut draw = cx.render(Attach::Declared, None);
+            let mut draw = cx.render(Attach::Declared);
             self.draw_composite(&mut draw);
         }
         0

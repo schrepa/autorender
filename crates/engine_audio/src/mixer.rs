@@ -19,7 +19,7 @@ use crate::backend::{Backend, Decoded};
 use crate::scene::{MAX_PITCH, MAX_RADIUS, MIN_PITCH, MIN_RADIUS};
 use crate::settings::{Audio, AudioStats};
 
-pub const AUDIO_FAILED: ErrorCode = ErrorCode::Brick("audio_failed");
+pub const AUDIO_FAILED: ErrorCode = ErrorCode::brick("audio_failed");
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
 

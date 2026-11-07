@@ -4,7 +4,8 @@ use bevy_ecs::resource::Resource;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ApplyAt, Ask, Error, ErrorCode, FrameId, Layers, Mobility, NodeId, Slot, TextureHandle,
+    ApplyAt, Ask, Error, ErrorCode, FrameId, Layers, Mobility, NodeId, PassMask, Slot,
+    TextureHandle,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -161,12 +162,21 @@ impl Slot for Jitter {
     const NAME: &'static str = "jitter";
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ViewLayer {
+    pub layer: u32,
+    pub rect: [u32; 4],
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OwnedView {
-    pub view_projection: [[f32; 4]; 4],
+    pub camera: NodeId,
+    pub target: ViewLayer,
+    pub clear: Clear,
+    pub passes: Option<PassMask>,
+    pub draws: bool,
     pub planes: Option<[[f32; 4]; 6]>,
     pub eye: [f32; 3],
-    pub size: [u32; 2],
     pub detail: f32,
     pub takes: Option<Mobility>,
 }

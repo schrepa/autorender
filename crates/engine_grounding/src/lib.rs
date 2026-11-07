@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 
 const OFFSET: Rule = Rule::range(-10_000.0, 10_000.0);
 
-pub const INVALID_GROUNDED: ErrorCode = ErrorCode::Brick("invalid_grounded");
+pub const INVALID_GROUNDED: ErrorCode = ErrorCode::brick("invalid_grounded");
 
 pub struct GroundingBrick;
 

@@ -99,7 +99,7 @@ impl GpuPart for PondGpu {
     }
 
     fn encode(&mut self, _pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        let mut draw = cx.render(Attach::Declared, None);
+        let mut draw = cx.render(Attach::Declared);
         draw.draw(
             &self.pipeline,
             Shape::Pulled {

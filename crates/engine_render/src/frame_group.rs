@@ -1,7 +1,7 @@
 use engine_core::{Error, ErrorCode};
 
 use crate::bindings::Stages;
-use crate::pipeline_layouts::StageLimits;
+use crate::pipelines::StageLimits;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Class {
@@ -23,6 +23,7 @@ pub(crate) struct FrameVariable {
 pub(crate) struct Reach {
     pub(crate) label: &'static str,
     pub(crate) pass: u32,
+    pub(crate) alone: bool,
     pub(crate) own_groups: u32,
     pub(crate) own: Vec<(Class, Stages)>,
     pub(crate) reached: Vec<(u32, Stages)>,
@@ -202,6 +203,9 @@ pub(crate) fn plan(
             skipped[index] = true;
             continue;
         }
+        if reach.alone {
+            continue;
+        }
         let same = exact.iter_mut().find(|variant| {
             variant.entries.len() == entries.len()
                 && variant
@@ -277,7 +281,10 @@ pub(crate) fn plan(
             None => merged.push(variant),
         }
     }
-    let mut of_pipeline = vec![0_u32; reaches.len()];
+    let mut of_pipeline: Vec<u32> = reaches
+        .iter()
+        .map(|reach| if reach.alone { u32::MAX } else { 0 })
+        .collect();
     for (index, variant) in merged.iter_mut().enumerate() {
         variant.members.sort_unstable();
         for &member in &variant.members {

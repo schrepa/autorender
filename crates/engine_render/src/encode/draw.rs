@@ -2,7 +2,7 @@ use super::*;
 
 fn input_of<'b>(
     machine: &Machine,
-    buffers: &'b [Option<(wgpu::Buffer, u64)>],
+    (shared, set): (&'b views::Tables, &'b views::ViewSet),
     part: u32,
     input: u32,
 ) -> Option<&'b wgpu::Buffer> {
@@ -10,10 +10,27 @@ fn input_of<'b>(
     if decl.part != part {
         return None;
     }
-    buffers
+    let tables = if machine.declared.buffers.get(decl.buffer as usize)?.per_view {
+        &set.tables
+    } else {
+        shared
+    };
+    tables
+        .buffers
         .get(decl.buffer as usize)?
         .as_ref()
         .map(|(buffer, _)| buffer)
+}
+
+fn held_group<'g>(
+    groups: &'g Groups,
+    set: &'g views::ViewSet,
+    holder: Holder,
+    parity: usize,
+) -> Option<&'g wgpu::BindGroup> {
+    set.groups
+        .get(&holder)
+        .map_or(groups.made[parity].as_ref(), |made| made[parity].as_ref())
 }
 
 fn offsets_of<'o>(
@@ -43,7 +60,9 @@ impl Run {
         match (built.decl.scope, point) {
             (Scoped::Pass(pass), None) => pass == self.pass,
             (Scoped::Scene(known), Some(point)) => known == point,
-            (Scoped::Scene(_), None) | (Scoped::Pass(_), Some(_)) => false,
+            (Scoped::Scene(_), None)
+            | (Scoped::Pass(_), Some(_))
+            | (Scoped::Outside(_), _) => false,
         }
     }
 
@@ -112,12 +131,14 @@ impl Run {
             frame_groups,
             own_groups,
             filled: fills,
-            buffers,
+            tables,
+            sets,
             assets,
             parity,
             ..
         } = self;
         let parity = *parity;
+        let set = &sets.list[sets.at];
         let Some(open) = recording.open_mut() else {
             return;
         };
@@ -132,7 +153,7 @@ impl Run {
         if open.set.frame != Some((built.variant, open.offset))
             && let Some(group) = frame_groups
                 .get(built.variant as usize)
-                .and_then(|groups| groups.made[parity].as_ref())
+                .and_then(|groups| held_group(groups, set, Holder::Frame(built.variant), parity))
         {
             let camera = usize::from(
                 machine
@@ -159,9 +180,13 @@ impl Run {
                     .find(|(index, _)| *index == group.index)
                     .map(|(_, made)| made)
             });
-            if let Some(made) =
-                filled_group.or(own_groups[pipeline as usize][at].made[parity].as_ref())
-            {
+            let owned = held_group(
+                &own_groups[pipeline as usize][at],
+                set,
+                Holder::Own(pipeline, at as u32),
+                parity,
+            );
+            if let Some(made) = filled_group.or(owned) {
                 render.set_bind_group(group.index, made, dynamic);
                 if let Some(known) = open.set.own.get_mut(slot) {
                     *known = Some(holding);
@@ -171,7 +196,7 @@ impl Run {
                 }
             }
         }
-        let input = |input: u32| input_of(machine, buffers, part, input);
+        let input = |input: u32| input_of(machine, (&*tables, set), part, input);
         let mesh_slots = built.mesh_slots;
         match shape {
             RawShape::Pulled {
@@ -328,6 +353,14 @@ impl Run {
         }
     }
 
+    pub(crate) fn view_rect(&mut self, [x, y, width, height]: [u32; 4]) {
+        if let Some(open) = self.recording.open_mut() {
+            open.pass
+                .set_viewport(x as f32, y as f32, width as f32, height as f32, 0.0, 1.0);
+            open.pass.set_scissor_rect(x, y, width, height);
+        }
+    }
+
     pub(crate) fn within(&mut self, size: (u32, u32)) {
         if let Some(open) = self.recording.open_mut() {
             crate::targets::draw_within(&mut open.pass, size);
@@ -336,6 +369,7 @@ impl Run {
 
     pub(crate) fn reset_scissor(&mut self) {
         let size = self
+            .set()
             .targets
             .first()
             .map(|(_, made)| (made.size.width, made.size.height));
@@ -370,7 +404,7 @@ impl Run {
             self.machine.pipelines[handle as usize].compute_ready = Some(made);
         }
         if let CountRaw::Indirect(input, _) = count
-            && input_of(&self.machine, &self.buffers, part, input).is_none()
+            && input_of(&self.machine, (&self.tables, self.set()), part, input).is_none()
         {
             return 0;
         }
@@ -397,11 +431,13 @@ impl Run {
             recording,
             frame_groups,
             own_groups,
-            buffers,
+            tables,
+            sets,
             parity,
             ..
         } = self;
         let parity = *parity;
+        let set = &sets.list[sets.at];
         let Some(pass) = recording.computing(current) else {
             return 0;
         };
@@ -412,7 +448,7 @@ impl Run {
         pass.set_pipeline(compute);
         if let Some(group) = frame_groups
             .get(built.variant as usize)
-            .and_then(|groups| groups.made[parity].as_ref())
+            .and_then(|groups| held_group(groups, set, Holder::Frame(built.variant), parity))
         {
             let camera = usize::from(
                 machine
@@ -426,13 +462,14 @@ impl Run {
         let mut held = [0_u32; MOST_OFFSETS];
         for (at, group) in built.groups.iter().enumerate() {
             let dynamic = offsets_of(group.windows, &mut given, &mut held);
-            if let Some(made) = own_groups[handle as usize][at].made[parity].as_ref() {
+            let holder = Holder::Own(handle, at as u32);
+            if let Some(made) = held_group(&own_groups[handle as usize][at], set, holder, parity) {
                 pass.set_bind_group(group.index, made, dynamic);
             }
         }
         match count {
             CountRaw::Indirect(input, offset) => {
-                if let Some(buffer) = input_of(machine, buffers, part, input) {
+                if let Some(buffer) = input_of(machine, (&*tables, set), part, input) {
                     pass.dispatch_workgroups_indirect(buffer, offset);
                 }
             }

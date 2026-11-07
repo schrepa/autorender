@@ -27,7 +27,7 @@ use engine_core::{
 use engine_places_simulation::physics::{BodyAsk, BodyPush, RigidBody};
 use engine_places_simulation::water::WaterObstacles;
 
-pub const INVALID_RIGID_BODY: ErrorCode = ErrorCode::Brick("invalid_rigid_body");
+pub const INVALID_RIGID_BODY: ErrorCode = ErrorCode::brick("invalid_rigid_body");
 
 pub struct PhysicsBrick;
 

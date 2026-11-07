@@ -13,9 +13,9 @@ use engine_core::{
 };
 
 use crate::bindings::Table;
+use crate::encode::Compiler;
 use crate::gpu_data::{level_copy, mip_chain_bytes, mip_levels};
 use crate::mipmaps::MipGenerator;
-use crate::pipeline_layouts::PipelineLayout;
 use crate::surface::{MaterialLayout, MaterialVariant, RECORD};
 
 pub const MATERIAL_ANISOTROPY: u16 = 16;
@@ -65,7 +65,6 @@ struct Defaults {
 pub struct MaterialStore {
     layout: MaterialLayout,
     table: &'static Table,
-    bake: PipelineLayout,
     group_layout: crate::pipelines::GroupLayout,
     samplers: HashMap<Sampler, wgpu::Sampler>,
     textures: BTreeMap<TextureHandle, GpuTexture>,
@@ -80,7 +79,7 @@ pub struct MaterialStore {
 impl MaterialStore {
     pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
         let layout = MaterialLayout::standard();
-        let (table, bake) = layout.table();
+        let table = layout.table();
         let group_layout = crate::pipelines::layout(device, table);
         let texel =
             |label, format, pixel| crate::targets::texel(device, queue, label, format, pixel);
@@ -107,7 +106,6 @@ impl MaterialStore {
         Self {
             layout,
             table,
-            bake,
             group_layout,
             samplers,
             textures: BTreeMap::new(),
@@ -131,7 +129,7 @@ impl MaterialStore {
         if self.layout == layout {
             return;
         }
-        let (table, bake) = layout.table();
+        let table = layout.table();
         self.group_layout = crate::pipelines::layout(device, table);
         let (group, uniform) = default_group(
             device,
@@ -144,14 +142,9 @@ impl MaterialStore {
         self.defaults.variant = layout.variant(None, &layout.plain_record());
         self.layout = layout;
         self.table = table;
-        self.bake = bake;
         self.materials.clear();
         self.generation += 1;
         self.synced = None;
-    }
-
-    pub(crate) fn bake_layout(&self) -> PipelineLayout {
-        self.bake
     }
 
     pub(crate) fn take_refused(&mut self) -> Vec<Error> {
@@ -163,7 +156,7 @@ impl MaterialStore {
         device: &wgpu::Device,
         queue: &crate::gpu_calls::Queue,
         world: &World,
-        encoder: &mut Option<wgpu::CommandEncoder>,
+        (encoder, compiler): (&mut Option<wgpu::CommandEncoder>, &mut Compiler<'_>),
     ) -> (u64, u32) {
         let (Some(residency), Some(library)) = (
             world.get_resource::<AssetResidency>(),
@@ -210,7 +203,14 @@ impl MaterialStore {
                 }
                 let source = library.texture(texture).expect("material_textures_validated");
                 let revision = library.revision_of(texture).unwrap_or_default();
-                let gpu = create_texture(device, queue, (source, revision), &self.mips, encoder, &mut levels);
+                let gpu = create_texture(
+                    device,
+                    queue,
+                    (source, revision),
+                    (&self.mips, &mut *compiler),
+                    encoder,
+                    &mut levels,
+                );
                 bytes += gpu.byte_len;
                 self.textures.insert(texture, gpu);
             }
@@ -221,8 +221,13 @@ impl MaterialStore {
         for handle in residency.textures() {
             if let Some(source) = library.texture(handle) {
                 let revision = library.revision_of(handle).unwrap_or_default();
-                let (more, generated) =
-                    self.upload_texture(device, queue, (handle, revision), source, encoder);
+                let (more, generated) = self.upload_texture(
+                    device,
+                    queue,
+                    (handle, revision),
+                    source,
+                    (&mut *encoder, &mut *compiler),
+                );
                 bytes += more;
                 levels += generated;
             }
@@ -241,13 +246,20 @@ impl MaterialStore {
         queue: &crate::gpu_calls::Queue,
         (handle, revision): (TextureHandle, u64),
         source: &Texture,
-        encoder: &mut Option<wgpu::CommandEncoder>,
+        (encoder, compiler): (&mut Option<wgpu::CommandEncoder>, &mut Compiler<'_>),
     ) -> (u64, u32) {
         let std::collections::btree_map::Entry::Vacant(entry) = self.textures.entry(handle) else {
             return (0, 0);
         };
         let mut levels = 0;
-        let gpu = create_texture(device, queue, (source, revision), &self.mips, encoder, &mut levels);
+        let gpu = create_texture(
+            device,
+            queue,
+            (source, revision),
+            (&self.mips, compiler),
+            encoder,
+            &mut levels,
+        );
         let bytes = gpu.byte_len;
         entry.insert(gpu);
         (bytes, levels)
@@ -567,7 +579,7 @@ fn create_texture(
     device: &wgpu::Device,
     queue: &crate::gpu_calls::Queue,
     (source, revision): (&Texture, u64),
-    mips: &MipGenerator,
+    (mips, compiler): (&MipGenerator, &mut Compiler<'_>),
     encoder: &mut Option<wgpu::CommandEncoder>,
     generated: &mut u32,
 ) -> GpuTexture {
@@ -628,7 +640,7 @@ fn create_texture(
                 label: Some("engine/texture-mips"),
             })
         });
-        *generated += mips.record(device, encoder, &texture);
+        *generated += mips.record((device, encoder), compiler, &texture, None);
     }
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     GpuTexture {

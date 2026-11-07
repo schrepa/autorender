@@ -6,20 +6,12 @@ import package::engine::mesh::impostor_frames::{
     impostor_basis, impostor_flags_hemisphere, impostor_frame_direction, impostor_frames,
     impostor_grid, impostor_index
 };
-import package::engine::view::{camera, detail_across};
+import package::engine::view::{camera, detail_across, view_clip};
 import package::face::instances::{AffinePose, SlotColor};
 import package::scatter::faces::placed_tiles::placed_impostor;
 
 @group(2) @binding(0) var<storage, read> poses: array<AffinePose>;
 @group(2) @binding(1) var<storage, read> colors: array<SlotColor>;
-
-fn flattened(clip: vec4<f32>) -> vec4<f32> {
-    return vec4<f32>(clip.xy, max(clip.z, 0.0), clip.w);
-}
-
-fn project(world: vec3<f32>) -> vec4<f32> {
-    return flattened(camera.view_projection * vec4<f32>(world, 1.0));
-}
 
 fn slot_world(slot: u32, position: vec3<f32>) -> vec3<f32> {
     let pose = poses[slot];
@@ -39,7 +31,7 @@ fn slot_world(slot: u32, position: vec3<f32>) -> vec3<f32> {
 
 @vertex
 fn vs_caster(@location(0) position: vec3<f32>, @location(2) slot: u32) -> @builtin(position) vec4<f32> {
-    return project(slot_world(slot, position));
+    return view_clip(slot_world(slot, position));
 }
 
 struct MaskedOutput {
@@ -51,7 +43,7 @@ struct MaskedOutput {
 fn vs_caster_masked(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>,
         @location(2) slot: u32) -> MaskedOutput {
     var output: MaskedOutput;
-    output.clip = project(slot_world(slot, position));
+    output.clip = view_clip(slot_world(slot, position));
     output.uv_alpha = vec3<f32>(uv, unpack2x16unorm(colors[slot].color.y).y);
     return output;
 }
@@ -108,7 +100,7 @@ fn vs_impostor_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
     let local = vec4<f32>(record.sphere.xyz
         + (basis.right * corner.x + basis.up * corner.y) * record.sphere.w, 1.0);
     var output: CardOutput;
-    output.clip = project(vec3<f32>(dot(pose.row_0, local), dot(pose.row_1, local),
+    output.clip = view_clip(vec3<f32>(dot(pose.row_0, local), dot(pose.row_1, local),
         dot(pose.row_2, local)));
     output.uv = (vec2<f32>(cell) + 0.5 + vec2<f32>(corner.x, -corner.y) * 0.5) / f32(frames);
     output.frame = vec4<u32>(record.layer, cell, frames);

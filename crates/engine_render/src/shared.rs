@@ -153,7 +153,7 @@ impl GpuPart for ScenePart {
     }
 
     fn encode(&mut self, _pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
-        cx.render(crate::Attach::Declared, None).scene(self, None)
+        cx.render(crate::Attach::Declared).scene(self)
     }
 }
 
@@ -223,7 +223,7 @@ impl GpuPart for Composite {
         } else {
             &self.plain
         };
-        let mut draw = cx.render(crate::Attach::Declared, None);
+        let mut draw = cx.render(crate::Attach::Declared);
         draw.draw(
             pipeline,
             crate::Shape::Pulled {

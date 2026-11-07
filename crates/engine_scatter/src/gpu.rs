@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetResidency, ColorPass, Cull, Cursor, DepthPass, Error, MaterialHandle, MeshHandle,
-    PassName, PassViews, ScenePass, Since, Var,
+    AssetResidency, AttachPoint, Cull, Cursor, Error, MaterialHandle, MeshHandle, PassViews,
+    ScenePass, Since, Var,
 };
 use engine_places_world::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
@@ -19,12 +19,6 @@ use crate::layouts::{
 use crate::occupancy::{ALL_CELLS, LISTED_RESET, OccupancyWindows};
 use crate::pool::{SlotWrite, dead};
 use crate::systems::{ScatterFeedback, ScatterState};
-
-const CASTER_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
-    constant: 1,
-    slope_scale: 0.0,
-    clamp: 0.0,
-};
 
 const IDS: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
     array_stride: 4,
@@ -485,7 +479,9 @@ impl ScatterGpu {
             debug: None,
             vertices: CASTER_STREAMS,
             primitive: wgpu::PrimitiveState::default(),
-            depth: DepthUse::Write { bias: CASTER_BIAS },
+            depth: DepthUse::Write {
+                bias: wgpu::DepthBiasState::default(),
+            },
             blend: None,
             writes: wgpu::ColorWrites::empty(),
         };
@@ -515,7 +511,9 @@ impl ScatterGpu {
                 debug: None,
                 vertices: SHADOW_CARD_STREAMS,
                 primitive: wgpu::PrimitiveState::default(),
-                depth: DepthUse::Write { bias: CASTER_BIAS },
+                depth: DepthUse::Write {
+                    bias: wgpu::DepthBiasState::default(),
+                },
                 blend: None,
                 writes: wgpu::ColorWrites::empty(),
             },
@@ -540,19 +538,20 @@ impl ScatterGpu {
         let mut joined = Vec::with_capacity(listed.len());
         for listed in listed {
             let scene = Scene::named(listed.name);
-            let made = if listed.name == ColorPass::NAME {
-                Joined::Lit {
+            let (owned, lit) = (
+                listed.pass.views == PassViews::Owned,
+                listed.pass.reads.base_color,
+            );
+            let made = match (owned, lit) {
+                (false, true) if listed.pass.at != AttachPoint::Transparent => Joined::Lit {
                     looks: Self::look_pipelines(cx, scene, objects, false)?,
                     card: Self::card_pipeline(cx, scene, (poses, colors))?,
-                }
-            } else if listed.name == DepthPass::NAME {
-                Joined::Depth {
+                },
+                (false, false) => Joined::Depth {
                     looks: Self::look_pipelines(cx, scene, objects, true)?,
-                }
-            } else if listed.pass.views == PassViews::Owned && !listed.pass.reads.base_color {
-                Self::caster_pipelines(cx, scene, (poses, colors))?
-            } else {
-                continue;
+                },
+                (true, false) => Self::caster_pipelines(cx, scene, (poses, colors))?,
+                (false | true, true) => continue,
             };
             let streams = Streams {
                 ids: cx.draw_input(scene, ids),
@@ -1043,7 +1042,7 @@ impl ScatterGpu {
                 );
             }
             let layer = map as u32;
-            let mut draw = cx.render(Attach::Colors(vec![(self.occupancy_map, layer)]), None);
+            let mut draw = cx.render(Attach::Colors(vec![(self.occupancy_map, layer)]));
             if redraw {
                 draw.draw(
                     &pipelines.clear,

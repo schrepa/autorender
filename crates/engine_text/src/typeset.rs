@@ -10,7 +10,7 @@ use crate::atlas::{Atlas, Slot, Upload};
 use crate::fonts::{Fonts, Layout, Shapes};
 use crate::{Label, TextSettings, TextStats};
 
-pub const INVALID_FONT: ErrorCode = ErrorCode::Brick("invalid_font");
+pub const INVALID_FONT: ErrorCode = ErrorCode::brick("invalid_font");
 
 #[derive(Clone, Copy)]
 pub(crate) enum Placed {

@@ -241,13 +241,11 @@ impl LightsGpu {
         main.lights[1] = flags;
         main.offsets = self.offsets(0);
         self.headers[0] = main;
-        for (index, face) in captures
-            .faces
-            .iter()
-            .take(self.views as usize - 1)
-            .enumerate()
-        {
-            let lit = 1 + index as u32;
+        for face in &captures.faces {
+            let lit = 1 + face.face;
+            if lit >= self.views {
+                continue;
+            }
             let mut header = Clusters::new(
                 face.view,
                 captures.size,
@@ -355,7 +353,13 @@ impl GpuPart for LightsGpu {
         if count > self.capacity {
             self.capacity = count.next_power_of_two();
         }
-        self.views = 1 + captures.faces.len().min(LIT_VIEWS as usize - 1) as u32;
+        self.views = 1 + captures
+            .faces
+            .iter()
+            .map(|face| face.face + 1)
+            .max()
+            .unwrap_or(0)
+            .min(LIT_VIEWS - 1);
         if self.views > self.arena {
             self.arena = self.views;
             self.index_bytes =

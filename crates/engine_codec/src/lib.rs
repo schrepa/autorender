@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use glam::{Vec2, Vec3};
 
-pub use codes::ErrorCode;
+pub use codes::{BrickCode, ErrorCode};
 pub use error::{Allowed, Detail, Error, Expected, MAX_GOT_BYTES, closest};
 pub use fields::{
     ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, is_id, state, stated,

@@ -4,8 +4,8 @@ use std::ops::Range;
 use bevy_ecs::prelude::*;
 use engine_core::math::max;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, ColorPass, Cull, DrawKind, DrawnPoses, DrawnTable,
-    Error, GlobalTransforms, MaterialHandle, MeshHandle, MeshVertex, PassName, PassViews,
+    AlphaMode, AssetLibrary, AssetResidency, AttachPoint, Cull, DrawKind, DrawnPoses, DrawnTable,
+    Error, GlobalTransforms, MaterialHandle, MeshHandle, MeshVertex, PassViews,
     PrimaryView, ScenePass, Views, gpu_struct,
 };
 use engine_places_rendering::animation::{Animator, Rig, RigPart, VertexSkin};
@@ -82,12 +82,6 @@ gpu_struct! {
 const SKINNED_BYTES: u64 = 40;
 const ARGS_BYTES: u64 = ARGS_WORDS as u64 * 4;
 const OWNER_BYTES: u64 = 4;
-
-const CASTER_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
-    constant: 1,
-    slope_scale: 0.0,
-    clamp: 0.0,
-};
 
 const LIT_STREAMS: &[VertexLayout] = &[VertexLayout::Buffer(wgpu::VertexBufferLayout {
     array_stride: SKINNED_BYTES,
@@ -619,7 +613,9 @@ fn caster_pipelines(
         debug: None,
         vertices: CASTER_STREAMS,
         primitive: wgpu::PrimitiveState::default(),
-        depth: DepthUse::Write { bias: CASTER_BIAS },
+        depth: DepthUse::Write {
+            bias: wgpu::DepthBiasState::default(),
+        },
         blend: None,
         writes: wgpu::ColorWrites::empty(),
     };
@@ -647,15 +643,17 @@ fn scene_pipelines(
     let mut scenes = Vec::with_capacity(listed.len());
     for listed in listed {
         let scene = Scene::named(listed.name);
-        let drawing = if listed.name == ColorPass::NAME {
-            Drawing::Lit([
+        let (owned, lit) = (
+            listed.pass.views == PassViews::Owned,
+            listed.pass.reads.base_color,
+        );
+        let drawing = match (owned, lit) {
+            (false, true) if listed.pass.at == AttachPoint::Opaque => Drawing::Lit([
                 lit_pipeline(cx, scene, false)?,
                 lit_pipeline(cx, scene, true)?,
-            ])
-        } else if listed.pass.views == PassViews::Owned && !listed.pass.reads.base_color {
-            Drawing::Casters(caster_pipelines(cx, scene)?)
-        } else {
-            continue;
+            ]),
+            (true, false) => Drawing::Casters(caster_pipelines(cx, scene)?),
+            (false | true, true | false) => continue,
         };
         let streams = Streams {
             skinned: cx.draw_input(scene, buffers.skinned),

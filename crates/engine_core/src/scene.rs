@@ -136,6 +136,7 @@ pub struct Camera {
 pub enum Projection {
     Perspective { vertical_fov_radians: f32 },
     Orthographic { height: f32 },
+    Fitted { clip: [[f32; 4]; 4] },
 }
 
 impl Default for Camera {
@@ -188,7 +189,12 @@ impl Camera {
             Projection::Orthographic { height } if !within(height, Self::MIN_DEPTH, reach) => {
                 return invalid("projection.height");
             }
-            Projection::Perspective { .. } | Projection::Orthographic { .. } => {}
+            Projection::Fitted { clip } if !clip.iter().flatten().all(|value| value.is_finite()) => {
+                return invalid("projection.clip");
+            }
+            Projection::Perspective { .. }
+            | Projection::Orthographic { .. }
+            | Projection::Fitted { .. } => {}
         }
         if self.far - self.near < Self::MIN_DEPTH {
             return invalid("far");
@@ -201,7 +207,7 @@ impl Camera {
             Projection::Perspective {
                 vertical_fov_radians,
             } => Some(vertical_fov_radians),
-            Projection::Orthographic { .. } => None,
+            Projection::Orthographic { .. } | Projection::Fitted { .. } => None,
         }
     }
 
@@ -226,6 +232,16 @@ impl Camera {
                     self.near,
                 )
             }
+            Projection::Fitted { clip } => Mat4::from_cols_array_2d(&clip),
+        }
+    }
+
+    pub fn fitted(clip: Mat4, origin: Vec3) -> Self {
+        Self {
+            projection: Projection::Fitted {
+                clip: (clip * Mat4::from_translation(origin)).to_cols_array_2d(),
+            },
+            ..Self::default()
         }
     }
 

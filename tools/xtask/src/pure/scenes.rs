@@ -241,7 +241,7 @@ fn scene_rules(root: &Path) -> Result<BTreeSet<String>, String> {
             let quoted = rest[end..]
                 .strip_prefix('(')
                 .and_then(|rest| rest.strip_prefix('"'));
-            match quoted.filter(|_| variant == "Brick") {
+            match quoted.filter(|_| variant == "brick") {
                 Some(code) => {
                     rules.insert(code[..code.find('"').unwrap_or_default()].to_owned());
                 }

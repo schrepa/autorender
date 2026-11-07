@@ -15,7 +15,7 @@ use engine_core::{
 };
 use engine_places_world::splines::SplineMesh;
 
-pub const INVALID_SPLINE: ErrorCode = ErrorCode::Brick("invalid_spline");
+pub const INVALID_SPLINE: ErrorCode = ErrorCode::brick("invalid_spline");
 
 pub struct SplinesBrick;
 

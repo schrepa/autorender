@@ -8,6 +8,7 @@ impl Run {
                 let target = final_target(view);
                 match target {
                     Target::Debug(index) => self
+                        .set()
                         .debug_targets
                         .get(index as usize)
                         .map(|made| made.texture.clone()),
@@ -16,6 +17,7 @@ impl Run {
                     | Target::Output(_)
                     | Target::Canvas
                     | Target::Copy(..) => self
+                        .set()
                         .targets
                         .iter()
                         .find(|(known, _)| *known == target)
@@ -59,7 +61,7 @@ impl Run {
     fn record_copy(&mut self, from: Copied, to: Copied, regions: &[crate::CopyRegion]) {
         let (source, target) = (self.copied_texture(from), self.copied_texture(to));
         let buffer = |copied: Copied| match copied {
-            Copied::Buffer(buffer) => self.buffers.get(buffer as usize).and_then(Option::as_ref).map(|(made, _)| made.clone()),
+            Copied::Buffer(buffer) => self.buffer_held(buffer).map(|(made, _)| made.clone()),
             Copied::Texture(_) | Copied::Target(_) | Copied::Canvas => None,
         };
         let (from_buffer, to_buffer) = (buffer(from), buffer(to));
@@ -111,7 +113,7 @@ impl Run {
 
     pub(crate) fn clear_buffer(&mut self, buffer: u32) {
         self.end_render();
-        let Some(Some((made, _))) = self.buffers.get(buffer as usize) else {
+        let Some((made, _)) = self.buffer_held(buffer) else {
             return;
         };
         let made = made.clone();
@@ -125,8 +127,9 @@ impl Run {
     pub(crate) fn copy_view(&mut self, layer: engine_core::AttachPoint, view: ViewTarget) {
         self.end_render();
         let from = final_target(view);
-        let source = self.targets.iter().find(|(known, _)| *known == from).map(|(_, made)| made.texture.clone());
-        let target = self.targets.iter().find(|(known, _)| *known == Target::Copy(layer, view)).map(|(_, made)| made.texture.clone());
+        let targets = &self.set().targets;
+        let source = targets.iter().find(|(known, _)| *known == from).map(|(_, made)| made.texture.clone());
+        let target = targets.iter().find(|(known, _)| *known == Target::Copy(layer, view)).map(|(_, made)| made.texture.clone());
         if let (Some(source), Some(target), Some(encoder)) = (source, target, self.recording.encoder()) {
             encoder.copy_texture_to_texture(source.as_image_copy(), target.as_image_copy(), source.size());
         }
@@ -139,7 +142,7 @@ impl Run {
         let written = self.written();
         let device = self.device.clone();
         for request in asked {
-            let Some(Some(buffer)) = self.buffers.get(request.buffer as usize).map(|made| made.as_ref().map(|(buffer, _)| buffer.clone())) else {
+            let Some(buffer) = self.buffer_held(request.buffer).map(|(buffer, _)| buffer.clone()) else {
                 continue;
             };
             let bytes = request.range.end.saturating_sub(request.range.start).next_multiple_of(4);

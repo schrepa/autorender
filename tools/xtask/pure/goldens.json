@@ -615,7 +615,8 @@
           "water_stats",
           "wind",
           "world_streaming",
-          "world_streaming_stats"
+          "world_streaming_stats",
+          "world_text"
         ]
       },
       "code": "unknown_inspector",

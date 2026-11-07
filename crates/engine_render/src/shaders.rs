@@ -4,12 +4,6 @@ use engine_core::{Module, ShaderText, Source};
 
 macro_rules! shader_modules {
     ($($path:literal = $file:literal;)*) => {
-        pub const MODULES: &[crate::fixed_linker::ShaderModule] = &[$(crate::fixed_linker::ShaderModule {
-            path: $path,
-            brick: "core",
-            source: include_str!($file),
-        }),*];
-
         const TEXTS: &[ShaderText] = &[
             $(ShaderText::generated($path, include_str!($file)),)*
             crate::shared::generated(crate::drawn::DRAWN_MODULE),
@@ -194,14 +188,6 @@ pub fn generated_core() -> [(&'static str, String); 13] {
     ]
 }
 
-pub fn fixed_linker() -> crate::fixed_linker::Linker {
-    let mut linker = crate::fixed_linker::Linker::new(MODULES);
-    for (path, text) in generated_core() {
-        linker.add_generated(path.to_owned(), "core", text);
-    }
-    linker
-}
-
 #[doc(hidden)]
 pub fn core_modules() -> Vec<(&'static str, String)> {
     let generated = generated_core();
@@ -213,55 +199,4 @@ pub fn core_modules() -> Vec<(&'static str, String)> {
         .collect();
     modules.extend(generated);
     modules
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stage {
-    Vertex,
-    Fragment,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Entry {
-    pub module: &'static str,
-    pub name: &'static str,
-    pub stage: Stage,
-}
-
-macro_rules! entry_stage {
-    (vertex) => {
-        Stage::Vertex
-    };
-    (fragment) => {
-        Stage::Fragment
-    };
-}
-
-macro_rules! entry_points {
-    ($($rust:ident {
-        $($stage:ident: [$($name:ident @ $module:literal),* $(,)?]),* $(,)?
-    })*) => {
-        pub mod entry {
-            $(
-                #[expect(non_upper_case_globals, reason = "named as their WGSL functions")]
-                pub mod $rust {
-                    use super::super::{Entry, Stage};
-                    $($(
-                        pub const $name: Entry = Entry {
-                            module: $module,
-                            name: stringify!($name),
-                            stage: entry_stage!($stage),
-                        };
-                    )*)*
-                }
-            )*
-        }
-    };
-}
-
-entry_points! {
-    mipmaps {
-        vertex: [vs_mip @ "engine::mipmaps"],
-        fragment: [fs_mip @ "engine::mipmaps"],
-    }
 }

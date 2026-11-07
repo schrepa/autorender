@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, ColorPass, Cursor, DeviceLimits, Error, PassName, PassViews, PrimaryView,
-    ScenePass,
+    AssetLibrary, Cursor, DeviceLimits, Error, PassViews, PrimaryView, ScenePass,
 };
 use engine_places_rendering::probes::{MIRRORED, ProbeCaptures};
 use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, ShadowMaps};
@@ -452,7 +451,7 @@ impl GpuPart for TerrainGpu {
             let scene = Scene::named(listed.name);
             let lit = listed.pass.reads.base_color;
             let owned = listed.pass.views == PassViews::Owned;
-            let made = if listed.name == ColorPass::NAME {
+            let made = if !owned && lit && listed.pass.at == AttachPoint::Opaque {
                 let debug_surface = |fragment| surface(fragment, Some(fragment), ccw);
                 Joined::Surface {
                     debug: true,
@@ -835,11 +834,11 @@ impl GpuPart for TerrainGpu {
             return self.bounce.encode(cx);
         }
         if pass == self.passes.ids {
-            let mut draw = cx.render(Attach::Declared, None);
+            let mut draw = cx.render(Attach::Declared);
             return self.draw_ids(&mut draw);
         }
         if pass == self.passes.resolve {
-            let mut draw = cx.render(Attach::Declared, None);
+            let mut draw = cx.render(Attach::Declared);
             return self.draw_resolve(&mut draw);
         }
         0

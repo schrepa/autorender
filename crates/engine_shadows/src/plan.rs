@@ -1,25 +1,26 @@
 use std::any::TypeId;
 
 use bevy_ecs::prelude::*;
-use engine_core::glam::{Mat4, Vec3};
+use engine_core::glam::Vec3;
 use engine_core::{
-    Cursor, Cut, DeviceLimits, FrameBudget, GpuBits, Mobility, PartDraws, PassName, PrimaryView,
-    Readable, Readback, OwnedView, OwnedViews, Since, Spawner, gpu_bits,
+    Camera, Cursor, Cut, DeviceLimits, FrameBudget, GpuBits, Mobility, Mover, Moves, Node,
+    OwnedView, OwnedViews, Pace, PartDraws, PassName, PrimaryView, Readable, Readback, Since,
+    Spawner, Transform, gpu_bits, mover_of,
 };
 use engine_places_rendering::shadows::{
     CasterMap, GROUND_TEXELS, Refresh, Region as MapView, ShadowChange, ShadowChanges,
     ShadowMaps,
 };
 use engine_places_rendering::sun::Sun;
-use engine_render::{CameraUniform, DebugShown, pixel_angle};
+use engine_render::DebugShown;
 
 use crate::atlas::MapsKey;
 use crate::constants::LEVEL_WORDS;
 use crate::gpu_layouts::{CasterCull, ComposeData, Route, ShadowPiece};
 use crate::part::{SHADOW_FORMAT, ShadowsGpu};
-use crate::regions::FrameRegions;
+use crate::regions::{FrameRegions, Placed};
 use crate::shadow_fit::{ClipPlan, ClipSettings, Clipmap, DrawnTile, LightBasis, region_tiles};
-use crate::sky::{RESOLUTION, SkyDraw, SkyMaps};
+use crate::sky::{SkyDraw, SkyMaps};
 use crate::{ShadowPass, ShadowSettings, ShadowStats, ShadowsBrick, SkyOcclusion};
 
 const BUDGET: &str = "shadow_tiles";
@@ -135,11 +136,9 @@ pub(crate) struct ShadowPlan {
     masks: Masks,
     pub(crate) sky: SkyMaps,
     pub(crate) sky_draw: Option<SkyDraw>,
-    sky_view: Option<Mat4>,
     pub(crate) views: Vec<MapView>,
-    pub(crate) cameras: Vec<CameraUniform>,
+    placed: Vec<Placed>,
     pub(crate) routes: Vec<Route>,
-    pub(crate) scissors: Vec<[u32; 4]>,
     pub(crate) levels: Vec<[u32; LEVEL_WORDS as usize]>,
     pub(crate) cull: CasterCull,
     pub(crate) composes: Vec<ComposeData>,
@@ -227,7 +226,7 @@ impl ShadowPlan {
         self.sky_draw = None;
         self.drawn.clear();
         self.views.clear();
-        self.cameras.clear();
+        self.placed.clear();
         self.routes.clear();
         self.composes.clear();
         self.moving = 0;
@@ -285,34 +284,76 @@ const DETAIL_PIXELS: f32 = 0.5;
 #[derive(Component)]
 pub(crate) struct ShadowViews;
 
-fn scene_views(maps: &ShadowMaps, key: Option<MapsKey>, eye: Vec3) -> OwnedViews {
-    let views = key.map_or_else(Vec::new, |key| {
-        maps.regions
-            .iter()
-            .map(|region| {
-                let (planes, texel) = match region.refresh {
-                    Refresh::Kept(kept) => (Some(kept.planes), kept.texel),
-                    Refresh::Redraw => (None, 0.0),
-                };
-                let (size, takes) = match region.map {
-                    CasterMap::Region => ([key.region_side(); 2], Mobility::Static),
-                    CasterMap::Moving => {
-                        let (width, height) = key.atlas.size();
-                        ([width, height], Mobility::Moving)
-                    }
-                    CasterMap::Sky => ([RESOLUTION; 2], Mobility::Static),
-                };
-                OwnedView {
-                    view_projection: region.view.to_cols_array_2d(),
-                    planes,
-                    eye: eye.to_array(),
-                    size,
-                    detail: if texel > 0.0 { DETAIL_PIXELS } else { 0.0 },
-                    takes: Some(takes),
-                }
-            })
-            .collect()
-    });
+#[derive(Component)]
+pub(crate) struct ShadowCamera;
+
+type Lenses<'w, 's> = Query<'w, 's, &'static mut Camera, With<ShadowCamera>>;
+
+=====END
+fn place_cameras(
+    placed: &[Placed],
+    eye: Vec3,
+    pool: &mut Vec<Entity>,
+    (spawner, moves, lenses): (
+        &mut Spawner<'_, '_, ShadowsBrick>,
+        &mut Moves<'_, '_, ShadowsBrick>,
+        &mut Lenses<'_, '_>,
+    ),
+) {
+    for (at, placed) in placed.iter().enumerate() {
+        let Some(&node) = pool.get(at) else {
+            pool.push(spawner.spawn((
+                ShadowCamera,
+                Node::default(),
+                Transform::from_translation(eye),
+                Camera::fitted(placed.clip, eye),
+                Mover {
+                    by: mover_of::<ShadowsBrick>(),
+                    pace: Pace::Frame,
+                },
+            )));
+            continue;
+        };
+        if let Some(mut transform) = moves.get_mut(node)
+            && transform.translation != eye
+        {
+            transform.translation = eye;
+        }
+        let origin = moves.local(node).map_or(eye, |transform| transform.translation);
+        if let Ok(mut lens) = lenses.get_mut(node) {
+            lens.set_if_neq(Camera::fitted(placed.clip, origin));
+        }
+    }
+}
+
+fn scene_views(maps: &ShadowMaps, placed: &[Placed], (cameras, eye): (&[Entity], Vec3)) -> OwnedViews {
+    let views = maps
+        .regions
+        .iter()
+        .zip(placed)
+        .zip(cameras)
+        .map(|((region, placed), &camera)| {
+            let (planes, texel) = match region.refresh {
+                Refresh::Kept(kept) => (Some(kept.planes), kept.texel),
+                Refresh::Redraw => (None, 0.0),
+            };
+            let takes = match region.map {
+                CasterMap::Region | CasterMap::Sky => Mobility::Static,
+                CasterMap::Moving => Mobility::Moving,
+            };
+            OwnedView {
+                camera,
+                target: placed.target,
+                clear: placed.clear,
+                passes: None,
+                draws: true,
+                planes,
+                eye: eye.to_array(),
+                detail: if texel > 0.0 { DETAIL_PIXELS } else { 0.0 },
+                takes: Some(takes),
+            }
+        })
+        .collect();
     OwnedViews {
         pass: ShadowPass::NAME,
         views,
@@ -349,6 +390,7 @@ pub(crate) fn plan_shadows(
         Query<&mut OwnedViews, With<ShadowViews>>,
         Spawner<ShadowsBrick>,
     ),
+    (mut pool, mut moves, mut lenses): (Local<Vec<Entity>>, Moves<ShadowsBrick>, Lenses),
 ) {
     let plan = &mut *plan;
     let eye = view.detail_eye();
@@ -362,7 +404,7 @@ pub(crate) fn plan_shadows(
             maps.on = false;
             maps.regions.clear();
         }
-        publish_views(scene_views(&maps, None, eye), &mut published, &mut spawner);
+        publish_views(scene_views(&maps, &[], (&[], eye)), &mut published, &mut spawner);
         return;
     }
     let basis = plan.place(&settings, limits.max_texture_dimension_2d, (sun, eye));
@@ -396,20 +438,18 @@ pub(crate) fn plan_shadows(
     plan.sky_draw = plan
         .sky
         .prepare(&sky, eye, still_changed || casters_changed);
-    if let Some(draw) = plan.sky_draw {
-        plan.sky_view = Some(draw.clip);
-    }
     let regions = FrameRegions {
         basis,
         clipmap: &plan.clipmap,
         plan: &plan.plan,
         layout: key.atlas,
     };
-    let viewer = eye.extend(1.0 / pixel_angle(view.view_projection(), view.display_size().y));
     regions.views(plan.sky_draw.as_ref(), &mut plan.views);
-    regions.cameras((viewer, plan.sky_view), &mut plan.cameras);
+    regions.placed(
+        (key.region_side(), plan.sky_draw.as_ref()),
+        &mut plan.placed,
+    );
     regions.routes(&mut plan.routes);
-    regions.scissors(&mut plan.scissors);
     regions.levels(&mut plan.levels);
     regions.composes(settings.tile_texels, &mut plan.composes);
     plan.cull = regions.cull(plan.sky_draw.as_ref());
@@ -431,7 +471,17 @@ pub(crate) fn plan_shadows(
         maps.regions.extend_from_slice(&plan.views);
         (maps.levels, maps.on) = (key.levels, true);
     }
-    publish_views(scene_views(&maps, Some(key), eye), &mut published, &mut spawner);
+    place_cameras(
+        &plan.placed,
+        eye,
+        &mut pool,
+        (&mut spawner, &mut moves, &mut lenses),
+    );
+    publish_views(
+        scene_views(&maps, &plan.placed, (&pool, eye)),
+        &mut published,
+        &mut spawner,
+    );
 }
 
 pub(crate) fn shadow_stats(

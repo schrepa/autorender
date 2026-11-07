@@ -266,18 +266,19 @@ impl Renderer {
         let row_upload = engine_profile::timed(engine_profile::row("render.uploads"));
         let mesh_bytes = run.assets.meshes.sync(&device, &self.core.queue, world);
         let mut mips = None;
-        let (mut texture_bytes, mut mip_levels) =
-            run.assets
-                .materials
-                .sync(&device, &self.core.queue, world, &mut mips);
         let written = run.written();
-        run.assets.impostors.run(
+        let (mut compiler, assets, readbacks) = run.split();
+        let (mut texture_bytes, mut mip_levels) =
+            assets
+                .materials
+                .sync(&device, &self.core.queue, world, (&mut mips, &mut compiler));
+        assets.impostors.run(
             &device,
             &self.core.queue,
             world,
-            (&run.assets.meshes, &run.assets.materials),
-            &mut mips,
-            (&mut run.readbacks, written),
+            (&assets.meshes, &assets.materials),
+            (&mut mips, &mut compiler),
+            (readbacks, written),
         );
         if let Some(encoder) = mips.take() {
             self.core.queue.hand(Handover::from(encoder));
@@ -319,8 +320,8 @@ impl Renderer {
             .map_or(0.0, |jitter| jitter.turn);
         let listed = listed_views(world, view, region, run.written());
         let entities: Vec<bevy_ecs::entity::Entity> = listed.iter().map(|facts| facts.view).collect();
-        run.settle_views(entities[0], &entities);
-        let cameras: Vec<CameraUniform> = listed
+        run.settle_sets(&entities);
+        let mut cameras: Vec<CameraUniform> = listed
             .iter()
             .enumerate()
             .map(|(index, facts)| {
@@ -340,10 +341,10 @@ impl Renderer {
         run.canvas_texture = Some(surface.texture().clone());
         run.canvas_format = run.surface;
         run.camera_slot = 0;
-        run.owned_views = owned_views(world, &run.machine);
+        run.owned = owned_draws(world, &mut cameras, seconds);
         let profile_writes = engine_profile::span("render", "queue_writes");
         let row_writes = engine_profile::timed(engine_profile::row("render.writes"));
-        run.drop_cameras(&cameras);
+        run.cameras = cameras;
         run.runs = Bits::of(run.machine.graph.passes());
         for at in run.machine.declared.passes.len()..run.machine.graph.passes() {
             run.runs.insert(at);
@@ -372,12 +373,13 @@ impl Renderer {
             for texture in std::mem::take(&mut run.wanted_textures) {
                 if let Some(source) = library.texture(texture) {
                     let revision = library.revision_of(texture).unwrap_or_default();
-                    let (bytes, levels) = run.assets.materials.upload_texture(
+                    let (mut compiler, assets, _) = run.split();
+                    let (bytes, levels) = assets.materials.upload_texture(
                         &device,
                         &self.core.queue,
                         (texture, revision),
                         source,
-                        &mut mips,
+                        (&mut mips, &mut compiler),
                     );
                     texture_bytes += bytes;
                     mip_levels += levels;
@@ -434,7 +436,7 @@ impl Renderer {
         let mut ran: Vec<&'static str> = Vec::new();
         let declared = run.machine.declared.passes.len();
         let mut ready = Bits::of(run.machine.graph.resources());
-        let mut drawn_on: Vec<(engine_core::Target, Option<usize>)> = Vec::new();
+        let mut drawn_on: Vec<(engine_core::Target, usize)> = Vec::new();
         let mut first = true;
         for (step, &index) in order.iter().enumerate() {
             let facts = listed[index];
@@ -445,10 +447,7 @@ impl Renderer {
                 continue;
             };
             run.leave();
-            let slot = run.park(facts.view);
-            if let Some(at) = slot {
-                run.swap_view(at);
-            }
+            let set = run.select(facts.view);
             let earlier = drawn_on
                 .iter()
                 .rev()
@@ -482,7 +481,7 @@ impl Renderer {
             keep_eligible(run, &facts, (first, index == 0), Some(step) == last_surface);
             let mut outputs = asked.clone();
             if order.len() > 1 {
-                for pass in run.runs.iter().filter(|&pass| !run.view_passes.contains(pass)) {
+                for pass in run.runs.iter().filter(|&pass| !run.sets.passes.contains(pass)) {
                     outputs = union(&outputs, &run.machine.graph.writes(pass));
                 }
             }
@@ -494,13 +493,13 @@ impl Renderer {
             )?;
             for planned in &plan.passes {
                 let pass = planned.pass.index();
-                if !run.view_passes.contains(pass) {
+                if !run.sets.passes.contains(pass) {
                     ready = union(&ready, &run.machine.graph.writes(pass));
                 }
             }
             run.plan = Some(std::sync::Arc::clone(&plan));
             let carried = match earlier {
-                Some(from) if facts.clear == engine_core::Clear::Nothing => run.carry(from, slot),
+                Some(from) if facts.clear == engine_core::Clear::Nothing => run.carry(from),
                 Some(_) | None => false,
             };
             run.carried = carried;
@@ -524,7 +523,7 @@ impl Renderer {
                 run.clear_canvas();
             }
             if run.canvas_load {
-                run.canvas_in();
+                run.copy_canvas(true);
             }
             let opaque = opaque_span(&run.machine.declared.passes, &plan);
             let mut opaque_open = false;
@@ -658,12 +657,9 @@ impl Renderer {
                 mark_span(&self.core.profiler, run.recording.encoder(), OPAQUE_MESHES, true);
             }
             if run.canvas_rect.is_some() {
-                run.canvas_out();
+                run.copy_canvas(false);
             }
-            drawn_on.push((facts.target, slot));
-            if let Some(at) = slot {
-                run.swap_view(at);
-            }
+            drawn_on.push((facts.target, set));
             first = false;
         }
         let Some(run) = self.run.as_mut() else {
@@ -672,6 +668,7 @@ impl Renderer {
         run.close_encode_span(&self.core.profiler);
         run.flush_clears();
         run.leave();
+        run.select(entities[0]);
         run.camera_slot = 0;
         run.canvas = Some(canvas);
         run.canvas_texture = Some(surface.texture().clone());
@@ -965,20 +962,52 @@ fn canvas_of(
     }
 }
 
-fn owned_views(world: &World, machine: &crate::machine::Machine) -> Vec<(&'static str, u32)> {
+fn owned_draws(
+    world: &World,
+    cameras: &mut Vec<CameraUniform>,
+    seconds: f32,
+) -> Vec<crate::encode::OwnedDraw> {
     let Some(views) = world.get_resource::<engine_core::Views>() else {
         return Vec::new();
     };
-    let mut owned: Vec<(&'static str, u32)> = Vec::new();
-    for pass in &machine.declared.passes {
-        if let Some(scene) = pass.scene
-            && !owned.iter().any(|(name, _)| *name == scene.name)
-            && let Some(range) = views.owned(scene.name)
-        {
-            owned.push((scene.name, range.start));
-        }
+    let mut owned = Vec::new();
+    for (drawn, view) in views.drawn().iter().enumerate() {
+        let Some(pass) = view.owner else {
+            continue;
+        };
+        owned.push(crate::encode::OwnedDraw {
+            pass,
+            local: view.local,
+            drawn: drawn as u32,
+            slot: cameras.len() as u32,
+            layer: view.target.layer,
+            rect: view.target.rect,
+            clear: view.clear,
+            passes: view.passes,
+            draws: view.draws,
+        });
+        cameras.push(owned_camera(view, seconds));
     }
     owned
+}
+
+fn owned_camera(view: &engine_core::DrawnView, seconds: f32) -> CameraUniform {
+    let size = crate::targets::FrameSize {
+        width: view.size.x,
+        height: view.size.y,
+    };
+    let mut camera = CameraUniform::viewed(
+        (view.view_projection, view.view_projection),
+        view.position,
+        (seconds, seconds),
+        [0.0; 2],
+        (size.width, size.height),
+    );
+    camera.set_region(view.view_projection, crate::targets::FrameRegion::whole(size));
+    camera.set_detail(view.eye);
+    camera.options[0] = 1.0;
+    camera.view[0] = 1 + view.local;
+    camera
 }
 
 fn keep_eligible(
@@ -990,8 +1019,8 @@ fn keep_eligible(
     let declared = run.machine.declared.passes.len();
     let listed: Vec<usize> = run.runs.iter().collect();
     for index in listed {
-        let viewed = run.view_passes.contains(index);
-        let mained = run.main_passes.contains(index);
+        let viewed = run.sets.passes.contains(index);
+        let mained = run.sets.main.contains(index);
         if (mained && !main) || (!mained && !viewed && !first) {
             run.runs.remove(index);
             continue;

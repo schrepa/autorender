@@ -116,10 +116,9 @@ impl Run {
         }
         self.end_render();
         for buffer in std::mem::take(&mut self.queued.cleared) {
-            if let (Some(Some((made, _))), Some(encoder)) =
-                (self.buffers.get(buffer as usize), self.recording.encoder())
-            {
-                encoder.clear_buffer(made, 0, None);
+            let made = self.buffer_held(buffer).map(|(made, _)| made.clone());
+            if let (Some(made), Some(encoder)) = (made, self.recording.encoder()) {
+                encoder.clear_buffer(&made, 0, None);
             }
         }
     }
@@ -166,12 +165,8 @@ impl Run {
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
-    pub(crate) fn begin_render(&mut self, attach: AttachRaw, view: Option<u32>) -> bool {
-        let Some(offset) = self.view_offset(self.part, view) else {
-            let error = fault(self.path("render.view"), ErrorCode::OutOfRange);
-            self.fault(error);
-            return false;
-        };
+    pub(crate) fn begin_render(&mut self, attach: AttachRaw, view: Option<&OwnedDraw>) -> bool {
+        let offset = self.view_offset(view);
         let Some(pass) = self.pass_decls.get(self.pass as usize).cloned() else {
             return false;
         };
@@ -236,13 +231,13 @@ impl Run {
                     if !own_colors_only(&pass) {
                         main = !self.debug;
                         if self.debug {
-                            for index in 0..self.debug_targets.len() {
+                            for index in 0..self.set().debug_targets.len() {
                                 let target = Target::Debug(index as u32);
                                 let ops = ops_of(self.machine.ids.target(target)).unwrap_or(Ops {
                                     load: Load::Load,
                                     store: true,
                                 });
-                                let made = &self.debug_targets[index];
+                                let made = &self.set().debug_targets[index];
                                 colors.push((
                                     key(target),
                                     Some(made.view.clone()),
@@ -381,7 +376,8 @@ impl Run {
                 }
             }
             AttachRaw::Depth(texture, layer) => {
-                if !self.depth_attachment(&pass, texture, layer.unwrap_or(0), &mut depth) {
+                let layer = view.map_or(layer.unwrap_or(0), |view| view.layer);
+                if !self.depth_attachment(&pass, texture, layer, &mut depth) {
                     return self.mismatch(pass.name);
                 }
             }
@@ -403,7 +399,7 @@ impl Run {
                     ..planned
                 };
                 let format = self.machine.declared.textures[color as usize].format;
-                let at = layer.unwrap_or(0);
+                let at = view.map_or(layer.unwrap_or(0), |view| view.layer);
                 let view = self.attachment_view(color, 0, at);
                 colors.push((
                     (u64::from(color) * 4_096 + u64::from(at)) * 64 + 10_000,
@@ -444,6 +440,9 @@ impl Run {
                     ));
                 }
             }
+        }
+        if let Some(view) = view {
+            keep_loads(view.clear, &mut colors, depth.as_mut());
         }
         let mut attachments = std::mem::take(&mut self.spare.attachments);
         attachments.clear();
@@ -634,7 +633,10 @@ impl Run {
         layer: u32,
     ) -> Option<wgpu::TextureView> {
         let parity = self.parity;
-        let made = self.textures.get_mut(texture as usize)?;
+        let made = self
+            .texture_tables_mut(texture)
+            .textures
+            .get_mut(texture as usize)?;
         let made = match parity {
             1 if made[1].is_some() => made[1].as_mut()?,
             _ => made[0].as_mut()?,
@@ -706,6 +708,19 @@ fn color_ops(ops: Ops) -> wgpu::Operations<wgpu::Color> {
         } else {
             wgpu::StoreOp::Discard
         },
+    }
+}
+
+fn keep_loads(
+    clear: engine_core::Clear,
+    colors: &mut [(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)],
+    depth: Option<&mut (u64, wgpu::TextureView, wgpu::TextureFormat, Option<Ops>, bool)>,
+) {
+    for (_, _, _, ops) in colors.iter_mut().filter(|_| !clear.color()) {
+        ops.load = Load::Load;
+    }
+    if let Some((_, _, _, Some(ops), _)) = depth.filter(|_| !clear.depth()) {
+        ops.load = Load::Load;
     }
 }
 

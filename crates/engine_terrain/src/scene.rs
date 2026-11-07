@@ -745,7 +745,7 @@ impl SceneTerrain {
     }
 }
 
-pub const INVALID_STREAMED: ErrorCode = ErrorCode::Brick("invalid_streamed");
+pub const INVALID_STREAMED: ErrorCode = ErrorCode::brick("invalid_streamed");
 
 pub(crate) fn terrain_kind() -> ComponentKindOf<TerrainScene> {
     ComponentKind::of::<TerrainScene>("terrain")

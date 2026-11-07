@@ -11,7 +11,7 @@ use crate::ShadowPass;
 use crate::constants::{LEVEL_WORDS, MARK_GROUP, SKY_LAYERS};
 use crate::gpu_layouts::{CasterCull, ComposeData, Route, SkyViews};
 use crate::plan::{LOST, MarkKind, SKIPPED, SKY_LOST, ShadowDrawn, ShadowFeedback, ShadowPlan};
-use crate::regions::{MOVING_TILES, MOVING_VIEW, SKY_VIEW};
+=====END
 use crate::shaders;
 use crate::sky::RESOLUTION;
 
@@ -58,8 +58,6 @@ pub(crate) struct ShadowsGpu {
     compose_vertices: DrawInput<Self, Own>,
     marking: ComputePipeline<Self>,
     at: Vec<CasterView>,
-    scissors: Vec<[u32; 4]>,
-    sky_layer: Option<u32>,
     composed: u32,
     moving: u32,
     marked: Option<[u32; 3]>,
@@ -96,7 +94,6 @@ fn extent(width: u32, height: u32, layers: u32) -> wgpu::Extent3d {
 
 impl ShadowsGpu {
     fn upload(&mut self, plan: &ShadowPlan, cx: &mut Prepare<'_, Self>) {
-        cx.cameras(&plan.cameras);
         cx.write(self.routes, 0, &plan.routes);
         cx.write(self.cull, 0, &[plan.cull]);
         cx.write(self.sky_views, 0, std::slice::from_ref(&*plan.sky.uniform));
@@ -325,8 +322,6 @@ impl GpuPart for ShadowsGpu {
             compose_vertices,
             marking,
             at: Vec::new(),
-            scissors: Vec::new(),
-            sky_layer: None,
             composed: 0,
             moving: 0,
             marked: None,
@@ -352,8 +347,6 @@ impl GpuPart for ShadowsGpu {
         self.upload(&plan, cx);
         self.at.clear();
         self.at.extend(maps.views());
-        self.scissors.clone_from(&plan.scissors);
-        self.sky_layer = plan.sky_draw.map(|draw| draw.layer as u32);
         (self.composed, self.moving) = (plan.composes.len() as u32, plan.moving);
         if !self.at.is_empty() || self.composed > 0 {
             cx.run(self.maps);
@@ -404,7 +397,7 @@ impl GpuPart for ShadowsGpu {
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
         if pass == self.opening {
             if let Some(drawn) = self.opened {
-                let mut draw = cx.render(Attach::Declared, None);
+                let mut draw = cx.render(Attach::Declared);
                 draw.within(drawn);
                 draw.draw(
                     &self.sky_opening,
@@ -422,19 +415,16 @@ impl GpuPart for ShadowsGpu {
             }
             return 0;
         }
-        let mut drawn = 0;
+        let count = |map: CasterMap| self.at.iter().filter(|at| at.map == map).count() as u32;
+        let regions = count(CasterMap::Region);
+        let tiles = regions..regions + count(CasterMap::Moving);
+        let sky = tiles.end..tiles.end + count(CasterMap::Sky);
         cx.span("shadow_regions");
-        for at in self.at.iter().filter(|at| at.map == CasterMap::Region) {
-            let mut draw = cx.render(
-                Attach::Depth(self.regions, Some(at.region)),
-                Some(at.region),
-            );
-            drawn += draw.scene(self, Some(at.view()));
-        }
+        let mut drawn = cx.views(self, &Attach::Depth(self.regions, None), 0..regions);
         if self.composed > 0 || self.moving > 0 {
             cx.span("shadow_atlas");
             let vertices = [self.compose_vertices];
-            let mut atlas = cx.render(Attach::Depth(self.atlas, None), Some(MOVING_VIEW));
+            let mut atlas = cx.render(Attach::Depth(self.atlas, None));
             if self.composed > 0 {
                 atlas.draw(
                     &self.composing,
@@ -456,18 +446,10 @@ impl GpuPart for ShadowsGpu {
                 );
             }
         }
-        let moving = self.at.iter().filter(|at| at.map == CasterMap::Moving);
-        for (camera, (at, &scissor)) in (MOVING_TILES..).zip(moving.zip(&self.scissors)) {
-            let mut tile = cx.render(Attach::Depth(self.atlas, None), Some(camera));
-            tile.scissor(scissor);
-            drawn += tile.scene(self, Some(at.view()));
-        }
-        if let Some(layer) = self.sky_layer {
+        drawn += cx.views(self, &Attach::Depth(self.atlas, None), tiles);
+        if !sky.is_empty() {
             cx.span("shadow_sky");
-            for at in self.at.iter().filter(|at| at.map == CasterMap::Sky) {
-                let mut draw = cx.render(Attach::Depth(self.sky, Some(layer)), Some(SKY_VIEW));
-                drawn += draw.scene(self, Some(at.view()));
-            }
+            drawn += cx.views(self, &Attach::Depth(self.sky, None), sky);
         }
         drawn
     }

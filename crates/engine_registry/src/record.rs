@@ -82,7 +82,7 @@ pub struct BrickRecord {
     pub(crate) settles: Vec<Settle>,
     pub(crate) named: Vec<NamedField>,
     problems: Vec<Error>,
-    errors: Vec<ErrorCode>,
+    errors: Vec<&'static ErrorCode>,
 }
 
 impl BrickRecord {
@@ -159,12 +159,12 @@ impl BrickRecord {
         self.smokes
     }
 
-    pub fn error_codes(&self) -> &[ErrorCode] {
+    pub fn error_codes(&self) -> &[&'static ErrorCode] {
         &self.errors
     }
 
     pub fn add_error_codes(&mut self, codes: &'static [ErrorCode]) {
-        self.errors.extend_from_slice(codes);
+        self.errors.extend(codes);
     }
 
     pub fn scope(&self) -> Scope {

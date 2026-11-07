@@ -4,7 +4,7 @@ import package::engine::drawn::{DRAWN_OWN_PROJECTION, drawn_clip, drawn_records}
 import package::engine::mesh::vertex::{origin_key, pose_matrix, transform_vertex};
 import package::engine::shading::PositionInput;
 import package::engine::slots::slot_position;
-import package::engine::view::{camera, detail_across};
+import package::engine::view::{camera, detail_across, view_clip};
 import package::meshes::slots::{instance_colors, instance_poses, instance_previous_poses};
 import package::place::instances::{AffinePose, SlotColor};
 
@@ -44,7 +44,7 @@ fn affine_motion(input: AffineVertexInput, pose: AffinePose, previous: AffinePos
     let current = placed_position(model, input.position, vertex.world_v.xyz, material,
         camera.position.w);
     vertex.world_v = vec4<f32>(current, vertex.world_v.w);
-    vertex.clip_position = camera.view_projection * vec4<f32>(current, 1.0);
+    vertex.clip_position = view_clip(current);
     world = vec4<f32>(placed_position(model, input.position, world.xyz, material,
         camera.previous.w), 1.0);
     let shown = camera.previous_view_projection * world;

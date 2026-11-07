@@ -242,6 +242,7 @@ pub(super) fn camera_value(
             vertical_fov_radians,
         } => (Some(vertical_fov_radians), None),
         Projection::Orthographic { height } => (None, Some(height)),
+        Projection::Fitted { .. } => (None, None),
     };
     json!(CameraView {
         position: eye.to_array(),

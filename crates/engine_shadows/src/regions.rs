@@ -1,23 +1,25 @@
 use bytemuck::Zeroable;
 use engine_core::glam::{Mat4, Vec3, Vec4};
+use engine_core::{Clear, ViewLayer};
 use engine_places_rendering::shadows::{
     CasterMap, KeptRefresh, Refresh, Region as MapView, SHADOW_REGIONS,
 };
-use engine_render::CameraUniform;
 
 use crate::atlas::AtlasLayout;
 use crate::constants::{LEVEL_BAND, LEVEL_BEFORE, LEVEL_WINDOW, LEVEL_WORDS, SKY_REFRESH};
 use crate::gpu_layouts::{CasterCull, ComposeData, Route, ShadowPiece};
 use crate::shadow_fit::{ClipPlan, Clipmap, LightBasis, MapRegion, MovingTile, Region, region_tiles};
-use crate::sky::SkyDraw;
+use crate::sky::{RESOLUTION, SkyDraw};
 
 const NORMAL_OFFSET_TEXELS: f32 = 0.5;
 const SLOPE_LIMIT_TEXELS: f32 = 16.0;
 const REGIONS: usize = SHADOW_REGIONS as usize;
 
-pub(crate) const MOVING_VIEW: u32 = SHADOW_REGIONS;
-pub(crate) const SKY_VIEW: u32 = SHADOW_REGIONS + 1;
-pub(crate) const MOVING_TILES: u32 = SHADOW_REGIONS + 2;
+pub(crate) struct Placed {
+    pub(crate) clip: Mat4,
+    pub(crate) target: ViewLayer,
+    pub(crate) clear: Clear,
+}
 
 pub(crate) struct FrameRegions<'a> {
     pub(crate) basis: LightBasis,
@@ -40,19 +42,19 @@ fn planes(rows: [Vec3; 3], rect: [f32; 4], depth: f32) -> [[f32; 4]; 6] {
     ]
 }
 
-fn view(clip: Mat4, eye: [f32; 4]) -> CameraUniform {
-    CameraUniform {
-        view_projection: clip.to_cols_array_2d(),
-        position: eye,
-        ..CameraUniform::default()
-    }
-}
-
 impl FrameRegions<'_> {
     fn region_clip(&self, region: &Region) -> Mat4 {
         MapRegion {
             rect: region.rect,
             depth: region.depth,
+        }
+        .clip(&self.basis)
+    }
+
+    fn tile_clip(&self, tile: &MovingTile) -> Mat4 {
+        MapRegion {
+            rect: self.clipmap.tile_rect(tile.level, tile.tile),
+            depth: self.clipmap.band(tile.level),
         }
         .clip(&self.basis)
     }
@@ -64,11 +66,7 @@ impl FrameRegions<'_> {
         let slot = self
             .layout
             .texels(self.layout.still + u32::from(tile.index));
-        let clip = MapRegion {
-            rect: self.clipmap.tile_rect(tile.level, tile.tile),
-            depth: self.clipmap.band(tile.level),
-        }
-        .clip(&self.basis);
+        let clip = self.tile_clip(tile);
         let onto = Mat4::from_cols(
             Vec4::new(side / width, 0.0, 0.0, 0.0),
             Vec4::new(0.0, side / height, 0.0, 0.0),
@@ -83,12 +81,37 @@ impl FrameRegions<'_> {
         (onto * clip, slot)
     }
 
-    pub(crate) fn scissors(&self, out: &mut Vec<[u32; 4]>) {
+    pub(crate) fn placed(&self, (side, sky): (u32, Option<&SkyDraw>), out: &mut Vec<Placed>) {
         out.clear();
-        let side = self.layout.slot;
+        out.extend((0_u32..).zip(&self.plan.regions).map(|(layer, region)| Placed {
+            clip: self.region_clip(region),
+            target: ViewLayer {
+                layer,
+                rect: [0, 0, side, side],
+            },
+            clear: Clear::DepthOnly,
+        }));
+        let slot = self.layout.slot;
         out.extend(self.plan.moving.iter().map(|tile| {
-            let [x, y, _, _] = self.moving_clip(tile).1;
-            [x as u32, y as u32, side, side]
+            let [x, y, _, _] = self
+                .layout
+                .texels(self.layout.still + u32::from(tile.index));
+            Placed {
+                clip: self.tile_clip(tile),
+                target: ViewLayer {
+                    layer: 0,
+                    rect: [x as u32, y as u32, slot, slot],
+                },
+                clear: Clear::Nothing,
+            }
+        }));
+        out.extend(sky.map(|draw| Placed {
+            clip: draw.clip,
+            target: ViewLayer {
+                layer: draw.layer as u32,
+                rect: [0, 0, RESOLUTION, RESOLUTION],
+            },
+            clear: Clear::DepthOnly,
         }));
     }
 
@@ -131,28 +154,6 @@ impl FrameRegions<'_> {
                 }),
             });
         }
-    }
-
-    pub(crate) fn cameras(
-        &self,
-        (viewer, sky): (Vec4, Option<Mat4>),
-        out: &mut Vec<CameraUniform>,
-    ) {
-        out.clear();
-        out.resize(SKY_VIEW as usize + 1, CameraUniform::default());
-        for (index, region) in self.plan.regions.iter().enumerate() {
-            out[index] = view(self.region_clip(region), [0.0; 4]);
-        }
-        out[MOVING_VIEW as usize] = view(Mat4::IDENTITY, viewer.to_array());
-        if let Some(clip) = sky {
-            out[SKY_VIEW as usize] = view(clip, [0.0; 4]);
-        }
-        out.extend(
-            self.plan
-                .moving
-                .iter()
-                .map(|tile| view(self.moving_clip(tile).0, viewer.to_array())),
-        );
     }
 
     pub(crate) fn routes(&self, routes: &mut Vec<Route>) {

@@ -36,7 +36,8 @@ pub use feeds::{Cursor, CursorView, Events, Feed, FeedView, Ring, Since, StoreId
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{
     AttachPoint, BlendedPass, CORE_BRICK, CORE_PASSES, ColorPass, DepthPass, PASS_BITS, Pass,
-    PassBit, PassDepth, PassEntry, PassMask, PassName, PassViews, ScenePass, ScenePasses, SlotSet,
+    PassBit, PassCull, PassEntry, PassMask, PassName, PassRaster, PassViews, ScenePass, ScenePasses,
+    SlotSet,
     TargetName, Writes,
     every, never,
 };
@@ -45,7 +46,7 @@ pub use readiness::Readiness;
 pub use requests::{Census, Interest, Progress, Request, Requests, Ticket};
 pub use level::{Level, LevelView};
 pub use views::{
-    Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory,
+    Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory, ViewLayer,
 };
 
 pub trait Slot: Resource + Default {

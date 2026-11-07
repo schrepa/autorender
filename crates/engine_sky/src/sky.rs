@@ -686,7 +686,7 @@ impl GpuPart for SkyGpu {
             return self.tables.encode(cx);
         }
         if pass == self.dome_pass {
-            let mut draw = cx.render(Attach::Declared, None);
+            let mut draw = cx.render(Attach::Declared);
             draw.draw(
                 &self.dome,
                 Shape::Pulled {

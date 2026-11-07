@@ -67,6 +67,7 @@ pub(crate) enum Work {
 pub(crate) enum Scoped {
     Pass(u32),
     Scene(&'static str),
+    Outside(&'static str),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -74,6 +75,7 @@ pub(crate) struct SceneOf {
     pub(crate) name: &'static str,
     pub(crate) pass: engine_core::Pass,
     pub(crate) bit: Option<PassBit>,
+    pub(crate) raster: engine_core::PassRaster,
     pub(crate) core: bool,
 }
 
@@ -125,6 +127,7 @@ pub(crate) struct RenderDecl {
     pub(crate) blend: Option<wgpu::BlendState>,
     pub(crate) writes: wgpu::ColorWrites,
     pub(crate) targets: Option<Vec<(Option<wgpu::BlendState>, wgpu::ColorWrites)>>,
+    pub(crate) samples: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -545,6 +548,10 @@ impl InstallCore {
 
     pub(crate) fn draws_scene(&mut self, pass: u32, name: &'static str, listed: engine_core::Pass) {
         let bit = self.passes.bit(name);
+        let raster = self
+            .passes
+            .get(name)
+            .map_or(engine_core::PassRaster::PLAIN, |listed| listed.raster);
         let mut members: Vec<u32> = self
             .draws
             .iter()
@@ -563,6 +570,7 @@ impl InstallCore {
                 name,
                 pass: listed,
                 bit,
+                raster,
                 core,
             });
             declared.members = members;

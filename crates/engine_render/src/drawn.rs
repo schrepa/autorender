@@ -126,13 +126,7 @@ fn view_masks(views: &Views, passes: Option<&ScenePasses>) -> Vec<CullView> {
         .drawn()
         .iter()
         .map(|view| CullView {
-            passes: view.owner.map_or(main, |owner| {
-                listed
-                    .iter()
-                    .find(|scene| scene.name == owner)
-                    .and_then(|scene| scene.bit)
-                    .map_or(0, |bit| bit.mask().word())
-            }),
+            passes: if view.draws { view.passes.word() } else { 0 },
             layers: view.layers.0,
             takes: view.takes.map_or(0, |mobility| mobility as u32 + 1),
             pad: 0,

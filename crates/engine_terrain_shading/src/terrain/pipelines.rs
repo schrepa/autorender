@@ -1,7 +1,7 @@
 use engine_render::wgpu;
 
 pub(super) const CASTER_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
-    constant: 2,
+    constant: 1,
     slope_scale: 2.5,
     clamp: 0.0,
 };

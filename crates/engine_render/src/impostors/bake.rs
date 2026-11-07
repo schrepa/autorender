@@ -1,5 +1,10 @@
 use super::*;
 
+use engine_core::{Entry, Error, Var};
+
+use crate::install::{Bound, Program, RenderDecl, Scoped};
+use crate::surface::{DrawState, MaterialVariant};
+
 engine_core::gpu_struct! {
     pub struct ImpostorBake {
         pub sphere: [f32; 4],
@@ -10,6 +15,7 @@ engine_core::gpu_struct! {
 
 const BAKE_SAMPLES: u32 = 4;
 const BAKE_DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+const BAKE_GROUP: u32 = 2;
 const SHADE_SCALE: u32 = 4;
 const SHADE_MOST: u32 = 2048;
 const TILE_TEXELS: u32 = 1024;
@@ -41,10 +47,61 @@ fn tile_frames(shape: AtlasShape) -> u32 {
     (TILE_TEXELS / shape.texels).clamp(1, shape.frames)
 }
 
+fn slot(extended: bool, shade: bool, two_sided: bool) -> usize {
+    usize::from(extended) | (usize::from(shade) << 1) | (usize::from(two_sided) << 2)
+}
+
+pub(crate) struct ImpostorBakes {
+    pipelines: [u32; 8],
+}
+
+impl crate::GpuPart for ImpostorBakes {
+    type Reads = ();
+    const NAME: &'static str = "impostor_bake";
+
+    fn install(cx: &mut crate::Install<'_, Self>) -> Result<Self, Error> {
+        let module = crate::shaders::core_module(BAKE_MODULE);
+        let mut pipelines = [0; 8];
+        for (at, pipeline) in pipelines.iter_mut().enumerate() {
+            let (extended, shade, two_sided) = (at & 1 != 0, at & 2 != 0, at & 4 != 0);
+            let (vertex, fragment) = bake_entries(extended, shade);
+            let mut bound = vec![(Var::generated(module, "impostor_bake"), Bound::Asset)];
+            if !shade {
+                bound.push((Var::generated(module, "impostor_shade"), Bound::Asset));
+            }
+            *pipeline = cx.core.pipeline(
+                Scoped::Outside(Self::NAME),
+                Program::Render(RenderDecl {
+                    vertex: Entry::generated(module, vertex),
+                    fragment: Some(Entry::generated(module, fragment)),
+                    debug: None,
+                    vertices: vec![crate::VertexLayout::Mesh; 1 + usize::from(extended)],
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode: (!two_sided).then_some(wgpu::Face::Back),
+                        ..Default::default()
+                    },
+                    depth: crate::DepthUse::Write {
+                        bias: wgpu::DepthBiasState::default(),
+                    },
+                    blend: None,
+                    writes: wgpu::ColorWrites::ALL,
+                    targets: None,
+                    samples: if shade { 1 } else { BAKE_SAMPLES },
+                }),
+                bound,
+            )?;
+        }
+        Ok(Self { pipelines })
+    }
+
+    fn prepare(&mut self, (): (), _cx: &mut crate::Prepare<'_, Self>) {}
+}
+
 impl Atlas {
     pub(super) fn bake(
         &mut self,
-        gpu: BakeGpu<'_>,
+        gpu: BakeGpu<'_, '_>,
         source: &BakeSource<'_>,
         identity: ImpostorIdentity,
         hemisphere: bool,
@@ -53,7 +110,7 @@ impl Atlas {
             device,
             encoder,
             mips,
-            pipelines,
+            compiler,
             readbacks,
         } = gpu;
         let encoder = mip_encoder(device, encoder);
@@ -64,9 +121,9 @@ impl Atlas {
         let targets = self
             .targets
             .get_or_insert_with(|| bake_targets(device, shape));
-        draw_layer(device, encoder, pipelines, targets, source, shape);
+        draw_layer((device, &mut *encoder), compiler, targets, source, shape);
         for texture in &targets.layer {
-            mips.record(device, encoder, texture);
+            mips.record((device, &mut *encoder), compiler, texture, None);
         }
         self.read_back((device, encoder), readbacks, (identity, shape));
     }
@@ -74,10 +131,36 @@ impl Atlas {
 
 type BakeDraw<'a> = (&'a MeshDraw<'a>, bool, &'a wgpu::BindGroup, BakeKey);
 
+type BakeMade = (BakeKey, wgpu::RenderPipeline, wgpu::RenderPipeline);
+
+fn bake_pipeline(
+    compiler: &mut Compiler<'_>,
+    pipelines: &[u32; 8],
+    key: BakeKey,
+    shade: bool,
+) -> Option<wgpu::RenderPipeline> {
+    let formats: Vec<Option<wgpu::TextureFormat>> = if shade {
+        Vec::new()
+    } else {
+        FORMATS.map(Some).to_vec()
+    };
+    let variant = MaterialVariant::PLAIN.with_draw(DrawState {
+        alpha_test: key.look.masked,
+        ..DrawState::PLAIN
+    });
+    compiler
+        .compile(
+            pipelines[slot(key.extended, shade, key.look.two_sided)],
+            (&formats, Some((BAKE_DEPTH, true))),
+            (false, false),
+            Some(variant),
+        )
+        .map(|(_, made)| made)
+}
+
 fn draw_layer(
-    device: &wgpu::Device,
-    encoder: &mut wgpu::CommandEncoder,
-    pipelines: &mut ImpostorPipelines,
+    (device, encoder): (&wgpu::Device, &mut wgpu::CommandEncoder),
+    compiler: &mut Compiler<'_>,
     targets: &BakeTargets,
     source: &BakeSource<'_>,
     shape: AtlasShape,
@@ -92,53 +175,37 @@ fn draw_layer(
             )
             .map(|(draw, extended, group, look)| (draw, extended, group, BakeKey { look, extended }))
             .collect();
-    if pipelines
-        .bake_pipeline_layout
-        .as_ref()
-        .is_none_or(|(label, _)| *label != source.layout.label)
-    {
-        pipelines.bake_pipeline_layout = Some((
-            source.layout.label,
-            crate::pipelines::layout_of(device, &source.layout),
-        ));
-        pipelines.bake_pipelines.clear();
-        pipelines.shade_pipelines.clear();
-    }
-    let Some((_, layout)) = &pipelines.bake_pipeline_layout else {
+    let Some(pipelines) = compiler
+        .part::<ImpostorBakes>()
+        .map(|bakes| bakes.pipelines)
+    else {
         return;
     };
+    let mut made: Vec<BakeMade> = Vec::new();
     for &(_, _, _, key) in &draws {
-        pipelines
-            .bake_pipelines
-            .entry(key)
-            .or_insert_with(|| bake_pipeline(device, layout, key, false));
-        pipelines
-            .shade_pipelines
-            .entry(key)
-            .or_insert_with(|| bake_pipeline(device, layout, key, true));
+        if made.iter().any(|(known, _, _)| *known == key) {
+            continue;
+        }
+        let shade = bake_pipeline(compiler, &pipelines, key, true);
+        let bake = bake_pipeline(compiler, &pipelines, key, false);
+        if let (Some(shade), Some(bake)) = (shade, bake) {
+            made.push((key, shade, bake));
+        }
     }
-    let no_shade = pipelines
-        .no_shade
-        .get_or_insert_with(|| {
-            bake_texture(
-                device,
-                1,
-                1,
-                BAKE_DEPTH,
-                wgpu::TextureUsages::TEXTURE_BINDING,
-            )
-            .create_view(&Default::default())
-        })
-        .clone();
-    let drawn = (&*pipelines, draws.as_slice());
+    let layouts = [true, false]
+        .map(|shade| compiler.group_layout(pipelines[slot(false, shade, false)], BAKE_GROUP));
+    let [Some(shade_layout), Some(bake_layout)] = layouts else {
+        return;
+    };
+    let drawn = (made.as_slice(), draws.as_slice());
     let frames = shape.frames;
     {
         let group = bake_group(
             device,
-            drawn.0,
+            &shade_layout,
             (source, shape),
             [0, 0, frames, frames],
-            &no_shade,
+            None,
         );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("engine/impostor-shade"),
@@ -155,7 +222,7 @@ fn draw_layer(
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_bind_group(2, &group, &[]);
+        pass.set_bind_group(BAKE_GROUP, &group, &[]);
         draw_frames(&mut pass, drawn, true, frames * frames);
     }
     let side = tile_frames(shape) as usize;
@@ -163,7 +230,7 @@ fn draw_layer(
         for column in (0..frames).step_by(side) {
             draw_tile(
                 (device, &mut *encoder),
-                drawn,
+                (drawn, &bake_layout),
                 targets,
                 (source, shape),
                 (column, row),
@@ -174,20 +241,15 @@ fn draw_layer(
 
 fn draw_frames(
     pass: &mut wgpu::RenderPass<'_>,
-    (pipelines, draws): (&ImpostorPipelines, &[BakeDraw<'_>]),
+    (made, draws): (&[BakeMade], &[BakeDraw<'_>]),
     shade: bool,
     frames: u32,
 ) {
-    let kept = if shade {
-        &pipelines.shade_pipelines
-    } else {
-        &pipelines.bake_pipelines
-    };
     for &(mesh, extended, group, key) in draws {
-        let Some(pipeline) = kept.get(&key) else {
+        let Some((_, shading, baking)) = made.iter().find(|(known, _, _)| *known == key) else {
             continue;
         };
-        pass.set_pipeline(pipeline);
+        pass.set_pipeline(if shade { shading } else { baking });
         pass.set_bind_group(1, group, &[]);
         pass.set_vertex_buffer(0, mesh.vertices.slice(..));
         if extended && let Some(extras) = mesh.extras {
@@ -204,7 +266,7 @@ fn draw_frames(
 
 fn draw_tile(
     (device, encoder): (&wgpu::Device, &mut wgpu::CommandEncoder),
-    drawn: (&ImpostorPipelines, &[BakeDraw<'_>]),
+    (drawn, layout): ((&[BakeMade], &[BakeDraw<'_>]), &wgpu::BindGroupLayout),
     targets: &BakeTargets,
     (source, shape): (&BakeSource<'_>, AtlasShape),
     (column, row): (u32, u32),
@@ -216,10 +278,10 @@ fn draw_tile(
     );
     let group = bake_group(
         device,
-        drawn.0,
+        layout,
         (source, shape),
         [column, row, columns, side],
-        &targets.shade,
+        Some(&targets.shade),
     );
     {
         let attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> = targets
@@ -253,7 +315,7 @@ fn draw_tile(
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_bind_group(2, &group, &[]);
+        pass.set_bind_group(BAKE_GROUP, &group, &[]);
         draw_frames(&mut pass, drawn, false, columns * rows);
     }
     for (resolved, layer) in targets.resolved.iter().zip(&targets.layer) {
@@ -285,10 +347,10 @@ fn draw_tile(
 
 fn bake_group(
     device: &wgpu::Device,
-    pipelines: &ImpostorPipelines,
+    layout: &wgpu::BindGroupLayout,
     (source, shape): (&BakeSource<'_>, AtlasShape),
     tile: [u32; 4],
-    shade: &wgpu::TextureView,
+    shade: Option<&wgpu::TextureView>,
 ) -> wgpu::BindGroup {
     let baking = ImpostorRecord::new(
         source.bounds.0,
@@ -309,16 +371,15 @@ fn bake_group(
             usage: wgpu::BufferUsages::UNIFORM,
         },
     );
-    crate::pipelines::group(
-        device,
-        "engine/impostor-bake-group",
-        &IMPOSTOR_BAKE,
-        &pipelines.bake_layout,
-        &[
-            ("impostor_bake", uniform.as_entire_binding()),
-            ("impostor_shade", crate::pipelines::view(shade)),
-        ],
-    )
+    let mut entries = vec![wgpu::BindGroupEntry {
+        binding: 0,
+        resource: uniform.as_entire_binding(),
+    }];
+    entries.extend(shade.map(|shade| wgpu::BindGroupEntry {
+        binding: 1,
+        resource: crate::pipelines::view(shade),
+    }));
+    crate::pipelines::bind_group(device, "engine/impostor-bake-group", layout, &entries)
 }
 
 fn bake_texture(
@@ -419,58 +480,4 @@ fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
         layer,
         _textures: textures,
     }
-}
-
-fn bake_pipeline(
-    device: &wgpu::Device,
-    layout: &wgpu::PipelineLayout,
-    key: BakeKey,
-    shade: bool,
-) -> wgpu::RenderPipeline {
-    let constants = crate::surface::DrawState {
-        alpha_test: key.look.masked,
-        ..crate::surface::DrawState::PLAIN
-    }
-    .constants();
-    let extended = key.extended;
-    let (vertex, fragment) = bake_entries(extended, shade);
-    let mut buffers = vec![crate::mesh_arena::vertex_layout()];
-    if extended {
-        buffers.push(crate::mesh_arena::extra_layout());
-    }
-    let targets = if shade {
-        Vec::new()
-    } else {
-        FORMATS
-            .map(|format| Some(wgpu::ColorTargetState::from(format)))
-            .to_vec()
-    };
-    crate::pipelines::sampled(
-        device,
-        &crate::pipelines::Geometry {
-            label: "engine/impostor-bake",
-            layout,
-            vertex,
-            vertex_constants: &[],
-            buffers: &buffers,
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: (!key.look.two_sided).then_some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth: Some(wgpu::DepthStencilState {
-                format: BAKE_DEPTH,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Greater),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            fragment: Some(crate::pipelines::Fragment {
-                entry: fragment,
-                constants: &constants,
-                targets: &targets,
-            }),
-        },
-        if shade { 1 } else { BAKE_SAMPLES },
-    )
 }

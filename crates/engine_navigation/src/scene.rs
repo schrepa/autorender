@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use crate::agents::SceneNavAgent;
 use crate::dev::schema_of;
 
-pub const INVALID_NAV_AGENT: ErrorCode = ErrorCode::Brick("invalid_nav_agent");
+pub const INVALID_NAV_AGENT: ErrorCode = ErrorCode::brick("invalid_nav_agent");
 
 pub(crate) fn nav_agent() -> ComponentKindOf<NavAgent> {
     ComponentKind::of::<NavAgent>("nav_agent")
