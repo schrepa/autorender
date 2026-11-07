@@ -769,14 +769,6 @@ impl PrimaryView {
         self.facts.and_then(|facts| facts.jitter)
     }
 
-    pub fn capture(&self) -> bool {
-        self.cameras.facts().capture
-    }
-
-    pub fn debug(&self) -> bool {
-        self.cameras.facts().debug
-    }
-
     pub fn scene(&self) -> u64 {
         self.cameras.scene()
     }

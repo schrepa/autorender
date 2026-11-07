@@ -130,14 +130,11 @@ impl Run {
         }
     }
 
-    fn layer_set(&self, layer: engine_core::AttachPoint) -> Arc<[SetFormat]> {
-        self.planning.layer_sets
-            .iter()
-            .find(|(known, _)| *known == layer)
-            .map_or_else(
-                || Arc::from(set_formats(&self.machine.outputs, layer)),
-                |(_, set)| Arc::clone(set),
-            )
+    fn pass_set(&self, pass: u32) -> Arc<[SetFormat]> {
+        self.planning.pass_sets.get(pass as usize).map_or_else(
+            || Arc::from(Vec::new()),
+            Arc::clone,
+        )
     }
 
     #[expect(
@@ -167,6 +164,7 @@ impl Run {
             bool,
         )> = None;
         let mut main = false;
+        let mut plain = false;
         let ops_of = |id: Option<crate::graph::ResourceId>| {
             planned
                 .colors
@@ -192,10 +190,16 @@ impl Run {
             };
         let key = target_key;
         let kept = self.canvas.carried;
+        let clear = self.canvas.clear;
         let carried = move |target: Target, ops: Ops| {
             if kept && matches!(target, Target::Scene | Target::Depth) {
                 Ops {
                     load: Load::Load,
+                    ..ops
+                }
+            } else if target == Target::Scene && matches!(ops.load, Load::Clear(Clear::Color(_))) {
+                Ops {
+                    load: Load::Clear(Clear::Color(clear)),
                     ..ops
                 }
             } else {
@@ -206,46 +210,28 @@ impl Run {
         let lone = crate::shared::draws_canvas(&pass) && !composites && self.canvas.rect.is_some();
         match attach {
             AttachRaw::Declared => {
-                if let Some(layer) = layer.filter(|_| !lone) {
-                    if !own_colors_only(&pass) {
-                        main = !self.debug;
-                        if self.debug {
-                            for index in 0..self.set().debug_targets.len() {
-                                let target = Target::Debug(index as u32);
-                                let ops = ops_of(self.machine.ids.target(target)).unwrap_or(Ops {
+                if layer.is_some() && !lone {
+                    let set = self.pass_set(self.pass);
+                    main = lit_set(&set);
+                    plain = !set.is_empty() && !main;
+                    for &(target, format, _, written) in set.iter() {
+                        let id = self.machine.ids.target(target);
+                        match ops_of(id).filter(|_| written) {
+                            Some(ops) => colors.push((
+                                key(target),
+                                self.view_of(target).cloned(),
+                                format,
+                                carried(target, ops),
+                            )),
+                            None => colors.push((
+                                key(target),
+                                None,
+                                format,
+                                Ops {
                                     load: Load::Load,
-                                    store: true,
-                                });
-                                let made = &self.set().debug_targets[index];
-                                colors.push((
-                                    key(target),
-                                    Some(made.view.clone()),
-                                    made.texture.format(),
-                                    ops,
-                                ));
-                            }
-                        } else {
-                            let set = self.layer_set(layer);
-                            for &(target, format, _, written) in set.iter() {
-                                let id = self.machine.ids.target(target);
-                                match ops_of(id).filter(|_| written) {
-                                    Some(ops) => colors.push((
-                                        key(target),
-                                        self.view_of(target).cloned(),
-                                        format,
-                                        carried(target, ops),
-                                    )),
-                                    None => colors.push((
-                                        key(target),
-                                        None,
-                                        format,
-                                        Ops {
-                                            load: Load::Load,
-                                            store: false,
-                                        },
-                                    )),
-                                }
-                            }
+                                    store: false,
+                                },
+                            )),
                         }
                     }
                     if let (Some(id), Some(made)) = (
@@ -458,7 +444,7 @@ impl Run {
             depth
                 .as_ref()
                 .map(|(_, _, format, _, view)| (*format, *view)),
-            (self.debug && layer.is_some(), main),
+            (plain, main),
         );
         let Some(encoder) = self.recording.encoder() else {
             return false;
@@ -655,7 +641,7 @@ impl Run {
 fn pass_layout(
     colors: &[(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)],
     depth: Option<(wgpu::TextureFormat, bool)>,
-    (debug, main): (bool, bool),
+    (plain, main): (bool, bool),
 ) -> PassLayout {
     let mut formats = [None; MOST_COLORS];
     for (format, (_, view, known, _)) in formats.iter_mut().zip(colors) {
@@ -665,7 +651,7 @@ fn pass_layout(
         formats,
         count: colors.len().min(MOST_COLORS),
         depth,
-        debug,
+        plain,
         main,
     }
 }

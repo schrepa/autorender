@@ -7,9 +7,9 @@ use serde_json::{Value, json};
 
 use crate::{
     AssetLibrary, Camera, Clear, ColorSpace, DRAWN_UNBOUNDED, Detail, Drawn, DrawnPoses, DrawnTable, Error,
-    ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Jitter, Layers, Mobility, Operation,
-    OwnedView, OwnedViews, PassBit, PassMask, PassViews, PrimaryView, ScenePasses, Target, View,
-    ViewCut, ViewHistory, ViewLayer, take_asks,
+    ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Interest, Jitter, Layers, List,
+    Mobility, Operation, OwnedView, OwnedViews, PassBit, PassMask, PassViews, PrimaryView, Requests,
+    ScenePasses, Target, View, ViewCut, ViewHistory, ViewJitter, ViewLayer, take_asks,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -33,6 +33,7 @@ pub struct ViewFacts {
     pub render: UVec2,
     pub layers: Layers,
     pub clear: Clear,
+    pub clear_color: [f32; 4],
     pub order: i32,
     pub lens: Camera,
     pub eye: Vec3,
@@ -40,9 +41,8 @@ pub struct ViewFacts {
     pub view_projection: Mat4,
     pub previous_view_projection: Mat4,
     pub history: ViewHistory,
-    pub debug: bool,
     pub jitter: Option<Vec2>,
-    pub capture: bool,
+    pub noise: f32,
     pub frame: FrameId,
 }
 
@@ -117,12 +117,13 @@ impl ViewFacts {
             "render": self.render.to_array(),
             "layers": self.layers.0,
             "clear": self.clear,
+            "clear_color": self.clear_color,
             "order": self.order,
             "eye": self.eye.to_array(),
             "forward": self.forward.to_array(),
             "history": self.history,
-            "debug": self.debug,
             "jitter": self.jitter.map(|jitter| jitter.to_array()),
+            "noise": self.noise,
         })
     }
 }
@@ -141,6 +142,7 @@ pub struct DrawnView {
     pub layers: Layers,
     pub target: ViewLayer,
     pub clear: Clear,
+    pub capture: bool,
     pub passes: PassMask,
     pub draws: bool,
 }
@@ -153,7 +155,6 @@ struct Key {
     camera: Entity,
     cut: Option<u64>,
     scene: u64,
-    debug: bool,
     jittered: bool,
 }
 
@@ -281,7 +282,10 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
         world.get_resource::<DrawnPoses>(),
     );
     let assets = world.get_resource::<AssetLibrary>();
-    let offset = world.get_resource::<Jitter>().and_then(|jitter| jitter.offset);
+    let given: Vec<ViewJitter> = world
+        .get_resource::<Jitter>()
+        .map(|jitter| jitter.views.clone())
+        .unwrap_or_default();
     let mut listed = Vec::with_capacity(found.len());
     let mut refused = Vec::new();
     let mut kept = Vec::with_capacity(found.len());
@@ -318,11 +322,11 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
             refused.push((entity, refuse(entity, "camera", ErrorCode::InvalidCamera)));
             continue;
         }
-        let main = listed.is_empty() && view.target.surface();
-        let debug = main && facts.debug;
+        let offset = given.iter().find(|given| given.view == entity);
         let jitter = offset
-            .filter(|_| view.target.surface() && !debug)
-            .map(Vec2::from);
+            .filter(|_| !view.steady)
+            .map(|given| Vec2::from(given.offset));
+        let noise = offset.map_or(0.0, |given| given.noise);
         let cut = globals
             .zip(poses)
             .and_then(|(globals, poses)| poses.fresh_at(globals, view.camera));
@@ -333,7 +337,6 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
             camera: view.camera,
             cut,
             scene,
-            debug,
             jittered: jitter.is_some(),
         };
         let before = held.iter().find(|held| held.view == entity);
@@ -362,6 +365,7 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
             render,
             layers: view.layers,
             clear: view.clear,
+            clear_color: view.clear_color,
             order: view.order,
             lens,
             eye,
@@ -369,9 +373,8 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
             view_projection,
             previous_view_projection: previous,
             history,
-            debug,
             jitter,
-            capture: main && facts.capture,
+            noise,
             frame,
         });
     }
@@ -439,6 +442,7 @@ pub(crate) fn settle_owned(world: &mut World) {
                 rect: facts.pixels,
             },
             clear: facts.clear,
+            capture: false,
             passes: every,
             draws: true,
         })
@@ -489,8 +493,30 @@ fn owned_view(
         layers: Layers::ALL,
         target: view.target,
         clear: view.clear,
+        capture: view.capture,
         passes: view.passes.unwrap_or(pass),
         draws: view.draws && placed.is_some(),
+    }
+}
+
+#[derive(Resource, Debug, Default)]
+pub struct WholeFrames {
+    requests: Requests<&'static str, ()>,
+}
+
+impl List for WholeFrames {
+    const NAME: &'static str = "whole_frames";
+    type Member = &'static str;
+}
+
+impl WholeFrames {
+    pub fn ask(&mut self, by: &'static str) -> Interest<&'static str> {
+        self.requests.ask(by)
+    }
+
+    pub fn asked(&mut self) -> bool {
+        self.requests.settle(0.0);
+        self.requests.asked().next().is_some()
     }
 }
 

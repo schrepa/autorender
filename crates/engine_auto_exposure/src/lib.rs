@@ -15,8 +15,8 @@ use std::mem::offset_of;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, Brick, Bricks, GpuStruct, Pass, PassName, PassViews, PrimaryView, Readable,
-    Readback, Schedule, SlotSet, Source, Writes, never,
+    AttachPoint, Brick, Bricks, GpuStruct, Pass, PassName, PassViews, Readable, Readback,
+    Schedule, SlotSet, Source, Writes, never,
 };
 use engine_places_rendering::exposure::Exposure;
 use engine_render::RenderBricks;
@@ -90,17 +90,11 @@ fn hundredths(stops: f32) -> i32 {
     (stops * 100.0).round() as i32
 }
 
-fn exposure_stats(
-    feedback: Res<ExposureFeedback>,
-    view: Res<PrimaryView>,
-    mut stats: ResMut<ExposureStats>,
-) {
-    let active = !view.debug();
-    let [stops, metered, viewed, wanted, moving] =
-        feedback.read.filter(|_| active).unwrap_or_default();
+fn exposure_stats(feedback: Res<ExposureFeedback>, mut stats: ResMut<ExposureStats>) {
+    let [stops, metered, viewed, wanted, moving] = feedback.read.unwrap_or_default();
     let (stops, wanted) = (hundredths(stops), hundredths(wanted));
     stats.set_if_neq(ExposureStats {
-        active,
+        active: true,
         stops,
         metered: hundredths(metered),
         view: hundredths(viewed),

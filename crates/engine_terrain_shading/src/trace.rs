@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{DeviceLimits, Error, Joined, PrimaryView};
+use engine_core::{DeviceLimits, Error, Joined};
 use engine_places_rendering::reflections::TraceReaders;
 use engine_places_world::ground::{Cover, GroundTiles, PALETTE_ENTRIES, PlacedTiles, TerrainTiles};
 use engine_render::{
@@ -23,7 +23,6 @@ pub(crate) struct TraceGpu {
 
 impl GpuPart for TraceGpu {
     type Reads = (
-        Res<'static, PrimaryView>,
         Res<'static, DeviceLimits>,
         Res<'static, TerrainTiles>,
         Res<'static, GroundTiles>,
@@ -65,11 +64,11 @@ impl GpuPart for TraceGpu {
 
     fn prepare(
         &mut self,
-        (view, limits, tiles, ground, placed, cover, readers): SystemParamItem<'_, '_, Self::Reads>,
+        (limits, tiles, ground, placed, cover, readers): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.placed_changed |= placed.is_changed();
-        if view.debug() || readers.iter().next().is_none() {
+        if readers.iter().next().is_none() {
             return;
         }
         let placed_changed = std::mem::take(&mut self.placed_changed);

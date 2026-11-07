@@ -99,13 +99,3 @@ fn derived(point: SurfacePoint) -> SurfacePoint {
 fn unlit(point: SurfacePoint) -> Shaded {
     return flat(vec4<f32>(point.base_color + point.emissive, point.opacity));
 }
-
-fn world_plane(p: vec3<f32>, axis: u32) -> vec2<f32> {
-    if axis == 0u {
-        return vec2<f32>(p.z, -p.y);
-    }
-    if axis == 2u {
-        return vec2<f32>(p.x, -p.y);
-    }
-    return p.xz;
-}

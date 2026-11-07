@@ -176,8 +176,12 @@ pub struct ViewForm {
     pub layers: Layers,
     #[serde(default)]
     pub clear: Clear,
+    #[serde(default = "black")]
+    pub clear_color: [f32; 4],
     #[serde(default)]
     pub order: i32,
+    #[serde(default)]
+    pub steady: bool,
     #[serde(skip)]
     found: Option<Entity>,
 }
@@ -186,7 +190,17 @@ fn every_layer() -> Layers {
     Layers::ALL
 }
 
+fn black() -> [f32; 4] {
+    View::BLACK
+}
+
 fn view_checked(form: &ViewForm, path: &str) -> Result<(), Error> {
+    if let Some(at) = form.clear_color.iter().position(|value| !value.is_finite()) {
+        return Err(
+            Error::new(ErrorCode::InvalidValue, format!("{path}.clear_color[{at}]"))
+                .got(form.clear_color[at]),
+        );
+    }
     form.viewport.check(&format!("{path}.viewport"))
 }
 
@@ -217,7 +231,9 @@ impl SceneForm for ViewForm {
             viewport: self.viewport,
             layers: self.layers,
             clear: self.clear,
+            clear_color: self.clear_color,
             order: self.order,
+            steady: self.steady,
         });
         Ok(())
     }
@@ -239,7 +255,9 @@ impl SceneForm for ViewForm {
             viewport: view.viewport,
             layers: view.layers,
             clear: view.clear,
+            clear_color: view.clear_color,
             order: view.order,
+            steady: view.steady,
             found: None,
         })
     }

@@ -140,35 +140,22 @@ fn color_targets(
     desc: &RenderDecl,
     formats: &[Option<wgpu::TextureFormat>],
     written: Option<&[u32]>,
-    (debug, main): (bool, bool),
+    main: bool,
 ) -> Vec<Option<wgpu::ColorTargetState>> {
-    let add = wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    };
     formats
         .iter()
         .enumerate()
         .map(|(location, format)| {
             let format = (*format)?;
-            let (blend, mask) = if debug {
-                let blend = (location == DEBUG_COUNT).then_some(wgpu::BlendState {
-                    color: add,
-                    alpha: add,
-                });
-                (blend, wgpu::ColorWrites::ALL)
-            } else {
-                match &desc.targets {
-                    Some(targets) => targets
-                        .get(location)
-                        .copied()
-                        .unwrap_or((None, wgpu::ColorWrites::empty())),
-                    None => (
-                        (!main || location == 0).then_some(desc.blend).flatten(),
-                        desc.writes,
-                    ),
-                }
+            let (blend, mask) = match &desc.targets {
+                Some(targets) => targets
+                    .get(location)
+                    .copied()
+                    .unwrap_or((None, wgpu::ColorWrites::empty())),
+                None => (
+                    (!main || location == 0).then_some(desc.blend).flatten(),
+                    desc.writes,
+                ),
             };
             let outputs = written.is_none_or(|written| written.contains(&(location as u32)));
             Some(wgpu::ColorTargetState {
@@ -339,7 +326,7 @@ impl Run {
         let (key, made) = self.compile(
             pipeline,
             (layout.formats(), layout.depth),
-            (layout.debug, layout.main),
+            (layout.plain, layout.main),
             variant,
         )?;
         self.tallies.rebuilt.compiles += 1;
@@ -476,14 +463,14 @@ impl Compiler<'_> {
             &[Option<wgpu::TextureFormat>],
             Option<(wgpu::TextureFormat, bool)>,
         ),
-        (debug, main): (bool, bool),
+        (plain, main): (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
     ) -> Option<(u64, wgpu::RenderPipeline)> {
         let built = self.machine.pipelines.get(pipeline as usize)?;
         let Program::Render(desc) = &built.decl.program else {
             return None;
         };
-        if built.skipped || (debug && desc.debug.is_none()) {
+        if built.skipped || (desc.fragment.is_none() && formats.iter().any(Option::is_some)) {
             return None;
         }
         let switches = stage_switches(self.switches, &built.stages);
@@ -496,12 +483,12 @@ impl Compiler<'_> {
             })
         });
         let specialized = used.contains(&true);
-        let styled = !debug && !desc.writes.is_empty();
+        let styled = !plain && !desc.writes.is_empty();
         let bits = variant.and_then(|variant| variant.keyed(used, styled));
         let raster = raster_of(self.machine, pipeline);
         let material = material_constants(bits.filter(|_| specialized), raster.clamp_near);
         let mut hasher = DefaultHasher::new();
-        (formats, depth, debug, main, &switches, bits).hash(&mut hasher);
+        (formats, depth, plain, main, &switches, bits).hash(&mut hasher);
         (raster.bias, raster.slope.to_bits(), raster.clamp_near, raster.cull).hash(&mut hasher);
         let key = hasher.finish();
         if let Some((_, made)) = built.made.iter().find(|(known, _)| *known == key) {
@@ -520,12 +507,8 @@ impl Compiler<'_> {
             constants: named.get(stage).map_or(&[][..], Vec::as_slice),
             zero_initialize_workgroup_memory: true,
         };
-        let fragment_at = if debug {
-            1 + usize::from(desc.fragment.is_some())
-        } else {
-            1
-        };
-        let fragment_entry = if debug { desc.debug } else { desc.fragment };
+        let fragment_at = 1;
+        let fragment_entry = desc.fragment;
         let layouts = vertex_layouts(&desc.vertices);
         let styling = bits.filter(|_| styled);
         let depth_stencil = depth_state(depth, desc.depth, styling, raster);
@@ -542,7 +525,7 @@ impl Compiler<'_> {
                 )
             })
             .map(|alpha| (alpha, crate::machine::cover_location(&self.machine.outputs)));
-        let mut targets = color_targets(desc, formats, written.as_deref(), (debug, main));
+        let mut targets = color_targets(desc, formats, written.as_deref(), main);
         if let Some((alpha, cover)) = blended {
             blend_targets(&mut targets, alpha, cover.filter(|_| main));
         }
@@ -590,7 +573,7 @@ impl Compiler<'_> {
             program,
             formats: formats.to_vec(),
             depth,
-            debug,
+            plain,
             main,
             variant: bits,
         });
@@ -605,20 +588,20 @@ impl Run {
     ) -> (
         Vec<Option<wgpu::TextureFormat>>,
         Option<(wgpu::TextureFormat, bool)>,
-        bool,
+        (bool, bool),
     ) {
         let Some(pass) = self.machine.declared.passes.get(index as usize) else {
-            return (Vec::new(), None, false);
+            return (Vec::new(), None, (false, false));
         };
         let mut formats: Vec<Option<wgpu::TextureFormat>> = Vec::new();
         let mut depth = None;
-        let mut main = false;
-        if let Some(layer) = pass_layer(pass) {
-            if !own_colors_only(pass) {
-                main = true;
-                for (_, format, _, written) in set_formats(&self.machine.outputs, layer) {
-                    formats.push(written.then_some(format));
-                }
+        let mut shown = (false, false);
+        if pass_layer(pass).is_some() {
+            let set = pass_set(&self.machine.outputs, pass);
+            let main = lit_set(&set);
+            shown = (!set.is_empty() && !main, main);
+            for (_, format, _, written) in set {
+                formats.push(written.then_some(format));
             }
             depth = Some((DEPTH_FORMAT, true));
         }
@@ -647,7 +630,7 @@ impl Run {
                 .get(texture as usize)
                 .map(|texture| (texture.format, false));
         }
-        (formats, depth, main)
+        (formats, depth, shown)
     }
 
     fn part_reached(&self, part: u32) -> bool {
@@ -691,7 +674,7 @@ impl Run {
             sides: [side(true), side(false)],
         };
         self.at_reached_switches(|run| {
-            run.warm(false);
+            run.warm();
             run.compile_listed();
         });
     }
@@ -724,7 +707,7 @@ impl Run {
                 let _ = self.compile(
                     pipeline as u32,
                     (&key.formats, key.depth),
-                    (key.debug, key.main),
+                    (key.plain, key.main),
                     specialized(key),
                 );
             }
@@ -742,7 +725,7 @@ impl Run {
         }
     }
 
-    pub(crate) fn warm(&mut self, debug: bool) {
+    pub(crate) fn warm(&mut self) {
         for pipeline in 0..self.machine.pipelines.len() {
             if !self.part_reached(self.machine.pipelines[pipeline].decl.part) {
                 continue;
@@ -758,29 +741,17 @@ impl Run {
                 let Some(declared) = self.machine.declared.passes.get(pass as usize) else {
                     continue;
                 };
-                let (lazy, shares) = (declared.name == crate::shared::DEBUG_VIEW, shared(declared));
-                if (lazy && !debug) || !self.part_reached(declared.part) {
+                if !self.part_reached(declared.part) {
                     continue;
                 }
-                let (formats, depth, main) = self.pass_formats(pass);
-                if self.writes_fit(pipeline, &formats, false) {
-                    let _ = self.compile(pipeline as u32, (&formats, depth), (false, main), None);
+                let (formats, depth, shown) = self.pass_formats(pass);
+                if self.writes_fit(pipeline, &formats) {
+                    let _ = self.compile(pipeline as u32, (&formats, depth), shown, None);
                 }
                 for layered in self.layered_formats(pipeline, pass, formats.len()) {
-                    if self.writes_fit(pipeline, &layered, false) {
-                        let _ =
-                            self.compile(pipeline as u32, (&layered, None), (false, main), None);
+                    if self.writes_fit(pipeline, &layered) {
+                        let _ = self.compile(pipeline as u32, (&layered, None), shown, None);
                     }
-                }
-                let shown: Vec<Option<wgpu::TextureFormat>> =
-                    DEBUG_FORMATS.iter().copied().map(Some).collect();
-                if debug && shares && self.writes_fit(pipeline, &shown, true) {
-                    let _ = self.compile(
-                        pipeline as u32,
-                        (&shown, Some((DEPTH_FORMAT, true))),
-                        (true, false),
-                        None,
-                    );
                 }
             }
         }
@@ -790,7 +761,6 @@ impl Run {
         &self,
         pipeline: usize,
         formats: &[Option<wgpu::TextureFormat>],
-        debug: bool,
     ) -> bool {
         let Some(built) = self.machine.pipelines.get(pipeline) else {
             return false;
@@ -798,15 +768,10 @@ impl Run {
         let Program::Render(desc) = &built.decl.program else {
             return true;
         };
-        let (at, entry) = if debug {
-            (1 + usize::from(desc.fragment.is_some()), desc.debug)
-        } else {
-            (1, desc.fragment)
-        };
         let Some(kinds) = built
             .stages
-            .get(at)
-            .zip(entry)
+            .get(1)
+            .zip(desc.fragment)
             .and_then(|(stage, entry)| fragment_kinds(&stage.composed.text, entry.name()))
         else {
             return true;

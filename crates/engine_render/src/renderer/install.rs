@@ -22,6 +22,7 @@ struct Listed {
 pub(crate) struct Built {
     pub(crate) run_parts: Vec<Option<Box<dyn Installed>>>,
     pub(crate) gates: Vec<Option<GateId>>,
+    pub(crate) pass_gates: Vec<(u32, GateId)>,
     pub(crate) reinstalls: Vec<Reinstall>,
     pub(crate) draws: Vec<KindMember>,
     pub(crate) machine: Machine,
@@ -504,6 +505,26 @@ fn pieces(
     )
 }
 
+fn pass_gates(registry: &Registry, passes: &[crate::install::PassDecl]) -> Vec<(u32, GateId)> {
+    let scoped: Vec<(&'static str, GateId)> = registry
+        .iter()
+        .flat_map(|(brick, record)| {
+            record
+                .render_entries::<crate::registration::PassScope>()
+                .filter_map(move |entry| Some((entry.name, registry.gate(brick, entry.scope)?)))
+        })
+        .collect();
+    passes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, pass)| {
+            let scene = pass.scene.filter(|scene| scene.core)?;
+            let &(_, gate) = scoped.iter().find(|(name, _)| *name == scene.name)?;
+            Some((index as u32, gate))
+        })
+        .collect()
+}
+
 fn names_twice(registry: &Registry, world: &World, problems: &mut Vec<Error>) {
     let mut seen: Vec<&'static str> = Vec::new();
     for (_, record) in registry.iter() {
@@ -789,10 +810,12 @@ fn install_with(
         })
         .collect();
     problems.extend(machine.linker.unused(&composed, &roots));
+    let pass_gates = pass_gates(registry, &machine.declared.passes);
     if problems.is_empty() {
         Ok(Built {
             run_parts: parts,
             gates,
+            pass_gates,
             reinstalls,
             draws: entries,
             machine,
@@ -874,6 +897,7 @@ impl Renderer {
             adopt(&mut run, kept, world);
         }
         run.installs.gates = installed.gates;
+        run.installs.pass_gates = installed.pass_gates;
         run.installs.reinstalls = installed.reinstalls;
         run.installs.draw_entries = installed.draws;
         run.take_states(world.get_resource::<BrickStates>());
@@ -938,7 +962,7 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     );
     run.installs.gates = installed.gates;
     run.pipelines.switches = switches_of(&run.machine, world);
-    run.warm(true);
+    run.warm();
     run.make_all_shaders();
     match crate::platform::ready(scope.pop()) {
         Some(Some(error)) => Err(vec![failed_with("$.pipelines", error)]),

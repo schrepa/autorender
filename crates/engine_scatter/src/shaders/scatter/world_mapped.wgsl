@@ -4,13 +4,40 @@ import package::engine::materials::{MAP_BASE_COLOR, MAP_METALLIC_ROUGHNESS, MAP_
     map_present, map_uv, material_value, metallic_roughness_map, metallic_roughness_sampler,
     normal_map, normal_sampler, normal_scale, occlusion_map, occlusion_sampler,
     occlusion_strength};
-import package::engine::noise::variety_noise;
-import package::engine::shading::{SurfaceInput, SurfacePoint, world_plane};
+import package::engine::shading::{SurfaceInput, SurfacePoint};
 import package::engine::view::{material_detail, stable_normalize};
 import package::scatter::grounding::{grounded_color, grounded_metalness, grounded_normal,
     grounded_roughness};
 
 const NORMAL_ROUNDING: f32 = 1.7320508 / 255.0;
+
+fn variety_hash(cell: vec2<i32>) -> f32 {
+    var h = (u32(cell.x) * 0x8da6b343u) ^ (u32(cell.y) * 0xd8163841u);
+    h = (h ^ (h >> 16u)) * 0x7feb352du;
+    h = (h ^ (h >> 15u)) * 0x846ca68bu;
+    return f32((h ^ (h >> 16u)) >> 8u) * (1.0 / 16777216.0);
+}
+
+fn variety_noise(p: vec2<f32>) -> f32 {
+    let cell = vec2<i32>(floor(p));
+    let f = fract(p);
+    let s = f * f * (3.0 - 2.0 * f);
+    let a = variety_hash(cell);
+    let b = variety_hash(cell + vec2<i32>(1, 0));
+    let c = variety_hash(cell + vec2<i32>(0, 1));
+    let d = variety_hash(cell + vec2<i32>(1, 1));
+    return mix(mix(a, b, s.x), mix(c, d, s.x), s.y);
+}
+
+fn world_plane(p: vec3<f32>, axis: u32) -> vec2<f32> {
+    if axis == 0u {
+        return vec2<f32>(p.z, -p.y);
+    }
+    if axis == 2u {
+        return vec2<f32>(p.x, -p.y);
+    }
+    return p.xz;
+}
 
 struct WorldLook {
     base: vec4<f32>,

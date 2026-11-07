@@ -102,7 +102,6 @@ impl Environment {
         let faces = |fragment| RenderPipeline {
             vertex: maps_shaders::VS_ENVIRONMENT,
             fragment: Some(fragment),
-            debug: None,
             vertices: &[],
             primitive: wgpu::PrimitiveState::default(),
             depth: DepthUse::None,

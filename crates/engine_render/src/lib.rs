@@ -178,7 +178,12 @@ impl RenderBricks for Bricks<'_> {
             .render_entries::<PassEntry>()
             .any(|entry| entry.name == N::NAME)
         {
+            let scope = record.scope();
             record.render.push(Box::new(PassEntry::of::<N>()));
+            record.render.push(Box::new(registration::PassScope {
+                name: N::NAME,
+                scope,
+            }));
         }
         self
     }
@@ -495,7 +500,6 @@ pub enum VertexLayout {
 pub struct RenderPipeline<'a> {
     pub vertex: Entry,
     pub fragment: Option<Entry>,
-    pub debug: Option<Entry>,
     pub vertices: &'a [VertexLayout],
     pub primitive: wgpu::PrimitiveState,
     pub depth: DepthUse,
@@ -536,11 +540,6 @@ impl SamplerDesc {
     };
 }
 
-pub const DEBUG_TARGETS: [TargetName; 3] = [
-    TargetName("debug_ids"),
-    TargetName("debug_count"),
-    TargetName("debug_words"),
-];
 
 fn target_of(name: TargetName) -> Result<install::ViewTarget, Error> {
     install::ViewTarget::of(name).ok_or_else(|| {
@@ -718,7 +717,6 @@ impl<P: GpuPart> Install<'_, P> {
         let program = install::Program::Render(install::RenderDecl {
             vertex: desc.vertex,
             fragment: desc.fragment,
-            debug: desc.debug,
             vertices: desc.vertices.to_vec(),
             primitive: desc.primitive,
             depth: desc.depth,
@@ -1442,7 +1440,10 @@ gpu_struct! {
         pub inverse_view_projection: [[f32; 4]; 4],
         pub position: [f32; 4],
         pub jitter: [f32; 4],
-        pub options: [f32; 4],
+        pub capture: u32,
+        pub pixel_angle: f32,
+        pub noise_phase: f32,
+        pub mip_bias: f32,
         pub previous: [f32; 4],
         pub region: [f32; 4],
         pub detail: [f32; 4],
@@ -1470,9 +1471,26 @@ impl Slot for Lit {
 pub struct DebugShown {
     pub owner: Option<TypeId>,
     pub local: u32,
-    pub next_debug: bool,
-    pub next_whole: bool,
 }
+
+pub const DEBUG_TARGETS: [TargetName; 3] = [
+    TargetName("debug_ids"),
+    TargetName("debug_count"),
+    TargetName("debug_words"),
+];
+
+pub const DEBUG_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
 
 impl Slot for DebugShown {
     const NAME: &'static str = "debug";

@@ -79,9 +79,6 @@ impl GpuPart for BloomGpu {
     fn prepare(&mut self, (): (), _cx: &mut Prepare<'_, Self>) {}
 
     fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
-        if view.debug {
-            return;
-        }
         let display = view.size();
         let half = ((display.x / 2).max(1), (display.y / 2).max(1));
         self.count = BLOOM_LEVELS.min(mip_levels(half.0, half.1));
@@ -139,7 +136,6 @@ fn fullscreen(fragment: Entry, blend: Option<wgpu::BlendState>) -> RenderPipelin
     RenderPipeline {
         vertex: FULLSCREEN,
         fragment: Some(fragment),
-        debug: None,
         vertices: &[],
         primitive: wgpu::PrimitiveState::default(),
         depth: DepthUse::None,

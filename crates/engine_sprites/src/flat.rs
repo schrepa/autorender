@@ -44,7 +44,6 @@ impl Flat {
                 &RenderPipeline {
                     vertex: flat::VS_SPRITE,
                     fragment: lit.then_some(flat::FS_SPRITE),
-                    debug: None,
                     vertices: &[],
                     primitive: wgpu::PrimitiveState::default(),
                     depth: DepthUse::Write {
@@ -68,7 +67,7 @@ impl Flat {
     }
 
     pub(crate) fn prepare(&mut self, view: &PrimaryView, cx: &mut Prepare<'_, SpritesGpu>) {
-        self.drawn = !view.debug() && view.jitter().is_none();
+        self.drawn = view.jitter().is_none();
         if cx.allocate(self.checker, CHECKER_SIZE, 1) == Allocation::Kept {
             return;
         }

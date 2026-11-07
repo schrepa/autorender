@@ -30,7 +30,6 @@ pub(crate) enum Bound {
 pub(crate) enum ViewTarget {
     Scene,
     Depth,
-    Debug(u32),
 }
 
 impl ViewTarget {
@@ -38,13 +37,7 @@ impl ViewTarget {
         if name == TargetName::COLOR {
             return Some(Self::Scene);
         }
-        if name == TargetName::DEPTH {
-            return Some(Self::Depth);
-        }
-        crate::DEBUG_TARGETS
-            .iter()
-            .position(|known| *known == name)
-            .map(|index| Self::Debug(index as u32))
+        (name == TargetName::DEPTH).then_some(Self::Depth)
     }
 }
 
@@ -121,7 +114,6 @@ pub(crate) struct PassDecl {
 pub(crate) struct RenderDecl {
     pub(crate) vertex: Entry,
     pub(crate) fragment: Option<Entry>,
-    pub(crate) debug: Option<Entry>,
     pub(crate) vertices: Vec<VertexLayout>,
     pub(crate) primitive: wgpu::PrimitiveState,
     pub(crate) depth: DepthUse,
@@ -170,7 +162,6 @@ impl PipelineDecl {
         match &self.program {
             Program::Render(render) => std::iter::once(render.vertex)
                 .chain(render.fragment)
-                .chain(render.debug)
                 .collect(),
             Program::Compute(entry) => vec![*entry],
         }

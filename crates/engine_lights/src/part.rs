@@ -342,9 +342,6 @@ impl GpuPart for LightsGpu {
         >,
         cx: &mut Prepare<'_, Self>,
     ) {
-        if view.debug() {
-            return;
-        }
         let room = limits.storage_room / 16 * 16;
         if list.lights.is_empty() || room != self.room {
             self.reset(room);

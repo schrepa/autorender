@@ -6,23 +6,11 @@ impl Run {
             Copied::Texture(texture) => self.written_texture(texture).map(|made| made.texture.clone()),
             Copied::Target(view) => {
                 let target = final_target(view);
-                match target {
-                    Target::Debug(index) => self
-                        .set()
-                        .debug_targets
-                        .get(index as usize)
-                        .map(|made| made.texture.clone()),
-                    Target::Scene
-                    | Target::Depth
-                    | Target::Output(_)
-                    | Target::Canvas
-                    | Target::Copy(..) => self
-                        .set()
-                        .targets
-                        .iter()
-                        .find(|(known, _)| *known == target)
-                        .map(|(_, made)| made.texture.clone()),
-                }
+                self.set()
+                    .targets
+                    .iter()
+                    .find(|(known, _)| *known == target)
+                    .map(|(_, made)| made.texture.clone())
             }
             Copied::Canvas => self.canvas.texture.clone(),
             Copied::Buffer(_) => None,

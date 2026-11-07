@@ -9,7 +9,7 @@ mod part;
 mod settings;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, PrimaryView, Schedule, Source, gpu_struct};
+use engine_core::{Brick, Bricks, Schedule, Source, gpu_struct};
 use engine_places_rendering::occlusion::{AmbientVisibility, OcclusionSource};
 use engine_render::RenderBricks;
 
@@ -58,8 +58,6 @@ fn publish_piece(
     });
 }
 
-fn publish_stats(view: Res<PrimaryView>, mut stats: ResMut<AmbientOcclusionStats>) {
-    stats.set_if_neq(AmbientOcclusionStats {
-        active: !view.debug(),
-    });
+fn publish_stats(mut stats: ResMut<AmbientOcclusionStats>) {
+    stats.set_if_neq(AmbientOcclusionStats { active: true });
 }

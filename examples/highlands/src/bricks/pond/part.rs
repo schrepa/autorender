@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, PrimaryView, gpu_consts, gpu_struct};
+use engine_core::{Error, gpu_consts, gpu_struct};
 use engine_places_world::ground::{GroundTiles, TerrainEntry, TerrainTiles};
 use engine_render::{
     Attach, AttachPoint, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass,
@@ -47,7 +47,6 @@ impl GpuPart for PondGpu {
         Query<'static, 'static, &'static Pond>,
         Res<'static, TerrainTiles>,
         Res<'static, GroundTiles>,
-        Res<'static, PrimaryView>,
     );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
@@ -59,7 +58,6 @@ impl GpuPart for PondGpu {
             &RenderPipeline {
                 vertex: surface::VS_POND,
                 fragment: Some(surface::FS_POND),
-                debug: None,
                 vertices: &[],
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -84,11 +82,11 @@ impl GpuPart for PondGpu {
 
     fn prepare(
         &mut self,
-        (ponds, tiles, ground, view): SystemParamItem<'_, '_, Self::Reads>,
+        (ponds, tiles, ground): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.drawn = 0;
-        if ponds.is_empty() || view.debug() || ground.layers == 0 {
+        if ponds.is_empty() || ground.layers == 0 {
             return;
         }
         let (shapes, count) = shapes(ponds.iter(), &tiles.terrains, &ground);

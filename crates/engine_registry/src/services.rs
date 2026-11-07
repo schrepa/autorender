@@ -4,8 +4,6 @@ use glam::{Mat4, UVec2, Vec3};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrameFacts {
-    pub capture: bool,
-    pub debug: bool,
     pub display_size: UVec2,
     pub render_size: UVec2,
     pub pixel_ratio: f32,
@@ -14,8 +12,6 @@ pub struct FrameFacts {
 impl Default for FrameFacts {
     fn default() -> Self {
         Self {
-            capture: false,
-            debug: false,
             display_size: UVec2::new(1920, 1080),
             render_size: UVec2::new(1920, 1080),
             pixel_ratio: 1.0,

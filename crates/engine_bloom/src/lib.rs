@@ -10,8 +10,8 @@ mod settings;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, Brick, Bricks, Pass, PassName, PassViews, PrimaryView, Schedule, SlotSet, Source,
-    Writes, gpu_struct, never,
+    AttachPoint, Brick, Bricks, Pass, PassName, PassViews, Schedule, SlotSet, Source, Writes,
+    gpu_struct, never,
 };
 use engine_render::RenderBricks;
 
@@ -55,16 +55,10 @@ impl Brick for BloomBrick {
     }
 }
 
-fn publish_bloom(
-    bloom: Res<Bloom>,
-    view: Res<PrimaryView>,
-    mut piece: ResMut<BloomPiece>,
-    mut stats: ResMut<BloomStats>,
-) {
-    let active = !view.debug();
+fn publish_bloom(bloom: Res<Bloom>, mut piece: ResMut<BloomPiece>, mut stats: ResMut<BloomStats>) {
     piece.set_if_neq(BloomPiece {
         threshold: [bloom.threshold, 0.0, 0.0, 0.0],
-        applied: [bloom.intensity, f32::from(active), 0.0, 0.0],
+        applied: [bloom.intensity, 1.0, 0.0, 0.0],
     });
-    stats.set_if_neq(BloomStats { active });
+    stats.set_if_neq(BloomStats { active: true });
 }

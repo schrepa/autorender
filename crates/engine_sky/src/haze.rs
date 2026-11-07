@@ -136,7 +136,6 @@ impl Haze {
         let fullscreen = |fragment| RenderPipeline {
             vertex: FULLSCREEN,
             fragment: Some(fragment),
-            debug: None,
             vertices: &[],
             primitive: wgpu::PrimitiveState::default(),
             depth: DepthUse::None,

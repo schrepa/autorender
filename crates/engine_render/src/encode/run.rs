@@ -13,7 +13,6 @@ pub(crate) struct Run {
     pub(crate) recording: Recording,
     pub(crate) timed: Timed,
     pub(crate) queued: Queued,
-    pub(crate) debug: bool,
     pub(crate) region: Option<(u32, u32)>,
     pub(crate) sets: views::Sets,
     pub(crate) tables: views::Tables,
@@ -38,6 +37,7 @@ pub(crate) struct Installs {
     pub(crate) draw_entries: Vec<KindMember>,
     pub(crate) installed: Vec<FrameId>,
     pub(crate) gates: Vec<Option<engine_registry::GateId>>,
+    pub(crate) pass_gates: Vec<(u32, engine_registry::GateId)>,
     pub(crate) applied: Vec<crate::shared::AppliedModule>,
 }
 
@@ -68,6 +68,7 @@ pub(crate) struct Canvas {
     pub(crate) rect: Option<[u32; 4]>,
     pub(crate) load: bool,
     pub(crate) carried: bool,
+    pub(crate) clear: [f64; 4],
 }
 
 pub(crate) struct Uniforms {
@@ -95,7 +96,8 @@ pub(crate) struct Planning {
     pub(crate) plan: Option<Arc<Plan>>,
     pub(crate) planned_at: usize,
     pub(crate) pass_decls: Vec<Arc<PassDecl>>,
-    pub(crate) layer_sets: Vec<(engine_core::AttachPoint, Arc<[SetFormat]>)>,
+    pub(crate) pass_sets: Vec<Arc<[SetFormat]>>,
+    pub(crate) live: Vec<bool>,
     pub(crate) merge: bool,
     pub(crate) labelled: Option<u32>,
 }
@@ -160,14 +162,13 @@ fn stale_holders(machine: &Machine) -> std::collections::BTreeSet<Holder> {
         .collect()
 }
 
-fn layer_sets_of(machine: &Machine) -> Vec<(engine_core::AttachPoint, Arc<[SetFormat]>)> {
-    let mut layer_sets: Vec<(engine_core::AttachPoint, Arc<[SetFormat]>)> = Vec::new();
-    for layer in machine.declared.passes.iter().filter_map(pass_layer) {
-        if !layer_sets.iter().any(|(known, _)| *known == layer) {
-            layer_sets.push((layer, Arc::from(set_formats(&machine.outputs, layer))));
-        }
-    }
-    layer_sets
+fn pass_sets_of(machine: &Machine) -> Vec<Arc<[SetFormat]>> {
+    machine
+        .declared
+        .passes
+        .iter()
+        .map(|pass| Arc::from(pass_set(&machine.outputs, pass)))
+        .collect()
 }
 
 fn fresh_groups(machine: &Machine) -> (Vec<Groups>, Vec<Vec<Groups>>) {
@@ -231,7 +232,8 @@ impl Run {
             .iter()
             .map(|pass| Arc::new(pass.clone()))
             .collect();
-        let layer_sets = layer_sets_of(&machine);
+        let pass_sets = pass_sets_of(&machine);
+        let live = machine.outputs.iter().map(crate::machine::layered).collect();
         Self {
             device,
             queue,
@@ -245,7 +247,6 @@ impl Run {
             recording: Recording::Idle,
             timed: Timed::default(),
             queued: Queued::default(),
-            debug: false,
             region: None,
             sets,
             tables,
@@ -259,6 +260,7 @@ impl Run {
                 draw_entries: Vec::new(),
                 installed: vec![FrameId::default(); count],
                 gates: Vec::new(),
+                pass_gates: Vec::new(),
                 applied: Vec::new(),
             },
             frames: Frames::default(),
@@ -280,6 +282,7 @@ impl Run {
                 rect: None,
                 load: false,
                 carried: false,
+                clear: crate::graph::BLACK,
             },
             uniforms: Uniforms {
                 cameras: vec![bytemuck::Zeroable::zeroed()],
@@ -297,7 +300,8 @@ impl Run {
                 plan: None,
                 planned_at: 0,
                 pass_decls,
-                layer_sets,
+                pass_sets,
+                live,
                 merge: true,
                 labelled: None,
             },

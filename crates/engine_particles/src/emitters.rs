@@ -476,10 +476,9 @@ pub(crate) fn gather_emitters(
 pub(crate) fn particle_stats(
     gather: Res<Gather>,
     packed: Res<Packed>,
-    view: Res<PrimaryView>,
     mut stats: ResMut<ParticleStats>,
 ) {
-    let frame = (!view.debug() && packed.emits && packed.total > 0).then_some(&*packed);
+    let frame = (packed.emits && packed.total > 0).then_some(&*packed);
     let drawn = frame.map_or(0, |frame| frame.total);
     let cut =
         (gather.cut as u64 + frame.map_or(0, |frame| frame.cut)).min(u64::from(u32::MAX)) as u32;

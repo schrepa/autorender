@@ -5,8 +5,9 @@ use engine_core::{
 };
 use engine_places_world::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
-    Access, AfterRead, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw,
-    DrawInput, Encode, GpuPart, Install, Lifetime, MeshPass, Own, Pass, Pipeline, Prepare,
+    Access, AfterRead, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND,
+    DEBUG_TARGETS, DepthUse, Draw, DrawInput, Encode, GpuPart, Install, Lifetime, MeshPass, Own,
+    Pass, Pipeline, Prepare,
     RenderPipeline, SamplerDesc, Scene, SceneDraw, Shape, Texture, VertexLayout, wgpu,
 };
 
@@ -279,7 +280,6 @@ impl ScatterGpu {
         let target = |vertex, fragment| RenderPipeline {
             vertex,
             fragment: Some(fragment),
-            debug: None,
             vertices: &[],
             primitive: wgpu::PrimitiveState::default(),
             depth: DepthUse::None,
@@ -352,7 +352,7 @@ impl ScatterGpu {
         cx: &mut Install<'_, Self>,
         scene: Scene,
         (poses, colors, grounds): (Buffer<Self>, Buffer<Self>, Buffer<Self>),
-        lit: bool,
+        (lit, shows): (bool, bool),
     ) -> Result<Looks, Error> {
         use crate::shaders::scatter::draw;
         let vars = (draw::POSES, draw::COLORS, draw::GROUNDS);
@@ -378,27 +378,25 @@ impl ScatterGpu {
             } else {
                 (draw::FS_OBJECT, draw::FS_DEBUG_OBJECT, draw::FS_MASKED_DEPTH)
             };
-            let desc = |vertex, fragment, debug| RenderPipeline {
+            let desc = |vertex, fragment| RenderPipeline {
                 vertex,
                 fragment,
-                debug,
                 vertices,
                 primitive: primitive(double_sided),
                 depth: DepthUse::Write {
                     bias: wgpu::DepthBiasState::default(),
                 },
-                blend: None,
+                blend: shows.then_some(DEBUG_BLEND),
                 writes: wgpu::ColorWrites::ALL,
             };
-            let (still, faded) = if lit {
-                (
-                    desc(vertex, Some(shaded), Some(shown)),
-                    desc(fading, Some(shaded), Some(shown)),
-                )
+            let (still, faded) = if shows {
+                (desc(vertex, Some(shown)), desc(fading, Some(shown)))
+            } else if lit {
+                (desc(vertex, Some(shaded)), desc(fading, Some(shaded)))
             } else {
                 (
-                    desc(vertex, masked.then_some(cut), None),
-                    desc(fading, Some(cut), None),
+                    desc(vertex, masked.then_some(cut)),
+                    desc(fading, Some(cut)),
                 )
             };
             looks.push([
@@ -413,20 +411,21 @@ impl ScatterGpu {
         cx: &mut Install<'_, Self>,
         scene: Scene,
         (poses, colors): (Buffer<Self>, Buffer<Self>),
-        lit: bool,
+        (lit, shows): (bool, bool),
     ) -> Result<Pipeline<Self, Scene>, Error> {
         use crate::shaders::scatter::cards;
-        let (fragment, debug) = if lit {
-            (cards::FS_PLACED_CARD, Some(cards::FS_DEBUG_PLACED_CARD))
+        let fragment = if shows {
+            cards::FS_DEBUG_PLACED_CARD
+        } else if lit {
+            cards::FS_PLACED_CARD
         } else {
-            (cards::FS_PLACED_CARD_DEPTH, None)
+            cards::FS_PLACED_CARD_DEPTH
         };
         cx.render_pipeline(
             scene,
             &RenderPipeline {
                 vertex: cards::VS_PLACED_CARD,
                 fragment: Some(fragment),
-                debug,
                 vertices: CARD_STREAMS,
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -436,7 +435,7 @@ impl ScatterGpu {
                 depth: DepthUse::Write {
                     bias: wgpu::DepthBiasState::default(),
                 },
-                blend: None,
+                blend: shows.then_some(DEBUG_BLEND),
                 writes: wgpu::ColorWrites::ALL,
             },
             &[
@@ -455,7 +454,6 @@ impl ScatterGpu {
         let caster_desc = |vertex, fragment| RenderPipeline {
             vertex,
             fragment,
-            debug: None,
             vertices: CASTER_STREAMS,
             primitive: wgpu::PrimitiveState::default(),
             depth: DepthUse::Write {
@@ -487,7 +485,6 @@ impl ScatterGpu {
             &RenderPipeline {
                 vertex: casters::VS_IMPOSTOR_CARD,
                 fragment: Some(casters::FS_IMPOSTOR_CARD),
-                debug: None,
                 vertices: SHADOW_CARD_STREAMS,
                 primitive: wgpu::PrimitiveState::default(),
                 depth: DepthUse::Write {
@@ -521,10 +518,11 @@ impl ScatterGpu {
                 listed.pass.views == PassViews::Owned,
                 listed.pass.writes.contains(TargetName::COLOR),
             );
+            let shows = listed.pass.writes.contains(DEBUG_TARGETS[0]);
             let made = match (owned, lit) {
                 (false, _) if listed.pass.at != AttachPoint::Transparent => Joined::Placed {
-                    looks: Self::look_pipelines(cx, scene, objects, lit)?,
-                    card: Self::card_pipeline(cx, scene, (poses, colors), lit)?,
+                    looks: Self::look_pipelines(cx, scene, objects, (lit, shows))?,
+                    card: Self::card_pipeline(cx, scene, (poses, colors), (lit, shows))?,
                 },
                 (true, false) => Self::caster_pipelines(cx, scene, (poses, colors))?,
                 (false, _) | (true, true) => continue,

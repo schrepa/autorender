@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
 use bevy_ecs::prelude::*;
-use engine_core::{DrawKind, Joined, PrimaryView};
+use engine_core::{DrawKind, Interest, Joined, WholeFrames};
 use engine_render::{DebugMode, DebugModes, DebugShown};
 use serde_json::Value;
 
@@ -21,6 +21,11 @@ pub(crate) const OWN: [(&str, u32); 5] = [
 ];
 
 type Drawn = (TypeId, u32);
+
+pub(crate) const WHOLE: &str = "debug_view";
+
+#[derive(Resource, Default)]
+pub(crate) struct Whole(Option<Interest<&'static str>>);
 
 pub(crate) fn member(name: &'static str) -> DebugMode {
     DebugMode {
@@ -57,27 +62,21 @@ fn code(drawn: Option<Drawn>) -> u32 {
 }
 
 pub(crate) fn publish(
-    (view, frame): (Res<DebugView>, Res<PrimaryView>),
-    probe: Res<Probe>,
-    modes: Joined<DebugModes>,
+    (view, probe, modes): (Res<DebugView>, Res<Probe>, Joined<DebugModes>),
+    (mut whole, mut frames): (ResMut<Whole>, ResMut<WholeFrames>),
     mut shown: ResMut<DebugShown>,
     mut piece: ResMut<DebugViewPiece>,
 ) {
-    let chosen = named_mode(&view, &modes);
-    let drawn = match probe.forces() {
-        Some(false) => None,
-        Some(true) => Some(chosen.unwrap_or((TypeId::of::<DebugViewBrick>(), 0))),
-        None => chosen,
+    let drawn = named_mode(&view, &modes);
+    if drawn.is_some() != whole.0.is_some() {
+        whole.0 = drawn.map(|_| frames.ask(WHOLE));
     }
-    .filter(|_| frame.debug());
-    let coming = probe.coming();
     shown.set_if_neq(DebugShown {
         owner: drawn.map(|(owner, _)| owner),
         local: drawn.map_or(0, |(_, local)| local),
-        next_debug: coming.unwrap_or(chosen.is_some()),
-        next_whole: coming.is_some(),
     });
     piece.set_if_neq(DebugViewPiece {
         view: [code(drawn), u32::from(view.shade), 0, 0],
+        probe: probe.pixel(),
     });
 }

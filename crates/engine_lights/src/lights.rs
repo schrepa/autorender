@@ -222,11 +222,10 @@ pub(crate) fn gather_lights(
 pub(crate) fn light_stats(
     list: Res<LightList>,
     gather: Res<LightGather>,
-    view: Res<PrimaryView>,
     totals: Res<LightTotals>,
     mut stats: ResMut<LightStats>,
 ) {
-    let lit = !list.lights.is_empty() && !view.debug();
+    let lit = !list.lights.is_empty();
     let found = totals.found().filter(|_| lit);
     let kept = list.lights.len().min(u32::MAX as usize) as u32;
     let cut = gather.cut.min(u32::MAX as usize) as u32;

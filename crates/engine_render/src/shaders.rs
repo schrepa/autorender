@@ -21,7 +21,6 @@ shader_modules! {
     "engine::math" = "math.wgsl";
     "engine::screen_points" = "screen_points.wgsl";
     "engine::mipmaps" = "mipmaps.wgsl";
-    "engine::noise" = "noise.wgsl";
     "engine::view" = "frame/view.wgsl";
     "engine::shading" = "shading.wgsl";
     "engine::standard" = "standard.wgsl";
@@ -43,10 +42,7 @@ pub const FS_COMPOSITE: engine_core::Entry = engine_core::Entry::generated(
     Module::generated(&CORE, (TEXTS.len() - 1) as u32),
     "fs_composite",
 );
-pub const FS_DEBUG_VIEW: engine_core::Entry = engine_core::Entry::generated(
-    Module::generated(&CORE, (TEXTS.len() - 1) as u32),
-    "fs_debug_view",
-);
+
 
 pub(crate) fn core_module(path: &str) -> Module {
     let index = TEXTS.iter().position(|text| text.path() == path);
@@ -156,7 +152,9 @@ pub fn math_source() -> String {
 }
 
 pub fn view_source() -> String {
+    use engine_core::GpuStruct;
     let mut source = String::from(include_str!("frame/view.wgsl"));
+    source.push_str(<crate::CameraUniform as GpuStruct>::WGSL);
     float(
         &mut source,
         "DETAIL_ANISOTROPY",

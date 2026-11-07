@@ -177,7 +177,6 @@ impl GpuPart for SpritesGpu {
                 &RenderPipeline {
                     vertex: draw::VS_SPRITE,
                     fragment: Some(draw::FS_SPRITE),
-                    debug: None,
                     vertices: &[],
                     primitive: wgpu::PrimitiveState::default(),
                     depth: DepthUse::None,

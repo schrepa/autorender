@@ -2,22 +2,26 @@ use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::{clamp, half, max, pow};
 use engine_core::{
-    DrawKind, DrawnTable, Error, ErrorCode, GpuBits, Joined, Operation, PassMask, PrimaryView,
-    Readable, Readback, ScenePasses,
+    AttachPoint, DrawKind, DrawnTable, Error, ErrorCode, GpuBits, Interest, Joined, Operation,
+    PassMask, PassViews, PrimaryView, Readable, Readback, ScenePasses, ViewFacts, WholeFrames,
 };
 use engine_render::debug::DebugRecord;
 use engine_render::{
-    AfterRead, Buffer, Copied, CopyRegion, DEBUG_TARGETS, DebugModes, DebugShown, GpuPart, Install,
-    Lifetime, Prepare, TargetName, wgpu,
+    AfterRead, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DebugModes, Encode,
+    GpuPart, Install, Lifetime, Pass, Prepare, TargetName, wgpu,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-const IDS: u64 = 0;
-const COUNT: u64 = 256;
+use crate::gpu::{PROBED_COUNT, PROBED_IDS, PROBED_WORDS};
+use crate::modes::WHOLE;
+use crate::shaders::debug_view::probe;
+
+const IDS: u64 = PROBED_IDS as u64 * 4;
+const COUNT: u64 = PROBED_COUNT as u64 * 4;
 const SCENE: u64 = 512;
 const CANVAS: u64 = 768;
-const WORDS: u64 = 1024;
+const WORDS: u64 = PROBED_WORDS as u64 * 4;
 const DEPTH: u64 = 1280;
 const CANVAS_ORDER: u64 = 1284;
 const PROBED_BYTES: u64 = 1288;
@@ -30,8 +34,7 @@ enum Stage {
     #[default]
     Idle,
     Armed,
-    Debug,
-    Shaded,
+    Capturing,
     Waiting,
     Read(Vec<u8>),
 }
@@ -45,40 +48,32 @@ pub(crate) struct Probe {
     depth_row: u32,
     size: (u32, u32),
     view_projection: Mat4,
+    whole: Option<Interest<&'static str>>,
 }
 
 #[derive(Resource, Default)]
 pub(crate) struct ProbeSteps {
-    done: Vec<(u32, bool)>,
+    done: Vec<u32>,
 }
 
 impl Readable for ProbeSteps {
-    fn arrived(&mut self, armed: u32, read: Readback<&[u8]>) {
-        let shaded = read.value.first().is_some_and(|&shaded| shaded != 0);
-        self.done.push((armed, shaded));
+    fn arrived(&mut self, armed: u32, _: Readback<&[u8]>) {
+        self.done.push(armed);
     }
 }
 
 impl Probe {
-    pub(crate) fn forces(&self) -> Option<bool> {
-        match self.stage {
-            Stage::Debug => Some(true),
-            Stage::Shaded => Some(false),
-            Stage::Idle | Stage::Armed | Stage::Waiting | Stage::Read(_) => None,
-        }
+    pub(crate) fn capturing(&self) -> bool {
+        self.stage == Stage::Capturing
     }
 
-    pub(crate) fn coming(&self) -> Option<bool> {
-        match self.stage {
-            Stage::Armed => Some(true),
-            Stage::Debug => Some(false),
-            Stage::Idle | Stage::Shaded | Stage::Waiting | Stage::Read(_) => None,
-        }
+    pub(crate) fn pixel(&self) -> [u32; 4] {
+        [self.pixel.0, self.pixel.1, 0, 0]
     }
 
-    fn probing(&self) -> bool {
+    pub(crate) fn probing(&self) -> bool {
         match self.stage {
-            Stage::Armed | Stage::Debug | Stage::Shaded | Stage::Waiting => true,
+            Stage::Armed | Stage::Capturing | Stage::Waiting => true,
             Stage::Idle | Stage::Read(_) => false,
         }
     }
@@ -86,7 +81,7 @@ impl Probe {
     fn read(&self) -> Option<&[u8]> {
         match &self.stage {
             Stage::Read(bytes) => Some(bytes),
-            Stage::Idle | Stage::Armed | Stage::Debug | Stage::Shaded | Stage::Waiting => None,
+            Stage::Idle | Stage::Armed | Stage::Capturing | Stage::Waiting => None,
         }
     }
 
@@ -171,8 +166,9 @@ impl Probe {
 
 impl Readable for Probe {
     fn arrived(&mut self, armed: u32, read: Readback<&[u8]>) {
-        if armed == self.armed && matches!(self.stage, Stage::Shaded | Stage::Waiting) {
+        if armed == self.armed && matches!(self.stage, Stage::Capturing | Stage::Waiting) {
             self.stage = Stage::Read(read.value.to_vec());
+            self.whole = None;
         }
     }
 }
@@ -231,14 +227,12 @@ fn unpacked_normal(packed: u32) -> [f32; 3] {
 pub(crate) fn advance(view: Res<PrimaryView>, mut steps: ResMut<ProbeSteps>, mut probe: ResMut<Probe>) {
     let probe = &mut *probe;
     let done = std::mem::take(&mut steps.done);
-    let stepped = |shaded: bool| done.contains(&(probe.armed, shaded));
     let next = match &probe.stage {
-        Stage::Armed => Some(Stage::Debug),
-        Stage::Debug => stepped(false).then_some(Stage::Shaded),
-        Stage::Shaded => stepped(true).then_some(Stage::Waiting),
+        Stage::Armed => Some(Stage::Capturing),
+        Stage::Capturing => done.contains(&probe.armed).then_some(Stage::Waiting),
         Stage::Idle | Stage::Waiting | Stage::Read(_) => None,
     };
-    if next == Some(Stage::Debug) {
+    if next == Some(Stage::Capturing) {
         let size = view.display_size();
         probe.size = (size.x, size.y);
         probe.view_projection = view.view_projection();
@@ -262,12 +256,12 @@ impl Operation for ProbePixel {
     type Params = (
         Res<'static, PrimaryView>,
         ResMut<'static, Probe>,
-        ResMut<'static, DebugShown>,
+        ResMut<'static, WholeFrames>,
     );
     type Request = PixelRequest;
 
     fn run(
-        (view, mut probe, mut shown): SystemParamItem<'_, '_, Self::Params>,
+        (view, mut probe, mut frames): SystemParamItem<'_, '_, Self::Params>,
         request: PixelRequest,
     ) -> Result<Value, Error> {
         let size = view.display_size();
@@ -285,10 +279,9 @@ impl Operation for ProbePixel {
             pixel: (request.x, request.y),
             armed_size: (size.x, size.y),
             depth_row: (size.x * 4).next_multiple_of(ROW_ALIGNMENT),
+            whole: Some(frames.ask(WHOLE)),
             ..Probe::default()
         };
-        shown.next_debug = true;
-        shown.next_whole = true;
         Ok(json!({ "pixel": [request.x, request.y] }))
     }
 }
@@ -338,6 +331,9 @@ fn texel(at: wgpu::Origin3d, offset: u64) -> CopyRegion {
 pub(crate) struct ProbeGpu {
     probed: Buffer<Self>,
     rows: Buffer<Self>,
+    pass: Pass<Self>,
+    reading: ComputePipeline<Self>,
+    capturing: bool,
 }
 
 impl GpuPart for ProbeGpu {
@@ -347,9 +343,24 @@ impl GpuPart for ProbeGpu {
     const LABELS: &'static [&'static str] = &["engine/debug-view"];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
+        let probed = cx.buffer("debug_view_probe", Lifetime::Kept);
+        let pass = cx
+            .pass("debug_view_probe")
+            .at(AttachPoint::Post)
+            .views(PassViews::Main)
+            .span("debug_view")
+            .id();
+        let reading = cx.compute_pipeline(
+            pass,
+            probe::CS_DEBUG_PROBE,
+            &[(probe::PROBED, Bind::Buffer(probed))],
+        )?;
         Ok(Self {
-            probed: cx.buffer("debug_view_probe", Lifetime::Kept),
+            probed,
             rows: cx.buffer("debug_view_probe_depth", Lifetime::Kept),
+            pass,
+            reading,
+            capturing: false,
         })
     }
 
@@ -364,16 +375,10 @@ impl GpuPart for ProbeGpu {
             y: probe.pixel.1.min(size.y.saturating_sub(1)),
             z: 0,
         };
+        self.capturing = probe.capturing();
         match probe.stage {
-            Stage::Debug => {
+            Stage::Capturing => {
                 cx.allocate_buffer(self.probed, PROBED_BYTES);
-                for (debug, offset) in [(0, IDS), (1, COUNT), (2, WORDS)] {
-                    cx.copy_at_end(
-                        Copied::Target(DEBUG_TARGETS[debug as usize]),
-                        Copied::Buffer(self.probed),
-                        &[texel(at, offset)],
-                    );
-                }
                 if (size.x, size.y) == probe.armed_size {
                     let (width, height) = probe.armed_size;
                     let row = u64::from(probe.depth_row);
@@ -407,11 +412,6 @@ impl GpuPart for ProbeGpu {
                 } else {
                     cx.write(self.probed, DEPTH, &[0_u32]);
                 }
-                cx.deliver::<ProbeSteps>(probe.armed, vec![0]);
-            }
-            Stage::Shaded => {
-                cx.allocate_buffer(self.probed, PROBED_BYTES);
-                cx.allocate_buffer(self.rows, 0);
                 cx.copy_at_end(
                     Copied::Target(TargetName::COLOR),
                     Copied::Buffer(self.probed),
@@ -437,10 +437,24 @@ impl GpuPart for ProbeGpu {
                 cx.write(self.probed, CANVAS_ORDER, &[order]);
                 let range = 0..PROBED_BYTES;
                 if cx.read_back::<Probe>(probe.armed, self.probed, range, AfterRead::Keep) {
-                    cx.deliver::<ProbeSteps>(probe.armed, vec![1]);
+                    cx.deliver::<ProbeSteps>(probe.armed, Vec::new());
                 }
             }
-            Stage::Idle | Stage::Armed | Stage::Waiting | Stage::Read(_) => {}
+            Stage::Waiting => {
+                cx.allocate_buffer(self.rows, 0);
+            }
+            Stage::Idle | Stage::Armed | Stage::Read(_) => {}
         }
+    }
+
+    fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
+        if self.capturing && view.target.surface() && cx.view_index() == 0 {
+            cx.run(self.pass);
+        }
+    }
+
+    fn encode(&mut self, _: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+        cx.dispatch(&self.reading, Count::Groups([1, 1, 1]));
+        0
     }
 }

@@ -77,7 +77,6 @@ fn opaque_span(
 fn camera_of(
     viewed: &Viewed,
     facts: &engine_core::ViewFacts,
-    turn: f32,
     previous_seconds: f32,
 ) -> CameraUniform {
     let region = view_region(facts);
@@ -92,9 +91,7 @@ fn camera_of(
         clip,
         (width, height),
     );
-    if facts.jitter.is_some() {
-        camera.options[2] = turn - turn.floor();
-    }
+    camera.noise_phase = facts.noise - facts.noise.floor();
     camera.set_region(viewed.view_projection, region);
     camera.set_detail(viewed.detail);
     camera
@@ -255,7 +252,6 @@ impl Renderer {
         };
         let world = frame.world();
         let view = world.get_resource::<PrimaryView>();
-        let debug = view.is_some_and(PrimaryView::debug);
         let region = self.core.display.plan_region(view.map(PrimaryView::render_size));
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
@@ -286,7 +282,6 @@ impl Renderer {
         drop(row_upload);
         run.frames.current += 1;
         run.frames.parity = (run.frames.current % 2) as usize;
-        run.debug = debug;
         run.tallies.drawn = 0;
         run.tallies.uploads.counted = 0;
         run.tallies.uploads.memory.clear();
@@ -313,9 +308,6 @@ impl Renderer {
             .get_resource::<FrameTime>()
             .map_or(0.0, |time| time.elapsed as f32);
         let previous_seconds = self.seconds.replace(seconds).unwrap_or(seconds);
-        let turn = world
-            .get_resource::<engine_core::Jitter>()
-            .map_or(0.0, |jitter| jitter.turn);
         let listed = listed_views(world, view, region, run.written());
         let entities: Vec<bevy_ecs::entity::Entity> = listed.iter().map(|facts| facts.view).collect();
         run.settle_sets(&entities);
@@ -329,7 +321,7 @@ impl Renderer {
                     detail: detail_of(view, index, facts),
                     seconds,
                 };
-                camera_of(&viewed, facts, turn, previous_seconds)
+                camera_of(&viewed, facts, previous_seconds)
             })
             .collect();
         let canvas = surface
@@ -367,6 +359,28 @@ impl Renderer {
             run.forget_global(index as u32);
             run.parts[index] = Some(held);
         }
+        let gated = world.get_resource::<engine_registry::BrickStates>();
+        for &(pass, gate) in &run.installs.pass_gates {
+            if gated.is_some_and(|states| !states.on(gate)) {
+                run.planning.runs.remove(pass as usize);
+            }
+        }
+        let mut live: Vec<bool> = run
+            .machine
+            .outputs
+            .iter()
+            .map(crate::machine::layered)
+            .collect();
+        for pass in run.planning.runs.iter() {
+            for (target, ..) in run.planning.pass_sets.get(pass).into_iter().flat_map(|set| set.iter()) {
+                if let Target::Output(index) = target
+                    && let Some(on) = live.get_mut(*index as usize)
+                {
+                    *on = true;
+                }
+            }
+        }
+        run.planning.live = live;
         if let Some(library) = world.get_resource::<engine_core::AssetLibrary>() {
             for texture in std::mem::take(&mut run.bindings.wanted_textures) {
                 if let Some(source) = library.texture(texture) {
@@ -453,7 +467,7 @@ impl Renderer {
                 .map(|&(_, from)| from);
             let size = facts.size();
             run.uniforms.camera_slot = index as u32;
-            run.debug = facts.debug;
+            run.canvas.clear = facts.clear_color.map(f64::from);
             run.region = (facts.render != size).then_some((facts.render.x, facts.render.y));
             run.canvas.format = format;
             run.canvas.rect = (!facts.whole(glam::UVec2::new(texture.width(), texture.height())))
@@ -897,6 +911,7 @@ fn listed_views(
         render: glam::UVec2::new(drawn_width, drawn_height),
         layers: engine_core::Layers::ALL,
         clear: engine_core::Clear::All,
+        clear_color: engine_core::View::BLACK,
         order: 0,
         lens: view.map(PrimaryView::lens).unwrap_or_default(),
         eye: view.map_or(glam::Vec3::ZERO, PrimaryView::eye),
@@ -904,9 +919,8 @@ fn listed_views(
         view_projection,
         previous_view_projection: view_projection,
         history: view.map_or(engine_core::ViewHistory::Fresh, PrimaryView::history),
-        debug: view.is_some_and(PrimaryView::debug),
         jitter: view.and_then(PrimaryView::jitter),
-        capture: view.is_some_and(PrimaryView::capture),
+        noise: view.and_then(PrimaryView::facts).map_or(0.0, |facts| facts.noise),
         frame,
     }]
 }
@@ -1000,7 +1014,7 @@ fn owned_camera(view: &engine_core::DrawnView, seconds: f32) -> CameraUniform {
     );
     camera.set_region(view.view_projection, crate::targets::FrameRegion::whole(size));
     camera.set_detail(view.eye);
-    camera.options[0] = 1.0;
+    camera.capture = u32::from(view.capture);
     camera.view[0] = 1 + view.local;
     camera
 }

@@ -63,7 +63,7 @@ fn air_glow(direction: vec3<f32>) -> vec3<f32> {
 }
 
 fn marched_reach() -> f32 {
-    return select(sky_piece.haze_march.x, 0.0, camera.options.x != 0.0);
+    return select(sky_piece.haze_march.x, 0.0, camera.capture != 0u);
 }
 
 const HAZE_BLUR: f32 = 0.3;

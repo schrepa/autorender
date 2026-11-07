@@ -74,7 +74,6 @@ impl crate::GpuPart for ImpostorBakes {
                 Program::Render(RenderDecl {
                     vertex: Entry::generated(module, vertex),
                     fragment: Some(Entry::generated(module, fragment)),
-                    debug: None,
                     vertices: vec![crate::VertexLayout::Mesh; 1 + usize::from(extended)],
                     primitive: wgpu::PrimitiveState {
                         topology: wgpu::PrimitiveTopology::TriangleList,

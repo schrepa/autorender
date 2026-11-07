@@ -152,7 +152,6 @@ fn particle(fragment: Entry) -> RenderPipeline<'static> {
     RenderPipeline {
         vertex: draw::VS_PARTICLE,
         fragment: Some(fragment),
-        debug: None,
         vertices: &[],
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleStrip,
@@ -323,7 +322,6 @@ impl GpuPart for ParticlesGpu {
             &RenderPipeline {
                 vertex: FULLSCREEN,
                 fragment: Some(composite::FS_COMPOSITE),
-                debug: None,
                 vertices: &[],
                 primitive: wgpu::PrimitiveState::default(),
                 depth: DepthUse::None,
@@ -386,12 +384,9 @@ impl GpuPart for ParticlesGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         self.drawing = None;
-        self.show(packed.emits && !view.debug(), cx);
+        self.show(packed.emits, cx);
         if !packed.emits {
             self.release_held(cx);
-            return;
-        }
-        if view.debug() {
             return;
         }
         let room = limits.storage_room / 16 * 16;

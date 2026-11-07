@@ -45,6 +45,11 @@ impl PartRecord {
 
 pub(crate) struct Generated(pub(crate) &'static [&'static str]);
 
+pub(crate) struct PassScope {
+    pub(crate) name: &'static str,
+    pub(crate) scope: Scope,
+}
+
 pub(crate) struct Applied {
     pub(crate) pass: engine_core::PassEntry,
     pub(crate) module: engine_core::Module,

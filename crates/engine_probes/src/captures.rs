@@ -41,7 +41,6 @@ fn faces(fragment: engine_core::Entry) -> RenderPipeline<'static> {
     RenderPipeline {
         vertex: shaders::probes::filter::VS_FACE,
         fragment: Some(fragment),
-        debug: None,
         vertices: &[],
         primitive: wgpu::PrimitiveState::default(),
         depth: DepthUse::None,
@@ -55,7 +54,6 @@ fn backdrop() -> RenderPipeline<'static> {
     RenderPipeline {
         vertex: backdrop::VS_BACKDROP,
         fragment: Some(backdrop::FS_BACKDROP),
-        debug: None,
         vertices: &[],
         primitive: wgpu::PrimitiveState::default(),
         depth: DepthUse::Compare {
