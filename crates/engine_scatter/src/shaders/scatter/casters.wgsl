@@ -1,69 +1,13 @@
 import package::engine::impostors::{impostor_albedo, impostor_sampler};
-import package::engine::shading::{PositionInput, SurfaceInput};
-import package::engine::slots::slot_position;
-import package::engine::surface::opacity_cut;
+import package::engine::mesh::declarations::AffinePose;
 import package::engine::mesh::impostor_frames::{
     impostor_basis, impostor_flags_hemisphere, impostor_frame_direction, impostor_frames,
     impostor_grid, impostor_index
 };
-import package::engine::view::{camera, detail_across, view_clip};
-import package::face::instances::{AffinePose, SlotColor};
+import package::engine::view::{camera, view_clip};
 import package::scatter::faces::placed_tiles::placed_impostor;
 
 @group(2) @binding(0) var<storage, read> poses: array<AffinePose>;
-@group(2) @binding(1) var<storage, read> colors: array<SlotColor>;
-
-fn slot_world(slot: u32, position: vec3<f32>) -> vec3<f32> {
-    let pose = poses[slot];
-    let point = vec4<f32>(position, 1.0);
-    let world = vec3<f32>(dot(pose.row_0, point), dot(pose.row_1, point), dot(pose.row_2, point));
-    let color = colors[slot];
-    let origin = vec3<f32>(pose.row_0.w, pose.row_1.w, pose.row_2.w);
-    var input: PositionInput;
-    input.local = position;
-    input.world = world;
-    input.origin = origin;
-    input.time = camera.position.w;
-    input.pixels = 1.0 / max(detail_across(origin), 1.0e-6);
-    input.object = vec4<u32>(color.color, color.surface, color.flags);
-    return slot_position(input);
-}
-
-@vertex
-fn vs_caster(@location(0) position: vec3<f32>, @location(2) slot: u32) -> @builtin(position) vec4<f32> {
-    return view_clip(slot_world(slot, position));
-}
-
-struct MaskedOutput {
-    @builtin(position) clip: vec4<f32>,
-    @location(0) uv_alpha: vec3<f32>,
-}
-
-@vertex
-fn vs_caster_masked(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>,
-        @location(2) slot: u32) -> MaskedOutput {
-    var output: MaskedOutput;
-    output.clip = view_clip(slot_world(slot, position));
-    output.uv_alpha = vec3<f32>(uv, unpack2x16unorm(colors[slot].color.y).y);
-    return output;
-}
-
-fn masked_cut(uv_alpha: vec3<f32>, pixel: vec2<f32>) -> bool {
-    var surface: SurfaceInput;
-    surface.color = vec4<f32>(1.0, 1.0, 1.0, uv_alpha.z);
-    surface.uv = uv_alpha.xy;
-    surface.uv1 = uv_alpha.xy;
-    surface.pixel = pixel;
-    surface.front = true;
-    return opacity_cut(surface);
-}
-
-@fragment
-fn fs_caster_masked(input: MaskedOutput) {
-    if masked_cut(input.uv_alpha, input.clip.xy) {
-        discard;
-    }
-}
 
 struct CardOutput {
     @builtin(position) clip: vec4<f32>,

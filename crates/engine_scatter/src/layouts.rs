@@ -10,13 +10,27 @@ gpu_struct! {
         pub counts: [u32; 4],
         pub strides: [u32; 4],
         pub fade: [f32; 4],
+        pub drawn: [u32; 4],
     }
 }
 
 gpu_struct! {
     pub(crate) struct CullView {
         pub planes: [[f32; 4]; 6],
-        pub limits: [f32; 4],
+        pub eye: [f32; 4],
+        pub shape: [u32; 4],
+    }
+}
+
+gpu_struct! {
+    pub(crate) struct PlacedValues {
+        pub tilt: u32,
+        pub ground: f32,
+        pub reach: f32,
+        pub texel: u32,
+        pub tint: u32,
+        pub sway: f32,
+        pub pad: [u32; 2],
     }
 }
 
@@ -158,6 +172,7 @@ pub(crate) const GENERATED: &[&str] = &[
     <ScatterTerrain as GpuBits>::WGSL,
     <CullFrame as engine_core::GpuStruct>::WGSL,
     <CullView as engine_core::GpuStruct>::WGSL,
+    <PlacedValues as engine_core::GpuStruct>::WGSL,
     <CullGroup as engine_core::GpuStruct>::WGSL,
     <Snap as engine_core::GpuStruct>::WGSL,
     <Splat as engine_core::GpuStruct>::WGSL,
@@ -248,12 +263,10 @@ pub(crate) struct PlacedRecord {
 pub(crate) struct SlotColor {
     pub color: [u32; 2],
     pub surface: u32,
-    pub flags: u32,
+    pub pad: u32,
 }
 
 pub(crate) type PoseData = [[f32; 4]; 3];
-
-pub(crate) type GroundData = [u32; 4];
 
 pub(crate) type DrawArgs = [u32; 5];
 

@@ -12,7 +12,7 @@ use crate::groups::Groups;
 use engine_core::GpuBits;
 
 use crate::layouts::{
-    DEAD, GroundData, NO_LAYER, PlacedRecord, PoseData, ScatterFade, ScatterTerrain, SlotColor,
+    DEAD, NO_LAYER, PlacedRecord, PlacedValues, PoseData, ScatterFade, ScatterTerrain, SlotColor,
     TERRAIN_INDEX,
 };
 
@@ -20,7 +20,7 @@ pub(crate) type TileObjects = (
     Vec<PoseData>,
     Vec<SlotColor>,
     Vec<PlacedRecord>,
-    Vec<GroundData>,
+    Vec<PlacedValues>,
 );
 
 pub(crate) type PoolKey = (Entity, TileKey);
