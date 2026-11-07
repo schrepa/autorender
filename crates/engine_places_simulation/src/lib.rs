@@ -9,7 +9,6 @@ pub mod ground;
 pub mod navigation;
 pub mod physics;
 pub mod solids;
-pub mod sweeps;
 pub mod water;
 pub mod wind;
 
@@ -30,5 +29,4 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::component::<physics::BodyPush>("body_push"),
     PlaceDecl::ask::<physics::BodyAsk>(),
     PlaceDecl::component::<solids::SolidSource>("solid_source"),
-    PlaceDecl::slot::<sweeps::Sweeps>(),
 ];

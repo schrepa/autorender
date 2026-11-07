@@ -7,7 +7,7 @@ use engine_core::{
     Cursor, Error, Events, Feed, FixedTime, FrameTime, GlobalTransforms, Section, Since, Transform,
 };
 use engine_math::collections::HashMap;
-use engine_places_simulation::sweeps::{Sweep, Sweeps};
+use engine_places::queries::{SceneQueries, SceneQuery};
 use engine_places_simulation::physics::{
     Collide, Collider, ColliderShape, ColliderSolid, Collision, CollisionRay, QueryFilter, RayHit,
     SLIDE_STEPS, SensorEvent, SensorEventKind, SensorFilter, SensorPair, ShapeCastOptions,
@@ -614,8 +614,8 @@ impl Collide for CollisionWorld {
     }
 }
 
-impl Sweep for Solids {
-    fn sphere(&self, radius: f32, from: Vec3, along: Vec3, ignore: Entity) -> Option<f32> {
+impl SceneQuery for Solids {
+    fn sweep(&self, radius: f32, from: Vec3, along: Vec3, ignore: Entity) -> Option<f32> {
         let filter = QueryFilter {
             exclude: Some(ignore),
             sensors: SensorFilter::Exclude,
@@ -793,7 +793,7 @@ pub(crate) fn sync(
     config: Res<CollisionConfig>,
     (frame, tick): (Res<FrameTime>, Res<FixedTime>),
     mut collision: ResMut<Collision>,
-    (mut stats, mut sweeps): (ResMut<CollisionStats>, ResMut<Sweeps>),
+    (mut stats, mut queries): (ResMut<CollisionStats>, ResMut<SceneQueries>),
 ) {
     let world = installed(&mut collision);
     world.refresh(
@@ -803,7 +803,7 @@ pub(crate) fn sync(
         &globals,
     );
     stats.set_if_neq(world.stats());
-    sweeps.0 = Arc::new(world.sweep());
+    queries.0 = Arc::new(world.sweep());
 }
 
 pub(crate) fn refresh(
@@ -812,7 +812,7 @@ pub(crate) fn refresh(
     config: Res<CollisionConfig>,
     (frame, tick): (Res<FrameTime>, Res<FixedTime>),
     mut collision: ResMut<Collision>,
-    (mut stats, mut sweeps): (ResMut<CollisionStats>, ResMut<Sweeps>),
+    (mut stats, mut queries): (ResMut<CollisionStats>, ResMut<SceneQueries>),
 ) {
     let world = installed(&mut collision);
     world.sync_ground(&sources);
@@ -823,7 +823,7 @@ pub(crate) fn refresh(
         &globals,
     );
     stats.set_if_neq(world.stats());
-    sweeps.0 = Arc::new(world.sweep());
+    queries.0 = Arc::new(world.sweep());
 }
 
 pub(crate) fn detect(mut collision: ResMut<Collision>, time: Res<FixedTime>) {

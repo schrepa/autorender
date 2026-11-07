@@ -10,7 +10,6 @@ pub mod audio;
 pub mod exposure;
 pub mod lighting;
 pub mod lights;
-pub mod obstruction;
 pub mod occlusion;
 pub mod particles;
 pub mod probes;
@@ -71,5 +70,4 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<screens::Screens>(),
     PlaceDecl::component::<screens::Screen>("screen"),
     PlaceDecl::ask::<screens::ScreenAsk>(),
-    PlaceDecl::slot::<obstruction::Obstructions>(),
 ];

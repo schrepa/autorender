@@ -30,7 +30,7 @@ use engine_places_simulation::physics::{
     COLLISION_INVALID_TRANSFORM, COLLISION_NUMERICAL_FAILURE, COLLISION_PAIR_BUDGET,
     COLLISION_RESULT_BUDGET, Collider, Collision, INVALID_COLLIDER, INVALID_COLLIDER_TRANSFORM,
 };
-use engine_places_simulation::sweeps::Sweeps;
+use engine_places::queries::SceneQueries;
 
 const ERRORS: &[ErrorCode] = &[
     COLLISION_INVALID_SHAPE,
@@ -64,7 +64,7 @@ impl Brick for CollisionBrick {
             .settled_stats::<CollisionStats, _>(world::refresh)
             .errors(ERRORS)
             .fill::<Collision>(None)
-            .fill::<Sweeps>(None)
+            .fill::<SceneQueries>(None)
             .join::<SceneComponents>(
                 ComponentKind::of::<Collider>("collider")
                     .check(scene::checked)
