@@ -1,7 +1,6 @@
 #![expect(unsafe_code, reason = "Vulkan's layer entry points and calls")]
 
 use engine::collections::HashMap;
-use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::{CStr, c_char, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,10 +26,6 @@ static INSTANCE: OnceLock<ash::Instance> = OnceLock::new();
 static COUNTING: OnceLock<Counting> = OnceLock::new();
 static UNAVAILABLE: Mutex<Option<Error>> = Mutex::new(None);
 static ACTIVE: AtomicBool = AtomicBool::new(false);
-
-thread_local! {
-    static GROUPS: RefCell<(Vec<String>, u64)> = const { RefCell::new((Vec::new(), 0)) };
-}
 
 pub fn enable(selection: Selection) -> Result<(), Error> {
     SELECTION
@@ -469,6 +464,7 @@ struct State {
     next_reset: usize,
     results: Vec<(Pass, Vec<f64>)>,
     skipped: u64,
+    instances: u64,
     destroyed: bool,
 }
 
@@ -493,7 +489,7 @@ enum Use {
 
 #[derive(Default)]
 struct Recording {
-    depth: u32,
+    groups: Vec<String>,
     render_pass: bool,
     pool: Option<usize>,
     open: Option<u32>,
@@ -950,25 +946,23 @@ unsafe extern "system" fn begin_label(
     // name.
     let name = unsafe { (*label).label_name_as_c_str() }
         .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
-    let pass = GROUPS.with_borrow_mut(|(groups, outermost)| {
-        if groups.is_empty() {
-            *outermost += 1;
-        }
-        groups.push(name);
-        Pass {
-            groups: groups.clone(),
-            instance: *outermost,
-        }
-    });
-    let mut state = counting.state();
+    let mut guard = counting.state();
+    let state = &mut *guard;
     let Some(recording) = state.recording.get_mut(&buffer) else {
         return;
     };
-    recording.depth += 1;
-    if recording.depth > 1 || recording.render_pass || !ACTIVE.load(Ordering::Acquire) {
+    if recording.groups.is_empty() {
+        state.instances += 1;
+    }
+    recording.groups.push(name);
+    let pass = Pass {
+        groups: recording.groups.clone(),
+        instance: state.instances,
+    };
+    if recording.groups.len() > 1 || recording.render_pass || !ACTIVE.load(Ordering::Acquire) {
         return;
     }
-    let Some((pool, query)) = counting.take(&mut state, buffer, pass) else {
+    let Some((pool, query)) = counting.take(state, buffer, pass) else {
         state.skipped += 1;
         return;
     };
@@ -987,12 +981,11 @@ unsafe extern "system" fn begin_label(
 
 unsafe extern "system" fn end_label(buffer: vk::CommandBuffer) {
     let counting = counting();
-    GROUPS.with_borrow_mut(|(groups, _)| groups.pop());
     let open = {
         let mut state = counting.state();
         let ended = state.recording.get_mut(&buffer).is_some_and(|recording| {
-            recording.depth = recording.depth.saturating_sub(1);
-            recording.depth == 0
+            recording.groups.pop();
+            recording.groups.is_empty()
         });
         if ended {
             close(&mut state, buffer)

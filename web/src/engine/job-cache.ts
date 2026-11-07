@@ -87,16 +87,6 @@ export class JobStore {
   }
 
   async lookup(key: string): Promise<Uint8Array | undefined> {
-    if (this.index.holds(key)) {
-      let bytes: Uint8Array | undefined;
-      try {
-        await this.writing.get(key);
-        bytes = new Uint8Array(await (await (await this.directory.getFileHandle(key)).getFile()).arrayBuffer());
-      } catch {}
-      const hit = this.index.hit(key, bytes?.length);
-      this.changed();
-      if (hit) return bytes;
-    }
     for (const pack of this.packs) {
       const entry = pack.directory.find(key);
       if (!entry) continue;
@@ -105,14 +95,23 @@ export class JobStore {
         const bytes = await fetchRange(pack.url, offset, stored);
         const record = await this.unpack(bytes, raw) ?? pack.directory.unpack(key, bytes);
         this.packHits++;
-        this.keep(key, record);
         return record;
       } catch (error) {
         console.warn(`A record of ${pack.url} does not read: ${String(error)}`);
       }
     }
-    this.index.miss();
-    return undefined;
+    if (!this.index.holds(key)) {
+      this.index.miss();
+      return undefined;
+    }
+    let bytes: Uint8Array | undefined;
+    try {
+      await this.writing.get(key);
+      bytes = new Uint8Array(await (await (await this.directory.getFileHandle(key)).getFile()).arrayBuffer());
+    } catch {}
+    const hit = this.index.hit(key, bytes?.length);
+    this.changed();
+    return hit ? bytes : undefined;
   }
 
   keep(key: string, output: Uint8Array) {

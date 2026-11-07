@@ -15,6 +15,10 @@ impl Renderer {
         crate::memory::take()
     }
 
+    pub fn begin_gpu_warmup(&mut self) {
+        crate::memory::begin_warmup();
+    }
+
     pub fn end_gpu_warmup(&mut self) {
         crate::memory::end_warmup();
     }

@@ -30,7 +30,7 @@ enum Source {
 }
 
 pub struct DevSession<G: Game> {
-    pub(crate) game: Offscreen<G>,
+    game: Offscreen<G>,
     controls: BTreeMap<String, GameControl<G>>,
     parameters: BTreeMap<String, String>,
     source: Option<Source>,
@@ -45,7 +45,8 @@ pub struct DevSession<G: Game> {
 }
 
 impl<G: Game> DevSession<G> {
-    pub fn new(game: Offscreen<G>, artifacts: PathBuf) -> Self {
+    pub fn new(mut game: Offscreen<G>, artifacts: PathBuf) -> Self {
+        game.host_mut().set_preparation(false);
         let mut hash = Sha256::new();
         hash.update(format!(
             "{:?} {}",
@@ -114,16 +115,6 @@ impl<G: Game> DevSession<G> {
         self
     }
 
-    pub(crate) fn play(&mut self, document: &str) -> engine::Result<()> {
-        self.source = Some(Source::Document(document.to_owned()));
-        let files = engine::smokes::scene_files(document, &self.files, &self.kinds())?;
-        self.game.host_mut().reload_scene(document, &files)
-    }
-
-    pub(crate) fn file(&mut self, name: &str, bytes: &[u8]) {
-        self.files.insert(name.to_owned(), bytes.to_vec());
-    }
-
     pub fn run(mut self) -> engine::Result<()> {
         let lines = read_lines();
         let size = self.game.size();
@@ -181,7 +172,7 @@ impl<G: Game> DevSession<G> {
         let _ = out.flush();
     }
 
-    pub(crate) fn request(&mut self, line: &str) -> Value {
+    fn request(&mut self, line: &str) -> Value {
         if line.len() <= engine::dev::MAX_REQUEST_BYTES
             && let Ok(Value::Object(command)) = serde_json::from_str::<Value>(line)
             && command.get("verb") == Some(&json!("profile"))
@@ -496,6 +487,32 @@ impl<G: Game> DevSession<G> {
         self.error(
             &Error::new(ErrorCode::ProfilingUnavailable, "$.deep").expected(Expected::Supported),
         )
+    }
+}
+
+impl<G: Game> engine::smokes::GpuSession for DevSession<G> {
+    fn world(&self) -> &engine::bevy_ecs::world::World {
+        self.game.host().engine().app.world()
+    }
+
+    fn send(&mut self, line: &str) -> Value {
+        let reply = self.request(line);
+        self.game.exchange_jobs();
+        reply
+    }
+
+    fn frame(&mut self, timestamp: f64) -> engine::Result<()> {
+        self.game.frame(timestamp)
+    }
+
+    fn play(&mut self, document: &str) -> engine::Result<()> {
+        self.source = Some(Source::Document(document.to_owned()));
+        let files = engine::smokes::scene_files(document, &self.files, &self.kinds())?;
+        self.game.host_mut().reload_scene(document, &files)
+    }
+
+    fn file(&mut self, name: &str, bytes: &[u8]) {
+        self.files.insert(name.to_owned(), bytes.to_vec());
     }
 }
 

@@ -401,7 +401,7 @@ impl<G: Game> GameHost<G> {
         self.game
             .reload_scene(self.app.engine_mut(), source, files)?;
         self.app.replay_settings()?;
-        self.app.forget_pipeline_list();
+        self.app.reloaded();
         self.suspend();
         self.level_built();
         Ok(())
@@ -558,7 +558,7 @@ impl<G: Game> GameHost<G> {
         .and_then(|()| self.app.replay_settings());
         match result {
             Ok(()) => {
-                self.app.forget_pipeline_list();
+                self.app.reloaded();
                 self.suspend();
                 let skipped = self.game.scene().map(|scene| scene.skipped().to_vec());
                 let mut reloaded = serde_json::json!({"reloaded": true, "saved_by_reload": false});

@@ -108,7 +108,7 @@ fn texture_bytes(descriptor: &wgpu::TextureDescriptor<'_>) -> u64 {
 }
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
-pub use ledger::{end_warmup, take};
+pub use ledger::{begin_warmup, end_warmup, take};
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
 pub struct Owned {
@@ -237,6 +237,13 @@ mod ledger {
             if ledger.uploads.insert(destination, content) == Some(content) {
                 *ledger.duplicates.entry(owner).or_default() += data.len() as u64;
             }
+        });
+    }
+
+    pub fn begin_warmup() {
+        LEDGER.with_borrow_mut(|ledger| {
+            ledger.warm = false;
+            ledger.created.clear();
         });
     }
 

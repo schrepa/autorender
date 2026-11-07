@@ -1,7 +1,7 @@
 #![expect(unsafe_code, reason = "signals threads and reads their registers")]
 
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 pub(super) const METHOD: Option<&str> = Some("signal_frame_pointers");
@@ -17,11 +17,13 @@ pub(super) struct Open(libc::pthread_t);
 
 const MAX: usize = super::MAX_FRAMES;
 
-const IDLE: u32 = 0;
-const REQUESTED: u32 = 1;
-const WRITING: u32 = 2;
-const WRITTEN: u32 = 3;
-static STATE: AtomicU32 = AtomicU32::new(IDLE);
+const IDLE: u64 = 0;
+const REQUESTED: u64 = 1;
+const WRITING: u64 = 2;
+const WRITTEN: u64 = 3;
+const PHASE: u64 = 3;
+static STATE: AtomicU64 = AtomicU64::new(IDLE);
+static TARGET: AtomicUsize = AtomicUsize::new(0);
 static LOW: AtomicU64 = AtomicU64::new(0);
 static HIGH: AtomicU64 = AtomicU64::new(0);
 static DEPTH: AtomicUsize = AtomicUsize::new(0);
@@ -61,35 +63,38 @@ pub(super) fn cpu_ns(Open(thread): &Open) -> Option<u64> {
 }
 
 pub(super) fn sample(Open(thread): &Open, (low, high): (u64, u64), frames: &mut [u64]) -> usize {
+    let tag = STATE.load(Ordering::Relaxed).wrapping_add(PHASE + 1) & !PHASE;
     LOW.store(low, Ordering::Relaxed);
     HIGH.store(high, Ordering::Relaxed);
     DEPTH.store(0, Ordering::Relaxed);
-    STATE.store(REQUESTED, Ordering::Release);
+    TARGET.store(*thread as usize, Ordering::Relaxed);
+    STATE.store(tag | REQUESTED, Ordering::Release);
     // SAFETY: signals a thread of this process; the handler is installed.
     if unsafe { libc::pthread_kill(*thread, libc::SIGPROF) } != 0 {
-        STATE.store(IDLE, Ordering::Release);
+        STATE.store(tag | IDLE, Ordering::Release);
         return 0;
     }
     let start = Instant::now();
     loop {
-        match STATE.load(Ordering::Acquire) {
-            WRITTEN => break,
-            REQUESTED if start.elapsed() > Duration::from_millis(20) => {
-                if STATE
-                    .compare_exchange(REQUESTED, IDLE, Ordering::AcqRel, Ordering::Acquire)
-                    .is_ok()
-                {
-                    return 0;
-                }
-            }
-            _ => std::thread::yield_now(),
+        let state = STATE.load(Ordering::Acquire);
+        if state == tag | WRITTEN {
+            break;
         }
+        if state == tag | REQUESTED
+            && start.elapsed() > Duration::from_millis(20)
+            && STATE
+                .compare_exchange(state, tag | IDLE, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
+            return 0;
+        }
+        std::thread::yield_now();
     }
     let depth = DEPTH.load(Ordering::Relaxed).min(frames.len());
     for (frame, slot) in frames.iter_mut().zip(&FRAMES).take(depth) {
         *frame = slot.load(Ordering::Relaxed);
     }
-    STATE.store(IDLE, Ordering::Release);
+    STATE.store(tag | IDLE, Ordering::Release);
     depth
 }
 
@@ -111,9 +116,15 @@ fn install() -> Option<()> {
 }
 
 extern "C" fn handler(_: libc::c_int, _: *mut libc::siginfo_t, context: *mut libc::c_void) {
-    if STATE
-        .compare_exchange(REQUESTED, WRITING, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
+    let state = STATE.load(Ordering::Acquire);
+    let tag = state & !PHASE;
+    // SAFETY: reads the calling thread's own handle.
+    let thread = unsafe { libc::pthread_self() };
+    if state != tag | REQUESTED
+        || TARGET.load(Ordering::Relaxed) != thread as usize
+        || STATE
+            .compare_exchange(state, tag | WRITING, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
     {
         return;
     }
@@ -126,7 +137,7 @@ extern "C" fn handler(_: libc::c_int, _: *mut libc::siginfo_t, context: *mut lib
         slot.store(*frame, Ordering::Relaxed);
     }
     DEPTH.store(depth, Ordering::Relaxed);
-    STATE.store(WRITTEN, Ordering::Release);
+    STATE.store(tag | WRITTEN, Ordering::Release);
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]

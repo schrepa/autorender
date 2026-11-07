@@ -13,8 +13,7 @@ interface Host {
   signal: AbortSignal;
   paused(): boolean;
   setPaused(value: boolean): void;
-  setBusy(value: boolean): void;
-  isBusy?(): boolean;
+  exclusive<R>(work: () => Promise<R>): Promise<R> | undefined;
   size(): [number, number];
   poll(): void;
   frame(timestamp: number): void;
@@ -47,7 +46,6 @@ const TIMING = "raf_paced";
 
 export function connectDevelopment(host: Host): () => void {
   let disposed = false;
-  let busy = false;
   const runtime = host.game;
   if (!runtime.dev_request) throw engineFailure({ code: "runtime_unavailable", path: "$", expected: "present", got: "dev_request" });
   const closed = () => disposed || host.signal.aborted;
@@ -145,35 +143,32 @@ export function connectDevelopment(host: Host): () => void {
       if (closed()) return refuse(CLOSED);
       const stopped = host.stopped();
       if (stopped) return { ok: false, error: { code: "runtime_panicked", path: "$", got: stopped } };
-      if (busy || host.isBusy?.()) return { ok: false, error: { code: "command_busy", path: "$" } };
-      let line: string;
-      try { line = JSON.stringify(command) ?? "null"; }
-      catch { return refuse({ code: "invalid_request", path: "$.command", expected: "json" }); }
-      busy = true;
-      host.setBusy(true);
-      try {
-        let step = parseJson(runtime.dev_request!(line, context()));
-        while ("effect" in step) step = await carry(step.effect);
-        const reply = step.reply;
-        if (closed()) return refuse(CLOSED);
-        if (reply.ok) {
-          await nameAdapters(reply);
-          host.poll();
+      const answered = host.exclusive(async (): Promise<Reply> => {
+        let line: string;
+        try { line = JSON.stringify(command) ?? "null"; }
+        catch { return refuse({ code: "invalid_request", path: "$.command", expected: "json" }); }
+        try {
+          let step = parseJson(runtime.dev_request!(line, context()));
+          while ("effect" in step) step = await carry(step.effect);
+          const reply = step.reply;
+          if (closed()) return refuse(CLOSED);
+          if (reply.ok) {
+            await nameAdapters(reply);
+            host.poll();
+          }
+          return reply;
+        } catch (cause) {
+          if (closed()) return refuse(CLOSED);
+          if (fatal(cause)) {
+            host.fail(cause);
+            return { ok: false, error: { code: "runtime_panicked", path: "$", got: host.stopped() ?? String(cause) } };
+          }
+          const thrown = engineError(cause);
+          if (thrown) return refuse(failure(thrown));
+          return refuse({ code: "browser_command_failed", path: "$", got: String(cause) });
         }
-        return reply;
-      } catch (cause) {
-        if (closed()) return refuse(CLOSED);
-        if (fatal(cause)) {
-          host.fail(cause);
-          return { ok: false, error: { code: "runtime_panicked", path: "$", got: host.stopped() ?? String(cause) } };
-        }
-        const thrown = engineError(cause);
-        if (thrown) return refuse(failure(thrown));
-        return refuse({ code: "browser_command_failed", path: "$", got: String(cause) });
-      } finally {
-        busy = false;
-        host.setBusy(false);
-      }
+      });
+      return answered ?? { ok: false, error: { code: "command_busy", path: "$" } };
     },
   };
   window.__engineDev = api;

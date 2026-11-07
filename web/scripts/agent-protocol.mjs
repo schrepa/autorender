@@ -121,10 +121,33 @@ export function createBridge({ session, url, build, execute, activity, onClose, 
   const requestIds = new Set();
   const queue = [];
   let running = false;
-  let unavailable = initiallyUnavailable;
-  let replacing = false;
-  let closed = false;
+  /** @type {{ kind: "ready" } | { kind: "unavailable" } | { kind: "replacing", from: "ready" | "unavailable" } | { kind: "closed" }} */
+  let state = { kind: initiallyUnavailable ? "unavailable" : "ready" };
   let carrying;
+
+  /** @param {"lost" | "replace" | "replaced" | "kept" | "close"} event */
+  function move(event) {
+    switch (state.kind) {
+      case "ready":
+      case "unavailable":
+        if (event === "lost") state = { kind: "unavailable" };
+        else if (event === "replace") state = { kind: "replacing", from: state.kind };
+        else if (event === "close") state = { kind: "closed" };
+        else throw new AgentError("session_unavailable", "$", { expected: "replacing", got: state.kind });
+        return;
+      case "replacing":
+        if (event === "lost") state = { kind: "replacing", from: "unavailable" };
+        else if (event === "replaced") state = { kind: "ready" };
+        else if (event === "kept") state = { kind: state.from };
+        else throw new AgentError("session_replacing", "$", { expected: "live" });
+        return;
+      case "closed":
+        if (event === "lost" || event === "close") return;
+        throw new AgentError("session_closed", "$", { expected: "live" });
+    }
+  }
+
+  const live = () => state.kind === "ready" || (state.kind === "replacing" && state.from === "ready");
 
   const answer = (request, response, acceptedSession = session, acceptedBuild = build) =>
     envelope(request, acceptedSession, { ...response, ...(acceptedBuild === undefined ? {} : { build: acceptedBuild }) });
@@ -142,10 +165,10 @@ export function createBridge({ session, url, build, execute, activity, onClose, 
 
   async function overdue(command, limit) {
     const { verb, name } = command;
-    const state = carrying?.command === command
+    const progress = carrying?.command === command
       ? { running: true, running_ms: Date.now() - carrying.started }
       : { running: false, behind: carried() };
-    return new AgentError("command_timeout", "timeout_ms", { allowed: atMost(limit), got: { verb, name, ...state, ...await activity?.() } });
+    return new AgentError("command_timeout", "timeout_ms", { allowed: atMost(limit), got: { verb, name, ...progress, ...await activity?.() } });
   }
 
   async function pump() {
@@ -156,17 +179,18 @@ export function createBridge({ session, url, build, execute, activity, onClose, 
       clearTimeout(item.expiry);
       if (item.replacement) {
         try {
-          if (closed) throw new AgentError("session_closed", "$", { expected: "live" });
           if (item.replacement.validate && !await item.replacement.validate()) throw new AgentError("build_superseded", "$", { expected: "matching" });
           item.replacement.commit?.();
           ({ session, url, build, execute, activity } = item.replacement);
           carrying = undefined;
           startedAt = new Date().toISOString();
           requestIds.clear();
-          unavailable = false;
+          move("replaced");
           item.resolve();
-        } catch (error) { item.reject(error); }
-        finally { replacing = false; }
+        } catch (error) {
+          move("kept");
+          item.reject(error);
+        }
         continue;
       }
       const acceptedSession = session;
@@ -185,7 +209,7 @@ export function createBridge({ session, url, build, execute, activity, onClose, 
         });
         if (carrying) await Promise.race([carrying.finished, limit]);
         if (expired) await limit;
-        if (unavailable) throw new AgentError("session_unavailable", "$", { expected: "live" });
+        if (!live()) throw new AgentError("session_unavailable", "$", { expected: "live" });
         response = await Promise.race([carry(command, record => { if (!expired) item.onRecord?.(record); }), limit]);
         if (!response || typeof response.ok !== "boolean") throw new AgentError("invalid_browser_response", "$", { expected: "object" });
         if (item.request.rendering === false && response.result) delete response.result.rendering;
@@ -199,14 +223,13 @@ export function createBridge({ session, url, build, execute, activity, onClose, 
 
   function submit(request, onRecord) {
     validate(request, session);
-    if (replacing) throw new AgentError("session_replacing", "$", { expected: "live" });
+    if (state.kind === "replacing") throw new AgentError("session_replacing", "$", { expected: "live" });
     const closes = closing(request.command) && onClose;
-    if (unavailable && !closes) throw new AgentError("session_unavailable", "$", { expected: "live" });
+    if (!live() && !closes) throw new AgentError("session_unavailable", "$", { expected: "live" });
     if (requestIds.has(request.id)) throw new AgentError("duplicate_request", "id", { expected: "unique", got: request.id });
     if (closes) {
       checkClose(request.command);
-      unavailable = true;
-      closed = true;
+      move("close");
       return Promise.resolve(answer(request, { ok: true, result: { state: "closing" } }));
     }
     if (requestIds.size >= MAX_REQUEST_IDS) throw new AgentError("session_request_limit", "$", { allowed: atMost(MAX_REQUEST_IDS) });
@@ -240,7 +263,7 @@ export function createBridge({ session, url, build, execute, activity, onClose, 
         throw new AgentError("origin_rejected", "$", { allowed: variants([`127.0.0.1:${address.port}`]), got: request.headers.host });
       }
       if (request.method === "GET" && request.url === "/sessions") {
-        send(response, 200, { version: VERSION, sessions: [{ session, url, ...(build === undefined ? {} : { build }), started_at: startedAt, state: unavailable ? "unavailable" : "ready" }] });
+        send(response, 200, { version: VERSION, sessions: [{ session, url, ...(build === undefined ? {} : { build }), started_at: startedAt, state: live() ? "ready" : "unavailable" }] });
         return;
       }
       if (request.method === "GET" && request.url === "/development" && development) {
@@ -280,10 +303,9 @@ export function createBridge({ session, url, build, execute, activity, onClose, 
   server.maxHeadersCount = 32;
   return {
     server, submit,
-    markUnavailable: () => { unavailable = true; },
+    markUnavailable: () => move("lost"),
     replaceSession(next) {
-      if (closed || replacing) return Promise.reject(new AgentError("session_replacing", "$", { expected: "live" }));
-      replacing = true;
+      try { move("replace"); } catch (error) { return Promise.reject(error); }
       return new Promise((resolve, reject) => {
         queue.push({ replacement: next, resolve, reject });
         void pump();

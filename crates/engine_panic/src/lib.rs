@@ -50,6 +50,11 @@ pub fn install() {
         reason = "this is the engine's one panic hook"
     )]
     INSTALLED.call_once(|| std::panic::set_hook(Box::new(hook)));
+    #[cfg(target_arch = "wasm32")]
+    let _ = js_sys::Reflect::delete_property(
+        &js_sys::global(),
+        &wasm_bindgen::JsValue::from_str(PANIC_GLOBAL),
+    );
 }
 
 fn hook(info: &std::panic::PanicHookInfo<'_>) {

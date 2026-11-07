@@ -153,8 +153,8 @@ impl AppHost {
             .get_resource::<JobExchange>()
             .map_or((0, false), |jobs| (jobs.workers(), jobs.verifying()));
         wire(&mut engine, &self.renderer, jobs, self.terrain_clock);
-        self.pipeline_list = crate::host::PipelineList::default();
         let replaced = std::mem::replace(&mut self.engine, engine);
+        self.reloaded();
         if let Err(error) = self.claim_passes() {
             panic!("{error}");
         }
@@ -178,8 +178,9 @@ impl AppHost {
         self.pipeline_list.waiting()
     }
 
-    pub(crate) fn forget_pipeline_list(&mut self) {
+    pub(crate) fn reloaded(&mut self) {
         self.pipeline_list = crate::host::PipelineList::default();
+        self.restart_attribution();
     }
 
     pub fn set_setting(&mut self, key: &str, value: serde_json::Value) -> Result<()> {

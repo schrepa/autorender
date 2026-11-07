@@ -1,3 +1,4 @@
+mod harness;
 mod host;
 mod proofs;
 
@@ -11,6 +12,8 @@ use engine_scene::{SceneFiles, SceneInstance, SceneKinds};
 use serde_json::{Map, Value, json};
 
 use crate::{Error, Game, Inspectors, Result};
+
+pub use harness::{GpuSession, SmokeHost, run};
 
 pub type Build<'b, G> = &'b dyn Fn(Option<&str>, &mut Engine) -> Result<G>;
 
@@ -129,6 +132,12 @@ pub fn registered(bricks: &BrickList) -> Result<Vec<SmokeEntry>> {
 
 pub fn engine_of(bricks: BrickList) -> Result<Engine> {
     crate::game::listed(bricks)
+}
+
+pub fn built<G>(bricks: BrickList, build: Build<'_, G>) -> Result<(Engine, G)> {
+    let mut engine = engine_of(bricks)?;
+    let game = build(None, &mut engine)?;
+    Ok((engine, game))
 }
 
 pub type SceneBuild<G> = fn(&str, &SceneFiles, &mut Engine) -> Result<G>;
@@ -581,9 +590,7 @@ impl<G: Game> Headless<G> {
 pub mod page {
     use std::collections::BTreeMap;
 
-    use std::any::{Any, TypeId};
-
-    use engine_core::{BrickList, SmokeFailure, SmokeSession};
+    use engine_core::BrickList;
     use engine_dev::{Effect, HostContext, Outcome, Step};
     use engine_scene::SceneKinds;
     use serde_json::Value;
@@ -591,27 +598,21 @@ pub mod page {
     use web_sys::HtmlCanvasElement;
 
     use super::{
-        Build, FRAME_MS, Headless, SmokeEntry, SmokeRecord, answered, engine_of, fault, json,
-        routed, scene_files, select,
+        Build, GpuSession, SmokeEntry, SmokeHost, SmokeRecord, built, json, scene_files,
     };
     use crate::{Game, GameHost, RenderTarget, Result};
 
-    enum Backend<G: Game> {
-        Gpu(Box<GameHost<G>>),
-        Headless(Box<Headless<G>>),
+    struct Canvas {
+        canvas: HtmlCanvasElement,
+        size: (u32, u32),
     }
 
-    struct Page<'b, G: Game> {
-        backend: Backend<G>,
-        bricks: BrickList,
-        build: Build<'b, G>,
-        source: Option<String>,
-        files: BTreeMap<String, Vec<u8>>,
+    struct Page<G: Game> {
+        host: Box<GameHost<G>>,
         size: (u32, u32),
         paused: bool,
-        clock: f64,
-        loaded: bool,
-        faults: Vec<SmokeFailure>,
+        source: Option<String>,
+        files: BTreeMap<String, Vec<u8>>,
     }
 
     pub async fn run<G: Game>(
@@ -624,166 +625,80 @@ pub mod page {
     ) -> std::result::Result<bool, JsValue> {
         let report = js_sys::Function::from(report.clone());
         let size = (canvas.width().max(1), canvas.height().max(1));
-        let mut gpu = None;
-        let mut passed = true;
-        for entry in select(entries, names).map_err(engine_settings::js_error)? {
-            let record = record(entry, &canvas, size, bricks, build, &mut gpu).await;
-            passed &= record.ok;
-            report.call1(&JsValue::NULL, &JsValue::from_str(&record.line()))?;
-        }
-        Ok(passed)
-    }
-
-    async fn record<G: Game>(
-        entry: &SmokeEntry,
-        canvas: &HtmlCanvasElement,
-        size: (u32, u32),
-        bricks: &BrickList,
-        build: Build<'_, G>,
-        gpu: &mut Option<bool>,
-    ) -> SmokeRecord {
-        if entry.gpu() && *gpu == Some(false) {
-            return SmokeRecord::skipped(entry);
-        }
-        let started = crate::host::now_ms();
-        let elapsed = || crate::host::now_ms() - started;
-        let mut faults = Vec::new();
-        let first = match entry.restart {
-            Some(restart) => {
-                let opened = session(entry, canvas, size, bricks.clone(), build, gpu).await;
-                let mut page = match opened {
-                    Ok(Some(page)) => page,
-                    Ok(None) => return SmokeRecord::skipped(entry),
-                    Err(error) => {
-                        return SmokeRecord::failed(entry, elapsed(), fault("session", &error));
-                    }
-                };
-                let first = (restart.first)(&mut page);
-                faults = page.faults;
-                match first {
-                    Ok(value) => Some((restart.then, value)),
-                    Err(failure) => return SmokeRecord::of(entry, elapsed(), Err(failure), faults),
-                }
-            }
-            None => None,
-        };
-        let opened = session(entry, canvas, size, entry.bricks(bricks), build, gpu).await;
-        let mut page = match opened {
-            Ok(Some(page)) => page,
-            Ok(None) => return SmokeRecord::skipped(entry),
-            Err(error) => return SmokeRecord::failed(entry, elapsed(), fault("session", &error)),
-        };
-        let outcome = match first {
-            Some((then, value)) => then(&mut page, value),
-            None => entry.run_in(&mut page),
-        };
-        faults.extend(page.faults);
-        SmokeRecord::of(entry, elapsed(), outcome, faults)
-    }
-
-    async fn session<'b, G: Game>(
-        entry: &SmokeEntry,
-        canvas: &HtmlCanvasElement,
-        size: (u32, u32),
-        bricks: BrickList,
-        build: Build<'b, G>,
-        gpu: &mut Option<bool>,
-    ) -> Result<Option<Page<'b, G>>> {
-        let backend = open(canvas, bricks.clone(), build, gpu).await?;
-        if entry.gpu() && matches!(backend, Backend::Headless(_)) {
-            return Ok(None);
-        }
-        Ok(Some(Page {
-            backend,
+        let mut refused = None;
+        let passed = super::run(
+            &mut Canvas { canvas, size },
+            names,
+            entries,
             bricks,
             build,
-            source: None,
-            files: BTreeMap::new(),
-            size,
-            paused: true,
-            clock: 0.0,
-            loaded: false,
-            faults: Vec::new(),
-        }))
-    }
-
-    async fn open<G: Game>(
-        canvas: &HtmlCanvasElement,
-        bricks: BrickList,
-        build: Build<'_, G>,
-        gpu: &mut Option<bool>,
-    ) -> Result<Backend<G>> {
-        if *gpu != Some(false) {
-            let target = RenderTarget::Canvas(canvas.clone());
-            let listed = bricks.clone();
-            match GameHost::launch(target, move |_| listed, |engine| build(None, engine)).await {
-                Ok(mut host) => {
-                    prepared(&mut host);
-                    *gpu = Some(true);
-                    return Ok(Backend::Gpu(Box::new(host)));
+            &mut |record: &SmokeRecord| {
+                let line = JsValue::from_str(&record.line());
+                if refused.is_none()
+                    && let Err(error) = report.call1(&JsValue::NULL, &line)
+                {
+                    refused = Some(error);
                 }
-                Err(error) if *gpu == Some(true) => return Err(error),
-                Err(_) => {}
-            }
+            },
+        )
+        .await
+        .map_err(engine_settings::js_error)?;
+        match refused {
+            Some(error) => Err(error),
+            None => Ok(passed),
         }
-        let mut engine = engine_of(bricks)?;
-        let game = build(None, &mut engine)?;
-        *gpu = Some(false);
-        Ok(Backend::Headless(Box::new(Headless::new(engine, game))))
     }
 
     fn prepared<G: Game>(host: &mut GameHost<G>) {
         host.set_job_workers(0);
         host.set_job_cache(false, false);
+        host.set_preparation(false);
         let _ = host.set_setting(crate::DYNAMIC_RESOLUTION, Value::Bool(false));
     }
 
-    fn carry<G: Game>(
-        host: &mut GameHost<G>,
-        paused: &mut bool,
-        (width, height): (u32, u32),
-        effect: Effect,
-    ) -> Outcome {
-        match effect {
-            Effect::Pause { paused: wanted } => {
-                *paused = wanted;
-                Outcome::default()
+    impl<G: Game> SmokeHost<G> for Canvas {
+        type Gpu = Page<G>;
+
+        fn open(
+            &mut self,
+            bricks: BrickList,
+            build: Build<'_, G>,
+        ) -> impl Future<Output = Result<Page<G>>> {
+            let target = RenderTarget::Canvas(self.canvas.clone());
+            let size = self.size;
+            async move {
+                let mut host =
+                    GameHost::launch(target, move |_| bricks, |engine| build(None, engine)).await?;
+                prepared(&mut host);
+                Ok(Page {
+                    host: Box::new(host),
+                    size,
+                    paused: true,
+                    source: None,
+                    files: BTreeMap::new(),
+                })
             }
-            Effect::Wait { .. } => Outcome {
-                now: Some(crate::host::now_ms()),
-                ..Outcome::default()
-            },
-            Effect::Frame { timestamp } => {
-                let drawn = host.frame(timestamp, width, height);
-                let _ = host.take_jobs();
-                match drawn {
-                    Ok(()) => Outcome::default(),
-                    Err(error) => Outcome {
-                        failed: Some(json(&error).to_string()),
-                        ..Outcome::default()
-                    },
-                }
-            }
-            Effect::Show | Effect::Stream { .. } => Outcome::default(),
-            Effect::Game { .. } | Effect::Source => Outcome {
-                missing: Some(Vec::new()),
-                ..Outcome::default()
-            },
-            Effect::Save { name, .. } => Outcome {
-                failed: Some(name),
-                ..Outcome::default()
-            },
+        }
+
+        fn rebuild(
+            &mut self,
+            mut gpu: Page<G>,
+            bricks: BrickList,
+            build: Build<'_, G>,
+        ) -> Result<Page<G>> {
+            let (engine, game) = built(bricks, build)?;
+            gpu.host.replace_engine(engine);
+            *gpu.host.game_mut() = game;
+            prepared(gpu.host.as_mut());
+            Ok(gpu)
+        }
+
+        fn artifact(&mut self, _path: &str) -> Option<Vec<u8>> {
+            None
         }
     }
 
-    impl<G: Game> Page<'_, G> {
-        fn world(&self) -> &bevy_ecs::world::World {
-            match &self.backend {
-                Backend::Headless(headless) => headless.engine.app.world(),
-                Backend::Gpu(host) => host.engine().app.world(),
-            }
-        }
-
+    impl<G: Game> Page<G> {
         fn context(&self) -> HostContext {
             HostContext {
                 width: self.size.0,
@@ -796,168 +711,83 @@ pub mod page {
             }
         }
 
-        fn send(&mut self, line: &str) -> Value {
-            let context = self.context();
-            match &mut self.backend {
-                Backend::Headless(headless) => headless.request(line),
-                Backend::Gpu(host) => {
-                    let mut step = host.dev_request(line, &context);
-                    let reply = loop {
-                        match step {
-                            Step::Reply(reply) => break reply,
-                            Step::Effect(effect) => {
-                                step = match (effect, self.source.as_deref()) {
-                                    (Effect::Source, Some(document)) => {
-                                        let kinds = SceneKinds::of(host.engine().app.world());
-                                        match scene_files(document, &self.files, &kinds) {
-                                            Ok(files) => {
-                                                host.dev_reloaded(document, Some(&files), &context)
-                                            }
-                                            Err(error) => {
-                                                let outcome = Outcome {
-                                                    failed: Some(json(&error).to_string()),
-                                                    ..Outcome::default()
-                                                };
-                                                host.dev_resume(outcome, &context)
-                                            }
-                                        }
-                                    }
-                                    (effect, _) => {
-                                        let outcome = carry(
-                                            host.as_mut(),
-                                            &mut self.paused,
-                                            self.size,
-                                            effect,
-                                        );
-                                        let context = HostContext {
-                                            paused: self.paused,
-                                            ..context.clone()
-                                        };
-                                        host.dev_resume(outcome, &context)
-                                    }
-                                };
-                            }
-                        }
-                    };
-                    let _ = host.take_jobs();
-                    reply
-                }
+        fn carry(&mut self, effect: Effect, context: &HostContext) -> Step {
+            let failed = |error: crate::Error| Outcome {
+                failed: Some(json(&error).to_string()),
+                ..Outcome::default()
+            };
+            if let (Effect::Source, Some(document)) = (&effect, self.source.clone()) {
+                let kinds = SceneKinds::of(self.host.engine().app.world());
+                return match scene_files(&document, &self.files, &kinds) {
+                    Ok(files) => self.host.dev_reloaded(&document, Some(&files), context),
+                    Err(error) => self.host.dev_resume(failed(error), context),
+                };
             }
+            let outcome = match effect {
+                Effect::Pause { paused } => {
+                    self.paused = paused;
+                    Outcome::default()
+                }
+                Effect::Wait { .. } => Outcome {
+                    now: Some(crate::host::now_ms()),
+                    ..Outcome::default()
+                },
+                Effect::Frame { timestamp } => match self.frame(timestamp) {
+                    Ok(()) => Outcome::default(),
+                    Err(error) => failed(error),
+                },
+                Effect::Show | Effect::Stream { .. } => Outcome::default(),
+                Effect::Game { .. } | Effect::Source => Outcome {
+                    missing: Some(Vec::new()),
+                    ..Outcome::default()
+                },
+                Effect::Save { name, .. } => Outcome {
+                    failed: Some(name),
+                    ..Outcome::default()
+                },
+            };
+            let context = HostContext {
+                paused: self.paused,
+                ..context.clone()
+            };
+            self.host.dev_resume(outcome, &context)
         }
     }
 
-    impl<G: Game> SmokeSession for Page<'_, G> {
-        fn request(&mut self, verb: &str, body: Value) -> std::result::Result<Value, Value> {
-            let line = routed(self.world(), verb, body);
-            answered(self.send(&line))
+    impl<G: Game> GpuSession for Page<G> {
+        fn world(&self) -> &bevy_ecs::world::World {
+            self.host.engine().app.world()
         }
 
-        fn step(&mut self, ticks: u32) {
-            for line in super::step_lines(ticks) {
-                let reply = self.send(&line);
-                if reply["ok"] != true {
-                    self.faults.push(fault("step", &reply));
-                    return;
+        fn send(&mut self, line: &str) -> Value {
+            let context = self.context();
+            let mut step = self.host.dev_request(line, &context);
+            let reply = loop {
+                match step {
+                    Step::Reply(reply) => break reply,
+                    Step::Effect(effect) => step = self.carry(effect, &context),
                 }
-            }
-        }
-
-        fn frame(&mut self) -> bool {
-            let Backend::Gpu(host) = &mut self.backend else {
-                return false;
             };
-            self.clock += FRAME_MS;
-            if let Err(error) = host.frame(self.clock, self.size.0, self.size.1) {
-                self.faults.push(fault("frame", &error));
-            }
-            let _ = host.take_jobs();
-            true
+            let _ = self.host.take_jobs();
+            reply
         }
 
-        fn source(&mut self, document: &str) {
+        fn frame(&mut self, timestamp: f64) -> Result<()> {
+            let drawn = self.host.frame(timestamp, self.size.0, self.size.1);
+            let _ = self.host.take_jobs();
+            drawn
+        }
+
+        fn play(&mut self, document: &str) -> Result<()> {
             self.source = Some(document.to_owned());
-            let loaded = match &mut self.backend {
-                Backend::Headless(headless) => headless.source(document),
-                Backend::Gpu(host) => {
-                    let kinds = SceneKinds::of(host.engine().app.world());
-                    scene_files(document, &self.files, &kinds)
-                        .and_then(|files| host.reload_scene(document, &files))
-                }
-            };
-            match loaded {
-                Ok(()) => self.loaded = true,
-                Err(_) if self.loaded => {}
-                Err(error) => self.faults.push(fault("source", &error)),
-            }
-        }
-
-        fn idle(&mut self, milliseconds: f64) {
-            super::idle(milliseconds);
-        }
-
-        fn joined(&mut self, list: TypeId, each: &mut dyn FnMut(&dyn Any)) {
-            super::joined(self.world(), list, each);
-        }
-
-        fn members(&mut self, place: &str) -> Vec<&'static str> {
-            super::members(self.world(), place)
-        }
-
-        fn slot(&mut self, slot: TypeId, each: &mut dyn FnMut(&dyn Any)) {
-            super::slot(self.world(), slot, each);
-        }
-
-        fn without(&mut self, bricks: &[&'static str]) {
-            let listed = super::without(&self.bricks, bricks);
-            let built = engine_of(listed).and_then(|mut engine| {
-                let game = (self.build)(None, &mut engine)?;
-                Ok((engine, game))
-            });
-            let (engine, game) = match built {
-                Ok(built) => built,
-                Err(error) => {
-                    self.faults.push(fault("without", &error));
-                    return;
-                }
-            };
-            match &mut self.backend {
-                Backend::Gpu(host) => {
-                    host.replace_engine(engine);
-                    *host.game_mut() = game;
-                    prepared(host.as_mut());
-                }
-                Backend::Headless(headless) => {
-                    **headless = Headless::new(engine, game);
-                    for (name, bytes) in &self.files {
-                        headless.file(name, bytes);
-                    }
-                }
-            }
-            self.clock = 0.0;
-            if let Some(document) = self.source.clone() {
-                self.source(&document);
-            }
+            let kinds = SceneKinds::of(self.host.engine().app.world());
+            let files = scene_files(document, &self.files, &kinds)?;
+            self.host.reload_scene(document, &files)
         }
 
         fn file(&mut self, name: &str, bytes: &[u8]) {
             self.files.insert(name.to_owned(), bytes.to_vec());
-            if let Backend::Headless(headless) = &mut self.backend {
-                headless.file(name, bytes);
-            }
-        }
-
-        fn artifact(&mut self, _path: &str) -> Option<Vec<u8>> {
-            None
-        }
-
-        fn decode_image(
-            &mut self,
-            path: &str,
-            bytes: &[u8],
-        ) -> std::result::Result<(u32, u32, Vec<u8>), Value> {
-            engine_worker::decode_image(path, bytes)
-                .map(|image| (image.width, image.height, image.pixels))
-                .map_err(|error| json(&error))
         }
     }
+
 }

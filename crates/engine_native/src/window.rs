@@ -120,8 +120,7 @@ struct Running<G: Game> {
     playing: Option<Instant>,
     measured: Vec<(Instant, f64)>,
     settled: u32,
-    flown: Vec<f64>,
-    marks: Vec<u64>,
+    flown: Vec<(f64, u64)>,
     track: Vec<serde_json::Value>,
     tracked: usize,
     steps: u32,
@@ -189,7 +188,6 @@ impl<'a, G: Game> App<'a, G> {
             measured: Vec::new(),
             settled: 0,
             flown: Vec::new(),
-            marks: Vec::new(),
             track: Vec::new(),
             tracked: 0,
             steps: 0,
@@ -379,22 +377,21 @@ impl<G: Game> Running<G> {
         }
         self.host.key("KeyW", true);
         let now = engine::host::now_ms();
-        let since = self.flown.last().map_or(0.0, |&before| now - before);
+        let since = self.flown.last().map_or(0.0, |&(before, _)| now - before);
         self.host.look(flight.turn * (since / 1000.0) as f32, 0.0);
-        self.flown.push(now);
-        self.marks.push(engine::profiling::frame_mark());
+        self.flown.push((now, engine::profiling::frame_mark()));
         let resolution = self.host.frame_times().resolution;
         let size = (resolution.render_width, resolution.render_height);
         if self.flown.len() > 1 && size != self.render_size {
             self.steps += 1;
         }
         self.render_size = size;
-        let first = self.flown.first().copied()?;
-        let last = self.flown.last().copied()?;
-        if last - self.flown[self.tracked] >= TRACK_MS {
+        let (first, _) = self.flown.first().copied()?;
+        let (last, _) = self.flown.last().copied()?;
+        if last - self.flown[self.tracked].0 >= TRACK_MS {
             let mut spans: Vec<f64> = self.flown[self.tracked..]
                 .windows(2)
-                .map(|at| at[1] - at[0])
+                .map(|at| at[1].0 - at[0].0)
                 .collect();
             spans.sort_by(f64::total_cmp);
             self.track.push(serde_json::json!({
@@ -410,15 +407,19 @@ impl<G: Game> Running<G> {
         if last - first < f64::from(flight.seconds) * 1000.0 {
             return None;
         }
-        let mut intervals: Vec<f64> = self.flown.windows(2).map(|at| at[1] - at[0]).collect();
-        let hitches: Vec<serde_json::Value> = intervals
+        let spans: Vec<(f64, u64)> = self
+            .flown
+            .windows(2)
+            .map(|at| (at[1].0 - at[0].0, at[1].1))
+            .collect();
+        let hitches: Vec<serde_json::Value> = spans
             .iter()
-            .zip(&self.marks)
-            .filter(|&(&ms, _)| ms > HITCH_MS)
-            .map(|(&ms, &mark)| serde_json::json!({ "frame": mark, "ms": ms }))
+            .filter(|&&(ms, _)| ms > HITCH_MS)
+            .map(|&(ms, mark)| serde_json::json!({ "frame": mark, "ms": ms }))
             .collect();
         let minutes = (last - first) / 60_000.0;
-        let over = intervals.iter().filter(|&&ms| ms > HITCH_MS).count();
+        let over = hitches.len();
+        let mut intervals: Vec<f64> = spans.into_iter().map(|(ms, _)| ms).collect();
         intervals.sort_by(f64::total_cmp);
         Some(WindowReport {
             frames: self.flown.len() as u32,
