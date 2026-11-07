@@ -95,9 +95,13 @@ fn stable_normalize(value: vec3<f32>) -> vec3<f32> {
     return normalize(value / scale);
 }
 
+fn noise_phase() -> f32 {
+    return camera.options.z;
+}
+
 fn fade_noise(position: vec2<f32>) -> f32 {
     return fract(fract(52.9829189 * fract(dot(position, vec2<f32>(0.06711056, 0.00583715))))
-        + camera.options.z);
+        + noise_phase());
 }
 
 fn pixel_noise(position: vec2<f32>) -> f32 {

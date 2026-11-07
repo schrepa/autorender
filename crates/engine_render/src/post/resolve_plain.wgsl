@@ -1,11 +1,6 @@
 import package::engine::post::frame::{drawn_uv, linear, post, scene};
 import package::engine::post::pixel::{PostPixel, SceneLight};
 
-struct Started {
-    light: SceneLight,
-    at: PostPixel,
-}
-
 fn upscaled_scene(pixel: vec2<f32>) -> vec4<f32> {
     let center = floor(pixel - 0.5) + 0.5;
     let f = pixel - center;
@@ -33,15 +28,18 @@ fn scene_tap(pixel: vec2<f32>) -> vec4<f32> {
     return textureSampleLevel(scene, linear, drawn_uv(pixel, post), 0.0);
 }
 
-fn scene_light(position: vec4<f32>) -> Started {
+fn post_pixel(position: vec4<f32>) -> PostPixel {
     let uv = position.xy * post.extent.zw;
     let whole = all(post.size.xy == post.extent.xy);
     let rendered = select(uv * post.size.xy, position.xy, whole);
     let pixel = min(vec2<i32>(rendered), vec2<i32>(post.size.xy) - 1);
-    var texel = textureLoad(scene, pixel, 0);
-    if !whole {
-        texel = upscaled_scene(rendered);
+    return PostPixel(position.xy, uv, pixel);
+}
+
+fn scene_light(at: PostPixel) -> SceneLight {
+    var texel = textureLoad(scene, at.pixel, 0);
+    if any(post.size.xy != post.extent.xy) {
+        texel = upscaled_scene(at.uv * post.size.xy);
     }
-    let at = PostPixel(position.xy, uv, pixel, 0.0, 1u);
-    return Started(SceneLight(texel.rgb, texel.a), at);
+    return SceneLight(texel.rgb, texel.a);
 }

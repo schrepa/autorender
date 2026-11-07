@@ -19,7 +19,9 @@ pub(crate) const APPLIED_MODULE: &str = "generated::applied";
 pub(crate) const PASSES_MODULE: &str = "generated::passes";
 pub(crate) const KINDS_MODULE: &str = "generated::kinds";
 pub(crate) const TRANSPARENCY_MODULE: &str = "engine::transparency";
+pub(crate) const NORMALS_MODULE: &str = "engine::normals";
 pub(crate) const COVER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+pub(crate) const NORMALS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgb10a2Unorm;
 pub(crate) const MOST_APPLIED: usize = 128;
 pub(crate) static PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<Resolve>(),
@@ -160,7 +162,6 @@ impl GpuPart for ScenePart {
 pub(crate) struct Composite {
     pass: Pass<Self>,
     pipeline: crate::Pipeline<Self, crate::Own>,
-    plain: crate::Pipeline<Self, crate::Own>,
     debug_pass: Pass<Self>,
     debug_pipeline: crate::Pipeline<Self, crate::Own>,
 }
@@ -191,15 +192,12 @@ impl GpuPart for Composite {
             .span("post_composite")
             .id();
         let pipeline = cx.render_pipeline(pass, &fullscreen(crate::shaders::FS_COMPOSITE), &[])?;
-        let plain =
-            cx.render_pipeline(pass, &fullscreen(crate::shaders::FS_COMPOSITE_PLAIN), &[])?;
         let debug_pass = cx.pass(DEBUG_VIEW).after(pass).id();
         let debug_pipeline =
             cx.render_pipeline(debug_pass, &fullscreen(crate::shaders::FS_DEBUG_VIEW), &[])?;
         Ok(Self {
             pass,
             pipeline,
-            plain,
             debug_pass,
             debug_pipeline,
         })
@@ -218,10 +216,8 @@ impl GpuPart for Composite {
     fn encode(&mut self, pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
         let pipeline = if pass == self.debug_pass {
             &self.debug_pipeline
-        } else if cx.core.jittered && cx.core.resolve.is_some() {
-            &self.pipeline
         } else {
-            &self.plain
+            &self.pipeline
         };
         let mut draw = cx.render(crate::Attach::Declared);
         draw.draw(
@@ -295,7 +291,7 @@ fn sampled_type(format: wgpu::TextureFormat) -> &'static str {
 
 pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
     let mut imports = String::from(
-        "import package::engine::shading::{Shaded, ViewPixel};\nimport package::engine::post::pixel::{PostPixel, SceneLight};\n",
+        "import package::engine::shading::{Shaded, SurfacePoint, ViewPixel, unlit};\n",
     );
     let mut body = String::new();
     for (index, output) in outputs.iter().enumerate() {
@@ -323,11 +319,7 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
             body,
             "\nstruct {name} {{\n    @location(0) color: vec4<f32>,"
         );
-        for (index, output) in outputs
-            .iter()
-            .filter(|output| !output.layers.is_empty())
-            .enumerate()
-        {
+        for (index, output) in outputs.iter().enumerate() {
             let _ = writeln!(
                 body,
                 "    @location({}) {}: {},",
@@ -341,26 +333,40 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
         }
         let _ = writeln!(body, "}}");
     }
+    let at_depth = |output: &&OutputDecl| output.layers.contains(&AttachPoint::Depth);
+    let _ = writeln!(body, "\nstruct DepthTargets {{");
+    for (index, output) in outputs.iter().enumerate() {
+        if at_depth(&output) {
+            let _ = writeln!(
+                body,
+                "    @location({}) {}: {},",
+                index + 1,
+                output.name,
+                output_type(output.format)
+            );
+        }
+    }
+    let _ = writeln!(body, "}}");
     let _ = writeln!(
         body,
-        "\nfn view_targets(shaded: Shaded, at: ViewPixel) -> ViewTargets {{"
+        "\nfn view_targets(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> ViewTargets {{"
     );
     let _ = writeln!(
         body,
         "    var targets: ViewTargets;\n    targets.color = vec4<f32>(shaded.linear, shaded.ambient);"
     );
     for (index, output) in outputs.iter().enumerate() {
-        if !output.layers.is_empty() && output.module.is_some() {
+        if output.module.is_some() {
             let _ = writeln!(
                 body,
-                "    targets.{} = member_{index}(shaded, at);",
+                "    targets.{} = member_{index}(point, shaded, at);",
                 output.name
             );
         }
     }
     let _ = writeln!(
         body,
-        "    return targets;\n}}\n\nfn blended_targets(shaded: Shaded, at: ViewPixel) -> ViewTargets {{\n    var targets = view_targets(shaded, at);\n    targets.color = vec4<f32>(shaded.linear * shaded.opacity, shaded.opacity);\n    return targets;\n}}"
+        "    return targets;\n}}\n\nfn blended_targets(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> ViewTargets {{\n    var targets = view_targets(point, shaded, at);\n    targets.color = vec4<f32>(shaded.linear * shaded.opacity, shaded.opacity);\n    return targets;\n}}"
     );
     if outputs
         .iter()
@@ -373,47 +379,38 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
     }
     let _ = writeln!(
         body,
-        "\nfn depth_view_targets(shaded: Shaded, at: ViewPixel, depth: f32) -> DepthViewTargets {{"
+        "\nfn depth_view_targets(point: SurfacePoint, shaded: Shaded, at: ViewPixel, depth: f32) -> DepthViewTargets {{"
     );
     let _ = writeln!(
         body,
-        "    let targets = view_targets(shaded, at);\n    var out: DepthViewTargets;\n    out.color = targets.color;"
+        "    let targets = view_targets(point, shaded, at);\n    var out: DepthViewTargets;\n    out.color = targets.color;"
     );
-    for output in outputs.iter().filter(|output| !output.layers.is_empty()) {
+    for output in outputs {
         let _ = writeln!(body, "    out.{name} = targets.{name};", name = output.name);
     }
     let _ = writeln!(
         body,
-        "    out.depth = depth;\n    return out;\n}}\n\nstruct CompositeOut {{\n    @location(0) canvas: vec4<f32>,"
-    );
-    for (location, output) in (1..).zip(outputs.iter().filter(|output| output.layers.is_empty())) {
-        let _ = writeln!(
-            body,
-            "    @location({location}) {}: {},",
-            output.name,
-            output_type(output.format)
-        );
-    }
-    let _ = writeln!(
-        body,
-        "}}\n\nfn composite_out(color: vec4<f32>, light: SceneLight, at: PostPixel) -> CompositeOut {{\n    var out: CompositeOut;\n    out.canvas = color;"
+        "    out.depth = depth;\n    return out;\n}}\n\nfn depth_targets(point: SurfacePoint, at: ViewPixel) -> DepthTargets {{\n    let shaded = unlit(point);\n    var targets: DepthTargets;"
     );
     for (index, output) in outputs.iter().enumerate() {
-        if output.layers.is_empty() && output.module.is_some() {
-            let _ = writeln!(body, "    out.{} = member_{index}(light, at);", output.name);
+        if at_depth(&output) && output.module.is_some() {
+            let _ = writeln!(
+                body,
+                "    targets.{} = member_{index}(point, shaded, at);",
+                output.name
+            );
         }
     }
-    let _ = writeln!(body, "    return out;\n}}");
+    let _ = writeln!(body, "    return targets;\n}}");
     format!("{imports}\n{body}")
 }
 
 pub(crate) fn composite_source() -> String {
     "import package::engine::post::frame::{depth_texture, post};
-import package::engine::post::resolve_plain::scene_light;
+import package::engine::post::resolve_plain::{post_pixel, scene_light};
 import package::engine::color::encode_srgb;
 import package::generated::applied::{applied_color, applied_display, applied_light};
-import package::face::resolve::{resolve, resolved_at};
-import package::generated::targets::{CompositeOut, composite_out};
+import package::face::resolve::resolved;
 import package::face::debug::{DebugShade, DebugTargets, shown};
 import package::face::debug_modes::shade_kind;
 
@@ -437,25 +434,16 @@ fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
 }
 
 @fragment
-fn fs_composite(@builtin(position) position: vec4<f32>) -> CompositeOut {
-    let started = scene_light(position);
-    if uncovered(started.at.pixel) {
+fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let at = post_pixel(position);
+    if uncovered(at.pixel) {
         discard;
     }
-    let light = resolve(started.at, started.light);
-    let at = resolved_at(started.at);
-    let color = applied_display(applied_color(light.color, at), at);
-    return composite_out(vec4<f32>(encode_srgb(color), 1.0), light, at);
-}
-
-@fragment
-fn fs_composite_plain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let started = scene_light(position);
-    if uncovered(started.at.pixel) {
-        discard;
+    var light = resolved(at);
+    if light.a == 0.0 {
+        light = vec4<f32>(applied_light(scene_light(at), at).color, 1.0);
     }
-    let light = applied_light(started.light, started.at);
-    let color = applied_display(applied_color(light.color, started.at), started.at);
+    let color = applied_display(applied_color(light.rgb, at), at);
     return vec4<f32>(encode_srgb(color), 1.0);
 }
 "

@@ -50,7 +50,8 @@ fn vs_placed_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
 fn fs_placed_card(input: PlacedCardVertex) -> DepthViewTargets {
     let card = card_of(input);
     let shaded = placed_card_shade(card, placed_impostor(impostor_index(card.batch)));
-    return depth_view_targets(shaded.shaded, placed_card_pixel(card), shaded.depth);
+    return depth_view_targets(shaded.point, shaded.shaded, placed_card_pixel(card),
+        shaded.depth);
 }
 
 @fragment

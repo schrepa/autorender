@@ -412,7 +412,7 @@ fn attachments(
     }
     if let Some(layer) = pass_layer(pass) {
         if !own_colors_only(pass) {
-            for (target, _, _, written) in set_formats(outputs, Some(layer)) {
+            for (target, _, _, written) in set_formats(outputs, layer) {
                 if written {
                     found.push(Handle::Target(target));
                 }
@@ -424,6 +424,9 @@ fn attachments(
         if shared(pass) || depth_writes {
             found.push(Handle::Target(Target::Depth));
         }
+    }
+    for &view in &pass.targets {
+        found.push(Handle::Target(final_target(view)));
     }
     if crate::shared::draws_canvas(pass) {
         found.push(Handle::Target(Target::Canvas));
@@ -647,9 +650,6 @@ impl Machine {
                     Handle::Texture { texture, .. } => {
                         !doubled.get(*texture as usize).copied().unwrap_or(false)
                     }
-                    Handle::Target(Target::Output(index)) => outputs
-                        .get(*index as usize)
-                        .is_none_or(|output| !output.layers.is_empty()),
                     Handle::Buffer(_) | Handle::Target(_) => true,
                 });
                 handle.map(|handle| (handle, *ty))
@@ -1039,24 +1039,18 @@ fn graph_access(access: Access, clear: Clear) -> GraphAccess {
 pub(crate) fn cover_location(outputs: &[OutputDecl]) -> Option<usize> {
     outputs
         .iter()
-        .filter(|output| !output.layers.is_empty())
         .position(|output| output.name == engine_core::TargetName::TRANSPARENCY.name())
         .map(|at| at + 1)
 }
 
-pub(crate) fn set_formats(outputs: &[OutputDecl], layer: Option<AttachPoint>) -> Vec<SetFormat> {
+pub(crate) fn set_formats(outputs: &[OutputDecl], layer: AttachPoint) -> Vec<SetFormat> {
     let mut set = vec![(Target::Scene, SCENE_FORMAT, Clear::Color(SCENE_CLEAR), true)];
     for (index, output) in outputs.iter().enumerate() {
-        let written = match layer {
-            Some(_) if output.layers.is_empty() => continue,
-            Some(layer) => output.layers.contains(&layer),
-            None => output.layers.is_empty(),
-        };
         set.push((
             Target::Output(index as u32),
             output.format,
             Clear::Color(TRANSPARENT),
-            written,
+            output.layers.contains(&layer),
         ));
     }
     set
@@ -1118,7 +1112,7 @@ fn graph_of(
         target(
             Target::Output(index as u32),
             output.name,
-            !output.layers.is_empty(),
+            true,
             Life::Output,
             &mut ids,
         );
@@ -1235,7 +1229,7 @@ fn graph_of(
         }
         if let Some(layer) = scene {
             if !own_colors_only(pass) {
-                for (target, _, clear, written) in set_formats(outputs, Some(layer)) {
+                for (target, _, clear, written) in set_formats(outputs, layer) {
                     if let Some(id) = ids.target(target).filter(|_| written) {
                         let access = if entry.shared {
                             GraphAccess::Draw(clear)
@@ -1265,6 +1259,11 @@ fn graph_of(
                     GraphAccess::ReadOnly
                 };
                 depth = Some((id, access));
+            }
+        }
+        for &view in &pass.targets {
+            if let Some(id) = ids.target(final_target(view)) {
+                colors.push((id, GraphAccess::Load));
             }
         }
         for &(texture, access) in &pass.colors {
@@ -1313,14 +1312,6 @@ fn graph_of(
         );
         for target in [Target::Scene, Target::Depth] {
             passes[at].reads.extend(ids.target(target));
-        }
-        for (index, output) in outputs.iter().enumerate() {
-            let target = ids.target(Target::Output(index as u32));
-            if output.layers.is_empty() {
-                passes[at].writes.extend(target);
-            } else {
-                passes[at].reads.extend(target);
-            }
         }
     }
     if let (Some(at), Some(canvas)) = (

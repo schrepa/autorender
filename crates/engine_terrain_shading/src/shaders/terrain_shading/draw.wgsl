@@ -5,7 +5,7 @@ import package::face::far_cover::{GroundAt, far_color};
 import package::face::ground_tiles::macro_color;
 import package::face::bounce::bounce_light;
 import package::face::foliage::foliage;
-import package::face::lit::{finish, widened};
+import package::face::lit::finish;
 import package::face::shadows::{kept_level, kept_texels};
 import package::face::sun::sun_direction;
 import package::engine::view::{DETAIL_EDGE_ON, PI, camera, detail_across, detail_distance, detail_level,
@@ -1211,8 +1211,10 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
 
 fn terrain_point(relative: vec3<f32>) -> SurfacePoint {
     let look = terrain_forward_look(relative);
-    let point = terrain_point_seen(relative, look, terrain_seen(relative, look), relative);
-    return widened(point, dpdx(point.normal), dpdy(point.normal));
+    var point = terrain_point_seen(relative, look, terrain_seen(relative, look), relative);
+    point.normal_dx = dpdx(point.normal);
+    point.normal_dy = dpdy(point.normal);
+    return point;
 }
 
 struct TerrainLook {
@@ -1397,8 +1399,9 @@ fn terrain_resolved(position: vec4<f32>, dither: f32) -> TerrainResolved {
     let met = relative + relative * (seen.beyond / max(away, 1.0e-6));
     let shown = terrain_point_seen(relative, look, seen, met);
     var resolved: TerrainResolved;
-    resolved.point = widened(shown, select(vec3<f32>(0.0), dpdxFine(shown.normal), same.x),
-        select(vec3<f32>(0.0), dpdyFine(shown.normal), same.y));
+    resolved.point = shown;
+    resolved.point.normal_dx = select(vec3<f32>(0.0), dpdxFine(shown.normal), same.x);
+    resolved.point.normal_dy = select(vec3<f32>(0.0), dpdyFine(shown.normal), same.y);
     resolved.previous = (camera.previous_view_projection * vec4<f32>(eye_world(met), 1.0)).xyw;
     resolved.depth = depth;
     if seen.beyond != 0.0 {
@@ -1428,7 +1431,7 @@ fn terrain_resolve_targets(input: TerrainResolveInput, dither: f32) -> DepthView
     let point = resolved.point;
     let shaded = finish(point, position.xy, vec3<f32>(0.0));
     let previous = vec4<f32>(resolved.previous.xy, 0.0, resolved.previous.z);
-    return depth_view_targets(shaded, view_pixel(position, previous), resolved.depth);
+    return depth_view_targets(point, shaded, view_pixel(position, previous), resolved.depth);
 }
 
 @fragment

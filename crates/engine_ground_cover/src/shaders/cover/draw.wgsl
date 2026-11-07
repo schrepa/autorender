@@ -4,7 +4,7 @@ import package::cover::laws::{COVER_LEAF_STEPS, COVER_ROOT_OCCLUSION, STRAIGHT_F
 import package::engine::shading::SurfacePoint;
 import package::engine::surfaces::SURFACE_THIN;
 import package::engine::view::{PI, camera, stable_normalize, view_pixel};
-import package::face::lit::{finish, widened};
+import package::face::lit::finish;
 import package::face::foliage::foliage;
 import package::face::sun::sun_direction;
 import package::generated::cover::{CoverBlade, CoverFrame};
@@ -202,12 +202,14 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     point.world = input.world;
     point.world_dx = dpdx(input.world);
     point.world_dy = dpdy(input.world);
-    return widened(point, dpdx(normal), dpdy(normal));
+    point.normal_dx = dpdx(normal);
+    point.normal_dy = dpdy(normal);
+    return point;
 }
 
 @fragment
 fn fs_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> ViewTargets {
     let point = cover_surface(input, front);
     let shaded = finish(point, input.clip_position.xy, vec3<f32>(0.0));
-    return view_targets(shaded, view_pixel(input.clip_position, input.previous));
+    return view_targets(point, shaded, view_pixel(input.clip_position, input.previous));
 }

@@ -157,17 +157,9 @@ pub trait RenderBricks {
     ) -> &mut Self;
     fn view_target(&mut self, target: TargetDecl) -> &mut Self;
     fn generated(&mut self, wgsl: &'static [&'static str]) -> &mut Self;
-    fn resolve_pass(&mut self, names: PassNames) -> &mut Self;
     fn material_slot(&mut self, module: SlotModule) -> &mut Self;
     fn lighting_model(&mut self, module: LightingModule) -> &mut Self;
     fn surface_kind(&mut self, kind: SurfaceKind) -> &mut Self;
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PassNames {
-    pub pass: &'static str,
-    pub label: &'static str,
-    pub span: &'static str,
 }
 
 impl RenderBricks for Bricks<'_> {
@@ -228,13 +220,6 @@ impl RenderBricks for Bricks<'_> {
         self.record()
             .render
             .push(Box::new(registration::Generated(wgsl)));
-        self
-    }
-
-    fn resolve_pass(&mut self, names: PassNames) -> &mut Self {
-        self.record()
-            .render
-            .push(Box::new(registration::ResolvePass(names)));
         self
     }
 
@@ -328,17 +313,11 @@ pub struct SceneDraw {
     pub index: Option<u32>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Written {
-    At(&'static [AttachPoint]),
-    Composite,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct TargetDecl {
     pub name: TargetName,
     pub format: wgpu::TextureFormat,
-    pub written: Written,
+    pub written: &'static [AttachPoint],
     pub module: Option<engine_core::Module>,
 }
 
@@ -862,6 +841,25 @@ impl<P: GpuPart> PassBuilder<'_, P> {
     }
 
     #[must_use]
+    pub fn target(self, name: TargetName) -> Self {
+        match install::ViewTarget::of(name).filter(|view| *view == install::ViewTarget::Scene) {
+            Some(view) => {
+                if let Some(pass) = self.core.pass_mut(self.pass) {
+                    pass.targets.push(view);
+                }
+            }
+            None => {
+                let pass = self.core.pass_mut(self.pass).map_or("", |pass| pass.name);
+                let path = format!("$.passes.{pass}.targets.{}", name.name());
+                self.core
+                    .problems
+                    .push(Error::new(engine_core::ErrorCode::PassMismatch, path));
+            }
+        }
+        self
+    }
+
+    #[must_use]
     pub fn color_cleared(self, target: Texture<P>, clear: wgpu::Color) -> Self {
         if let Some(pass) = self.core.pass_mut(self.pass) {
             pass.colors.push((target.0, Access::Clear));
@@ -942,12 +940,21 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.camera_slot
     }
 
-    pub fn writes_target(&self, name: TargetName) -> bool {
-        self.core
-            .machine
+    pub fn read_target(&self, name: TargetName) -> bool {
+        let machine = &self.core.machine;
+        let Some(target) = machine
             .outputs
             .iter()
-            .any(|output| output.name == name.name() && !output.layers.is_empty())
+            .position(|output| output.name == name.name())
+            .and_then(|index| machine.ids.target(machine::Target::Output(index as u32)))
+        else {
+            return false;
+        };
+        self.core
+            .set()
+            .ran
+            .iter()
+            .any(|pass| machine.graph.reads(pass).contains(target.index()))
     }
 
     pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) -> Allocation {

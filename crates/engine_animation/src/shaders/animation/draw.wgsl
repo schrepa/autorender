@@ -20,5 +20,6 @@ fn vs_skinned(input: AffineVertexInput, @location(3) previous: vec3<f32>) -> Slo
 
 @fragment
 fn fs_skinned(input: SlotVertex, @builtin(front_facing) front: bool) -> ViewTargets {
-    return view_targets(slot_shade(slot_fragment(input), front, false), slot_pixel(input));
+    let shaded = slot_shade(slot_fragment(input), front, false);
+    return view_targets(shaded.point, shaded.shaded, slot_pixel(input));
 }

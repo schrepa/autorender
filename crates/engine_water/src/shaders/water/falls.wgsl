@@ -12,7 +12,7 @@ import package::generated::targets::{ViewTargets, view_targets};
 import package::place::water::WATER_HELD;
 import package::water::footprint::WATER_SMOOTHEST;
 import package::water::surface::{water_body, water_ground, water_pixel, water_scattered,
-    water_scene, water_transmitted};
+    water_transmitted};
 
 struct FallInput {
     @location(0) position: vec3<f32>,
@@ -111,6 +111,7 @@ fn fall_clear(world: vec3<f32>, thickness: f32) -> f32 {
 }
 
 struct FallShade {
+    point: SurfacePoint,
     shaded: Shaded,
     shown: f32,
     coverage: f32,
@@ -177,29 +178,25 @@ fn shade_fall(input: FallOutput) -> FallShade {
         * water_scattered(view, sunlight, seen)
         * ((1.0 - reflectance) * scattering.x * input.sky);
     var shade: FallShade;
+    shade.point = point;
     shade.shaded = finish(point, input.clip_position.xy, body + glow);
     shade.shown = shown;
     shade.coverage = coverage;
     return shade;
 }
 
-fn fall_mirroring(shade: FallShade, pixel: vec2<f32>) -> FallShade {
+fn fall_mirroring(shade: FallShade) -> FallShade {
     var result = shade;
-    let own = luminance(shade.shaded.linear) * shade.shown;
-    let behind = luminance(textureLoad(water_scene, vec2<i32>(pixel), 0).rgb)
-        * (1.0 - shade.coverage);
-    result.shaded.outputs.mirrored *= own / max(own + behind, 1.0e-6);
-    result.shaded.outputs.reflect *= shade.shown;
+    result.point.opacity = shade.shown;
     return result;
 }
 
 @fragment
 fn fs_fall(input: FallTemporalOutput) -> ViewTargets {
     use_terrain(input.terrain);
-    let pixel = input.clip_position.xy;
-    let shade = fall_mirroring(shade_fall(fall_temporal_output(input)), pixel);
+    let shade = fall_mirroring(shade_fall(fall_temporal_output(input)));
     let previous = input.previous;
-    var targets = view_targets(shade.shaded,
+    var targets = view_targets(shade.point, shade.shaded,
         view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
     targets.color = vec4<f32>(shade.shaded.linear * shade.shown, shade.coverage);
     return targets;

@@ -373,27 +373,19 @@ impl ScatterGpu {
             } else {
                 (PLAIN_STREAMS, draw::VS_OBJECT, draw::VS_OBJECT_FADING)
             };
-            let (fragment, debug, masked_depth) = match (extended, masked) {
-                (false, false) => (
-                    draw::FS_OBJECT,
-                    draw::FS_DEBUG_OBJECT,
-                    draw::FS_MASKED_DEPTH,
-                ),
-                (false, true) => (
-                    draw::FS_OBJECT_PRETESTED,
-                    draw::FS_DEBUG_OBJECT,
-                    draw::FS_MASKED_DEPTH,
-                ),
-                (true, false) => (
-                    draw::FS_OBJECT_EXTENDED,
-                    draw::FS_DEBUG_OBJECT_EXTENDED,
-                    draw::FS_MASKED_DEPTH_EXTENDED,
-                ),
+            let (fragment, debug) = match (extended, masked) {
+                (false, false) => (draw::FS_OBJECT, draw::FS_DEBUG_OBJECT),
+                (false, true) => (draw::FS_OBJECT_PRETESTED, draw::FS_DEBUG_OBJECT),
+                (true, false) => (draw::FS_OBJECT_EXTENDED, draw::FS_DEBUG_OBJECT_EXTENDED),
                 (true, true) => (
                     draw::FS_OBJECT_EXTENDED_PRETESTED,
                     draw::FS_DEBUG_OBJECT_EXTENDED,
-                    draw::FS_MASKED_DEPTH_EXTENDED,
                 ),
+            };
+            let (depth_fragment, masked_depth) = if extended {
+                (draw::FS_DEPTH_EXTENDED, draw::FS_MASKED_DEPTH_EXTENDED)
+            } else {
+                (draw::FS_DEPTH, draw::FS_MASKED_DEPTH)
             };
             let written = DepthUse::Write {
                 bias: wgpu::DepthBiasState::default(),
@@ -401,10 +393,10 @@ impl ScatterGpu {
             let (shaded, shown, depth, writes) = match (depth_only, masked) {
                 (true, false) => continue,
                 (true, true) => (
-                    masked_depth,
+                    depth_fragment,
                     masked_depth,
                     written,
-                    wgpu::ColorWrites::empty(),
+                    wgpu::ColorWrites::ALL,
                 ),
                 (false, true) => (
                     fragment,

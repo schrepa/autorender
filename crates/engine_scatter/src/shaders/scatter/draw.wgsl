@@ -3,11 +3,11 @@ import package::engine::mesh::declarations::{AffineVertexInput, faded_entry_fade
 import package::face::debug::{DebugTargets, debug_record_with_kind};
 import package::face::instances::{
     AffinePose, SlotColor, SlotExtras, SlotVertex, SlotVertexExtended,
-    slot_debug, slot_fragment, slot_fragment_extended, slot_masked_depth, slot_pixel,
+    slot_debug, slot_depth, slot_fragment, slot_fragment_extended, slot_masked_depth, slot_pixel,
     slot_pixel_extended, slot_shade, slot_vertex, slot_vertex_extended
 };
 import package::generated::kinds::KIND_PLACED;
-import package::generated::targets::{ViewTargets, view_targets};
+import package::generated::targets::{DepthTargets, ViewTargets, depth_targets, view_targets};
 
 @group(2) @binding(0) var<storage, read> poses: array<AffinePose>;
 @group(2) @binding(1) var<storage, read> colors: array<SlotColor>;
@@ -71,12 +71,13 @@ fn placed_extended_vertex(input: AffineVertexInput, extras: SlotExtras, slot: u3
 }
 
 fn lit(vertex: SlotVertex, front: bool, pretested: bool) -> ViewTargets {
-    return view_targets(slot_shade(slot_fragment(vertex), front, pretested), slot_pixel(vertex));
+    let shaded = slot_shade(slot_fragment(vertex), front, pretested);
+    return view_targets(shaded.point, shaded.shaded, slot_pixel(vertex));
 }
 
 fn lit_extended(vertex: SlotVertexExtended, front: bool, pretested: bool) -> ViewTargets {
-    return view_targets(slot_shade(slot_fragment_extended(vertex), front, pretested),
-        slot_pixel_extended(vertex));
+    let shaded = slot_shade(slot_fragment_extended(vertex), front, pretested);
+    return view_targets(shaded.point, shaded.shaded, slot_pixel_extended(vertex));
 }
 
 @vertex
@@ -134,6 +135,20 @@ fn fs_masked_depth(input: PlacedVertex) {
 @fragment
 fn fs_masked_depth_extended(input: PlacedExtendedVertex) {
     slot_masked_depth(slot_fragment_extended(extended_of(input)));
+}
+
+@fragment
+fn fs_depth(input: PlacedVertex, @builtin(front_facing) front: bool) -> DepthTargets {
+    let vertex = slot_of(input);
+    return depth_targets(slot_depth(slot_fragment(vertex), front), slot_pixel(vertex));
+}
+
+@fragment
+fn fs_depth_extended(input: PlacedExtendedVertex, @builtin(front_facing) front: bool)
+        -> DepthTargets {
+    let vertex = extended_of(input);
+    return depth_targets(slot_depth(slot_fragment_extended(vertex), front),
+        slot_pixel_extended(vertex));
 }
 
 @fragment

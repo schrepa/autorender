@@ -117,26 +117,7 @@ impl Run {
         })
     }
 
-    pub(super) fn output_view(&self, index: u32, writing: bool) -> Option<&wgpu::TextureView> {
-        let target = Target::Output(index);
-        let doubled = self
-            .machine
-            .outputs
-            .get(index as usize)
-            .is_some_and(|output| output.layers.is_empty());
-        let second = doubled && (self.parity == 1) == writing;
-        let set = self.set();
-        let list = if second {
-            &set.previous_targets
-        } else {
-            &set.targets
-        };
-        list.iter()
-            .find(|(known, _)| *known == target)
-            .map(|(_, made)| &made.view)
-    }
-
-    pub(super) fn view_of(&self, target: Target, writing: bool) -> Option<&wgpu::TextureView> {
+    pub(super) fn view_of(&self, target: Target) -> Option<&wgpu::TextureView> {
         match target {
             Target::Canvas => self.canvas.as_ref(),
             Target::Debug(index) => self
@@ -144,8 +125,9 @@ impl Run {
                 .debug_targets
                 .get(index as usize)
                 .map(|made| &made.view),
-            Target::Output(index) => self.output_view(index, writing),
-            Target::Scene | Target::Depth | Target::Copy(..) => self.set().target(target),
+            Target::Output(_) | Target::Scene | Target::Depth | Target::Copy(..) => {
+                self.set().target(target)
+            }
         }
     }
 
@@ -188,7 +170,7 @@ impl Run {
             }
             Bound::Target(view) => {
                 let wanted = target_read(*view, self.pass_layer(), self.reads_direct());
-                self.view_of(wanted, false).cloned()
+                self.view_of(wanted).cloned()
             }
             Bound::Buffer(_) | Bound::Window { .. } | Bound::Sampler(_) | Bound::Asset => None,
         }
@@ -430,7 +412,7 @@ impl Run {
             },
             Some(CoreFrame::Post) => Resolved::Buffer(self.set().post_buffer.clone()),
             Some(CoreFrame::Linear) => Resolved::Sampler(self.linear.clone()),
-            Some(CoreFrame::Target(target)) => match self.view_of(*target, false) {
+            Some(CoreFrame::Target(target)) => match self.view_of(*target) {
                 Some(view) => Resolved::View(view.clone()),
                 None => Resolved::Placeholder(ty),
             },
@@ -481,18 +463,11 @@ impl Run {
             ),
             (Target::Depth, made("engine/depth", DEPTH_FORMAT)),
         ];
-        let mut previous = Vec::new();
         for (index, output) in self.machine.outputs.iter().enumerate() {
             targets.push((
                 Target::Output(index as u32),
                 made(output.name, output.format),
             ));
-            if output.layers.is_empty() {
-                previous.push((
-                    Target::Output(index as u32),
-                    made(output.name, output.format),
-                ));
-            }
         }
         for (target, _) in &self.machine.ids.targets {
             if matches!(target, Target::Copy(..))
@@ -511,7 +486,6 @@ impl Run {
             .collect();
         let set = self.set_mut();
         set.targets = targets;
-        set.previous_targets = previous;
         set.debug_targets = debug_targets;
         self.rebuilt.textures += 1;
         self.touch(Held::Targets);
@@ -657,7 +631,6 @@ impl Tables {
 pub(crate) struct ViewSet {
     pub(crate) view: bevy_ecs::entity::Entity,
     pub(crate) targets: Vec<(Target, Allocated)>,
-    pub(crate) previous_targets: Vec<(Target, Allocated)>,
     pub(crate) debug_targets: Vec<Allocated>,
     pub(crate) tables: Tables,
     pub(crate) post_buffer: wgpu::Buffer,
@@ -676,7 +649,6 @@ impl ViewSet {
         Self {
             view,
             targets: Vec::new(),
-            previous_targets: Vec::new(),
             debug_targets: Vec::new(),
             tables: Tables::of(machine),
             post_buffer: uniform_buffer(

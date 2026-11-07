@@ -423,6 +423,7 @@ struct WaterSurface {
 }
 
 struct WaterLit {
+    point: SurfacePoint,
     shaded: Shaded,
     reflectance: f32,
     sunny: f32,
@@ -498,8 +499,9 @@ fn water_light(surface: WaterSurface, pixel: vec2<f32>) -> WaterLit {
     point.world_dx = surface.world_dx;
     point.world_dy = surface.world_dy;
     point.kind = SURFACE_WATER;
-    point.inputs.sun_blocked = 1.0;
+    point.sun_blocked = 1.0;
     var lit: WaterLit;
+    lit.point = point;
     lit.shaded = finish(point, pixel, mix(body + glint, foam, surface.foam));
     lit.reflectance = reflectance;
     let sunlit = luminance(sunlight) * max(sun.y, 0.0);
@@ -508,6 +510,7 @@ fn water_light(surface: WaterSurface, pixel: vec2<f32>) -> WaterLit {
 }
 
 struct WaterShade {
+    point: SurfacePoint,
     shaded: Shaded,
     coverage: f32,
     behind: vec3<f32>,
@@ -633,6 +636,7 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let wet = water_ramp(standing, WATER_SOAKED, standing_change) * WATER_WET;
     let let_through = (1.0 - lit.reflectance) * (1.0 - cover);
     var result: WaterShade;
+    result.point = lit.point;
     result.shaded = lit.shaded;
     result.coverage = max(max(1.0 - (1.0 - lit.reflectance) * luminance(transmit), wet),
         cover) * fade;
@@ -645,9 +649,7 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
 
 fn water_mirroring(shade: WaterShade) -> WaterShade {
     var result = shade;
-    let own = luminance(shade.shaded.linear);
-    result.shaded.outputs.mirrored *= shade.fade * own / max(own + luminance(shade.behind), 1.0e-6);
-    result.shaded.outputs.reflect *= shade.fade;
+    result.point.opacity = shade.fade;
     return result;
 }
 
@@ -661,7 +663,7 @@ fn fs_water(input: WaterOutput) -> ViewTargets {
     use_terrain(input.terrain);
     let shade = shade_mesh(input.relative, input.clip_position.xy);
     let previous = water_previous(input.relative, shade.flow, saturate(shade.coverage));
-    var targets = view_targets(shade.shaded,
+    var targets = view_targets(shade.point, shade.shaded,
         view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
     targets.color = water_covering(shade);
     return targets;

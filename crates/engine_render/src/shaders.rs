@@ -27,6 +27,7 @@ shader_modules! {
     "engine::standard" = "standard.wgsl";
     "engine::surface" = "surface.wgsl";
     "engine::transparency" = "transparency.wgsl";
+    "engine::normals" = "normals.wgsl";
     "engine::mesh::vertex" = "meshes/vertex.wgsl";
     "engine::impostor_bake" = "impostors/bake.wgsl";
     "engine::post::pixel" = "post/pixel.wgsl";
@@ -42,10 +43,6 @@ pub const FULLSCREEN: engine_core::Entry =
 pub const FS_COMPOSITE: engine_core::Entry = engine_core::Entry::generated(
     Module::generated(&CORE, (TEXTS.len() - 1) as u32),
     "fs_composite",
-);
-pub const FS_COMPOSITE_PLAIN: engine_core::Entry = engine_core::Entry::generated(
-    Module::generated(&CORE, (TEXTS.len() - 1) as u32),
-    "fs_composite_plain",
 );
 pub const FS_DEBUG_VIEW: engine_core::Entry = engine_core::Entry::generated(
     Module::generated(&CORE, (TEXTS.len() - 1) as u32),

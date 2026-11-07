@@ -568,6 +568,12 @@ impl StaticGraph {
             .map_or_else(|| Bits::of(self.resources.len()), Node::outputs)
     }
 
+    pub fn reads(&self, pass: usize) -> Bits {
+        self.nodes
+            .get(pass)
+            .map_or_else(|| Bits::of(self.resources.len()), Node::reads_only)
+    }
+
     pub fn spread(&self, mut passes: Bits, mut varying: Bits, held: &Bits) -> Bits {
         let mut frame = Bits::of(self.resources.len());
         for (index, resource) in self.resources.iter().enumerate() {

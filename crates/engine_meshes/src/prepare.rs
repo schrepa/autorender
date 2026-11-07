@@ -92,7 +92,7 @@ impl MeshesGpu {
         if self.state.capacity == 0 || slots > self.state.capacity {
             self.state.capacity = capacity_for(slots, limit);
         }
-        let kept = cx.writes_target(TargetName::MOTION);
+        let kept = cx.read_target(TargetName::MOTION);
         let fresh = self.prepare_instances(&table, &assets, kept, cx);
         let size = view.render_size();
         let motion = self.prepare_motion(generation, (kept, view.history().valid(), fresh), cx);

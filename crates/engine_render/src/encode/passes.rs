@@ -35,24 +35,12 @@ impl Run {
         }
     }
 
-    pub(super) fn resolving(&self, pass: u32) -> Option<PassNames> {
-        let declared = self.machine.declared.passes.get(pass as usize)?;
-        let (names, _) = self.resolve?;
-        (self.jittered && declared.name == crate::shared::COMPOSITE).then_some(names)
-    }
-
     pub(crate) fn label_of(&self, pass: u32) -> Option<&'static str> {
-        if let Some(names) = self.resolving(pass) {
-            return Some(names.label);
-        }
         let declared = self.machine.declared.passes.get(pass as usize)?;
         Some(declared.label.unwrap_or(declared.name))
     }
 
     pub(crate) fn group_of(&self, pass: u32) -> &'static str {
-        if let Some(names) = self.resolving(pass) {
-            return names.pass;
-        }
         self.machine
             .declared
             .passes
@@ -60,16 +48,7 @@ impl Run {
             .map_or("", |declared| declared.group.unwrap_or(declared.name))
     }
 
-    pub(crate) fn stage_of(&self, pass: u32) -> Option<&'static str> {
-        self.resolving(pass)
-            .and(self.resolve)
-            .map(|(_, stage)| stage)
-    }
-
     pub(crate) fn span_of(&self, pass: u32) -> Option<&'static str> {
-        if let Some(names) = self.resolving(pass) {
-            return Some(names.span);
-        }
         self.machine.declared.passes.get(pass as usize)?.span
     }
 
@@ -151,7 +130,7 @@ impl Run {
         }
     }
 
-    fn layer_set(&self, layer: Option<engine_core::AttachPoint>) -> Arc<[SetFormat]> {
+    fn layer_set(&self, layer: engine_core::AttachPoint) -> Arc<[SetFormat]> {
         self.layer_sets
             .iter()
             .find(|(known, _)| *known == layer)
@@ -246,13 +225,13 @@ impl Run {
                                 ));
                             }
                         } else {
-                            let set = self.layer_set(Some(layer));
+                            let set = self.layer_set(layer);
                             for &(target, format, _, written) in set.iter() {
                                 let id = self.machine.ids.target(target);
                                 match ops_of(id).filter(|_| written) {
                                     Some(ops) => colors.push((
                                         key(target),
-                                        self.view_of(target, true).cloned(),
+                                        self.view_of(target).cloned(),
                                         format,
                                         carried(target, ops),
                                     )),
@@ -271,7 +250,7 @@ impl Run {
                     }
                     if let (Some(id), Some(made)) = (
                         self.machine.ids.target(Target::Depth),
-                        self.view_of(Target::Depth, true),
+                        self.view_of(Target::Depth),
                     ) {
                         let ops = depth_of(Some(id))
                             .unwrap_or(Some(Ops {
@@ -302,23 +281,19 @@ impl Run {
                         colors.insert(0, (key(Target::Canvas), Some(canvas), format, ops));
                     }
                 }
-                if pass.name == crate::shared::COMPOSITE {
-                    let set = self.layer_set(None);
-                    for &(target, format, _, _) in
-                        set.iter().skip(1).filter(|(_, _, _, written)| *written)
-                    {
-                        let id = self.machine.ids.target(target);
-                        let ops = ops_of(id).unwrap_or(Ops {
-                            load: Load::Load,
-                            store: true,
-                        });
-                        colors.push((
-                            key(target),
-                            self.view_of(target, true).cloned(),
-                            format,
-                            ops,
-                        ));
-                    }
+                for &view in &pass.targets {
+                    let target = final_target(view);
+                    let id = self.machine.ids.target(target);
+                    let ops = ops_of(id).unwrap_or(Ops {
+                        load: Load::Load,
+                        store: true,
+                    });
+                    colors.push((
+                        key(target),
+                        self.view_of(target).cloned(),
+                        target_format(target, &self.machine.outputs).unwrap_or(crate::machine::SCENE_FORMAT),
+                        ops,
+                    ));
                 }
                 for &(texture, access) in &pass.colors {
                     let id = self.machine.ids.textures.get(texture as usize).copied();

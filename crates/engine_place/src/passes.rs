@@ -138,6 +138,10 @@ impl SlotSet {
         opacity: true,
         ..Self::NONE
     };
+    pub const DEPTH: Self = Self {
+        normal: true,
+        ..Self::MASK
+    };
     pub const ALL: Self = Self {
         position: true,
         base_color: true,
@@ -219,8 +223,8 @@ pub struct DepthPass;
 impl PassName for DepthPass {
     const NAME: &'static str = "depth";
     const PASS: Pass = Pass {
-        writes: Writes::DEPTH,
-        reads: SlotSet::MASK,
+        writes: Writes(&[TargetName::DEPTH, TargetName::NORMALS]),
+        reads: SlotSet::DEPTH,
         views: PassViews::Every,
         at: AttachPoint::Depth,
         takes: every,

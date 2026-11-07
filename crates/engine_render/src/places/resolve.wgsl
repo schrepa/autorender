@@ -1,9 +1,5 @@
-import package::engine::post::pixel::{PostPixel, SceneLight};
+import package::engine::post::pixel::PostPixel;
 
-fn resolve(at: PostPixel, scene: SceneLight) -> SceneLight {
-    return scene;
-}
-
-fn resolved_at(at: PostPixel) -> PostPixel {
-    return at;
+fn resolved(at: PostPixel) -> vec4<f32> {
+    return vec4<f32>(0.0);
 }

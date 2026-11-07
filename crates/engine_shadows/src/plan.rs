@@ -289,7 +289,6 @@ pub(crate) struct ShadowCamera;
 
 type Lenses<'w, 's> = Query<'w, 's, &'static mut Camera, With<ShadowCamera>>;
 
-=====END
 fn place_cameras(
     placed: &[Placed],
     eye: Vec3,

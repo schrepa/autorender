@@ -1,4 +1,4 @@
-import package::engine::shading::{SPECULAR_LIMIT, SPECULAR_VARIANCE, Shaded, SurfacePoint};
+import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::view::PI;
 import package::face::lights::{cluster_light, kept_regions, light_cluster, lights_on,
     shaped_lights};
@@ -7,8 +7,8 @@ import package::face::sun_blockers::{DEBUG_SUN_NONE, SunAt, SunOpen, sun_flags, 
 import package::generated::pieces::lighting_model::piece;
 import package::lighting_model::inputs::sun_seen;
 import package::lighting_model::local::shaped_light;
-import package::lighting_model::surface::shade_surface;
-import package::place::lighting::{LightInputs, LightOutputs};
+import package::lighting_model::surface::{reflected, shade_surface};
+import package::place::lighting::{LightInputs, Reflecting, SPECULAR_LIMIT, SPECULAR_VARIANCE};
 
 fn highlights() -> vec4<f32> {
     return piece().highlights;
@@ -43,7 +43,7 @@ fn environment_brdf(f0: vec3<f32>, roughness: f32, n_v: f32) -> vec3<f32> {
 }
 
 fn surface_sun(point: SurfacePoint) -> SunAt {
-    return SunAt(point.world + point.inputs.shadow_shift, point.geometric, point.world_dx,
+    return SunAt(point.world + sun_direction() * point.thickness, point.geometric, point.world_dx,
         point.world_dy, point.inputs.shadow_softness, point.kind, point.inputs.shadow_lift_first,
         point.inputs.shadow_lifts);
 }
@@ -54,17 +54,6 @@ fn sun_visibility(at: SunAt) -> f32 {
 
 fn sun_debug(at: SunAt) -> u32 {
     return sun_flags(DEBUG_SUN_NONE, at);
-}
-
-fn lit_debug(point: SurfacePoint) -> u32 {
-    return sun_debug(surface_sun(point));
-}
-
-fn lit_card(point: SurfacePoint, thickness: f32, seen: f32) -> SurfacePoint {
-    var result = point;
-    result.inputs.sun_blocked = 1.0 - seen;
-    result.inputs.shadow_shift = sun_direction() * thickness;
-    return result;
 }
 
 fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
@@ -119,15 +108,20 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
     return sum * saturate((end - depth) / (0.1 * end));
 }
 
-fn widened(point: SurfacePoint, turn_dx: vec3<f32>, turn_dy: vec3<f32>) -> SurfacePoint {
+fn widened(point: SurfacePoint) -> SurfacePoint {
     var result = point;
-    let widening = min(2.0 * SPECULAR_VARIANCE * (dot(turn_dx, turn_dx) + dot(turn_dy, turn_dy)),
-        SPECULAR_LIMIT);
+    let turned = dot(point.normal_dx, point.normal_dx) + dot(point.normal_dy, point.normal_dy);
+    let widening = min(2.0 * SPECULAR_VARIANCE * turned, SPECULAR_LIMIT);
     result.alpha = sqrt(saturate(point.alpha * point.alpha + widening));
     result.roughness = sqrt(result.alpha);
     return result;
 }
 
-fn finish(point: SurfacePoint, pixel: vec2<f32>, added: vec3<f32>) -> Shaded {
+fn reflecting(point: SurfacePoint) -> Reflecting {
+    return reflected(widened(point));
+}
+
+fn finish(surface: SurfacePoint, pixel: vec2<f32>, added: vec3<f32>) -> Shaded {
+    let point = widened(surface);
     return shade_surface(point, local_light(point, pixel) + added);
 }

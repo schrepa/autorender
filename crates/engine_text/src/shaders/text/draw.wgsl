@@ -1,5 +1,5 @@
 import package::engine::drawn::{drawn_records, drawn_shown};
-import package::engine::shading::flat;
+import package::engine::shading::{flat, flat_point};
 import package::engine::view::{camera, view_pixel};
 import package::face::text::glyph_coverage;
 import package::generated::targets::{ViewTargets, view_targets};
@@ -45,5 +45,6 @@ fn facing(lens: mat4x4<f32>, origin: vec4<f32>, at: vec2<f32>) -> vec4<f32> {
 @fragment fn fs_label(placed: Placed) -> ViewTargets {
     let coverage = glyph_coverage(vec2<i32>(placed.texel));
     if placed.color.a * coverage < 0.5 { discard; }
-    return view_targets(flat(vec4<f32>(placed.color.rgb, 1.0)), view_pixel(placed.clip, placed.previous));
+    let color = vec4<f32>(placed.color.rgb, 1.0);
+    return view_targets(flat_point(color), flat(color), view_pixel(placed.clip, placed.previous));
 }

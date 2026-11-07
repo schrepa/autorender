@@ -1,15 +1,15 @@
 import package::engine::mesh::declarations::AffineVertexInput;
 import package::engine::mesh::impostor_frames::ImpostorRecord;
-import package::engine::shading::{Shaded, ViewPixel};
+import package::engine::shading::{SurfacePoint, ViewPixel};
 import package::face::debug::DebugTargets;
 import package::meshes::cards::{card_debug, placed_card, placed_card_lit, placed_card_point};
 import package::meshes::debug::point_targets;
 import package::meshes::forward::drawn_pixel;
-import package::meshes::shade::{masked_depth, mesh_point, placed_fragment, shade};
+import package::meshes::shade::{depth_point, masked_depth, mesh_point, placed_fragment, shade};
 import package::meshes::slots::{instance_colors, instance_poses};
 import package::meshes::vertex::{pose_origin, slot_motion};
 import package::place::instances::{AffinePose, CardDebugTargets, CardShaded, CardVertex,
-    SlotColor, SlotExtras, SlotFragment, SlotVertex, SlotVertexExtended};
+    SlotColor, SlotExtras, SlotFragment, SlotShaded, SlotVertex, SlotVertexExtended};
 
 fn instance_pose(slot: u32) -> AffinePose {
     return instance_poses[slot];
@@ -47,12 +47,16 @@ fn slot_fragment_extended(input: SlotVertexExtended) -> SlotFragment {
     return values;
 }
 
-fn slot_shade(fragment: SlotFragment, front: bool, pretested: bool) -> Shaded {
+fn slot_shade(fragment: SlotFragment, front: bool, pretested: bool) -> SlotShaded {
     return shade(fragment, front, pretested);
 }
 
 fn slot_masked_depth(fragment: SlotFragment) {
     masked_depth(fragment);
+}
+
+fn slot_depth(fragment: SlotFragment, front: bool) -> SurfacePoint {
+    return depth_point(fragment, front);
 }
 
 fn slot_pixel(input: SlotVertex) -> ViewPixel {

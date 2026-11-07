@@ -1,5 +1,5 @@
 import package::engine::color::{hash3, luminance};
-import package::engine::shading::{ViewPixel, flat};
+import package::engine::shading::{ViewPixel, flat, flat_point};
 import package::engine::view::{camera, stable_normalize};
 import package::face::sun::sun_direction;
 import package::face::tonemap::exposure;
@@ -370,8 +370,8 @@ fn fs_view_clouds_post(input: SkyOutput) -> @location(0) vec4<f32> {
 fn fs_sky(input: SkyOutput) -> ViewTargets {
     let ray = sky_ray(input.ndc);
     let light = clouded_sky(ray);
-    var shaded = flat(vec4<f32>(light, 0.0));
-    shaded.outputs.across = 1.0;
+    let color = vec4<f32>(light, 0.0);
     let previous = camera.previous_view_projection * vec4<f32>(ray, 0.0);
-    return view_targets(shaded, ViewPixel(vec4<f32>(input.ndc, 0.0, 1.0), previous));
+    return view_targets(flat_point(color), flat(color),
+        ViewPixel(vec4<f32>(input.ndc, 0.0, 1.0), previous));
 }

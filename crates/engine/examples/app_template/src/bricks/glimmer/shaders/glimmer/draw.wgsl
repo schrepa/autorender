@@ -1,5 +1,5 @@
 import package::engine::drawn::drawn_shown;
-import package::engine::shading::flat;
+import package::engine::shading::{flat, flat_point};
 import package::engine::view::{camera, view_pixel};
 import package::generated::glimmer::GlimmerInstance;
 import package::generated::targets::{ViewTargets, view_targets};
@@ -44,11 +44,13 @@ fn placed(corner: u32, glimmer: GlimmerInstance, grow: f32, color: vec4<f32>) ->
 
 @fragment fn fs_glimmer(corner: Corner) -> ViewTargets {
     if dot(corner.unit, corner.unit) > 1.0 { discard; }
-    return view_targets(flat(corner.color), view_pixel(corner.clip, corner.previous));
+    return view_targets(flat_point(corner.color), flat(corner.color),
+        view_pixel(corner.clip, corner.previous));
 }
 
 @fragment fn fs_ring(corner: Corner) -> ViewTargets {
     let reach = length(corner.unit);
     if reach > 1.0 || reach < GLIMMER_RING_INNER { discard; }
-    return view_targets(flat(corner.color), view_pixel(corner.clip, corner.previous));
+    return view_targets(flat_point(corner.color), flat(corner.color),
+        view_pixel(corner.clip, corner.previous));
 }

@@ -18,7 +18,7 @@ use crate::machine::{
 use crate::profiling::GpuProfiler;
 use crate::readback::{Deliver, Keep, Reader, Readbacks};
 use crate::registration::{Installed, KindMember};
-use crate::{AfterRead, Allocation, CameraUniform, DepthUse, PassNames, SceneDraw, VertexLayout};
+use crate::{AfterRead, Allocation, CameraUniform, DepthUse, SceneDraw, VertexLayout};
 
 mod compile;
 mod copies;
@@ -412,7 +412,7 @@ pub(crate) struct Run {
     pub(crate) stale: std::collections::BTreeSet<Holder>,
     pub(crate) rebuilt: Rebuilt,
     pub(crate) pass_decls: Vec<Arc<PassDecl>>,
-    pub(crate) layer_sets: Vec<(Option<engine_core::AttachPoint>, Arc<[SetFormat]>)>,
+    pub(crate) layer_sets: Vec<(engine_core::AttachPoint, Arc<[SetFormat]>)>,
     pub(crate) spare: Spare,
     pub(crate) tables: views::Tables,
     pub(crate) dimensions: Vec<wgpu::TextureDimension>,
@@ -440,13 +440,11 @@ pub(crate) struct Run {
     pub(crate) recording: Recording,
     pub(crate) timed: Timed,
     pub(crate) queued: Queued,
-    pub(crate) resolve: Option<(PassNames, &'static str)>,
     pub(crate) labelled: Option<u32>,
     pub(crate) merge: bool,
     pub(crate) plan: Option<Arc<Plan>>,
     pub(crate) planned_at: usize,
     pub(crate) debug: bool,
-    pub(crate) jittered: bool,
     pub(crate) region: Option<(u32, u32)>,
     pub(crate) assets: Assets,
     pub(crate) surface: wgpu::TextureFormat,
@@ -723,11 +721,9 @@ fn stale_holders(machine: &Machine) -> std::collections::BTreeSet<Holder> {
         .collect()
 }
 
-fn layer_sets_of(machine: &Machine) -> Vec<(Option<engine_core::AttachPoint>, Arc<[SetFormat]>)> {
-    let mut layer_sets: Vec<(Option<engine_core::AttachPoint>, Arc<[SetFormat]>)> =
-        vec![(None, Arc::from(set_formats(&machine.outputs, None)))];
-    for pass in &machine.declared.passes {
-        let layer = pass_layer(pass);
+fn layer_sets_of(machine: &Machine) -> Vec<(engine_core::AttachPoint, Arc<[SetFormat]>)> {
+    let mut layer_sets: Vec<(engine_core::AttachPoint, Arc<[SetFormat]>)> = Vec::new();
+    for layer in machine.declared.passes.iter().filter_map(pass_layer) {
         if !layer_sets.iter().any(|(known, _)| *known == layer) {
             layer_sets.push((layer, Arc::from(set_formats(&machine.outputs, layer))));
         }
@@ -846,13 +842,11 @@ impl Run {
             recording: Recording::Idle,
             timed: Timed::default(),
             queued: Queued::default(),
-            resolve: None,
             labelled: None,
             merge: true,
             plan: None,
             planned_at: 0,
             debug: false,
-            jittered: false,
             region: None,
             assets,
             surface: wgpu::TextureFormat::Bgra8Unorm,

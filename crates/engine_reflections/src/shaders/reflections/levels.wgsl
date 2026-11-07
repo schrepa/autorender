@@ -1,7 +1,12 @@
-import package::engine::post::frame::{drawn_uv, linear, post};
+import package::engine::post::frame::{drawn_uv, linear, post, scene};
 import package::engine::post::levels::halved;
 
 @group(1) @binding(0) var source: texture_2d<f32>;
+
+@fragment
+fn fs_levels_scene(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    return vec4<f32>(textureLoad(scene, vec2<i32>(position.xy), 0).rgb, 1.0);
+}
 
 @fragment
 fn fs_levels_first(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {

@@ -12,7 +12,7 @@ import package::engine::shading::{SurfacePoint, derived};
 import package::engine::surfaces::{SURFACE_SOLID, SURFACE_THIN};
 import package::engine::view::{camera, fade_noise, material_detail, stable_normalize};
 import package::face::debug::{debug_record_with_fading, debug_record_with_kind};
-import package::face::lit::{finish, lit_card, widened};
+import package::face::lit::finish;
 import package::generated::kinds::KIND_MESH;
 import package::generated::meshes::{card_frames_first, card_frames_second, card_frames_third,
     card_frames_with_first, card_frames_with_origin, card_frames_with_second,
@@ -283,9 +283,11 @@ fn card_point(input: CardVertex, record: ImpostorRecord) -> SurfacePoint {
     point.view = stable_normalize(to_eye);
     point.world = world;
     let reach = select(1.0, 0.25, impostor_flags_hemisphere(record.flags));
-    let lit = derived(lit_card(point, reach * length(input.depth_axis.xyz),
-        saturate(surface.w * unpremultiply)));
-    return widened(lit, dpdx(lit.normal), dpdy(lit.normal));
+    point.thickness = reach * length(input.depth_axis.xyz);
+    point.sun_blocked = 1.0 - saturate(surface.w * unpremultiply);
+    point.normal_dx = dpdx(geometric);
+    point.normal_dy = dpdy(geometric);
+    return derived(point);
 }
 
 fn mesh_card_point(input: CardVertex) -> SurfacePoint {
@@ -299,10 +301,10 @@ fn placed_card_point(input: CardVertex, impostor: ImpostorRecord) -> SurfacePoin
 fn card_lit(input: CardVertex, point: SurfacePoint) -> CardShaded {
     let shaded = finish(point, input.clip_position.xy, vec3<f32>(0.0));
     if impostor_over(input.batch) {
-        return CardShaded(shaded, input.clip_position.z);
+        return CardShaded(point, shaded, input.clip_position.z);
     }
     let clip = camera.view_projection * vec4<f32>(point.world, 1.0);
-    return CardShaded(shaded, saturate(clip.z / clip.w));
+    return CardShaded(point, shaded, saturate(clip.z / clip.w));
 }
 
 fn mesh_card_lit(input: CardVertex) -> CardShaded {
@@ -326,8 +328,8 @@ fn card_debug(input: CardVertex, point: SurfacePoint, record: u32, object: u32)
 fn fs_card(input: CardOutput) -> DepthViewTargets {
     let card = card_vertex(input);
     let shaded = mesh_card_lit(card);
-    return depth_view_targets(shaded.shaded, drawn_pixel(input.clip_position, input.previous),
-        shaded.depth);
+    return depth_view_targets(shaded.point, shaded.shaded,
+        drawn_pixel(input.clip_position, input.previous), shaded.depth);
 }
 
 @fragment

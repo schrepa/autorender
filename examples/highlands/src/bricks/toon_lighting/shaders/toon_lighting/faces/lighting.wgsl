@@ -6,7 +6,7 @@ import package::face::lights::{cluster_light, light_cluster, lights_on};
 import package::face::sky::atmospheric;
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::{DEBUG_SUN_NONE, SunAt, SunOpen, sun_flags, sun_open};
-import package::place::lighting::{LightInputs, LightOutputs};
+import package::place::lighting::{LightInputs, Reflecting};
 import package::toon_lighting::bands::{TOON_DARK, TOON_HIGHLIGHTS, TOON_NEAREST, TOON_RIM,
     TOON_SHADOW_EDGE, TOON_SHARPEST, TOON_SPECULAR, TOON_UP, TOON_VISIBILITY, TOON_WIDEST,
     banded};
@@ -19,9 +19,10 @@ fn specular() -> f32 {
     return TOON_SPECULAR;
 }
 
-fn widened(point: SurfacePoint, turn_dx: vec3<f32>, turn_dy: vec3<f32>) -> SurfacePoint {
+fn widened(point: SurfacePoint) -> SurfacePoint {
     var result = point;
-    result.alpha = max(point.alpha, min(length(turn_dx) + length(turn_dy), TOON_WIDEST));
+    let turned = length(point.normal_dx) + length(point.normal_dy);
+    result.alpha = max(point.alpha, min(turned, TOON_WIDEST));
     return result;
 }
 
@@ -43,7 +44,7 @@ fn environment_brdf(f0: vec3<f32>, roughness: f32, n_v: f32) -> vec3<f32> {
 }
 
 fn surface_sun(point: SurfacePoint) -> SunAt {
-    return SunAt(point.world + point.inputs.shadow_shift, point.geometric, point.world_dx,
+    return SunAt(point.world + sun_direction() * point.thickness, point.geometric, point.world_dx,
         point.world_dy, point.inputs.shadow_softness, point.kind, point.inputs.shadow_lift_first,
         point.inputs.shadow_lifts);
 }
@@ -55,17 +56,6 @@ fn sun_visibility(at: SunAt) -> f32 {
 
 fn sun_debug(at: SunAt) -> u32 {
     return sun_flags(DEBUG_SUN_NONE, at);
-}
-
-fn lit_debug(point: SurfacePoint) -> u32 {
-    return sun_debug(surface_sun(point));
-}
-
-fn lit_card(point: SurfacePoint, thickness: f32, seen: f32) -> SurfacePoint {
-    var result = point;
-    result.inputs.sun_blocked = 1.0 - seen;
-    result.inputs.shadow_shift = sun_direction() * thickness;
-    return result;
 }
 
 fn toon_environment() -> EnvironmentLight {
@@ -101,7 +91,13 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
     return sum;
 }
 
-fn finish(point: SurfacePoint, pixel: vec2<f32>, added: vec3<f32>) -> Shaded {
+fn reflecting(point: SurfacePoint) -> Reflecting {
+    var result: Reflecting;
+    return result;
+}
+
+fn finish(surface: SurfacePoint, pixel: vec2<f32>, added: vec3<f32>) -> Shaded {
+    let point = widened(surface);
     let sun = sun_direction();
     let n_l = dot(point.normal, sun);
     let half_vector = normalize(point.view + sun);
@@ -110,7 +106,7 @@ fn finish(point: SurfacePoint, pixel: vec2<f32>, added: vec3<f32>) -> Shaded {
         * (distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha));
     let shine = select(0.0, specular(), n_l > 0.0);
     let sunlit = (point.diffuse_color * banded(n_l) + spot * shine) * sun_color()
-        * (1.0 - point.inputs.sun_blocked);
+        * (1.0 - point.sun_blocked);
     var shown = 1.0;
     if any(sunlit != vec3<f32>(0.0)) {
         shown = sun_visibility(surface_sun(point));
@@ -124,8 +120,5 @@ fn finish(point: SurfacePoint, pixel: vec2<f32>, added: vec3<f32>) -> Shaded {
     shaded.linear = through.rgb;
     shaded.ambient = saturate(luminance(skylight) / max(luminance(lit), TOON_DARK))
         * (1.0 - through.a);
-    shaded.normal = point.normal;
-    shaded.roughness = point.roughness;
-    shaded.kind = point.kind;
     return shaded;
 }

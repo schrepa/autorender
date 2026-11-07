@@ -216,7 +216,6 @@ impl Renderer {
             seconds: None,
             part_names: &[],
             linked: engine_core::LinkedStats::default(),
-            resolver: None,
             recovering: None,
             lost_bricks: Vec::new(),
         };

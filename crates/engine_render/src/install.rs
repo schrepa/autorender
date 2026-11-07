@@ -110,6 +110,7 @@ pub(crate) struct PassDecl {
     pub(crate) views: PassViews,
     pub(crate) after: Vec<u32>,
     pub(crate) colors: Vec<(u32, Access)>,
+    pub(crate) targets: Vec<ViewTarget>,
     pub(crate) depths: Vec<(u32, Access)>,
     pub(crate) clears: Vec<(u32, Clear)>,
     pub(crate) scene: Option<SceneOf>,
@@ -423,6 +424,7 @@ impl InstallCore {
             colors: Vec::new(),
             depths: Vec::new(),
             clears: Vec::new(),
+            targets: Vec::new(),
             scene: None,
             members: Vec::new(),
         });

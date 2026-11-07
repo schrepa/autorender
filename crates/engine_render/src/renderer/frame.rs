@@ -256,7 +256,6 @@ impl Renderer {
         let world = frame.world();
         let view = world.get_resource::<PrimaryView>();
         let debug = view.is_some_and(PrimaryView::debug);
-        let jittered = view.and_then(PrimaryView::jitter).is_some();
         let region = self.core.display.plan_region(view.map(PrimaryView::render_size));
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
@@ -288,7 +287,6 @@ impl Renderer {
         run.frame += 1;
         run.parity = (run.frame % 2) as usize;
         run.debug = debug;
-        run.jittered = jittered;
         run.drawn = 0;
         run.uploads.counted = 0;
         run.uploads.memory.clear();
@@ -456,7 +454,6 @@ impl Renderer {
             let size = facts.size();
             run.camera_slot = index as u32;
             run.debug = facts.debug;
-            run.jittered = facts.jitter.is_some();
             run.region = (facts.render != size).then_some((facts.render.x, facts.render.y));
             run.canvas_format = format;
             run.canvas_rect = (!facts.whole(glam::UVec2::new(texture.width(), texture.height())))
@@ -589,9 +586,7 @@ impl Renderer {
                     (None, _) => false,
                 };
                 if run.enter(index as u32) {
-                    let span = run
-                        .stage_of(index as u32)
-                        .or_else(|| self.spans.get(index).copied());
+                    let span = self.spans.get(index).copied();
                     let mut encoder = run.take_encoder();
                     if !keeps && let Some((open, _)) = parted.take() {
                         mark_span(&self.core.profiler, encoder.as_mut(), open, true);

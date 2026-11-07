@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 
-use crate::temporal::PASS;
+use crate::lit::RESOLVE_PASS;
 
 const SIDE: usize = 12;
 const FRAME_MS: f64 = 1000.0 / 60.0;
@@ -175,10 +175,10 @@ pub(crate) fn temporal_antialiasing(session: &mut dyn SmokeSession) -> Result<()
     );
     let rendering = frames(session, 90, "runs_temporal_frames")?;
     smoke_eq!(active(&rendering), json!(true), "ordinary_frames_resolve");
-    let resolving = json!(PASS.pass);
+    let resolving = json!(RESOLVE_PASS);
     smoke_eq!(
         seen(
-            passes(&rendering, PASS.pass),
+            passes(&rendering, RESOLVE_PASS),
             rendering["render_passes"].clone(),
             &resolving
         ),
@@ -204,10 +204,10 @@ pub(crate) fn temporal_antialiasing(session: &mut dyn SmokeSession) -> Result<()
     );
     let rendering = frames(session, 30, "runs_plain_frames")?;
     smoke_eq!(active(&rendering), json!(false), "settings_observed");
-    let plain = json!(format!("no {}", PASS.pass));
+    let plain = json!(format!("no {RESOLVE_PASS}"));
     smoke_eq!(
         seen(
-            !passes(&rendering, PASS.pass),
+            !passes(&rendering, RESOLVE_PASS),
             rendering["render_passes"].clone(),
             &plain
         ),

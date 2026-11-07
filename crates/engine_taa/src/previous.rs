@@ -1,11 +1,11 @@
-use engine_render::{AttachPoint, TargetDecl, TargetName, Written, wgpu};
+use engine_render::{AttachPoint, TargetDecl, TargetName, wgpu};
 
 pub(crate) const JITTER_SAMPLES: u64 = 8;
 
 pub(crate) const MOTION: TargetDecl = TargetDecl {
     name: TargetName::MOTION,
     format: wgpu::TextureFormat::Rg16Float,
-    written: Written::At(&[AttachPoint::Depth, AttachPoint::Opaque, AttachPoint::Sky]),
+    written: &[AttachPoint::Depth, AttachPoint::Opaque, AttachPoint::Sky],
     module: Some(crate::shaders::taa::motion::MODULE),
 };
 

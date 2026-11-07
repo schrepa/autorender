@@ -36,6 +36,8 @@ fn surface_point(input: SurfaceInput) -> SurfacePoint {
     point.base_color = slot_base_color(input, point);
     point.opacity = slot_opacity(input, point);
     point.normal = slot_normal(input, point);
+    point.normal_dx = dpdx(point.normal);
+    point.normal_dy = dpdy(point.normal);
     point.roughness = slot_roughness(input, point);
     point.metalness = slot_metalness(input, point);
     point = derived(point);
@@ -44,6 +46,13 @@ fn surface_point(input: SurfaceInput) -> SurfacePoint {
     point.transmission = slot_transmission(input, point);
     point.kind = slot_kind(input, point);
     point.inputs = slot_light_inputs(input, point);
+    return point;
+}
+
+fn depth_surface(input: SurfaceInput) -> SurfacePoint {
+    var point = placed(input);
+    point.opacity = slot_opacity(input, point);
+    point.normal = slot_normal(input, point);
     return point;
 }
 

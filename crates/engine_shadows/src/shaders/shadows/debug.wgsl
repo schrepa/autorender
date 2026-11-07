@@ -2,6 +2,8 @@ import package::face::debug::{DEBUG_CARDS, DEBUG_EMPTY, DEBUG_OTHER, DebugShade,
     debug_record_card, debug_record_kind, debug_record_source};
 import package::engine::debug::debug_kind_color;
 import package::engine::drawn::drawn_records;
+import package::engine::shading::SurfacePoint;
+import package::face::lighting::{sun_debug, surface_sun};
 import package::generated::kinds::KIND_MESH;
 import package::generated::passes::PASS_SHADOW;
 import package::generated::pieces::shadows::piece;
@@ -65,4 +67,8 @@ fn shade_kind(shade: DebugShade, targets: DebugTargets) -> DebugShade {
         default: {}
     }
     return shaded;
+}
+
+fn point_source(source: u32, point: SurfacePoint) -> u32 {
+    return sun_debug(surface_sun(point));
 }

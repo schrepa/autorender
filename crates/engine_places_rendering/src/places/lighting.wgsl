@@ -2,20 +2,18 @@ import package::engine::shading::SurfacePoint;
 import package::place::sun_blockers::SunAt;
 
 struct LightInputs {
-    shadow_shift: vec3<f32>,
     ignore_face: bool,
     bounce: vec3<f32>,
     sky_bend: vec3<f32>,
-    sun_blocked: f32,
     smoother_across: f32,
     shadow_softness: f32,
     shadow_lift_first: u32,
     shadow_lifts: vec4<f32>,
 }
 
-struct LightOutputs {
-    reflect: f32,
-    mirrored: f32,
+struct Reflecting {
+    light: vec3<f32>,
+    share: f32,
     across: f32,
 }
 
@@ -56,3 +54,7 @@ fn sun_debug(at: SunAt) -> u32 {
     return 0u;
 }
 
+fn reflecting(point: SurfacePoint) -> Reflecting {
+    var result: Reflecting;
+    return result;
+}

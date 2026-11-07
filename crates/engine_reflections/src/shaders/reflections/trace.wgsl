@@ -4,8 +4,7 @@ import package::engine::screen_points::{depth_normal, world_at};
 import package::face::trace_depths::{TRACE_DEPTH_OPAQUE, TRACE_DEPTH_SOLID, TRACE_DEPTH_THIN};
 import package::face::trace_source::{trace_holds, trace_world};
 import package::generated::pieces::reflections::piece;
-import package::generated::targets::{output_reflectivity, output_surface};
-import package::reflections::surface::MIRRORED_BITS;
+import package::generated::targets::{output_reflected, output_surface};
 
 @group(1) @binding(0) var nearest_depth: texture_2d<f32>;
 @group(1) @binding(1) var scene_levels: texture_2d<f32>;
@@ -47,21 +46,18 @@ fn world_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
 struct Mirroring {
     normal: vec3<f32>,
     roughness: vec2<f32>,
-    mirrored: f32,
 }
 
 fn mirroring_at(pixel: vec2<i32>) -> Mirroring {
     let words = textureLoad(output_surface, pixel, 0);
-    let most = (1u << MIRRORED_BITS) - 1u;
     var mirroring: Mirroring;
     mirroring.normal = normalize(octahedral_normal(vec2<f32>(words.xy) / 65535.0 * 2.0 - 1.0));
     mirroring.roughness = unpack4x8unorm(words.z).xy;
-    mirroring.mirrored = f32(words.w & most) / f32(most);
     return mirroring;
 }
 
 fn body_at(pixel: vec2<i32>) -> u32 {
-    return textureLoad(output_surface, pixel, 0).w >> MIRRORED_BITS;
+    return textureLoad(output_surface, pixel, 0).w;
 }
 
 fn blurred_scene(at: vec2<f32>, level: f32) -> vec3<f32> {
@@ -234,7 +230,7 @@ fn reach_fade(travelled: f32, reach: f32) -> f32 {
 @fragment
 fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(position.xy);
-    let stored = textureLoad(output_reflectivity, pixel, 0).x;
+    let stored = textureLoad(output_reflected, pixel, 0).a;
     if stored < 0.01 {
         return vec4<f32>(0.0);
     }
@@ -245,7 +241,7 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     if reflectivity < 0.01 {
         return vec4<f32>(0.0);
     }
-    let mirrored = mirroring.mirrored * smooth_enough;
+    let mirrored = smooth_enough;
     let center = world_at(pixel);
     if center.w == 0.0 {
         return vec4<f32>(0.0);

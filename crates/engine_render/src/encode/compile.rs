@@ -629,7 +629,7 @@ impl Run {
         if let Some(layer) = pass_layer(pass) {
             if !own_colors_only(pass) {
                 main = true;
-                for (_, format, _, written) in set_formats(&self.machine.outputs, Some(layer)) {
+                for (_, format, _, written) in set_formats(&self.machine.outputs, layer) {
                     formats.push(written.then_some(format));
                 }
             }
@@ -638,14 +638,8 @@ impl Run {
         if crate::shared::draws_canvas(pass) {
             formats.insert(0, Some(self.surface));
         }
-        if pass.name == crate::shared::COMPOSITE {
-            for (_, format, _, written) in
-                set_formats(&self.machine.outputs, None).into_iter().skip(1)
-            {
-                if written {
-                    formats.push(Some(format));
-                }
-            }
+        for &view in &pass.targets {
+            formats.push(target_format(final_target(view), &self.machine.outputs));
         }
         for &(texture, _) in &pass.colors {
             formats.push(

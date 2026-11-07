@@ -1,14 +1,10 @@
-import package::engine::slots::{LightInputs, LightOutputs};
+import package::engine::slots::LightInputs;
 import package::engine::surfaces::SURFACE_SOLID;
 
 struct Shaded {
     linear: vec3<f32>,
     ambient: f32,
-    normal: vec3<f32>,
-    roughness: f32,
-    kind: u32,
     opacity: f32,
-    outputs: LightOutputs,
 }
 
 struct PositionInput {
@@ -32,6 +28,8 @@ struct SurfacePoint {
     f0: vec3<f32>,
     diffuse_color: vec3<f32>,
     normal: vec3<f32>,
+    normal_dx: vec3<f32>,
+    normal_dy: vec3<f32>,
     geometric: vec3<f32>,
     view: vec3<f32>,
     n_v: f32,
@@ -40,6 +38,8 @@ struct SurfacePoint {
     world_dy: vec3<f32>,
     distance: f32,
     kind: u32,
+    thickness: f32,
+    sun_blocked: f32,
     inputs: LightInputs,
 }
 
@@ -62,9 +62,6 @@ struct SurfaceInput {
     origin: vec3<f32>,
 }
 
-const SPECULAR_VARIANCE: f32 = 0.15;
-const SPECULAR_LIMIT: f32 = 0.2;
-
 struct ViewPixel {
     clip: vec4<f32>,
     previous: vec4<f32>,
@@ -74,11 +71,21 @@ fn flat(color: vec4<f32>) -> Shaded {
     var shaded: Shaded;
     shaded.linear = color.rgb;
     shaded.ambient = 0.0;
-    shaded.normal = vec3<f32>(0.0, 0.0, 1.0);
-    shaded.roughness = 1.0;
-    shaded.kind = SURFACE_SOLID;
     shaded.opacity = color.a;
     return shaded;
+}
+
+fn flat_point(color: vec4<f32>) -> SurfacePoint {
+    var point: SurfacePoint;
+    point.base_color = color.rgb;
+    point.opacity = color.a;
+    point.normal = vec3<f32>(0.0, 0.0, 1.0);
+    point.geometric = point.normal;
+    point.view = point.normal;
+    point.roughness = 1.0;
+    point.occlusion = 1.0;
+    point.kind = SURFACE_SOLID;
+    return derived(point);
 }
 
 fn derived(point: SurfacePoint) -> SurfacePoint {
@@ -92,11 +99,7 @@ fn derived(point: SurfacePoint) -> SurfacePoint {
 }
 
 fn unlit(point: SurfacePoint) -> Shaded {
-    var shaded = flat(vec4<f32>(point.base_color + point.emissive, point.opacity));
-    shaded.normal = point.normal;
-    shaded.roughness = point.roughness;
-    shaded.kind = point.kind;
-    return shaded;
+    return flat(vec4<f32>(point.base_color + point.emissive, point.opacity));
 }
 
 fn world_plane(p: vec3<f32>, axis: u32) -> vec2<f32> {

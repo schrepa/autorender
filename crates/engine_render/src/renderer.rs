@@ -75,7 +75,6 @@ pub struct Renderer {
     seconds: Option<f32>,
     part_names: &'static [&'static str],
     linked: engine_core::LinkedStats,
-    resolver: Option<(&'static str, &'static str)>,
     recovering: Option<startup::Opening>,
     lost_bricks: Vec<engine_registry::BrickId>,
 }
@@ -86,11 +85,6 @@ impl Renderer {
     }
 
     pub fn pass_owner(&self, pass: &str) -> Option<&'static str> {
-        if let Some((resolved, package)) = self.resolver
-            && resolved == pass
-        {
-            return Some(package);
-        }
         let machine = &self.run.as_ref()?.machine;
         let declared = machine
             .declared

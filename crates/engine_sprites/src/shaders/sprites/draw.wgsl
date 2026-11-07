@@ -1,6 +1,6 @@
 import package::engine::drawn::{drawn_records, drawn_shown};
 import package::engine::view::{camera, view_pixel};
-import package::engine::shading::flat;
+import package::engine::shading::{flat, flat_point};
 import package::generated::sprites::SpriteInstance;
 import package::generated::targets::{ViewTargets, view_targets};
 @group(1) @binding(0) var<storage, read> instances: array<SpriteInstance>;
@@ -25,5 +25,5 @@ struct Corner { @builtin(position) clip: vec4<f32>, @location(0) uv: vec2<f32>, 
 @fragment fn fs_sprite(corner: Corner) -> ViewTargets {
     let texel = textureSample(sheet, sheet_sampler, corner.uv) * corner.tint;
     if texel.a < 0.5 { discard; }
-    return view_targets(flat(texel), view_pixel(corner.clip, corner.previous));
+    return view_targets(flat_point(texel), flat(texel), view_pixel(corner.clip, corner.previous));
 }

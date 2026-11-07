@@ -13,7 +13,7 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     Brick, Bricks, Pass, PassName, PassViews, PrimaryView, Schedule, SlotSet, Source, Writes, never,
 };
-use engine_render::{AttachPoint, RenderBricks, TargetDecl, TargetName, Written, wgpu};
+use engine_render::{AttachPoint, RenderBricks, TargetDecl, TargetName, wgpu};
 
 pub use settings::{Reflections, ReflectionsStats};
 
@@ -37,14 +37,14 @@ const SURFACE_POINTS: &[AttachPoint] = &[AttachPoint::Opaque, AttachPoint::Sky];
 const SURFACE: TargetDecl = TargetDecl {
     name: TargetName("surface"),
     format: wgpu::TextureFormat::Rgba16Uint,
-    written: Written::At(SURFACE_POINTS),
+    written: SURFACE_POINTS,
     module: Some(shaders::reflections::surface::MODULE),
 };
 
-const REFLECTIVITY: TargetDecl = TargetDecl {
-    name: TargetName("reflectivity"),
-    format: wgpu::TextureFormat::R8Unorm,
-    written: Written::At(SURFACE_POINTS),
+const REFLECTED: TargetDecl = TargetDecl {
+    name: TargetName("reflected"),
+    format: wgpu::TextureFormat::Rgba16Float,
+    written: SURFACE_POINTS,
     module: Some(shaders::reflections::surface::MODULE),
 };
 
@@ -54,19 +54,17 @@ impl Brick for ReflectionsBrick {
     const SOURCE: &'static Source = &SOURCE;
 
     fn register(bricks: &mut Bricks<'_>) {
-        use shaders::reflections::apply;
         bricks
             .settings::<Reflections>()
             .stats::<ReflectionsStats>()
             .piece::<ReflectionsPiece>()
             .generated(gpu::GENERATED)
             .view_target(SURFACE)
-            .view_target(REFLECTIVITY)
+            .view_target(REFLECTED)
             .pass::<ReflectionsPass>()
             .systems(Schedule::ViewSync, publish_piece)
             .within(reflecting, |bricks| {
                 bricks
-                    .applies::<ReflectionsPass>(apply::MODULE)
                     .join::<engine_places_rendering::reflections::TraceReaders>((), None)
                     .part::<part::TraceGpu>();
             });

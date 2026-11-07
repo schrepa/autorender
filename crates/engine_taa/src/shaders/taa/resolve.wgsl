@@ -1,14 +1,20 @@
 import package::engine::post::frame::{depth_texture, linear, post};
-import package::engine::post::pixel::{PostPixel, SceneLight};
 import package::face::tonemap::exposure;
 import package::face::transparency::revealed;
 import package::generated::pieces::taa::piece;
-import package::generated::targets::{blended_cover, output_history, output_motion};
-import package::taa::lit::turn;
+import package::generated::targets::{blended_cover, output_motion};
+import package::generated::taa::TaaView;
 
-@group(0) @binding(0) var lit: texture_2d<f32>;
+@group(1) @binding(0) var lit: texture_2d<f32>;
+@group(1) @binding(1) var history: texture_2d<f32>;
+@group(1) @binding(2) var<uniform> taa_view: TaaView;
 
 const STILL_PIXELS: f32 = 0.015625f;
+
+struct Resolved {
+    @location(0) color: vec4<f32>,
+    @location(1) kept: vec4<f32>,
+}
 
 struct Centre {
     screen: vec2<f32>,
@@ -55,11 +61,11 @@ fn sample_history(uv: vec2<f32>) -> vec3<f32> {
     let weights = vec4<f32>(w12.x * w0.y, w0.x * w12.y, w3.x * w12.y, w12.x * w3.y);
     let middle_weight = w12.x * w12.y;
     let sum = middle_weight + weights.x + weights.y + weights.z + weights.w;
-    let color = textureSampleLevel(output_history, linear, middle, 0.0).rgb * middle_weight
-        + textureSampleLevel(output_history, linear, vec2<f32>(middle.x, before.y), 0.0).rgb * weights.x
-        + textureSampleLevel(output_history, linear, vec2<f32>(before.x, middle.y), 0.0).rgb * weights.y
-        + textureSampleLevel(output_history, linear, vec2<f32>(after.x, middle.y), 0.0).rgb * weights.z
-        + textureSampleLevel(output_history, linear, vec2<f32>(middle.x, after.y), 0.0).rgb * weights.w;
+    let color = textureSampleLevel(history, linear, middle, 0.0).rgb * middle_weight
+        + textureSampleLevel(history, linear, vec2<f32>(middle.x, before.y), 0.0).rgb * weights.x
+        + textureSampleLevel(history, linear, vec2<f32>(before.x, middle.y), 0.0).rgb * weights.y
+        + textureSampleLevel(history, linear, vec2<f32>(after.x, middle.y), 0.0).rgb * weights.z
+        + textureSampleLevel(history, linear, vec2<f32>(middle.x, after.y), 0.0).rgb * weights.w;
     return color / sum;
 }
 
@@ -98,21 +104,22 @@ fn upsampled(position: vec2<f32>, last: vec2<i32>) -> vec3<f32> {
 fn centre(position: vec2<f32>) -> Centre {
     let screen = position * post.extent.zw;
     let rendered = screen * post.size.xy;
-    let jittered = rendered + piece().offset;
+    let jittered = rendered + taa_view.offset;
     let last = vec2<i32>(post.size.xy) - 1;
     let pixel = clamp(vec2<i32>(floor(jittered)), vec2<i32>(0), last);
     return Centre(screen, rendered, jittered, last, pixel);
 }
 
-fn resolve(at: PostPixel, light: SceneLight) -> SceneLight {
-    let tap = centre(at.position);
+@fragment
+fn fs_temporal_resolve(@builtin(position) position: vec4<f32>) -> Resolved {
+    let tap = centre(position.xy);
     let screen = tap.screen;
     let rendered = tap.rendered;
     let jittered = tap.jittered;
     let last = tap.last;
     let pixel = tap.pixel;
     let current = weighed(textureLoad(lit, pixel, 0).rgb);
-    let away = (vec2<f32>(pixel) + 0.5 - piece().offset - rendered)
+    let away = (vec2<f32>(pixel) + 0.5 - taa_view.offset - rendered)
         / (post.size.xy * post.extent.zw);
     let near = saturate(2.0 - 2.0 * max(abs(away.x), abs(away.y)));
     var color = current;
@@ -120,11 +127,11 @@ fn resolve(at: PostPixel, light: SceneLight) -> SceneLight {
         color = weighed(upsampled(jittered, last));
     }
     var offset = textureLoad(output_motion, pixel, 0).xy;
-    if piece().options.y != 0.0 {
+    if piece().options.x != 0.0 {
         offset = nearest_motion(pixel, last);
     }
     let uv = screen + offset;
-    if piece().history_valid != 0u && all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0)) {
+    if taa_view.history != 0u && all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0)) {
         let center = ycocg(current);
         let left = neighbor(pixel, vec2<i32>(-1, 0), last);
         let right = neighbor(pixel, vec2<i32>(1, 0), last);
@@ -132,7 +139,7 @@ fn resolve(at: PostPixel, light: SceneLight) -> SceneLight {
         let down = neighbor(pixel, vec2<i32>(0, 1), last);
         var low = min(center, min(min(left, right), min(up, down)));
         var high = max(center, max(max(left, right), max(up, down)));
-        if piece().options.z != 0.0 {
+        if piece().options.y != 0.0 {
             let a = neighbor(pixel, vec2<i32>(-1, -1), last);
             let b = neighbor(pixel, vec2<i32>(1, -1), last);
             let c = neighbor(pixel, vec2<i32>(-1, 1), last);
@@ -142,23 +149,18 @@ fn resolve(at: PostPixel, light: SceneLight) -> SceneLight {
         }
         var past: vec3<f32>;
         if all(abs(offset) < post.extent.zw * STILL_PIXELS) {
-            past = textureLoad(output_history, vec2<i32>(at.position), 0).rgb;
+            past = textureLoad(history, vec2<i32>(position.xy), 0).rgb;
         } else {
             past = sample_history(uv);
         }
         past = weighed(max(past, vec3<f32>(0.0)));
-        var weight = piece().current_weight * near;
-        if piece().options.w > 0.0 {
+        var weight = piece().options.w * near;
+        if piece().options.z > 0.0 {
             let covered = 1.0 - revealed(pixel).y * (1.0 - blended_cover(pixel));
-            weight = max(weight, min(piece().options.w * covered, 1.0));
+            weight = max(weight, min(piece().options.z * covered, 1.0));
         }
         color = mix(rgb(clamp(ycocg(past), low, high)), current, weight);
     }
-    color = unweighed(max(color, vec3<f32>(0.0)));
-    return SceneLight(color, light.ambient);
-}
-
-fn resolved_at(at: PostPixel) -> PostPixel {
-    let tap = centre(at.position);
-    return PostPixel(at.position, tap.screen, tap.pixel, turn(), 2u);
+    let resolved = vec4<f32>(unweighed(max(color, vec3<f32>(0.0))), 1.0);
+    return Resolved(resolved, resolved);
 }

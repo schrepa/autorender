@@ -51,14 +51,13 @@ impl Brick for TaaBrick {
             .settings::<TemporalAntialiasing>()
             .stats::<TemporalAntialiasingStats>()
             .piece::<temporal::TaaPiece>()
-            .fill::<Resolve>(Some(shaders::taa::resolve::MODULE))
+            .generated(temporal::GENERATED)
+            .fill::<Resolve>(Some(shaders::taa::resolved::MODULE))
             .fill::<Jitter>(None)
             .view_target(previous::MOTION)
-            .view_target(temporal::HISTORY)
             .pass::<TemporalPass>()
             .systems(Schedule::WorldSync, temporal::jitter)
             .systems(Schedule::ViewSync, temporal::publish)
-            .resolve_pass(temporal::PASS)
             .part::<lit::LitGpu>();
     }
 }

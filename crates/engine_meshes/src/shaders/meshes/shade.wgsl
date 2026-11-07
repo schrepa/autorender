@@ -1,13 +1,12 @@
 import package::engine::materials::{alpha_test, fade_list};
 import package::engine::mesh::declarations::{MotionOutput, VertexOutput, fade_hidden};
 import package::engine::mesh::vertex::output_color;
-import package::engine::shading::{Shaded, SurfaceInput, SurfacePoint};
+import package::engine::shading::{SurfaceInput, SurfacePoint};
 import package::engine::slots::{shade_model, slot_output};
-import package::engine::surface::{masked_out, opacity_cut, surface_point};
+import package::engine::surface::{depth_surface, masked_out, opacity_cut, surface_point};
 import package::engine::view::{camera, material_bias};
-import package::face::lit::widened;
 import package::meshes::vertex::{ExtendedOutput, ExtendedMotionOutput};
-import package::place::instances::SlotFragment;
+import package::place::instances::{SlotFragment, SlotShaded};
 
 fn surface_input(input: SlotFragment, front: bool) -> SurfaceInput {
     var surface: SurfaceInput;
@@ -32,11 +31,10 @@ fn surface_input(input: SlotFragment, front: bool) -> SurfaceInput {
 
 fn lit_point(surface: SurfaceInput, tested: bool) -> SurfacePoint {
     let point = surface_point(surface);
-    let result = widened(point, dpdx(point.normal), dpdy(point.normal));
-    if alpha_test() && !tested && masked_out(surface, result) {
+    if alpha_test() && !tested && masked_out(surface, point) {
         discard;
     }
-    return result;
+    return point;
 }
 
 fn mesh_point(input: SlotFragment, front: bool, tested: bool) -> SurfacePoint {
@@ -91,10 +89,19 @@ fn masked_depth(input: SlotFragment) {
     }
 }
 
-fn shade(input: SlotFragment, front: bool, tested: bool) -> Shaded {
+fn depth_point(input: SlotFragment, front: bool) -> SurfacePoint {
+    let surface = surface_input(input, front);
+    let point = depth_surface(surface);
+    if masked_out(surface, point) {
+        discard;
+    }
+    return point;
+}
+
+fn shade(input: SlotFragment, front: bool, tested: bool) -> SlotShaded {
     let surface = surface_input(input, front);
     let point = lit_point(surface, tested);
-    return slot_output(surface, point, shade_model(point, input.pixel));
+    return SlotShaded(point, slot_output(surface, point, shade_model(point, input.pixel)));
 }
 
 fn motion_output(input: MotionOutput) -> VertexOutput {

@@ -45,8 +45,6 @@ impl PartRecord {
 
 pub(crate) struct Generated(pub(crate) &'static [&'static str]);
 
-pub(crate) struct ResolvePass(pub(crate) crate::PassNames);
-
 pub(crate) struct Applied {
     pub(crate) pass: engine_core::PassEntry,
     pub(crate) module: engine_core::Module,

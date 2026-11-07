@@ -10,7 +10,7 @@ use crate::install::{InstallCore, PartInfo, Reinstall};
 use crate::linker::{CORE_PACKAGE, Linker, Part};
 use crate::machine::{Machine, OutputDecl};
 use crate::places::{Answered, Fed, checked, face_module, face_source, place_module};
-use crate::registration::{Generated, Installed, KindDraw, KindMember, PartRecord, ResolvePass};
+use crate::registration::{Generated, Installed, KindDraw, KindMember, PartRecord};
 
 struct Listed {
     record: PartRecord,
@@ -29,7 +29,6 @@ pub(crate) struct Built {
     pub(crate) passes: Vec<&'static str>,
     pub(crate) linked: engine_core::LinkedStats,
     pub(crate) placed: Placed,
-    pub(crate) resolve: Option<(crate::PassNames, &'static str)>,
     pub(crate) material: crate::surface::MaterialLayout,
     pub(crate) applied: Vec<crate::shared::AppliedModule>,
 }
@@ -358,13 +357,23 @@ fn applied_modules(
 
 fn outputs(registry: &Registry, roots: &mut Vec<(String, String)>) -> Vec<OutputDecl> {
     let cover = engine_core::TargetName::TRANSPARENCY.name();
+    let normals = engine_core::TargetName::NORMALS.name();
     roots.push((crate::shared::TRANSPARENCY_MODULE.to_owned(), cover.to_owned()));
-    let mut found = vec![OutputDecl {
-        name: cover,
-        format: crate::shared::COVER_FORMAT,
-        layers: vec![engine_core::AttachPoint::Transparent],
-        module: Some(crate::shared::TRANSPARENCY_MODULE.to_owned()),
-    }];
+    roots.push((crate::shared::NORMALS_MODULE.to_owned(), normals.to_owned()));
+    let mut found = vec![
+        OutputDecl {
+            name: cover,
+            format: crate::shared::COVER_FORMAT,
+            layers: vec![engine_core::AttachPoint::Transparent],
+            module: Some(crate::shared::TRANSPARENCY_MODULE.to_owned()),
+        },
+        OutputDecl {
+            name: normals,
+            format: crate::shared::NORMALS_FORMAT,
+            layers: vec![engine_core::AttachPoint::Depth],
+            module: Some(crate::shared::NORMALS_MODULE.to_owned()),
+        },
+    ];
     for (_, record) in registry.iter() {
         for target in record.render_entries::<crate::TargetDecl>() {
             let module = target.module.as_ref().and_then(module_path);
@@ -374,10 +383,7 @@ fn outputs(registry: &Registry, roots: &mut Vec<(String, String)>) -> Vec<Output
             found.push(OutputDecl {
                 name: target.name.name(),
                 format: target.format,
-                layers: match target.written {
-                    crate::Written::At(points) => points.to_vec(),
-                    crate::Written::Composite => Vec::new(),
-                },
+                layers: target.written.to_vec(),
                 module,
             });
         }
@@ -515,6 +521,7 @@ fn names_twice(registry: &Registry, world: &World, problems: &mut Vec<Error>) {
             let name = target.name.name();
             if crate::install::ViewTarget::of(target.name).is_some()
                 || target.name == engine_core::TargetName::TRANSPARENCY
+                || target.name == engine_core::TargetName::NORMALS
                 || seen.contains(&name)
             {
                 problems.push(
@@ -628,17 +635,6 @@ fn install_with(
     );
     let (pieces, placed, piece_texts) = pieces(registry, &mut linker, &mut problems);
     hand_generated(registry, &mut linker, piece_texts);
-    let resolve = registry.iter().find_map(|(_, record)| {
-        let fills = record
-            .fills()
-            .iter()
-            .any(|filled| filled.slot == TypeId::of::<crate::Resolve>());
-        record
-            .render_entries::<ResolvePass>()
-            .next()
-            .filter(|_| fills)
-            .map(|entry| (entry.0, record.package))
-    });
     let mut listed: Vec<Listed> = vec![
         Listed {
             record: core_part::<crate::shared::ScenePart>(),
@@ -815,7 +811,6 @@ fn install_with(
             passes,
             linked: links.stats(),
             placed,
-            resolve,
             material,
             applied,
         })
@@ -897,13 +892,6 @@ impl Renderer {
         run.surface = self.core.display.format();
         run.canvas_format = run.surface;
         run.applied = installed.applied;
-        run.resolve = installed.resolve.map(|(names, _)| {
-            let stage: &'static str = Box::leak(format!("stage_{}", names.pass).into_boxed_str());
-            (names, stage)
-        });
-        self.resolver = installed
-            .resolve
-            .map(|(names, package)| (names.pass, package));
         let mut stages: Vec<(&'static str, &'static str)> = Vec::new();
         self.spans = run
             .machine
@@ -923,13 +911,7 @@ impl Renderer {
                 }
             })
             .collect();
-        let mut passes = installed.passes;
-        if let Some((names, _)) = installed.resolve
-            && !passes.contains(&names.pass)
-        {
-            passes.push(names.pass);
-        }
-        self.passes = Box::leak(passes.into_boxed_slice());
+        self.passes = Box::leak(installed.passes.into_boxed_slice());
         self.linked = installed.linked;
         let names: Vec<&'static str> = run
             .machine

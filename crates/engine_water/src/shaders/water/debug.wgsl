@@ -39,14 +39,14 @@ fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt) -> DebugTargets 
         discard;
     }
     let world = eye_world(point);
-    let normal = shade.shaded.normal;
+    let normal = shade.point.normal;
     let depth = at.depth;
     let speed = length(at.words.flow);
     let froude = speed / sqrt(GRAVITY * max(depth, DRY));
     let eddies = water_eddy_froude(speed, length(at.slope), depth);
     var targets = debug_targets(debug_record(KIND_WATER, 0u, false, false, 0u),
         pack2x16float(vec2<f32>(depth, speed)),
-        water_probe_detail(debug_span_code(at.words.span), debug_byte(shade.shaded.roughness),
+        water_probe_detail(debug_span_code(at.words.span), debug_byte(shade.point.roughness),
             false),
         normal, water_sun(world, normal));
     targets.words = vec2<u32>(pack2x16float(vec2<f32>(froude, eddies)),
@@ -70,7 +70,7 @@ fn fs_debug_fall(input: FallOutput) -> DebugTargets {
         discard;
     }
     let world = eye_world(input.relative);
-    let normal = shade.shaded.normal;
+    let normal = shade.point.normal;
     return debug_targets(debug_record(KIND_WATER, 0u, false, false, 0u), 0u,
         water_probe_detail(0u, 0u, true), normal, water_sun(world, normal));
 }

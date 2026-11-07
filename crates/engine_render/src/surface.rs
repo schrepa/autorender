@@ -424,7 +424,7 @@ impl MaterialLayout {
             let _ = writeln!(body, "    return standard_{name}({args});\n}}");
         }
         if full {
-            imports.push_str("import package::face::lit::{LightInputs, LightOutputs, finish};\n");
+            imports.push_str("import package::face::lit::{LightInputs, finish};\n");
             body.push_str(
                 "\nfn shade_model(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    var shaded = modeled(point, pixel);\n    shaded.opacity = point.opacity;\n    return shaded;\n}\n",
             );
@@ -441,7 +441,7 @@ impl MaterialLayout {
             }
             body.push_str("    return finish(point, pixel, vec3<f32>(0.0));\n}\n");
         } else {
-            body.push_str("\nalias LightInputs = u32;\n\nalias LightOutputs = u32;\n");
+            body.push_str("\nalias LightInputs = u32;\n");
         }
         let mut used = vec![
             "material_module".to_owned(),

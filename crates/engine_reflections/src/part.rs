@@ -1,14 +1,13 @@
 use engine_core::{Entry, Error, PassName, ViewFacts};
 use engine_render::{
-    Access, Attach, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse, Encode,
-    FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
-    SCENE_FORMAT, SamplerDesc, Shape, TargetName, Texture, level_region, mip_levels,
-    pyramid_extents, wgpu,
+    Access, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, Encode, FULLSCREEN, GpuPart,
+    Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, SCENE_FORMAT, Shape,
+    TargetName, Texture, level_region, mip_levels, pyramid_extents, wgpu,
 };
 
 use crate::ReflectionsPass;
 use crate::gpu::{PYRAMID_GROUP, PyramidExtent};
-use crate::shaders::reflections::{apply, levels, nearest, trace};
+use crate::shaders::reflections::{blend, levels, nearest, trace};
 
 const SCENE_LEVELS: u32 = 6;
 const PYRAMID_LEVELS: u32 = 15;
@@ -18,16 +17,18 @@ const NEAREST_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 
 pub(crate) struct TraceGpu {
     reduce: Pass<Self>,
-    copy: Pass<Self>,
     chain: Pass<Self>,
     reflect: Pass<Self>,
+    blend: Pass<Self>,
     reflected: Texture<Self>,
     levels: Texture<Self>,
     pyramid: Texture<Self>,
     extents: Vec<Buffer<Self>>,
     reductions: Vec<ComputePipeline<Self>>,
+    first: Pipeline<Self, Own>,
     downs: Vec<Pipeline<Self, Own>>,
     tracing: Pipeline<Self, Own>,
+    blending: Pipeline<Self, Own>,
     count: u32,
     render: (u32, u32),
     drawn: [(u32, u32); SCENE_LEVELS as usize],
@@ -47,9 +48,6 @@ impl GpuPart for TraceGpu {
         let extents: Vec<Buffer<Self>> = (0..PYRAMID_LEVELS)
             .map(|_| cx.view_buffer("nearest_extent", Lifetime::Kept))
             .collect();
-        let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
-        cx.frame(apply::REFLECTIONS, Bind::Texture(reflected))?;
-        cx.frame(apply::REFLECTIONS_SAMPLER, Bind::Sampler(sampler))?;
         let (at, views) = (ReflectionsPass::PASS.at, ReflectionsPass::PASS.views);
         let reduce = cx
             .pass("nearest_depth")
@@ -58,25 +56,29 @@ impl GpuPart for TraceGpu {
             .label("engine/depth-pyramid")
             .span(SPAN)
             .id();
-        let copy = cx.copy(
-            "scene_levels_copy",
-            Copied::Target(TargetName::COLOR),
-            Copied::Texture(levels_texture),
-        );
         let chain = cx
             .pass("scene_levels")
             .at(at)
             .views(views)
             .label("engine/post-scene-levels")
             .span(SPAN)
-            .after(copy)
             .color(levels_texture, Access::Load)
             .id();
         let reflect = cx
             .screen::<ReflectionsPass>()
             .label("engine/post-reflections")
             .span(SPAN)
+            .after(chain)
             .color(reflected, Access::Clear)
+            .id();
+        let blend = cx
+            .pass("reflections_blend")
+            .at(at)
+            .views(views)
+            .label("engine/post-reflections-blend")
+            .span(SPAN)
+            .after(reflect)
+            .target(TargetName::COLOR)
             .id();
         let mut reductions = Vec::new();
         for (level, uniform) in (0..PYRAMID_LEVELS).zip(&extents) {
@@ -103,6 +105,7 @@ impl GpuPart for TraceGpu {
             };
             reductions.push(reduction);
         }
+        let first = cx.render_pipeline(chain, &screen(levels::FS_LEVELS_SCENE), &[])?;
         let mut downs = Vec::new();
         for level in 1..=SCENE_LEVELS {
             let fragment = if level == 1 {
@@ -124,18 +127,28 @@ impl GpuPart for TraceGpu {
                 (trace::SCENE_LEVELS, Bind::Texture(levels_texture)),
             ],
         )?;
+        let blending = cx.render_pipeline(
+            blend,
+            &RenderPipeline {
+                blend: Some(ADDED_COLOR),
+                ..screen(blend::FS_REFLECTIONS_BLEND)
+            },
+            &[(blend::REFLECTIONS, Bind::Texture(reflected))],
+        )?;
         Ok(Self {
             reduce,
-            copy,
             chain,
             reflect,
+            blend,
             reflected,
             levels: levels_texture,
             pyramid,
             extents,
             reductions,
+            first,
             downs,
             tracing,
+            blending,
             count: 0,
             render: (0, 0),
             drawn: [(0, 0); SCENE_LEVELS as usize],
@@ -173,18 +186,9 @@ impl GpuPart for TraceGpu {
             cx.write(*buffer, 0, &[*written]);
         }
         cx.run(self.reduce);
-        cx.copy(
-            self.copy,
-            &[CopyRegion::Texels {
-                from: wgpu::Origin3d::ZERO,
-                to: wgpu::Origin3d::ZERO,
-                size: whole,
-            }],
-        );
-        if self.count > 0 {
-            cx.run(self.chain);
-        }
+        cx.run(self.chain);
         cx.run(self.reflect);
+        cx.run(self.blend);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
@@ -201,6 +205,10 @@ impl GpuPart for TraceGpu {
             return 0;
         }
         if pass == self.chain {
+            let mut draw = cx.render(Attach::ColorMip(self.levels, 0, 0));
+            draw.within(self.render);
+            draw.draw(&self.first, TRIANGLE);
+            drop(draw);
             for ((level, down), drawn) in (0..self.count).zip(&self.downs).zip(self.drawn) {
                 let mut draw = cx.render(Attach::ColorMip(self.levels, level + 1, 0));
                 draw.within(drawn);
@@ -208,14 +216,30 @@ impl GpuPart for TraceGpu {
             }
             return 0;
         }
-        if pass == self.reflect {
-            let mut draw = cx.render(Attach::Declared);
-            draw.within(self.render);
-            draw.draw(&self.tracing, TRIANGLE);
-        }
+        let pipeline = if pass == self.reflect {
+            &self.tracing
+        } else {
+            &self.blending
+        };
+        let mut draw = cx.render(Attach::Declared);
+        draw.within(self.render);
+        draw.draw(pipeline, TRIANGLE);
         0
     }
 }
+
+const ADDED_COLOR: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
 
 const TRIANGLE: Shape<'static, TraceGpu, Own> = Shape::Pulled {
     vertices: 0..3,

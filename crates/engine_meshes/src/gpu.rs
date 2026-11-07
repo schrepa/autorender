@@ -738,22 +738,28 @@ fn depth_looks<S: Scope<MeshesGpu> + Copy>(
     let mut looks = Vec::with_capacity(8);
     for index in 0..8_usize {
         let (_, double_sided, extended) = look_of(index);
-        let (vertex, streams, masked_depth) = if extended {
+        let (vertex, streams, depth, masked_depth) = if extended {
             (
                 vertex::VS_MESH_EXTENDED,
                 EXTENDED_STREAMS,
+                forward::FS_DEPTH_EXTENDED,
                 forward::FS_MASKED_DEPTH_EXTENDED,
             )
         } else {
-            (vertex::VS_MESH, MESH_STREAMS, forward::FS_MASKED_DEPTH)
+            (
+                vertex::VS_MESH,
+                MESH_STREAMS,
+                forward::FS_DEPTH,
+                forward::FS_MASKED_DEPTH,
+            )
         };
         looks.push(cx.render_pipeline(
             scope,
             &mesh_pipeline(
-                (vertex, masked_depth, Some(masked_depth)),
+                (vertex, depth, Some(masked_depth)),
                 (streams, double_sided, false),
                 WRITE,
-                wgpu::ColorWrites::empty(),
+                wgpu::ColorWrites::ALL,
             ),
             &[],
         )?);

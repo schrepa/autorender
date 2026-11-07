@@ -1,6 +1,6 @@
 import package::engine::mesh::declarations::AffineVertexInput;
 import package::engine::mesh::impostor_frames::ImpostorRecord;
-import package::engine::shading::{Shaded, ViewPixel};
+import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};
 import package::place::debug::DebugTargets;
 
 struct AffinePose {
@@ -71,7 +71,13 @@ struct CardVertex {
     @location(12) @interpolate(flat) slope_c: vec2<f32>,
 }
 
+struct SlotShaded {
+    point: SurfacePoint,
+    shaded: Shaded,
+}
+
 struct CardShaded {
+    point: SurfacePoint,
     shaded: Shaded,
     depth: f32,
 }
@@ -116,12 +122,17 @@ fn slot_fragment_extended(input: SlotVertexExtended) -> SlotFragment {
     return fragment;
 }
 
-fn slot_shade(fragment: SlotFragment, front: bool, pretested: bool) -> Shaded {
-    var shaded: Shaded;
+fn slot_shade(fragment: SlotFragment, front: bool, pretested: bool) -> SlotShaded {
+    var shaded: SlotShaded;
     return shaded;
 }
 
 fn slot_masked_depth(fragment: SlotFragment) {
+}
+
+fn slot_depth(fragment: SlotFragment, front: bool) -> SurfacePoint {
+    var point: SurfacePoint;
+    return point;
 }
 
 fn slot_pixel(input: SlotVertex) -> ViewPixel {

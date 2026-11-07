@@ -49,6 +49,7 @@ fn pond_ground(shape: PondShape, world: vec3<f32>) -> f32 {
 }
 
 struct PondShade {
+    point: SurfacePoint,
     shaded: Shaded,
     cover: f32,
 }
@@ -86,8 +87,8 @@ fn shade_pond(input: PondOutput) -> PondShade {
     var shade: PondShade;
     shade.shaded = finish(point, input.clip_position.xy, vec3<f32>(0.0));
     shade.cover = 1.0 - exp(-depth / (POND_CLEAR * n_v));
-    shade.shaded.outputs.reflect *= shade.cover;
-    shade.shaded.outputs.mirrored *= shade.cover;
+    shade.point = point;
+    shade.point.opacity = shade.cover;
     return shade;
 }
 
@@ -95,7 +96,7 @@ fn shade_pond(input: PondOutput) -> PondShade {
 fn fs_pond(input: PondOutput) -> ViewTargets {
     let shade = shade_pond(input);
     let previous = (camera.previous_view_projection * vec4<f32>(input.world, 1.0)).xyw;
-    var targets = view_targets(shade.shaded,
+    var targets = view_targets(shade.point, shade.shaded,
         view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
     targets.color = vec4<f32>(shade.shaded.linear * shade.cover, shade.cover);
     return targets;
