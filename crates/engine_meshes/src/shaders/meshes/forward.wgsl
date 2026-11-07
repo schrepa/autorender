@@ -51,12 +51,12 @@ fn fs_mesh_extended_pretested(input: ExtendedTemporalOutput,
 }
 
 @fragment
-fn fs_probe(input: TemporalOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+fn fs_view(input: TemporalOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     return vec4<f32>(shade(fragment(temporal_output(input)), front, false).linear, 1.0);
 }
 
 @fragment
-fn fs_probe_extended(input: ExtendedTemporalOutput, @builtin(front_facing) front: bool)
+fn fs_view_extended(input: ExtendedTemporalOutput, @builtin(front_facing) front: bool)
         -> @location(0) vec4<f32> {
     let shaded = shade(extended_fragment(extended_temporal_output(input)), front, false);
     return vec4<f32>(shaded.linear, 1.0);

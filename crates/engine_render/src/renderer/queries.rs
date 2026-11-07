@@ -2,7 +2,6 @@ use bevy_ecs::world::World;
 
 use super::*;
 
-const MOTION_OUTPUTS: [&str; 2] = ["motion", "previous_poses"];
 
 impl Renderer {
     pub fn adapter(&self) -> &crate::AdapterInfo {
@@ -32,12 +31,15 @@ impl Renderer {
 
     pub fn motion(&self, world: &World) -> bool {
         world
-            .get_resource::<engine_registry::MembersOf<crate::ViewOutputs>>()
+            .get_resource::<engine_registry::Registry>()
             .zip(world.get_resource::<engine_registry::BrickStates>())
-            .is_some_and(|(members, states)| {
-                members
-                    .live(states)
-                    .any(|output| MOTION_OUTPUTS.contains(&output.name))
+            .is_some_and(|(registry, states)| {
+                registry.iter().any(|(brick, record)| {
+                    states.brick_on(brick)
+                        && record
+                            .render_entries::<crate::TargetDecl>()
+                            .any(|target| target.name == engine_core::TargetName::MOTION)
+                })
             })
     }
 
@@ -97,11 +99,24 @@ impl Renderer {
 
     pub fn pipelines_compiling(&self) -> u32 {
         crate::platform::poll(&self.core.device);
-        self.core.pipeline_counts.compiling()
+        self.core.ledger.compiling()
+    }
+
+    pub fn compiled_per_pass(&self) -> Vec<(&'static str, u32)> {
+        self.core.ledger.per_pass().to_vec()
+    }
+
+    pub fn compile_ahead(&mut self, world: &World) -> u32 {
+        let Some(run) = self.run.as_mut() else {
+            return 0;
+        };
+        let before = run.compiled.len();
+        run.warm_reached(world);
+        (run.compiled.len() - before) as u32
     }
 
     pub fn pipeline_list(&self) -> Vec<u8> {
-        let fixed = self.core.pipeline_counts.list();
+        let fixed = self.core.ledger.list();
         let mut record = (fixed.len() as u32).to_le_bytes().to_vec();
         record.extend(fixed);
         if let Some(run) = self.run.as_ref() {
@@ -120,7 +135,7 @@ impl Renderer {
             .get(..length)
             .ok_or_else(|| broken(Expected::Present))?;
         let machine = &rest[length..];
-        let mut created = self.core.pipeline_counts.create_listed(fixed)?;
+        let mut created = self.core.ledger.create_listed(fixed)?;
         if let Some(run) = self.run.as_mut() {
             created += run.create_listed(machine)?;
         }
@@ -128,7 +143,7 @@ impl Renderer {
     }
 
     pub fn pipelines_listed(&self) -> (u32, u32) {
-        let (up_front, unlisted) = self.core.pipeline_counts.listed();
+        let (up_front, unlisted) = self.core.ledger.listed();
         let (made, missed) = self
             .run
             .as_ref()

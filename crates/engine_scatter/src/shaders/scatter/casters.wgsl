@@ -1,5 +1,6 @@
 import package::engine::impostors::{impostor_albedo, impostor_sampler};
-import package::engine::materials::{base_color_sampler, base_color_texture, material_maps};
+import package::engine::shading::SurfaceInput;
+import package::engine::surface::opacity_cut;
 import package::engine::mesh::impostor_frames::{
     impostor_basis, impostor_flags_hemisphere, impostor_frame_direction, impostor_frames,
     impostor_grid, impostor_index
@@ -53,15 +54,12 @@ fn vs_caster_masked(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>
 }
 
 fn masked_cut(uv_alpha: vec3<f32>) -> bool {
-    let point = vec3<f32>(uv_alpha.xy, 1.0);
-    let uv = vec2<f32>(dot(material_maps.transforms[0].xyz, point),
-        dot(material_maps.transforms[1].xyz, point));
-    let texel = textureSample(base_color_texture, base_color_sampler, uv);
-    let size = vec2<f32>(textureDimensions(base_color_texture));
-    let dx = dpdx(uv) * size;
-    let dy = dpdy(uv) * size;
-    let coverage = 1.0 + 0.25 * max(0.5 * log2(max(dot(dx, dx), dot(dy, dy))), 0.0);
-    return texel.a * uv_alpha.z * coverage < material_maps.params.z;
+    var surface: SurfaceInput;
+    surface.color = vec4<f32>(1.0, 1.0, 1.0, uv_alpha.z);
+    surface.uv = uv_alpha.xy;
+    surface.uv1 = uv_alpha.xy;
+    surface.front = true;
+    return opacity_cut(surface);
 }
 
 @fragment

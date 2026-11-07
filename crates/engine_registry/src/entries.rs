@@ -11,7 +11,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::members::{add_member, each_member, init_members};
+use crate::members::{add_member, drop_members, each_member, init_members};
 use crate::registry::MemberEach;
 use crate::state::{GateId, Scope};
 
@@ -89,6 +89,7 @@ pub struct JoinEntry {
     pub(crate) add: MemberAdd,
     pub(crate) init: fn(&mut World),
     pub(crate) each: MemberEach,
+    pub(crate) left: fn(&mut World, GateId),
 }
 
 impl JoinEntry {
@@ -106,6 +107,7 @@ impl JoinEntry {
             add: add_member::<L>,
             init: init_members::<L>,
             each: each_member::<L>,
+            left: drop_members::<L>,
         }
     }
 

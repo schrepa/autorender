@@ -1,17 +1,4 @@
-use std::any::Any;
-
-use engine_core::DrawPoint;
-
 use crate::profiling::GpuProfiler;
-
-pub(crate) type DrawCall<D> =
-    Box<dyn Fn(&dyn Any, &<D as DrawPoint>::Args, &mut RawDraw<'_>) -> u32 + Send + Sync>;
-
-pub(crate) struct DrawMember<D: DrawPoint> {
-    pub(crate) part: u32,
-    pub(crate) layer: D::Layer,
-    pub(crate) call: DrawCall<D>,
-}
 
 pub(crate) struct RawDraw<'e> {
     encoding: &'e mut crate::encode::Run,

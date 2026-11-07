@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
-    AssetLibrary, Camera, Error, ErrorCode, Expected, Jobs, Operation, ProvidedAssets,
-    RecordExchange, Transform,
+    AssetLibrary, Error, ErrorCode, Expected, Jobs, Operation, ProvidedAssets, RecordExchange,
+    Transform,
 };
 use engine_places_simulation::ground::Ground;
 use engine_places_simulation::physics::RigidBody;
@@ -13,7 +13,7 @@ use serde_json::Value;
 use crate::bricks::game::bodies::Bodies;
 use crate::bricks::game::cave::{Cave, CaveMouth};
 use crate::bricks::game::content::{self, Content};
-use crate::bricks::game::views::{Views, bodies_view};
+use crate::bricks::game::views::{Views, bodies_view, show};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -55,7 +55,7 @@ impl Operation for HighlandsControl {
         (
             Option<Res<'static, Ground>>,
             Query<'static, 'static, &'static Transform, With<RigidBody>>,
-            ResMut<'static, Camera>,
+            Commands<'static, 'static>,
         ),
     );
     type Request = Self;
@@ -64,7 +64,7 @@ impl Operation for HighlandsControl {
         (
             (mut assets, mut records, provided, mut jobs),
             (mut content, mut cave, mut bodies, mut views),
-            (ground, rigid, mut camera),
+            (ground, rigid, mut commands),
         ): SystemParamItem<'_, '_, Self::Params>,
         control: Self,
     ) -> Result<Value, Error> {
@@ -107,10 +107,10 @@ impl Operation for HighlandsControl {
                     bodies.bank = Some((boulder, count));
                 }
             }
-            Self::Stand { place } => views.stand(ground.as_deref(), place, &mut camera),
+            Self::Stand { place } => show(&mut commands, views.stand(ground.as_deref(), place)),
             Self::WatchBodies { on } => {
                 if let Some(view) = views.watch_bodies(on, bodies_view(&rigid)) {
-                    *camera = view;
+                    show(&mut commands, view);
                 }
             }
             Self::Reset => views.reset(),

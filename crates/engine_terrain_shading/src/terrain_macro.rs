@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use engine_core::{AssetLibrary, Error, Texture, TextureFormat};
+use engine_core::{AssetLibrary, ColorSpace, Error, Texture, TextureFormat};
 use engine_places_world::ground::TerrainTiles;
 use engine_render::{Allocation, Install, Lifetime, Prepare, wgpu};
 
@@ -95,7 +95,7 @@ impl MacroMaps {
         self.empty = false;
         let allocation = cx.allocate_as(
             self.texture,
-            engine_render::texture_format(shape.format, false).0,
+            engine_render::texture_format(shape.format, ColorSpace::Linear).0,
             wgpu::Extent3d {
                 width: shape.size,
                 height: shape.size,

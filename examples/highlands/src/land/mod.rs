@@ -53,6 +53,23 @@ const CAVE_MOUTH: &str = "cave_mouth";
 const WALL_ROCK: &str = "highlands_wall_rock";
 const CAVE_WALL: &str = "highlands_cave_wall";
 
+const WORLD_MAPPED: &str = "world_mapped";
+const WORLD_MAPPED_SLOTS: [SurfaceSlot; 5] = [
+    SurfaceSlot::BaseColor,
+    SurfaceSlot::Normal,
+    SurfaceSlot::Roughness,
+    SurfaceSlot::Metalness,
+    SurfaceSlot::Occlusion,
+];
+const GROUNDING_HEIGHT: &str = "grounding_height";
+
+#[derive(Clone, Copy)]
+struct TopLayer {
+    color: [f32; 3],
+    coverage: f32,
+    roughness: f32,
+}
+
 const MOSS: TopLayer = TopLayer {
     color: [0.055, 0.07, 0.03],
     coverage: 0.36,
@@ -64,7 +81,26 @@ const LICHEN: TopLayer = TopLayer {
     roughness: 0.85,
 };
 
-const SOIL: Grounding = Grounding { height: 0.12 };
+const SOIL_HEIGHT: f32 = 0.12;
+
+fn world_mapped(material: Material, tiling: f32, top: TopLayer) -> engine::Result<Material> {
+    let [red, green, blue] = top.color;
+    let mut material = material;
+    for (name, value) in [
+        ("world_tiling", tiling),
+        ("top_red", red),
+        ("top_green", green),
+        ("top_blue", blue),
+        ("top_coverage", top.coverage),
+        ("top_roughness", top.roughness),
+    ] {
+        material = material.with_value(name, value)?;
+    }
+    for slot in WORLD_MAPPED_SLOTS {
+        material = material.with_slot(slot, WORLD_MAPPED)?;
+    }
+    Ok(material)
+}
 
 pub(crate) fn provide(world: &mut World, files: &RockMaps) -> engine::Result<()> {
     world.insert_resource(ProvidedAssets::default());
@@ -92,7 +128,7 @@ pub(crate) fn provide(world: &mut World, files: &RockMaps) -> engine::Result<()>
         None => in_terrain_rock(&rock, ([0.8, 0.77, 0.72], 0.85), 3.0, MOSS)?,
     };
     let boulder_rock = material
-        .with_grounding(SOIL)
+        .with_value(GROUNDING_HEIGHT, SOIL_HEIGHT)
         .and_then(|material| assets.insert_material(material))?;
     provided.provide_material("boulder_rock", boulder_rock);
     let wall_rock = match scanned(&mut assets, files, "cliff", WALL_SCAN_TILING, LICHEN)? {
@@ -104,8 +140,8 @@ pub(crate) fn provide(world: &mut World, files: &RockMaps) -> engine::Result<()>
     };
     let wall = assets
         .material(wall_rock)
-        .copied()
-        .map(|material| material.with_double_sided(true))
+        .cloned()
+        .map(|material| material.with_cull(Cull::None))
         .ok_or_else(|| {
             Error::new(ErrorCode::GameRule, "$.cave.wall").expected(Expected::Present)
         })?;
@@ -203,8 +239,14 @@ fn scanned(
         let Some(file) = files.get(&file_name) else {
             return Ok(None);
         };
+        let space = if map == "albedo" {
+            ColorSpace::Srgb
+        } else {
+            ColorSpace::Linear
+        };
         let texture = Texture::from_rgba(file.width, file.height, file.pixels.clone())
-            .map_err(|error| error.within(&format!("$.rocks.{name}.{map}")))?;
+            .map_err(|error| error.within(&format!("$.rocks.{name}.{map}")))?
+            .with_color_space(space);
         textures.push(assets.insert_texture(texture)?);
     }
     Material::new([1.0; 4])
@@ -218,8 +260,7 @@ fn scanned(
         .and_then(|material| material.with_normal_texture(TextureRef::new(textures[1]), 1.0))
         .and_then(|material| material.with_metallic_roughness_texture(TextureRef::new(textures[2])))
         .and_then(|material| material.with_occlusion_texture(TextureRef::new(textures[2]), 1.0))
-        .and_then(|material| material.with_world_mapping(tiling))
-        .and_then(|material| material.with_top_layer(top))
+        .and_then(|material| world_mapped(material, tiling, top))
         .map(Some)
 }
 
@@ -241,6 +282,5 @@ fn in_terrain_rock(
         .and_then(|material| material.with_normal_texture(TextureRef::new(textures[1]), 0.8))
         .and_then(|material| material.with_metallic_roughness_texture(TextureRef::new(textures[2])))
         .and_then(|material| material.with_occlusion_texture(TextureRef::new(textures[2]), 1.0))
-        .and_then(|material| material.with_world_mapping(tiling))
-        .and_then(|material| material.with_top_layer(top))
+        .and_then(|material| world_mapped(material, tiling, top))
 }

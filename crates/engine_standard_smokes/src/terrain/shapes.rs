@@ -1,10 +1,10 @@
 use engine_core::smoke::{
-    Checked, above, at_most, below, control, inspect, near, number, query, refuse, render, with,
+    Checked, above, at_most, below, control, inspect, near, number, query, refuse, settled, with,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-use super::{SETTLE_FRAMES, height_at, heights, layer_sweep, open, raycast, viewed};
+use super::{height_at, heights, layer_sweep, open, raycast, viewed};
 use crate::requests::seen;
 
 const ROAD: [[f64; 2]; 4] = [
@@ -547,7 +547,7 @@ fn edits(session: &mut dyn SmokeSession) -> Checked<()> {
         wanted,
         "the_edit_applies"
     );
-    let height = reaches(session, spot, authored + 8.0)?;
+    let height = reaches(session, spot)?;
     let wanted = near(authored + 8.0, 0.05);
     smoke_eq!(
         seen(
@@ -585,7 +585,7 @@ fn history(
         &json!("smoke-mound"),
         "undo_names_the_edit"
     );
-    let height = reaches(session, spot, authored)?;
+    let height = reaches(session, spot)?;
     let wanted = near(authored, 0.05);
     smoke_eq!(
         seen((height - authored).abs() < 0.05, json!(height), &wanted),
@@ -598,7 +598,7 @@ fn history(
         &json!("smoke-mound"),
         "redo_names_the_edit"
     );
-    let height = reaches(session, spot, authored + 8.0)?;
+    let height = reaches(session, spot)?;
     let wanted = near(authored + 8.0, 0.05);
     smoke_eq!(
         seen(
@@ -626,7 +626,7 @@ fn history(
         &json!("smoke-mound"),
         "undo_takes_the_edit_back"
     );
-    let height = reaches(session, spot, authored)?;
+    let height = reaches(session, spot)?;
     let wanted = near(authored, 0.05);
     smoke_eq!(
         seen((height - authored).abs() < 0.05, json!(height), &wanted),
@@ -636,16 +636,9 @@ fn history(
     Ok(())
 }
 
-fn reaches(session: &mut dyn SmokeSession, spot: [f64; 2], wanted: f64) -> Checked<f64> {
-    let mut height = f64::NAN;
-    for _ in 0..SETTLE_FRAMES {
-        height = number(&height_at(session, spot)?["height"]);
-        if (height - wanted).abs() < 0.05 {
-            break;
-        }
-        render(session)?;
-    }
-    Ok(height)
+fn reaches(session: &mut dyn SmokeSession, spot: [f64; 2]) -> Checked<f64> {
+    settled(session)?;
+    Ok(number(&height_at(session, spot)?["height"]))
 }
 
 fn rivers(session: &mut dyn SmokeSession) -> Checked<()> {

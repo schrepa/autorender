@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, AssetUses, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk, ImpostorAsks, ImpostorPolicy,
-    MaterialHandle, MeshHandle, Spawner, TextureHandle,
+    Asset, AssetLibrary, AssetResidency, AssetUses, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk,
+    ImpostorAsks, ImpostorPolicy, Spawner,
 };
 
 use crate::MeshesBrick;
@@ -11,32 +11,22 @@ use crate::settings::Impostors;
 #[derive(Component)]
 pub(crate) struct MeshAssets;
 
-fn uses(assets: &AssetLibrary, plan: &BatchPlan) -> AssetUses {
-    let mut meshes: Vec<MeshHandle> = plan.batches.iter().map(|batch| batch.mesh).collect();
-    meshes.dedup();
-    let mut materials: Vec<MaterialHandle> = plan
+fn uses(plan: &BatchPlan) -> Vec<Asset> {
+    let mut wanted: Vec<Asset> = plan
         .batches
         .iter()
-        .filter_map(|batch| batch.material)
+        .flat_map(|batch| {
+            std::iter::once(Asset::Mesh(batch.mesh)).chain(batch.material.map(Asset::Material))
+        })
         .collect();
-    materials.sort_unstable();
-    materials.dedup();
-    let mut textures: Vec<TextureHandle> = materials
-        .iter()
-        .filter_map(|&handle| assets.material(handle))
-        .flat_map(|material| material.textures())
-        .collect();
-    textures.sort_unstable();
-    textures.dedup();
-    AssetUses {
-        meshes,
-        materials,
-        textures,
-    }
+    wanted.sort_unstable();
+    wanted.dedup();
+    wanted
 }
 
 fn asks(assets: &AssetLibrary, plan: &BatchPlan) -> ImpostorAsks {
     ImpostorAsks {
+        generation: plan.generation(),
         hemisphere: false,
         asks: plan
             .batches
@@ -61,6 +51,7 @@ fn asks(assets: &AssetLibrary, plan: &BatchPlan) -> ImpostorAsks {
 
 pub(crate) fn publish_assets(
     assets: Res<AssetLibrary>,
+    residency: Res<AssetResidency>,
     plan: Res<BatchPlan>,
     own: Query<(Entity, &AssetUses, &ImpostorAsks), With<MeshAssets>>,
     mut spawner: Spawner<MeshesBrick>,
@@ -69,19 +60,19 @@ pub(crate) fn publish_assets(
     if plan.refused.is_some() || (held.is_ok() && !plan.changed()) {
         return;
     }
-    let used = uses(&assets, &plan);
+    let wanted = uses(&plan);
     let asked = asks(&assets, &plan);
     match held {
         Ok((entity, held, held_asks)) => {
-            if *held != used {
-                spawner.insert(entity, used);
+            if held.assets() != wanted.as_slice() {
+                spawner.insert(entity, AssetUses::new(&residency, wanted));
             }
             if *held_asks != asked {
                 spawner.insert(entity, asked);
             }
         }
         Err(_) => {
-            spawner.spawn((MeshAssets, used, asked));
+            spawner.spawn((MeshAssets, AssetUses::new(&residency, wanted), asked));
         }
     }
 }

@@ -26,7 +26,7 @@ struct Player {
 pub struct ScenePlayer {
     instance: Option<SceneInstance>,
     player: Option<Player>,
-    view: Camera,
+    view: (Transform, Camera),
 }
 
 impl ScenePlayer {
@@ -34,7 +34,7 @@ impl ScenePlayer {
         let mut player = Self {
             instance: None,
             player: None,
-            view: Camera::default(),
+            view: (Transform::looking_at(Camera::EYE, Vec3::ZERO), Camera::default()),
         };
         player.load(engine, source, files)?;
         Ok(player)
@@ -66,22 +66,29 @@ impl ScenePlayer {
         }
         let player_id = players.first().map(|player| player.id.clone());
         let world = engine.app.world_mut();
-        let instance = document.instantiate_with(world, files)?;
-        if let Some(previous) = self.instance.take() {
+        let limited = engine::host::has_setting(world, COLLISION);
+        let (instance, player) = document.instantiate_then(world, files, |world, entities| {
+            let player = match player_id.as_ref().and_then(|id| entities.get(id)) {
+                Some(&entity) => Some(attach_player(world, entity)?),
+                None => None,
+            };
+            let mut settings: Vec<(String, serde_json::Value)> = Vec::new();
+            if limited {
+                settings.extend(
+                    COLLISION_LIMITS
+                        .iter()
+                        .map(|&(key, limit)| (key.to_owned(), json!(limit))),
+                );
+            }
+            settings.push((FLIES.to_owned(), json!(player.is_none())));
+            engine::host::apply_settings(world, &settings)?;
+            Ok(player)
+        })?;
+        if let Some(previous) = self.instance.replace(instance) {
             previous.despawn(world);
         }
-        self.player = match player_id.and_then(|id| instance.entity(&id)) {
-            Some(entity) => Some(attach_player(world, entity)?),
-            None => None,
-        };
-        self.instance = Some(instance);
-        self.view = *world.resource::<Camera>();
-        if engine::host::has_setting(world, COLLISION) {
-            for (key, limit) in COLLISION_LIMITS {
-                engine::host::apply_setting(world, key, &json!(limit))?;
-            }
-        }
-        engine::host::apply_setting(world, FLIES, &json!(self.player.is_none()))?;
+        self.player = player;
+        self.view = document.camera.placed();
         engine.reset_clock();
         Ok(())
     }
@@ -111,7 +118,9 @@ impl Game for ScenePlayer {
         match self.player {
             Some(player) => reset_player(world, player),
             None => {
-                world.insert_resource(self.view);
+                if let Some(camera) = main_camera(world) {
+                    place_camera(world, camera, self.view.0, self.view.1);
+                }
             }
         }
         engine.reset_clock();

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::math::{max, min, sin_cos};
-use engine_core::{Camera, DeviceLimits, Projection, Since, View};
+use engine_core::{DeviceLimits, PrimaryView, Since};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::{TILE_STRIDE, on_triangle, tile_cell};
 use engine_places_simulation::water::WaterObstacle;
@@ -203,8 +203,7 @@ fn largest_bytes(blocks: u32, (sources, solids): (usize, usize)) -> u64 {
 
 pub(crate) fn place_water_windows(
     mut state: ResMut<WaterState>,
-    camera: Res<Camera>,
-    view: Res<View>,
+    view: Res<PrimaryView>,
     water: Res<Water>,
     (tiles, limits): (Res<TerrainTiles>, Res<DeviceLimits>),
 ) {
@@ -216,12 +215,7 @@ pub(crate) fn place_water_windows(
         .find(|entry| !entry.surroundings && entry.baked.is_some())
         .map(|entry| entry.terrain);
     let height = view.display_size().y;
-    let fov = match camera.projection {
-        Projection::Perspective {
-            vertical_fov_radians,
-        } => vertical_fov_radians,
-        Projection::Orthographic { .. } => 0.0,
-    };
+    let fov = view.lens().vertical_fov().unwrap_or(0.0);
     let eye = view.detail_eye();
     for terrain in &mut state.terrains {
         let settled = terrain
@@ -358,7 +352,7 @@ fn sample_height(state: &WaterTerrain, local: Vec2) -> Option<f32> {
     let pyramid = &state.pyramid;
     (0..pyramid.levels()).find_map(|level| {
         let key = pyramid.tile_at(level, local)?;
-        let face = &state.held.get(&key)?.face;
+        let face = &state.held.get(&key).filter(|held| held.on_face())?.face;
         let (i, j, fu, fv) = tile_cell(face.spacing, local - pyramid.tile_origin(key))?;
         let stride = TILE_STRIDE as i32;
         let height = |x: i32, z: i32| face.heights[((z + 1) * stride + x + 1) as usize];
@@ -425,7 +419,7 @@ fn read_at(state: &WaterTerrain, key: TileKey) -> WaterRead {
     let middle = corner + Vec2::splat(0.5 * size);
     let tile = (0..pyramid.levels()).find_map(|level| {
         let held = pyramid.tile_at(level, middle)?;
-        state.held.get(&held)
+        state.held.get(&held).filter(|held| held.on_face())
     });
     let ready = tile.is_some_and(|tile| {
         let held_back = state

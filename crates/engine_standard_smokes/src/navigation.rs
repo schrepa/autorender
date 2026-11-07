@@ -1,11 +1,11 @@
 use engine_core::smoke::{
-    Checked, above, component, control, near, number, query, refuse, render,
+    Checked, above, component, control, near, number, query, refuse, settled,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
 use super::requests::seen;
-use super::terrain::{SETTLE_FRAMES, height_at, open, viewed};
+use super::terrain::{height_at, open, viewed};
 
 const GOAL: [f64; 2] = [-25.0, 12.0];
 
@@ -33,13 +33,10 @@ fn around_a_hole(session: &mut dyn SmokeSession) -> Checked<()> {
         "terrain_edit",
         json!({"id": "smoke-pit", "center": center, "radius": radius, "change": "hole"}),
     )?;
-    let mut found = Value::Null;
-    for _ in 0..SETTLE_FRAMES {
+    let mut found = query(session, "nav_path", json!({"from": start, "to": end}))?;
+    while found["searching"] == true {
+        settled(session)?;
         found = query(session, "nav_path", json!({"from": start, "to": end}))?;
-        if found["searching"] == false {
-            break;
-        }
-        render(session)?;
     }
     smoke_eq!(&found["searching"], &json!(false), "the_walk_search_ends");
     let walk = &found["walk"];
@@ -101,12 +98,7 @@ fn hikes(session: &mut dyn SmokeSession) -> Checked<()> {
         &json!(GOAL),
         "the_hiker_takes_its_destination"
     );
-    for _ in 0..SETTLE_FRAMES {
-        session.step(1);
-        if walk(session)?["status"] != "searching" {
-            break;
-        }
-    }
+    searched(session, HIKER)?;
     let mut walked = walk(session)?;
     for _ in 0..30 {
         session.step(60);
@@ -195,6 +187,15 @@ fn character(session: &mut dyn SmokeSession, id: &str) -> Checked<Value> {
     query(session, "nav_agent", json!({ "entity": id }))
 }
 
+fn searched(session: &mut dyn SmokeSession, id: &str) -> Checked<()> {
+    session.step(1);
+    while character(session, id)?["status"] == "searching" {
+        settled(session)?;
+        session.step(1);
+    }
+    Ok(())
+}
+
 fn meets_a_wall(session: &mut dyn SmokeSession) -> Checked<()> {
     for (id, goal) in [(BODY, BODY_GOAL), (GHOST, GHOST_GOAL)] {
         control(
@@ -203,12 +204,7 @@ fn meets_a_wall(session: &mut dyn SmokeSession) -> Checked<()> {
             json!({"entity": id, "destination": goal}),
         )?;
     }
-    for _ in 0..SETTLE_FRAMES {
-        session.step(1);
-        if character(session, GHOST)?["status"] != "searching" {
-            break;
-        }
-    }
+    searched(session, GHOST)?;
     let mut ghost = character(session, GHOST)?;
     for _ in 0..30 {
         session.step(60);

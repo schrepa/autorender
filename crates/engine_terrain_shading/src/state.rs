@@ -6,14 +6,14 @@ use engine_core::collections::HashMap;
 use engine_core::{
     AssetLibrary, Cursor, DeviceLimits, Error, Feed, FeedSettings, FrameId, FrameTime, Interest,
     JobFailures, JobKind, Jobs, MakeSources, Readable, Readback, RecordExchange, RecordKey, Records,
-    Since, Spawner, Stamp, TextureHandle, TextureSet, TextureUsage, View, codec, content_hash,
+    Since, Stamp, TextureHandle, TextureSet, TextureUsage, PrimaryView, codec, content_hash,
 };
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_places_rendering::shadows::ShadowChanges;
+use engine_places_rendering::shadows::{ShadowChange, ShadowChanges};
 use engine_places_simulation::ground::{Pyramid, TileKey};
 use engine_places_world::ground::{
     GroundBake, GroundBakes, GroundBaking, GroundTiles, Heightfield, HeldTile, PALETTE_ENTRIES,
-    TerrainEntry, TerrainTiles, TileChange, TileFace,
+    TerrainEntry, TerrainTiles, TileChange, TileFace, TileMaterials,
 };
 use engine_render::DebugShown;
 use glam::{Vec2, Vec3};
@@ -26,7 +26,7 @@ use crate::settings::{TerrainShading, TerrainShadingStats};
 use crate::shading::TileShading;
 use crate::shadings::Shadings;
 use crate::world_trace::traced;
-use crate::{TerrainShadingBrick, terrain_bounce, terrain_horizons};
+use crate::{terrain_bounce, terrain_horizons};
 
 const VIEW_PRIORITY: u32 = 0;
 const SKIRT_SPACINGS: f32 = 4.0;
@@ -414,7 +414,6 @@ pub(crate) struct Atlas {
     pub(crate) capacity: u32,
     pub(crate) now: f32,
     changes: Feed<AtlasChange>,
-    pub(crate) ground_changes: Vec<(Vec3, Vec3, f32)>,
 }
 
 impl Default for Atlas {
@@ -431,7 +430,6 @@ impl Default for Atlas {
             capacity: 0,
             now: 0.0,
             changes: Feed::new(FeedSettings::default().tiles as usize),
-            ground_changes: Vec::new(),
         }
     }
 }
@@ -470,7 +468,7 @@ impl Atlas {
         &mut self,
         entry: &TerrainEntry,
         key: TileKey,
-        missing: &mut Vec<(TileId, Option<u32>)>,
+        (missing, shadows): (&mut Vec<(TileId, Option<u32>)>, &mut ShadowChanges),
     ) {
         let id = (entry.terrain, key);
         match (
@@ -481,13 +479,12 @@ impl Atlas {
                 self.unplaced.remove(&id);
             }
             (None, Some(held)) => {
-                self.ground_changes
-                    .push(ground_box(entry, key, (held.low, held.high)));
+                shadows.push(ground_box(entry, key, (held.low, held.high)));
                 self.release(id);
             }
             (Some(_), None) => missing.push((id, None)),
             (Some(tile), Some(held)) if held.stamp == tile.stamp => {
-                let unsurfaced = !entry.surface_program
+                let unsurfaced = !programmed(entry, tile)
                     && tile.control.is_none()
                     && !shaded_elsewhere(key.level, entry.surroundings);
                 if unsurfaced && self.surfaced.remove(&id).is_some() {
@@ -495,10 +492,8 @@ impl Atlas {
                 }
             }
             (Some(tile), Some(held)) => {
-                let stood = ground_box(entry, key, (held.low, held.high));
-                let stands = ground_box(entry, key, heights_of(tile));
-                self.ground_changes
-                    .push((stood.0.min(stands.0), stood.1.max(stands.1), stands.2));
+                let (low, high) = heights_of(tile);
+                shadows.push(ground_box(entry, key, (held.low.min(low), held.high.max(high))));
                 missing.push((id, self.slots.get(&id).copied()));
             }
         }
@@ -580,6 +575,10 @@ impl Atlas {
     }
 }
 
+pub(crate) fn programmed(entry: &TerrainEntry, tile: &TileFace) -> bool {
+    entry.surface_program && tile.materials == TileMaterials::Program
+}
+
 fn heights_of(tile: &TileFace) -> (f32, f32) {
     (tile.bounds.0.y, tile.bounds.1.y)
 }
@@ -616,12 +615,11 @@ pub(crate) fn place_tiles(
     ),
     bakes: Res<Bakes>,
     mut atlas: ResMut<Atlas>,
-    mut ground: ResMut<GroundTiles>,
+    (mut ground, mut shadows): (ResMut<GroundTiles>, ResMut<ShadowChanges>),
 ) {
     let atlas = &mut *atlas;
     atlas.now = time.real_elapsed as f32;
     atlas.changes.resize(feeds.tiles as usize);
-    atlas.ground_changes.clear();
     let attached = |entry: &TerrainEntry| {
         bakes
             .of(entry.terrain)
@@ -680,7 +678,7 @@ pub(crate) fn place_tiles(
         let keys = tile_keys(atlas, entry, entry.changes.since(&mut cursor));
         atlas.cursors.insert(entry.terrain, cursor);
         for key in keys {
-            atlas.follow_tile(entry, key, &mut missing);
+            atlas.follow_tile(entry, key, (&mut missing, &mut shadows));
         }
     }
     if atlas.has_room() {
@@ -699,11 +697,10 @@ pub(crate) fn place_tiles(
         };
         let shades = shaded_elsewhere(id.1.level, entry.surroundings);
         let shading = bakes.of(id.0).and_then(|held| held.shading(tile)).is_some();
-        let placed = atlas.place(id, tile, replaced, (shades, entry.surface_program, shading));
+        let program = programmed(entry, tile);
+        let placed = atlas.place(id, tile, replaced, (shades, program, shading));
         if placed && replaced.is_none() {
-            atlas
-                .ground_changes
-                .push(ground_box(entry, id.1, heights_of(tile)));
+            shadows.push(ground_box(entry, id.1, heights_of(tile)));
         }
     }
     for entry in tiles.terrains.iter() {
@@ -746,7 +743,7 @@ pub(crate) fn listed_tile(tiles: &[TileFace], key: TileKey) -> Option<&TileFace>
         .map(|at| &tiles[at])
 }
 
-fn ground_box(terrain: &TerrainEntry, key: TileKey, (low, high): (f32, f32)) -> (Vec3, Vec3, f32) {
+fn ground_box(terrain: &TerrainEntry, key: TileKey, (low, high): (f32, f32)) -> ShadowChange {
     let pyramid = terrain.pyramid;
     let level = u32::from(key.level);
     let corner = pyramid.tile_origin(key);
@@ -758,34 +755,10 @@ fn ground_box(terrain: &TerrainEntry, key: TileKey, (low, high): (f32, f32)) -> 
     } else {
         spacing
     };
-    (
-        terrain.origin + Vec3::new(corner.x, low - skirt, corner.y),
-        terrain.origin + Vec3::new(corner.x + size, high, corner.y + size),
-        reach,
-    )
-}
-
-#[derive(Component)]
-pub(crate) struct GroundChanges;
-
-pub(crate) fn publish_changes(
-    atlas: Res<Atlas>,
-    own: Query<Entity, With<GroundChanges>>,
-    mut spawner: Spawner<TerrainShadingBrick>,
-) {
-    if atlas.ground_changes.is_empty() {
-        return;
-    }
-    let change = ShadowChanges {
-        boxes: atlas.ground_changes.clone(),
-        all: false,
-        casters: false,
-    };
-    match own.single() {
-        Ok(entity) => spawner.insert(entity, change),
-        Err(_) => {
-            spawner.spawn((GroundChanges, change));
-        }
+    ShadowChange::Box {
+        min: terrain.origin + Vec3::new(corner.x, low - skirt, corner.y),
+        max: terrain.origin + Vec3::new(corner.x + size, high, corner.y + size),
+        spacing: reach,
     }
 }
 
@@ -984,7 +957,7 @@ pub(crate) fn publish_piece(
     tiles: Res<TerrainTiles>,
     ground: Res<GroundTiles>,
     bakes: Res<Bakes>,
-    view: Res<View>,
+    view: Res<PrimaryView>,
     limits: Res<DeviceLimits>,
     shown: Res<DebugShown>,
     mut piece: ResMut<HorizonsPiece>,

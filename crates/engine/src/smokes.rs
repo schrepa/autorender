@@ -76,20 +76,6 @@ pub fn idle(milliseconds: f64) {
     }
 }
 
-pub fn settled(session: &mut dyn SmokeSession) -> std::result::Result<Value, SmokeFailure> {
-    loop {
-        let rendering = engine_core::smoke::render(session)?;
-        let readiness = &rendering["readiness"];
-        engine_core::smoke_eq!(readiness["failed"], json!([]), "nothing_fails_while_settling");
-        if readiness["loading"]["total"] == 0
-            && readiness["compiling"] == 0
-            && readiness["settling"] == 0
-        {
-            return Ok(rendering);
-        }
-    }
-}
-
 pub fn joined(world: &bevy_ecs::world::World, list: TypeId, each: &mut dyn FnMut(&dyn Any)) {
     if let Some(registry) = world.get_resource::<Registry>() {
         registry.each_member(world, list, each);

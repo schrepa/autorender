@@ -11,6 +11,8 @@ pub(crate) use part::TerrainGpu;
 pub(crate) use patches::planes;
 pub(crate) use surface::meshlet_indices;
 
+pub(crate) const TERRAIN: engine_core::DrawKind = engine_core::DrawKind("terrain");
+
 const LAYER_SIZE: u32 = crate::gpu::TILE_STRIDE;
 const SLOT: u64 = 256;
 const VIEWS: u64 = 7;

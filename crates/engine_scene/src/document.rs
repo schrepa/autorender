@@ -171,8 +171,8 @@ fn default_camera() -> SceneCamera {
         unreachable!("default_camera_perspective");
     };
     SceneCamera {
-        position: camera.position.to_array(),
-        target: camera.target.to_array(),
+        position: Camera::EYE.to_array(),
+        target: [0.0; 3],
         fov_degrees: vertical_fov_radians.to_degrees(),
         near: camera.near,
         far: camera.far,
@@ -195,36 +195,42 @@ engine_settings::fields! {
 
 impl engine_settings::ExtraRules for SceneCamera {
     fn check_extra(&self) -> Result<(), InvalidSetting> {
-        let camera = self.camera();
-        if (camera.target - camera.position).length_squared()
-            < Camera::MIN_DEPTH * Camera::MIN_DEPTH
-        {
+        let reach = glam::Vec3::from(self.target) - glam::Vec3::from(self.position);
+        if reach.length_squared() < Camera::MIN_DEPTH * Camera::MIN_DEPTH {
             return Err(
                 InvalidSetting::broken("target", fields::at_least(Camera::MIN_DEPTH))
-                    .got((camera.target - camera.position).length()),
+                    .got(reach.length()),
             );
         }
-        if camera.far - camera.near < Camera::MIN_DEPTH {
+        if self.far - self.near < Camera::MIN_DEPTH {
             return Err(InvalidSetting::broken(
                 "far",
-                fields::range(camera.near + Camera::MIN_DEPTH, Camera::REACH),
+                fields::range(self.near + Camera::MIN_DEPTH, Camera::REACH),
             )
-            .got(camera.far));
+            .got(self.far));
         }
         Ok(())
     }
 }
 
 impl SceneCamera {
-    pub(crate) fn camera(self) -> Camera {
-        Camera {
-            position: self.position.into(),
-            target: self.target.into(),
-            near: self.near,
-            far: self.far,
-            projection: Projection::Perspective {
-                vertical_fov_radians: self.fov_degrees.to_radians(),
+    pub fn placed(self) -> (Transform, Camera) {
+        (
+            Transform::looking_at(self.position.into(), self.target.into()),
+            Camera {
+                near: self.near,
+                far: self.far,
+                projection: Projection::Perspective {
+                    vertical_fov_radians: self.fov_degrees.to_radians(),
+                },
             },
+        )
+    }
+
+    pub(crate) fn show(self, world: &mut bevy_ecs::world::World) {
+        if let Some(camera) = engine_core::main_camera(world) {
+            let (at, lens) = self.placed();
+            engine_core::place_camera(world, camera, at, lens);
         }
     }
 }

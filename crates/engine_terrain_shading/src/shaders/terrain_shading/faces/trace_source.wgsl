@@ -5,6 +5,7 @@ import package::engine::mesh::impostor_frames::{
     impostor_flags_texels, impostor_frame_direction, impostor_frames, impostor_grid, impostor_met,
 };
 import package::engine::post::frame::post;
+import package::engine::surfaces::{SURFACE_GROUND, SURFACE_SOLID};
 import package::engine::view::{camera, stable_normalize};
 import package::face::bounce::bounce_light;
 import package::face::cover::{cover_growth, cover_seen, cover_tint};
@@ -613,7 +614,7 @@ fn world_light(hit: WorldHit, p: vec3<f32>, direction: vec3<f32>, footprint: f32
     var sun_light = vec3<f32>(0.0);
     if wrapped > 0.0 {
         let visible = sun_visibility(SunAt(world, normal, vec3<f32>(0.0), vec3<f32>(0.0), 0.0,
-            hit.ground, 0u, vec4<f32>(0.0))) * unshaded;
+            select(SURFACE_SOLID, SURFACE_GROUND, hit.ground), 0u, vec4<f32>(0.0))) * unshaded;
         sun_light = albedo * sun_color() * (wrapped * visible);
     }
     let eye = camera.position.xyz;

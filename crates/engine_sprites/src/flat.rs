@@ -1,10 +1,10 @@
-use engine_core::{Error, View};
+use engine_core::{Error, PrimaryView};
 use engine_render::{
-    Allocation, Bind, DepthUse, Draw, Install, Lifetime, MainView, Pipeline, Prepare,
-    RenderPipeline, SamplerDesc, Shape, Texture, wgpu,
+    Allocation, Bind, DepthUse, Draw, Install, Lifetime, Pipeline, Prepare, RenderPipeline,
+    SamplerDesc, Scene, Shape, Texture, wgpu,
 };
 
-use crate::SpritesGpu;
+use crate::{DRAWN_IN, SpritesGpu};
 use crate::shaders::sprites::flat;
 
 pub const LIGHT: [u8; 4] = [224, 64, 32, 255];
@@ -21,7 +21,7 @@ const CHECKER_SIZE: wgpu::Extent3d = wgpu::Extent3d {
 
 pub(crate) struct Flat {
     checker: Texture<SpritesGpu>,
-    pipeline: Pipeline<SpritesGpu, MainView>,
+    pipeline: Pipeline<SpritesGpu, Scene>,
     drawn: bool,
 }
 
@@ -34,7 +34,7 @@ impl Flat {
         );
         let sampler = cx.sampler(SamplerDesc::NEAREST);
         let pipeline = cx.render_pipeline(
-            MainView,
+            DRAWN_IN,
             &RenderPipeline {
                 vertex: flat::VS_SPRITE,
                 fragment: Some(flat::FS_SPRITE),
@@ -59,7 +59,7 @@ impl Flat {
         })
     }
 
-    pub(crate) fn prepare(&mut self, view: &View, cx: &mut Prepare<'_, SpritesGpu>) {
+    pub(crate) fn prepare(&mut self, view: &PrimaryView, cx: &mut Prepare<'_, SpritesGpu>) {
         self.drawn = !view.debug() && !view.temporal();
         if cx.allocate(self.checker, CHECKER_SIZE, 1) == Allocation::Kept {
             return;
@@ -77,7 +77,7 @@ impl Flat {
         );
     }
 
-    pub(crate) fn draw(&self, draw: &mut Draw<'_, SpritesGpu, MainView>) -> u32 {
+    pub(crate) fn draw(&self, draw: &mut Draw<'_, SpritesGpu, Scene>) -> u32 {
         if !self.drawn {
             return 0;
         }

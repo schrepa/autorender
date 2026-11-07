@@ -1,13 +1,12 @@
-import package::engine::materials::{
-    ALPHA_MASK, MATERIAL_MAPS, MaterialTexels, NORMAL_MAP, TOP_LAYER, VARIANT_MAPS,
-    VARIANT_NORMAL_MAP, VARIANT_TOP_LAYER, geometric_normal, mapped_normal, material_flag,
-    material_maps, material_texels, top_layer_amount
-};
+import package::engine::materials::alpha_test;
 import package::engine::mesh::impostor_frames::{
     ImpostorBake, impostor_basis, impostor_flags_hemisphere, impostor_frame_direction,
     impostor_frames
 };
 import package::engine::mesh::vertex::octahedral_normal;
+import package::engine::shading::SurfaceInput;
+import package::engine::standard::{base_texel, emissive_texel};
+import package::engine::surface::{masked_out, opacity_cut, surface_point};
 import package::engine::view::stable_normalize;
 
 @group(2) @binding(15) var<uniform> impostor_bake: ImpostorBake;
@@ -118,59 +117,60 @@ struct BakeTargets {
     @location(3) surface: vec4<f32>,
 }
 
-fn bake_mask(texels: MaterialTexels, color: vec4<f32>) {
-    if ALPHA_MASK && texels.base.a * color.a * texels.coverage < material_maps.params.z {
+fn bake_input(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool)
+        -> SurfaceInput {
+    var surface: SurfaceInput;
+    surface.color = color;
+    surface.normal = input.normal_u.xyz;
+    surface.world = input.local_v.xyz;
+    surface.world_dx = dpdx(surface.world);
+    surface.world_dy = dpdy(surface.world);
+    surface.uv = vec2<f32>(input.normal_u.w, input.local_v.w);
+    surface.uv1 = uv1;
+    surface.surface = vec4<f32>(1.0, 1.0, 0.0, 0.0);
+    surface.front = front;
+    surface.eye = surface.world + input.normal_u.xyz;
+    return surface;
+}
+
+fn bake_mask(surface: SurfaceInput) {
+    if alpha_test() && opacity_cut(surface) {
         discard;
     }
 }
 
 fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool)
         -> BakeTargets {
-    let uv = vec2<f32>(input.normal_u.w, input.local_v.w);
-    let texels = material_texels(uv, uv1, 0.0);
-    let local = input.local_v.xyz;
-    let local_dx = dpdx(local);
-    let local_dy = dpdy(local);
-    let geometric = geometric_normal(input.normal_u.xyz, front);
-    var normal = geometric;
-    if material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP) {
-        normal = mapped_normal(geometric, local_dx, local_dy, texels.normal_dx,
-            texels.normal_dy, texels.normal, material_maps.params.x);
+    let surface = bake_input(input, color, uv1, front);
+    let point = surface_point(surface);
+    let base = base_texel(surface);
+    if alpha_test() && masked_out(surface, point.opacity) {
+        discard;
     }
-    var albedo = texels.base.rgb * color.rgb;
-    if material_flag(VARIANT_TOP_LAYER, TOP_LAYER) {
-        let up = stable_normalize(normal).y;
-        let amount = (top_layer_amount(up, 0.25, texels) + top_layer_amount(up, 0.5, texels)
-            + top_layer_amount(up, 0.75, texels)) / 3.0;
-        albedo = mix(albedo, material_maps.top.rgb, amount);
-        normal = mix(normal, geometric, 0.5 * amount);
-    }
-    var emissive = vec3<f32>(0.0);
-    var occlusion = 1.0;
-    if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
-        emissive = texels.emissive;
-        occlusion = 1.0 + material_maps.params.y * (texels.occlusion - 1.0);
-    }
-    bake_mask(texels, color);
     var targets: BakeTargets;
-    targets.albedo = vec4<f32>(albedo, 1.0);
-    targets.emissive = vec4<f32>(emissive, texels.base.a);
-    targets.geometry = vec4<f32>(stable_normalize(normal) * 0.5 + 0.5, 0.5 + 0.5 * input.depth);
-    targets.surface = vec4<f32>(texels.factors, occlusion,
-        impostor_self_visibility(local, geometric));
+    targets.albedo = vec4<f32>(point.base_color, 1.0);
+    targets.emissive = vec4<f32>(emissive_texel(surface), base.a);
+    targets.geometry = vec4<f32>(stable_normalize(point.normal) * 0.5 + 0.5,
+        0.5 + 0.5 * input.depth);
+    targets.surface = vec4<f32>(point.roughness, point.metalness, point.occlusion,
+        impostor_self_visibility(surface.world, point.geometric));
     return targets;
 }
 
 @fragment
 fn fs_impostor_shade(input: BakeOutput) {
     let uv = vec2<f32>(input.normal_u.w, input.local_v.w);
-    bake_mask(material_texels(uv, uv, 0.0), vec4<f32>(1.0));
+    bake_mask(bake_input(input, vec4<f32>(1.0), uv, true));
 }
 
 @fragment
 fn fs_impostor_shade_extended(input: BakeExtendedOutput) {
-    let uv = vec2<f32>(input.normal_u.w, input.local_v.w);
-    bake_mask(material_texels(uv, input.uv1, 0.0), input.color);
+    var vertex: BakeOutput;
+    vertex.clip_position = input.clip_position;
+    vertex.normal_u = input.normal_u;
+    vertex.local_v = input.local_v;
+    vertex.depth = input.depth;
+    bake_mask(bake_input(vertex, input.color, input.uv1, true));
 }
 
 @fragment

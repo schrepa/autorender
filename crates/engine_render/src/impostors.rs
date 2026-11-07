@@ -18,7 +18,7 @@ use engine_core::{
 };
 
 use crate::bindings::IMPOSTOR_BAKE;
-use crate::materials::{MaterialStore, Variant};
+use crate::materials::{MaterialLook, MaterialStore};
 use crate::mesh_arena::{GpuMeshes, MeshDraw};
 use crate::mipmaps::MipGenerator;
 use crate::readback::{Arrival, Readbacks};
@@ -154,7 +154,8 @@ struct BakeSource<'a> {
     draw: MeshDraw<'a>,
     extended: bool,
     group: &'a wgpu::BindGroup,
-    variant: Variant,
+    look: MaterialLook,
+    layout: crate::pipeline_layouts::PipelineLayout,
     bounds: (Vec3, Vec3),
     parts: Vec<BakePart<'a>>,
 }
@@ -163,14 +164,20 @@ struct BakePart<'a> {
     draw: MeshDraw<'a>,
     extended: bool,
     group: &'a wgpu::BindGroup,
-    variant: Variant,
+    look: MaterialLook,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct BakeKey {
+    look: MaterialLook,
+    extended: bool,
 }
 
 struct ImpostorPipelines {
     bake_layout: crate::pipelines::GroupLayout,
-    bake_pipeline_layout: wgpu::PipelineLayout,
-    bake_pipelines: HashMap<Variant, wgpu::RenderPipeline>,
-    shade_pipelines: HashMap<Variant, wgpu::RenderPipeline>,
+    bake_pipeline_layout: Option<(&'static str, wgpu::PipelineLayout)>,
+    bake_pipelines: HashMap<BakeKey, wgpu::RenderPipeline>,
+    shade_pipelines: HashMap<BakeKey, wgpu::RenderPipeline>,
     sampler: wgpu::Sampler,
     no_shade: Option<wgpu::TextureView>,
 }
@@ -178,8 +185,6 @@ struct ImpostorPipelines {
 impl ImpostorPipelines {
     fn new(device: &wgpu::Device) -> Self {
         let bake_layout = crate::pipelines::layout(device, &IMPOSTOR_BAKE);
-        let bake_pipeline_layout =
-            crate::pipelines::layout_of(device, &crate::pipeline_layouts::IMPOSTOR_BAKE_PIPELINES);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/impostor-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -191,7 +196,7 @@ impl ImpostorPipelines {
         });
         Self {
             bake_layout,
-            bake_pipeline_layout,
+            bake_pipeline_layout: None,
             bake_pipelines: HashMap::default(),
             shade_pipelines: HashMap::default(),
             sampler,
@@ -526,7 +531,7 @@ fn bake_source<'a>(
         return None;
     }
     let gpu = meshes.get(mesh)?;
-    let (group, variant) = materials.binding(material);
+    let (group, look) = materials.binding(material);
     let mut baked = Vec::with_capacity(parts.len());
     for &(part, part_material) in parts {
         let (Some(part_mesh), Some(draw)) = (meshes.get(part), meshes.draw(part)) else {
@@ -535,19 +540,20 @@ fn bake_source<'a>(
         if !held(Some(part_material)) {
             continue;
         }
-        let (group, variant) = materials.binding(Some(part_material));
+        let (group, look) = materials.binding(Some(part_material));
         baked.push(BakePart {
             draw,
             extended: part_mesh.extended,
             group,
-            variant: variant.with_extended(part_mesh.extended),
+            look,
         });
     }
     Some(BakeSource {
         draw: meshes.draw(mesh)?,
         extended: gpu.extended,
         group,
-        variant,
+        look,
+        layout: materials.bake_layout(),
         bounds,
         parts: baked,
     })

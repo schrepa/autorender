@@ -1,23 +1,30 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Cursor, Cut, DeviceLimits, FrameTime, GlobalTransforms, Mobility, Readable, Readback, Since,
-    StoreId, View,
+    Cursor, Cut, DeviceLimits, Events, FrameBudget, FrameTime, GlobalTransforms, Mobility,
+    PassName, PrimaryView, Readable, Readback, SceneView, SceneViews, Spawner, StoreId,
 };
 use engine_math as math;
-use engine_places::meshes::Instances;
-use engine_places_rendering::probes::{ProbeCaptures, ProbeFace, ProbeView};
+use engine_places_rendering::probes::{ProbeCaptures, ProbeFace};
 use engine_places_rendering::sky::SkyLight;
 use engine_render::CameraUniform;
 use glam::{Mat4, Vec3, Vec4};
 
 use crate::gather::{ProbeList, RenderReflectionProbe};
-use crate::{PROBE_ENTRY_WORDS, ReflectionProbeSettings, ReflectionProbeStats};
+use crate::{
+    PROBE_ENTRY_WORDS, ProbePass, ReflectionProbeSettings, ReflectionProbeStats,
+    ReflectionProbesBrick,
+};
 
 pub(crate) const FACES: usize = 6;
 pub(crate) const SETS: u32 = 2;
+pub(crate) const CAPTURED_ACK: u32 = 0;
+pub(crate) const LOST_ACK: u32 = 1;
+const FACE_TEXEL_BYTES: u64 = 12;
+const SLOT_ACK_BYTES: usize = 12;
 const CAPTURE_NEAR: f32 = 0.05;
 const CAPTURE_FAR: f32 = 4_000.0;
 const GRID_CELLS: f32 = 64.0;
+const BUDGET: &str = "reflection_probes";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Capture {
@@ -37,15 +44,50 @@ impl Slot {
     }
 }
 
+enum ProbeAck {
+    Captured { ran: bool, slots: Vec<(usize, u64)> },
+    Lost,
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct ProbeAcks {
-    acks: Vec<(u32, bool)>,
+    acks: Vec<ProbeAck>,
+}
+
+pub(crate) fn captured_bytes(ran: bool, slots: &[(usize, u64)]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(1 + slots.len() * SLOT_ACK_BYTES);
+    bytes.push(u8::from(ran));
+    for &(slot, key) in slots {
+        bytes.extend_from_slice(&(slot as u32).to_le_bytes());
+        bytes.extend_from_slice(&key.to_le_bytes());
+    }
+    bytes
 }
 
 impl Readable for ProbeAcks {
-    fn arrived(&mut self, proposal: u32, read: Readback<&[u8]>) {
-        let ran = read.value.first().is_some_and(|&ran| ran != 0);
-        self.acks.push((proposal, ran));
+    fn arrived(&mut self, tag: u32, read: Readback<&[u8]>) {
+        if tag == LOST_ACK {
+            self.acks.push(ProbeAck::Lost);
+            return;
+        }
+        let Some((&ran, listed)) = read.value.split_first() else {
+            return;
+        };
+        let slots = listed
+            .as_chunks::<SLOT_ACK_BYTES>()
+            .0
+            .iter()
+            .map(|&[s0, s1, s2, s3, k0, k1, k2, k3, k4, k5, k6, k7]| {
+                (
+                    u32::from_le_bytes([s0, s1, s2, s3]) as usize,
+                    u64::from_le_bytes([k0, k1, k2, k3, k4, k5, k6, k7]),
+                )
+            })
+            .collect();
+        self.acks.push(ProbeAck::Captured {
+            ran: ran != 0,
+            slots,
+        });
     }
 }
 
@@ -235,19 +277,19 @@ pub(crate) struct ProbeState {
     moves_seen: Cursor,
     pub(crate) size: u32,
     pub(crate) cubes: u32,
-    layout: StoreId,
-    sky: u64,
+    pub(crate) layout: StoreId,
+    sky: Option<StoreId>,
     set: u32,
+    maps_lost: bool,
     pub(crate) listed: bool,
     pub(crate) captures: bool,
     views: bool,
     pub(crate) timed: bool,
     pub(crate) faces: Vec<ProbeFace>,
-    pub(crate) drawn: Vec<(ProbeView, u32)>,
+    pub(crate) drawn: Vec<u32>,
     pub(crate) cameras: Vec<CameraUniform>,
     pub(crate) finished: Option<(u32, u32)>,
-    pub(crate) proposal: u32,
-    sent: Vec<(u32, Vec<(usize, u64)>)>,
+    pub(crate) taken: Vec<(usize, u64)>,
     words: Vec<[u32; 4]>,
     words_changed: bool,
     stats: ReflectionProbeStats,
@@ -264,8 +306,9 @@ impl Default for ProbeState {
             size: ReflectionProbeSettings::default().resolution,
             cubes: 1,
             layout: StoreId::next(),
-            sky: 0,
+            sky: None,
             set: 0,
+            maps_lost: false,
             listed: false,
             captures: false,
             views: false,
@@ -274,8 +317,7 @@ impl Default for ProbeState {
             drawn: Vec::new(),
             cameras: Vec::new(),
             finished: None,
-            proposal: 0,
-            sent: Vec::new(),
+            taken: Vec::new(),
             words: Vec::new(),
             words_changed: false,
             stats: ReflectionProbeStats::default(),
@@ -305,28 +347,22 @@ impl ProbeState {
     }
 
     fn static_moved(&mut self, globals: &GlobalTransforms) -> bool {
-        match globals.changes_since(&mut self.moves_seen) {
-            Since::Listed(listed) => listed.iter().any(|&index| {
-                globals.word_at(index as usize).is_some_and(|word| {
-                    word.drawn() && word.mobility == Mobility::Static
-                })
-            }),
-            Since::Same | Since::All => false,
+        match globals.static_moves_since(&mut self.moves_seen) {
+            Events::Listed(listed) => listed.iter().any(|&entity| globals.drawn(entity)),
+            Events::Missed(_) => true,
         }
     }
 
     fn acknowledge(&mut self, acks: &mut ProbeAcks) {
-        for (proposal, ran) in acks.acks.drain(..) {
-            let Some(at) = self.sent.iter().position(|(sent, _)| *sent == proposal) else {
-                continue;
-            };
-            let Some((_, slots)) = self.sent.drain(..=at).last() else {
-                continue;
-            };
-            if !ran {
-                for (slot, key) in slots {
-                    self.slots.missed(slot, key);
+        for ack in acks.acks.drain(..) {
+            match ack {
+                ProbeAck::Captured { ran: true, .. } => {}
+                ProbeAck::Captured { ran: false, slots } => {
+                    for (slot, key) in slots {
+                        self.slots.missed(slot, key);
+                    }
                 }
+                ProbeAck::Lost => self.maps_lost = true,
             }
         }
     }
@@ -334,39 +370,32 @@ impl ProbeState {
     fn capture(
         &mut self,
         probes: &[RenderReflectionProbe],
-        (faces, culls): (u32, bool),
+        budget: &mut FrameBudget,
         seconds: f32,
     ) -> u32 {
+        let face_bytes = u64::from(self.size) * u64::from(self.size) * FACE_TEXEL_BYTES;
         let mut used = [false; FACES];
         let mut drawn = 0;
-        let mut slots = Vec::new();
-        while drawn < faces {
+        loop {
             let Some((cube, face, probe)) = self.slots.next_face(probes) else {
                 break;
             };
             if used[face] {
                 break;
             }
-            used[face] = true;
             self.timed = true;
-            if !culls {
+            if !budget.spend(BUDGET, face_bytes) {
                 break;
             }
+            used[face] = true;
             let view = face_view_projection(probe.center, face);
             let index = self.faces.len() as u32;
             self.faces.push(ProbeFace {
                 face: face as u32,
                 center: probe.center,
                 view,
-                cube,
             });
-            self.drawn.push((
-                ProbeView {
-                    face: face as u32,
-                    center: probe.center,
-                },
-                self.set * FACES as u32 + face as u32,
-            ));
+            self.drawn.push(self.set * FACES as u32 + face as u32);
             self.cameras.push(probe_camera(
                 view,
                 probe.center,
@@ -375,18 +404,14 @@ impl ProbeState {
             ));
             drawn += 1;
             if let Some(held) = self.slots.capturing()
-                && !slots.contains(&held)
+                && !self.taken.contains(&held)
             {
-                slots.push(held);
+                self.taken.push(held);
             }
             if self.slots.face_drawn() {
                 self.finished = Some((cube, self.set));
                 self.set = (self.set + 1) % SETS;
             }
-        }
-        if !slots.is_empty() {
-            self.proposal = self.proposal.wrapping_add(1);
-            self.sent.push((self.proposal, slots));
         }
         drawn
     }
@@ -394,14 +419,14 @@ impl ProbeState {
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "the plan joins the probes, the sky, the meshes' culling and the view"
+    reason = "the plan joins the probes, the sky, the static moves, the budget and the view"
 )]
 pub(crate) fn plan_captures(
     settings: Res<ReflectionProbeSettings>,
     limits: Res<DeviceLimits>,
-    view: Res<View>,
+    view: Res<PrimaryView>,
     sky: Res<SkyLight>,
-    (instances, globals): (Res<Instances>, Res<GlobalTransforms>),
+    (globals, mut budget): (Res<GlobalTransforms>, ResMut<FrameBudget>),
     time: Res<FrameTime>,
     gathered: Res<ProbeList>,
     mut acks: ResMut<ProbeAcks>,
@@ -410,22 +435,20 @@ pub(crate) fn plan_captures(
     let state = &mut *state;
     state.acknowledge(&mut acks);
     let probes = gathered.list.as_slice();
-    let present = sky.environment != 0;
+    let present = sky.environment.is_some();
     state.listed = !probes.is_empty();
     state.views = state.listed && present;
     let moved = state.static_moved(&globals);
-    let (cubes, most_cubes, lost, sky_changed) = if present {
+    let (cubes, most_cubes, placed, sky_changed) = if present {
         let most_cubes = (limits.texture_layers / FACES as u32).max(1);
-        let lost = state.place(probes, settings.resolution, most_cubes);
+        let placed = state.place(probes, settings.resolution, most_cubes);
         let sky_changed = sky.environment != state.sky;
         state.sky = sky.environment;
-        (state.cubes, most_cubes, lost, sky_changed)
+        (state.cubes, most_cubes, placed, sky_changed)
     } else {
         (1, 1, false, false)
     };
-    if lost {
-        state.sent.clear();
-    }
+    let lost = placed || std::mem::take(&mut state.maps_lost);
     state
         .slots
         .plan(probes, (cubes - 1) as usize, lost, sky_changed || moved);
@@ -436,6 +459,7 @@ pub(crate) fn plan_captures(
     state.faces.clear();
     state.drawn.clear();
     state.cameras.clear();
+    state.taken.clear();
     state.finished = None;
     state.timed = false;
     let count = probes.len() as u64;
@@ -446,15 +470,11 @@ pub(crate) fn plan_captures(
     let mut drawn = 0;
     state.captures = !view.debug() && state.listed;
     if state.captures && state.views {
-        drawn = state.capture(
-            probes,
-            (settings.faces_per_frame, instances.candidates != 0),
-            time.elapsed as f32,
-        );
+        drawn = state.capture(probes, &mut budget, time.elapsed as f32);
     }
     state.stats = ReflectionProbeStats {
         ready: state.slots.ready(),
-        waiting: if state.captures && state.views && instances.candidates != 0 {
+        waiting: if state.captures && state.views {
             state.slots.unready()
         } else {
             0
@@ -464,31 +484,52 @@ pub(crate) fn plan_captures(
     };
 }
 
+#[derive(Component)]
+pub(crate) struct CaptureViews;
+
+fn capture_views(state: &ProbeState) -> SceneViews {
+    SceneViews {
+        pass: ProbePass::NAME,
+        views: state
+            .faces
+            .iter()
+            .map(|face| SceneView {
+                view_projection: face.view.to_cols_array_2d(),
+                planes: None,
+                eye: face.center.to_array(),
+                size: [state.size, state.size],
+                detail: 0.0,
+                takes: Some(Mobility::Static),
+            })
+            .collect(),
+    }
+}
+
 pub(crate) fn publish_captures(
     mut state: ResMut<ProbeState>,
     mut words: ResMut<ProbeWords>,
     mut captures: ResMut<ProbeCaptures>,
     mut stats: ResMut<ReflectionProbeStats>,
+    mut published: Query<&mut SceneViews, With<CaptureViews>>,
+    mut spawner: Spawner<ReflectionProbesBrick>,
 ) {
     let state = &mut *state;
     if std::mem::take(&mut state.words_changed) {
         std::mem::swap(&mut words.words, &mut state.words);
     }
-    let finished = state.finished.map(|(cube, _)| cube);
-    if captures.faces != state.faces
-        || captures.size != state.size
-        || captures.cubes != state.cubes
-        || captures.layout != state.layout
-        || captures.finished != finished
-        || captures.views != state.views
-    {
+    if captures.faces != state.faces || captures.size != state.size {
         let captures = &mut *captures;
         captures.faces.clone_from(&state.faces);
         captures.size = state.size;
-        captures.cubes = state.cubes;
-        captures.layout = state.layout;
-        captures.finished = finished;
-        captures.views = state.views;
+    }
+    let views = capture_views(state);
+    match published.single_mut() {
+        Ok(mut held) => {
+            held.set_if_neq(views);
+        }
+        Err(_) => {
+            spawner.spawn((CaptureViews, views));
+        }
     }
     stats.set_if_neq(state.stats.clone());
 }

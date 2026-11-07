@@ -1,9 +1,10 @@
 import package::cover::faces::cover::{COVER_FAR_SIDE, COVER_ROUGHNESS};
 import package::cover::laws::{COVER_LEAF_STEPS, COVER_ROOT_OCCLUSION, STRAIGHT_FIRST_VERTEX,
     STRAIGHT_JOINTS};
-import package::engine::shading::{BODY_THIN, SurfacePoint};
+import package::engine::shading::SurfacePoint;
+import package::engine::surfaces::SURFACE_THIN;
 import package::engine::view::{PI, camera, stable_normalize, view_pixel};
-import package::face::lighting::{finish, local_light, widened};
+import package::face::lit::{finish, local_light, widened};
 import package::face::foliage::foliage;
 import package::face::sun::sun_direction;
 import package::generated::cover::{CoverBlade, CoverFrame};
@@ -184,7 +185,8 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     let relative = input.world - camera.position.xyz;
     let albedo = input.color * select(1.0, COVER_FAR_SIDE, through);
     var point: SurfacePoint;
-    point.albedo = albedo;
+    point.base_color = albedo;
+    point.kind = SURFACE_THIN;
     point.transmission = foliage().x;
     point.opacity = 1.0;
     point.occlusion = mix(COVER_ROOT_OCCLUSION, 1.0, input.along);
@@ -206,7 +208,6 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
 @fragment
 fn fs_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> ViewTargets {
     let point = cover_surface(input, front);
-    var shaded = finish(point, local_light(point, input.clip_position.xy));
-    shaded.body = BODY_THIN;
+    let shaded = finish(point, local_light(point, input.clip_position.xy));
     return view_targets(shaded, view_pixel(input.clip_position, input.previous));
 }

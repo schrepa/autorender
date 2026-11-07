@@ -17,8 +17,26 @@ use crate::gpu::{
 use crate::state::{Atlas, AtlasMoves, TileId, Upload, listed_tile};
 use crate::terrain_maps::TerrainMaps;
 
-const FADE_HELD: f32 = 1.0e30;
-const FADE_DONE: f32 = -1.0e30;
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Fade {
+    Held,
+    Since(f32),
+    Done,
+}
+
+impl Fade {
+    fn began(self) -> f32 {
+        match self {
+            Self::Held => 1.0e30,
+            Self::Since(at) => at,
+            Self::Done => -1.0e30,
+        }
+    }
+
+    fn pair(fades: [Self; 2]) -> [f32; 2] {
+        fades.map(Self::began)
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct TerrainTables {
@@ -198,10 +216,10 @@ impl TerrainTables {
         tiles: &TerrainTiles,
         atlas: &Atlas,
     ) {
-        let mut fades = vec![[FADE_DONE; 2]; self.layers_room as usize];
+        let mut fades = vec![Fade::pair([Fade::Done; 2]); self.layers_room as usize];
         for (&id, &layer) in &atlas.slots {
             if let Some(fade) = fades.get_mut(layer as usize) {
-                *fade = fades_of(tiles, atlas, id);
+                *fade = Fade::pair(fades_of(tiles, atlas, id));
             }
         }
         cx.write(handles.tables, u64::from(self.fades_at) * 4, &fades);
@@ -215,7 +233,7 @@ impl TerrainTables {
         moves: &AtlasMoves,
     ) {
         for &layer in &moves.vacated {
-            self.write_fade(cx, handles, layer, [FADE_DONE; 2]);
+            self.write_fade(cx, handles, layer, [Fade::Done; 2]);
         }
         for &id in &moves.changed {
             if let Some(layer) = atlas.layer_of(id.0, id.1) {
@@ -229,10 +247,10 @@ impl TerrainTables {
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
         layer: u32,
-        fade: [f32; 2],
+        fade: [Fade; 2],
     ) {
         let at = self.fades_at + 2 * layer;
-        cx.write(handles.tables, u64::from(at) * 4, &fade);
+        cx.write(handles.tables, u64::from(at) * 4, &Fade::pair(fade));
     }
 
     fn write_all_holes(
@@ -410,8 +428,11 @@ fn tiles_below(pyramid: &Pyramid, level: u32) -> u32 {
         .sum()
 }
 
-fn fades_of(tiles: &TerrainTiles, atlas: &Atlas, id: TileId) -> [f32; 2] {
-    let materials = atlas.surfaced.get(&id).copied().unwrap_or(FADE_HELD);
+fn fades_of(tiles: &TerrainTiles, atlas: &Atlas, id: TileId) -> [Fade; 2] {
+    let materials = atlas
+        .surfaced
+        .get(&id)
+        .map_or(Fade::Held, |&at| Fade::Since(at));
     let shaded = tiles
         .terrains
         .iter()
@@ -421,7 +442,10 @@ fn fades_of(tiles: &TerrainTiles, atlas: &Atlas, id: TileId) -> [f32; 2] {
         return [materials, materials];
     }
     [
-        atlas.arrivals.get(&id).copied().unwrap_or(FADE_DONE),
+        atlas
+            .arrivals
+            .get(&id)
+            .map_or(Fade::Done, |&at| Fade::Since(at)),
         materials,
     ]
 }

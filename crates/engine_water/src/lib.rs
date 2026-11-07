@@ -37,17 +37,17 @@ mod white_water;
 mod windows;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Cut, JobKind, Schedule, Source, stats};
+use engine_core::{Attributes, Brick, Bricks, Cut, JobKind, KindDecl, Schedule, Source, stats};
 use engine_places_rendering::sky::EyeMedium;
 use engine_places_world::ground::Heightfield;
 use engine_places_world::water::Waterline;
-use engine_render::{DebugModes, DebugShown, RenderBricks};
+use engine_render::{DebugModes, DebugShown, RenderBricks, SurfaceKind, TraceDepth};
 
 pub(crate) use engine_codec as codec;
 pub(crate) use engine_heightfield::tile::Footprint;
 pub(crate) use engine_heightfield::{Layers, NARROWEST, TileKey};
 
-pub use flow::{Block, Pool, RiverFlow, WEIR};
+pub use flow::{Block, FlowState, Pool, RiverFlow, WEIR};
 pub use settings::Water;
 pub use steady_water::*;
 pub use tile_water::*;
@@ -59,6 +59,7 @@ pub use windows::{
 
 use state::WaterState;
 use water_particles::ParticleTallies;
+use water_sim::LiveSteps;
 
 stats! {
     #[section("water_stats")]
@@ -116,10 +117,22 @@ impl Brick for WaterBrick {
             .resource::<WaterState>()
             .resource::<SettleFeedback>()
             .resource::<ParticleTallies>()
+            .resource::<LiveSteps>()
             .piece::<gpu::WaterPiece>()
+            .surface_kind(SurfaceKind {
+                name: "water",
+                depth: TraceDepth::Opaque,
+            })
             .fill::<Waterline>(Some(shaders::water::faces::water::MODULE))
             .fill::<EyeMedium>(None)
-            .observation::<views::WaterFlowQuery>();
+            .observation::<views::WaterFlowQuery>()
+            .draw_kind(KindDecl {
+                kind: water::WATER_KIND,
+                vertex: shaders::water::surface::VS_WATER.name(),
+                needs: Attributes::NONE,
+            })
+            .pass::<water::WaterPass>()
+            .draws::<water::WaterGpu>(water::WATER_KIND, water::WaterGpu::draw);
         for (index, mode) in debug::modes().enumerate() {
             let wgsl = (index == 0).then_some(shaders::water::modes::MODULE);
             bricks.join::<DebugModes>(mode, wgsl);
@@ -156,7 +169,7 @@ impl Brick for WaterBrick {
 
 fn water_stats(
     state: Res<WaterState>,
-    tallies: Res<ParticleTallies>,
+    (tallies, steps): (Res<ParticleTallies>, Res<LiveSteps>),
     heightfield: Res<Heightfield>,
     mut stats: ResMut<WaterStats>,
 ) {
@@ -165,11 +178,13 @@ fn water_stats(
         PARTICLE_WAVES_DROPPED, PARTICLE_WAVES_LIVE,
     };
     let frame = !state.watered.is_empty();
-    let (cell_cut, [live_cut, live_steps, live_behind, live_setup, live_waiting]) = if frame {
-        state.live.cells()
+    let live = state.live.cells().filter(|_| frame);
+    let [live_steps, live_behind] = if live.is_some() {
+        [steps.steps, steps.behind]
     } else {
-        (Cut::default(), [0; 5])
+        [0; 2]
     };
+    let (cell_cut, [live_cut, live_setup, live_waiting]) = live.unwrap_or_default();
     let [touches, dropped_touches] = if frame { state.live.touches() } else { [0; 2] };
     let [leaves, refused] = if frame {
         heightfield.water_leaves
@@ -232,6 +247,6 @@ fn water_stats(
 fn publish_piece(shown: Res<DebugShown>, mut piece: ResMut<gpu::WaterPiece>) {
     let mine = shown.owner == Some(std::any::TypeId::of::<WaterBrick>());
     piece.set_if_neq(gpu::WaterPiece {
-        debug: [u32::from(mine), shown.local, 0, 0],
+        debug: [u32::from(mine), debug::shown(shown.local), 0, 0],
     });
 }

@@ -77,6 +77,13 @@ pub struct PlacedLayer {
     pub assets: Vec<(u16, f32)>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TileMaterials {
+    #[default]
+    Baked,
+    Program,
+}
+
 #[derive(Clone, Debug)]
 pub struct TileFace {
     pub key: TileKey,
@@ -86,6 +93,7 @@ pub struct TileFace {
     pub spacing: f32,
     pub heights: Arc<[f32]>,
     pub holes: Option<Arc<[u64]>>,
+    pub materials: TileMaterials,
     pub control: Option<Arc<[u32]>>,
     pub river_edges: Option<Arc<[u16]>>,
     pub river_beds: Option<Arc<[u16]>>,
@@ -305,7 +313,6 @@ impl Slot for PlacedTiles {
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct Cover {
-    pub enabled: bool,
     pub density: f32,
     pub widths: Vec<(Entity, f32)>,
 }

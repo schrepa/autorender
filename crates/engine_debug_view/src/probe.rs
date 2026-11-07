@@ -1,12 +1,12 @@
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::{clamp, half, max, pow};
-use engine_core::{Error, ErrorCode, GpuBits, Joined, Operation, Readable, Readback, View};
+use engine_core::{Error, ErrorCode, GpuBits, Joined, Operation, Readable, Readback, PrimaryView};
 use engine_places::meshes::Instances;
 use engine_render::debug::{DebugKind, DebugRecord};
 use engine_render::{
-    AfterRead, Buffer, Copied, CopyRegion, DebugModes, DebugShown, GpuPart, Install, Lifetime,
-    Prepare, ViewTarget, wgpu,
+    AfterRead, Buffer, Copied, CopyRegion, DEBUG_TARGETS, DebugModes, DebugShown, GpuPart, Install,
+    Lifetime, Prepare, TargetName, wgpu,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -261,7 +261,7 @@ fn drawn_kind(kind: DebugKind) -> Option<DrawnKind> {
     })
 }
 
-pub(crate) fn advance(view: Res<View>, mut steps: ResMut<ProbeSteps>, mut probe: ResMut<Probe>) {
+pub(crate) fn advance(view: Res<PrimaryView>, mut steps: ResMut<ProbeSteps>, mut probe: ResMut<Probe>) {
     let probe = &mut *probe;
     let done = std::mem::take(&mut steps.done);
     let stepped = |shaded: bool| done.contains(&(probe.armed, shaded));
@@ -293,7 +293,7 @@ pub(crate) struct ProbePixel;
 impl Operation for ProbePixel {
     const NAME: &'static str = "probe_pixel";
     type Params = (
-        Res<'static, View>,
+        Res<'static, PrimaryView>,
         ResMut<'static, Probe>,
         ResMut<'static, DebugShown>,
     );
@@ -374,7 +374,7 @@ pub(crate) struct ProbeGpu {
 }
 
 impl GpuPart for ProbeGpu {
-    type Reads = (Res<'static, Probe>, Res<'static, View>);
+    type Reads = (Res<'static, Probe>, Res<'static, PrimaryView>);
     const NAME: &'static str = "debug_view";
     const LAZY: bool = true;
     const LABELS: &'static [&'static str] = &["engine/debug-view"];
@@ -402,7 +402,7 @@ impl GpuPart for ProbeGpu {
                 cx.allocate_buffer(self.probed, PROBED_BYTES);
                 for (debug, offset) in [(0, IDS), (1, COUNT), (2, TERRAIN)] {
                     cx.copy_at_end(
-                        Copied::Target(ViewTarget::Debug(debug)),
+                        Copied::Target(DEBUG_TARGETS[debug as usize]),
                         Copied::Buffer(self.probed),
                         &[texel(at, offset)],
                     );
@@ -412,7 +412,7 @@ impl GpuPart for ProbeGpu {
                     let row = u64::from(probe.depth_row);
                     cx.allocate_buffer(self.rows, row * u64::from(height));
                     cx.copy_at_end(
-                        Copied::Target(ViewTarget::Depth),
+                        Copied::Target(TargetName::DEPTH),
                         Copied::Buffer(self.rows),
                         &[CopyRegion::ToBuffer {
                             from: wgpu::Origin3d::ZERO,
@@ -446,7 +446,7 @@ impl GpuPart for ProbeGpu {
                 cx.allocate_buffer(self.probed, PROBED_BYTES);
                 cx.allocate_buffer(self.rows, 0);
                 cx.copy_at_end(
-                    Copied::Target(ViewTarget::Scene),
+                    Copied::Target(TargetName::COLOR),
                     Copied::Buffer(self.probed),
                     &[texel(at, SCENE)],
                 );

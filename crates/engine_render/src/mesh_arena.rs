@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use bevy_ecs::world::World;
 use engine_core::{
     ArenaShape, AssetLibrary, AssetResidency, Cursor, Mesh, MeshHandle, MeshLods, MeshPlacement,
-    MeshStreams, ResidentMesh, Since,
+    MeshResidence, MeshStreams, ResidentMesh, Since,
 };
 
 use crate::gpu_calls::Queue;
@@ -217,7 +217,8 @@ struct OwnMesh {
 }
 
 pub struct GpuMesh {
-    placement: Option<MeshPlacement>,
+    placement: MeshResidence,
+    revision: u64,
     own: Option<OwnMesh>,
     pub extended: bool,
     pub index_count: u32,
@@ -225,12 +226,12 @@ pub struct GpuMesh {
 
 impl GpuMesh {
     fn draw<'a>(&'a self, arena: &'a MeshArena) -> Option<MeshDraw<'a>> {
-        match (&self.placement, &self.own) {
-            (Some(placement), _) => Some(MeshDraw {
+        match (self.placement, &self.own) {
+            (MeshResidence::Arena(placement), _) => Some(MeshDraw {
                 index_count: self.index_count,
-                ..arena.draw(*placement)
+                ..arena.draw(placement)
             }),
-            (None, Some(own)) => Some(MeshDraw {
+            (MeshResidence::Own, Some(own)) => Some(MeshDraw {
                 vertices: &own.vertices,
                 extras: own.extras.as_ref(),
                 indices: &own.indices,
@@ -238,7 +239,7 @@ impl GpuMesh {
                 base_vertex: 0,
                 index_count: self.index_count,
             }),
-            (None, None) => None,
+            (MeshResidence::Own, None) => None,
         }
     }
 }
@@ -313,9 +314,9 @@ impl GpuMeshes {
             Since::Listed(handles) => handles,
             Since::All => {
                 self.meshes.retain(|&handle, mesh| {
-                    residency
-                        .mesh(handle)
-                        .is_some_and(|resident| resident.placement() == mesh.placement)
+                    residency.mesh(handle).is_some_and(|resident| {
+                        (resident.placement(), resident.revision()) == (mesh.placement, mesh.revision)
+                    })
                 });
                 all = residency.meshes().map(|(handle, _)| handle).collect();
                 all.as_slice()
@@ -325,8 +326,13 @@ impl GpuMeshes {
         let mut bytes = 0;
         for &handle in changed {
             let resident = residency.mesh(handle);
-            let current = self.meshes.get(&handle).map(|mesh| mesh.placement);
-            if resident.is_some_and(|resident| current == Some(resident.placement())) {
+            let current = self
+                .meshes
+                .get(&handle)
+                .map(|mesh| (mesh.placement, mesh.revision));
+            if resident
+                .is_some_and(|resident| current == Some((resident.placement(), resident.revision())))
+            {
                 continue;
             }
             self.meshes.remove(&handle);
@@ -359,7 +365,7 @@ impl GpuMeshes {
         let indices = with_levels(source, lods);
         let placement = resident.placement();
         let own = match placement {
-            Some(placement) => {
+            MeshResidence::Arena(placement) => {
                 debug_assert_eq!(
                     placement.streams == MeshStreams::Extended,
                     extras.is_some(),
@@ -368,7 +374,7 @@ impl GpuMeshes {
                 self.arena.write(queue, placement, &streams, &indices);
                 None
             }
-            None => {
+            MeshResidence::Own => {
                 let buffer = |label, contents: &[u8], usage| {
                     buffer_init(
                         device,
@@ -397,6 +403,7 @@ impl GpuMeshes {
             handle,
             GpuMesh {
                 placement,
+                revision: resident.revision(),
                 own,
                 extended: extras.is_some(),
                 index_count: resident.index_count(),

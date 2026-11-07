@@ -2,6 +2,7 @@ import package::engine::shading::{SPECULAR_LIMIT, SPECULAR_VARIANCE, Shaded, Sur
 import package::engine::view::PI;
 import package::face::lights::{cluster_light, kept_regions, light_cluster, lights_on,
     shaped_lights};
+import package::face::sun::sun_direction;
 import package::face::sun_blockers::{DEBUG_SUN_NONE, SunAt, SunOpen, sun_flags, sun_open};
 import package::generated::pieces::lighting_model::piece;
 import package::lighting_model::inputs::sun_seen;
@@ -41,9 +42,9 @@ fn environment_brdf(f0: vec3<f32>, roughness: f32, n_v: f32) -> vec3<f32> {
 }
 
 fn surface_sun(point: SurfacePoint) -> SunAt {
-    return SunAt(point.world + point.shadow_offset, point.geometric, point.world_dx,
-        point.world_dy, point.shadow_softness, point.ground, point.shadow_lift_first,
-        point.shadow_lifts);
+    return SunAt(point.world + point.inputs.shadow_shift, point.geometric, point.world_dx,
+        point.world_dy, point.inputs.shadow_softness, point.kind, point.inputs.shadow_lift_first,
+        point.inputs.shadow_lifts);
 }
 
 fn sun_visibility(at: SunAt) -> f32 {
@@ -52,6 +53,14 @@ fn sun_visibility(at: SunAt) -> f32 {
 
 fn sun_debug(at: SunAt) -> u32 {
     return sun_flags(DEBUG_SUN_NONE, at);
+}
+
+fn lit_debug(point: SurfacePoint) -> u32 {
+    return sun_debug(surface_sun(point));
+}
+
+fn lit_toward(point: SurfacePoint) -> vec3<f32> {
+    return sun_direction();
 }
 
 fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {

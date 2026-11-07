@@ -1,4 +1,5 @@
 import package::engine::color::encode_srgb;
+import package::face::text::glyph_coverage;
 import package::generated::ui::UiRect;
 @group(1) @binding(0) var<storage, read> instances: array<UiRect>;
 @group(1) @binding(1) var sheet: texture_2d<f32>;
@@ -44,4 +45,8 @@ fn shaded(corner: Corner, fill: vec4<f32>) -> vec4<f32> {
 @fragment fn fs_image(corner: Corner) -> @location(0) vec4<f32> {
     let texel = textureSample(sheet, sheet_sampler, corner.uv);
     return shaded(corner, vec4<f32>(encode_srgb(texel.rgb), texel.a) * corner.color);
+}
+@fragment fn fs_glyph(corner: Corner) -> @location(0) vec4<f32> {
+    let coverage = glyph_coverage(vec2<i32>(corner.uv));
+    return vec4<f32>(corner.color.rgb, corner.color.a * coverage);
 }

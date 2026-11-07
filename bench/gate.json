@@ -90,10 +90,6 @@
       "allocations": 0.0,
       "ms": 0.0011983333335592761
     },
-    "engine_meshes::casters::plan_casters": {
-      "allocations": 1.0,
-      "ms": 0.004308333333259118
-    },
     "engine_meshes::order::plan_draws": {
       "allocations": 0.0,
       "ms": 0.0030649999999150168

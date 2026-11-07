@@ -5,7 +5,7 @@ use crate::protocol::{
 use crate::results::{DebugMissingAssetResult, EnvironmentResult, ParentResult, result};
 use crate::{BrowserControl, EnvironmentControl, bounded};
 use bevy_ecs::prelude::World;
-use engine_core::{AssetLibrary, Camera, Engine, Mesh3d, Projection, glam::Vec3};
+use engine_core::{AssetLibrary, Camera, Engine, Mesh3d, Projection, Transform, glam::Vec3};
 use engine_registry::{OperationScene, Registry};
 use engine_scene::{SceneEnvironment, SceneInstance};
 use engine_settings::{Error, ErrorCode, Expected};
@@ -251,24 +251,29 @@ pub fn validated_camera(
     vertical_fov_radians: f32,
     near: f32,
     far: f32,
-) -> Result<Camera, Error> {
-    let camera = Camera {
-        position: Vec3::from_array(position),
-        target: Vec3::from_array(target),
+) -> Result<(Transform, Camera), Error> {
+    let lens = Camera {
         near,
         far,
         projection: Projection::Perspective {
             vertical_fov_radians,
         },
     };
-    camera.check().map_err(|invalid| Error {
-        code: ErrorCode::InvalidCamera,
-        ..invalid
-    })?;
-    if !camera.view_projection(1.0).is_finite() {
+    lens.check()?;
+    let (position, target) = (Vec3::from_array(position), Vec3::from_array(target));
+    let reach = Camera::REACH;
+    for (name, point) in [("position", position), ("target", target)] {
+        if !point.is_finite() || point.abs().max_element() > reach {
+            return Err(Error::new(ErrorCode::InvalidCamera, format!("$.{name}")));
+        }
+    }
+    if (target - position).length_squared() < Camera::MIN_DEPTH * Camera::MIN_DEPTH {
+        return Err(Error::new(ErrorCode::InvalidCamera, "$.target"));
+    }
+    if !lens.view_projection(position, target - position, 1.0).is_finite() {
         return Err(Error::new(ErrorCode::InvalidCamera, "$").expected(Expected::Finite));
     }
-    Ok(camera)
+    Ok((Transform::looking_at(position, target), lens))
 }
 
 pub enum OperationCall {

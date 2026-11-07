@@ -1,3 +1,5 @@
+import package::engine::surfaces::SURFACE_SOLID;
+
 struct Shaded {
     linear: vec3<f32>,
     ambient: f32,
@@ -6,18 +8,30 @@ struct Shaded {
     normal: vec3<f32>,
     roughness: f32,
     across: f32,
-    body: u32,
+    kind: u32,
+}
+
+struct LightInputs {
+    shadow_shift: vec3<f32>,
+    ignore_face: bool,
+    bounce: vec3<f32>,
+    sky_bend: vec3<f32>,
+    sun_blocked: f32,
+    smoother_across: f32,
+    shadow_softness: f32,
+    shadow_lift_first: u32,
+    shadow_lifts: vec4<f32>,
 }
 
 struct SurfacePoint {
-    albedo: vec3<f32>,
+    base_color: vec3<f32>,
     opacity: f32,
-    emission: f32,
     emissive: vec3<f32>,
     occlusion: f32,
     roughness: f32,
     alpha: f32,
-    smoother_across: f32,
+    metalness: f32,
+    transmission: f32,
     f0: vec3<f32>,
     diffuse_color: vec3<f32>,
     normal: vec3<f32>,
@@ -28,21 +42,28 @@ struct SurfacePoint {
     world_dx: vec3<f32>,
     world_dy: vec3<f32>,
     distance: f32,
-    shadow_offset: vec3<f32>,
-    ground: bool,
-    indirect: vec3<f32>,
-    sky_turn: vec3<f32>,
-    sun_shade: f32,
-    transmission: f32,
-    shadow_softness: f32,
-    shadow_lift_first: u32,
-    shadow_lifts: vec4<f32>,
+    kind: u32,
+    inputs: LightInputs,
 }
 
-const BODY_SOLID: u32 = 0u;
-const BODY_THIN: u32 = 1u;
-const BODY_GROUND: u32 = 2u;
-const BODY_WATER: u32 = 3u;
+struct SurfaceInput {
+    color: vec4<f32>,
+    normal: vec3<f32>,
+    world: vec3<f32>,
+    world_dx: vec3<f32>,
+    world_dy: vec3<f32>,
+    uv: vec2<f32>,
+    uv1: vec2<f32>,
+    surface: vec4<f32>,
+    pixel: vec2<f32>,
+    front: bool,
+    eye: vec3<f32>,
+    bias: f32,
+    time: f32,
+    object: vec4<u32>,
+    words: vec4<u32>,
+    origin: vec3<f32>,
+}
 
 const SPECULAR_VARIANCE: f32 = 0.15;
 const SPECULAR_LIMIT: f32 = 0.2;
@@ -61,7 +82,25 @@ fn flat(color: vec4<f32>) -> Shaded {
     shaded.normal = vec3<f32>(0.0, 0.0, 1.0);
     shaded.roughness = 1.0;
     shaded.across = 0.0;
-    shaded.body = BODY_SOLID;
+    shaded.kind = SURFACE_SOLID;
+    return shaded;
+}
+
+fn derived(point: SurfacePoint) -> SurfacePoint {
+    var result = point;
+    result.roughness = max(point.roughness, 0.03);
+    result.alpha = result.roughness * result.roughness;
+    result.f0 = mix(vec3<f32>(0.04), point.base_color, point.metalness);
+    result.diffuse_color = point.base_color * (1.0 - point.metalness);
+    result.n_v = max(dot(point.normal, point.view), 1.0e-4);
+    return result;
+}
+
+fn unlit(point: SurfacePoint) -> Shaded {
+    var shaded = flat(vec4<f32>(point.base_color + point.emissive, point.opacity));
+    shaded.normal = point.normal;
+    shaded.roughness = point.roughness;
+    shaded.kind = point.kind;
     return shaded;
 }
 

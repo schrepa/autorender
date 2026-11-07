@@ -79,8 +79,8 @@ fn shade_surface(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let specular = piece().model.z;
     var facing = 1.0;
     let face = cross(point.world_dx, point.world_dy); // filter: none, the face's own plane across the pixel, a direction
-    if dot(face, face) > 1.0e-20 && all(point.shadow_offset == vec3<f32>(0.0))
-        && !point.ground {
+    if dot(face, face) > 1.0e-20 && all(point.inputs.shadow_shift == vec3<f32>(0.0))
+        && !point.inputs.ignore_face {
         let toward = select(-1.0, 1.0, dot(face, point.geometric) >= 0.0);
         facing = smoothstep(-0.05, 0.1, dot(normalize(face) * toward, sun));
     }
@@ -97,9 +97,9 @@ fn shade_surface(point: SurfacePoint, local: vec3<f32>) -> Shaded {
                 * (distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha) * n_l);
         }
     }
-    let skyward = normalize(normal + point.sky_turn);
+    let skyward = normalize(normal + point.inputs.sky_bend);
     let light = environment(no_environment(), EnvironmentAt(point.world, normal, skyward,
-        dominant_direction(point), point.roughness, point.alpha, point.ground));
+        dominant_direction(point), point.roughness, point.alpha, point.kind));
     let brdf = environment_brdf(point.f0, point.roughness, point.n_v);
     let reflection = environment_specular(light) * brdf * specular;
     let grazing = 1.0 - max(dot(point.geometric, view), 0.0);
@@ -107,18 +107,18 @@ fn shade_surface(point: SurfacePoint, local: vec3<f32>) -> Shaded {
         * (1.0 - abs(point.geometric.y));
     let inside = light.inside;
     let open = light.open;
-    let bounce = point.indirect + light.bounce * point.occlusion;
+    let bounce = point.inputs.bounce + light.bounce * point.occlusion;
     let sky_light = (point.diffuse_color * (ambient_light(light) + light.horizon * rim)
         * inside.x + reflection) * point.occlusion * open
         + point.diffuse_color * bounce * open * inside.x;
     let sunlit = (point.diffuse_color * wrapped + highlight * specular + transmitted(point))
         * sun_color();
     var visible = 1.0;
-    if any(sunlit != vec3<f32>(0.0)) && point.sun_shade != 1.0 && inside.y != 0.0 {
+    if any(sunlit != vec3<f32>(0.0)) && point.inputs.sun_blocked != 1.0 && inside.y != 0.0 {
         visible = sun_visibility(surface_sun(point));
     }
-    let sun_light = sunlit * visible * (1.0 - point.sun_shade) * inside.y;
-    let emitted = (point.albedo * point.emission + point.emissive) * piece().model.y;
+    let sun_light = sunlit * visible * (1.0 - point.inputs.sun_blocked) * inside.y;
+    let emitted = point.emissive * piece().model.y;
     let lit = sky_light + sun_light + emitted + local;
     let through = atmospheric(lit, camera.position.xyz, point.world, -view);
     let fogged = through.rgb;
@@ -126,7 +126,8 @@ fn shade_surface(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     var shaded: Shaded;
     shaded.normal = normal;
     shaded.roughness = point.roughness;
-    shaded.across = point.roughness - point.smoother_across;
+    shaded.across = point.roughness - point.inputs.smoother_across;
+    shaded.kind = point.kind;
     shaded.linear = fogged;
     shaded.ambient = saturate(luminance(sky_light) / max(luminance(lit), 1.0e-6)) * (1.0 - covered)
         * transmission_occlusion(point);

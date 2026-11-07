@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asks, CameraHandoff, CameraNode, Clock, FrameTime, GlobalTransforms, MoveInput, Mover, Moves,
-    Pace, mover_of,
+    Asks, CameraHandoff, Clock, FrameTime, GlobalTransforms, MoveInput, Mover, Moves, Pace,
+    PrimaryView, mover_of,
 };
 use engine_math::{atan2, clamp};
 use glam::{Quat, Vec3};
@@ -74,12 +74,12 @@ pub(crate) fn fly(
         Res<FlyCamera>,
         Res<GlobalTransforms>,
     ),
-    cameras: Query<Entity, With<CameraNode>>,
+    view: Res<PrimaryView>,
     mut rig: ResMut<Rig>,
     mut handoff: Asks<CameraHandoff>,
     mut moves: Moves<FlyCameraBrick>,
 ) {
-    let Ok(camera) = cameras.single() else {
+    let Some(camera) = view.camera() else {
         return;
     };
     match *rig {

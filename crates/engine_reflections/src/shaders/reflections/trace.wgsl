@@ -1,7 +1,7 @@
 import package::engine::mesh::vertex::octahedral_normal;
 import package::engine::post::frame::{depth_texture, drawn_uv, linear, post};
 import package::engine::screen_points::{depth_normal, world_at};
-import package::engine::shading::{BODY_SOLID, BODY_THIN, BODY_WATER};
+import package::engine::surfaces::{TRACE_DEPTH_OPAQUE, TRACE_DEPTH_SOLID, TRACE_DEPTH_THIN};
 import package::face::trace_source::{trace_holds, trace_world};
 import package::generated::pieces::reflections::piece;
 import package::generated::targets::{output_reflectivity, output_surface};
@@ -190,7 +190,7 @@ fn screen_walk(origin: vec3<f32>, ray: vec3<f32>) -> ScreenWalk {
         }
         let here = vec2<i32>(cell);
         let body = body_at(here);
-        if body == BODY_WATER {
+        if body == TRACE_DEPTH_OPAQUE {
             walk.met = true;
             walk.point = point;
             return walk;
@@ -203,22 +203,22 @@ fn screen_walk(origin: vec3<f32>, ray: vec3<f32>) -> ScreenWalk {
         let axis = select(vec2<i32>(0, 1), vec2<i32>(1, 0), inside.x < inside.y);
         let spans = stride + surface_span(here, axis, surface, point.xy, shown);
         var thickness = 0.0;
-        if body == BODY_THIN {
+        if body == TRACE_DEPTH_THIN {
             thickness = REFLECTION_THIN;
         }
-        if body == BODY_SOLID {
+        if body == TRACE_DEPTH_SOLID {
             if entered.x < 0.0 {
                 entered = point.xy;
             }
             thickness = distance(point.xy, entered) * distance(shown, post.eye.xyz) / post.eye.w;
         }
         if distance(ray_point, shown) <= thickness + spans
-            || (body == BODY_THIN && trace_holds(shown, ray_point)) {
+            || (body == TRACE_DEPTH_THIN && trace_holds(shown, ray_point)) {
             walk.met = true;
             walk.point = point;
             return walk;
         }
-        if body != BODY_SOLID {
+        if body != TRACE_DEPTH_SOLID {
             break;
         }
         t = leave;

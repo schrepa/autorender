@@ -1,11 +1,11 @@
 use bevy_ecs::prelude::Resource;
 use engine_core::math::min;
-use engine_core::{Error, Readable, Readback};
+use engine_core::{Error, FrameBudget, Readable, Readback};
 use engine_places_rendering::sun::Sun;
 use engine_render::{
-    Allocation, Attach, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse, Draw,
-    DrawInput, Encode, Install, Layer, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
-    Sampler, SamplerDesc, Shape, Texture, ViewTarget, wgpu,
+    Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count,
+    DepthUse, Draw, DrawInput, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare,
+    RenderPipeline, Sampler, SamplerDesc, Shape, TargetName, Texture, wgpu,
 };
 
 use crate::gpu_layouts::{
@@ -23,8 +23,9 @@ const ENVIRONMENT_EVERY: u64 = 16;
 const SHADOW_EXTENT: f32 = 8192.0;
 const LIGHT_EXTENT: f32 = 24_000.0;
 const LIGHT_RECENTER: f32 = 2_000.0;
-const LIGHT_ROWS: u32 = 48;
+const LIGHT_ROW_BYTES: u64 = CLOUD_LIGHT_BYTES as u64 / LIGHT_TEXELS as u64;
 const COMPOSITE_ARGS: [u32; 4] = [0, 1, 0, 0];
+const BUDGET: &str = "clouds";
 
 pub(crate) type CloudLight<'a> = (&'a Sun, &'a SkyPiece);
 
@@ -35,15 +36,38 @@ type CloudInputs<'a> = (
     f64,
 );
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CloudStep {
+    completed: u64,
+    generation: u64,
+}
+
+impl CloudStep {
+    fn bytes(self, ran: bool) -> Vec<u8> {
+        let mut bytes = vec![u8::from(ran)];
+        bytes.extend_from_slice(&self.completed.to_le_bytes());
+        bytes.extend_from_slice(&self.generation.to_le_bytes());
+        bytes
+    }
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct CloudSteps {
-    done: Vec<(u32, bool)>,
+    done: Vec<(bool, CloudStep)>,
 }
 
 impl Readable for CloudSteps {
-    fn arrived(&mut self, step: u32, read: Readback<&[u8]>) {
-        let ran = read.value.first().is_some_and(|&ran| ran != 0);
-        self.done.push((step, ran));
+    fn arrived(&mut self, _: u32, read: Readback<&[u8]>) {
+        let Some((&ran, [c0, c1, c2, c3, c4, c5, c6, c7, g0, g1, g2, g3, g4, g5, g6, g7])) =
+            read.value.split_first()
+        else {
+            return;
+        };
+        let step = CloudStep {
+            completed: u64::from_le_bytes([*c0, *c1, *c2, *c3, *c4, *c5, *c6, *c7]),
+            generation: u64::from_le_bytes([*g0, *g1, *g2, *g3, *g4, *g5, *g6, *g7]),
+        };
+        self.done.push((ran != 0, step));
     }
 }
 
@@ -191,8 +215,7 @@ pub(crate) struct CloudPlan {
     recorded: u64,
     recorded_generation: Option<u64>,
     ready: bool,
-    step: u32,
-    sent: Vec<(u32, u64, u64)>,
+    pub(crate) step: CloudStep,
     job: Option<(usize, u32, u32)>,
     active: bool,
     shadowing: bool,
@@ -224,8 +247,10 @@ impl Default for CloudPlan {
             recorded: 0,
             recorded_generation: None,
             ready: false,
-            step: 0,
-            sent: Vec::new(),
+            step: CloudStep {
+                completed: 0,
+                generation: 0,
+            },
             job: None,
             active: false,
             shadowing: false,
@@ -242,7 +267,7 @@ impl Default for CloudPlan {
 }
 
 impl CloudPlan {
-    fn plan_light(&mut self, uniform: &CloudUniform) -> [u32; 4] {
+    fn plan_light(&mut self, uniform: &CloudUniform, budget: &mut FrameBudget) -> [u32; 4] {
         let [eye_x, _, eye_z, _] = uniform.eye;
         let [drift_x, drift_z, repeat, seed] = uniform.drift;
         let own = [eye_x + drift_x + seed, eye_z + drift_z - seed];
@@ -268,7 +293,10 @@ impl CloudPlan {
             self.light.built = 0;
         }
         let first = self.light.built;
-        let rows = LIGHT_ROWS.min(LIGHT_TEXELS - first);
+        let mut rows = 0;
+        while first + rows < LIGHT_TEXELS && budget.spend(BUDGET, LIGHT_ROW_BYTES) {
+            rows += 1;
+        }
         self.light.built += rows;
         self.light.job = rows;
         [first, rows, 0, 0]
@@ -312,16 +340,10 @@ impl CloudPlan {
     }
 
     pub(crate) fn acknowledge(&mut self, steps: &mut CloudSteps) {
-        for (step, ran) in steps.done.drain(..) {
-            let Some(at) = self.sent.iter().position(|&(sent, _, _)| sent == step) else {
-                continue;
-            };
-            let Some((_, completed, generation)) = self.sent.drain(..=at).last() else {
-                continue;
-            };
+        for (ran, step) in steps.done.drain(..) {
             if ran {
-                self.recorded = completed;
-                self.recorded_generation = Some(generation);
+                self.recorded = step.completed;
+                self.recorded_generation = Some(step.generation);
             } else {
                 self.ready = false;
                 self.cycle = None;
@@ -335,7 +357,7 @@ impl CloudPlan {
         &mut self,
         (settings, noise, (eye, surface), seconds): CloudInputs<'_>,
         light: CloudLight<'_>,
-        marches: bool,
+        (marches, budget): (bool, &mut FrameBudget),
     ) {
         self.rows = 0;
         self.job = None;
@@ -352,7 +374,6 @@ impl CloudPlan {
             self.marched = None;
             self.cycle = None;
             self.completes = false;
-            self.sent.clear();
             self.release();
             self.write_domes(eye, settings);
             return;
@@ -415,12 +436,14 @@ impl CloudPlan {
         uniform.shadow = shadow_grid(eye).map_or([0.0; 4], |(first, cell)| {
             [first[0], first[1], cell, CLOUD_SHADOW_CELLS as f32]
         });
-        uniform.light_rows = self.plan_light(&uniform);
+        uniform.light_rows = self.plan_light(&uniform, budget);
         uniform.light = self.light_uniform();
         uniform.layers = [target as u32 * DOME_LAYERS, 0, 0, 0];
         self.uniform = uniform;
-        self.step = self.step.wrapping_add(1);
-        self.sent.push((self.step, self.completed, self.generation));
+        self.step = CloudStep {
+            completed: self.completed,
+            generation: self.generation,
+        };
         self.write_domes(eye, settings);
     }
 
@@ -529,7 +552,7 @@ pub(crate) struct CloudPass {
     compositing: Pipeline<SkyGpu, Own>,
     composite_draws: DrawInput<SkyGpu, Own>,
     noise: Option<u64>,
-    stepped: Option<(u32, bool, bool)>,
+    stepped: Option<(CloudStep, bool, bool)>,
     run: CloudRun,
 }
 
@@ -590,7 +613,7 @@ fn samplers(cx: &mut Install<'_, SkyGpu>) -> [Sampler<SkyGpu>; 2] {
 
 fn cloud_passes(
     cx: &mut Install<'_, SkyGpu>,
-    environment: Pass<SkyGpu>,
+    (environment, dome): (Pass<SkyGpu>, Pass<SkyGpu>),
     (shadow_cells, shadows): (Buffer<SkyGpu>, Buffer<SkyGpu>),
 ) -> [Pass<SkyGpu>; 6] {
     let light_pass = cx
@@ -619,14 +642,15 @@ fn cloud_passes(
     );
     let view_pass = cx
         .pass("cloud_march")
-        .at(Layer::Over)
+        .at(AttachPoint::Sky)
         .label("engine/cloud-view")
         .span("cloud_view")
         .id();
     let composite_pass = cx
         .pass("cloud_composite")
-        .at(Layer::Over)
+        .at(AttachPoint::Sky)
         .after(view_pass)
+        .after(dome)
         .label("engine/cloud-composite")
         .span("cloud_composite")
         .id();
@@ -644,7 +668,7 @@ impl CloudPass {
     pub(crate) fn install(
         cx: &mut Install<'_, SkyGpu>,
         (transmittance, table_sampler): (Texture<SkyGpu>, Sampler<SkyGpu>),
-        environment: Pass<SkyGpu>,
+        (environment, dome): (Pass<SkyGpu>, Pass<SkyGpu>),
     ) -> Result<Self, Error> {
         use crate::shaders::sky::{clouds, faces::cloud_shadows, light};
         let noise_shape = cx.texture(
@@ -681,7 +705,7 @@ impl CloudPass {
             shadow_copy,
             view_pass,
             composite_pass,
-        ] = cloud_passes(cx, environment, (shadow_cells, shadows));
+        ] = cloud_passes(cx, (environment, dome), (shadow_cells, shadows));
         let noise = || {
             [
                 (clouds::CLOUDS, Bind::Buffer(uniform)),
@@ -721,7 +745,7 @@ impl CloudPass {
             (clouds::NOISE_SAMPLER, Bind::Sampler(noise_sampler)),
             (clouds::NOISE_DETAIL, Bind::Texture(noise_detail)),
             (clouds::CLOUD_VIEW, Bind::Buffer(view_uniform)),
-            (clouds::VIEW_DEPTH, Bind::Target(ViewTarget::Depth)),
+            (clouds::VIEW_DEPTH, Bind::Target(TargetName::DEPTH)),
             (clouds::VIEW_OUT, Bind::Texture(view_texture)),
             (clouds::COMPOSITE_DRAW, Bind::Buffer(composite_args)),
         ];
@@ -784,7 +808,7 @@ impl CloudPass {
     ) {
         if let Some((step, light, march)) = self.stepped.take() {
             let ran = (!light || cx.ran(self.light_pass)) && (!march || cx.ran(self.march_pass));
-            cx.deliver::<CloudSteps>(step, vec![u8::from(ran)]);
+            cx.deliver::<CloudSteps>(0, step.bytes(ran));
         }
         self.allocate(cx);
         if !plan.active {

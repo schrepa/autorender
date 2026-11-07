@@ -22,6 +22,82 @@ pub(super) fn device_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
     }
 }
 
+pub(crate) struct Opened {
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    features: wgpu::Features,
+}
+
+pub(super) type Opening = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Opened, Error>>>>;
+
+fn features_of(adapter: &wgpu::Adapter) -> wgpu::Features {
+    let compression = adapter.features()
+        & (wgpu::Features::TEXTURE_COMPRESSION_BC
+            | wgpu::Features::TEXTURE_COMPRESSION_ETC2
+            | wgpu::Features::TEXTURE_COMPRESSION_ASTC);
+    let features = compression
+        | (adapter.features()
+            & (wgpu::Features::INDIRECT_FIRST_INSTANCE
+                | wgpu::Features::RG11B10UFLOAT_RENDERABLE
+                | wgpu::Features::TIMESTAMP_QUERY));
+    #[cfg(not(feature = "profiling"))]
+    let required = features;
+    #[cfg(feature = "profiling")]
+    let required = features | (adapter.features() & crate::profiling::FEATURES);
+    required
+}
+
+async fn opened(adapter: wgpu::Adapter) -> Result<Opened, Error> {
+    let features = features_of(&adapter);
+    let (device, queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("engine/device"),
+            required_features: features,
+            required_limits: device_limits(&adapter.limits()),
+            ..Default::default()
+        })
+        .await
+        .map_err(|error| failed_with("$.device", error))?;
+    Ok(Opened {
+        adapter,
+        device,
+        queue,
+        features,
+    })
+}
+
+pub(super) async fn open(
+    instance: wgpu::Instance,
+    power_preference: wgpu::PowerPreference,
+) -> Result<Opened, Error> {
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+            ..Default::default()
+        })
+        .await
+        .map_err(|error| failed_with("$.adapter", error))?;
+    opened(adapter).await
+}
+
+fn watch(device: &wgpu::Device, health: &Arc<Mutex<health::Reports>>) {
+    let lost = Arc::clone(health);
+    device.set_device_lost_callback(move |reason, message| {
+        if let Ok(mut reports) = lost.lock() {
+            reports.lost(reason, &message);
+        }
+    });
+    let uncaptured = Arc::clone(health);
+    device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| {
+        if let Ok(mut reports) = uncaptured.lock() {
+            reports.uncaptured(&error);
+        }
+    }));
+}
+
 pub struct StartingRenderer {
     renderer: Renderer,
     validation: std::pin::Pin<Box<dyn std::future::Future<Output = Option<wgpu::Error>>>>,
@@ -37,6 +113,39 @@ impl StartingRenderer {
 }
 
 impl Renderer {
+    pub(super) fn adopt_device(&mut self, opened: Opened) -> Result<(), Error> {
+        let Opened {
+            adapter,
+            device,
+            queue,
+            features,
+        } = opened;
+        if !self.core.display.supports(&adapter) {
+            return Err(failed("$.surface").expected(Expected::Supported));
+        }
+        watch(&device, &self.core.health);
+        let queue = crate::gpu_calls::Queue::new(queue);
+        let period = queue.get_timestamp_period();
+        self.surface = None;
+        self.run = None;
+        self.installing = None;
+        self.previous = None;
+        self.plans = PlanCache::default();
+        self.core.display.configure(&device, period);
+        self.core.profiler = GpuProfiler::new(features, f64::from(period));
+        self.core.ledger = crate::pipelines::Ledger::new(&device, self.core.display.format());
+        self.core.limits = super::install::device_limits(
+            &device.limits(),
+            device.features(),
+            self.core.limits.cores,
+        );
+        self.core.adapter = crate::AdapterInfo::of(&adapter.get_info());
+        self.assets = Some(new_assets(&device, &queue));
+        self.core.device = device;
+        self.core.queue = queue;
+        Ok(())
+    }
+
     pub async fn new(target: RenderTarget) -> Result<Self, Error> {
         Self::start(target).await?.finish().await
     }
@@ -56,44 +165,16 @@ impl Renderer {
             .await
             .map_err(|error| failed_with("$.adapter", error))?;
         let adapter_info = crate::AdapterInfo::of(&adapter.get_info());
-        let limits = device_limits(&adapter.limits());
-        let compression = adapter.features()
-            & (wgpu::Features::TEXTURE_COMPRESSION_BC
-                | wgpu::Features::TEXTURE_COMPRESSION_ETC2
-                | wgpu::Features::TEXTURE_COMPRESSION_ASTC);
-        let features = compression
-            | (adapter.features()
-                & (wgpu::Features::INDIRECT_FIRST_INSTANCE
-                    | wgpu::Features::RG11B10UFLOAT_RENDERABLE
-                    | wgpu::Features::TIMESTAMP_QUERY));
-        #[cfg(not(feature = "profiling"))]
-        let required_features = features;
-        #[cfg(feature = "profiling")]
-        let required_features = features | (adapter.features() & crate::profiling::FEATURES);
-        let (device, wgpu_queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("engine/device"),
-                required_features,
-                required_limits: limits,
-                ..Default::default()
-            })
-            .await
-            .map_err(|error| failed_with("$.device", error))?;
+        let Opened {
+            adapter,
+            device,
+            queue: wgpu_queue,
+            features: required_features,
+        } = opened(adapter).await?;
         let queue = crate::gpu_calls::Queue::new(wgpu_queue);
-
         let health = Arc::new(Mutex::new(health::Reports::default()));
-        let lost = Arc::clone(&health);
-        device.set_device_lost_callback(move |reason, message| {
-            if let Ok(mut reports) = lost.lock() {
-                reports.lost(reason, &message);
-            }
-        });
-        let uncaptured = Arc::clone(&health);
-        device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| {
-            if let Ok(mut reports) = uncaptured.lock() {
-                reports.uncaptured(&error);
-            }
-        }));
+        watch(&device, &health);
+        let limits = super::install::device_limits(&device.limits(), device.features(), 0);
 
         let mut display = Display::new(
             instance,
@@ -107,7 +188,7 @@ impl Renderer {
         let assets = new_assets(&device, &queue);
         let validation = Box::pin(scope.pop());
         let profiler = GpuProfiler::new(required_features, f64::from(queue.get_timestamp_period()));
-        let pipeline_counts = crate::pipelines::PipelineCounts::new(&device, display.format());
+        let ledger = crate::pipelines::Ledger::new(&device, display.format());
         let core = Core {
             device,
             queue,
@@ -117,7 +198,8 @@ impl Renderer {
             display,
             health,
             profiler,
-            pipeline_counts,
+            ledger,
+            limits,
         };
         let renderer = Self {
             surface: None,
@@ -130,11 +212,12 @@ impl Renderer {
             #[cfg(feature = "profiling")]
             prelude_owners: Vec::new(),
             installing: None,
-            previous: None,
             seconds: None,
             part_names: &[],
             linked: engine_core::LinkedStats::default(),
             resolver: None,
+            recovering: None,
+            lost_bricks: Vec::new(),
         };
         crate::platform::yield_now().await;
         Ok(StartingRenderer {

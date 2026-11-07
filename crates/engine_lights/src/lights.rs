@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Cut, DrawnPoses, Expected, GlobalTransforms, InvalidSetting, Mobility, Nearest, Rule, View,
+    Cut, DrawnPoses, Expected, GlobalTransforms, InvalidSetting, Mobility, Nearest, Rule, PrimaryView,
     fields, settings, stats,
 };
 use engine_places::meshes::Instances;
@@ -172,7 +172,7 @@ pub(crate) fn gather_lights(
     settings: Res<LocalLightSettings>,
     lights: Query<(Entity, &'static LocalLight)>,
     (instances, globals, poses): (Res<Instances>, Res<GlobalTransforms>, Res<DrawnPoses>),
-    view: Res<View>,
+    view: Res<PrimaryView>,
     mut gather: ResMut<LightGather>,
     mut list: ResMut<LightList>,
 ) {
@@ -221,7 +221,7 @@ pub(crate) fn gather_lights(
 pub(crate) fn light_stats(
     list: Res<LightList>,
     gather: Res<LightGather>,
-    view: Res<View>,
+    view: Res<PrimaryView>,
     totals: Res<LightTotals>,
     mut stats: ResMut<LightStats>,
 ) {

@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::math::{clamp, max};
-use engine_core::{Cut, DeviceLimits, Error, FrameTime, Readable, Readback, View};
+use engine_core::{Cut, DeviceLimits, Error, FrameTime, Readable, Readback, PrimaryView};
 use engine_places_simulation::wind::Wind;
 use engine_places_world::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
@@ -57,7 +57,7 @@ pub(crate) struct ParticleView {
 }
 
 impl ParticleView {
-    pub(crate) fn of(view: &View) -> Self {
+    pub(crate) fn of(view: &PrimaryView) -> Self {
         let display = view.display_size();
         Self {
             detail: view.detail_eye(),
@@ -271,7 +271,7 @@ pub(crate) fn particle_terrain(
 
 pub(crate) fn plan_particles(
     water: Res<Water>,
-    (view, limits, time, wind): (Res<View>, Res<DeviceLimits>, Res<FrameTime>, Res<Wind>),
+    (view, limits, time, wind): (Res<PrimaryView>, Res<DeviceLimits>, Res<FrameTime>, Res<Wind>),
     (ground, tiles): (Res<GroundTiles>, Res<TerrainTiles>),
     mut state: ResMut<WaterState>,
 ) {

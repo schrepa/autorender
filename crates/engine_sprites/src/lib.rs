@@ -7,17 +7,22 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetUses, Brick, Bricks, ComponentKind, DrawnPoses, Error, GlobalTransforms, Runs,
-    SceneComponents, Schedule, Smoke, Source, Spawner, TextureHandle, View, gpu_struct,
+    Asset, AssetResidency, AssetUses, Attributes, Brick, Bricks, ColorPass, ComponentKind,
+    DrawKind, DrawnPoses, Error, GlobalTransforms, KindDecl, PrimaryView, Runs, SceneComponents,
+    Schedule, Smoke, Source, Spawner, TextureHandle, gpu_struct,
 };
 use engine_render::{
-    Bind, Buffer, DepthUse, Draw, GpuPart, Install, Layer, Lifetime, MainView, Pipeline, Prepare,
-    RenderBricks, RenderPipeline, SamplerDesc, Shape, wgpu,
+    Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare, RenderBricks,
+    RenderPipeline, SamplerDesc, Scene, SceneDraw, Shape, wgpu,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub use flat::{DARK, LIGHT};
+
+pub const SPRITES: DrawKind = DrawKind("sprites");
+
+const DRAWN_IN: Scene = Scene::of::<ColorPass>();
 
 const GENERATED: &[&str] = &[<SpriteInstance as engine_core::GpuStruct>::WGSL];
 
@@ -66,8 +71,12 @@ impl Brick for SpritesBrick {
             )
             .systems(Schedule::ViewSync, publish_sheets)
             .generated(GENERATED)
-            .draws::<SpritesGpu, MainView>(Layer::Opaque, SpritesGpu::draw_sprites)
-            .draws::<SpritesGpu, MainView>(Layer::Late, SpritesGpu::draw_flat);
+            .draw_kind(KindDecl {
+                kind: SPRITES,
+                vertex: "vs_sprite",
+                needs: Attributes::NONE,
+            })
+            .draws::<SpritesGpu>(SPRITES, SpritesGpu::draw);
     }
 }
 
@@ -77,46 +86,43 @@ struct Sheets;
 fn publish_sheets(
     sprites: Query<(Entity, &Sprite)>,
     globals: Res<GlobalTransforms>,
+    residency: Res<AssetResidency>,
     own: Query<(Entity, &AssetUses), With<Sheets>>,
     mut spawner: Spawner<SpritesBrick>,
 ) {
-    let mut textures: Vec<TextureHandle> = sprites
+    let mut wanted: Vec<Asset> = sprites
         .iter()
         .filter(|(entity, _)| globals.pose(*entity).is_some())
-        .map(|(_, sprite)| sprite.sheet)
+        .map(|(_, sprite)| Asset::Texture(sprite.sheet))
         .collect();
-    textures.sort_unstable();
-    textures.dedup();
-    let used = AssetUses {
-        textures,
-        ..AssetUses::default()
-    };
+    wanted.sort_unstable();
+    wanted.dedup();
     match own.single() {
         Ok((entity, held)) => {
-            if *held != used {
-                spawner.insert(entity, used);
+            if held.assets() != wanted.as_slice() {
+                spawner.insert(entity, AssetUses::new(&residency, wanted));
             }
         }
         Err(_) => {
-            spawner.spawn((Sheets, used));
+            spawner.spawn((Sheets, AssetUses::new(&residency, wanted)));
         }
     }
 }
 
 struct SpritesGpu {
     flat: flat::Flat,
-    pipeline: Pipeline<Self, MainView>,
+    pipeline: Pipeline<Self, Scene>,
     instances: Buffer<Self>,
     staged: Vec<SpriteInstance>,
     runs: Vec<(TextureHandle, Range<u32>)>,
-    drawn: Vec<(Pipeline<Self, MainView>, Range<u32>)>,
+    drawn: Vec<(Pipeline<Self, Scene>, Range<u32>)>,
 }
 
 impl GpuPart for SpritesGpu {
     type Reads = (
         Query<'static, 'static, (Entity, &'static Sprite)>,
         (Res<'static, GlobalTransforms>, Res<'static, DrawnPoses>),
-        Res<'static, View>,
+        Res<'static, PrimaryView>,
     );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
@@ -125,7 +131,7 @@ impl GpuPart for SpritesGpu {
         let instances = cx.buffer("instances", Lifetime::Kept);
         let sampler = cx.sampler(SamplerDesc::NEAREST);
         let pipeline = cx.render_pipeline(
-            MainView,
+            DRAWN_IN,
             &RenderPipeline {
                 vertex: draw::VS_SPRITE,
                 fragment: Some(draw::FS_SPRITE),
@@ -178,7 +184,10 @@ impl GpuPart for SpritesGpu {
 }
 
 impl SpritesGpu {
-    fn draw_sprites(&self, _: &(), draw: &mut Draw<'_, Self, MainView>) -> u32 {
+    fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
+        if scene.pass != DRAWN_IN {
+            return 0;
+        }
         for (pipeline, range) in &self.drawn {
             draw.draw(
                 pipeline,
@@ -188,11 +197,7 @@ impl SpritesGpu {
                 },
             );
         }
-        self.drawn.len() as u32
-    }
-
-    fn draw_flat(&self, _: &(), draw: &mut Draw<'_, Self, MainView>) -> u32 {
-        self.flat.draw(draw)
+        self.drawn.len() as u32 + self.flat.draw(draw)
     }
 }
 

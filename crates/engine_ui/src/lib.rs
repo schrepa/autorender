@@ -15,14 +15,15 @@ use std::collections::BTreeSet;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asks, AssetUses, Brick, Bricks, ComponentKind, CursorMode, CursorRequests, Error, ErrorCode,
-    FeedSettings, GlobalTransforms, MenuInput, PointerInput, Runs, SceneComponents, SceneContext,
-    SceneCx, Schedule, Screens, Smoke, Source, Spawner, View, gpu_struct, settings, stats,
+    Asks, Asset, AssetResidency, AssetUses, AttachPoint, Brick, Bricks, ComponentKind, CursorMode,
+    CursorRequests, Error, ErrorCode, FeedSettings, GlobalTransforms, MenuInput, PassName,
+    PassViews, PointerInput, PrimaryView, Runs, SceneComponents, SceneContext, SceneCx, Schedule,
+    Screens, SlotSet, Smoke, Source, Spawner, Writes, gpu_struct, never, settings, stats,
 };
 use engine_places_rendering::screens::ScreenAsk;
 use engine_places_rendering::text::Text;
 use engine_places_rendering::ui::{UiEvents, UiLength, UiNode, UiRoot, UiValues};
-use engine_render::{Layer, OverlayStack, OverlaySteps, RenderBricks};
+use engine_render::RenderBricks;
 use serde_json::{Value, json};
 
 use gpu::UiGpu;
@@ -66,11 +67,24 @@ gpu_struct! {
     }
 }
 
+pub(crate) struct UiPass;
+
+impl PassName for UiPass {
+    const NAME: &'static str = "ui";
+    const PASS: engine_core::Pass = engine_core::Pass {
+        writes: Writes::NOTHING,
+        reads: SlotSet::NONE,
+        views: PassViews::Main,
+        at: AttachPoint::Overlay,
+        takes: never,
+    };
+}
+
 type Reading<'w, 's> = (
     Roots<'w, 's>,
     Res<'w, Text>,
     Res<'w, UiValues>,
-    Res<'w, View>,
+    Res<'w, PrimaryView>,
     Res<'w, UiSettings>,
     (Option<Res<'w, SceneContext>>, Res<'w, GlobalTransforms>),
 );
@@ -229,7 +243,6 @@ fn present(
     screens: Res<Screens>,
     mut state: ResMut<UiState>,
     mut stats: ResMut<UiStats>,
-    mut stack: ResMut<OverlaySteps>,
 ) {
     if state.is_idle() && (roots.is_empty() || !settings.enabled) {
         return;
@@ -243,12 +256,8 @@ fn present(
         screens.top(),
     );
     state.sync(&roots, &facts);
-    gpu::stage(&mut state, settings.max_rects as usize);
-    state.queue_text(&text);
+    gpu::stage(&mut state, &text, settings.max_rects as usize);
     stats.set_if_neq(state.stats());
-    stack.set_if_neq(OverlaySteps {
-        count: state.shown_roots,
-    });
 }
 
 #[derive(Component)]
@@ -256,22 +265,22 @@ struct Images;
 
 fn publish_images(
     state: Res<UiState>,
+    residency: Res<AssetResidency>,
     own: Query<(Entity, &AssetUses), With<Images>>,
     mut spawner: Spawner<UiBrick>,
 ) {
-    let used = || AssetUses {
-        textures: state.textures.clone(),
-        ..AssetUses::default()
-    };
+    let mut wanted: Vec<Asset> = state.textures.iter().copied().map(Asset::Texture).collect();
+    wanted.sort_unstable();
+    wanted.dedup();
     match own.single() {
         Ok((entity, held)) => {
-            if held.textures != state.textures {
-                spawner.insert(entity, used());
+            if held.assets() != wanted.as_slice() {
+                spawner.insert(entity, AssetUses::new(&residency, wanted));
             }
         }
         Err(_) => {
-            if !state.textures.is_empty() {
-                spawner.spawn((Images, used()));
+            if !wanted.is_empty() {
+                spawner.spawn((Images, AssetUses::new(&residency, wanted)));
             }
         }
     }
@@ -301,7 +310,6 @@ impl Brick for UiBrick {
             .resource::<UiState>()
             .fill::<UiValues>(None)
             .fill::<UiEvents>(None)
-            .fill::<OverlaySteps>(None)
             .join::<SceneComponents>(
                 ComponentKind::of::<UiRoot>("ui")
                     .check(check_root)
@@ -316,6 +324,7 @@ impl Brick for UiBrick {
             .operation::<operations::UiPress>()
             .observation::<operations::UiTree>()
             .generated(GENERATED)
-            .draws::<UiGpu, OverlayStack>(Layer::Opaque, UiGpu::draw_rects);
+            .pass::<UiPass>()
+            .part::<UiGpu>();
     }
 }

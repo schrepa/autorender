@@ -2,13 +2,13 @@ use std::any::Any;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use bevy_ecs::prelude::ResMut;
-use engine_core::{Error, ErrorCode, View};
-use engine_places_rendering::text::{FontId, Text, TextRun, TextSize, Typeset};
+use engine_core::{Error, ErrorCode, PrimaryView};
+use engine_places_rendering::text::{FontId, Glyph, Text, TextRun, TextSize, Typeset};
 use glam::UVec2;
 
 use crate::atlas::{Atlas, Slot, Upload};
 use crate::fonts::{Fonts, Layout, Shapes};
-use crate::{GlyphInstance, GlyphRange, Label, TextSettings, TextStats};
+use crate::{Label, TextSettings, TextStats};
 
 struct Placing<'a> {
     text: &'a str,
@@ -24,28 +24,29 @@ pub(crate) struct State {
     fonts: Option<Fonts>,
     shapes: Shapes,
     atlas: Atlas,
-    queue: Vec<TextRun>,
-    queued: u32,
-    shown: Vec<TextRun>,
+    placed_runs: u32,
+    placed_glyphs: u32,
     cut: u32,
     ratio: f32,
     limit: u32,
+    enabled: bool,
     frame: u64,
     stats: TextStats,
 }
 
 impl Default for State {
     fn default() -> Self {
+        let settings = TextSettings::default();
         Self {
             fonts: None,
             shapes: Shapes::default(),
             atlas: Atlas::default(),
-            queue: Vec::new(),
-            queued: 0,
-            shown: Vec::new(),
+            placed_runs: 0,
+            placed_glyphs: 0,
             cut: 0,
             ratio: 1.0,
-            limit: TextSettings::default().max_glyphs,
+            limit: settings.max_glyphs,
+            enabled: settings.enabled,
             frame: 0,
             stats: TextStats::default(),
         }
@@ -53,18 +54,20 @@ impl Default for State {
 }
 
 impl State {
-    pub(crate) fn sync(&mut self, settings: &TextSettings, view: &View) {
+    pub(crate) fn sync(&mut self, settings: &TextSettings, view: &PrimaryView) {
         self.ratio = view.pixel_ratio();
         self.limit = settings.max_glyphs;
+        self.enabled = settings.enabled;
         self.atlas.resize(settings.atlas_size);
+    }
+
+    pub(crate) fn advance(&mut self) {
+        self.shapes.sweep(self.frame);
+        self.frame += 1;
     }
 
     pub(crate) fn stats(&self) -> TextStats {
         self.stats.clone()
-    }
-
-    pub(crate) fn runs(&self) -> Vec<TextRun> {
-        self.queue.iter().chain(&self.shown).cloned().collect()
     }
 
     pub(crate) fn atlas_side(&self) -> u32 {
@@ -86,45 +89,49 @@ impl State {
         &mut self,
         labels: impl Iterator<Item = &'l Label>,
         settings: &TextSettings,
-        view: &View,
-        staged: &mut Vec<GlyphInstance>,
-        ranges: &mut Vec<GlyphRange>,
-    ) {
+        view: &PrimaryView,
+        staged: &mut Vec<Glyph>,
+    ) -> u32 {
         self.sync(settings, view);
-        self.frame += 1;
-        std::mem::swap(&mut self.queue, &mut self.shown);
-        self.queue.clear();
-        self.queued = 0;
         let mut cut = std::mem::take(&mut self.cut);
-        let mut runs = 0;
+        let mut runs = std::mem::take(&mut self.placed_runs);
+        let placed = std::mem::take(&mut self.placed_glyphs);
         staged.clear();
-        if settings.enabled {
+        if self.enabled {
             let display = view.display_size().max(UVec2::ONE);
+            let limit = self.limit as usize;
             for label in labels.filter(|label| label.visible && !label.text.is_empty()) {
                 let placing = self.label_placing(label);
-                self.place(&placing, display, staged, &mut cut);
+                self.place(&placing, display, limit, staged, &mut cut);
                 runs += 1;
             }
-            extend_ranges(ranges, None, staged.len());
-            let shown = std::mem::take(&mut self.shown);
-            for run in shown.iter().filter(|run| !run.text.is_empty()) {
-                let placing = self.run_placing(run);
-                self.place(&placing, display, staged, &mut cut);
-                extend_ranges(ranges, run.step, staged.len());
-                runs += 1;
-            }
-            self.shown = shown;
         }
         let resets = u32::from(self.atlas.settle());
-        self.shapes.sweep(self.frame);
+        let shown = staged.len() as u32 + placed;
         self.stats = TextStats {
             runs,
-            glyphs_drawn: staged.len() as u32,
+            glyphs_drawn: shown,
             glyphs_cut: cut,
             atlas_resets: self.stats.atlas_resets + resets,
             fonts: self.fonts.as_ref().map_or(0, Fonts::loaded),
             failed_fonts: self.fonts.as_ref().map_or(0, Fonts::failed),
         };
+        shown
+    }
+
+    fn place_run(&mut self, run: &TextRun, display: UVec2, glyphs: &mut Vec<Glyph>) {
+        if !self.enabled || run.text.is_empty() {
+            return;
+        }
+        let placing = self.run_placing(run);
+        let before = glyphs.len();
+        let mut cut = 0;
+        self.place(&placing, display, usize::MAX, glyphs, &mut cut);
+        self.cut = self.cut.saturating_add(cut);
+        self.placed_runs = self.placed_runs.saturating_add(1);
+        self.placed_glyphs = self
+            .placed_glyphs
+            .saturating_add((glyphs.len() - before) as u32);
     }
 
     pub(crate) fn load_font(&mut self, bytes: Arc<[u8]>) -> Option<FontId> {
@@ -165,11 +172,11 @@ impl State {
         &mut self,
         run: &Placing<'_>,
         display: UVec2,
-        staged: &mut Vec<GlyphInstance>,
+        limit: usize,
+        staged: &mut Vec<Glyph>,
         cut: &mut u32,
     ) {
         let ratio = self.ratio;
-        let limit = self.limit as usize;
         let frame = self.frame;
         let Self {
             fonts,
@@ -201,34 +208,8 @@ impl State {
                 origin[0] + glyph.x + slot.left,
                 origin[1] + glyph.y - slot.top,
             ];
-            staged.extend(instance(slot, at, bounds, run.color, screen));
+            staged.extend(glyph(slot, at, bounds, run.color, screen));
         }
-    }
-
-    fn enqueue(&mut self, run: TextRun) {
-        let count = run.text.chars().count() as u32;
-        let queued = self.queued.saturating_add(count);
-        if queued > self.limit {
-            self.cut = self.cut.saturating_add(count);
-            return;
-        }
-        self.queued = queued;
-        self.queue.push(run);
-    }
-}
-
-fn extend_ranges(ranges: &mut Vec<GlyphRange>, step: Option<u32>, end: usize) {
-    let end = end as u32;
-    let start = ranges.last().map_or(0, |(_, range)| range.end);
-    if start == end {
-        return;
-    }
-    if let Some((held, range)) = ranges.last_mut()
-        && *held == step
-    {
-        range.end = end;
-    } else {
-        ranges.push((step, start..end));
     }
 }
 
@@ -245,13 +226,13 @@ fn bounds_of(clip: Option<[f32; 4]>, ratio: f32, display: UVec2) -> [i32; 4] {
     ]
 }
 
-fn instance(
+fn glyph(
     slot: Slot,
     at: [i32; 2],
     bounds: [i32; 4],
     color: [f32; 4],
     screen: glam::Vec2,
-) -> Option<GlyphInstance> {
+) -> Option<Glyph> {
     let left = at[0].max(bounds[0]);
     let top = at[1].max(bounds[1]);
     let right = (at[0] + slot.width as i32).min(bounds[2]);
@@ -261,9 +242,9 @@ fn instance(
     }
     let across = |x: i32| x as f32 / screen.x * 2.0 - 1.0;
     let down = |y: i32| 1.0 - y as f32 / screen.y * 2.0;
-    Some(GlyphInstance {
+    Some(Glyph {
         place: [across(left), down(top), across(right), down(bottom)],
-        rect: [
+        texel: [
             (slot.x as i32 + left - at[0]) as f32,
             (slot.y as i32 + top - at[1]) as f32,
             (right - left) as f32,
@@ -315,7 +296,8 @@ impl Typeset for Typesetter {
         }
     }
 
-    fn queue(&self, run: TextRun) {
-        self.lock().enqueue(run);
+    fn place(&self, run: &TextRun, display: [u32; 2], glyphs: &mut Vec<Glyph>) {
+        let display = UVec2::from_array(display).max(UVec2::ONE);
+        self.lock().place_run(run, display, glyphs);
     }
 }

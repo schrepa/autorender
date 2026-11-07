@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Cut, DeviceLimits, Error, GpuBits, Readable, Readback, View};
+use engine_core::{Cut, DeviceLimits, Error, GpuBits, Readable, Readback, PrimaryView};
 use engine_places_rendering::lighting::Lighting;
 use engine_places_rendering::lights::{LIGHT_EXTERIOR, LIGHT_INTERIOR, LightRegion};
 use engine_places_rendering::probes::ProbeCaptures;
@@ -222,7 +222,7 @@ impl LightsGpu {
     fn place_headers(
         &mut self,
         settings: &LocalLightSettings,
-        view: &View,
+        view: &PrimaryView,
         captures: &ProbeCaptures,
         shaped: bool,
     ) {
@@ -271,7 +271,7 @@ impl GpuPart for LightsGpu {
         Res<'static, LightList>,
         Res<'static, LightTotals>,
         Res<'static, Lighting>,
-        Res<'static, View>,
+        Res<'static, PrimaryView>,
         Res<'static, ProbeCaptures>,
         Res<'static, DeviceLimits>,
     );

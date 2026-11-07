@@ -2,7 +2,9 @@ import package::face::instances::{
     AffinePose, CardDebugTargets, CardVertex, SlotColor, placed_card_debug, placed_card_pixel,
     placed_card_shade, placed_card_vertex
 };
+import package::engine::mesh::impostor_frames::impostor_index;
 import package::generated::targets::{DepthViewTargets, depth_view_targets};
+import package::scatter::faces::placed_tiles::placed_impostor;
 
 @group(2) @binding(0) var<storage, read> poses: array<AffinePose>;
 @group(2) @binding(1) var<storage, read> colors: array<SlotColor>;
@@ -35,7 +37,8 @@ fn card_of(input: PlacedCardVertex) -> CardVertex {
 fn vs_placed_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
         @location(3) batch: u32, @location(14) draw: vec4<u32>) -> PlacedCardVertex {
     let pose = poses[slot];
-    let card = placed_card_vertex(vertex, batch, pose, pose, colors[slot]);
+    let card = placed_card_vertex(vertex, batch, pose, pose, colors[slot],
+        placed_impostor(impostor_index(batch)));
     return PlacedCardVertex(card.clip_position, card.frames_ab, card.frame_c, card.world,
         card.normal_x, card.normal_y, card.normal_z, card.depth_axis, card.material, card.batch,
         card.previous, card.crossings, card.slopes_ab, card.slope_c, vec2<u32>(draw.x, slot));
@@ -44,11 +47,13 @@ fn vs_placed_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
 @fragment
 fn fs_placed_card(input: PlacedCardVertex) -> DepthViewTargets {
     let card = card_of(input);
-    let shaded = placed_card_shade(card);
+    let shaded = placed_card_shade(card, placed_impostor(impostor_index(card.batch)));
     return depth_view_targets(shaded.shaded, placed_card_pixel(card), shaded.depth);
 }
 
 @fragment
 fn fs_debug_placed_card(input: PlacedCardVertex) -> CardDebugTargets {
-    return placed_card_debug(card_of(input), input.object.x, input.object.y);
+    let card = card_of(input);
+    return placed_card_debug(card, input.object.x, input.object.y,
+        placed_impostor(impostor_index(card.batch)));
 }

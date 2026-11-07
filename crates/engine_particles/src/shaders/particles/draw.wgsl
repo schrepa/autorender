@@ -1,5 +1,6 @@
 import package::engine::math::{pcg, unit};
 import package::engine::particles::{Particle, ParticleIn, standard};
+import package::engine::surfaces::SURFACE_SOLID;
 import package::engine::view::camera;
 import package::face::lighting::sun_visibility;
 import package::face::particle_formula::custom_particle;
@@ -114,7 +115,7 @@ fn vs_particle(@builtin(vertex_index) vertex: u32,
     output.center = vec4<f32>(position, size * MIST_SPREAD);
     output.key = unit(pcg(seed + 5u)) * 256.0;
     output.sunlit = sun_visibility(SunAt(position, sun_direction(), vec3<f32>(0.0),
-        vec3<f32>(0.0), 0.0, false, 0u, vec4<f32>(0.0)));
+        vec3<f32>(0.0), 0.0, SURFACE_SOLID, 0u, vec4<f32>(0.0)));
     return output;
 }
 

@@ -1,6 +1,6 @@
 use engine_scene::{
-    SceneAlphaMode, SceneDocument, SceneFilter, SceneMap, SceneMaterial, SceneMipmapFilter,
-    SceneSurface, SceneTexture, SceneTextureMap, SceneWrap,
+    SceneAlphaMode, SceneCull, SceneDocument, SceneFilter, SceneMap, SceneMaterial,
+    SceneMipmapFilter, SceneSurface, SceneTexture, SceneTextureMap, SceneWrap,
 };
 use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 use serde_json::Value;
@@ -142,11 +142,14 @@ pub(crate) fn import(
             emissive_texture,
             alpha_mode,
             alpha_cutoff,
-            double_sided: material.double_sided().then_some(true),
-            foliage: None,
-            world_tiling: None,
-            top: None,
-            grounding: None,
+            cull: material.double_sided().then_some(SceneCull::None),
+            depth_test: None,
+            depth_write: None,
+            depth_bias: None,
+            transmission: None,
+            slots: None,
+            values: None,
+            lighting: None,
         });
     }
     Ok(())

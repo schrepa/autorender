@@ -9,10 +9,26 @@ mod part;
 mod settings;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Schedule, Source, View, gpu_struct};
+use engine_core::{
+    AttachPoint, Brick, Bricks, Pass, PassName, PassViews, PrimaryView, Schedule, SlotSet, Source,
+    Writes, gpu_struct, never,
+};
 use engine_render::{PostLight, RenderBricks};
 
 pub use settings::{Bloom, BloomStats};
+
+pub(crate) struct BloomPass;
+
+impl PassName for BloomPass {
+    const NAME: &'static str = "bloom";
+    const PASS: Pass = Pass {
+        writes: Writes::NOTHING,
+        reads: SlotSet::NONE,
+        views: PassViews::Main,
+        at: AttachPoint::Post,
+        takes: never,
+    };
+}
 
 gpu_struct! {
     #[derive(Resource)]
@@ -33,6 +49,7 @@ impl Brick for BloomBrick {
             .settings::<Bloom>()
             .stats::<BloomStats>()
             .piece::<BloomPiece>()
+            .pass::<BloomPass>()
             .join::<PostLight>((), Some(shaders::bloom::apply::MODULE))
             .systems(Schedule::ViewSync, publish_bloom)
             .part::<part::BloomGpu>();
@@ -41,7 +58,7 @@ impl Brick for BloomBrick {
 
 fn publish_bloom(
     bloom: Res<Bloom>,
-    view: Res<View>,
+    view: Res<PrimaryView>,
     mut piece: ResMut<BloomPiece>,
     mut stats: ResMut<BloomStats>,
 ) {

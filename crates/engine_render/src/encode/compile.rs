@@ -186,6 +186,23 @@ impl Run {
         }
     }
 
+    fn pass_name(&self, pipeline: u32) -> &'static str {
+        let Some(built) = self.machine.pipelines.get(pipeline as usize) else {
+            return crate::pipelines::FIXED;
+        };
+        match built.decl.scope {
+            Scoped::Scene(name) => name,
+            Scoped::Pass(pass) => self
+                .machine
+                .declared
+                .passes
+                .get(pass as usize)
+                .map_or(crate::pipelines::FIXED, |declared| {
+                    declared.group.unwrap_or(declared.name)
+                }),
+        }
+    }
+
     pub(super) fn pipeline_of(&self, handle: u32) -> Option<(u32, Option<usize>)> {
         let count = self.machine.pipelines.len() as u32;
         if handle < count {
@@ -198,11 +215,14 @@ impl Run {
     pub(super) fn render_pipeline(
         &mut self,
         pipeline: u32,
-        variant: Option<crate::materials::Variant>,
+        variant: Option<crate::surface::DrawState>,
     ) -> Option<usize> {
         let layout = self.recording.open()?.layout;
-        let bits = variant.map(crate::materials::Variant::bits);
+        let bits = variant.map(engine_core::GpuBits::pack);
         let built = self.machine.pipelines.get(pipeline as usize)?;
+        if built.skipped {
+            return None;
+        }
         if let Some(at) = built
             .ready
             .iter()
@@ -210,7 +230,7 @@ impl Run {
         {
             return Some(at);
         }
-        let specialized = variant.map(|variant| (variant.bits(), variant.constants()));
+        let specialized = variant.map(|state| (engine_core::GpuBits::pack(state), state.constants()));
         let (key, made) = self.compile(
             pipeline,
             (layout.formats(), layout.depth),
@@ -268,7 +288,7 @@ impl Run {
         let Program::Render(desc) = &built.decl.program else {
             return None;
         };
-        if debug && desc.debug.is_none() {
+        if built.skipped || (debug && desc.debug.is_none()) {
             return None;
         }
         let switches = stage_switches(&self.switches, &built.stages);
@@ -357,12 +377,13 @@ impl Run {
                     multiview_mask: None,
                     cache: None,
                 });
+        let program = built.program_key;
         if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize) {
             built.made.push((key, made.clone()));
         }
-        crate::pipelines::count(1);
+        crate::pipelines::count(self.pass_name(pipeline), 1);
         self.note_compiled(Compiled {
-            pipeline,
+            program,
             formats: formats.to_vec(),
             depth,
             debug,
@@ -403,7 +424,7 @@ impl Run {
             }
             depth = Some((DEPTH_FORMAT, true));
         }
-        if crate::shared::draws_canvas(pass.name) {
+        if crate::shared::draws_canvas(pass) {
             formats.insert(0, Some(self.surface));
         }
         if pass.name == crate::shared::COMPOSITE {
@@ -443,7 +464,9 @@ impl Run {
     )]
     pub(super) fn compute_pipeline(&mut self, pipeline: u32) -> Option<wgpu::ComputePipeline> {
         let built = self.machine.pipelines.get(pipeline as usize)?;
-        let (Program::Compute(_), Some(stage)) = (&built.decl.program, built.stages.first()) else {
+        let (Program::Compute(_), Some(stage), false) =
+            (&built.decl.program, built.stages.first(), built.skipped)
+        else {
             return None;
         };
         let switches: Vec<(u32, bool)> = self
@@ -500,7 +523,7 @@ impl Run {
                 },
                 cache: None,
             });
-        crate::pipelines::count(1);
+        crate::pipelines::count(self.pass_name(pipeline), 1);
         if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize) {
             built.computed.push((key, made.clone()));
         }
@@ -571,14 +594,15 @@ impl Run {
         };
         let before = self.compiled.len();
         for key in &keys {
-            let reached = self
+            let found = self
                 .machine
                 .pipelines
-                .get(key.pipeline as usize)
-                .is_some_and(|built| self.part_reached(built.decl.part));
-            if reached {
+                .iter()
+                .position(|built| built.program_key == key.program)
+                .filter(|&at| self.part_reached(self.machine.pipelines[at].decl.part));
+            if let Some(pipeline) = found {
                 let _ = self.compile(
-                    key.pipeline,
+                    pipeline as u32,
                     (&key.formats, key.depth),
                     (key.debug, key.main),
                     specialized(key),

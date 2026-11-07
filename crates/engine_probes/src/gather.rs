@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{GlobalTransforms, Nearest, View};
+use engine_core::{GlobalTransforms, Nearest, PrimaryView};
 use engine_places_rendering::probes::{Interior, ReflectionProbe};
 use glam::Vec3;
 
@@ -24,7 +24,7 @@ pub(crate) struct ProbeList {
 
 pub(crate) fn gather_probes(
     settings: Res<ReflectionProbeSettings>,
-    view: Res<View>,
+    view: Res<PrimaryView>,
     globals: Res<GlobalTransforms>,
     probes: Query<(Entity, &ReflectionProbe)>,
     mut gathered: ResMut<ProbeList>,

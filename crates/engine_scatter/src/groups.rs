@@ -7,7 +7,7 @@ use engine_core::{
 };
 use engine_math::collections::HashMap;
 use engine_places_world::ground::{Placed, PlacedAsset};
-use engine_render::{ground_data, pack_color, pack_surface};
+use engine_render::{pack_color, pack_surface};
 use glam::Vec3;
 
 use crate::layouts::{
@@ -16,6 +16,23 @@ use crate::layouts::{
 };
 use crate::pool::TileObjects;
 use crate::settings::{PlacedLook, ScatterSettings};
+
+pub(crate) const GROUNDING_HEIGHT: &str = "grounding_height";
+
+fn ground_data(height: Option<f32>, normal: [f32; 2], sink: f32, scale: f32) -> [u32; 4] {
+    let Some(height) = height else {
+        return [0; 4];
+    };
+    let snorm = |value: f32| {
+        u32::from((engine_math::clamp(value, -1.0, 1.0) * 32767.0).round() as i16 as u16)
+    };
+    [
+        snorm(normal[0]) | snorm(normal[1]) << 16,
+        sink.to_bits(),
+        (height * scale).to_bits(),
+        0,
+    ]
+}
 
 type Range3 = (u32, u32, i32);
 
@@ -246,7 +263,7 @@ impl Groups {
                 groups.push(DrawGroup {
                     meshes,
                     material: asset.material.handle,
-                    source: *material,
+                    source: material.clone(),
                     extended,
                     color,
                     sphere,
@@ -319,7 +336,7 @@ impl Groups {
                 a.color == b.color
                     && a.sphere == b.sphere
                     && a.objects == b.objects
-                    && a.source.grounding() == b.source.grounding()
+                    && a.source.value(GROUNDING_HEIGHT) == b.source.value(GROUNDING_HEIGHT)
             })
     }
 
@@ -371,7 +388,7 @@ impl Groups {
                 pad: [0; 3],
             });
             objects.3.push(ground_data(
-                draw.source.grounding(),
+                draw.source.value(GROUNDING_HEIGHT),
                 placed.ground,
                 placed.sink,
                 placed.scale,

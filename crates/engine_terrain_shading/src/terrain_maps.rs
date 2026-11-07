@@ -1,10 +1,18 @@
 use std::sync::Arc;
 
-use engine_core::{AssetLibrary, Error, Texture, TextureFormat, TextureHandle};
+use engine_core::{AssetLibrary, ColorSpace, Error, Texture, TextureFormat, TextureHandle};
 use engine_places_world::ground::{SurfaceMaps, TerrainTiles};
 use engine_render::{Install, Lifetime, Prepare, Sampler, SamplerDesc, wgpu};
 
 use crate::terrain::TerrainGpu;
+
+fn array_space(array: usize) -> ColorSpace {
+    if array == 0 {
+        ColorSpace::Srgb
+    } else {
+        ColorSpace::Linear
+    }
+}
 
 type LayerKey = [Option<TextureHandle>; 3];
 
@@ -181,7 +189,7 @@ impl TerrainMaps {
         };
         let arrays = [self.albedo, self.data];
         for (array, texture) in arrays.into_iter().enumerate() {
-            let format = engine_render::texture_format(shape.formats[array], array == 0).0;
+            let format = engine_render::texture_format(shape.formats[array], array_space(array)).0;
             let layers = count * if array == 0 { 1 } else { 2 };
             cx.allocate_as(
                 texture,
@@ -226,7 +234,7 @@ impl TerrainMaps {
     fn defaults(&self, cx: &mut Prepare<'_, TerrainGpu>) {
         let arrays = [self.albedo, self.data];
         for (array, texture) in arrays.into_iter().enumerate() {
-            let format = engine_render::texture_format(TextureFormat::Rgba8, array == 0).0;
+            let format = engine_render::texture_format(TextureFormat::Rgba8, array_space(array)).0;
             cx.allocate_as(
                 texture,
                 format,
@@ -262,7 +270,7 @@ fn shape_of(maps: &SurfaceMaps, assets: &AssetLibrary, features: wgpu::Features)
         };
         let array = usize::from(index > 0);
         let format = texture.format();
-        let sampled = features.contains(engine_render::texture_format(format, array == 0).1);
+        let sampled = features.contains(engine_render::texture_format(format, array_space(array)).1);
         let chained = texture.has_mips() || (levels == 1 && !format.is_compressed());
         if (texture.width(), texture.height()) != size
             || texture.levels().len() != levels

@@ -288,11 +288,7 @@ impl WorldTrace {
             TileKey::new(0, 0, 0),
             TileKey::new(u8::MAX, u16::MAX, u16::MAX),
         );
-        let cover = if frame.cover.enabled {
-            frame.cover.density
-        } else {
-            0.0
-        };
+        let cover = frame.cover.density;
         let words = self.words.len() as u32;
         for (terrain, table) in traced(frame.tiles, frame.ground) {
             let ground = frame

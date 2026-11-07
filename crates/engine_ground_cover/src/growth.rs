@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{Cut, DeviceLimits, FrameTime, Readable, Readback, View};
+use engine_core::{Cut, DeviceLimits, FrameTime, Readable, Readback, PrimaryView};
 use engine_places_simulation::wind::Wind;
 use engine_places_world::ground::{Foliage, GroundTiles, TerrainEntry, TerrainTiles};
 use engine_render::{pixels_per_meter, planes};
@@ -27,7 +27,6 @@ pub(crate) struct CoverPlan {
     pub(crate) drawn: bool,
     reach: f32,
     tiers: u32,
-    previous_time: Option<f32>,
 }
 
 #[derive(Resource, Default)]
@@ -74,13 +73,13 @@ pub(crate) fn plan_cover(
         Res<TerrainTiles>,
         Res<GroundTiles>,
     ),
-    (view, time, limits): (Res<View>, Res<FrameTime>, Res<DeviceLimits>),
+    (view, time, limits): (Res<PrimaryView>, Res<FrameTime>, Res<DeviceLimits>),
     (wind, foliage): (Res<Wind>, Res<Foliage>),
     mut plan: ResMut<CoverPlan>,
     mut counts: ResMut<BladeCounts>,
 ) {
     let plan = &mut *plan;
-    plan.shown = cover.enabled && cover.density > 0.0;
+    plan.shown = cover.density > 0.0;
     plan.room = limits.storage_room / 16 * 16;
     plan.drawn = !ground.tables.is_empty();
     if !plan.drawn {
@@ -90,8 +89,8 @@ pub(crate) fn plan_cover(
     plan.cells.clear();
     plan.reach = 0.0;
     plan.tiers = 0;
+    let previous = (time.elapsed - time.seconds) as f32;
     let time = time.elapsed as f32;
-    let previous = plan.previous_time.replace(time).unwrap_or(time);
     let grounded = foliage.ground_blend > 0.0;
     let sight = Sight {
         culling: view.view_projection(),
@@ -130,7 +129,7 @@ impl CoverPlan {
         sight: Sight,
         grounded: bool,
     ) -> bool {
-        if !cover.enabled || cover.density <= 0.0 {
+        if cover.density <= 0.0 {
             return false;
         }
         let common = Common {

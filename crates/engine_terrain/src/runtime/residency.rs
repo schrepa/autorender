@@ -39,11 +39,95 @@ fn with_edits(
     base.with_stamps(&stamps, kinds).map_or(base, Arc::new)
 }
 
+pub(super) enum TileSlot {
+    Loading {
+        interest: Interest<RecordKey>,
+        made: Generation,
+        priority: u32,
+    },
+    Prefetching {
+        interest: Interest<RecordKey>,
+        made: Generation,
+    },
+    Failed {
+        interest: Interest<RecordKey>,
+    },
+}
+
+pub(super) enum SlotEvent {
+    Asked {
+        interest: Interest<RecordKey>,
+        made: Generation,
+        priority: u32,
+    },
+    Prefetched {
+        interest: Interest<RecordKey>,
+        made: Generation,
+    },
+    Failed,
+    Done,
+}
+
+impl TileSlot {
+    fn next(held: Option<Self>, event: SlotEvent) -> Option<Self> {
+        match (held, event) {
+            (
+                _,
+                SlotEvent::Asked {
+                    interest,
+                    made,
+                    priority,
+                },
+            ) => Some(Self::Loading {
+                interest,
+                made,
+                priority,
+            }),
+            (None, SlotEvent::Prefetched { interest, made }) => {
+                Some(Self::Prefetching { interest, made })
+            }
+            (Some(held), SlotEvent::Prefetched { .. }) => Some(held),
+            (Some(Self::Loading { interest, .. }), SlotEvent::Failed) => {
+                Some(Self::Failed { interest })
+            }
+            (Some(Self::Prefetching { .. }) | None, SlotEvent::Failed) | (_, SlotEvent::Done) => {
+                None
+            }
+            (Some(held @ Self::Failed { .. }), SlotEvent::Failed) => Some(held),
+        }
+    }
+
+    pub(super) fn loading(&self) -> Option<(&Interest<RecordKey>, Generation, u32)> {
+        match self {
+            Self::Loading {
+                interest,
+                made,
+                priority,
+            } => Some((interest, *made, *priority)),
+            Self::Prefetching { .. } | Self::Failed { .. } => None,
+        }
+    }
+
+    pub(super) fn prefetching(&self) -> Option<(&Interest<RecordKey>, Generation)> {
+        match self {
+            Self::Prefetching { interest, made } => Some((interest, *made)),
+            Self::Loading { .. } | Self::Failed { .. } => None,
+        }
+    }
+
+    pub(super) fn failed(&self) -> Option<&Interest<RecordKey>> {
+        match self {
+            Self::Failed { interest } => Some(interest),
+            Self::Loading { .. } | Self::Prefetching { .. } => None,
+        }
+    }
+}
+
 pub(super) struct TerrainState {
     pub(super) entity: Entity,
     pub(super) terrain: Terrain,
     pub(super) store: TileStore,
-    pub(super) failed: TileMap<Interest<RecordKey>>,
+    pub(super) slots: TileMap<TileSlot>,
     pub(super) drawn: bool,
     pub(super) collision: Vec<TileKey>,
     pub(super) ranges: Vec<f32>,
@@ -59,13 +143,11 @@ pub(super) struct TerrainState {
     pub(super) target: HashSet<TileKey>,
     pub(super) keep: HashSet<TileKey>,
     pub(super) recipe: Option<SharedRecipe>,
-    pub(super) dispatched: TileMap<(Interest<RecordKey>, Generation, u32)>,
     pub(super) bake: TerrainBake,
     pub(super) failures: JobFailures,
-    pub(super) prefetched: TileMap<(Interest<RecordKey>, Generation)>,
     pub(super) cook: Option<CookTiles>,
     pub(super) surface: Option<(Arc<Layers>, Option<Arc<SurfaceData>>)>,
-    pub(super) materials: bool,
+    pub(super) materials: TileMaterials,
 }
 
 #[derive(Default)]
@@ -109,7 +191,7 @@ impl TerrainState {
             store: TileStore::new(terrain.pyramid, Generation::of(&terrain.edits, None)),
             current: with_edits(terrain.layers.clone(), &terrain.edits, kinds),
             terrain,
-            failed: TileMap::default(),
+            slots: TileMap::default(),
             drawn: false,
             collision: Vec::new(),
             ranges: Vec::new(),
@@ -124,14 +206,37 @@ impl TerrainState {
             target: HashSet::default(),
             keep: HashSet::default(),
             recipe: None,
-            dispatched: TileMap::default(),
             bake: TerrainBake::default(),
             failures: JobFailures::default(),
-            prefetched: TileMap::default(),
             cook: None,
             surface: None,
-            materials: true,
+            materials: TileMaterials::Baked,
         }
+    }
+
+    pub(super) fn slot_event(&mut self, key: TileKey, event: SlotEvent) {
+        let held = self.slots.remove(&key);
+        if let Some(next) = TileSlot::next(held, event) {
+            self.slots.insert(key, next);
+        }
+    }
+
+    pub(super) fn loading(&self) -> usize {
+        self.slots
+            .keys_where(|_, slot| slot.loading().is_some())
+            .len()
+    }
+
+    pub(super) fn prefetching(&self) -> usize {
+        self.slots
+            .keys_where(|_, slot| slot.prefetching().is_some())
+            .len()
+    }
+
+    pub(super) fn failed(&self, key: &TileKey) -> bool {
+        self.slots
+            .get(key)
+            .is_some_and(|slot| slot.failed().is_some())
     }
 
     pub(super) fn show(&mut self, drawn: bool) {
@@ -161,14 +266,26 @@ impl TerrainState {
                 self.surface = Some((layers.clone(), data));
                 self.changed = true;
             }
-            self.surface.as_ref().is_none_or(|(_, data)| data.is_none())
+            match self.surface.as_ref() {
+                Some((_, Some(_))) => TileMaterials::Program,
+                Some((_, None)) | None => TileMaterials::Baked,
+            }
         } else {
-            true
+            TileMaterials::Baked
         };
         if materials != self.materials {
             self.materials = materials;
             self.changed = true;
         }
+    }
+
+    pub(super) fn programmed(&self) -> Option<&Arc<SurfaceData>> {
+        let drawn = self.materials == TileMaterials::Program
+            || self.store.holds(TileMaterials::Program);
+        self.surface
+            .as_ref()
+            .and_then(|(_, data)| data.as_ref())
+            .filter(|_| drawn)
     }
 
     pub(super) fn retire(self, retired: &mut Retired) {
@@ -244,7 +361,7 @@ impl TerrainState {
         };
     }
 
-    pub(super) fn recipe_changed(&mut self, materials: Option<bool>) {
+    pub(super) fn recipe_changed(&mut self, materials: Option<TileMaterials>) {
         let regions = self
             .reshaped
             .take()
@@ -305,7 +422,7 @@ impl TerrainState {
     #[cfg(debug_assertions)]
     pub(super) fn check(&self) {
         self.store.check();
-        for key in self.dispatched.keys() {
+        for key in self.slots.keys_where(|_, slot| slot.loading().is_some()) {
             assert!(self.store.loads(&key), "dispatched_tile_loads {key:?}");
         }
     }
@@ -339,6 +456,7 @@ pub struct Terrains {
     pub(super) between: u64,
     pub(super) changed: bool,
     pub(super) grounds: u64,
+    pub(super) edits: u64,
 }
 
 #[derive(Default)]

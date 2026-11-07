@@ -10,25 +10,42 @@ mod part;
 mod settings;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Schedule, Source, View};
-use engine_render::{Layer, Output, PostScene, RenderBricks, ViewOutputs, wgpu};
+use engine_core::{
+    Brick, Bricks, Pass, PassName, PassViews, PrimaryView, Schedule, SlotSet, Source, Writes, never,
+};
+use engine_render::{AttachPoint, PostScene, RenderBricks, TargetDecl, TargetName, Written, wgpu};
 
 pub use settings::{Reflections, ReflectionsStats};
 
 use gpu::ReflectionsPiece;
 
-const SURFACE_LAYERS: &[Layer] = &[Layer::Opaque, Layer::Late, Layer::Backdrop, Layer::Media];
+pub(crate) struct ReflectionsPass;
 
-const SURFACE: Output = Output {
-    name: "surface",
+impl PassName for ReflectionsPass {
+    const NAME: &'static str = "reflections";
+    const PASS: Pass = Pass {
+        writes: Writes::NOTHING,
+        reads: SlotSet::NONE,
+        views: PassViews::Main,
+        at: AttachPoint::Post,
+        takes: never,
+    };
+}
+
+const SURFACE_POINTS: &[AttachPoint] = &[AttachPoint::Opaque, AttachPoint::Sky];
+
+const SURFACE: TargetDecl = TargetDecl {
+    name: TargetName("surface"),
     format: wgpu::TextureFormat::Rgba16Uint,
-    layers: SURFACE_LAYERS,
+    written: Written::At(SURFACE_POINTS),
+    module: Some(shaders::reflections::surface::MODULE),
 };
 
-const REFLECTIVITY: Output = Output {
-    name: "reflectivity",
+const REFLECTIVITY: TargetDecl = TargetDecl {
+    name: TargetName("reflectivity"),
     format: wgpu::TextureFormat::R8Unorm,
-    layers: SURFACE_LAYERS,
+    written: Written::At(SURFACE_POINTS),
+    module: Some(shaders::reflections::surface::MODULE),
 };
 
 pub struct ReflectionsBrick;
@@ -37,14 +54,15 @@ impl Brick for ReflectionsBrick {
     const SOURCE: &'static Source = &SOURCE;
 
     fn register(bricks: &mut Bricks<'_>) {
-        use shaders::reflections::{apply, surface};
+        use shaders::reflections::apply;
         bricks
             .settings::<Reflections>()
             .stats::<ReflectionsStats>()
             .piece::<ReflectionsPiece>()
             .generated(gpu::GENERATED)
-            .join::<ViewOutputs>(SURFACE, Some(surface::MODULE))
-            .join::<ViewOutputs>(REFLECTIVITY, Some(surface::MODULE))
+            .view_target(SURFACE)
+            .view_target(REFLECTIVITY)
+            .pass::<ReflectionsPass>()
             .systems(Schedule::ViewSync, publish_piece)
             .within(reflecting, |bricks| {
                 bricks
@@ -61,7 +79,7 @@ fn reflecting(reflections: Res<Reflections>) -> bool {
 
 fn publish_piece(
     reflections: Res<Reflections>,
-    view: Res<View>,
+    view: Res<PrimaryView>,
     mut piece: ResMut<ReflectionsPiece>,
     mut stats: ResMut<ReflectionsStats>,
 ) {

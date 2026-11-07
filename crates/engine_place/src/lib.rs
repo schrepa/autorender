@@ -1,11 +1,14 @@
 mod asks;
 mod budget;
+mod drawn;
 mod feeds;
 mod nodes;
+mod passes;
 mod readback;
 mod readiness;
 mod requests;
 mod screens;
+mod views;
 
 use std::any::{Any, TypeId};
 
@@ -18,14 +21,23 @@ use serde_json::Value;
 
 pub use asks::{Applied, ApplyAt, Ask, Asked, Moment};
 pub use budget::{BudgetUse, FrameBudget};
+pub use drawn::{
+    DrawKind, Drawn, DrawnProjection, GeometryHandle, InstanceValues, KindDecl, Layers, NodeId,
+};
 pub use engine_assets::{MaterialHandle, MeshHandle, TextureHandle};
 pub use engine_settings::{Error, ErrorCode};
 pub use feeds::{Cursor, CursorView, Events, Feed, FeedView, Ring, Since, StoreId};
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
+pub use passes::{
+    AttachPoint, CORE_BRICK, CORE_PASSES, ColorPass, DepthPass, PASS_BITS, Pass, PassBit,
+    PassEntry, PassMask, PassName, PassViews, ScenePass, ScenePasses, SceneView, SceneViews, SlotSet,
+    TargetName, Writes, every, never,
+};
 pub use readback::{FrameId, Readable, Readback};
 pub use readiness::Readiness;
 pub use requests::{Census, Interest, Progress, Request, Requests, Ticket};
 pub use screens::{Level, LevelView, Screens};
+pub use views::{Clear, Rect, Target, View, ViewCut, ViewHistory};
 
 pub trait Slot: Resource + Default {
     const NAME: &'static str;
@@ -38,12 +50,8 @@ pub trait List: Send + Sync + 'static {
     type Member: Send + Sync + 'static;
     const WGSL: Option<&'static str> = None;
     const SMOKES: &'static [Smoke] = &[];
-}
 
-pub trait DrawPoint: Slot {
-    type Layer: Copy + Ord + Send + Sync + 'static;
-    type Args: Copy + Send + Sync + 'static;
-    const UBER_MATERIALS: bool = false;
+    fn dropped(_world: &mut World, _member: &Self::Member) {}
 }
 
 type ReadMembers = fn(&World, &mut dyn FnMut(&dyn Any));

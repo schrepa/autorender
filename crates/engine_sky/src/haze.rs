@@ -2,7 +2,7 @@ use bevy_ecs::prelude::Resource;
 use engine_core::{Error, Readable, Readback};
 use engine_render::{
     Access, Attach, Bind, Buffer, DepthUse, Encode, FULLSCREEN, Install, Lifetime, Own, Pass,
-    Pipeline, Prepare, RenderPipeline, Shape, Texture, ViewTarget, wgpu,
+    Pipeline, Prepare, RenderPipeline, Shape, TargetName, Texture, wgpu,
 };
 use glam::{Mat4, UVec2, Vec3};
 
@@ -40,16 +40,17 @@ pub(crate) struct HazeFrame {
     pub(crate) eye: Vec3,
     pub(crate) display: UVec2,
     pub(crate) render: UVec2,
+    pub(crate) history: bool,
+    pub(crate) frame: u64,
 }
 
 #[derive(Default)]
 pub(crate) struct HazePlan {
     runs: bool,
-    size: Option<UVec2>,
+    size: UVec2,
     drawn: (u32, u32),
     history: Option<History>,
     kept: Option<History>,
-    frames: u32,
     uniform: HazeView,
 }
 
@@ -59,20 +60,13 @@ impl HazePlan {
     }
 
     pub(crate) fn prepare(&mut self, (runs, missed): (bool, bool), frame: &HazeFrame) -> [f32; 4] {
-        self.history = self.kept.take().filter(|_| !missed);
-        if self.history.is_some() {
-            self.frames = self.frames.wrapping_add(1);
-        }
+        self.history = self.kept.take().filter(|_| !missed && frame.history);
         self.runs = false;
         if !runs {
-            self.release();
+            self.history = None;
             return [0.0; 4];
         }
-        let size = frame.display;
-        if self.size != Some(size) {
-            self.size = Some(size);
-            self.history = None;
-        }
+        self.size = frame.display;
         self.drawn = (frame.render.x, frame.render.y);
         self.kept = Some(History {
             view_projection: frame.view_projection,
@@ -80,7 +74,7 @@ impl HazePlan {
             drawn: self.drawn,
         });
         let history = self.history;
-        let turn = (self.frames % 1024) as f32 * 0.618_034;
+        let turn = (frame.frame % 1024) as f32 * 0.618_034;
         let turn = turn - turn.floor();
         let (width, height) = (frame.render.x as f32, frame.render.y as f32);
         let view_projection = frame.view_projection;
@@ -101,11 +95,6 @@ impl HazePlan {
         history.map_or([turn, 0.0, 0.0, 1.0], |last| {
             [turn, last.drawn.0 as f32, last.drawn.1 as f32, 1.0]
         })
-    }
-
-    fn release(&mut self) {
-        self.size = None;
-        self.history = None;
     }
 }
 
@@ -157,7 +146,7 @@ impl Haze {
         let viewed = || {
             [
                 (haze_view::POST, Bind::Buffer(uniform)),
-                (haze_view::DEPTH_TEXTURE, Bind::Target(ViewTarget::Depth)),
+                (haze_view::DEPTH_TEXTURE, Bind::Target(TargetName::DEPTH)),
             ]
         };
         let marching =
@@ -190,9 +179,10 @@ impl Haze {
         if std::mem::take(&mut self.stepped) {
             cx.deliver::<HazeSteps>(0, vec![u8::from(cx.ran(self.filter_pass))]);
         }
-        let Some(size) = plan.size.filter(|_| plan.runs) else {
+        if !plan.runs {
             return;
-        };
+        }
+        let size = plan.size;
         let extent = wgpu::Extent3d {
             width: size.x,
             height: size.y,

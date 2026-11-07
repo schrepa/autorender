@@ -162,8 +162,8 @@ fn fixture() -> Value {
         "id": "mesh-fixture", "revision": 1,
         "camera": {"position": [0, 1, 4], "target": [0, 1, 0], "fov_degrees": 60, "near": 0.1, "far": 2000},
         "materials": [
-            {"id": "plain", "color": [0.8, 0.4, 0.2, 1], "double_sided": true},
-            {"id": "stone", "color": [0.5, 0.55, 0.6, 1], "double_sided": true},
+            {"id": "plain", "color": [0.8, 0.4, 0.2, 1], "cull": "none"},
+            {"id": "stone", "color": [0.5, 0.55, 0.6, 1], "cull": "none"},
         ],
         "meshes": [
             {"id": "ribbon", "source": {"kind": "inline", "vertices": ribbon,
@@ -186,9 +186,9 @@ pub(crate) fn meshes(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure>
     smoke_eq!(
         json!({
             "vertices": drawn["mesh"]["vertices"], "indices": drawn["mesh"]["indices"],
-            "double_sided": drawn["material"]["double_sided"],
+            "cull": drawn["material"]["cull"],
         }),
-        json!({"vertices": 6, "indices": 12, "double_sided": true}),
+        json!({"vertices": 6, "indices": 12, "cull": "none"}),
         "inspects"
     );
     smoke_eq!(session.frame(), true, "frames_draw");

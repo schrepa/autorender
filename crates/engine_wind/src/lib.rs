@@ -10,7 +10,7 @@ pub mod constants;
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Schedule, Source, ViewWind, settings};
 use engine_places_simulation::wind::{GustWaves, Wind};
-use engine_render::RenderBricks;
+use engine_render::{InstanceMotion, RenderBricks};
 
 use constants::{
     GUST_QUICK_ACROSS, GUST_QUICK_RATE, GUST_QUICK_SHARE, GUST_QUICK_TRAVEL, GUST_SLOW_RATE,
@@ -49,6 +49,7 @@ impl Brick for WindBrick {
         bricks
             .settings::<WindSettings>()
             .fill::<Wind>(Some(shaders::wind::faces::wind::MODULE))
+            .fill::<InstanceMotion>(Some(shaders::wind::faces::motion::MODULE))
             .fill::<ViewWind>(None)
             .generated(GENERATED)
             .systems(Schedule::Presentation, publish_wind);

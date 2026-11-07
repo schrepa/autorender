@@ -152,7 +152,7 @@ impl Run {
         }
     }
 
-    fn layer_set(&self, layer: Option<crate::Layer>) -> Arc<[SetFormat]> {
+    fn layer_set(&self, layer: Option<engine_core::AttachPoint>) -> Arc<[SetFormat]> {
         self.layer_sets
             .iter()
             .find(|(known, _)| *known == layer)
@@ -272,7 +272,7 @@ impl Run {
                         depth = Some((key(Target::Depth), made.clone(), DEPTH_FORMAT, ops, true));
                     }
                 }
-                if crate::shared::draws_canvas(pass.name) {
+                if crate::shared::draws_canvas(&pass) {
                     let id = self.machine.ids.target(Target::Canvas);
                     if let (Some(ops), Some(canvas)) = (ops_of(id), self.canvas.clone()) {
                         let format = self.canvas_format();

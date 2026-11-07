@@ -2,7 +2,7 @@ use engine_core::smoke::{Checked, control, inspect, query, refuse, render, rende
 use engine_core::{SmokeFailure, SmokeSession, smoke_check, smoke_eq};
 use serde_json::{Value, json};
 
-const OVERLAY: &str = "overlay";
+const OVERLAY: &str = "ui";
 const FRAMES: u32 = 240;
 
 fn scene(entities: &Value) -> String {

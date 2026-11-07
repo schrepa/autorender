@@ -1,4 +1,4 @@
-use engine_core::smoke::{Checked, control, inspect, number};
+use engine_core::smoke::{Checked, control, inspect, number, settled};
 use engine_core::{BrickList, Runs, Smoke, SmokeSession, smoke_eq};
 use engine_registry::Registry;
 use serde_json::{Value, json};
@@ -78,7 +78,7 @@ pub(super) fn outdoor_listed(registry: &Registry) -> bool {
 fn opened(session: &mut dyn SmokeSession, document: &Value) -> Checked<Value> {
     session.source(&document.to_string());
     control(session, "pause", json!({}))?;
-    super::settled(session)
+    settled(session)
 }
 
 fn lit_room(session: &mut dyn SmokeSession) -> Checked<()> {

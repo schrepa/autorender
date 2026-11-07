@@ -1,11 +1,12 @@
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::ops::Range;
 
-use engine_core::{Entry, Error, ErrorCode, Var};
+use engine_core::{AttachPoint, Entry, Error, ErrorCode, PassBit, TargetName, Var};
 
 use crate::graph::Clear;
 use crate::linker::Linker;
-use crate::{Access, DepthUse, Layer, Lifetime, SamplerDesc, VertexLayout, ViewTarget};
+use crate::registration::KindMember;
+use crate::{Access, DepthUse, Lifetime, SamplerDesc, VertexLayout};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Bound {
@@ -25,6 +26,28 @@ pub(crate) enum Bound {
     Asset,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ViewTarget {
+    Scene,
+    Depth,
+    Debug(u32),
+}
+
+impl ViewTarget {
+    pub(crate) fn of(name: TargetName) -> Option<Self> {
+        if name == TargetName::COLOR {
+            return Some(Self::Scene);
+        }
+        if name == TargetName::DEPTH {
+            return Some(Self::Depth);
+        }
+        crate::DEBUG_TARGETS
+            .iter()
+            .position(|known| *known == name)
+            .map(|index| Self::Debug(index as u32))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Copied {
     Buffer(u32),
@@ -38,13 +61,20 @@ pub(crate) enum Work {
     Render,
     Copy { from: Copied, to: Copied },
     Clear(u32),
-    Shared(Layer),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Scoped {
     Pass(u32),
-    Point(TypeId),
+    Scene(&'static str),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SceneOf {
+    pub(crate) name: &'static str,
+    pub(crate) pass: engine_core::Pass,
+    pub(crate) bit: Option<PassBit>,
+    pub(crate) core: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -72,12 +102,12 @@ pub(crate) struct PassDecl {
     pub(crate) group: Option<&'static str>,
     pub(crate) part: u32,
     pub(crate) work: Work,
-    pub(crate) layer: Option<Layer>,
+    pub(crate) layer: Option<AttachPoint>,
     pub(crate) after: Vec<u32>,
     pub(crate) colors: Vec<(u32, Access)>,
     pub(crate) depths: Vec<(u32, Access)>,
     pub(crate) clears: Vec<(u32, Clear)>,
-    pub(crate) claims: Vec<TypeId>,
+    pub(crate) scene: Option<SceneOf>,
     pub(crate) members: Vec<u32>,
 }
 
@@ -156,13 +186,6 @@ pub(crate) struct FrameBind {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Claim {
-    pub(crate) point: TypeId,
-    pub(crate) part: u32,
-    pub(crate) uber: bool,
-}
-
-#[derive(Clone, Copy, Debug)]
 pub(crate) struct PartInfo {
     pub(crate) ty: TypeId,
     pub(crate) package: &'static str,
@@ -190,7 +213,6 @@ pub(crate) struct Declared {
     pub(crate) pipelines: Vec<PipelineDecl>,
     pub(crate) inputs: Vec<DrawInputDecl>,
     pub(crate) frame: Vec<FrameBind>,
-    pub(crate) claims: Vec<Claim>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -201,7 +223,6 @@ pub(crate) struct Counts {
     pipelines: usize,
     inputs: usize,
     frame: usize,
-    claims: usize,
 }
 
 impl Declared {
@@ -213,7 +234,6 @@ impl Declared {
             pipelines: self.pipelines.len(),
             inputs: self.inputs.len(),
             frame: self.frame.len(),
-            claims: self.claims.len(),
         }
     }
 
@@ -230,7 +250,6 @@ impl Declared {
             pipelines: kept(&self.pipelines, counts.pipelines),
             inputs: kept(&self.inputs, counts.inputs),
             frame: kept(&self.frame, counts.frame),
-            claims: kept(&self.claims, counts.claims),
         }
     }
 }
@@ -244,18 +263,13 @@ pub(crate) struct Reinstall {
     pub(crate) to: Counts,
 }
 
-#[derive(Clone)]
-pub(crate) struct DrawEntry {
-    pub(crate) part: u32,
-    pub(crate) record: std::sync::Arc<dyn Any + Send + Sync>,
-}
-
 pub(crate) struct InstallCore {
     pub(crate) part: u32,
     pub(crate) package: &'static str,
     pub(crate) fills: Vec<TypeId>,
     pub(crate) declared: Declared,
-    pub(crate) draws: Vec<DrawEntry>,
+    pub(crate) draws: Vec<KindMember>,
+    pub(crate) passes: engine_core::ScenePasses,
     pub(crate) linker: Linker,
     pub(crate) features: wgpu::Features,
     pub(crate) limits: engine_core::DeviceLimits,
@@ -267,16 +281,21 @@ fn core_entry(entry: Entry) -> bool {
 }
 
 impl InstallCore {
-    pub(crate) fn new(linker: Linker, features: wgpu::Features) -> Self {
+    pub(crate) fn new(
+        linker: Linker,
+        features: wgpu::Features,
+        limits: engine_core::DeviceLimits,
+    ) -> Self {
         Self {
             part: 0,
             package: "",
             fills: Vec::new(),
             declared: Declared::default(),
             draws: Vec::new(),
+            passes: engine_core::ScenePasses::default(),
             linker,
             features,
-            limits: engine_core::DeviceLimits::without_device(0),
+            limits,
             problems: Vec::new(),
         }
     }
@@ -390,7 +409,7 @@ impl InstallCore {
             colors: Vec::new(),
             depths: Vec::new(),
             clears: Vec::new(),
-            claims: Vec::new(),
+            scene: None,
             members: Vec::new(),
         });
         let pass = (self.declared.passes.len() - 1) as u32;
@@ -406,7 +425,7 @@ impl InstallCore {
                 }
             }
             Work::Clear(buffer) => self.use_buffer(buffer, wgpu::BufferUsages::COPY_DST),
-            Work::Render | Work::Shared(_) => {}
+            Work::Render => {}
         }
         pass
     }
@@ -513,40 +532,28 @@ impl InstallCore {
         (self.declared.inputs.len() - 1) as u32
     }
 
-    pub(crate) fn claim(
-        &mut self,
-        (point, uber): (TypeId, bool),
-        name: &'static str,
-        pass: u32,
-    ) -> Result<(), Error> {
-        let path = self.path(&format!("claims.{name}"));
-        if !self.fills.contains(&point) {
-            return Err(Error::new(ErrorCode::PlaceNotFilled, path).got(self.package));
-        }
-        if let Some(known) = self
-            .declared
-            .claims
+    pub(crate) fn draws_scene(&mut self, pass: u32, name: &'static str, listed: engine_core::Pass) {
+        let bit = self.passes.bit(name);
+        let mut members: Vec<u32> = self
+            .draws
             .iter()
-            .find(|claim| claim.point == point)
-        {
-            let owner = self.declared.parts[known.part as usize].package;
-            return Err(Error::new(ErrorCode::SlotFilledTwice, path).got(owner));
+            .filter(|member| (listed.takes)(member.kind))
+            .map(|member| member.part)
+            .collect();
+        members.sort_unstable();
+        members.dedup();
+        let core = self.package == crate::linker::CORE_PACKAGE;
+        if let Some(declared) = self.pass_mut(pass) {
+            if core {
+                declared.layer = Some(listed.at);
+            }
+            declared.scene = Some(SceneOf {
+                name,
+                pass: listed,
+                bit,
+                core,
+            });
+            declared.members = members;
         }
-        let Some(declared) = self.pass_mut(pass) else {
-            return Err(Error::new(ErrorCode::PassMismatch, path));
-        };
-        declared.claims.push(point);
-        self.declared.claims.push(Claim {
-            point,
-            part: self.part,
-            uber,
-        });
-        Ok(())
-    }
-
-    pub(crate) fn members<T: Any>(&self) -> impl Iterator<Item = (u32, &T)> + '_ {
-        self.draws
-            .iter()
-            .filter_map(|entry| Some((entry.part, entry.record.downcast_ref::<T>()?)))
     }
 }

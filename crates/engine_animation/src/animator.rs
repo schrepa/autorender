@@ -3,8 +3,8 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    Applies, AssetLibrary, AssetUses, Clock, FixedTime, FrameTime, GlobalTransforms, Mover, Moves,
-    Pace, Parent, Pause, Spawner, Transform, mover_of,
+    Applies, Asset, AssetResidency, AssetUses, Clock, FixedTime, FrameTime, GlobalTransforms,
+    Mover, Moves, Pace, Parent, Pause, Spawner, Transform, mover_of,
 };
 use engine_places_rendering::animation::{
     Animate, Animator, Attachment, Clip, Joint, Keys, Rig, Track,
@@ -355,46 +355,31 @@ pub(crate) struct SkinAssets;
 
 pub(crate) fn publish_assets(
     animators: Query<&Animator>,
-    assets: Res<AssetLibrary>,
+    residency: Res<AssetResidency>,
     own: Query<(Entity, &AssetUses), With<SkinAssets>>,
     mut spawner: Spawner<AnimationBrick>,
 ) {
-    let mut meshes = Vec::new();
-    let mut materials = Vec::new();
+    let mut wanted = Vec::new();
     for animator in &animators {
         for part in &animator.rig().parts {
-            meshes.push(part.mesh);
-            materials.push(part.material);
+            wanted.push(Asset::Mesh(part.mesh));
+            wanted.push(Asset::Material(part.material));
         }
     }
-    meshes.sort_unstable();
-    meshes.dedup();
-    materials.sort_unstable();
-    materials.dedup();
-    let mut textures: Vec<_> = materials
-        .iter()
-        .filter_map(|&material| assets.material(material))
-        .flat_map(|material| material.textures())
-        .collect();
-    textures.sort_unstable();
-    textures.dedup();
-    let used = AssetUses {
-        meshes,
-        materials,
-        textures,
-    };
+    wanted.sort_unstable();
+    wanted.dedup();
     let mut owned = own.iter();
     match owned.next() {
         Some((entity, held)) => {
-            if *held != used {
-                spawner.insert(entity, used);
+            if held.assets() != wanted.as_slice() {
+                spawner.insert(entity, AssetUses::new(&residency, wanted));
             }
             for (extra, _) in owned {
                 spawner.despawn(extra);
             }
         }
         None => {
-            spawner.spawn((SkinAssets, used));
+            spawner.spawn((SkinAssets, AssetUses::new(&residency, wanted)));
         }
     }
 }

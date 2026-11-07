@@ -1,20 +1,16 @@
 use std::fmt::Write as _;
 
-use bevy_ecs::prelude::Res;
-use bevy_ecs::system::SystemParamItem;
-use engine_core::{Error, PlaceDecl, ShaderText, Source};
+use engine_core::{AttachPoint, Error, PassViews, PlaceDecl, ShaderText, Source};
 
-use crate::install::Work;
+use crate::install::{PassDecl, Work};
 use crate::machine::OutputDecl;
 use crate::{
-    DebugModes, DebugShown, Draws, GpuPart, Install, Layer, MainView, Overlay, OverlayStack,
-    OverlaySteps, Pass, PostDisplay, PostLight, PostScene, PostTone, Prepare, Resolve, ViewOutputs,
+    DebugModes, DebugShown, GpuPart, Install, InstanceMotion, Lit, Pass, PostDisplay, PostLight,
+    PostScene, PostTone, Prepare, Resolve,
 };
 
 pub(crate) const COMPOSITE: &str = "composite";
 pub(crate) const DEBUG_VIEW: &str = "debug_view";
-pub(crate) const OVERLAY: &str = "overlay";
-pub(crate) const DEBUG_TARGETS: [&str; 3] = ["debug_ids", "debug_count", "debug_terrain"];
 pub(crate) const OUTPUT_PREFIX: &str = "output_";
 pub(crate) const POST: &str = "post";
 pub(crate) const LINEAR: &str = "linear";
@@ -22,103 +18,67 @@ pub(crate) const SCENE: &str = "scene";
 pub(crate) const DEPTH: &str = "depth_texture";
 pub(crate) const TARGETS_MODULE: &str = "generated::targets";
 pub(crate) const COMPOSITE_MODULE: &str = "generated::composite";
-pub(crate) const LAYERS: [Layer; 7] = [
-    Layer::Occluders,
-    Layer::Opaque,
-    Layer::Late,
-    Layer::Backdrop,
-    Layer::Media,
-    Layer::Over,
-    Layer::Blend,
-];
-
+pub(crate) const PASSES_MODULE: &str = "generated::passes";
 pub(crate) static PLACES: &[PlaceDecl] = &[
-    PlaceDecl::list::<ViewOutputs>(),
     PlaceDecl::slot::<Resolve>(),
+    PlaceDecl::slot::<Lit>(),
+    PlaceDecl::slot::<InstanceMotion>(),
     PlaceDecl::list::<PostScene>(),
     PlaceDecl::list::<PostLight>(),
     PlaceDecl::slot::<PostTone>(),
     PlaceDecl::list::<PostDisplay>(),
     PlaceDecl::slot::<DebugShown>(),
     PlaceDecl::list::<DebugModes>(),
-    PlaceDecl::slot::<OverlaySteps>(),
 ];
 
-pub(crate) fn draws_canvas(pass: &str) -> bool {
-    pass == COMPOSITE || pass == DEBUG_VIEW || pass == OVERLAY
+pub(crate) fn composites(pass: &PassDecl) -> bool {
+    pass.name == COMPOSITE || pass.name == DEBUG_VIEW
 }
 
-pub(crate) struct Layers {
-    passes: Vec<(Layer, Pass<Self>)>,
-    draws: Draws<MainView>,
+pub(crate) fn draws_canvas(pass: &PassDecl) -> bool {
+    composites(pass) || pass.layer == Some(AttachPoint::Overlay)
 }
 
-impl GpuPart for Layers {
+pub(crate) struct ScenePart {
+    passes: Vec<Pass<Self>>,
+}
+
+impl GpuPart for ScenePart {
     type Reads = ();
+    const NAME: &'static str = "scene";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let members: Vec<(u32, Layer)> = cx
+        let listed: Vec<engine_core::ScenePass> = cx
             .core
-            .members::<crate::registration::DrawRecord<MainView>>()
-            .map(|(part, record)| (part, record.layer))
+            .passes
+            .listed()
+            .iter()
+            .filter(|listed| listed.bit.is_some() && listed.pass.views != PassViews::Owned)
+            .filter(|listed| {
+                cx.core
+                    .draws
+                    .iter()
+                    .any(|member| (listed.pass.takes)(member.kind))
+            })
+            .copied()
             .collect();
-        let mut passes = Vec::new();
-        for layer in LAYERS {
-            let drawn: Vec<u32> = members
-                .iter()
-                .filter(|(_, at)| *at == layer)
-                .map(|(part, _)| *part)
-                .collect();
-            if drawn.is_empty() {
-                continue;
-            }
-            let pass = cx.core.pass(layer_name(layer), Work::Shared(layer));
-            if let Some(declared) = cx.core.pass_mut(pass) {
-                declared.members = drawn;
-            }
-            passes.push((layer, Pass(pass, std::marker::PhantomData)));
+        let mut passes = Vec::with_capacity(listed.len());
+        for listed in listed {
+            let pass = cx.core.pass(listed.name, Work::Render);
+            cx.core.draws_scene(pass, listed.name, listed.pass);
+            passes.push(Pass(pass, std::marker::PhantomData));
         }
-        let Some(&(_, first)) = passes.first() else {
-            return Ok(Self {
-                passes,
-                draws: Draws {
-                    members: Box::new([]),
-                },
-            });
-        };
-        let draws = cx.claim::<MainView>(first)?;
-        for (_, pass) in passes.iter().skip(1) {
-            if let Some(declared) = cx.core.pass_mut(pass.0) {
-                declared.claims.push(std::any::TypeId::of::<MainView>());
-            }
-        }
-        Ok(Self { passes, draws })
+        Ok(Self { passes })
     }
 
     fn prepare(&mut self, (): (), cx: &mut Prepare<'_, Self>) {
-        for (_, pass) in &self.passes {
+        for pass in &self.passes {
             cx.run(*pass);
         }
     }
 
-    fn encode(&mut self, pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
-        let Some(&(layer, _)) = self.passes.iter().find(|(_, known)| *known == pass) else {
-            return 0;
-        };
-        let mut draw = cx.render(crate::Attach::Declared, None);
-        self.draws.draw::<Self>(&mut draw, layer, &())
-    }
-}
-
-fn layer_name(layer: Layer) -> &'static str {
-    match layer {
-        Layer::Occluders => "occluders",
-        Layer::Opaque => "opaque",
-        Layer::Late => "late",
-        Layer::Backdrop => "backdrop",
-        Layer::Media => "media",
-        Layer::Over => "over",
-        Layer::Blend => "blend",
+    fn encode(&mut self, _pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
+        cx.render(crate::Attach::Declared, None).scene(None)
     }
 }
 
@@ -128,19 +88,6 @@ pub(crate) struct Composite {
     plain: crate::Pipeline<Self, crate::Own>,
     debug_pass: Pass<Self>,
     debug_pipeline: crate::Pipeline<Self, crate::Own>,
-    overlay: Pass<Self>,
-    overlay_draws: Draws<Overlay>,
-    stack_draws: Draws<OverlayStack>,
-    stack_height: u32,
-}
-
-impl Composite {
-    fn stack_step(&self, draw: &mut crate::Draw<'_, Self, crate::Own>, step: Option<u32>) -> u32 {
-        LAYERS
-            .into_iter()
-            .map(|layer| self.stack_draws.draw::<Self>(draw, layer, &step))
-            .sum()
-    }
 }
 
 fn fullscreen(fragment: engine_core::Entry) -> crate::RenderPipeline<'static> {
@@ -157,7 +104,7 @@ fn fullscreen(fragment: engine_core::Entry) -> crate::RenderPipeline<'static> {
 }
 
 impl GpuPart for Composite {
-    type Reads = Res<'static, OverlaySteps>;
+    type Reads = ();
     const NAME: &'static str = "post";
     const LAZY: bool = true;
     const LABELS: &'static [&'static str] = &["engine/post-", "engine/post."];
@@ -174,29 +121,16 @@ impl GpuPart for Composite {
         let debug_pass = cx.pass(DEBUG_VIEW).after(pass).id();
         let debug_pipeline =
             cx.render_pipeline(debug_pass, &fullscreen(crate::shaders::FS_DEBUG_VIEW), &[])?;
-        let overlay = cx
-            .pass(OVERLAY)
-            .label("engine/post-overlay")
-            .after(pass)
-            .after(debug_pass)
-            .id();
-        let overlay_draws = cx.claim::<Overlay>(overlay)?;
-        let stack_draws = cx.claim::<OverlayStack>(overlay)?;
         Ok(Self {
             pass,
             pipeline,
             plain,
             debug_pass,
             debug_pipeline,
-            overlay,
-            overlay_draws,
-            stack_draws,
-            stack_height: 0,
         })
     }
 
-    fn prepare(&mut self, stack: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
-        self.stack_height = stack.count;
+    fn prepare(&mut self, (): (), cx: &mut Prepare<'_, Self>) {
         if cx.core.debug {
             cx.run(self.debug_pass);
         } else {
@@ -205,17 +139,6 @@ impl GpuPart for Composite {
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
-        if pass == self.overlay {
-            let mut draw = cx.render(crate::Attach::Declared, None);
-            let mut drawn: u32 = (0..self.stack_height)
-                .map(|step| self.stack_step(&mut draw, Some(step)))
-                .sum();
-            drawn += LAYERS
-                .into_iter()
-                .map(|layer| self.overlay_draws.draw::<Self>(&mut draw, layer, &()))
-                .sum::<u32>();
-            return drawn + self.stack_step(&mut draw, None);
-        }
         let pipeline = if pass == self.debug_pass {
             &self.debug_pipeline
         } else if cx.core.temporal {

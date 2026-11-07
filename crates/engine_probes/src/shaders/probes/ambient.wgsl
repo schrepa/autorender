@@ -1,12 +1,11 @@
-import package::face::sky::{environment_levels, environment_sample};
 import package::generated::probes::PROBE_ENTRY_WORDS;
 import package::place::ambient::{EnvironmentAt, EnvironmentLight};
-import package::probes::sample::{box_projected, probe_words};
+import package::probes::sample::{box_projected, probe_maps, probe_sample, probe_words};
 
 fn environment(light: EnvironmentLight, at: EnvironmentAt) -> EnvironmentLight {
     let world = at.world;
     let direction = at.lobe;
-    let level = at.roughness * f32(environment_levels() - 1u);
+    let level = at.roughness * f32(textureNumLevels(probe_maps) - 1u);
     var found = vec3<f32>(0.0);
     var covered = 0.0;
     var shares = vec2<f32>(1.0);
@@ -40,7 +39,7 @@ fn environment(light: EnvironmentLight, at: EnvironmentAt) -> EnvironmentLight {
                 if reflects {
                     let weight = fade * (1.0 - covered);
                     let along = box_projected(world, direction, center, extent);
-                    found += weight * environment_sample(along, second.w, level);
+                    found += weight * probe_sample(along, second.w, level);
                     covered += weight;
                 }
                 if shades {

@@ -1,8 +1,9 @@
+import package::engine::surfaces::SURFACE_GROUND;
 import package::place::ambient::{EnvironmentAt, EnvironmentLight};
 import package::terrain_shading::faces::bounce::bounce_light;
 
 fn environment(light: EnvironmentLight, at: EnvironmentAt) -> EnvironmentLight {
-    if at.ground {
+    if at.kind == SURFACE_GROUND {
         return light;
     }
     let around = bounce_light(at.world, at.normal, false);

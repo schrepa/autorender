@@ -42,9 +42,9 @@ fn environment_brdf(f0: vec3<f32>, roughness: f32, n_v: f32) -> vec3<f32> {
 }
 
 fn surface_sun(point: SurfacePoint) -> SunAt {
-    return SunAt(point.world + point.shadow_offset, point.geometric, point.world_dx,
-        point.world_dy, point.shadow_softness, point.ground, point.shadow_lift_first,
-        point.shadow_lifts);
+    return SunAt(point.world + point.inputs.shadow_shift, point.geometric, point.world_dx,
+        point.world_dy, point.inputs.shadow_softness, point.kind, point.inputs.shadow_lift_first,
+        point.inputs.shadow_lifts);
 }
 
 fn sun_visibility(at: SunAt) -> f32 {
@@ -54,6 +54,14 @@ fn sun_visibility(at: SunAt) -> f32 {
 
 fn sun_debug(at: SunAt) -> u32 {
     return sun_flags(DEBUG_SUN_NONE, at);
+}
+
+fn lit_debug(point: SurfacePoint) -> u32 {
+    return sun_debug(surface_sun(point));
+}
+
+fn lit_toward(point: SurfacePoint) -> vec3<f32> {
+    return sun_direction();
 }
 
 fn toon_environment() -> EnvironmentLight {
@@ -98,16 +106,15 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
         * (distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha));
     let shine = select(0.0, specular(), n_l > 0.0);
     let sunlit = (point.diffuse_color * banded(n_l) + spot * shine) * sun_color()
-        * (1.0 - point.sun_shade);
+        * (1.0 - point.inputs.sun_blocked);
     var shown = 1.0;
     if any(sunlit != vec3<f32>(0.0)) {
         shown = sun_visibility(surface_sun(point));
     }
     let around = environment(toon_environment(), EnvironmentAt(point.world, point.normal,
-        TOON_UP, point.normal, point.roughness, point.alpha, point.ground));
+        TOON_UP, point.normal, point.roughness, point.alpha, point.kind));
     let skylight = point.diffuse_color * around.sky * point.occlusion;
-    let lit = skylight + sunlit * shown + point.albedo * point.emission + point.emissive
-        + local;
+    let lit = skylight + sunlit * shown + point.emissive + local;
     let through = atmospheric(lit, camera.position.xyz, point.world, -point.view);
     var shaded: Shaded;
     shaded.linear = through.rgb;
@@ -115,5 +122,6 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
         * (1.0 - through.a);
     shaded.normal = point.normal;
     shaded.roughness = point.roughness;
+    shaded.kind = point.kind;
     return shaded;
 }

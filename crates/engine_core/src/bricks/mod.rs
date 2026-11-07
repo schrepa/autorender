@@ -22,8 +22,8 @@ use serde_json::Value;
 
 use crate::moves::NodeKind;
 use crate::{
-    Authored, Error, ErrorCode, Explain, GpuStruct, JobKind, List, Module, Mover, MoverId,
-    Operation, Pace, PlaceDecl, SceneContext, SceneIds, Section, Slot, Smoke, Source,
+    Authored, Error, ErrorCode, Explain, GpuStruct, JobKind, KindDecl, List, Module, Mover,
+    MoverId, Operation, Pace, PlaceDecl, SceneContext, SceneIds, Section, Slot, Smoke, Source,
 };
 
 pub trait Brick: 'static {
@@ -144,6 +144,11 @@ impl Bricks<'_> {
             );
         }
         self.record.piece::<T>();
+        self
+    }
+
+    pub fn draw_kind(&mut self, kind: KindDecl) -> &mut Self {
+        self.record.render.push(Box::new(kind));
         self
     }
 
@@ -716,6 +721,11 @@ impl<B: Brick> Spawner<'_, '_, B> {
             .queue(move |world: &mut World| parented::<B>(world, &changes));
     }
 
+    pub fn set_parents_of<C: Component>(&mut self, changes: Vec<(Entity, Option<Entity>)>) {
+        self.commands
+            .queue(move |world: &mut World| parented_of::<B, C>(world, &changes));
+    }
+
     pub fn set_parents_then<R: Resource<Mutability = Mutable>>(
         &mut self,
         changes: Vec<(Entity, Option<Entity>)>,
@@ -779,7 +789,7 @@ fn spawned_then<B: Brick, R: Resource<Mutability = Mutable>, T: Bundle>(
     }
 }
 
-fn marked<B: Brick, C: Component, T: Component + Default>(world: &mut World, entity: Entity) {
+fn kind_of<B: Brick, C: Component>(world: &mut World) -> bool {
     let component = world.register_component::<C>();
     let kinds: Vec<fn(&mut World) -> bevy_ecs::component::ComponentId> = world
         .get_resource::<MembersOf<crate::SceneComponents>>()
@@ -791,10 +801,13 @@ fn marked<B: Brick, C: Component, T: Component + Default>(world: &mut World, ent
                 .collect()
         })
         .unwrap_or_default();
-    let registered = kinds
+    kinds
         .into_iter()
-        .any(|register| register(world) == component);
-    if !registered || world.get::<C>(entity).is_none() {
+        .any(|register| register(world) == component)
+}
+
+fn marked<B: Brick, C: Component, T: Component + Default>(world: &mut World, entity: Entity) {
+    if !kind_of::<B, C>(world) || world.get::<C>(entity).is_none() {
         foreign::<B>(world, entity);
         return;
     }
@@ -889,6 +902,22 @@ fn parented<B: Brick>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
         foreign::<B>(world, child);
         return;
     }
+    reparented::<B>(world, changes);
+}
+
+fn parented_of<B: Brick, C: Component>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
+    let kind = kind_of::<B, C>(world);
+    let stranger = changes
+        .iter()
+        .find(|&&(child, _)| !kind || world.get::<C>(child).is_none());
+    if let Some(&(child, _)) = stranger {
+        foreign::<B>(world, child);
+        return;
+    }
+    reparented::<B>(world, changes);
+}
+
+fn reparented<B: Brick>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
     if let Err(error) = crate::set_parents(world, changes) {
         let path = format!("$.bricks.{}.spawner.parent", B::SOURCE.package());
         report(world, error.within(&path));

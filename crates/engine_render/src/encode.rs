@@ -1,4 +1,3 @@
-use std::any::TypeId;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
 use std::sync::Arc;
@@ -7,7 +6,9 @@ use bevy_ecs::world::World;
 use engine_core::{Error, ErrorCode, FrameId, MaterialHandle, MeshHandle, Readback, TextureHandle};
 
 use crate::graph::{Bits, Clear, FAR, Load, Ops, Plan, Planned};
-use crate::install::{Bound, Copied, DrawEntry, PassDecl, Program, Reinstall, Scoped, Work};
+use crate::install::{
+    Bound, Copied, PassDecl, Program, Reinstall, Scoped, ViewTarget, Work,
+};
 use crate::linker::Ty;
 use crate::machine::{
     CAMERA_STRIDE, CoreFrame, DEBUG_COUNT, DEBUG_FORMATS, DEPTH_FORMAT, Machine, Ready, SetFormat,
@@ -16,8 +17,8 @@ use crate::machine::{
 };
 use crate::profiling::GpuProfiler;
 use crate::readback::{Deliver, Keep, Reader, Readbacks};
-use crate::registration::Installed;
-use crate::{AfterRead, Allocation, CameraUniform, DepthUse, PassNames, VertexLayout, ViewTarget};
+use crate::registration::{Installed, KindMember};
+use crate::{AfterRead, Allocation, CameraUniform, DepthUse, PassNames, SceneDraw, VertexLayout};
 
 mod compile;
 mod copies;
@@ -32,7 +33,7 @@ pub(crate) use recording::{Ended, Recording, Step};
 pub(crate) type FrameCore = Run;
 pub(crate) type EncodeCore = Run;
 
-type Specialized = (u32, [(&'static str, f64); 15]);
+type Specialized = (u32, [(&'static str, f64); 1]);
 
 const MOST_STREAMS: usize = 16;
 const MOST_OFFSETS: usize = 16;
@@ -61,7 +62,7 @@ impl Streams {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Holder {
     Frame(u32),
     Own(u32, u32),
@@ -150,15 +151,11 @@ impl Holders {
 
 pub(crate) struct Groups {
     pub(crate) made: [Option<wgpu::BindGroup>; 2],
-    pub(crate) stale: bool,
 }
 
 impl Groups {
     fn fresh() -> Self {
-        Self {
-            made: [None, None],
-            stale: true,
-        }
+        Self { made: [None, None] }
     }
 }
 
@@ -179,7 +176,7 @@ impl PassLayout {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Compiled {
-    pipeline: u32,
+    program: u64,
     formats: Vec<Option<wgpu::TextureFormat>>,
     depth: Option<(wgpu::TextureFormat, bool)>,
     debug: bool,
@@ -196,7 +193,7 @@ struct Listing {
 
 fn specialized(compiled: &Compiled) -> Option<Specialized> {
     let bits = compiled.variant?;
-    let mut constants = crate::materials::Variant::BASIC.constants();
+    let mut constants = <crate::surface::DrawState as engine_core::GpuBits>::unpack(bits)?.constants();
     for (name, value) in &mut constants {
         if let Some((_, listed)) = compiled
             .constants
@@ -383,24 +380,25 @@ pub(crate) struct Timed {
 pub(crate) struct Run {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: crate::gpu_calls::Queue,
+    pub(crate) limits: engine_core::DeviceLimits,
     pub(crate) machine: Machine,
     pub(crate) parts: Vec<Option<Box<dyn Installed>>>,
     pub(crate) turned: Vec<Option<u64>>,
     pub(crate) faults: Vec<(u32, Error)>,
     pub(crate) reinstalls: Vec<Reinstall>,
-    pub(crate) draw_entries: Vec<DrawEntry>,
+    pub(crate) draw_entries: Vec<KindMember>,
     pub(crate) part: u32,
     pub(crate) pass: u32,
-    pub(crate) point: Option<TypeId>,
+    pub(crate) point: Option<&'static str>,
     pub(crate) frame: u64,
     pub(crate) asked_frame: u64,
     pub(crate) parity: usize,
     pub(crate) atlas_generation: Option<u64>,
     pub(crate) holders: Holders,
-    pub(crate) stale: Vec<Holder>,
+    pub(crate) stale: std::collections::BTreeSet<Holder>,
     pub(crate) rebuilt: Rebuilt,
     pub(crate) pass_decls: Vec<Arc<PassDecl>>,
-    pub(crate) layer_sets: Vec<(Option<crate::Layer>, Arc<[SetFormat]>)>,
+    pub(crate) layer_sets: Vec<(Option<engine_core::AttachPoint>, Arc<[SetFormat]>)>,
     pub(crate) spare: Spare,
     pub(crate) textures: Vec<[Option<Allocated>; 2]>,
     pub(crate) dimensions: Vec<wgpu::TextureDimension>,
@@ -682,7 +680,7 @@ fn post_sampler(device: &wgpu::Device) -> wgpu::Sampler {
     })
 }
 
-fn stale_holders(machine: &Machine) -> Vec<Holder> {
+fn stale_holders(machine: &Machine) -> std::collections::BTreeSet<Holder> {
     (0..machine.variants.len())
         .map(|variant| Holder::Frame(variant as u32))
         .chain(
@@ -698,8 +696,8 @@ fn stale_holders(machine: &Machine) -> Vec<Holder> {
         .collect()
 }
 
-fn layer_sets_of(machine: &Machine) -> Vec<(Option<crate::Layer>, Arc<[SetFormat]>)> {
-    let mut layer_sets: Vec<(Option<crate::Layer>, Arc<[SetFormat]>)> =
+fn layer_sets_of(machine: &Machine) -> Vec<(Option<engine_core::AttachPoint>, Arc<[SetFormat]>)> {
+    let mut layer_sets: Vec<(Option<engine_core::AttachPoint>, Arc<[SetFormat]>)> =
         vec![(None, Arc::from(set_formats(&machine.outputs, None)))];
     for pass in &machine.declared.passes {
         let layer = pass_layer(pass);
@@ -712,8 +710,11 @@ fn layer_sets_of(machine: &Machine) -> Vec<(Option<crate::Layer>, Arc<[SetFormat
 
 impl Run {
     pub(crate) fn new(
-        device: wgpu::Device,
-        queue: crate::gpu_calls::Queue,
+        (device, queue, limits): (
+            wgpu::Device,
+            crate::gpu_calls::Queue,
+            engine_core::DeviceLimits,
+        ),
         machine: Machine,
         parts: Vec<Option<Box<dyn Installed>>>,
         assets: Assets,
@@ -764,6 +765,7 @@ impl Run {
         Self {
             device,
             queue,
+            limits,
             machine,
             parts,
             turned: vec![Some(0); count],
@@ -874,17 +876,9 @@ impl Run {
 
     pub(crate) fn touch(&mut self, held: Held) {
         for &holder in self.holders.of_held(held) {
-            let groups = match holder {
-                Holder::Frame(variant) => &mut self.frame_groups[variant as usize],
-                Holder::Own(pipeline, group) => {
-                    &mut self.own_groups[pipeline as usize][group as usize]
-                }
-            };
-            if groups.stale {
+            if !self.stale.insert(holder) {
                 continue;
             }
-            groups.stale = true;
-            self.stale.push(holder);
             if cfg!(feature = "profiling") {
                 let reason = match held {
                     Held::Texture(texture) => {
@@ -974,6 +968,37 @@ impl Run {
         }
     }
 
+    pub(crate) fn scene_draw(&self, view: Option<u32>) -> Option<SceneDraw> {
+        let scene = self
+            .machine
+            .declared
+            .passes
+            .get(self.pass as usize)?
+            .scene?;
+        Some(SceneDraw {
+            pass: crate::Scene::named(scene.name),
+            bit: scene.bit,
+            at: scene.pass.at,
+            reads: scene.pass.reads,
+            writes: scene.pass.writes,
+            view,
+        })
+    }
+
+    pub(crate) fn scene_members(&self) -> Vec<KindMember> {
+        let Some(pass) = self.machine.declared.passes.get(self.pass as usize) else {
+            return Vec::new();
+        };
+        let Some(scene) = pass.scene else {
+            return Vec::new();
+        };
+        self.draw_entries
+            .iter()
+            .filter(|member| pass.members.contains(&member.part) && (scene.pass.takes)(member.kind))
+            .cloned()
+            .collect()
+    }
+
     pub(crate) fn run_pass(&mut self, pass: u32) {
         let owned = self
             .machine
@@ -983,18 +1008,6 @@ impl Run {
             .is_some_and(|declared| declared.part == self.part);
         if owned {
             self.runs.insert(pass as usize);
-        }
-    }
-
-    pub(crate) fn want_overlay(&mut self) {
-        let overlay = self
-            .machine
-            .declared
-            .passes
-            .iter()
-            .position(|declared| declared.name == crate::shared::OVERLAY);
-        if let Some(at) = overlay {
-            self.runs.insert(at);
         }
     }
 

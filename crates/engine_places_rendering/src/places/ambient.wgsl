@@ -5,7 +5,7 @@ struct EnvironmentAt {
     lobe: vec3<f32>,
     roughness: f32,
     alpha: f32,
-    ground: bool,
+    kind: u32,
 }
 
 struct EnvironmentLight {

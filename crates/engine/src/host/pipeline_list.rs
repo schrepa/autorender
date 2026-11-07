@@ -21,8 +21,17 @@ enum State {
     },
     Making {
         key: RecordKey,
+        kept: u32,
     },
     Done,
+}
+
+fn compiled(renderer: &Renderer) -> u32 {
+    renderer
+        .compiled_per_pass()
+        .iter()
+        .map(|(_, count)| *count)
+        .sum()
 }
 
 fn cooking(engine: &Engine) -> bool {
@@ -51,7 +60,7 @@ impl PipelineList {
     }
 
     pub(crate) fn making(&self) -> bool {
-        matches!(self.state, State::Making { .. })
+        matches!(self.state, State::Making { kept: 0, .. })
     }
 
     pub(crate) fn ask(&mut self, engine: &mut Engine, content: Option<Vec<u8>>) {
@@ -78,7 +87,7 @@ impl PipelineList {
         }
         let key = key_of(&identity);
         if cooking(engine) {
-            self.state = State::Making { key };
+            self.state = State::Making { key, kept: 0 };
             return;
         }
         self.state = match engine.app.world_mut().get_resource_mut::<JobExchange>() {
@@ -102,23 +111,27 @@ impl PipelineList {
             return;
         };
         self.state = match output.map(|record| renderer.create_listed_pipelines(&record)) {
-            Ok(Ok(_)) => State::Done,
-            Ok(Err(_)) => State::Making { key },
-            Err(error) if error == MISSING_RECORD => State::Making { key },
+            Ok(Ok(_)) => State::Making {
+                key,
+                kept: compiled(renderer),
+            },
+            Ok(Err(_)) => State::Making { key, kept: 0 },
+            Err(error) if error == MISSING_RECORD => State::Making { key, kept: 0 },
             Err(_) => State::Done,
         };
     }
 
     pub(crate) fn after_frame(&mut self, engine: &mut Engine, renderer: &Renderer, created: u32) {
-        let State::Making { key } = self.state else {
+        let State::Making { key, kept } = self.state else {
             return;
         };
-        if created > 0 || !engine.readiness().settled() {
+        let total = compiled(renderer);
+        if created > 0 || total <= kept || !engine.readiness().settled() {
             return;
         }
         if let Some(mut jobs) = engine.app.world_mut().get_resource_mut::<JobExchange>() {
             jobs.keep(key, None, renderer.pipeline_list());
         }
-        self.state = State::Done;
+        self.state = State::Making { key, kept: total };
     }
 }

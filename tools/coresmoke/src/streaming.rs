@@ -1,7 +1,9 @@
 use std::path::Path;
 
 use engine_core::glam::Vec3;
-use engine_core::{BrickList, Camera, Engine, Projection};
+use engine_core::{
+    BrickList, Camera, Engine, Projection, Transform, edit_transform, main_camera, place_camera,
+};
 use engine_registry::Registry;
 use engine_scene::{SceneDocument, SceneKinds};
 use engine_terrain::TileKey;
@@ -10,7 +12,6 @@ use serde_json::{Map, Value, json};
 use crate::{Report, hash};
 
 const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
-const ASPECT: f32 = 16.0 / 9.0;
 const FRAMES: u32 = 400;
 const LISTING: &str = "terrain_listing";
 const SECTIONS: [&str; 3] = ["terrain_stats", "water_stats", "terrain_shading_stats"];
@@ -49,12 +50,20 @@ const FIELDS: [&str; 30] = [
 
 pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
     let mut engine = load()?;
+    let main = main_camera(engine.app.world()).ok_or("the engine holds no main view")?;
     let mut lines = Vec::with_capacity(FRAMES as usize);
     for frame in 0..FRAMES {
-        *engine.app.world_mut().resource_mut::<Camera>() = camera(frame);
+        let (at, cut) = camera(frame);
+        let world = engine.app.world_mut();
+        if cut {
+            place_camera(world, main, at, lens());
+        } else {
+            edit_transform(world, main, |transform| *transform = at)
+                .map_err(|error| error.to_string())?;
+        }
         engine.step_fixed(1).map_err(|error| error.to_string())?;
         let world = engine
-            .extract_frame(ASPECT)
+            .extract_frame()
             .map_err(|error| format!("extract_frame: {error}"))?
             .world();
         let mut line = format!("{frame}: {}", stats(world)?);
@@ -145,7 +154,17 @@ fn listing(world: &mut bevy_ecs::world::World) -> Result<Vec<(bool, Vec<TileKey>
         .collect()
 }
 
-fn camera(frame: u32) -> Camera {
+fn lens() -> Camera {
+    Camera {
+        near: 0.5,
+        far: 4000.0,
+        projection: Projection::Perspective {
+            vertical_fov_radians: std::f32::consts::FRAC_PI_3,
+        },
+    }
+}
+
+fn camera(frame: u32) -> (Transform, bool) {
     let overview = (Vec3::new(0.0, 80.0, 140.0), Vec3::new(0.0, 30.0, 0.0));
     let across = (Vec3::new(380.0, 90.0, 380.0), Vec3::new(450.0, 40.0, 450.0));
     let corner = (Vec3::new(-420.0, 120.0, -420.0), Vec3::new(0.0, 30.0, 0.0));
@@ -161,15 +180,10 @@ fn camera(frame: u32) -> Camera {
         240..330 => corner,
         _ => overview,
     };
-    Camera {
-        position,
-        target,
-        near: 0.5,
-        far: 4000.0,
-        projection: Projection::Perspective {
-            vertical_fov_radians: std::f32::consts::FRAC_PI_3,
-        },
-    }
+    (
+        Transform::looking_at(position, target),
+        matches!(frame, 0 | 240 | 330),
+    )
 }
 
 fn load() -> Result<Engine, String> {

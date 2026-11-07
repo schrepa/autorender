@@ -30,7 +30,6 @@ pub struct TextRun {
     pub max_width: Option<f32>,
     pub align: TextAlign,
     pub clip: Option<[f32; 4]>,
-    pub step: Option<u32>,
 }
 
 impl Default for TextRun {
@@ -44,7 +43,6 @@ impl Default for TextRun {
             max_width: None,
             align: TextAlign::Left,
             clip: None,
-            step: None,
         }
     }
 }
@@ -55,12 +53,19 @@ pub struct TextSize {
     pub height: f32,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Glyph {
+    pub place: [f32; 4],
+    pub texel: [f32; 4],
+    pub color: [f32; 4],
+}
+
 pub trait Typeset: Any + Send + Sync + 'static {
     fn register_font(&self, bytes: &[u8]) -> Result<FontId, Error>;
 
     fn measure(&self, run: &TextRun) -> TextSize;
 
-    fn queue(&self, run: TextRun);
+    fn place(&self, run: &TextRun, display: [u32; 2], glyphs: &mut Vec<Glyph>);
 }
 
 struct NoText;
@@ -74,7 +79,7 @@ impl Typeset for NoText {
         TextSize::default()
     }
 
-    fn queue(&self, _: TextRun) {}
+    fn place(&self, _: &TextRun, _: [u32; 2], _: &mut Vec<Glyph>) {}
 }
 
 #[derive(Resource)]
@@ -88,4 +93,5 @@ impl Default for Text {
 
 impl Slot for Text {
     const NAME: &'static str = "text";
+    const WGSL: Option<&'static str> = Some(include_str!("places/text.wgsl"));
 }

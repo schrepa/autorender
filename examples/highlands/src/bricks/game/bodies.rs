@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Camera, Error, Material, Mesh, Mesh3d, MeshHandle, Spawner, Transform, math,
+    AssetLibrary, Error, Material, Mesh, Mesh3d, MeshHandle, PrimaryView, Spawner, Transform, math,
 };
 use engine_heightfield::RIVER_STEP;
 use engine_places_simulation::ground::Ground;
@@ -131,7 +131,7 @@ pub(crate) fn wait_for_ground(
 }
 
 pub(crate) fn place(
-    (camera, hydrology, tiles): (Res<Camera>, Res<Hydrology>, Res<TerrainTiles>),
+    (view, hydrology, tiles): (Res<PrimaryView>, Res<Hydrology>, Res<TerrainTiles>),
     waters: Query<&WaterBody>,
     mut bodies: ResMut<Bodies>,
     mut assets: ResMut<AssetLibrary>,
@@ -143,7 +143,7 @@ pub(crate) fn place(
     let Some((boulder, count)) = bodies.bank else {
         return;
     };
-    let Some(site) = site(&hydrology, &tiles, camera.position) else {
+    let Some(site) = site(&hydrology, &tiles, view.eye()) else {
         return;
     };
     let [x, z] = site.points[site.point];

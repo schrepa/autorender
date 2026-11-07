@@ -14,18 +14,37 @@ mod probes;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, Cut, SceneComponents, Schedule, Source, gpu_consts, settings,
-    stats,
+    AttachPoint, Brick, Bricks, ComponentKind, Cut, DrawKind, Pass, PassName, PassViews,
+    SceneComponents, Schedule, SlotSet, Source, Writes, gpu_consts, settings, stats,
 };
 use engine_places_rendering::lighting::{Ambient, Interiors};
-use engine_places_rendering::probes::{ProbeCaptures, ProbeViews, ReflectionProbe};
-use engine_places_rendering::sky::EnvironmentLayers;
+use engine_places_rendering::probes::{ProbeCaptures, ReflectionProbe};
 use engine_render::RenderBricks;
 
 pub use component::{SceneInterior, SceneReflectionProbe};
 
 gpu_consts! {
     pub const PROBE_ENTRY_WORDS: u32 = 3;
+}
+
+pub struct ProbePass;
+
+impl PassName for ProbePass {
+    const NAME: &'static str = "probe";
+    const PASS: Pass = Pass {
+        writes: Writes::LIT,
+        reads: SlotSet::ALL,
+        views: PassViews::Owned,
+        at: AttachPoint::Opaque,
+        takes: reflected,
+    };
+}
+
+fn reflected(kind: DrawKind) -> bool {
+    !matches!(
+        kind.name(),
+        "particles" | "sprites" | "text" | "ui" | "water" | "cover"
+    )
 }
 
 settings! {
@@ -37,7 +56,6 @@ settings! {
         pub resolution: u32 = 128 => power_of_two(16, 1024),
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_probes: Option<u32> = None => budget,
-        pub faces_per_frame: u32 = 1 => at_least(1),
     }
 }
 
@@ -78,7 +96,6 @@ impl Brick for ReflectionProbesBrick {
             .join::<Ambient>((), Some(shaders::probes::ambient::MODULE))
             .join::<Interiors>((), Some(shaders::probes::interior::MODULE))
             .fill::<ProbeCaptures>(None)
-            .fill::<ProbeViews>(None)
             .systems(
                 Schedule::ViewSync,
                 (
@@ -88,10 +105,7 @@ impl Brick for ReflectionProbesBrick {
                 ),
             )
             .generated(GENERATED)
-            .part::<captures::ProbesGpu>()
-            .draws::<captures::ProbesGpu, EnvironmentLayers>(
-                (),
-                captures::ProbesGpu::draw_environment,
-            );
+            .pass::<ProbePass>()
+            .part::<captures::ProbesGpu>();
     }
 }

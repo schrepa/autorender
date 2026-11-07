@@ -27,6 +27,36 @@ impl TextureFormat {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ColorSpace {
+    #[default]
+    Srgb,
+    Linear,
+}
+
+impl ColorSpace {
+    pub fn tag(self) -> u8 {
+        match self {
+            Self::Srgb => 0,
+            Self::Linear => 1,
+        }
+    }
+
+    pub fn of_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0 => Some(Self::Srgb),
+            1 => Some(Self::Linear),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum Contents {
+    Levels(Box<[Box<[u8]>]>),
+    Drawn,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextureSummary {
     pub color: [f32; 3],
@@ -90,7 +120,8 @@ pub struct Texture {
     width: u32,
     height: u32,
     format: TextureFormat,
-    levels: Box<[Box<[u8]>]>,
+    space: ColorSpace,
+    contents: Contents,
     masked: bool,
     summary: OnceLock<TextureSummary>,
     identity: OnceLock<u128>,
@@ -113,25 +144,27 @@ impl Texture {
         Self::from_levels(TextureFormat::Rgba8, width, height, vec![rgba8])
     }
 
+    pub fn target(width: u32, height: u32, space: ColorSpace) -> Result<Self, Error> {
+        check_size(TextureFormat::Rgba8, width, height)?;
+        Ok(Self {
+            width,
+            height,
+            format: TextureFormat::Rgba8,
+            space,
+            contents: Contents::Drawn,
+            masked: false,
+            summary: OnceLock::new(),
+            identity: OnceLock::new(),
+        })
+    }
+
     pub fn from_levels(
         format: TextureFormat,
         width: u32,
         height: u32,
         levels: Vec<Vec<u8>>,
     ) -> Result<Self, Error> {
-        for (path, size) in [("$.width", width), ("$.height", height)] {
-            if !(1..=MAX_TEXTURE_DIMENSION).contains(&size) {
-                return Err(invalid(path)
-                    .range(1.0, f64::from(MAX_TEXTURE_DIMENSION))
-                    .got(size));
-            }
-            if format.is_compressed() && !size.is_multiple_of(4) {
-                return Err(invalid(path)
-                    .expected(Expected::Multiple)
-                    .got(size)
-                    .nearest(size.next_multiple_of(4)));
-            }
-        }
+        check_size(format, width, height)?;
         if levels.is_empty() || levels.len() > full_chain(width, height) as usize {
             return Err(invalid("$.levels")
                 .expected(Expected::Array)
@@ -157,7 +190,8 @@ impl Texture {
             width,
             height,
             format,
-            levels: levels.into_iter().map(Vec::into_boxed_slice).collect(),
+            space: ColorSpace::Srgb,
+            contents: Contents::Levels(levels.into_iter().map(Vec::into_boxed_slice).collect()),
             masked: masked || format.is_compressed(),
             summary: OnceLock::new(),
             identity: OnceLock::new(),
@@ -170,11 +204,30 @@ impl Texture {
             for value in [self.width, self.height, self.format as u32] {
                 bytes.extend_from_slice(&value.to_le_bytes());
             }
-            for level in &self.levels {
+            bytes.push(self.space.tag());
+            bytes.push(u8::from(self.is_target()));
+            for level in self.levels() {
                 bytes.extend_from_slice(level);
             }
             hash(&bytes)
         })
+    }
+
+    #[must_use]
+    pub fn with_color_space(self, space: ColorSpace) -> Self {
+        Self {
+            space,
+            identity: OnceLock::new(),
+            ..self
+        }
+    }
+
+    pub fn color_space(&self) -> ColorSpace {
+        self.space
+    }
+
+    pub fn is_target(&self) -> bool {
+        matches!(self.contents, Contents::Drawn)
     }
 
     #[must_use]
@@ -205,7 +258,7 @@ impl Texture {
     }
 
     pub fn pixels(&self) -> &[u8] {
-        &self.levels[0]
+        self.levels().first().map_or(&[][..], |level| &level[..])
     }
 
     pub fn format(&self) -> TextureFormat {
@@ -213,18 +266,21 @@ impl Texture {
     }
 
     pub fn levels(&self) -> &[Box<[u8]>] {
-        &self.levels
+        match &self.contents {
+            Contents::Levels(levels) => levels,
+            Contents::Drawn => &[],
+        }
     }
 
     pub fn has_mips(&self) -> bool {
-        self.levels.len() == full_chain(self.width, self.height) as usize
+        self.levels().len() == full_chain(self.width, self.height) as usize
     }
 
     pub fn summary(&self) -> Option<TextureSummary> {
         if let Some(summary) = self.summary.get() {
             return Some(*summary);
         }
-        (self.format == TextureFormat::Rgba8).then(|| {
+        (self.format == TextureFormat::Rgba8 && !self.is_target()).then(|| {
             *self
                 .summary
                 .get_or_init(|| TextureSummary::of_rgba8(self.pixels()))
@@ -236,8 +292,25 @@ impl Texture {
     }
 
     pub fn byte_len(&self) -> usize {
-        self.levels.iter().map(|level| level.len()).sum()
+        self.levels().iter().map(|level| level.len()).sum()
     }
+}
+
+fn check_size(format: TextureFormat, width: u32, height: u32) -> Result<(), Error> {
+    for (path, size) in [("$.width", width), ("$.height", height)] {
+        if !(1..=MAX_TEXTURE_DIMENSION).contains(&size) {
+            return Err(invalid(path)
+                .range(1.0, f64::from(MAX_TEXTURE_DIMENSION))
+                .got(size));
+        }
+        if format.is_compressed() && !size.is_multiple_of(4) {
+            return Err(invalid(path)
+                .expected(Expected::Multiple)
+                .got(size)
+                .nearest(size.next_multiple_of(4)));
+        }
+    }
+    Ok(())
 }
 
 fn invalid(path: impl Into<String>) -> Error {

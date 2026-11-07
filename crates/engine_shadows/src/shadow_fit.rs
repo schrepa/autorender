@@ -14,10 +14,6 @@ pub(crate) const LEVEL_TEXELS: u32 = 8192;
 
 pub(crate) const REGION_TEXELS: u32 = 512;
 
-const MARKED_FRAMES: u32 = 8;
-
-const MOVING_FRAMES: u32 = 8;
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct LightBasis {
     pub rows: [Vec3; 3],
@@ -116,12 +112,12 @@ struct Cell {
 }
 
 impl Cell {
-    fn marked_at(&self, frame: u32) -> bool {
-        self.marked != 0 && self.marked + MARKED_FRAMES > frame
+    fn marked_in(&self, marks: u32) -> bool {
+        self.marked != 0 && self.marked == marks
     }
 
-    fn moving_at(&self, frame: u32) -> bool {
-        self.moving != 0 && self.moving + MOVING_FRAMES > frame
+    fn moving_in(&self, masks: u32) -> bool {
+        self.moving != 0 && self.moving == masks
     }
 }
 
@@ -215,7 +211,8 @@ pub(crate) struct Clipmap {
     moving: Vec<(usize, usize)>,
     order: Vec<(i32, u16)>,
     drawing: Vec<DrawnTile>,
-    frame: u32,
+    marks: u32,
+    masks: u32,
     stats: ClipStats,
 }
 
@@ -244,7 +241,6 @@ impl Clipmap {
             self.changed = vec![true; settings.levels as usize];
             self.moving.clear();
         }
-        self.frame += 1;
         let basis = self.follow(sun, eye);
         let light = basis.apply(eye);
         let rise = basis.rows[1].y.abs();
@@ -304,10 +300,10 @@ impl Clipmap {
     }
 
     fn old_sun_wanted(&self) -> bool {
-        let (frame, cells) = (self.frame, (self.side * self.side) as usize);
+        let (marks, cells) = (self.marks, (self.side * self.side) as usize);
         self.levels.iter().enumerate().any(|(level, clip)| {
             clip.live.iter().map(|&cell| usize::from(cell)).any(|cell| {
-                clip.cells[cell].marked_at(frame)
+                clip.cells[cell].marked_in(marks)
                     && tile_of(self.table[level * cells + cell]).old_sun
             })
         })
@@ -337,14 +333,14 @@ impl Clipmap {
                 level.depth + level.half_depth,
             ];
         }
-        let frame = self.frame;
+        let marks = self.marks;
         for slot in 0..self.owners.len() {
             let Some((level, cell)) = self.owners[slot] else {
                 continue;
             };
             let (level, cell) = (level as usize, cell as usize);
             let tile = &mut self.levels[level].cells[cell];
-            if !tile.marked_at(frame) {
+            if !tile.marked_in(marks) {
                 self.release(level, cell);
             } else if tile.drawn {
                 tile.dirty = true;
@@ -446,11 +442,12 @@ impl Clipmap {
     }
 
     pub(crate) fn merge_marks(&mut self, words: &[u32]) {
-        let frame = self.frame;
+        self.marks += 1;
+        let marks = self.marks;
         for (level, cell) in self.marked_cells(words) {
             let clip = &mut self.levels[level];
             let held = &mut clip.cells[cell];
-            held.marked = frame;
+            held.marked = marks;
             if !held.listed {
                 held.listed = true;
                 clip.live.push(cell as u16);
@@ -466,13 +463,14 @@ impl Clipmap {
     }
 
     pub(crate) fn merge_moving(&mut self, words: &[u32]) {
-        let (frame, side) = (self.frame, self.side as usize);
+        self.masks += 1;
+        let (masks, side) = (self.masks, self.side as usize);
         for (level, cell) in self.marked_cells(words) {
             let (column, row) = (cell % side, cell / side);
             for dy in [side - 1, 0, 1] {
                 for dx in [side - 1, 0, 1] {
                     let beside = (row + dy) % side * side + (column + dx) % side;
-                    self.levels[level].cells[beside].moving = frame;
+                    self.levels[level].cells[beside].moving = masks;
                 }
             }
         }
@@ -502,12 +500,16 @@ impl Clipmap {
         }
     }
 
-    pub(crate) fn invalidate(&mut self) {
+    pub(crate) fn invalidate(&mut self, kept: &[DrawnTile]) {
         let cells = (self.side * self.side) as usize;
         self.drawing.clear();
         for level in 0..self.levels.len() {
             for cell in 0..cells {
-                self.undraw_cell(level, cell);
+                let held = self.levels[level].cells[cell];
+                let drawn = held.slot.filter(|_| held.drawn);
+                if drawn.is_some_and(|slot| !kept.contains(&(level, cell, slot))) {
+                    self.undraw_cell(level, cell);
+                }
             }
         }
     }
@@ -540,10 +542,10 @@ impl Clipmap {
         }
     }
 
-    pub(crate) fn plan(
+    pub(crate) fn plan<F: FnMut() -> bool>(
         &mut self,
-        (budget, region): (u32, u32),
-        moving_budget: u32,
+        (afford, region): (&mut F, u32),
+        moving_slots: u32,
         out: &mut ClipPlan,
     ) {
         out.regions.clear();
@@ -553,9 +555,9 @@ impl Clipmap {
         self.stats = ClipStats::default();
         self.prune_live();
         self.allocate();
-        self.redraw(budget, region, out);
-        self.draw_moving(moving_budget, out);
-        let frame = self.frame;
+        self.redraw(afford, region, out);
+        self.draw_moving(moving_slots, out);
+        let masks = self.masks;
         let (mut slotted, mut moving) = (0, 0);
         for clip in &self.levels {
             for &cell in &clip.live {
@@ -563,7 +565,7 @@ impl Clipmap {
                 self.stats.marked += 1;
                 slotted += u32::from(cell.slot.is_some());
                 self.stats.waiting += u32::from(cell.slot.is_some() && (!cell.drawn || cell.dirty));
-                moving += u32::from(cell.drawn && cell.moving_at(frame));
+                moving += u32::from(cell.drawn && cell.moving_in(masks));
             }
         }
         self.stats.resident = self.owners.iter().flatten().count() as u32;
@@ -574,14 +576,14 @@ impl Clipmap {
     }
 
     fn prune_live(&mut self) {
-        let frame = self.frame;
+        let marks = self.marks;
         for clip in &mut self.levels {
             let ClipLevel { cells, live, .. } = clip;
             live.sort_unstable();
             live.dedup();
             live.retain(|&cell| {
                 let held = &mut cells[cell as usize];
-                let kept = held.marked_at(frame);
+                let kept = held.marked_in(marks);
                 held.listed = kept;
                 kept
             });
@@ -603,7 +605,7 @@ impl Clipmap {
     }
 
     fn allocate(&mut self) {
-        let frame = self.frame;
+        let marks = self.marks;
         let wanted = self
             .levels
             .iter()
@@ -617,7 +619,7 @@ impl Clipmap {
                     continue;
                 };
                 let held = &self.levels[level as usize].cells[cell as usize];
-                if !held.marked_at(frame) {
+                if !held.marked_in(marks) {
                     reclaimable.push((held.marked, slot as u16));
                 }
             }
@@ -648,18 +650,14 @@ impl Clipmap {
         }
     }
 
-    fn redraw(&mut self, budget: u32, region: u32, out: &mut ClipPlan) {
+    fn redraw<F: FnMut() -> bool>(&mut self, afford: &mut F, region: u32, out: &mut ClipPlan) {
         let side = self.side as i32;
         let square = region as i32;
-        let mut left = budget;
         let mut order = std::mem::take(&mut self.order);
         'levels: for level in (0..self.levels.len()).rev() {
             self.scan_order(level, &mut order);
             for redrawing in [false, true] {
                 for &(place, cell) in &order {
-                    if left == 0 {
-                        break 'levels;
-                    }
                     let cell = usize::from(cell);
                     let clip = &self.levels[level];
                     let tile = [clip.origin[0] + place % side, clip.origin[1] + place / side];
@@ -671,18 +669,20 @@ impl Clipmap {
                         continue;
                     }
                     let first = tile.map(|at| at.div_euclid(square) * square);
-                    let index = match out
+                    let found = out
                         .regions
                         .iter()
-                        .position(|region| region.level == level && region.first == first)
-                    {
-                        Some(index) => index,
-                        None if out.regions.len() < SHADOW_REGIONS as usize => {
-                            out.regions.push(self.region(level, first, square));
-                            out.regions.len() - 1
-                        }
-                        None => continue,
-                    };
+                        .position(|region| region.level == level && region.first == first);
+                    if found.is_none() && out.regions.len() >= SHADOW_REGIONS as usize {
+                        continue;
+                    }
+                    if !afford() {
+                        break 'levels;
+                    }
+                    let index = found.unwrap_or_else(|| {
+                        out.regions.push(self.region(level, first, square));
+                        out.regions.len() - 1
+                    });
                     out.composes.push(Compose {
                         slot,
                         region: index as u8,
@@ -698,7 +698,6 @@ impl Clipmap {
                     };
                     self.set_entry(level, cell, drawn.pack());
                     self.drawing.push((level, cell, slot));
-                    left -= 1;
                 }
             }
         }
@@ -724,7 +723,7 @@ impl Clipmap {
         }
     }
 
-    fn draw_moving(&mut self, budget: u32, out: &mut ClipPlan) {
+    fn draw_moving(&mut self, slots: u32, out: &mut ClipPlan) {
         for (level, cell) in std::mem::take(&mut self.moving) {
             let still = TileEntry {
                 moving: 0,
@@ -732,20 +731,20 @@ impl Clipmap {
             };
             self.set_entry(level, cell, still.pack());
         }
-        let frame = self.frame;
+        let masks = self.masks;
         let side = self.side as i32;
         let mut order = std::mem::take(&mut self.order);
         'levels: for level in (0..self.levels.len()).rev() {
             self.scan_order(level, &mut order);
             for &(place, cell) in &order {
-                if out.moving.len() >= budget as usize {
+                if out.moving.len() >= slots as usize {
                     break 'levels;
                 }
                 let cell = usize::from(cell);
                 let clip = &self.levels[level];
                 let tile = [clip.origin[0] + place % side, clip.origin[1] + place / side];
                 let held = clip.cells[cell];
-                if !(held.drawn && held.moving_at(frame)) {
+                if !(held.drawn && held.moving_in(masks)) {
                     continue;
                 }
                 let index = out.moving.len() as u16;
@@ -827,7 +826,7 @@ impl Clipmap {
         };
         let light = basis.apply(point);
         let side = self.side as i32;
-        let frame = self.frame;
+        let (marks, masks) = (self.marks, self.masks);
         self.levels
             .iter()
             .enumerate()
@@ -848,8 +847,8 @@ impl Clipmap {
                         slot: held.slot,
                         drawn: held.drawn,
                         dirty: held.dirty,
-                        marked: held.marked_at(frame),
-                        moving: held.moving_at(frame),
+                        marked: held.marked_in(marks),
+                        moving: held.moving_in(masks),
                     }
                 })
             })

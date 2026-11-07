@@ -33,7 +33,7 @@ fn offsets_of<'o>(
 }
 
 impl Run {
-    pub(super) fn scoped(&self, part: u32, point: Option<TypeId>, pipeline: u32) -> bool {
+    pub(super) fn scoped(&self, part: u32, point: Option<&'static str>, pipeline: u32) -> bool {
         let Some(built) = self.machine.pipelines.get(pipeline as usize) else {
             return false;
         };
@@ -42,54 +42,24 @@ impl Run {
         }
         match (built.decl.scope, point) {
             (Scoped::Pass(pass), None) => pass == self.pass,
-            (Scoped::Point(known), Some(point)) => known == point,
-            (Scoped::Point(known), None) => {
-                known == TypeId::of::<crate::MainView>()
-                    && self
-                        .machine
-                        .declared
-                        .passes
-                        .get(self.pass as usize)
-                        .is_some_and(shared)
-            }
-            (Scoped::Pass(_), Some(_)) => false,
+            (Scoped::Scene(known), Some(point)) => known == point,
+            (Scoped::Scene(_), None) | (Scoped::Pass(_), Some(_)) => false,
         }
     }
 
     fn mesh_variant(
         &self,
-        point: Option<TypeId>,
         mesh: MeshHandle,
         material: Option<MaterialHandle>,
         pass: crate::MeshPass,
-    ) -> Option<crate::materials::Variant> {
-        let extended = self.assets.meshes.get(mesh)?.extended;
+    ) -> Option<crate::surface::DrawState> {
+        self.assets.meshes.get(mesh)?;
         if material.is_some_and(|handle| self.assets.materials.group(handle).is_none()) {
             return None;
         }
-        let uber = point.is_some_and(|point| {
-            self.machine
-                .declared
-                .claims
-                .iter()
-                .any(|claim| claim.point == point && claim.uber)
-        });
-        let variant = self
-            .assets
-            .materials
-            .binding(material)
-            .1
-            .with_extended(extended)
-            .with_fading(pass.fading)
-            .with_grounding(pass.grounding);
-        Some(if uber {
-            variant.uber()
-        } else if pass.prepass {
-            variant.prepass()
-        } else if pass.opaque {
-            variant.opaque()
-        } else {
-            variant
+        Some(crate::surface::DrawState {
+            alpha_test: self.assets.materials.binding(material).1.masked,
+            fading: pass.fading,
         })
     }
 
@@ -100,7 +70,7 @@ impl Run {
     pub(crate) fn draw(
         &mut self,
         part: u32,
-        point: Option<TypeId>,
+        point: Option<&'static str>,
         handle: u32,
         (shape, offsets, pass): (RawShape, &[u32], crate::MeshPass),
         timed: TimedDraw<'_>,
@@ -125,7 +95,7 @@ impl Run {
         }
         let variant = match &shape {
             RawShape::MeshIndirect { mesh, material, .. } => {
-                let Some(variant) = self.mesh_variant(point, *mesh, *material, pass) else {
+                let Some(variant) = self.mesh_variant(*mesh, *material, pass) else {
                     return;
                 };
                 Some(variant)
@@ -332,7 +302,7 @@ impl Run {
                     let texture = textures.get(hole).copied();
                     hole += 1;
                     match texture
-                        .and_then(|texture| self.assets.materials.texture_view(texture, true))
+                        .and_then(|texture| self.assets.materials.texture_view(texture))
                     {
                         Some(view) => Resolved::View(view.clone()),
                         None => Resolved::Placeholder(ty),

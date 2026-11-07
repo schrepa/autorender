@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use bevy_ecs::prelude::{Component, Entity};
 use engine_codec::Expected;
@@ -474,6 +475,7 @@ impl Ask for Animate {
 #[serde(from = "AnimatorScene", into = "AnimatorScene")]
 pub struct Animator {
     rig: Arc<Rig>,
+    revision: u64,
     start: Option<Start>,
     layers: Vec<ClipLayer>,
     overrides: Vec<(u32, Quat)>,
@@ -483,8 +485,10 @@ pub struct Animator {
 impl Animator {
     #[must_use]
     pub fn new(rig: Arc<Rig>) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
         Self {
             rig,
+            revision: NEXT.fetch_add(1, Ordering::Relaxed),
             start: None,
             layers: vec![ClipLayer::default()],
             overrides: Vec::new(),
@@ -510,6 +514,10 @@ impl Animator {
 
     pub fn rig(&self) -> &Arc<Rig> {
         &self.rig
+    }
+
+    pub fn rig_revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn layers(&self) -> &[ClipLayer] {

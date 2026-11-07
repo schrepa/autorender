@@ -122,7 +122,7 @@ impl Run {
         }
     }
 
-    pub(crate) fn copy_view(&mut self, layer: crate::Layer, view: ViewTarget) {
+    pub(crate) fn copy_view(&mut self, layer: engine_core::AttachPoint, view: ViewTarget) {
         self.end_render();
         let from = final_target(view);
         let source = self.targets.iter().find(|(known, _)| *known == from).map(|(_, made)| made.texture.clone());

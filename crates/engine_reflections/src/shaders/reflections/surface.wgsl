@@ -1,4 +1,5 @@
 import package::engine::shading::{Shaded, ViewPixel};
+import package::engine::surfaces::surface_depth;
 
 const MIRRORED_BITS: u32 = 14u;
 
@@ -14,7 +15,7 @@ fn surface(shaded: Shaded, at: ViewPixel) -> vec4<u32> {
     let most = f32((1u << MIRRORED_BITS) - 1u);
     let mirrored = u32(floor(saturate(shaded.mirrored) * most + 0.5));
     return vec4<u32>(normal & 0xffffu, normal >> 16u, roughness,
-        mirrored | (shaded.body << MIRRORED_BITS));
+        mirrored | (surface_depth(shaded.kind) << MIRRORED_BITS));
 }
 
 fn reflectivity(shaded: Shaded, at: ViewPixel) -> f32 {

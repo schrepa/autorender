@@ -219,7 +219,7 @@ impl FrameRegions<'_> {
 
     pub(crate) fn lookup_piece(
         &self,
-        (tile_texels, crown_depth): (u32, f32),
+        tile_texels: u32,
         (shown, sky): (u32, [f32; 4]),
     ) -> ShadowPiece {
         let (width, height) = self.layout.size();
@@ -227,7 +227,7 @@ impl FrameRegions<'_> {
         ShadowPiece {
             light: self.basis.words(),
             before: self.clipmap.before().unwrap_or(self.basis).words(),
-            state: [1.0, crown_depth, shown as f32, 0.0],
+            state: [1.0, 0.0, shown as f32, 0.0],
             level_state: [
                 levels as f32,
                 self.clipmap.texel(0),

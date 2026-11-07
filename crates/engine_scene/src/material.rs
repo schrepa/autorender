@@ -1,8 +1,13 @@
+use std::collections::BTreeMap;
+
+use bevy_ecs::system::{Res, ResMut, SystemParamItem};
 use engine_core::{
-    AlphaMode, Error, Filter, Material, Sampler, TextureHandle, TextureRef, UvTransform, Wrap,
+    AlphaMode, AssetLibrary, ColorSpace, Cull, DepthBias, Error, Filter, LightingModel, Material,
+    Operation, Sampler, SceneContext, SurfaceSlot, TextureHandle, TextureRef, UvTransform, Wrap,
 };
 use engine_settings::{ErrorCode, Expected};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::SceneSurface;
 use crate::validation::{identifier, moved};
@@ -53,15 +58,21 @@ pub struct SceneMaterial {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpha_cutoff: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub double_sided: Option<bool>,
+    pub cull: Option<SceneCull>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub foliage: Option<bool>,
+    pub depth_test: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub world_tiling: Option<f32>,
+    pub depth_write: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub top: Option<SceneTopLayer>,
+    pub depth_bias: Option<SceneDepthBias>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grounding: Option<SceneGrounding>,
+    pub transmission: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slots: Option<BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub values: Option<BTreeMap<String, f32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lighting: Option<String>,
 }
 
 #[cfg(feature = "schema")]
@@ -73,35 +84,27 @@ fn state_material_rules(schema: &mut schemars::Schema) {
         ("occlusion_strength", Material::OCCLUSION_STRENGTH),
         ("emissive", Material::EMISSIVE),
         ("alpha_cutoff", Material::ALPHA_CUTOFF),
-        ("world_tiling", Material::WORLD_TILING),
+        ("transmission", Material::TRANSMISSION),
     ] {
         engine_settings::state(schema, field, rule);
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(transform = engine_core::Grounding::state_rules)
-)]
-#[serde(deny_unknown_fields)]
-pub struct SceneGrounding {
-    pub height: f32,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum SceneCull {
+    Back,
+    Front,
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(transform = engine_core::TopLayer::state_rules)
-)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-pub struct SceneTopLayer {
-    pub color: [f32; 3],
-    pub coverage: f32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub roughness: Option<f32>,
+pub struct SceneDepthBias {
+    pub constant: i32,
+    pub slope: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -188,6 +191,8 @@ pub enum SceneMipmapFilter {
 pub enum SceneAlphaMode {
     Opaque,
     Mask,
+    Blend,
+    Additive,
 }
 
 const MAP_FIELDS: [&str; 5] = [
@@ -215,7 +220,7 @@ impl PreparedMaterial {
                     .with_tex_coord(*tex_coord)
             })
         });
-        let mut material = self.material;
+        let mut material = self.material.clone();
         let valid = "prepared_maps_valid";
         if let Some(map) = base {
             material = material.with_base_color_texture(map).expect(valid);
@@ -251,9 +256,12 @@ impl SceneMaterial {
         };
         let [red, green, blue, opacity] = material.color();
         let surface = material.surface();
-        let (alpha_mode, alpha_cutoff) = match material.alpha_mode() {
+        let state = material.render_state();
+        let (alpha_mode, alpha_cutoff) = match state.alpha {
             AlphaMode::Opaque => (SceneAlphaMode::Opaque, None),
             AlphaMode::Mask { cutoff } => (SceneAlphaMode::Mask, Some(cutoff)),
+            AlphaMode::Blend => (SceneAlphaMode::Blend, None),
+            AlphaMode::Additive => (SceneAlphaMode::Additive, None),
         };
         Self {
             id: id.into(),
@@ -276,16 +284,31 @@ impl SceneMaterial {
             emissive_texture: map(material.emissive_texture()),
             alpha_mode: Some(alpha_mode),
             alpha_cutoff,
-            double_sided: Some(material.is_double_sided()),
-            foliage: Some(material.is_foliage()),
-            world_tiling: material.world_tiling(),
-            top: material.top_layer().map(|top| SceneTopLayer {
-                color: top.color,
-                coverage: top.coverage,
-                roughness: Some(top.roughness),
+            cull: Some(match state.cull {
+                Cull::Back => SceneCull::Back,
+                Cull::Front => SceneCull::Front,
+                Cull::None => SceneCull::None,
             }),
-            grounding: material.grounding().map(|grounding| SceneGrounding {
-                height: grounding.height,
+            depth_test: Some(state.depth_test),
+            depth_write: Some(state.depth_write),
+            depth_bias: Some(SceneDepthBias {
+                constant: state.bias.constant,
+                slope: state.bias.slope,
+            }),
+            transmission: Some(material.transmission()),
+            slots: (!material.slots().is_empty()).then(|| {
+                material
+                    .slots()
+                    .iter()
+                    .map(|(slot, module)| (slot.name().to_owned(), module.clone()))
+                    .collect()
+            }),
+            values: (!material.values().is_empty())
+                .then(|| material.values().iter().cloned().collect()),
+            lighting: Some(match material.lighting() {
+                LightingModel::Lit => "lit".to_owned(),
+                LightingModel::Unlit => "unlit".to_owned(),
+                LightingModel::Named(name) => name.clone(),
             }),
         }
     }
@@ -295,6 +318,19 @@ impl SceneMaterial {
             .into_iter()
             .zip(MAP_FIELDS)
             .filter_map(|(map, field)| map.map(|map| (field, map.id())))
+    }
+
+    pub(crate) fn map_spaces(&self) -> impl Iterator<Item = (&str, ColorSpace)> + '_ {
+        self.maps()
+            .into_iter()
+            .zip([
+                ColorSpace::Srgb,
+                ColorSpace::Linear,
+                ColorSpace::Linear,
+                ColorSpace::Linear,
+                ColorSpace::Srgb,
+            ])
+            .filter_map(|(map, space)| map.map(|map| (map.id(), space)))
     }
 
     fn maps(&self) -> [Option<&SceneMap>; 5] {
@@ -335,11 +371,14 @@ impl SceneMaterial {
             ("emissive_texture", self.emissive_texture.is_some()),
             ("alpha_mode", self.alpha_mode.is_some()),
             ("alpha_cutoff", self.alpha_cutoff.is_some()),
-            ("double_sided", self.double_sided.is_some()),
-            ("foliage", self.foliage.is_some()),
-            ("world_tiling", self.world_tiling.is_some()),
-            ("top", self.top.is_some()),
-            ("grounding", self.grounding.is_some()),
+            ("cull", self.cull.is_some()),
+            ("depth_test", self.depth_test.is_some()),
+            ("depth_write", self.depth_write.is_some()),
+            ("depth_bias", self.depth_bias.is_some()),
+            ("transmission", self.transmission.is_some()),
+            ("slots", self.slots.is_some()),
+            ("values", self.values.is_some()),
+            ("lighting", self.lighting.is_some()),
         ];
         if let Some((field, _)) = given.into_iter().find(|&(_, given)| given) {
             return Err(
@@ -375,6 +414,8 @@ impl SceneMaterial {
                 SceneAlphaMode::Mask => AlphaMode::Mask {
                     cutoff: self.alpha_cutoff.unwrap_or(0.5),
                 },
+                SceneAlphaMode::Blend => AlphaMode::Blend,
+                SceneAlphaMode::Additive => AlphaMode::Additive,
             };
             material = material
                 .with_alpha_mode(mode)
@@ -397,32 +438,57 @@ impl SceneMaterial {
                 .with_emissive(emissive)
                 .map_err(|error| failed(error, "emissive"))?;
         }
-        if let Some(double_sided) = self.double_sided {
-            material = material.with_double_sided(double_sided);
+        let mut state = material.render_state();
+        if let Some(cull) = self.cull {
+            state.cull = match cull {
+                SceneCull::Back => Cull::Back,
+                SceneCull::Front => Cull::Front,
+                SceneCull::None => Cull::None,
+            };
         }
-        if let Some(foliage) = self.foliage {
-            material = material.with_foliage(foliage);
+        if let Some(test) = self.depth_test {
+            state.depth_test = test;
         }
-        if let Some(tiling) = self.world_tiling {
+        if let Some(write) = self.depth_write {
+            state.depth_write = write;
+        }
+        if let Some(bias) = self.depth_bias {
+            state.bias = DepthBias {
+                constant: bias.constant,
+                slope: bias.slope,
+            };
+        }
+        material = material
+            .with_render_state(state)
+            .map_err(|error| failed(error, "depth_bias"))?;
+        if let Some(transmission) = self.transmission {
             material = material
-                .with_world_mapping(tiling)
-                .map_err(|error| failed(error, "world_tiling"))?;
+                .with_transmission(transmission)
+                .map_err(|error| failed(error, "transmission"))?;
         }
-        if let Some(top) = self.top {
+        for (name, module) in self.slots.iter().flatten() {
+            let Some(slot) = SurfaceSlot::named(name) else {
+                return Err(
+                    Error::new(ErrorCode::UnknownVariant, format!("{path}.slots.{name}"))
+                        .variants(SurfaceSlot::ALL.map(SurfaceSlot::name))
+                        .got(name.as_str()),
+                );
+            };
             material = material
-                .with_top_layer(engine_core::TopLayer {
-                    color: top.color,
-                    coverage: top.coverage,
-                    roughness: top.roughness.unwrap_or(0.85),
-                })
-                .map_err(|error| failed(error, "top"))?;
+                .with_slot(slot, module.as_str())
+                .map_err(|error| failed(error, &format!("slots.{name}")))?;
         }
-        if let Some(grounding) = self.grounding {
+        for (name, value) in self.values.iter().flatten() {
             material = material
-                .with_grounding(engine_core::Grounding {
-                    height: grounding.height,
-                })
-                .map_err(|error| failed(error, "grounding"))?;
+                .with_value(name.as_str(), *value)
+                .map_err(|error| failed(error, &format!("values.{name}")))?;
+        }
+        if let Some(lighting) = &self.lighting {
+            material = material.with_lighting(match lighting.as_str() {
+                "lit" => LightingModel::Lit,
+                "unlit" => LightingModel::Unlit,
+                named => LightingModel::Named(named.to_owned()),
+            });
         }
         let normal_scale = self.normal_scale.unwrap_or(1.0);
         if !normal_scale.is_finite() {
@@ -535,5 +601,64 @@ impl SceneTextureMap {
                 SceneMipmapFilter::Linear => Some(Filter::Linear),
             },
         }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SceneMaterialControl {
+    pub material: SceneMaterial,
+}
+
+impl Operation for SceneMaterialControl {
+    const NAME: &'static str = "scene_material";
+    type Params = (
+        Option<Res<'static, SceneContext>>,
+        Option<ResMut<'static, AssetLibrary>>,
+    );
+    type Request = Self;
+
+    fn run(
+        (context, assets): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Value, Error> {
+        let id = request.material.id.as_str();
+        let unknown = |names: Vec<&str>| {
+            Error::new(ErrorCode::UnknownReference, "$.material.id")
+                .got(id)
+                .variants(names)
+        };
+        let Some(context) = context else {
+            return Err(unknown(Vec::new()));
+        };
+        let handle = context
+            .assets
+            .materials
+            .get(id)
+            .copied()
+            .ok_or_else(|| unknown(context.assets.materials.keys().map(String::as_str).collect()))?;
+        let textures = &context.assets.textures;
+        for (field, texture) in request.material.texture_ids() {
+            if !textures.contains_key(texture) {
+                return Err(
+                    Error::new(ErrorCode::UnknownReference, format!("$.material.{field}"))
+                        .got(texture)
+                        .variants(textures.keys().map(String::as_str)),
+                );
+            }
+        }
+        let material = request
+            .material
+            .prepare("$.material")?
+            .material(|texture| textures[texture]);
+        let mut assets = assets.ok_or_else(|| Error::new(ErrorCode::MissingAssetLibrary, "$"))?;
+        assets.replace_material(handle, material)?;
+        Ok(json!({ "temporary": true, "material": id }))
+    }
+
+    #[cfg(feature = "schema")]
+    fn schema() -> Value {
+        serde_json::to_value(schemars::schema_for!(Self)).unwrap_or(Value::Null)
     }
 }

@@ -1,16 +1,16 @@
 use std::any::TypeId;
 
 use bevy_ecs::world::World;
-use engine_core::{Error, Module, Section};
+use engine_core::{Error, ErrorCode, Module, Section};
 use engine_place::PlaceKind;
 use engine_registry::{BrickStates, GateId, MembersOf, Registry, RegistryBuilder, SettingsEntry};
 
 use super::*;
-use crate::install::{DrawEntry, InstallCore, PartInfo, Reinstall};
+use crate::install::{InstallCore, PartInfo, Reinstall};
 use crate::linker::{CORE_PACKAGE, Linker, Part};
 use crate::machine::{Machine, OutputDecl};
 use crate::places::{Answered, Fed, checked, face_module, face_source, place_module};
-use crate::registration::{DrawAny, Generated, Installed, PartRecord, ResolvePass};
+use crate::registration::{Generated, Installed, KindDraw, KindMember, PartRecord, ResolvePass};
 
 struct Listed {
     record: PartRecord,
@@ -23,13 +23,14 @@ pub(crate) struct Built {
     pub(crate) run_parts: Vec<Option<Box<dyn Installed>>>,
     pub(crate) gates: Vec<Option<GateId>>,
     pub(crate) reinstalls: Vec<Reinstall>,
-    pub(crate) draws: Vec<DrawEntry>,
+    pub(crate) draws: Vec<KindMember>,
     pub(crate) machine: Machine,
     pub(crate) pieces: Vec<(usize, crate::pieces::PieceAt)>,
     pub(crate) passes: Vec<&'static str>,
     pub(crate) linked: engine_core::LinkedStats,
     pub(crate) placed: Placed,
     pub(crate) resolve: Option<(crate::PassNames, &'static str)>,
+    pub(crate) material: crate::surface::MaterialLayout,
 }
 
 #[derive(Default)]
@@ -265,30 +266,60 @@ fn faces(
     (switches, links)
 }
 
-fn outputs(
+fn material_layout(
     registry: &Registry,
-    world: &World,
+    linker: &mut Linker,
     roots: &mut Vec<(String, String)>,
-) -> Vec<OutputDecl> {
-    let members = world
-        .get_resource::<MembersOf<crate::ViewOutputs>>()
-        .map_or(&[][..], |members| members.all());
-    let joins = registry
-        .iter()
-        .flat_map(|(_, record)| record.joins().iter())
-        .filter(|joined| joined.list == TypeId::of::<crate::ViewOutputs>());
+    problems: &mut Vec<Error>,
+) -> crate::surface::MaterialLayout {
+    use crate::surface::{LightingModule, MaterialLayout, SlotModule, SurfaceKind};
+    let mut slots = Vec::new();
+    for (_, declared) in registry.render_entries::<SlotModule>() {
+        linker.add_source(declared.module.source());
+        let (path, name) = crate::linker::path_of((declared.module, declared.slot.name()));
+        roots.push((path.to_owned(), name));
+        slots.push((*declared, path.to_owned()));
+    }
+    let mut models = Vec::new();
+    for (_, declared) in registry.render_entries::<LightingModule>() {
+        linker.add_source(declared.module.source());
+        let (path, name) = crate::linker::path_of((declared.module, "finish"));
+        roots.push((path.to_owned(), name));
+        models.push((*declared, path.to_owned()));
+    }
+    let kinds: Vec<SurfaceKind> = registry
+        .render_entries::<SurfaceKind>()
+        .map(|(_, kind)| *kind)
+        .collect();
+    let layout = MaterialLayout::of(&slots, &models, &kinds, problems);
+    for (path, text) in [
+        (crate::surface::MATERIALS_MODULE, layout.materials_source()),
+        (crate::surface::SLOTS_MODULE, layout.slots_source(true)),
+        (crate::surface::SURFACES_MODULE, layout.surfaces_source()),
+    ] {
+        linker.add_generated(path.to_owned(), CORE_PACKAGE, text);
+    }
+    layout
+}
+
+fn outputs(registry: &Registry, roots: &mut Vec<(String, String)>) -> Vec<OutputDecl> {
     let mut found = Vec::new();
-    for (output, joined) in members.iter().zip(joins) {
-        let module = wgsl_of(joined.wgsl.as_deref()).and_then(module_path);
-        if let Some(module) = &module {
-            roots.push((module.clone(), output.name.to_owned()));
+    for (_, record) in registry.iter() {
+        for target in record.render_entries::<crate::TargetDecl>() {
+            let module = target.module.as_ref().and_then(module_path);
+            if let Some(module) = &module {
+                roots.push((module.clone(), target.name.name().to_owned()));
+            }
+            found.push(OutputDecl {
+                name: target.name.name(),
+                format: target.format,
+                layers: match target.written {
+                    crate::Written::At(points) => points.to_vec(),
+                    crate::Written::Composite => Vec::new(),
+                },
+                module,
+            });
         }
-        found.push(OutputDecl {
-            name: output.name,
-            format: output.format,
-            layers: output.layers.to_vec(),
-            module,
-        });
     }
     found
 }
@@ -416,36 +447,71 @@ fn pieces(
     )
 }
 
-fn names_twice(world: &World, problems: &mut Vec<Error>) {
-    if let Some(members) = world.get_resource::<MembersOf<crate::ViewOutputs>>() {
-        problems.extend(members.names_twice(|member| member.name));
+fn names_twice(registry: &Registry, world: &World, problems: &mut Vec<Error>) {
+    let mut seen: Vec<&'static str> = Vec::new();
+    for (_, record) in registry.iter() {
+        for target in record.render_entries::<crate::TargetDecl>() {
+            let name = target.name.name();
+            if crate::install::ViewTarget::of(target.name).is_some() || seen.contains(&name) {
+                problems.push(
+                    Error::new(ErrorCode::NameTwice, format!("$.targets.{name}"))
+                        .got(record.package),
+                );
+            } else {
+                seen.push(name);
+            }
+        }
     }
     if let Some(members) = world.get_resource::<MembersOf<crate::DebugModes>>() {
         problems.extend(members.names_twice(|member| member.name));
     }
 }
 
-fn device_limits(device: &wgpu::Device, world: &World) -> engine_core::DeviceLimits {
-    let limits = device.limits();
-    let cores = world
-        .get_resource::<engine_core::DeviceLimits>()
-        .map_or(0, |held| held.cores);
+pub fn device_limits(
+    limits: &wgpu::Limits,
+    features: wgpu::Features,
+    cores: u32,
+) -> engine_core::DeviceLimits {
     engine_core::DeviceLimits {
+        cores,
         storage_room: limits
             .max_storage_buffer_binding_size
             .min(limits.max_buffer_size),
         texture_layers: limits.max_texture_array_layers,
         max_texture_dimension_2d: limits.max_texture_dimension_2d,
         max_compute_workgroups_per_dimension: limits.max_compute_workgroups_per_dimension,
-        indirect_first_instance: device
-            .features()
-            .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE),
-        ..engine_core::DeviceLimits::without_device(cores)
+        indirect_first_instance: features.contains(wgpu::Features::INDIRECT_FIRST_INSTANCE),
     }
 }
 
-pub(crate) fn install(device: &wgpu::Device, world: &mut World) -> Result<Built, Vec<Error>> {
-    world.resource_scope::<Registry, _>(|world, registry| install_with(device, world, &registry))
+fn held_limits(limits: engine_core::DeviceLimits, world: &World) -> engine_core::DeviceLimits {
+    let cores = world
+        .get_resource::<engine_core::DeviceLimits>()
+        .map_or(0, |held| held.cores);
+    engine_core::DeviceLimits { cores, ..limits }
+}
+
+fn scene_passes(world: &World) -> engine_core::ScenePasses {
+    world
+        .get_resource::<engine_core::ScenePasses>()
+        .cloned()
+        .unwrap_or_default()
+}
+
+pub(crate) fn install(
+    device: &wgpu::Device,
+    limits: engine_core::DeviceLimits,
+    world: &mut World,
+) -> Result<Built, Vec<Error>> {
+    let built = world.resource_scope::<Registry, _>(|world, registry| {
+        install_with((device, limits), world, &registry)
+    })?;
+    if let Some(mut registry) = world.get_resource_mut::<Registry>() {
+        for problem in &built.machine.over_limit {
+            registry.report(problem.clone());
+        }
+    }
+    Ok(built)
 }
 
 #[expect(
@@ -453,19 +519,20 @@ pub(crate) fn install(device: &wgpu::Device, world: &mut World) -> Result<Built,
     reason = "longer than the line ceiling; it may only shrink"
 )]
 fn install_with(
-    device: &wgpu::Device,
+    (device, limits): (&wgpu::Device, engine_core::DeviceLimits),
     world: &mut World,
     registry: &Registry,
 ) -> Result<Built, Vec<Error>> {
     let mut problems = Vec::new();
-    names_twice(world, &mut problems);
+    names_twice(registry, world, &mut problems);
     let mut roots = Vec::new();
     let mut linker = Linker::new(crate::shared::core_source());
     for (path, text) in crate::shaders::generated_core() {
         linker.add_generated(path.to_owned(), CORE_PACKAGE, text);
     }
     let (switches, links) = faces(registry, &mut linker, &mut roots, &mut problems);
-    let outputs = outputs(registry, world, &mut roots);
+    let material = material_layout(registry, &mut linker, &mut roots, &mut problems);
+    let outputs = outputs(registry, &mut roots);
     linker.add_generated(
         crate::shared::TARGETS_MODULE.to_owned(),
         CORE_PACKAGE,
@@ -475,6 +542,11 @@ fn install_with(
         crate::shared::COMPOSITE_MODULE.to_owned(),
         CORE_PACKAGE,
         crate::shared::composite_source(),
+    );
+    linker.add_generated(
+        crate::shared::PASSES_MODULE.to_owned(),
+        CORE_PACKAGE,
+        scene_passes(world).wgsl(),
     );
     let (pieces, placed, piece_texts) = pieces(registry, &mut linker, &mut problems);
     hand_generated(registry, &mut linker, piece_texts);
@@ -489,26 +561,21 @@ fn install_with(
             .filter(|_| fills)
             .map(|entry| (entry.0, record.package))
     });
-    let core_fills = vec![
-        TypeId::of::<crate::MainView>(),
-        TypeId::of::<crate::Overlay>(),
-        TypeId::of::<crate::OverlayStack>(),
-    ];
     let mut listed: Vec<Listed> = vec![
         Listed {
-            record: core_part::<crate::shared::Layers>(),
+            record: core_part::<crate::shared::ScenePart>(),
             package: CORE_PACKAGE,
             brick: None,
-            fills: core_fills.clone(),
+            fills: Vec::new(),
         },
         Listed {
             record: core_part::<crate::shared::Composite>(),
             package: CORE_PACKAGE,
             brick: None,
-            fills: core_fills,
+            fills: Vec::new(),
         },
     ];
-    let mut draws: Vec<(TypeId, &DrawAny)> = Vec::new();
+    let mut draws: Vec<&KindDraw> = Vec::new();
     for (brick, record) in registry.iter() {
         let fills: Vec<TypeId> = record.fills().iter().map(|filled| filled.slot).collect();
         for entry in &record.render {
@@ -531,13 +598,13 @@ fn install_with(
                     fills: fills.clone(),
                 });
             }
-            if let Some(draw) = entry.downcast_ref::<DrawAny>() {
-                draws.push((draw.part, draw));
+            if let Some(draw) = entry.downcast_ref::<KindDraw>() {
+                draws.push(draw);
             }
         }
     }
-    let mut core = InstallCore::new(linker, device.features());
-    core.limits = device_limits(device, world);
+    let mut core = InstallCore::new(linker, device.features(), held_limits(limits, world));
+    core.passes = scene_passes(world);
     for entry in &listed {
         core.declared.parts.push(PartInfo {
             ty: entry.record.part,
@@ -554,11 +621,12 @@ fn install_with(
                 .map_or(0, engine_registry::BrickId::profile_index),
         });
     }
-    for (part, draw) in &draws {
-        if let Some(index) = listed.iter().position(|entry| entry.record.part == *part) {
-            core.draws.push(DrawEntry {
+    for draw in &draws {
+        if let Some(index) = listed.iter().position(|entry| entry.record.part == draw.part) {
+            core.draws.push(KindMember {
                 part: index as u32,
-                record: std::sync::Arc::clone(&draw.record),
+                kind: draw.kind,
+                call: std::sync::Arc::clone(&draw.call),
             });
         }
     }
@@ -612,7 +680,7 @@ fn install_with(
             passes.push(name);
         }
     }
-    let limits = crate::pipeline_layouts::REQUIRED_LIMITS;
+    let limits = crate::pipeline_layouts::StageLimits::of(&device.limits());
     let scope = crate::gpu_calls::validation_scope(device);
     let machine = Machine::build(
         device,
@@ -620,7 +688,7 @@ fn install_with(
         declared,
         outputs,
         switches,
-        &limits,
+        (&limits, material.table().0),
         &mut problems,
     );
     if let Some(Some(error)) = crate::platform::ready(scope.pop()) {
@@ -652,6 +720,7 @@ fn install_with(
             linked: links.stats(),
             placed,
             resolve,
+            material,
         })
     } else {
         Err(problems)
@@ -680,9 +749,6 @@ impl Renderer {
     #[doc(hidden)]
     pub fn register_places(registry: &mut RegistryBuilder) {
         registry.places(crate::shared::PLACES);
-        registry.fill_core::<crate::MainView>();
-        registry.fill_core::<crate::Overlay>();
-        registry.fill_core::<crate::OverlayStack>();
         registry.core_settings(SettingsEntry::of::<crate::RenderSettings>(
             crate::RenderSettings::KEY,
             check_render,
@@ -692,7 +758,7 @@ impl Renderer {
     }
 
     pub fn install(&mut self, world: &mut World) -> Result<(), Vec<Error>> {
-        let installed = install(&self.core.device, world)?;
+        let installed = install(&self.core.device, self.core.limits, world)?;
         let (mut assets, kept) = match (self.run.take(), self.assets.take()) {
             (Some(run), _) => {
                 let (assets, kept) = kept_of(run);
@@ -701,6 +767,9 @@ impl Renderer {
             (None, Some(assets)) => (assets, None),
             (None, None) => (new_assets(&self.core.device, &self.core.queue), None),
         };
+        assets
+            .materials
+            .configure(&self.core.device, installed.material.clone());
         crate::mesh_arena::configure(
             &self.core.device,
             world,
@@ -711,8 +780,11 @@ impl Renderer {
             ),
         );
         let mut run = Run::new(
-            self.core.device.clone(),
-            self.core.queue.clone(),
+            (
+                self.core.device.clone(),
+                self.core.queue.clone(),
+                self.core.limits,
+            ),
             installed.machine,
             installed.run_parts,
             assets,
@@ -781,14 +853,15 @@ impl Renderer {
 #[doc(hidden)]
 pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     let (device, queue) = noop_device().map_err(|error| vec![error])?;
-    let mut installed = install(&device, world)?;
+    let limits = device_limits(&device.limits(), device.features(), 0);
+    let mut installed = install(&device, limits, world)?;
     let listed = listing(&mut installed);
     let queue = crate::gpu_calls::Queue::new(queue);
-    let assets = new_assets(&device, &queue);
+    let mut assets = new_assets(&device, &queue);
+    assets.materials.configure(&device, installed.material.clone());
     let scope = crate::gpu_calls::validation_scope(&device);
     let mut run = Run::new(
-        device.clone(),
-        queue.clone(),
+        (device.clone(), queue.clone(), limits),
         installed.machine,
         installed.run_parts,
         assets,
@@ -957,8 +1030,8 @@ pub(crate) fn reinstall(
         &mut run.machine.linker,
         Linker::new(crate::shared::core_source()),
     );
-    let mut core = InstallCore::new(linker, run.device.features());
-    core.limits = device_limits(&run.device, world);
+    let mut core = InstallCore::new(linker, run.device.features(), held_limits(run.limits, world));
+    core.passes = scene_passes(world);
     core.part = part;
     core.package = again.package;
     core.fills = again.fills;

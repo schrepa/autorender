@@ -72,7 +72,7 @@ impl Atlas {
     }
 }
 
-type BakeDraw<'a> = (&'a MeshDraw<'a>, bool, &'a wgpu::BindGroup, Variant);
+type BakeDraw<'a> = (&'a MeshDraw<'a>, bool, &'a wgpu::BindGroup, BakeKey);
 
 fn draw_layer(
     device: &wgpu::Device,
@@ -83,32 +83,39 @@ fn draw_layer(
     shape: AtlasShape,
 ) {
     let draws: Vec<BakeDraw<'_>> =
-        std::iter::once((&source.draw, source.extended, source.group, source.variant))
+        std::iter::once((&source.draw, source.extended, source.group, source.look))
             .chain(
                 source
                     .parts
                     .iter()
-                    .map(|part| (&part.draw, part.extended, part.group, part.variant)),
+                    .map(|part| (&part.draw, part.extended, part.group, part.look)),
             )
-            .map(|(draw, extended, group, variant)| {
-                (
-                    draw,
-                    extended,
-                    group,
-                    variant.with_extended(extended).uber(),
-                )
-            })
+            .map(|(draw, extended, group, look)| (draw, extended, group, BakeKey { look, extended }))
             .collect();
-    let layout = &pipelines.bake_pipeline_layout;
-    for &(_, _, _, variant) in &draws {
+    if pipelines
+        .bake_pipeline_layout
+        .as_ref()
+        .is_none_or(|(label, _)| *label != source.layout.label)
+    {
+        pipelines.bake_pipeline_layout = Some((
+            source.layout.label,
+            crate::pipelines::layout_of(device, &source.layout),
+        ));
+        pipelines.bake_pipelines.clear();
+        pipelines.shade_pipelines.clear();
+    }
+    let Some((_, layout)) = &pipelines.bake_pipeline_layout else {
+        return;
+    };
+    for &(_, _, _, key) in &draws {
         pipelines
             .bake_pipelines
-            .entry(variant)
-            .or_insert_with(|| bake_pipeline(device, layout, variant, false));
+            .entry(key)
+            .or_insert_with(|| bake_pipeline(device, layout, key, false));
         pipelines
             .shade_pipelines
-            .entry(variant)
-            .or_insert_with(|| bake_pipeline(device, layout, variant, true));
+            .entry(key)
+            .or_insert_with(|| bake_pipeline(device, layout, key, true));
     }
     let no_shade = pipelines
         .no_shade
@@ -176,8 +183,8 @@ fn draw_frames(
     } else {
         &pipelines.bake_pipelines
     };
-    for &(mesh, extended, group, variant) in draws {
-        let Some(pipeline) = kept.get(&variant) else {
+    for &(mesh, extended, group, key) in draws {
+        let Some(pipeline) = kept.get(&key) else {
             continue;
         };
         pass.set_pipeline(pipeline);
@@ -287,7 +294,7 @@ fn bake_group(
         source.bounds.0,
         source.bounds.1,
         0,
-        ([0.0; 3], false, false),
+        ([0.0; 3], false),
         shape,
     );
     let uniform = crate::memory::buffer_init(
@@ -417,11 +424,15 @@ fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
 fn bake_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
-    variant: Variant,
+    key: BakeKey,
     shade: bool,
 ) -> wgpu::RenderPipeline {
-    let constants = variant.constants();
-    let extended = variant.extended();
+    let constants = crate::surface::DrawState {
+        alpha_test: key.look.masked,
+        fading: false,
+    }
+    .constants();
+    let extended = key.extended;
     let (vertex, fragment) = bake_entries(extended, shade);
     let mut buffers = vec![crate::mesh_arena::vertex_layout()];
     if extended {
@@ -444,7 +455,7 @@ fn bake_pipeline(
             buffers: &buffers,
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
+                cull_mode: (!key.look.two_sided).then_some(wgpu::Face::Back),
                 ..Default::default()
             },
             depth: Some(wgpu::DepthStencilState {

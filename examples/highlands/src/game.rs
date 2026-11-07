@@ -13,7 +13,7 @@ const APPLIED: [&str; 4] = ["lod", "effects", "stand", WATCH_BODIES];
 pub struct Highlands {
     options: Options,
     scene: Option<SceneInstance>,
-    start: Option<Camera>,
+    start: Option<(Transform, Camera)>,
     reflections: Option<Value>,
 }
 
@@ -134,8 +134,10 @@ impl Game for Highlands {
         if let Err(error) = land::control(world, json!("reset")) {
             report_failure("highlands_reset_failed", &error);
         }
-        if let Some(start) = self.start {
-            world.insert_resource(start);
+        if let Some((at, lens)) = self.start
+            && let Some(camera) = main_camera(world)
+        {
+            place_camera(world, camera, at, lens);
         }
     }
 

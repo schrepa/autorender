@@ -1,11 +1,11 @@
 use engine_core::smoke::{
     COMPILE_FRAMES, Checked, above, camera, compiling, environment, inspect, not, number, present,
-    refuse, render, renders_until, shot, with,
+    refuse, render, renders_until, settled_by, shot, with,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-use super::{SETTLE_FRAMES, WAIT_FRAMES, open, overview, settle, view};
+use super::{WAIT_FRAMES, open, overview, settle, view};
 use crate::requests::seen;
 use crate::stats::terrain;
 
@@ -25,14 +25,11 @@ fn materials(session: &mut dyn SmokeSession) -> Checked<()> {
     settle(session)?;
     camera(session, view([380.0, 90.0, -420.0], [300.0, 30.0, -300.0]))?;
     let mut controls = 0.0;
-    for _ in 0..SETTLE_FRAMES {
+    settled_by(session, |session| {
         let rendering = render(session)?;
-        let drawn = terrain(&rendering);
-        controls += number(&drawn["gpu_controls"]);
-        if controls > 0.0 && drawn["loading_tiles"] == 0 && drawn["fallback_tiles"] == 0 {
-            break;
-        }
-    }
+        controls += number(&terrain(&rendering)["gpu_controls"]);
+        Ok(rendering)
+    })?;
     let wanted = above(0);
     smoke_eq!(
         seen(controls > 0.0, json!(controls), &wanted),

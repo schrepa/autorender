@@ -231,19 +231,49 @@ pub(crate) fn end_tick(world: &mut World) -> bool {
     true
 }
 
-pub(crate) fn start_frame(world: &mut World) {
-    let handoffs = take_asks::<CameraHandoff>(world);
-    if handoffs.is_empty() {
-        return;
+fn tick_paced(world: &World, node: Entity) -> bool {
+    world
+        .get::<Mover>(node)
+        .is_some_and(|mover| mover.pace == Pace::Tick)
+}
+
+fn frame_teleports(world: &mut World) -> Vec<Teleport> {
+    let framed: Vec<Entity> = world
+        .get_resource::<Asked<Teleport>>()
+        .into_iter()
+        .flat_map(Asked::pending)
+        .filter(|teleport| !tick_paced(world, teleport.node))
+        .map(|teleport| teleport.node)
+        .collect();
+    if framed.is_empty() {
+        return Vec::new();
     }
-    let mut fresh = Vec::with_capacity(handoffs.len());
+    let now = moment(world);
+    world
+        .resource_mut::<Asked<Teleport>>()
+        .take_where(now, |teleport| framed.contains(&teleport.node))
+}
+
+pub(crate) fn start_frame(world: &mut World) -> bool {
+    let handoffs = take_asks::<CameraHandoff>(world);
+    let teleports = frame_teleports(world);
+    if handoffs.is_empty() && teleports.is_empty() {
+        return false;
+    }
+    let mut fresh = Vec::with_capacity(handoffs.len() + teleports.len());
     for CameraHandoff { camera, to } in handoffs {
         if let Ok(mut held) = world.get_entity_mut(camera) {
             held.insert(to);
             fresh.push(camera);
         }
     }
+    for Teleport { node, to } in teleports {
+        if edit_transform(world, node, |transform| *transform = to).is_ok() {
+            fresh.push(node);
+        }
+    }
     crate::presentation::make_fresh(world, &fresh);
+    true
 }
 
 #[derive(Resource, Default)]

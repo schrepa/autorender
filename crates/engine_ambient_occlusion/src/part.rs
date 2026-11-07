@@ -1,10 +1,11 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Entry, Error, View};
+use engine_core::{Entry, Error, PassName, PrimaryView};
 use engine_render::{
-    Access, Attach, Bind, DebugShown, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
+    Access, Attach, Bind, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
     Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, wgpu,
 };
 
+use crate::OcclusionPass;
 use crate::shaders::ambient_occlusion::{apply, occlusion as shading};
 
 const RAW_OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
@@ -34,7 +35,7 @@ fn fullscreen(fragment: Entry) -> RenderPipeline<'static> {
 }
 
 impl GpuPart for AmbientGpu {
-    type Reads = (Res<'static, View>, Res<'static, DebugShown>);
+    type Reads = Res<'static, PrimaryView>;
     const NAME: &'static str = "ambient_occlusion";
     const LAZY: bool = true;
     const LABELS: &'static [&'static str] = &["engine/ambient-occlusion"];
@@ -43,14 +44,17 @@ impl GpuPart for AmbientGpu {
         let raw = cx.texture("raw_occlusion", RAW_OCCLUSION_FORMAT, Lifetime::Kept);
         let occlusion = cx.texture("occlusion", OCCLUSION_FORMAT, Lifetime::Frame);
         cx.frame(apply::OCCLUSION, Bind::Texture(occlusion))?;
+        let at = OcclusionPass::PASS.at;
         let occluding = cx
-            .pass("ambient_occlusion")
+            .pass(OcclusionPass::NAME)
+            .at(at)
             .label("engine/ambient-occlusion")
             .span("ambient_occlusion")
             .color(raw, Access::Load)
             .id();
         let filtering = cx
             .pass("effects_filter")
+            .at(at)
             .label("engine/ambient-occlusion-filter")
             .span("effects_filter")
             .color_cleared(occlusion, wgpu::Color::WHITE)
@@ -75,10 +79,10 @@ impl GpuPart for AmbientGpu {
 
     fn prepare(
         &mut self,
-        (view, shown): SystemParamItem<'_, '_, Self::Reads>,
+        view: SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        if shown.owner.is_some() {
+        if view.debug() {
             return;
         }
         let display = view.display_size();

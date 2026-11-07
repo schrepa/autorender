@@ -13,11 +13,10 @@ use engine_settings::{Error, ErrorCode, Expected};
 #[cfg(target_arch = "wasm32")]
 mod browser;
 mod cache;
-mod image;
 mod pack;
 
 pub use cache::JobCache;
-pub use image::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
+pub use engine_core::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 pub use pack::{
     LISTING_KIND, PACK_HEADER, PackEntry, PackIndex, key_from_hex, listing_bytes, listing_key,
     pack_bytes, pack_directory, read_listing, unpack, unpack_bytes,

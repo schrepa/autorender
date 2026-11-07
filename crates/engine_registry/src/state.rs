@@ -274,13 +274,23 @@ impl Reset {
     }
 }
 
+pub type Despawn = fn(&mut World, &[Entity]);
+
 #[derive(Default)]
 pub(crate) struct Turning {
     pub(crate) resources: Vec<(fn(&mut World), fn(&mut World))>,
     pub(crate) settings: Vec<fn(&mut World)>,
     pub(crate) slots: Vec<fn(&mut World)>,
+    pub(crate) joins: Vec<fn(&mut World, GateId)>,
     pub(crate) private: Vec<Reset>,
     pub(crate) spawned: Option<fn(&mut World) -> ComponentId>,
+    pub(crate) despawn: Option<Despawn>,
+}
+
+fn despawn_all(world: &mut World, entities: &[Entity]) {
+    for &entity in entities {
+        world.despawn(entity);
+    }
 }
 
 fn turning(world: &World, brick: BrickId, gate: GateId) -> Turning {
@@ -341,15 +351,17 @@ fn turn_off(world: &mut World, gate: GateId, to: BrickState) {
     let work = turning(world, brick, gate);
     if let Some(spawned) = work.spawned {
         let id = spawned(world);
-        for entity in holders(world, id) {
-            world.despawn(entity);
-        }
+        let owned = holders(world, id);
+        work.despawn.unwrap_or(despawn_all)(world, &owned);
     }
     for &(_, remove) in &work.resources {
         remove(world);
     }
     for reset in &work.slots {
         reset(world);
+    }
+    for left in &work.joins {
+        left(world, gate);
     }
 }
 

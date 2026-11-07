@@ -61,16 +61,4 @@ impl<V> TileMap<V> {
     pub(super) fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
         self.0.values_mut()
     }
-
-    pub(super) fn take_where(&mut self, mut gone: impl FnMut(&TileKey, &V) -> bool) -> Vec<V> {
-        let mut taken = Vec::new();
-        for key in self.keys() {
-            if self.0.get(&key).is_some_and(|value| gone(&key, value))
-                && let Some(value) = self.0.remove(&key)
-            {
-                taken.push(value);
-            }
-        }
-        taken
-    }
 }

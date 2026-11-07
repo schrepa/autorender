@@ -20,14 +20,12 @@ mod trace;
 mod world_trace;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, JobKind, Schedule, Source};
+use engine_core::{Attributes, Brick, Bricks, JobKind, KindDecl, Schedule, Source};
 use engine_places_rendering::lighting::{Ambient, SunBlockers};
-use engine_places_rendering::probes::ProbeViews;
 use engine_places_rendering::reflections::TraceSource;
-use engine_places_rendering::shadows::{ShadowCasters, ShadowMaps};
 use engine_places_rendering::sky::OpenSky;
 use engine_places_world::ground::{Bounce, GroundBaking, GroundTiles, Heightfield, Horizons};
-use engine_render::{DebugModes, Layer, MainView, RenderBricks};
+use engine_render::{DebugModes, RenderBricks, SurfaceKind, TraceDepth};
 
 pub use gpu::HorizonsPiece;
 pub use settings::{MAX_BOUNCE_LEVELS, TerrainShading, TerrainShadingStats};
@@ -57,6 +55,11 @@ impl Brick for TerrainShadingBrick {
             .resource::<state::SurfaceTotals>()
             .resource::<state::PartStats>()
             .piece::<HorizonsPiece>()
+            .generated(debug::GENERATED)
+            .surface_kind(SurfaceKind {
+                name: "ground",
+                depth: TraceDepth::Surface,
+            })
             .fill::<Heightfield>(Some(faces::heightfield::MODULE))
             .fill::<GroundTiles>(Some(faces::ground_tiles::MODULE))
             .fill::<GroundBaking>(None)
@@ -84,7 +87,6 @@ impl Brick for TerrainShadingBrick {
                     shadings::shade,
                     state::color,
                     state::place_tiles,
-                    state::publish_changes,
                     state::publish_piece,
                     state::publish_heightfield,
                     state::count,
@@ -92,14 +94,17 @@ impl Brick for TerrainShadingBrick {
             )
             .part::<TerrainGpu>()
             .part::<trace::TraceGpu>()
-            .draws::<TerrainGpu, MainView>(Layer::Opaque, TerrainGpu::draw_main)
-            .draws::<TerrainGpu, ShadowCasters>((), TerrainGpu::draw_casters)
-            .draws::<TerrainGpu, ProbeViews>((), TerrainGpu::draw_probe);
+            .draw_kind(KindDecl {
+                kind: terrain::TERRAIN,
+                vertex: shaders::terrain_shading::draw::VS_TERRAIN.name(),
+                needs: Attributes::NONE,
+            })
+            .draws::<TerrainGpu>(terrain::TERRAIN, TerrainGpu::draw);
     }
 }
 
-fn horizons_on(shading: Res<TerrainShading>, maps: Res<ShadowMaps>) -> bool {
-    maps.on && shading.sun_shadows
+fn horizons_on(shading: Res<TerrainShading>) -> bool {
+    shading.sun_shadows
 }
 
 fn bounce_on(shading: Res<TerrainShading>) -> bool {

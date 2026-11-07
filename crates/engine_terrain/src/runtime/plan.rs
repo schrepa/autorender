@@ -122,9 +122,7 @@ pub(super) fn plan(mut input: PlanInput<'_>) -> Plan {
     let missing: Vec<(TileKey, u32)> = order
         .iter()
         .enumerate()
-        .filter(|(_, key)| {
-            input.settings.enabled && target.contains(key) && store.loads(key) && !waits(key)
-        })
+        .filter(|(_, key)| target.contains(key) && store.loads(key) && !waits(key))
         .map(|(index, &key)| {
             let class = if index < urgent {
                 URGENT_JOBS
@@ -259,14 +257,9 @@ fn ground_bounds(store: &TileStore, pyramid: &Pyramid, key: TileKey) -> Option<[
 pub(super) struct ViewPlanes(Option<[Vec4; 5]>);
 
 impl ViewPlanes {
-    pub(super) fn new(camera: &Camera, eye: Vec3, size: glam::UVec2) -> Self {
+    pub(super) fn new(camera: &Camera, (eye, forward): (Vec3, Vec3), size: glam::UVec2) -> Self {
         let aspect = size.x as f32 / size.y.max(1) as f32;
-        let from = Camera {
-            position: eye,
-            target: eye + (camera.target - camera.eye()),
-            ..*camera
-        };
-        let rows = from.view_projection(aspect).transpose();
+        let rows = camera.view_projection(eye, forward, aspect).transpose();
         let planes = [
             rows.w_axis + rows.x_axis,
             rows.w_axis - rows.x_axis,

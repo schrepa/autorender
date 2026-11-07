@@ -9,7 +9,7 @@ use engine_core::collections::HashMap;
 use engine_core::{Error, Expected};
 use serde::{Deserialize, Serialize};
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     sync::{
         Arc,
@@ -24,16 +24,25 @@ use crate::pipeline_layouts::{PIPELINE_LAYOUTS, PipelineLayout, StageLimits};
 pub type Layouts = &'static [(&'static str, &'static PipelineLayout)];
 
 thread_local! {
-    static CREATED: Cell<u32> = const { Cell::new(0) };
+    static CREATED: RefCell<Vec<(&'static str, u32)>> = const { RefCell::new(Vec::new()) };
     static REGISTRIES: RefCell<Vec<Registry>> = const { RefCell::new(Vec::new()) };
 }
 
-pub(crate) fn count(created: u32) {
-    CREATED.with(|counted| counted.set(counted.get().saturating_add(created)));
+pub(crate) const FIXED: &str = "fixed";
+
+fn add(counts: &mut Vec<(&'static str, u32)>, pass: &'static str, created: u32) {
+    match counts.iter_mut().find(|(known, _)| *known == pass) {
+        Some((_, held)) => *held = held.saturating_add(created),
+        None => counts.push((pass, created)),
+    }
 }
 
-fn take_created() -> u32 {
-    CREATED.with(|created| created.replace(0))
+pub(crate) fn count(pass: &'static str, created: u32) {
+    CREATED.with(|counted| add(&mut counted.borrow_mut(), pass, created));
+}
+
+fn take_created() -> Vec<(&'static str, u32)> {
+    CREATED.with(|created| std::mem::take(&mut *created.borrow_mut()))
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -113,7 +122,7 @@ impl Key {
         layout: &wgpu::PipelineLayout,
         modules: &Modules,
     ) -> Created {
-        count(1);
+        count(FIXED, 1);
         let render = match &self.stages {
             KeyStages::Compute { entry, .. } => {
                 return Created::Compute(create_compute(
@@ -570,7 +579,9 @@ fn create_all(device: &wgpu::Device, wanted: &[Wanted]) -> Vec<(String, Created)
     });
     let mut made = Vec::new();
     for (part, created) in parts {
-        count(created);
+        for (pass, more) in created {
+            count(pass, more);
+        }
         made.extend(part);
     }
     made
@@ -627,14 +638,15 @@ fn create_layout(
     })
 }
 
-pub(crate) struct PipelineCounts {
+pub(crate) struct Ledger {
     device: wgpu::Device,
     created: u32,
+    per_pass: Vec<(&'static str, u32)>,
     frames: u64,
     compiled: Arc<AtomicU64>,
 }
 
-impl Drop for PipelineCounts {
+impl Drop for Ledger {
     fn drop(&mut self) {
         let _ = REGISTRIES.try_with(|registries| {
             registries
@@ -644,12 +656,13 @@ impl Drop for PipelineCounts {
     }
 }
 
-impl PipelineCounts {
+impl Ledger {
     pub(crate) fn new(device: &wgpu::Device, canvas: wgpu::TextureFormat) -> Self {
         with_registry(device, |registry| registry.canvas = Some(canvas));
         Self {
             device: device.clone(),
             created: 0,
+            per_pass: Vec::new(),
             frames: 0,
             compiled: Arc::default(),
         }
@@ -739,7 +752,11 @@ impl PipelineCounts {
     }
 
     pub(crate) fn frame_submitted(&mut self, queue: &crate::gpu_calls::Queue) -> u32 {
-        let created = take_created();
+        let mut created = 0_u32;
+        for (pass, more) in take_created() {
+            add(&mut self.per_pass, pass, more);
+            created = created.saturating_add(more);
+        }
         self.created = self.created.saturating_add(created);
         if created > 0 {
             self.frames += 1;
@@ -753,6 +770,10 @@ impl PipelineCounts {
 
     pub(crate) fn created(&self) -> u32 {
         self.created
+    }
+
+    pub(crate) fn per_pass(&self) -> &[(&'static str, u32)] {
+        &self.per_pass
     }
 
     pub(crate) fn compiling(&self) -> u32 {

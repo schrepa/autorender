@@ -1,63 +1,72 @@
 use engine_core::{MaterialHandle, MeshHandle};
-use engine_places_rendering::probes::{ProbeView, ProbeViews};
-use engine_places_rendering::shadows::{CasterView, ShadowCasters};
-use engine_render::{Draw, MainView, MeshPass, Shape};
+use engine_render::{Draw, MeshPass, Pipeline, Scene, SceneDraw, Shape};
 
-use crate::casters::{map_factor, map_start};
 use crate::debug::{DrawKind, DrawRecord};
-use crate::gpu::MeshesGpu;
-use crate::layouts::{DRAW_ARGS_BYTES, LOD_LEVELS, MOVING_MAP};
-use crate::presentation::{PHASE_ONE, PHASE_TWO};
+use crate::gpu::{Drawing, Looked, MeshesGpu, Streams, ViewStreams};
+use crate::layouts::{DRAW_ARGS_BYTES, LOD_LEVELS};
+use crate::presentation::{PHASE_ONE, ViewSlot};
 
 const FADE_CARDS_START: u64 = 16;
 
 impl MeshesGpu {
-    pub(crate) fn draw_prepass(&self, _: &(), draw: &mut Draw<'_, Self, MainView>) -> u32 {
-        if self.state.instance_count == 0 || !self.state.draws.masked {
-            return 0;
-        }
-        self.draw_meshes(draw, PHASE_ONE, true)
-    }
-
-    pub(crate) fn draw_opaque(&self, _: &(), draw: &mut Draw<'_, Self, MainView>) -> u32 {
+    pub(crate) fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
         if self.state.instance_count == 0 {
             return 0;
         }
-        self.draw_meshes(draw, PHASE_ONE, false) + self.draw_cards(draw, PHASE_ONE)
-    }
-
-    pub(crate) fn draw_second(&self, _: &(), draw: &mut Draw<'_, Self, MainView>) -> u32 {
-        if !self.state.occlusion || self.state.instance_count == 0 {
+        let Some(joined) = self
+            .scenes
+            .iter()
+            .find(|joined| joined.name == scene.pass.name())
+        else {
             return 0;
+        };
+        match &joined.drawing {
+            Drawing::Lit {
+                looks,
+                card,
+                streams,
+            } => {
+                self.draw_meshes(draw, streams, looks, (PHASE_ONE, false))
+                    + self.draw_cards(draw, streams, card, PHASE_ONE)
+            }
+            Drawing::Depth { looks, streams } => {
+                if !self.state.draws.masked {
+                    return 0;
+                }
+                self.draw_meshes(draw, streams, looks, (PHASE_ONE, true))
+            }
+            Drawing::Casters { casting, streams } => {
+                let Some(slot) = self.state.view_slot(scene.pass.name(), scene.view) else {
+                    return 0;
+                };
+                self.draw_casters(draw, streams, casting, slot)
+            }
+            Drawing::Views { looks, streams } => {
+                let Some(slot) = self.state.view_slot(scene.pass.name(), scene.view) else {
+                    return 0;
+                };
+                self.draw_view(draw, streams, &looks[usize::from(slot.mirrored)], slot)
+            }
         }
-        let mut drawn = 0;
-        if self.state.draws.masked {
-            drawn += self.draw_meshes(draw, PHASE_TWO, true);
-        }
-        drawn + self.draw_meshes(draw, PHASE_TWO, false) + self.draw_cards(draw, PHASE_TWO)
     }
 
-    fn record(&self, kind: DrawKind, level: usize) -> u64 {
+    pub(crate) fn record(&self, kind: DrawKind, level: usize) -> u64 {
         DrawRecord::of(kind, level, self.state.casts).offset()
     }
 
-    fn draw_meshes(&self, draw: &mut Draw<'_, Self, MainView>, phase: usize, prepass: bool) -> u32 {
-        let records = self.inputs.records;
+    pub(crate) fn draw_meshes<S: 'static>(
+        &self,
+        draw: &mut Draw<'_, Self, S>,
+        streams: &Streams<S>,
+        looks: &Looked<Pipeline<Self, S>>,
+        (phase, prepass): (usize, bool),
+    ) -> u32 {
         let mut drawn = 0;
         for item in &self.state.draws.items {
             if prepass && !item.look.masked {
                 continue;
             }
-            let pipeline = if prepass {
-                self.pipelines.prepass.of(item.look)
-            } else {
-                self.pipelines.opaque.of(item.look)
-            };
-            let pass = MeshPass {
-                opaque: !prepass,
-                prepass,
-                ..MeshPass::default()
-            };
+            let pipeline = looks.of(item.look);
             let (mesh, material) = (item.mesh, item.material);
             for level in 0..LOD_LEVELS as usize {
                 if item.levels & (1 << level) == 0 {
@@ -73,14 +82,14 @@ impl MeshesGpu {
                         Shape::MeshIndirect {
                             mesh,
                             material,
-                            args: self.inputs.args[phase],
+                            args: streams.args,
                             offset: args,
                             streams: &[
-                                (self.inputs.ids[phase], ids),
-                                (records, self.record(DrawKind::Mesh, level)),
+                                (streams.ids, ids),
+                                (streams.records, self.record(DrawKind::Mesh, level)),
                             ],
                         },
-                        pass,
+                        MeshPass::default(),
                     ),
                     || draw_label((mesh, material), (phase, level), prepass),
                 );
@@ -90,21 +99,27 @@ impl MeshesGpu {
         drawn
     }
 
-    fn draw_cards(&self, draw: &mut Draw<'_, Self, MainView>, phase: usize) -> u32 {
+    pub(crate) fn draw_cards<S: 'static>(
+        &self,
+        draw: &mut Draw<'_, Self, S>,
+        streams: &Streams<S>,
+        card: &Pipeline<Self, S>,
+        phase: usize,
+    ) -> u32 {
         if !self.state.cards {
             return 0;
         }
         let records = (
-            self.inputs.records,
+            streams.records,
             self.record(DrawKind::Card, LOD_LEVELS as usize),
         );
         let args = u64::from(LOD_LEVELS) * u64::from(self.state.groups.batch_count);
         draw.draw(
-            &self.pipelines.card,
+            card,
             Shape::IndirectAt {
-                vertices: &[(self.inputs.card_ids[phase], 0), records],
+                vertices: &[(streams.cards, 0), records],
                 indices: None,
-                args: self.inputs.args[phase],
+                args: streams.args,
                 offset: args * DRAW_ARGS_BYTES,
             },
         );
@@ -112,91 +127,64 @@ impl MeshesGpu {
             return 1;
         }
         draw.draw(
-            &self.pipelines.card,
+            card,
             Shape::IndirectAt {
-                vertices: &[(self.inputs.fade_cards, FADE_CARDS_START), records],
+                vertices: &[(streams.fading, FADE_CARDS_START), records],
                 indices: None,
-                args: self.inputs.fade_cards,
+                args: streams.fading,
                 offset: 0,
             },
         );
         2
     }
 
-    pub(crate) fn draw_probe_face(
+    fn draw_view(
         &self,
-        at: &ProbeView,
-        draw: &mut Draw<'_, Self, ProbeViews>,
+        draw: &mut Draw<'_, Self, Scene>,
+        streams: &ViewStreams,
+        looks: &Looked<Pipeline<Self, Scene>>,
+        slot: &ViewSlot,
     ) -> u32 {
-        let face = at.face as usize;
-        if !self.state.faces.contains(&at.face) {
-            return 0;
-        }
-        let (Some(&args), Some(&ids)) = (
-            self.inputs.face_args.get(face),
-            self.inputs.face_ids.get(face),
-        ) else {
-            return 0;
-        };
         let mut drawn = 0;
         for item in &self.state.draws.items {
-            let (ids_offset, args_offset) =
-                self.state
-                    .groups
-                    .draw_source(item.start, item.batch as usize, 0);
-            draw.draw(
-                self.pipelines.probe.of(item.look),
-                Shape::MeshIndirect {
-                    mesh: item.mesh,
-                    material: item.material,
-                    args,
-                    offset: args_offset,
-                    streams: &[(ids, ids_offset)],
-                },
-            );
-            drawn += 1;
+            for level in slot.levels(item.levels) {
+                let (ids, args) = self.state.groups.view_source(slot, item, level);
+                draw.draw(
+                    looks.of(item.look),
+                    Shape::MeshIndirect {
+                        mesh: item.mesh,
+                        material: item.material,
+                        args: streams.args,
+                        offset: args,
+                        streams: &[(streams.ids, ids)],
+                    },
+                );
+                drawn += 1;
+            }
         }
         drawn
     }
 
-    pub(crate) fn draw_casters(
+    fn draw_casters(
         &self,
-        at: &CasterView,
-        draw: &mut Draw<'_, Self, ShadowCasters>,
+        draw: &mut Draw<'_, Self, Scene>,
+        streams: &ViewStreams,
+        casting: &[Pipeline<Self, Scene>; 2],
+        slot: &ViewSlot,
     ) -> u32 {
-        let casters = &self.state.casters;
-        if !casters.runs {
-            return 0;
-        }
-        let Some(Some(map)) = casters.maps.get(at.region as usize).copied() else {
-            return 0;
-        };
-        let set = if map == MOVING_MAP as usize {
-            &self.pipelines.moving
-        } else {
-            &self.pipelines.casters
-        };
-        let groups = casters.groups.len() as u64;
-        let start = map_start(map, casters.id_capacity);
         let mut drawn = 0;
-        for choice in [false, true] {
-            for (index, &(mesh, material, group_start)) in casters.groups.iter().enumerate() {
-                if material.is_some() != choice {
-                    continue;
-                }
-                let ids = if casters.regions_in_args {
-                    0
-                } else {
-                    (start + map_factor(map) as usize * group_start as usize) as u64 * 4
-                };
+        for item in &self.state.draws.items {
+            let masked = item.look.masked;
+            for level in slot.levels(item.levels) {
+                let (ids, args) = self.state.groups.view_source(slot, item, level);
                 draw.draw(
-                    &set[usize::from(choice)],
+                    &casting[usize::from(masked)],
                     Shape::MeshIndirect {
-                        mesh,
-                        material,
-                        args: self.inputs.caster_args,
-                        offset: (map as u64 * groups + index as u64) * DRAW_ARGS_BYTES,
-                        streams: &[(self.inputs.caster_ids, ids)],
+                        mesh: item.mesh,
+                        material: item.material.filter(|_| masked),
+                        args: streams.args,
+                        offset: args,
+                        streams: &[(streams.ids, ids)],
                     },
                 );
                 drawn += 1;

@@ -35,7 +35,7 @@ fn lobe_texels(alpha: f32) -> f32 {
 }
 
 fn sky_map_light(lobe: EnvironmentLobe) -> vec3<f32> {
-    return environment_sample(lobe.direction, 0u, lobe.level);
+    return environment_sample(lobe.direction, lobe.level);
 }
 
 fn mirrored_sky(lobe: EnvironmentLobe, world: vec3<f32>) -> vec3<f32> {

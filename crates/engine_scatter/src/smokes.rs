@@ -120,7 +120,6 @@ pub(crate) fn foliage_settings(session: &mut dyn SmokeSession) -> Result<(), Smo
         "variation": 1.0,
         "hashed_cutoff": false,
         "ground_blend": 0.4_f32,
-        "crown_depth": 2.0,
     });
     let inspect = "inspects_foliage";
     smoke_eq!(

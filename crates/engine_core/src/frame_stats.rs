@@ -20,7 +20,7 @@ pub struct FrameStats {
     pub resolution: ResolutionStats,
     pub dynamic_resolution: DynamicResolutionStats,
     pub jobs: crate::JobStats,
-    pub camera_refusals: crate::CameraRefusals,
+    pub refused_views: u32,
     pub disabled_features: Names,
     #[serde(flatten)]
     pub render: RenderStats,

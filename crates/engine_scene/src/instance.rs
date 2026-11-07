@@ -7,7 +7,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::world::{World, WorldId};
 use engine_assets::SceneAssets;
 use engine_core::{
-    AssetLibrary, Camera, Error, MaterialHandle, Mesh3d, MeshHandle, ProvidedAssets, SceneContext,
+    AssetLibrary, Error, MaterialHandle, Mesh3d, MeshHandle, ProvidedAssets, SceneContext,
     TextureHandle, Transform, propagate_transforms, set_parents,
 };
 use engine_registry::{OperationScene, SceneEntity, SettingsEntry};
@@ -296,6 +296,16 @@ impl SceneDocument {
         world: &mut World,
         files: &SceneFiles,
     ) -> Result<SceneInstance, Error> {
+        self.instantiate_then(world, files, |_, _| Ok(()))
+            .map(|(instance, ())| instance)
+    }
+
+    pub fn instantiate_then<R>(
+        &self,
+        world: &mut World,
+        files: &SceneFiles,
+        then: impl FnOnce(&mut World, &BTreeMap<String, Entity>) -> Result<R, Error>,
+    ) -> Result<(SceneInstance, R), Error> {
         let kinds = SceneKinds::of(world);
         let mut prepared = self.prepare(Some(files), &kinds)?;
         let skipped = crate::loading::named(self).scope(|| self.admit(world, &kinds))?;
@@ -325,14 +335,27 @@ impl SceneDocument {
             &kinds,
             Some(files.buffers()),
         );
-        if let Err(error) = self.land(world, (&prepared, &kinds), &context, &spawned) {
-            for &entity in &spawned {
-                let _ = world.try_despawn(entity);
+        let landed = self
+            .land(world, (&prepared, &kinds), &context, &spawned)
+            .and_then(|()| {
+                world.insert_resource(OperationScene {
+                    id: self.id.clone(),
+                    entities: entities.clone(),
+                    streamed: false,
+                });
+                then(world, &*entities)
+            });
+        let done = match landed {
+            Ok(done) => done,
+            Err(error) => {
+                for &entity in &spawned {
+                    let _ = world.try_despawn(entity);
+                }
+                owned.remove(&mut world.resource_mut::<AssetLibrary>());
+                replaced.restore(world);
+                return Err(error);
             }
-            owned.remove(&mut world.resource_mut::<AssetLibrary>());
-            replaced.restore(world);
-            return Err(error);
-        }
+        };
         let instance = SceneInstance {
             id: self.id.clone(),
             revision: self.revision,
@@ -361,8 +384,7 @@ impl SceneDocument {
             },
             skipped,
         };
-        world.insert_resource(instance.operation_scene());
-        Ok(instance)
+        Ok((instance, done))
     }
 
     fn land(
@@ -393,7 +415,6 @@ impl SceneDocument {
                 .within("$.entities")
         })?;
         propagate_transforms(world);
-        world.insert_resource(self.camera.camera());
         world.insert_resource(SceneContext {
             files: None,
             ..context.clone()
@@ -402,7 +423,9 @@ impl SceneDocument {
             context.scope(|| environment.apply_all(world, "$.environment"))?;
         }
         world.insert_resource(crate::SceneViews::of(self));
-        context.scope(|| crate::environment::apply_streamed(world, self.streamed_section()))
+        context.scope(|| crate::environment::apply_streamed(world, self.streamed_section()))?;
+        self.camera.show(world);
+        Ok(())
     }
 
     fn insert_assets(
@@ -518,7 +541,6 @@ impl SceneDocument {
 }
 
 struct Replaced {
-    camera: Option<Camera>,
     context: Option<SceneContext>,
     views: Option<crate::SceneViews>,
     scene: Option<OperationScene>,
@@ -531,7 +553,6 @@ impl Replaced {
         let sections =
             crate::loading::within(context.as_ref(), || crate::environment::held(world));
         Self {
-            camera: world.get_resource::<Camera>().copied(),
             context,
             views: world.get_resource::<crate::SceneViews>().cloned(),
             scene: world.get_resource::<OperationScene>().cloned(),
@@ -540,7 +561,6 @@ impl Replaced {
     }
 
     fn restore(self, world: &mut World) {
-        put(world, self.camera);
         put(world, self.views);
         put(world, self.scene);
         put(world, self.context.clone());

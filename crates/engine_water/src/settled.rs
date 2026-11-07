@@ -4,7 +4,7 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::{
     CookMode, DeviceLimits, Error, FrameBudget, FrameTime, IDLE_JOBS, Interest, JobFailures, Jobs,
-    RecordKey, Records, VIEW_JOBS, View, job_priority,
+    RecordKey, Records, VIEW_JOBS, PrimaryView, job_priority,
 };
 use engine_heightfield::tile::{Solid, TILE_STRIDE};
 use engine_heightfield::{Pyramid, TILE_QUADS, reaches};
@@ -15,7 +15,7 @@ use crate::jobs::{
     DRAWN, PARTS, REACH, ReachJob, SETTLED, STEADIED, SteadiedJob, WaterJob, WaterReach,
     WaterRegion, settled_share, summary_share,
 };
-use crate::state::{Drawing, SettleQueue, WaterState, WaterTerrain};
+use crate::state::{Base, Drawing, SettleQueue, WaterState, WaterTerrain};
 use crate::water_settle::SettleAsk;
 use crate::{
     Layers, SettleRegion, SettleStart, SettledKey, SteadyCell, SteadyWater, TileKey, Water,
@@ -89,16 +89,21 @@ enum Found {
     Never,
 }
 
+enum Step {
+    Asked(Interest<RecordKey>),
+    Made(Option<Arc<[u8]>>),
+    Failed,
+}
+
 struct Watering {
     reads: Vec<(TileKey, RecordKey)>,
     record: RecordKey,
-    job: Option<Interest<RecordKey>>,
-    made: Option<Arc<[u8]>>,
+    step: Step,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Made {
-    generation: u64,
+    basis: [u8; 32],
     alone: bool,
     pub(crate) record: RecordKey,
 }
@@ -146,7 +151,6 @@ pub(crate) struct Settled {
     reach: Option<Reach>,
     over: Option<Arc<Layers>>,
     keyed: Option<Keyed>,
-    generation: u64,
     pub(crate) held: BTreeMap<TileKey, (Arc<SteadyWater>, Made)>,
     shared: BTreeMap<TileKey, Made>,
     summaries: BTreeMap<TileKey, Made>,
@@ -156,7 +160,6 @@ pub(crate) struct Settled {
     making: Vec<Making>,
     parts: BTreeMap<TileKey, Part>,
     waters: BTreeMap<TileKey, Watering>,
-    waters_failed: BTreeMap<TileKey, Vec<(TileKey, RecordKey)>>,
     sharing: BTreeMap<(RecordKey, u8), RecordKey>,
     waters_waiting: u64,
     cooking: bool,
@@ -186,9 +189,15 @@ impl Settled {
         self.water_again = true;
     }
 
+    fn current(&self, made: &Made) -> bool {
+        self.keyed
+            .as_ref()
+            .is_some_and(|keyed| keyed.basis == made.basis)
+    }
+
     pub(crate) fn water_failed(&mut self, key: TileKey) {
-        if let Some(watering) = self.waters.remove(&key) {
-            self.waters_failed.insert(key, watering.reads);
+        if let Some(watering) = self.waters.get_mut(&key) {
+            watering.step = Step::Failed;
         }
     }
 
@@ -224,14 +233,14 @@ impl Settled {
                 let current = self
                     .summaries
                     .get(&key)
-                    .is_some_and(|made| made.generation == self.generation && made.alone == single);
+                    .is_some_and(|made| self.current(made) && made.alone == single);
                 !current && !self.failed.contains_key(&key)
             })
             .count() as u64;
         let running = self
             .waters
             .values()
-            .filter(|watering| watering.job.is_some());
+            .filter(|watering| matches!(watering.step, Step::Asked(_)));
         records + self.waters_waiting + running.count() as u64
     }
 
@@ -313,7 +322,7 @@ impl Settled {
             self.summaries.get(&key)
         };
         here.is_some_and(|made| {
-            made.generation == self.generation && made.alone == self.wants_alone(key)
+            self.current(made) && made.alone == self.wants_alone(key)
         })
     }
 
@@ -516,10 +525,10 @@ fn reset(terrain: &mut WaterTerrain, jobs: &mut Jobs, reach: Option<Reach>) {
         cooking: settled.cooking,
         ..Settled::default()
     };
-    for held in terrain.held.values_mut().chain(terrain.left.values_mut()) {
+    for held in terrain.held.values_mut() {
         held.given = None;
-        if matches!(held.drawing, Some((_, Drawing::Given(_)))) {
-            held.drawing = None;
+        if matches!(held.base, Base::Redrawing(_, Drawing::Given(_))) {
+            held.base = Base::Made;
         }
     }
     terrain.touch_all();
@@ -589,7 +598,6 @@ fn key_settled(terrain: &mut WaterTerrain, recipe: [u8; 32], cell: f32) {
         relief,
         basis,
     });
-    settled.generation += 1;
     settled.missing.clear();
     settled.asked.clear();
     settled.failed.clear();
@@ -696,7 +704,6 @@ fn ask(
         fetch_record(terrain, cx, (key, fetched, made(key)), priority);
     }
     if cx.settles {
-        let generation = terrain.settled.generation;
         let regions: Vec<(SettleRegion, bool, u32)> = if cooking {
             cook_regions(terrain)
         } else {
@@ -707,7 +714,7 @@ fn ask(
                         .settled
                         .held
                         .get(&key)
-                        .is_some_and(|(_, held)| held.generation != generation || !held.alone);
+                        .is_some_and(|(_, held)| !terrain.settled.current(held) || !held.alone);
                     (SettleRegion::alone(&pyramid, key, cell), warm, place)
                 })
                 .collect()
@@ -917,8 +924,11 @@ fn take_arrived(
                 continue;
             }
         };
+        let Some(basis) = settled.keyed.as_ref().map(|keyed| keyed.basis) else {
+            continue;
+        };
         let made = Made {
-            generation: settled.generation,
+            basis,
             alone: asked.alone,
             record: asked.record.key,
         };
@@ -1085,7 +1095,7 @@ fn take_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u
         .settled
         .waters
         .iter()
-        .filter(|(_, watering)| watering.job.is_some())
+        .filter(|(_, watering)| matches!(watering.step, Step::Asked(_)))
         .map(|(&key, _)| key)
         .collect();
     let mut taken = false;
@@ -1093,11 +1103,11 @@ fn take_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u
         if taken && cx.budget.expired() {
             break;
         }
-        let Some(ticket) = terrain
+        let Some(Step::Asked(ticket)) = terrain
             .settled
             .waters
             .get(&key)
-            .and_then(|watering| watering.job.as_ref())
+            .map(|watering| &watering.step)
         else {
             continue;
         };
@@ -1105,9 +1115,6 @@ fn take_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u
             continue;
         };
         taken = true;
-        if let Some(watering) = terrain.settled.waters.get_mut(&key) {
-            watering.job = None;
-        }
         let made = output.map_err(|error| error.to_string()).and_then(|bytes| {
             is_dry(&bytes).map(|_| bytes).map_err(|error| {
                 format!("{}: its output does not decode: {error}", STEADIED.name())
@@ -1117,7 +1124,7 @@ fn take_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u
             Ok(bytes) => {
                 let resident = terrain.resident(&key).is_some();
                 if let Some(watering) = terrain.settled.waters.get_mut(&key) {
-                    watering.made = resident.then_some(bytes);
+                    watering.step = Step::Made(resident.then_some(bytes));
                 }
             }
             Err(error) => {
@@ -1243,15 +1250,9 @@ fn ask_waters(
     };
     let pyramid = terrain.pyramid;
     let tiles = watering(terrain, (watered, near));
-    let settled = &mut terrain.settled;
-    let waters = std::mem::take(&mut settled.waters);
-    for (key, watering) in waters {
-        if tiles.binary_search(&key).is_ok() {
-            settled.waters.insert(key, watering);
-        }
-    }
-    settled
-        .waters_failed
+    terrain
+        .settled
+        .waters
         .retain(|key, _| tiles.binary_search(key).is_ok());
     let size = pyramid.tile_size(0);
     let mut wanted: Vec<(u32, TileKey)> = tiles
@@ -1283,15 +1284,13 @@ fn ask_waters(
             .waters
             .get(&key)
             .is_some_and(|watering| watering.reads == reads);
-        if asked || terrain.settled.waters_failed.get(&key) == Some(&reads) {
+        if asked {
             continue;
         }
         let Some(tile) = terrain.tile_job(key) else {
             continue;
         };
         let settled = &mut terrain.settled;
-        settled.waters.remove(&key);
-        settled.waters_failed.remove(&key);
         let priority = job_priority(VIEW_JOBS, place);
         let input = SteadiedJob {
             tile,
@@ -1309,8 +1308,7 @@ fn ask_waters(
             Watering {
                 reads,
                 record,
-                job: Some(ticket),
-                made: None,
+                step: Step::Asked(ticket),
             },
         );
     }
@@ -1323,11 +1321,14 @@ fn give_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>) -> bool 
         .waters
         .iter()
         .filter_map(|(&key, watering)| {
-            let bytes = watering.made.clone()?;
+            let Step::Made(Some(bytes)) = &watering.step else {
+                return None;
+            };
+            let bytes = Arc::clone(bytes);
             let held = terrain.resident(&key)?;
             let record = watering.record;
             let coming =
-                matches!(&held.drawing, Some((_, Drawing::Given(given))) if *given == record);
+                matches!(&held.base, Base::Redrawing(_, Drawing::Given(given)) if *given == record);
             let holds = coming || held.given == Some(record);
             (held.face.current && held.watered.is_none() && !holds).then_some((key, bytes, record))
         })
@@ -1349,12 +1350,12 @@ fn give_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>) -> bool 
             held.drawn = None;
             held.watered = None;
             held.given = Some(record);
-            held.drawing = None;
+            held.base = Base::Made;
             terrain.touch(key);
         } else {
             let input = draw_input(held, &bytes);
             let job = cx.jobs.start(&DRAWN, input, job_priority(VIEW_JOBS, 0));
-            held.drawing = Some((job, Drawing::Given(record)));
+            held.base = Base::Redrawing(job, Drawing::Given(record));
         }
     }
     false
@@ -1362,7 +1363,7 @@ fn give_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>) -> bool 
 
 pub(crate) fn request_settle(
     water: Res<Water>,
-    view: Res<View>,
+    view: Res<PrimaryView>,
     time: Res<FrameTime>,
     records: Res<Records>,
     (limits, cook): (Res<DeviceLimits>, Res<CookMode>),

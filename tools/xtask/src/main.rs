@@ -280,8 +280,9 @@ fn authoring_commands() -> Vec<Command> {
         Command::new(
             "new brick",
             [
-                CommandOption::taking("PART", "NAME").required(),
                 CommandOption::taking("NAME", "NAME").required(),
+                CommandOption::taking("--project", "DIR").required(),
+                CommandOption::taking("--place", "PLACE"),
             ],
         ),
         Command::new(

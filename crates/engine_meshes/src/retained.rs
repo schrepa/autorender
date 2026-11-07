@@ -66,7 +66,7 @@ impl Instance {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct HeldMaterial {
     handle: MaterialHandle,
     material: Material,
@@ -86,9 +86,9 @@ impl Materials {
         if let Some(Some(held)) = self.held.get(at)
             && held.handle == handle
         {
-            return Some(*held);
+            return Some(held.clone());
         }
-        let material = *assets.material(handle)?;
+        let material = assets.material(handle)?.clone();
         if !textures_live(assets, &material) {
             return None;
         }
@@ -104,7 +104,7 @@ impl Materials {
             canonical,
             stale: false,
         };
-        self.held[at] = Some(held);
+        self.held[at] = Some(held.clone());
         Some(held)
     }
 
@@ -118,7 +118,7 @@ impl Materials {
     fn settle(&mut self, assets: &AssetLibrary) -> bool {
         let mut mapped_changed = false;
         for at in 0..self.held.len() {
-            let Some(held) = self.held[at] else {
+            let Some(held) = self.held[at].clone() else {
                 continue;
             };
             let live = assets
@@ -128,7 +128,7 @@ impl Materials {
                 Some(material) if *material == held.material => {}
                 Some(material) if material.binding() == held.material.binding() => {
                     self.held[at] = Some(HeldMaterial {
-                        material: *material,
+                        material: material.clone(),
                         stale: true,
                         ..held
                     });
@@ -137,7 +137,7 @@ impl Materials {
             }
         }
         for at in 0..self.held.len() {
-            let Some(held) = self.held[at] else {
+            let Some(held) = self.held[at].clone() else {
                 continue;
             };
             if let Some(canonical) = held.canonical
@@ -184,7 +184,6 @@ pub(crate) struct RetainedRender {
     hidden: BTreeSet<Entity>,
     materials: Materials,
     asset_revision: Option<(u64, u64)>,
-    material_revision: Option<u64>,
     topology: Option<Revision>,
     words: Option<u64>,
     colors: Feed<u32>,
@@ -206,7 +205,6 @@ impl Default for RetainedRender {
             hidden: BTreeSet::new(),
             materials: Materials::default(),
             asset_revision: None,
-            material_revision: None,
             topology: None,
             words: None,
             colors: Feed::new(FeedSettings::default().instance_colors as usize),
@@ -343,12 +341,10 @@ impl RetainedRender {
     ) -> bool {
         let assets = inputs.assets;
         let revision = Some(assets.revision());
-        let material_revision = Some(assets.material_revision());
-        if self.asset_revision == revision && self.material_revision == material_revision {
+        if self.asset_revision == revision {
             return false;
         }
         self.asset_revision = revision;
-        self.material_revision = material_revision;
         self.changed |= self.materials.settle(assets);
         let cube = assets.cube_mesh();
         for slot in 0..self.owners.len() {

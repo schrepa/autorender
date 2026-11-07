@@ -14,14 +14,3 @@ gpu_structs! {
         pub uv1: [f32; 2],
     }
 }
-
-engine_core::gpu_struct! {
-    pub struct MaterialUniform {
-        pub transforms: [[f32; 4]; 10],
-        pub emissive: [f32; 4],
-        pub params: [f32; 4],
-        pub variant: [f32; 4],
-        pub top: [f32; 4],
-        pub layer: [f32; 4],
-    }
-}

@@ -400,7 +400,7 @@ pub(crate) fn draw(
         let drawing: Vec<TileKey> = terrain
             .held
             .iter()
-            .filter(|(_, held)| matches!(held.base, Base::Drawing(_)) || held.drawing.is_some())
+            .filter(|(_, held)| matches!(held.base, Base::Drawing(_) | Base::Redrawing(..)))
             .map(|(&key, _)| key)
             .collect();
         for key in drawing {
@@ -410,12 +410,11 @@ pub(crate) fn draw(
             let Some(held) = terrain.held.get_mut(&key) else {
                 continue;
             };
-            let asked = if let Base::Drawing(asked) = &held.base {
-                asked
-            } else if let Some((asked, _)) = &held.drawing {
-                asked
-            } else {
-                continue;
+            let asked = match &held.base {
+                Base::Drawing(asked) | Base::Redrawing(asked, _) => asked,
+                Base::Waiting | Base::Asking(_) | Base::Failed | Base::Made | Base::Left => {
+                    continue;
+                }
             };
             let Some(output) = records.get(asked) else {
                 continue;
@@ -426,10 +425,10 @@ pub(crate) fn draw(
                     format!("{}: its output does not decode: {error}", DRAWN.name())
                 })
             });
-            if matches!(held.base, Base::Drawing(_)) {
+            let base = std::mem::replace(&mut held.base, Base::Made);
+            if let Base::Drawing(_) = base {
                 match made {
                     Ok(made) => {
-                        held.base = Base::Made;
                         held.hold(made);
                         held.watered = None;
                     }
@@ -438,7 +437,7 @@ pub(crate) fn draw(
                         state.failures.record(frame, error);
                     }
                 }
-            } else if let Some((_, drawing)) = held.drawing.take() {
+            } else if let Base::Redrawing(_, drawing) = base {
                 match (made, drawing) {
                     (Ok(made), Drawing::Given(record)) => {
                         held.hold(made);

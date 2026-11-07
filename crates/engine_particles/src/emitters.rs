@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
     Allowed, Clock, Cut, DrawnPoses, Expected, FrameTime, GlobalTransforms, InvalidSetting,
-    Nearest, Rule, View, fields, gpu_struct, settings, stats,
+    Nearest, Rule, PrimaryView, fields, gpu_struct, settings, stats,
 };
 use engine_places_rendering::particles::{
     MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleBursts, ParticleEmitter,
@@ -413,7 +413,7 @@ pub(crate) fn gather_emitters(
     (globals, poses, view, time, bursts): (
         Res<GlobalTransforms>,
         Res<DrawnPoses>,
-        Res<View>,
+        Res<PrimaryView>,
         Res<FrameTime>,
         Res<ParticleBursts>,
     ),
@@ -438,7 +438,7 @@ pub(crate) fn gather_emitters(
 pub(crate) fn particle_stats(
     gather: Res<Gather>,
     packed: Res<Packed>,
-    view: Res<View>,
+    view: Res<PrimaryView>,
     mut stats: ResMut<ParticleStats>,
 ) {
     let frame = (!view.debug() && packed.emits && packed.total > 0).then_some(&*packed);

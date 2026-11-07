@@ -1,7 +1,6 @@
-use std::any::TypeId;
 
 use bevy_ecs::world::World;
-use engine_core::{AssetResidency, FrameTime, Readback, RenderFrame, RenderStats, View};
+use engine_core::{AssetResidency, FrameTime, PrimaryView, Readback, RenderFrame, RenderStats};
 
 use super::*;
 use crate::CameraUniform;
@@ -38,7 +37,6 @@ struct Viewed {
     eye: glam::Vec3,
     detail: glam::Vec3,
     seconds: f32,
-    scene: u64,
 }
 
 fn mark_between(
@@ -73,7 +71,7 @@ fn opaque_span(
         passes.get(planned.pass.index()).is_some_and(|pass| {
             crate::machine::shared(pass)
                 && crate::machine::pass_layer(pass)
-                    .is_some_and(|layer| layer <= crate::Layer::Backdrop)
+                    .is_some_and(|layer| layer <= engine_core::AttachPoint::Sky)
         })
     };
     Some((
@@ -154,12 +152,21 @@ impl Renderer {
 
     pub fn deliver(&mut self, world: &mut World) {
         self.fault_bricks(world);
+        self.recover(world);
         self.collect();
         let Some(run) = self.run.as_mut() else {
             return;
         };
         run.deliver(world);
         run.assets.impostors.deliver(world);
+        let refused = run.assets.materials.take_refused();
+        if !refused.is_empty()
+            && let Some(mut registry) = world.get_resource_mut::<engine_registry::Registry>()
+        {
+            for error in refused {
+                registry.report(error);
+            }
+        }
         let mut draws = engine_core::PartDraws::default();
         for (part, drawn) in run.machine.declared.parts.iter().zip(&run.part_draws) {
             draws.add(part.ty, *drawn);
@@ -248,7 +255,7 @@ impl Renderer {
         let _row = engine_profile::timed(engine_profile::row("render.acquire"));
         self.check_health()?;
         drop(self.surface.take());
-        if self.core.display.suspended() || self.run.is_none() {
+        if self.core.display.suspended() || self.run.is_none() || !self.usable() {
             return Ok(false);
         }
         self.surface = self.core.display.acquire(&self.core.device)?;
@@ -266,12 +273,10 @@ impl Renderer {
             return Ok(RenderStats::default());
         };
         let world = frame.world();
-        let view = world.get_resource::<View>();
-        let debug = world
-            .get_resource::<crate::DebugShown>()
-            .is_some_and(|shown| shown.owner.is_some());
-        let temporal_frame = !debug && view.is_some_and(View::temporal);
-        let region = self.core.display.plan_region(view.map(View::render_size));
+        let view = world.get_resource::<PrimaryView>();
+        let debug = view.is_some_and(PrimaryView::debug);
+        let temporal_frame = !debug && view.is_some_and(PrimaryView::temporal);
+        let region = self.core.display.plan_region(view.map(PrimaryView::render_size));
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
         };
@@ -332,14 +337,12 @@ impl Renderer {
                 seconds: world
                     .get_resource::<FrameTime>()
                     .map_or(0.0, |time| time.elapsed as f32),
-                scene: view.scene(),
             },
             None => Viewed {
                 view_projection: Mat4::IDENTITY,
                 eye: glam::Vec3::ZERO,
                 detail: glam::Vec3::ZERO,
                 seconds: 0.0,
-                scene: 0,
             },
         };
         let previous_seconds = self
@@ -350,12 +353,10 @@ impl Renderer {
             .get_resource::<crate::Resolve>()
             .copied()
             .unwrap_or_default();
-        let size = region.display.pixels();
         let temporal = temporal_frame.then(|| {
-            let previous = self
-                .previous
-                .filter(|(_, known, scene)| *known == size && *scene == viewed.scene)
-                .map_or(viewed.view_projection, |(previous, _, _)| previous);
+            let previous = view
+                .and_then(PrimaryView::facts)
+                .map_or(viewed.view_projection, |facts| facts.previous_view_projection);
             (resolve, previous)
         });
         let wind = world
@@ -363,7 +364,6 @@ impl Renderer {
             .copied()
             .unwrap_or_default();
         run.cameras[0] = camera_of(&viewed, temporal, region, (previous_seconds, wind));
-        self.previous = temporal.map(|_| (viewed.view_projection, size, viewed.scene));
         run.post = crate::shared::post_uniform(
             viewed.view_projection,
             viewed.eye,
@@ -378,6 +378,7 @@ impl Renderer {
         run.canvas_texture = Some(surface.texture().clone());
         let profile_writes = engine_profile::span("render", "queue_writes");
         let row_writes = engine_profile::timed(engine_profile::row("render.writes"));
+        run.drop_cameras();
         run.runs = Bits::of(run.machine.graph.passes());
         for at in run.machine.declared.passes.len()..run.machine.graph.passes() {
             run.runs.insert(at);
@@ -405,10 +406,11 @@ impl Renderer {
         if let Some(library) = world.get_resource::<engine_core::AssetLibrary>() {
             for texture in std::mem::take(&mut run.wanted_textures) {
                 if let Some(source) = library.texture(texture) {
+                    let revision = library.revision_of(texture).unwrap_or_default();
                     let (bytes, levels) = run.assets.materials.upload_texture(
                         &device,
                         &self.core.queue,
-                        (texture, true),
+                        (texture, revision),
                         source,
                         &mut mips,
                     );
@@ -506,10 +508,7 @@ impl Renderer {
             }
             let pass = &run.machine.declared.passes[index];
             let (part, work) = (pass.part, pass.work);
-            let elsewhere = pass
-                .claims
-                .iter()
-                .any(|point| *point != TypeId::of::<crate::MainView>());
+            let elsewhere = pass.scene.is_some_and(|scene| !scene.core);
             if !run.drawable(part) {
                 continue;
             }
@@ -572,7 +571,7 @@ impl Renderer {
                     }
                 }
                 Work::Clear(_) => {}
-                Work::Render | Work::Shared(_) => {
+                Work::Render => {
                     let Some(mut held) = run.parts[part as usize].take() else {
                         continue;
                     };
@@ -642,7 +641,7 @@ impl Renderer {
         self.core.queue.hand(Handover::from(encoder));
         self.core.queue.settle();
         surface.present(&self.core.queue);
-        let pipelines_created = self.core.pipeline_counts.frame_submitted(&self.core.queue);
+        let pipelines_created = self.core.ledger.frame_submitted(&self.core.queue);
         let render_passes = self.ran_passes(&ran);
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
@@ -671,7 +670,7 @@ impl Renderer {
             resident_textures,
             texture_upload_bytes: texture_bytes,
             resident_texture_bytes,
-            pipelines: self.core.pipeline_counts.created(),
+            pipelines: self.core.ledger.created(),
             pipelines_created,
             render_passes,
             linked: self.linked,

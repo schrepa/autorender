@@ -27,10 +27,10 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     for stream in STREAMS {
         aim(session, stream)?;
         environment(session, json!({"debug_view": {"view": "off"}}))?;
-        engine::smokes::settled(session)?;
+        engine_core::smoke::settled(session)?;
         for view in WATER_VIEWS {
             environment(session, json!({"debug_view": {"view": view}}))?;
-            let shown = engine::smokes::settled(session)?;
+            let shown = engine_core::smoke::settled(session)?;
             let passes = &shown["render_passes"];
             smoke_eq!(
                 passes
@@ -49,7 +49,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
 fn probed(session: &mut dyn SmokeSession) -> Checked<()> {
     aim(session, "torrent")?;
     environment(session, json!({"debug_view": {"view": "water_depth"}}))?;
-    let rendering = engine::smokes::settled(session)?;
+    let rendering = engine_core::smoke::settled(session)?;
     let width = number(&rendering["resolution"]["display_width"]);
     let height = number(&rendering["resolution"]["display_height"]);
     let mut pixels: Vec<[f64; 2]> = (1..PROBES_ACROSS)

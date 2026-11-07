@@ -1,9 +1,11 @@
 import package::engine::color::luminance;
 import package::engine::shading::{Shaded, SurfacePoint};
+import package::engine::surfaces::SURFACE_WATER;
 import package::engine::view::{camera, detail_resolved, detail_span, eye_world, stable_normalize,
     view_pixel};
 import package::face::heightfield::{terrain_uniform, use_terrain};
-import package::face::lighting::{environment_brdf, finish, sun_visibility};
+import package::face::lighting::{environment_brdf, sun_visibility};
+import package::face::lit::finish;
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
 import package::generated::targets::{ViewTargets, view_targets};
@@ -146,19 +148,17 @@ fn shade_fall(input: FallOutput) -> FallShade {
     var sunlight = vec3<f32>(0.0);
     if sun.y > 0.0 {
         sunlight = sun_color() * sun_visibility(SunAt(world, select(seen, -seen, backlit),
-            world_dx, world_dy, 0.0, false, 0u, vec4<f32>(0.0)));
+            world_dx, world_dy, 0.0, SURFACE_WATER, 0u, vec4<f32>(0.0)));
     }
     var glow = vec3<f32>(0.0);
     if backlit {
         glow = sunlight * (FALL_ALBEDO * scattering.z * -dot(sun, seen));
     }
     var point: SurfacePoint;
-    point.albedo = vec3<f32>(FALL_ALBEDO);
+    point.base_color = vec3<f32>(FALL_ALBEDO);
     point.opacity = 1.0;
-    point.emission = 0.0;
     point.emissive = vec3<f32>(0.0);
     point.occlusion = input.sky;
-    point.indirect = vec3<f32>(0.0);
     point.roughness = WATER_SMOOTHEST;
     point.alpha = point.roughness * point.roughness;
     point.f0 = vec3<f32>(0.02 * (1.0 - white));
@@ -171,9 +171,7 @@ fn shade_fall(input: FallOutput) -> FallShade {
     point.world = world;
     point.world_dx = world_dx;
     point.world_dy = world_dy;
-    point.shadow_offset = vec3<f32>(0.0);
-    point.ground = false;
-    point.sun_shade = 0.0;
+    point.kind = SURFACE_WATER;
     let reflectance = luminance(environment_brdf(point.f0, point.roughness, point.n_v));
     let body = water_body(0.0) * (vec3<f32>(1.0) - clarity)
         * water_scattered(view, sunlight, seen)

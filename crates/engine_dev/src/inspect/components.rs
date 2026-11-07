@@ -8,11 +8,22 @@ use crate::MenuPress;
 
 impl DevTools {
     pub(super) fn register_components(&mut self, schemas: &Value) {
-        self.register_resource::<Camera>(
-            InspectorDescriptor::generated(schemas, "Camera")
-                .with_default(camera_value(&Camera::default())),
-            camera_value,
-        )
+        let ahead = (engine_core::glam::Vec3::ZERO - Camera::EYE).normalize();
+        self.insert(Inspector {
+            brick: None,
+            descriptor: InspectorDescriptor::generated(schemas, "Camera")
+                .with_default(camera_value(&Camera::default(), Camera::EYE, ahead)),
+            kind: InspectorKind::Resource,
+            has: Box::new(|world, _| {
+                world
+                    .get_resource::<PrimaryView>()
+                    .is_some_and(|view| view.facts().is_some())
+            }),
+            read: Box::new(|world, _, _| {
+                let facts = world.get_resource::<PrimaryView>()?.facts().copied()?;
+                Some(camera_value(&facts.lens, facts.eye, facts.forward))
+            }),
+        })
         .expect("descriptor_bounded");
         self.insert(Inspector {
             brick: None,
@@ -161,9 +172,8 @@ pub(super) fn mesh_view(
         .map(|material| {
             material
                 .maps()
-                .into_iter()
-                .flatten()
-                .map(|map| {
+                .iter()
+                .map(|(_, map)| {
                     let origin = scene.and_then(|scene| scene.texture_origin(map.texture));
                     let texture = assets.texture(map.texture);
                     let (uri, inline, provided) = match origin.map(|(_, source)| source) {
@@ -212,7 +222,11 @@ pub(super) fn mesh_view(
     }
 }
 
-pub(super) fn camera_value(value: &Camera) -> Value {
+pub(super) fn camera_value(
+    value: &Camera,
+    eye: engine_core::glam::Vec3,
+    forward: engine_core::glam::Vec3,
+) -> Value {
     let (vertical_fov_radians, height) = match value.projection {
         Projection::Perspective {
             vertical_fov_radians,
@@ -220,8 +234,8 @@ pub(super) fn camera_value(value: &Camera) -> Value {
         Projection::Orthographic { height } => (None, Some(height)),
     };
     json!(CameraView {
-        position: value.position.to_array(),
-        target: value.target.to_array(),
+        position: eye.to_array(),
+        target: (eye + forward).to_array(),
         vertical_fov_radians,
         height,
         near: value.near,

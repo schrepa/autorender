@@ -4,7 +4,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use bevy_ecs::prelude::*;
 use engine_core::{
     Cursor, Feed, FeedSettings, FrameBudget, FrameTime, Interest, JobFailures, Jobs, RecordKey,
-    Records, Since, Spawner, VIEW_JOBS, View, job_priority,
+    Records, Since, Spawner, VIEW_JOBS, PrimaryView, job_priority,
 };
 use engine_heightfield::tile::{Solid, TileJob};
 use engine_heightfield::{
@@ -34,6 +34,8 @@ pub(crate) enum Base {
     Drawing(Interest<RecordKey>),
     Failed,
     Made,
+    Redrawing(Interest<RecordKey>, Drawing),
+    Left,
 }
 
 pub(crate) enum Drawing {
@@ -48,7 +50,6 @@ pub(crate) struct HeldWater {
     pub(crate) drawn: Option<Arc<DrawnWater>>,
     pub(crate) watered: Watered,
     pub(crate) given: Option<RecordKey>,
-    pub(crate) drawing: Option<(Interest<RecordKey>, Drawing)>,
 }
 
 impl HeldWater {
@@ -60,12 +61,15 @@ impl HeldWater {
             drawn: None,
             watered: None,
             given: None,
-            drawing: None,
         }
     }
 
     pub(crate) fn resident(&self) -> bool {
-        matches!(self.base, Base::Made)
+        matches!(self.base, Base::Made | Base::Redrawing(..))
+    }
+
+    pub(crate) fn on_face(&self) -> bool {
+        !matches!(self.base, Base::Left)
     }
 
     pub(crate) fn hold(&mut self, made: Option<(TileWater, DrawnWater)>) {
@@ -99,7 +103,6 @@ pub(crate) struct WaterTerrain {
     pub(crate) window_changed: Vec<[Vec2; 2]>,
     pub(crate) settled: Settled,
     pub(crate) held: BTreeMap<TileKey, HeldWater>,
-    pub(crate) left: BTreeMap<TileKey, HeldWater>,
     pub(crate) touched: Feed<TileKey>,
     pub(crate) window_cursor: Cursor,
     cursor: Cursor,
@@ -125,7 +128,6 @@ impl WaterTerrain {
             window_changed: Vec::new(),
             settled: Settled::default(),
             held: BTreeMap::new(),
-            left: BTreeMap::new(),
             touched: Feed::new(feed),
             window_cursor: Cursor::default(),
             cursor: Cursor::default(),
@@ -181,11 +183,11 @@ impl WaterTerrain {
         let held = self.held.remove(&key);
         let Some(face) = face else {
             if let Some(mut held) = held
-                && held.resident()
+                && (held.resident() || !held.on_face())
                 && self.kept.contains(&(key, held.face.stamp))
             {
-                held.drawing = None;
-                self.left.insert(key, held);
+                held.base = Base::Left;
+                self.held.insert(key, held);
             }
             self.touch(key);
             return;
@@ -193,16 +195,12 @@ impl WaterTerrain {
         let held = match held {
             Some(mut held) if held.face.stamp == face.stamp => {
                 held.face = face.clone();
+                if !held.on_face() {
+                    held.base = Base::Made;
+                }
                 held
             }
-            Some(_) => HeldWater::new(face.clone()),
-            None => match self.left.remove(&key) {
-                Some(mut held) if held.face.stamp == face.stamp => {
-                    held.face = face.clone();
-                    held
-                }
-                Some(_) | None => HeldWater::new(face.clone()),
-            },
+            Some(_) | None => HeldWater::new(face.clone()),
         };
         self.held.insert(key, held);
         self.touch(key);
@@ -212,8 +210,8 @@ impl WaterTerrain {
         if !Arc::ptr_eq(&self.kept, &entry.kept) {
             self.kept = Arc::clone(&entry.kept);
             let kept = &self.kept;
-            self.left
-                .retain(|&key, held| kept.contains(&(key, held.face.stamp)));
+            self.held
+                .retain(|&key, held| held.on_face() || kept.contains(&(key, held.face.stamp)));
         }
         let mut keys: Vec<TileKey> = match entry.changes.since(&mut self.cursor) {
             Since::Same => return,
@@ -245,7 +243,12 @@ impl WaterTerrain {
             .iter()
             .filter(|(_, held)| match held.base {
                 Base::Waiting => true,
-                Base::Asking(_) | Base::Drawing(_) | Base::Failed | Base::Made => false,
+                Base::Asking(_)
+                | Base::Drawing(_)
+                | Base::Failed
+                | Base::Made
+                | Base::Redrawing(..)
+                | Base::Left => false,
             })
             .map(|(&key, _)| {
                 let span = pyramid.tile_size(u32::from(key.level));
@@ -479,7 +482,7 @@ impl WaterQuery for WaterSurface {
 pub(crate) fn follow(
     tiles: Res<TerrainTiles>,
     records: Res<Records>,
-    view: Res<View>,
+    view: Res<PrimaryView>,
     time: Res<FrameTime>,
     (budget, feeds): (Res<FrameBudget>, Res<FeedSettings>),
     mut jobs: Jobs,

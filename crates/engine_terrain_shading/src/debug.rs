@@ -1,15 +1,43 @@
 use std::any::TypeId;
 
-use engine_core::GpuBits;
+use engine_core::{GpuBits, gpu_bits};
 use engine_render::debug::{DEBUG_NO_MATERIAL, DebugKind, DebugRecord};
 use engine_render::{DebugMode, DebugShown};
 use serde_json::{Value, json};
 
 use crate::TerrainShadingBrick;
-use crate::gpu::{
-    DEBUG_PATCH_SHIFT, DEBUG_SHOWN_DETAIL, DEBUG_SHOWN_MATERIALS, DEBUG_SHOWN_SKY,
-    DEBUG_SHOWN_TILES,
+use crate::gpu::{DEBUG_SHOWN_DETAIL, DEBUG_SHOWN_MATERIALS, DEBUG_SHOWN_SKY, DEBUG_SHOWN_TILES};
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TerrainDebug {
+    #[bits(1, at = 11)]
+    pub(crate) tile_edge: bool,
+    pub(crate) patch_edge: bool,
+    #[bits(4, at = 24)]
+    pub(crate) patch_x: u32,
+    #[bits(4)]
+    pub(crate) patch_y: u32,
+}
+
+const _: () = {
+    let ours = <TerrainDebug as GpuBits>::FIELDS;
+    let record = <DebugRecord as GpuBits>::FIELDS;
+    let mut at = 0;
+    while at < ours.len() {
+        let mut other = 0;
+        while other < record.len() {
+            assert!(
+                ours[at].mask() & record[other].mask() == 0,
+                "terrain_debug_bits_sit_beside_the_debug_record"
+            );
+            other += 1;
+        }
+        at += 1;
+    }
 };
+
+pub(crate) const GENERATED: &[&str] = &[<TerrainDebug as GpuBits>::WGSL];
 
 pub(crate) const MODES: [(&str, u32); 4] = [
     ("tiles", DEBUG_SHOWN_TILES),
@@ -43,14 +71,14 @@ fn terrain([record, object, detail, tiles]: [u32; 4], [ids, ..]: [f32; 4]) -> Va
         .filter(|&(material, share)| material != DEBUG_NO_MATERIAL && share > 0.0)
         .collect();
     materials.sort_by(|a, b| b.1.total_cmp(&a.1));
-    let within = record >> DEBUG_PATCH_SHIFT;
+    let patch = TerrainDebug::unpack(record).map_or([0, 0], |bits| [bits.patch_x, bits.patch_y]);
     json!({
         "terrain": {
             "tile": [
                 i32::from((tiles & 0xffff) as u16 as i16),
                 i32::from((tiles >> 16) as u16 as i16),
             ],
-            "patch": [within & 0xf, (within >> 4) & 0xf],
+            "patch": patch,
             "materials": materials
                 .iter()
                 .map(|&(material, share)| json!({"material": material, "share": share}))

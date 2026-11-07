@@ -36,6 +36,31 @@ pub struct MaterialHandle(Id);
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TextureHandle(Id);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Asset {
+    Mesh(MeshHandle),
+    Material(MaterialHandle),
+    Texture(TextureHandle),
+}
+
+impl From<MeshHandle> for Asset {
+    fn from(handle: MeshHandle) -> Self {
+        Self::Mesh(handle)
+    }
+}
+
+impl From<MaterialHandle> for Asset {
+    fn from(handle: MaterialHandle) -> Self {
+        Self::Material(handle)
+    }
+}
+
+impl From<TextureHandle> for Asset {
+    fn from(handle: TextureHandle) -> Self {
+        Self::Texture(handle)
+    }
+}
+
 impl MeshHandle {
     pub fn slot(self) -> usize {
         self.0.slot
@@ -248,10 +273,16 @@ impl Default for AssetBudget {
     }
 }
 
+enum Held<T> {
+    Free,
+    Reserved,
+    Filled(T),
+}
+
 struct Slot<T> {
     generation: u64,
-    value: Option<T>,
-    reserved: bool,
+    revision: u64,
+    held: Held<T>,
 }
 
 struct Storage<T> {
@@ -275,21 +306,20 @@ impl<T> Storage<T> {
         self.count < limit && (!self.free.is_empty() || self.slots.len() < limit)
     }
 
-    fn insert(&mut self, library: u64, value: T) -> Id {
-        self.place(library, Some(value))
+    fn insert(&mut self, library: u64, value: T, revision: u64) -> Id {
+        self.place(library, Held::Filled(value), revision)
     }
 
-    fn reserve(&mut self, library: u64) -> Id {
-        self.place(library, None)
+    fn reserve(&mut self, library: u64, revision: u64) -> Id {
+        self.place(library, Held::Reserved, revision)
     }
 
-    fn place(&mut self, library: u64, value: Option<T>) -> Id {
+    fn place(&mut self, library: u64, held: Held<T>, revision: u64) -> Id {
         self.count += 1;
-        let reserved = value.is_none();
         if let Some(index) = self.free.pop() {
             let slot = &mut self.slots[index];
-            slot.value = value;
-            slot.reserved = reserved;
+            slot.held = held;
+            slot.revision = revision;
             Id {
                 library,
                 slot: index,
@@ -299,8 +329,8 @@ impl<T> Storage<T> {
             let slot = self.slots.len();
             self.slots.push(Slot {
                 generation: 0,
-                value,
-                reserved,
+                revision,
+                held,
             });
             Id {
                 library,
@@ -310,22 +340,41 @@ impl<T> Storage<T> {
         }
     }
 
-    fn fill(&mut self, library: u64, id: Id, value: T) -> bool {
-        match self.slot_mut(library, id) {
-            Some(slot) if slot.reserved => {
-                slot.value = Some(value);
-                slot.reserved = false;
+    fn fill(&mut self, library: u64, id: Id, value: T, revision: u64) -> bool {
+        let Some(slot) = self.slot_mut(library, id) else {
+            return false;
+        };
+        match slot.held {
+            Held::Reserved => {
+                slot.held = Held::Filled(value);
+                slot.revision = revision;
                 true
             }
-            _ => false,
+            Held::Free | Held::Filled(_) => false,
         }
     }
 
     fn holds(&self, library: u64, id: Id) -> bool {
-        id.library == library
-            && self.slots.get(id.slot).is_some_and(|slot| {
-                slot.generation == id.generation && (slot.value.is_some() || slot.reserved)
-            })
+        self.revision(library, id).is_some()
+    }
+
+    fn revision(&self, library: u64, id: Id) -> Option<u64> {
+        if id.library != library {
+            return None;
+        }
+        let slot = self.slots.get(id.slot)?;
+        match slot.held {
+            Held::Reserved | Held::Filled(_) if slot.generation == id.generation => {
+                Some(slot.revision)
+            }
+            Held::Free | Held::Reserved | Held::Filled(_) => None,
+        }
+    }
+
+    fn touch(&mut self, library: u64, id: Id, revision: u64) {
+        if let Some(slot) = self.slot_mut(library, id) {
+            slot.revision = revision;
+        }
     }
 
     fn slot_mut(&mut self, library: u64, id: Id) -> Option<&mut Slot<T>> {
@@ -342,36 +391,37 @@ impl<T> Storage<T> {
             return None;
         }
         let slot = self.slots.get(id.slot)?;
-        if slot.generation != id.generation {
-            return None;
+        match &slot.held {
+            Held::Filled(value) if slot.generation == id.generation => Some(value),
+            Held::Free | Held::Reserved | Held::Filled(_) => None,
         }
-        slot.value.as_ref()
     }
 
     fn values(&self) -> impl Iterator<Item = (usize, &T)> {
         self.slots
             .iter()
             .enumerate()
-            .filter_map(|(slot, entry)| entry.value.as_ref().map(|value| (slot, value)))
+            .filter_map(|(slot, entry)| match &entry.held {
+                Held::Filled(value) => Some((slot, value)),
+                Held::Free | Held::Reserved => None,
+            })
     }
 
     fn get_mut(&mut self, library: u64, id: Id) -> Option<&mut T> {
-        if id.library != library {
-            return None;
+        let slot = self.slot_mut(library, id)?;
+        match &mut slot.held {
+            Held::Filled(value) => Some(value),
+            Held::Free | Held::Reserved => None,
         }
-        let slot = self.slots.get_mut(id.slot)?;
-        if slot.generation != id.generation {
-            return None;
-        }
-        slot.value.as_mut()
     }
 
     fn remove(&mut self, library: u64, id: Id) -> Option<Option<T>> {
-        let slot = self
-            .slot_mut(library, id)
-            .filter(|slot| slot.value.is_some() || slot.reserved)?;
-        let value = slot.value.take();
-        slot.reserved = false;
+        let slot = self.slot_mut(library, id)?;
+        let value = match std::mem::replace(&mut slot.held, Held::Free) {
+            Held::Free => return None,
+            Held::Reserved => None,
+            Held::Filled(value) => Some(value),
+        };
         let next = slot.generation.checked_add(1);
         if let Some(next) = next {
             slot.generation = next;
@@ -418,11 +468,10 @@ pub struct AssetLibrary {
     id: u64,
     cube: Option<MeshHandle>,
     revision: u64,
-    material_revision: u64,
     budget: AssetBudget,
     meshes: Storage<HeldMesh>,
     awaiting_lods: Vec<MeshHandle>,
-    materials: Storage<(Material, u64)>,
+    materials: Storage<Material>,
     textures: Storage<Arc<Texture>>,
     resident_bytes: usize,
     texture_bytes: usize,
@@ -453,7 +502,6 @@ impl AssetLibrary {
             id,
             cube: None,
             revision: 0,
-            material_revision: 0,
             budget,
             meshes: Storage::default(),
             awaiting_lods: Vec::new(),
@@ -471,7 +519,8 @@ impl AssetLibrary {
         self.reserve_bytes(mesh.byte_len())?;
         let held = HeldMesh::new(mesh);
         let awaits = held.awaits();
-        let handle = MeshHandle(self.meshes.insert(self.id, held));
+        let revision = self.bump();
+        let handle = MeshHandle(self.meshes.insert(self.id, held, revision));
         if awaits {
             self.awaiting_lods.push(handle);
         }
@@ -492,8 +541,8 @@ impl AssetLibrary {
         if !self.meshes.has_capacity(self.budget.max_meshes) {
             return Err(full("$.meshes", self.budget.max_meshes));
         }
-        self.revision = self.revision.saturating_add(1);
-        Ok(MeshHandle(self.meshes.reserve(self.id)))
+        let revision = self.bump();
+        Ok(MeshHandle(self.meshes.reserve(self.id, revision)))
     }
 
     pub fn fill_mesh(&mut self, handle: MeshHandle, mesh: Mesh) -> Result<(), Error> {
@@ -505,7 +554,8 @@ impl AssetLibrary {
         if held.awaits() {
             self.awaiting_lods.push(handle);
         }
-        self.meshes.fill(self.id, handle.0, held);
+        let revision = self.bump();
+        self.meshes.fill(self.id, handle.0, held, revision);
         Ok(())
     }
 
@@ -529,7 +579,8 @@ impl AssetLibrary {
         let bytes = lods.as_deref().map_or(0, MeshLods::byte_len);
         held.lods = lods.map_or(Levels::Without, Levels::Built);
         self.resident_bytes += bytes;
-        self.revision = self.revision.saturating_add(1);
+        let revision = self.bump();
+        self.meshes.touch(self.id, handle.0, revision);
         Ok(())
     }
 
@@ -552,8 +603,9 @@ impl AssetLibrary {
             return Err(full("$.materials", self.budget.max_materials));
         }
         self.reserve_bytes(size_of::<Material>())?;
+        let revision = self.bump();
         Ok(MaterialHandle(
-            self.materials.insert(self.id, (material, 0)),
+            self.materials.insert(self.id, material, revision),
         ))
     }
 
@@ -568,12 +620,14 @@ impl AssetLibrary {
         {
             return Err(dead(ErrorCode::InvalidTexture, "$.textures"));
         }
+        let revision = self.revision.saturating_add(1);
         let slot = self
             .materials
             .get_mut(self.id, handle.0)
             .ok_or_else(|| dead(ErrorCode::InvalidMaterial, "$.material"))?;
-        self.material_revision = self.material_revision.saturating_add(1);
-        *slot = (material, self.material_revision);
+        *slot = material;
+        self.revision = revision;
+        self.materials.touch(self.id, handle.0, revision);
         Ok(())
     }
 
@@ -583,8 +637,9 @@ impl AssetLibrary {
         }
         self.reserve_bytes(texture.byte_len())?;
         self.texture_bytes += texture.byte_len();
+        let revision = self.bump();
         Ok(TextureHandle(
-            self.textures.insert(self.id, Arc::new(texture)),
+            self.textures.insert(self.id, Arc::new(texture), revision),
         ))
     }
 
@@ -592,8 +647,8 @@ impl AssetLibrary {
         if !self.textures.has_capacity(self.budget.max_textures) {
             return Err(full("$.textures", self.budget.max_textures));
         }
-        self.revision = self.revision.saturating_add(1);
-        Ok(TextureHandle(self.textures.reserve(self.id)))
+        let revision = self.bump();
+        Ok(TextureHandle(self.textures.reserve(self.id, revision)))
     }
 
     pub fn fill_texture(&mut self, handle: TextureHandle, texture: Texture) -> Result<(), Error> {
@@ -602,7 +657,8 @@ impl AssetLibrary {
         }
         self.reserve_bytes(texture.byte_len())?;
         self.texture_bytes += texture.byte_len();
-        self.textures.fill(self.id, handle.0, Arc::new(texture));
+        let revision = self.bump();
+        self.textures.fill(self.id, handle.0, Arc::new(texture), revision);
         Ok(())
     }
 
@@ -614,20 +670,16 @@ impl AssetLibrary {
         (self.id, self.revision)
     }
 
-    pub fn material_revision(&self) -> u64 {
-        self.material_revision
+    pub fn revision_of(&self, asset: impl Into<Asset>) -> Option<u64> {
+        match asset.into() {
+            Asset::Mesh(handle) => self.meshes.revision(self.id, handle.0),
+            Asset::Material(handle) => self.materials.revision(self.id, handle.0),
+            Asset::Texture(handle) => self.textures.revision(self.id, handle.0),
+        }
     }
 
     pub fn material(&self, handle: MaterialHandle) -> Option<&Material> {
-        self.materials
-            .get(self.id, handle.0)
-            .map(|(material, _)| material)
-    }
-
-    pub fn material_version(&self, handle: MaterialHandle) -> Option<u64> {
-        self.materials
-            .get(self.id, handle.0)
-            .map(|&(_, version)| version)
+        self.materials.get(self.id, handle.0)
     }
 
     pub fn texture(&self, handle: TextureHandle) -> Option<&Arc<Texture>> {
@@ -645,7 +697,7 @@ impl AssetLibrary {
             };
             held.mesh.byte_len() + settled
         });
-        self.revision = self.revision.saturating_add(1);
+        self.bump();
         true
     }
 
@@ -654,7 +706,7 @@ impl AssetLibrary {
             return false;
         }
         self.resident_bytes -= size_of::<Material>();
-        self.revision = self.revision.saturating_add(1);
+        self.bump();
         true
     }
 
@@ -665,7 +717,7 @@ impl AssetLibrary {
         let bytes = texture.map_or(0, |texture| texture.byte_len());
         self.resident_bytes -= bytes;
         self.texture_bytes -= bytes;
-        self.revision = self.revision.saturating_add(1);
+        self.bump();
         true
     }
 
@@ -686,9 +738,7 @@ impl AssetLibrary {
     }
 
     pub fn materials(&self) -> impl Iterator<Item = (usize, &Material)> {
-        self.materials
-            .values()
-            .map(|(slot, (material, _))| (slot, material))
+        self.materials.values()
     }
 
     pub fn textures(&self) -> impl Iterator<Item = (usize, &Arc<Texture>)> {
@@ -712,7 +762,11 @@ impl AssetLibrary {
             return Err(full("$.cpu_bytes", available).got(requested));
         }
         self.resident_bytes += requested;
-        self.revision = self.revision.saturating_add(1);
         Ok(())
+    }
+
+    fn bump(&mut self) -> u64 {
+        self.revision = self.revision.saturating_add(1);
+        self.revision
     }
 }

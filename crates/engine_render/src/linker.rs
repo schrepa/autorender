@@ -348,7 +348,7 @@ impl Linker {
             "place" => module.package == CORE_PACKAGE || fills(module.package, second),
             "generated" => match second {
                 "pieces" => segments.next() == Some(own),
-                "targets" | "composite" => true,
+                "targets" | "composite" | "passes" => true,
                 _ => second == own,
             },
             _ => first == own,

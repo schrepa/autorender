@@ -39,5 +39,5 @@ pub use scene::{
 };
 pub use services::{FrameFacts, InputState, ViewState};
 pub use state::{
-    BrickState, BrickStates, GateDriver, GateFn, GateId, Scope, ask_on, fault, fault_of,
+    BrickState, BrickStates, Despawn, GateDriver, GateFn, GateId, Scope, ask_on, fault, fault_of,
 };

@@ -65,6 +65,4 @@ macro_rules! gpu_structs {
     };
 }
 
-pub mod constants;
-
 pub mod scene;

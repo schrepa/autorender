@@ -1,4 +1,3 @@
-use crate::gpu_layouts::scene::MaterialUniform;
 use crate::impostors::ImpostorBake;
 
 mod groups;
@@ -36,23 +35,6 @@ tables! {
     const EMPTY: Table = Table {
         label: "engine/empty-layout",
         bindings: &[],
-    };
-
-    const MATERIAL: Table = Table {
-        label: "engine/material-layout",
-        bindings: &[
-            texture("base_color_texture", Float, D2, F),
-            sampler("base_color_sampler", Filtering, F),
-            texture("metallic_roughness_texture", Float, D2, F),
-            sampler("metallic_roughness_sampler", Filtering, F),
-            texture("normal_texture", Float, D2, F),
-            sampler("normal_sampler", Filtering, F),
-            texture("occlusion_texture", Float, D2, F),
-            sampler("occlusion_sampler", Filtering, F),
-            texture("emissive_texture", Float, D2, F),
-            sampler("emissive_sampler", Filtering, F),
-            uniform_of("material_maps", size_of::<MaterialUniform>(), F),
-        ],
     };
 
     const IMPOSTOR_BAKE: Table = Table {

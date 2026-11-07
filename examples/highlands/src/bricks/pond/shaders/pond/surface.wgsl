@@ -1,7 +1,8 @@
-import package::engine::shading::{BODY_WATER, Shaded, SurfacePoint};
+import package::engine::shading::{Shaded, SurfacePoint};
+import package::engine::surfaces::SURFACE_POND;
 import package::engine::view::{camera, stable_normalize, view_pixel};
 import package::face::ground_tiles::{GroundTerrain, ground_height, terrain_info};
-import package::face::lighting::finish;
+import package::face::lit::finish;
 import package::generated::pond::{POND_MOST, PondShape};
 import package::generated::targets::{ViewTargets, view_targets};
 
@@ -66,7 +67,8 @@ fn shade_pond(input: PondOutput) -> PondShade {
     let view = stable_normalize(toward);
     let n_v = max(dot(up, view), 1.0e-4);
     var point: SurfacePoint;
-    point.albedo = POND_BODY;
+    point.base_color = POND_BODY;
+    point.kind = SURFACE_POND;
     point.opacity = 1.0;
     point.occlusion = 1.0;
     point.roughness = POND_ROUGHNESS;
@@ -83,7 +85,6 @@ fn shade_pond(input: PondOutput) -> PondShade {
     point.distance = length(toward);
     var shade: PondShade;
     shade.shaded = finish(point, vec3<f32>(0.0));
-    shade.shaded.body = BODY_WATER;
     shade.cover = 1.0 - exp(-depth / (POND_CLEAR * n_v));
     shade.shaded.reflect *= shade.cover;
     shade.shaded.mirrored *= shade.cover;

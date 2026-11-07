@@ -6,9 +6,10 @@ mod layouts;
 mod part;
 mod settings;
 
-use engine_core::{Brick, Bricks, Schedule, Source};
+use bevy_ecs::prelude::Res;
+use engine_core::{Attributes, Brick, Bricks, KindDecl, Schedule, Source};
 use engine_places_world::ground::{Cover, FarCover};
-use engine_render::{Layer, MainView, RenderBricks};
+use engine_render::RenderBricks;
 
 pub use settings::{CoverLook, GroundCover, GroundCoverStats};
 
@@ -19,6 +20,7 @@ impl Brick for GroundCoverBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .when(|cover: Res<GroundCover>| cover.enabled)
             .settings::<GroundCover>()
             .stats::<GroundCoverStats>()
             .resource::<covers::CoverTable>()
@@ -31,6 +33,11 @@ impl Brick for GroundCoverBrick {
                 (covers::write_covers, growth::plan_cover, growth::cover_stats),
             )
             .generated(layouts::GENERATED)
-            .draws::<part::CoverGpu, MainView>(Layer::Late, part::CoverGpu::draw);
+            .draw_kind(KindDecl {
+                kind: part::COVER,
+                vertex: shaders::cover::draw::VS_COVER.name(),
+                needs: Attributes::NONE,
+            })
+            .draws::<part::CoverGpu>(part::COVER, part::CoverGpu::draw);
     }
 }

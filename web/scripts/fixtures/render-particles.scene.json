@@ -55,7 +55,7 @@
       },
       "alpha_mode": "mask",
       "alpha_cutoff": 0.5,
-      "double_sided": true
+      "cull": "none"
     }
   ],
   "meshes": [

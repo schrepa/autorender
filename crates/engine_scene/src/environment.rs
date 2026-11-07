@@ -134,12 +134,11 @@ impl SceneEnvironment {
             .copied()
             .collect();
         for section in sections {
-            match self.value(section.key) {
-                Some(value) => {
-                    section.set_at(world, value, &format!("{path}.{}", section.key))?;
-                }
-                None => section.reset(world),
-            }
+            let value = self
+                .value(section.key)
+                .cloned()
+                .unwrap_or_else(|| section.default_value());
+            section.set_at(world, &value, &format!("{path}.{}", section.key))?;
         }
         engine_registry::check_sections(world).map_err(|refused| refused.within(path))
     }
@@ -174,13 +173,8 @@ pub(crate) fn apply_streamed(world: &mut World, value: Option<Value>) -> Result<
     let Some(section) = listed(world, STREAMED) else {
         return Ok(());
     };
-    match value {
-        Some(value) => section.set_at(world, &value, "$"),
-        None => {
-            section.reset(world);
-            Ok(())
-        }
-    }
+    let value = value.unwrap_or_else(|| section.default_value());
+    section.set_at(world, &value, "$")
 }
 
 #[cfg(feature = "schema")]

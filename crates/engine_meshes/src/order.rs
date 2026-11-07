@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Detail, DeviceLimits, View};
+use engine_core::{Detail, DeviceLimits, PrimaryView};
 use engine_places::meshes::Instances;
 use engine_render::Resolve;
 use engine_render::slots::DRAWN_SLOTS;
@@ -40,7 +40,7 @@ fn instance_limit(limits: &DeviceLimits) -> Option<usize> {
 )]
 pub(crate) fn plan_draws(
     retained: Res<RetainedRender>,
-    (view, detail, limits, resolve): (Res<View>, Res<Detail>, Res<DeviceLimits>, Res<Resolve>),
+    (view, detail, limits, resolve): (Res<PrimaryView>, Res<Detail>, Res<DeviceLimits>, Res<Resolve>),
     culling: Res<Culling>,
     occlusion: Res<OcclusionCulling>,
     subpixel: Res<SubpixelCulling>,
@@ -57,13 +57,13 @@ pub(crate) fn plan_draws(
     if plan.refused.is_none() {
         plan.grow_capacity(retained.instances().len());
     }
-    let (capacity, candidates) = (
-        plan.instance_capacity as u32,
+    let (candidates, generation) = (
         plan.ordered.len().min(u32::MAX as usize) as u32,
+        plan.generation(),
     );
-    if (instances.capacity, instances.candidates) != (capacity, candidates) {
-        instances.capacity = capacity;
+    if (instances.candidates, instances.generation) != (candidates, generation) {
         instances.candidates = candidates;
+        instances.generation = generation;
     }
     let (planes, absolute) = frustum_uniform(rasterized(&view, resolve.offset, view.temporal()));
     let bounded = absolute.iter().flatten().all(|value| {

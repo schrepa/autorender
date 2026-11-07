@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::Label;
-use crate::typeset::{Typesetter, ensure};
+use crate::typeset::ensure;
 
 fn schema_of<T: schemars::JsonSchema>() -> Value {
     serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null)
@@ -56,14 +56,12 @@ pub(crate) struct TextRuns {}
 
 impl Operation for TextRuns {
     const NAME: &'static str = "text_runs";
-    type Params = (Query<'static, 'static, &'static Label>, Res<'static, Text>);
+    type Params = Query<'static, 'static, &'static Label>;
     type Request = Self;
 
-    fn run((labels, text): SystemParamItem<'_, '_, Self::Params>, _: Self) -> Result<Value, Error> {
+    fn run(labels: SystemParamItem<'_, '_, Self::Params>, _: Self) -> Result<Value, Error> {
         let labels: Vec<&Label> = labels.iter().collect();
-        let queued =
-            Typesetter::of(&text).map_or_else(Vec::new, |typesetter| typesetter.lock().runs());
-        Ok(json!({ "labels": labels, "queued": queued }))
+        Ok(json!({ "labels": labels }))
     }
 
     fn schema() -> Value {

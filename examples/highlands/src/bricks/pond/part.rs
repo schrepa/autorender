@@ -1,9 +1,9 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, View, gpu_consts, gpu_struct};
+use engine_core::{Error, PrimaryView, gpu_consts, gpu_struct};
 use engine_places_world::ground::{GroundTiles, TerrainEntry, TerrainTiles};
 use engine_render::{
-    Attach, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Layer, Lifetime, Own, Pass, Pipeline,
-    Prepare, RenderPipeline, Shape, wgpu,
+    Attach, AttachPoint, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass,
+    Pipeline, Prepare, RenderPipeline, Shape, wgpu,
 };
 use glam::Vec2;
 
@@ -47,13 +47,13 @@ impl GpuPart for PondGpu {
         Query<'static, 'static, &'static Pond>,
         Res<'static, TerrainTiles>,
         Res<'static, GroundTiles>,
-        Res<'static, View>,
+        Res<'static, PrimaryView>,
     );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::bricks::pond::shaders::pond::surface;
         let ponds = cx.buffer("ponds", Lifetime::Kept);
-        let pass = cx.pass("pond").at(Layer::Media).id();
+        let pass = cx.pass("pond").at(AttachPoint::Sky).id();
         let pipeline = cx.render_pipeline(
             pass,
             &RenderPipeline {

@@ -118,6 +118,7 @@ fn walked_identity(
 pub(crate) struct TerrainGround {
     terrains: Vec<GroundTerrain>,
     revision: u64,
+    edits: u64,
 }
 
 impl TerrainGround {
@@ -129,6 +130,7 @@ impl TerrainGround {
                 .map(|state| GroundTerrain::of(state, &terrains.stacks))
                 .collect(),
             revision: terrains.grounds,
+            edits: terrains.edits,
         }
     }
 }
@@ -224,5 +226,9 @@ impl GroundQuery for TerrainGround {
 
     fn revision(&self) -> u64 {
         self.revision
+    }
+
+    fn edits(&self) -> u64 {
+        self.edits
     }
 }

@@ -5,9 +5,12 @@
 
 mod astc;
 mod bc7;
+mod image;
 mod mips;
 
-use engine_assets::{Texture, TextureFormat, TextureSummary};
+pub use image::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
+
+use engine_assets::{ColorSpace, Texture, TextureFormat, TextureSummary};
 use engine_codec::{Error, ErrorCode, Expected};
 
 const COOK_HEADER: usize = 10;
@@ -74,6 +77,15 @@ pub enum Usage {
     Normal,
 }
 
+impl Usage {
+    pub fn space(self) -> ColorSpace {
+        match self {
+            Self::Color => ColorSpace::Srgb,
+            Self::Data | Self::Normal => ColorSpace::Linear,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Family {
     Bc7,
@@ -137,7 +149,8 @@ pub fn cook(source: &Source, family: Family) -> Result<Texture, Error> {
     Ok(
         Texture::from_levels(family.format(), source.width, source.height, compressed)?
             .with_summary(TextureSummary::of_rgba8(&source.pixels))
-            .with_emission_mask(masked),
+            .with_emission_mask(masked)
+            .with_color_space(source.usage.space()),
     )
 }
 
@@ -233,7 +246,8 @@ pub fn decompress(texture: &Texture) -> Result<Texture, Error> {
         texture.height(),
         levels,
     )?
-    .with_emission_mask(texture.has_emission_mask());
+    .with_emission_mask(texture.has_emission_mask())
+    .with_color_space(texture.color_space());
     Ok(match texture.summary() {
         Some(summary) => decoded.with_summary(summary),
         None => decoded,
@@ -260,7 +274,7 @@ pub fn record(texture: &Texture) -> Vec<u8> {
     });
     out.push(u8::from(texture.has_emission_mask()));
     out.push(texture.levels().len() as u8);
-    out.push(0);
+    out.push(texture.color_space().tag());
     out.extend_from_slice(&texture.width().to_le_bytes());
     out.extend_from_slice(&texture.height().to_le_bytes());
     for value in summary
@@ -294,6 +308,8 @@ pub fn decode(bytes: &[u8]) -> Result<Texture, String> {
     };
     let masked = header[5] != 0;
     let count = usize::from(header[6]);
+    let space = ColorSpace::of_tag(header[7])
+        .ok_or_else(|| format!("a texture record names colour space {}", header[7]))?;
     let word = |at: usize| {
         u32::from_le_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
     };
@@ -319,6 +335,11 @@ pub fn decode(bytes: &[u8]) -> Result<Texture, String> {
         return Err("a texture record holds bytes past its levels".into());
     }
     Texture::from_levels(format, width, height, levels)
-        .map(|texture| texture.with_summary(summary).with_emission_mask(masked))
+        .map(|texture| {
+            texture
+                .with_summary(summary)
+                .with_emission_mask(masked)
+                .with_color_space(space)
+        })
         .map_err(|error| error.to_string())
 }

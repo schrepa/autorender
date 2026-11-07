@@ -2,7 +2,7 @@ use engine_core::smoke::{Checked, inspect, query, render};
 use engine_core::{SmokeFailure, SmokeSession, smoke_check};
 use serde_json::{Value, json};
 
-const OVERLAY: &str = "overlay";
+const OVERLAY: &str = "text";
 const FRAMES: u32 = 240;
 
 fn measured(session: &mut dyn SmokeSession, args: Value) -> Checked<(f64, f64)> {

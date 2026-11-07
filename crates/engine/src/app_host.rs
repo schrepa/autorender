@@ -1,12 +1,12 @@
 use engine_core::{
     ActionInput, BrickList, Engine, ErrorCode, FrameFacts, FrameStats, JobExchange, JobId, JobRef,
-    MenuInput, MoveInput, RecordExchange, RenderStats, WorkClock,
+    MenuInput, MoveInput, PauseReason, RecordExchange, RenderStats, WorkClock,
 };
 use engine_registry::Registry;
 use engine_render::{RenderTarget, Renderer};
 
 use crate::host::policy::{FRAME_INTERVAL_MS, PACE_INTERVAL_LIMIT_MS, PACE_SMOOTHING};
-use crate::host::{FrameInput, JobMessage};
+use crate::host::{FrameInput, InputSource, JobMessage};
 use crate::resolution::{DynamicResolution, Resolution};
 use crate::{Error, Result};
 
@@ -69,7 +69,7 @@ fn wire(
         jobs.set_workers(workers);
         jobs.set_verifying(verifying);
     }
-    crate::game::limit(engine, &renderer.limits(), renderer.features());
+    crate::game::limit(engine, renderer.device_limits());
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -95,9 +95,16 @@ impl Refresh {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Focus {
+    Held,
+    Lost,
+}
+
 pub(crate) struct AppHost {
     pub(crate) engine: Engine,
     pub(crate) renderer: Box<Renderer>,
+    focus: Focus,
     stats: FrameStats,
     size: (u32, u32),
     terrain_clock: TerrainClock,
@@ -142,6 +149,7 @@ impl AppHost {
         Self {
             engine,
             renderer,
+            focus: Focus::Held,
             stats: FrameStats::default(),
             size: (0, 0),
             terrain_clock: TerrainClock::Wall,
@@ -165,6 +173,21 @@ impl AppHost {
 
     pub fn engine_mut(&mut self) -> &mut Engine {
         &mut self.engine
+    }
+
+    pub(crate) fn set_focus(&mut self, focus: Focus, source: InputSource) {
+        self.focus = focus;
+        self.follow_focus(source);
+    }
+
+    pub(crate) fn follow_focus(&mut self, source: InputSource) {
+        match (self.focus, source) {
+            (Focus::Lost, InputSource::Player) => self.engine.pause(PauseReason::Focus),
+            (Focus::Lost, InputSource::Agent)
+            | (Focus::Held, InputSource::Player | InputSource::Agent) => {
+                self.engine.resume(PauseReason::Focus);
+            }
+        }
     }
 
     pub fn replace_engine(&mut self, mut engine: Engine) -> Engine {
@@ -511,6 +534,7 @@ impl AppHost {
     #[cfg(feature = "dev")]
     pub fn dev_step(&mut self, ticks: u32, width: u32, height: u32) -> Result<()> {
         engine_core::check_dev_ticks(ticks)?;
+        self.follow_focus(InputSource::Agent);
         self.begin_attribution();
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
@@ -690,7 +714,7 @@ impl AppHost {
             resolution: self.resolution_stats((width, height)),
             dynamic_resolution,
             jobs: engine_core::JobStats::default(),
-            camera_refusals: engine_core::CameraRefusals::default(),
+            refused_views: 0,
             disabled_features: self.renderer.disabled_features(self.engine.app.world()),
             render: rendered,
             bricks_cost: None,
@@ -710,7 +734,6 @@ impl AppHost {
         (render_width, render_height): (u32, u32),
     ) -> Result<(f64, f64, RenderStats)> {
         let before_extraction = now_ms();
-        let aspect = width.max(1) as f32 / height.max(1) as f32;
         self.engine.start_frame();
         let world = self.engine.app.world();
         let shown = world
@@ -738,7 +761,7 @@ impl AppHost {
         let compiling =
             self.renderer.pipelines_compiling() + u32::from(self.pipeline_list.waiting());
         self.engine.set_compiling(compiling);
-        let frame = self.engine.extract_frame(aspect)?;
+        let frame = self.engine.extract_frame()?;
         let after_extraction = now_ms();
         let rendered = self.renderer.render_frame(frame)?;
         Ok((
@@ -787,10 +810,9 @@ impl AppHost {
                 .get_resource::<JobExchange>()
                 .map(JobExchange::stats)
                 .unwrap_or_default(),
-            camera_refusals: world
-                .get_resource::<engine_core::CameraRefusals>()
-                .cloned()
-                .unwrap_or_default(),
+            refused_views: world
+                .get_resource::<engine_core::Views>()
+                .map_or(0, |views| views.refused().len() as u32),
             bricks: world
                 .get_resource::<Registry>()
                 .map(|registry| registry.frame_stats(world))

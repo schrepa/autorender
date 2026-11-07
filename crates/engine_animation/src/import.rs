@@ -3,8 +3,9 @@ use std::sync::Arc;
 
 use engine_core::math::max;
 use engine_core::{
-    AlphaMode, AssetLibrary, Error, ErrorCode, Expected, Filter, Material, MaterialHandle, Mesh,
+    AlphaMode, AssetLibrary, Cull, Error, ErrorCode, Expected, Filter, Material, MaterialHandle, Mesh,
     Mesh3d, MeshVertex, Sampler, Surface, Texture, TextureHandle, TextureRef, UvTransform, Wrap,
+    decode_image,
 };
 use engine_places_rendering::animation::{
     Bound, Clip, Joint, JointKeys, Keys, Rig, RigPart, VertexSkin,
@@ -592,7 +593,11 @@ impl Library<'_> {
         if let Some(info) = material.emissive_texture() {
             built = built.with_emissive_texture(self.texture_ref(&info)?)?;
         }
-        Ok(built.with_double_sided(material.double_sided()))
+        Ok(built.with_cull(if material.double_sided() {
+            Cull::None
+        } else {
+            Cull::Back
+        }))
     }
 
     fn texture_ref(&mut self, info: &gltf::texture::Info<'_>) -> Result<TextureRef, Error> {
@@ -640,22 +645,14 @@ impl Library<'_> {
             self.textures.insert(index, held);
             return Ok(held);
         }
-        let decoded = match mime_type {
-            "image/png" => decode_png(bytes),
-            "image/jpeg" => decode_jpeg(bytes),
-            _ => {
-                return Err(unsupported(format!("{path}.mimeType"))
-                    .got(mime_type)
-                    .variants(["image/png", "image/jpeg"]));
-            }
-        };
-        let (width, height, pixels) = decoded.map_err(|failed| {
-            Error::new(ErrorCode::InvalidTexture, path.clone())
-                .expected(Expected::Image)
-                .got(failed)
-        })?;
-        let texture =
-            Texture::from_rgba(width, height, pixels).map_err(|error| error.within(&path))?;
+        if !matches!(mime_type, "image/png" | "image/jpeg") {
+            return Err(unsupported(format!("{path}.mimeType"))
+                .got(mime_type)
+                .variants(["image/png", "image/jpeg"]));
+        }
+        let image = decode_image(&path, bytes).map_err(|error| error.within(&path))?;
+        let texture = Texture::from_rgba(image.width, image.height, image.pixels)
+            .map_err(|error| error.within(&path))?;
         let handle = self.assets.insert_texture(texture)?;
         self.shared
             .textures
@@ -665,48 +662,4 @@ impl Library<'_> {
         self.textures.insert(index, handle);
         Ok(handle)
     }
-}
-
-fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
-    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder.read_info().map_err(|error| error.to_string())?;
-    let mut buffer = vec![0; reader.output_buffer_size()];
-    let info = reader
-        .next_frame(&mut buffer)
-        .map_err(|error| error.to_string())?;
-    buffer.truncate(info.buffer_size());
-    let pixels = match info.color_type {
-        png::ColorType::Rgba => buffer,
-        png::ColorType::Rgb => buffer
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .flat_map(|&[red, green, blue]| [red, green, blue, 255])
-            .collect(),
-        png::ColorType::GrayscaleAlpha => buffer
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .flat_map(|&[gray, alpha]| [gray, gray, gray, alpha])
-            .collect(),
-        png::ColorType::Grayscale => buffer
-            .iter()
-            .flat_map(|&gray| [gray, gray, gray, 255])
-            .collect(),
-        png::ColorType::Indexed => return Err("indexed".into()),
-    };
-    Ok((info.width, info.height, pixels))
-}
-
-fn decode_jpeg(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
-    let options = zune_jpeg::zune_core::options::DecoderOptions::default()
-        .jpeg_set_out_colorspace(zune_jpeg::zune_core::colorspace::ColorSpace::RGBA);
-    let mut decoder = zune_jpeg::JpegDecoder::new_with_options(
-        zune_jpeg::zune_core::bytestream::ZCursor::new(bytes),
-        options,
-    );
-    let pixels = decoder.decode().map_err(|error| error.to_string())?;
-    let (width, height) = decoder.dimensions().ok_or("dimensions")?;
-    Ok((width as u32, height as u32, pixels))
 }

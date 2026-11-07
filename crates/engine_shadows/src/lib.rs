@@ -14,12 +14,35 @@ mod sky;
 mod smokes;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source};
+use engine_core::{
+    AttachPoint, Brick, Bricks, DrawKind, Pass, PassName, PassViews, Runs, Schedule, SlotSet,
+    Smoke, Source, Writes,
+};
 use engine_places_rendering::lighting::SunBlockers;
-use engine_places_rendering::shadows::{CasterRoutes, ShadowCasters, ShadowMaps};
+use engine_places_rendering::shadows::{CasterRoutes, ShadowMaps};
 use engine_render::{DebugModes, PostScene, RenderBricks};
 
 pub use settings::{ShadowSettings, ShadowStats, SkyOcclusion};
+
+pub struct ShadowPass;
+
+impl PassName for ShadowPass {
+    const NAME: &'static str = "shadow";
+    const PASS: Pass = Pass {
+        writes: Writes::DEPTH,
+        reads: SlotSet::MASK,
+        views: PassViews::Owned,
+        at: AttachPoint::Depth,
+        takes: casts,
+    };
+}
+
+fn casts(kind: DrawKind) -> bool {
+    !matches!(
+        kind.name(),
+        "particles" | "sprites" | "text" | "ui" | "water" | "cover"
+    )
+}
 
 pub struct ShadowsBrick;
 
@@ -43,7 +66,6 @@ impl Brick for ShadowsBrick {
             .piece::<gpu_layouts::ShadowPiece>()
             .fill::<ShadowMaps>(Some(shaders::shadows::faces::shadows::MODULE))
             .fill::<CasterRoutes>(Some(shaders::shadows::faces::routes::MODULE))
-            .fill::<ShadowCasters>(None)
             .join::<SunBlockers>((), Some(shaders::shadows::blockers::MODULE))
             .join::<PostScene>((), Some(shaders::shadows::sky_open::MODULE));
         for (index, (name, _)) in debug::MODES.into_iter().enumerate() {
@@ -54,6 +76,7 @@ impl Brick for ShadowsBrick {
             .systems(Schedule::ViewSync, (plan::plan_shadows, plan::shadow_stats))
             .observation::<inspect::InspectShadowTile>()
             .generated(gpu_layouts::GENERATED)
+            .pass::<ShadowPass>()
             .part::<part::ShadowsGpu>();
     }
 }

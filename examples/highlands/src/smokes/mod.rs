@@ -57,7 +57,7 @@ fn aim(session: &mut dyn SmokeSession, view: &str) -> Checked<()> {
 }
 
 fn settle(session: &mut dyn SmokeSession) -> Checked<()> {
-    engine::smokes::settled(session)?;
+    engine_core::smoke::settled(session)?;
     let shading = inspect(session, "terrain_shading_stats")?;
     let terrain = inspect(session, "terrain_stats")?;
     smoke_eq!(

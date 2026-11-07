@@ -1,18 +1,18 @@
 use bevy_ecs::prelude::*;
-use engine_core::Camera;
+use engine_core::PrimaryView;
 use engine_places_rendering::sky::EyeMedium;
 use engine_places_simulation::ground::Ground;
 use engine_places_simulation::water::{WaterBody, WaterSample};
 use glam::{Vec2, Vec3};
 
 pub(crate) fn publish_medium(
-    camera: Res<Camera>,
+    view: Res<PrimaryView>,
     ground: Res<Ground>,
     bodies: Query<&WaterBody>,
     mut medium: ResMut<EyeMedium>,
 ) {
     medium.set_if_neq(EyeMedium {
-        surface: surface_under(&ground, &bodies, camera.eye()),
+        surface: surface_under(&ground, &bodies, view.eye()),
     });
 }
 

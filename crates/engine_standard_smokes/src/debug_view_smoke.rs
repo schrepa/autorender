@@ -1,3 +1,4 @@
+use engine_core::smoke::settled_by;
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
@@ -20,7 +21,6 @@ const KINDS: [&str; 9] = [
     "sky",
 ];
 const SLOTTED: [&str; 2] = ["mesh", "card"];
-const QUIET_FRAMES: u32 = 13;
 
 pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     load(session, &grid(SIDE, false))?;
@@ -296,83 +296,12 @@ fn surface(probed: &Value) -> bool {
         && (normal - 1.0).abs() < 0.01
 }
 
-fn settle(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
-    let mut compiling = true;
-    for _ in 0..600 {
-        let rendering = present(session)?;
-        compiling = engine_core::smoke::compiling(&rendering);
-        if !compiling {
-            break;
-        }
-    }
-    let wanted = json!(false);
-    smoke_eq!(
-        seen(!compiling, json!(compiling), &wanted),
-        wanted,
-        "pipelines_compile"
-    );
-    let (mut previous, mut stable, mut rendering) = (Value::Null, 0, Value::Null);
-    let mut calm = 0;
-    for frame in 1..=600_u64 {
-        if frame > 8 && stable >= 5 && calm >= QUIET_FRAMES {
-            return Ok(rendering);
-        }
-        rendering = present(session)?;
-        let detail = &rendering["meshes_stats"]["level_of_detail"];
-        let counts = json!([
-            detail["lod0_instances"],
-            detail["lod1_instances"],
-            detail["lod2_instances"],
-            detail["impostor_instances"]
-        ]);
-        let current = rendering["meshes_stats"]["read_back_age"]
-            .as_u64()
-            .is_some_and(|age| age < frame);
-        stable = if current && counts == previous {
-            stable + 1
-        } else {
-            0
-        };
-        previous = if current { counts } else { Value::Null };
-        calm = if quiet(&rendering["shadow_stats"]) {
-            calm + 1
-        } else {
-            0
-        };
-    }
-    let wanted = json!({"stable": 5});
-    smoke_eq!(
-        seen(stable >= 5, json!(rendering), &wanted),
-        wanted,
-        "read_back_settles"
-    );
-    let wanted = json!({"quiet_frames": QUIET_FRAMES});
-    smoke_eq!(
-        seen(
-            calm >= QUIET_FRAMES,
-            json!(rendering["shadow_stats"]),
-            &wanted
-        ),
-        wanted,
-        "shadows_settle"
-    );
-    Ok(rendering)
-}
-
-fn quiet(shadows: &Value) -> bool {
-    shadows["tile_cut"]["cut"].as_u64() == Some(0)
-        && shadows["moving_cut"]["kept"].as_u64() == Some(0)
-        && ["tiles_drawn", "sky_drawn"]
-            .iter()
-            .all(|field| shadows[*field].as_u64() == Some(0))
-}
-
 fn present(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
     Ok(control(session, "present", json!({"alpha": 0}))?["rendering"].clone())
 }
 
 fn capture(session: &mut dyn SmokeSession) -> Result<(Value, Value), SmokeFailure> {
-    settle(session)?;
+    settled_by(session, present)?;
     let captured = ask(session, "capture", json!({"alpha": 0}))?;
     let image = captured["artifact"]["sha256"].clone();
     let wanted = json!("sha256");

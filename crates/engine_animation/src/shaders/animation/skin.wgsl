@@ -1,6 +1,4 @@
-import package::face::caster_routes::{caster_box, caster_levels, caster_span, mark_caster};
-import package::generated::animation::{JointRows, RestVertex, SKIN_GROUP, SkinFrame, SkinPart,
-    TILE_ROOM};
+import package::generated::animation::{JointRows, RestVertex, SKIN_GROUP, SkinFrame, SkinPart};
 
 struct SkinnedVertex {
     x: f32,
@@ -15,22 +13,12 @@ struct SkinnedVertex {
     slot: u32,
 }
 
-struct CasterArgs {
-    index_count: u32,
-    instance_count: atomic<u32>,
-    first_index: u32,
-    base_vertex: i32,
-    first_instance: u32,
-}
-
 @group(1) @binding(0) var<uniform> frame: SkinFrame;
 @group(1) @binding(1) var<storage, read> parts: array<SkinPart>;
 @group(1) @binding(2) var<storage, read> owners: array<u32>;
 @group(1) @binding(3) var<storage, read> rest: array<RestVertex>;
 @group(1) @binding(4) var<storage, read> rows: array<JointRows>;
 @group(1) @binding(5) var<storage, read_write> skinned: array<SkinnedVertex>;
-@group(1) @binding(6) var<storage, read_write> caster_args: array<CasterArgs>;
-@group(1) @binding(7) var<storage, read_write> tiles: array<u32>;
 
 fn blended(start: u32, joints: vec4<u32>, weights: vec4<f32>) -> JointRows {
     var mixed = JointRows(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0));
@@ -74,38 +62,4 @@ fn skin_vertices(@builtin(global_invocation_id) id: vec3<u32>) {
         source.position_u.w, source.normal_v.w,
         dot(was.r0, point), dot(was.r1, point), dot(was.r2, point),
         slot);
-}
-
-fn append_tile(slot: u32, tile: u32) {
-    let offset = atomicAdd(&caster_args[slot].instance_count, 1u);
-    if offset >= TILE_ROOM {
-        atomicSub(&caster_args[slot].instance_count, 1u);
-        return;
-    }
-    tiles[slot * TILE_ROOM + offset] = tile;
-}
-
-@compute @workgroup_size(SKIN_GROUP)
-fn select_tiles(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x >= frame.parts {
-        return;
-    }
-    let part = parts[id.x];
-    if part.center.w == 0.0 {
-        return;
-    }
-    let bounds = caster_box(part.center.xyz, part.half.xyz);
-    let low = bounds[0];
-    let high = bounds[1];
-    for (var level = 0u; level < caster_levels(); level++) {
-        let span = caster_span(level, low.xy, high.xy);
-        for (var row = span.y; row <= span.w; row++) {
-            for (var column = span.x; column <= span.z; column++) {
-                let routed = mark_caster(level, vec2<i32>(column, row), true);
-                if routed != 0u {
-                    append_tile(id.x, routed - 1u);
-                }
-            }
-        }
-    }
 }

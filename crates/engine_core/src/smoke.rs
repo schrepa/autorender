@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 pub use engine_place::ask;
-use engine_place::smoke_check;
+use engine_place::{smoke_check, smoke_eq};
 
 use crate::{List, SmokeFailure, SmokeSession};
 
@@ -101,6 +101,31 @@ pub fn compiled(session: &mut dyn SmokeSession) -> Checked<Value> {
         &0
     );
     Ok(rendering)
+}
+
+pub fn settled(session: &mut dyn SmokeSession) -> Checked<Value> {
+    settled_by(session, render)
+}
+
+pub fn settled_by(
+    session: &mut dyn SmokeSession,
+    mut frame: impl FnMut(&mut dyn SmokeSession) -> Checked<Value>,
+) -> Checked<Value> {
+    loop {
+        let rendering = frame(&mut *session)?;
+        let readiness = &rendering["readiness"];
+        smoke_eq!(
+            readiness["failed"],
+            json!([]),
+            "nothing_fails_while_settling"
+        );
+        if readiness["loading"]["total"] == 0
+            && readiness["compiling"] == 0
+            && readiness["settling"] == 0
+        {
+            return Ok(rendering);
+        }
+    }
 }
 
 pub fn compiling(rendering: &Value) -> bool {

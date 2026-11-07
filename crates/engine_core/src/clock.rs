@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use bevy_ecs::prelude::{ResMut, Resource};
 use bevy_ecs::system::SystemParamItem;
+use bevy_ecs::world::World;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -90,6 +91,15 @@ pub struct Pause {
 impl List for Pause {
     const NAME: &'static str = "pause";
     type Member = PauseReason;
+
+    fn dropped(world: &mut World, member: &PauseReason) {
+        if world
+            .get_resource::<Self>()
+            .is_some_and(|pause| pause.holds(*member))
+        {
+            world.resource_mut::<Self>().remove(*member);
+        }
+    }
 }
 
 impl Pause {

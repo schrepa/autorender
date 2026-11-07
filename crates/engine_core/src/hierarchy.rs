@@ -218,6 +218,38 @@ pub fn set_parents(world: &mut World, changes: &[(Entity, Option<Entity>)]) -> R
     Ok(())
 }
 
+pub(crate) fn despawn_owned(world: &mut World, owned: &[Entity]) {
+    let gone: BTreeSet<Entity> = owned.iter().copied().collect();
+    let mut parented = world.query::<(Entity, &Parent)>();
+    let guests: Vec<Entity> = parented
+        .iter(world)
+        .filter(|(child, parent)| gone.contains(&parent.parent()) && !gone.contains(child))
+        .map(|(child, _)| child)
+        .collect();
+    for &guest in &guests {
+        let pose = world
+            .get_resource::<GlobalTransforms>()
+            .and_then(|globals| globals.pose(guest));
+        if let Some(pose) = pose {
+            let (scale, rotation, translation) = pose.to_scale_rotation_translation();
+            let _ = crate::edit_transform(world, guest, |transform| {
+                *transform = Transform {
+                    translation,
+                    rotation,
+                    scale,
+                };
+            });
+        }
+        if let Ok(mut held) = world.get_entity_mut(guest) {
+            held.remove::<Parent>();
+        }
+    }
+    crate::presentation::make_fresh(world, &guests);
+    for &entity in owned {
+        world.despawn(entity);
+    }
+}
+
 #[inline]
 pub fn valid_global_matrix(matrix: Mat4) -> bool {
     validation::valid_global_matrix(matrix)
@@ -404,6 +436,7 @@ pub struct GlobalTransforms {
     woken: Vec<Entity>,
     asleep: Vec<Entity>,
     moved_static: BTreeSet<Entity>,
+    static_moves: Feed<Entity>,
     scans: ScanClock,
     incomplete: bool,
     limit: usize,
@@ -445,6 +478,7 @@ impl FromWorld for GlobalTransforms {
             woken: Vec::new(),
             asleep: Vec::new(),
             moved_static: BTreeSet::new(),
+            static_moves: Feed::new(feed),
             scans: ScanClock::default(),
             incomplete: true,
             limit: node_limit(world),
@@ -664,6 +698,7 @@ impl GlobalTransforms {
     pub(crate) fn resize_changes(&mut self, size: usize) {
         self.changes.resize(size);
         self.word_changes.resize(size);
+        self.static_moves.resize(size);
     }
 
     pub fn len(&self) -> usize {
@@ -746,6 +781,7 @@ impl GlobalTransforms {
             changes,
             words,
             moved_static,
+            static_moves,
             ..
         } = self;
         let Dirty {
@@ -821,6 +857,7 @@ impl GlobalTransforms {
                     nodes.changes.push(index as u32);
                     if nodes.words[index].mobility == Mobility::Static {
                         moved_static.insert(entity);
+                        static_moves.push(entity);
                     }
                     if nodes.asleep(index) {
                         continue;
@@ -892,6 +929,7 @@ impl GlobalTransforms {
                 if local_changed {
                     if self.words[count].mobility == Mobility::Static {
                         self.moved_static.insert(entity);
+                        self.static_moves.push(entity);
                     }
                     self.dirty.mark(count, threshold);
                 }
@@ -910,6 +948,17 @@ impl GlobalTransforms {
 
     fn rebuild_topology(&mut self, world: &mut World, work: &mut PropagationWork) {
         let _profile = engine_profile::span("hierarchy", "topology_rebuild");
+        for (entity, transform, _) in self.query.iter(world) {
+            let Some(&index) = self.indices.get(&entity) else {
+                continue;
+            };
+            if self.words[index].mobility == Mobility::Static
+                && !same_pose_bits(&self.locals[index], &transform.to_pose())
+            {
+                self.moved_static.insert(entity);
+                self.static_moves.push(entity);
+            }
+        }
         self.asleep.clear();
         self.asleep.extend(
             self.entities

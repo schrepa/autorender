@@ -1,7 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, Cursor, DrawnPoses, GlobalTransforms, MaterialHandle,
-    MeshHandle, NodeInfo, NodePose, NodeStreams, Readable, Readback, ResidentMesh, Since,
+    AlphaMode, AssetLibrary, AssetResidency, Cull, Cursor, DrawnPoses, FrameId, GlobalTransforms,
+    MaterialHandle, MeshHandle, MeshResidence, NodeInfo, NodePose, NodeStreams, Readable, Readback,
+    ResidentMesh, Since,
 };
 use glam::{Mat4, Vec3};
 
@@ -12,9 +13,9 @@ use crate::uploads::{ColorData, PoseData, UploadRange, listed_ranges};
 
 pub(crate) const MIN_STORAGE_BYTES: u64 = 256;
 pub(crate) const TOTALS_BYTES: u64 = 56;
-pub(crate) const CASTER_TOTALS_BYTES: u64 = 16;
 pub(crate) const WATCHED: u32 = 2;
 pub(crate) const POSE: u32 = 3;
+pub(crate) const VIEWS: u32 = 4;
 const STREAM_STRIDE: usize = size_of::<engine_core::PoseRows>();
 const NODE_BYTES: usize =
     2 * size_of::<NodePose>() + size_of::<NodeInfo>() + size_of::<engine_core::PoseRows>();
@@ -59,7 +60,7 @@ fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
     ) * view_projection
 }
 
-pub(crate) fn rasterized(view: &engine_core::View, offset: glam::Vec2, temporal: bool) -> Mat4 {
+pub(crate) fn rasterized(view: &engine_core::PrimaryView, offset: glam::Vec2, temporal: bool) -> Mat4 {
     let view_projection = view.view_projection();
     if !temporal {
         return view_projection;
@@ -79,28 +80,38 @@ pub(crate) struct FrameTotals {
     pub levels: [u32; 4],
     pub triangles: u32,
     pub watched: Option<(u32, u32)>,
-    pub frame: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ViewTotals {
+    pub drawn: u32,
+    pub refused: u32,
 }
 
 #[derive(Resource, Default)]
 pub(crate) struct PresentationTotals {
-    last: Option<FrameTotals>,
-    watching: Vec<(u64, u32)>,
-    pose: Option<(u64, PoseData)>,
+    last: Option<Readback<FrameTotals>>,
+    watching: Vec<(FrameId, u32)>,
+    pose: Option<Readback<PoseData>>,
+    views: Option<Readback<ViewTotals>>,
 }
 
 impl PresentationTotals {
     pub(crate) fn last(&self) -> Option<FrameTotals> {
-        self.last
+        self.last.map(|read| read.value)
     }
 
     pub(crate) fn pose(&self) -> Option<PoseData> {
-        let (frame, rows) = self.pose?;
-        (self.last?.frame == frame).then_some(rows)
+        let pose = self.pose?;
+        (self.last?.written == pose.written).then_some(pose.value)
     }
 
     pub(crate) fn age(&self, now: u64) -> Option<u64> {
-        self.last.map(|totals| now.saturating_sub(totals.frame))
+        self.last.map(|read| now.saturating_sub(read.written.0))
+    }
+
+    pub(crate) fn views(&self) -> Option<ViewTotals> {
+        self.views.map(|read| read.value)
     }
 }
 
@@ -112,26 +123,34 @@ fn word(bytes: &[u8], index: usize) -> u32 {
 
 impl Readable for PresentationTotals {
     fn arrived(&mut self, tag: u32, read: Readback<&[u8]>) {
-        let (frame, bytes) = (read.written.0, read.value);
+        let (written, bytes) = (read.written, read.value);
         if tag == WATCHED {
-            self.watching.push((frame, word(bytes, 0)));
+            self.watching.push((written, word(bytes, 0)));
             return;
         }
         if tag == POSE {
             self.pose = bytes
                 .get(..size_of::<PoseData>())
                 .and_then(|bytes| bytemuck::try_pod_read_unaligned::<PoseData>(bytes).ok())
-                .map(|rows| (frame, rows));
+                .map(|value| Readback { value, written });
+            return;
+        }
+        if tag == VIEWS {
+            let value = ViewTotals {
+                drawn: word(bytes, 0),
+                refused: word(bytes, 1),
+            };
+            self.views = Some(Readback { value, written });
             return;
         }
         let watched = self
             .watching
             .iter()
-            .find(|&&(asked, _)| asked == frame)
+            .find(|&&(asked, _)| asked == written)
             .map(|&(_, slot)| (slot, word(bytes, 13)));
-        self.watching.retain(|&(asked, _)| asked > frame);
+        self.watching.retain(|&(asked, _)| asked > written);
         let (hidden, tiny) = (word(bytes, 2), word(bytes, 3));
-        self.last = Some(FrameTotals {
+        let value = FrameTotals {
             visible: word(bytes, 0)
                 .saturating_add(word(bytes, 1))
                 .saturating_add(hidden)
@@ -143,33 +162,34 @@ impl Readable for PresentationTotals {
             }),
             triangles: word(bytes, 12),
             watched,
-            frame,
-        });
-    }
-}
-
-#[derive(Resource, Default)]
-pub(crate) struct CasterTotals {
-    last: Option<[u32; 2]>,
-}
-
-impl CasterTotals {
-    pub(crate) fn last(&self) -> Option<[u32; 2]> {
-        self.last
-    }
-}
-
-impl Readable for CasterTotals {
-    fn arrived(&mut self, _tag: u32, read: Readback<&[u8]>) {
-        self.last = Some([word(read.value, 0), word(read.value, 1)]);
+        };
+        self.last = Some(Readback { value, written });
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Kept {
     pub phase_two: bool,
-    pub probe_faces: bool,
     pub impostors: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ViewSlot {
+    pub pass: &'static str,
+    pub index: u32,
+    pub frame_at: u32,
+    pub ids_base: u64,
+    pub args_base: u64,
+    pub detailed: bool,
+    pub mirrored: bool,
+}
+
+impl ViewSlot {
+    pub(crate) fn levels(&self, drawn: u8) -> impl Iterator<Item = usize> {
+        let detailed = self.detailed;
+        (0..LOD_LEVELS as usize)
+            .filter(move |&level| drawn & (1 << level) != 0 && (detailed || level == 0))
+    }
 }
 
 pub(crate) struct UploadSources<'a> {
@@ -235,15 +255,16 @@ impl Draws {
                         masked: material.is_some_and(|material| {
                             matches!(material.alpha_mode(), AlphaMode::Mask { .. })
                         }),
-                        double_sided: material.is_some_and(|material| material.is_double_sided()),
+                        double_sided: material.is_some_and(|material| material.cull() == Cull::None),
                         extended,
                     },
                     levels: drawn_levels(resident),
                     flat,
-                    variant: engine_render::material_variant(material, extended),
-                    buffers: resident
-                        .and_then(ResidentMesh::placement)
-                        .map_or(u8::MAX, |placement| placement.streams as u8),
+                    variant: engine_render::material_state(material),
+                    buffers: resident.map_or(u8::MAX, |resident| match resident.placement() {
+                        MeshResidence::Arena(placement) => placement.streams as u8,
+                        MeshResidence::Own => u8::MAX,
+                    }),
                 }
             }));
         self.items.sort_unstable_by_key(|item| {
@@ -374,7 +395,7 @@ impl DrawGroups {
         batches: &[DrawBatch],
         assets: &AssetLibrary,
         residency: &AssetResidency,
-        (groups, impostor): (impl Fn(usize) -> u32, impl Fn(usize) -> f32),
+        impostor: impl Fn(usize) -> f32,
     ) {
         let planes = (self.first_instance, self.capacity);
         self.batch_staging.clear();
@@ -389,7 +410,7 @@ impl DrawGroups {
                 batch_record(
                     batch,
                     (residency.mesh(batch.mesh), bounds),
-                    (groups(index), impostor(index)),
+                    impostor(index),
                     planes,
                 )
             }));
@@ -454,12 +475,22 @@ impl DrawGroups {
         };
         (ids, args * crate::layouts::DRAW_ARGS_BYTES)
     }
+
+    pub(crate) fn view_source(&self, slot: &ViewSlot, item: &DrawItem, level: usize) -> (u64, u64) {
+        let args = slot.args_base + (level * self.batch_count as usize + item.batch as usize) as u64;
+        let ids = if self.first_instance {
+            0
+        } else {
+            (slot.ids_base + (level * self.capacity) as u64 + u64::from(item.start)) * 4
+        };
+        (ids, args * crate::layouts::DRAW_ARGS_BYTES)
+    }
 }
 
 fn batch_record(
     batch: &DrawBatch,
     (mesh, bounds): (Option<&ResidentMesh>, (Vec3, Vec3)),
-    (group, impostor): (u32, f32),
+    impostor: f32,
     (first_instance, capacity): (bool, usize),
 ) -> BatchData {
     let first_index = mesh.map_or(0, ResidentMesh::first_index);
@@ -491,7 +522,7 @@ fn batch_record(
         first_plane: if first_instance { capacity as u32 } else { 0 },
         lod_ranges: [lod(0).0, lod(0).1, lod(1).0, lod(1).1],
         lod_errors: [lod(0).2, lod(1).2, (1 + lods) as f32, impostor],
-        group,
+        pad: 0,
         bounds_min: bounds.0.extend(0.0).to_array(),
         bounds_max: bounds.1.extend(kind).to_array(),
     }
@@ -504,16 +535,6 @@ pub(crate) struct Pyramid {
 }
 
 #[derive(Default)]
-pub(crate) struct CasterDraws {
-    pub groups: Vec<(MeshHandle, Option<MaterialHandle>, u32)>,
-    pub maps: Vec<Option<usize>>,
-    pub regions_in_args: bool,
-    pub id_capacity: usize,
-    pub candidates: u32,
-    pub runs: bool,
-}
-
-#[derive(Default)]
 pub(crate) struct FrameState {
     pub capacity: usize,
     pub color_staging: Vec<ColorData>,
@@ -521,7 +542,7 @@ pub(crate) struct FrameState {
     pub color_bits: Vec<u64>,
     pub colors_seen: Cursor,
     pub temporal: bool,
-    pub motion_key: Option<(u64, glam::UVec2)>,
+    pub motion_generation: Option<u64>,
     pub prepared_at: Option<f32>,
     pub faded_at: Option<f32>,
     pub cards: bool,
@@ -536,8 +557,16 @@ pub(crate) struct FrameState {
     pub occlusion: bool,
     pub lod: bool,
     pub pyramid: Pyramid,
-    pub faces: Vec<u32>,
-    pub casters: CasterDraws,
+    pub views: Vec<ViewSlot>,
     pub instance_count: usize,
     pub watched: Option<u32>,
+}
+
+impl FrameState {
+    pub(crate) fn view_slot(&self, pass: &str, view: Option<u32>) -> Option<&ViewSlot> {
+        let view = view?;
+        self.views
+            .iter()
+            .find(|slot| slot.pass == pass && slot.index == view)
+    }
 }

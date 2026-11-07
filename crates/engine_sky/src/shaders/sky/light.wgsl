@@ -53,7 +53,3 @@ fn clouded(light: vec3<f32>, start: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
 fn sky_along_in(start: vec3<f32>, direction: vec3<f32>, shown: bool) -> vec3<f32> {
     return clouded_in(sky_air_light(direction), start, direction, shown);
 }
-
-fn sky_along(start: vec3<f32>, direction: vec3<f32>) -> vec3<f32> {
-    return sky_along_in(start, direction, true);
-}

@@ -1,27 +1,27 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
-use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::math::max;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, DrawnPoses, Error, GlobalTransforms, MaterialHandle,
-    MeshHandle, MeshVertex, PresentationState, Span, View, gpu_struct,
+    AlphaMode, AssetLibrary, AssetResidency, ColorPass, Cull, DrawKind, DrawnPoses, Error,
+    GlobalTransforms, MaterialHandle, MeshHandle, MeshVertex, Mobility, PassName, PassViews,
+    PrimaryView, ScenePass, SceneView, SceneViews, gpu_struct,
 };
 use engine_places_rendering::animation::{Animator, Rig, RigPart, VertexSkin};
-use engine_places_rendering::shadows::{CasterMap, CasterView, ShadowCasters};
 use engine_render::{
     Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput, Encode, GpuPart, Install,
-    Lifetime, MainView, Pass, Pipeline, Prepare, RenderPipeline, Shape, VertexLayout, pack_color,
-    pack_surface, planes, wgpu,
+    Lifetime, Pass, Pipeline, Prepare, RenderPipeline, Scene, SceneDraw, Shape, VertexLayout,
+    pack_color, pack_surface, planes, wgpu,
 };
 use glam::{Mat4, Vec3, Vec4};
 
 use crate::shaders;
 
+pub(crate) const SKIN: DrawKind = DrawKind("skin");
+
 engine_core::gpu_consts! {
     pub(crate) const SKIN_GROUP: u32 = 64;
-    pub(crate) const TILE_ROOM: u32 = 64;
 }
 
 gpu_struct! {
@@ -39,8 +39,6 @@ gpu_struct! {
         pub(crate) previous_at: u32,
         pub(crate) rest_at: u32,
         pub(crate) skinned_at: u32,
-        pub(crate) center: [f32; 4],
-        pub(crate) half: [f32; 4],
     }
 }
 
@@ -104,38 +102,27 @@ const LIT_STREAMS: &[VertexLayout] = &[VertexLayout::Buffer(wgpu::VertexBufferLa
     ],
 })];
 
-const CASTER_STREAMS: &[VertexLayout] = &[
-    VertexLayout::Buffer(wgpu::VertexBufferLayout {
-        array_stride: SKINNED_BYTES,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &[
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x3,
-                offset: 0,
-                shader_location: 0,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: 16,
-                shader_location: 7,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Uint32,
-                offset: 36,
-                shader_location: 3,
-            },
-        ],
-    }),
-    VertexLayout::Buffer(wgpu::VertexBufferLayout {
-        array_stride: 4,
-        step_mode: wgpu::VertexStepMode::Instance,
-        attributes: &[wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Uint32,
+const CASTER_STREAMS: &[VertexLayout] = &[VertexLayout::Buffer(wgpu::VertexBufferLayout {
+    array_stride: SKINNED_BYTES,
+    step_mode: wgpu::VertexStepMode::Vertex,
+    attributes: &[
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
             offset: 0,
-            shader_location: 2,
-        }],
-    }),
-];
+            shader_location: 0,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x2,
+            offset: 16,
+            shader_location: 7,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Uint32,
+            offset: 36,
+            shader_location: 3,
+        },
+    ],
+})];
 
 struct Slot {
     entity: Entity,
@@ -146,21 +133,20 @@ struct Slot {
     reach: usize,
     masked: bool,
     double_sided: bool,
+    bounds: (Vec3, Vec3),
 }
+
+type LayoutKey = Vec<(Entity, usize, u64, Option<u64>)>;
 
 #[derive(Default)]
 struct Held {
-    key: Option<Vec<(Entity, usize, usize)>>,
+    key: Option<LayoutKey>,
     slots: Vec<Slot>,
     reaches: Vec<Vec<f32>>,
     vertices: u32,
-    frame: Option<u64>,
-    last: Vec<(Entity, Range<u32>)>,
-    last_rows: Vec<JointRows>,
-    earlier: Vec<(Entity, Range<u32>)>,
-    earlier_rows: Vec<JointRows>,
     lit: Vec<u32>,
     cast: Vec<u32>,
+    views: Vec<(&'static str, SceneView)>,
 }
 
 struct Buffers {
@@ -172,32 +158,34 @@ struct Buffers {
     skinned: Buffer<SkinningGpu>,
     colors: Buffer<SkinningGpu>,
     args: Buffer<SkinningGpu>,
-    caster_args: Buffer<SkinningGpu>,
-    tiles: Buffer<SkinningGpu>,
 }
 
-struct Inputs {
-    skinned: DrawInput<SkinningGpu, MainView>,
-    args: DrawInput<SkinningGpu, MainView>,
-    caster_skinned: DrawInput<SkinningGpu, ShadowCasters>,
-    caster_args: DrawInput<SkinningGpu, ShadowCasters>,
-    caster_tiles: DrawInput<SkinningGpu, ShadowCasters>,
+struct Streams {
+    skinned: DrawInput<SkinningGpu, Scene>,
+    args: DrawInput<SkinningGpu, Scene>,
+}
+
+enum Drawing {
+    Lit([Pipeline<SkinningGpu, Scene>; 2]),
+    Casters([Pipeline<SkinningGpu, Scene>; 2]),
+}
+
+struct ScenePipelines {
+    name: &'static str,
+    drawing: Drawing,
+    streams: Streams,
 }
 
 pub(crate) struct SkinningGpu {
     skin: Pass<Self>,
     skinning: ComputePipeline<Self>,
-    selecting: ComputePipeline<Self>,
-    lit: [Pipeline<Self, MainView>; 2],
-    casting: [Pipeline<Self, ShadowCasters>; 2],
+    scenes: Vec<ScenePipelines>,
     buffers: Buffers,
-    inputs: Inputs,
     held: Held,
 }
 
 struct Posed {
     rows: Vec<JointRows>,
-    fresh: Vec<bool>,
     spheres: Vec<Vec4>,
     ranges: Vec<(Entity, Range<u32>, bool)>,
 }
@@ -246,7 +234,7 @@ fn layout_key(
     listed: &[(Entity, &Animator)],
     residency: &AssetResidency,
     assets: &AssetLibrary,
-) -> Vec<(Entity, usize, usize)> {
+) -> LayoutKey {
     let mut key = Vec::new();
     for (entity, animator) in listed {
         let rig = animator.rig();
@@ -256,7 +244,12 @@ fn layout_key(
                 .is_some_and(|mesh| mesh.vertices().len() == part.skin.len());
             if shaped && residency.resident(part.mesh) && residency.material_resident(part.material)
             {
-                key.push((*entity, index, Arc::as_ptr(rig) as usize));
+                key.push((
+                    *entity,
+                    index,
+                    animator.rig_revision(),
+                    assets.revision_of(part.mesh),
+                ));
             }
         }
     }
@@ -278,10 +271,13 @@ fn pose_all(
 ) -> Posed {
     let mut posed = Posed {
         rows: Vec::new(),
-        fresh: Vec::new(),
         spheres: Vec::new(),
         ranges: Vec::new(),
     };
+    let mut previous = Vec::new();
+    let mut nodes = Vec::new();
+    let mut drawn = Vec::new();
+    let mut before = Vec::new();
     for &(entity, animator) in listed {
         if slots
             .binary_search_by_key(&entity, |slot| slot.entity)
@@ -290,18 +286,25 @@ fn pose_all(
             continue;
         }
         let start = posed.rows.len() as u32;
-        let nodes = animator.joint_nodes();
-        let mut shown = globals.drawn(entity) && !nodes.is_empty();
-        for bound in &animator.rig().palette {
-            let node = nodes.get(bound.joint as usize).copied();
-            let drawn = node.and_then(|node| poses.drawn_pose(globals, node));
-            shown &= drawn.is_some();
-            let joint = drawn.unwrap_or(Mat4::IDENTITY);
+        let joints = animator.joint_nodes();
+        let palette = &animator.rig().palette;
+        nodes.clear();
+        nodes.extend(
+            palette
+                .iter()
+                .filter_map(|bound| joints.get(bound.joint as usize).copied()),
+        );
+        let mut shown = globals.drawn(entity) && !joints.is_empty() && nodes.len() == palette.len();
+        poses.drawn_poses(globals, &nodes, &mut drawn);
+        poses.previous_drawn_poses(globals, &nodes, &mut before);
+        for (at, bound) in palette.iter().enumerate() {
+            let now = drawn.get(at).copied().flatten();
+            shown &= now.is_some();
+            let joint = now.unwrap_or(Mat4::IDENTITY);
+            let was = before.get(at).copied().flatten().unwrap_or(joint);
             let inverse = Mat4::from_cols_array_2d(&bound.inverse_bind);
             posed.rows.push(rows_of(joint * inverse));
-            posed.fresh.push(
-                node.is_none_or(|node| poses.span(globals, node) == Some(Span::Fresh)),
-            );
+            previous.push(rows_of(was * inverse));
             let scale = Vec3::new(
                 joint.x_axis.truncate().length_squared(),
                 joint.y_axis.truncate().length_squared(),
@@ -314,6 +317,7 @@ fn pose_all(
         let range = start..posed.rows.len() as u32;
         posed.ranges.push((entity, range, shown));
     }
+    posed.rows.append(&mut previous);
     posed
 }
 
@@ -334,75 +338,28 @@ fn part_box(reach: &[f32], spheres: &[Vec4]) -> (Vec3, Vec3) {
     ((low + high) * 0.5, (high - low) * 0.5)
 }
 
-fn previous_rows(held: &mut Held, posed: &mut Posed, frame: Option<u64>) {
-    let advanced = frame.is_none() || held.frame != frame;
-    if advanced {
-        std::mem::swap(&mut held.earlier, &mut held.last);
-        std::mem::swap(&mut held.earlier_rows, &mut held.last_rows);
-    }
-    let current = posed.rows.len();
-    for (entity, range, _) in &posed.ranges {
-        let earlier = held
-            .earlier
-            .binary_search_by_key(entity, |(known, _)| *known)
-            .ok()
-            .map(|at| held.earlier[at].1.clone())
-            .filter(|earlier| earlier.len() == range.len());
-        let now = range.start as usize..range.end as usize;
-        match earlier {
-            Some(earlier) => {
-                for (was, row) in (earlier.start as usize..earlier.end as usize).zip(now) {
-                    let previous = if posed.fresh[row] {
-                        posed.rows[row]
-                    } else {
-                        held.earlier_rows[was]
-                    };
-                    posed.rows.push(previous);
-                }
-            }
-            None => posed.rows.extend_from_within(now),
-        }
-    }
-    if advanced {
-        held.frame = frame;
-        held.last.clear();
-        held.last.extend(
-            posed
-                .ranges
-                .iter()
-                .map(|(entity, range, _)| (*entity, range.clone())),
-        );
-        held.last_rows.clear();
-        held.last_rows.extend_from_slice(&posed.rows[..current]);
-    }
-}
-
 impl SkinningGpu {
     fn lay_out(
         &mut self,
         listed: &[(Entity, &Animator)],
-        key: &[(Entity, usize, usize)],
+        key: &LayoutKey,
         assets: &AssetLibrary,
         cx: &mut Prepare<'_, Self>,
     ) {
         let held = &mut self.held;
         held.slots.clear();
         held.reaches.clear();
-        held.frame = None;
-        held.last.clear();
-        held.last_rows.clear();
-        held.earlier.clear();
-        held.earlier_rows.clear();
         let reaches = &mut held.reaches;
-        let mut shared: BTreeMap<(usize, usize), (u32, usize)> = BTreeMap::new();
+        let mut shared: BTreeMap<(MeshHandle, Option<u64>), Vec<(&Rig, &RigPart, u32, usize)>> =
+            BTreeMap::new();
         let mut rest: Vec<RestVertex> = Vec::new();
         let mut owners: Vec<u32> = Vec::new();
         let mut palette = 0_u64;
-        for &(entity, index, rig_id) in key {
+        for &(entity, index, _, revision) in key {
             let Ok(at) = listed.binary_search_by_key(&entity, |(known, _)| *known) else {
                 continue;
             };
-            let rig = listed[at].1.rig();
+            let rig: &Rig = listed[at].1.rig();
             let Some((part, mesh)) = rig
                 .parts
                 .get(index)
@@ -411,12 +368,20 @@ impl SkinningGpu {
                 continue;
             };
             let vertices = mesh.vertices();
-            let (rest_at, reach) = *shared.entry((rig_id, index)).or_insert_with(|| {
-                let rest_at = rest.len() as u32;
-                rest.extend(part.skin.iter().zip(vertices).map(rest_vertex));
-                reaches.push(reach_of(rig, part, vertices));
-                (rest_at, reaches.len() - 1)
+            let same = shared.entry((part.mesh, revision)).or_default();
+            let found = same.iter().find(|(other, kept, _, _)| {
+                kept.skin == part.skin && other.palette == rig.palette
             });
+            let (rest_at, reach) = match found {
+                Some(&(_, _, rest_at, reach)) => (rest_at, reach),
+                None => {
+                    let rest_at = rest.len() as u32;
+                    rest.extend(part.skin.iter().zip(vertices).map(rest_vertex));
+                    reaches.push(reach_of(rig, part, vertices));
+                    same.push((rig, part, rest_at, reaches.len() - 1));
+                    (rest_at, reaches.len() - 1)
+                }
+            };
             let skinned_at = owners.len() as u32;
             let slot = held.slots.len() as u32;
             owners.resize(owners.len() + vertices.len(), slot);
@@ -432,6 +397,7 @@ impl SkinningGpu {
                 reach,
                 masked: false,
                 double_sided: false,
+                bounds: (Vec3::ZERO, Vec3::ZERO),
             });
         }
         held.vertices = owners.len() as u32;
@@ -451,8 +417,6 @@ impl SkinningGpu {
         cx.allocate_buffer(buffers.parts, parts * size_of::<SkinPart>() as u64);
         cx.allocate_buffer(buffers.colors, parts * COLOR_BYTES);
         cx.allocate_buffer(buffers.args, parts * ARGS_BYTES);
-        cx.allocate_buffer(buffers.caster_args, parts * ARGS_BYTES);
-        cx.allocate_buffer(buffers.tiles, parts * u64::from(TILE_ROOM) * 4);
         if !owners.is_empty() {
             cx.write(buffers.owners, 0, &owners);
             cx.write(buffers.rest, 0, &rest);
@@ -462,7 +426,7 @@ impl SkinningGpu {
     fn stage(
         &mut self,
         posed: &Posed,
-        (residency, assets, view): (&AssetResidency, &AssetLibrary, &View),
+        (residency, assets, view): (&AssetResidency, &AssetLibrary, &PrimaryView),
         cx: &mut Prepare<'_, Self>,
     ) {
         let held = &mut self.held;
@@ -472,12 +436,12 @@ impl SkinningGpu {
             ranges,
         } = posed;
         let total = spheres.len() as u32;
+        debug_assert_eq!(rows.len(), spheres.len() * 2, "skin_rows_hold_previous");
         let frustum = planes(view.view_projection());
         let count = held.slots.len();
         let mut parts = Vec::with_capacity(count);
         let mut colors = Vec::with_capacity(count);
         let mut args = Vec::with_capacity(count);
-        let mut caster_args = Vec::with_capacity(count);
         for (index, slot) in held.slots.iter_mut().enumerate() {
             let found = ranges
                 .binary_search_by_key(&slot.entity, |(entity, _, _)| *entity)
@@ -488,18 +452,17 @@ impl SkinningGpu {
             let reach = held.reaches.get(slot.reach).map_or(&[][..], Vec::as_slice);
             let from_spheres = spheres.get(start as usize..).unwrap_or_default();
             let (center, half) = part_box(reach, from_spheres);
+            slot.bounds = (center, half);
             parts.push(SkinPart {
                 rows_at: start,
                 previous_at: start + total,
                 rest_at: slot.rest_at,
                 skinned_at: slot.skinned_at,
-                center: center.extend(if shown { 1.0 } else { 0.0 }).to_array(),
-                half: half.extend(0.0).to_array(),
             });
             let (color, surface) = match assets.material(slot.material) {
                 Some(material) => {
                     slot.masked = matches!(material.alpha_mode(), AlphaMode::Mask { .. });
-                    slot.double_sided = material.is_double_sided();
+                    slot.double_sided = material.cull() == Cull::None;
                     let surface = pack_surface(material.surface());
                     (pack_color(material.color()), surface)
                 }
@@ -510,7 +473,6 @@ impl SkinningGpu {
                 .mesh(slot.mesh)
                 .map_or((0, 0), |mesh| (mesh.index_count(), mesh.first_index()));
             args.push([indices, 1, first, 0, 0]);
-            caster_args.push([indices, 0, first, 0, 0]);
             if shown {
                 held.cast.push(index as u32);
                 if !outside(&frustum, center, half) {
@@ -523,7 +485,6 @@ impl SkinningGpu {
         cx.write(buffers.parts, 0, &parts);
         cx.write(buffers.colors, 0, &colors);
         cx.write(buffers.args, 0, &args);
-        cx.write(buffers.caster_args, 0, &caster_args);
         cx.write(
             buffers.frame,
             0,
@@ -536,68 +497,90 @@ impl SkinningGpu {
         );
     }
 
-    pub(crate) fn draw_lit(&self, _: &(), draw: &mut Draw<'_, Self, MainView>) -> u32 {
-        for &index in &self.held.lit {
-            let slot = &self.held.slots[index as usize];
-            draw.draw(
-                &self.lit[usize::from(slot.double_sided)],
-                Shape::MeshIndirect {
-                    mesh: slot.mesh,
-                    material: Some(slot.material),
-                    args: self.inputs.args,
-                    offset: u64::from(index) * ARGS_BYTES,
-                    streams: &[(
-                        self.inputs.skinned,
-                        u64::from(slot.skinned_at) * SKINNED_BYTES,
-                    )],
-                },
-            );
+    pub(crate) fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
+        let Some(joined) = self
+            .scenes
+            .iter()
+            .find(|joined| joined.name == scene.pass.name())
+        else {
+            return 0;
+        };
+        match &joined.drawing {
+            Drawing::Lit(lit) => self.draw_parts(draw, &joined.streams, &self.held.lit, |slot| {
+                (&lit[usize::from(slot.double_sided)], Some(slot.material))
+            }),
+            Drawing::Casters(casting) => {
+                let Some(view) = self.cast_view(scene) else {
+                    return 0;
+                };
+                let frustum = view.planes.unwrap_or_else(|| {
+                    planes(Mat4::from_cols_array_2d(&view.view_projection))
+                });
+                let cast: Vec<u32> = self
+                    .held
+                    .cast
+                    .iter()
+                    .copied()
+                    .filter(|&index| {
+                        let (center, half) = self.held.slots[index as usize].bounds;
+                        !outside(&frustum, center, half)
+                    })
+                    .collect();
+                self.draw_parts(draw, &joined.streams, &cast, |slot| {
+                    (
+                        &casting[usize::from(slot.masked)],
+                        slot.masked.then_some(slot.material),
+                    )
+                })
+            }
         }
-        self.held.lit.len() as u32
     }
 
-    pub(crate) fn draw_casters(
-        &self,
-        at: &CasterView,
-        draw: &mut Draw<'_, Self, ShadowCasters>,
+    fn cast_view(&self, scene: &SceneDraw) -> Option<&SceneView> {
+        let index = scene.view? as usize;
+        self.held
+            .views
+            .iter()
+            .filter(|(pass, _)| *pass == scene.pass.name())
+            .nth(index)
+            .map(|(_, view)| view)
+            .filter(|view| view.takes.is_none_or(|takes| takes == Mobility::Moving))
+    }
+
+    fn draw_parts<'p>(
+        &'p self,
+        draw: &mut Draw<'_, Self, Scene>,
+        streams: &Streams,
+        listed: &[u32],
+        chosen: impl Fn(&Slot) -> (&'p Pipeline<Self, Scene>, Option<MaterialHandle>),
     ) -> u32 {
-        if at.map != CasterMap::Moving {
-            return 0;
-        }
-        for &index in &self.held.cast {
+        for &index in listed {
             let slot = &self.held.slots[index as usize];
+            let (pipeline, material) = chosen(slot);
             draw.draw(
-                &self.casting[usize::from(slot.masked)],
+                pipeline,
                 Shape::MeshIndirect {
                     mesh: slot.mesh,
-                    material: slot.masked.then_some(slot.material),
-                    args: self.inputs.caster_args,
+                    material,
+                    args: streams.args,
                     offset: u64::from(index) * ARGS_BYTES,
-                    streams: &[
-                        (
-                            self.inputs.caster_skinned,
-                            u64::from(slot.skinned_at) * SKINNED_BYTES,
-                        ),
-                        (
-                            self.inputs.caster_tiles,
-                            u64::from(index) * u64::from(TILE_ROOM) * 4,
-                        ),
-                    ],
+                    streams: &[(streams.skinned, u64::from(slot.skinned_at) * SKINNED_BYTES)],
                 },
             );
         }
-        self.held.cast.len() as u32
+        listed.len() as u32
     }
 }
 
 fn lit_pipeline(
     cx: &mut Install<'_, SkinningGpu>,
+    scene: Scene,
     double_sided: bool,
     colors: Buffer<SkinningGpu>,
-) -> Result<Pipeline<SkinningGpu, MainView>, Error> {
+) -> Result<Pipeline<SkinningGpu, Scene>, Error> {
     use shaders::animation::draw;
     cx.render_pipeline(
-        MainView,
+        scene,
         &RenderPipeline {
             vertex: draw::VS_SKINNED,
             fragment: Some(draw::FS_SKINNED),
@@ -621,12 +604,13 @@ fn lit_pipeline(
 
 fn caster_pipelines(
     cx: &mut Install<'_, SkinningGpu>,
+    scene: Scene,
     colors: Buffer<SkinningGpu>,
-) -> Result<[Pipeline<SkinningGpu, ShadowCasters>; 2], Error> {
+) -> Result<[Pipeline<SkinningGpu, Scene>; 2], Error> {
     use shaders::animation::casters;
     let desc = |vertex, fragment| RenderPipeline {
         vertex,
-        fragment: Some(fragment),
+        fragment,
         debug: None,
         vertices: CASTER_STREAMS,
         primitive: wgpu::PrimitiveState::default(),
@@ -635,17 +619,50 @@ fn caster_pipelines(
         writes: wgpu::ColorWrites::empty(),
     };
     Ok([
+        cx.render_pipeline(scene, &desc(casters::VS_CASTER, None), &[])?,
         cx.render_pipeline(
-            ShadowCasters,
-            &desc(casters::VS_CASTER, casters::FS_CASTER),
-            &[],
-        )?,
-        cx.render_pipeline(
-            ShadowCasters,
-            &desc(casters::VS_CASTER_MASKED, casters::FS_CASTER_MASKED),
+            scene,
+            &desc(casters::VS_CASTER_MASKED, Some(casters::FS_CASTER_MASKED)),
             &[(casters::COLORS, Bind::Buffer(colors))],
         )?,
     ])
+}
+
+fn scene_pipelines(
+    cx: &mut Install<'_, SkinningGpu>,
+    buffers: &Buffers,
+) -> Result<Vec<ScenePipelines>, Error> {
+    let listed: Vec<ScenePass> = cx
+        .passes()
+        .listed()
+        .iter()
+        .filter(|listed| listed.bit.is_some() && (listed.pass.takes)(SKIN))
+        .copied()
+        .collect();
+    let mut scenes = Vec::with_capacity(listed.len());
+    for listed in listed {
+        let scene = Scene::named(listed.name);
+        let drawing = if listed.name == ColorPass::NAME {
+            Drawing::Lit([
+                lit_pipeline(cx, scene, false, buffers.colors)?,
+                lit_pipeline(cx, scene, true, buffers.colors)?,
+            ])
+        } else if listed.pass.views == PassViews::Owned && !listed.pass.reads.base_color {
+            Drawing::Casters(caster_pipelines(cx, scene, buffers.colors)?)
+        } else {
+            continue;
+        };
+        let streams = Streams {
+            skinned: cx.draw_input(scene, buffers.skinned),
+            args: cx.draw_input(scene, buffers.args),
+        };
+        scenes.push(ScenePipelines {
+            name: listed.name,
+            drawing,
+            streams,
+        });
+    }
+    Ok(scenes)
 }
 
 impl GpuPart for SkinningGpu {
@@ -653,10 +670,10 @@ impl GpuPart for SkinningGpu {
         Query<'static, 'static, (Entity, &'static Animator)>,
         Res<'static, GlobalTransforms>,
         Res<'static, DrawnPoses>,
-        Res<'static, PresentationState>,
         Res<'static, AssetResidency>,
         Res<'static, AssetLibrary>,
-        Res<'static, View>,
+        Res<'static, PrimaryView>,
+        Query<'static, 'static, &'static SceneViews>,
     );
     const NAME: &'static str = "animation";
     const LAZY: bool = true;
@@ -674,8 +691,6 @@ impl GpuPart for SkinningGpu {
             skinned: cx.buffer("skin_vertices", Lifetime::Kept),
             colors: cx.buffer("skin_colors", Lifetime::Kept),
             args: cx.buffer("skin_args", Lifetime::Kept),
-            caster_args: cx.buffer("skin_caster_args", Lifetime::Kept),
-            tiles: cx.buffer("skin_tiles", Lifetime::Kept),
         };
         let pass = cx
             .pass("skin")
@@ -694,43 +709,19 @@ impl GpuPart for SkinningGpu {
                 (skin::SKINNED, Bind::Buffer(buffers.skinned)),
             ],
         )?;
-        let selecting = cx.compute_pipeline(
-            pass,
-            skin::SELECT_TILES,
-            &[
-                (skin::FRAME, Bind::Buffer(buffers.frame)),
-                (skin::PARTS, Bind::Buffer(buffers.parts)),
-                (skin::CASTER_ARGS, Bind::Buffer(buffers.caster_args)),
-                (skin::TILES, Bind::Buffer(buffers.tiles)),
-            ],
-        )?;
-        let lit = [
-            lit_pipeline(cx, false, buffers.colors)?,
-            lit_pipeline(cx, true, buffers.colors)?,
-        ];
-        let casting = caster_pipelines(cx, buffers.colors)?;
-        let inputs = Inputs {
-            skinned: cx.draw_input(MainView, buffers.skinned),
-            args: cx.draw_input(MainView, buffers.args),
-            caster_skinned: cx.draw_input(ShadowCasters, buffers.skinned),
-            caster_args: cx.draw_input(ShadowCasters, buffers.caster_args),
-            caster_tiles: cx.draw_input(ShadowCasters, buffers.tiles),
-        };
+        let scenes = scene_pipelines(cx, &buffers)?;
         Ok(Self {
             skin: pass,
             skinning,
-            selecting,
-            lit,
-            casting,
+            scenes,
             buffers,
-            inputs,
             held: Held::default(),
         })
     }
 
     fn prepare(
         &mut self,
-        (animators, globals, poses, presentation, residency, assets, view): SystemParamItem<
+        (animators, globals, poses, residency, assets, view, published): SystemParamItem<
             '_,
             '_,
             Self::Reads,
@@ -746,11 +737,16 @@ impl GpuPart for SkinningGpu {
         }
         self.held.lit.clear();
         self.held.cast.clear();
+        self.held.views.clear();
+        self.held.views.extend(
+            published
+                .iter()
+                .flat_map(|views| views.views.iter().map(|view| (views.pass, *view))),
+        );
         if self.held.slots.is_empty() {
             return;
         }
-        let mut posed = pose_all(&listed, &self.held.slots, &globals, &poses);
-        previous_rows(&mut self.held, &mut posed, presentation.frame());
+        let posed = pose_all(&listed, &self.held.slots, &globals, &poses);
         self.stage(&posed, (&*residency, &*assets, &*view), cx);
         cx.run(self.skin);
     }
@@ -760,9 +756,7 @@ impl GpuPart for SkinningGpu {
             return 0;
         }
         let vertices = self.held.vertices.div_ceil(SKIN_GROUP);
-        let parts = (self.held.slots.len() as u32).div_ceil(SKIN_GROUP);
         cx.dispatch(&self.skinning, Count::Groups([vertices, 1, 1]));
-        cx.dispatch(&self.selecting, Count::Groups([parts, 1, 1]));
         0
     }
 }

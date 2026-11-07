@@ -11,7 +11,6 @@ settings! {
         pub finest_texel: f32 = 0.04 => range(0.005, 1.0),
         pub tile_texels: u32 = 128 => power_of_two(64, 512),
         pub atlas_slots: u32 = 1024 => range(64, 4096),
-        pub redraw_budget: u32 = 32 => range(1, 4096),
         pub moving_tiles: u32 = 256 => any,
     }
 }

@@ -3,7 +3,7 @@ use std::sync::{Arc, OnceLock};
 use engine_codec::{Error, ErrorCode, Expected};
 use glam::Vec3;
 
-use crate::{MeshLods, MeshVertex};
+use crate::{Attribute, Attributes, MeshLods, MeshVertex};
 
 fn invalid(path: impl Into<String>) -> Error {
     Error::new(ErrorCode::InvalidMesh, path)
@@ -194,6 +194,17 @@ impl Mesh {
 
     pub fn uv1(&self) -> Option<&[[f32; 2]]> {
         self.uv1.as_deref()
+    }
+
+    pub fn attributes(&self) -> Attributes {
+        let mut held = Attributes::BASE;
+        if self.uv1.is_some() {
+            held = held.with(Attribute::Uv1);
+        }
+        if self.colors.is_some() {
+            held = held.with(Attribute::Color);
+        }
+        held
     }
 
     pub fn indices(&self) -> &[u32] {

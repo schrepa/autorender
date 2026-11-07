@@ -5,7 +5,7 @@ import package::face::sun::sun_direction;
 import package::face::tonemap::exposure;
 import package::generated::targets::{ViewTargets, view_targets};
 import package::sky::common::{air_disc, air_radius, air_transmittance, sunlight_over};
-import package::sky::light::{clouded, sky_air_light, sky_along, sky_table_sampler};
+import package::sky::light::{clouded, sky_air_light, sky_table_sampler};
 import package::sky::piece::{sky_air, sky_piece};
 
 struct SkyOutput {
@@ -353,11 +353,6 @@ fn with_night_sky(light: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
 fn sky_ray(ndc: vec2<f32>) -> vec3<f32> {
     let far = camera.inverse_view_projection * vec4<f32>(ndc, 0.0, 1.0);
     return stable_normalize(far.xyz / far.w - camera.position.xyz);
-}
-
-@fragment
-fn fs_probe_sky(input: SkyOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(sky_along(sky_piece.domes_eye.xyz, sky_ray(input.ndc)), 1.0);
 }
 
 @group(1) @binding(46) var view_clouds: texture_2d<f32>;

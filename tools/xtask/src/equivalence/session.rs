@@ -19,8 +19,6 @@ const COMMAND_LIMIT: Duration = Duration::from_secs(240);
 
 const SETTLE_LIMIT: Duration = Duration::from_secs(300);
 
-const TAIL_RENDERS: usize = 30;
-
 struct Session {
     child: Child,
     input: ChildStdin,
@@ -323,9 +321,6 @@ fn settle(session: &mut Session, frame: &Value, log: &Path) -> Result<Option<Str
         if !settled {
             std::thread::sleep(Duration::from_millis(5));
         }
-    }
-    for _ in 0..TAIL_RENDERS {
-        session.ok(frame, log)?;
     }
     Ok(None)
 }

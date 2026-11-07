@@ -1,9 +1,10 @@
 import package::face::lighting::sun_debug;
 import package::face::sun_blockers::SunAt;
+import package::engine::surfaces::SURFACE_GROUND;
 import package::engine::view::eye_world;
 import package::face::debug::{DEBUG_KIND_TERRAIN, DEBUG_NO_MATERIAL, DebugTargets, debug_record,
     debug_targets};
-import package::generated::terrain_shading::{DEBUG_PATCH_EDGE, DEBUG_PATCH_SHIFT, DEBUG_TILE_EDGE};
+import package::generated::terrain_shading::terrain_debug;
 import package::terrain_shading::draw::{TerrainOutput, terrain_forward_look, terrain_holes_test, terrain_seen, terrain_shared_ground, terrain_shares};
 import package::terrain_shading::faces::heightfield::{terrain, use_terrain};
 import package::terrain_shading::sky::terrain_sky_map;
@@ -40,12 +41,11 @@ fn debug_terrain(input: TerrainOutput, holes: bool) -> DebugTargets {
     let tile_edge = abs(fract(input.cell / 256.0 + 0.5) - 0.5) * 256.0;
     let patch_edge = abs(fract(input.cell / 16.0 + 0.5) - 0.5) * 16.0;
     let record = debug_record(DEBUG_KIND_TERRAIN, level, false, false, 0u)
-        | select(0u, DEBUG_TILE_EDGE, any(tile_edge < width * 2.0))
-        | select(0u, DEBUG_PATCH_EDGE, any(patch_edge < width))
-        | ((within.x | (within.y << 4u)) << DEBUG_PATCH_SHIFT);
+        | terrain_debug(any(tile_edge < width * 2.0), any(patch_edge < width), within.x, within.y);
     let made = pack4x8unorm(vec4<f32>(sky, ground.detailed, ground.averaged, ground.canopy));
     var targets = debug_targets(record, made, pack4x8unorm(shares.weights), normal,
-        sun_debug(SunAt(world, normal, world_dx, world_dy, 0.0, true, 0u, vec4<f32>(0.0))));
+        sun_debug(SunAt(world, normal, world_dx, world_dy, 0.0, SURFACE_GROUND, 0u,
+            vec4<f32>(0.0))));
     let ids = min(shares.ids, vec4<u32>(DEBUG_NO_MATERIAL));
     let tiles = bitcast<vec2<u32>>(tile) & vec2<u32>(0xffffu);
     targets.terrain = vec2<u32>(tiles.x | (tiles.y << 16u),

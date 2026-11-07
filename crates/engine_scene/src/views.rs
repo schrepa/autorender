@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 
 use bevy_ecs::resource::Resource;
-use bevy_ecs::system::{Commands, Res, ResMut, SystemParamItem};
+use bevy_ecs::system::{Commands, Res, SystemParamItem};
 use bevy_ecs::world::World;
-use engine_core::{Camera, Error, Operation, SceneContext};
+use engine_core::{Camera, Error, Operation, SceneContext, Transform};
 use engine_registry::Registry;
 use engine_settings::{ErrorCode, Expected};
 use serde::{Deserialize, Serialize};
@@ -60,8 +60,8 @@ impl engine_settings::ExtraRules for SceneView {
 }
 
 impl SceneView {
-    pub fn camera(&self) -> Camera {
-        self.scene_camera().camera()
+    pub fn placed(&self) -> (Transform, Camera) {
+        self.scene_camera().placed()
     }
 
     fn scene_camera(&self) -> SceneCamera {
@@ -119,11 +119,11 @@ impl SceneViews {
         std::iter::once(SCENE_LOOK).chain(self.looks.iter().map(|look| look.name.as_str()))
     }
 
-    pub fn camera(&self, name: &str, path: &str) -> Result<Camera, Error> {
+    pub fn placed(&self, name: &str, path: &str) -> Result<(Transform, Camera), Error> {
         self.views
             .iter()
             .find(|view| view.name == name)
-            .map(SceneView::camera)
+            .map(SceneView::placed)
             .ok_or_else(|| {
                 Error::new(ErrorCode::UnknownVariant, path)
                     .got(name)
@@ -163,10 +163,12 @@ impl SceneViews {
     }
 }
 
-pub fn show_view(world: &mut World, name: &str, path: &str) -> Result<Camera, Error> {
-    let camera = view_camera(world.get_resource::<SceneViews>(), name, path)?;
-    world.insert_resource(camera);
-    Ok(camera)
+pub fn show_view(world: &mut World, name: &str, path: &str) -> Result<(Transform, Camera), Error> {
+    let placed = view_camera(world.get_resource::<SceneViews>(), name, path)?;
+    if let Some(camera) = engine_core::main_camera(world) {
+        engine_core::place_camera(world, camera, placed.0, placed.1);
+    }
+    Ok(placed)
 }
 
 pub fn show_look(world: &mut World, name: &str, path: &str) -> Result<(), Error> {
@@ -181,10 +183,14 @@ pub fn show_look(world: &mut World, name: &str, path: &str) -> Result<(), Error>
     })
 }
 
-fn view_camera(views: Option<&SceneViews>, name: &str, path: &str) -> Result<Camera, Error> {
+fn view_camera(
+    views: Option<&SceneViews>,
+    name: &str,
+    path: &str,
+) -> Result<(Transform, Camera), Error> {
     match views {
-        Some(views) => views.camera(name, path),
-        None => SceneViews::default().camera(name, path),
+        Some(views) => views.placed(name, path),
+        None => SceneViews::default().placed(name, path),
     }
 }
 
@@ -224,14 +230,19 @@ pub struct SceneViewControl {
 
 impl Operation for SceneViewControl {
     const NAME: &'static str = "scene_view";
-    type Params = (Option<Res<'static, SceneViews>>, ResMut<'static, Camera>);
+    type Params = (Option<Res<'static, SceneViews>>, Commands<'static, 'static>);
     type Request = Self;
 
     fn run(
-        (views, mut camera): SystemParamItem<'_, '_, Self::Params>,
+        (views, mut commands): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
-        *camera = view_camera(views.as_deref(), &request.name, "$.name")?;
+        let (at, lens) = view_camera(views.as_deref(), &request.name, "$.name")?;
+        commands.queue(move |world: &mut World| {
+            if let Some(camera) = engine_core::main_camera(world) {
+                engine_core::place_camera(world, camera, at, lens);
+            }
+        });
         Ok(json!({ "temporary": true, "view": request.name }))
     }
 }

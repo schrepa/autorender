@@ -3,7 +3,7 @@ import package::engine::mesh::declarations::{AffinePose as PoseRows, AffineVerte
 import package::engine::mesh::vertex::{first_person, first_person_clip, first_person_previous,
     origin_key, output_color, pose_matrix, transform_vertex};
 import package::engine::view::{camera, detail_across};
-import package::face::wind::{slot_sway, wind_sway};
+import package::face::instance_motion::{instance_moves, instance_offset};
 import package::meshes::slots::{instance_colors, instance_poses, instance_previous_poses};
 import package::place::instances::{AffinePose, SlotColor};
 
@@ -15,15 +15,15 @@ fn pose_origin(pose: AffinePose) -> vec3<f32> {
     return vec3<f32>(pose.row_0.w, pose.row_1.w, pose.row_2.w);
 }
 
-fn vertex_wind(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>, sway: f32,
+fn vertex_wind(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>, flags: u32,
         time: f32) -> vec3<f32> {
     let root = model[3].xyz;
-    return wind_sway(vec4<f32>(camera.wind.xyz, time), 1.0 / max(detail_across(root), 1.0e-6),
-        root, world.y - root.y, position, sway);
+    return instance_offset(vec4<f32>(camera.wind.xyz, time),
+        1.0 / max(detail_across(root), 1.0e-6), root, world.y - root.y, position, flags);
 }
 
-fn slot_wind(model: mat4x4<f32>, world: vec3<f32>, sway: f32, time: f32) -> vec3<f32> {
-    return vertex_wind(model, vec3<f32>(0.0), world, sway, time);
+fn slot_wind(model: mat4x4<f32>, world: vec3<f32>, flags: u32, time: f32) -> vec3<f32> {
+    return vertex_wind(model, vec3<f32>(0.0), world, flags, time);
 }
 
 fn affine_temporal(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,
@@ -38,14 +38,13 @@ fn affine_temporal(input: AffineVertexInput, pose: AffinePose, previous: AffineP
         world = vec4<f32>(dot(previous.row_0, point), dot(previous.row_1, point),
             dot(previous.row_2, point), 1.0);
     }
-    let sway = slot_sway(material.flags);
-    if sway > 0.0 {
-        let current = vertex.world_v.xyz
-            + vertex_wind(model, input.position, vertex.world_v.xyz, sway, camera.position.w);
+    if instance_moves(material.flags) {
+        let current = vertex.world_v.xyz + vertex_wind(model, input.position, vertex.world_v.xyz,
+            material.flags, camera.position.w);
         vertex.world_v = vec4<f32>(current, vertex.world_v.w);
         vertex.clip_position = camera.view_projection * vec4<f32>(current, 1.0);
         world = vec4<f32>(world.xyz
-            + vertex_wind(model, input.position, world.xyz, sway, camera.wind.w), 1.0);
+            + vertex_wind(model, input.position, world.xyz, material.flags, camera.wind.w), 1.0);
     }
     let shown = camera.previous_view_projection * world;
     var output: TemporalOutput;

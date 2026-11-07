@@ -1,4 +1,4 @@
-use engine_settings::{Error, ErrorCode, Expected};
+use engine_codec::{Error, ErrorCode, Expected};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImageFormat {

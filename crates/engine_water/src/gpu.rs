@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use engine_core::{gpu_consts, gpu_struct};
+use engine_core::{gpu_bits, gpu_consts, gpu_struct};
 use engine_heightfield::tile::{PATCH_QUADS, PATCHES_PER_TILE};
 
 gpu_consts! {
@@ -22,15 +22,6 @@ gpu_consts! {
     pub const SIM_CELL_SUMS: u32 = 4;
     pub const SIM_BLOCK_LOOKS: u32 = 3;
     pub const SIM_LIVE_LOOKS: u32 = 2;
-    pub const SIM_STEPPING: u32 = 1;
-    pub const SIM_LOCAL: u32 = 2;
-    pub const SIM_OPEN: u32 = 4;
-    pub const SIM_SUMMING: u32 = 8;
-    pub const SIM_LOOKING: u32 = 16;
-    pub const SIM_SPARSE: u32 = 32;
-    pub const SIM_LIVE: u32 = 64;
-    pub const SIM_BURSTING: u32 = 128;
-    pub const SIM_KEEPING: u32 = 256;
     pub const SIM_RIM: u32 = BLOCK_SIDE;
     pub const SIM_TOUCHES: u32 = 32;
     pub const WATER_SIM_SOURCE_GROUP: u32 = 64;
@@ -105,6 +96,54 @@ const _: () = assert!(
     WATER_TILE_PATCHES == PATCHES_PER_TILE,
     "WATER_TILE_PATCHES differs from PATCHES_PER_TILE"
 );
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SimFlags {
+    pub stepping: bool,
+    pub local: bool,
+    pub open: bool,
+    pub summing: bool,
+    pub looking: bool,
+    pub sparse: bool,
+    pub live: bool,
+    pub bursting: bool,
+    pub keeping: bool,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Shown {
+    WaterDepth = 0,
+    WaterSpeed = 1,
+    WaterFroude = 2,
+    WaterTurbulence = 3,
+    WaterWhite = 4,
+    WaterReach = 5,
+    WaterSpan = 6,
+    WaterEddies = 7,
+    WaterRoughness = 8,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WaterProbeDetail {
+    #[bits(8)]
+    pub span: u8,
+    #[bits(8)]
+    pub roughness: u8,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WaterProbeState {
+    #[bits(8)]
+    pub turbulence: u8,
+    #[bits(8)]
+    pub white: u8,
+    #[bits(8, at = 24)]
+    pub reach: u8,
+}
 
 gpu_struct! {
     pub(crate) struct WaterUniform {
@@ -202,6 +241,10 @@ pub(crate) struct FallVertex {
 
 pub(crate) const GENERATED: &[&str] = &[
     WGSL,
+    <SimFlags as engine_core::GpuBits>::WGSL,
+    <Shown as engine_core::BitValue>::WGSL,
+    <WaterProbeDetail as engine_core::GpuBits>::WGSL,
+    <WaterProbeState as engine_core::GpuBits>::WGSL,
     <WaterUniform as engine_core::GpuStruct>::WGSL,
     <SimFrame as engine_core::GpuStruct>::WGSL,
     <SimSlot as engine_core::GpuStruct>::WGSL,

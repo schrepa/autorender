@@ -65,7 +65,7 @@ fn scene(pond: bool) -> Value {
 }
 
 fn settle(session: &mut dyn SmokeSession) -> Checked<Value> {
-    engine::smokes::settled(session)?;
+    engine_core::smoke::settled(session)?;
     let terrain = inspect(session, "terrain_stats")?;
     smoke_eq!(
         json!({

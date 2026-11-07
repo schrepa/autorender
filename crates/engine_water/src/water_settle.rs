@@ -4,14 +4,13 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
-use engine_core::{CookMode, DeviceLimits, Error, Jobs, Readable, Readback};
+use engine_core::{CookMode, DeviceLimits, Error, GpuBits, Jobs, Readable, Readback};
 use engine_places_world::ground::GroundTiles;
-use engine_render::{AfterRead, ComputePipeline, Count, Encode, Install, Pass, Prepare};
-
-use crate::gpu::{
-    SIM_BLOCK_LOOKS, SIM_BURSTING, SIM_CELL_SUMS, SIM_KEEPING, SIM_LOCAL, SIM_LOOKING, SIM_OPEN,
-    SIM_SLOTS, SIM_SPARSE, SIM_STEPPING, SIM_SUMMING, SimSetup, SimSlot,
+use engine_render::{
+    AfterRead, Allocation, ComputePipeline, Count, Encode, Install, Pass, Prepare,
 };
+
+use crate::gpu::{SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_SLOTS, SimFlags, SimSetup, SimSlot};
 use crate::jobs::SETTLED;
 use crate::shallow_water::{CELL_MEANS, DRY, step_seconds};
 use crate::state::WaterState;
@@ -35,16 +34,19 @@ pub(crate) const TALLIES: u32 = 0;
 const LOOK: u32 = 0;
 const MEANS: u32 = 1;
 const GROUND: u32 = 2;
+const RAN: u32 = 3;
+const RAISED: u32 = 4;
+const KINDS: u32 = 5;
 const LOADS: u32 = 1 << 20;
 
 fn tag(slot: usize, kind: u32, load: u32) -> u32 {
-    1 + kind + 3 * (slot as u32 + SIM_SLOTS * (load % LOADS))
+    1 + kind + KINDS * (slot as u32 + SIM_SLOTS * (load % LOADS))
 }
 
 fn untag(tag: u32) -> (usize, u32, u32) {
     let at = tag.saturating_sub(1);
-    let rest = at / 3;
-    ((rest % SIM_SLOTS) as usize, at % 3, rest / SIM_SLOTS)
+    let rest = at / KINDS;
+    ((rest % SIM_SLOTS) as usize, at % KINDS, rest / SIM_SLOTS)
 }
 
 pub(crate) struct SettleAsk {
@@ -53,15 +55,23 @@ pub(crate) struct SettleAsk {
     pub(crate) start: Arc<SettleStart>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Raising {
+    Waiting,
+    Sent,
+    Done,
+}
+
 struct Square {
     inputs: Vec<Arc<[u8]>>,
     terrain: Entity,
     start: Arc<SettleStart>,
     load: u32,
-    raised: bool,
+    raising: Raising,
     steps: u32,
     since_look: u32,
     stirred: u32,
+    stir_asked: u32,
     looks: Vec<Look>,
     stepping: u64,
     flowing: u64,
@@ -123,6 +133,7 @@ pub(crate) struct Raise {
     pub(crate) list: Vec<[u32; 4]>,
     pub(crate) frame: SimSetup,
     pub(crate) blocks: u32,
+    pub(crate) tag: u32,
 }
 
 #[derive(Default)]
@@ -133,6 +144,7 @@ pub(crate) struct SettleWork {
     pub(crate) raise: Option<Raise>,
     pub(crate) squares: Vec<SimSlot>,
     pub(crate) steps: u32,
+    pub(crate) stepped: Vec<(u32, bool)>,
     pub(crate) sourced: u32,
     pub(crate) blocks: u32,
     pub(crate) stirring: bool,
@@ -251,7 +263,7 @@ impl SettleFeedback {
             .squares
             .iter()
             .flatten()
-            .filter(|square| square.raised && square.phase != Phase::Reading)
+            .filter(|square| square.raising == Raising::Done && square.phase != Phase::Reading)
             .map(|square| square.stepping.max(1))
             .sum();
         let budget = if cooking {
@@ -269,7 +281,9 @@ impl SettleFeedback {
 
     fn raise(&mut self, layout: &Layout, ground: &dyn Fn(Entity) -> Option<u32>) {
         let found = self.squares.iter().enumerate().find_map(|(slot, square)| {
-            let square = square.as_ref().filter(|square| !square.raised)?;
+            let square = square
+                .as_ref()
+                .filter(|square| square.raising == Raising::Waiting)?;
             Some((slot, ground(square.terrain)?))
         });
         let Some((slot, terrain)) = found else {
@@ -312,11 +326,12 @@ impl SettleFeedback {
             tiles: [0; 4],
             terrain: [terrain, 0, 0, 0],
         };
-        square.raised = true;
+        square.raising = Raising::Sent;
         self.work.raise = Some(Raise {
             list,
             frame,
             blocks: blocks as u32,
+            tag: tag(slot, RAISED, square.load),
         });
     }
 
@@ -342,10 +357,11 @@ impl SettleFeedback {
                 terrain: ask.terrain,
                 start: ask.start,
                 load: self.loads,
-                raised: false,
+                raising: Raising::Waiting,
                 steps: 0,
                 since_look: 0,
                 stirred: 0,
+                stir_asked: 0,
                 looks: Vec::new(),
                 stepping: steps,
                 flowing: 0,
@@ -361,6 +377,7 @@ impl SettleFeedback {
         let (mut blocks, mut sourced, mut stirring) = (0, 0, false);
         let mut written = vec![SimSlot::zeroed(); self.squares.len()];
         let mut looks = Vec::new();
+        let mut stepped = Vec::new();
         for (slot, held) in self.squares.iter_mut().enumerate() {
             let Some(square) = held else {
                 continue;
@@ -368,26 +385,29 @@ impl SettleFeedback {
             let start = &square.start;
             let stored = &start.stored;
             let stirs = square.phase == Phase::Stirring;
-            let mut flags = SIM_OPEN | SIM_SUMMING | SIM_SPARSE;
-            flags |= if stirs {
-                SIM_BURSTING | SIM_KEEPING
-            } else {
-                SIM_LOCAL
+            let mut flags = SimFlags {
+                open: true,
+                summing: true,
+                sparse: true,
+                bursting: stirs,
+                keeping: stirs,
+                local: !stirs,
+                ..SimFlags::default()
             };
-            let index = square.stirred;
-            let runs = square.raised && square.phase != Phase::Reading && steps > 0;
+            let index = square.stir_asked;
+            let runs =
+                square.raising == Raising::Done && square.phase != Phase::Reading && steps > 0;
             if runs {
-                flags |= SIM_STEPPING;
+                flags.stepping = true;
                 square.since_look += steps;
                 if stirs {
-                    square.stirred += steps;
+                    square.stir_asked += steps;
                     stirring = true;
-                } else {
-                    square.steps += steps;
                 }
+                stepped.push((tag(slot, RAN, square.load), stirs));
                 sourced = sourced.max(start.sources.len() as u32);
                 if square.since_look >= LOOK_EVERY {
-                    flags |= SIM_LOOKING;
+                    flags.looking = true;
                     square.since_look = 0;
                     looks.push(slot);
                 }
@@ -396,7 +416,7 @@ impl SettleFeedback {
             let [x, z] = stored.cells;
             let [first_x, first_z] = start.first.map(|first| first as i32 as u32);
             written[slot] = SimSlot {
-                shape: [x, z, flags, start.sources.len() as u32],
+                shape: [x, z, flags.pack(), start.sources.len() as u32],
                 step: [start.cell, step_seconds(start.cell), 0.0, 0.0],
                 blocks: [
                     stored.blocks[0],
@@ -409,6 +429,7 @@ impl SettleFeedback {
         }
         self.work.squares = written;
         self.work.steps = steps;
+        self.work.stepped = stepped;
         self.work.sourced = sourced;
         self.work.blocks = blocks;
         self.work.stirring = stirring;
@@ -513,6 +534,26 @@ impl SettleFeedback {
             else {
                 continue;
             };
+            if kind == RAISED {
+                square.raising = if bytes.first() == Some(&1) {
+                    Raising::Done
+                } else {
+                    Raising::Waiting
+                };
+                continue;
+            }
+            if kind == RAN {
+                let words = bytes.as_chunks::<4>().0;
+                if let [steps, stirs, ..] = words {
+                    let steps = u32::from_le_bytes(*steps);
+                    if u32::from_le_bytes(*stirs) != 0 {
+                        square.stirred += steps;
+                    } else {
+                        square.steps += steps;
+                    }
+                }
+                continue;
+            }
             if kind != LOOK {
                 if kind == MEANS {
                     square.means = Some(bytes);
@@ -861,6 +902,8 @@ pub(crate) struct SettleGpu {
     room: Option<usize>,
     loaded: Vec<u32>,
     raised: u32,
+    raising: Option<u32>,
+    planned: Vec<(u32, u32, bool)>,
     run: Option<(u32, u32, u32, bool, u32)>,
 }
 
@@ -909,6 +952,8 @@ impl SettleGpu {
             room: None,
             loaded: Vec::new(),
             raised: 0,
+            raising: None,
+            planned: Vec::new(),
             run: None,
         })
     }
@@ -916,6 +961,18 @@ impl SettleGpu {
     pub(crate) fn prepare(&mut self, work: &SettleWork, cx: &mut Prepare<'_, WaterGpu>) {
         self.run = None;
         self.raised = 0;
+        if let Some(raising) = self.raising.take() {
+            let raised = u8::from(cx.ran(self.raise));
+            cx.deliver::<SettleFeedback>(raising, vec![raised]);
+        }
+        let planned = std::mem::take(&mut self.planned);
+        if cx.ran(self.pass) {
+            for (tag, steps, stirs) in planned {
+                let words = [steps, u32::from(stirs)];
+                let bytes = words.iter().flat_map(|word| word.to_le_bytes()).collect();
+                cx.deliver::<SettleFeedback>(tag, bytes);
+            }
+        }
         let Some(layout) = work.layout else {
             self.layout = None;
             self.room = None;
@@ -925,8 +982,8 @@ impl SettleGpu {
             return;
         };
         let fresh = self.layout != Some(layout);
-        self.slots.hold(layout, fresh, cx);
-        if fresh {
+        let made = self.slots.hold(layout, fresh, cx);
+        if fresh || made == Allocation::Fresh {
             self.loaded = vec![0; layout.slots as usize];
         }
         self.layout = Some(layout);
@@ -957,6 +1014,7 @@ impl SettleGpu {
             cx.write(self.setup.list, 0, &raise.list);
             cx.write(self.setup.frame, 0, &[raise.frame]);
             self.raised = raise.blocks;
+            self.raising = Some(raise.tag);
             cx.run(self.raise);
         }
         self.slots.write_frames(&layout, cx);
@@ -969,6 +1027,11 @@ impl SettleGpu {
                 work.stirring,
                 layout.slots,
             ));
+            self.planned = work
+                .stepped
+                .iter()
+                .map(|&(tag, stirs)| (tag, work.steps, stirs))
+                .collect();
             cx.run(self.pass);
         }
         for read in &work.reads {

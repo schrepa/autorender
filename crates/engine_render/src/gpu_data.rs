@@ -84,26 +84,6 @@ pub fn pack_color(color: [f32; 4]) -> [u32; 2] {
     ]
 }
 
-pub fn ground_data(
-    grounding: Option<engine_core::Grounding>,
-    normal: [f32; 2],
-    sink: f32,
-    scale: f32,
-) -> [u32; 4] {
-    let Some(grounding) = grounding else {
-        return [0; 4];
-    };
-    let snorm = |value: f32| {
-        u32::from((engine_core::math::clamp(value, -1.0, 1.0) * 32767.0).round() as i16 as u16)
-    };
-    [
-        snorm(normal[0]) | snorm(normal[1]) << 16,
-        sink.to_bits(),
-        (grounding.height * scale).to_bits(),
-        0,
-    ]
-}
-
 pub fn pyramid_extents((width, height): (u32, u32), count: u32) -> Vec<[u32; 4]> {
     let mut source = (width.max(1), height.max(1));
     (0..count)

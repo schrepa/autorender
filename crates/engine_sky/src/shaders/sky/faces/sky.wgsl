@@ -39,8 +39,8 @@ fn environment_levels() -> u32 {
     return textureNumLevels(environment_maps);
 }
 
-fn environment_sample(direction: vec3<f32>, layer: u32, level: f32) -> vec3<f32> {
-    return textureSampleLevel(environment_maps, environment_sampler, direction, layer, level).rgb;
+fn environment_sample(direction: vec3<f32>, level: f32) -> vec3<f32> {
+    return textureSampleLevel(environment_maps, environment_sampler, direction, 0u, level).rgb;
 }
 
 fn zenith() -> vec3<f32> {

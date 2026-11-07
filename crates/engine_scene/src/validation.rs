@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use bevy_ecs::entity::Entity;
-use engine_core::{Error, Mesh, ScenePath, Texture, Transform};
+use engine_core::{ColorSpace, Error, Mesh, ScenePath, Texture, Transform};
 
 use crate::{
     MeshSource, SceneDocument, SceneFile, SceneFileKind, SceneFiles, SceneKinds,
@@ -161,11 +161,26 @@ impl SceneDocument {
                 }
             }
         }
+        let mut spaces: BTreeMap<&str, ColorSpace> = BTreeMap::new();
+        for (id, space) in self.materials.iter().flat_map(|material| material.map_spaces()) {
+            let held = spaces.entry(id).or_insert(space);
+            if space == ColorSpace::Srgb {
+                *held = ColorSpace::Srgb;
+            }
+        }
         let textures = self
             .textures
             .iter()
             .enumerate()
-            .map(|(index, texture)| texture.texture(&format!("$.textures[{index}]"), files))
+            .map(|(index, texture)| {
+                let space = spaces
+                    .get(texture.id.as_str())
+                    .copied()
+                    .unwrap_or_default();
+                texture
+                    .texture(&format!("$.textures[{index}]"), files)
+                    .map(|made| made.with_color_space(space))
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let meshes = self
             .meshes

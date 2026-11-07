@@ -1,16 +1,11 @@
 import package::face::debug::{DEBUG_KIND_SKY, DEBUG_KIND_WATER, DEBUG_OTHER, DEBUG_SKY, DebugShade,
     DebugTargets, debug_record_kind};
 import package::generated::pieces::water::piece;
-import package::generated::water::{BREAK_FULL, BREAK_ONSET, DEBUG_SPAN_STEPS};
-
-const DEBUG_WATER_DEPTH: u32 = 0u;
-const DEBUG_WATER_SPEED: u32 = 1u;
-const DEBUG_WATER_FROUDE: u32 = 2u;
-const DEBUG_WATER_TURBULENT: u32 = 3u;
-const DEBUG_WATER_WHITE: u32 = 4u;
-const DEBUG_WATER_SPAN: u32 = 6u;
-const DEBUG_WATER_EDDY: u32 = 7u;
-const DEBUG_WATER_ROUGH: u32 = 8u;
+import package::generated::water::{BREAK_FULL, BREAK_ONSET, DEBUG_SPAN_STEPS, SHOWN_WATER_DEPTH,
+    SHOWN_WATER_EDDIES, SHOWN_WATER_FROUDE, SHOWN_WATER_ROUGHNESS, SHOWN_WATER_SPAN,
+    SHOWN_WATER_SPEED, SHOWN_WATER_TURBULENCE, SHOWN_WATER_WHITE, water_probe_detail_roughness,
+    water_probe_detail_span, water_probe_state_reach, water_probe_state_turbulence,
+    water_probe_state_white};
 
 const DEBUG_WATER_DEEPEST: f32 = 2.0;
 const DEBUG_WATER_FASTEST: f32 = 6.0;
@@ -65,39 +60,44 @@ fn debug_eddies_color(froude: f32) -> vec3<f32> {
     return debug_ramp(DEBUG_WATER_EDDIES, 0.5 * (calm + breaking));
 }
 
+fn debug_share(byte: u32) -> f32 {
+    return f32(byte) / 255.0;
+}
+
 fn debug_water_color(view: u32, ids: vec4<u32>, numbers: vec2<u32>) -> vec3<f32> {
     let motion = unpack2x16float(ids.y);
-    let body = unpack4x8unorm(ids.z);
     let froudes = unpack2x16float(numbers.x);
-    let state = unpack4x8unorm(numbers.y);
     switch view {
-        case DEBUG_WATER_DEPTH: {
+        case SHOWN_WATER_DEPTH: {
             return debug_ramp(DEBUG_WATER_DEPTHS, sqrt(max(motion.x, 0.0) / DEBUG_WATER_DEEPEST));
         }
-        case DEBUG_WATER_SPEED: {
+        case SHOWN_WATER_SPEED: {
             return debug_ramp(DEBUG_WATER_SPEEDS, motion.y / DEBUG_WATER_FASTEST);
         }
-        case DEBUG_WATER_FROUDE: {
+        case SHOWN_WATER_FROUDE: {
             return debug_froude_color(froudes.x);
         }
-        case DEBUG_WATER_TURBULENT: {
-            return debug_ramp(DEBUG_WATER_TURBULENCE, state.x);
+        case SHOWN_WATER_TURBULENCE: {
+            return debug_ramp(DEBUG_WATER_TURBULENCE,
+                debug_share(water_probe_state_turbulence(numbers.y)));
         }
-        case DEBUG_WATER_WHITE: {
-            return mix(DEBUG_WATER_CLEAR, vec3<f32>(1.0), state.y);
+        case SHOWN_WATER_WHITE: {
+            return mix(DEBUG_WATER_CLEAR, vec3<f32>(1.0),
+                debug_share(water_probe_state_white(numbers.y)));
         }
-        case DEBUG_WATER_SPAN: {
-            let steps = round(body.x * (DEBUG_SPAN_STEPS + 1.0));
+        case SHOWN_WATER_SPAN: {
+            let steps = f32(water_probe_detail_span(ids.z));
             return debug_ramp(DEBUG_WATER_SPANS, max(steps - 1.0, 0.0) / DEBUG_SPAN_STEPS);
         }
-        case DEBUG_WATER_EDDY: {
+        case SHOWN_WATER_EDDIES: {
             return debug_eddies_color(froudes.y);
         }
-        case DEBUG_WATER_ROUGH: {
-            return debug_ramp(DEBUG_WATER_ROUGHNESS, body.y);
+        case SHOWN_WATER_ROUGHNESS: {
+            return debug_ramp(DEBUG_WATER_ROUGHNESS,
+                debug_share(water_probe_detail_roughness(ids.z)));
         }
         default: {
-            return DEBUG_REACHES[min(numbers.y >> 24u, 5u)];
+            return DEBUG_REACHES[min(water_probe_state_reach(numbers.y), 5u)];
         }
     }
 }

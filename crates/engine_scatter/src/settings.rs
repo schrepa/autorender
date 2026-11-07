@@ -23,7 +23,6 @@ settings! {
         pub variation: f32 = 1.0 => range(0.0, 1.0),
         pub hashed_cutoff: bool = false => any,
         pub ground_blend: f32 = 0.4 => range(0.0, 4.0),
-        pub crown_depth: f32 = 2.0 => range(0.0, 8.0),
     }
 }
 

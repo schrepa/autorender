@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::sync::Arc;
 
+use engine_core::Ticket;
 use engine_core::math::clamp;
 use engine_places_rendering::audio::Bus;
 use glam::{Mat3, Quat, Vec3};
@@ -28,10 +29,9 @@ fn decibels(amplitude: f32) -> Decibels {
     }
 }
 
-enum Sound {
+pub(crate) enum Decoded {
     Held(Box<StaticSoundData>),
     Streamed(Arc<[u8]>),
-    Failed(String),
 }
 
 enum Playing {
@@ -147,7 +147,6 @@ fn on_track<D: SoundData>(
 #[derive(Default)]
 pub(crate) struct Backend {
     device: Option<Device>,
-    sounds: BTreeMap<u32, Sound>,
     voices: BTreeMap<u32, Voice>,
 }
 
@@ -182,40 +181,38 @@ impl Backend {
         self.device = None;
     }
 
-    pub(crate) fn decode(&mut self, sound: u32, bytes: Arc<[u8]>, stream: bool, _may_open: bool) {
+    pub(crate) fn decode(
+        &mut self,
+        _sound: (u32, Ticket),
+        bytes: Arc<[u8]>,
+        stream: bool,
+        _may_open: bool,
+    ) -> Option<Result<Decoded, String>> {
         let decoded = if stream {
             StreamingSoundData::from_cursor(Cursor::new(Arc::clone(&bytes)))
-                .map(|_| Sound::Streamed(bytes))
+                .map(|_| Decoded::Streamed(bytes))
         } else {
-            StaticSoundData::from_cursor(Cursor::new(bytes)).map(|data| Sound::Held(Box::new(data)))
+            StaticSoundData::from_cursor(Cursor::new(bytes))
+                .map(|data| Decoded::Held(Box::new(data)))
         };
-        let entry = decoded.unwrap_or_else(|failure| Sound::Failed(failure.to_string()));
-        self.sounds.insert(sound, entry);
+        Some(decoded.map_err(|failure| failure.to_string()))
     }
 
-    pub(crate) fn forget(&mut self, sound: u32) {
-        self.sounds.remove(&sound);
+    pub(crate) fn arrivals(&mut self) -> Vec<((u32, Ticket), Result<Decoded, String>)> {
+        Vec::new()
     }
 
-    pub(crate) fn arrival(&self, sound: u32) -> Option<Result<(), String>> {
-        Some(match self.sounds.get(&sound) {
-            Some(Sound::Held(_) | Sound::Streamed(_)) => Ok(()),
-            Some(Sound::Failed(failure)) => Err(failure.clone()),
-            None => Err("sound_missing".to_owned()),
-        })
-    }
-
-    pub(crate) fn start(&mut self, voice: u32, sound: u32, play: &Start) -> Result<(), String> {
+    pub(crate) fn start(&mut self, voice: u32, sound: &Decoded, play: &Start) -> Result<(), String> {
         let device = self.device.as_mut().ok_or("no_device")?;
-        let sound = self.sounds.get(&sound).ok_or("sound_missing")?;
         let mut track = play.radius.map(|_| device.spatial(play.bus)).transpose()?;
         let bus = &mut device.tracks[play.bus.index()];
         let playing = match sound {
-            Sound::Held(data) => Playing::Held(on_track(bus, track.as_mut(), held(data, play))?),
-            Sound::Streamed(bytes) => {
+            Decoded::Held(data) => {
+                Playing::Held(on_track(bus, track.as_mut(), held(data, play))?)
+            }
+            Decoded::Streamed(bytes) => {
                 Playing::Streamed(on_track(bus, track.as_mut(), streamed(bytes, play)?)?)
             }
-            Sound::Failed(failure) => return Err(failure.clone()),
         };
         let radius = play.radius.unwrap_or_default();
         self.voices.insert(

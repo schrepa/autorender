@@ -1,0 +1,430 @@
+use std::fmt::Write as _;
+
+use bevy_ecs::component::Component;
+use bevy_ecs::resource::Resource;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::{DrawKind, Error, ErrorCode, Mobility, gpu_bits};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum AttachPoint {
+    Depth,
+    Opaque,
+    Sky,
+    Transparent,
+    Post,
+    Display,
+    Overlay,
+}
+
+impl AttachPoint {
+    pub const ALL: [Self; 7] = [
+        Self::Depth,
+        Self::Opaque,
+        Self::Sky,
+        Self::Transparent,
+        Self::Post,
+        Self::Display,
+        Self::Overlay,
+    ];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Depth => "depth",
+            Self::Opaque => "opaque",
+            Self::Sky => "sky",
+            Self::Transparent => "transparent",
+            Self::Post => "post",
+            Self::Display => "display",
+            Self::Overlay => "overlay",
+        }
+    }
+
+    pub const fn scene(self) -> bool {
+        match self {
+            Self::Depth | Self::Opaque | Self::Sky | Self::Transparent => true,
+            Self::Post | Self::Display | Self::Overlay => false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+pub struct TargetName(pub &'static str);
+
+impl TargetName {
+    pub const COLOR: Self = Self("color");
+    pub const DEPTH: Self = Self("depth");
+    pub const MOTION: Self = Self("motion");
+    pub const NORMALS: Self = Self("normals");
+    pub const TRANSPARENCY: Self = Self("transparency");
+    pub const CORE: [Self; 5] = [
+        Self::COLOR,
+        Self::DEPTH,
+        Self::MOTION,
+        Self::NORMALS,
+        Self::TRANSPARENCY,
+    ];
+
+    pub const fn name(self) -> &'static str {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Writes(pub &'static [TargetName]);
+
+impl Writes {
+    pub const LIT: Self = Self(&[TargetName::COLOR, TargetName::DEPTH]);
+    pub const DEPTH: Self = Self(&[TargetName::DEPTH]);
+    pub const NOTHING: Self = Self(&[]);
+
+    pub const fn targets(self) -> &'static [TargetName] {
+        self.0
+    }
+
+    pub fn contains(self, target: TargetName) -> bool {
+        self.0.contains(&target)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum PassViews {
+    Every,
+    Main,
+    Owned,
+}
+
+#[gpu_bits(crate = crate)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct SlotSet {
+    pub position: bool,
+    pub base_color: bool,
+    pub opacity: bool,
+    pub normal: bool,
+    pub roughness: bool,
+    pub metalness: bool,
+    pub emissive: bool,
+    pub occlusion: bool,
+    pub transmission: bool,
+    pub lighting: bool,
+    pub output: bool,
+}
+
+impl SlotSet {
+    pub const NONE: Self = Self {
+        position: false,
+        base_color: false,
+        opacity: false,
+        normal: false,
+        roughness: false,
+        metalness: false,
+        emissive: false,
+        occlusion: false,
+        transmission: false,
+        lighting: false,
+        output: false,
+    };
+    pub const POSITION: Self = Self {
+        position: true,
+        ..Self::NONE
+    };
+    pub const MASK: Self = Self {
+        position: true,
+        opacity: true,
+        ..Self::NONE
+    };
+    pub const ALL: Self = Self {
+        position: true,
+        base_color: true,
+        opacity: true,
+        normal: true,
+        roughness: true,
+        metalness: true,
+        emissive: true,
+        occlusion: true,
+        transmission: true,
+        lighting: true,
+        output: true,
+    };
+
+    pub fn covers(self, other: Self) -> bool {
+        let (held, wanted) = (
+            <Self as crate::GpuBits>::pack(self),
+            <Self as crate::GpuBits>::pack(other),
+        );
+        held & wanted == wanted
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Pass {
+    pub writes: Writes,
+    pub reads: SlotSet,
+    pub views: PassViews,
+    pub at: AttachPoint,
+    pub takes: fn(DrawKind) -> bool,
+}
+
+impl Pass {
+    pub const fn scene(&self) -> bool {
+        self.reads.position
+    }
+}
+
+pub fn every(_: DrawKind) -> bool {
+    true
+}
+
+pub fn never(_: DrawKind) -> bool {
+    false
+}
+
+pub trait PassName: 'static {
+    const NAME: &'static str;
+    const PASS: Pass;
+}
+
+pub struct DepthPass;
+
+impl PassName for DepthPass {
+    const NAME: &'static str = "depth";
+    const PASS: Pass = Pass {
+        writes: Writes::DEPTH,
+        reads: SlotSet::MASK,
+        views: PassViews::Every,
+        at: AttachPoint::Depth,
+        takes: every,
+    };
+}
+
+pub struct ColorPass;
+
+impl PassName for ColorPass {
+    const NAME: &'static str = "color";
+    const PASS: Pass = Pass {
+        writes: Writes::LIT,
+        reads: SlotSet::ALL,
+        views: PassViews::Every,
+        at: AttachPoint::Opaque,
+        takes: every,
+    };
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PassEntry {
+    pub name: &'static str,
+    pub pass: Pass,
+}
+
+impl PassEntry {
+    pub const fn of<N: PassName>() -> Self {
+        Self {
+            name: N::NAME,
+            pass: N::PASS,
+        }
+    }
+}
+
+pub const PASS_BITS: u32 = u32::BITS;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+pub struct PassBit(u8);
+
+impl PassBit {
+    pub const fn index(self) -> u32 {
+        self.0 as u32
+    }
+
+    pub const fn mask(self) -> PassMask {
+        PassMask(1 << self.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct PassMask(pub u32);
+
+impl PassMask {
+    pub const NONE: Self = Self(0);
+
+    pub const fn has(self, bit: PassBit) -> bool {
+        self.0 & (1 << bit.0) != 0
+    }
+
+    #[must_use]
+    pub const fn set(self, bit: PassBit, on: bool) -> Self {
+        if on {
+            Self(self.0 | (1 << bit.0))
+        } else {
+            Self(self.0 & !(1 << bit.0))
+        }
+    }
+
+    pub const fn word(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ScenePass {
+    pub name: &'static str,
+    pub brick: &'static str,
+    pub pass: Pass,
+    pub bit: Option<PassBit>,
+}
+
+#[derive(Resource, Clone, Debug, Default)]
+pub struct ScenePasses {
+    listed: Vec<ScenePass>,
+}
+
+pub const CORE_PASSES: [PassEntry; 2] =
+    [PassEntry::of::<DepthPass>(), PassEntry::of::<ColorPass>()];
+
+pub const CORE_BRICK: &str = "engine_render";
+
+fn wgsl_name(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+impl ScenePasses {
+    pub fn of(registered: impl IntoIterator<Item = (&'static str, PassEntry)>) -> (Self, Vec<Error>) {
+        let mut entries: Vec<(&'static str, PassEntry)> = registered.into_iter().collect();
+        entries.sort_by(|first, second| (first.0, first.1.name).cmp(&(second.0, second.1.name)));
+        let mut listed: Vec<ScenePass> = Vec::with_capacity(entries.len() + CORE_PASSES.len());
+        let mut problems = Vec::new();
+        let mut next = 0_u32;
+        let core = CORE_PASSES.iter().map(|entry| (CORE_BRICK, *entry));
+        for (brick, entry) in core.chain(entries) {
+            let path = format!("$.passes.{}", entry.name);
+            if let Some(known) = listed.iter().find(|known| known.name == entry.name) {
+                problems.push(Error::new(ErrorCode::NameTwice, path).got(known.brick));
+                continue;
+            }
+            let bit = if !entry.pass.scene() {
+                None
+            } else if next < PASS_BITS {
+                next += 1;
+                Some(PassBit((next - 1) as u8))
+            } else {
+                problems.push(Error::new(ErrorCode::OutOfRange, format!("{path}.bit")).got(PASS_BITS));
+                None
+            };
+            listed.push(ScenePass {
+                name: entry.name,
+                brick,
+                pass: entry.pass,
+                bit,
+            });
+        }
+        (Self { listed }, problems)
+    }
+
+    pub fn listed(&self) -> &[ScenePass] {
+        &self.listed
+    }
+
+    pub fn get(&self, name: &str) -> Option<&ScenePass> {
+        self.listed.iter().find(|listed| listed.name == name)
+    }
+
+    pub fn bit(&self, name: &str) -> Option<PassBit> {
+        self.get(name).and_then(|listed| listed.bit)
+    }
+
+    pub fn bit_of<N: PassName>(&self) -> Option<PassBit> {
+        self.bit(N::NAME)
+    }
+
+    pub fn at(&self, point: AttachPoint) -> impl Iterator<Item = &ScenePass> + '_ {
+        self.listed
+            .iter()
+            .filter(move |listed| listed.pass.at == point)
+    }
+
+    pub fn defaults(&self, kind: DrawKind) -> PassMask {
+        self.listed
+            .iter()
+            .filter_map(|listed| listed.bit.filter(|_| (listed.pass.takes)(kind)))
+            .fold(PassMask::NONE, |mask, bit| mask.set(bit, true))
+    }
+
+    pub fn decode(&self, mask: PassMask) -> Value {
+        let mut decoded = serde_json::Map::new();
+        for listed in &self.listed {
+            if let Some(bit) = listed.bit {
+                decoded.insert(listed.name.to_owned(), Value::Bool(mask.has(bit)));
+            }
+        }
+        Value::Object(decoded)
+    }
+
+    pub fn encode(&self, value: &Value, base: PassMask, path: &str) -> Result<PassMask, Error> {
+        let Value::Object(named) = value else {
+            return Err(Error::new(ErrorCode::InvalidType, path.to_owned()).got(value.clone()));
+        };
+        let mut mask = base;
+        for (name, on) in named {
+            let at = format!("{path}.{name}");
+            let Some(bit) = self.bit(name) else {
+                let known: Vec<&str> = self
+                    .listed
+                    .iter()
+                    .filter(|listed| listed.bit.is_some())
+                    .map(|listed| listed.name)
+                    .collect();
+                return Err(Error::new(ErrorCode::UnknownField, at).got(name).variants(known));
+            };
+            let Value::Bool(on) = on else {
+                return Err(Error::new(ErrorCode::InvalidType, at).got(on.clone()));
+            };
+            mask = mask.set(bit, *on);
+        }
+        Ok(mask)
+    }
+
+    pub fn wgsl(&self) -> String {
+        let mut text = String::new();
+        for listed in &self.listed {
+            if let Some(bit) = listed.bit {
+                let _ = writeln!(
+                    text,
+                    "const PASS_{}: u32 = {}u;",
+                    wgsl_name(listed.name),
+                    1_u32 << bit.index()
+                );
+            }
+        }
+        text
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneView {
+    pub view_projection: [[f32; 4]; 4],
+    pub planes: Option<[[f32; 4]; 6]>,
+    pub eye: [f32; 3],
+    pub size: [u32; 2],
+    pub detail: f32,
+    pub takes: Option<Mobility>,
+}
+
+#[derive(Component, Clone, Debug, Default, PartialEq)]
+pub struct SceneViews {
+    pub pass: &'static str,
+    pub views: Vec<SceneView>,
+}

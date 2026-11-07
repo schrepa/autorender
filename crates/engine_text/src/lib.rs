@@ -6,17 +6,17 @@ mod operations;
 mod smokes;
 mod typeset;
 
-use std::ops::Range;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, GlobalTransforms, Runs, SceneComponents,
-    SceneCx, Schedule, Smoke, Source, View, gpu_struct, settings, stats,
+    AttachPoint, Brick, Bricks, ComponentKind, Error, ErrorCode, GlobalTransforms, PassName,
+    PassViews, PrimaryView, Runs, SceneComponents, SceneCx, Schedule, SlotSet, Smoke, Source,
+    Writes, gpu_struct, never, settings, stats,
 };
-use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Text, TextAlign};
+use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Glyph, Text, TextAlign};
 use engine_render::{
-    Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, Layer, Lifetime, OverlayStack,
+    Allocation, Attach, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass,
     Pipeline, Prepare, RenderBricks, RenderPipeline, Shape, Texture, wgpu,
 };
 use serde::{Deserialize, Serialize};
@@ -56,7 +56,18 @@ gpu_struct! {
     }
 }
 
-pub(crate) type GlyphRange = (Option<u32>, Range<u32>);
+pub(crate) struct TextPass;
+
+impl PassName for TextPass {
+    const NAME: &'static str = "text";
+    const PASS: engine_core::Pass = engine_core::Pass {
+        writes: Writes::NOTHING,
+        reads: SlotSet::NONE,
+        views: PassViews::Main,
+        at: AttachPoint::Overlay,
+        takes: never,
+    };
+}
 
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -136,7 +147,7 @@ fn install(mut text: ResMut<Text>) {
 }
 
 fn sync(
-    (text, settings, view): (Res<Text>, Res<TextSettings>, Res<View>),
+    (text, settings, view): (Res<Text>, Res<TextSettings>, Res<PrimaryView>),
     mut labels: Query<&mut Label>,
     mut stats: ResMut<TextStats>,
 ) {
@@ -145,6 +156,7 @@ fn sync(
     };
     let mut state = typesetter.lock();
     state.sync(&settings, &view);
+    state.advance();
     for mut label in labels.iter_mut().filter(|label| label.bytes.is_some()) {
         let bytes = label.bytes.take();
         label.face = bytes.and_then(|bytes| state.load_font(bytes));
@@ -173,7 +185,7 @@ impl Brick for TextBrick {
         bricks
             .settings::<TextSettings>()
             .stats::<TextStats>()
-            .fill::<Text>(None)
+            .fill::<Text>(Some(shaders::text::faces::text::MODULE))
             .join::<SceneComponents>(
                 ComponentKind::of::<Label>("text")
                     .check(check_label)
@@ -188,16 +200,18 @@ impl Brick for TextBrick {
             .operation::<operations::TextMeasure>()
             .observation::<operations::TextRuns>()
             .generated(GENERATED)
-            .draws::<TextGpu, OverlayStack>(Layer::Over, TextGpu::draw_glyphs);
+            .pass::<TextPass>()
+            .part::<TextGpu>();
     }
 }
 
 struct TextGpu {
-    pipeline: Pipeline<Self, OverlayStack>,
+    pass: Pass<Self>,
+    pipeline: Pipeline<Self, Own>,
     instances: Buffer<Self>,
     atlas: Texture<Self>,
+    placed: Vec<Glyph>,
     staged: Vec<GlyphInstance>,
-    ranges: Vec<GlyphRange>,
 }
 
 impl GpuPart for TextGpu {
@@ -208,15 +222,21 @@ impl GpuPart for TextGpu {
         ),
         Res<'static, Text>,
         Res<'static, TextSettings>,
-        Res<'static, View>,
+        Res<'static, PrimaryView>,
     );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        use shaders::text::draw;
+        use shaders::text::{draw, faces::text as face};
         let instances = cx.buffer("instances", Lifetime::Kept);
         let atlas = cx.texture("atlas", wgpu::TextureFormat::R8Unorm, Lifetime::Kept);
+        cx.frame(face::TEXT_ATLAS, Bind::Texture(atlas))?;
+        let pass = cx
+            .pass(TextPass::NAME)
+            .at(TextPass::PASS.at)
+            .span(TextPass::NAME)
+            .id();
         let pipeline = cx.render_pipeline(
-            OverlayStack,
+            pass,
             &RenderPipeline {
                 vertex: draw::VS_TEXT,
                 fragment: Some(draw::FS_TEXT),
@@ -227,17 +247,15 @@ impl GpuPart for TextGpu {
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 writes: wgpu::ColorWrites::ALL,
             },
-            &[
-                (draw::INSTANCES, Bind::Buffer(instances)),
-                (draw::ATLAS, Bind::Texture(atlas)),
-            ],
+            &[(draw::INSTANCES, Bind::Buffer(instances))],
         )?;
         Ok(Self {
+            pass,
             pipeline,
             instances,
             atlas,
+            placed: Vec::new(),
             staged: Vec::new(),
-            ranges: Vec::new(),
         })
     }
 
@@ -246,23 +264,27 @@ impl GpuPart for TextGpu {
         ((labels, globals), text, settings, view): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.ranges.clear();
+        self.staged.clear();
         let Some(typesetter) = Typesetter::of(&text) else {
             return;
         };
         let mut state = typesetter.lock();
-        state.frame(
+        let shown = state.frame(
             labels
                 .iter()
                 .filter(|&(entity, _)| globals.drawn(entity))
                 .map(|(_, label)| label),
             &settings,
             &view,
-            &mut self.staged,
-            &mut self.ranges,
+            &mut self.placed,
         );
+        self.staged.extend(self.placed.iter().map(|glyph| GlyphInstance {
+            place: glyph.place,
+            rect: glyph.texel,
+            color: glyph.color,
+        }));
         let mut uploads = state.take_uploads();
-        if self.staged.is_empty() && uploads.is_empty() {
+        if shown == 0 && uploads.is_empty() {
             return;
         }
         let extent = |width, height| wgpu::Extent3d {
@@ -299,23 +321,18 @@ impl GpuPart for TextGpu {
             std::mem::size_of_val(self.staged.as_slice()) as u64,
         );
         cx.write(self.instances, 0, &self.staged);
-        cx.want_overlay();
+        cx.run(self.pass);
     }
-}
 
-impl TextGpu {
-    fn draw_glyphs(&self, step: &Option<u32>, draw: &mut Draw<'_, Self, OverlayStack>) -> u32 {
-        let mut drawn = 0;
-        for (_, glyphs) in self.ranges.iter().filter(|(held, _)| held == step) {
-            draw.draw(
-                &self.pipeline,
-                Shape::Pulled {
-                    vertices: 0..6,
-                    instances: glyphs.clone(),
-                },
-            );
-            drawn += 1;
-        }
-        drawn
+    fn encode(&mut self, _: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+        let mut draw = cx.render(Attach::Declared, None);
+        draw.draw(
+            &self.pipeline,
+            Shape::Pulled {
+                vertices: 0..6,
+                instances: 0..self.staged.len() as u32,
+            },
+        );
+        1
     }
 }

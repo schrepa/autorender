@@ -1,10 +1,11 @@
 import package::engine::mesh::declarations::AffineVertexInput;
+import package::engine::mesh::impostor_frames::ImpostorRecord;
 import package::engine::shading::{Shaded, ViewPixel};
 import package::face::debug::DebugTargets;
 import package::meshes::cards::{card_debug, placed_card, placed_card_lit, placed_card_point};
 import package::meshes::debug::point_targets;
 import package::meshes::forward::drawn_pixel;
-import package::meshes::shade::{masked_depth, placed_fragment, shade, surface_point};
+import package::meshes::shade::{masked_depth, mesh_point, placed_fragment, shade};
 import package::meshes::slots::instance_poses;
 import package::meshes::vertex::{pose_origin, slot_temporal};
 import package::place::instances::{AffinePose, CardDebugTargets, CardShaded, CardVertex,
@@ -60,22 +61,23 @@ fn slot_pixel_extended(input: SlotVertexExtended) -> ViewPixel {
 
 fn slot_debug(fragment: SlotFragment, front: bool, record: u32, object: u32, detail: u32)
         -> DebugTargets {
-    return point_targets(record, object, detail, surface_point(fragment, front, true));
+    return point_targets(record, object, detail, mesh_point(fragment, front, true));
 }
 
 fn placed_card_vertex(vertex: u32, batch: u32, pose: AffinePose, previous: AffinePose,
-        color: SlotColor) -> CardVertex {
-    return placed_card(vertex, batch, pose, previous, color);
+        color: SlotColor, impostor: ImpostorRecord) -> CardVertex {
+    return placed_card(vertex, batch, pose, previous, color, impostor);
 }
 
-fn placed_card_shade(input: CardVertex) -> CardShaded {
-    return placed_card_lit(input);
+fn placed_card_shade(input: CardVertex, impostor: ImpostorRecord) -> CardShaded {
+    return placed_card_lit(input, impostor);
 }
 
 fn placed_card_pixel(input: CardVertex) -> ViewPixel {
     return drawn_pixel(input.clip_position, input.previous);
 }
 
-fn placed_card_debug(input: CardVertex, record: u32, object: u32) -> CardDebugTargets {
-    return card_debug(input, placed_card_point(input), record, object);
+fn placed_card_debug(input: CardVertex, record: u32, object: u32, impostor: ImpostorRecord)
+        -> CardDebugTargets {
+    return card_debug(input, placed_card_point(input, impostor), record, object);
 }

@@ -4,14 +4,14 @@ use std::sync::Arc;
 
 use bevy_ecs::system::SystemState;
 use bevy_ecs::world::World;
-use engine_core::{DrawPoint, Error, ErrorCode};
+use engine_core::{DrawKind, Error, ErrorCode};
 use engine_registry::Scope;
 
-use crate::draws::{DrawMember, RawDraw};
+use crate::draws::RawDraw;
 use crate::encode::{EncodeCore, FrameCore};
 use crate::install::InstallCore;
 use crate::profiling::GpuProfiler;
-use crate::{Draw, Encode, GpuPart, Install, Pass, Prepare};
+use crate::{Draw, Encode, GpuPart, Install, Pass, Prepare, Scene, SceneDraw};
 
 pub(crate) type InstallFn = fn(&mut World, &mut InstallCore) -> Result<Box<dyn Installed>, Error>;
 
@@ -47,50 +47,38 @@ pub(crate) struct Generated(pub(crate) &'static [&'static str]);
 
 pub(crate) struct ResolvePass(pub(crate) crate::PassNames);
 
-pub(crate) struct DrawAny {
+pub(crate) type KindCall =
+    Arc<dyn Fn(&dyn Any, &SceneDraw, &mut RawDraw<'_>) -> u32 + Send + Sync>;
+
+pub(crate) struct KindDraw {
     pub(crate) part: TypeId,
-    pub(crate) record: Arc<dyn Any + Send + Sync>,
+    pub(crate) kind: DrawKind,
+    pub(crate) call: KindCall,
 }
 
-impl DrawAny {
-    pub(crate) fn of<P: GpuPart, D: DrawPoint>(
-        layer: D::Layer,
-        draw: fn(&P, &D::Args, &mut Draw<'_, P, D>) -> u32,
+impl KindDraw {
+    pub(crate) fn of<P: GpuPart>(
+        kind: DrawKind,
+        draw: fn(&P, &SceneDraw, &mut Draw<'_, P, Scene>) -> u32,
     ) -> Self {
         Self {
             part: TypeId::of::<P>(),
-            record: Arc::new(DrawRecord::<D> {
-                layer,
-                make: Box::new(move |part| DrawMember {
-                    part,
-                    layer,
-                    call: Box::new(trampoline::<P, D>(draw)),
-                }),
+            kind,
+            call: Arc::new(move |part: &dyn Any, scene: &SceneDraw, raw: &mut RawDraw<'_>| {
+                match part.downcast_ref::<P>() {
+                    Some(part) => draw(part, scene, &mut Draw::retyped(raw)),
+                    None => 0,
+                }
             }),
         }
     }
 }
 
-type MakeMember<D> = Box<dyn Fn(u32) -> DrawMember<D> + Send + Sync>;
-
-pub(crate) struct DrawRecord<D: DrawPoint> {
-    pub(crate) layer: D::Layer,
-    make: MakeMember<D>,
-}
-
-impl<D: DrawPoint> DrawRecord<D> {
-    pub(crate) fn member(&self, part: u32) -> DrawMember<D> {
-        (self.make)(part)
-    }
-}
-
-fn trampoline<P: GpuPart, D: DrawPoint>(
-    draw: fn(&P, &D::Args, &mut Draw<'_, P, D>) -> u32,
-) -> impl Fn(&dyn Any, &D::Args, &mut RawDraw<'_>) -> u32 + Send + Sync {
-    move |part, args, raw| match part.downcast_ref::<P>() {
-        Some(part) => draw(part, args, &mut Draw::retyped(raw)),
-        None => 0,
-    }
+#[derive(Clone)]
+pub(crate) struct KindMember {
+    pub(crate) part: u32,
+    pub(crate) kind: DrawKind,
+    pub(crate) call: KindCall,
 }
 
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {

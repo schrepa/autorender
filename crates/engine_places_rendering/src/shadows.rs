@@ -1,9 +1,10 @@
-use bevy_ecs::prelude::{Component, Resource};
-use engine_place::{DrawPoint, Slot};
+use bevy_ecs::prelude::Resource;
+use engine_place::{Cursor, Feed, Since, Slot};
 use glam::{Mat4, Vec3};
 
 pub const GROUND_TEXELS: f32 = 2.0;
 pub const SHADOW_REGIONS: u32 = 7;
+pub const SHADOW_CHANGES: usize = 1024;
 pub const DEBUG_SUN_NONE: u32 = 0;
 pub const DEBUG_SUN_HORIZON: u32 = 1;
 pub const DEBUG_SUN_BEYOND: u32 = 2;
@@ -23,6 +24,23 @@ pub struct ShadowMaps {
     pub writes: bool,
     pub levels: u32,
     pub regions: Vec<Region>,
+}
+
+impl ShadowMaps {
+    pub fn views(&self) -> impl Iterator<Item = CasterView> + '_ {
+        self.regions
+            .iter()
+            .enumerate()
+            .map(|(index, region)| CasterView {
+                region: index as u32,
+                map: region.map,
+                refresh: region.refresh,
+            })
+    }
+
+    pub fn view(&self, view: u32) -> Option<CasterView> {
+        self.views().nth(view as usize)
+    }
 }
 
 impl Slot for ShadowMaps {
@@ -64,18 +82,6 @@ pub enum Refresh {
     Redraw,
 }
 
-#[derive(Resource, Default)]
-pub struct ShadowCasters;
-
-impl Slot for ShadowCasters {
-    const NAME: &'static str = "shadow_casters";
-}
-
-impl DrawPoint for ShadowCasters {
-    type Layer = ();
-    type Args = CasterView;
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CasterView {
     pub region: u32,
@@ -83,13 +89,10 @@ pub struct CasterView {
     pub refresh: Refresh,
 }
 
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct ExtraCasters {
-    pub crown_depth: f32,
-}
-
-impl Slot for ExtraCasters {
-    const NAME: &'static str = "extra_casters";
+impl CasterView {
+    pub const fn view(&self) -> u32 {
+        self.region
+    }
 }
 
 #[derive(Resource, Default)]
@@ -100,9 +103,32 @@ impl Slot for CasterRoutes {
     const WGSL: Option<&'static str> = Some(include_str!("places/caster_routes.wgsl"));
 }
 
-#[derive(Component, Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ShadowChange {
+    Box { min: Vec3, max: Vec3, spacing: f32 },
+    All,
+    Casters,
+}
+
+#[derive(Resource, Clone, Debug)]
 pub struct ShadowChanges {
-    pub boxes: Vec<(Vec3, Vec3, f32)>,
-    pub all: bool,
-    pub casters: bool,
+    feed: Feed<ShadowChange>,
+}
+
+impl Default for ShadowChanges {
+    fn default() -> Self {
+        Self {
+            feed: Feed::new(SHADOW_CHANGES),
+        }
+    }
+}
+
+impl ShadowChanges {
+    pub fn push(&mut self, change: ShadowChange) {
+        self.feed.push(change);
+    }
+
+    pub fn since<'a>(&'a self, cursor: &mut Cursor) -> Since<'a, ShadowChange> {
+        self.feed.since(cursor)
+    }
 }

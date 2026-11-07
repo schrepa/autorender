@@ -434,13 +434,10 @@ pub struct ListedTerrain {
 
 impl Operation for TerrainListing {
     const NAME: &'static str = "terrain_listing";
-    type Params = (Res<'static, Terrains>, Res<'static, TerrainSettings>);
+    type Params = Res<'static, Terrains>;
     type Request = Self;
 
-    fn run(
-        (terrains, settings): SystemParamItem<'_, '_, Self::Params>,
-        _: Self,
-    ) -> Result<Value, Error> {
+    fn run(terrains: SystemParamItem<'_, '_, Self::Params>, _: Self) -> Result<Value, Error> {
         Ok(reply(TerrainListed {
             terrains: terrains
                 .entries
@@ -455,7 +452,7 @@ impl Operation for TerrainListing {
                             [u16::from(key.level), key.x, key.z]
                         })
                         .collect(),
-                    drawn: settings.enabled && state.drawn,
+                    drawn: state.drawn,
                 })
                 .collect(),
         }))

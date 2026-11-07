@@ -1,4 +1,4 @@
-import package::engine::shading::{Shaded, SurfacePoint};
+import package::engine::shading::SurfacePoint;
 import package::place::sun_blockers::SunAt;
 
 fn highlights() -> vec4<f32> {
@@ -38,15 +38,3 @@ fn sun_debug(at: SunAt) -> u32 {
     return 0u;
 }
 
-fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
-    return vec3<f32>(0.0);
-}
-
-fn widened(point: SurfacePoint, turn_dx: vec3<f32>, turn_dy: vec3<f32>) -> SurfacePoint {
-    return point;
-}
-
-fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
-    var shaded: Shaded;
-    return shaded;
-}

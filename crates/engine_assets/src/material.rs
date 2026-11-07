@@ -33,28 +33,6 @@ impl Surface {
     pub const MAX_EMISSION: f32 = 16.0;
 }
 
-fields! {
-    unauthored;
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct TopLayer {
-        pub color: [f32; 3] = [0.5; 3] => range(0.0, 1.0),
-        pub coverage: f32 = 0.5 => range(0.0, 1.0),
-        pub roughness: f32 = 0.85 => range(0.0, 1.0),
-    }
-}
-
-pub const MAX_WORLD_TILING: f32 = 10_000.0;
-
-fields! {
-    unauthored;
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct Grounding {
-        pub height: f32 = 1.0 => above_to(0.0, MAX_GROUNDING_HEIGHT),
-    }
-}
-
-pub const MAX_GROUNDING_HEIGHT: f32 = 10_000.0;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Wrap {
     #[default]
@@ -181,26 +159,159 @@ pub enum AlphaMode {
     Mask {
         cutoff: f32,
     },
+    Blend,
+    Additive,
+}
+
+impl AlphaMode {
+    pub const fn masked(self) -> bool {
+        matches!(self, Self::Mask { .. })
+    }
+
+    pub const fn blended(self) -> bool {
+        matches!(self, Self::Blend | Self::Additive)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Cull {
+    #[default]
+    Back,
+    Front,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct DepthBias {
+    pub constant: i32,
+    pub slope: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RenderState {
+    pub alpha: AlphaMode,
+    pub depth_test: bool,
+    pub depth_write: bool,
+    pub cull: Cull,
+    pub bias: DepthBias,
+}
+
+impl RenderState {
+    pub const OPAQUE: Self = Self {
+        alpha: AlphaMode::Opaque,
+        depth_test: true,
+        depth_write: true,
+        cull: Cull::Back,
+        bias: DepthBias {
+            constant: 0,
+            slope: 0.0,
+        },
+    };
+
+    fn check(&self) -> Result<(), Error> {
+        if let AlphaMode::Mask { cutoff } = self.alpha {
+            cutoff
+                .check("alpha_cutoff", Material::ALPHA_CUTOFF)
+                .map_err(invalid)?;
+        }
+        if !self.bias.slope.is_finite() {
+            return Err(Error::new(ErrorCode::InvalidMaterial, "$.state.bias.slope")
+                .expected(Expected::Finite)
+                .got(self.bias.slope));
+        }
+        Ok(())
+    }
+}
+
+impl Default for RenderState {
+    fn default() -> Self {
+        Self::OPAQUE
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SurfaceSlot {
+    BaseColor,
+    Opacity,
+    Normal,
+    Roughness,
+    Metalness,
+    Emissive,
+    Occlusion,
+    Transmission,
+    Output,
+}
+
+impl SurfaceSlot {
+    pub const ALL: [Self; 9] = [
+        Self::BaseColor,
+        Self::Opacity,
+        Self::Normal,
+        Self::Roughness,
+        Self::Metalness,
+        Self::Emissive,
+        Self::Occlusion,
+        Self::Transmission,
+        Self::Output,
+    ];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::BaseColor => "base_color",
+            Self::Opacity => "opacity",
+            Self::Normal => "normal",
+            Self::Roughness => "roughness",
+            Self::Metalness => "metalness",
+            Self::Emissive => "emissive",
+            Self::Occlusion => "occlusion",
+            Self::Transmission => "transmission",
+            Self::Output => "output",
+        }
+    }
+
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|slot| slot.name() == name)
+    }
+
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub enum LightingModel {
+    #[default]
+    Lit,
+    Unlit,
+    Named(String),
+}
+
+pub const BASE_COLOR_MAP: &str = "base_color";
+pub const METALLIC_ROUGHNESS_MAP: &str = "metallic_roughness";
+pub const NORMAL_MAP: &str = "normal";
+pub const OCCLUSION_MAP: &str = "occlusion";
+pub const EMISSIVE_MAP: &str = "emissive";
+pub const STANDARD_MAPS: [&str; 5] = [
+    BASE_COLOR_MAP,
+    METALLIC_ROUGHNESS_MAP,
+    NORMAL_MAP,
+    OCCLUSION_MAP,
+    EMISSIVE_MAP,
+];
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Material {
+    state: RenderState,
     color: [f32; 4],
-    base_color: Option<TextureRef>,
     surface: Surface,
-    metallic_roughness: Option<TextureRef>,
-    normal: Option<TextureRef>,
     normal_scale: f32,
-    occlusion: Option<TextureRef>,
     occlusion_strength: f32,
     emissive: [f32; 3],
-    emissive_texture: Option<TextureRef>,
-    alpha_mode: AlphaMode,
-    double_sided: bool,
-    foliage: bool,
-    world_tiling: Option<f32>,
-    top: Option<TopLayer>,
-    grounding: Option<Grounding>,
+    transmission: f32,
+    maps: Vec<(String, TextureRef)>,
+    slots: Vec<(SurfaceSlot, String)>,
+    values: Vec<(String, f32)>,
+    lighting: LightingModel,
 }
 
 impl Material {
@@ -210,7 +321,8 @@ impl Material {
     pub const NORMAL_SCALE: Rule = Rule::finite();
     pub const OCCLUSION_STRENGTH: Rule = Rule::range(0.0, 1.0);
     pub const EMISSIVE: Rule = Rule::at_least(0.0);
-    pub const WORLD_TILING: Rule = Rule::above_to(0.0, MAX_WORLD_TILING as f64);
+    pub const TRANSMISSION: Rule = Rule::range(0.0, 1.0);
+    pub const VALUE: Rule = Rule::finite();
 
     pub fn new(color: [f32; 4]) -> Result<Self, Error> {
         color.check("color", Self::COLOR).map_err(invalid)?;
@@ -220,28 +332,23 @@ impl Material {
                 .got(color[3]));
         }
         Ok(Self {
+            state: RenderState::OPAQUE,
             color,
-            base_color: None,
             surface: Surface::MATTE,
-            metallic_roughness: None,
-            normal: None,
             normal_scale: 1.0,
-            occlusion: None,
             occlusion_strength: 1.0,
             emissive: [0.0; 3],
-            emissive_texture: None,
-            alpha_mode: AlphaMode::Opaque,
-            double_sided: false,
-            foliage: false,
-            world_tiling: None,
-            top: None,
-            grounding: None,
+            transmission: 0.0,
+            maps: Vec::new(),
+            slots: Vec::new(),
+            values: Vec::new(),
+            lighting: LightingModel::Lit,
         })
     }
 
     pub fn with_opacity(mut self, opacity: f32) -> Result<Self, Error> {
         opacity.check("opacity", Self::OPACITY).map_err(invalid)?;
-        if opacity < 1.0 && self.alpha_mode == AlphaMode::Opaque {
+        if opacity < 1.0 && self.state.alpha == AlphaMode::Opaque {
             return Err(Error::new(ErrorCode::InvalidMaterial, "$.opacity")
                 .expected(Expected::Opaque)
                 .got(opacity));
@@ -250,17 +357,32 @@ impl Material {
         Ok(self)
     }
 
-    pub fn with_alpha_mode(mut self, mode: AlphaMode) -> Result<Self, Error> {
-        match mode {
-            AlphaMode::Opaque => self.color[3] = 1.0,
-            AlphaMode::Mask { cutoff } => {
-                cutoff
-                    .check("alpha_cutoff", Self::ALPHA_CUTOFF)
-                    .map_err(invalid)?;
-            }
+    pub fn with_alpha_mode(self, mode: AlphaMode) -> Result<Self, Error> {
+        let state = RenderState {
+            alpha: mode,
+            depth_write: !mode.blended(),
+            ..self.state
+        };
+        self.with_render_state(state)
+    }
+
+    pub fn with_render_state(mut self, state: RenderState) -> Result<Self, Error> {
+        state.check()?;
+        if state.alpha == AlphaMode::Opaque {
+            self.color[3] = 1.0;
         }
-        self.alpha_mode = mode;
+        self.state = state;
         Ok(self)
+    }
+
+    #[must_use]
+    pub fn with_cull(mut self, cull: Cull) -> Self {
+        self.state.cull = cull;
+        self
+    }
+
+    pub fn render_state(&self) -> RenderState {
+        self.state
     }
 
     pub fn opacity(&self) -> f32 {
@@ -268,42 +390,11 @@ impl Material {
     }
 
     pub fn alpha_mode(&self) -> AlphaMode {
-        self.alpha_mode
+        self.state.alpha
     }
 
-    pub fn with_world_mapping(mut self, tiling: f32) -> Result<Self, Error> {
-        tiling
-            .check("world_tiling", Self::WORLD_TILING)
-            .map_err(invalid)?;
-        self.world_tiling = Some(tiling);
-        Ok(self)
-    }
-
-    pub fn world_tiling(&self) -> Option<f32> {
-        self.world_tiling
-    }
-
-    pub fn with_top_layer(mut self, top: TopLayer) -> Result<Self, Error> {
-        top.validate()
-            .map_err(|setting| invalid_part("top", setting))?;
-        self.top = Some(top);
-        Ok(self)
-    }
-
-    pub fn top_layer(&self) -> Option<TopLayer> {
-        self.top
-    }
-
-    pub fn with_grounding(mut self, grounding: Grounding) -> Result<Self, Error> {
-        grounding
-            .validate()
-            .map_err(|setting| invalid_part("grounding", setting))?;
-        self.grounding = Some(grounding);
-        Ok(self)
-    }
-
-    pub fn grounding(&self) -> Option<Grounding> {
-        self.grounding
+    pub fn cull(&self) -> Cull {
+        self.state.cull
     }
 
     pub fn with_surface(mut self, surface: Surface) -> Result<Self, Error> {
@@ -315,28 +406,39 @@ impl Material {
     }
 
     pub fn textured(color: [f32; 4], texture: TextureHandle) -> Result<Self, Error> {
-        let mut material = Self::new(color)?;
-        material.base_color = Some(TextureRef::new(texture).with_sampler(Sampler::CLAMP));
-        Ok(material)
+        Self::new(color)?
+            .with_map(BASE_COLOR_MAP, TextureRef::new(texture).with_sampler(Sampler::CLAMP))
     }
 
-    pub fn with_base_color_texture(mut self, texture: TextureRef) -> Result<Self, Error> {
-        self.base_color = Some(checked(texture)?);
+    pub fn with_map(mut self, name: impl Into<String>, texture: TextureRef) -> Result<Self, Error> {
+        let name = name.into();
+        if !is_identifier(&name) {
+            return Err(Error::new(ErrorCode::InvalidMaterial, "$.maps")
+                .expected(Expected::Id)
+                .got(name));
+        }
+        let texture = checked(texture)?;
+        match self.maps.iter_mut().find(|(known, _)| *known == name) {
+            Some((_, held)) => *held = texture,
+            None => self.maps.push((name, texture)),
+        }
         Ok(self)
     }
 
-    pub fn with_metallic_roughness_texture(mut self, texture: TextureRef) -> Result<Self, Error> {
-        self.metallic_roughness = Some(checked(texture)?);
-        Ok(self)
+    pub fn with_base_color_texture(self, texture: TextureRef) -> Result<Self, Error> {
+        self.with_map(BASE_COLOR_MAP, texture)
+    }
+
+    pub fn with_metallic_roughness_texture(self, texture: TextureRef) -> Result<Self, Error> {
+        self.with_map(METALLIC_ROUGHNESS_MAP, texture)
     }
 
     pub fn with_normal_texture(mut self, texture: TextureRef, scale: f32) -> Result<Self, Error> {
         scale
             .check("normal_scale", Self::NORMAL_SCALE)
             .map_err(invalid)?;
-        self.normal = Some(checked(texture)?);
         self.normal_scale = scale;
-        Ok(self)
+        self.with_map(NORMAL_MAP, texture)
     }
 
     pub fn with_occlusion_texture(
@@ -347,9 +449,8 @@ impl Material {
         strength
             .check("occlusion_strength", Self::OCCLUSION_STRENGTH)
             .map_err(invalid)?;
-        self.occlusion = Some(checked(texture)?);
         self.occlusion_strength = strength;
-        Ok(self)
+        self.with_map(OCCLUSION_MAP, texture)
     }
 
     pub fn with_emissive(mut self, color: [f32; 3]) -> Result<Self, Error> {
@@ -358,20 +459,53 @@ impl Material {
         Ok(self)
     }
 
-    pub fn with_emissive_texture(mut self, texture: TextureRef) -> Result<Self, Error> {
-        self.emissive_texture = Some(checked(texture)?);
+    pub fn with_emissive_texture(self, texture: TextureRef) -> Result<Self, Error> {
+        self.with_map(EMISSIVE_MAP, texture)
+    }
+
+    pub fn with_transmission(mut self, transmission: f32) -> Result<Self, Error> {
+        transmission
+            .check("transmission", Self::TRANSMISSION)
+            .map_err(invalid)?;
+        self.transmission = transmission;
+        Ok(self)
+    }
+
+    pub fn with_slot(mut self, slot: SurfaceSlot, module: impl Into<String>) -> Result<Self, Error> {
+        let module = module.into();
+        if !is_identifier(&module) {
+            return Err(
+                Error::new(ErrorCode::InvalidMaterial, format!("$.slots.{}", slot.name()))
+                    .expected(Expected::Id)
+                    .got(module),
+            );
+        }
+        self.slots.retain(|(known, _)| *known != slot);
+        self.slots.push((slot, module));
+        self.slots.sort_by_key(|(known, _)| *known);
+        Ok(self)
+    }
+
+    pub fn with_value(mut self, name: impl Into<String>, value: f32) -> Result<Self, Error> {
+        let name = name.into();
+        if !is_identifier(&name) {
+            return Err(Error::new(ErrorCode::InvalidMaterial, "$.values")
+                .expected(Expected::Id)
+                .got(name));
+        }
+        value
+            .check("values", Self::VALUE)
+            .map_err(invalid)?;
+        match self.values.iter_mut().find(|(known, _)| *known == name) {
+            Some((_, held)) => *held = value,
+            None => self.values.push((name, value)),
+        }
         Ok(self)
     }
 
     #[must_use]
-    pub fn with_double_sided(mut self, double_sided: bool) -> Self {
-        self.double_sided = double_sided;
-        self
-    }
-
-    #[must_use]
-    pub fn with_foliage(mut self, foliage: bool) -> Self {
-        self.foliage = foliage;
+    pub fn with_lighting(mut self, lighting: LightingModel) -> Self {
+        self.lighting = lighting;
         self
     }
 
@@ -379,32 +513,47 @@ impl Material {
         self.color
     }
 
-    pub fn texture(&self) -> Option<TextureHandle> {
-        self.base_color.map(|texture| texture.texture)
-    }
-
-    pub fn base_color_texture(&self) -> Option<TextureRef> {
-        self.base_color
-    }
-
     pub fn surface(&self) -> Surface {
         self.surface
     }
 
+    pub fn map(&self, name: &str) -> Option<TextureRef> {
+        self.maps
+            .iter()
+            .find(|(known, _)| known == name)
+            .map(|(_, texture)| *texture)
+    }
+
+    pub fn maps(&self) -> &[(String, TextureRef)] {
+        &self.maps
+    }
+
+    pub fn texture(&self) -> Option<TextureHandle> {
+        self.map(BASE_COLOR_MAP).map(|texture| texture.texture)
+    }
+
+    pub fn base_color_texture(&self) -> Option<TextureRef> {
+        self.map(BASE_COLOR_MAP)
+    }
+
     pub fn metallic_roughness_texture(&self) -> Option<TextureRef> {
-        self.metallic_roughness
+        self.map(METALLIC_ROUGHNESS_MAP)
     }
 
     pub fn normal_texture(&self) -> Option<TextureRef> {
-        self.normal
+        self.map(NORMAL_MAP)
+    }
+
+    pub fn occlusion_texture(&self) -> Option<TextureRef> {
+        self.map(OCCLUSION_MAP)
+    }
+
+    pub fn emissive_texture(&self) -> Option<TextureRef> {
+        self.map(EMISSIVE_MAP)
     }
 
     pub fn normal_scale(&self) -> f32 {
         self.normal_scale
-    }
-
-    pub fn occlusion_texture(&self) -> Option<TextureRef> {
-        self.occlusion
     }
 
     pub fn occlusion_strength(&self) -> f32 {
@@ -415,84 +564,120 @@ impl Material {
         self.emissive
     }
 
-    pub fn emissive_texture(&self) -> Option<TextureRef> {
-        self.emissive_texture
+    pub fn transmission(&self) -> f32 {
+        self.transmission
     }
 
-    pub fn is_double_sided(&self) -> bool {
-        self.double_sided
+    pub fn slots(&self) -> &[(SurfaceSlot, String)] {
+        &self.slots
     }
 
-    pub fn is_foliage(&self) -> bool {
-        self.foliage
+    pub fn slot(&self, slot: SurfaceSlot) -> Option<&str> {
+        self.slots
+            .iter()
+            .find(|(known, _)| *known == slot)
+            .map(|(_, module)| module.as_str())
     }
 
-    pub fn maps(&self) -> [Option<TextureRef>; 5] {
-        [
-            self.base_color,
-            self.metallic_roughness,
-            self.normal,
-            self.occlusion,
-            self.emissive_texture,
-        ]
+    pub fn values(&self) -> &[(String, f32)] {
+        &self.values
+    }
+
+    pub fn value(&self, name: &str) -> Option<f32> {
+        self.values
+            .iter()
+            .find(|(known, _)| known == name)
+            .map(|(_, value)| *value)
+    }
+
+    pub fn lighting(&self) -> &LightingModel {
+        &self.lighting
     }
 
     pub fn textures(&self) -> impl Iterator<Item = TextureHandle> + '_ {
-        self.maps().into_iter().flatten().map(|map| map.texture)
-    }
-
-    pub fn has_maps(&self) -> bool {
-        self.maps().iter().any(Option::is_some)
-            || self.emissive != [0.0; 3]
-            || self.double_sided
-            || matches!(self.alpha_mode, AlphaMode::Mask { .. })
+        self.maps.iter().map(|(_, map)| map.texture)
     }
 
     pub fn binding(&self) -> Option<MaterialBinding> {
-        self.has_maps().then(|| MaterialBinding {
-            maps: self.maps().map(|map| {
-                map.map(|map| {
+        let plain = self.maps.is_empty()
+            && self.slots.is_empty()
+            && self.values.is_empty()
+            && self.emissive == [0.0; 3]
+            && self.transmission == 0.0
+            && self.state == RenderState::OPAQUE
+            && self.lighting == LightingModel::Lit;
+        (!plain).then(|| MaterialBinding {
+            state: (
+                match self.state.alpha {
+                    AlphaMode::Opaque => (0, 0),
+                    AlphaMode::Mask { cutoff } => (1, cutoff.to_bits()),
+                    AlphaMode::Blend => (2, 0),
+                    AlphaMode::Additive => (3, 0),
+                },
+                self.state.depth_test,
+                self.state.depth_write,
+                self.state.cull,
+                (self.state.bias.constant, self.state.bias.slope.to_bits()),
+            ),
+            maps: self
+                .maps
+                .iter()
+                .map(|(name, map)| {
                     let UvTransform {
                         offset: [u, v],
                         rotation,
                         scale: [x, y],
                     } = map.transform;
                     (
+                        name.clone(),
                         map.texture,
                         map.sampler,
                         [u, v, rotation, x, y].map(f32::to_bits),
                         map.tex_coord,
                     )
                 })
-            }),
-            parameters: [
+                .collect(),
+            factors: [
                 self.normal_scale,
                 self.occlusion_strength,
                 self.emissive[0],
                 self.emissive[1],
                 self.emissive[2],
-                match self.alpha_mode {
-                    AlphaMode::Mask { cutoff } => cutoff,
-                    AlphaMode::Opaque => 0.0,
-                },
+                self.transmission,
             ]
             .map(f32::to_bits),
-            masked: matches!(self.alpha_mode, AlphaMode::Mask { .. }),
-            double_sided: self.double_sided,
-            foliage: self.foliage,
+            slots: self.slots.clone(),
+            values: self
+                .values
+                .iter()
+                .map(|(name, value)| (name.clone(), value.to_bits()))
+                .collect(),
+            lighting: self.lighting.clone(),
         })
     }
 }
 
-type BoundMap = (TextureHandle, Sampler, [u32; 5], u32);
+type BoundMap = (String, TextureHandle, Sampler, [u32; 5], u32);
+type BoundState = ((u8, u32), bool, bool, Cull, (i32, u32));
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MaterialBinding {
-    maps: [Option<BoundMap>; 5],
-    parameters: [u32; 6],
-    masked: bool,
-    double_sided: bool,
-    foliage: bool,
+    state: BoundState,
+    maps: Vec<BoundMap>,
+    factors: [u32; 6],
+    slots: Vec<(SurfaceSlot, String)>,
+    values: Vec<(String, u32)>,
+    lighting: LightingModel,
+}
+
+fn is_identifier(name: &str) -> bool {
+    let mut characters = name.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_ascii_lowercase())
+        && characters.all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
+        })
 }
 
 fn checked(texture: TextureRef) -> Result<TextureRef, Error> {

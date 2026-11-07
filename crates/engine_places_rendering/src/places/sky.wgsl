@@ -23,7 +23,7 @@ fn environment_levels() -> u32 {
     return 1u;
 }
 
-fn environment_sample(direction: vec3<f32>, layer: u32, level: f32) -> vec3<f32> {
+fn environment_sample(direction: vec3<f32>, level: f32) -> vec3<f32> {
     return vec3<f32>(0.0);
 }
 

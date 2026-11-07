@@ -2,7 +2,6 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod assets;
 mod batches;
-mod casters;
 mod debug;
 mod draw;
 mod drawn;
@@ -19,31 +18,30 @@ mod smokes;
 mod uploads;
 
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, ImpostorPolicy, Mesh3d, Rule, Runs,
-    SceneComponents, Schedule, Setting, Smoke, Source,
+    Attributes, Brick, Bricks, ComponentKind, DrawKind, Error, ErrorCode, ImpostorPolicy,
+    KindDecl, Mesh3d, Rule, Runs, SceneComponents, Schedule, Setting, Smoke, Source,
 };
 use engine_places::meshes::{Cube, FirstPersonLayer, Instances, Tint};
-use engine_places_rendering::probes::ProbeViews;
-use engine_places_rendering::shadows::ShadowCasters;
-use engine_render::{Layer, MainView, RenderBricks};
+use engine_render::RenderBricks;
 use serde_json::{Value, json};
 
 pub use settings::{
     Culling, CullingStats, DetailStats, Impostors, MeshStats, OcclusionCulling, SubpixelCulling,
 };
 
+pub const MESH: DrawKind = DrawKind("mesh");
+
 const GENERATED: &[&str] = &[
     layouts::WGSL,
     <layouts::CandidateState as engine_core::GpuBits>::WGSL,
     <layouts::LodHistory as engine_core::BitValue>::WGSL,
     <layouts::LodFade as engine_core::GpuBits>::WGSL,
-    <layouts::CasterCache as engine_core::BitValue>::WGSL,
+    <layouts::CardFrames as engine_core::GpuBits>::WGSL,
     <engine_core::Mobility as engine_core::BitValue>::WGSL,
     <engine_core::NodeWord as engine_core::GpuBits>::WGSL,
     <layouts::PresentationFrame as engine_core::GpuStruct>::WGSL,
     <layouts::CandidateData as engine_core::GpuStruct>::WGSL,
     <layouts::BatchData as engine_core::GpuStruct>::WGSL,
-    <layouts::CasterFrame as engine_core::GpuStruct>::WGSL,
 ];
 
 const TINT_RULE: Rule = Rule::range(0.0, 1.0);
@@ -96,9 +94,7 @@ impl Brick for MeshesBrick {
             .resource::<retained::RetainedRender>()
             .resource::<batches::BatchPlan>()
             .resource::<order::MeshPlan>()
-            .resource::<casters::CasterPlan>()
             .resource::<presentation::PresentationTotals>()
-            .resource::<presentation::CasterTotals>()
             .resource::<drawn::WatchedSlot>()
             .operation::<drawn::MeshDrawn>()
             .observation::<drawn::MeshesListing>()
@@ -124,15 +120,15 @@ impl Brick for MeshesBrick {
                     order::plan_draws,
                     assets::publish_assets,
                     assets::impostor_policy,
-                    casters::plan_casters,
                     settings::mesh_stats,
                 ),
             )
             .generated(GENERATED)
-            .draws::<gpu::MeshesGpu, MainView>(Layer::Occluders, gpu::MeshesGpu::draw_prepass)
-            .draws::<gpu::MeshesGpu, MainView>(Layer::Opaque, gpu::MeshesGpu::draw_opaque)
-            .draws::<gpu::MeshesGpu, MainView>(Layer::Backdrop, gpu::MeshesGpu::draw_second)
-            .draws::<gpu::MeshesGpu, ShadowCasters>((), gpu::MeshesGpu::draw_casters)
-            .draws::<gpu::MeshesGpu, ProbeViews>((), gpu::MeshesGpu::draw_probe_face);
+            .draw_kind(KindDecl {
+                kind: MESH,
+                vertex: shaders::meshes::vertex::VS_MESH.name(),
+                needs: Attributes::BASE,
+            })
+            .draws::<gpu::MeshesGpu>(MESH, gpu::MeshesGpu::draw);
     }
 }

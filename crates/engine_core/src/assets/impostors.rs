@@ -8,7 +8,8 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Query, Res, SystemState};
 use bevy_ecs::world::World;
 use engine_assets::{
-    AlphaMode, AssetLibrary, Filter, Material, MaterialHandle, MeshHandle, TextureRef, Wrap,
+    AlphaMode, AssetLibrary, Cull, Filter, LightingModel, Material, MaterialHandle, MeshHandle,
+    TextureRef, Wrap,
 };
 use glam::Vec3;
 
@@ -37,8 +38,6 @@ pub struct ImpostorFlags {
     pub masked: bool,
     #[bits(5, at = 19)]
     pub frames: u32,
-    #[bits(1, at = 24)]
-    pub foliage: bool,
 }
 
 pub mod impostor_atlas {
@@ -64,7 +63,7 @@ impl ImpostorRecord {
         min: Vec3,
         max: Vec3,
         layer: u32,
-        (emissive, masked, foliage): ([f32; 3], bool, bool),
+        (emissive, masked): ([f32; 3], bool),
         shape: AtlasShape,
     ) -> Self {
         let center = (min + max) * 0.5;
@@ -77,7 +76,6 @@ impl ImpostorRecord {
             emissive,
             flags: ImpostorFlags {
                 masked,
-                foliage,
                 ..shape.flags()
             }
             .pack(),
@@ -147,7 +145,6 @@ impl AtlasShape {
             hemisphere: self.hemisphere,
             masked: false,
             frames: self.frames,
-            foliage: false,
         }
     }
 
@@ -439,12 +436,14 @@ pub struct ImpostorAsk {
 
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct ImpostorAsks {
+    pub generation: u64,
     pub hemisphere: bool,
     pub asks: Vec<Option<ImpostorAsk>>,
 }
 
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct ImpostorRecords {
+    pub generation: u64,
     pub records: Vec<ImpostorRecord>,
     pub asked: u32,
     pub refused: u32,
@@ -457,17 +456,25 @@ fn material_content(library: &AssetLibrary, material: Option<&Material>) -> u128
     };
     let mut bytes = Vec::with_capacity(256);
     floats(&mut bytes, &material.color());
-    for map in material.maps() {
-        let Some(map) = map else {
-            bytes.push(0);
-            continue;
-        };
-        bytes.push(1);
+    for (name, map) in material.maps() {
+        bytes.extend_from_slice(name.as_bytes());
+        bytes.push(0);
         let texture = library
             .texture(map.texture)
             .map_or(0, |texture| texture.identity(content_hash));
         bytes.extend_from_slice(&texture.to_le_bytes());
-        texture_ref(&mut bytes, &map);
+        texture_ref(&mut bytes, map);
+    }
+    for (slot, module) in material.slots() {
+        bytes.extend_from_slice(slot.name().as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(module.as_bytes());
+        bytes.push(0);
+    }
+    for (name, value) in material.values() {
+        bytes.extend_from_slice(name.as_bytes());
+        bytes.push(0);
+        floats(&mut bytes, &[*value]);
     }
     let surface = material.surface();
     floats(
@@ -482,29 +489,28 @@ fn material_content(library: &AssetLibrary, material: Option<&Material>) -> u128
         ],
     );
     floats(&mut bytes, &material.emissive());
+    floats(&mut bytes, &[material.transmission()]);
     match material.alpha_mode() {
         AlphaMode::Opaque => bytes.push(0),
         AlphaMode::Mask { cutoff } => {
             bytes.push(1);
             floats(&mut bytes, &[cutoff]);
         }
+        AlphaMode::Blend => bytes.push(2),
+        AlphaMode::Additive => bytes.push(3),
     }
-    bytes.push(u8::from(material.is_double_sided()));
-    floats(&mut bytes, &[material.world_tiling().unwrap_or(-1.0)]);
-    match material.top_layer() {
-        Some(top) => {
-            bytes.push(1);
-            floats(&mut bytes, &top.color);
-            floats(&mut bytes, &[top.coverage, top.roughness]);
+    bytes.push(match material.cull() {
+        Cull::Back => 0,
+        Cull::Front => 1,
+        Cull::None => 2,
+    });
+    match material.lighting() {
+        LightingModel::Lit => bytes.push(0),
+        LightingModel::Unlit => bytes.push(1),
+        LightingModel::Named(name) => {
+            bytes.push(2);
+            bytes.extend_from_slice(name.as_bytes());
         }
-        None => bytes.push(0),
-    }
-    match material.grounding() {
-        Some(grounding) => {
-            bytes.push(1);
-            floats(&mut bytes, &[grounding.height]);
-        }
-        None => bytes.push(0),
     }
     content_hash(&bytes)
 }
@@ -551,12 +557,6 @@ fn combined(first: u128, second: u128) -> u128 {
     bytes[..16].copy_from_slice(&first.to_le_bytes());
     bytes[16..].copy_from_slice(&second.to_le_bytes());
     content_hash(&bytes)
-}
-
-fn shades_as_foliage(material: Option<&Material>) -> bool {
-    material.is_some_and(|material| {
-        matches!(material.alpha_mode(), AlphaMode::Mask { .. }) || material.is_foliage()
-    })
 }
 
 fn masked(material: Option<&Material>) -> bool {
@@ -638,7 +638,6 @@ struct Bake {
     bounds: (Vec3, Vec3),
     content: (u128, u128),
     masked: bool,
-    foliage: bool,
     parts: Vec<(MeshHandle, MaterialHandle)>,
 }
 
@@ -937,7 +936,7 @@ impl Book {
             bake.bounds.0,
             bake.bounds.1,
             layer,
-            (emissive, bake.masked, bake.foliage),
+            (emissive, bake.masked),
             self.shape.facing(key.2),
         );
         self.baked.insert(
@@ -1299,7 +1298,7 @@ fn current_material<'a>(
     move |handle: MaterialHandle| {
         residency
             .material_resident(handle)
-            .then(|| library.material(handle).copied())
+            .then(|| library.material(handle).cloned())
             .flatten()
     }
 }
@@ -1321,7 +1320,6 @@ fn bake_of(
     let bounds = mesh.bounds();
     let (mut low, mut high) = (bounds.min(), bounds.max());
     let mut masked_any = masked(material.as_ref());
-    let mut foliage_any = shades_as_foliage(material.as_ref());
     let mut parts = Vec::with_capacity(ask.parts.len());
     for &(part_mesh, part_material) in &ask.parts {
         if !residency.resident(part_mesh) {
@@ -1340,7 +1338,6 @@ fn bake_of(
         low = low.min(bounds.min());
         high = high.max(bounds.max());
         masked_any |= masked(Some(value));
-        foliage_any |= shades_as_foliage(Some(value));
         parts.push((part_mesh, part_material));
     }
     Some(Bake {
@@ -1348,7 +1345,6 @@ fn bake_of(
         bounds: (low, high),
         content,
         masked: masked_any,
-        foliage: foliage_any,
         parts,
     })
 }
@@ -1422,7 +1418,10 @@ fn settle(
     }
     let mut written = Vec::with_capacity(asked.len());
     for (entity, asks) in asked {
-        let mut settled = ImpostorRecords::default();
+        let mut settled = ImpostorRecords {
+            generation: asks.generation,
+            ..ImpostorRecords::default()
+        };
         supply_all(
             book,
             cx,

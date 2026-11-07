@@ -1,13 +1,11 @@
 use engine_core::smoke::{
     COMPILE_FRAMES, Checked, above, camera, capture, control, environment, inspect, not, number,
-    query, refuse, render, renders_until, with,
+    query, refuse, render, renders_until, settled_by, with,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-use super::{
-    SETTLE_FRAMES, WAIT_FRAMES, height_at, heights, open, overview, settle, view, viewed,
-};
+use super::{WAIT_FRAMES, height_at, heights, open, overview, settle, view, viewed};
 use crate::requests::seen;
 use crate::stats::terrain;
 
@@ -559,12 +557,13 @@ fn horizons(session: &mut dyn SmokeSession) -> Checked<Value> {
 fn bounce(session: &mut dyn SmokeSession) -> Checked<()> {
     let mut changed = environment(session, json!({ "terrain": {}, "terrain_shading": {} }))?;
     let mut bounced = changed["rendering"].take();
-    for _ in 0..SETTLE_FRAMES {
-        if terrain(&bounced)["bounce"]["relit"] != 0 {
-            break;
+    settled_by(session, |session| {
+        let rendering = render(session)?;
+        if terrain(&bounced)["bounce"]["relit"] == 0 {
+            bounced = rendering.clone();
         }
-        bounced = render(session)?;
-    }
+        Ok(rendering)
+    })?;
     smoke_eq!(
         terrain(&bounced)["bounce"]["relit"].clone(),
         json!(1),

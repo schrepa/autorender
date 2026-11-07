@@ -23,7 +23,8 @@ mod startup;
 pub use attribution::GpuPassTimes;
 pub(crate) use display::Display;
 use display::DisplayFrame;
-pub use install::{Installation, InstalledPart, InstalledPiece, install_noop};
+pub use health::DeviceHealth;
+pub use install::{Installation, InstalledPart, InstalledPiece, device_limits, install_noop};
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::GpuMark;
 pub use startup::StartingRenderer;
@@ -56,7 +57,8 @@ pub(crate) struct Core {
     pub(crate) display: Display,
     pub(crate) health: Arc<Mutex<health::Reports>>,
     pub(crate) profiler: GpuProfiler,
-    pub(crate) pipeline_counts: crate::pipelines::PipelineCounts,
+    pub(crate) ledger: crate::pipelines::Ledger,
+    pub(crate) limits: engine_core::DeviceLimits,
 }
 
 pub struct Renderer {
@@ -70,11 +72,12 @@ pub struct Renderer {
     #[cfg(feature = "profiling")]
     prelude_owners: Vec<(&'static str, &'static str)>,
     installing: Option<Validation>,
-    previous: Option<(Mat4, (u32, u32), u64)>,
     seconds: Option<f32>,
     part_names: &'static [&'static str],
     linked: engine_core::LinkedStats,
     resolver: Option<(&'static str, &'static str)>,
+    recovering: Option<startup::Opening>,
+    lost_bricks: Vec<engine_registry::BrickId>,
 }
 
 impl Renderer {
@@ -99,6 +102,10 @@ impl Renderer {
             .parts
             .get(declared.part as usize)
             .map(|part| part.package)
+    }
+
+    pub fn device_limits(&self) -> engine_core::DeviceLimits {
+        self.core.limits
     }
 
     pub fn readback_overflows(&self) -> u64 {

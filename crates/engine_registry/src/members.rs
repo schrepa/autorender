@@ -1,7 +1,7 @@
 use std::any::{Any, TypeId};
 
 use bevy_ecs::resource::Resource;
-use bevy_ecs::world::World;
+use bevy_ecs::world::{Mut, World};
 use engine_place::{Error, ErrorCode, List};
 
 use crate::state::{BrickStates, GateId};
@@ -126,4 +126,17 @@ pub(crate) fn each_member<L: List>(world: &World, each: &mut dyn FnMut(&dyn Any)
 
 pub(crate) fn init_members<L: List>(world: &mut World) {
     world.init_resource::<MembersOf<L>>();
+}
+
+pub(crate) fn drop_members<L: List>(world: &mut World, gate: GateId) {
+    world.try_resource_scope(|world, members: Mut<MembersOf<L>>| {
+        for (member, _) in members
+            .members
+            .iter()
+            .zip(&members.gates)
+            .filter(|(_, held)| **held == gate)
+        {
+            L::dropped(world, member);
+        }
+    });
 }

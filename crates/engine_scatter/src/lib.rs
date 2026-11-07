@@ -15,17 +15,60 @@ mod settings;
 mod smokes;
 mod systems;
 
-use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source};
+use engine_core::{
+    Attributes, Brick, Bricks, KindDecl, Module, Runs, Schedule, Smoke, Source, SurfaceSlot,
+};
 use engine_places_rendering::lighting::Ambient;
 use engine_places_rendering::occlusion::OcclusionSource;
-use engine_places_rendering::shadows::{ExtraCasters, ShadowCasters};
 use engine_places_world::ground::{FarCover, Foliage, PlacedTiles};
-use engine_render::{Layer, MainView, RenderBricks};
+use engine_render::{RenderBricks, SlotModule};
 
 pub use settings::{
     FoliageSettings, OccupancySettings, PlacedLod, PlacedLook, PlacedPart, ScatterSettings,
     ScatterStats,
 };
+
+const GROUNDED: [SurfaceSlot; 4] = [
+    SurfaceSlot::BaseColor,
+    SurfaceSlot::Normal,
+    SurfaceSlot::Roughness,
+    SurfaceSlot::Metalness,
+];
+
+const LOOKS: [(&str, Module, &[SurfaceSlot], &[&str]); 3] = [
+    ("grounded", shaders::scatter::grounded::MODULE, &GROUNDED, &[]),
+    (
+        "foliage",
+        shaders::scatter::leaves::MODULE,
+        &[
+            SurfaceSlot::BaseColor,
+            SurfaceSlot::Normal,
+            SurfaceSlot::Roughness,
+            SurfaceSlot::Metalness,
+            SurfaceSlot::Transmission,
+        ],
+        &[],
+    ),
+    (
+        "world_mapped",
+        shaders::scatter::world_mapped::MODULE,
+        &[
+            SurfaceSlot::BaseColor,
+            SurfaceSlot::Normal,
+            SurfaceSlot::Roughness,
+            SurfaceSlot::Metalness,
+            SurfaceSlot::Occlusion,
+        ],
+        &[
+            "world_tiling",
+            "top_red",
+            "top_green",
+            "top_blue",
+            "top_coverage",
+            "top_roughness",
+        ],
+    ),
+];
 
 pub struct ScatterBrick;
 
@@ -59,7 +102,6 @@ impl Brick for ScatterBrick {
             .fill::<Foliage>(Some(shaders::scatter::faces::foliage::MODULE))
             .fill::<PlacedTiles>(Some(shaders::scatter::faces::placed_tiles::MODULE))
             .fill::<OcclusionSource>(None)
-            .fill::<ExtraCasters>(None)
             .join::<Ambient>((), Some(shaders::scatter::ambient::MODULE))
             .join::<FarCover>((), Some(shaders::scatter::faces::far_cover::MODULE))
             .systems(
@@ -77,8 +119,22 @@ impl Brick for ScatterBrick {
                     systems::scatter_stats,
                 ),
             )
-            .draws::<gpu::ScatterGpu, MainView>(Layer::Occluders, gpu::ScatterGpu::draw_occluders)
-            .draws::<gpu::ScatterGpu, MainView>(Layer::Late, gpu::ScatterGpu::draw_late)
-            .draws::<gpu::ScatterGpu, ShadowCasters>((), gpu::ScatterGpu::draw_casters);
+            .draw_kind(KindDecl {
+                kind: gpu::PLACED,
+                vertex: shaders::scatter::draw::VS_OBJECT.name(),
+                needs: Attributes::BASE,
+            })
+            .draws::<gpu::ScatterGpu>(gpu::PLACED, gpu::ScatterGpu::draw);
+        for (name, module, slots, values) in LOOKS {
+            for &slot in slots {
+                bricks.material_slot(SlotModule {
+                    slot,
+                    name,
+                    module,
+                    maps: &[],
+                    values,
+                });
+            }
+        }
     }
 }

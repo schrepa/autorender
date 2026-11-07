@@ -1,10 +1,11 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Entry, Error, View};
+use engine_core::{Entry, Error, PassName, PrimaryView};
 use engine_render::{
     Access, Attach, Bind, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass,
     Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, level_region, mip_levels, wgpu,
 };
 
+use crate::BloomPass;
 use crate::shaders::bloom::{apply, chain};
 
 const BLOOM_LEVELS: u32 = 6;
@@ -29,7 +30,7 @@ pub(crate) struct BloomGpu {
 }
 
 impl GpuPart for BloomGpu {
-    type Reads = Res<'static, View>;
+    type Reads = Res<'static, PrimaryView>;
     const NAME: &'static str = "bloom";
     const LAZY: bool = true;
     const LABELS: &'static [&'static str] = &["engine/bloom"];
@@ -45,7 +46,8 @@ impl GpuPart for BloomGpu {
         cx.frame(apply::BLOOM, mip(levels, 0))?;
         cx.frame(apply::BLOOM_SAMPLER, Bind::Sampler(sampler))?;
         let pass = cx
-            .pass("bloom")
+            .pass(BloomPass::NAME)
+            .at(BloomPass::PASS.at)
             .label("engine/bloom")
             .span("bloom")
             .color(levels, Access::Load)

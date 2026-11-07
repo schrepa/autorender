@@ -17,14 +17,6 @@ fn sample_offset(state: &TerrainState) -> Vec2 {
         .map_or(Vec2::ZERO, |(layers, _)| layers.offset)
 }
 
-fn surface_program(state: &TerrainState) -> bool {
-    !state.materials
-        && state
-            .surface
-            .as_ref()
-            .is_some_and(|(_, data)| data.is_some())
-}
-
 fn maps_of(look: &SurfaceMaterial, assets: &AssetLibrary) -> Option<SurfaceMaps> {
     let handle = look.material?;
     let material = assets.material(handle)?;
@@ -145,7 +137,7 @@ fn entry_of(
         pinned_levels: settings.pinned_levels,
         pixel_error: settings.pixel_error,
         level_errors: Arc::from(state.store.errors()),
-        surface_program: surface_program(state),
+        surface_program: state.programmed().is_some(),
         baked: (state.around.is_none() && terrains.bake_asked(state.entity))
             .then(|| terrains.layers(state.entity))
             .flatten(),
@@ -224,6 +216,7 @@ pub(crate) fn publish_terrains(
         spawner.despawn(entity);
     }
     let mut changed = std::mem::take(&mut terrains.changed);
+    let mut reshaped = false;
     for state in &mut terrains.entries {
         if let Some(around) = state.around.as_mut()
             && around.entity.is_none()
@@ -231,12 +224,16 @@ pub(crate) fn publish_terrains(
             around.entity = Some(spawner.spawn(SurroundingsGround));
             state.changed = true;
         }
+        reshaped |= state.store.take_reshaped();
         changed |= std::mem::take(&mut state.changed);
         changed |= state.store.settle_tiles(feeds.tiles as usize);
         changed |= state.store.settle_kept();
     }
     if changed {
         terrains.grounds += 1;
+    }
+    if reshaped {
+        terrains.edits += 1;
     }
     let terrains = &*terrains;
     if changed {

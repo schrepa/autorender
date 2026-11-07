@@ -1,17 +1,16 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, FrameTime, View};
-use engine_math::max;
+use engine_core::{Error, FrameTime, PassName, PrimaryView};
 use engine_places_rendering::sky::SkyLight;
 use engine_places_rendering::tonemap::Display;
 use engine_render::{
-    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install,
-    Lifetime, Pass, Prepare, ViewTarget,
+    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime,
+    Pass, Prepare, TargetName,
 };
 
 use crate::gpu_layouts::{
     EXPOSURE_BINS, EXPOSURE_GRID, EXPOSURE_GROUP, ExposureState, ExposureUniform,
 };
-use crate::{AutoExposure, ExposureFeedback, shaders};
+use crate::{AutoExposure, ExposureFeedback, ExposurePass, shaders};
 
 const STATE_BYTES: u64 = size_of::<ExposureState>() as u64;
 const UNIFORM_BYTES: u64 = size_of::<ExposureUniform>() as u64;
@@ -28,8 +27,6 @@ pub(crate) struct MeterGpu {
     uniform: Buffer<Self>,
     bins: Buffer<Self>,
     state: Buffer<Self>,
-    last_seconds: Option<f64>,
-    last_camera: [u32; 16],
 }
 
 impl ExposureUniform {
@@ -76,7 +73,7 @@ impl GpuPart for MeterGpu {
         Res<'static, SkyLight>,
         Res<'static, Display>,
         Res<'static, FrameTime>,
-        Res<'static, View>,
+        Res<'static, PrimaryView>,
     );
     const NAME: &'static str = "exposure";
     const LAZY: bool = true;
@@ -89,7 +86,8 @@ impl GpuPart for MeterGpu {
         let uniform = cx.buffer("exposure_uniform", Lifetime::Kept);
         let bins = cx.buffer("exposure_bins", Lifetime::Kept);
         let pass = cx
-            .pass("exposure")
+            .pass(ExposurePass::NAME)
+            .at(ExposurePass::PASS.at)
             .label("engine/exposure")
             .span("auto_exposure")
             .id();
@@ -98,8 +96,8 @@ impl GpuPart for MeterGpu {
             meter::METER_EXPOSURE,
             &[
                 (meter::SETTINGS, Bind::Buffer(uniform)),
-                (meter::SCENE_COLOR, Bind::Target(ViewTarget::Scene)),
-                (meter::SCENE_DEPTH, Bind::Target(ViewTarget::Depth)),
+                (meter::SCENE_COLOR, Bind::Target(TargetName::COLOR)),
+                (meter::SCENE_DEPTH, Bind::Target(TargetName::DEPTH)),
                 (meter::BINS, Bind::Buffer(bins)),
             ],
         )?;
@@ -119,8 +117,6 @@ impl GpuPart for MeterGpu {
             uniform,
             bins,
             state,
-            last_seconds: None,
-            last_camera: [0; 16],
         })
     }
 
@@ -139,17 +135,12 @@ impl GpuPart for MeterGpu {
         if view.debug() {
             return;
         }
-        let seconds = time.real_elapsed;
-        let camera = view.view_projection().to_cols_array().map(f32::to_bits);
-        let moved = std::mem::replace(&mut self.last_camera, camera) != camera;
-        let elapsed = self
-            .last_seconds
-            .replace(seconds)
-            .map_or(0.0, |last| max((seconds - last) as f32, 0.0));
-        let elapsed = if elapsed <= 0.0 && moved {
-            -1.0
+        let elapsed = if view.capture() || !view.history().valid() {
+            0.0
+        } else if time.real_seconds > 0.0 {
+            time.real_seconds as f32
         } else {
-            elapsed
+            -1.0
         };
         let drawn = view.render_size().to_array();
         let values = ExposureUniform::of(&settings, &sky, authored, elapsed, drawn);

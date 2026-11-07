@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, AssetResidency, AssetUses, Cut, Detail, DeviceLimits, FrameTime, ImpostorAsks,
-    ImpostorPolicy, ImpostorRecord, ImpostorRecords, MaterialHandle, MeshHandle, Readable, Readback, Spawner,
-    TextureHandle, View,
+    Asset, AssetLibrary, AssetResidency, AssetUses, Cut, Detail, DeviceLimits, FrameTime,
+    ImpostorAsks, ImpostorPolicy, ImpostorRecord, ImpostorRecords, Readable, Readback, Spawner,
+    PrimaryView,
 };
 use engine_math::collections::HashMap;
 use engine_places_rendering::occlusion::OcclusionSource;
-use engine_places_rendering::shadows::{CasterMap, ExtraCasters, Refresh, ShadowChanges, ShadowMaps};
+use engine_places_rendering::shadows::{CasterMap, Refresh, ShadowChange, ShadowChanges, ShadowMaps};
 use engine_places_simulation::ground::TileKey;
 use engine_places_world::ground::{Foliage, PlacedTiles, PooledTile, TerrainTiles, TileFace};
 use glam::Vec3;
@@ -105,6 +105,7 @@ pub(crate) struct ScatterState {
     pub(crate) moved: Vec<(Vec3, Vec3)>,
     pub(crate) restyled: bool,
     pub(crate) impostors: Vec<ImpostorRecord>,
+    pub(crate) impostor_generation: u64,
     pub(crate) impostor_live: u32,
     pub(crate) impostor_refused: u32,
     pub(crate) uses: AssetUses,
@@ -135,6 +136,7 @@ impl Default for ScatterState {
             moved: Vec::new(),
             restyled: false,
             impostors: Vec::new(),
+            impostor_generation: 0,
             impostor_live: 0,
             impostor_refused: 0,
             uses: AssetUses::default(),
@@ -174,16 +176,9 @@ fn grow(held: &mut u64, bytes: u64, room: u64) -> bool {
     true
 }
 
-pub(crate) fn publish_foliage(
-    settings: Res<FoliageSettings>,
-    mut foliage: ResMut<Foliage>,
-    mut casters: ResMut<ExtraCasters>,
-) {
+pub(crate) fn publish_foliage(settings: Res<FoliageSettings>, mut foliage: ResMut<Foliage>) {
     foliage.set_if_neq(Foliage {
         ground_blend: settings.ground_blend,
-    });
-    casters.set_if_neq(ExtraCasters {
-        crown_depth: settings.crown_depth,
     });
 }
 
@@ -192,7 +187,10 @@ pub(crate) fn take_impostors(
     mut state: ResMut<ScatterState>,
 ) {
     let state = &mut *state;
-    let held = records.single().ok();
+    let held = records
+        .single()
+        .ok()
+        .filter(|held| held.generation == state.impostor_generation);
     let arrived = held.as_ref().is_some_and(|held| held.is_changed());
     state.restyled = false;
     if std::mem::take(&mut state.retake) || arrived {
@@ -211,7 +209,7 @@ pub(crate) fn take_impostors(
 }
 
 pub(crate) fn place_windows(
-    (settings, foliage, view): (Res<OccupancySettings>, Res<FoliageSettings>, Res<View>),
+    (settings, foliage, view): (Res<OccupancySettings>, Res<FoliageSettings>, Res<PrimaryView>),
     state: Res<ScatterState>,
     mut windows: ResMut<OccupancyWindows>,
     mut piece: ResMut<CanopyPiece>,
@@ -262,35 +260,19 @@ fn resolve_all<'a>(
     (resolved, kept)
 }
 
-fn asset_uses(resolved: &ResolvedTerrains<'_>) -> AssetUses {
-    let mut meshes: Vec<MeshHandle> = Vec::new();
-    let mut materials: Vec<MaterialHandle> = Vec::new();
-    let mut textures: Vec<TextureHandle> = Vec::new();
+fn asset_uses(resolved: &ResolvedTerrains<'_>) -> Vec<Asset> {
+    let mut wanted: Vec<Asset> = Vec::new();
     for asset in resolved
         .iter()
         .flat_map(|(_, assets)| assets.iter().flatten())
     {
-        for mesh in asset.meshes() {
-            if !meshes.contains(&mesh.handle) {
-                meshes.push(mesh.handle);
-            }
-        }
-        for material in asset.materials() {
-            if !materials.contains(&material) {
-                materials.push(material);
-            }
-        }
-        for &texture in &asset.textures {
-            if !textures.contains(&texture) {
-                textures.push(texture);
-            }
-        }
+        wanted.extend(asset.meshes().map(|mesh| Asset::Mesh(mesh.handle)));
+        wanted.extend(asset.materials().map(Asset::Material));
+        wanted.extend(asset.textures.iter().copied().map(Asset::Texture));
     }
-    AssetUses {
-        meshes,
-        materials,
-        textures,
-    }
+    wanted.sort_unstable();
+    wanted.dedup();
+    wanted
 }
 
 fn set_groups(state: &mut ScatterState) {
@@ -399,7 +381,10 @@ pub(crate) fn place_pool(
     if tiles.is_changed() || settings.is_changed() || library.is_changed() {
         far.fill(&tiles.terrains, &resolved, &library);
     }
-    state.uses = asset_uses(&resolved);
+    let wanted = asset_uses(&resolved);
+    if state.uses.assets() != wanted.as_slice() {
+        state.uses = AssetUses::new(&residency, wanted);
+    }
     let mut groups = Groups::build(&residency, &resolved);
     let refill = !state.groups.same_objects(&groups);
     if !refill {
@@ -411,6 +396,7 @@ pub(crate) fn place_pool(
     state.groups = groups;
     state.refilled = refill;
     if refill {
+        state.impostor_generation += 1;
         state.impostors = vec![ImpostorRecord::default(); state.groups.groups.len()];
         state.retake = true;
         state.pool.clear(state.groups.groups.len());
@@ -463,7 +449,7 @@ pub(crate) fn place_pool(
 }
 
 pub(crate) fn plan_cull(
-    (view, detail, maps, policy): (Res<View>, Res<Detail>, Res<ShadowMaps>, Res<ImpostorPolicy>),
+    (view, detail, maps, policy): (Res<PrimaryView>, Res<Detail>, Res<ShadowMaps>, Res<ImpostorPolicy>),
     mut state: ResMut<ScatterState>,
     mut feedback: ResMut<ScatterFeedback>,
 ) {
@@ -491,15 +477,15 @@ pub(crate) fn plan_cull(
         planes: engine_render::planes(view_projection),
         limits: [0.0; 4],
     });
-    for (index, region) in maps.regions.iter().enumerate() {
-        let (CasterMap::Region, Refresh::Kept(kept)) = (region.map, region.refresh) else {
+    for at in maps.views() {
+        let (CasterMap::Region, Refresh::Kept(kept)) = (at.map, at.refresh) else {
             continue;
         };
         plan.views.push(CullView {
             planes: kept.planes,
             limits: [0.5 * kept.texel, kept.texel, 0.0, 0.0],
         });
-        plan.maps.push(index as u32);
+        plan.maps.push(at.view());
     }
     let view_count = plan.views.len() as u32;
     let group_count = state.groups.layouts.len() as u32;
@@ -563,6 +549,7 @@ pub(crate) fn publish_assets(
     mut spawner: Spawner<ScatterBrick>,
 ) {
     let asks = ImpostorAsks {
+        generation: state.impostor_generation,
         hemisphere: true,
         asks: state.groups.asks.clone(),
     };
@@ -640,29 +627,17 @@ pub(crate) fn publish_tiles(state: Res<ScatterState>, mut placed: ResMut<PlacedT
         }));
 }
 
-pub(crate) fn publish_changes(
-    state: Res<ScatterState>,
-    own: Query<Entity, With<Placements>>,
-    mut spawner: Spawner<ScatterBrick>,
-) {
-    if state.moved.is_empty() && !state.restyled {
-        return;
+pub(crate) fn publish_changes(state: Res<ScatterState>, mut shadows: ResMut<ShadowChanges>) {
+    for &(min, max) in &state.moved {
+        shadows.push(ShadowChange::Box {
+            min,
+            max,
+            spacing: f32::INFINITY,
+        });
     }
-    let Ok(entity) = own.single() else {
-        return;
-    };
-    spawner.insert(
-        entity,
-        ShadowChanges {
-            boxes: state
-                .moved
-                .iter()
-                .map(|&(low, high)| (low, high, f32::INFINITY))
-                .collect(),
-            all: state.restyled,
-            casters: false,
-        },
-    );
+    if state.restyled {
+        shadows.push(ShadowChange::All);
+    }
 }
 
 pub(crate) fn scatter_stats(

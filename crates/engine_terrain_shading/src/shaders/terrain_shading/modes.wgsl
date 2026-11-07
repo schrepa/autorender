@@ -1,8 +1,8 @@
 import package::face::debug::{DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN, DEBUG_NO_MATERIAL, DEBUG_OTHER,
     DEBUG_SKY, DebugShade, DebugTargets, debug_record_kind};
 import package::generated::pieces::terrain_shading::piece;
-import package::generated::terrain_shading::{DEBUG_PATCH_EDGE, DEBUG_SHOWN_DETAIL,
-    DEBUG_SHOWN_MATERIALS, DEBUG_SHOWN_SKY, DEBUG_SHOWN_TILES, DEBUG_TILE_EDGE};
+import package::generated::terrain_shading::{DEBUG_SHOWN_DETAIL, DEBUG_SHOWN_MATERIALS,
+    DEBUG_SHOWN_SKY, DEBUG_SHOWN_TILES, terrain_debug_patch_edge, terrain_debug_tile_edge};
 
 fn debug_material_color(material: u32) -> vec3<f32> {
     let hue = fract(f32(material) * 0.618034 + 0.13);
@@ -29,10 +29,10 @@ fn debug_detail_color(made: vec4<f32>) -> vec3<f32> {
 }
 
 fn debug_tiles_color(record: u32) -> vec3<f32> {
-    if (record & DEBUG_TILE_EDGE) != 0u {
+    if terrain_debug_tile_edge(record) {
         return vec3<f32>(0.95, 0.15, 0.1);
     }
-    if (record & DEBUG_PATCH_EDGE) != 0u {
+    if terrain_debug_patch_edge(record) {
         return vec3<f32>(0.1, 0.1, 0.1);
     }
     return vec3<f32>(0.6);

@@ -14,11 +14,11 @@ mod views;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asked, Brick, Bricks, ComponentKind, GpuStruct, Runs, SceneComponents, Schedule, Smoke, Source,
+    Asked, Attributes, Brick, Bricks, ComponentKind, GpuStruct, KindDecl, Runs, SceneComponents,
+    Schedule, Smoke, Source, settings,
 };
 use engine_places_rendering::animation::{Animate, Animator, Attachment};
-use engine_places_rendering::shadows::ShadowCasters;
-use engine_render::{Layer, MainView, RenderBricks};
+use engine_render::RenderBricks;
 
 pub use import::{ImportShared, Model, import_glb};
 pub use views::{
@@ -34,6 +34,15 @@ const GENERATED: &[&str] = &[
     <part::JointRows as GpuStruct>::WGSL,
 ];
 
+settings! {
+    #[section("animation")]
+    #[serde(deny_unknown_fields)]
+    #[schemars(rename = "SceneAnimation")]
+    pub struct AnimationSettings {
+        pub enabled: bool = true => any,
+    }
+}
+
 pub struct AnimationBrick;
 
 impl Brick for AnimationBrick {
@@ -46,7 +55,8 @@ impl Brick for AnimationBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(animated)
+            .when(|animation: Res<AnimationSettings>| animation.enabled)
+            .settings::<AnimationSettings>()
             .resource::<animator::Books>()
             .fill::<Asked<Animate>>(None)
             .join::<SceneComponents>(
@@ -81,11 +91,11 @@ impl Brick for AnimationBrick {
                 ),
             )
             .generated(GENERATED)
-            .draws::<part::SkinningGpu, MainView>(Layer::Opaque, part::SkinningGpu::draw_lit)
-            .draws::<part::SkinningGpu, ShadowCasters>((), part::SkinningGpu::draw_casters);
+            .draw_kind(KindDecl {
+                kind: part::SKIN,
+                vertex: shaders::animation::draw::VS_SKINNED.name(),
+                needs: Attributes::BASE,
+            })
+            .draws::<part::SkinningGpu>(part::SKIN, part::SkinningGpu::draw);
     }
-}
-
-fn animated(animators: Query<(), With<Animator>>) -> bool {
-    !animators.is_empty()
 }

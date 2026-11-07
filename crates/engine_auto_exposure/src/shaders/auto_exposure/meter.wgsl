@@ -92,12 +92,14 @@ fn adapt_exposure() {
     let wanted = day + clamp(-beyond * settings.frame.z, -settings.reach.y, settings.reach.x)
         + settings.frame.w;
     var stops = wanted;
+    var moving = 0.0;
     if held && settings.frame.y < 0.0 {
         stops = state.stops;
     } else if held && settings.frame.y > 0.0 {
         let seconds = select(settings.reach.w, settings.reach.z, wanted > state.stops);
         stops = mix(state.stops, wanted, 1.0 - exp(-settings.frame.y / max(seconds, 1.0e-3)));
+        moving = 1.0;
     }
     let authored = max(settings.frame.x, 1.0e-6);
-    state = ExposureState(authored * exp2(stops), stops, metered, 1.0, view, day);
+    state = ExposureState(authored * exp2(stops), stops, metered, 1.0, view, day, wanted, moving);
 }

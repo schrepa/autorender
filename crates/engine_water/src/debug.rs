@@ -1,29 +1,25 @@
 use engine_core::math::half;
+use engine_core::{BitValue, GpuBits};
 use engine_render::DebugMode;
-use engine_core::GpuBits;
 use engine_render::debug::{DebugKind, DebugRecord};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::gpu::{DEBUG_SPAN_STEPS, WATER_SPAN_LEAST, WATER_SPAN_MOST};
-
-pub(crate) const NAMES: [&str; 9] = [
-    "water_depth",
-    "water_speed",
-    "water_froude",
-    "water_turbulence",
-    "water_white",
-    "water_reach",
-    "water_span",
-    "water_eddies",
-    "water_roughness",
-];
+use crate::gpu::{
+    DEBUG_SPAN_STEPS, Shown, WATER_SPAN_LEAST, WATER_SPAN_MOST, WaterProbeDetail, WaterProbeState,
+};
 
 pub(crate) fn modes() -> impl Iterator<Item = DebugMode> {
-    NAMES.into_iter().map(|name| DebugMode {
+    <Shown as BitValue>::VALUES.iter().map(|&(_, name)| DebugMode {
         name,
         decode: probe,
     })
+}
+
+pub(crate) fn shown(local: u32) -> u32 {
+    <Shown as BitValue>::VALUES
+        .get(local as usize)
+        .map_or(0, |&(value, _)| value)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -77,20 +73,22 @@ fn water_span(code: u8) -> f32 {
 }
 
 fn water_probe((object, detail): (u32, u32), (froudes, state): (u32, u32)) -> WaterProbe {
-    let share = |word: u32, byte: u32| f32::from(((word >> (byte * 8)) & 0xff) as u8) / 255.0;
+    let share = |byte: u8| f32::from(byte) / 255.0;
     let halves = |pair: u32| (half(pair as u16), half((pair >> 16) as u16));
     let (depth, speed) = halves(object);
     let (froude, eddies) = halves(froudes);
+    let detail = WaterProbeDetail::unpack(detail).unwrap_or_default();
+    let state = WaterProbeState::unpack(state).unwrap_or_default();
     WaterProbe {
         depth,
         speed,
         froude,
-        turbulence: share(state, 0),
-        white: share(state, 1),
-        reach: water_reach(state >> 24),
-        span: water_span((detail & 0xff) as u8),
+        turbulence: share(state.turbulence),
+        white: share(state.white),
+        reach: water_reach(u32::from(state.reach)),
+        span: water_span(detail.span),
         eddies,
-        roughness: share(detail, 1),
+        roughness: share(detail.roughness),
     }
 }
 

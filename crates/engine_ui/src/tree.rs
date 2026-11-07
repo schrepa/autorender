@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::math::{clamp, max, min};
-use engine_core::{CursorAsk, GlobalTransforms, Interest, SceneContext, TextureHandle, View};
+use engine_core::{CursorAsk, GlobalTransforms, Interest, PrimaryView, SceneContext, TextureHandle};
 use engine_places_rendering::text::{FontId, Text, TextRun};
 use engine_places_rendering::ui::{
     UiAction, UiAlign, UiDirection, UiInsets, UiJustify, UiKind, UiLength, UiNode, UiRoot, UiValue,
@@ -15,6 +15,7 @@ use taffy::{
     TaffyError, TaffyTree, compute_leaf_layout,
 };
 
+use crate::gpu::Fill;
 use crate::{UiRect, UiSettings, UiStats};
 
 pub(crate) type Roots<'w, 's> = Query<'w, 's, (Entity, Ref<'static, UiRoot>)>;
@@ -35,7 +36,7 @@ impl<'a> Facts<'a> {
     pub(crate) fn of(
         text: &'a Res<'_, Text>,
         values: &'a UiValues,
-        view: &View,
+        view: &PrimaryView,
         settings: &UiSettings,
         (scene, globals): (Option<&'a Res<'_, SceneContext>>, &'a GlobalTransforms),
         top: Option<&'a str>,
@@ -123,7 +124,7 @@ impl Flat {
         }
     }
 
-    fn shows_text(&self) -> bool {
+    pub(crate) fn shows_text(&self) -> bool {
         matches!(self.node.kind, UiKind::Label | UiKind::Button) && !self.text.is_empty()
     }
 
@@ -259,7 +260,7 @@ impl Flat {
         self.measured_at(text, (width > 0.0).then_some(width), scale)
     }
 
-    fn run(&self, scale: f32) -> TextRun {
+    pub(crate) fn run(&self, scale: f32) -> TextRun {
         let [x, y, width, height] = self.content(scale);
         TextRun {
             text: self.text.clone(),
@@ -270,7 +271,6 @@ impl Flat {
             max_width: (width > 0.0).then_some(width),
             align: self.node.text_align,
             clip: self.clip,
-            step: Some(self.step),
         }
     }
 
@@ -328,7 +328,7 @@ pub(crate) struct UiState {
     pub(crate) cursor: Option<Interest<CursorAsk>>,
     pub(crate) textures: Vec<TextureHandle>,
     pub(crate) rects: Vec<UiRect>,
-    pub(crate) runs: Vec<(u32, Option<TextureHandle>, Range<u32>)>,
+    pub(crate) runs: Vec<(Fill, Range<u32>)>,
     pub(crate) rects_cut: u32,
     pub(crate) events: u32,
     pub(crate) shown_roots: u32,
@@ -436,16 +436,6 @@ impl UiState {
         }
         if moved {
             self.place();
-        }
-    }
-
-    pub(crate) fn queue_text(&self, text: &Text) {
-        let scale = self.metrics[3];
-        for flat in &self.nodes {
-            let in_view = flat.clip.is_none_or(|clip| clip[2] > 0.0 && clip[3] > 0.0);
-            if flat.shows_text() && in_view {
-                text.0.queue(flat.run(scale));
-            }
         }
     }
 

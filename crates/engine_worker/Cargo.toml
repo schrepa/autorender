@@ -16,8 +16,6 @@ engine_math.workspace = true
 sha2.workspace = true
 serde_json.workspace = true
 ruzstd.workspace = true
-png.workspace = true
-zune-jpeg.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys.workspace = true

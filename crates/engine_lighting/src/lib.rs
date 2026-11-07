@@ -11,6 +11,7 @@ mod light;
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Schedule, Source, gpu_struct};
 use engine_places_rendering::lighting::Lighting;
+use engine_render::Lit;
 use engine_places_rendering::sky::SkyLight;
 
 pub use highlights::Highlights;
@@ -35,6 +36,7 @@ impl Brick for LightingModelBrick {
             .settings::<Highlights>()
             .piece::<LightingPiece>()
             .fill::<Lighting>(Some(shaders::lighting_model::faces::lighting::MODULE))
+            .fill::<Lit>(Some(shaders::lighting_model::faces::lighting::MODULE))
             .systems(Schedule::ViewSync, (publish_lighting, publish_piece));
     }
 }

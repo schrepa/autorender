@@ -20,7 +20,9 @@ use crate::jobs::JobQueue;
 use crate::order::{self, PlaceRules};
 use crate::owners::{Shared, Used, ValueKind, Values, note, ownership};
 use crate::record::BrickRecord;
-use crate::state::{BrickStates, GateDriver, GateFn, GateId, Reset, Scope, Turning, state_on};
+use crate::state::{
+    BrickStates, Despawn, GateDriver, GateFn, GateId, Reset, Scope, Turning, state_on,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BrickId(pub(crate) u32);
@@ -53,6 +55,7 @@ pub struct Registry {
     owners: Vec<Shared>,
     private: Vec<Vec<(ComponentId, Reset)>>,
     movers: Option<MoverRule>,
+    despawn: Option<Despawn>,
     problems: Vec<Error>,
 }
 
@@ -130,6 +133,10 @@ impl RegistryBuilder {
 
     pub fn mover_rule(&mut self, rule: MoverRule) {
         self.registry.movers = Some(rule);
+    }
+
+    pub fn despawn_rule(&mut self, despawn: Despawn) {
+        self.registry.despawn = Some(despawn);
     }
 
     pub fn writers_first<T: 'static>(&mut self) {
@@ -529,16 +536,25 @@ impl Registry {
             .filter(|filled| filled.scope == scope)
             .map(|filled| filled.reset)
             .collect();
+        let joins = record
+            .joins()
+            .iter()
+            .filter(|joined| joined.scope == scope)
+            .map(|joined| joined.left)
+            .collect();
         if scope != Scope::BRICK {
             return Turning {
                 slots,
+                joins,
                 ..Turning::default()
             };
         }
         let mut turning = Turning {
             slots,
+            joins,
             private: self.private(brick).iter().map(|&(_, reset)| reset).collect(),
             spawned: Some(record.spawned),
+            despawn: self.despawn,
             ..Turning::default()
         };
         for owned in record.owned() {

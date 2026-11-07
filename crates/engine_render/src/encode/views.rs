@@ -2,43 +2,21 @@ use super::*;
 
 impl Run {
     pub(crate) fn cameras(&mut self, views: &[CameraUniform]) {
-        let part = self.part;
-        match self.views.iter().position(|(known, _, _)| *known == part) {
-            Some(at) if self.views[at].2 as usize == views.len() => {
-                let base = self.views[at].1 as usize;
-                self.cameras[base..base + views.len()].copy_from_slice(views);
-            }
-            Some(at) => {
-                self.views.remove(at);
-                self.repack();
-                self.push_views(part, views);
-            }
-            None => self.push_views(part, views),
-        }
-    }
-
-    pub(super) fn push_views(&mut self, part: u32, views: &[CameraUniform]) {
         let base = self.cameras.len() as u32;
         self.cameras.extend_from_slice(views);
-        self.views.push((part, base, views.len() as u32));
+        self.views.push((self.part, base, views.len() as u32));
     }
 
-    pub(super) fn repack(&mut self) {
-        let mut packed = vec![self.cameras[0]];
-        for (_, base, count) in &mut self.views {
-            let from = *base as usize;
-            let kept = &self.cameras[from..from + *count as usize];
-            *base = packed.len() as u32;
-            packed.extend_from_slice(kept);
-        }
-        self.cameras = packed;
+    pub(crate) fn drop_cameras(&mut self) {
+        self.cameras.truncate(1);
+        self.views.clear();
     }
 
     pub(crate) fn view_offset(&self, part: u32, view: Option<u32>) -> Option<u32> {
         let Some(view) = view else {
             return Some(0);
         };
-        let (_, base, count) = self.views.iter().find(|(known, _, _)| *known == part)?;
+        let (_, base, count) = self.views.iter().rev().find(|(known, _, _)| *known == part)?;
         (view < *count).then(|| (base + view) * CAMERA_STRIDE as u32)
     }
 
@@ -230,7 +208,7 @@ impl Run {
         }
     }
 
-    pub(crate) fn pass_layer(&self) -> Option<crate::Layer> {
+    pub(crate) fn pass_layer(&self) -> Option<engine_core::AttachPoint> {
         pass_layer(self.machine.declared.passes.get(self.pass as usize)?)
     }
 
@@ -356,15 +334,14 @@ impl Run {
         }
         let saved_pass = self.pass;
         let saved_parity = self.parity;
-        let mut stale = std::mem::take(&mut self.stale);
+        let stale = std::mem::take(&mut self.stale);
         self.rebuilt.groups += stale.len() as u32;
-        for holder in stale.drain(..) {
+        for holder in stale {
             match holder {
                 Holder::Frame(variant) => self.rebuild_frame(variant as usize),
                 Holder::Own(pipeline, group) => self.rebuild_own(pipeline as usize, group as usize),
             }
         }
-        self.stale = stale;
         self.parity = saved_parity;
         self.pass = saved_pass;
     }
@@ -396,7 +373,6 @@ impl Run {
             let group = self.bind_group(&layout, (None, 0), resolved);
             self.frame_groups[variant].made[parity] = Some(group);
         }
-        self.frame_groups[variant].stale = false;
     }
 
     fn rebuild_own(&mut self, pipeline: usize, group: usize) {
@@ -418,7 +394,6 @@ impl Run {
             let made = self.bind_group(&layout, (Some(pipeline), index), resolved);
             self.own_groups[pipeline][group].made[parity] = Some(made);
         }
-        self.own_groups[pipeline][group].stale = false;
         for filled in &mut self.filled {
             if filled.base as usize == pipeline {
                 filled.groups.clear();

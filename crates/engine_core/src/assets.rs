@@ -1,24 +1,38 @@
-use std::collections::{BTreeMap, BTreeSet};
-
-use bevy_ecs::change_detection::Mut;
 use bevy_ecs::component::Component;
-use bevy_ecs::query::QueryState;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
-use engine_assets::{AssetLibrary, MaterialHandle, Mesh, MeshHandle, MeshLods, TextureHandle};
+use engine_assets::{Asset, AssetLibrary, MaterialHandle, Mesh, MeshHandle, MeshLods, TextureHandle};
 pub use engine_textures::solid_block;
 
-use crate::Feed;
+use crate::{Census, Feed, Interest, Request, Requests};
 
 mod impostors;
 
 pub use impostors::*;
 
-#[derive(Component, Clone, Debug, Default, PartialEq)]
+#[derive(Component, Clone, Debug, Default)]
 pub struct AssetUses {
-    pub meshes: Vec<MeshHandle>,
-    pub materials: Vec<MaterialHandle>,
-    pub textures: Vec<TextureHandle>,
+    assets: Vec<Asset>,
+    held: Vec<Interest<Asset>>,
+}
+
+impl AssetUses {
+    pub fn new(residency: &AssetResidency, mut assets: Vec<Asset>) -> Self {
+        assets.sort_unstable();
+        assets.dedup();
+        let held = assets.iter().map(|&asset| residency.hold(asset)).collect();
+        Self { assets, held }
+    }
+
+    pub fn assets(&self) -> &[Asset] {
+        &self.assets
+    }
+}
+
+impl PartialEq for AssetUses {
+    fn eq(&self, other: &Self) -> bool {
+        self.assets == other.assets
+    }
 }
 
 #[doc(hidden)]
@@ -36,6 +50,13 @@ pub struct MeshPlacement {
     pub streams: MeshStreams,
     pub base_vertex: u32,
     pub vertex_count: u32,
+}
+
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeshResidence {
+    Arena(MeshPlacement),
+    Own,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -173,7 +194,8 @@ impl Arena {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResidentMesh {
-    placement: Option<MeshPlacement>,
+    placement: MeshResidence,
+    revision: u64,
     extended: bool,
     index_count: u32,
     byte_len: u64,
@@ -185,16 +207,25 @@ pub struct ResidentMesh {
 
 impl ResidentMesh {
     pub fn first_index(&self) -> u32 {
-        self.placement.map_or(0, |placement| placement.first_index)
+        match self.placement {
+            MeshResidence::Arena(placement) => placement.first_index,
+            MeshResidence::Own => 0,
+        }
     }
 
     pub fn base_vertex(&self) -> i32 {
-        self.placement
-            .map_or(0, |placement| placement.base_vertex as i32)
+        match self.placement {
+            MeshResidence::Arena(placement) => placement.base_vertex as i32,
+            MeshResidence::Own => 0,
+        }
     }
 
     pub fn index_count(&self) -> u32 {
         self.index_count
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn extended(&self) -> bool {
@@ -226,7 +257,7 @@ impl ResidentMesh {
     }
 
     #[doc(hidden)]
-    pub fn placement(&self) -> Option<MeshPlacement> {
+    pub fn placement(&self) -> MeshResidence {
         self.placement
     }
 }
@@ -237,7 +268,11 @@ fn plan_levels(lods: &[(u32, u32, f32)]) -> Vec<(u32, u32, f32)> {
     first.into_iter().chain(empty).collect()
 }
 
-fn resident_mesh(mesh: &Mesh, lods: Option<&MeshLods>, arena: &mut Arena) -> ResidentMesh {
+fn resident_mesh(
+    (mesh, lods): (&Mesh, Option<&MeshLods>),
+    revision: u64,
+    arena: &mut Arena,
+) -> ResidentMesh {
     let extended = mesh.colors().is_some() || mesh.uv1().is_some();
     let streams = if extended {
         MeshStreams::Extended
@@ -247,7 +282,8 @@ fn resident_mesh(mesh: &Mesh, lods: Option<&MeshLods>, arena: &mut Arena) -> Res
     let total = mesh.indices().len() + lods.map_or(0, |lods| lods.indices.len());
     let placement = u32::try_from(total)
         .ok()
-        .and_then(|count| arena.insert(streams, mesh.vertices().len() as u32, count));
+        .and_then(|count| arena.insert(streams, mesh.vertices().len() as u32, count))
+        .map_or(MeshResidence::Own, MeshResidence::Arena);
     let (levels, casters) = match lods {
         Some(lods) => (
             lods.levels
@@ -260,6 +296,7 @@ fn resident_mesh(mesh: &Mesh, lods: Option<&MeshLods>, arena: &mut Arena) -> Res
     };
     ResidentMesh {
         placement,
+        revision,
         extended,
         index_count: mesh.indices().len() as u32,
         byte_len: mesh.byte_len() as u64,
@@ -270,221 +307,297 @@ fn resident_mesh(mesh: &Mesh, lods: Option<&MeshLods>, arena: &mut Arena) -> Res
     }
 }
 
-#[derive(Default)]
-struct Named {
-    meshes: Vec<MeshHandle>,
-    materials: BTreeSet<MaterialHandle>,
-    textures: BTreeSet<TextureHandle>,
-}
-
 #[derive(Debug)]
-struct Table {
-    meshes: BTreeMap<MeshHandle, ResidentMesh>,
-    materials: BTreeMap<MaterialHandle, u64>,
-    textures: BTreeSet<TextureHandle>,
-    arena: Option<Arena>,
-    placed: Feed<MeshHandle>,
-    materials_generation: u64,
+pub enum Resident {
+    Mesh(ResidentMesh),
+    Material {
+        revision: u64,
+        textures: Vec<Interest<Asset>>,
+    },
+    Texture {
+        revision: u64,
+    },
 }
 
-impl Default for Table {
-    fn default() -> Self {
-        Self {
-            meshes: BTreeMap::new(),
-            materials: BTreeMap::new(),
-            textures: BTreeSet::new(),
-            arena: None,
-            placed: Feed::new(crate::FeedSettings::default().mesh_residency as usize),
-            materials_generation: 0,
+impl Resident {
+    pub fn revision(&self) -> u64 {
+        match self {
+            Self::Mesh(mesh) => mesh.revision,
+            Self::Material { revision, .. } | Self::Texture { revision } => *revision,
         }
     }
 }
 
-impl Table {
-    fn settle(&mut self, named: &Named, library: &AssetLibrary) {
-        let Some(arena) = self.arena.as_mut() else {
-            return;
-        };
-        let placed = &mut self.placed;
-        let settled = |handle: MeshHandle| {
-            library.mesh(handle).is_some() && library.mesh_lods(handle).is_some()
-        };
-        let wanted: BTreeSet<MeshHandle> = named
-            .meshes
-            .iter()
-            .copied()
-            .filter(|&handle| settled(handle))
-            .collect();
-        self.meshes.retain(|&handle, mesh| {
-            let keep = wanted.contains(&handle);
-            if !keep {
-                if let Some(placement) = mesh.placement {
-                    arena.remove(placement);
-                }
-                placed.push(handle);
-            }
-            keep
-        });
-        for &handle in &named.meshes {
-            if !wanted.contains(&handle) || self.meshes.contains_key(&handle) {
-                continue;
-            }
-            let (Some(mesh), Some(lods)) = (library.mesh(handle), library.mesh_lods(handle)) else {
-                continue;
-            };
-            let held = resident_mesh(mesh, lods.map(|lods| &**lods), arena);
-            self.meshes.insert(handle, held);
-            placed.push(handle);
-        }
-        let materials: BTreeMap<MaterialHandle, u64> = named
-            .materials
-            .iter()
-            .filter_map(|&handle| {
-                let material = library.material(handle)?;
-                material
-                    .textures()
-                    .all(|texture| library.texture(texture).is_some())
-                    .then(|| (handle, library.material_version(handle).unwrap_or(0)))
-            })
-            .collect();
-        let mut textures: BTreeSet<TextureHandle> = named
-            .textures
-            .iter()
-            .copied()
-            .filter(|&texture| library.texture(texture).is_some())
-            .collect();
-        for &handle in materials.keys() {
-            if let Some(material) = library.material(handle) {
-                textures.extend(material.textures());
-            }
-        }
-        if materials != self.materials || textures != self.textures {
-            self.materials = materials;
-            self.textures = textures;
-            self.materials_generation = self.materials_generation.wrapping_add(1);
-        }
-    }
+enum Resolved {
+    Ready(Resident),
+    Waiting,
+    Gone,
 }
 
 #[derive(Resource)]
 #[component(immutable)]
 pub struct AssetResidency {
-    table: Table,
+    wanted: Requests<Asset, Resident>,
+    arena: Option<Arena>,
+    placed: Feed<MeshHandle>,
+    seen: Option<(u64, u64)>,
+    revision: u64,
 }
 
 impl AssetResidency {
     pub(crate) fn empty() -> Self {
         Self {
-            table: Table::default(),
+            wanted: Requests::default(),
+            arena: None,
+            placed: Feed::new(crate::FeedSettings::default().mesh_residency as usize),
+            seen: None,
+            revision: 0,
         }
     }
 
+    pub fn hold(&self, asset: impl Into<Asset>) -> Interest<Asset> {
+        self.wanted.ask_later(asset.into())
+    }
+
+    pub fn state(&self, asset: impl Into<Asset>) -> Option<&Request<Resident>> {
+        self.wanted.get(&asset.into())
+    }
+
+    pub fn census(&self) -> Census {
+        self.wanted.census()
+    }
+
+    pub fn holders(&self, asset: impl Into<Asset>) -> u32 {
+        self.wanted.interests(&asset.into())
+    }
+
     pub fn resident(&self, mesh: MeshHandle) -> bool {
-        self.table.meshes.contains_key(&mesh)
+        self.mesh(mesh).is_some()
     }
 
     pub fn placed(&self) -> &Feed<MeshHandle> {
-        &self.table.placed
+        &self.placed
     }
 
     pub fn mesh(&self, mesh: MeshHandle) -> Option<&ResidentMesh> {
-        self.table.meshes.get(&mesh)
+        let Some(Request::Ready(Resident::Mesh(resident))) = self.wanted.get(&Asset::Mesh(mesh))
+        else {
+            return None;
+        };
+        Some(resident)
     }
 
     pub fn material_resident(&self, material: MaterialHandle) -> bool {
-        self.table.materials.contains_key(&material)
+        matches!(
+            self.wanted.get(&Asset::Material(material)),
+            Some(Request::Ready(Resident::Material { .. }))
+        )
     }
 
     pub fn texture_resident(&self, texture: TextureHandle) -> bool {
-        self.table.textures.contains(&texture)
+        matches!(
+            self.wanted.get(&Asset::Texture(texture)),
+            Some(Request::Ready(Resident::Texture { .. }))
+        )
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     #[doc(hidden)]
     pub fn meshes(&self) -> impl Iterator<Item = (MeshHandle, &ResidentMesh)> + '_ {
-        self.table
-            .meshes
+        self.wanted
             .iter()
-            .map(|(&handle, mesh)| (handle, mesh))
+            .filter_map(|(asset, request)| {
+                if let (Asset::Mesh(handle), Request::Ready(Resident::Mesh(mesh))) = (asset, request) {
+                    Some((*handle, mesh))
+                } else {
+                    None
+                }
+            })
     }
 
     #[doc(hidden)]
     pub fn materials(&self) -> impl Iterator<Item = (MaterialHandle, u64)> + '_ {
-        self.table
-            .materials
+        self.wanted
             .iter()
-            .map(|(&handle, &version)| (handle, version))
+            .filter_map(|(asset, request)| {
+                if let (Asset::Material(handle), Request::Ready(Resident::Material { revision, .. })) =
+                    (asset, request)
+                {
+                    Some((*handle, *revision))
+                } else {
+                    None
+                }
+            })
     }
 
     #[doc(hidden)]
     pub fn textures(&self) -> impl Iterator<Item = TextureHandle> + '_ {
-        self.table.textures.iter().copied()
-    }
-
-    #[doc(hidden)]
-    pub fn materials_generation(&self) -> u64 {
-        self.table.materials_generation
+        self.wanted
+            .iter()
+            .filter_map(|(asset, request)| {
+                if let (Asset::Texture(handle), Request::Ready(Resident::Texture { .. })) =
+                    (asset, request)
+                {
+                    Some(*handle)
+                } else {
+                    None
+                }
+            })
     }
 
     #[doc(hidden)]
     pub fn capacities(&self) -> Option<([u32; 2], u32)> {
-        self.table.arena.as_ref().map(|arena| {
+        self.arena.as_ref().map(|arena| {
             (
                 [arena.classes[0].capacity, arena.classes[1].capacity],
                 arena.indices.capacity,
             )
         })
     }
-}
 
-#[derive(Resource)]
-struct AssetScratch {
-    uses: QueryState<&'static AssetUses>,
-}
-
-fn names(world: &mut World) -> Named {
-    if !world.contains_resource::<AssetScratch>() {
-        let uses = world.query::<&'static AssetUses>();
-        world.insert_resource(AssetScratch { uses });
+    fn release(&mut self, asset: Asset, request: &Request<Resident>) {
+        if let (Asset::Mesh(handle), Request::Ready(Resident::Mesh(mesh))) = (asset, request) {
+            if let (MeshResidence::Arena(placement), Some(arena)) = (mesh.placement, self.arena.as_mut())
+            {
+                arena.remove(placement);
+            }
+            self.placed.push(handle);
+        }
+        self.revision = self.revision.wrapping_add(1);
     }
-    world.resource_scope(|world, mut scratch: Mut<AssetScratch>| {
-        let mut named = Named::default();
-        let mut seen = BTreeSet::new();
-        for uses in scratch.uses.iter(world) {
-            for &mesh in &uses.meshes {
-                if seen.insert(mesh) {
-                    named.meshes.push(mesh);
+
+    fn resolve(&mut self, asset: Asset, library: &AssetLibrary) -> Resolved {
+        let Some(revision) = library.revision_of(asset) else {
+            return Resolved::Gone;
+        };
+        match asset {
+            Asset::Mesh(handle) => {
+                let (Some(mesh), Some(lods), Some(arena)) = (
+                    library.mesh(handle),
+                    library.mesh_lods(handle),
+                    self.arena.as_mut(),
+                ) else {
+                    return Resolved::Waiting;
+                };
+                let resident = resident_mesh((mesh, lods.map(|lods| &**lods)), revision, arena);
+                self.placed.push(handle);
+                Resolved::Ready(Resident::Mesh(resident))
+            }
+            Asset::Material(handle) => {
+                let Some(material) = library.material(handle) else {
+                    return Resolved::Waiting;
+                };
+                if material
+                    .textures()
+                    .any(|texture| library.texture(texture).is_none())
+                {
+                    return Resolved::Waiting;
+                }
+                let textures = material
+                    .textures()
+                    .map(|texture| self.wanted.ask_later(Asset::Texture(texture)))
+                    .collect();
+                Resolved::Ready(Resident::Material { revision, textures })
+            }
+            Asset::Texture(handle) => match library.texture(handle) {
+                Some(_) => Resolved::Ready(Resident::Texture { revision }),
+                None => Resolved::Waiting,
+            },
+        }
+    }
+
+    fn settle(&mut self, library: &AssetLibrary, now: f64) {
+        let mut dirty = self.seen != Some(library.revision());
+        while self.wanted.changed() || dirty {
+            dirty = false;
+            for (asset, request) in self.wanted.settle(now) {
+                self.release(asset, &request);
+            }
+            let stale: Vec<Asset> = self
+                .wanted
+                .iter()
+                .filter(|&(asset, request)| match request {
+                    Request::Ready(resident) => {
+                        library.revision_of(*asset) != Some(resident.revision())
+                    }
+                    Request::Asked(_) => true,
+                    Request::Missing | Request::Failed(_) => library.revision_of(*asset).is_some(),
+                })
+                .map(|(asset, _)| *asset)
+                .collect();
+            for asset in stale {
+                self.restate(asset, library);
+            }
+        }
+        self.seen = Some(library.revision());
+    }
+
+    fn restate(&mut self, asset: Asset, library: &AssetLibrary) {
+        let held = self.wanted.get(&asset);
+        let was_ready = matches!(held, Some(Request::Ready(_)));
+        let placed = if let Some(Request::Ready(Resident::Mesh(mesh))) = held {
+            Some(mesh.placement)
+        } else {
+            None
+        };
+        if let (Some(MeshResidence::Arena(placement)), Some(arena)) = (placed, self.arena.as_mut()) {
+            arena.remove(placement);
+        }
+        let resolved = self.resolve(asset, library);
+        let Some(ticket) = self.wanted.ask_again(&asset) else {
+            return;
+        };
+        match resolved {
+            Resolved::Ready(resident) => {
+                self.wanted.ready(&asset, ticket, resident);
+                self.revision = self.revision.wrapping_add(1);
+            }
+            Resolved::Waiting => {
+                if was_ready {
+                    self.revision = self.revision.wrapping_add(1);
                 }
             }
-            named.materials.extend(uses.materials.iter().copied());
-            named.textures.extend(uses.textures.iter().copied());
+            Resolved::Gone => {
+                self.wanted.miss(&asset, ticket);
+                self.revision = self.revision.wrapping_add(1);
+            }
         }
-        named
-    })
+    }
+
+    fn unplace(&mut self) {
+        let placed: Vec<Asset> = self.meshes().map(|(handle, _)| Asset::Mesh(handle)).collect();
+        for asset in placed {
+            self.wanted.ask_again(&asset);
+        }
+    }
 }
 
 fn settle_residency(world: &mut World) {
-    if world
-        .get_resource::<AssetResidency>()
-        .is_none_or(|residency| residency.table.arena.is_none())
-    {
-        return;
-    }
-    let named = names(world);
     let size = world
         .get_resource::<crate::FeedSettings>()
         .map_or(crate::FeedSettings::default().mesh_residency, |feeds| {
             feeds.mesh_residency
         });
-    let Some(mut table) = world
-        .modify_resource(|residency: &mut AssetResidency| std::mem::take(&mut residency.table))
+    let now = world
+        .get_resource::<crate::FrameTime>()
+        .map_or(0.0, |time| time.real_elapsed);
+    let Some(mut residency) = world
+        .modify_resource(|held: &mut AssetResidency| {
+            std::mem::replace(held, AssetResidency::empty())
+        })
         .ok()
         .flatten()
     else {
         return;
     };
-    table.placed.resize(size as usize);
-    table.settle(&named, world.resource::<AssetLibrary>());
-    let _ = world.modify_resource(|residency: &mut AssetResidency| residency.table = table);
+    residency.placed.resize(size as usize);
+    if let Some(library) = world.get_resource::<AssetLibrary>() {
+        residency.settle(library, now);
+    }
+    let _ = world.modify_resource(|held: &mut AssetResidency| *held = residency);
 }
 
 pub(crate) fn install(world: &mut World) {
@@ -495,13 +608,11 @@ pub(crate) fn install(world: &mut World) {
 #[doc(hidden)]
 pub fn configure_assets(world: &mut World, arena: ArenaShape, atlas: AtlasDevice) {
     let _ = world.modify_resource(|residency: &mut AssetResidency| {
-        let table = &mut residency.table;
-        table.meshes.clear();
-        table.materials.clear();
-        table.textures.clear();
-        table.arena = Some(Arena::new(arena));
-        table.placed.replace();
-        table.materials_generation = table.materials_generation.wrapping_add(1);
+        residency.unplace();
+        residency.arena = Some(Arena::new(arena));
+        residency.placed.replace();
+        residency.seen = None;
+        residency.revision = residency.revision.wrapping_add(1);
     });
     impostors::configure(world, atlas);
 }
@@ -512,5 +623,6 @@ pub fn settle_assets(world: &mut World) {
         let _profile = engine_profile::span("render", "validate_and_retire");
         settle_residency(world);
     }
+    crate::drawn::resolve(world);
     impostors::settle_impostors(world);
 }

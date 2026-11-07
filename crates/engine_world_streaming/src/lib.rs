@@ -29,7 +29,7 @@ use serde::Serialize;
 
 use engine_core::math::{max, min};
 use engine_core::{
-    Brick, Bricks, Camera, FrameTime, GlobalTransforms, Interest, Request, Requests, Runs,
+    Brick, Bricks, FrameTime, GlobalTransforms, Interest, PrimaryView, Request, Requests, Runs,
     SceneContext, Schedule, Smoke, Source, Spawner, settings, stats,
 };
 use engine_places_world::streaming::StreamingFocus;
@@ -378,8 +378,8 @@ impl WorldCells {
                 .map(|&source| cell.distance_to(source))
                 .fold(f32::INFINITY, min);
             let range = STREAMING_GRIDS[cell.grid as usize].range * settings.distance;
-            let leaving = !settings.enabled || cell.distance > range * settings.unload;
-            let coming = settings.enabled && cell.distance <= range;
+            let leaving = cell.distance > range * settings.unload;
+            let coming = cell.distance <= range;
             if !settings.frozen {
                 match cell.load {
                     Load::Loaded(_) if leaving => cell.load = Load::Unloaded,
@@ -477,7 +477,7 @@ impl WorldCells {
 
 type StreamReads<'w> = (
     Res<'w, WorldStreaming>,
-    Res<'w, Camera>,
+    Res<'w, PrimaryView>,
     Res<'w, FrameTime>,
     Res<'w, GlobalTransforms>,
 );
@@ -487,7 +487,7 @@ type SceneReads<'w> = (Res<'w, StreamedScene>, Option<Res<'w, SceneContext>>);
 type FocusQuery<'w, 's> = Query<'w, 's, Entity, With<StreamingFocus>>;
 
 pub(crate) fn stream_cells(
-    (settings, camera, frame, globals): StreamReads<'_>,
+    (settings, view, frame, globals): StreamReads<'_>,
     (scene, context): SceneReads<'_>,
     (focus, live): (FocusQuery<'_, '_>, Query<Entity>),
     mut cells: ResMut<WorldCells>,
@@ -516,7 +516,7 @@ pub(crate) fn stream_cells(
     cells.stats.spawned = 0;
     cells.stats.despawned = 0;
     if !cells.cells.is_empty() {
-        sources(camera.eye(), &frame, (&*globals, &focus), cells, settings);
+        sources(view.eye(), &frame, (&*globals, &focus), cells, settings);
         let revised = tracked.is_changed();
         let changes = tracked.bypass_change_detection();
         let (despawned, removed) = cells.reconcile(changes, revised, &mut act);
@@ -604,6 +604,7 @@ impl Brick for WorldStreamingBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .when(|settings: Res<WorldStreaming>| settings.enabled)
             .settings::<WorldStreaming>()
             .settings::<StreamedScene>()
             .stats::<CellStats>()

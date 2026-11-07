@@ -1,11 +1,17 @@
+use std::ops::Range;
+
 use bevy_ecs::prelude::*;
-use engine_core::{DeviceLimits, Entry, Error, View, gpu_struct};
+use engine_core::{
+    AttachPoint, DeviceLimits, DrawKind, Entry, Error, PassName, PassViews, PrimaryView, SlotSet,
+    TargetName, Writes, gpu_struct,
+};
 use engine_render::{
-    Access, Attach, Bind, Buffer, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Layer, Lifetime,
-    Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, ViewTarget, wgpu,
+    Access, Attach, Bind, Buffer, DepthUse, Draw, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
+    Own, Pass, Pipeline, Prepare, RenderPipeline, Scene, SceneDraw, Shape, Texture, wgpu,
 };
 use glam::{Mat4, Vec3};
 
+use crate::PARTICLES;
 use crate::emitters::{Emitter, Packed};
 use crate::shaders::particles::{composite, draw, faces::transparency as face};
 
@@ -71,6 +77,47 @@ const OVER: [(Option<wgpu::BlendState>, wgpu::ColorWrites); 1] = [(
     wgpu::ColorWrites::ALL,
 )];
 
+fn weighted(kind: DrawKind) -> bool {
+    kind == PARTICLES
+}
+
+pub(crate) struct WeightedPass;
+
+impl PassName for WeightedPass {
+    const NAME: &'static str = "transparent";
+    const PASS: engine_core::Pass = engine_core::Pass {
+        writes: Writes(&[TargetName::TRANSPARENCY]),
+        reads: SlotSet {
+            position: true,
+            base_color: true,
+            opacity: true,
+            emissive: true,
+            ..SlotSet::NONE
+        },
+        views: PassViews::Owned,
+        at: AttachPoint::Transparent,
+        takes: weighted,
+    };
+}
+
+pub(crate) struct CompositePass;
+
+impl PassName for CompositePass {
+    const NAME: &'static str = "transparent_composite";
+    const PASS: engine_core::Pass = engine_core::Pass {
+        writes: Writes(&[TargetName::COLOR]),
+        reads: SlotSet {
+            position: true,
+            base_color: true,
+            emissive: true,
+            ..SlotSet::NONE
+        },
+        views: PassViews::Owned,
+        at: AttachPoint::Transparent,
+        takes: weighted,
+    };
+}
+
 gpu_struct! {
     pub(crate) struct Particles {
         right: [f32; 4],
@@ -134,41 +181,20 @@ fn grown(capacity: u64, bytes: u64, room: u64) -> Option<u64> {
     }
 }
 
-#[derive(Clone, Copy)]
-struct Counts {
-    alpha: u32,
-    mist: u32,
-    total: u32,
-}
-
-pub(crate) struct ParticlesGpu {
+pub(crate) struct WeightedGpu {
     accumulate: Pass<Self>,
     composite: Pass<Self>,
     accumulated: Texture<Self>,
     revealed: Texture<Self>,
     shown: Buffer<Self>,
-    uniform: Buffer<Self>,
-    emitters: Buffer<Self>,
-    alpha: Pipeline<Self, Own>,
-    mist: Pipeline<Self, Own>,
-    additive: Pipeline<Self, Own>,
     compositing: Pipeline<Self, Own>,
     targets: bool,
-    emitter_bytes: Option<u64>,
-    drawing: Option<Counts>,
 }
 
-impl ParticlesGpu {
+impl WeightedGpu {
     fn show(&self, drawn: bool, cx: &mut Prepare<'_, Self>) {
         cx.allocate_buffer(self.shown, SHOWN_BYTES);
         cx.write(self.shown, 0, &[u32::from(drawn), 0, 0, 0]);
-    }
-
-    fn drop_held(&mut self, cx: &mut Prepare<'_, Self>) {
-        if self.emitter_bytes.take().is_some() {
-            cx.release_buffer(self.uniform);
-            cx.release_buffer(self.emitters);
-        }
     }
 
     fn release_targets(&mut self, cx: &mut Prepare<'_, Self>) {
@@ -177,10 +203,127 @@ impl ParticlesGpu {
             cx.release(self.revealed);
         }
     }
+}
+
+impl GpuPart for WeightedGpu {
+    type Reads = (Res<'static, Packed>, Res<'static, PrimaryView>);
+
+    fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
+        let accumulated = cx.texture("accumulated", ACCUMULATED_FORMAT, Lifetime::Frame);
+        let revealed = cx.texture("revealed", REVEALED_FORMAT, Lifetime::Kept);
+        let shown = cx.buffer("transparent_drawn", Lifetime::Kept);
+        cx.frame(face::TRANSPARENT_REVEALED, Bind::Texture(revealed))?;
+        cx.frame(face::TRANSPARENT_DRAWN, Bind::Buffer(shown))?;
+        let accumulate = cx
+            .scene::<WeightedPass>()
+            .at(WeightedPass::PASS.at)
+            .span(WeightedPass::NAME)
+            .color(accumulated, Access::Clear)
+            .color_cleared(revealed, wgpu::Color::WHITE)
+            .id();
+        let composite_pass = cx
+            .scene::<CompositePass>()
+            .at(CompositePass::PASS.at)
+            .span(CompositePass::NAME)
+            .id();
+        let compositing = cx.render_pipeline_targets(
+            composite_pass,
+            &RenderPipeline {
+                vertex: FULLSCREEN,
+                fragment: Some(composite::FS_COMPOSITE),
+                debug: None,
+                vertices: &[],
+                primitive: wgpu::PrimitiveState::default(),
+                depth: DepthUse::None,
+                blend: None,
+                writes: wgpu::ColorWrites::ALL,
+            },
+            &OVER,
+            &[
+                (composite::ACCUMULATED, Bind::Texture(accumulated)),
+                (composite::REVEALED, Bind::Texture(revealed)),
+            ],
+        )?;
+        Ok(Self {
+            accumulate,
+            composite: composite_pass,
+            accumulated,
+            revealed,
+            shown,
+            compositing,
+            targets: false,
+        })
+    }
+
+    fn prepare(
+        &mut self,
+        (packed, view): SystemParamItem<'_, '_, Self::Reads>,
+        cx: &mut Prepare<'_, Self>,
+    ) {
+        self.show(packed.emits && !view.debug(), cx);
+        if view.debug() {
+            return;
+        }
+        if !packed.emits {
+            self.release_targets(cx);
+            return;
+        }
+        let size = view.display_size();
+        let extent = wgpu::Extent3d {
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: 1,
+        };
+        cx.allocate(self.accumulated, extent, 1);
+        cx.allocate(self.revealed, extent, 1);
+        self.targets = true;
+        cx.run(self.accumulate);
+        cx.run(self.composite);
+    }
+
+    fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+        let mut draw = cx.render(Attach::Declared, None);
+        if pass == self.composite {
+            draw.draw(
+                &self.compositing,
+                Shape::Pulled {
+                    vertices: 0..3,
+                    instances: 0..1,
+                },
+            );
+        }
+        draw.scene(None)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Counts {
+    alpha: u32,
+    mist: u32,
+    total: u32,
+}
+
+pub(crate) struct ParticlesGpu {
+    uniform: Buffer<Self>,
+    emitters: Buffer<Self>,
+    alpha: Pipeline<Self, Scene>,
+    mist: Pipeline<Self, Scene>,
+    additive: Pipeline<Self, Scene>,
+    emitter_bytes: Option<u64>,
+    drawing: Option<Counts>,
+}
+
+impl ParticlesGpu {
+    fn drop_held(&mut self, cx: &mut Prepare<'_, Self>) {
+        if self.emitter_bytes.take().is_some() {
+            cx.release_buffer(self.uniform);
+            cx.release_buffer(self.emitters);
+        }
+    }
 
     fn prepare_frame(
         &mut self,
-        (packed, view): (&Packed, &View),
+        (packed, view): (&Packed, &PrimaryView),
         room: u64,
         cx: &mut Prepare<'_, Self>,
     ) -> Option<Counts> {
@@ -210,91 +353,85 @@ impl ParticlesGpu {
             total: packed.total,
         })
     }
+
+    pub(crate) fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
+        let Some(counts) = self.drawing else {
+            return 0;
+        };
+        let ranges: [(&Pipeline<Self, Scene>, Range<u32>); 2] =
+            if scene.pass == Scene::of::<WeightedPass>() {
+                [
+                    (&self.alpha, 0..counts.alpha),
+                    (&self.mist, counts.alpha..counts.mist),
+                ]
+            } else if scene.pass == Scene::of::<CompositePass>() {
+                [
+                    (&self.additive, counts.mist..counts.total),
+                    (&self.additive, counts.total..counts.total),
+                ]
+            } else {
+                return 0;
+            };
+        let mut drawn = 0;
+        for (pipeline, instances) in ranges {
+            if instances.is_empty() {
+                continue;
+            }
+            draw.draw(
+                pipeline,
+                Shape::Pulled {
+                    vertices: 0..4,
+                    instances,
+                },
+            );
+            drawn += 1;
+        }
+        drawn
+    }
 }
 
 impl GpuPart for ParticlesGpu {
     type Reads = (
         Res<'static, Packed>,
-        Res<'static, View>,
+        Res<'static, PrimaryView>,
         Res<'static, DeviceLimits>,
     );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let accumulated = cx.texture("accumulated", ACCUMULATED_FORMAT, Lifetime::Frame);
-        let revealed = cx.texture("revealed", REVEALED_FORMAT, Lifetime::Kept);
-        let shown = cx.buffer("transparent_drawn", Lifetime::Kept);
         let uniform = cx.buffer("particles", Lifetime::Kept);
         let emitters = cx.buffer("emitters", Lifetime::Kept);
-        cx.frame(face::TRANSPARENT_REVEALED, Bind::Texture(revealed))?;
-        cx.frame(face::TRANSPARENT_DRAWN, Bind::Buffer(shown))?;
-        let accumulate = cx
-            .pass("transparent")
-            .at(Layer::Blend)
-            .span("transparent")
-            .color(accumulated, Access::Clear)
-            .color_cleared(revealed, wgpu::Color::WHITE)
-            .id();
-        let composite_pass = cx
-            .pass("transparent_composite")
-            .at(Layer::Blend)
-            .span("transparent_composite")
-            .id();
         let bound = || {
             [
                 (draw::PARTICLES, Bind::Buffer(uniform)),
                 (draw::EMITTERS, Bind::Buffer(emitters)),
-                (draw::DEPTH_TEXTURE, Bind::Target(ViewTarget::Depth)),
+                (draw::DEPTH_TEXTURE, Bind::Target(TargetName::DEPTH)),
             ]
         };
+        let (weighted, over) = (Scene::of::<WeightedPass>(), Scene::of::<CompositePass>());
         let alpha = cx.render_pipeline_targets(
-            accumulate,
+            weighted,
             &particle(draw::FS_PARTICLE),
             &ACCUMULATION,
             &bound(),
         )?;
         let mist = cx.render_pipeline_targets(
-            accumulate,
+            weighted,
             &particle(draw::FS_PARTICLE_MIST),
             &ACCUMULATION,
             &bound(),
         )?;
         let additive = cx.render_pipeline_targets(
-            composite_pass,
+            over,
             &particle(draw::FS_PARTICLE_ADD_POST),
             &ADDITIVE,
             &bound(),
         )?;
-        let compositing = cx.render_pipeline_targets(
-            composite_pass,
-            &RenderPipeline {
-                vertex: FULLSCREEN,
-                fragment: Some(composite::FS_COMPOSITE),
-                debug: None,
-                vertices: &[],
-                primitive: wgpu::PrimitiveState::default(),
-                depth: DepthUse::None,
-                blend: None,
-                writes: wgpu::ColorWrites::ALL,
-            },
-            &OVER,
-            &[
-                (composite::ACCUMULATED, Bind::Texture(accumulated)),
-                (composite::REVEALED, Bind::Texture(revealed)),
-            ],
-        )?;
         Ok(Self {
-            accumulate,
-            composite: composite_pass,
-            accumulated,
-            revealed,
-            shown,
             uniform,
             emitters,
             alpha,
             mist,
             additive,
-            compositing,
-            targets: false,
             emitter_bytes: None,
             drawing: None,
         })
@@ -308,72 +445,12 @@ impl GpuPart for ParticlesGpu {
         self.drawing = None;
         if !packed.emits {
             self.drop_held(cx);
+            return;
         }
-        self.show(packed.emits && !view.debug(), cx);
         if view.debug() {
             return;
         }
-        if !packed.emits {
-            self.release_targets(cx);
-            return;
-        }
-        let size = view.display_size();
-        let extent = wgpu::Extent3d {
-            width: size.x,
-            height: size.y,
-            depth_or_array_layers: 1,
-        };
-        cx.allocate(self.accumulated, extent, 1);
-        cx.allocate(self.revealed, extent, 1);
-        self.targets = true;
-        cx.run(self.accumulate);
-        cx.run(self.composite);
         let room = limits.storage_room / 16 * 16;
         self.drawing = self.prepare_frame((&*packed, &*view), room, cx);
-    }
-
-    fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        let drawing = self.drawing;
-        let mut draw = cx.render(Attach::Declared, None);
-        if pass == self.accumulate {
-            if let Some(counts) = drawing.filter(|counts| counts.mist > 0) {
-                if counts.alpha > 0 {
-                    draw.draw(
-                        &self.alpha,
-                        Shape::Pulled {
-                            vertices: 0..4,
-                            instances: 0..counts.alpha,
-                        },
-                    );
-                }
-                if counts.mist > counts.alpha {
-                    draw.draw(
-                        &self.mist,
-                        Shape::Pulled {
-                            vertices: 0..4,
-                            instances: counts.alpha..counts.mist,
-                        },
-                    );
-                }
-            }
-            return 0;
-        }
-        draw.draw(
-            &self.compositing,
-            Shape::Pulled {
-                vertices: 0..3,
-                instances: 0..1,
-            },
-        );
-        if let Some(counts) = drawing.filter(|counts| counts.total != counts.mist) {
-            draw.draw(
-                &self.additive,
-                Shape::Pulled {
-                    vertices: 0..4,
-                    instances: counts.mist..counts.total,
-                },
-            );
-        }
-        0
     }
 }

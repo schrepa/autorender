@@ -42,9 +42,6 @@ gpu_consts! {
     pub const RIVER_BEDS: u32 = 2;
     pub const RIVER_PLANE_FAR: u32 = 0xffff;
     pub const ARRIVAL_SECONDS: f32 = 0.4;
-    pub const DEBUG_TILE_EDGE: u32 = 0x800;
-    pub const DEBUG_PATCH_EDGE: u32 = 0x1000;
-    pub const DEBUG_PATCH_SHIFT: u32 = 24;
     pub const DEBUG_SHOWN_TILES: u32 = 1;
     pub const DEBUG_SHOWN_MATERIALS: u32 = 2;
     pub const DEBUG_SHOWN_SKY: u32 = 3;

@@ -31,17 +31,21 @@ mod games {
     pub use crate::host::{MenuKey, MoveDirection};
     pub use crate::resolution::{DynamicResolution, Resolution};
     pub use engine_core::{
-        Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, AxisId,
-        AxisInput, BrickList, Camera, CameraNode, CursorAsk, CursorMode, CursorRequests,
-        DynamicResolutionStats,
+        Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, Attribute,
+        Attributes, AxisId, AxisInput, BrickList, Camera, Clear, ColorSpace, CursorAsk, Hit,
+        Picking, PrimaryView, Ray, Rect, Target, View, ViewCut, ViewFacts, ViewHistory, Views,
+        main_camera, place_camera,
+        CursorMode, CursorRequests, DrawKind, Drawn, DrawnProjection, DrawnState, DrawnTable,
+        DynamicResolutionStats, InstanceValues, KindDecl, Layers,
         Engine, EngineConfig,
         Filter, FixedTime, FrameLimits, FrameTime, GlobalTransform, GlobalTransforms,
-        Asks, CameraHandoff, Clock, Grounding, HandOver, Listing, MakeSources, MakeTextures,
+        Asks, CameraHandoff, Clock, Cull, DepthBias, HandOver, LightingModel, Listing,
+        MakeSources, MakeTextures, RenderState, SurfaceSlot,
         Material, Mobility, Mover, MoverId, Moves, Node, NodeWord, Pace, Teleport,
         MaterialHandle, MenuInput, Mesh, Mesh3d, MeshHandle, MeshVertex, MoveInput, Parent,
         Pause, PauseReason, PointerInput, Poses, Projection, ProvidedAssets, ResolutionStats, Sampler,
         Surface, Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage,
-        TopLayer, Transform, UvTransform, Wrap, edit_transform, make_fresh, math,
+        Transform, UvTransform, Wrap, edit_transform, make_fresh, math,
         set_parent, set_parents, Span, TimeScale, trim_cards,
     };
 }

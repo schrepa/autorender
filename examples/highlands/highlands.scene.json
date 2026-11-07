@@ -4119,15 +4119,21 @@
         1.0,
         1.0
       ],
-      "foliage": true,
-      "grounding": {
-        "height": 0.25
-      },
       "id": "needles",
+      "slots": {
+        "base_color": "foliage",
+        "metalness": "foliage",
+        "normal": "foliage",
+        "roughness": "foliage",
+        "transmission": "foliage"
+      },
       "surface": {
         "roughness": 0.9
       },
-      "texture": "bark_atlas"
+      "texture": "bark_atlas",
+      "values": {
+        "grounding_height": 0.25
+      }
     },
     {
       "id": "boulder_rock",

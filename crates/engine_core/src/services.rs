@@ -14,7 +14,7 @@ use glam::{Mat4, Vec3};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
-use crate::{Aabb, Camera, Error, ErrorCode, Expected, List, Mesh, Operation, Slot, settings};
+use crate::{Aabb, Error, ErrorCode, Expected, List, Mesh, Operation, Slot, settings};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
@@ -169,7 +169,42 @@ pub struct ComponentKindOf<C> {
     component: PhantomData<fn() -> C>,
 }
 
+pub trait SceneForm: Clone + Serialize + DeserializeOwned + Send + Sync + 'static {
+    type Component: Component;
+
+    fn insert(self, world: &mut World, entity: Entity) -> Result<(), Error>;
+
+    fn read(world: &World, entity: Entity) -> Option<Self>;
+}
+
 impl ComponentKind {
+    pub fn form<F: SceneForm>(key: &'static str) -> ComponentKindOf<F> {
+        ComponentKindOf {
+            kind: Self {
+                key,
+                register: World::register_component::<F::Component>,
+                scene: engine_registry::SceneRead(read_form::<F>),
+                parse: parse_component::<F>,
+                value: form_value::<F>,
+                prepared: prepared_component::<F>,
+                insert: insert_form::<F>,
+                remove: remove_component::<F::Component>,
+                placement: Placement::Anywhere,
+                check: None,
+                placed: None,
+                files: None,
+                reach: None,
+                paths: None,
+                schema: None,
+                example: None,
+                prepare: None,
+                view: None,
+                view_schema: None,
+            },
+            component: PhantomData,
+        }
+    }
+
     pub fn of<C: Component + Clone + Serialize + DeserializeOwned>(
         key: &'static str,
     ) -> ComponentKindOf<C> {
@@ -348,7 +383,7 @@ impl ComponentKind {
     }
 }
 
-impl<C: Component + Clone + Serialize + DeserializeOwned> ComponentKindOf<C> {
+impl<C: Clone + Serialize + DeserializeOwned + Send + Sync + 'static> ComponentKindOf<C> {
     pub fn check(mut self, check: fn(&C, &str) -> Result<(), Error>) -> Self {
         self.kind.check = Some(Arc::new(move |value: &Value, path: &str| {
             check(&parsed::<C>(value, path)?, path)
@@ -440,7 +475,9 @@ impl<C: Component + Clone + Serialize + DeserializeOwned> ComponentKindOf<C> {
         ));
         self
     }
+}
 
+impl<C: Component + Clone + Serialize + DeserializeOwned> ComponentKindOf<C> {
     pub fn view<A: Component, V: Serialize + schemars::JsonSchema + 'static>(
         mut self,
         view: fn(&C, Option<&A>) -> V,
@@ -498,7 +535,7 @@ fn read_component<C: Component + DeserializeOwned>(
     Ok(())
 }
 
-fn prepared_component<C: Component + DeserializeOwned>(
+fn prepared_component<C: DeserializeOwned + Send + Sync + 'static>(
     value: &Value,
     path: &str,
 ) -> Result<Prepared, Error> {
@@ -518,6 +555,37 @@ fn insert_component<C: Component>(
         .map_err(|_| Error::new(ErrorCode::UnknownEntity, "$").got(entity.to_string()))?;
     target.insert(*component);
     Ok(())
+}
+
+fn read_form<F: SceneForm>(world: &mut World, entity: Entity, value: &Value) -> Result<(), Error> {
+    let form: F = engine_settings::parse_value(value.clone())?;
+    if world.get_entity(entity).is_err() {
+        return Err(Error::new(ErrorCode::UnknownEntity, "$").got(entity.to_string()));
+    }
+    form.insert(world, entity)
+}
+
+fn form_value<F: SceneForm>(world: &World, entity: Entity) -> Option<Value> {
+    let form = F::read(world, entity)?;
+    let write = || serde_json::to_value(&form).ok();
+    match world.get_resource::<SceneContext>() {
+        Some(context) => context.scope(write),
+        None => write(),
+    }
+}
+
+fn insert_form<F: SceneForm>(
+    world: &mut World,
+    entity: Entity,
+    prepared: Prepared,
+) -> Result<(), Error> {
+    let Ok(form) = prepared.0.downcast::<F>() else {
+        return Err(Error::new(ErrorCode::InvalidType, "$").got(std::any::type_name::<F>()));
+    };
+    if world.get_entity(entity).is_err() {
+        return Err(Error::new(ErrorCode::UnknownEntity, "$").got(entity.to_string()));
+    }
+    F::insert(*form, world, entity)
 }
 
 fn remove_component<C: Component>(world: &mut World, entity: Entity) {
@@ -647,17 +715,19 @@ static VIEWS: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Resource)]
 #[component(immutable)]
-pub struct View {
+pub struct PrimaryView {
     cameras: engine_registry::ViewState,
+    facts: Option<crate::ViewFacts>,
 }
 
-impl View {
+impl PrimaryView {
     pub(crate) fn empty() -> Self {
         let identity = VIEWS
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .expect("view_identities_left");
         Self {
             cameras: engine_registry::ViewState::identified(identity),
+            facts: None,
         }
     }
 
@@ -682,6 +752,10 @@ impl View {
         self.cameras.view_projection()
     }
 
+    pub fn eye(&self) -> glam::Vec3 {
+        self.cameras.eye()
+    }
+
     pub fn detail_eye(&self) -> glam::Vec3 {
         self.cameras.detail_eye()
     }
@@ -702,6 +776,31 @@ impl View {
         self.cameras.scene()
     }
 
+    pub fn facts(&self) -> Option<&crate::ViewFacts> {
+        self.facts.as_ref()
+    }
+
+    pub fn view(&self) -> Option<Entity> {
+        self.facts.map(|facts| facts.view)
+    }
+
+    pub fn camera(&self) -> Option<Entity> {
+        self.facts.map(|facts| facts.camera)
+    }
+
+    pub fn lens(&self) -> crate::Camera {
+        self.facts.map(|facts| facts.lens).unwrap_or_default()
+    }
+
+    pub fn forward(&self) -> glam::Vec3 {
+        self.facts.map_or(glam::Vec3::NEG_Z, |facts| facts.forward)
+    }
+
+    pub fn history(&self) -> crate::ViewHistory {
+        self.facts
+            .map_or(crate::ViewHistory::Fresh, |facts| facts.history)
+    }
+
     #[doc(hidden)]
     pub fn state(&self) -> &engine_registry::ViewState {
         &self.cameras
@@ -710,6 +809,14 @@ impl View {
     #[doc(hidden)]
     pub fn state_mut(&mut self) -> &mut engine_registry::ViewState {
         &mut self.cameras
+    }
+
+    pub(crate) fn shown(&mut self, facts: Option<crate::ViewFacts>) {
+        self.facts = facts;
+    }
+
+    pub(crate) fn same(&self, facts: Option<&crate::ViewFacts>) -> bool {
+        self.facts.as_ref() == facts
     }
 }
 
@@ -722,23 +829,19 @@ pub(crate) struct ViewControl {
 
 impl Operation for ViewControl {
     const NAME: &'static str = "view";
-    type Params = (
-        Res<'static, View>,
-        Res<'static, Camera>,
-        Commands<'static, 'static>,
-    );
+    type Params = (Res<'static, PrimaryView>, Commands<'static, 'static>);
     type Request = Self;
 
     fn run(params: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<Value, Error> {
-        let (view, camera, mut commands) = params;
+        let (view, mut commands) = params;
         let frozen = match request.freeze {
-            Some(true) => Some(view.cameras.frozen().unwrap_or_else(|| camera.eye())),
+            Some(true) => Some(view.cameras.frozen().unwrap_or_else(|| view.eye())),
             Some(false) => None,
             None => view.cameras.frozen(),
         };
         if frozen != view.cameras.frozen() {
             commands.queue(move |world: &mut World| {
-                crate::modify(world, |view: &mut View| view.cameras.freeze(frozen));
+                crate::modify(world, |view: &mut PrimaryView| view.cameras.freeze(frozen));
             });
         }
         Ok(json!({ "frozen_at": frozen.map(|eye| eye.to_array()) }))

@@ -66,11 +66,7 @@ fn drawn_surfaces(terrains: &Terrains) -> impl Iterator<Item = Option<&Arc<Surfa
         .entries
         .iter()
         .filter(|state| state.drawn)
-        .map(|state| {
-            (!state.materials)
-                .then(|| state.surface.as_ref().and_then(|(_, data)| data.as_ref()))
-                .flatten()
-        })
+        .map(TerrainState::programmed)
 }
 
 pub(crate) struct SurfaceProgramGpu {

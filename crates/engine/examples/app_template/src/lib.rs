@@ -4,6 +4,7 @@ use engine::prelude::*;
 use engine_fly_camera::FlyCameraBrick;
 
 pub mod bricks {
+    pub mod glimmer;
     pub mod turning;
 }
 
@@ -13,7 +14,11 @@ pub struct Template;
 
 impl Game for Template {
     fn reset_camera(&mut self, engine: &mut Engine) {
-        engine.app.world_mut().insert_resource(Camera::default());
+        let world = engine.app.world_mut();
+        if let Some(camera) = main_camera(world) {
+            let at = Transform::looking_at(Camera::EYE, Vec3::ZERO);
+            place_camera(world, camera, at, Camera::default());
+        }
     }
 }
 

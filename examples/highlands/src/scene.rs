@@ -21,7 +21,7 @@ const EFFECTS: [&str; 7] = [
 
 pub(crate) struct Furnished {
     pub(crate) instance: SceneInstance,
-    pub(crate) start: Camera,
+    pub(crate) start: (Transform, Camera),
     pub(crate) reflections: Option<Value>,
 }
 
@@ -50,7 +50,7 @@ pub(crate) fn furnish(
         set(world, "collision.enabled", json!(false))?;
         set(world, "physics.enabled", json!(false))?;
     }
-    let start = *world.resource::<Camera>();
+    let start = document.camera.placed();
     if flying {
         set(world, "fly_camera.speed", json!(SPEED))?;
     } else {

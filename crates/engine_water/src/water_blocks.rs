@@ -27,7 +27,60 @@ type Slot = (Entity, TileKey);
 struct TileBlocks {
     stamp: engine_core::Stamp,
     water: Option<Arc<TileWater>>,
+    drawn: Option<Arc<DrawnWater>>,
     blocks: Box<[u32]>,
+}
+
+impl TileBlocks {
+    fn writes(&self, into: &mut Vec<(u32, Arc<DrawnWater>, usize)>) {
+        let (Some(water), Some(drawn)) = (self.water.as_deref(), self.drawn.as_ref()) else {
+            return;
+        };
+        let patches = PATCHES_PER_TILE as usize;
+        let mut offset = 0;
+        for pz in 0..patches {
+            for px in 0..patches {
+                if !water.patch_holds_water(px as u32, pz as u32) {
+                    continue;
+                }
+                let at = offset;
+                offset += PATCH_BYTES;
+                let block = self.blocks[pz * patches + px];
+                if block != NO_WATER_BLOCK {
+                    into.push((block, Arc::clone(drawn), at));
+                }
+            }
+        }
+    }
+}
+
+enum TileState {
+    Waiting { since: u64 },
+    Held(TileBlocks),
+    Behind(TileBlocks),
+}
+
+impl TileState {
+    fn held(&self) -> Option<&TileBlocks> {
+        match self {
+            Self::Held(tile) | Self::Behind(tile) => Some(tile),
+            Self::Waiting { .. } => None,
+        }
+    }
+
+    fn into_held(self) -> Option<TileBlocks> {
+        match self {
+            Self::Held(tile) | Self::Behind(tile) => Some(tile),
+            Self::Waiting { .. } => None,
+        }
+    }
+
+    fn since(&self) -> Option<u64> {
+        match self {
+            Self::Waiting { since } => Some(*since),
+            Self::Held(_) | Self::Behind(_) => None,
+        }
+    }
 }
 
 fn alike(a: Option<&Arc<TileWater>>, b: Option<&Arc<TileWater>>) -> bool {
@@ -61,6 +114,7 @@ fn tile_water<'a>(terrains: &'a [WaterTerrain], tile: &HeldTile) -> Shown<'a> {
         .iter()
         .find(|terrain| terrain.entity == tile.terrain)
         .and_then(|terrain| terrain.held.get(&tile.key))
+        .filter(|water| water.on_face())
     else {
         return Shown::Gone;
     };
@@ -68,9 +122,9 @@ fn tile_water<'a>(terrains: &'a [WaterTerrain], tile: &HeldTile) -> Shown<'a> {
         return Shown::Coming;
     }
     match water.base {
-        Base::Made => Shown::Ready(water),
+        Base::Made | Base::Redrawing(..) => Shown::Ready(water),
         Base::Waiting | Base::Asking(_) | Base::Drawing(_) => Shown::Coming,
-        Base::Failed => Shown::Gone,
+        Base::Failed | Base::Left => Shown::Gone,
     }
 }
 
@@ -98,7 +152,7 @@ fn patch_writes(tile: &HeldWater, before: Option<&TileBlocks>) -> u64 {
 
 #[derive(Default)]
 pub(crate) struct Blocks {
-    tiles: BTreeMap<Slot, TileBlocks>,
+    tiles: BTreeMap<Slot, TileState>,
     free: Vec<u32>,
     next: u32,
     pub(crate) layers: u32,
@@ -108,9 +162,8 @@ pub(crate) struct Blocks {
     occupants: Vec<Option<Slot>>,
     layer_writes: Vec<(u32, Slot)>,
     whole_directory: bool,
-    waiting: BTreeSet<Slot>,
+    dirty: BTreeSet<Slot>,
     frames: u64,
-    waited: BTreeMap<Slot, u64>,
     cursors: BTreeMap<Entity, Cursor>,
 }
 
@@ -119,15 +172,28 @@ impl Blocks {
         self.next - self.free.len() as u32
     }
 
-    pub(crate) fn current(
+    fn held(&self, slot: Slot) -> Option<&TileBlocks> {
+        self.tiles.get(&slot).and_then(TileState::held)
+    }
+
+    pub(crate) fn shows(
         &self,
-        terrain: Entity,
-        key: TileKey,
+        slot: Slot,
+        stamp: engine_core::Stamp,
         water: Option<&Arc<TileWater>>,
     ) -> bool {
-        self.tiles
-            .get(&(terrain, key))
-            .is_some_and(|tile| alike(tile.water.as_ref(), water))
+        match self.tiles.get(&slot) {
+            Some(TileState::Held(tile)) => tile.stamp == stamp && alike(tile.water.as_ref(), water),
+            Some(TileState::Behind(_) | TileState::Waiting { .. }) | None => false,
+        }
+    }
+
+    fn fall_behind(&mut self, slot: Slot, stamp: engine_core::Stamp) {
+        let behind =
+            matches!(self.tiles.get(&slot), Some(TileState::Held(held)) if held.stamp != stamp);
+        if behind && let Some(TileState::Held(held)) = self.tiles.remove(&slot) {
+            self.tiles.insert(slot, TileState::Behind(held));
+        }
     }
 
     pub(crate) fn caught_up(
@@ -136,8 +202,7 @@ impl Blocks {
         key: TileKey,
         water: Option<&Arc<TileWater>>,
     ) -> bool {
-        self.tiles
-            .get(&(terrain, key))
+        self.held((terrain, key))
             .is_none_or(|tile| alike(tile.water.as_ref(), water))
     }
 
@@ -151,9 +216,9 @@ impl Blocks {
     }
 
     fn walk(&mut self, ground: &GroundTiles, terrains: &[WaterTerrain]) {
-        self.waiting.extend(self.tiles.keys().copied());
+        self.dirty.extend(self.tiles.keys().copied());
         let mut occupants: Vec<Option<Slot>> = vec![None; ground.layers as usize];
-        let mut waited = BTreeMap::new();
+        let mut wanted = BTreeSet::new();
         for tile in &ground.held {
             let slot = (tile.terrain, tile.key);
             if let Some(occupant) = occupants.get_mut(tile.layer as usize) {
@@ -165,14 +230,16 @@ impl Blocks {
             if !knows(terrains, tile.terrain) {
                 continue;
             }
-            self.waiting.insert(slot);
-            if !self.tiles.contains_key(&slot) {
-                let since = self.waited.get(&slot).copied().unwrap_or(self.frames);
-                waited.insert(slot, since);
-            }
+            self.dirty.insert(slot);
+            wanted.insert(slot);
+            let since = self.frames;
+            self.tiles
+                .entry(slot)
+                .or_insert(TileState::Waiting { since });
         }
+        self.tiles
+            .retain(|slot, state| state.held().is_some() || wanted.contains(slot));
         self.occupants = occupants;
-        self.waited = waited;
     }
 
     fn place(
@@ -185,37 +252,50 @@ impl Blocks {
         let mut changed = false;
         let mut replacing = Vec::new();
         let mut arriving = Vec::new();
-        for slot in std::mem::take(&mut self.waiting) {
+        let mut caught = Vec::new();
+        for slot in std::mem::take(&mut self.dirty) {
             let tile = ground_tile(ground, slot);
             let water = match tile.map_or(Shown::Gone, |tile| tile_water(terrains, tile)) {
                 Shown::Ready(water) => water,
-                Shown::Coming => continue,
+                Shown::Coming => {
+                    if let Some(tile) = tile {
+                        self.fall_behind(slot, tile.stamp);
+                    }
+                    continue;
+                }
                 Shown::Gone => {
                     changed |= self.drop_tile(slot, tile, terrains);
                     continue;
                 }
             };
+            let same = |held: &TileBlocks| {
+                held.stamp == water.face.stamp && alike(held.water.as_ref(), water.water.as_ref())
+            };
             match self.tiles.get(&slot) {
-                Some(held)
-                    if held.stamp == water.face.stamp
-                        && alike(held.water.as_ref(), water.water.as_ref()) => {}
-                Some(_) => replacing.push((slot, water)),
-                None => arriving.push((slot, water)),
+                Some(TileState::Held(held)) if same(held) => {}
+                Some(TileState::Behind(held)) if same(held) => caught.push(slot),
+                Some(TileState::Held(_) | TileState::Behind(_)) => replacing.push((slot, water)),
+                Some(TileState::Waiting { .. }) | None => arriving.push((slot, water)),
+            }
+        }
+        for slot in caught {
+            if let Some(TileState::Behind(held)) = self.tiles.remove(&slot) {
+                self.tiles.insert(slot, TileState::Held(held));
             }
         }
         self.free.sort_unstable_by(|a, b| b.cmp(a));
         let mut uploaded = false;
         for (slot, water) in replacing {
-            let bytes = patch_writes(water, self.tiles.get(&slot)) * PATCH_BYTES as u64;
+            let bytes = patch_writes(water, self.held(slot)) * PATCH_BYTES as u64;
             if (uploaded && budget.expired()) || !budget.spend("water", bytes) {
-                self.waiting.insert(slot);
+                self.dirty.insert(slot);
                 continue;
             }
             uploaded = true;
             changed = true;
-            let before = self.tiles.remove(&slot);
+            let before = self.tiles.remove(&slot).and_then(TileState::into_held);
             let blocks = self.upload(water, before, max_layers);
-            self.tiles.insert(slot, blocks);
+            self.tiles.insert(slot, TileState::Held(blocks));
             if let Some(tile) = ground_tile(ground, slot) {
                 self.layer_writes.push((tile.layer, slot));
             }
@@ -223,14 +303,15 @@ impl Blocks {
         for (slot, water) in arriving {
             let bytes = patch_writes(water, None) * PATCH_BYTES as u64;
             if (uploaded && budget.expired()) || !budget.spend("water", bytes) {
-                self.waiting.insert(slot);
+                self.dirty.insert(slot);
                 continue;
             }
             uploaded = true;
             changed = true;
+            let since = self.tiles.remove(&slot).and_then(|state| state.since());
             let blocks = self.upload(water, None, max_layers);
-            self.count_wait(slot, &blocks.blocks);
-            self.tiles.insert(slot, blocks);
+            self.count_wait(slot, since, &blocks.blocks);
+            self.tiles.insert(slot, TileState::Held(blocks));
             if let Some(tile) = ground_tile(ground, slot) {
                 self.layer_writes.push((tile.layer, slot));
             }
@@ -244,7 +325,10 @@ impl Blocks {
         tile: Option<&HeldTile>,
         terrains: &[WaterTerrain],
     ) -> bool {
-        let Some(gone) = self.tiles.remove(&slot) else {
+        if self.held(slot).is_none() {
+            return false;
+        }
+        let Some(gone) = self.tiles.remove(&slot).and_then(TileState::into_held) else {
             return false;
         };
         self.free.extend(
@@ -256,14 +340,15 @@ impl Blocks {
         if let Some(tile) = tile {
             self.layer_writes.push((tile.layer, slot));
             if knows(terrains, slot.0) {
-                self.waited.insert(slot, self.frames);
+                let since = self.frames;
+                self.tiles.insert(slot, TileState::Waiting { since });
             }
         }
         true
     }
 
-    fn count_wait(&mut self, (terrain, key): Slot, blocks: &[u32]) {
-        let Some(since) = self.waited.remove(&(terrain, key)) else {
+    fn count_wait(&mut self, (terrain, key): Slot, since: Option<u64>, blocks: &[u32]) {
+        let Some(since) = since else {
             return;
         };
         if blocks.iter().all(|&block| block == NO_WATER_BLOCK) {
@@ -289,7 +374,7 @@ impl Blocks {
                 usize::from(z & 1) * half + pz / 2,
             );
             (level, x, z) = (level + 1, x / 2, z / 2);
-            if let Some(tile) = self.tiles.get(&(terrain, TileKey::new(level, x, z))) {
+            if let Some(tile) = self.held((terrain, TileKey::new(level, x, z))) {
                 return tile.blocks[pz * 2 * half + px] != NO_WATER_BLOCK;
             }
             if x == 0 && z == 0 {
@@ -352,8 +437,17 @@ impl Blocks {
         TileBlocks {
             stamp,
             water: tile.water.clone(),
+            drawn: tile.drawn.clone(),
             blocks,
         }
+    }
+
+    fn all_writes(&self) -> Vec<(u32, Arc<DrawnWater>, usize)> {
+        let mut writes = Vec::new();
+        for tile in self.tiles.values().filter_map(TileState::held) {
+            tile.writes(&mut writes);
+        }
+        writes
     }
 
     fn allocate(&mut self, max_layers: u32) -> Option<u32> {
@@ -376,7 +470,11 @@ impl Blocks {
         let mut holding: Vec<Entity> = self
             .tiles
             .iter()
-            .filter(|(_, tile)| tile.blocks.iter().any(|&block| block != NO_WATER_BLOCK))
+            .filter(|(_, state)| {
+                state
+                    .held()
+                    .is_some_and(|tile| tile.blocks.iter().any(|&block| block != NO_WATER_BLOCK))
+            })
             .map(|(&(terrain, _), _)| terrain)
             .collect();
         holding.dedup();
@@ -409,9 +507,9 @@ pub(crate) fn place_blocks(
         blocks.whole_directory = whole;
         blocks.walk(&ground, &state.terrains);
     } else {
-        blocks.waiting.extend(touched);
+        blocks.dirty.extend(touched);
     }
-    if blocks.waiting.is_empty() {
+    if blocks.dirty.is_empty() {
         return;
     }
     if blocks.place(&ground, &state.terrains, limits.texture_layers, &mut budget) {
@@ -454,14 +552,16 @@ impl BlocksGpu {
             height: size,
             depth_or_array_layers: layers,
         };
-        cx.grow(self.surface, extent, 1);
-        cx.grow(self.info, extent, 1);
+        let surface = cx.grow(self.surface, extent, 1);
+        let info = cx.grow(self.info, extent, 1);
+        let refilled = (surface == Allocation::Fresh || info == Allocation::Fresh)
+            .then(|| blocks.all_writes());
         let block = wgpu::Extent3d {
             width: BLOCK,
             height: BLOCK,
             depth_or_array_layers: 1,
         };
-        for (at, drawn, offset) in &blocks.writes {
+        for (at, drawn, offset) in refilled.as_ref().unwrap_or(&blocks.writes) {
             let index = at % PER_LAYER;
             let origin = wgpu::Origin3d {
                 x: index % SIDE * BLOCK,
@@ -498,7 +598,7 @@ impl BlocksGpu {
                 let Some(slot) = directory.get_mut(at..at + entry) else {
                     continue;
                 };
-                match blocks.tiles.get(&(tile.terrain, tile.key)) {
+                match blocks.held((tile.terrain, tile.key)) {
                     Some(held) => slot.copy_from_slice(&held.blocks),
                     None if knows(terrains, tile.terrain) => slot.fill(WATER_WAITING),
                     None => {}
@@ -514,7 +614,7 @@ impl BlocksGpu {
                 continue;
             }
             let at = (layer as usize * entry * 4) as u64;
-            if let Some(held) = blocks.tiles.get(&slot) {
+            if let Some(held) = blocks.held(slot) {
                 cx.write(self.directory, at, &held.blocks);
             } else {
                 let fill = if knows(terrains, slot.0) {

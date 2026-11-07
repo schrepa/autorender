@@ -38,6 +38,8 @@ pub(crate) struct Variant {
 pub(crate) struct FramePlan {
     pub(crate) variants: Vec<Variant>,
     pub(crate) of_pipeline: Vec<u32>,
+    pub(crate) skipped: Vec<bool>,
+    pub(crate) over: Vec<Error>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -179,7 +181,9 @@ pub(crate) fn plan(
     conflict: &dyn Fn(u32, u32) -> bool,
 ) -> Result<FramePlan, Vec<Error>> {
     let mut exact: Vec<Variant> = Vec::new();
+    let mut conflicts = Vec::new();
     let mut over = Vec::new();
+    let mut skipped = vec![false; reaches.len()];
     for (index, reach) in reaches.iter().enumerate() {
         let pipeline = index as u32;
         let entries = joined(&[], &reach.reached);
@@ -187,7 +191,7 @@ pub(crate) fn plan(
             .iter()
             .find(|&&(variable, _)| conflict(pipeline, variable))
         {
-            over.push(Error::new(
+            conflicts.push(Error::new(
                 ErrorCode::UsageConflict,
                 format!("{}.{}", reach.label, variables[variable as usize].name),
             ));
@@ -195,6 +199,7 @@ pub(crate) fn plan(
         }
         if let Err((stage, what)) = fits(reach, &entries, variables, limits) {
             over.push(refused(ErrorCode::BindingLimit, reach, variables, stage, what));
+            skipped[index] = true;
             continue;
         }
         let same = exact.iter_mut().find(|variant| {
@@ -279,11 +284,13 @@ pub(crate) fn plan(
             of_pipeline[member as usize] = index as u32;
         }
     }
-    if !over.is_empty() {
-        return Err(over);
+    if !conflicts.is_empty() {
+        return Err(conflicts);
     }
     Ok(FramePlan {
         variants: merged,
         of_pipeline,
+        skipped,
+        over,
     })
 }

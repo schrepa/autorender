@@ -31,8 +31,8 @@ pub use environment::section_schemas;
 pub use files::{SceneFile, SceneFileKind, SceneFiles};
 pub use instance::{MeshOrigin, SceneInstance, TextureOrigin};
 pub use material::{
-    SceneAlphaMode, SceneFilter, SceneGrounding, SceneMap, SceneMaterial, SceneMipmapFilter,
-    SceneTextureMap, SceneTopLayer, SceneWrap,
+    SceneAlphaMode, SceneCull, SceneDepthBias, SceneFilter, SceneMap, SceneMaterial,
+    SceneMaterialControl, SceneMipmapFilter, SceneTextureMap, SceneWrap,
 };
 pub use texture::SceneTexture;
 pub use validation::{identifier, unknown};

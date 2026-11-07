@@ -3,10 +3,12 @@ use std::any::TypeId;
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::{
-    Cut, DeviceLimits, FrameTime, GpuBits, PartDraws, Readable, Readback, View, ViewWind, gpu_bits,
+    Cursor, Cut, DeviceLimits, FrameBudget, FrameTime, GpuBits, Mobility, PartDraws, PassName,
+    PrimaryView, Readable, Readback, SceneView, SceneViews, Since, Spawner, ViewWind, gpu_bits,
 };
 use engine_places_rendering::shadows::{
-    ExtraCasters, GROUND_TEXELS, Region as MapView, ShadowChanges, ShadowMaps,
+    CasterMap, GROUND_TEXELS, Refresh, Region as MapView, ShadowChange, ShadowChanges,
+    ShadowMaps,
 };
 use engine_places_rendering::sun::Sun;
 use engine_render::{CameraUniform, DebugShown, pixel_angle};
@@ -14,11 +16,17 @@ use engine_render::{CameraUniform, DebugShown, pixel_angle};
 use crate::atlas::MapsKey;
 use crate::constants::LEVEL_WORDS;
 use crate::gpu_layouts::{CasterCull, ComposeData, Route, ShadowPiece};
-use crate::part::ShadowsGpu;
+use crate::part::{SHADOW_FORMAT, ShadowsGpu};
 use crate::regions::FrameRegions;
 use crate::shadow_fit::{ClipPlan, ClipSettings, Clipmap, DrawnTile, LightBasis, region_tiles};
-use crate::sky::{SkyDraw, SkyMaps};
-use crate::{ShadowSettings, ShadowStats, SkyOcclusion};
+use crate::sky::{RESOLUTION, SkyDraw, SkyMaps};
+use crate::{ShadowPass, ShadowSettings, ShadowStats, ShadowsBrick, SkyOcclusion};
+
+const BUDGET: &str = "shadow_tiles";
+const TILE_WORDS: usize = 3;
+pub(crate) const SKIPPED: u8 = 0;
+pub(crate) const LOST: u8 = 1;
+pub(crate) const SKY_LOST: u8 = 2;
 
 #[gpu_bits]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,13 +68,27 @@ impl Readable for ShadowFeedback {
 
 #[derive(Resource, Default)]
 pub(crate) struct ShadowDrawn {
-    acks: Vec<(u32, bool)>,
+    acks: Vec<(u32, u8, Vec<DrawnTile>)>,
 }
 
 impl Readable for ShadowDrawn {
-    fn arrived(&mut self, batch: u32, read: Readback<&[u8]>) {
-        let ran = read.value.first().is_some_and(|&ran| ran != 0);
-        self.acks.push((batch, ran));
+    fn arrived(&mut self, layout: u32, read: Readback<&[u8]>) {
+        let Some((&status, tiles)) = read.value.split_first() else {
+            return;
+        };
+        let words: Vec<u32> = tiles
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| u32::from_le_bytes(*word))
+            .collect();
+        let tiles = words
+            .as_chunks::<TILE_WORDS>()
+            .0
+            .iter()
+            .map(|&[level, cell, slot]| (level as usize, cell as usize, slot as u16))
+            .collect();
+        self.acks.push((layout, status, tiles));
     }
 }
 
@@ -78,7 +100,8 @@ struct Masks {
 }
 
 impl ShadowFeedback {
-    fn take(&mut self, layout: u8, words: usize, into: &mut Masks) {
+    fn take(&mut self, layout: u8, words: usize, into: &mut Masks) -> [bool; 3] {
+        let mut came = [false; 3];
         for read in [&mut into.marked, &mut into.dirty, &mut into.moving] {
             read.clear();
         }
@@ -86,16 +109,18 @@ impl ShadowFeedback {
             if tag.layout != layout {
                 continue;
             }
-            let read = match tag.kind {
-                MarkKind::Map => &mut into.dirty,
-                MarkKind::Depth => &mut into.marked,
-                MarkKind::Masks => &mut into.moving,
+            let (read, at) = match tag.kind {
+                MarkKind::Map => (&mut into.dirty, 0),
+                MarkKind::Depth => (&mut into.marked, 1),
+                MarkKind::Masks => (&mut into.moving, 2),
             };
+            came[at] = true;
             read.resize(words, 0);
             for (word, bits) in read.iter_mut().zip(arrived) {
                 *word |= bits;
             }
         }
+        came
     }
 }
 
@@ -103,10 +128,10 @@ impl ShadowFeedback {
 pub(crate) struct ShadowPlan {
     clipmap: Clipmap,
     plan: ClipPlan,
+    changes: Cursor,
     pub(crate) key: Option<MapsKey>,
     pub(crate) layout: u8,
-    pub(crate) batch: u32,
-    drawing: Vec<(u32, Vec<DrawnTile>)>,
+    pub(crate) drawn: Vec<DrawnTile>,
     masks: Masks,
     pub(crate) sky: SkyMaps,
     pub(crate) sky_draw: Option<SkyDraw>,
@@ -144,6 +169,17 @@ impl ShadowPlan {
         .pack()
     }
 
+    pub(crate) fn drawn_bytes(&self, status: u8) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(1 + self.drawn.len() * TILE_WORDS * 4);
+        bytes.push(status);
+        for &(level, cell, slot) in &self.drawn {
+            for word in [level as u32, cell as u32, u32::from(slot)] {
+                bytes.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+        bytes
+    }
+
     fn place(
         &mut self,
         settings: &ShadowSettings,
@@ -164,40 +200,31 @@ impl ShadowPlan {
             },
         );
         if made && !restarted {
-            self.clipmap.invalidate();
+            self.clipmap.invalidate(&[]);
         }
         if made || restarted {
             self.layout = self.layout.wrapping_add(1);
-            self.drawing.clear();
         }
         basis
     }
 
     fn acknowledge(&mut self, drawn: &mut ShadowDrawn) {
-        for (batch, ran) in drawn.acks.drain(..) {
-            let Some(at) = self.drawing.iter().position(|(held, _)| *held == batch) else {
+        for (layout, status, tiles) in drawn.acks.drain(..) {
+            if layout != u32::from(self.layout) {
                 continue;
-            };
-            let Some((_, tiles)) = self.drawing.drain(..=at).last() else {
-                continue;
-            };
-            if !ran {
-                self.clipmap.undraw(&tiles);
             }
-        }
-    }
-
-    fn drew(&mut self) {
-        let tiles = self.clipmap.take_drawing();
-        if !tiles.is_empty() {
-            self.batch = self.batch.wrapping_add(1);
-            self.drawing.push((self.batch, tiles));
+            match status {
+                LOST => self.clipmap.invalidate(&tiles),
+                SKY_LOST => self.sky.forget(),
+                _ => self.clipmap.undraw(&tiles),
+            }
         }
     }
 
     fn idle(&mut self) {
         self.clipmap.idle();
         self.sky_draw = None;
+        self.drawn.clear();
         self.views.clear();
         self.cameras.clear();
         self.routes.clear();
@@ -208,25 +235,34 @@ impl ShadowPlan {
 
     fn merge(&mut self, feedback: &mut ShadowFeedback) -> bool {
         let words = self.clipmap.mask_words();
-        feedback.take(self.layout, words, &mut self.masks);
+        let [_, marked, moving] = feedback.take(self.layout, words, &mut self.masks);
         let still_changed = self.masks.dirty.iter().any(|&word| word != 0);
-        self.clipmap.merge_marks(&self.masks.marked);
+        if marked {
+            self.clipmap.merge_marks(&self.masks.marked);
+        }
         self.clipmap.merge_dirty(&self.masks.dirty);
-        self.clipmap.merge_moving(&self.masks.moving);
+        if moving {
+            self.clipmap.merge_moving(&self.masks.moving);
+        }
         self.mask_words = words as u32;
         still_changed
     }
 
-    fn change(&mut self, change: &ShadowChanges) {
-        if change.all {
-            self.clipmap.dirty_all();
-        }
-        for &(min, max, spacing) in &change.boxes {
-            for level in 0..self.clipmap.len() {
-                if spacing >= GROUND_TEXELS * self.clipmap.texel(level) {
-                    self.clipmap.dirty_level_box(level, min, max);
+    fn change(&mut self, change: &ShadowChange) -> bool {
+        match *change {
+            ShadowChange::Box { min, max, spacing } => {
+                for level in 0..self.clipmap.len() {
+                    if spacing >= GROUND_TEXELS * self.clipmap.texel(level) {
+                        self.clipmap.dirty_level_box(level, min, max);
+                    }
                 }
+                false
             }
+            ShadowChange::All => {
+                self.clipmap.dirty_all();
+                false
+            }
+            ShadowChange::Casters => true,
         }
     }
 
@@ -243,14 +279,70 @@ impl ShadowPlan {
     }
 }
 
+#[derive(Component)]
+pub(crate) struct ShadowViews;
+
+fn scene_views(maps: &ShadowMaps, key: Option<MapsKey>, eye: Vec3) -> SceneViews {
+    let views = key.map_or_else(Vec::new, |key| {
+        maps.regions
+            .iter()
+            .map(|region| {
+                let (planes, texel) = match region.refresh {
+                    Refresh::Kept(kept) => (Some(kept.planes), kept.texel),
+                    Refresh::Redraw => (None, 0.0),
+                };
+                let (side, takes) = match region.map {
+                    CasterMap::Region => (key.region_side(), Mobility::Static),
+                    CasterMap::Moving => (key.atlas.slot, Mobility::Moving),
+                    CasterMap::Sky => (RESOLUTION, Mobility::Static),
+                };
+                SceneView {
+                    view_projection: region.view.to_cols_array_2d(),
+                    planes,
+                    eye: eye.to_array(),
+                    size: [side, side],
+                    detail: 0.5 * texel,
+                    takes: Some(takes),
+                }
+            })
+            .collect()
+    });
+    SceneViews {
+        pass: ShadowPass::NAME,
+        views,
+    }
+}
+
+fn publish_views(
+    views: SceneViews,
+    published: &mut Query<'_, '_, &mut SceneViews, With<ShadowViews>>,
+    spawner: &mut Spawner<'_, '_, ShadowsBrick>,
+) {
+    match published.single_mut() {
+        Ok(mut held) => {
+            held.set_if_neq(views);
+        }
+        Err(_) => {
+            spawner.spawn((ShadowViews, views));
+        }
+    }
+}
+
 pub(crate) fn plan_shadows(
     (settings, sky): (Res<ShadowSettings>, Res<SkyOcclusion>),
-    (sun, view, limits, time): (Res<Sun>, Res<View>, Res<DeviceLimits>, Res<FrameTime>),
-    (casters, wind, shown): (Res<ExtraCasters>, Res<ViewWind>, Res<DebugShown>),
-    (mut feedback, mut drawn): (ResMut<ShadowFeedback>, ResMut<ShadowDrawn>),
-    changes: Query<&ShadowChanges, Changed<ShadowChanges>>,
+    (sun, view, limits, time): (Res<Sun>, Res<PrimaryView>, Res<DeviceLimits>, Res<FrameTime>),
+    (changes, wind, shown): (Res<ShadowChanges>, Res<ViewWind>, Res<DebugShown>),
+    (mut feedback, mut drawn, mut budget): (
+        ResMut<ShadowFeedback>,
+        ResMut<ShadowDrawn>,
+        ResMut<FrameBudget>,
+    ),
     (mut plan, mut piece): (ResMut<ShadowPlan>, ResMut<ShadowPiece>),
-    mut maps: ResMut<ShadowMaps>,
+    (mut maps, mut published, mut spawner): (
+        ResMut<ShadowMaps>,
+        Query<&mut SceneViews, With<ShadowViews>>,
+        Spawner<ShadowsBrick>,
+    ),
 ) {
     let plan = &mut *plan;
     let eye = view.detail_eye();
@@ -264,25 +356,37 @@ pub(crate) fn plan_shadows(
             maps.on = false;
             maps.regions.clear();
         }
+        publish_views(scene_views(&maps, None, eye), &mut published, &mut spawner);
         return;
     }
     let basis = plan.place(&settings, limits.max_texture_dimension_2d, (sun, eye));
     plan.acknowledge(&mut drawn);
     let still_changed = plan.merge(&mut feedback);
     let mut casters_changed = false;
-    for change in &changes {
-        casters_changed |= change.casters;
-        plan.change(change);
+    match changes.since(&mut plan.changes) {
+        Since::Same => {}
+        Since::Listed(listed) => {
+            for change in listed {
+                casters_changed |= plan.change(change);
+            }
+        }
+        Since::All => {
+            plan.clipmap.dirty_all();
+            casters_changed = true;
+        }
     }
     let Some(key) = plan.key else {
         return;
     };
+    let texel_bytes = SHADOW_FORMAT.block_copy_size(None).map_or(0, u64::from);
+    let tile_bytes = u64::from(key.atlas.slot).pow(2) * texel_bytes;
+    let mut afford = || budget.spend(BUDGET, tile_bytes);
     plan.clipmap.plan(
-        (settings.redraw_budget, region_tiles(settings.tile_texels)),
+        (&mut afford, region_tiles(settings.tile_texels)),
         key.atlas.moving,
         &mut plan.plan,
     );
-    plan.drew();
+    plan.drawn = plan.clipmap.take_drawing();
     plan.sky_draw = plan
         .sky
         .prepare(&sky, eye, still_changed || casters_changed);
@@ -321,7 +425,7 @@ pub(crate) fn plan_shadows(
         if sky.darkens() { 1.0 } else { 0.0 },
     ];
     piece.set_if_neq(regions.lookup_piece(
-        (settings.tile_texels, casters.crown_depth),
+        settings.tile_texels,
         (crate::debug::shown(*shown), open),
     ));
     plan.moving = plan.plan.moving.len() as u32;
@@ -332,6 +436,7 @@ pub(crate) fn plan_shadows(
         maps.regions.extend_from_slice(&plan.views);
         (maps.levels, maps.on) = (key.levels, true);
     }
+    publish_views(scene_views(&maps, Some(key), eye), &mut published, &mut spawner);
 }
 
 pub(crate) fn shadow_stats(

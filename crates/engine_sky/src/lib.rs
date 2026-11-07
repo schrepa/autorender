@@ -17,9 +17,8 @@ mod views;
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, JobKind, Schedule, Slot, Source};
 use engine_places_rendering::lighting::{Ambient, SunBlockers};
-use engine_places_rendering::probes::ProbeViews;
-use engine_places_rendering::sky::{EnvironmentLayers, SkyLight};
-use engine_render::{Layer, MainView, PostLight, RenderBricks};
+use engine_places_rendering::sky::SkyLight;
+use engine_render::{PostLight, RenderBricks};
 
 pub use settings::{Clouds, Haze, NightSky, Sky};
 
@@ -52,11 +51,11 @@ impl Brick for SkyBrick {
             .resource::<sky::SkyPlan>()
             .resource::<clouds::CloudSteps>()
             .resource::<haze::HazeSteps>()
+            .resource::<environment::EnvironmentFresh>()
             .fill::<SkyLight>(Some(shaders::sky::faces::sky::MODULE))
             .join::<SunBlockers>((), Some(shaders::sky::blockers::MODULE))
             .join::<Ambient>((), Some(shaders::sky::ambient::MODULE))
-            .fill::<EnvironmentLayers>(None)
-            .within(casts_cloud_shadows, |bricks| {
+            .within(|clouds: Res<Clouds>| clouds.enabled, |bricks| {
                 bricks.fill::<CloudShadows>(Some(shaders::sky::faces::cloud_shadows::MODULE));
             })
             .within(
@@ -76,13 +75,8 @@ impl Brick for SkyBrick {
                 ),
             )
             .generated(gpu_layouts::GENERATED)
-            .draws::<sky::SkyGpu, MainView>(Layer::Backdrop, sky::SkyGpu::draw_dome)
-            .draws::<sky::SkyGpu, ProbeViews>((), sky::SkyGpu::draw_probe_face);
+            .part::<sky::SkyGpu>();
     }
-}
-
-fn casts_cloud_shadows(sky: Res<Sky>, clouds: Res<Clouds>) -> bool {
-    sky.enabled && clouds.enabled && clouds.coverage > 0.0 && clouds.shadows > 0.0
 }
 
 fn publish_sky_light(sky: Res<Sky>, plan: Res<sky::SkyPlan>, mut light: ResMut<SkyLight>) {

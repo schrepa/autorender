@@ -1,24 +1,23 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use bevy_ecs::prelude::*;
 use engine_core::math::clamp;
 use engine_core::{
-    Camera, Error, ErrorCode, GlobalTransforms, Pause, SceneIds, fault_of,
+    Error, ErrorCode, FrameTime, GlobalTransforms, Interest, Pause, Poses, PrimaryView, Request,
+    Requests, SceneIds, Ticket, fault_of,
 };
 use engine_places_rendering::audio::{
     Bus, OneShot, SoundHandle, SoundOrder, SoundSource, Sounds, VoiceHandle,
 };
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use serde::Serialize;
 
 use crate::AudioBrick;
-use crate::backend::Backend;
+use crate::backend::{Backend, Decoded};
 use crate::scene::{MAX_PITCH, MAX_RADIUS, MIN_PITCH, MIN_RADIUS};
 use crate::settings::{Audio, AudioStats};
-
-const STRAIGHT_UP: f32 = 0.999;
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -40,6 +39,10 @@ fn level(volume: f32) -> f32 {
 
 fn rate(pitch: f32) -> f32 {
     bounded(pitch, MIN_PITCH, MAX_PITCH)
+}
+
+fn same(held: &Arc<[u8]>, wanted: &Arc<[u8]>) -> bool {
+    Arc::ptr_eq(held, wanted) || held[..] == wanted[..]
 }
 
 const fn pauses(bus: Bus) -> bool {
@@ -83,13 +86,6 @@ impl Start {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Stage {
-    Decoding,
-    Ready,
-    Failed,
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Device {
     #[default]
@@ -99,21 +95,32 @@ enum Device {
     Failed,
 }
 
-enum Origin {
-    File((String, bool), Arc<[u8]>),
-    Loaded(SoundHandle),
-    Once,
+struct File {
+    bytes: Arc<[u8]>,
+    sound: Interest<u32>,
 }
 
-struct Sound {
-    stage: Stage,
-    origin: Origin,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum Playing {
+    Waiting(Interest<u32>),
+    Started(Interest<u32>),
+    Ended,
+}
+
+impl Playing {
+    fn started(self) -> Self {
+        match self {
+            Self::Waiting(sound) | Self::Started(sound) => Self::Started(sound),
+            Self::Ended => Self::Ended,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum VoiceState {
     Waiting,
-    Started,
+    Playing,
+    Ended,
 }
 
 #[derive(PartialEq)]
@@ -141,37 +148,60 @@ impl Key {
 
 enum Owner {
     Source(Entity, Key),
-    Shot(VoiceHandle),
-    Bytes(VoiceHandle),
+    Handle(VoiceHandle),
 }
 
 struct Voice {
     id: u32,
     owner: Owner,
-    sound: u32,
     play: Start,
     at: Option<Vec3>,
     playing: Playing,
 }
 
 impl Voice {
-    fn new(owner: Owner, sound: u32, play: Start, at: Option<Vec3>) -> Self {
+    fn new(owner: Owner, sound: Interest<u32>, play: Start, at: Option<Vec3>) -> Self {
         Self {
             id: fresh(),
             owner,
-            sound,
             play,
             at,
-            playing: Playing::Waiting,
+            playing: Playing::Waiting(sound),
         }
     }
 
-    fn shot(owner: Owner, sound: u32, shot: &OneShot) -> Self {
-        Self::new(owner, sound, Start::of_shot(shot), shot.at)
+    fn shot(voice: VoiceHandle, sound: Interest<u32>, shot: &OneShot) -> Self {
+        Self::new(Owner::Handle(voice), sound, Start::of_shot(shot), shot.at)
     }
 
     fn started(&self) -> bool {
-        self.playing == Playing::Started
+        matches!(self.playing, Playing::Started(_))
+    }
+
+    fn live(&self) -> bool {
+        !matches!(self.playing, Playing::Ended)
+    }
+
+    fn sound(&self) -> Option<u32> {
+        match &self.playing {
+            Playing::Waiting(sound) | Playing::Started(sound) => Some(*sound.key()),
+            Playing::Ended => None,
+        }
+    }
+
+    fn state(&self) -> VoiceState {
+        match self.playing {
+            Playing::Waiting(_) => VoiceState::Waiting,
+            Playing::Started(_) => VoiceState::Playing,
+            Playing::Ended => VoiceState::Ended,
+        }
+    }
+
+    fn ends(&self) -> bool {
+        match self.owner {
+            Owner::Source(..) => !self.play.looping,
+            Owner::Handle(_) => false,
+        }
     }
 
     fn of_entity(&self, entity: Entity) -> bool {
@@ -179,7 +209,7 @@ impl Voice {
     }
 
     fn of_handle(&self, handle: VoiceHandle) -> bool {
-        matches!(&self.owner, Owner::Shot(owner) | Owner::Bytes(owner) if *owner == handle)
+        matches!(&self.owner, Owner::Handle(owner) if *owner == handle)
     }
 
     fn holds(&self, key: &Key) -> bool {
@@ -195,7 +225,7 @@ pub(crate) struct VoiceView<'a> {
     pitch: f32,
     looping: bool,
     spatial: bool,
-    playing: bool,
+    state: VoiceState,
     at: Option<[f32; 3]>,
 }
 
@@ -204,8 +234,9 @@ pub(crate) struct Mixer {
     backend: Backend,
     device: Device,
     voices: Vec<Voice>,
-    sounds: BTreeMap<u32, Sound>,
-    ended: BTreeMap<Entity, Key>,
+    sounds: Requests<u32, Decoded>,
+    files: BTreeMap<(String, bool), File>,
+    loaded: BTreeMap<SoundHandle, Interest<u32>>,
     cut: u32,
     failures: u32,
     latest: Option<String>,
@@ -216,15 +247,16 @@ impl Drop for Mixer {
         for voice in &self.voices {
             self.backend.stop(voice.id);
         }
-        for sound in self.sounds.keys() {
-            self.backend.forget(*sound);
-        }
     }
 }
 
 impl Mixer {
+    fn live(&self) -> usize {
+        self.voices.iter().filter(|voice| voice.live()).count()
+    }
+
     fn room(&self, limit: u32) -> bool {
-        self.device == Device::Allowed && self.voices.len() < limit as usize
+        self.device == Device::Allowed && self.live() < limit as usize
     }
 
     fn turn(&mut self, next: Device) {
@@ -262,14 +294,14 @@ impl Mixer {
             .map(|voice| VoiceView {
                 entity: match &voice.owner {
                     Owner::Source(entity, _) => ids.id(*entity),
-                    Owner::Shot(_) | Owner::Bytes(_) => None,
+                    Owner::Handle(_) => None,
                 },
                 bus: voice.play.bus,
                 volume: voice.play.volume,
                 pitch: voice.play.pitch,
                 looping: voice.play.looping,
                 spatial: voice.play.radius.is_some(),
-                playing: voice.started(),
+                state: voice.state(),
                 at: voice.at.map(|at| at.to_array()),
             })
             .collect()
@@ -293,10 +325,12 @@ impl Mixer {
     }
 
     fn shut(&mut self) {
-        for voice in std::mem::take(&mut self.voices) {
-            self.backend.stop(voice.id);
-            self.discard(&voice);
+        for voice in &self.voices {
+            if voice.live() {
+                self.backend.stop(voice.id);
+            }
         }
+        self.voices.retain(|voice| !voice.live());
         self.backend.close();
     }
 
@@ -309,101 +343,78 @@ impl Mixer {
         self.cut = self.cut.saturating_add(1);
     }
 
-    fn decode(&mut self, id: u32, bytes: Arc<[u8]>, (stream, origin): (bool, Origin)) {
-        self.sounds.insert(
-            id,
-            Sound {
-                stage: Stage::Decoding,
-                origin,
-            },
-        );
-        let may_open = !matches!(self.device, Device::Refused | Device::Failed);
-        self.backend.decode(id, bytes, stream, may_open);
+    fn decode(&mut self, bytes: Arc<[u8]>, stream: bool) -> Interest<u32> {
+        let sound = self.sounds.ask(fresh());
+        let key = *sound.key();
+        if let Some(ticket) = self.sounds.ticket(&key) {
+            let may_open = !matches!(self.device, Device::Refused | Device::Failed);
+            if let Some(decoded) = self.backend.decode((key, ticket), bytes, stream, may_open) {
+                self.arrive((key, ticket), decoded);
+            }
+        }
+        sound
     }
 
-    fn forget(&mut self, id: u32) {
-        self.backend.forget(id);
-        self.sounds.remove(&id);
-    }
-
-    fn stage(&self, id: u32) -> Option<Stage> {
-        self.sounds.get(&id).map(|sound| sound.stage)
-    }
-
-    fn discard(&mut self, voice: &Voice) {
-        match voice.owner {
-            Owner::Bytes(_) => self.forget(voice.sound),
-            Owner::Source(..) | Owner::Shot(_) => {}
+    fn arrive(&mut self, (key, ticket): (u32, Ticket), decoded: Result<Decoded, String>) {
+        match decoded {
+            Ok(decoded) => {
+                self.sounds.ready(&key, ticket, decoded);
+            }
+            Err(failure) => {
+                let error =
+                    Error::new(ErrorCode::AudioFailed, "$.audio.sounds").got(failure.clone());
+                if self.sounds.fail(&key, ticket, error) {
+                    self.fail(failure);
+                }
+            }
         }
     }
 
-    fn files(&self, kept: impl Fn(&(String, bool), &Arc<[u8]>) -> bool) -> Vec<u32> {
-        self.sounds
-            .iter()
-            .filter_map(|(&id, sound)| match &sound.origin {
-                Origin::File(key, bytes) => kept(key, bytes).then_some(id),
-                Origin::Loaded(_) | Origin::Once => None,
-            })
-            .collect()
+    fn prune(&mut self, named: &BTreeSet<(&str, bool)>) {
+        self.files
+            .retain(|(file, stream), _| named.contains(&(file.as_str(), *stream)));
     }
 
-    fn prune(&mut self) {
-        for id in self.files(|_, bytes| Arc::strong_count(bytes) == 1) {
-            self.forget(id);
-        }
-    }
-
-    fn loaded(&self, handle: SoundHandle) -> Option<u32> {
-        self.sounds.iter().find_map(|(&id, sound)| match sound.origin {
-            Origin::Loaded(held) => (held == handle).then_some(id),
-            Origin::File(..) | Origin::Once => None,
-        })
-    }
-
-    fn sound_of(&mut self, source: &SoundSource) -> Option<u32> {
+    fn sound_of(&mut self, source: &SoundSource) -> Option<Interest<u32>> {
         let key = (source.file.clone(), source.stream);
-        let current = self
-            .files(|held, bytes| {
-                *held == key
-                    && source
-                        .bytes
-                        .as_ref()
-                        .is_none_or(|wanted| Arc::ptr_eq(wanted, bytes))
-            })
-            .first()
-            .copied();
-        if current.is_some() {
-            return current;
+        if let Some(held) = self.files.get(&key)
+            && source
+                .bytes
+                .as_ref()
+                .is_none_or(|wanted| same(&held.bytes, wanted))
+        {
+            return Some(held.sound.clone());
         }
         let Some(bytes) = source.bytes.clone() else {
             self.fail(format!("no_bytes:{}", source.file));
             return None;
         };
-        let replaced = self.files(|held, _| *held == key);
-        let id = fresh();
-        let origin = Origin::File(key, Arc::clone(&bytes));
-        self.decode(id, bytes, (source.stream, origin));
-        for old in replaced {
-            self.forget(old);
-        }
-        Some(id)
+        let sound = self.decode(Arc::clone(&bytes), source.stream);
+        self.files.insert(
+            key,
+            File {
+                bytes,
+                sound: sound.clone(),
+            },
+        );
+        Some(sound)
     }
 
     fn add(&mut self, voice: Voice, limit: u32) {
-        if self.stage(voice.sound) == Some(Stage::Failed) {
-            self.discard(&voice);
-        } else if self.voices.len() >= limit as usize {
+        let failed = voice
+            .sound()
+            .is_some_and(|sound| matches!(self.sounds.get(&sound), Some(Request::Failed(_))));
+        if failed {
+            return;
+        }
+        if self.live() >= limit as usize {
             self.cut_one();
-            self.discard(&voice);
         } else if self.device() {
             self.voices.push(voice);
-        } else {
-            self.discard(&voice);
         }
     }
 
     fn begin(&mut self, entity: Entity, source: &SoundSource, limit: u32) {
-        self.ended.remove(&entity);
         let Some(sound) = self.sound_of(source) else {
             return;
         };
@@ -415,7 +426,6 @@ impl Mixer {
     fn halt(&mut self, at: usize) {
         let voice = self.voices.swap_remove(at);
         self.backend.stop(voice.id);
-        self.discard(&voice);
     }
 
     fn adjust(&mut self, at: usize, volume: f32, pitch: f32) {
@@ -430,7 +440,6 @@ impl Mixer {
     fn reconcile(&mut self, entity: Entity, source: &SoundSource, limit: u32) {
         let at = self.voices.iter().position(|voice| voice.of_entity(entity));
         if !source.autoplay {
-            self.ended.remove(&entity);
             if let Some(at) = at {
                 self.halt(at);
             }
@@ -439,13 +448,14 @@ impl Mixer {
         let key = Key::of(source);
         match at {
             Some(at) if self.voices[at].holds(&key) => {
-                self.adjust(at, level(source.volume), rate(source.pitch));
+                if self.voices[at].live() {
+                    self.adjust(at, level(source.volume), rate(source.pitch));
+                }
             }
             Some(at) => {
                 self.halt(at);
                 self.begin(entity, source, limit);
             }
-            None if self.ended.get(&entity) == Some(&key) => {}
             None => self.begin(entity, source, limit),
         }
     }
@@ -453,17 +463,17 @@ impl Mixer {
     fn order(&mut self, order: SoundOrder, limit: u32) {
         match order {
             SoundOrder::Load { sound, bytes } => {
-                self.decode(fresh(), bytes, (false, Origin::Loaded(sound)));
+                let decoded = self.decode(bytes, false);
+                self.loaded.insert(sound, decoded);
             }
-            SoundOrder::Play { voice, sound, shot } => match self.loaded(sound) {
-                Some(id) => self.add(Voice::shot(Owner::Shot(voice), id, &shot), limit),
+            SoundOrder::Play { voice, sound, shot } => match self.loaded.get(&sound).cloned() {
+                Some(held) => self.add(Voice::shot(voice, held, &shot), limit),
                 None => self.cut_one(),
             },
             SoundOrder::PlayBytes { voice, bytes, shot } => {
                 if self.device != Device::Off {
-                    let id = fresh();
-                    self.decode(id, bytes, (false, Origin::Once));
-                    self.add(Voice::shot(Owner::Bytes(voice), id, &shot), limit);
+                    let sound = self.decode(bytes, false);
+                    self.add(Voice::shot(voice, sound, &shot), limit);
                 }
             }
             SoundOrder::Stop(voice) => {
@@ -481,27 +491,18 @@ impl Mixer {
     }
 
     fn trim(&mut self, limit: u32) {
-        while self.voices.len() > limit as usize {
-            self.halt(self.voices.len() - 1);
+        while self.live() > limit as usize {
+            let Some(at) = self.voices.iter().rposition(Voice::live) else {
+                return;
+            };
+            self.halt(at);
             self.cut_one();
         }
     }
 
     fn collect_decoded(&mut self) {
-        for (id, sound) in &mut self.sounds {
-            if sound.stage != Stage::Decoding {
-                continue;
-            }
-            match self.backend.arrival(*id) {
-                None => {}
-                Some(Ok(())) => sound.stage = Stage::Ready,
-                Some(Err(failure)) => {
-                    sound.stage = Stage::Failed;
-                    self.backend.forget(*id);
-                    self.failures = self.failures.saturating_add(1);
-                    self.latest = Some(failure);
-                }
-            }
+        for (sound, decoded) in self.backend.arrivals() {
+            self.arrive(sound, decoded);
         }
     }
 
@@ -516,66 +517,68 @@ impl Mixer {
     }
 
     fn running(&mut self, at: usize) -> bool {
-        let stage = self.stage(self.voices[at].sound);
-        let voice = &mut self.voices[at];
-        if voice.started() {
-            return !self.backend.finished(voice.id);
-        }
-        match stage {
-            Some(Stage::Decoding) => true,
-            Some(Stage::Ready) => match self.backend.start(voice.id, voice.sound, &voice.play) {
+        let Self {
+            backend,
+            sounds,
+            voices,
+            cut,
+            latest,
+            ..
+        } = self;
+        let voice = &mut voices[at];
+        let sound = match &voice.playing {
+            Playing::Started(_) => return !backend.finished(voice.id),
+            Playing::Ended => return true,
+            Playing::Waiting(sound) => *sound.key(),
+        };
+        match sounds.get(&sound) {
+            Some(Request::Asked(_)) => true,
+            Some(Request::Ready(decoded)) => match backend.start(voice.id, decoded, &voice.play) {
                 Ok(()) => {
-                    voice.playing = Playing::Started;
+                    voice.playing = std::mem::replace(&mut voice.playing, Playing::Ended).started();
                     true
                 }
                 Err(failure) => {
-                    self.cut = self.cut.saturating_add(1);
-                    self.latest = Some(failure);
+                    *cut = cut.saturating_add(1);
+                    *latest = Some(failure);
                     false
                 }
             },
-            Some(Stage::Failed) | None => false,
-        }
-    }
-
-    fn retire(&mut self, voice: Voice) {
-        self.backend.stop(voice.id);
-        self.discard(&voice);
-        match voice.owner {
-            Owner::Source(entity, key) if !voice.play.looping => {
-                self.ended.insert(entity, key);
-            }
-            Owner::Source(..) | Owner::Shot(_) | Owner::Bytes(_) => {}
+            Some(Request::Failed(_) | Request::Missing) | None => false,
         }
     }
 
     fn advance(&mut self) {
-        if self.voices.is_empty() {
+        if !self.voices.iter().any(Voice::live) {
             return;
         }
         self.backend.tick();
         let mut at = 0;
         while at < self.voices.len() {
-            if self.running(at) {
+            if !self.voices[at].live() || self.running(at) {
+                at += 1;
+                continue;
+            }
+            let voice = &mut self.voices[at];
+            self.backend.stop(voice.id);
+            if voice.ends() {
+                voice.playing = Playing::Ended;
                 at += 1;
             } else {
-                let voice = self.voices.swap_remove(at);
-                self.retire(voice);
+                self.voices.swap_remove(at);
             }
         }
     }
 
-    fn hear(&mut self, camera: &Camera, globals: &GlobalTransforms) {
-        if !self.backend.opened() {
+    fn hear(&mut self, listener: Option<Mat4>, globals: &GlobalTransforms) {
+        let Some(listener) = listener.filter(|_| self.backend.opened()) else {
             return;
-        }
-        let eye = camera.eye();
-        let forward = (camera.target - eye).try_normalize().unwrap_or(Vec3::NEG_Z);
-        let up = if forward.dot(Vec3::Y).abs() > STRAIGHT_UP {
-            Vec3::Z
-        } else {
-            Vec3::Y
         };
+        let eye = listener.w_axis.truncate();
+        let forward = (-listener.z_axis.truncate())
+            .try_normalize()
+            .unwrap_or(Vec3::NEG_Z);
+        let up = listener.y_axis.truncate().try_normalize().unwrap_or(Vec3::Y);
         self.backend.listen(eye, forward, up);
         for voice in &mut self.voices {
             if !voice.started() || voice.play.radius.is_none() {
@@ -583,7 +586,7 @@ impl Mixer {
             }
             let posed = match &voice.owner {
                 Owner::Source(entity, _) => globals.pose(*entity),
-                Owner::Shot(_) | Owner::Bytes(_) => None,
+                Owner::Handle(_) => None,
             };
             if let Some(pose) = posed {
                 voice.at = Some(Vec3::from(pose.translation));
@@ -593,18 +596,12 @@ impl Mixer {
         }
     }
 
-    fn count(&self, stage: Stage) -> u32 {
-        self.sounds
-            .values()
-            .filter(|sound| sound.stage == stage)
-            .count() as u32
-    }
-
     fn publish(&self, stats: &mut AudioStats) {
+        let census = self.sounds.census();
         stats.device = self.backend.opened();
-        stats.sounds_loaded = self.count(Stage::Ready);
-        stats.decoding = self.count(Stage::Decoding);
-        stats.voices = self.voices.len() as u32;
+        stats.sounds_loaded = census.ready;
+        stats.decoding = census.asked;
+        stats.voices = self.live() as u32;
         stats.voices_cut = self.cut;
         stats.decode_failures = self.failures;
         stats.latest_failure.clone_from(&self.latest);
@@ -612,8 +609,13 @@ impl Mixer {
 }
 
 pub(crate) fn mix(
-    settings: Res<Audio>,
-    (camera, globals, pause): (Res<Camera>, Res<GlobalTransforms>, Option<Res<Pause>>),
+    (settings, time): (Res<Audio>, Res<FrameTime>),
+    (view, poses, globals, pause): (
+        Res<PrimaryView>,
+        Poses,
+        Res<GlobalTransforms>,
+        Option<Res<Pause>>,
+    ),
     sounds: Res<Sounds>,
     sources: Query<(Entity, Ref<SoundSource>)>,
     (mut stats, mut mixer, mut commands): (ResMut<AudioStats>, ResMut<Mixer>, Commands),
@@ -622,7 +624,16 @@ pub(crate) fn mix(
     let closed = !mixer.backend.opened();
     let limit = settings.max_voices;
     mixer.set_enabled(settings.enabled);
-    mixer.prune();
+    if !mixer.files.is_empty() {
+        let named: BTreeSet<(&str, bool)> = sources
+            .iter()
+            .map(|(_, source)| {
+                let source = source.into_inner();
+                (source.file.as_str(), source.stream)
+            })
+            .collect();
+        mixer.prune(&named);
+    }
     mixer.cut = mixer.cut.saturating_add(sounds.take_cut());
     for order in sounds.take_orders() {
         mixer.order(order, limit);
@@ -653,7 +664,8 @@ pub(crate) fn mix(
         mixer.apply_buses(&settings, pause.is_some_and(|pause| pause.paused()));
     }
     mixer.advance();
-    mixer.hear(&camera, &globals);
+    mixer.hear(view.camera().and_then(|camera| poses.drawn_pose(camera)), &globals);
+    mixer.sounds.settle(time.real_elapsed);
     mixer.publish(&mut stats);
     if was != Device::Failed && mixer.device == Device::Failed {
         let error = Error::new(ErrorCode::AudioFailed, "$.audio.device").got(mixer.latest.clone());
@@ -662,7 +674,6 @@ pub(crate) fn mix(
 }
 
 pub(crate) fn release(In(entity): In<Entity>, mut mixer: ResMut<Mixer>) {
-    mixer.ended.remove(&entity);
     if let Some(at) = mixer.voices.iter().position(|held| held.of_entity(entity)) {
         mixer.halt(at);
     }

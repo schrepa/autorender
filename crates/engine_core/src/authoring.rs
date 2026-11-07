@@ -1,25 +1,238 @@
+use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
-use engine_registry::{CORE_ROW, MembersOf, OperationScene};
-use serde::Deserialize;
+use engine_registry::{CORE_ROW, MembersOf, OperationScene, SceneEntity};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    ComponentKind, Error, ErrorCode, Expected, GlobalTransforms, List, Mover, Node, Parent, Placed,
-    Placement, SceneComponents, SceneContext, scene_component, scene_components,
+    Camera, Clear, ComponentKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode, Expected,
+    GlobalTransforms, InstanceValues, Layers, List, MaterialHandle, Mesh3d, MeshHandle, Mover,
+    Node, Parent, PassMask, Placed, Placement, Rect, SceneComponents, SceneContext, SceneCx,
+    SceneForm, ScenePasses, Target, TextureHandle, View, scene_component, scene_components,
 };
 
 pub(crate) const COMPONENT: &str = "component";
 
-static CORE: LazyLock<[ComponentKind; 2]> = LazyLock::new(|| {
+static CORE: LazyLock<[ComponentKind; 5]> = LazyLock::new(|| {
     let node = ComponentKind::of::<Node>("node");
     let mover = ComponentKind::of::<Mover>("mover");
+    let camera = ComponentKind::of::<Camera>("camera").check(camera_checked);
+    let view = ComponentKind::form::<ViewForm>("view")
+        .check(view_checked)
+        .prepare(view_camera);
+    let drawn = ComponentKind::form::<DrawnForm>("drawn");
     #[cfg(feature = "schema")]
-    let (node, mover) = (node.schema(schema_of::<Node>), mover.schema(schema_of::<Mover>));
-    [node.into(), mover.into()]
+    let (node, mover, camera, view, drawn) = (
+        node.schema(schema_of::<Node>),
+        mover.schema(schema_of::<Mover>),
+        camera.schema(schema_of::<Camera>),
+        view.schema(schema_of::<ViewForm>),
+        drawn.schema(schema_of::<DrawnForm>),
+    );
+    [
+        node.into(),
+        mover.into(),
+        camera.into(),
+        view.into(),
+        drawn.into(),
+    ]
 });
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct DrawnForm {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<MeshHandle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<MaterialHandle>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub passes: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub layers: Layers,
+    #[serde(default)]
+    pub order: i16,
+    #[serde(default = "receives_shadows")]
+    pub receives_shadows: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection: Option<DrawnProjection>,
+    #[serde(default)]
+    pub values: InstanceValues,
+}
+
+fn receives_shadows() -> bool {
+    true
+}
+
+impl SceneForm for DrawnForm {
+    type Component = Drawn;
+
+    fn insert(self, world: &mut World, entity: Entity) -> Result<(), Error> {
+        let table = world.get_resource::<DrawnTable>();
+        let kind = table
+            .and_then(|table| {
+                table
+                    .kinds()
+                    .iter()
+                    .find(|declared| declared.kind.name() == self.kind)
+            })
+            .map(|declared| declared.kind)
+            .ok_or_else(|| {
+                Error::new(ErrorCode::UnknownVariant, "$.kind")
+                    .got(&self.kind)
+                    .variants(
+                        table
+                            .into_iter()
+                            .flat_map(DrawnTable::kinds)
+                            .map(|declared| declared.kind.name()),
+                    )
+            })?;
+        let passes = if self.passes.is_empty() {
+            None
+        } else {
+            let unlisted = ScenePasses::default();
+            let listed = world.get_resource::<ScenePasses>().unwrap_or(&unlisted);
+            let named = serde_json::to_value(&self.passes).unwrap_or(Value::Null);
+            Some(listed.encode(&named, listed.defaults(kind), "$.passes")?)
+        };
+        let shown = world.get::<Mesh3d>(entity).copied().unwrap_or_default();
+        world.entity_mut(entity).insert(Drawn {
+            kind,
+            geometry: self.mesh.unwrap_or(shown.mesh),
+            material: self.material.unwrap_or(shown.material),
+            node: entity,
+            passes,
+            layers: self.layers,
+            order: self.order,
+            receives_shadows: self.receives_shadows,
+            projection: self.projection,
+            values: self.values,
+        });
+        Ok(())
+    }
+
+    fn read(world: &World, entity: Entity) -> Option<Self> {
+        let drawn = world.get::<Drawn>(entity)?;
+        let shown = world.get::<Mesh3d>(entity).copied().unwrap_or_default();
+        let passes = drawn
+            .passes
+            .zip(world.get_resource::<ScenePasses>())
+            .map(|(mask, listed)| switched(listed, mask, listed.defaults(drawn.kind)))
+            .unwrap_or_default();
+        Some(Self {
+            kind: drawn.kind.name().to_owned(),
+            mesh: (drawn.geometry != shown.mesh).then_some(drawn.geometry),
+            material: (drawn.material != shown.material).then_some(drawn.material),
+            passes,
+            layers: drawn.layers,
+            order: drawn.order,
+            receives_shadows: drawn.receives_shadows,
+            projection: drawn.projection,
+            values: drawn.values.clone(),
+        })
+    }
+}
+
+fn switched(listed: &ScenePasses, mask: PassMask, base: PassMask) -> BTreeMap<String, bool> {
+    listed
+        .listed()
+        .iter()
+        .filter_map(|pass| pass.bit.map(|bit| (pass.name, bit)))
+        .filter(|&(_, bit)| mask.has(bit) != base.has(bit))
+        .map(|(name, bit)| (name.to_owned(), mask.has(bit)))
+        .collect()
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ViewForm {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub texture: Option<TextureHandle>,
+    #[serde(default)]
+    pub viewport: Rect,
+    #[serde(default = "every_layer")]
+    pub layers: Layers,
+    #[serde(default)]
+    pub clear: Clear,
+    #[serde(default)]
+    pub order: i32,
+    #[serde(skip)]
+    found: Option<Entity>,
+}
+
+fn every_layer() -> Layers {
+    Layers::ALL
+}
+
+fn view_checked(form: &ViewForm, path: &str) -> Result<(), Error> {
+    form.viewport.check(&format!("{path}.viewport"))
+}
+
+fn view_camera(mut form: ViewForm, cx: &SceneCx<'_>, path: &str) -> Result<ViewForm, Error> {
+    if let (Some(id), Some(scene)) = (form.camera.as_deref(), cx.scene()) {
+        let found = scene.entity(id).ok_or_else(|| {
+            Error::new(ErrorCode::UnknownReference, format!("{path}.camera")).got(id)
+        })?;
+        form.found = Some(found);
+    }
+    Ok(form)
+}
+
+impl SceneForm for ViewForm {
+    type Component = View;
+
+    fn insert(self, world: &mut World, entity: Entity) -> Result<(), Error> {
+        let camera = match &self.camera {
+            None => entity,
+            Some(id) => self
+                .found
+                .filter(|found| *found != Entity::PLACEHOLDER)
+                .ok_or_else(|| Error::new(ErrorCode::UnknownReference, "$.camera").got(id))?,
+        };
+        world.entity_mut(entity).insert(View {
+            camera,
+            target: self.texture.map_or(Target::Surface, Target::Texture),
+            viewport: self.viewport,
+            layers: self.layers,
+            clear: self.clear,
+            order: self.order,
+        });
+        Ok(())
+    }
+
+    fn read(world: &World, entity: Entity) -> Option<Self> {
+        let view = world.get::<View>(entity)?;
+        let camera = if view.camera == entity {
+            None
+        } else {
+            Some(world.get::<SceneEntity>(view.camera)?.authored_id.clone())
+        };
+        let texture = match view.target {
+            Target::Surface => None,
+            Target::Texture(texture) => Some(texture),
+        };
+        Some(Self {
+            camera,
+            texture,
+            viewport: view.viewport,
+            layers: view.layers,
+            clear: view.clear,
+            order: view.order,
+            found: None,
+        })
+    }
+}
+
+fn camera_checked(camera: &Camera, path: &str) -> Result<(), Error> {
+    camera.check().map_err(|error| error.within(path))
+}
 
 #[cfg(feature = "schema")]
 fn schema_of<C: schemars::JsonSchema>() -> Value {

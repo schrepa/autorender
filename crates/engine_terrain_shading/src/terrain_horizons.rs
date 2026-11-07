@@ -57,16 +57,10 @@ impl Horizons {
     pub(crate) fn prepare(
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,
-        (tiles, bakes, settings, shadows, layers): (
-            &TerrainTiles,
-            &Bakes,
-            &TerrainShading,
-            bool,
-            u32,
-        ),
+        (tiles, bakes, settings, layers): (&TerrainTiles, &Bakes, &TerrainShading, u32),
         slots: u32,
     ) {
-        if !(shadows && settings.sun_shadows) || tiles.terrains.is_empty() {
+        if !settings.sun_shadows || tiles.terrains.is_empty() {
             self.rest();
             return;
         }

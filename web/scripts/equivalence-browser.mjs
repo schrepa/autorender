@@ -10,7 +10,6 @@ if (!planPath || !resultPath) {
   process.exit(1);
 }
 const plan = JSON.parse(await readFile(planPath, "utf8"));
-const TAIL = 30;
 const SETTLE_MS = 300_000;
 
 const { page, close } = await launchContext({ viewport: { width: plan.size[0] + 100, height: plan.size[1] + 100 }, deviceScaleFactor: 1 });
@@ -63,7 +62,6 @@ async function settle(frame) {
     if (Date.now() - started > SETTLE_MS) return [settled ? "" : `readiness ${JSON.stringify(readiness)}`, stale ? "read-backs older than settling" : ""].filter(Boolean).join("; ");
     if (!settled) await delay(5);
   }
-  for (let frame_ = 0; frame_ < TAIL; frame_++) await ok(frame);
   return undefined;
 }
 

@@ -181,9 +181,15 @@ fn own_depth(line: &River, point: usize, discharge: f32) -> f32 {
 }
 
 #[derive(Clone, Debug)]
+pub enum FlowState {
+    Still,
+    Running(Arc<Running>),
+}
+
+#[derive(Clone, Debug)]
 pub struct RiverFlow {
     base: Arc<Rivers>,
-    running: Option<Arc<Running>>,
+    state: FlowState,
     blocks: Vec<Block>,
     pools: Vec<Pool>,
     last: Vec<Option<Vec<f32>>>,
@@ -205,7 +211,7 @@ const JAM: f32 = 0.3;
 impl RiverFlow {
     pub fn new(base: Arc<Rivers>) -> Self {
         Self {
-            running: None,
+            state: FlowState::Still,
             blocks: Vec::new(),
             pools: Vec::new(),
             last: Vec::new(),
@@ -218,8 +224,15 @@ impl RiverFlow {
         &self.base
     }
 
+    pub fn state(&self) -> &FlowState {
+        &self.state
+    }
+
     pub fn running(&self) -> Option<&Arc<Running>> {
-        self.running.as_ref()
+        match &self.state {
+            FlowState::Running(running) => Some(running),
+            FlowState::Still => None,
+        }
     }
 
     pub fn blocks(&self) -> &[Block] {
@@ -244,7 +257,7 @@ impl RiverFlow {
     }
 
     pub fn still(&self) -> bool {
-        self.pools.is_empty() && self.running.is_none()
+        self.pools.is_empty() && matches!(self.state, FlowState::Still)
     }
 
     pub fn block(&self, center: Vec3, axes: Mat3, round: bool) -> Option<Block> {
@@ -272,8 +285,7 @@ impl RiverFlow {
         };
         let (bottom, top) = (center.y - rise, center.y + rise);
         let surface = self
-            .running
-            .as_ref()
+            .running()
             .and_then(|running| running.river(station.river))
             .map_or(line.surface[point], |levels| levels.surface[point]);
         if !(bottom < surface && top > bed) {
@@ -292,7 +304,7 @@ impl RiverFlow {
         })
     }
 
-    pub fn step(&mut self, blocks: &[Block], seconds: f32) -> bool {
+    pub fn step(&mut self, blocks: &[Block], seconds: f32) {
         self.blocks = blocks.to_vec();
         self.blocks.sort_by(|a, b| {
             (a.river, a.point)
@@ -315,7 +327,8 @@ impl RiverFlow {
         }
         self.pools.sort_by_key(|pool| (pool.river, pool.point));
         if self.pools.is_empty() {
-            return self.running.take().is_some();
+            self.state = FlowState::Still;
+            return;
         }
         let drowned: Vec<bool> = self
             .pools
@@ -333,14 +346,13 @@ impl RiverFlow {
             .map(|river| river.as_ref().map(|river| river.surface.clone()))
             .collect();
         self.flows = flows;
-        self.running = Some(Arc::new(Running::of(
+        self.state = FlowState::Running(Arc::new(Running::of(
             rivers
                 .into_iter()
                 .enumerate()
                 .filter_map(|(river, levels)| Some((river as u32, levels?)))
                 .collect(),
         )));
-        true
     }
 
     fn next(&self, river: usize, point: usize) -> (usize, usize) {

@@ -17,7 +17,7 @@ use crate::gpu::{
     NormalJob, PEAKS_GROUP, RIVER_BEDS, RIVER_EDGES, SURFACE_ERROR_MIPS,
 };
 use crate::state::{
-    Atlas, AtlasMoves, Bakes, TerrainBakes, TileId, Upload, all_uploads, listed_tile,
+    Atlas, AtlasMoves, Bakes, TerrainBakes, TileId, Upload, all_uploads, listed_tile, programmed,
 };
 
 const HEIGHT_MIPS: u32 = 1 + SURFACE_ERROR_MIPS;
@@ -278,7 +278,7 @@ impl TileAtlas {
                     self.normal_ancestors
                         .push(ancestor_job(atlas, (entry, held), (layer, key), false));
                 }
-            } else if tile.control.is_none() && !entry.surface_program {
+            } else if tile.control.is_none() && !programmed(entry, tile) {
                 self.control_ancestors
                     .push(ancestor_job(atlas, (entry, held), (layer, key), true));
             }
@@ -370,7 +370,7 @@ impl TileAtlas {
                 layer,
                 (bytemuck::cast_slice(&values[..]), 4),
             );
-        } else if entry.surface_program {
+        } else if programmed(entry, tile) {
             let mut rivers = 0;
             if let Some(edges) = &tile.river_edges {
                 rivers |= RIVER_EDGES;

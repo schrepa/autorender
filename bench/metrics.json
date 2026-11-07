@@ -145,7 +145,7 @@
       "direction": null
     },
     {
-      "name": "camera_refusals.count",
+      "name": "refused_views",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -431,6 +431,17 @@
       "direction": null
     },
     {
+      "name": "exposure_stats.settling",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "exposure_stats.stops",
       "kind": "work",
       "rule": "shown",
@@ -443,6 +454,17 @@
     },
     {
       "name": "exposure_stats.view",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame_late",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "centistops",
+      "direction": null
+    },
+    {
+      "name": "exposure_stats.wanted",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame_late",
@@ -838,17 +860,6 @@
       "direction": null
     },
     {
-      "name": "meshes_stats.casters",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame_or_absent",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "meshes_stats.culled_instances",
       "kind": "work",
       "rule": "shown",
@@ -1025,17 +1036,6 @@
       "direction": "lower"
     },
     {
-      "name": "meshes_stats.moving_casters",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame_or_absent",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "meshes_stats.occlusion_culling.active",
       "kind": "work",
       "rule": "equal",
@@ -1048,6 +1048,17 @@
     },
     {
       "name": "meshes_stats.occlusion_culling.instances",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame_or_absent",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "meshes_stats.refused_views",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame_or_absent",
@@ -1095,6 +1106,17 @@
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "meshes_stats.views",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame_or_absent",
       "runtimes": [
         "native"
       ],
@@ -1990,6 +2012,17 @@
         "native"
       ],
       "unit": "boolean",
+      "direction": null
+    },
+    {
+      "name": "temporal_antialiasing_stats.settling",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
       "direction": null
     },
     {

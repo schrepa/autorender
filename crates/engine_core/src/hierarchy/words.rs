@@ -4,7 +4,7 @@ use bevy_ecs::world::World;
 
 use super::{GlobalTransforms, tracking};
 use crate::moves::MovingKinds;
-use crate::{Cursor, GpuBits, Mobility, Mover, Node, NodeWord, Since};
+use crate::{Cursor, Events, GpuBits, Mobility, Mover, Node, NodeWord, Since};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct Declared {
@@ -154,5 +154,9 @@ impl GlobalTransforms {
 
     pub fn moved_static(&self) -> impl ExactSizeIterator<Item = Entity> + '_ {
         self.moved_static.iter().copied()
+    }
+
+    pub fn static_moves_since(&self, cursor: &mut Cursor) -> Events<'_, Entity> {
+        self.static_moves.events(cursor)
     }
 }

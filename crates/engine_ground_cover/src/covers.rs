@@ -109,7 +109,6 @@ pub(crate) fn write_covers(
         return;
     }
     shown.set_if_neq(Cover {
-        enabled: cover.enabled,
         density: cover.density,
         widths: tiles
             .terrains

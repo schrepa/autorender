@@ -23,7 +23,7 @@ fn sun_shadowed() -> bool {
 }
 
 fn crown_softness(softness: f32, per_meter: f32) -> f32 {
-    return softness * piece().state.y * abs(per_meter);
+    return softness * abs(per_meter);
 }
 
 fn texel_slope(map_dx: vec4<f32>, map_dy: vec4<f32>, scale: vec2<f32>, limit: f32) -> vec2<f32> {

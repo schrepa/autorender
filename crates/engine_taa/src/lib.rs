@@ -14,10 +14,26 @@ mod previous;
 mod temporal;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source};
-use engine_render::{RenderBricks, Resolve, ViewOutputs};
+use engine_core::{
+    AttachPoint, Brick, Bricks, Pass, PassName, PassViews, Runs, Schedule, SlotSet, Smoke, Source,
+    Writes, never,
+};
+use engine_render::{RenderBricks, Resolve};
 
 pub use antialiasing::{TemporalAntialiasing, TemporalAntialiasingStats};
+
+pub(crate) struct TemporalPass;
+
+impl PassName for TemporalPass {
+    const NAME: &'static str = "temporal_lit";
+    const PASS: Pass = Pass {
+        writes: Writes::NOTHING,
+        reads: SlotSet::NONE,
+        views: PassViews::Main,
+        at: AttachPoint::Post,
+        takes: never,
+    };
+}
 
 pub struct TaaBrick;
 
@@ -34,11 +50,11 @@ impl Brick for TaaBrick {
             .when(|taa: Res<TemporalAntialiasing>| taa.enabled)
             .settings::<TemporalAntialiasing>()
             .stats::<TemporalAntialiasingStats>()
-            .resource::<previous::History>()
             .piece::<temporal::TaaPiece>()
             .fill::<Resolve>(Some(shaders::taa::resolve::MODULE))
-            .join::<ViewOutputs>(previous::MOTION, Some(shaders::taa::motion::MODULE))
-            .join::<ViewOutputs>(temporal::HISTORY, Some(shaders::taa::history::MODULE))
+            .view_target(previous::MOTION)
+            .view_target(temporal::HISTORY)
+            .pass::<TemporalPass>()
             .systems(Schedule::ViewSync, temporal::publish)
             .resolve_pass(temporal::PASS)
             .part::<lit::LitGpu>();

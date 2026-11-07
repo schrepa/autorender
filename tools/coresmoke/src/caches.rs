@@ -19,7 +19,6 @@ const TICKS: u64 = 200;
 const CHECK_EVERY: u64 = 4;
 const EDITS_BEFORE_TICK: usize = 24;
 const EDITS_AFTER_TICK: usize = 6;
-const ASPECT: f32 = 16.0 / 9.0;
 const SHOWN: usize = 8;
 const RETAINED: &str = "meshes_listing";
 const MOVER: Mover = Mover {
@@ -416,7 +415,7 @@ fn bits(matrix: engine_core::glam::Mat4) -> [u32; 16] {
 
 fn frame(engine: &mut Engine) -> Result<Frame, String> {
     let world = engine
-        .extract_frame(ASPECT)
+        .extract_frame()
         .map_err(|error| format!("extract_frame: {error}"))?
         .world();
     let globals = world
@@ -582,7 +581,7 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
         );
         let Some((mut engine, _, map)) = fresh else {
             living
-                .extract_frame(ASPECT)
+                .extract_frame()
                 .map_err(|error| format!("extract_frame: {error}"))?;
             continue;
         };

@@ -1,6 +1,6 @@
 use super::*;
 use engine_core::{
-    CookMode, DeviceLimits, FrameBudget, FrameTime, GlobalTransforms, Joined, Projection, View,
+    CookMode, DeviceLimits, FrameBudget, FrameTime, GlobalTransforms, Joined, PrimaryView,
     WorkClock, WorkRemaining,
 };
 use engine_places_world::streaming::StreamingFocus;
@@ -8,12 +8,7 @@ use engine_places_world::terrain::TerrainLayers;
 use glam::UVec2;
 
 pub(super) fn vertical_fov(camera: &Camera) -> f32 {
-    match camera.projection {
-        Projection::Perspective {
-            vertical_fov_radians,
-        } => vertical_fov_radians,
-        Projection::Orthographic { .. } => f32::NAN,
-    }
+    camera.vertical_fov().unwrap_or(f32::NAN)
 }
 
 fn device_tiles(limits: &DeviceLimits) -> Option<u32> {
@@ -27,7 +22,6 @@ impl Terrains {
 
     fn work_between_frames(
         &mut self,
-        settings: &TerrainSettings,
         (clock, milliseconds): (Option<fn() -> f64>, f64),
         asking: &mut Asking<'_, '_, '_>,
         budget: &mut FrameBudget,
@@ -39,7 +33,7 @@ impl Terrains {
         let frame = self.frame;
         let mut remaining = false;
         for state in &mut self.entries {
-            if state.terrain.validate().is_err() || !settings.enabled {
+            if state.terrain.validate().is_err() {
                 continue;
             }
             let mut missing: Vec<(TileKey, u32)> = std::mem::take(&mut state.missing)
@@ -50,7 +44,7 @@ impl Terrains {
                 self.restored += state.store.restore(&missing, &work);
                 missing.retain(|(key, _)| state.loads(key));
             }
-            if missing.is_empty() && state.dispatched.is_empty() {
+            if missing.is_empty() && state.loading() == 0 {
                 continue;
             }
             let target = std::mem::take(&mut state.target);
@@ -62,7 +56,7 @@ impl Terrains {
                 .collect();
             state.target = target;
             state.keep = keep;
-            remaining |= baking || !state.missing.is_empty() || !state.dispatched.is_empty();
+            remaining |= baking || !state.missing.is_empty() || state.loading() > 0;
             if work.expired() {
                 break;
             }
@@ -101,7 +95,7 @@ impl Terrains {
     fn stream(
         &mut self,
         settings: &TerrainSettings,
-        camera: &Camera,
+        (camera, looking): (&Camera, Vec3),
         (eye, ahead): (Vec3, Vec3),
         (size, device_tiles): (UVec2, Option<u32>),
         (focus, places): (&[Vec3], &[(Vec3, f32)]),
@@ -130,9 +124,8 @@ impl Terrains {
                 .count() as u32,
             ..TerrainStats::default()
         };
-        let forward = camera.target - camera.eye();
-        let forward = Vec2::new(forward.x, forward.z);
-        let planes = ViewPlanes::new(camera, eye, size);
+        let forward = Vec2::new(looking.x, looking.z);
+        let planes = ViewPlanes::new(camera, (eye, looking), size);
         let fov = vertical_fov(camera);
         let fov = if fov.is_finite() && fov > 0.0 && fov < std::f32::consts::PI {
             fov
@@ -271,13 +264,13 @@ impl Terrains {
             stats.pending += state
                 .missing
                 .iter()
-                .filter(|(key, _)| !state.failed.contains_key(key))
+                .filter(|(key, _)| !state.failed(key))
                 .count() as u32;
             stats.cached_tiles += state.store.kept_tiles() as u32;
             stats.cached_bytes += state.store.cached_bytes();
-            stats.prefetching_tiles += state.prefetched.len() as u32;
-            stats.loading_tiles += state.dispatched.len() as u32;
-            state.show(settings.enabled && state.store.len() > 0);
+            stats.prefetching_tiles += state.prefetching() as u32;
+            stats.loading_tiles += state.loading() as u32;
+            state.show(state.store.len() > 0);
             stats.fallback_tiles += fallback;
             if cutout.is_some() {
                 stats.surroundings_tiles += state.store.len() as u32;
@@ -344,8 +337,7 @@ pub(crate) struct TerrainStreaming {
 }
 
 pub(crate) type StreamReads<'w> = (
-    Res<'w, Camera>,
-    Res<'w, View>,
+    Res<'w, PrimaryView>,
     Res<'w, FrameTime>,
     Res<'w, CookMode>,
     Res<'w, DeviceLimits>,
@@ -359,7 +351,7 @@ pub(crate) type StreamReads<'w> = (
 )]
 pub(crate) fn stream_terrains(
     settings: Res<TerrainSettings>,
-    (camera, view, time, cooking, limits, globals, records): StreamReads<'_>,
+    (view, time, cooking, limits, globals, records): StreamReads<'_>,
     kinds: Joined<TerrainLayers>,
     focus: Query<Entity, With<StreamingFocus>>,
     prefetch: Query<(Entity, &TerrainPrefetch)>,
@@ -406,7 +398,7 @@ pub(crate) fn stream_terrains(
     };
     terrains.stream(
         &settings,
-        &camera,
+        (&view.lens(), view.forward()),
         (eye, ahead),
         (view.display_size(), device_tiles(&limits)),
         (&streaming.points, &streaming.places),
@@ -424,7 +416,6 @@ pub(crate) fn stream_terrains(
 }
 
 pub(crate) fn work_between_frames(
-    settings: Res<TerrainSettings>,
     (time, clock, records): (Res<FrameTime>, Res<WorkClock>, Res<Records>),
     kinds: Joined<TerrainLayers>,
     mut jobs: Jobs,
@@ -440,7 +431,6 @@ pub(crate) fn work_between_frames(
     };
     let milliseconds = f64::from(time.between_frames_micros) / 1000.0;
     remaining.report(terrains.work_between_frames(
-        &settings,
         (clock.reading, milliseconds),
         &mut asking,
         &mut *budget,
@@ -456,6 +446,7 @@ impl Terrains {
             } else {
                 state.retire(&mut self.retired);
                 self.changed = true;
+                self.edits += 1;
             }
         }
         self.entries = kept;
@@ -470,6 +461,7 @@ impl Terrains {
                         let old =
                             std::mem::replace(state, TerrainState::new(entity, terrain, kinds));
                         old.retire(&mut self.retired);
+                        self.edits += 1;
                     } else {
                         if !Arc::ptr_eq(&terrain.edits, &state.terrain.edits) {
                             state.edit(terrain.edits.clone(), kinds);
@@ -487,6 +479,7 @@ impl Terrains {
                 }
                 None => {
                     self.entries.push(TerrainState::new(entity, terrain, kinds));
+                    self.edits += 1;
                 }
             }
         }

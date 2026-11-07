@@ -11,6 +11,7 @@ pub mod bounds;
 mod bricks;
 mod clock;
 pub mod command_line;
+mod drawn;
 mod entity_indices;
 mod frame_stats;
 mod hierarchy;
@@ -35,6 +36,7 @@ mod source;
 mod statistics;
 mod ticks;
 mod transform_edits;
+mod views;
 
 mod sources {
     include!(concat!(env!("OUT_DIR"), "/sources.rs"));
@@ -45,23 +47,36 @@ pub mod profile {
 }
 
 pub use assets::*;
-pub use authoring::core_components;
+pub use authoring::{DrawnForm, ViewForm, core_components};
 pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
-pub use engine_assets::{
-    Aabb, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, Filter, Grounding, LodInput, LodLevel,
-    MAX_TEXTURE_DIMENSION, Material, MaterialBinding, Mesh, MeshLods, MeshVertex, Sampler, Surface,
-    Texture, TextureFormat, TextureRef, TopLayer, UvTransform, Wrap, lod_input, trim_cards,
+pub use drawn::{
+    DRAWN_OWN_PROJECTION, DRAWN_RECEIVES_SHADOWS, DrawnBatch, DrawnRecord, DrawnSettings,
+    DrawnState, DrawnTable, PlanState, drawn_wgsl,
 };
+pub use engine_assets::{
+    Aabb, AlphaImage, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, Attributes,
+    BASE_COLOR_MAP, ColorSpace, Cull, DepthBias, EMISSIVE_MAP, Filter, LightingModel, LodInput,
+    LodLevel, MAX_TEXTURE_DIMENSION, METALLIC_ROUGHNESS_MAP, Material, MaterialBinding, Mesh,
+    MeshLods, MeshVertex, NORMAL_MAP, OCCLUSION_MAP, RenderState, STANDARD_MAPS, Sampler,
+    Surface, SurfaceSlot, Texture, TextureFormat, TextureRef, UvTransform, Wrap, attributes_wgsl,
+    lod_input, trim_cards,
+};
+pub use engine_textures::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 pub use engine_place::{
-    Applied, ApplyAt, Ask, Asked, BudgetUse, Census, Clock, Cursor, CursorView, DrawPoint, Error,
-    ErrorCode, Events, Feed, FeedView, FrameBudget, GpuStruct, Interest, JobRef, Level, LevelView,
-    List, MaterialHandle, Mesh3d, MeshHandle, Mobility, Moment, Mover, MoverId, Node, NodeWord,
-    Pace, PlaceDecl, Progress, Readiness, Request, Requests, Ring, Runs, Screens, Since, Slot,
-    Smoke, SmokeFailure, SmokeSession, Stamp, StoreId, TextureHandle, Ticket, gpu_consts,
+    Applied, ApplyAt, Ask, Asked, AttachPoint, BudgetUse, CORE_PASSES, Census, Clock, ColorPass,
+    Cursor, CursorView, DepthPass, DrawKind, Drawn, DrawnProjection, Error, ErrorCode, Events,
+    Feed, FeedView, FrameBudget, GeometryHandle, GpuStruct, InstanceValues, Interest, JobRef,
+    KindDecl, Layers, Level, LevelView, List, MaterialHandle, Mesh3d, MeshHandle, Mobility, Moment,
+    Mover, MoverId, Node, NodeId, NodeWord, PASS_BITS, Pace, Pass, PassBit, PassEntry,
+    PassMask, PassName, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring, Runs,
+    ScenePass, ScenePasses, SceneView, SceneViews, Screens, Since, Slot, SlotSet, Smoke,
+    SmokeFailure, SmokeSession,
+    Stamp, StoreId, TargetName, TextureHandle, Ticket, Writes, every, gpu_consts, never,
     smoke_check, smoke_eq,
 };
+pub use engine_place::{Clear, Rect, Target, View, ViewCut, ViewHistory};
 pub use engine_registry::{
     AuthoredId, ExplainAsk, ExplainRecord, FrameFacts, RecordParity, fault_of,
 };
@@ -90,13 +105,14 @@ pub use section::{Cut, Explain, Operation, RESERVED_REPLY_KEYS, Section};
 pub use shared::{FeedSettings, FrameBudgetSettings};
 pub use services::{
     Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, Placed,
-    Placement, Prepared, Reach, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneIds,
-    ScenePath, View, ViewWind, WorkClock, WorkRemaining, scene_component, scene_components,
+    Placement, Prepared, Reach, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm,
+    SceneIds, PrimaryView, ScenePath, ViewWind, WorkClock, WorkRemaining, scene_component, scene_components,
 };
 pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
 pub use ticks::ScanClock;
 pub use transform_edits::*;
+pub use views::{Hit, Picking, Ray, ViewFacts, Views, main_camera};
 
 pub mod codec {
     pub use engine_codec::{decode, encode};
@@ -148,9 +164,15 @@ static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<ViewWind>(),
     PlaceDecl::ledger::<FrameBudget>("frame_budget"),
     PlaceDecl::ledger::<Readiness>("readiness"),
+    PlaceDecl::ledger::<AssetLibrary>("asset_library"),
+    PlaceDecl::component::<Drawn>("drawn"),
+    PlaceDecl::component::<SceneViews>("scene_views"),
     PlaceDecl::ask::<Teleport>(),
     PlaceDecl::ask::<HandOver>(),
     PlaceDecl::ask::<CameraHandoff>(),
+    PlaceDecl::ask::<ViewCut>(),
+    PlaceDecl::component::<View>("view"),
+    PlaceDecl::component::<Camera>("camera"),
 ];
 
 #[cfg(feature = "dev")]
@@ -216,6 +238,7 @@ fn core_entries(registry: &mut RegistryBuilder) {
     registry.core_settings(bricks::settings_entry::<Detail>());
     registry.core_settings(bricks::settings_entry::<FeedSettings>());
     registry.core_settings(bricks::settings_entry::<FrameBudgetSettings>());
+    registry.core_settings(bricks::settings_entry::<DrawnSettings>());
     registry.core_settings(bricks::settings_entry::<FrameLimits>());
     registry.core_operation(OperationEntry::of::<
         <services::ViewControl as Operation>::Params,
@@ -255,14 +278,42 @@ fn core_entries(registry: &mut RegistryBuilder) {
         moves::MovesState::CONTROL,
         bricks::run_operation::<moves::MovesState>,
     ));
+    registry.core_operation(OperationEntry::of::<
+        <views::ViewsState as Operation>::Params,
+    >(
+        views::ViewsState::NAME,
+        views::ViewsState::CONTROL,
+        bricks::run_operation::<views::ViewsState>,
+    ));
     registry.mover_rule(moves::rule());
+    registry.despawn_rule(hierarchy::despawn_owned);
     registry.fill_core::<Asked<Teleport>>();
     registry.fill_core::<Asked<HandOver>>();
     registry.fill_core::<Asked<CameraHandoff>>();
-    registry.writers_first::<Camera>();
+    registry.fill_core::<Asked<ViewCut>>();
     registry.writers_first::<Pause>();
     registry.writers_first::<TimeScale>();
     registry.writers_first::<Screens>();
+}
+
+fn install_passes(world: &mut World) {
+    let registered: Vec<(&'static str, PassEntry)> = world
+        .get_resource::<Registry>()
+        .into_iter()
+        .flat_map(|registry| registry.iter())
+        .flat_map(|(_, record)| {
+            record
+                .render_entries::<PassEntry>()
+                .map(move |entry| (record.package, *entry))
+        })
+        .collect();
+    let (passes, problems) = ScenePasses::of(registered);
+    world.insert_resource(passes);
+    if let Some(mut registry) = world.get_resource_mut::<Registry>() {
+        for problem in problems {
+            registry.report(problem);
+        }
+    }
 }
 
 fn refused(problems: &[Error]) -> Result<(), Error> {
@@ -273,16 +324,34 @@ fn refused(problems: &[Error]) -> Result<(), Error> {
     }
 }
 
-fn publish_view(world: &mut World, aspect: f32, facts: FrameFacts) {
-    let camera = *world.resource::<Camera>();
-    let view_projection = camera.view_projection(aspect);
-    let eye = camera.eye();
-    let held = world.resource::<View>().state();
-    if held.facts() == facts && held.view_projection() == view_projection && held.eye() == eye {
+fn publish_view(world: &mut World, facts: FrameFacts) {
+    let scene = world.resource::<PrimaryView>().scene();
+    views::settle(world, facts, scene);
+    let main = world.resource::<Views>().main().copied();
+    let held = world.resource::<PrimaryView>();
+    let (shown, view_projection, eye) = match main {
+        Some(main) => (
+            FrameFacts {
+                display_size: main.size(),
+                render_size: main.render,
+                ..facts
+            },
+            main.view_projection,
+            main.eye,
+        ),
+        None => (facts, held.view_projection(), held.eye()),
+    };
+    let state = held.state();
+    if state.facts() == shown
+        && state.view_projection() == view_projection
+        && state.eye() == eye
+        && held.same(main.as_ref())
+    {
         return;
     }
-    modify(world, |view: &mut View| {
-        view.state_mut().set(facts, view_projection, eye);
+    modify(world, |view: &mut PrimaryView| {
+        view.state_mut().set(shown, view_projection, eye);
+        view.shown(main);
     });
 }
 
@@ -325,19 +394,18 @@ impl Engine {
             .init_resource::<Level>()
             .init_resource::<Readiness>()
             .init_resource::<FrameBudget>()
-            .init_resource::<Camera>()
-            .init_resource::<scene::CameraHeld>()
-            .init_resource::<CameraRefusals>()
+            .init_resource::<Views>()
             .init_resource::<Detail>()
             .init_resource::<FeedSettings>()
             .init_resource::<FrameBudgetSettings>()
+            .init_resource::<DrawnSettings>()
             .init_resource::<CookMode>()
             .insert_resource(exchange)
             .insert_resource(listed)
             .init_resource::<engine_registry::JobQueue>()
             .init_resource::<Records>()
             .init_resource::<RecordExchange>()
-            .insert_resource(View::empty())
+            .insert_resource(PrimaryView::empty())
             .insert_resource(DeviceLimits::without_device(cores))
             .init_resource::<WorkClock>()
             .init_resource::<PartDraws>()
@@ -359,10 +427,12 @@ impl Engine {
             .init_resource::<Asked<Teleport>>()
             .init_resource::<Asked<HandOver>>()
             .init_resource::<Asked<CameraHandoff>>()
+            .init_resource::<Asked<ViewCut>>()
             .insert_resource(TransformNodeLimit(config.max_transform_nodes))
             .init_resource::<GlobalTransforms>()
             .insert_resource(assets);
         assets::install(app.world_mut());
+        drawn::install(app.world_mut());
         Self {
             app,
             clock,
@@ -402,7 +472,9 @@ impl Engine {
         let labels: [InternedScheduleLabel; 11] = Schedule::ALL.map(Schedule::label);
         let mut gates = registry.install(world, &labels);
         moves::install_kinds(world);
-        scene::spawn_camera(world);
+        install_passes(world);
+        drawn::install_kinds(world);
+        scene::spawn_main_view(world);
         let mut twice = world
             .get_resource::<MembersOf<SceneComponents>>()
             .map(|members| members.names_twice(|kind| kind.key()))
@@ -520,6 +592,9 @@ impl Engine {
     pub fn present(&mut self, presented: Presented) -> Result<(), Error> {
         presentation::check_alpha(presented.alpha())?;
         self.finalize();
+        if moves::start_frame(self.app.world_mut()) {
+            self.refresh_transforms();
+        }
         presentation::present(self.app.world_mut(), presented);
         Ok(())
     }
@@ -677,7 +752,9 @@ impl Engine {
             time.dropped_seconds += advanced.dropped_seconds;
             time.cut_seconds += cut_seconds;
         });
-        moves::start_frame(world);
+        if moves::start_frame(world) {
+            self.refresh_transforms();
+        }
         for _ in 0..advanced.ticks {
             self.run_fixed_tick();
         }
@@ -693,7 +770,6 @@ impl Engine {
             self.app.world_mut().run_schedule(Presentation);
         }
         self.refresh_transforms();
-        scene::settle_camera(self.app.world_mut());
         self.app.world_mut().clear_trackers();
         self.check_gate_ticks();
     }
@@ -761,14 +837,14 @@ impl Engine {
         self.app.world().resource::<PresentationState>()
     }
 
-    pub fn extract_frame(&mut self, aspect: f32) -> Result<RenderFrame<'_>, Error> {
+    pub fn extract_frame(&mut self) -> Result<RenderFrame<'_>, Error> {
         let _profile = engine_profile::span("cpu", "extraction");
         self.finalize();
         self.run_gates();
         self.sync_world();
         self.refresh_transforms();
         presentation::gather(self.app.world_mut());
-        self.sync_view(aspect);
+        self.sync_view();
         shared::settle_readiness(self.app.world_mut());
         modify(self.app.world_mut(), ActionInput::hide_edges);
         Ok(RenderFrame {
@@ -788,12 +864,11 @@ impl Engine {
         self.app.world_mut().run_schedule(WorldSync);
     }
 
-    fn sync_view(&mut self, aspect: f32) {
+    fn sync_view(&mut self) {
         let _profile = engine_profile::span("ecs", "ViewSync");
-        scene::settle_camera(self.app.world_mut());
         let facts = self.facts.unwrap_or_else(|| self.viewport_facts());
         let world = self.app.world_mut();
-        publish_view(world, aspect, facts);
+        publish_view(world, facts);
         world.run_schedule(ViewSync);
         assets::settle_assets(world);
     }

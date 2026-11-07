@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::Resource;
-use engine_place::{DrawPoint, Slot};
+use engine_place::{Slot, StoreId};
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct SkyLight {
@@ -7,7 +7,7 @@ pub struct SkyLight {
     pub sun_intensity: f32,
     pub sun_size: f32,
     pub adaptation: f32,
-    pub environment: u64,
+    pub environment: Option<StoreId>,
 }
 
 impl Slot for SkyLight {
@@ -30,22 +30,4 @@ pub struct OpenSky;
 impl Slot for OpenSky {
     const NAME: &'static str = "open_sky";
     const WGSL: Option<&'static str> = Some(include_str!("places/open_sky.wgsl"));
-}
-
-#[derive(Resource, Default)]
-pub struct EnvironmentLayers;
-
-impl Slot for EnvironmentLayers {
-    const NAME: &'static str = "environment_layers";
-}
-
-impl DrawPoint for EnvironmentLayers {
-    type Layer = ();
-    type Args = EnvironmentFaces;
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EnvironmentFaces {
-    pub level: u32,
-    pub first: u32,
 }

@@ -6,8 +6,7 @@ use glam::{Affine3A, BVec4A, Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
 use serde::Serialize;
 
 use crate::{
-    Clock, DrawnPoses, Error, ErrorCode, GlobalTransforms, Mobility, Node, NodePose, Parent,
-    edit_transform, make_fresh,
+    Clock, Error, ErrorCode, GlobalTransforms, Mobility, Node, NodePose, Parent, View,
 };
 use std::sync::Arc;
 
@@ -123,16 +122,17 @@ impl Transform {
     }
 }
 
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct Camera {
-    pub position: Vec3,
-    pub target: Vec3,
     pub near: f32,
     pub far: f32,
     pub projection: Projection,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Projection {
     Perspective { vertical_fov_radians: f32 },
     Orthographic { height: f32 },
@@ -141,8 +141,6 @@ pub enum Projection {
 impl Default for Camera {
     fn default() -> Self {
         Self {
-            position: Vec3::new(24.0, 19.0, 28.0),
-            target: Vec3::ZERO,
             near: 0.1,
             far: 500.0,
             projection: Projection::Perspective {
@@ -156,13 +154,6 @@ fn default_fov() -> f32 {
     55.0_f32.to_radians()
 }
 
-#[derive(Resource, Clone, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct CameraRefusals {
-    pub count: u64,
-    pub latest: Option<String>,
-}
-
 fn within(value: f32, min: f32, max: f32) -> bool {
     (min..=max).contains(&value)
 }
@@ -172,27 +163,11 @@ impl Camera {
     pub const MIN_DEPTH: f32 = 0.001;
     pub const MIN_FOV_DEGREES: f32 = 1.0;
     pub const MAX_FOV_DEGREES: f32 = 179.0;
+    pub const EYE: Vec3 = Vec3::new(24.0, 19.0, 28.0);
 
-    #[doc(hidden)]
     pub fn check(&self) -> Result<(), Error> {
-        let invalid = |field: &str| Err(Error::new(ErrorCode::InvalidValue, format!("$.{field}")));
+        let invalid = |field: &str| Err(Error::new(ErrorCode::InvalidCamera, format!("$.{field}")));
         let reach = Self::REACH;
-        if !self
-            .position
-            .to_array()
-            .iter()
-            .all(|&axis| within(axis, -reach, reach))
-        {
-            return invalid("position");
-        }
-        if !self
-            .target
-            .to_array()
-            .iter()
-            .all(|&axis| within(axis, -reach, reach))
-        {
-            return invalid("target");
-        }
         if !within(self.near, Self::MIN_DEPTH, reach) {
             return invalid("near");
         }
@@ -215,61 +190,31 @@ impl Camera {
             }
             Projection::Perspective { .. } | Projection::Orthographic { .. } => {}
         }
-        if (self.target - self.position).length_squared() < Self::MIN_DEPTH * Self::MIN_DEPTH {
-            return invalid("target");
-        }
         if self.far - self.near < Self::MIN_DEPTH {
             return invalid("far");
         }
         Ok(())
     }
 
-    pub fn eye(&self) -> Vec3 {
-        self.position
+    pub fn vertical_fov(&self) -> Option<f32> {
+        match self.projection {
+            Projection::Perspective {
+                vertical_fov_radians,
+            } => Some(vertical_fov_radians),
+            Projection::Orthographic { .. } => None,
+        }
     }
 
-    pub fn rotation(&self) -> Quat {
-        let direction = (self.target - self.position)
-            .try_normalize()
-            .unwrap_or(Vec3::NEG_Z);
-        let yaw = crate::math::atan2(-direction.x, -direction.z);
-        let pitch = crate::math::clamp(direction.y, -1.0, 1.0).asin();
-        Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch)
-    }
-
-    pub fn view_projection(&self, aspect: f32) -> Mat4 {
-        let (projection, position, direction, up) = self.lens(aspect);
-        projection * Mat4::look_to_rh(position, direction, up)
-    }
-
-    pub fn relative_view_projection(&self, aspect: f32) -> Mat4 {
-        let (projection, _, direction, up) = self.lens(aspect);
-        projection * Mat4::look_to_rh(Vec3::ZERO, direction, up)
-    }
-
-    fn lens(&self, aspect: f32) -> (Mat4, Vec3, Vec3, Vec3) {
+    pub fn clip(&self, aspect: f32) -> Mat4 {
         let aspect = if aspect.is_finite() && aspect > 0.0 {
             aspect
         } else {
             1.0
         };
-        let Self {
-            position,
-            target,
-            near,
-            far,
-            projection,
-        } = *self;
-        let direction = (target - position).try_normalize().unwrap_or(Vec3::NEG_Z);
-        let up = if direction.dot(Vec3::Y).abs() > 0.999 {
-            Vec3::Z
-        } else {
-            Vec3::Y
-        };
-        let projection = match projection {
+        match self.projection {
             Projection::Perspective {
                 vertical_fov_radians,
-            } => Mat4::perspective_rh(vertical_fov_radians, aspect, far, near),
+            } => Mat4::perspective_rh(vertical_fov_radians, aspect, self.far, self.near),
             Projection::Orthographic { height } => {
                 let (half_width, half_height) = (height * aspect * 0.5, height * 0.5);
                 Mat4::orthographic_rh(
@@ -277,34 +222,39 @@ impl Camera {
                     half_width,
                     -half_height,
                     half_height,
-                    far,
-                    near,
+                    self.far,
+                    self.near,
                 )
             }
+        }
+    }
+
+    pub fn view_projection(&self, eye: Vec3, forward: Vec3, aspect: f32) -> Mat4 {
+        let direction = forward.try_normalize().unwrap_or(Vec3::NEG_Z);
+        let up = if direction.dot(Vec3::Y).abs() > 0.999 {
+            Vec3::Z
+        } else {
+            Vec3::Y
         };
-        (projection, position, direction, up)
+        self.clip(aspect) * Mat4::look_to_rh(eye, direction, up)
     }
 }
 
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CameraNode;
-
-#[derive(Resource, Clone, Copy, Debug, Default)]
-pub(crate) struct CameraHeld {
-    node: Option<Entity>,
-    shown: Camera,
+impl Transform {
+    pub fn looking_at(position: Vec3, target: Vec3) -> Self {
+        let direction = (target - position).try_normalize().unwrap_or(Vec3::NEG_Z);
+        let yaw = crate::math::atan2(-direction.x, -direction.z);
+        let pitch = crate::math::clamp(direction.y, -1.0, 1.0).asin();
+        Self::from_translation(position)
+            .with_rotation(Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch))
+    }
 }
 
-pub(crate) fn spawn_camera(world: &mut World) {
-    let camera = *world.resource::<Camera>();
-    let node = world
+pub(crate) fn spawn_main_view(world: &mut World) {
+    let camera = world
         .spawn((
-            Transform {
-                translation: camera.position,
-                rotation: camera.rotation(),
-                scale: Vec3::ONE,
-            },
-            CameraNode,
+            Transform::looking_at(Camera::EYE, Vec3::ZERO),
+            Camera::default(),
             Node {
                 clock: Some(Clock::Real),
                 mobility: Some(Mobility::Moving),
@@ -312,52 +262,18 @@ pub(crate) fn spawn_camera(world: &mut World) {
             },
         ))
         .id();
-    world.insert_resource(CameraHeld {
-        node: Some(node),
-        shown: camera,
-    });
+    world.spawn(View::new(camera));
 }
 
-pub(crate) fn settle_camera(world: &mut World) {
-    let held = *world.resource::<CameraHeld>();
-    let written = *world.resource::<Camera>();
-    let asked = written != held.shown;
-    let placed = match held.node {
-        Some(node) if !asked => posed(world, node, written),
-        Some(_) | None => written,
-    };
-    let kept = match placed.check() {
-        Ok(()) => placed,
-        Err(error) => {
-            let mut refusals = world.resource_mut::<CameraRefusals>();
-            refusals.count += 1;
-            refusals.latest = Some(error.path);
-            held.shown
-        }
-    };
-    if let Some(node) = held.node
-        && (asked || kept != placed)
-    {
-        cut(world, node, kept);
-    }
-    if kept != written {
-        *world.resource_mut::<Camera>() = kept;
-    }
-    if kept != held.shown {
-        world.resource_mut::<CameraHeld>().shown = kept;
-    }
-}
-
-fn cut(world: &mut World, node: Entity, camera: Camera) {
-    let rotation = camera.rotation();
+pub fn place_camera(world: &mut World, camera: Entity, at: Transform, lens: Camera) {
     let parent = world
-        .get::<Parent>(node)
+        .get::<Parent>(camera)
         .map(Parent::parent)
         .and_then(|parent| world.get_resource::<GlobalTransforms>()?.pose(parent));
-    let placed = match parent {
+    let to = match parent {
         Some(pose) => {
             let local =
-                pose.inverse() * Affine3A::from_rotation_translation(rotation, camera.position);
+                pose.inverse() * Affine3A::from_rotation_translation(at.rotation, at.translation);
             let (scale, rotation, translation) = local.to_scale_rotation_translation();
             Transform {
                 translation,
@@ -365,35 +281,12 @@ fn cut(world: &mut World, node: Entity, camera: Camera) {
                 scale,
             }
         }
-        None => Transform {
-            translation: camera.position,
-            rotation,
-            scale: Vec3::ONE,
-        },
+        None => at,
     };
-    if edit_transform(world, node, |transform| *transform = placed).is_ok() {
-        make_fresh(world, &[node]);
+    if let Ok(mut held) = world.get_entity_mut(camera) {
+        held.insert(lens);
     }
-}
-
-fn posed(world: &World, node: Entity, written: Camera) -> Camera {
-    let pose = world
-        .get_resource::<GlobalTransforms>()
-        .zip(world.get_resource::<DrawnPoses>())
-        .and_then(|(globals, poses)| poses.drawn_pose(globals, node));
-    let Some(pose) = pose else {
-        return written;
-    };
-    let Some(forward) = pose.transform_vector3(Vec3::NEG_Z).try_normalize() else {
-        return written;
-    };
-    let position = pose.w_axis.truncate();
-    let focus = (written.target - written.position).length();
-    Camera {
-        position,
-        target: position + forward * focus,
-        ..written
-    }
+    crate::send_ask(world, crate::Teleport { node: camera, to });
 }
 
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
@@ -436,7 +329,7 @@ pub struct RenderTexture {
     pub texture: Arc<Texture>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct RenderMaterial {
     pub handle: MaterialHandle,
     pub material: Material,

@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{Component, Resource};
-use engine_place::{DrawPoint, Slot, StoreId};
+use engine_place::Slot;
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -82,41 +82,17 @@ impl ReflectionProbe {
     }
 }
 
-#[derive(Resource, Default)]
-pub struct ProbeViews;
-
-impl Slot for ProbeViews {
-    const NAME: &'static str = "probe_views";
-}
-
-impl DrawPoint for ProbeViews {
-    type Layer = ();
-    type Args = ProbeView;
-    const UBER_MATERIALS: bool = true;
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ProbeView {
-    pub face: u32,
-    pub center: Vec3,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ProbeFace {
     pub face: u32,
     pub center: Vec3,
     pub view: Mat4,
-    pub cube: u32,
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct ProbeCaptures {
     pub faces: Vec<ProbeFace>,
     pub size: u32,
-    pub cubes: u32,
-    pub layout: StoreId,
-    pub finished: Option<u32>,
-    pub views: bool,
 }
 
 impl Slot for ProbeCaptures {

@@ -10,9 +10,11 @@ pub(crate) struct CandidateState {
     pub phase_two: bool,
     pub occluded: bool,
     pub subpixel: bool,
-    pub probe: bool,
+    pub view: bool,
     #[bits(2)]
     pub level: u32,
+    #[bits(2)]
+    pub view_level: u32,
 }
 
 #[gpu_bits]
@@ -44,10 +46,16 @@ impl LodFade {
 }
 
 #[gpu_bits]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CasterCache {
-    Out = 0,
-    Kept = 1,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CardFrames {
+    #[bits(8)]
+    pub first: u32,
+    #[bits(8)]
+    pub second: u32,
+    #[bits(8)]
+    pub third: u32,
+    #[bits(8)]
+    pub origin: u32,
 }
 
 gpu_consts! {
@@ -58,9 +66,6 @@ gpu_consts! {
     pub const GROUP: u32 = 64;
     pub const PARENT_GROUP: u32 = 64;
     pub const ARGS_GROUP: u32 = 64;
-    pub const MOVING_MAP: u32 = 7;
-    pub const SKY_MAP: u32 = 8;
-    pub const MOVING_PAIRS: u32 = 8;
     pub const UNWATCHED: u32 = u32::MAX;
     pub const FIRST_PERSON_BATCH: f32 = 1.0;
 }
@@ -92,6 +97,7 @@ gpu_struct! {
         pub pad: u32,
         pub eye: [f32; 4],
         pub fade: [f32; 4],
+        pub bases: [u32; 4],
     }
 }
 
@@ -109,7 +115,7 @@ gpu_struct! {
         pub start: u32,
         pub count: u32,
         pub index_count: u32,
-        pub group: u32,
+        pub pad: u32,
         pub bounds_min: [f32; 4],
         pub bounds_max: [f32; 4],
         pub first_index: u32,
@@ -118,14 +124,5 @@ gpu_struct! {
         pub first_plane: u32,
         pub lod_ranges: [u32; 4],
         pub lod_errors: [f32; 4],
-    }
-}
-
-gpu_struct! {
-    pub(crate) struct CasterFrame {
-        pub candidates: u32,
-        pub groups: u32,
-        pub capacity: u32,
-        pub pad: u32,
     }
 }

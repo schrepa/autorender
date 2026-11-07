@@ -1,6 +1,4 @@
-use engine_core::{Error, ErrorCode};
-
-use crate::Layer;
+use engine_core::{AttachPoint, Error, ErrorCode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Life {
@@ -146,7 +144,7 @@ pub struct PassEntry {
     pub label: &'static str,
     pub package: &'static str,
     pub registered: u32,
-    pub layer: Option<Layer>,
+    pub layer: Option<AttachPoint>,
     pub shared: bool,
     pub group: Option<&'static str>,
 }
@@ -225,9 +223,15 @@ impl Node {
         match self.entry.layer {
             None if positioned_before => 2,
             None => 0,
-            Some(Layer::Occluders | Layer::Opaque | Layer::Late) => 1,
-            Some(Layer::Backdrop) if self.entry.shared => 1,
-            Some(Layer::Backdrop | Layer::Media | Layer::Over | Layer::Blend) => 2,
+            Some(AttachPoint::Depth | AttachPoint::Opaque) => 1,
+            Some(AttachPoint::Sky) if self.entry.shared => 1,
+            Some(
+                AttachPoint::Sky
+                | AttachPoint::Transparent
+                | AttachPoint::Post
+                | AttachPoint::Display
+                | AttachPoint::Overlay,
+            ) => 2,
         }
     }
 }

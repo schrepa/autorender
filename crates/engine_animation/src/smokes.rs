@@ -1,7 +1,7 @@
 use std::f32::consts::FRAC_1_SQRT_2;
 
 use engine_core::smoke::{
-    Checked, above, ask, compiled, component, control, not, number, query, render, with,
+    Checked, above, ask, component, control, not, number, query, render, settled, with,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_check, smoke_eq};
 use serde_json::{Value, json};
@@ -12,7 +12,6 @@ const CORNERS: [[f32; 2]; 4] = [[-0.1, -0.1], [0.1, -0.1], [0.1, 0.1], [-0.1, 0.
 const RINGS: [(f32, u32); 5] = [(0.0, 0), (0.5, 0), (1.0, 1), (1.5, 1), (2.0, 2)];
 const CLOSE: f64 = 0.02;
 const WAIT_FRAMES: u32 = 600;
-const SETTLE_FRAMES: u32 = 8;
 const CHANNEL_TOLERANCE: u8 = 24;
 const POSE_PIXELS: usize = 200;
 
@@ -279,10 +278,7 @@ fn resident(session: &mut dyn SmokeSession) -> Checked<()> {
 }
 
 fn shown(session: &mut dyn SmokeSession) -> Checked<Option<Vec<u8>>> {
-    compiled(session)?;
-    for _ in 0..SETTLE_FRAMES {
-        render(session)?;
-    }
+    settled(session)?;
     let captured = ask(session, "capture", json!({}))?;
     let path = captured["artifact"]["path"].as_str().unwrap_or_default();
     let Some(bytes) = session.artifact(path) else {

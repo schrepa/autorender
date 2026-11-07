@@ -1,31 +1,31 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, AssetResidency, Detail, DeviceLimits, DrawnPoses, Error, FrameTime,
-    GlobalTransforms, ImpostorRecords, MAX_HIERARCHY_DEPTH, View,
+    AssetLibrary, AssetResidency, ColorPass, DepthPass, Detail, DeviceLimits, DrawnPoses, Error,
+    FrameTime, GlobalTransforms, ImpostorRecords, MAX_HIERARCHY_DEPTH, PassName, PassViews,
+    PrimaryView, ScenePass, SceneViews,
 };
-use engine_places_rendering::probes::{ProbeCaptures, ProbeViews};
-use engine_places_rendering::shadows::{ShadowCasters, ShadowMaps};
 use engine_render::{
-    Bind, Buffer, ComputePipeline, Copied, DepthUse, DrawInput, Encode, GpuPart, Install, Lifetime,
-    MainView, Pass, Pipeline, Prepare, RenderPipeline, Resolve, Texture, VertexLayout, ViewTarget,
-    wgpu,
+    AttachPoint, Bind, Buffer, ComputePipeline, Copied, DepthUse, DrawInput, Encode, GpuPart,
+    Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Resolve, Scene, Scope,
+    TargetName, Texture, VertexLayout, wgpu,
 };
 
+use crate::MESH;
 use crate::assets::MeshAssets;
 use crate::batches::BatchPlan;
-use crate::casters::CasterPlan;
 use crate::debug::RECORD_STREAM;
 use crate::drawn::WatchedSlot;
+use crate::layouts::PresentationFrame;
 use crate::order::{BatchLook, MeshPlan};
 use crate::presentation::{FrameState, PresentationTotals};
 use crate::retained::RetainedRender;
 use crate::settings::Impostors;
 use crate::shaders::meshes::{cards, casters, debug, forward, presentation, pyramid, vertex};
 
-pub(crate) const FACES: usize = 6;
 pub(crate) const PYRAMID_LEVELS: usize = 16;
 pub(crate) const NODE_LEVELS: usize = MAX_HIERARCHY_DEPTH + 1;
 pub(crate) const PYRAMID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+pub(crate) const VIEW_FRAME_BYTES: u64 = 512;
 
 const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
 const SLOT_STREAM: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
@@ -79,9 +79,8 @@ pub(crate) struct Passes {
     pub presentation: Pass<MeshesGpu>,
     pub keep_poses: Pass<MeshesGpu>,
     pub occlusion: Pass<MeshesGpu>,
-    pub caster_args: Pass<MeshesGpu>,
-    pub casters: Pass<MeshesGpu>,
-    pub probes: Pass<MeshesGpu>,
+    pub occluded: Pass<MeshesGpu>,
+    pub views: Pass<MeshesGpu>,
 }
 
 pub(crate) struct Instances {
@@ -95,7 +94,7 @@ pub(crate) struct Instances {
 pub(crate) struct Presented {
     pub frame: Buffer<MeshesGpu>,
     pub frame_two: Buffer<MeshesGpu>,
-    pub faces: Vec<Buffer<MeshesGpu>>,
+    pub view_frames: Buffer<MeshesGpu>,
     pub locals: Buffer<MeshesGpu>,
     pub info: Buffer<MeshesGpu>,
     pub authority: Buffer<MeshesGpu>,
@@ -110,8 +109,8 @@ pub(crate) struct Presented {
     pub batch_bases: Buffer<MeshesGpu>,
     pub draws: [Buffer<MeshesGpu>; 2],
     pub visible: [Buffer<MeshesGpu>; 2],
-    pub face_draws: Vec<Buffer<MeshesGpu>>,
-    pub face_visible: Vec<Buffer<MeshesGpu>>,
+    pub view_draws: Buffer<MeshesGpu>,
+    pub view_visible: Buffer<MeshesGpu>,
     pub impostor_ids: [Buffer<MeshesGpu>; 2],
     pub lod_states: Buffer<MeshesGpu>,
     pub fade_cards: Buffer<MeshesGpu>,
@@ -121,30 +120,19 @@ pub(crate) struct Presented {
     pub extents: Vec<Buffer<MeshesGpu>>,
 }
 
-pub(crate) struct CasterBuffers {
-    pub select: Buffer<MeshesGpu>,
-    pub cache: Buffer<MeshesGpu>,
-    pub ids: Buffer<MeshesGpu>,
-    pub args: Buffer<MeshesGpu>,
-    pub template: Buffer<MeshesGpu>,
-    pub totals: Buffer<MeshesGpu>,
-}
-
 pub(crate) struct Computes {
     pub compose: Vec<ComputePipeline<MeshesGpu>>,
     pub cull: ComputePipeline<MeshesGpu>,
     pub fades: ComputePipeline<MeshesGpu>,
     pub one: Compaction,
     pub two: Compaction,
-    pub faces: Vec<Compaction>,
+    pub views: Compaction,
     pub gather_one: ComputePipeline<MeshesGpu>,
     pub gather_two: ComputePipeline<MeshesGpu>,
     pub occlusion: ComputePipeline<MeshesGpu>,
-    pub probe: Vec<ComputePipeline<MeshesGpu>>,
+    pub view_cull: ComputePipeline<MeshesGpu>,
     pub pyramid_first: ComputePipeline<MeshesGpu>,
     pub pyramid_down: Vec<ComputePipeline<MeshesGpu>>,
-    pub select: ComputePipeline<MeshesGpu>,
-    pub count_casters: ComputePipeline<MeshesGpu>,
 }
 
 pub(crate) struct Looked<P> {
@@ -160,35 +148,58 @@ impl<P> Looked<P> {
     }
 }
 
-pub(crate) struct Pipelines {
-    pub prepass: Looked<Pipeline<MeshesGpu, MainView>>,
-    pub opaque: Looked<Pipeline<MeshesGpu, MainView>>,
-    pub card: Pipeline<MeshesGpu, MainView>,
-    pub probe: Looked<Pipeline<MeshesGpu, ProbeViews>>,
-    pub casters: [Pipeline<MeshesGpu, ShadowCasters>; 2],
-    pub moving: [Pipeline<MeshesGpu, ShadowCasters>; 2],
+pub(crate) struct Streams<S> {
+    pub ids: DrawInput<MeshesGpu, S>,
+    pub args: DrawInput<MeshesGpu, S>,
+    pub records: DrawInput<MeshesGpu, S>,
+    pub cards: DrawInput<MeshesGpu, S>,
+    pub fading: DrawInput<MeshesGpu, S>,
 }
 
-pub(crate) struct Inputs {
-    pub records: DrawInput<MeshesGpu, MainView>,
-    pub card_ids: [DrawInput<MeshesGpu, MainView>; 2],
-    pub fade_cards: DrawInput<MeshesGpu, MainView>,
-    pub ids: [DrawInput<MeshesGpu, MainView>; 2],
-    pub args: [DrawInput<MeshesGpu, MainView>; 2],
-    pub face_ids: Vec<DrawInput<MeshesGpu, ProbeViews>>,
-    pub face_args: Vec<DrawInput<MeshesGpu, ProbeViews>>,
-    pub caster_ids: DrawInput<MeshesGpu, ShadowCasters>,
-    pub caster_args: DrawInput<MeshesGpu, ShadowCasters>,
+pub(crate) struct ViewStreams {
+    pub ids: DrawInput<MeshesGpu, Scene>,
+    pub args: DrawInput<MeshesGpu, Scene>,
+}
+
+pub(crate) enum Drawing {
+    Lit {
+        looks: Looked<Pipeline<MeshesGpu, Scene>>,
+        card: Pipeline<MeshesGpu, Scene>,
+        streams: Streams<Scene>,
+    },
+    Depth {
+        looks: Looked<Pipeline<MeshesGpu, Scene>>,
+        streams: Streams<Scene>,
+    },
+    Casters {
+        casting: [Pipeline<MeshesGpu, Scene>; 2],
+        streams: ViewStreams,
+    },
+    Views {
+        looks: [Looked<Pipeline<MeshesGpu, Scene>>; 2],
+        streams: ViewStreams,
+    },
+}
+
+pub(crate) struct ScenePipelines {
+    pub name: &'static str,
+    pub drawing: Drawing,
+}
+
+pub(crate) struct Occluded {
+    pub depth: Looked<Pipeline<MeshesGpu, Own>>,
+    pub lit: Looked<Pipeline<MeshesGpu, Own>>,
+    pub card: Pipeline<MeshesGpu, Own>,
+    pub streams: Streams<Own>,
 }
 
 pub(crate) struct MeshesGpu {
     pub passes: Passes,
     pub instances: Instances,
     pub presented: Presented,
-    pub casters: CasterBuffers,
     pub computes: Computes,
-    pub pipelines: Pipelines,
-    pub inputs: Inputs,
+    pub scenes: Vec<ScenePipelines>,
+    pub occluded: Occluded,
     pub state: FrameState,
 }
 
@@ -196,6 +207,7 @@ pub(crate) type MeshReads = (
     FrameReads,
     (
         Query<'static, 'static, &'static ImpostorRecords, With<MeshAssets>>,
+        Query<'static, 'static, &'static SceneViews>,
         Res<'static, WatchedSlot>,
         Res<'static, PresentationTotals>,
         Res<'static, AssetResidency>,
@@ -207,16 +219,13 @@ pub(crate) type FrameReads = (
     Res<'static, BatchPlan>,
     Res<'static, AssetLibrary>,
     Res<'static, MeshPlan>,
-    Res<'static, CasterPlan>,
     Res<'static, DrawnPoses>,
     Res<'static, GlobalTransforms>,
-    Res<'static, View>,
+    Res<'static, PrimaryView>,
     Res<'static, Detail>,
     Res<'static, Impostors>,
     Res<'static, Resolve>,
     Res<'static, FrameTime>,
-    Res<'static, ShadowMaps>,
-    Res<'static, ProbeCaptures>,
     Res<'static, DeviceLimits>,
 );
 
@@ -226,39 +235,17 @@ impl GpuPart for MeshesGpu {
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let instances = install_instances(cx)?;
         let presented = install_presented(cx);
-        let casters = install_casters(cx);
-        let passes = install_passes(cx, &instances, &casters);
-        let computes = install_computes(cx, &passes, &instances, &presented, &casters)?;
-        let pipelines = install_pipelines(cx)?;
-        let inputs = Inputs {
-            records: cx.draw_input(MainView, instances.records),
-            card_ids: presented
-                .impostor_ids
-                .map(|ids| cx.draw_input(MainView, ids)),
-            fade_cards: cx.draw_input(MainView, presented.fade_cards),
-            ids: presented.visible.map(|ids| cx.draw_input(MainView, ids)),
-            args: presented.draws.map(|args| cx.draw_input(MainView, args)),
-            face_ids: presented
-                .face_visible
-                .iter()
-                .map(|&ids| cx.draw_input(ProbeViews, ids))
-                .collect(),
-            face_args: presented
-                .face_draws
-                .iter()
-                .map(|&args| cx.draw_input(ProbeViews, args))
-                .collect(),
-            caster_ids: cx.draw_input(ShadowCasters, casters.ids),
-            caster_args: cx.draw_input(ShadowCasters, casters.args),
-        };
+        let passes = install_passes(cx, &instances);
+        let computes = install_computes(cx, &passes, &instances, &presented)?;
+        let scenes = install_scenes(cx, &instances, &presented)?;
+        let occluded = install_occluded(cx, passes.occluded, &instances, &presented)?;
         Ok(Self {
             passes,
             instances,
             presented,
-            casters,
             computes,
-            pipelines,
-            inputs,
+            scenes,
+            occluded,
             state: FrameState::default(),
         })
     }
@@ -299,6 +286,7 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
     let mut buffer = |label: &'static str| cx.buffer(label, Lifetime::Kept);
     let frame = buffer("presentation_frame");
     let frame_two = buffer("presentation_frame_two");
+    let view_frames = buffer("presentation_view_frames");
     let locals = buffer("presentation_locals");
     let info = buffer("presentation_info");
     let authority = buffer("presentation_authority");
@@ -318,6 +306,8 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
         buffer("presentation_visible_ids"),
         buffer("presentation_visible_ids_two"),
     ];
+    let view_draws = buffer("presentation_view_draws");
+    let view_visible = buffer("presentation_view_ids");
     let impostor_ids = [
         buffer("presentation_impostor_ids"),
         buffer("presentation_impostor_ids_two"),
@@ -326,15 +316,6 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
     let fade_cards = buffer("presentation_fading_cards");
     let counts = buffer("presentation_occlusion_counts");
     let totals = buffer("presentation_totals");
-    let faces = (0..FACES)
-        .map(|_| cx.buffer("presentation_frame_probe", Lifetime::Kept))
-        .collect();
-    let face_draws = (0..FACES)
-        .map(|_| cx.buffer("presentation_draws_probe", Lifetime::Kept))
-        .collect();
-    let face_visible = (0..FACES)
-        .map(|_| cx.buffer("presentation_visible_ids_probe", Lifetime::Kept))
-        .collect();
     let levels = (0..NODE_LEVELS)
         .map(|_| cx.buffer("presentation_level", Lifetime::Kept))
         .collect();
@@ -342,10 +323,11 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
         .map(|_| cx.buffer("depth_pyramid_extent", Lifetime::Kept))
         .collect();
     let pyramid = cx.texture("depth_pyramid", PYRAMID_FORMAT, Lifetime::Kept);
+    cx.window(view_frames, size_of::<PresentationFrame>() as u64);
     Presented {
         frame,
         frame_two,
-        faces,
+        view_frames,
         locals,
         info,
         authority,
@@ -360,8 +342,8 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
         batch_bases,
         draws,
         visible,
-        face_draws,
-        face_visible,
+        view_draws,
+        view_visible,
         impostor_ids,
         lod_states,
         fade_cards,
@@ -372,59 +354,30 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
     }
 }
 
-fn install_casters(cx: &mut Install<'_, MeshesGpu>) -> CasterBuffers {
-    let mut buffer = |label: &'static str| cx.buffer(label, Lifetime::Kept);
-    CasterBuffers {
-        select: buffer("shadow_select"),
-        cache: buffer("shadow_cache"),
-        ids: buffer("shadow_ids"),
-        args: buffer("shadow_args"),
-        template: buffer("shadow_args_template"),
-        totals: buffer("shadow_counters"),
-    }
-}
-
-fn install_passes(
-    cx: &mut Install<'_, MeshesGpu>,
-    instances: &Instances,
-    casters: &CasterBuffers,
-) -> Passes {
+fn install_passes(cx: &mut Install<'_, MeshesGpu>, instances: &Instances) -> Passes {
     let presentation = cx.pass("presentation").id();
     let keep_poses = cx.copy(
         "presentation_keep_poses",
         Copied::Buffer(instances.poses),
         Copied::Buffer(instances.previous_poses),
     );
-    let caster_args = cx.copy(
-        "shadow_args_template",
-        Copied::Buffer(casters.template),
-        Copied::Buffer(casters.args),
-    );
-    let casters_pass = cx
-        .pass("shadow_select")
-        .after(presentation)
-        .after(caster_args)
-        .id();
-    cx.group(caster_args, "shadow_select");
-    cx.group(casters_pass, "shadow_select");
     let occlusion = cx
         .pass("occlusion_test")
-        .at(engine_render::Layer::Late)
+        .at(AttachPoint::Opaque)
         .after(presentation)
-        .after(casters_pass)
         .id();
-    let probes = cx
-        .pass("probe_cull")
+    let occluded = cx
+        .pass("occluded")
+        .at(AttachPoint::Opaque)
         .after(occlusion)
-        .after(casters_pass)
         .id();
+    let views = cx.pass("view_cull").after(presentation).id();
     Passes {
         presentation,
         keep_poses,
         occlusion,
-        caster_args,
-        casters: casters_pass,
-        probes,
+        occluded,
+        views,
     }
 }
 
@@ -488,14 +441,13 @@ fn compaction(
 
 #[expect(
     clippy::too_many_lines,
-    reason = "every compute pipeline of the presentation, the pyramid and the caster cull is made here"
+    reason = "every compute pipeline of the presentation, the pyramid and the view cull is made here"
 )]
 fn install_computes(
     cx: &mut Install<'_, MeshesGpu>,
     passes: &Passes,
     instances: &Instances,
     presented: &Presented,
-    casters: &CasterBuffers,
 ) -> Result<Computes, Error> {
     use presentation as p;
     let at = passes.presentation;
@@ -596,7 +548,7 @@ fn install_computes(
         late,
         pyramid::PYRAMID_FIRST,
         &[
-            (pyramid::SOURCE_DEPTH, Bind::Target(ViewTarget::Depth)),
+            (pyramid::SOURCE_DEPTH, Bind::Target(TargetName::DEPTH)),
             (
                 pyramid::TARGET_LEVEL,
                 Bind::Slice {
@@ -637,56 +589,27 @@ fn install_computes(
             ],
         )?);
     }
-    let mut faces = Vec::with_capacity(FACES);
-    let mut probe = Vec::with_capacity(FACES);
-    for face in 0..FACES {
-        let frame = presented.faces[face];
-        probe.push(cx.compute_pipeline(
-            passes.probes,
-            p::PROBE_CULL,
-            &[
-                (p::FRAME, Bind::Buffer(frame)),
-                (p::SLOT_CANDIDATES, Bind::Buffer(presented.slot_candidates)),
-                (p::SCAN, Bind::Buffer(presented.scan)),
-                (p::BATCHES, Bind::Buffer(presented.batches)),
-                (p::NODE_WORDS, Bind::Buffer(presented.node_words)),
-            ],
-        )?);
-        faces.push(compaction(
-            cx,
-            passes.probes,
-            presented,
-            (
-                frame,
-                presented.face_visible[face],
-                presented.face_draws[face],
-                presented.impostor_ids[0],
-            ),
-        )?);
-    }
-    let select = cx.compute_pipeline(
-        passes.casters,
-        casters::SELECT_CASTERS,
+    let view_cull = cx.compute_pipeline(
+        passes.views,
+        p::VIEW_CULL,
         &[
-            (casters::SELECTION, Bind::Buffer(casters.select)),
-            (casters::CANDIDATES, Bind::Buffer(presented.candidates)),
-            (casters::BATCHES, Bind::Buffer(presented.batches)),
-            (casters::POSES, Bind::Buffer(instances.poses)),
-            (casters::FLAGS, Bind::Buffer(presented.scan)),
-            (casters::CACHE, Bind::Buffer(casters.cache)),
-            (casters::IDS, Bind::Buffer(casters.ids)),
-            (casters::ARGS, Bind::Buffer(casters.args)),
-            (casters::NODE_WORDS, Bind::Buffer(presented.node_words)),
+            (p::FRAME, Bind::Buffer(presented.view_frames)),
+            (p::SLOT_CANDIDATES, Bind::Buffer(presented.slot_candidates)),
+            (p::SCAN, Bind::Buffer(presented.scan)),
+            (p::BATCHES, Bind::Buffer(presented.batches)),
+            (p::NODE_WORDS, Bind::Buffer(presented.node_words)),
         ],
     )?;
-    let count_casters = cx.compute_pipeline(
-        passes.casters,
-        casters::COUNT_CASTERS,
-        &[
-            (casters::SELECTION, Bind::Buffer(casters.select)),
-            (casters::ARGS, Bind::Buffer(casters.args)),
-            (casters::TOTALS, Bind::Buffer(casters.totals)),
-        ],
+    let views = compaction(
+        cx,
+        passes.views,
+        presented,
+        (
+            presented.view_frames,
+            presented.view_visible,
+            presented.view_draws,
+            presented.impostor_ids[0],
+        ),
     )?;
     Ok(Computes {
         compose,
@@ -694,15 +617,13 @@ fn install_computes(
         fades,
         one,
         two,
-        faces,
+        views,
         gather_one,
         gather_two,
         occlusion,
-        probe,
+        view_cull,
         pyramid_first,
         pyramid_down,
-        select,
-        count_casters,
     })
 }
 
@@ -737,40 +658,60 @@ fn mesh_pipeline(
     }
 }
 
-fn install_pipelines(cx: &mut Install<'_, MeshesGpu>) -> Result<Pipelines, Error> {
-    let write = DepthUse::Write {
-        bias: wgpu::DepthBiasState::default(),
-    };
-    let mut prepass = Vec::with_capacity(8);
-    let mut opaque = Vec::with_capacity(8);
-    let mut probe = Vec::with_capacity(8);
+const WRITE: DepthUse = DepthUse::Write {
+    bias: wgpu::DepthBiasState {
+        constant: 0,
+        slope_scale: 0.0,
+        clamp: 0.0,
+    },
+};
+
+fn look_of(index: usize) -> (bool, bool, bool) {
+    (index & 4 != 0, index & 2 != 0, index & 1 != 0)
+}
+
+fn depth_looks<S: Scope<MeshesGpu> + Copy>(
+    cx: &mut Install<'_, MeshesGpu>,
+    scope: S,
+) -> Result<Looked<Pipeline<MeshesGpu, S::Tag>>, Error> {
+    let mut looks = Vec::with_capacity(8);
     for index in 0..8_usize {
-        let (masked, double_sided, extended) = (index & 4 != 0, index & 2 != 0, index & 1 != 0);
-        let (vertex, view_vertex, streams, view_streams) = if extended {
+        let (_, double_sided, extended) = look_of(index);
+        let (vertex, streams, masked_depth) = if extended {
             (
                 vertex::VS_MESH_EXTENDED,
-                vertex::VS_VIEW_EXTENDED,
                 EXTENDED_STREAMS,
-                EXTENDED_VIEW_STREAMS,
+                forward::FS_MASKED_DEPTH_EXTENDED,
             )
         } else {
-            (vertex::VS_MESH, vertex::VS_VIEW, MESH_STREAMS, VIEW_STREAMS)
+            (vertex::VS_MESH, MESH_STREAMS, forward::FS_MASKED_DEPTH)
         };
-        let masked_depth = if extended {
-            forward::FS_MASKED_DEPTH_EXTENDED
-        } else {
-            forward::FS_MASKED_DEPTH
-        };
-        prepass.push(cx.render_pipeline(
-            MainView,
+        looks.push(cx.render_pipeline(
+            scope,
             &mesh_pipeline(
                 (vertex, masked_depth, Some(masked_depth)),
                 (streams, double_sided, false),
-                write,
+                WRITE,
                 wgpu::ColorWrites::empty(),
             ),
             &[],
         )?);
+    }
+    Ok(Looked { looks })
+}
+
+fn lit_looks<S: Scope<MeshesGpu> + Copy>(
+    cx: &mut Install<'_, MeshesGpu>,
+    scope: S,
+) -> Result<Looked<Pipeline<MeshesGpu, S::Tag>>, Error> {
+    let mut looks = Vec::with_capacity(8);
+    for index in 0..8_usize {
+        let (masked, double_sided, extended) = look_of(index);
+        let (vertex, streams) = if extended {
+            (vertex::VS_MESH_EXTENDED, EXTENDED_STREAMS)
+        } else {
+            (vertex::VS_MESH, MESH_STREAMS)
+        };
         let (lit, shown) = match (extended, masked) {
             (false, false) => (forward::FS_MESH, debug::FS_DEBUG_MESH),
             (false, true) => (forward::FS_MESH_PRETESTED, debug::FS_DEBUG_MESH_PRETESTED),
@@ -787,10 +728,10 @@ fn install_pipelines(cx: &mut Install<'_, MeshesGpu>) -> Result<Pipelines, Error
                 bias: wgpu::DepthBiasState::default(),
             }
         } else {
-            write
+            WRITE
         };
-        opaque.push(cx.render_pipeline(
-            MainView,
+        looks.push(cx.render_pipeline(
+            scope,
             &mesh_pipeline(
                 (vertex, lit, Some(shown)),
                 (streams, double_sided, false),
@@ -799,24 +740,47 @@ fn install_pipelines(cx: &mut Install<'_, MeshesGpu>) -> Result<Pipelines, Error
             ),
             &[],
         )?);
-        let view = if extended {
-            forward::FS_PROBE_EXTENDED
+    }
+    Ok(Looked { looks })
+}
+
+fn view_looks(
+    cx: &mut Install<'_, MeshesGpu>,
+    scene: Scene,
+    mirrored: bool,
+) -> Result<Looked<Pipeline<MeshesGpu, Scene>>, Error> {
+    let mut looks = Vec::with_capacity(8);
+    for index in 0..8_usize {
+        let (_, double_sided, extended) = look_of(index);
+        let (vertex, streams, shown) = if extended {
+            (
+                vertex::VS_VIEW_EXTENDED,
+                EXTENDED_VIEW_STREAMS,
+                forward::FS_VIEW_EXTENDED,
+            )
         } else {
-            forward::FS_PROBE
+            (vertex::VS_VIEW, VIEW_STREAMS, forward::FS_VIEW)
         };
-        probe.push(cx.render_pipeline(
-            ProbeViews,
+        looks.push(cx.render_pipeline(
+            scene,
             &mesh_pipeline(
-                (view_vertex, view, None),
-                (view_streams, double_sided, engine_places_rendering::probes::MIRRORED),
-                write,
+                (vertex, shown, None),
+                (streams, double_sided, mirrored),
+                WRITE,
                 wgpu::ColorWrites::ALL,
             ),
             &[],
         )?);
     }
-    let card = cx.render_pipeline(
-        MainView,
+    Ok(Looked { looks })
+}
+
+fn card_pipeline<S: Scope<MeshesGpu>>(
+    cx: &mut Install<'_, MeshesGpu>,
+    scope: S,
+) -> Result<Pipeline<MeshesGpu, S::Tag>, Error> {
+    cx.render_pipeline(
+        scope,
         &RenderPipeline {
             vertex: cards::VS_CARD,
             fragment: Some(cards::FS_CARD),
@@ -827,29 +791,21 @@ fn install_pipelines(cx: &mut Install<'_, MeshesGpu>) -> Result<Pipelines, Error
                 cull_mode: None,
                 ..Default::default()
             },
-            depth: write,
+            depth: WRITE,
             blend: None,
             writes: wgpu::ColorWrites::ALL,
         },
         &[],
-    )?;
-    let [casters_pipelines, moving] = caster_pipelines(cx)?;
-    Ok(Pipelines {
-        prepass: Looked { looks: prepass },
-        opaque: Looked { looks: opaque },
-        card,
-        probe: Looked { looks: probe },
-        casters: casters_pipelines,
-        moving,
-    })
+    )
 }
 
 fn caster_pipelines(
     cx: &mut Install<'_, MeshesGpu>,
-) -> Result<[[Pipeline<MeshesGpu, ShadowCasters>; 2]; 2], Error> {
+    scene: Scene,
+) -> Result<[Pipeline<MeshesGpu, Scene>; 2], Error> {
     let caster = |cx: &mut Install<'_, MeshesGpu>, vertex, fragment| {
         cx.render_pipeline(
-            ShadowCasters,
+            scene,
             &RenderPipeline {
                 vertex,
                 fragment,
@@ -863,25 +819,95 @@ fn caster_pipelines(
             &[],
         )
     };
-    let still = [
+    Ok([
         caster(cx, casters::VS_CASTER, None)?,
         caster(
             cx,
             casters::VS_CASTER_MASKED,
             Some(casters::FS_CASTER_MASKED),
         )?,
-    ];
-    let moving = [
-        caster(
-            cx,
-            casters::VS_CASTER_MOVING,
-            Some(casters::FS_CASTER_MOVING),
-        )?,
-        caster(
-            cx,
-            casters::VS_CASTER_MOVING_MASKED,
-            Some(casters::FS_CASTER_MOVING_MASKED),
-        )?,
-    ];
-    Ok([still, moving])
+    ])
+}
+
+fn streams<S: Scope<MeshesGpu> + Copy>(
+    cx: &mut Install<'_, MeshesGpu>,
+    scope: S,
+    (instances, presented): (&Instances, &Presented),
+    phase: usize,
+) -> Streams<S::Tag> {
+    Streams {
+        ids: cx.draw_input(scope, presented.visible[phase]),
+        args: cx.draw_input(scope, presented.draws[phase]),
+        records: cx.draw_input(scope, instances.records),
+        cards: cx.draw_input(scope, presented.impostor_ids[phase]),
+        fading: cx.draw_input(scope, presented.fade_cards),
+    }
+}
+
+fn install_scenes(
+    cx: &mut Install<'_, MeshesGpu>,
+    instances: &Instances,
+    presented: &Presented,
+) -> Result<Vec<ScenePipelines>, Error> {
+    let listed: Vec<ScenePass> = cx
+        .passes()
+        .listed()
+        .iter()
+        .filter(|listed| listed.bit.is_some() && (listed.pass.takes)(MESH))
+        .copied()
+        .collect();
+    let mut scenes = Vec::with_capacity(listed.len());
+    for listed in listed {
+        let scene = Scene::named(listed.name);
+        let owned = listed.pass.views == PassViews::Owned;
+        let drawing = if listed.name == ColorPass::NAME {
+            Drawing::Lit {
+                looks: lit_looks(cx, scene)?,
+                card: card_pipeline(cx, scene)?,
+                streams: streams(cx, scene, (instances, presented), 0),
+            }
+        } else if listed.name == DepthPass::NAME {
+            Drawing::Depth {
+                looks: depth_looks(cx, scene)?,
+                streams: streams(cx, scene, (instances, presented), 0),
+            }
+        } else if owned && !listed.pass.reads.base_color {
+            Drawing::Casters {
+                casting: caster_pipelines(cx, scene)?,
+                streams: ViewStreams {
+                    ids: cx.draw_input(scene, presented.view_visible),
+                    args: cx.draw_input(scene, presented.view_draws),
+                },
+            }
+        } else if owned {
+            Drawing::Views {
+                looks: [view_looks(cx, scene, false)?, view_looks(cx, scene, true)?],
+                streams: ViewStreams {
+                    ids: cx.draw_input(scene, presented.view_visible),
+                    args: cx.draw_input(scene, presented.view_draws),
+                },
+            }
+        } else {
+            continue;
+        };
+        scenes.push(ScenePipelines {
+            name: listed.name,
+            drawing,
+        });
+    }
+    Ok(scenes)
+}
+
+fn install_occluded(
+    cx: &mut Install<'_, MeshesGpu>,
+    pass: Pass<MeshesGpu>,
+    instances: &Instances,
+    presented: &Presented,
+) -> Result<Occluded, Error> {
+    Ok(Occluded {
+        depth: depth_looks(cx, pass)?,
+        lit: lit_looks(cx, pass)?,
+        card: card_pipeline(cx, pass)?,
+        streams: streams(cx, pass, (instances, presented), 1),
+    })
 }

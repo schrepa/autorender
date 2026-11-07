@@ -33,7 +33,7 @@ fn memory_bytes(tile: &Tile) -> u64 {
 fn face_of(
     tile: &Tile,
     (stamps, stamp): (&Arc<[Stamp]>, engine_core::Stamp),
-    pyramid: &Pyramid,
+    (pyramid, materials): (&Pyramid, TileMaterials),
 ) -> TileFace {
     let key = tile.key();
     let corner = pyramid.tile_origin(key);
@@ -50,6 +50,7 @@ fn face_of(
         spacing: tile.spacing(),
         heights: tile.shared_heights(),
         holes: tile.shared_holes(),
+        materials,
         control: tile.shared_control(),
         river_edges: tile.shared_river_edges(),
         river_beds: tile.shared_river_beds(),
@@ -75,6 +76,7 @@ pub(super) struct TileStore {
     kept: Arc<[(TileKey, engine_core::Stamp)]>,
     tiles_moved: bool,
     kept_moved: bool,
+    reshaped: bool,
 }
 
 impl TileStore {
@@ -93,7 +95,12 @@ impl TileStore {
             kept: Arc::from(Vec::new()),
             tiles_moved: false,
             kept_moved: false,
+            reshaped: false,
         }
+    }
+
+    pub(super) fn take_reshaped(&mut self) -> bool {
+        std::mem::take(&mut self.reshaped)
     }
 
     pub(super) fn get(&self, key: &TileKey) -> Option<&Arc<Tile>> {
@@ -178,14 +185,32 @@ impl TileStore {
         self.tiles_moved = true;
     }
 
-    pub(super) fn arrive(&mut self, tile: Arc<Tile>, stamps: Arc<[Stamp]>) {
+    pub(super) fn holds(&self, materials: TileMaterials) -> bool {
+        self.tiles
+            .iter()
+            .any(|(_, resident)| resident.face.materials == materials)
+    }
+
+    pub(super) fn arrive(
+        &mut self,
+        tile: Arc<Tile>,
+        stamps: Arc<[Stamp]>,
+        materials: TileMaterials,
+    ) {
         let made = self.generation;
-        let face = face_of(&tile, (&stamps, engine_core::Stamp::next()), &self.pyramid);
+        let stamp = engine_core::Stamp::next();
+        let face = face_of(&tile, (&stamps, stamp), (&self.pyramid, materials));
         self.put(tile, stamps, face, made);
     }
 
-    pub(super) fn keep_unseen(&mut self, tile: Arc<Tile>, stamps: Arc<[Stamp]>, frame: u64) {
-        let face = face_of(&tile, (&stamps, engine_core::Stamp::next()), &self.pyramid);
+    pub(super) fn keep_unseen(
+        &mut self,
+        tile: Arc<Tile>,
+        stamps: Arc<[Stamp]>,
+        (frame, materials): (u64, TileMaterials),
+    ) {
+        let stamp = engine_core::Stamp::next();
+        let face = face_of(&tile, (&stamps, stamp), (&self.pyramid, materials));
         let left = Left {
             tile,
             stamps,
@@ -225,6 +250,7 @@ impl TileStore {
             },
         );
         let kind = if held.is_some() {
+            self.reshaped = true;
             TileChangeKind::Replaced
         } else {
             TileChangeKind::Arrived

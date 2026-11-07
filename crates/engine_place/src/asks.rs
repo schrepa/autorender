@@ -76,12 +76,19 @@ impl<A: Ask> Asked<A> {
     }
 
     pub fn take(&mut self, now: Moment) -> Vec<A> {
-        if self.pending.is_empty() {
+        self.take_where(now, |_| true)
+    }
+
+    pub fn take_where(&mut self, now: Moment, taken: impl Fn(&A) -> bool) -> Vec<A> {
+        if !self.pending.iter().any(|(ask, _)| taken(ask)) {
             return Vec::new();
         }
         self.applied.clear();
-        let pending = std::mem::take(&mut self.pending);
-        pending
+        let (chosen, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending)
+            .into_iter()
+            .partition(|(ask, _)| taken(ask));
+        self.pending = kept;
+        chosen
             .into_iter()
             .map(|(ask, asked)| {
                 self.applied.push(Applied {

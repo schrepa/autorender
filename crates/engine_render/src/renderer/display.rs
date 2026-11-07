@@ -107,6 +107,20 @@ impl Display {
         self.state == SurfaceState::Suspended
     }
 
+    pub(crate) fn instance(&self) -> wgpu::Instance {
+        self.instance.clone()
+    }
+
+    pub(crate) fn power_preference(&self) -> wgpu::PowerPreference {
+        self.target.power_preference()
+    }
+
+    pub(crate) fn supports(&self, adapter: &wgpu::Adapter) -> bool {
+        self.surface
+            .as_ref()
+            .is_none_or(|surface| adapter.is_surface_supported(surface))
+    }
+
     fn configure_surface(&mut self, device: &wgpu::Device) {
         match &self.surface {
             Some(surface) => surface.configure(device, &self.configuration),

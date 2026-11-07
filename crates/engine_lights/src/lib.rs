@@ -33,7 +33,7 @@ impl Brick for LightsBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(lit)
+            .when(|settings: Res<LocalLightSettings>| settings.enabled)
             .settings::<LocalLightSettings>()
             .stats::<LightStats>()
             .resource::<lights::LightGather>()
@@ -55,8 +55,4 @@ impl Brick for LightsBrick {
             .generated(GENERATED)
             .part::<part::LightsGpu>();
     }
-}
-
-fn lit(settings: Res<LocalLightSettings>, lights: Query<(), With<LocalLight>>) -> bool {
-    settings.enabled && !lights.is_empty()
 }

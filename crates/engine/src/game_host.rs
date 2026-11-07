@@ -1,4 +1,4 @@
-use crate::app_host::AppHost;
+use crate::app_host::{AppHost, Focus};
 use crate::game::Game;
 use crate::host::{
     FrameInput, FrameLoop, FramePhase, HostPause, InputGatherer, InputSource, JobId, JobOrder,
@@ -167,7 +167,9 @@ impl<G: Game> GameHost<G> {
     pub fn frame(&mut self, timestamp: f64, width: u32, height: u32) -> crate::Result<()> {
         self.step_level();
         self.prepare_pipelines();
-        let input = self.frame_input(self.input_source());
+        let source = self.input_source();
+        self.app.follow_focus(source);
+        let input = self.frame_input(source);
         self.app.set_gathered(&input);
         self.game.before_frame(self.app.engine_mut());
         self.app.accept(&input);
@@ -212,12 +214,22 @@ impl<G: Game> GameHost<G> {
         if self.app.engine().app.world().resource::<Pause>().holds(reason) {
             return;
         }
-        self.app.engine_mut().pause(reason);
+        let source = self.input_source();
+        match pause {
+            HostPause::Focus => self.app.set_focus(Focus::Lost, source),
+            HostPause::Hidden | HostPause::Suspended => self.app.engine_mut().pause(reason),
+        }
         self.input.clear();
     }
 
     pub fn resume(&mut self, pause: HostPause) {
-        self.app.engine_mut().resume(pause.reason());
+        let source = self.input_source();
+        match pause {
+            HostPause::Focus => self.app.set_focus(Focus::Held, source),
+            HostPause::Hidden | HostPause::Suspended => {
+                self.app.engine_mut().resume(pause.reason());
+            }
+        }
     }
 
     pub fn refresh_interval(&self) -> f64 {
@@ -505,7 +517,7 @@ impl<G: Game> GameHost<G> {
 
     pub fn eye(&self) -> Option<[f32; 3]> {
         let world = self.app.engine().app.world();
-        let view = world.get_resource::<engine_core::View>()?;
+        let view = world.get_resource::<engine_core::PrimaryView>()?;
         Some(view.detail_eye().to_array())
     }
 

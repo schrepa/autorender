@@ -1,7 +1,7 @@
 use bytemuck::Zeroable;
 use engine_core::Error;
 use engine_render::{
-    Bind, Buffer, ComputePipeline, Count, Encode, Install, Lifetime, Pass, Prepare,
+    Allocation, Bind, Buffer, ComputePipeline, Count, Encode, Install, Lifetime, Pass, Prepare,
 };
 
 use crate::gpu::{
@@ -234,7 +234,12 @@ impl SlotHandles {
         }
     }
 
-    pub(crate) fn hold(&mut self, layout: Layout, fresh: bool, cx: &mut Prepare<'_, WaterGpu>) {
+    pub(crate) fn hold(
+        &mut self,
+        layout: Layout,
+        fresh: bool,
+        cx: &mut Prepare<'_, WaterGpu>,
+    ) -> Allocation {
         let entries = layout.entries();
         let all = u64::from(layout.slots);
         let rings = if layout.live { all * entries.ring } else { 0 };
@@ -254,11 +259,14 @@ impl SlotHandles {
         let inputs_grew = self
             .layout
             .is_some_and(|held| held.capacity.sources != layout.capacity.sources);
+        let mut made = Allocation::Kept;
         for (at, (buffer, bytes)) in sizes.into_iter().enumerate() {
             if fresh || (at == 4 && inputs_grew) {
                 cx.release_buffer(buffer);
             }
-            cx.allocate_buffer(buffer, bytes);
+            if cx.allocate_buffer(buffer, bytes) == Allocation::Fresh {
+                made = Allocation::Fresh;
+            }
         }
         cx.allocate_buffer(self.squares, size_of::<SimSlots>() as u64);
         for frame in self.frames {
@@ -266,6 +274,7 @@ impl SlotHandles {
         }
         cx.allocate_buffer(self.touches, size_of::<SimTouches>() as u64);
         self.layout = Some(layout);
+        made
     }
 
     pub(crate) fn release(&mut self, cx: &mut Prepare<'_, WaterGpu>) {
@@ -449,12 +458,12 @@ impl SetupHandles {
         (room, live_room): (usize, usize),
         fresh: bool,
         cx: &mut Prepare<'_, WaterGpu>,
-    ) {
+    ) -> Allocation {
         if fresh {
             cx.release_buffer(self.list);
         }
         cx.allocate_buffer(self.frame, size_of::<crate::gpu::SimSetup>() as u64);
-        cx.allocate_buffer(self.list, Self::live_at(room) + live_room as u64 * 4);
+        cx.allocate_buffer(self.list, Self::live_at(room) + live_room as u64 * 4)
     }
 
     pub(crate) fn release(&self, cx: &mut Prepare<'_, WaterGpu>) {

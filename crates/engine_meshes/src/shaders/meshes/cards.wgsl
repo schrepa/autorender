@@ -1,26 +1,26 @@
 import package::engine::impostors::{impostor_albedo, impostor_emissive, impostor_geometry,
     impostor_sampler, impostor_surface};
-import package::engine::materials::MASK_MIP_SCALE;
+import package::engine::materials::{MASK_MIP_SCALE, SURFACE_EMISSION};
 import package::engine::math::maximum_abs;
 import package::engine::mesh::declarations::{drawn_slot_moved, drawn_slot_slot};
 import package::engine::mesh::impostor_frames::{IMPOSTOR_CUTOFF, ImpostorRecord,
     impostor_basis, impostor_facing, impostor_fade, impostor_fading, impostor_fading_out,
-    impostor_flags_foliage, impostor_flags_hemisphere, impostor_flags_masked,
-    impostor_flags_texels, impostor_frame_direction, impostor_frames, impostor_grid,
+    impostor_flags_hemisphere, impostor_flags_masked, impostor_flags_texels, impostor_frame_direction, impostor_frames, impostor_grid,
     impostor_index, impostor_met, impostor_over};
 import package::engine::mesh::vertex::origin_key;
-import package::engine::shading::{BODY_SOLID, BODY_THIN, SurfacePoint};
+import package::engine::shading::{SurfacePoint, derived};
+import package::engine::standard::rippled;
+import package::engine::surfaces::{SURFACE_SOLID, SURFACE_THIN};
 import package::engine::view::{camera, fade_noise, material_detail, stable_normalize};
 import package::face::debug::debug_record_with_fading;
-import package::face::foliage::foliage;
-import package::face::lighting::{finish, local_light, widened};
-import package::face::placed_tiles::placed_impostor;
-import package::face::sun::sun_direction;
-import package::face::wind::slot_sway;
+import package::face::instance_motion::instance_moves;
+import package::face::lit::{finish, lit_toward, local_light, widened};
+import package::generated::meshes::{card_frames_first, card_frames_second, card_frames_third,
+    card_frames_with_first, card_frames_with_origin, card_frames_with_second,
+    card_frames_with_third};
 import package::generated::targets::{DepthViewTargets, depth_view_targets};
 import package::meshes::debug::point_targets;
 import package::meshes::forward::drawn_pixel;
-import package::meshes::shade::{alpha_cutoff, fragment_pixel, leafiness, plant_tint, rippled};
 import package::meshes::slots::{instance_colors, instance_poses, instance_previous_poses};
 import package::meshes::vertex::{posed, slot_wind};
 import package::place::instances::{AffinePose, CardDebugTargets, CardShaded, CardVertex,
@@ -115,7 +115,7 @@ fn posed_card(vertex: u32, batch: u32, pose: AffinePose, color: SlotColor,
     var uvs: array<vec2<f32>, 3>;
     var slopes: array<vec2<f32>, 3>;
     var crossings = vec3<f32>(0.0);
-    var packed_frames = 0u;
+    var shown = vec3<u32>(0u);
     for (var k = 0u; k < 3u; k++) {
         let frame = corners[k].y * frames + corners[k].x;
         let d = impostor_frame_direction(frame, frames, hemisphere);
@@ -125,12 +125,14 @@ fn posed_card(vertex: u32, batch: u32, pose: AffinePose, color: SlotColor,
         uvs[k] = (vec2<f32>(corners[k]) + 0.5 + image * 0.5) / f32(frames);
         slopes[k] = vec2<f32>(dot(dir, frame_basis.right), -dot(dir, frame_basis.up));
         crossings[k] = dot(across, d) / radius;
-        packed_frames |= frame << (8u * k);
+        shown[k] = frame;
     }
+    let packed_frames = card_frames_with_origin(card_frames_with_third(card_frames_with_second(
+        card_frames_with_first(0u, shown.x), shown.y), shown.z),
+        origin_key(model[3].xyz) >> 24u);
     var swayed = world.xyz;
-    let sway = slot_sway(color.flags);
-    if sway > 0.0 {
-        swayed += slot_wind(model, world.xyz, sway, camera.position.w);
+    if instance_moves(color.flags) {
+        swayed += slot_wind(model, world.xyz, color.flags, camera.position.w);
     }
     var output: CardVertex;
     output.clip_position = camera.view_projection * vec4<f32>(swayed, 1.0);
@@ -142,8 +144,7 @@ fn posed_card(vertex: u32, batch: u32, pose: AffinePose, color: SlotColor,
     output.normal_z = xy * orientation;
     let axis = model[0].xyz * dir.x + model[1].xyz * dir.y + model[2].xyz * dir.z;
     output.depth_axis = vec4<f32>(axis * radius, support / radius);
-    output.material = vec4<u32>(color.color, color.surface,
-        packed_frames | (origin_key(model[3].xyz) & 0xff000000u));
+    output.material = vec4<u32>(color.color, color.surface, packed_frames);
     output.batch = batch;
     output.crossings = crossings;
     output.slopes_ab = vec4<f32>(slopes[0], slopes[1]);
@@ -155,17 +156,17 @@ fn card_previous(local: vec3<f32>, pose: AffinePose, color: SlotColor) -> vec3<f
     let point = vec4<f32>(local, 1.0);
     var world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
         dot(pose.row_2, point), 1.0);
-    let sway = slot_sway(color.flags);
-    if sway > 0.0 {
+    if instance_moves(color.flags) {
         let model = posed(pose);
-        world = vec4<f32>(world.xyz + slot_wind(model, world.xyz, sway, camera.wind.w), 1.0);
+        world = vec4<f32>(world.xyz + slot_wind(model, world.xyz, color.flags, camera.wind.w),
+            1.0);
     }
     return (camera.previous_view_projection * world).xyw;
 }
 
 fn placed_card(vertex: u32, batch: u32, pose: AffinePose, previous: AffinePose,
-        color: SlotColor) -> CardVertex {
-    let made = posed_card(vertex, batch, pose, color, placed_impostor(impostor_index(batch)));
+        color: SlotColor, impostor: ImpostorRecord) -> CardVertex {
+    let made = posed_card(vertex, batch, pose, color, impostor);
     var output = made.output;
     output.previous = card_previous(made.local, previous, color);
     return output;
@@ -198,9 +199,9 @@ fn card_point(input: CardVertex, record: ImpostorRecord) -> SurfacePoint {
     let weights = vec3<f32>(input.normal_x.w, input.normal_y.w,
         1.0 - input.normal_x.w - input.normal_y.w);
     let packed = input.material.w;
-    let shown = vec3<u32>(packed & 255u, (packed >> 8u) & 255u, (packed >> 16u) & 255u);
+    let shown = vec3<u32>(card_frames_first(packed), card_frames_second(packed),
+        card_frames_third(packed));
     let frames = impostor_frames(record.flags);
-    let masked = impostor_flags_masked(record.flags);
     let texels = impostor_flags_texels(record.flags);
     let size = f32(frames * texels);
     let footprint = max(length(dpdx(input.frames_ab.xy)), length(dpdy(input.frames_ab.xy)))
@@ -244,12 +245,7 @@ fn card_point(input: CardVertex, record: ImpostorRecord) -> SurfacePoint {
         albedo += weights[k] * texel;
     }
     let coverage = albedo.a;
-    var cutoff = IMPOSTOR_CUTOFF;
-    if masked {
-        fragment_pixel = input.clip_position.xy;
-        cutoff = alpha_cutoff(cutoff);
-    }
-    if coverage * scale < cutoff {
+    if coverage * scale < IMPOSTOR_CUTOFF {
         discard;
     }
     if impostor_fading(input.batch) {
@@ -280,47 +276,38 @@ fn card_point(input: CardVertex, record: ImpostorRecord) -> SurfacePoint {
     let world = input.world - input.depth_axis.xyz * (input.depth_axis.w - depth);
     let slot_surface = unpack4x8unorm(input.material.z);
     let color = vec4<f32>(unpack2x16unorm(input.material.x), unpack2x16unorm(input.material.y));
-    var albedo_color = albedo.rgb * unpremultiply * color.rgb;
-    var leaf = 0.0;
-    if impostor_flags_foliage(record.flags) {
-        leaf = leafiness(albedo_color);
-        albedo_color *= plant_tint(packed, leaf);
-    }
-    let metalness = slot_surface.y * surface.y * unpremultiply;
+    let albedo_color = albedo.rgb * unpremultiply * color.rgb;
     var point: SurfacePoint;
-    point.albedo = albedo_color;
-    point.transmission = foliage().x * leaf;
-    point.shadow_softness = leaf;
+    point.base_color = albedo_color;
     point.opacity = color.a;
-    point.emission = slot_surface.z * 16.0 * emissive.a * unpremultiply;
-    point.emissive = record.emissive * emissive.rgb * unpremultiply;
+    point.emissive = albedo_color * (slot_surface.z * SURFACE_EMISSION * emissive.a * unpremultiply)
+        + record.emissive * emissive.rgb * unpremultiply;
     point.occlusion = surface.z * unpremultiply;
-    point.sun_shade = 1.0 - saturate(surface.w * unpremultiply);
-    point.roughness = max(slot_surface.x * surface.x * unpremultiply, 0.03);
-    point.alpha = point.roughness * point.roughness;
-    point.f0 = mix(vec3<f32>(0.04), albedo_color, metalness);
-    point.diffuse_color = albedo_color * (1.0 - metalness);
+    point.inputs.sun_blocked = 1.0 - saturate(surface.w * unpremultiply);
+    point.roughness = slot_surface.x * surface.x * unpremultiply;
+    point.metalness = slot_surface.y * surface.y * unpremultiply;
+    point.kind = select(SURFACE_SOLID, SURFACE_THIN, impostor_flags_masked(record.flags));
     point.geometric = geometric;
     point.normal = geometric;
     if slot_surface.w > 0.0 {
-        point.normal = rippled(geometric, world, slot_surface.w);
+        point.normal = rippled(geometric, world, slot_surface.w, camera.position.w);
     }
     let to_eye = camera.position.xyz - world;
     point.distance = length(to_eye);
     point.view = stable_normalize(to_eye);
-    point.n_v = max(dot(point.normal, point.view), 1.0e-4);
     point.world = world;
     let reach = select(1.0, 0.25, impostor_flags_hemisphere(record.flags));
-    point.shadow_offset = sun_direction() * (reach * length(input.depth_axis.xyz));
-    return widened(point, dpdx(point.normal), dpdy(point.normal));
+    point.inputs.shadow_shift = lit_toward(point) * (reach * length(input.depth_axis.xyz));
+    let lit = derived(point);
+    return widened(lit, dpdx(lit.normal), dpdy(lit.normal));
 }
 
 fn mesh_card_point(input: CardVertex) -> SurfacePoint {
     return card_point(input, impostor_records[impostor_index(input.batch)]);
 }
 
-fn placed_card_point(input: CardVertex) -> SurfacePoint {
-    return card_point(input, placed_impostor(impostor_index(input.batch)));
+fn placed_card_point(input: CardVertex, impostor: ImpostorRecord) -> SurfacePoint {
+    return card_point(input, impostor);
 }
 
 fn card_shaded(input: CardVertex, point: SurfacePoint, light: vec3<f32>) -> CardShaded {
@@ -331,24 +318,16 @@ fn card_shaded(input: CardVertex, point: SurfacePoint, light: vec3<f32>) -> Card
     return CardShaded(finish(point, light), saturate(clip.z / clip.w));
 }
 
-fn card_body(record: ImpostorRecord) -> u32 {
-    return select(BODY_SOLID, BODY_THIN, impostor_flags_foliage(record.flags));
-}
-
-fn card_lit(input: CardVertex, point: SurfacePoint, body: u32) -> CardShaded {
-    var lit = card_shaded(input, point, local_light(point, input.clip_position.xy));
-    lit.shaded.body = body;
-    return lit;
+fn card_lit(input: CardVertex, point: SurfacePoint) -> CardShaded {
+    return card_shaded(input, point, local_light(point, input.clip_position.xy));
 }
 
 fn mesh_card_lit(input: CardVertex) -> CardShaded {
-    return card_lit(input, mesh_card_point(input),
-        card_body(impostor_records[impostor_index(input.batch)]));
+    return card_lit(input, mesh_card_point(input));
 }
 
-fn placed_card_lit(input: CardVertex) -> CardShaded {
-    return card_lit(input, placed_card_point(input),
-        card_body(placed_impostor(impostor_index(input.batch))));
+fn placed_card_lit(input: CardVertex, impostor: ImpostorRecord) -> CardShaded {
+    return card_lit(input, placed_card_point(input, impostor));
 }
 
 fn card_debug(input: CardVertex, point: SurfacePoint, record: u32, object: u32)

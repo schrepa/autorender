@@ -7,7 +7,7 @@ mod water_sky;
 use std::f64::consts::FRAC_PI_3;
 
 use engine_core::smoke::{
-    Checked, above, camera, control, environment, number, query, render, renders_until,
+    Checked, above, camera, control, environment, number, query, renders_until, settled,
 };
 use engine_core::{SmokeSession, smoke_eq};
 use serde_json::{Value, json};
@@ -22,7 +22,6 @@ pub(crate) use surface::run as surface;
 pub(crate) use water_sky::run as water_sky;
 
 pub(crate) const WAIT_FRAMES: u32 = 600;
-pub(crate) const SETTLE_FRAMES: u32 = 2400;
 
 pub(crate) fn heights(session: &mut dyn SmokeSession, points: &[[f64; 2]]) -> Checked<Vec<Value>> {
     let mut samples = Vec::with_capacity(points.len());
@@ -54,25 +53,13 @@ pub(crate) fn raycast(
 }
 
 pub(crate) fn settle(session: &mut dyn SmokeSession) -> Checked<Value> {
-    let mut resident = 0;
-    let mut rendering = Value::Null;
-    for _ in 0..SETTLE_FRAMES {
-        rendering = render(session)?;
-        let drawn = terrain(&rendering);
-        let ready = number(&drawn["tiles"]) > 0.0
-            && drawn["loading_tiles"] == 0
-            && drawn["fallback_tiles"] == 0;
-        resident = if ready { resident + 1 } else { 0 };
-        if resident > 1 {
-            return Ok(rendering);
-        }
-    }
+    let rendering = settled(session)?;
+    let drawn = terrain(&rendering);
+    let ready = number(&drawn["tiles"]) > 0.0
+        && drawn["loading_tiles"] == 0
+        && drawn["fallback_tiles"] == 0;
     let wanted = json!({"tiles": above(0), "loading_tiles": 0, "fallback_tiles": 0});
-    smoke_eq!(
-        seen(false, terrain(&rendering), &wanted),
-        wanted,
-        "terrain_settles"
-    );
+    smoke_eq!(seen(ready, drawn, &wanted), wanted, "terrain_settles");
     Ok(rendering)
 }
 

@@ -1,4 +1,5 @@
 import package::engine::mesh::declarations::AffineVertexInput;
+import package::engine::mesh::impostor_frames::ImpostorRecord;
 import package::engine::shading::{Shaded, ViewPixel};
 import package::place::debug::DebugTargets;
 
@@ -47,7 +48,7 @@ struct SlotFragment {
     world: vec3<f32>,
     uv: vec2<f32>,
     uv1: vec2<f32>,
-    surface: u32,
+    object: vec4<u32>,
     pixel: vec2<f32>,
     ground: vec4<u32>,
     origin: vec3<f32>,
@@ -135,12 +136,12 @@ fn slot_debug(fragment: SlotFragment, front: bool, record: u32, object: u32, det
 }
 
 fn placed_card_vertex(vertex: u32, batch: u32, pose: AffinePose, previous: AffinePose,
-        color: SlotColor) -> CardVertex {
+        color: SlotColor, impostor: ImpostorRecord) -> CardVertex {
     var card: CardVertex;
     return card;
 }
 
-fn placed_card_shade(input: CardVertex) -> CardShaded {
+fn placed_card_shade(input: CardVertex, impostor: ImpostorRecord) -> CardShaded {
     var shaded: CardShaded;
     return shaded;
 }
@@ -150,7 +151,8 @@ fn placed_card_pixel(input: CardVertex) -> ViewPixel {
     return pixel;
 }
 
-fn placed_card_debug(input: CardVertex, record: u32, object: u32) -> CardDebugTargets {
+fn placed_card_debug(input: CardVertex, record: u32, object: u32, impostor: ImpostorRecord)
+        -> CardDebugTargets {
     var targets: CardDebugTargets;
     return targets;
 }

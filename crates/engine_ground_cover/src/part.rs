@@ -1,10 +1,12 @@
 use bevy_ecs::prelude::*;
-use engine_core::Error;
+use engine_core::{ColorPass, DrawKind, Error};
 use engine_places_world::ground::PALETTE_ENTRIES;
 use engine_render::{
     AfterRead, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput, Encode, GpuPart,
-    Install, Lifetime, MainView, Pass, Pipeline, Prepare, RenderPipeline, Shape, wgpu,
+    Install, Lifetime, Pass, Pipeline, Prepare, RenderPipeline, Scene, SceneDraw, Shape, wgpu,
 };
+
+pub(crate) const COVER: DrawKind = DrawKind("cover");
 
 use crate::covers::CoverTable;
 use crate::growth::{BLADE_BYTES, BladeCounts, CoverPlan};
@@ -29,8 +31,8 @@ pub(crate) struct CoverGpu {
     growing: ComputePipeline<Self>,
     stepping: ComputePipeline<Self>,
     finishing: ComputePipeline<Self>,
-    lit: Pipeline<Self, MainView>,
-    indirect: DrawInput<Self, MainView>,
+    lit: Pipeline<Self, Scene>,
+    indirect: DrawInput<Self, Scene>,
     cells: Vec<u32>,
     blade_bytes: u64,
     row_bytes: u64,
@@ -78,7 +80,7 @@ impl GpuPart for CoverGpu {
             ],
         )?;
         let lit = cx.render_pipeline(
-            MainView,
+            Scene::of::<ColorPass>(),
             &RenderPipeline {
                 vertex: draw::VS_COVER,
                 fragment: Some(draw::FS_COVER),
@@ -100,7 +102,7 @@ impl GpuPart for CoverGpu {
                 (draw::COVER_FRAME, Bind::Buffer(frame)),
             ],
         )?;
-        let indirect = cx.draw_input(MainView, args);
+        let indirect = cx.draw_input(Scene::of::<ColorPass>(), args);
         Ok(Self {
             grow: grow_pass,
             rows,
@@ -185,8 +187,8 @@ impl GpuPart for CoverGpu {
 }
 
 impl CoverGpu {
-    pub(crate) fn draw(&self, _: &(), draw: &mut Draw<'_, Self, MainView>) -> u32 {
-        if !self.drawn {
+    pub(crate) fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
+        if !self.drawn || scene.pass != Scene::of::<ColorPass>() {
             return 0;
         }
         for offset in [0, DRAW_ARGS] {

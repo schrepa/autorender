@@ -14,7 +14,10 @@ mod settings;
 use std::mem::offset_of;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, GpuStruct, Readable, Readback, Schedule, Source, View};
+use engine_core::{
+    AttachPoint, Brick, Bricks, GpuStruct, Pass, PassName, PassViews, PrimaryView, Readable,
+    Readback, Schedule, SlotSet, Source, Writes, never,
+};
 use engine_places_rendering::exposure::Exposure;
 use engine_render::RenderBricks;
 
@@ -23,6 +26,19 @@ use crate::gpu_layouts::{ExposureState, ExposureUniform};
 pub use settings::{AutoExposure, ExposureStats};
 
 const GENERATED: &[&str] = &[gpu_layouts::WGSL, ExposureUniform::WGSL, ExposureState::WGSL];
+
+pub(crate) struct ExposurePass;
+
+impl PassName for ExposurePass {
+    const NAME: &'static str = "exposure";
+    const PASS: Pass = Pass {
+        writes: Writes::NOTHING,
+        reads: SlotSet::NONE,
+        views: PassViews::Main,
+        at: AttachPoint::Post,
+        takes: never,
+    };
+}
 
 pub struct AutoExposureBrick;
 
@@ -36,6 +52,7 @@ impl Brick for AutoExposureBrick {
             .stats::<ExposureStats>()
             .resource::<ExposureFeedback>()
             .fill::<Exposure>(Some(shaders::auto_exposure::faces::exposure::MODULE))
+            .pass::<ExposurePass>()
             .systems(Schedule::ViewSync, exposure_stats)
             .generated(GENERATED)
             .part::<meter::MeterGpu>();
@@ -44,7 +61,7 @@ impl Brick for AutoExposureBrick {
 
 #[derive(Resource, Default)]
 pub(crate) struct ExposureFeedback {
-    read: Option<[f32; 3]>,
+    read: Option<[f32; 5]>,
 }
 
 impl Readable for ExposureFeedback {
@@ -61,6 +78,8 @@ impl Readable for ExposureFeedback {
                 offset_of!(ExposureState, stops),
                 offset_of!(ExposureState, metered),
                 offset_of!(ExposureState, view),
+                offset_of!(ExposureState, wanted),
+                offset_of!(ExposureState, moving),
             ]
             .map(word),
         );
@@ -73,15 +92,19 @@ fn hundredths(stops: f32) -> i32 {
 
 fn exposure_stats(
     feedback: Res<ExposureFeedback>,
-    view: Res<View>,
+    view: Res<PrimaryView>,
     mut stats: ResMut<ExposureStats>,
 ) {
     let active = !view.debug();
-    let [stops, metered, viewed] = feedback.read.filter(|_| active).unwrap_or_default();
+    let [stops, metered, viewed, wanted, moving] =
+        feedback.read.filter(|_| active).unwrap_or_default();
+    let (stops, wanted) = (hundredths(stops), hundredths(wanted));
     stats.set_if_neq(ExposureStats {
         active,
-        stops: hundredths(stops),
+        stops,
         metered: hundredths(metered),
         view: hundredths(viewed),
+        wanted,
+        settling: u32::from(moving != 0.0 && stops != wanted),
     });
 }

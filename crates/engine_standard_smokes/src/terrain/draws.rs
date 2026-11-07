@@ -1,12 +1,12 @@
 use engine_core::smoke::{
     Checked, above, ask, at_most, below, camera, capture, component, control, environment, inspect,
-    not, number, present, refuse, render, renders_until, with,
+    not, number, present, refuse, render, renders_until, settled, with,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
 use super::{
-    SETTLE_FRAMES, WAIT_FRAMES, fixture, heights, layer_sweep, open, opened, overview, settle,
+    WAIT_FRAMES, fixture, heights, layer_sweep, open, opened, overview, settle,
     subdivided, view, viewed,
 };
 use crate::requests::seen;
@@ -468,12 +468,14 @@ fn debug_views(session: &mut dyn SmokeSession) -> Checked<()> {
         wanted,
         "the_materials_view_differs"
     );
-    let (arrived, mapped) = renders_until(session, SETTLE_FRAMES, |rendering| {
-        terrain(rendering)["sky_maps"] == 2
-    })?;
+    let mapped = settled(session)?;
     let wanted = json!(2);
     smoke_eq!(
-        seen(arrived, terrain(&mapped)["sky_maps"].clone(), &wanted),
+        seen(
+            terrain(&mapped)["sky_maps"] == 2,
+            terrain(&mapped)["sky_maps"].clone(),
+            &wanted
+        ),
         wanted,
         "the_sky_maps_arrive"
     );
@@ -544,14 +546,8 @@ fn prefetch(session: &mut dyn SmokeSession) -> Checked<()> {
         default,
         "the_place_inspects_its_reach"
     );
-    let mut stored = inspect(session, "terrain_stats")?;
-    for _ in 0..SETTLE_FRAMES {
-        if number(&stored["cached_tiles"]) > 0.0 && stored["prefetching_tiles"] == 0 {
-            break;
-        }
-        render(session)?;
-        stored = inspect(session, "terrain_stats")?;
-    }
+    settled(session)?;
+    let stored = inspect(session, "terrain_stats")?;
     let wanted = json!({"cached_tiles": above(0), "prefetching_tiles": 0});
     smoke_eq!(
         seen(

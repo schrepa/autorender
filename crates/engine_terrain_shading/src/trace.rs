@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{DeviceLimits, Error, Joined, View};
+use engine_core::{DeviceLimits, Error, Joined, PrimaryView};
 use engine_places_rendering::reflections::TraceReaders;
 use engine_places_world::ground::{Cover, GroundTiles, PALETTE_ENTRIES, PlacedTiles, TerrainTiles};
 use engine_render::{
@@ -23,7 +23,7 @@ pub(crate) struct TraceGpu {
 
 impl GpuPart for TraceGpu {
     type Reads = (
-        Res<'static, View>,
+        Res<'static, PrimaryView>,
         Res<'static, DeviceLimits>,
         Res<'static, TerrainTiles>,
         Res<'static, GroundTiles>,

@@ -4,7 +4,7 @@ use engine_core::{AssetResidency, Cut, Detail, ImpostorRecords, settings, stats}
 use crate::assets::MeshAssets;
 use crate::batches::BatchPlan;
 use crate::order::MeshPlan;
-use crate::presentation::{CasterTotals, PresentationTotals};
+use crate::presentation::PresentationTotals;
 use crate::retained::RetainedRender;
 
 settings! {
@@ -110,8 +110,8 @@ stats! {
         pub level_of_detail: DetailStats,
         pub occlusion_culling: CullingStats,
         pub subpixel_culling: CullingStats,
-        pub casters: Option<u32>,
-        pub moving_casters: Option<u32>,
+        pub views: Option<u32>,
+        pub refused_views: Option<u32>,
     }
 }
 
@@ -119,10 +119,6 @@ fn counted(value: usize) -> u32 {
     value.min(u32::MAX as usize) as u32
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the stats join the retained counters, the plan, the residency and both readbacks"
-)]
 pub(crate) fn mesh_stats(
     (retained, batches, plan): (Res<RetainedRender>, Res<BatchPlan>, Res<MeshPlan>),
     (culling, occlusion, subpixel, detail): (
@@ -133,7 +129,6 @@ pub(crate) fn mesh_stats(
     ),
     residency: Res<AssetResidency>,
     totals: Res<PresentationTotals>,
-    casters: Res<CasterTotals>,
     impostors: Query<&ImpostorRecords, With<MeshAssets>>,
     frame: Res<engine_core::FrameTime>,
     mut stats: ResMut<MeshStats>,
@@ -190,8 +185,8 @@ pub(crate) fn mesh_stats(
                 .filter(|_| subpixel.enabled)
                 .map(|totals| totals.subpixel),
         },
-        casters: casters.last().map(|counts| counts[0]),
-        moving_casters: casters.last().map(|counts| counts[1]),
+        views: totals.views().map(|views| views.drawn),
+        refused_views: totals.views().map(|views| views.refused),
     };
     stats.set_if_neq(next);
 }

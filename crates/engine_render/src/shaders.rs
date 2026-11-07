@@ -27,6 +27,8 @@ shader_modules! {
     "engine::noise" = "noise.wgsl";
     "engine::view" = "frame/view.wgsl";
     "engine::shading" = "shading.wgsl";
+    "engine::standard" = "standard.wgsl";
+    "engine::surface" = "surface.wgsl";
     "engine::particles" = "particles.wgsl";
     "engine::mesh::vertex" = "meshes/vertex.wgsl";
     "engine::impostor_bake" = "impostors/bake.wgsl";
@@ -56,7 +58,6 @@ pub const FS_DEBUG_VIEW: engine_core::Entry = engine_core::Entry::generated(
 pub const PRESENTATION_MODULE: &str = "engine::presentation";
 pub const DEBUG_MODULE: &str = "engine::debug";
 pub const DECLARATIONS_MODULE: &str = "engine::mesh::declarations";
-pub const MATERIALS_MODULE: &str = "engine::materials";
 pub const IMPOSTOR_FRAMES_MODULE: &str = "engine::mesh::impostor_frames";
 pub const IMPOSTORS_MODULE: &str = "engine::impostors";
 pub const MATH_MODULE: &str = "engine::math";
@@ -111,19 +112,6 @@ pub fn debug_source() -> String {
     source
 }
 
-pub fn materials_source() -> String {
-    use crate::gpu_layouts::constants::{WGSL_FLOAT, WGSL_UNSIGNED};
-    let mut source = String::from(include_str!("meshes/materials.wgsl"));
-    source.push_str(<crate::gpu_layouts::scene::MaterialUniform as engine_core::GpuStruct>::WGSL);
-    for (name, value) in WGSL_UNSIGNED {
-        unsigned(&mut source, name, value);
-    }
-    for (name, value) in WGSL_FLOAT {
-        float(&mut source, name, value);
-    }
-    source
-}
-
 pub fn declarations_source() -> String {
     use crate::slots::{DrawnSlot, FADE_LEVEL_MAX, FadeWord, FadedSlot};
     use engine_core::GpuBits;
@@ -171,12 +159,15 @@ pub fn view_source() -> String {
     source
 }
 
-pub fn generated_core() -> [(&'static str, String); 9] {
+pub fn generated_core() -> [(&'static str, String); 11] {
+    let standard = crate::surface::MaterialLayout::standard();
     [
         (PRESENTATION_MODULE, presentation_source()),
         (DEBUG_MODULE, debug_source()),
         (DECLARATIONS_MODULE, declarations_source()),
-        (MATERIALS_MODULE, materials_source()),
+        (crate::surface::MATERIALS_MODULE, standard.materials_source()),
+        (crate::surface::SLOTS_MODULE, standard.slots_source(false)),
+        (crate::surface::SURFACES_MODULE, standard.surfaces_source()),
         (IMPOSTOR_FRAMES_MODULE, impostor_frames_source()),
         (IMPOSTORS_MODULE, crate::impostors::atlas_source()),
         (MATH_MODULE, math_source()),

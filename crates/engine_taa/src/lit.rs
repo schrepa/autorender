@@ -1,10 +1,11 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, View};
+use engine_core::{Error, PassName, PrimaryView};
 use engine_render::{
     Access, Attach, Bind, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass,
-    Pipeline, Prepare, RenderPipeline, SCENE_FORMAT, Shape, Texture, ViewTarget, wgpu,
+    Pipeline, Prepare, RenderPipeline, SCENE_FORMAT, Shape, TargetName, Texture, wgpu,
 };
 
+use crate::TemporalPass;
 use crate::shaders::taa::{lit as lighting, resolve};
 
 pub(crate) struct LitGpu {
@@ -15,13 +16,14 @@ pub(crate) struct LitGpu {
 }
 
 impl GpuPart for LitGpu {
-    type Reads = Res<'static, View>;
+    type Reads = Res<'static, PrimaryView>;
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let lit = cx.texture("lit", SCENE_FORMAT, Lifetime::Frame);
         cx.frame(resolve::LIT, Bind::Texture(lit))?;
         let pass = cx
-            .pass("temporal_lit")
+            .pass(TemporalPass::NAME)
+            .at(TemporalPass::PASS.at)
             .label("engine/taa-lit")
             .span("taa_lit")
             .color(lit, Access::Clear)
@@ -38,7 +40,7 @@ impl GpuPart for LitGpu {
                 blend: None,
                 writes: wgpu::ColorWrites::ALL,
             },
-            &[(lighting::SCENE_COLOR, Bind::Target(ViewTarget::Scene))],
+            &[(lighting::SCENE_COLOR, Bind::Target(TargetName::COLOR))],
         )?;
         Ok(Self {
             pass,

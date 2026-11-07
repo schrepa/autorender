@@ -6,9 +6,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct Instances {
     pub slots: engine_math::collections::HashMap<Entity, u32>,
-    pub capacity: u32,
     pub candidates: u32,
-    pub casters: bool,
+    pub generation: u64,
 }
 
 impl Instances {

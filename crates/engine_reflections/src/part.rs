@@ -1,12 +1,13 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Entry, Error, View};
+use engine_core::{Entry, Error, PassName, PrimaryView};
 use engine_render::{
     Access, Attach, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse, Encode,
     FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
-    SCENE_FORMAT, SamplerDesc, Shape, Texture, ViewTarget, level_region, mip_levels,
+    SCENE_FORMAT, SamplerDesc, Shape, TargetName, Texture, level_region, mip_levels,
     pyramid_extents, wgpu,
 };
 
+use crate::ReflectionsPass;
 use crate::gpu::{PYRAMID_GROUP, PyramidExtent};
 use crate::shaders::reflections::{apply, levels, nearest, trace};
 
@@ -35,7 +36,7 @@ pub(crate) struct TraceGpu {
 }
 
 impl GpuPart for TraceGpu {
-    type Reads = Res<'static, View>;
+    type Reads = Res<'static, PrimaryView>;
     const NAME: &'static str = "reflections";
     const LAZY: bool = true;
     const LABELS: &'static [&'static str] = &["engine/reflections-"];
@@ -50,25 +51,29 @@ impl GpuPart for TraceGpu {
         let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
         cx.frame(apply::REFLECTIONS, Bind::Texture(reflected))?;
         cx.frame(apply::REFLECTIONS_SAMPLER, Bind::Sampler(sampler))?;
+        let at = ReflectionsPass::PASS.at;
         let reduce = cx
             .pass("nearest_depth")
+            .at(at)
             .label("engine/depth-pyramid")
             .span(SPAN)
             .id();
         let copy = cx.copy(
             "scene_levels_copy",
-            Copied::Target(ViewTarget::Scene),
+            Copied::Target(TargetName::COLOR),
             Copied::Texture(levels_texture),
         );
         let chain = cx
             .pass("scene_levels")
+            .at(at)
             .label("engine/post-scene-levels")
             .span(SPAN)
             .after(copy)
             .color(levels_texture, Access::Load)
             .id();
         let reflect = cx
-            .pass("reflections")
+            .pass(ReflectionsPass::NAME)
+            .at(at)
             .label("engine/post-reflections")
             .span(SPAN)
             .color(reflected, Access::Clear)
@@ -80,7 +85,7 @@ impl GpuPart for TraceGpu {
                     reduce,
                     nearest::CS_NEAREST_FIRST,
                     &[
-                        (nearest::SOURCE_DEPTH, Bind::Target(ViewTarget::Depth)),
+                        (nearest::SOURCE_DEPTH, Bind::Target(TargetName::DEPTH)),
                         (nearest::TARGET_LEVEL, mip(pyramid, 0)),
                         (nearest::EXTENT, Bind::Buffer(*uniform)),
                     ],

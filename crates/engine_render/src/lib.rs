@@ -12,13 +12,14 @@ use std::ops::Range;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
-    Bricks, DrawPoint, Entry, Error, List, MaterialHandle, MeshHandle, Read, Readable, Readback,
-    Slot, TextureHandle, Var, gpu_struct,
+    Bricks, DrawKind, Entry, Error, List, MaterialHandle, MeshHandle, PassBit, PassEntry, PassName,
+    Read, Readable, Readback, Slot, SlotSet, TextureHandle, Var, Writes, gpu_struct,
 };
 use engine_registry::RecordExt;
 
-use crate::draws::{DrawMember, RawDraw};
+use crate::draws::RawDraw;
 
+pub use engine_core::{AttachPoint, TargetName};
 pub use wgpu;
 
 mod bindings;
@@ -44,6 +45,7 @@ mod shaders;
 mod shared;
 mod sizes;
 pub mod slots;
+mod surface;
 
 mod materials;
 mod memory;
@@ -56,12 +58,13 @@ mod renderer;
 mod targets;
 
 pub use gpu_data::{
-    ground_data, jitter_clip, mip_levels, pack_color, pack_surface, pixel_angle, pixels_per_meter,
+    jitter_clip, mip_levels, pack_color, pack_surface, pixel_angle, pixels_per_meter,
     planes, pyramid_extents,
 };
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;
-pub use materials::{MATERIAL_ANISOTROPY, material_variant};
+pub use materials::MATERIAL_ANISOTROPY;
+pub use surface::{DrawState, LightingModule, SlotModule, SurfaceKind, TraceDepth, material_state};
 #[doc(hidden)]
 pub use memory::GpuMemory;
 #[doc(hidden)]
@@ -75,8 +78,8 @@ pub use pyramid::{PYRAMID_GROUP, PyramidExtent};
 pub use renderer::GpuMark;
 #[doc(hidden)]
 pub use renderer::{
-    GpuPassTimes, Installation, InstalledPart, InstalledPiece, Renderer, StartingRenderer,
-    install_noop,
+    DeviceHealth, GpuPassTimes, Installation, InstalledPart, InstalledPiece, Renderer,
+    StartingRenderer, device_limits, install_noop,
 };
 pub use shaders::FULLSCREEN;
 #[doc(hidden)]
@@ -86,7 +89,7 @@ pub const IMPOSTOR_VERTICES: u32 = 6;
 
 pub const DEV: bool = cfg!(feature = "dev");
 
-pub fn level_region(view: &engine_core::View, level: u32) -> (u32, u32) {
+pub fn level_region(view: &engine_core::PrimaryView, level: u32) -> (u32, u32) {
     let (display, render) = (view.display_size(), view.render_size());
     targets::FrameRegion::new(
         targets::FrameSize {
@@ -158,13 +161,18 @@ pub trait GpuPart: Sized + Send + Sync + 'static {
 
 pub trait RenderBricks {
     fn part<P: GpuPart>(&mut self) -> &mut Self;
-    fn draws<P: GpuPart, D: DrawPoint>(
+    fn pass<N: PassName>(&mut self) -> &mut Self;
+    fn draws<P: GpuPart>(
         &mut self,
-        layer: D::Layer,
-        draw: fn(&P, &D::Args, &mut Draw<'_, P, D>) -> u32,
+        kind: DrawKind,
+        draw: fn(&P, &SceneDraw, &mut Draw<'_, P, Scene>) -> u32,
     ) -> &mut Self;
+    fn view_target(&mut self, target: TargetDecl) -> &mut Self;
     fn generated(&mut self, wgsl: &'static [&'static str]) -> &mut Self;
     fn resolve_pass(&mut self, names: PassNames) -> &mut Self;
+    fn material_slot(&mut self, module: SlotModule) -> &mut Self;
+    fn lighting_model(&mut self, module: LightingModule) -> &mut Self;
+    fn surface_kind(&mut self, kind: SurfaceKind) -> &mut Self;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,10 +192,15 @@ impl RenderBricks for Bricks<'_> {
         self
     }
 
-    fn draws<P: GpuPart, D: DrawPoint>(
+    fn pass<N: PassName>(&mut self) -> &mut Self {
+        self.record().render.push(Box::new(PassEntry::of::<N>()));
+        self
+    }
+
+    fn draws<P: GpuPart>(
         &mut self,
-        layer: D::Layer,
-        draw: fn(&P, &D::Args, &mut Draw<'_, P, D>) -> u32,
+        kind: DrawKind,
+        draw: fn(&P, &SceneDraw, &mut Draw<'_, P, Scene>) -> u32,
     ) -> &mut Self {
         let record = self.record();
         let scope = record.scope();
@@ -196,7 +209,12 @@ impl RenderBricks for Bricks<'_> {
             .push(Box::new(registration::PartRecord::of::<P>(scope)));
         record
             .render
-            .push(Box::new(registration::DrawAny::of::<P, D>(layer, draw)));
+            .push(Box::new(registration::KindDraw::of::<P>(kind, draw)));
+        self
+    }
+
+    fn view_target(&mut self, target: TargetDecl) -> &mut Self {
+        self.record().render.push(Box::new(target));
         self
     }
 
@@ -211,6 +229,21 @@ impl RenderBricks for Bricks<'_> {
         self.record()
             .render
             .push(Box::new(registration::ResolvePass(names)));
+        self
+    }
+
+    fn material_slot(&mut self, module: SlotModule) -> &mut Self {
+        self.record().render.push(Box::new(module));
+        self
+    }
+
+    fn lighting_model(&mut self, module: LightingModule) -> &mut Self {
+        self.record().render.push(Box::new(module));
+        self
+    }
+
+    fn surface_kind(&mut self, kind: SurfaceKind) -> &mut Self {
+        self.record().render.push(Box::new(kind));
         self
     }
 }
@@ -253,10 +286,55 @@ handle!(DrawInput<P, S>);
 
 pub struct Own;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Scene(&'static str);
+
+impl Scene {
+    pub const fn of<N: PassName>() -> Self {
+        Self(N::NAME)
+    }
+
+    pub const fn named(name: &'static str) -> Self {
+        Self(name)
+    }
+
+    pub const fn name(self) -> &'static str {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SceneDraw {
+    pub pass: Scene,
+    pub bit: Option<PassBit>,
+    pub at: AttachPoint,
+    pub reads: SlotSet,
+    pub writes: Writes,
+    pub view: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Written {
+    At(&'static [AttachPoint]),
+    Composite,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TargetDecl {
+    pub name: TargetName,
+    pub format: wgpu::TextureFormat,
+    pub written: Written,
+    pub module: Option<engine_core::Module>,
+}
+
 pub trait Scope<P> {
     type Tag: 'static;
     #[doc(hidden)]
     fn pass_index(&self) -> Option<u32> {
+        None
+    }
+    #[doc(hidden)]
+    fn scene_pass(&self) -> Option<&'static str> {
         None
     }
 }
@@ -268,8 +346,11 @@ impl<P> Scope<P> for Pass<P> {
     }
 }
 
-impl<P, D: DrawPoint> Scope<P> for D {
-    type Tag = D;
+impl<P> Scope<P> for Scene {
+    type Tag = Scene;
+    fn scene_pass(&self) -> Option<&'static str> {
+        Some(self.0)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -285,28 +366,10 @@ pub enum Allocation {
     Fresh,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Layer {
-    Occluders,
-    Opaque,
-    Late,
-    Backdrop,
-    Media,
-    Over,
-    Blend,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Access {
     Load,
     Clear,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ViewTarget {
-    Scene,
-    Depth,
-    Debug(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -324,14 +387,14 @@ pub enum Bind<P> {
     },
     Buffer(Buffer<P>),
     Sampler(Sampler<P>),
-    Target(ViewTarget),
+    Target(TargetName),
     Asset,
 }
 
 pub enum Copied<P> {
     Buffer(Buffer<P>),
     Texture(Texture<P>),
-    Target(ViewTarget),
+    Target(TargetName),
     Canvas,
 }
 
@@ -411,10 +474,7 @@ pub enum Shape<'a, P, S> {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MeshPass {
-    pub opaque: bool,
-    pub prepass: bool,
     pub fading: bool,
-    pub grounding: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -482,8 +542,24 @@ impl SamplerDesc {
     };
 }
 
-fn bound_of<P>(bound: &Bind<P>) -> install::Bound {
-    match bound {
+pub const DEBUG_TARGETS: [TargetName; 3] = [
+    TargetName("debug_ids"),
+    TargetName("debug_count"),
+    TargetName("debug_terrain"),
+];
+
+fn target_of(name: TargetName) -> Result<install::ViewTarget, Error> {
+    install::ViewTarget::of(name).ok_or_else(|| {
+        Error::new(
+            engine_core::ErrorCode::UnknownVariable,
+            format!("$.targets.{}", name.name()),
+        )
+        .got(name.name())
+    })
+}
+
+fn bound_of<P>(bound: &Bind<P>) -> Result<install::Bound, Error> {
+    Ok(match bound {
         Bind::Texture(texture) => install::Bound::Texture(texture.0),
         Bind::Slice {
             texture,
@@ -496,32 +572,32 @@ fn bound_of<P>(bound: &Bind<P>) -> install::Bound {
         },
         Bind::Buffer(buffer) => install::Bound::Buffer(buffer.0),
         Bind::Sampler(sampler) => install::Bound::Sampler(sampler.0),
-        Bind::Target(view) => install::Bound::Target(*view),
+        Bind::Target(name) => install::Bound::Target(target_of(*name)?),
         Bind::Asset => install::Bound::Asset,
-    }
+    })
 }
 
-fn bound_list<P>(bound: &[(Var, Bind<P>)]) -> Vec<(Var, install::Bound)> {
+fn bound_list<P>(bound: &[(Var, Bind<P>)]) -> Result<Vec<(Var, install::Bound)>, Error> {
     bound
         .iter()
-        .map(|(var, bound)| (*var, bound_of(bound)))
+        .map(|(var, bound)| Ok((*var, bound_of(bound)?)))
         .collect()
 }
 
 fn scoped<P, S: Scope<P>>(scope: &S) -> install::Scoped {
     match scope.pass_index() {
         Some(pass) => install::Scoped::Pass(pass),
-        None => install::Scoped::Point(TypeId::of::<S::Tag>()),
+        None => install::Scoped::Scene(scope.scene_pass().unwrap_or_default()),
     }
 }
 
-fn copied<P>(copied: Copied<P>) -> install::Copied {
-    match copied {
+fn copied<P>(copied: Copied<P>) -> Result<install::Copied, Error> {
+    Ok(match copied {
         Copied::Buffer(buffer) => install::Copied::Buffer(buffer.0),
         Copied::Texture(texture) => install::Copied::Texture(texture.0),
-        Copied::Target(view) => install::Copied::Target(view),
+        Copied::Target(name) => install::Copied::Target(target_of(name)?),
         Copied::Canvas => install::Copied::Canvas,
-    }
+    })
 }
 
 pub struct Install<'i, P> {
@@ -560,7 +636,7 @@ impl<P: GpuPart> Install<'_, P> {
     }
 
     pub fn frame(&mut self, variable: Var, bound: Bind<P>) -> Result<(), Error> {
-        self.core.frame(variable, bound_of(&bound))
+        self.core.frame(variable, bound_of(&bound)?)
     }
 
     pub fn pass(&mut self, name: &'static str) -> PassBuilder<'_, P> {
@@ -573,9 +649,12 @@ impl<P: GpuPart> Install<'_, P> {
     }
 
     pub fn copy(&mut self, name: &'static str, from: Copied<P>, to: Copied<P>) -> Pass<P> {
-        let work = install::Work::Copy {
-            from: copied(from),
-            to: copied(to),
+        let work = match (copied(from), copied(to)) {
+            (Ok(from), Ok(to)) => install::Work::Copy { from, to },
+            (Err(error), _) | (_, Err(error)) => {
+                self.core.problems.push(error);
+                install::Work::Render
+            }
         };
         Pass(self.core.pass(name, work), PhantomData)
     }
@@ -642,7 +721,7 @@ impl<P: GpuPart> Install<'_, P> {
         });
         let pipeline = self
             .core
-            .pipeline(scoped(scope), program, bound_list(bound))?;
+            .pipeline(scoped(scope), program, bound_list(bound)?)?;
         Ok(Pipeline(pipeline, PhantomData))
     }
 
@@ -655,7 +734,7 @@ impl<P: GpuPart> Install<'_, P> {
         let pipeline = self.core.pipeline(
             install::Scoped::Pass(pass.0),
             install::Program::Compute(entry),
-            bound_list(bound),
+            bound_list(bound)?,
         )?;
         Ok(ComputePipeline(pipeline, PhantomData))
     }
@@ -664,15 +743,18 @@ impl<P: GpuPart> Install<'_, P> {
         DrawInput(self.core.draw_input(scoped(&scope), buffer.0), PhantomData)
     }
 
-    pub fn claim<D: DrawPoint>(&mut self, pass: Pass<P>) -> Result<Draws<D>, Error> {
-        self.core
-            .claim((TypeId::of::<D>(), D::UBER_MATERIALS), D::NAME, pass.0)?;
-        let members = self
-            .core
-            .members::<registration::DrawRecord<D>>()
-            .map(|(part, record)| record.member(part))
-            .collect();
-        Ok(Draws { members })
+    pub fn scene<N: PassName>(&mut self) -> PassBuilder<'_, P> {
+        let pass = self.core.pass(N::NAME, install::Work::Render);
+        self.core.draws_scene(pass, N::NAME, N::PASS);
+        PassBuilder {
+            core: &mut *self.core,
+            pass,
+            part: PhantomData,
+        }
+    }
+
+    pub fn passes(&self) -> &engine_core::ScenePasses {
+        &self.core.passes
     }
 }
 
@@ -684,9 +766,9 @@ pub struct PassBuilder<'b, P> {
 
 impl<P: GpuPart> PassBuilder<'_, P> {
     #[must_use]
-    pub fn at(self, layer: Layer) -> Self {
+    pub fn at(self, point: AttachPoint) -> Self {
         if let Some(pass) = self.core.pass_mut(self.pass) {
-            pass.layer = Some(layer);
+            pass.layer = Some(point);
         }
         self
     }
@@ -798,10 +880,6 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn ran(&self, pass: Pass<P>) -> bool {
         self.core.ran.contains(pass.0 as usize)
-    }
-
-    pub fn want_overlay(&mut self) {
-        self.core.want_overlay();
     }
 
     pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) -> Allocation {
@@ -920,10 +998,10 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn copy_at_end(&mut self, from: Copied<P>, to: Copied<P>, regions: &[CopyRegion]) {
         let regions = regions.iter().map(region_of).collect();
-        self.core
-            .queued
-            .ending
-            .push((copied(from), copied(to), regions));
+        match (copied(from), copied(to)) {
+            (Ok(from), Ok(to)) => self.core.queued.ending.push((from, to, regions)),
+            (Err(error), _) | (_, Err(error)) => self.core.refuse(error),
+        }
     }
 
     pub fn cameras(&mut self, views: &[CameraUniform]) {
@@ -1209,27 +1287,23 @@ impl<P: GpuPart> Draw<'_, P, Own> {
     }
 }
 
-pub struct Draws<D: DrawPoint> {
-    members: Box<[DrawMember<D>]>,
-}
-
-impl<D: DrawPoint> Draws<D> {
-    pub fn draw<P: GpuPart>(
-        &self,
-        owner: &mut Draw<'_, P, Own>,
-        layer: D::Layer,
-        args: &D::Args,
-    ) -> u32 {
-        owner.raw.run().reset_scissor();
+impl<P: GpuPart> Draw<'_, P, Own> {
+    pub fn scene(&mut self, view: Option<u32>) -> u32 {
+        let run = self.raw.run();
+        run.reset_scissor();
+        let Some(scene) = run.scene_draw(view) else {
+            return 0;
+        };
+        let members = run.scene_members();
         let mut drawn = 0;
-        for member in self.members.iter().filter(|member| member.layer == layer) {
-            let run = owner.raw.run();
+        for member in members.iter() {
+            let run = self.raw.run();
             let Some(held) = run.take_member(member.part) else {
                 continue;
             };
-            run.point = Some(TypeId::of::<D>());
-            drawn += (member.call)(held.part(), args, &mut owner.raw.member(member.part));
-            let run = owner.raw.run();
+            run.point = Some(scene.pass.0);
+            drawn += (member.call)(held.part(), &scene, &mut self.raw.member(member.part));
+            let run = self.raw.run();
             run.point = None;
             run.give_member(member.part, held);
         }
@@ -1252,65 +1326,6 @@ gpu_struct! {
     }
 }
 
-#[derive(Resource, Default)]
-pub struct MainView;
-
-impl Slot for MainView {
-    const NAME: &'static str = "main_view";
-}
-
-impl DrawPoint for MainView {
-    type Layer = Layer;
-    type Args = ();
-}
-
-#[derive(Resource, Default)]
-pub struct Overlay;
-
-impl Slot for Overlay {
-    const NAME: &'static str = "overlay";
-}
-
-impl DrawPoint for Overlay {
-    type Layer = Layer;
-    type Args = ();
-}
-
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct OverlaySteps {
-    pub count: u32,
-}
-
-impl Slot for OverlaySteps {
-    const NAME: &'static str = "overlay_steps";
-}
-
-#[derive(Resource, Default)]
-pub struct OverlayStack;
-
-impl Slot for OverlayStack {
-    const NAME: &'static str = "overlay_stack";
-}
-
-impl DrawPoint for OverlayStack {
-    type Layer = Layer;
-    type Args = Option<u32>;
-}
-
-pub struct Output {
-    pub name: &'static str,
-    pub format: wgpu::TextureFormat,
-    pub layers: &'static [Layer],
-}
-
-pub struct ViewOutputs;
-
-impl List for ViewOutputs {
-    const NAME: &'static str = "view_outputs";
-    type Member = Output;
-    const WGSL: Option<&'static str> = Some(include_str!("places/view_outputs.wgsl"));
-}
-
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Resolve {
     pub offset: glam::Vec2,
@@ -1320,6 +1335,22 @@ pub struct Resolve {
 impl Slot for Resolve {
     const NAME: &'static str = "resolve";
     const WGSL: Option<&'static str> = Some(include_str!("places/resolve.wgsl"));
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Lit;
+
+impl Slot for Lit {
+    const NAME: &'static str = "lit";
+    const WGSL: Option<&'static str> = Some(include_str!("places/lit.wgsl"));
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InstanceMotion;
+
+impl Slot for InstanceMotion {
+    const NAME: &'static str = "instance_motion";
+    const WGSL: Option<&'static str> = Some(include_str!("places/instance_motion.wgsl"));
 }
 
 pub struct PostScene;

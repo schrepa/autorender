@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
 use bevy_ecs::prelude::*;
-use engine_core::Joined;
+use engine_core::{Joined, PrimaryView};
 use engine_render::{DebugMode, DebugModes, DebugShown};
 use serde_json::Value;
 
@@ -57,7 +57,7 @@ fn code(drawn: Option<Drawn>) -> u32 {
 }
 
 pub(crate) fn publish(
-    view: Res<DebugView>,
+    (view, frame): (Res<DebugView>, Res<PrimaryView>),
     probe: Res<Probe>,
     modes: Joined<DebugModes>,
     mut shown: ResMut<DebugShown>,
@@ -68,7 +68,8 @@ pub(crate) fn publish(
         Some(false) => None,
         Some(true) => Some(chosen.unwrap_or((TypeId::of::<DebugViewBrick>(), 0))),
         None => chosen,
-    };
+    }
+    .filter(|_| frame.debug());
     let coming = probe.coming();
     shown.set_if_neq(DebugShown {
         owner: drawn.map(|(owner, _)| owner),

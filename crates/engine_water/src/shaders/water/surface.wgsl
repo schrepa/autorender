@@ -1,12 +1,14 @@
 import package::engine::color::luminance;
 import package::engine::math::GRAVITY;
-import package::engine::shading::{BODY_WATER, Shaded, SurfacePoint};
+import package::engine::shading::{Shaded, SurfacePoint};
+import package::engine::surfaces::SURFACE_WATER;
 import package::engine::view::{PI, camera, detail_across, detail_level, eye_world,
     stable_normalize, view_pixel};
 import package::face::heightfield::{SURFACE_LEAF_INDICES, surface_leaf, surface_leaf_count,
     surface_vertex, terrain_level_height, terrain_uniform, terrain_view_uniform, use_terrain};
-import package::face::lighting::{distribution, environment_brdf, finish, fresnel, highlights,
-    specular, sun_visibility, visibility};
+import package::face::lighting::{distribution, environment_brdf, fresnel, highlights, specular,
+    sun_visibility, visibility};
+import package::face::lit::finish;
 import package::face::sky::{ambient, atmospheric_cover, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
@@ -442,7 +444,7 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     var sunlight = vec3<f32>(0.0);
     if sun.y > 0.0 {
         sunlight = sun_color()
-            * sun_visibility(SunAt(world, up, surface.world_dx, surface.world_dy, 0.0, false, 0u,
+            * sun_visibility(SunAt(world, up, surface.world_dx, surface.world_dy, 0.0, SURFACE_WATER, 0u,
                 vec4<f32>(0.0)));
     }
     var glint = vec3<f32>(0.0);
@@ -478,15 +480,13 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     let foam = WATER_FOAM_ALBEDO * (1.0 - surface.foam_shade)
         * (mix(around, sky, WATER_FOAM_SKY) + sunlight * max(foam_n_l, 0.0)) + foam_glint;
     var point: SurfacePoint;
-    point.albedo = surface.scatter;
+    point.base_color = surface.scatter;
     point.opacity = 1.0;
-    point.emission = 0.0;
     point.emissive = vec3<f32>(0.0);
     point.occlusion = 1.0;
-    point.indirect = vec3<f32>(0.0);
     point.roughness = roughness.x;
     point.alpha = alphas.x;
-    point.smoother_across = roughness.x - roughness.y;
+    point.inputs.smoother_across = roughness.x - roughness.y;
     point.f0 = f0;
     point.diffuse_color = vec3<f32>(0.0);
     point.geometric = up;
@@ -497,12 +497,10 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     point.world = world;
     point.world_dx = surface.world_dx;
     point.world_dy = surface.world_dy;
-    point.shadow_offset = vec3<f32>(0.0);
-    point.ground = false;
-    point.sun_shade = 1.0;
+    point.kind = SURFACE_WATER;
+    point.inputs.sun_blocked = 1.0;
     var lit: WaterLit;
     lit.shaded = finish(point, mix(body + glint, foam, surface.foam));
-    lit.shaded.body = BODY_WATER;
     lit.reflectance = reflectance;
     let sunlit = luminance(sunlight) * max(sun.y, 0.0);
     lit.sunny = sunlit / max(sunlit + luminance(sky), 1.0e-6);

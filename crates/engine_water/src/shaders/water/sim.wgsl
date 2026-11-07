@@ -1,11 +1,12 @@
 import package::engine::math::GRAVITY;
 import package::generated::water::{BLOCK_GROUND, BREAK_FULL, BREAK_ONSET, BREAK_THINNEST,
     CELL_MEANS, COURANT, DEEPEST, DENSITY, DRY, FASTEST, FERGUSON_A1, FERGUSON_A2, LOCAL_SHARE,
-    NO_BLOCK, NO_WATER_SURFACE, SHALLOWEST, SIM_BLOCK_LOOKS, SIM_BURSTING, SIM_CELL_SUMS,
-    SIM_KEEPING, SIM_LIVE, SIM_LIVE_LOOKS, SIM_LOCAL, SIM_LOOKING, SIM_OPEN, SIM_RIM, SIM_SLOTS,
-    SIM_SPARSE, SIM_STANDING, SIM_STEPPING, SIM_SUMMING, SIM_TOUCHES, SLOWEST, SOURCE_SPEED,
-    STRICKLER, SimFrame, SimSlot, SimTouch, THETA, THIN, TURBULENT_SPEED, TURBULENT_SWIRL, UNHELD,
-    WATER_FLOW_RANGE, WATER_SHEAR_RANGE, WATER_SIM_GROUP, WATER_SIM_SOURCE_GROUP, WET_MOST};
+    NO_BLOCK, NO_WATER_SURFACE, SHALLOWEST, SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_LIVE_LOOKS,
+    SIM_RIM, SIM_SLOTS, SIM_STANDING, SIM_TOUCHES, SLOWEST, SOURCE_SPEED, STRICKLER, SimFrame,
+    SimSlot, SimTouch, THETA, THIN, TURBULENT_SPEED, TURBULENT_SWIRL, UNHELD, WATER_FLOW_RANGE,
+    WATER_SHEAR_RANGE, WATER_SIM_GROUP, WATER_SIM_SOURCE_GROUP, WET_MOST, sim_flags_bursting,
+    sim_flags_keeping, sim_flags_live, sim_flags_local, sim_flags_looking, sim_flags_open,
+    sim_flags_sparse, sim_flags_stepping, sim_flags_summing};
 import package::water::bursts::water_burst;
 import package::water::sim_shared::sim_minmod;
 
@@ -52,10 +53,6 @@ fn sim_square(slot: u32) -> Square {
     let held = sim_slots.slot[slot];
     return Square(slot, held.shape.x, held.shape.y, held.shape.z, held.shape.w, held.step.x,
         held.step.y, held.blocks.xy, held.blocks.z);
-}
-
-fn sim_has(q: Square, flag: u32) -> bool {
-    return (q.flags & flag) != 0u;
 }
 
 fn sim_slot_count() -> u32 {
@@ -204,7 +201,7 @@ fn sim_cell_of(q: Square, group: vec3<u32>, count: vec3<u32>, local: vec3<u32>) 
     }
     let place = sim_place(q, block) * WATER_SIM_GROUP + local.xy;
     let at = block * SIM_BLOCK_CELLS + local.y * WATER_SIM_GROUP + local.x;
-    let runs = sim_has(q, SIM_STEPPING) && place.x < q.nx && place.y < q.nz;
+    let runs = sim_flags_stepping(q.flags) && place.x < q.nx && place.y < q.nz;
     return SimCell(at, place.x, place.y, runs);
 }
 
@@ -213,7 +210,7 @@ fn sim_block_at(q: Square, block: u32) -> u32 {
 }
 
 fn sim_active(q: Square, at: u32) -> bool {
-    if !sim_has(q, SIM_SPARSE) {
+    if !sim_flags_sparse(q.flags) {
         return true;
     }
     return sim_steps[sim_block_at(q, at / SIM_BLOCK_CELLS) + 1u].x > 0.5;
@@ -572,7 +569,7 @@ fn sim_exchange(
     let j = cell.j;
     let at = cell.at;
     let state = frame.stage.x;
-    let open = sim_has(q, SIM_OPEN);
+    let open = sim_flags_open(q.flags);
     let fluxes = sim_fluxes_base(q);
     let edges = fluxes + 2u * sim_held();
     let steps = sim_active(q, at);
@@ -716,7 +713,7 @@ fn sim_waves(
 ) {
     let q = sim_square(group.z);
     let cell = sim_cell_of(q, group, count, local);
-    if !cell.runs || !sim_has(q, SIM_LOCAL) || !sim_active(q, cell.at) {
+    if !cell.runs || !sim_flags_local(q.flags) || !sim_active(q, cell.at) {
         return;
     }
     let at = cell.at;
@@ -733,7 +730,7 @@ fn sim_seconds(
 ) {
     let q = sim_square(group.z);
     let cell = sim_cell_of(q, group, count, local);
-    if !cell.runs || !sim_has(q, SIM_LOCAL) || !sim_active(q, cell.at) {
+    if !cell.runs || !sim_flags_local(q.flags) || !sim_active(q, cell.at) {
         return;
     }
     let base = sim_steps_base(q);
@@ -750,7 +747,7 @@ fn sim_seconds(
 }
 
 fn sim_seconds_at(q: Square, at: u32) -> f32 {
-    if sim_has(q, SIM_LOCAL) {
+    if sim_flags_local(q.flags) {
         return sim_steps[sim_steps_base(q) + at].y;
     }
     return q.live;
@@ -890,11 +887,11 @@ fn sim_update(
     let settled = sim_settle(q, at, next, ground, sim_lake(q, at), rubbing);
     let written = select(base + held + at, base + at, stage == 1u);
     sim_cells[written] = vec4<f32>(settled.xyz, 0.0);
-    if stage == 1u && settled.w > 0.0 && sim_has(q, SIM_SUMMING) {
+    if stage == 1u && settled.w > 0.0 && sim_flags_summing(q.flags) {
         sim_averages[sim_sums_at(q, at) + 3u].x += dt;
     }
     let first = at % SIM_BLOCK_CELLS == 0u;
-    if stage == 0u && sim_has(q, SIM_SPARSE) && first {
+    if stage == 0u && sim_flags_sparse(q.flags) && first {
         sim_steps[sim_block_at(q, at / SIM_BLOCK_CELLS)].x = 0.0;
     }
 }
@@ -932,7 +929,7 @@ fn sim_touch(
 ) {
     let q = sim_square(0u);
     let cell = (sim_touches.blocks.xy + group.xy) * WATER_SIM_GROUP + local.xy;
-    if !sim_has(q, SIM_STEPPING) || cell.x >= q.nx || cell.y >= q.nz {
+    if !sim_flags_stepping(q.flags) || cell.x >= q.nx || cell.y >= q.nz {
         return;
     }
     let at = sim_at(q, i32(cell.x), i32(cell.y));
@@ -984,7 +981,7 @@ fn sim_burst(
 ) {
     let q = sim_square(group.z);
     let cell = sim_cell_of(q, group, count, local);
-    if !cell.runs || !sim_has(q, SIM_BURSTING) {
+    if !cell.runs || !sim_flags_bursting(q.flags) {
         return;
     }
     let at = cell.at;
@@ -1016,8 +1013,8 @@ fn sim_push(
     let q = sim_square(group.z);
     let cell = sim_cell_of(q, group, count, local);
     let block = group.y * count.x + group.x;
-    var gathering = group.z < sim_slot_count() && sim_has(q, SIM_STEPPING)
-        && sim_has(q, SIM_BURSTING) && block < q.stored;
+    var gathering = group.z < sim_slot_count() && sim_flags_stepping(q.flags)
+        && sim_flags_bursting(q.flags) && block < q.stored;
     if gathering {
         let place = sim_place(q, block);
         gathering = place.x < q.blocks.x && place.y < q.blocks.y;
@@ -1169,7 +1166,7 @@ fn sim_ended(
     if index < SIM_RIM_AROUND {
         let block = group.y * count.x + group.x;
         var stands = false;
-        if group.z < sim_slot_count() && sim_has(q, SIM_LIVE) && block < q.stored {
+        if group.z < sim_slot_count() && sim_flags_live(q.flags) && block < q.stored {
             let near = vec2<i32>(sim_place(q, block))
                 + vec2<i32>(i32(index % SIM_RIM_SIDE), i32(index / SIM_RIM_SIDE))
                 - vec2<i32>(i32(SIM_RIM_BLOCKS));
@@ -1183,11 +1180,11 @@ fn sim_ended(
     if cell.runs && sim_active(q, at) {
         let base = sim_cells_base(q);
         var water = sim_cells[base + at];
-        if sim_has(q, SIM_LIVE) {
+        if sim_flags_live(q.flags) {
             water = mix(water, sim_averages[sim_looks(at)], sim_rim_pull(q, cell));
             sim_cells[base + at] = water;
         }
-        if sim_has(q, SIM_SPARSE) && !sim_held_at(q, at) && water.x - sim_bed(q, at) > DRY {
+        if sim_flags_sparse(q.flags) && !sim_held_at(q, at) && water.x - sim_bed(q, at) > DRY {
             let inside = at % SIM_BLOCK_CELLS;
             let x = inside % WATER_SIM_GROUP;
             let z = inside / WATER_SIM_GROUP;
@@ -1205,7 +1202,7 @@ fn sim_ended(
         sim_steps[sim_block_at(q, at / SIM_BLOCK_CELLS)].x = f32(sides);
     }
     let first = index == 0u && all(group.xy == vec2<u32>(0u));
-    if first && group.z < sim_slot_count() && sim_has(q, SIM_STEPPING) {
+    if first && group.z < sim_slot_count() && sim_flags_stepping(q.flags) {
         sim_steps[sim_count_at(q)].x += 1.0;
     }
 }
@@ -1232,7 +1229,7 @@ fn sim_still(q: Square, at: u32, water: vec4<f32>) -> SimSums {
 }
 
 fn sim_standing(q: Square) -> f32 {
-    if sim_has(q, SIM_LOCAL) {
+    if sim_flags_local(q.flags) {
         return LOCAL_SHARE * COURANT * q.dx / SLOWEST;
     }
     return q.live;
@@ -1279,7 +1276,7 @@ fn sim_tally(
 ) {
     let q = sim_square(group.z);
     let cell = sim_cell_of(q, group, count, local);
-    if !cell.runs || !sim_has(q, SIM_SUMMING) || !sim_active(q, cell.at) {
+    if !cell.runs || !sim_flags_summing(q.flags) || !sim_active(q, cell.at) {
         return;
     }
     let at = cell.at;
@@ -1307,7 +1304,7 @@ fn sim_tally(
 @compute @workgroup_size(WATER_SIM_SOURCE_GROUP)
 fn sim_source(@builtin(global_invocation_id) id: vec3<u32>) {
     let q = sim_square(id.z);
-    if id.z >= sim_slot_count() || !sim_has(q, SIM_STEPPING) || id.x >= q.sourced {
+    if id.z >= sim_slot_count() || !sim_flags_stepping(q.flags) || id.x >= q.sourced {
         return;
     }
     let source = sim_inputs[sim_sources_base(q) + id.x];
@@ -1322,7 +1319,7 @@ fn sim_source(@builtin(global_invocation_id) id: vec3<u32>) {
     cell.y += added * source.z * SOURCE_SPEED;
     cell.z += added * source.w * SOURCE_SPEED;
     sim_cells[cells + at] = cell;
-    if sim_has(q, SIM_SPARSE) {
+    if sim_flags_sparse(q.flags) {
         sim_steps[sim_block_at(q, at / SIM_BLOCK_CELLS)].x = 1.0;
     }
 }
@@ -1343,7 +1340,7 @@ fn sim_activity(
 ) {
     let q = sim_square(group.z);
     let block = (group.y * count.x + group.x) * SIM_BLOCK_CELLS + local;
-    let sparse = sim_has(q, SIM_STEPPING) && sim_has(q, SIM_SPARSE);
+    let sparse = sim_flags_stepping(q.flags) && sim_flags_sparse(q.flags);
     if group.z >= sim_slot_count() || !sparse || block >= q.stored {
         return;
     }
@@ -1355,7 +1352,7 @@ fn sim_activity(
     wet = wet || (sim_wet_at(q, place + vec2<i32>(0, 1)) & SIM_WET_SOUTH) != 0u;
     let entry = sim_block_at(q, block) + 1u;
     let state = sim_steps[entry];
-    if wet && state.x < 0.5 && state.y > 0.0 && sim_has(q, SIM_SUMMING) {
+    if wet && state.x < 0.5 && state.y > 0.0 && sim_flags_summing(q.flags) {
         let base = sim_cells_base(q);
         let first = vec2<u32>(place) * WATER_SIM_GROUP;
         let seconds = state.y * sim_standing(q);
@@ -1398,9 +1395,9 @@ fn sim_look(
     let q = sim_square(group.z);
     let cell = sim_cell_of(q, group, count, local);
     let block = group.y * count.x + group.x;
-    let looking = group.z < sim_slot_count() && sim_has(q, SIM_LOOKING)
-        && sim_has(q, SIM_SUMMING) && block < q.stored;
-    let sparse = sim_has(q, SIM_SPARSE);
+    let looking = group.z < sim_slot_count() && sim_flags_looking(q.flags)
+        && sim_flags_summing(q.flags) && block < q.stored;
+    let sparse = sim_flags_sparse(q.flags);
     var water_sum = vec4<f32>(0.0);
     var motion_sum = vec4<f32>(0.0);
     var edges = vec2<f32>(0.0);
@@ -1434,7 +1431,7 @@ fn sim_look(
         sim_averages[means + 1u] = vec4<f32>(moving.x, heave, moving.z, rush);
         sim_averages[means + 2u] = vec4<f32>(shares.z / seconds, portions.w, spent.x / seconds,
             0.0);
-        let kept = select(0.0, 1.0, sim_has(q, SIM_KEEPING));
+        let kept = select(0.0, 1.0, sim_flags_keeping(q.flags));
         sim_averages[sums] = water * kept;
         sim_averages[sums + 1u] = motion * kept;
         sim_averages[sums + 2u] = shares * kept;
@@ -1516,7 +1513,7 @@ fn sim_drawn(
 ) {
     let q = sim_square(0u);
     let cell = sim_cell_of(q, group, count, local);
-    if !cell.runs || !sim_has(q, SIM_LIVE) {
+    if !cell.runs || !sim_flags_live(q.flags) {
         return;
     }
     let at = cell.at;

@@ -5,12 +5,13 @@ import package::face::far_cover::{GroundAt, far_color};
 import package::face::ground_tiles::macro_color;
 import package::face::bounce::bounce_light;
 import package::face::foliage::foliage;
-import package::face::lighting::{finish, local_light, widened};
+import package::face::lit::{finish, local_light, widened};
 import package::face::shadows::{kept_level, kept_texels};
 import package::face::sun::sun_direction;
 import package::engine::view::{DETAIL_EDGE_ON, PI, camera, detail_across, detail_distance, detail_level,
     detail_resolved, detail_span, eye_world, fade_noise, material_detail, stable_normalize, view_pixel};
-import package::engine::shading::{BODY_GROUND, Shaded, SurfacePoint, world_plane};
+import package::engine::shading::{Shaded, SurfacePoint, world_plane};
+import package::engine::surfaces::SURFACE_GROUND;
 import package::face::water::{WATER_HELD, WaterCell, water_cell, water_level};
 import package::generated::targets::{DepthViewTargets, depth_view_targets};
 import package::terrain_shading::draw_shared::{terrain_hash2, terrain_value, terrain_value2};
@@ -1305,15 +1306,15 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
     let sky_map = terrain_sky_map(local);
     let sky = sky_map.r;
     var point: SurfacePoint;
-    point.albedo = albedo;
+    point.base_color = albedo;
     point.opacity = 1.0;
-    point.emission = 0.0;
     point.emissive = vec3<f32>(0.0);
     point.occlusion = occlusion * sky;
-    point.indirect = bounce_light(world, normal, true).light * occlusion;
-    point.sky_turn = sky_map.gba * 2.0 - 1.0;
+    point.inputs.bounce = bounce_light(world, normal, true).light * occlusion;
+    point.inputs.sky_bend = sky_map.gba * 2.0 - 1.0;
     point.roughness = roughness;
     point.alpha = roughness * roughness;
+    point.metalness = ground.metalness;
     point.f0 = mix(vec3<f32>(0.04), albedo, ground.metalness);
     point.diffuse_color = albedo * (1.0 - ground.metalness);
     point.geometric = geometric;
@@ -1325,11 +1326,11 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
     let detail = material_detail();
     point.world_dx = select(site.world_dx / detail, look.world_dx, look.raw.x);
     point.world_dy = select(site.world_dy / detail, look.world_dy, look.raw.y);
-    point.shadow_offset = vec3<f32>(0.0);
-    point.ground = true;
+    point.kind = SURFACE_GROUND;
+    point.inputs.ignore_face = true;
     point.transmission = foliage().x * ground.canopy;
-    point.shadow_lift_first = lift.first;
-    point.shadow_lifts = lift.lifts;
+    point.inputs.shadow_lift_first = lift.first;
+    point.inputs.shadow_lifts = lift.lifts;
     return point;
 }
 
@@ -1425,8 +1426,7 @@ fn terrain_resolve_targets(input: TerrainResolveInput, dither: f32) -> DepthView
     let position = input.position;
     let resolved = terrain_resolved(position, dither);
     let point = resolved.point;
-    var shaded = finish(point, local_light(point, position.xy));
-    shaded.body = BODY_GROUND;
+    let shaded = finish(point, local_light(point, position.xy));
     let previous = vec4<f32>(resolved.previous.xy, 0.0, resolved.previous.z);
     return depth_view_targets(shaded, view_pixel(position, previous), resolved.depth);
 }
@@ -1445,9 +1445,7 @@ fn shade_terrain(input: TerrainOutput, holes: bool) -> Shaded {
     use_terrain(input.terrain);
     let point = terrain_point(input.relative.xyz);
     terrain_holes_test(input.cell, holes);
-    var shaded = finish(point, local_light(point, input.clip_position.xy));
-    shaded.body = BODY_GROUND;
-    return shaded;
+    return finish(point, local_light(point, input.clip_position.xy));
 }
 
 @fragment

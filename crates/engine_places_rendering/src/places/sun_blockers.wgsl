@@ -4,7 +4,7 @@ struct SunAt {
     world_dx: vec3<f32>,
     world_dy: vec3<f32>,
     softness: f32,
-    ground: bool,
+    kind: u32,
     lift_first: u32,
     lifts: vec4<f32>,
 }

@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use engine_core::Ticket;
 use engine_places_rendering::audio::Bus;
 use glam::Vec3;
 use js_sys::Uint8Array;
@@ -32,10 +33,18 @@ fn glide(param: &AudioParam, value: f32, now: f64) {
     }
 }
 
-enum Entry {
-    Decoding,
-    Ready(AudioBuffer),
-    Failed(String),
+type Arrival = ((u32, Ticket), Result<Decoded, String>);
+
+pub(crate) struct Decoded(u32);
+
+impl Drop for Decoded {
+    fn drop(&mut self) {
+        let _ = PAGE.try_with(|page| {
+            if let Ok(mut page) = page.try_borrow_mut() {
+                page.buffers.remove(&self.0);
+            }
+        });
+    }
 }
 
 struct Voice {
@@ -100,7 +109,8 @@ impl Graph {
 #[derive(Default)]
 struct Page {
     graph: Option<Graph>,
-    sounds: BTreeMap<u32, Entry>,
+    buffers: BTreeMap<u32, AudioBuffer>,
+    arrived: Vec<Arrival>,
     voices: BTreeMap<u32, Voice>,
     paused: [bool; Bus::ALL.len()],
 }
@@ -119,12 +129,12 @@ impl Page {
             .map_or(0.0, |graph| graph.context.current_time())
     }
 
-    fn start(&mut self, voice: u32, sound: u32, play: &Start) -> Result<(), JsValue> {
+    fn start(&mut self, voice: u32, sound: &Decoded, play: &Start) -> Result<(), JsValue> {
         let graph = self
             .graph
             .as_ref()
             .ok_or_else(|| JsValue::from_str("no_device"))?;
-        let Some(Entry::Ready(buffer)) = self.sounds.get(&sound) else {
+        let Some(buffer) = self.buffers.get(&sound.0) else {
             return Err(JsValue::from_str("sound_missing"));
         };
         let context = &graph.context;
@@ -189,7 +199,7 @@ impl Page {
     }
 }
 
-fn begin_decode(sound: u32, bytes: &[u8]) -> Result<(), JsValue> {
+fn begin_decode(sound: (u32, Ticket), bytes: &[u8]) -> Result<(), JsValue> {
     let promise = PAGE.with_borrow_mut(|page| {
         let graph = page.graph()?;
         graph
@@ -199,12 +209,14 @@ fn begin_decode(sound: u32, bytes: &[u8]) -> Result<(), JsValue> {
     spawn_local(async move {
         let decoded = JsFuture::from(promise).await;
         PAGE.with_borrow_mut(|page| {
-            if let Some(entry) = page.sounds.get_mut(&sound) {
-                *entry = match decoded {
-                    Ok(buffer) => Entry::Ready(buffer.unchecked_into()),
-                    Err(failure) => Entry::Failed(text(&failure)),
-                };
-            }
+            let arrived = match decoded {
+                Ok(buffer) => {
+                    page.buffers.insert(sound.0, buffer.unchecked_into());
+                    Ok(Decoded(sound.0))
+                }
+                Err(failure) => Err(text(&failure)),
+            };
+            page.arrived.push((sound, arrived));
         });
     });
     Ok(())
@@ -231,36 +243,26 @@ impl Backend {
         self.opened = false;
     }
 
-    pub(crate) fn decode(&mut self, sound: u32, bytes: Arc<[u8]>, _stream: bool, may_open: bool) {
-        let entry = if may_open {
-            begin_decode(sound, &bytes).map_or_else(
-                |failure| Entry::Failed(text(&failure)),
-                |()| Entry::Decoding,
-            )
-        } else {
-            Entry::Failed("device_refused".to_owned())
-        };
-        PAGE.with_borrow_mut(|page| {
-            page.sounds.insert(sound, entry);
-        });
+    pub(crate) fn decode(
+        &mut self,
+        sound: (u32, Ticket),
+        bytes: Arc<[u8]>,
+        _stream: bool,
+        may_open: bool,
+    ) -> Option<Result<Decoded, String>> {
+        if !may_open {
+            return Some(Err("device_refused".to_owned()));
+        }
+        begin_decode(sound, &bytes)
+            .err()
+            .map(|failure| Err(text(&failure)))
     }
 
-    pub(crate) fn forget(&mut self, sound: u32) {
-        PAGE.with_borrow_mut(|page| {
-            page.sounds.remove(&sound);
-        });
+    pub(crate) fn arrivals(&mut self) -> Vec<Arrival> {
+        PAGE.with_borrow_mut(|page| std::mem::take(&mut page.arrived))
     }
 
-    pub(crate) fn arrival(&self, sound: u32) -> Option<Result<(), String>> {
-        PAGE.with_borrow(|page| match page.sounds.get(&sound) {
-            Some(Entry::Decoding) => None,
-            Some(Entry::Ready(_)) => Some(Ok(())),
-            Some(Entry::Failed(failure)) => Some(Err(failure.clone())),
-            None => Some(Err("sound_missing".to_owned())),
-        })
-    }
-
-    pub(crate) fn start(&mut self, voice: u32, sound: u32, play: &Start) -> Result<(), String> {
+    pub(crate) fn start(&mut self, voice: u32, sound: &Decoded, play: &Start) -> Result<(), String> {
         PAGE.with_borrow_mut(|page| page.start(voice, sound, play))
             .map_err(|failure| text(&failure))
     }

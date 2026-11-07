@@ -4,17 +4,17 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
-use engine_core::{Camera, Cut, Error, FrameTime};
+use engine_core::{Cut, Error, FrameTime, GpuBits, PrimaryView, Readable, Readback};
 use engine_heightfield::TileKey;
 use engine_places_simulation::water::{WaterObstacle, WaterObstacles};
 use engine_places_world::ground::{GroundBaking, GroundTiles, TerrainTiles};
-use engine_render::{ComputePipeline, Count, Encode, Install, Pass, Prepare};
+use engine_render::{Allocation, ComputePipeline, Count, Encode, Install, Pass, Prepare};
 use glam::{Mat3, Vec2, Vec3};
 
 use crate::gpu::{
     LIVE_CELL, LIVE_HEAD, LIVE_NONE, SETUP_RISEN, SETUP_SOLID_ENTRIES, SETUP_STANDS, SETUP_WHOLE,
-    SIM_BURSTING, SIM_LIVE, SIM_STANDING, SIM_STEPPING, SIM_TOUCHES, SimSetup, SimSlot, SimTouch,
-    SimTouches, WATER_SETUP_RING_GROUP,
+    SIM_STANDING, SIM_TOUCHES, SimFlags, SimSetup, SimSlot, SimTouch, SimTouches,
+    WATER_SETUP_RING_GROUP,
 };
 use crate::shallow_water::step_seconds;
 use crate::state::WaterState;
@@ -39,7 +39,6 @@ pub(crate) struct Listed {
     pub(crate) entries: Vec<[u32; 4]>,
     pub(crate) offset: u64,
     pub(crate) frame: SimSetup,
-    pub(crate) blocks: u32,
     pub(crate) ghosts: u32,
 }
 
@@ -47,6 +46,35 @@ pub(crate) struct Square {
     pub(crate) chunks: Vec<(u32, Arc<SteadyWater>)>,
     pub(crate) sources: Vec<[f32; 4]>,
     pub(crate) solids: Vec<[f32; 4]>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SimShape {
+    cells: u32,
+    cell: u32,
+    pool: u32,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SimClock {
+    tick: i64,
+    most: i64,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct LiveSteps {
+    pub(crate) steps: u32,
+    pub(crate) behind: u32,
+}
+
+impl Readable for LiveSteps {
+    fn arrived(&mut self, _: u32, read: Readback<&[u8]>) {
+        let words = read.value.as_chunks::<4>().0;
+        if let [steps, behind, ..] = words {
+            self.steps = u32::from_le_bytes(*steps);
+            self.behind = u32::from_le_bytes(*behind);
+        }
+    }
 }
 
 pub(crate) struct SimDrawn {
@@ -181,17 +209,16 @@ impl LivePool {
 
 #[derive(Default)]
 pub(crate) struct SimWork {
-    pub(crate) layout: Option<(Layout, u64)>,
-    pub(crate) setup: Option<((usize, usize), u64)>,
+    pub(crate) layout: Option<(Layout, SimShape)>,
+    pub(crate) setup: Option<(usize, usize)>,
     pub(crate) square: Option<Square>,
     pub(crate) table: Option<StoredBlocks>,
     pub(crate) listed: Option<Listed>,
     pub(crate) slot: SimSlot,
     pub(crate) touches: Option<SimTouches>,
-    pub(crate) steps: u32,
+    pub(crate) clock: Option<SimClock>,
     pub(crate) sourced: u32,
     pub(crate) blocks: u32,
-    pub(crate) terrain: u32,
     pub(crate) ready: bool,
     pub(crate) drawn: Option<SimDrawn>,
 }
@@ -207,10 +234,8 @@ struct SimWindow {
     stored: StoredBlocks,
     wrap: [u32; 2],
     layout: Layout,
-    layout_generation: u64,
     room: usize,
     live_room: usize,
-    setup_generation: u64,
     sourced: u32,
     solids: u32,
     tiles: [u32; 4],
@@ -229,10 +254,6 @@ struct SimWindow {
 #[derive(Default)]
 pub(crate) struct LiveSim {
     window: Option<SimWindow>,
-    steps: u32,
-    behind: u32,
-    tick: Option<i64>,
-    generation: u64,
     touches: [u32; 2],
     pub(crate) work: SimWork,
 }
@@ -257,7 +278,7 @@ impl LiveSim {
         self.work = SimWork::default();
         let Some(live) = live else {
             self.window = None;
-            (self.steps, self.behind, self.tick, self.touches) = (0, 0, None, [0; 2]);
+            self.touches = [0; 2];
             return;
         };
         let sets_up = live.ground.is_some();
@@ -273,8 +294,7 @@ impl LiveSim {
                     .as_mut()
                     .map(|current| current.follow(window, live.changed))
             } else {
-                self.generation += 1;
-                let (held, square) = SimWindow::new(window, self.generation);
+                let (held, square) = SimWindow::new(window);
                 self.window = Some(held);
                 Some(square)
             };
@@ -296,14 +316,6 @@ impl LiveSim {
         let step = step_seconds(cell);
         let tick = (seconds / f64::from(step)).floor() as i64;
         let most = i64::from(live_steps(cell));
-        let passed = self.tick.map_or(0, |last| (tick - last).max(0));
-        let starting = self.tick.map_or(tick, |last| last + 1);
-        self.tick = Some(tick);
-        (self.steps, self.behind) = if current.ready {
-            (passed.min(most) as u32, (passed - most).max(0) as u32)
-        } else {
-            (0, 0)
-        };
         let pushing = touching(window, live.touches);
         self.touches = [
             pushing.as_ref().map_or(0, |pushing| pushing.count[0]),
@@ -312,24 +324,29 @@ impl LiveSim {
         let [columns, rows] = current.stored.blocks;
         let pooled = current.stored.stored() as u32;
         let [x, z] = window.first;
-        self.work.layout = Some((current.layout, current.layout_generation));
-        self.work.setup = Some(((current.room, current.live_room), current.setup_generation));
+        self.work.layout = Some((current.layout, current.shape()));
+        self.work.setup = Some((current.room, current.live_room));
+        self.work.clock = Some(SimClock { tick, most });
         self.work.slot = SimSlot {
             shape: [
                 cells,
                 cells,
-                SIM_STEPPING | SIM_LIVE | SIM_BURSTING,
+                SimFlags {
+                    stepping: true,
+                    live: true,
+                    bursting: true,
+                    ..SimFlags::default()
+                }
+                .pack(),
                 current.sourced,
             ],
             step: [cell, step, 0.0, 0.0],
             blocks: [columns, rows, pooled, 0],
-            place: [x as u32, z as u32, starting as u32, 0],
+            place: [x as u32, z as u32, 0, 0],
         };
         self.work.touches = pushing;
-        self.work.steps = self.steps;
         self.work.sourced = current.sourced;
         self.work.blocks = pooled;
-        self.work.terrain = live.ground.unwrap_or(0);
         self.work.ready = current.ready;
         self.work.drawn = current.ready.then_some(SimDrawn {
             origin: window.origin,
@@ -346,22 +363,13 @@ impl LiveSim {
         self.prepare(None, &|_| false, 0.0);
     }
 
-    pub(crate) fn cells(&self) -> (Cut, [u32; 5]) {
-        self.window.as_ref().filter(|window| window.ready).map_or(
-            (Cut::default(), [0; 5]),
-            |window| {
-                (
-                    Cut::of(window.asked, window.cells),
-                    [
-                        window.placed - window.cells,
-                        self.steps,
-                        self.behind,
-                        window.whole,
-                        window.waiting,
-                    ],
-                )
-            },
-        )
+    pub(crate) fn cells(&self) -> Option<(Cut, [u32; 3])> {
+        self.window.as_ref().filter(|window| window.ready).map(|window| {
+            (
+                Cut::of(window.asked, window.cells),
+                [window.placed - window.cells, window.whole, window.waiting],
+            )
+        })
     }
 
     pub(crate) fn touches(&self) -> [u32; 2] {
@@ -370,7 +378,15 @@ impl LiveSim {
 }
 
 impl SimWindow {
-    fn new(window: &WaterWindow, generation: u64) -> (Self, Square) {
+    fn shape(&self) -> SimShape {
+        SimShape {
+            cells: self.cells,
+            cell: self.cell.to_bits(),
+            pool: self.pool,
+        }
+    }
+
+    fn new(window: &WaterWindow) -> (Self, Square) {
         let pool = pool_of(window);
         let (stored, wrap) = wrapped(window, pool);
         let slots = stored.stored();
@@ -391,10 +407,8 @@ impl SimWindow {
             stored,
             wrap,
             layout,
-            layout_generation: generation,
             room: entries.max(1).next_power_of_two(),
             live_room: 4,
-            setup_generation: 0,
             sourced: 0,
             solids: 0,
             tiles: [0; 4],
@@ -452,10 +466,8 @@ impl SimWindow {
                 .sum::<usize>()
                 + table_room as usize;
             self.live_room = words.max(self.live_room).max(4).next_power_of_two();
-            self.setup_generation += 1;
             self.live.reset(table_room, self.live_room as u32);
-            self.live.place(&window.reads, tiles);
-            Vec::new()
+            self.live.place(&window.reads, tiles).unwrap_or_default()
         });
         self.tiles = tiles;
         let sources = sources_of(&self.layout, window, &self.stored);
@@ -566,14 +578,12 @@ impl SimWindow {
             tiles: self.tiles,
             terrain: [0; 4],
         };
-        let blocks = listed.len() as u32;
         (
             table,
             Some(Listed {
                 entries: listed,
                 offset: u64::from(self.solids) * SETUP_SOLID as u64 * 16,
                 frame,
-                blocks,
                 ghosts,
             }),
         )
@@ -750,7 +760,7 @@ fn touching(window: &WaterWindow, touches: &[WaterObstacle]) -> Option<SimTouche
 
 pub(crate) fn plan_sim(
     obstacles: Res<WaterObstacles>,
-    (ground, time, camera): (Res<GroundTiles>, Res<FrameTime>, Res<Camera>),
+    (ground, time, view): (Res<GroundTiles>, Res<FrameTime>, Res<PrimaryView>),
     (tiles, baking): (Res<TerrainTiles>, Res<GroundBaking>),
     mut state: ResMut<WaterState>,
 ) {
@@ -766,7 +776,7 @@ pub(crate) fn plan_sim(
         state.live.rest();
         return;
     }
-    let eye = camera.position;
+    let eye = view.eye();
     let index_of = |entity: Entity| {
         ground
             .tables
@@ -790,11 +800,7 @@ pub(crate) fn plan_sim(
         };
         read.ready
             && read.tile.is_some_and(|(_, stamp)| {
-                ground
-                    .held
-                    .binary_search_by_key(&(entity, read.key), |held| (held.terrain, held.key))
-                    .is_ok_and(|at| ground.held[at].stamp == stamp)
-                    && blocks.current(entity, read.key, read.water.as_ref())
+                blocks.shows((entity, read.key), stamp, read.water.as_ref())
             })
     };
     let live = found.map(|(_, window, beyond, ground)| Live {
@@ -816,8 +822,10 @@ pub(crate) struct SimGpu {
     set_blocks: ComputePipeline<WaterGpu>,
     set_ring: ComputePipeline<WaterGpu>,
     pass: Pass<WaterGpu>,
-    layout: Option<(Layout, u64)>,
-    setup_held: Option<((usize, usize), u64)>,
+    layout: Option<(Layout, SimShape)>,
+    stepped: Option<i64>,
+    planned: Option<(i64, [u32; 2], bool)>,
+    pending: Vec<[u32; 4]>,
     listed: Option<(u32, u32)>,
     run: Option<(u32, u32, u32, Option<[u32; 2]>)>,
 }
@@ -861,7 +869,9 @@ impl SimGpu {
             set_ring,
             pass,
             layout: None,
-            setup_held: None,
+            stepped: None,
+            planned: None,
+            pending: Vec::new(),
             listed: None,
             run: None,
         })
@@ -897,38 +907,49 @@ impl SimGpu {
         let work = &live.work;
         self.listed = None;
         self.run = None;
-        let (Some((layout, generation)), Some((rooms, setup_generation))) =
-            (work.layout, work.setup)
+        if let Some((tick, counts, listed)) = self.planned.take()
+            && cx.ran(self.pass)
+        {
+            self.stepped = Some(tick);
+            if listed {
+                self.pending.clear();
+            }
+            let bytes = counts.iter().flat_map(|count| count.to_le_bytes()).collect();
+            cx.deliver::<LiveSteps>(0, bytes);
+        }
+        let (Some((layout, shape)), Some(rooms), Some(clock)) =
+            (work.layout, work.setup, work.clock)
         else {
             self.layout = None;
-            self.setup_held = None;
+            self.stepped = None;
+            self.pending.clear();
             self.slots.release(cx);
             self.setup.release(cx);
             return;
         };
-        let fresh = self.layout.is_none_or(|(_, held)| held != generation);
-        self.slots.hold(layout, fresh, cx);
-        self.layout = Some((layout, generation));
-        let setup_fresh = fresh
-            || self
-                .setup_held
-                .is_none_or(|held| held != (rooms, setup_generation));
-        self.setup.hold(rooms, setup_fresh, cx);
-        self.setup_held = Some((rooms, setup_generation));
+        let fresh = self.layout != Some((layout, shape));
+        let made = self.slots.hold(layout, fresh, cx);
+        self.layout = Some((layout, shape));
+        let refill = self.setup.hold(rooms, fresh, cx) == Allocation::Fresh
+            || made == Allocation::Fresh
+            || fresh;
+        if fresh {
+            self.pending.clear();
+        }
         let pool = live.window.as_ref().map(|window| &window.live);
-        if setup_fresh && let Some(pool) = pool {
+        if refill && let Some(pool) = pool {
             for (range, water) in pool.tiles.values() {
                 self.write_chunk(rooms.0, (range.start, water), cx);
             }
         }
-        if (setup_fresh || work.square.is_some())
+        if (refill || work.square.is_some())
             && let Some(pool) = pool
             && !pool.table.is_empty()
         {
             cx.write(self.setup.list, SetupHandles::live_at(rooms.0), &pool.table);
         }
         if let Some(square) = &work.square {
-            if !setup_fresh {
+            if !refill {
                 for (at, water) in &square.chunks {
                     self.write_chunk(rooms.0, (*at, water), cx);
                 }
@@ -944,12 +965,22 @@ impl SimGpu {
             self.slots.write_table(&layout, 0, table, cx);
         }
         if let Some(listed) = &work.listed {
-            cx.write(self.setup.list, listed.offset, &listed.entries);
-            cx.write(self.setup.frame, 0, &[listed.frame]);
-            self.listed = Some((listed.blocks, listed.ghosts));
+            let fresh_slots: Vec<u32> = listed.entries.iter().map(|entry| entry[0]).collect();
+            self.pending
+                .retain(|entry| !fresh_slots.contains(&entry[0]));
+            self.pending.extend_from_slice(&listed.entries);
+            let mut frame = listed.frame;
+            frame.counts[0] = self.pending.len() as u32;
+            if !self.pending.is_empty() {
+                cx.write(self.setup.list, listed.offset, &self.pending);
+            }
+            cx.write(self.setup.frame, 0, &[frame]);
+            self.listed = Some((self.pending.len() as u32, listed.ghosts));
         }
         self.slots.write_frames(&layout, cx);
-        cx.write(self.slots.squares, 0, &[squares(&[work.slot])]);
+        let mut slot = work.slot;
+        slot.place[2] = self.stepped.map_or(clock.tick, |last| last + 1) as u32;
+        cx.write(self.slots.squares, 0, &[squares(&[slot])]);
         let none = SimTouches::zeroed();
         cx.write(
             self.slots.touches,
@@ -957,13 +988,18 @@ impl SimGpu {
             &[*work.touches.as_ref().unwrap_or(&none)],
         );
         if !work.ready {
+            self.stepped = Some(clock.tick);
             return;
         }
+        let passed = self.stepped.map_or(0, |last| (clock.tick - last).max(0));
+        let steps = passed.min(clock.most) as u32;
+        let behind = (passed - clock.most).max(0) as u32;
         let touched = work
             .touches
             .as_ref()
             .map(|touches| [touches.blocks[2], touches.blocks[3]]);
-        self.run = Some((work.steps, work.sourced, work.blocks, touched));
+        self.run = Some((steps, work.sourced, work.blocks, touched));
+        self.planned = Some((clock.tick, [steps, behind], self.listed.is_some()));
         cx.run(self.pass);
     }
 

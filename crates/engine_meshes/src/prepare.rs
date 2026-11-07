@@ -1,29 +1,28 @@
+use bevy_ecs::prelude::Query;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
     DrawnPoses, GlobalTransforms, GpuBits, ImpostorRecord, NodeInfo, NodePose, NodeStreams,
-    PoseRows, Since,
+    PoseRows, SceneViews, Since,
 };
 use engine_render::{
     AfterRead, Allocation, CopyRegion, GpuPart, Prepare, mip_levels, pyramid_extents, wgpu,
 };
 
 use crate::batches::BatchPlan;
-use crate::casters::{CACHE_BYTES, CasterPlan, ID_CAPACITIES, MAPS};
-use crate::gpu::{FACES, MeshesGpu, NODE_LEVELS, PYRAMID_LEVELS};
+use crate::gpu::{Drawing, MeshesGpu, NODE_LEVELS, PYRAMID_LEVELS, VIEW_FRAME_BYTES};
 use crate::layouts::{
-    BatchData, COMPOSED_BYTES, CandidateData, CandidateState, CasterFrame, DRAW_ARGS_BYTES, GROUP,
-    LOD_LEVELS, NO_NODE, PresentationFrame, UNWATCHED,
+    BatchData, COMPOSED_BYTES, CandidateData, CandidateState, DRAW_ARGS_BYTES, GROUP, LOD_LEVELS,
+    NO_NODE, PresentationFrame, UNWATCHED,
 };
 use crate::order::MeshPlan;
 use crate::presentation::{
-    CASTER_TOTALS_BYTES, CasterTotals, FADE_MARGIN, Kept, POSE, PresentationTotals,
-    TOTALS_BYTES, UploadSources, WATCHED, frustum_uniform, grow, rasterized, storage_bytes,
+    FADE_MARGIN, Kept, POSE, PresentationTotals, TOTALS_BYTES, UploadSources, VIEWS, ViewSlot,
+    WATCHED, frustum_uniform, grow, rasterized, storage_bytes,
 };
 use crate::retained::RetainedRender;
 use crate::uploads::{ColorData, PoseData, UploadRange, color_data, listed_ranges};
 
 const TOTALS: u32 = 0;
-const CASTERS: u32 = 1;
 
 struct View {
     view_projection: glam::Mat4,
@@ -33,7 +32,6 @@ struct View {
     occlusion: Option<u32>,
     lod_error: f32,
     impostors: bool,
-    probes: bool,
     fade: f32,
     watched: Option<u32>,
 }
@@ -52,7 +50,6 @@ impl MeshesGpu {
                 plan,
                 assets,
                 decided,
-                caster_plan,
                 presented,
                 hierarchy,
                 view,
@@ -60,11 +57,9 @@ impl MeshesGpu {
                 impostors,
                 resolve,
                 time,
-                maps,
-                captures,
                 limits,
             ),
-            (records, watched, totals, residency),
+            (records, scene_views, watched, totals, residency),
         ): SystemParamItem<'_, '_, <Self as GpuPart>::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
@@ -76,15 +71,15 @@ impl MeshesGpu {
         let held = records
             .single()
             .ok()
+            .filter(|held| held.generation == plan.generation())
             .map_or(&[][..], |held| held.records.as_slice());
         self.write_impostors(held, cx);
-        self.state.casts = maps.on;
         self.state.groups.first_instance = limits.indirect_first_instance;
         self.state.instance_count = plan.ordered.len();
         let temporal = view.temporal();
         let fresh = self.prepare_instances(&retained, &plan, temporal, cx);
         let size = view.render_size();
-        let motion = self.prepare_motion(&plan, (view.display_size(), temporal, fresh), cx);
+        let motion = self.prepare_motion(&plan, (temporal, view.history().valid(), fresh), cx);
         let shown = cx.ran(self.passes.presentation);
         let fade = self.fade_share(time.real_elapsed as f32, detail.fade_seconds, shown);
         if !decided.occlusion_enabled {
@@ -105,7 +100,6 @@ impl MeshesGpu {
                 0.0
             },
             impostors: impostors.enabled,
-            probes: captures.views,
             fade,
             watched: watched.slot,
         };
@@ -113,7 +107,6 @@ impl MeshesGpu {
         let prepared = self.prepare_presentation(
             &retained,
             &plan,
-            &caster_plan,
             (&*presented, &nodes),
             &culling,
             &decided,
@@ -128,21 +121,21 @@ impl MeshesGpu {
         if engine_core::profile::active() {
             self.gpu_counters(&prepared, totals.last().map(|last| last.visible));
         }
-        self.prepare_faces(&captures, cx);
-        self.prepare_casters(&caster_plan, &maps, cx);
+        self.prepare_views(&scene_views, limits.storage_room, cx);
     }
 
     fn prepare_motion(
         &mut self,
         plan: &BatchPlan,
-        (size, temporal, fresh): (glam::UVec2, bool, bool),
+        (temporal, history, fresh): (bool, bool, bool),
         cx: &mut Prepare<'_, Self>,
     ) -> bool {
         let shown = cx.ran(self.passes.presentation);
         let state = &mut self.state;
-        let key = (plan.generation(), size);
-        let motion = temporal && !fresh && shown && state.motion_key == Some(key);
-        state.motion_key = temporal.then_some(key);
+        let generation = plan.generation();
+        let motion =
+            temporal && history && !fresh && shown && state.motion_generation == Some(generation);
+        state.motion_generation = temporal.then_some(generation);
         state.temporal = temporal;
         if temporal {
             engine_core::profile::counter("render.taa_object_motion", f64::from(u8::from(motion)));
@@ -307,13 +300,12 @@ impl MeshesGpu {
 
     #[expect(
         clippy::too_many_arguments,
-        reason = "the presentation joins the plan, the casters, the hierarchy and the view"
+        reason = "the presentation joins the plan, the hierarchy and the view"
     )]
     fn prepare_presentation(
         &mut self,
         retained: &RetainedRender,
         plan: &BatchPlan,
-        casters: &CasterPlan,
         (poses, streams): (&DrawnPoses, &NodeStreams<'_>),
         view: &View,
         decided: &MeshPlan,
@@ -323,7 +315,6 @@ impl MeshesGpu {
         self.ensure_nodes(streams.info.len(), streams.parents.len(), cx);
         let kept = Kept {
             phase_two: view.occlusion.is_some(),
-            probe_faces: view.probes,
             impostors: view.impostors && view.lod_error > 0.0,
         };
         self.ensure_groups((plan.ordered.len(), plan.batches.len()), kept, cx);
@@ -338,12 +329,13 @@ impl MeshesGpu {
             .plan(poses, streams.info.len())
             .map(|full| (full, self.upload_nodes(streams, cx)));
         self.upload_words(sources.hierarchy, streams.info.len(), cx);
-        let group_bytes = self.write_batches(plan, casters, &sources, cx)
+        let group_bytes = self.write_batches(plan, &sources, cx)
             + self.write_candidates(retained, plan, sources.hierarchy, cx);
         self.write_frame_uniform(streams.alpha, view, decided, cx);
         cx.run(self.passes.presentation);
         if self.state.occlusion {
             cx.run(self.passes.occlusion);
+            cx.run(self.passes.occluded);
         }
         if self.state.candidates != 0
             && cx.read_back::<PresentationTotals>(
@@ -489,17 +481,6 @@ impl MeshesGpu {
                 storage_bytes(if wanted { args } else { 0 }),
             );
         }
-        for face in 0..FACES {
-            let wanted = kept.probe_faces;
-            cx.allocate_buffer(
-                presented.face_visible[face],
-                storage_bytes(if wanted { ids } else { 0 }),
-            );
-            cx.allocate_buffer(
-                presented.face_draws[face],
-                storage_bytes(if wanted { args } else { 0 }),
-            );
-        }
         let impostors = [kept.impostors, kept.impostors && kept.phase_two];
         for (index, wanted) in impostors.into_iter().enumerate() {
             cx.allocate_buffer(
@@ -596,25 +577,16 @@ impl MeshesGpu {
     fn write_batches(
         &mut self,
         plan: &BatchPlan,
-        casters: &CasterPlan,
         sources: &UploadSources<'_>,
         cx: &mut Prepare<'_, Self>,
     ) -> u64 {
         let groups = &mut self.state.groups;
-        groups.stage_batches(
-            &plan.batches,
-            sources.assets,
-            sources.residency,
-            (
-                |index| casters.batch_group(index),
-                |index| {
-                    sources
-                        .impostors
-                        .get(index)
-                        .map_or(0.0, ImpostorRecord::error)
-                },
-            ),
-        );
+        groups.stage_batches(&plan.batches, sources.assets, sources.residency, |index| {
+            sources
+                .impostors
+                .get(index)
+                .map_or(0.0, ImpostorRecord::error)
+        });
         if !groups.batch_staging.is_empty() {
             cx.write(self.presented.batches, 0, &groups.batch_staging);
         }
@@ -717,6 +689,7 @@ impl MeshesGpu {
                 .extend(if view.impostors { 1.0 } else { 0.0 })
                 .to_array(),
             fade: [view.fade, FADE_MARGIN, 0.0, 0.0],
+            bases: [0; 4],
         };
         cx.allocate_buffer(self.presented.frame, size_of::<PresentationFrame>() as u64);
         cx.write(self.presented.frame, 0, &[uniform]);
@@ -736,110 +709,108 @@ impl MeshesGpu {
         }
     }
 
-    fn prepare_faces(
+    fn prepare_views(
         &mut self,
-        captures: &engine_places_rendering::probes::ProbeCaptures,
+        published: &Query<'_, '_, &SceneViews>,
+        room: u64,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.state.faces.clear();
-        let Some(base) = self.state.frame else {
-            return;
-        };
-        if self.state.candidates == 0 || !self.state.groups.kept.probe_faces {
-            return;
-        }
-        for face in &captures.faces {
-            let slot = face.face as usize;
-            if slot >= FACES || self.state.faces.contains(&face.face) {
-                continue;
-            }
-            let (planes, absolute) = frustum_uniform(face.view);
-            let mut uniform = base;
-            uniform.planes = planes;
-            uniform.absolute_view_projection = absolute;
-            uniform.view_projection = face.view.to_cols_array_2d();
-            uniform.culling = 1;
-            uniform.mask = CandidateState {
-                probe: true,
-                ..CandidateState::default()
-            }
-            .pack();
-            uniform.occlusion = 0;
-            uniform.subpixel = 1;
-            uniform.viewport = [captures.size as f32, captures.size as f32, 0.0, 0.0];
-            uniform.motion = 0;
-            uniform.budget = u32::MAX;
-            uniform.lod_error = 0.0;
-            let frame = self.presented.faces[slot];
-            cx.allocate_buffer(frame, size_of::<PresentationFrame>() as u64);
-            cx.write(frame, 0, &[uniform]);
-            self.state.faces.push(face.face);
-        }
-        if !self.state.faces.is_empty() {
-            cx.run(self.passes.probes);
-        }
-    }
-
-    fn prepare_casters(
-        &mut self,
-        plan: &CasterPlan,
-        maps: &engine_places_rendering::shadows::ShadowMaps,
-        cx: &mut Prepare<'_, Self>,
-    ) {
-        let buffers = &self.casters;
-        let draws = &mut self.state.casters;
-        draws.maps.clone_from(&plan.maps);
-        draws.runs = maps.on && !maps.regions.is_empty() && !plan.groups.is_empty();
-        if !draws.runs {
-            return;
-        }
-        cx.allocate_buffer(
-            buffers.cache,
-            storage_bytes(plan.cache_capacity as u64 * CACHE_BYTES),
-        );
-        let starts = (ID_CAPACITIES * plan.id_capacity * 4) as u64;
-        cx.allocate_buffer(
-            buffers.ids,
-            storage_bytes(starts + (plan.arg_capacity * 4) as u64),
-        );
-        let args = (MAPS * plan.arg_capacity) as u64 * DRAW_ARGS_BYTES;
-        cx.allocate_buffer(buffers.args, storage_bytes(args));
-        cx.allocate_buffer(buffers.template, storage_bytes(args));
-        cx.allocate_buffer(buffers.totals, storage_bytes(CASTER_TOTALS_BYTES));
-        draws.groups.clear();
-        draws.groups.extend(
-            plan.groups
+        let state = &mut self.state;
+        state.views.clear();
+        state.casts = false;
+        let base = state.frame.filter(|_| state.candidates != 0);
+        let capacity = state.groups.capacity as u64;
+        let arg_count = u64::from(LOD_LEVELS) * u64::from(state.groups.batch_count) + 1;
+        let mut listed: Vec<&SceneViews> = base.map_or_else(Vec::new, |_| published.iter().collect());
+        listed.sort_by_key(|views| views.pass);
+        let (mut ids, mut args, mut refused) = (0_u64, 0_u64, 0_u32);
+        let mut frames: Vec<PresentationFrame> = Vec::new();
+        for views in listed {
+            let Some(depth_only) = self
+                .scenes
                 .iter()
-                .map(|group| (group.mesh, group.material, group.start)),
+                .filter(|scene| scene.name == views.pass)
+                .find_map(|scene| match scene.drawing {
+                    Drawing::Casters { .. } => Some(true),
+                    Drawing::Views { .. } => Some(false),
+                    Drawing::Lit { .. } | Drawing::Depth { .. } => None,
+                })
+            else {
+                continue;
+            };
+            for (index, view) in views.views.iter().enumerate() {
+                let (Some(base), detailed) = (base, view.detail > 0.0) else {
+                    continue;
+                };
+                let id_words = if detailed { u64::from(LOD_LEVELS) } else { 1 } * capacity;
+                let over = (ids + id_words) * 4 > room || (args + arg_count) * DRAW_ARGS_BYTES > room;
+                if room != 0 && over {
+                    refused += 1;
+                    continue;
+                }
+                let view_projection = glam::Mat4::from_cols_array_2d(&view.view_projection);
+                let (planes, absolute) = frustum_uniform(view_projection);
+                let mut uniform = base;
+                uniform.planes = view.planes.unwrap_or(planes);
+                uniform.absolute_view_projection = absolute;
+                uniform.view_projection = view.view_projection;
+                uniform.culling = 1;
+                uniform.mask = CandidateState {
+                    view: true,
+                    ..CandidateState::default()
+                }
+                .pack();
+                uniform.occlusion = 0;
+                uniform.subpixel = 1;
+                uniform.viewport = [view.size[0] as f32, view.size[1] as f32, 0.0, 0.0];
+                uniform.motion = 0;
+                uniform.budget = u32::MAX;
+                uniform.lod_error = view.detail;
+                uniform.watched = UNWATCHED;
+                uniform.eye = [view.eye[0], view.eye[1], view.eye[2], 0.0];
+                uniform.bases = [
+                    ids as u32,
+                    args as u32,
+                    view.takes.map_or(0, |mobility| mobility as u32 + 1),
+                    0,
+                ];
+                state.views.push(ViewSlot {
+                    pass: views.pass,
+                    index: index as u32,
+                    frame_at: (frames.len() as u64 * VIEW_FRAME_BYTES) as u32,
+                    ids_base: ids,
+                    args_base: args,
+                    detailed,
+                    mirrored: view_projection.determinant() < 0.0,
+                });
+                state.casts |= depth_only;
+                frames.push(uniform);
+                ids += id_words;
+                args += arg_count;
+            }
+        }
+        let counts = [state.views.len() as u32, refused];
+        cx.deliver::<PresentationTotals>(VIEWS, bytemuck::cast_slice(&counts).to_vec());
+        if frames.is_empty() {
+            return;
+        }
+        let presented = &self.presented;
+        cx.allocate_buffer(
+            presented.view_frames,
+            frames.len() as u64 * VIEW_FRAME_BYTES,
         );
-        draws.regions_in_args = plan.regions_in_args;
-        draws.id_capacity = plan.id_capacity;
-        cx.write(buffers.template, 0, &plan.template);
-        cx.write(buffers.ids, starts, &plan.starts);
-        let candidates = self.state.groups.count;
-        draws.candidates = candidates;
-        let frame = CasterFrame {
-            candidates,
-            groups: plan.groups.len() as u32,
-            capacity: plan.id_capacity as u32,
-            pad: 0,
-        };
-        cx.allocate_buffer(buffers.select, size_of::<CasterFrame>() as u64);
-        cx.write(buffers.select, 0, &[frame]);
-        cx.copy(
-            self.passes.caster_args,
-            &[CopyRegion::Bytes {
-                from: 0,
-                to: 0,
-                size: MAPS as u64 * plan.groups.len() as u64 * DRAW_ARGS_BYTES,
-            }],
+        for (at, frame) in frames.iter().enumerate() {
+            cx.write(
+                presented.view_frames,
+                at as u64 * VIEW_FRAME_BYTES,
+                std::slice::from_ref(frame),
+            );
+        }
+        cx.allocate_buffer(presented.view_visible, storage_bytes(ids * 4));
+        cx.allocate_buffer(
+            presented.view_draws,
+            storage_bytes(args * DRAW_ARGS_BYTES),
         );
-        cx.run(self.passes.casters);
-        cx.read_back::<CasterTotals>(
-            CASTERS,
-            buffers.totals,
-            0..CASTER_TOTALS_BYTES,
-            AfterRead::Clear,
-        );
+        cx.run(self.passes.views);
     }
 }

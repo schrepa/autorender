@@ -1,22 +1,21 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, View};
-use engine_places_rendering::shadows::{
-    CasterMap, CasterView, SHADOW_REGIONS, ShadowCasters, ShadowMaps,
-};
+use engine_core::{Error, PrimaryView};
+use engine_places_rendering::shadows::{CasterMap, CasterView, SHADOW_REGIONS, ShadowMaps};
 use engine_render::{
-    Access, AfterRead, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DebugShown,
-    DepthUse, DrawInput, Draws, Encode, FULLSCREEN, GpuPart, Install, Layer, Lifetime, Own, Pass,
-    Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, VertexLayout, ViewTarget, wgpu,
+    Access, AfterRead, Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count,
+    DebugShown, DepthUse, DrawInput, Encode, FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass,
+    Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, TargetName, Texture, VertexLayout, wgpu,
 };
 
+use crate::ShadowPass;
 use crate::constants::{LEVEL_WORDS, MARK_GROUP, SKY_LAYERS};
 use crate::gpu_layouts::{CasterCull, ComposeData, Route, SkyViews};
-use crate::plan::{MarkKind, ShadowDrawn, ShadowFeedback, ShadowPlan};
+use crate::plan::{LOST, MarkKind, SKIPPED, SKY_LOST, ShadowDrawn, ShadowFeedback, ShadowPlan};
 use crate::regions::{MOVING_VIEW, SKY_VIEW};
 use crate::shaders;
 use crate::sky::RESOLUTION;
 
-const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
+pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 const TABLE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 const SKY_OPEN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 const COMPOSE_ATTRIBUTES: [wgpu::VertexAttribute; 2] = [
@@ -58,14 +57,13 @@ pub(crate) struct ShadowsGpu {
     sky_opening: Pipeline<Self, Own>,
     compose_vertices: DrawInput<Self, Own>,
     marking: ComputePipeline<Self>,
-    casters: Draws<ShadowCasters>,
     at: Vec<CasterView>,
     sky_layer: Option<u32>,
     composed: u32,
     moving: u32,
     marked: Option<[u32; 3]>,
     opened: Option<(u32, u32)>,
-    drawing: Option<u32>,
+    drawing: Option<(u32, Vec<u8>)>,
     written_table: Vec<u64>,
     compose_bytes: u64,
 }
@@ -157,7 +155,7 @@ impl ShadowsGpu {
     fn open_sky(
         &mut self,
         plan: &ShadowPlan,
-        view: &View,
+        view: &PrimaryView,
         shown: DebugShown,
         cx: &mut Prepare<'_, Self>,
     ) {
@@ -181,20 +179,22 @@ impl ShadowsGpu {
         cx.run(self.opening);
     }
 
-    fn allocate(&mut self, plan: &ShadowPlan, cx: &mut Prepare<'_, Self>) {
+    fn allocate(&mut self, plan: &ShadowPlan, cx: &mut Prepare<'_, Self>) -> (bool, bool) {
         let Some(key) = plan.key else {
-            return;
+            return (false, false);
         };
         let (width, height) = key.atlas.size();
         let side = key.region_side();
         let (columns, rows) = key.table_size();
-        cx.allocate(self.atlas, extent(width, height, 1), 1);
+        let atlas = cx.allocate(self.atlas, extent(width, height, 1), 1) == Allocation::Fresh;
         cx.allocate(self.regions, extent(side, side, SHADOW_REGIONS), 1);
         if cx.allocate(self.tiles, extent(columns, rows, 1), 1) == Allocation::Fresh {
             self.written_table.clear();
         }
+        let mut sky = false;
         if plan.sky.live {
-            cx.allocate(self.sky, extent(RESOLUTION, RESOLUTION, SKY_LAYERS), 1);
+            sky = cx.allocate(self.sky, extent(RESOLUTION, RESOLUTION, SKY_LAYERS), 1)
+                == Allocation::Fresh;
         } else {
             cx.release(self.sky);
         }
@@ -207,6 +207,7 @@ impl ShadowsGpu {
         );
         cx.allocate_buffer(self.cull, size_of::<CasterCull>() as u64);
         cx.allocate_buffer(self.sky_views, size_of::<SkyViews>() as u64);
+        (atlas, sky)
     }
 }
 
@@ -214,7 +215,7 @@ impl GpuPart for ShadowsGpu {
     type Reads = (
         Res<'static, ShadowMaps>,
         Res<'static, ShadowPlan>,
-        Res<'static, View>,
+        Res<'static, PrimaryView>,
         Res<'static, DebugShown>,
     );
     const NAME: &'static str = "shadows";
@@ -249,7 +250,7 @@ impl GpuPart for ShadowsGpu {
         cx.frame(face_routes::CASTER_ROUTES, Bind::Buffer(routes))?;
         cx.frame(face_routes::CASTER_MARKS, Bind::Buffer(map_marks))?;
         let maps = cx
-            .pass("shadow_maps")
+            .scene::<ShadowPass>()
             .label("engine/shadow-map")
             .depth_cleared(regions, 1.0)
             .depth(atlas, Access::Load)
@@ -259,7 +260,7 @@ impl GpuPart for ShadowsGpu {
             .pass("shadow_marks")
             .label("engine/shadow-marks")
             .span("shadow_marks")
-            .at(Layer::Backdrop)
+            .at(AttachPoint::Sky)
             .id();
         let opening = cx
             .pass("sky_occlusion")
@@ -298,11 +299,10 @@ impl GpuPart for ShadowsGpu {
             marks,
             mark_shaders::MARK_SHADOW_TILES,
             &[
-                (mark_shaders::SHADOW_DEPTH, Bind::Target(ViewTarget::Depth)),
+                (mark_shaders::SHADOW_DEPTH, Bind::Target(TargetName::DEPTH)),
                 (mark_shaders::SHADOW_MARKS, Bind::Buffer(depth_marks)),
             ],
         )?;
-        let casters = cx.claim::<ShadowCasters>(maps)?;
         Ok(Self {
             maps,
             marks,
@@ -323,7 +323,6 @@ impl GpuPart for ShadowsGpu {
             sky_opening,
             compose_vertices,
             marking,
-            casters,
             at: Vec::new(),
             sky_layer: None,
             composed: 0,
@@ -341,30 +340,30 @@ impl GpuPart for ShadowsGpu {
         (maps, plan, view, shown): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        if let Some(batch) = self.drawing.take() {
-            cx.deliver::<ShadowDrawn>(batch, vec![u8::from(cx.ran(self.maps))]);
+        if let Some((layout, tiles)) = self.drawing.take()
+            && !cx.ran(self.maps)
+        {
+            cx.deliver::<ShadowDrawn>(layout, tiles);
         }
         self.open_sky(&plan, &view, *shown, cx);
-        self.allocate(&plan, cx);
+        let (atlas_lost, sky_lost) = self.allocate(&plan, cx);
         self.upload(&plan, cx);
         self.at.clear();
-        self.at.extend(
-            maps.regions
-                .iter()
-                .enumerate()
-                .map(|(index, region)| CasterView {
-                    region: index as u32,
-                    map: region.map,
-                    refresh: region.refresh,
-                }),
-        );
+        self.at.extend(maps.views());
         self.sky_layer = plan.sky_draw.map(|draw| draw.layer as u32);
         (self.composed, self.moving) = (plan.composes.len() as u32, plan.moving);
         if !self.at.is_empty() || self.composed > 0 {
             cx.run(self.maps);
         }
+        let layout = u32::from(plan.layout);
+        if atlas_lost {
+            cx.deliver::<ShadowDrawn>(layout, plan.drawn_bytes(LOST));
+        }
+        if sky_lost {
+            cx.deliver::<ShadowDrawn>(layout, vec![SKY_LOST]);
+        }
         if self.composed > 0 {
-            self.drawing = Some(plan.batch);
+            self.drawing = Some((layout, plan.drawn_bytes(SKIPPED)));
         }
         let size = view.render_size();
         self.marked = (plan.mask_words != 0 && size.x != 0 && size.y != 0).then_some([
@@ -427,7 +426,7 @@ impl GpuPart for ShadowsGpu {
                 Attach::Depth(self.regions, Some(at.region)),
                 Some(at.region),
             );
-            drawn += self.casters.draw(&mut draw, (), at);
+            drawn += draw.scene(Some(at.view()));
         }
         if self.composed > 0 || self.moving > 0 {
             cx.span("shadow_atlas");
@@ -453,7 +452,7 @@ impl GpuPart for ShadowsGpu {
                     },
                 );
                 for at in self.at.iter().filter(|at| at.map == CasterMap::Moving) {
-                    drawn += self.casters.draw(&mut atlas, (), at);
+                    drawn += atlas.scene(Some(at.view()));
                 }
             }
         }
@@ -461,7 +460,7 @@ impl GpuPart for ShadowsGpu {
             cx.span("shadow_sky");
             for at in self.at.iter().filter(|at| at.map == CasterMap::Sky) {
                 let mut draw = cx.render(Attach::Depth(self.sky, Some(layer)), Some(SKY_VIEW));
-                drawn += self.casters.draw(&mut draw, (), at);
+                drawn += draw.scene(Some(at.view()));
             }
         }
         drawn

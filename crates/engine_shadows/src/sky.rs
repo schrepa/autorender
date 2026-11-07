@@ -87,6 +87,10 @@ impl SkyMaps {
         (self.ready, self.drawn)
     }
 
+    pub(crate) fn forget(&mut self) {
+        self.layers = [Layer::default(); LAYERS];
+    }
+
     pub(crate) fn release(&mut self) {
         self.live = false;
         self.layers = [Layer::default(); LAYERS];
