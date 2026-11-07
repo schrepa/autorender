@@ -2,30 +2,31 @@ import package::generated::wind::{GUST_QUICK_ACROSS, GUST_QUICK_RATE, GUST_QUICK
     GUST_QUICK_TRAVEL, GUST_SLOW_RATE, GUST_SLOW_SHARE, GUST_SLOW_TRAVEL, WIND_BRANCH,
     WIND_BRANCH_RATE, WIND_BRANCH_RISE, WIND_FLUTTER, WIND_FLUTTER_RATE, WIND_FULL_SPEED,
     WIND_SHAKE_STILL, WIND_SHAKE_WHOLE, WIND_SPAN, WIND_TRUNK_FLUTTER, WIND_TRUNK_RATE};
+import package::generated::pieces::wind::piece;
 
 fn wind_shown(swing: f32, pixels: f32) -> f32 {
     return smoothstep(WIND_SHAKE_STILL, WIND_SHAKE_WHOLE, swing * pixels);
 }
 
-fn wind_sway(wind: vec4<f32>, pixels: f32, root: vec3<f32>, height: f32,
-        local: vec3<f32>, sway: f32) -> vec3<f32> {
-    let speed = length(wind.xy);
+fn wind_sway(time: f32, pixels: f32, root: vec3<f32>, height: f32, local: vec3<f32>,
+        sway: f32) -> vec3<f32> {
+    let wind = piece();
+    let speed = length(wind.velocity);
     if speed < 1.0e-4 {
         return vec3<f32>(0.0);
     }
-    let toward = wind.xy / speed;
+    let toward = wind.velocity / speed;
     let along = vec3<f32>(toward.x, 0.0, toward.y);
-    let time = wind.w;
     let mean = sway * min(speed / WIND_FULL_SPEED, 1.0);
     let rise = max(height, 0.0) / WIND_SPAN;
     let bend = mean * rise * rise;
     var offset = along * bend;
     let travel = dot(root.xz, toward);
-    let gusts = wind.z
+    let gusts = wind.gusts
         * (GUST_SLOW_SHARE * sin(time * GUST_SLOW_RATE - travel * GUST_SLOW_TRAVEL)
             + GUST_QUICK_SHARE * sin(time * GUST_QUICK_RATE - travel * GUST_QUICK_TRAVEL
                 + root.x * GUST_QUICK_ACROSS));
-    let strongest = 1.0 + abs(wind.z);
+    let strongest = 1.0 + abs(wind.gusts);
     let own = dot(root.xz, vec2<f32>(0.83, 0.57));
     let trunk = wind_shown(bend * (strongest * (1.0 + WIND_TRUNK_FLUTTER) - 1.0), pixels);
     if trunk > 0.0 {

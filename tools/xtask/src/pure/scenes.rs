@@ -14,6 +14,7 @@ const FIXTURES: &str = "tools/xtask/pure/scenes.json";
 const SCENE_SOURCES: &[&str] = &[
     "crates/engine_scene/src",
     "crates/engine_grounding/src/lib.rs",
+    "crates/engine_splines/src/lib.rs",
     "crates/engine_splines/src/scene.rs",
     "crates/engine_splines/src/spline_mesh.rs",
     "crates/engine_world_streaming/src/scene.rs",
@@ -142,7 +143,6 @@ fn round_trip(name: &str, source: &str, kinds: &SceneKinds, observed: &mut Obser
                 format!("document {name} counts"),
                 json!({
                     "entities": document.entities.len(),
-                    "streamed": document.streamed.len(),
                     "prefabs": document.prefabs.len(),
                     "materials": document.materials.len(),
                     "meshes": document.meshes.len(),
@@ -228,6 +228,7 @@ fn scene_rules(root: &Path) -> Result<BTreeSet<String>, String> {
         }
     }
     let mut named = BTreeSet::new();
+    let mut rules = BTreeSet::new();
     for path in paths {
         let text = fs::read_to_string(&path)
             .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
@@ -236,10 +237,20 @@ fn scene_rules(root: &Path) -> Result<BTreeSet<String>, String> {
             let end = rest
                 .find(|c: char| !c.is_alphanumeric())
                 .unwrap_or(rest.len());
-            named.insert(rest[..end].to_owned());
+            let variant = &rest[..end];
+            let quoted = rest[end..]
+                .strip_prefix('(')
+                .and_then(|rest| rest.strip_prefix('"'));
+            match quoted.filter(|_| variant == "Brick") {
+                Some(code) => {
+                    rules.insert(code[..code.find('"').unwrap_or_default()].to_owned());
+                }
+                None => {
+                    named.insert(variant.to_owned());
+                }
+            }
         }
     }
-    let mut rules = BTreeSet::new();
     for variant in named {
         let code = ErrorCode::ALL
             .iter()

@@ -1,8 +1,11 @@
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
+use bevy_ecs::resource::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::{ApplyAt, Ask, Error, ErrorCode, FrameId, Layers, Mobility, NodeId, TextureHandle};
+use crate::{
+    ApplyAt, Ask, Error, ErrorCode, FrameId, Layers, Mobility, NodeId, Slot, TextureHandle,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Target {
@@ -146,6 +149,16 @@ pub struct ViewCut {
 impl Ask for ViewCut {
     const NAME: &'static str = "view_cut";
     const AT: ApplyAt = ApplyAt::FrameStart;
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct Jitter {
+    pub offset: Option<[f32; 2]>,
+    pub turn: f32,
+}
+
+impl Slot for Jitter {
+    const NAME: &'static str = "jitter";
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

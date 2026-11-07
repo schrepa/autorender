@@ -22,10 +22,10 @@ mod world_trace;
 use bevy_ecs::prelude::*;
 use engine_core::{Attributes, Brick, Bricks, JobKind, KindDecl, Schedule, Source};
 use engine_places_rendering::lighting::{Ambient, SunBlockers};
-use engine_places_rendering::reflections::TraceSource;
+use engine_places_rendering::reflections::{TraceDepths, TraceSource};
 use engine_places_rendering::sky::OpenSky;
 use engine_places_world::ground::{Bounce, GroundBaking, GroundTiles, Heightfield, Horizons};
-use engine_render::{DebugModes, RenderBricks, SurfaceKind, TraceDepth};
+use engine_render::{DebugModes, RenderBricks, SurfaceKind};
 
 pub use gpu::HorizonsPiece;
 pub use settings::{MAX_BOUNCE_LEVELS, TerrainShading, TerrainShadingStats};
@@ -45,21 +45,20 @@ impl Brick for TerrainShadingBrick {
     ];
 
     fn register(bricks: &mut Bricks<'_>) {
-        use shaders::terrain_shading::{ambient, blockers, faces, modes};
+        use shaders::terrain_shading::{ambient, blockers, faces, modes, trace_depth};
         bricks
             .when(|shading: Res<TerrainShading>| shading.enabled)
             .settings::<TerrainShading>()
             .stats::<TerrainShadingStats>()
+            .errors(&[engine_heightfield::INVALID_TERRAIN])
             .resource::<state::Bakes>()
             .resource::<state::Atlas>()
             .resource::<state::SurfaceTotals>()
             .resource::<state::PartStats>()
             .piece::<HorizonsPiece>()
             .generated(debug::GENERATED)
-            .surface_kind(SurfaceKind {
-                name: "ground",
-                depth: TraceDepth::Surface,
-            })
+            .surface_kind(SurfaceKind { name: "ground" })
+            .join::<TraceDepths>((), Some(trace_depth::MODULE))
             .fill::<Heightfield>(Some(faces::heightfield::MODULE))
             .fill::<GroundTiles>(Some(faces::ground_tiles::MODULE))
             .fill::<GroundBaking>(None)

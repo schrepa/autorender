@@ -1,5 +1,6 @@
-import package::face::debug::{DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN, DEBUG_NO_MATERIAL, DEBUG_OTHER,
-    DEBUG_SKY, DebugShade, DebugTargets, debug_record_kind};
+import package::face::debug::{DEBUG_EMPTY, DEBUG_NO_MATERIAL, DEBUG_OTHER, DebugShade,
+    DebugTargets, debug_record_kind};
+import package::generated::kinds::KIND_TERRAIN;
 import package::generated::pieces::terrain_shading::piece;
 import package::generated::terrain_shading::{DEBUG_SHOWN_DETAIL, DEBUG_SHOWN_MATERIALS,
     DEBUG_SHOWN_SKY, DEBUG_SHOWN_TILES, terrain_debug_patch_edge, terrain_debug_tile_edge};
@@ -48,17 +49,17 @@ fn shade_kind(shade: DebugShade, targets: DebugTargets) -> DebugShade {
     let kind = debug_record_kind(record);
     let made = unpack4x8unorm(ids.y);
     var color = vec3<f32>(0.0);
-    if kind != DEBUG_KIND_TERRAIN {
-        color = select(DEBUG_OTHER, DEBUG_SKY, kind == DEBUG_KIND_SKY);
+    if kind != KIND_TERRAIN {
+        color = select(DEBUG_OTHER, DEBUG_EMPTY, kind == 0u);
     } else if view == DEBUG_SHOWN_TILES {
         color = debug_tiles_color(record);
     } else if view == DEBUG_SHOWN_MATERIALS {
-        color = debug_materials_color(targets.terrain.y, unpack4x8unorm(ids.z));
+        color = debug_materials_color(targets.words.y, unpack4x8unorm(ids.z));
     } else if view == DEBUG_SHOWN_SKY {
         color = vec3<f32>(made.x);
     } else if view == DEBUG_SHOWN_DETAIL {
         color = debug_detail_color(made);
     }
-    let surface = kind != 0u && kind != DEBUG_KIND_SKY && view != DEBUG_SHOWN_SKY;
+    let surface = kind != 0u && view != DEBUG_SHOWN_SKY;
     return DebugShade(color, surface);
 }

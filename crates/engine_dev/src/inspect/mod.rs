@@ -580,7 +580,8 @@ impl DevTools {
                 return Ok(DescribeResult::Catalog {
                     name: name.to_owned(),
                     kind: TypeKind::Catalog,
-                    codes: ErrorCode::ALL.iter().map(|&(_, code)| code).collect(),
+                    codes: registry
+                        .map_or_else(|| ErrorCode::NAMES.to_vec(), Registry::error_codes),
                 });
             }
             "FrameStats" => {

@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::*;
-use engine_core::glam::Vec2;
-use engine_core::{FrameTime, PrimaryView, ViewHistory, gpu_struct, profile};
-use engine_render::{PassNames, Resolve, TargetDecl, TargetName, Written, wgpu};
+use engine_core::{FrameTime, Jitter, PrimaryView, ViewHistory, gpu_struct, profile};
+use engine_render::{PassNames, TargetDecl, TargetName, Written, wgpu};
 
 use crate::antialiasing::{TemporalAntialiasing, TemporalAntialiasingStats};
 use crate::previous::{JITTER_SAMPLES, jitter_offset, turn_of};
@@ -38,37 +37,37 @@ fn cycled(view: &PrimaryView) -> bool {
     })
 }
 
+pub(crate) fn jitter(time: Res<FrameTime>, mut jitter: ResMut<Jitter>) {
+    jitter.set_if_neq(Jitter {
+        offset: Some(jitter_offset(time.frame)),
+        turn: turn_of(time.frame),
+    });
+}
+
 pub(crate) fn publish(
-    (view, time): (Res<PrimaryView>, Res<FrameTime>),
+    (view, jitter): (Res<PrimaryView>, Res<Jitter>),
     settings: Res<TemporalAntialiasing>,
-    mut resolve: ResMut<Resolve>,
     mut piece: ResMut<TaaPiece>,
     mut stats: ResMut<TemporalAntialiasingStats>,
 ) {
-    let active = view.temporal();
+    let offset = view.jitter();
     stats.set_if_neq(TemporalAntialiasingStats {
-        active,
-        settling: u32::from(active && !cycled(&view)),
+        active: offset.is_some(),
+        settling: u32::from(offset.is_some() && !cycled(&view)),
     });
-    if !active {
-        resolve.set_if_neq(Resolve::default());
+    let Some(offset) = offset else {
         return;
-    }
+    };
     let history_valid = view.history().valid();
-    let (offset, turn) = (jitter_offset(time.frame), turn_of(time.frame));
     profile::counter("render.taa_history", f64::from(u8::from(history_valid)));
-    resolve.set_if_neq(Resolve {
-        offset: Vec2::from(offset),
-        turn,
-    });
     piece.set_if_neq(TaaPiece {
         options: [
-            turn,
+            jitter.turn,
             f32::from(u8::from(settings.nearest_motion)),
             f32::from(u8::from(settings.rounded_clamp)),
             settings.particle_response,
         ],
-        offset,
+        offset: offset.to_array(),
         current_weight: CURRENT_WEIGHT,
         history_valid: u32::from(history_valid),
     });

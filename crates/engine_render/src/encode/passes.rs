@@ -38,7 +38,7 @@ impl Run {
     pub(super) fn resolving(&self, pass: u32) -> Option<PassNames> {
         let declared = self.machine.declared.passes.get(pass as usize)?;
         let (names, _) = self.resolve?;
-        (self.temporal && declared.name == crate::shared::COMPOSITE).then_some(names)
+        (self.jittered && declared.name == crate::shared::COMPOSITE).then_some(names)
     }
 
     pub(crate) fn label_of(&self, pass: u32) -> Option<&'static str> {

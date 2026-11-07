@@ -12,6 +12,19 @@ pub const MIN_COLLIDER_EXTENT: f32 = 1.0e-4;
 pub const MAX_COLLIDER_EXTENT: f32 = 1.0e4;
 pub const MAX_COLLISION_COORDINATE: f32 = 1.0e6;
 
+pub const COLLISION_INVALID_SHAPE: ErrorCode = ErrorCode::Brick("collision_invalid_shape");
+pub const COLLISION_INVALID_TRANSFORM: ErrorCode = ErrorCode::Brick("collision_invalid_transform");
+pub const COLLISION_INVALID_RAY: ErrorCode = ErrorCode::Brick("collision_invalid_ray");
+pub const COLLISION_INVALID_CAST: ErrorCode = ErrorCode::Brick("collision_invalid_cast");
+pub const COLLISION_INVALID_CONFIG: ErrorCode = ErrorCode::Brick("collision_invalid_config");
+pub const COLLISION_INCOMPLETE_WORLD: ErrorCode = ErrorCode::Brick("collision_incomplete_world");
+pub const COLLISION_CANDIDATE_BUDGET: ErrorCode = ErrorCode::Brick("collision_candidate_budget");
+pub const COLLISION_PAIR_BUDGET: ErrorCode = ErrorCode::Brick("collision_pair_budget");
+pub const COLLISION_RESULT_BUDGET: ErrorCode = ErrorCode::Brick("collision_result_budget");
+pub const COLLISION_NUMERICAL_FAILURE: ErrorCode = ErrorCode::Brick("collision_numerical_failure");
+pub const INVALID_COLLIDER: ErrorCode = ErrorCode::Brick("invalid_collider");
+pub const INVALID_COLLIDER_TRANSFORM: ErrorCode = ErrorCode::Brick("invalid_collider_transform");
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ColliderShape {
@@ -36,7 +49,7 @@ impl ColliderShape {
             Ok(())
         } else {
             Err(
-                Error::new(ErrorCode::CollisionInvalidShape, "$.collision").range(
+                Error::new(COLLISION_INVALID_SHAPE, "$.collision").range(
                     f64::from(MIN_COLLIDER_EXTENT),
                     f64::from(MAX_COLLIDER_EXTENT),
                 ),

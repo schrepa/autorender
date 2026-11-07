@@ -17,6 +17,7 @@ pub(crate) const TARGETS_MODULE: &str = "generated::targets";
 pub(crate) const COMPOSITE_MODULE: &str = "generated::composite";
 pub(crate) const APPLIED_MODULE: &str = "generated::applied";
 pub(crate) const PASSES_MODULE: &str = "generated::passes";
+pub(crate) const KINDS_MODULE: &str = "generated::kinds";
 pub(crate) const TRANSPARENCY_MODULE: &str = "engine::transparency";
 pub(crate) const COVER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 pub(crate) const MOST_APPLIED: usize = 128;
@@ -217,7 +218,7 @@ impl GpuPart for Composite {
     fn encode(&mut self, pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
         let pipeline = if pass == self.debug_pass {
             &self.debug_pipeline
-        } else if cx.core.temporal {
+        } else if cx.core.jittered && cx.core.resolve.is_some() {
             &self.pipeline
         } else {
             &self.plain
@@ -418,7 +419,7 @@ import package::face::debug_modes::shade_kind;
 
 @group(0) @binding(0) var debug_ids: texture_2d<u32>;
 @group(0) @binding(0) var debug_count: texture_2d<f32>;
-@group(0) @binding(0) var debug_terrain: texture_2d<u32>;
+@group(0) @binding(0) var debug_words: texture_2d<u32>;
 
 fn uncovered(pixel: vec2<i32>) -> bool {
     return post.kept.x > 0.5 && textureLoad(depth_texture, pixel, 0) <= 0.0;
@@ -430,7 +431,7 @@ fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
     var targets: DebugTargets;
     targets.ids = textureLoad(debug_ids, pixel, 0);
     targets.count = textureLoad(debug_count, pixel, 0).r;
-    targets.terrain = textureLoad(debug_terrain, pixel, 0).xy;
+    targets.words = textureLoad(debug_words, pixel, 0).xy;
     var shade: DebugShade;
     return shown(shade_kind(shade, targets), targets);
 }

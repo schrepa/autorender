@@ -10,6 +10,8 @@ use crate::atlas::{Atlas, Slot, Upload};
 use crate::fonts::{Fonts, Layout, Shapes};
 use crate::{Label, TextSettings, TextStats};
 
+pub const INVALID_FONT: ErrorCode = ErrorCode::Brick("invalid_font");
+
 #[derive(Clone, Copy)]
 pub(crate) enum Placed {
     Screen,
@@ -347,7 +349,7 @@ impl Typeset for Typesetter {
             .fonts
             .get_or_insert_with(Fonts::new)
             .load(Arc::from(bytes))
-            .ok_or_else(|| Error::new(ErrorCode::InvalidFont, "$.font").got(bytes.len()))
+            .ok_or_else(|| Error::new(INVALID_FONT, "$.font").got(bytes.len()))
     }
 
     fn measure(&self, run: &TextRun) -> TextSize {

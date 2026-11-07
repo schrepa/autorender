@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Joined, PrimaryView};
+use engine_core::{DrawKind, Joined, PrimaryView};
 use engine_render::{DebugMode, DebugModes, DebugShown};
 use serde_json::Value;
 
@@ -33,7 +33,7 @@ pub(crate) fn name(mode: &DebugMode) -> &'static str {
     mode.name
 }
 
-fn no_fields(_: [u32; 4], _: [f32; 4]) -> Value {
+fn no_fields(_: Option<DrawKind>, _: [u32; 4], _: [f32; 4]) -> Value {
     Value::Null
 }
 

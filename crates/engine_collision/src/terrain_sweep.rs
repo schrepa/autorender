@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode, Filled, Operation, Slot, bounds, stated};
+use engine_core::{Error, ErrorCode, Filled, Operation, Rule, Slot, bounds, stated};
 use engine_places_simulation::ground::Ground;
 use engine_places_simulation::physics::{Collide, Collision, CollisionRay, QueryFilter};
 use glam::{Vec2, Vec3};
@@ -11,16 +11,18 @@ use crate::types::missing_brick;
 use crate::world::{CollisionWorld, world_of};
 
 const PLACED_RAY_HITS: usize = 16;
+const SWEEP_EXTENT: Rule = Rule::Range(0.0, 4096.0);
+const SWEEP_SAMPLES: Rule = Rule::Range(2.0, 64.0);
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TerrainSweepQuery {
     pub center: [f64; 2],
     #[serde(default = "default_half_extent")]
-    #[schemars(transform = stated(bounds::SWEEP_EXTENT))]
+    #[schemars(transform = stated(SWEEP_EXTENT))]
     pub half_extent: f64,
     #[serde(default = "default_sweep_samples")]
-    #[schemars(transform = stated(bounds::SWEEP_SAMPLES))]
+    #[schemars(transform = stated(SWEEP_SAMPLES))]
     pub samples: u32,
 }
 
@@ -46,13 +48,13 @@ impl Operation for TerrainSweepQuery {
         let cz = coordinate(center[1], "$.center[1]")?;
         bounded(
             half_extent,
-            bounds::SWEEP_EXTENT,
+            SWEEP_EXTENT,
             ErrorCode::OutOfRange,
             "$.half_extent",
         )?;
         bounded(
             samples,
-            bounds::SWEEP_SAMPLES,
+            SWEEP_SAMPLES,
             ErrorCode::OutOfRange,
             "$.samples",
         )?;

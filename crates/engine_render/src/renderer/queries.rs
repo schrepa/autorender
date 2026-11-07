@@ -29,20 +29,6 @@ impl Renderer {
             .is_some_and(|part| run.drawable(part as u32))
     }
 
-    pub fn motion(&self, world: &World) -> bool {
-        world
-            .get_resource::<engine_registry::Registry>()
-            .zip(world.get_resource::<engine_registry::BrickStates>())
-            .is_some_and(|(registry, states)| {
-                registry.iter().any(|(brick, record)| {
-                    states.brick_on(brick)
-                        && record
-                            .render_entries::<crate::TargetDecl>()
-                            .any(|target| target.name == engine_core::TargetName::MOTION)
-                })
-            })
-    }
-
     pub fn texture_sampling(&self) -> engine_core::TextureSampling {
         use engine_core::{TextureFamily, TextureSampling};
         let features = self.core.device.features();

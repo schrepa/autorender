@@ -6,6 +6,7 @@ import package::face::lights::{cluster_light, light_cluster, lights_on};
 import package::face::sky::atmospheric;
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::{DEBUG_SUN_NONE, SunAt, SunOpen, sun_flags, sun_open};
+import package::place::lighting::{LightInputs, LightOutputs};
 import package::toon_lighting::bands::{TOON_DARK, TOON_HIGHLIGHTS, TOON_NEAREST, TOON_RIM,
     TOON_SHADOW_EDGE, TOON_SHARPEST, TOON_SPECULAR, TOON_UP, TOON_VISIBILITY, TOON_WIDEST,
     banded};
@@ -60,8 +61,11 @@ fn lit_debug(point: SurfacePoint) -> u32 {
     return sun_debug(surface_sun(point));
 }
 
-fn lit_toward(point: SurfacePoint) -> vec3<f32> {
-    return sun_direction();
+fn lit_card(point: SurfacePoint, thickness: f32, seen: f32) -> SurfacePoint {
+    var result = point;
+    result.inputs.sun_blocked = 1.0 - seen;
+    result.inputs.shadow_shift = sun_direction() * thickness;
+    return result;
 }
 
 fn toon_environment() -> EnvironmentLight {
@@ -97,7 +101,7 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
     return sum;
 }
 
-fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
+fn finish(point: SurfacePoint, pixel: vec2<f32>, added: vec3<f32>) -> Shaded {
     let sun = sun_direction();
     let n_l = dot(point.normal, sun);
     let half_vector = normalize(point.view + sun);
@@ -114,7 +118,7 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let around = environment(toon_environment(), EnvironmentAt(point.world, point.normal,
         TOON_UP, point.normal, point.roughness, point.alpha, point.kind));
     let skylight = point.diffuse_color * around.sky * point.occlusion;
-    let lit = skylight + sunlit * shown + point.emissive + local;
+    let lit = skylight + sunlit * shown + point.emissive + local_light(point, pixel) + added;
     let through = atmospheric(lit, camera.position.xyz, point.world, -point.view);
     var shaded: Shaded;
     shaded.linear = through.rgb;

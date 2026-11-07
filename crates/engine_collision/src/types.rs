@@ -3,8 +3,11 @@ use std::borrow::Cow;
 use engine_core::rule::Bound;
 use engine_core::{Error, ErrorCode, Expected, settings, stats};
 use engine_places_simulation::physics::{
-    ColliderShape, CollisionRay, MAX_COLLIDER_EXTENT, MAX_COLLISION_COORDINATE,
-    MIN_COLLIDER_EXTENT, ShapeCastOptions,
+    COLLISION_CANDIDATE_BUDGET, COLLISION_INCOMPLETE_WORLD, COLLISION_INVALID_CAST,
+    COLLISION_INVALID_CONFIG, COLLISION_INVALID_RAY, COLLISION_INVALID_SHAPE,
+    COLLISION_INVALID_TRANSFORM, COLLISION_NUMERICAL_FAILURE, COLLISION_PAIR_BUDGET,
+    COLLISION_RESULT_BUDGET, ColliderShape, CollisionRay, MAX_COLLIDER_EXTENT,
+    MAX_COLLISION_COORDINATE, MIN_COLLIDER_EXTENT, ShapeCastOptions,
 };
 use glam::{Mat3, Mat4, Vec3};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -241,18 +244,18 @@ impl Fault {
         let code = match self {
             Self::MissingPlugin => return missing_brick("collision", PATH),
             Self::InvalidShape => {
-                return Error::new(ErrorCode::CollisionInvalidShape, PATH)
+                return Error::new(COLLISION_INVALID_SHAPE, PATH)
                     .range(MIN_COLLIDER_EXTENT.bound(), MAX_COLLIDER_EXTENT.bound());
             }
-            Self::InvalidTransform => ErrorCode::CollisionInvalidTransform,
-            Self::InvalidRay => ErrorCode::CollisionInvalidRay,
-            Self::InvalidCast => ErrorCode::CollisionInvalidCast,
-            Self::InvalidConfig => ErrorCode::CollisionInvalidConfig,
-            Self::IncompleteWorld => ErrorCode::CollisionIncompleteWorld,
-            Self::CandidateBudget => ErrorCode::CollisionCandidateBudget,
-            Self::PairBudget => ErrorCode::CollisionPairBudget,
-            Self::ResultBudget => ErrorCode::CollisionResultBudget,
-            Self::NumericalFailure => ErrorCode::CollisionNumericalFailure,
+            Self::InvalidTransform => COLLISION_INVALID_TRANSFORM,
+            Self::InvalidRay => COLLISION_INVALID_RAY,
+            Self::InvalidCast => COLLISION_INVALID_CAST,
+            Self::InvalidConfig => COLLISION_INVALID_CONFIG,
+            Self::IncompleteWorld => COLLISION_INCOMPLETE_WORLD,
+            Self::CandidateBudget => COLLISION_CANDIDATE_BUDGET,
+            Self::PairBudget => COLLISION_PAIR_BUDGET,
+            Self::ResultBudget => COLLISION_RESULT_BUDGET,
+            Self::NumericalFailure => COLLISION_NUMERICAL_FAILURE,
         };
         Error::new(code, PATH)
     }

@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use crate::{
     AssetLibrary, Camera, Clear, ColorSpace, DRAWN_UNBOUNDED, Detail, Drawn, DrawnPoses, DrawnTable, Error,
-    ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Layers, Mobility, Operation,
+    ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Jitter, Layers, Mobility, Operation,
     OwnedViews, PrimaryView, Target, View, ViewCut, ViewHistory, take_asks,
 };
 
@@ -40,7 +40,7 @@ pub struct ViewFacts {
     pub previous_view_projection: Mat4,
     pub history: ViewHistory,
     pub debug: bool,
-    pub temporal: bool,
+    pub jitter: Option<Vec2>,
     pub capture: bool,
     pub frame: FrameId,
 }
@@ -121,7 +121,7 @@ impl ViewFacts {
             "forward": self.forward.to_array(),
             "history": self.history,
             "debug": self.debug,
-            "temporal": self.temporal,
+            "jitter": self.jitter.map(Vec2::to_array),
         })
     }
 }
@@ -147,7 +147,7 @@ struct Key {
     cut: Option<u64>,
     scene: u64,
     debug: bool,
-    temporal: bool,
+    jittered: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -274,6 +274,7 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
         world.get_resource::<DrawnPoses>(),
     );
     let assets = world.get_resource::<AssetLibrary>();
+    let offset = world.get_resource::<Jitter>().and_then(|jitter| jitter.offset);
     let mut listed = Vec::with_capacity(found.len());
     let mut refused = Vec::new();
     let mut kept = Vec::with_capacity(found.len());
@@ -312,6 +313,9 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
         }
         let main = listed.is_empty() && view.target.surface();
         let debug = main && facts.debug;
+        let jitter = offset
+            .filter(|_| view.target.surface() && !debug)
+            .map(Vec2::from);
         let cut = globals
             .zip(poses)
             .and_then(|(globals, poses)| poses.fresh_at(globals, view.camera));
@@ -323,7 +327,7 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
             cut,
             scene,
             debug,
-            temporal: facts.temporal,
+            jittered: jitter.is_some(),
         };
         let before = held.iter().find(|held| held.view == entity);
         let reset = cuts.contains(&entity) || before.is_none_or(|held| held.key != key);
@@ -359,7 +363,7 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
             previous_view_projection: previous,
             history,
             debug,
-            temporal: facts.temporal,
+            jitter,
             capture: main && facts.capture,
             frame,
         });

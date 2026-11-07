@@ -70,14 +70,16 @@ pub use engine_place::{
     Cursor, CursorView, DepthPass, DrawKind, Drawn, DrawnProjection, Error, ErrorCode, Events,
     Feed, FeedView, FrameBudget, GeometryHandle, GpuStruct, InstanceValues, Interest, JobRef,
     KindDecl, Layers, Level, LevelView, List, MaterialHandle, MeshHandle, Mobility, Moment,
-    Mover, MoverId, Node, NodeId, NodeWord, PASS_BITS, Pace, Pass, PassBit, PassEntry,
+    Mover, MoverId, Node, NodeId, NodeWord, PASS_BITS, Pace, Pass, PassBit, PassDepth, PassEntry,
     PassMask, PassName, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring, Runs,
-    ScenePass, ScenePasses, Screens, Since, Slot, SlotSet, Smoke,
+    ScenePass, ScenePasses, Since, Slot, SlotSet, Smoke,
     SmokeFailure, SmokeSession,
     Stamp, StoreId, TargetName, TextureHandle, Ticket, Writes, every, gpu_consts, never,
     smoke_check, smoke_eq,
 };
-pub use engine_place::{Clear, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory};
+pub use engine_place::{
+    Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory,
+};
 pub use engine_registry::{
     AuthoredId, ExplainAsk, ExplainRecord, FrameFacts, RecordParity, fault_of,
 };
@@ -107,7 +109,7 @@ pub use shared::{FeedSettings, FrameBudgetSettings};
 pub use services::{
     Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, Placed,
     Placement, Prepared, Reach, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm,
-    SceneIds, PrimaryView, ScenePath, ViewWind, WorkClock, WorkRemaining, scene_component, scene_components,
+    SceneIds, PrimaryView, SceneShare, WorkClock, WorkRemaining, scene_component, scene_components,
 };
 pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
@@ -152,7 +154,7 @@ use engine_registry::{
 };
 use schedules::{
     BetweenFrames, FixedMove, FixedPostSimulation, FixedPreSimulation, FixedSimulation, FrameStart,
-    Presentation, Stream, TransformPropagation, ViewSync, Waiting, WorldSync,
+    Presentation, PreWorldSync, TransformPropagation, ViewSync, Waiting, WorldSync,
 };
 
 pub const MAX_DEV_TICKS: u32 = 120;
@@ -162,7 +164,6 @@ static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::list::<CursorRequests>(),
     PlaceDecl::list::<Pause>(),
     PlaceDecl::slot::<ImpostorPolicy>(),
-    PlaceDecl::slot::<ViewWind>(),
     PlaceDecl::ledger::<FrameBudget>("frame_budget"),
     PlaceDecl::ledger::<Readiness>("readiness"),
     PlaceDecl::ledger::<AssetLibrary>("asset_library"),
@@ -173,6 +174,7 @@ static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::ask::<CameraHandoff>(),
     PlaceDecl::ask::<ViewCut>(),
     PlaceDecl::component::<View>("view"),
+    PlaceDecl::slot::<Jitter>(),
     PlaceDecl::component::<Camera>("camera"),
 ];
 
@@ -294,7 +296,6 @@ fn core_entries(registry: &mut RegistryBuilder) {
     registry.fill_core::<Asked<ViewCut>>();
     registry.writers_first::<Pause>();
     registry.writers_first::<TimeScale>();
-    registry.writers_first::<Screens>();
 }
 
 fn install_passes(world: &mut World) {
@@ -391,7 +392,6 @@ impl Engine {
             .init_resource::<Pause>()
             .init_resource::<TimeScale>()
             .init_resource::<FrameLimits>()
-            .init_resource::<Screens>()
             .init_resource::<Level>()
             .init_resource::<Readiness>()
             .init_resource::<FrameBudget>()
@@ -859,8 +859,8 @@ impl Engine {
         records::exchange(self.app.world_mut());
         jobs::exchange_orders(self.app.world_mut());
         mesh_lods::settle(self.app.world_mut());
-        if has_systems(self.app.world(), Stream) {
-            self.app.world_mut().run_schedule(Stream);
+        if has_systems(self.app.world(), PreWorldSync) {
+            self.app.world_mut().run_schedule(PreWorldSync);
         }
         self.app.world_mut().run_schedule(WorldSync);
     }

@@ -14,7 +14,7 @@ use glam::{Mat4, Vec3};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
-use crate::{Aabb, Error, ErrorCode, Expected, List, Mesh, Operation, Slot, settings};
+use crate::{Aabb, Error, ErrorCode, Expected, List, Mesh, Operation, settings};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
@@ -53,15 +53,6 @@ impl Reach<'_> {
             })
             .fold(0.0, crate::math::max)
     }
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ScenePath {
-    pub terrain: String,
-    pub id: String,
-    pub origin: [f32; 3],
-    pub points: Vec<[f32; 2]>,
-    pub at: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -134,8 +125,9 @@ type CheckHook = Arc<dyn Fn(&Value, &str) -> Result<(), Error> + Send + Sync>;
 type PlacedHook = Arc<dyn Fn(&Value, Placed, &str) -> Result<(), Error> + Send + Sync>;
 type FilesHook = Arc<dyn Fn(&Value, &SceneCx<'_>) -> Vec<String> + Send + Sync>;
 type ReachHook = Arc<dyn Fn(&Value, &Reach<'_>, &mut dyn FnMut(f32)) + Send + Sync>;
-type PathsHook =
-    Arc<dyn Fn(&Value, &SceneCx<'_>, &str) -> Result<Vec<ScenePath>, Error> + Send + Sync>;
+pub type SceneShare = Arc<dyn Any + Send + Sync>;
+type SharesHook =
+    Arc<dyn Fn(&Value, &SceneCx<'_>, &str) -> Result<SceneShare, Error> + Send + Sync>;
 type SchemaHook = Arc<dyn Fn(&SceneCx<'_>) -> Value + Send + Sync>;
 type PrepareHook = Arc<dyn Fn(&Value, &SceneCx<'_>, &str) -> Result<Prepared, Error> + Send + Sync>;
 type ViewHook = Arc<dyn Fn(&World, Entity) -> Option<Value> + Send + Sync>;
@@ -155,7 +147,7 @@ pub struct ComponentKind {
     placed: Option<PlacedHook>,
     files: Option<FilesHook>,
     reach: Option<ReachHook>,
-    paths: Option<PathsHook>,
+    shares: Option<SharesHook>,
     schema: Option<SchemaHook>,
     example: Option<fn() -> Value>,
     prepare: Option<PrepareHook>,
@@ -194,7 +186,7 @@ impl ComponentKind {
                 placed: None,
                 files: None,
                 reach: None,
-                paths: None,
+                shares: None,
                 schema: None,
                 example: None,
                 prepare: None,
@@ -223,7 +215,7 @@ impl ComponentKind {
                 placed: None,
                 files: None,
                 reach: None,
-                paths: None,
+                shares: None,
                 schema: None,
                 example: None,
                 prepare: None,
@@ -354,15 +346,16 @@ impl ComponentKind {
     }
 
     #[doc(hidden)]
-    pub fn scene_paths_in(
+    pub fn shared_in(
         &self,
         value: &Value,
         cx: &SceneCx<'_>,
         path: &str,
-    ) -> Result<Vec<ScenePath>, Error> {
-        self.paths
+    ) -> Result<Option<SceneShare>, Error> {
+        self.shares
             .as_ref()
-            .map_or_else(|| Ok(Vec::new()), |paths| paths(value, cx, path))
+            .map(|shares| shares(value, cx, path))
+            .transpose()
     }
 
     #[doc(hidden)]
@@ -430,22 +423,14 @@ impl<C: Clone + Serialize + DeserializeOwned + Send + Sync + 'static> ComponentK
         self
     }
 
-    pub fn paths(mut self, paths: fn(&C, &str) -> Result<Vec<ScenePath>, Error>) -> Self {
-        self.kind.paths = Some(Arc::new(
-            move |value: &Value, _: &SceneCx<'_>, path: &str| {
-                paths(&parsed::<C>(value, path)?, path)
-            },
-        ));
-        self
-    }
-
-    pub fn paths_in(
+    pub fn shares<T: Any + Send + Sync>(
         mut self,
-        paths: fn(&C, &SceneCx<'_>, &str) -> Result<Vec<ScenePath>, Error>,
+        shares: fn(&C, &SceneCx<'_>, &str) -> Result<T, Error>,
     ) -> Self {
-        self.kind.paths = Some(Arc::new(
+        self.kind.shares = Some(Arc::new(
             move |value: &Value, cx: &SceneCx<'_>, path: &str| {
-                paths(&parsed::<C>(value, path)?, cx, path)
+                let shared: SceneShare = Arc::new(shares(&parsed::<C>(value, path)?, cx, path)?);
+                Ok(shared)
             },
         ));
         self
@@ -640,7 +625,7 @@ impl SceneIds<'_, '_> {
     pub fn entity(&self, id: &str) -> Option<Entity> {
         let scene = self.scene.as_ref()?;
         scene.entities.get(id).copied().or_else(|| {
-            if !scene.streamed {
+            if !scene.authored_later {
                 return None;
             }
             self.entities
@@ -690,7 +675,7 @@ pub struct SceneContext {
     pub id: String,
     pub assets: Arc<engine_assets::SceneAssets>,
     pub prefabs: Arc<BTreeMap<String, (usize, Value)>>,
-    pub paths: Arc<[ScenePath]>,
+    pub shares: Arc<BTreeMap<String, Vec<SceneShare>>>,
     pub entities: Arc<BTreeMap<String, Entity>>,
     pub kinds: Arc<[ComponentKind]>,
     pub bounds: Arc<BTreeMap<String, Aabb>>,
@@ -708,6 +693,22 @@ impl SceneContext {
 
     pub fn prefab(&self, id: &str) -> Option<&(usize, Value)> {
         self.prefabs.get(id)
+    }
+
+    pub fn shared<T: Any>(&self, entity: &str) -> Option<&T> {
+        self.shares
+            .get(entity)?
+            .iter()
+            .find_map(|value| (**value).downcast_ref::<T>())
+    }
+
+    pub fn sharing<T: Any>(&self) -> impl Iterator<Item = (&str, &T)> + '_ {
+        self.shares.iter().filter_map(|(entity, values)| {
+            values
+                .iter()
+                .find_map(|value| (**value).downcast_ref::<T>())
+                .map(|value| (entity.as_str(), value))
+        })
     }
 }
 
@@ -760,8 +761,8 @@ impl PrimaryView {
         self.cameras.detail_eye()
     }
 
-    pub fn temporal(&self) -> bool {
-        self.cameras.facts().temporal
+    pub fn jitter(&self) -> Option<glam::Vec2> {
+        self.facts.and_then(|facts| facts.jitter)
     }
 
     pub fn capture(&self) -> bool {
@@ -892,16 +893,6 @@ impl WorkClock {
     pub fn now(&self) -> Option<f64> {
         self.reading.map(|clock| clock())
     }
-}
-
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct ViewWind {
-    pub velocity: [f32; 2],
-    pub gusts: f32,
-}
-
-impl Slot for ViewWind {
-    const NAME: &'static str = "view_wind";
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]

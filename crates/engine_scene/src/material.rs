@@ -272,7 +272,6 @@ impl SceneMaterial {
                 roughness: surface.roughness,
                 metalness: surface.metalness,
                 emission: surface.emission,
-                ripples: surface.ripples,
             }),
             opacity: Some(opacity),
             metallic_roughness_texture: map(material.metallic_roughness_texture()),

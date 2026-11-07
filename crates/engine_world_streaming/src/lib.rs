@@ -610,7 +610,7 @@ impl Brick for WorldStreamingBrick {
             .stats::<CellStats>()
             .resource::<WorldCells>()
             .resource::<WorldChanges>()
-            .systems(Schedule::Stream, stream_cells)
+            .systems(Schedule::PreWorldSync, stream_cells)
             .operation::<WorldChangesControl>()
             .observation::<WorldCellsQuery>()
             .observation::<WorldChangesQuery>()

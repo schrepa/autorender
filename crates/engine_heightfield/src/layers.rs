@@ -476,12 +476,12 @@ impl Layers {
             let kind = kinds
                 .iter()
                 .find(|kind| kind.name == STAMP)
-                .ok_or_else(|| Error::new(ErrorCode::MissingLayer, "$.stamps").variants([STAMP]))?;
+                .ok_or_else(|| Error::new(crate::MISSING_LAYER, "$.stamps").variants([STAMP]))?;
             for (offset, stamp) in stamps.iter().enumerate() {
                 let at = format!("$.layers[{}]", self.layers.len() + offset);
                 stamp
                     .validate()
-                    .map_err(|error| error.coded(ErrorCode::InvalidTerrain).within(&at))?;
+                    .map_err(|error| error.coded(crate::INVALID_TERRAIN).within(&at))?;
                 let bytes = engine_codec::encode(stamp);
                 let made =
                     (kind.read)(&mut Reader::new(&bytes)).map_err(|error| error.within(&at))?;

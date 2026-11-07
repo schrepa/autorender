@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use engine_core::{Error, ErrorCode, Expected, Job, JobCx, JobKind, RecordKey};
 use engine_heightfield::layer::LayerKind;
-use engine_heightfield::reaches;
+use engine_heightfield::{INVALID_TERRAIN, reaches};
 use engine_heightfield::tile::{Recipe, TerrainRecipe, TileJob, shaded_elsewhere, stamped};
 use engine_places_simulation::ground::{GroundBridge, GroundGrid};
 use engine_places_world::terrain::TerrainLayers;
@@ -295,7 +295,7 @@ fn holes(layers: &Layers, first: [i64; 2], spacing: f32) -> Option<Box<[u64]>> {
 }
 
 pub(crate) fn invalid_heights() -> Error {
-    Error::new(ErrorCode::InvalidTerrain, "$.heights").expected(Expected::Finite)
+    Error::new(INVALID_TERRAIN, "$.heights").expected(Expected::Finite)
 }
 
 pub(crate) fn outside(key: TileKey) -> Error {

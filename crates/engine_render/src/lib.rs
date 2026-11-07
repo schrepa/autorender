@@ -66,7 +66,7 @@ pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;
 pub use materials::MATERIAL_ANISOTROPY;
 pub use surface::{
-    DrawState, LightingModule, MaterialVariant, SlotModule, SurfaceKind, TraceDepth, material_state,
+    DrawState, LightingModule, MaterialVariant, SlotModule, SurfaceKind, material_state,
 };
 #[doc(hidden)]
 pub use memory::GpuMemory;
@@ -112,27 +112,13 @@ pub mod debug {
 
     #[gpu_bits]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub enum DebugKind {
-        Nothing = 0,
-        Mesh = 1,
-        Placed = 2,
-        Card = 3,
-        PlacedCard = 4,
-        Terrain = 6,
-        Cover = 7,
-        Water = 8,
-        Falls = 10,
-        Sky = 11,
-    }
-
-    #[gpu_bits]
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct DebugRecord {
-        #[bits(4)]
-        pub kind: DebugKind,
+        #[bits(8)]
+        pub kind: u32,
         #[bits(4)]
         pub level: u32,
         pub fading: bool,
+        pub card: bool,
         #[bits(8, at = 16)]
         pub source: u32,
     }
@@ -576,7 +562,7 @@ impl SamplerDesc {
 pub const DEBUG_TARGETS: [TargetName; 3] = [
     TargetName("debug_ids"),
     TargetName("debug_count"),
-    TargetName("debug_terrain"),
+    TargetName("debug_words"),
 ];
 
 fn target_of(name: TargetName) -> Result<install::ViewTarget, Error> {
@@ -955,6 +941,14 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn view_index(&self) -> u32 {
         self.core.camera_slot
+    }
+
+    pub fn writes_target(&self, name: TargetName) -> bool {
+        self.core
+            .machine
+            .outputs
+            .iter()
+            .any(|output| output.name == name.name() && !output.layers.is_empty())
     }
 
     pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) -> Allocation {
@@ -1406,18 +1400,15 @@ gpu_struct! {
         pub position: [f32; 4],
         pub jitter: [f32; 4],
         pub options: [f32; 4],
-        pub wind: [f32; 4],
+        pub previous: [f32; 4],
         pub region: [f32; 4],
         pub detail: [f32; 4],
         pub view: [u32; 4],
     }
 }
 
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct Resolve {
-    pub offset: glam::Vec2,
-    pub turn: f32,
-}
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Resolve;
 
 impl Slot for Resolve {
     const NAME: &'static str = "resolve";
@@ -1447,7 +1438,7 @@ impl Slot for DebugShown {
 
 pub struct DebugMode {
     pub name: &'static str,
-    pub decode: fn(ids: [u32; 4], color: [f32; 4]) -> serde_json::Value,
+    pub decode: fn(kind: Option<DrawKind>, ids: [u32; 4], color: [f32; 4]) -> serde_json::Value,
 }
 
 pub struct DebugModes;

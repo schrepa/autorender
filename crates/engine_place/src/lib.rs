@@ -2,12 +2,12 @@ mod asks;
 mod budget;
 mod drawn;
 mod feeds;
+mod level;
 mod nodes;
 mod passes;
 mod readback;
 mod readiness;
 mod requests;
-mod screens;
 mod views;
 
 use std::any::{Any, TypeId};
@@ -31,14 +31,17 @@ pub use feeds::{Cursor, CursorView, Events, Feed, FeedView, Ring, Since, StoreId
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{
     AttachPoint, BlendedPass, CORE_BRICK, CORE_PASSES, ColorPass, DepthPass, PASS_BITS, Pass,
-    PassBit, PassEntry, PassMask, PassName, PassViews, ScenePass, ScenePasses, SlotSet, TargetName, Writes,
+    PassBit, PassDepth, PassEntry, PassMask, PassName, PassViews, ScenePass, ScenePasses, SlotSet,
+    TargetName, Writes,
     every, never,
 };
 pub use readback::{FrameId, Readable, Readback};
 pub use readiness::Readiness;
 pub use requests::{Census, Interest, Progress, Request, Requests, Ticket};
-pub use screens::{Level, LevelView, Screens};
-pub use views::{Clear, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory};
+pub use level::{Level, LevelView};
+pub use views::{
+    Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory,
+};
 
 pub trait Slot: Resource + Default {
     const NAME: &'static str;

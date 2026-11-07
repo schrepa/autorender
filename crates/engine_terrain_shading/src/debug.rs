@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
-use engine_core::{GpuBits, gpu_bits};
-use engine_render::debug::{DEBUG_NO_MATERIAL, DebugKind, DebugRecord};
+use engine_core::{DrawKind, GpuBits, gpu_bits};
+use engine_render::debug::{DEBUG_NO_MATERIAL, DebugRecord};
 use engine_render::{DebugMode, DebugShown};
 use serde_json::{Value, json};
 
@@ -11,7 +11,7 @@ use crate::gpu::{DEBUG_SHOWN_DETAIL, DEBUG_SHOWN_MATERIALS, DEBUG_SHOWN_SKY, DEB
 #[gpu_bits]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TerrainDebug {
-    #[bits(1, at = 11)]
+    #[bits(1, at = 14)]
     pub(crate) tile_edge: bool,
     pub(crate) patch_edge: bool,
     #[bits(4, at = 24)]
@@ -60,8 +60,12 @@ pub(crate) fn shown(shown: &DebugShown) -> u32 {
     MODES.get(shown.local as usize).map_or(0, |(_, code)| *code)
 }
 
-fn terrain([record, object, detail, tiles]: [u32; 4], [ids, ..]: [f32; 4]) -> Value {
-    if DebugRecord::unpack(record).map(|record| record.kind) != Some(DebugKind::Terrain) {
+fn terrain(
+    kind: Option<DrawKind>,
+    [record, object, detail, tiles]: [u32; 4],
+    [ids, ..]: [f32; 4],
+) -> Value {
+    if kind != Some(crate::terrain::TERRAIN) {
         return json!({ "terrain": null });
     }
     let ids = ids.to_bits();

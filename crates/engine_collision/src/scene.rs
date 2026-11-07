@@ -1,6 +1,7 @@
-use engine_core::{Error, ErrorCode, Placed};
+use engine_core::{Error, Placed};
 use engine_places_simulation::physics::{
-    Collider, ColliderShape, MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT,
+    Collider, ColliderShape, INVALID_COLLIDER, INVALID_COLLIDER_TRANSFORM, MAX_COLLIDER_EXTENT,
+    MIN_COLLIDER_EXTENT,
 };
 use glam::Mat4;
 use serde::{Deserialize, Serialize};
@@ -73,14 +74,14 @@ impl SceneCollider {
     fn runtime(self, path: &str) -> Result<(), Error> {
         validate_shape(self.shape.runtime()).map_err(|error| {
             error
-                .coded(ErrorCode::InvalidCollider)
+                .coded(INVALID_COLLIDER)
                 .at(format!("{path}.shape"))
         })
     }
 
     fn validate_world(self, matrix: Mat4, path: &str) -> Result<(), Error> {
         validate_collider_transform(self.shape.runtime(), matrix)
-            .map_err(|error| error.coded(ErrorCode::InvalidColliderTransform).at(path))
+            .map_err(|error| error.coded(INVALID_COLLIDER_TRANSFORM).at(path))
     }
 }
 

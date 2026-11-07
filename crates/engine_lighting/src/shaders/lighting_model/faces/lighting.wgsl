@@ -8,6 +8,7 @@ import package::generated::pieces::lighting_model::piece;
 import package::lighting_model::inputs::sun_seen;
 import package::lighting_model::local::shaped_light;
 import package::lighting_model::surface::shade_surface;
+import package::place::lighting::{LightInputs, LightOutputs};
 
 fn highlights() -> vec4<f32> {
     return piece().highlights;
@@ -59,8 +60,11 @@ fn lit_debug(point: SurfacePoint) -> u32 {
     return sun_debug(surface_sun(point));
 }
 
-fn lit_toward(point: SurfacePoint) -> vec3<f32> {
-    return sun_direction();
+fn lit_card(point: SurfacePoint, thickness: f32, seen: f32) -> SurfacePoint {
+    var result = point;
+    result.inputs.sun_blocked = 1.0 - seen;
+    result.inputs.shadow_shift = sun_direction() * thickness;
+    return result;
 }
 
 fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
@@ -124,6 +128,6 @@ fn widened(point: SurfacePoint, turn_dx: vec3<f32>, turn_dy: vec3<f32>) -> Surfa
     return result;
 }
 
-fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
-    return shade_surface(point, local);
+fn finish(point: SurfacePoint, pixel: vec2<f32>, added: vec3<f32>) -> Shaded {
+    return shade_surface(point, local_light(point, pixel) + added);
 }

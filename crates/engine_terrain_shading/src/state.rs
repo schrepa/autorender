@@ -4,7 +4,7 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    AssetLibrary, Cursor, DeviceLimits, Error, Feed, FeedSettings, FrameId, FrameTime, Interest,
+    AssetLibrary, Cursor, DeviceLimits, Error, Feed, FrameId, FrameTime, Interest,
     JobFailures, JobKind, Jobs, MakeSources, Readable, Readback, RecordExchange, RecordKey, Records,
     Since, Stamp, TextureHandle, TextureSet, TextureUsage, PrimaryView, codec, content_hash,
 };
@@ -429,7 +429,7 @@ impl Default for Atlas {
             next_layer: 0,
             capacity: 0,
             now: 0.0,
-            changes: Feed::new(FeedSettings::default().tiles as usize),
+            changes: Feed::new(TerrainShading::default().tile_feed as usize),
         }
     }
 }
@@ -607,11 +607,11 @@ fn tile_keys(atlas: &Atlas, entry: &TerrainEntry, since: Since<'_, TileChange>) 
 }
 
 pub(crate) fn place_tiles(
-    (tiles, limits, time, feeds): (
+    (tiles, limits, time, settings): (
         Res<TerrainTiles>,
         Res<DeviceLimits>,
         Res<FrameTime>,
-        Res<FeedSettings>,
+        Res<TerrainShading>,
     ),
     bakes: Res<Bakes>,
     mut atlas: ResMut<Atlas>,
@@ -619,7 +619,7 @@ pub(crate) fn place_tiles(
 ) {
     let atlas = &mut *atlas;
     atlas.now = time.real_elapsed as f32;
-    atlas.changes.resize(feeds.tiles as usize);
+    atlas.changes.resize(settings.tile_feed as usize);
     let attached = |entry: &TerrainEntry| {
         bakes
             .of(entry.terrain)

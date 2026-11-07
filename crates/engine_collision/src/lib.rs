@@ -21,9 +21,31 @@ mod world;
 pub use types::{CollisionConfig, CollisionLimits, CollisionStats, Count};
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source};
-use engine_places::sweeps::Sweeps;
-use engine_places_simulation::physics::{Collider, Collision};
+use engine_core::{
+    Brick, Bricks, ComponentKind, ErrorCode, Runs, SceneComponents, Schedule, Smoke, Source,
+};
+use engine_places_simulation::physics::{
+    COLLISION_CANDIDATE_BUDGET, COLLISION_INCOMPLETE_WORLD, COLLISION_INVALID_CAST,
+    COLLISION_INVALID_CONFIG, COLLISION_INVALID_RAY, COLLISION_INVALID_SHAPE,
+    COLLISION_INVALID_TRANSFORM, COLLISION_NUMERICAL_FAILURE, COLLISION_PAIR_BUDGET,
+    COLLISION_RESULT_BUDGET, Collider, Collision, INVALID_COLLIDER, INVALID_COLLIDER_TRANSFORM,
+};
+use engine_places_simulation::sweeps::Sweeps;
+
+const ERRORS: &[ErrorCode] = &[
+    COLLISION_INVALID_SHAPE,
+    COLLISION_INVALID_TRANSFORM,
+    COLLISION_INVALID_RAY,
+    COLLISION_INVALID_CAST,
+    COLLISION_INVALID_CONFIG,
+    COLLISION_INCOMPLETE_WORLD,
+    COLLISION_CANDIDATE_BUDGET,
+    COLLISION_PAIR_BUDGET,
+    COLLISION_RESULT_BUDGET,
+    COLLISION_NUMERICAL_FAILURE,
+    INVALID_COLLIDER,
+    INVALID_COLLIDER_TRANSFORM,
+];
 
 pub struct CollisionBrick;
 
@@ -40,6 +62,7 @@ impl Brick for CollisionBrick {
             .when(|config: Res<CollisionConfig>| config.enabled)
             .settings::<CollisionConfig>()
             .settled_stats::<CollisionStats, _>(world::refresh)
+            .errors(ERRORS)
             .fill::<Collision>(None)
             .fill::<Sweeps>(None)
             .join::<SceneComponents>(

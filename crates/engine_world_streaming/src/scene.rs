@@ -5,10 +5,11 @@ use engine_codec::closest;
 use engine_core::__private::schemars::{JsonSchema, Schema};
 use engine_core::{
     ComponentKind, Error, ErrorCode, Expected, InvalidSetting, MAX_HIERARCHY_DEPTH as MAX_DEPTH,
-    MAX_ID_BYTES, Placed, Placement, Rule, SceneContext, ScenePath, Section, Setting, Transform,
+    MAX_ID_BYTES, Placed, Placement, Rule, SceneContext, Section, Setting, Transform,
     fields, is_id, math, parse_value_at, state, valid_global_matrix,
 };
 use engine_places_simulation::ground::Grounded;
+use engine_places_world::paths::{ScenePath, ScenePaths};
 use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -331,7 +332,7 @@ impl StreamedScene {
             prefabs: prefabs.keys().copied().collect(),
         };
         let kinds: &[ComponentKind] = &scene.kinds;
-        let placed = self.placed_along(kinds, &scene.paths)?;
+        let placed = self.placed_along(kinds, scene)?;
         let mut kept = Vec::new();
         let mut streamed = listed(&self.streamed, "$.streamed");
         for spot in &placed {
@@ -372,14 +373,14 @@ impl StreamedScene {
     fn placed_along(
         &self,
         kinds: &[ComponentKind],
-        paths: &[ScenePath],
+        scene: &SceneContext,
     ) -> Result<Vec<Spot>, Error> {
         unique_ids(self.along.iter().map(|along| along.id.as_str()), "$.along")?;
         let mut placed = Vec::new();
         for (index, along) in self.along.iter().enumerate() {
             let path = format!("$.along[{index}]");
             along.validate(kinds, &path)?;
-            let chosen = along_path(along, &path, paths)?;
+            let chosen = along_path(along, &path, scene)?;
             let origin = Vec3::from_array(chosen.origin);
             let spots = along.spots(&chosen.points, &path)?;
             for (number, (point, yaw)) in spots.into_iter().enumerate() {
@@ -411,33 +412,26 @@ impl StreamedScene {
 fn along_path<'a>(
     along: &StreamedAlong,
     path: &str,
-    paths: &'a [ScenePath],
+    scene: &'a SceneContext,
 ) -> Result<&'a ScenePath, Error> {
-    let found: Vec<&ScenePath> = paths
-        .iter()
-        .filter(|answer| answer.terrain == along.terrain)
-        .collect();
-    if found.is_empty() {
-        let mut answered: Vec<String> = Vec::new();
-        for answer in paths {
-            if answered.last() != Some(&answer.terrain) {
-                answered.push(answer.terrain.clone());
-            }
-        }
+    let walked = |paths: &&ScenePaths| !paths.0.is_empty();
+    let Some(found) = scene.shared::<ScenePaths>(&along.terrain).filter(walked) else {
         return Err(
             Error::new(ErrorCode::UnknownReference, format!("{path}.terrain"))
                 .got(&along.terrain)
-                .variants(answered),
-        );
-    }
-    let Some(chosen) = found.iter().position(|answer| answer.id == along.layer) else {
-        return Err(
-            Error::new(ErrorCode::UnknownReference, format!("{path}.layer"))
-                .got(&along.layer)
-                .variants(found.iter().map(|answer| answer.id.clone())),
+                .variants(
+                    scene
+                        .sharing::<ScenePaths>()
+                        .filter(|(_, paths)| walked(paths))
+                        .map(|(entity, _)| entity.to_owned()),
+                ),
         );
     };
-    Ok(found[chosen])
+    found.0.iter().find(|answer| answer.id == along.layer).ok_or_else(|| {
+        Error::new(ErrorCode::UnknownReference, format!("{path}.layer"))
+            .got(&along.layer)
+            .variants(found.0.iter().map(|answer| answer.id.clone()))
+    })
 }
 
 fn expand_list(

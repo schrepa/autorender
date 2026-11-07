@@ -15,7 +15,7 @@ fn fixture(streamed: &[Value]) -> Value {
             {"id": "shade", "mesh": "box", "material": "plain", "transform": {"translation": [0, 2.2, 0], "scale": [12, 0.2, 12]}},
         ]}],
         "entities": [],
-        "streamed": streamed,
+        "environment": {"streamed": {"streamed": streamed}},
     })
 }
 

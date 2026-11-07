@@ -23,19 +23,19 @@ fn fixture() -> Value {
             {"id": "ground", "terrain": {"origin": [-1024, 0, -1024], "tiles": [8, 8], "spacing": 1,
              "layers": [{"type": "noise", "seed": 5, "height": 40, "wavelength": 400}]}},
         ],
-        "streamed": [
+        "environment": {"streamed": {"streamed": [
             {"id": "crate-near", "mesh": "box", "material": "plain", "collider": cube, "grounded": {"offset": 0.5}, "transform": {"translation": [20, 0, 0]}},
             {"id": "crate-mid", "mesh": "box", "material": "plain", "grounded": {"offset": 0.5}, "transform": {"translation": [900, 0, 0]}},
             {"id": "spinner", "transform": {"translation": [-30, 30, 10]}},
             {"id": "spinner-blade", "parent": "spinner", "mesh": "box", "material": "plain", "transform": {"scale": [3, 0.2, 0.4]}},
             {"id": "lamp-far", "prefab": "lamp", "transform": {"translation": [1500, 0, 300]}},
             {"id": "tower", "mesh": "box", "material": "plain", "transform": {"translation": [5000, 30, 0], "scale": [10, 60, 10]}},
-        ],
+        ]}},
     })
 }
 
 fn objects(document: &mut Value) -> &mut Value {
-    &mut document["streamed"]
+    &mut document["environment"]["streamed"]["streamed"]
 }
 
 pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
@@ -159,18 +159,26 @@ fn grounded(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
 
 fn refusals(session: &mut dyn SmokeSession, source: &Value) -> Result<(), SmokeFailure> {
     for (case, code, path) in [
-        ("terrain", "invalid_streamed", "$.streamed[6].terrain"),
+        (
+            "terrain",
+            "invalid_streamed",
+            "$.environment.streamed.streamed[6].terrain",
+        ),
         (
             "parent_across_lists",
             "unknown_parent",
-            "$.streamed[5].parent",
+            "$.environment.streamed.streamed[5].parent",
         ),
         (
             "grounded_child",
             "invalid_grounded",
-            "$.streamed[3].grounded",
+            "$.environment.streamed.streamed[3].grounded",
         ),
-        ("duplicate_id", "duplicate_id", "$.streamed[0].id"),
+        (
+            "duplicate_id",
+            "duplicate_id",
+            "$.environment.streamed.streamed[0].id",
+        ),
     ] {
         let mut broken = source.clone();
         let items = objects(&mut broken);

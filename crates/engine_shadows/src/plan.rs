@@ -3,8 +3,8 @@ use std::any::TypeId;
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::{
-    Cursor, Cut, DeviceLimits, FrameBudget, FrameTime, GpuBits, Mobility, PartDraws, PassName,
-    PrimaryView, Readable, Readback, OwnedView, OwnedViews, Since, Spawner, ViewWind, gpu_bits,
+    Cursor, Cut, DeviceLimits, FrameBudget, GpuBits, Mobility, PartDraws, PassName, PrimaryView,
+    Readable, Readback, OwnedView, OwnedViews, Since, Spawner, gpu_bits,
 };
 use engine_places_rendering::shadows::{
     CasterMap, GROUND_TEXELS, Refresh, Region as MapView, ShadowChange, ShadowChanges,
@@ -135,7 +135,7 @@ pub(crate) struct ShadowPlan {
     masks: Masks,
     pub(crate) sky: SkyMaps,
     pub(crate) sky_draw: Option<SkyDraw>,
-    sky_view: Option<(Mat4, [f32; 4])>,
+    sky_view: Option<Mat4>,
     pub(crate) views: Vec<MapView>,
     pub(crate) cameras: Vec<CameraUniform>,
     pub(crate) routes: Vec<Route>,
@@ -336,8 +336,8 @@ fn publish_views(
 
 pub(crate) fn plan_shadows(
     (settings, sky): (Res<ShadowSettings>, Res<SkyOcclusion>),
-    (sun, view, limits, time): (Res<Sun>, Res<PrimaryView>, Res<DeviceLimits>, Res<FrameTime>),
-    (changes, wind, shown): (Res<ShadowChanges>, Res<ViewWind>, Res<DebugShown>),
+    (sun, view, limits): (Res<Sun>, Res<PrimaryView>, Res<DeviceLimits>),
+    (changes, shown): (Res<ShadowChanges>, Res<DebugShown>),
     (mut feedback, mut drawn, mut budget): (
         ResMut<ShadowFeedback>,
         ResMut<ShadowDrawn>,
@@ -396,16 +396,8 @@ pub(crate) fn plan_shadows(
     plan.sky_draw = plan
         .sky
         .prepare(&sky, eye, still_changed || casters_changed);
-    let gusting = [
-        wind.velocity[0],
-        wind.velocity[1],
-        wind.gusts,
-        time.elapsed as f32,
-    ];
-    if let Some(draw) = plan.sky_draw
-        && plan.sky_view.is_none_or(|(clip, _)| clip != draw.clip)
-    {
-        plan.sky_view = Some((draw.clip, gusting));
+    if let Some(draw) = plan.sky_draw {
+        plan.sky_view = Some(draw.clip);
     }
     let regions = FrameRegions {
         basis,
@@ -415,11 +407,7 @@ pub(crate) fn plan_shadows(
     };
     let viewer = eye.extend(1.0 / pixel_angle(view.view_projection(), view.display_size().y));
     regions.views(plan.sky_draw.as_ref(), &mut plan.views);
-    regions.cameras(
-        (wind.velocity, gusting),
-        (viewer, plan.sky_view),
-        &mut plan.cameras,
-    );
+    regions.cameras((viewer, plan.sky_view), &mut plan.cameras);
     regions.routes(&mut plan.routes);
     regions.scissors(&mut plan.scissors);
     regions.levels(&mut plan.levels);

@@ -16,11 +16,11 @@ use std::collections::BTreeSet;
 use bevy_ecs::prelude::*;
 use engine_core::{
     Asks, Asset, AssetResidency, AssetUses, AttachPoint, Brick, Bricks, ComponentKind, CursorMode,
-    CursorRequests, Error, ErrorCode, FeedSettings, GlobalTransforms, MenuInput, PassName,
+    CursorRequests, Error, ErrorCode, GlobalTransforms, MenuInput, PassName,
     PassViews, PointerInput, PrimaryView, Runs, SceneComponents, SceneContext, SceneCx, Schedule,
-    Screens, SlotSet, Smoke, Source, Spawner, Writes, gpu_struct, never, settings, stats,
+    SlotSet, Smoke, Source, Spawner, Writes, gpu_struct, never, settings, stats,
 };
-use engine_places_rendering::screens::ScreenAsk;
+use engine_places_rendering::screens::{ScreenAsk, Screens};
 use engine_places_rendering::text::Text;
 use engine_places_rendering::ui::{UiEvents, UiLength, UiNode, UiRoot, UiValues};
 use engine_render::RenderBricks;
@@ -39,6 +39,7 @@ settings! {
         pub scale: f32 = 1.0 => range(0.25, 8.0),
         pub max_nodes: u32 = 4096 => range(1, 1_000_000),
         pub max_rects: u32 = 8192 => range(1, 1_000_000),
+        pub events: u32 = 256 => at_least(1),
     }
 }
 
@@ -193,13 +194,13 @@ fn root_example() -> Value {
 
 fn follow(
     (roots, text, values, view, settings, (scene, globals)): Reading<'_, '_>,
-    (pointer, feeds): (Res<PointerInput>, Res<FeedSettings>),
+    pointer: Res<PointerInput>,
     (mut menu, mut cursor, (screens, mut asks), mut events): Steering<'_, '_>,
     mut state: ResMut<UiState>,
     mut stats: ResMut<UiStats>,
 ) {
-    if feeds.is_changed() || events.is_added() {
-        events.resize(feeds.ui_events as usize);
+    if settings.is_changed() || events.is_added() {
+        events.resize(settings.events as usize);
     }
     if state.is_idle() && (roots.is_empty() || !settings.enabled) {
         return;

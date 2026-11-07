@@ -25,7 +25,7 @@ fn without_back_faces(triangles: &[u32]) -> Option<Vec<u32>> {
     (kept.len() < triangles.len()).then_some(kept)
 }
 
-pub(crate) fn caster_ranges(
+pub(crate) fn single_sided_ranges(
     indices: &mut Vec<u32>,
     index_count: u32,
     lods: &[(u32, u32, f32)],

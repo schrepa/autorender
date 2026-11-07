@@ -12,12 +12,12 @@ use std::any::Any;
 use std::sync::Arc;
 
 use engine_codec::{Reader, Writer};
-use engine_core::{Brick, Bricks, ErrorCode, Source, parse_value};
+use engine_core::{Brick, Bricks, Source, parse_value};
 use engine_heightfield::layer::{
     Below, ChangeMap, LayerFiles, LayerKind, Made, Row, TerrainLayer, maps, no_files, no_points,
     same_as,
 };
-use engine_heightfield::{Layers, Pyramid, TileHeights};
+use engine_heightfield::{INVALID_TERRAIN, Layers, Pyramid, TileHeights};
 use engine_places_world::terrain::TerrainLayers;
 use serde_json::Value;
 
@@ -29,7 +29,9 @@ impl Brick for LayerErosionBrick {
     const SOURCE: &'static Source = &SOURCE;
 
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.join::<TerrainLayers>(&EROSION, None);
+        bricks
+            .errors(&[INVALID_TERRAIN])
+            .join::<TerrainLayers>(&EROSION, None);
     }
 }
 
@@ -55,7 +57,7 @@ fn made(stage: ErosionStage) -> Made {
     stage
         .layer
         .validate()
-        .map_err(|invalid| invalid.error(ErrorCode::InvalidTerrain, "$"))?;
+        .map_err(|invalid| invalid.error(INVALID_TERRAIN, "$"))?;
     Ok(Arc::new(stage))
 }
 

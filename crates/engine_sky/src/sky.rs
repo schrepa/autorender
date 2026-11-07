@@ -1,9 +1,10 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::math::{max, min};
-use engine_core::{Error, FrameBudget, FrameTime, PrimaryView, StoreId, ViewWind};
+use engine_core::{Error, FrameBudget, FrameTime, PrimaryView, StoreId};
 use engine_places_rendering::sky::EyeMedium;
 use engine_places_rendering::sun::{Sun, SunPath};
+use engine_places_rendering::wind::ViewWind;
 use engine_render::{
     AfterRead, Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Copied, CopyRegion,
     Count, DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare,
@@ -600,13 +601,13 @@ fn dome_pipeline(
     pass: Pass<SkyGpu>,
     transmittance: Texture<SkyGpu>,
 ) -> Result<Pipeline<SkyGpu, Own>, Error> {
-    use crate::shaders::sky::{debug, draw};
+    use crate::shaders::sky::draw;
     cx.render_pipeline(
         pass,
         &RenderPipeline {
             vertex: draw::VS_SKY,
             fragment: Some(draw::FS_SKY),
-            debug: Some(debug::FS_DEBUG_SKY),
+            debug: None,
             vertices: &[],
             primitive: wgpu::PrimitiveState::default(),
             depth: DepthUse::Compare {

@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, DrawKind, Drawn, Error, ErrorCode, Expected, Mesh, MeshHandle, MeshVertex,
+    AssetLibrary, DrawKind, Drawn, Error, Expected, Mesh, MeshHandle, MeshVertex,
     Spawner, Transform,
 };
 use engine_math::collections::HashMap;
@@ -8,7 +8,7 @@ use engine_math::{clamp, max};
 use engine_places_world::splines::SplineMesh;
 use glam::Vec3;
 
-use crate::SplinesBrick;
+use crate::{INVALID_SPLINE, SplinesBrick};
 
 pub const CHUNK_LENGTH: f32 = 256.0;
 pub const MAX_SPLINE_POINTS: usize = 4096;
@@ -221,7 +221,7 @@ fn point_at(samples: &[Vec3], along: &[f32], distance: f32) -> (Vec3, Vec3) {
 }
 
 fn bend(assets: &AssetLibrary, spline: &SplineMesh) -> Result<Bent, Error> {
-    let invalid = |path: &str| Error::new(ErrorCode::InvalidSpline, path);
+    let invalid = |path: &str| Error::new(INVALID_SPLINE, path);
     if !(2..=MAX_SPLINE_POINTS).contains(&spline.points.len()) {
         return Err(invalid("$.points")
             .expected(Expected::Array)

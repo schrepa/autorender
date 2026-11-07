@@ -2,11 +2,11 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     AssetLibrary, AssetResidency, BlendedPass, ColorPass, DepthPass, Detail, DeviceLimits,
     DrawnPoses, DrawnTable, Error, FrameTime, GlobalTransforms, ImpostorRecords,
-    MAX_HIERARCHY_DEPTH, PassName, PassViews, PrimaryView, ScenePass, Views,
+    MAX_HIERARCHY_DEPTH, PassDepth, PassName, PassViews, PrimaryView, ScenePass, Views,
 };
 use engine_render::{
     AttachPoint, Bind, Buffer, ComputePipeline, Copied, DepthUse, DrawInput, Encode, GpuPart,
-    Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Resolve, Scene, Scope,
+    Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Scene, Scope,
     TargetName, Texture, VertexLayout, wgpu,
 };
 
@@ -19,7 +19,7 @@ use crate::order::{BatchLook, MeshPlan};
 use crate::presentation::{FrameState, PresentationTotals};
 use crate::settings::Impostors;
 use crate::shaders::meshes::{
-    blended, cards, casters, debug, forward, presentation, pyramid, vertex,
+    blended, cards, debug, depth_views, forward, presentation, pyramid, vertex,
 };
 
 pub(crate) const PYRAMID_LEVELS: usize = 16;
@@ -50,7 +50,6 @@ const EXTENDED_VIEW_STREAMS: &[VertexLayout] = &[
     VertexLayout::Mesh,
     VertexLayout::Buffer(SLOT_STREAM),
 ];
-const CASTER_STREAMS: &[VertexLayout] = &[VertexLayout::Mesh, VertexLayout::Buffer(SLOT_STREAM)];
 const CARD_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![2 => Uint32, 3 => Uint32];
 const CARD_STREAM: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
@@ -62,12 +61,6 @@ const CARD_STREAMS: &[VertexLayout] = &[
     VertexLayout::Buffer(CARD_STREAM),
     VertexLayout::Buffer(RECORD_STREAM),
 ];
-const CASTER_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
-    constant: 1,
-    slope_scale: 0.0,
-    clamp: 0.0,
-};
-
 pub(crate) struct Compaction {
     pub sum: ComputePipeline<MeshesGpu>,
     pub scan: ComputePipeline<MeshesGpu>,
@@ -187,8 +180,8 @@ pub(crate) enum Drawing {
         looks: Looked<Pipeline<MeshesGpu, Scene>>,
         streams: Streams<Scene>,
     },
-    Casters {
-        casting: [Pipeline<MeshesGpu, Scene>; 2],
+    DepthViews {
+        pipelines: [Pipeline<MeshesGpu, Scene>; 2],
         streams: ViewStreams,
     },
     Views {
@@ -244,7 +237,6 @@ pub(crate) type FrameReads = (
     Res<'static, PrimaryView>,
     Res<'static, Detail>,
     Res<'static, Impostors>,
-    Res<'static, Resolve>,
     Res<'static, FrameTime>,
     Res<'static, DeviceLimits>,
 );
@@ -901,20 +893,34 @@ fn card_pipeline<S: Scope<MeshesGpu>>(
     )
 }
 
-fn caster_pipelines(
+fn depth_view_pipelines(
     cx: &mut Install<'_, MeshesGpu>,
     scene: Scene,
+    depth: PassDepth,
 ) -> Result<[Pipeline<MeshesGpu, Scene>; 2], Error> {
-    let caster = |cx: &mut Install<'_, MeshesGpu>, vertex, fragment| {
+    let (plain, masked) = if depth.clamped {
+        (
+            depth_views::VS_DEPTH_VIEW_CLAMPED,
+            depth_views::VS_DEPTH_VIEW_MASKED_CLAMPED,
+        )
+    } else {
+        (depth_views::VS_DEPTH_VIEW, depth_views::VS_DEPTH_VIEW_MASKED)
+    };
+    let bias = wgpu::DepthBiasState {
+        constant: depth.bias,
+        slope_scale: depth.slope,
+        clamp: 0.0,
+    };
+    let pipeline = |cx: &mut Install<'_, MeshesGpu>, vertex, fragment| {
         cx.render_pipeline(
             scene,
             &RenderPipeline {
                 vertex,
                 fragment,
                 debug: None,
-                vertices: CASTER_STREAMS,
+                vertices: VIEW_STREAMS,
                 primitive: wgpu::PrimitiveState::default(),
-                depth: DepthUse::Write { bias: CASTER_BIAS },
+                depth: DepthUse::Write { bias },
                 blend: None,
                 writes: wgpu::ColorWrites::empty(),
             },
@@ -922,12 +928,8 @@ fn caster_pipelines(
         )
     };
     Ok([
-        caster(cx, casters::VS_CASTER, None)?,
-        caster(
-            cx,
-            casters::VS_CASTER_MASKED,
-            Some(casters::FS_CASTER_MASKED),
-        )?,
+        pipeline(cx, plain, None)?,
+        pipeline(cx, masked, Some(depth_views::FS_DEPTH_VIEW_MASKED))?,
     ])
 }
 
@@ -984,8 +986,8 @@ fn install_scenes(
                 },
             }
         } else if owned && !listed.pass.reads.base_color {
-            Drawing::Casters {
-                casting: caster_pipelines(cx, scene)?,
+            Drawing::DepthViews {
+                pipelines: depth_view_pipelines(cx, scene, listed.depth)?,
                 streams: ViewStreams {
                     ids: cx.draw_input(scene, presented.view_visible),
                     args: cx.draw_input(scene, presented.view_draws),

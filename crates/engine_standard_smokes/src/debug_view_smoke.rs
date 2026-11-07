@@ -9,18 +9,8 @@ const SIDE: usize = 24;
 const VIEWS: [&str; 7] = [
     "kinds", "levels", "cards", "shadows", "casters", "overdraw", "normals",
 ];
-const KINDS: [&str; 9] = [
-    "mesh",
-    "placed",
-    "card",
-    "placed_card",
-    "terrain",
-    "cover",
-    "water",
-    "falls",
-    "sky",
-];
-const SLOTTED: [&str; 2] = ["mesh", "card"];
+const KINDS: [&str; 5] = ["mesh", "placed", "terrain", "cover", "water"];
+const SLOTTED: [&str; 1] = ["mesh"];
 
 pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     load(session, &grid(SIDE, false))?;
@@ -197,7 +187,7 @@ fn probes(session: &mut dyn SmokeSession, rendering: &Value) -> Result<(), Smoke
         let kind = probed["kind"].as_str().unwrap_or_default().to_owned();
         let wanted = json!(KINDS);
         smoke_eq!(
-            seen(KINDS.contains(&kind.as_str()), json!(probed), &wanted),
+            seen(known(&probed), json!(probed), &wanted),
             wanted,
             "probe_kind"
         );
@@ -213,7 +203,7 @@ fn probes(session: &mut dyn SmokeSession, rendering: &Value) -> Result<(), Smoke
             wanted,
             "probe_shaded"
         );
-        if kind != "sky" {
+        if !kind.is_empty() {
             let wanted = json!("surface");
             smoke_eq!(
                 seen(surface(&probed), json!(probed), &wanted),
@@ -252,13 +242,7 @@ fn probes(session: &mut dyn SmokeSession, rendering: &Value) -> Result<(), Smoke
     )?;
     let wanted = json!(KINDS);
     smoke_eq!(
-        seen(
-            sky["kind"]
-                .as_str()
-                .is_some_and(|kind| KINDS.contains(&kind)),
-            json!(sky),
-            &wanted,
-        ),
+        seen(known(&sky), json!(sky), &wanted),
         wanted,
         "probe_top"
     );
@@ -273,6 +257,13 @@ fn probes(session: &mut dyn SmokeSession, rendering: &Value) -> Result<(), Smoke
         "probe_refuses_outside"
     );
     Ok(())
+}
+
+fn known(probed: &Value) -> bool {
+    probed["kind"].is_null()
+        || probed["kind"]
+            .as_str()
+            .is_some_and(|kind| KINDS.contains(&kind))
 }
 
 fn surface(probed: &Value) -> bool {

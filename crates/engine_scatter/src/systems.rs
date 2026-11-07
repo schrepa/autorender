@@ -222,7 +222,7 @@ pub(crate) fn place_windows(
         view.detail_eye(),
         (state.groups.covers.as_slice(), state.objects),
     );
-    piece.set_if_neq(canopy(lit, &foliage, view.temporal()));
+    piece.set_if_neq(canopy(lit, &foliage, view.jitter().is_some()));
     source.set_if_neq(OcclusionSource {
         texel_share: texel_share(&settings),
     });

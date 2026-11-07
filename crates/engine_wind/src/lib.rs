@@ -8,7 +8,8 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 pub mod constants;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Schedule, Source, ViewWind, settings};
+use engine_core::{Brick, Bricks, Schedule, Source, settings};
+use engine_places_rendering::wind::ViewWind;
 use engine_places_simulation::wind::{GustWaves, Wind};
 use engine_render::RenderBricks;
 
@@ -48,8 +49,9 @@ impl Brick for WindBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<WindSettings>()
-            .fill::<Wind>(Some(shaders::wind::faces::wind::MODULE))
-            .fill::<ViewWind>(None)
+            .piece::<ViewWind>()
+            .fill::<Wind>(None)
+            .fill::<ViewWind>(Some(shaders::wind::faces::wind::MODULE))
             .generated(GENERATED)
             .systems(Schedule::Presentation, publish_wind);
     }
@@ -68,5 +70,6 @@ fn publish_wind(
     view.set_if_neq(ViewWind {
         velocity: settings.velocity,
         gusts: settings.gusts,
+        pad: 0.0,
     });
 }

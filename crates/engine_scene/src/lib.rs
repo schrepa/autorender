@@ -25,7 +25,7 @@ pub use document::{
 pub use engine_assets::{MeshStreams, encode_mesh_buffer_with};
 pub use engine_registry::SceneEntity;
 pub use engine_settings::{parse_json, parse_value};
-pub use environment::{STREAMED, SceneEnvironment};
+pub use environment::SceneEnvironment;
 #[cfg(feature = "schema")]
 pub use environment::section_schemas;
 pub use files::{SceneFile, SceneFileKind, SceneFiles};

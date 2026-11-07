@@ -14,7 +14,7 @@ impl CameraUniform {
             position: position.extend(seconds).to_array(),
             jitter: [0.0; 4],
             options: [0.0; 4],
-            wind: [0.0, 0.0, 0.0, seconds],
+            previous: [0.0, 0.0, 0.0, seconds],
             region: [0.0; 4],
             detail: position.extend(0.0).to_array(),
             view: [0; 4],
@@ -31,16 +31,13 @@ impl CameraUniform {
         self.detail = eye.extend(0.0).to_array();
     }
 
-    pub fn temporal(
-        view_projection: Mat4,
+    pub fn viewed(
+        (view_projection, previous): (Mat4, Mat4),
         position: glam::Vec3,
-        seconds: f32,
-        previous: Mat4,
+        (seconds, previous_seconds): (f32, f32),
         jitter: [f32; 2],
         (width, height): (u32, u32),
-        frame: u64,
     ) -> Self {
-        let turn = (frame % 1024) as f32 * 0.618_034;
         Self {
             view_projection: jittered(view_projection, jitter).to_cols_array_2d(),
             previous_view_projection: previous.to_cols_array_2d(),
@@ -50,7 +47,7 @@ impl CameraUniform {
                 2.0 / width.max(1) as f32,
                 2.0 / height.max(1) as f32,
             ],
-            options: [0.0, 0.0, turn - turn.floor(), 0.0],
+            previous: [0.0, 0.0, 0.0, previous_seconds],
             ..Self::exact(view_projection, position, seconds)
         }
     }
@@ -70,7 +67,6 @@ pub fn pack_surface(surface: Surface) -> u32 {
     unit(surface.roughness, matte.roughness, 1.0)
         | unit(surface.metalness, matte.metalness, 1.0) << 8
         | unit(surface.emission, matte.emission, Surface::MAX_EMISSION) << 16
-        | unit(surface.ripples, matte.ripples, 1.0) << 24
 }
 
 pub fn pack_color(color: [f32; 4]) -> [u32; 2] {

@@ -1,7 +1,7 @@
 import package::engine::mesh::declarations::{AffinePose as PoseRows, AffineVertexInput,
-    TemporalOutput, slot_fade, slot_index, slot_moved};
+    MotionOutput, slot_fade, slot_index, slot_moved};
 import package::engine::drawn::{DRAWN_OWN_PROJECTION, drawn_clip, drawn_records};
-import package::engine::mesh::vertex::{origin_key, output_color, pose_matrix, transform_vertex};
+import package::engine::mesh::vertex::{origin_key, pose_matrix, transform_vertex};
 import package::engine::shading::PositionInput;
 import package::engine::slots::slot_position;
 import package::engine::view::{camera, detail_across};
@@ -29,8 +29,8 @@ fn placed_position(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>,
     return slot_position(input);
 }
 
-fn affine_temporal(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,
-        moved: bool, material: SlotColor, fade: u32) -> TemporalOutput {
+fn affine_motion(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,
+        moved: bool, material: SlotColor, fade: u32) -> MotionOutput {
     let model = posed(pose);
     var vertex = transform_vertex(input.position, input.normal, material.color,
         material.surface, input.uv, model);
@@ -46,9 +46,9 @@ fn affine_temporal(input: AffineVertexInput, pose: AffinePose, previous: AffineP
     vertex.world_v = vec4<f32>(current, vertex.world_v.w);
     vertex.clip_position = camera.view_projection * vec4<f32>(current, 1.0);
     world = vec4<f32>(placed_position(model, input.position, world.xyz, material,
-        camera.wind.w), 1.0);
+        camera.previous.w), 1.0);
     let shown = camera.previous_view_projection * world;
-    var output: TemporalOutput;
+    var output: MotionOutput;
     output.clip_position = vertex.clip_position;
     output.normal_u = vertex.normal_u;
     output.world_v = vertex.world_v;
@@ -57,7 +57,7 @@ fn affine_temporal(input: AffineVertexInput, pose: AffinePose, previous: AffineP
     return output;
 }
 
-fn own_projection(output: TemporalOutput, slot: u32) -> TemporalOutput {
+fn own_projection(output: MotionOutput, slot: u32) -> MotionOutput {
     let record = drawn_records[slot];
     if (record.flags & DRAWN_OWN_PROJECTION) == 0u {
         return output;
@@ -75,26 +75,22 @@ fn own_projection(output: TemporalOutput, slot: u32) -> TemporalOutput {
     return projected;
 }
 
-fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
+fn vertex_affine_motion(input: AffineVertexInput) -> MotionOutput {
     let slot = slot_index(input.slot);
     let moved = slot_moved(input.slot);
     var previous: AffinePose;
     if moved {
         previous = instance_previous_poses[slot];
     }
-    return own_projection(affine_temporal(input, instance_poses[slot], previous, moved,
+    return own_projection(affine_motion(input, instance_poses[slot], previous, moved,
         instance_colors[slot], slot_fade(input.slot)), slot);
 }
 
-fn slot_temporal(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,
-        color: SlotColor, ground: vec4<u32>, fade: u32) -> TemporalOutput {
+fn slot_motion(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,
+        color: SlotColor, fade: u32) -> MotionOutput {
     let moved = any(previous.row_0 != pose.row_0) || any(previous.row_1 != pose.row_1)
         || any(previous.row_2 != pose.row_2);
-    var vertex = affine_temporal(input, pose, previous, moved, color, fade);
-    if ground.z != 0u {
-        vertex.material.x = pack4x8unorm(output_color(vertex.material));
-    }
-    return vertex;
+    return affine_motion(input, pose, previous, moved, color, fade);
 }
 
 struct MeshOutput {
@@ -112,7 +108,7 @@ fn drawn_object(input: AffineVertexInput, draw: vec4<u32>) -> vec4<u32> {
 
 @vertex
 fn vs_mesh(input: AffineVertexInput, @location(14) draw: vec4<u32>) -> MeshOutput {
-    let vertex = vertex_affine_temporal(input);
+    let vertex = vertex_affine_motion(input);
     var output: MeshOutput;
     output.clip_position = vertex.clip_position;
     output.normal_u = vertex.normal_u;
@@ -124,8 +120,8 @@ fn vs_mesh(input: AffineVertexInput, @location(14) draw: vec4<u32>) -> MeshOutpu
 }
 
 @vertex
-fn vs_view(input: AffineVertexInput) -> TemporalOutput {
-    return vertex_affine_temporal(input);
+fn vs_view(input: AffineVertexInput) -> MotionOutput {
+    return vertex_affine_motion(input);
 }
 
 struct ExtendedOutput {
@@ -137,7 +133,7 @@ struct ExtendedOutput {
     @location(4) uv1: vec2<f32>,
 }
 
-struct ExtendedTemporalOutput {
+struct ExtendedMotionOutput {
     @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
@@ -158,10 +154,10 @@ struct ExtendedMeshOutput {
     @location(6) @interpolate(flat) object: vec4<u32>,
 }
 
-fn extended_temporal(input: AffineVertexInput, color: vec4<f32>, uv1: vec2<f32>)
-        -> ExtendedTemporalOutput {
-    let vertex = vertex_affine_temporal(input);
-    var output: ExtendedTemporalOutput;
+fn extended_motion(input: AffineVertexInput, color: vec4<f32>, uv1: vec2<f32>)
+        -> ExtendedMotionOutput {
+    let vertex = vertex_affine_motion(input);
+    var output: ExtendedMotionOutput;
     output.clip_position = vertex.clip_position;
     output.normal_u = vertex.normal_u;
     output.world_v = vertex.world_v;
@@ -175,7 +171,7 @@ fn extended_temporal(input: AffineVertexInput, color: vec4<f32>, uv1: vec2<f32>)
 @vertex
 fn vs_mesh_extended(input: AffineVertexInput, @location(9) color: vec4<f32>,
         @location(10) uv1: vec2<f32>, @location(14) draw: vec4<u32>) -> ExtendedMeshOutput {
-    let vertex = extended_temporal(input, color, uv1);
+    let vertex = extended_motion(input, color, uv1);
     var output: ExtendedMeshOutput;
     output.clip_position = vertex.clip_position;
     output.normal_u = vertex.normal_u;
@@ -190,6 +186,6 @@ fn vs_mesh_extended(input: AffineVertexInput, @location(9) color: vec4<f32>,
 
 @vertex
 fn vs_view_extended(input: AffineVertexInput, @location(9) color: vec4<f32>,
-        @location(10) uv1: vec2<f32>) -> ExtendedTemporalOutput {
-    return extended_temporal(input, color, uv1);
+        @location(10) uv1: vec2<f32>) -> ExtendedMotionOutput {
+    return extended_motion(input, color, uv1);
 }

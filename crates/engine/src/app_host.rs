@@ -750,7 +750,6 @@ impl AppHost {
             display_size
         };
         let facts = FrameFacts {
-            temporal: !debug && post && self.renderer.motion(world),
             capture: shown.next_whole,
             debug,
             display_size,

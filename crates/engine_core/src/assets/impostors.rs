@@ -483,7 +483,6 @@ fn material_content(library: &AssetLibrary, material: Option<&Material>) -> u128
             surface.roughness,
             surface.metalness,
             surface.emission,
-            surface.ripples,
             material.normal_scale(),
             material.occlusion_strength(),
         ],

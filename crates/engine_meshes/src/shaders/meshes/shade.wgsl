@@ -1,12 +1,12 @@
 import package::engine::materials::{alpha_test, fade_list};
-import package::engine::mesh::declarations::{TemporalOutput, VertexOutput, fade_hidden};
+import package::engine::mesh::declarations::{MotionOutput, VertexOutput, fade_hidden};
 import package::engine::mesh::vertex::output_color;
 import package::engine::shading::{Shaded, SurfaceInput, SurfacePoint};
 import package::engine::slots::{shade_model, slot_output};
 import package::engine::surface::{masked_out, opacity_cut, surface_point};
 import package::engine::view::{camera, material_bias};
 import package::face::lit::widened;
-import package::meshes::vertex::{ExtendedOutput, ExtendedTemporalOutput};
+import package::meshes::vertex::{ExtendedOutput, ExtendedMotionOutput};
 import package::place::instances::SlotFragment;
 
 fn surface_input(input: SlotFragment, front: bool) -> SurfaceInput {
@@ -25,7 +25,7 @@ fn surface_input(input: SlotFragment, front: bool) -> SurfaceInput {
     surface.bias = material_bias();
     surface.time = camera.position.w;
     surface.object = input.object;
-    surface.words = input.ground;
+    surface.words = input.words;
     surface.origin = input.origin;
     return surface;
 }
@@ -43,24 +43,17 @@ fn mesh_point(input: SlotFragment, front: bool, tested: bool) -> SurfacePoint {
     return lit_point(surface_input(input, front), tested);
 }
 
-fn fragment_color(material: vec4<u32>, ground: vec4<u32>) -> vec4<f32> {
-    if ground.z != 0u {
-        return unpack4x8unorm(material.x);
-    }
-    return output_color(material);
-}
-
 fn fragment_values(clip_position: vec4<f32>, normal_u: vec4<f32>, world_v: vec4<f32>,
-        material: vec4<u32>, ground: vec4<u32>, origin: vec3<f32>) -> SlotFragment {
+        material: vec4<u32>, words: vec4<u32>, origin: vec3<f32>) -> SlotFragment {
     var values: SlotFragment;
-    values.color = fragment_color(material, ground);
+    values.color = output_color(material);
     values.normal = normal_u.xyz;
     values.world = world_v.xyz;
     values.uv = vec2<f32>(normal_u.w, world_v.w);
     values.uv1 = values.uv;
     values.object = material;
     values.pixel = clip_position.xy;
-    values.ground = ground;
+    values.words = words;
     values.origin = origin;
     return values;
 }
@@ -85,11 +78,11 @@ fn extended_fragment(input: ExtendedOutput) -> SlotFragment {
 }
 
 fn placed_fragment(clip_position: vec4<f32>, normal_u: vec4<f32>, world_v: vec4<f32>,
-        material: vec4<u32>, ground: vec4<u32>, origin: vec3<f32>) -> SlotFragment {
+        material: vec4<u32>, words: vec4<u32>, origin: vec3<f32>) -> SlotFragment {
     if fade_hidden(material.w, clip_position.xy) {
         discard;
     }
-    return fragment_values(clip_position, normal_u, world_v, material, ground, origin);
+    return fragment_values(clip_position, normal_u, world_v, material, words, origin);
 }
 
 fn masked_depth(input: SlotFragment) {
@@ -104,7 +97,7 @@ fn shade(input: SlotFragment, front: bool, tested: bool) -> Shaded {
     return slot_output(surface, point, shade_model(point, input.pixel));
 }
 
-fn temporal_output(input: TemporalOutput) -> VertexOutput {
+fn motion_output(input: MotionOutput) -> VertexOutput {
     var output: VertexOutput;
     output.clip_position = input.clip_position;
     output.normal_u = input.normal_u;
@@ -113,7 +106,7 @@ fn temporal_output(input: TemporalOutput) -> VertexOutput {
     return output;
 }
 
-fn extended_temporal_output(input: ExtendedTemporalOutput) -> ExtendedOutput {
+fn extended_motion_output(input: ExtendedMotionOutput) -> ExtendedOutput {
     var output: ExtendedOutput;
     output.clip_position = input.clip_position;
     output.normal_u = input.normal_u;

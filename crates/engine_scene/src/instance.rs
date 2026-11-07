@@ -230,7 +230,7 @@ impl SceneInstance {
         OperationScene {
             id: self.id.clone(),
             entities: self.entities.clone(),
-            streamed: false,
+            authored_later: false,
         }
     }
 
@@ -260,7 +260,7 @@ impl SceneInstance {
         {
             world.remove_resource::<SceneContext>();
         }
-        self.remove_streamed(world);
+        self.remove_authored_later(world);
         for &entity in self.entities.values() {
             world.despawn(entity);
         }
@@ -269,18 +269,18 @@ impl SceneInstance {
         }
     }
 
-    fn remove_streamed(&self, world: &mut World) {
+    fn remove_authored_later(&self, world: &mut World) {
         let mut kept: BTreeSet<Entity> = self.entities.values().copied().collect();
         if let Some(current) = world.get_resource::<OperationScene>() {
             kept.extend(current.entities.values().copied());
         }
-        let streamed: Vec<Entity> = world
+        let later: Vec<Entity> = world
             .query::<(Entity, &SceneEntity)>()
             .iter(world)
             .filter(|(entity, authored)| authored.scene_id == self.id && !kept.contains(entity))
             .map(|(entity, _)| entity)
             .collect();
-        for entity in streamed {
+        for entity in later {
             let _ = world.try_despawn(entity);
         }
     }
@@ -330,7 +330,7 @@ impl SceneDocument {
         let context = crate::loading::context(
             self,
             (table, bounds),
-            std::mem::take(&mut prepared.paths),
+            prepared.shares.clone(),
             entities.clone(),
             &kinds,
             Some(files.buffers()),
@@ -341,7 +341,7 @@ impl SceneDocument {
                 world.insert_resource(OperationScene {
                     id: self.id.clone(),
                     entities: entities.clone(),
-                    streamed: false,
+                    authored_later: false,
                 });
                 then(world, &*entities)
             });
@@ -419,11 +419,10 @@ impl SceneDocument {
             files: None,
             ..context.clone()
         });
-        if let Some(environment) = &prepared.environment {
-            context.scope(|| environment.apply_all(world, "$.environment"))?;
-        }
+        let empty = crate::SceneEnvironment::default();
+        let environment = prepared.environment.as_ref().unwrap_or(&empty);
+        context.scope(|| environment.apply_all(world, "$.environment"))?;
         world.insert_resource(crate::SceneViews::of(self));
-        context.scope(|| crate::environment::apply_streamed(world, self.streamed_section()))?;
         self.camera.show(world);
         Ok(())
     }

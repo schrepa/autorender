@@ -1,18 +1,4 @@
 {
-  "along": [
-    {
-      "every": 40.0,
-      "first": 20.0,
-      "id": "lantern",
-      "layer": "road",
-      "offset": 5.0,
-      "prefab": "lantern",
-      "streamed": {
-        "reach": 12.0
-      },
-      "terrain": "terrain"
-    }
-  ],
   "camera": {
     "far": 20000.0,
     "near": 0.5,
@@ -3709,6 +3695,22 @@
           "mesh": "spruce2",
           "shadow": "spruce2_shadow",
           "sway": 0.35
+        }
+      ]
+    },
+    "streamed": {
+      "along": [
+        {
+          "every": 40.0,
+          "first": 20.0,
+          "id": "lantern",
+          "layer": "road",
+          "offset": 5.0,
+          "prefab": "lantern",
+          "streamed": {
+            "reach": 12.0
+          },
+          "terrain": "terrain"
         }
       ]
     },

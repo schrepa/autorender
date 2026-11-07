@@ -1,12 +1,11 @@
-import package::engine::debug::{DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS, DEBUG_KIND_MESH,
-    DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN, DEBUG_KIND_WATER,
-    DEBUG_NO_MATERIAL, debug_record, debug_record_fading, debug_record_kind,
-    debug_record_level, debug_record_source, debug_record_with_fading, debug_record_with_source};
+import package::engine::debug::{DEBUG_NO_MATERIAL, debug_record, debug_record_card,
+    debug_record_fading, debug_record_kind, debug_record_level, debug_record_source,
+    debug_record_with_fading, debug_record_with_kind, debug_record_with_source};
 
 struct DebugTargets {
     @location(0) ids: vec4<u32>,
     @location(1) count: f32,
-    @location(2) terrain: vec2<u32>,
+    @location(2) words: vec2<u32>,
 }
 
 struct DebugShade {
@@ -15,10 +14,10 @@ struct DebugShade {
 }
 
 const DEBUG_OTHER: vec3<f32> = vec3<f32>(0.4, 0.4, 0.42);
-const DEBUG_SKY: vec3<f32> = vec3<f32>(0.12, 0.13, 0.16);
+const DEBUG_EMPTY: vec3<f32> = vec3<f32>(0.12, 0.13, 0.16);
 const DEBUG_CARDS: vec3<f32> = vec3<f32>(0.95, 0.25, 0.85);
 
-fn debug_targets(record: u32, object: u32, detail: u32, normal: vec3<f32>, sun: u32) -> DebugTargets {
+fn debug_targets(record: u32, object: u32, detail: u32, normal: vec3<f32>, source: u32) -> DebugTargets {
     var targets: DebugTargets;
     targets.ids = vec4<u32>(record, object, detail, 0u);
     targets.count = 1.0;

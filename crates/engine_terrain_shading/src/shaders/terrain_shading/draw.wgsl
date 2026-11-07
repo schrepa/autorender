@@ -5,7 +5,7 @@ import package::face::far_cover::{GroundAt, far_color};
 import package::face::ground_tiles::macro_color;
 import package::face::bounce::bounce_light;
 import package::face::foliage::foliage;
-import package::face::lit::{finish, local_light, widened};
+import package::face::lit::{finish, widened};
 import package::face::shadows::{kept_level, kept_texels};
 import package::face::sun::sun_direction;
 import package::engine::view::{DETAIL_EDGE_ON, PI, camera, detail_across, detail_distance, detail_level,
@@ -1426,7 +1426,7 @@ fn terrain_resolve_targets(input: TerrainResolveInput, dither: f32) -> DepthView
     let position = input.position;
     let resolved = terrain_resolved(position, dither);
     let point = resolved.point;
-    let shaded = finish(point, local_light(point, position.xy));
+    let shaded = finish(point, position.xy, vec3<f32>(0.0));
     let previous = vec4<f32>(resolved.previous.xy, 0.0, resolved.previous.z);
     return depth_view_targets(shaded, view_pixel(position, previous), resolved.depth);
 }
@@ -1445,7 +1445,7 @@ fn shade_terrain(input: TerrainOutput, holes: bool) -> Shaded {
     use_terrain(input.terrain);
     let point = terrain_point(input.relative.xyz);
     terrain_holes_test(input.cell, holes);
-    return finish(point, local_light(point, input.clip_position.xy));
+    return finish(point, input.clip_position.xy, vec3<f32>(0.0));
 }
 
 @fragment

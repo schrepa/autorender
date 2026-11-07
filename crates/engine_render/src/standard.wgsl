@@ -3,7 +3,8 @@ import package::engine::materials::{MAP_BASE_COLOR, MAP_EMISSIVE, MAP_METALLIC_R
     base_color_sampler, emissive_factor, emissive_map, emissive_sampler, map_present, map_uv,
     metallic_roughness_map, metallic_roughness_sampler, normal_map, normal_sampler, normal_scale,
     occlusion_map, occlusion_sampler, occlusion_strength, transmission_factor};
-import package::engine::shading::{LightInputs, PositionInput, Shaded, SurfaceInput, SurfacePoint};
+import package::engine::shading::{PositionInput, Shaded, SurfaceInput, SurfacePoint};
+import package::engine::slots::LightInputs;
 import package::engine::view::stable_normalize;
 
 fn base_texel(input: SurfaceInput) -> vec4<f32> {
@@ -28,17 +29,6 @@ fn mapped_normal(normal: vec3<f32>, dp_dx: vec3<f32>, dp_dy: vec3<f32>, uv_dx: v
     let frame = inverseSqrt(max(max(dot(tangent, tangent), dot(bitangent, bitangent)), 1.0e-30));
     let deflection = sampled.xy * (scale * frame);
     return stable_normalize(tangent * deflection.x - bitangent * deflection.y + normal * sampled.z);
-}
-
-fn rippled(normal: vec3<f32>, world: vec3<f32>, strength: f32, time: f32) -> vec3<f32> {
-    let p = world.xz;
-    let a = dot(p, vec2<f32>(0.8, 0.6)) * 0.7 + time * 1.1;
-    let b = dot(p, vec2<f32>(-0.6, 0.8)) * 1.6 + time * 1.7;
-    let c = dot(p, vec2<f32>(0.1, -1.0)) * 3.3 + time * 2.3;
-    let slope = vec2<f32>(0.8, 0.6) * (0.126 * cos(a))
-        + vec2<f32>(-0.6, 0.8) * (0.112 * cos(b))
-        + vec2<f32>(0.1, -1.0) * (0.083 * cos(c));
-    return normalize(normal - vec3<f32>(slope.x, 0.0, slope.y) * strength);
 }
 
 fn position(input: PositionInput) -> vec3<f32> {
@@ -73,9 +63,6 @@ fn normal(input: SurfaceInput, point: SurfacePoint) -> vec3<f32> {
             * 2.0 - 1.0;
         shading = mapped_normal(shading, input.world_dx, input.world_dy, dpdx(uv), dpdy(uv),
             sampled, normal_scale());
-    }
-    if input.surface.w > 0.0 {
-        shading = rippled(shading, input.world, input.surface.w, input.time);
     }
     return shading;
 }

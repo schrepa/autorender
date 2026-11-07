@@ -1,10 +1,11 @@
 import package::engine::math::GRAVITY;
 import package::engine::surfaces::SURFACE_WATER;
 import package::engine::view::eye_world;
-import package::face::debug::{DEBUG_KIND_FALLS, DEBUG_KIND_WATER, DebugTargets, debug_targets};
+import package::face::debug::{DebugTargets, debug_record, debug_targets};
 import package::face::heightfield::use_terrain;
 import package::face::lighting::sun_debug;
 import package::face::sun_blockers::SunAt;
+import package::generated::kinds::KIND_WATER;
 import package::generated::pieces::water::piece;
 import package::generated::water::{DEBUG_SPAN_STEPS, DRY, WATER_SPAN_LEAST, WATER_SPAN_MOST,
     water_probe_detail, water_probe_state};
@@ -43,10 +44,12 @@ fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt) -> DebugTargets 
     let speed = length(at.words.flow);
     let froude = speed / sqrt(GRAVITY * max(depth, DRY));
     let eddies = water_eddy_froude(speed, length(at.slope), depth);
-    var targets = debug_targets(DEBUG_KIND_WATER, pack2x16float(vec2<f32>(depth, speed)),
-        water_probe_detail(debug_span_code(at.words.span), debug_byte(shade.shaded.roughness)),
+    var targets = debug_targets(debug_record(KIND_WATER, 0u, false, false, 0u),
+        pack2x16float(vec2<f32>(depth, speed)),
+        water_probe_detail(debug_span_code(at.words.span), debug_byte(shade.shaded.roughness),
+            false),
         normal, water_sun(world, normal));
-    targets.terrain = vec2<u32>(pack2x16float(vec2<f32>(froude, eddies)),
+    targets.words = vec2<u32>(pack2x16float(vec2<f32>(froude, eddies)),
         water_probe_state(debug_byte(at.words.state.x), debug_byte(at.words.state.y),
             min(at.words.reach, 0xffu)));
     return targets;
@@ -68,6 +71,6 @@ fn fs_debug_fall(input: FallOutput) -> DebugTargets {
     }
     let world = eye_world(input.relative);
     let normal = shade.shaded.normal;
-    return debug_targets(DEBUG_KIND_FALLS, 0u, 0u, normal,
-        water_sun(world, normal));
+    return debug_targets(debug_record(KIND_WATER, 0u, false, false, 0u), 0u,
+        water_probe_detail(0u, 0u, true), normal, water_sun(world, normal));
 }

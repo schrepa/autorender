@@ -4,18 +4,18 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use engine_core::{
     BrickList, ComponentKind, Error, JobExchange, Placed, Placement, SceneBuffers, SceneComponents,
-    SceneContext, SceneCx, ScenePath, core_components, scene_components,
+    SceneContext, SceneCx, SceneShare, core_components, scene_components,
 };
 use engine_registry::{JobList, Registry, SettingsEntry};
 use engine_settings::{ErrorCode, Expected};
 use serde_json::Value;
 
-use crate::{SceneObject, environment::STREAMED};
+use crate::SceneObject;
 
 #[derive(Clone)]
 pub struct SceneKinds {
     listed: Vec<ComponentKind>,
-    streamed: Option<SettingsEntry>,
+    sections: Vec<SettingsEntry>,
     list: Option<Arc<JobList>>,
 }
 
@@ -23,7 +23,7 @@ impl Default for SceneKinds {
     fn default() -> Self {
         Self {
             listed: core_components().to_vec(),
-            streamed: None,
+            sections: Vec::new(),
             list: None,
         }
     }
@@ -33,10 +33,12 @@ impl SceneKinds {
     pub fn of(world: &World) -> Self {
         Self {
             listed: scene_components(world).cloned().collect(),
-            streamed: world
+            sections: world
                 .get_resource::<Registry>()
-                .and_then(|registry| registry.section(STREAMED))
-                .copied(),
+                .into_iter()
+                .flat_map(Registry::sections)
+                .copied()
+                .collect(),
             list: world
                 .get_resource::<JobExchange>()
                 .map(JobExchange::shared_list),
@@ -51,14 +53,11 @@ impl SceneKinds {
                 .chain(list.members::<SceneComponents>())
                 .cloned()
                 .collect(),
-            streamed: bricks.listed().iter().find_map(|listed| {
-                listed
-                    .record()
-                    .settings_entries()
-                    .iter()
-                    .find(|section| section.key == STREAMED)
-                    .copied()
-            }),
+            sections: bricks
+                .listed()
+                .iter()
+                .flat_map(|listed| listed.record().settings_entries().to_vec())
+                .collect(),
             list: Some(Arc::new(list)),
         })
     }
@@ -67,8 +66,8 @@ impl SceneKinds {
         &self.listed
     }
 
-    pub(crate) fn streamed(&self) -> Option<SettingsEntry> {
-        self.streamed
+    pub(crate) fn section(&self, key: &str) -> Option<SettingsEntry> {
+        self.sections.iter().find(|section| section.key == key).copied()
     }
 
     pub(crate) fn cx<'a>(
@@ -136,18 +135,18 @@ impl SceneKinds {
         self.each_known(object, path, |kind, value, at| kind.validate_placed(value, placed, at))
     }
 
-    pub(crate) fn paths(
+    pub(crate) fn shares(
         &self,
         object: &SceneObject,
         path: &str,
         cx: &SceneCx<'_>,
-    ) -> Result<Vec<ScenePath>, Error> {
-        let mut paths = Vec::new();
+    ) -> Result<Vec<SceneShare>, Error> {
+        let mut shares = Vec::new();
         self.each_known(object, path, |kind, value, at| {
-            paths.extend(kind.scene_paths_in(value, cx, at)?);
+            shares.extend(kind.shared_in(value, cx, at)?);
             Ok(())
         })?;
-        Ok(paths)
+        Ok(shares)
     }
 
     pub(crate) fn files<'a>(

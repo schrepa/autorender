@@ -40,11 +40,10 @@ fn planes(rows: [Vec3; 3], rect: [f32; 4], depth: f32) -> [[f32; 4]; 6] {
     ]
 }
 
-fn view(clip: Mat4, wind: [f32; 4], eye: [f32; 4]) -> CameraUniform {
+fn view(clip: Mat4, eye: [f32; 4]) -> CameraUniform {
     CameraUniform {
         view_projection: clip.to_cols_array_2d(),
         position: eye,
-        wind,
         ..CameraUniform::default()
     }
 }
@@ -136,28 +135,23 @@ impl FrameRegions<'_> {
 
     pub(crate) fn cameras(
         &self,
-        (wind, gusting): ([f32; 2], [f32; 4]),
-        (viewer, sky): (Vec4, Option<(Mat4, [f32; 4])>),
+        (viewer, sky): (Vec4, Option<Mat4>),
         out: &mut Vec<CameraUniform>,
     ) {
         out.clear();
         out.resize(SKY_VIEW as usize + 1, CameraUniform::default());
         for (index, region) in self.plan.regions.iter().enumerate() {
-            out[index] = view(
-                self.region_clip(region),
-                [wind[0], wind[1], 0.0, 0.0],
-                [0.0; 4],
-            );
+            out[index] = view(self.region_clip(region), [0.0; 4]);
         }
-        out[MOVING_VIEW as usize] = view(Mat4::IDENTITY, gusting, viewer.to_array());
-        if let Some((clip, written)) = sky {
-            out[SKY_VIEW as usize] = view(clip, written, [0.0; 4]);
+        out[MOVING_VIEW as usize] = view(Mat4::IDENTITY, viewer.to_array());
+        if let Some(clip) = sky {
+            out[SKY_VIEW as usize] = view(clip, [0.0; 4]);
         }
         out.extend(
             self.plan
                 .moving
                 .iter()
-                .map(|tile| view(self.moving_clip(tile).0, gusting, viewer.to_array())),
+                .map(|tile| view(self.moving_clip(tile).0, viewer.to_array())),
         );
     }
 

@@ -6,6 +6,8 @@ use engine_place::{JobRef, Slot};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
+pub const UNKNOWN_TERRAIN: ErrorCode = ErrorCode::Brick("unknown_terrain");
+
 pub const TILE_QUADS: u32 = 256;
 pub const TILE_SAMPLES: u32 = TILE_QUADS + 1;
 pub const MAX_LEVEL: u32 = 15;

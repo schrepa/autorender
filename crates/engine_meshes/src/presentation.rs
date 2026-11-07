@@ -59,11 +59,11 @@ fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
     ) * view_projection
 }
 
-pub(crate) fn rasterized(view: &engine_core::PrimaryView, offset: glam::Vec2, temporal: bool) -> Mat4 {
+pub(crate) fn rasterized(view: &engine_core::PrimaryView) -> Mat4 {
     let view_projection = view.view_projection();
-    if !temporal {
+    let Some(offset) = view.jitter() else {
         return view_projection;
-    }
+    };
     let size = view.render_size();
     jittered(
         view_projection,
@@ -572,7 +572,6 @@ pub(crate) struct FrameState {
     pub color_bits: Vec<u64>,
     pub colors_seen: Cursor,
     pub colors_library: Option<(u64, u64)>,
-    pub temporal: bool,
     pub motion_generation: Option<u64>,
     pub prepared_at: Option<f32>,
     pub faded_at: Option<f32>,

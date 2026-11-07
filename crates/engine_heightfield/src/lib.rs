@@ -33,6 +33,13 @@ pub use path::{Bridge, PathSample};
 pub use rivers::{Given, RIVER_STEP, River, RiverLine, Rivers};
 pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverListing, RiverSight};
 
+use engine_codec::ErrorCode;
+
+pub const INVALID_TERRAIN: ErrorCode = ErrorCode::Brick("invalid_terrain");
+pub const MISSING_LAYER: ErrorCode = ErrorCode::Brick("missing_layer");
+pub const UNKNOWN_MAP: ErrorCode = ErrorCode::Brick("unknown_map");
+pub const UNREADABLE_MAP: ErrorCode = ErrorCode::Brick("unreadable_map");
+
 pub fn bound(value: f32) -> f64 {
     engine_codec::rule::Bound::bound(value)
 }

@@ -132,6 +132,7 @@ pub(crate) struct WaterProbeDetail {
     pub span: u8,
     #[bits(8)]
     pub roughness: u8,
+    pub falls: bool,
 }
 
 #[gpu_bits]

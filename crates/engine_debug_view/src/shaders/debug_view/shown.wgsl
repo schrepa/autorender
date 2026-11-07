@@ -4,7 +4,7 @@ import package::generated::pieces::debug_view::piece;
 import package::place::debug::{DebugShade, DebugTargets, debug_record_with_source};
 
 const DEBUG_OTHER: vec3<f32> = vec3<f32>(0.4, 0.4, 0.42);
-const DEBUG_SKY: vec3<f32> = vec3<f32>(0.12, 0.13, 0.16);
+const DEBUG_EMPTY: vec3<f32> = vec3<f32>(0.12, 0.13, 0.16);
 
 fn debug_octahedral(normal: vec3<f32>) -> vec2<f32> {
     let n = normal / (abs(normal.x) + abs(normal.y) + abs(normal.z));
@@ -12,13 +12,13 @@ fn debug_octahedral(normal: vec3<f32>) -> vec2<f32> {
     return select(n.xy, (vec2<f32>(1.0) - abs(n.yx)) * sign, n.z < 0.0);
 }
 
-fn debug_targets(record: u32, object: u32, detail: u32, normal: vec3<f32>, sun: u32)
+fn debug_targets(record: u32, object: u32, detail: u32, normal: vec3<f32>, source: u32)
         -> DebugTargets {
     var targets: DebugTargets;
-    targets.ids = vec4<u32>(debug_record_with_source(record, sun), object, detail,
+    targets.ids = vec4<u32>(debug_record_with_source(record, source), object, detail,
         pack2x16snorm(debug_octahedral(stable_normalize(normal))));
     targets.count = 1.0;
-    targets.terrain = vec2<u32>(0u);
+    targets.words = vec2<u32>(0u);
     return targets;
 }
 

@@ -4,7 +4,9 @@ use engine_codec::{self as codec, Error, record};
 use engine_core::{ErrorCode, Job, JobCx, JobKind, RecordKey};
 use engine_heightfield::layer::LayerKind;
 use engine_heightfield::tile::{Generator, Recipe, Tile};
-use engine_heightfield::{Pyramid, Stamp, TILE_QUADS, TileKey, reaches, reaches_span};
+use engine_heightfield::{
+    INVALID_TERRAIN, Pyramid, Stamp, TILE_QUADS, TileKey, reaches, reaches_span,
+};
 use engine_places_world::terrain::TerrainLayers;
 
 use crate::bounce::{MAX_PROBES, TerrainBounce, bounce};
@@ -469,7 +471,7 @@ fn between(tile: &Tile, x: f32, z: f32) -> f32 {
 }
 
 pub(crate) fn invalid_heights() -> Error {
-    Error::new(ErrorCode::InvalidTerrain, "$.heights").expected(engine_codec::Expected::Finite)
+    Error::new(INVALID_TERRAIN, "$.heights").expected(engine_codec::Expected::Finite)
 }
 
 fn unshared(path: &str, name: &str) -> Error {

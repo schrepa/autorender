@@ -61,23 +61,24 @@ impl FrameTime {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PauseReason {
     Agent,
-    Screen,
     Game,
     Focus,
     Hidden,
     Suspended,
+    #[serde(untagged)]
+    Brick(&'static str),
 }
 
 impl PauseReason {
     pub fn stops_frames(self) -> bool {
         match self {
             Self::Hidden | Self::Suspended => true,
-            Self::Agent | Self::Screen | Self::Game | Self::Focus => false,
+            Self::Agent | Self::Game | Self::Focus | Self::Brick(_) => false,
         }
     }
 }

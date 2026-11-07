@@ -119,7 +119,6 @@ impl Operation for MeshesListing {
                         "roughness": surface.roughness,
                         "metalness": surface.metalness,
                         "emission": surface.emission,
-                        "ripples": surface.ripples,
                     },
                 })
             })

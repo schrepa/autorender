@@ -2,11 +2,14 @@ use super::operations::{coordinate, reply, within};
 use super::*;
 use crate::layer::maps;
 use crate::{HydrologyBake, TerrainLayer};
-use engine_core::{Operation, SceneIds, bounds, stated};
+use engine_core::{Operation, SceneIds, stated};
+use engine_places_simulation::ground::UNKNOWN_TERRAIN;
 use serde_json::Value;
 
 pub const FALLS_SHOWN: usize = 16;
 pub const RIVERS_SHOWN: usize = 16;
+const SWEEP_EXTENT: Rule = Rule::Range(0.0, 4096.0);
+const SWEEP_SAMPLES: Rule = Rule::Range(2.0, 64.0);
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -148,7 +151,7 @@ impl Operation for TerrainInspect {
                 .find_map(|(entity, _)| Some((entity, built(entity)?))),
         };
         let Some((entity, (scene, terrain))) = found else {
-            let error = Error::new(ErrorCode::UnknownTerrain, "$.terrain");
+            let error = Error::new(UNKNOWN_TERRAIN, "$.terrain");
             return Err(match request.terrain {
                 Some(name) => error.got(name),
                 None => error,
@@ -336,9 +339,9 @@ fn hydrology_view(terrains: &Terrains, entity: Entity) -> HydrologyView {
 #[serde(deny_unknown_fields)]
 pub struct TerrainLayerSweep {
     pub center: [f64; 2],
-    #[schemars(transform = stated(bounds::SWEEP_EXTENT))]
+    #[schemars(transform = stated(SWEEP_EXTENT))]
     pub half_extent: f64,
-    #[schemars(transform = stated(bounds::SWEEP_SAMPLES))]
+    #[schemars(transform = stated(SWEEP_SAMPLES))]
     pub samples: u32,
 }
 
@@ -364,10 +367,10 @@ impl Operation for TerrainLayerSweep {
             coordinate(request.center[0], "$.center[0]")?,
             coordinate(request.center[1], "$.center[1]")?,
         );
-        let half_extent = within(request.half_extent, bounds::SWEEP_EXTENT, "$.half_extent")?;
+        let half_extent = within(request.half_extent, SWEEP_EXTENT, "$.half_extent")?;
         within(
             f64::from(request.samples),
-            bounds::SWEEP_SAMPLES,
+            SWEEP_SAMPLES,
             "$.samples",
         )?;
         Ok(reply(layer_sweep(

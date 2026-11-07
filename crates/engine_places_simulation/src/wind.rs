@@ -43,5 +43,4 @@ impl Wind {
 
 impl Slot for Wind {
     const NAME: &'static str = "wind";
-    const WGSL: Option<&'static str> = Some(include_str!("places/wind.wgsl"));
 }

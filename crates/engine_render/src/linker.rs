@@ -598,9 +598,18 @@ impl Linker {
         let Ok(unit) = module.text.parse::<TranslationUnit>() else {
             return false;
         };
-        let declared = unit.global_declarations.iter().any(|declaration| {
-            matches!(declaration.node(), GlobalDeclaration::Declaration(item) if item.ident.to_string() == name)
-        });
+        let declared = unit
+            .global_declarations
+            .iter()
+            .any(|declaration| match declaration.node() {
+                GlobalDeclaration::Declaration(item) => item.ident.to_string() == name,
+                GlobalDeclaration::Struct(item) => item.ident.to_string() == name,
+                GlobalDeclaration::TypeAlias(item) => item.ident.to_string() == name,
+                GlobalDeclaration::Void
+                | GlobalDeclaration::Function(_)
+                | GlobalDeclaration::ConstAssert(_)
+                | GlobalDeclaration::Compound(_) => false,
+            });
         declared
             || unit
                 .imports

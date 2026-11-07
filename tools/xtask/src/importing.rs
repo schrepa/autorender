@@ -10,6 +10,7 @@ use engine_assetc::{
 };
 use engine_core::{Error, ErrorCode, Expected};
 use engine_dev::authoring;
+use engine_places_simulation::physics::INVALID_COLLIDER;
 use engine_scene::{SceneDocument, SceneKinds};
 use serde_json::{Value, json};
 
@@ -321,7 +322,7 @@ fn preserve_colliders(
             continue;
         };
         let Some(replacement) = replacements.get_mut(&old.id) else {
-            return Err(Error::new(ErrorCode::InvalidCollider, "$.replace")
+            return Err(Error::new(INVALID_COLLIDER, "$.replace")
                 .expected(Expected::Present)
                 .got(&old.id));
         };

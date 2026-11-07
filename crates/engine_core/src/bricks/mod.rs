@@ -115,6 +115,11 @@ impl Bricks<'_> {
         self
     }
 
+    pub fn errors(&mut self, codes: &'static [ErrorCode]) -> &mut Self {
+        self.record.add_error_codes(codes);
+        self
+    }
+
     #[track_caller]
     pub fn stats<S: Section + Resource<Mutability = Mutable>>(&mut self) -> &mut Self {
         self.record
@@ -850,7 +855,7 @@ fn authored_by<B: Brick>(world: &mut World, entity: Entity, authored: Authored) 
         return;
     }
     let scene_id = if let Some(mut scene) = world.get_resource_mut::<OperationScene>() {
-        scene.streamed = true;
+        scene.authored_later = true;
         scene.id.clone()
     } else {
         world
@@ -998,5 +1003,5 @@ pub enum Schedule {
     ViewSync,
     BetweenFrames,
     Waiting,
-    Stream,
+    PreWorldSync,
 }

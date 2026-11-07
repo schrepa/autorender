@@ -4,7 +4,7 @@ use std::sync::Arc;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use engine_assets::{Aabb, SceneAssets};
-use engine_core::{Error, Mesh, SceneBuffers, SceneContext, ScenePath};
+use engine_core::{Error, Mesh, SceneBuffers, SceneContext, SceneShare};
 
 use crate::{SceneDocument, SceneKinds};
 
@@ -28,18 +28,19 @@ pub(crate) fn named(document: &SceneDocument) -> Arc<SceneAssets> {
     })
 }
 
-pub(crate) fn paths(document: &SceneDocument, kinds: &SceneKinds) -> Result<Vec<ScenePath>, Error> {
+pub(crate) type Shares = Arc<BTreeMap<String, Vec<SceneShare>>>;
+
+pub(crate) fn shares(document: &SceneDocument, kinds: &SceneKinds) -> Result<Shares, Error> {
     let cx = kinds.cx(None, None);
     named(document).lenient(|| {
-        let mut paths = Vec::new();
+        let mut shares = BTreeMap::new();
         for (index, entity) in document.entities.iter().enumerate() {
-            let answered = kinds.paths(entity, &format!("$.entities[{index}]"), &cx)?;
-            paths.extend(answered.into_iter().map(|path| ScenePath {
-                terrain: entity.id.clone(),
-                ..path
-            }));
+            let shared = kinds.shares(entity, &format!("$.entities[{index}]"), &cx)?;
+            if !shared.is_empty() {
+                shares.insert(entity.id.clone(), shared);
+            }
         }
-        Ok(paths)
+        Ok(Arc::new(shares))
     })
 }
 
@@ -55,7 +56,7 @@ pub(crate) fn bounds(document: &SceneDocument, meshes: &[Mesh]) -> BTreeMap<Stri
 pub(crate) fn context(
     document: &SceneDocument,
     (assets, bounds): (Arc<SceneAssets>, BTreeMap<String, Aabb>),
-    paths: Vec<ScenePath>,
+    shares: Shares,
     entities: Arc<BTreeMap<String, Entity>>,
     kinds: &SceneKinds,
     files: Option<Arc<SceneBuffers>>,
@@ -74,7 +75,7 @@ pub(crate) fn context(
                 })
                 .collect(),
         ),
-        paths: paths.into(),
+        shares,
         entities,
         kinds: kinds.listed_kinds().into(),
         bounds: Arc::new(bounds),

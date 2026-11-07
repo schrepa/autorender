@@ -14,15 +14,9 @@ use crate::readback::{Arrival, Reader};
 
 const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
 const OPAQUE_MESHES: &str = "opaque_meshes";
-const MEMORY: [&str; 15] = [
-    "memory.gpu_shadow_bytes",
-    "memory.gpu_post_bytes",
-    "memory.gpu_environment_bytes",
-    "memory.gpu_light_bytes",
+const MEMORY: [&str; 9] = [
     "memory.gpu_impostor_bytes",
-    "memory.gpu_terrain_bytes",
-    "memory.gpu_transparent_bytes",
-    "memory.gpu_temporal_bytes",
+    "memory.gpu_previous_pose_bytes",
     "memory.gpu_presentation_bytes",
     "memory.render_staging_capacity_bytes",
     "memory.gpu_instance_buffer_bytes",
@@ -82,40 +76,27 @@ fn opaque_span(
 
 fn camera_of(
     viewed: &Viewed,
-    temporal: Option<(crate::Resolve, Mat4)>,
-    region: crate::targets::FrameRegion,
-    (previous_seconds, wind): (f32, engine_core::ViewWind),
+    facts: &engine_core::ViewFacts,
+    turn: f32,
+    previous_seconds: f32,
 ) -> CameraUniform {
-    let mut camera = match temporal {
-        Some((resolve, previous)) => {
-            let (width, height) = region.render.pixels();
-            let clip = crate::gpu_data::jitter_clip(resolve.offset.to_array(), width, height);
-            let mut camera = CameraUniform::temporal(
-                viewed.view_projection,
-                viewed.eye,
-                viewed.seconds,
-                previous,
-                clip,
-                (width, height),
-                0,
-            );
-            camera.options[2] = resolve.turn - resolve.turn.floor();
-            camera
-        }
-        None => CameraUniform::exact(viewed.view_projection, viewed.eye, viewed.seconds),
-    };
+    let region = view_region(facts);
+    let (width, height) = region.render.pixels();
+    let clip = facts.jitter.map_or([0.0; 2], |offset| {
+        crate::gpu_data::jitter_clip(offset.to_array(), width, height)
+    });
+    let mut camera = CameraUniform::viewed(
+        (viewed.view_projection, facts.previous_view_projection),
+        viewed.eye,
+        (viewed.seconds, previous_seconds),
+        clip,
+        (width, height),
+    );
+    if facts.jitter.is_some() {
+        camera.options[2] = turn - turn.floor();
+    }
     camera.set_region(viewed.view_projection, region);
     camera.set_detail(viewed.detail);
-    camera.wind = [
-        wind.velocity[0],
-        wind.velocity[1],
-        wind.gusts,
-        if temporal.is_some() {
-            previous_seconds
-        } else {
-            viewed.seconds
-        },
-    ];
     camera
 }
 
@@ -275,7 +256,7 @@ impl Renderer {
         let world = frame.world();
         let view = world.get_resource::<PrimaryView>();
         let debug = view.is_some_and(PrimaryView::debug);
-        let temporal_frame = !debug && view.is_some_and(PrimaryView::temporal);
+        let jittered = view.and_then(PrimaryView::jitter).is_some();
         let region = self.core.display.plan_region(view.map(PrimaryView::render_size));
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
@@ -306,7 +287,7 @@ impl Renderer {
         run.frame += 1;
         run.parity = (run.frame % 2) as usize;
         run.debug = debug;
-        run.temporal = temporal_frame;
+        run.jittered = jittered;
         run.drawn = 0;
         run.uploads.counted = 0;
         run.uploads.memory.clear();
@@ -333,14 +314,9 @@ impl Renderer {
             .get_resource::<FrameTime>()
             .map_or(0.0, |time| time.elapsed as f32);
         let previous_seconds = self.seconds.replace(seconds).unwrap_or(seconds);
-        let resolve = world
-            .get_resource::<crate::Resolve>()
-            .copied()
-            .unwrap_or_default();
-        let wind = world
-            .get_resource::<engine_core::ViewWind>()
-            .copied()
-            .unwrap_or_default();
+        let turn = world
+            .get_resource::<engine_core::Jitter>()
+            .map_or(0.0, |jitter| jitter.turn);
         let listed = listed_views(world, view, region, run.written());
         let entities: Vec<bevy_ecs::entity::Entity> = listed.iter().map(|facts| facts.view).collect();
         run.settle_views(entities[0], &entities);
@@ -354,9 +330,7 @@ impl Renderer {
                     detail: detail_of(view, index, facts),
                     seconds,
                 };
-                let temporal =
-                    jittered(facts).then_some((resolve, facts.previous_view_projection));
-                camera_of(&viewed, temporal, view_region(facts), (previous_seconds, wind))
+                camera_of(&viewed, facts, turn, previous_seconds)
             })
             .collect();
         let canvas = surface
@@ -483,7 +457,7 @@ impl Renderer {
             let size = facts.size();
             run.camera_slot = index as u32;
             run.debug = facts.debug;
-            run.temporal = jittered(&facts);
+            run.jittered = facts.jitter.is_some();
             run.region = (facts.render != size).then_some((facts.render.x, facts.render.y));
             run.canvas_format = format;
             run.canvas_rect = (!facts.whole(glam::UVec2::new(texture.width(), texture.height())))
@@ -939,7 +913,7 @@ fn listed_views(
         previous_view_projection: view_projection,
         history: view.map_or(engine_core::ViewHistory::Fresh, PrimaryView::history),
         debug: view.is_some_and(PrimaryView::debug),
-        temporal: view.is_some_and(PrimaryView::temporal),
+        jitter: view.and_then(PrimaryView::jitter),
         capture: view.is_some_and(PrimaryView::capture),
         frame,
     }]
@@ -949,10 +923,6 @@ fn drawn_order(listed: &[engine_core::ViewFacts]) -> Vec<usize> {
     let (surfaces, textures): (Vec<usize>, Vec<usize>) =
         (0..listed.len()).partition(|&index| listed[index].target.surface());
     textures.into_iter().chain(surfaces).collect()
-}
-
-fn jittered(facts: &engine_core::ViewFacts) -> bool {
-    facts.temporal && !facts.debug && facts.target.surface()
 }
 
 fn detail_of(view: Option<&PrimaryView>, index: usize, facts: &engine_core::ViewFacts) -> glam::Vec3 {

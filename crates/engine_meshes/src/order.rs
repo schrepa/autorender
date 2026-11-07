@@ -4,7 +4,6 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     Detail, DeviceLimits, DrawnTable, MaterialHandle, MeshHandle, PlanState, PrimaryView,
 };
-use engine_render::Resolve;
 use engine_render::slots::DRAWN_SLOTS;
 
 use crate::MESH;
@@ -92,11 +91,11 @@ pub(crate) struct MeshPlan {
 
 pub(crate) fn plan_draws(
     table: Res<DrawnTable>,
-    (view, detail, resolve): (Res<PrimaryView>, Res<Detail>, Res<Resolve>),
+    (view, detail): (Res<PrimaryView>, Res<Detail>),
     (culling, occlusion, subpixel): (Res<Culling>, Res<OcclusionCulling>, Res<SubpixelCulling>),
     mut decided: ResMut<MeshPlan>,
 ) {
-    let (planes, absolute) = frustum_uniform(rasterized(&view, resolve.offset, view.temporal()));
+    let (planes, absolute) = frustum_uniform(rasterized(&view));
     let bounded = absolute.iter().flatten().all(|value| {
         value.is_finite() && *value <= engine_core::presentation_bounds::MAX_COEFFICIENT
     }) && planes.iter().flatten().all(|value| value.is_finite());

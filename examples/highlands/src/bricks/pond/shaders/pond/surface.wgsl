@@ -84,10 +84,10 @@ fn shade_pond(input: PondOutput) -> PondShade {
     point.world_dy = world_dy;
     point.distance = length(toward);
     var shade: PondShade;
-    shade.shaded = finish(point, vec3<f32>(0.0));
+    shade.shaded = finish(point, input.clip_position.xy, vec3<f32>(0.0));
     shade.cover = 1.0 - exp(-depth / (POND_CLEAR * n_v));
-    shade.shaded.reflect *= shade.cover;
-    shade.shaded.mirrored *= shade.cover;
+    shade.shaded.outputs.reflect *= shade.cover;
+    shade.shaded.outputs.mirrored *= shade.cover;
     return shade;
 }
 

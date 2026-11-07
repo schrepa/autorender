@@ -1,7 +1,6 @@
 use engine_core::math::half;
-use engine_core::{BitValue, GpuBits};
+use engine_core::{BitValue, DrawKind, GpuBits};
 use engine_render::DebugMode;
-use engine_render::debug::{DebugKind, DebugRecord};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -92,10 +91,11 @@ fn water_probe((object, detail): (u32, u32), (froudes, state): (u32, u32)) -> Wa
     }
 }
 
-fn probe(ids: [u32; 4], color: [f32; 4]) -> Value {
-    let [record, object, detail, froudes] = ids;
+fn probe(kind: Option<DrawKind>, ids: [u32; 4], color: [f32; 4]) -> Value {
+    let [_, object, detail, froudes] = ids;
     let state = color[0].to_bits();
-    let water = (DebugRecord::unpack(record).map(|record| record.kind) == Some(DebugKind::Water))
+    let falls = WaterProbeDetail::unpack(detail).is_some_and(|detail| detail.falls);
+    let water = (kind == Some(crate::water::WATER_KIND) && !falls)
         .then(|| water_probe((object, detail), (froudes, state)));
     serde_json::to_value(Probed { water }).unwrap_or(Value::Null)
 }

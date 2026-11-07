@@ -1,8 +1,9 @@
-use engine_core::{Error, ErrorCode, Expected, MaterialHandle, MeshHandle, Reach};
+use engine_core::{Error, Expected, MaterialHandle, MeshHandle, Reach};
 use engine_places_world::splines::SplineMesh;
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use crate::INVALID_SPLINE;
 use crate::spline_mesh::MAX_SPLINE_POINTS;
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -28,7 +29,7 @@ impl SceneSpline {
     fn validate(&self, path: &str) -> Result<(), Error> {
         if !(2..=MAX_SPLINE_POINTS).contains(&self.points.len()) {
             return Err(
-                Error::new(ErrorCode::InvalidSpline, format!("{path}.points"))
+                Error::new(INVALID_SPLINE, format!("{path}.points"))
                     .expected(Expected::Array)
                     .range(2.0, MAX_SPLINE_POINTS as f64)
                     .got(self.points.len()),
@@ -40,7 +41,7 @@ impl SceneSpline {
                 .all(|value| value.is_finite() && value.abs() <= 1.0e7)
         }) {
             return Err(
-                Error::new(ErrorCode::InvalidSpline, format!("{path}.points[{index}]"))
+                Error::new(INVALID_SPLINE, format!("{path}.points[{index}]"))
                     .expected(Expected::Finite)
                     .range(-1.0e7, 1.0e7)
                     .got(self.points[index]),

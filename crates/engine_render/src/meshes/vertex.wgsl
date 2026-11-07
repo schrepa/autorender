@@ -27,10 +27,6 @@ fn octahedral_normal(encoded: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(encoded - shift, z);
 }
 
-fn placed_material(material: vec4<u32>, slot: u32) -> vec4<u32> {
-    return vec4<u32>(pack4x8unorm(output_color(material)), slot, material.zw);
-}
-
 fn transform_vertex(position: vec3<f32>, encoded_normal: vec2<f32>, color: vec2<u32>,
         surface: u32, uv: vec2<f32>, model: mat4x4<f32>) -> VertexOutput {
     let world_position = model * vec4<f32>(position, 1.0);

@@ -4,7 +4,7 @@ use engine_core::{
     Moves, Operation, Pace, Poses, PrimaryView, Rule, Setting, mover_of,
 };
 use engine_math::{atan2, clamp, exp, max, min, sin, sin_cos};
-use engine_places::sweeps::Sweeps;
+use engine_places_rendering::obstruction::Obstructions;
 use glam::{Quat, Vec3};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -100,7 +100,7 @@ fn eased(seconds: f32, smoothing: f32) -> f32 {
 
 pub(crate) fn follow(
     (time, input, settings): (Res<FrameTime>, Res<MoveInput>, Res<FollowCamera>),
-    (globals, poses, sweeps): (Res<GlobalTransforms>, Poses, Res<Sweeps>),
+    (globals, poses, obstructions): (Res<GlobalTransforms>, Poses, Res<Obstructions>),
     (view, targets): (Res<PrimaryView>, Query<Entity, With<CameraTarget>>),
     mut handoff: Asks<CameraHandoff>,
     (mut orbit, mut shake): (ResMut<Orbit>, ResMut<Shake>),
@@ -155,7 +155,7 @@ pub(crate) fn follow(
     follow.focus = follow.focus.lerp(goal, blend);
     let rotation = follow.rotation();
     let back = rotation * Vec3::Z * settings.distance;
-    let clear = sweeps
+    let clear = obstructions
         .0
         .sphere(settings.collision_radius, follow.focus, back, target)
         .map_or(1.0, |fraction| clamp(fraction, 0.0, 1.0));

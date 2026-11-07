@@ -1,36 +1,5 @@
 import package::engine::math::{TAU, pcg, unit};
-
-struct ParticleIn {
-    seed: u32,
-    age: f32,
-    life: f32,
-    lifetime: f32,
-    origin: vec3<f32>,
-    emitter_velocity: vec3<f32>,
-    direction: vec3<f32>,
-    speed: f32,
-    speed_spread: f32,
-    acceleration: vec3<f32>,
-    spread: f32,
-    ball: bool,
-    extent: vec3<f32>,
-    rotation: vec4<f32>,
-    size: vec2<f32>,
-    size_spread: f32,
-    start_color: vec4<f32>,
-    end_color: vec4<f32>,
-    fade_in: f32,
-    brightness: f32,
-    params: array<f32, 8>,
-}
-
-struct Particle {
-    position: vec3<f32>,
-    velocity: vec3<f32>,
-    size: f32,
-    color: vec4<f32>,
-    hidden: bool,
-}
+import package::place::particle_formula::{Particle, ParticleIn};
 
 fn basis(axis: vec3<f32>) -> mat2x3<f32> {
     let helper = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(axis.x) > 0.9);

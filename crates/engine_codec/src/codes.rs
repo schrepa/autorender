@@ -3,6 +3,7 @@ macro_rules! error_codes {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         pub enum ErrorCode {
             $($variant,)*
+            Brick(&'static str),
         }
 
         impl ErrorCode {
@@ -15,6 +16,7 @@ macro_rules! error_codes {
             pub const fn as_str(self) -> &'static str {
                 match self {
                     $(ErrorCode::$variant => $code,)*
+                    ErrorCode::Brick(code) => code,
                 }
             }
 
@@ -54,10 +56,8 @@ impl schemars::JsonSchema for ErrorCode {
     }
 
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        let codes: Vec<&str> = Self::ALL.iter().map(|&(_, code)| code).collect();
         schemars::json_schema!({
             "type": "string",
-            "enum": codes,
         })
     }
 }
@@ -95,7 +95,6 @@ error_codes! {
 
     GameRule => "game_rule",
     NoScene => "no_scene",
-    UnknownTerrain => "unknown_terrain",
     UnknownEntity => "unknown_entity",
     EntityRemoved => "entity_removed",
     WrongWorld => "wrong_world",
@@ -116,7 +115,6 @@ error_codes! {
     SourceIo => "source_io",
     SourceLocked => "source_locked",
     RenderFailed => "render_failed",
-    AudioFailed => "audio_failed",
     DuplicateId => "duplicate_id",
     DuplicateTag => "duplicate_tag",
     InvalidId => "invalid_id",
@@ -134,32 +132,12 @@ error_codes! {
     InvalidMesh => "invalid_mesh",
     InvalidMaterial => "invalid_material",
     InvalidTexture => "invalid_texture",
-    InvalidFont => "invalid_font",
     InvalidRenderable => "invalid_renderable",
-    InvalidCollider => "invalid_collider",
-    InvalidColliderTransform => "invalid_collider_transform",
     InvalidWorldTransform => "invalid_world_transform",
-    InvalidSpline => "invalid_spline",
-    InvalidTerrain => "invalid_terrain",
-    InvalidNavAgent => "invalid_nav_agent",
-    InvalidStreamed => "invalid_streamed",
-    InvalidGrounded => "invalid_grounded",
-    InvalidRigidBody => "invalid_rigid_body",
     InvalidEnvironment => "invalid_environment",
 
     MissingPlugin => "missing_plugin",
     DuplicateBrick => "duplicate_brick",
-
-    CollisionInvalidShape => "collision_invalid_shape",
-    CollisionInvalidTransform => "collision_invalid_transform",
-    CollisionInvalidRay => "collision_invalid_ray",
-    CollisionInvalidCast => "collision_invalid_cast",
-    CollisionInvalidConfig => "collision_invalid_config",
-    CollisionIncompleteWorld => "collision_incomplete_world",
-    CollisionCandidateBudget => "collision_candidate_budget",
-    CollisionPairBudget => "collision_pair_budget",
-    CollisionResultBudget => "collision_result_budget",
-    CollisionNumericalFailure => "collision_numerical_failure",
 
     PauseRequired => "pause_required",
     CommandBusy => "command_busy",
@@ -223,9 +201,6 @@ error_codes! {
     InvalidPack => "invalid_pack",
 
     InvalidRecord => "invalid_record",
-    MissingLayer => "missing_layer",
-    UnknownMap => "unknown_map",
-    UnreadableMap => "unreadable_map",
     InvalidGltf => "invalid_gltf",
     UnsupportedFeature => "unsupported_feature",
     JobUnsupported => "job_unsupported",

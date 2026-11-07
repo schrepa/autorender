@@ -288,7 +288,7 @@ fn vs_water(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instanc
 }
 
 fn water_previous(relative: vec3<f32>, flow: vec2<f32>, share: f32) -> vec3<f32> {
-    let seconds = clamp(camera.position.w - camera.wind.w, 0.0, WATER_LONGEST_FRAME);
+    let seconds = clamp(camera.position.w - camera.previous.w, 0.0, WATER_LONGEST_FRAME);
     let before = eye_world(relative) - vec3<f32>(flow.x, 0.0, flow.y) * (seconds * share);
     return (camera.previous_view_projection * vec4<f32>(before, 1.0)).xyw;
 }
@@ -428,7 +428,7 @@ struct WaterLit {
     sunny: f32,
 }
 
-fn water_light(surface: WaterSurface) -> WaterLit {
+fn water_light(surface: WaterSurface, pixel: vec2<f32>) -> WaterLit {
     let world = eye_world(surface.relative);
     let distance = length(surface.relative);
     let view = stable_normalize(-surface.relative);
@@ -500,7 +500,7 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     point.kind = SURFACE_WATER;
     point.inputs.sun_blocked = 1.0;
     var lit: WaterLit;
-    lit.shaded = finish(point, mix(body + glint, foam, surface.foam));
+    lit.shaded = finish(point, pixel, mix(body + glint, foam, surface.foam));
     lit.reflectance = reflectance;
     let sunlit = luminance(sunlight) * max(sun.y, 0.0);
     lit.sunny = sunlit / max(sunlit + luminance(sky), 1.0e-6);
@@ -627,7 +627,7 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     surface.foam = cover;
     surface.scatter = water_body(aerated);
     surface.transmit = transmit;
-    let lit = water_light(surface);
+    let lit = water_light(surface, pixel);
     let caustic = 1.0 + (gathered - 1.0) * lit.sunny
         * exp(-bed_depth * (1.0 / WATER_CAUSTIC_DEPTH + WATER_BUBBLES * aerated));
     let wet = water_ramp(standing, WATER_SOAKED, standing_change) * WATER_WET;
@@ -646,8 +646,8 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
 fn water_mirroring(shade: WaterShade) -> WaterShade {
     var result = shade;
     let own = luminance(shade.shaded.linear);
-    result.shaded.mirrored *= shade.fade * own / max(own + luminance(shade.behind), 1.0e-6);
-    result.shaded.reflect *= shade.fade;
+    result.shaded.outputs.mirrored *= shade.fade * own / max(own + luminance(shade.behind), 1.0e-6);
+    result.shaded.outputs.reflect *= shade.fade;
     return result;
 }
 

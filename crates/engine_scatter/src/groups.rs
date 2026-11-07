@@ -495,7 +495,7 @@ fn terrain_indices(terrains: &[(Entity, Vec<Option<Resolved<'_>>>)]) -> HashMap<
 fn scatter_levels(residency: &AssetResidency, asset: &Resolved<'_>) -> Option<Levels> {
     let mesh = residency.mesh(asset.mesh.handle)?;
     let level = |mesh: &ResidentMesh, level: usize, own: (u32, u32)| {
-        let (first, count) = mesh.caster_range(level, own);
+        let (first, count) = mesh.single_sided_range(level, own);
         (
             (own.1, mesh.first_index() + own.0, mesh.base_vertex()),
             (count, mesh.first_index() + first, mesh.base_vertex()),
@@ -573,6 +573,6 @@ fn part_levels(
 
 fn proxy_caster(residency: &AssetResidency, proxy: &ResolvedMesh<'_>) -> Option<Range3> {
     let mesh = residency.mesh(proxy.handle)?;
-    let (first, count) = mesh.caster_range(0, (0, mesh.index_count()));
+    let (first, count) = mesh.single_sided_range(0, (0, mesh.index_count()));
     Some((count, mesh.first_index() + first, mesh.base_vertex()))
 }

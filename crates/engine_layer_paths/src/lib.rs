@@ -12,12 +12,12 @@ use std::any::Any;
 use std::sync::Arc;
 
 use engine_codec::{Reader, Writer};
-use engine_core::{Brick, Bricks, ErrorCode, Source, parse_value};
+use engine_core::{Brick, Bricks, Source, parse_value};
 use engine_heightfield::layer::{
     self, Below, LayerFiles, LayerKind, Made, Row, TerrainLayer, maps,
 };
 use engine_heightfield::path::{Bridge, PathSample};
-use engine_heightfield::{Layers, Pyramid, TileHeights};
+use engine_heightfield::{INVALID_TERRAIN, Layers, Pyramid, TileHeights};
 use engine_places_world::terrain::TerrainLayers;
 use glam::Vec2;
 use serde_json::Value;
@@ -32,7 +32,9 @@ impl Brick for LayerPathsBrick {
     const SOURCE: &'static Source = &SOURCE;
 
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.join::<TerrainLayers>(&PATH_KIND, None);
+        bricks
+            .errors(&[INVALID_TERRAIN])
+            .join::<TerrainLayers>(&PATH_KIND, None);
     }
 }
 
@@ -72,7 +74,7 @@ fn points(settings: &Value) -> Option<Vec<[f32; 2]>> {
 fn made(settings: Arc<PathLayer>, profile: Option<Arc<PathProfile>>) -> Made {
     settings
         .validate()
-        .map_err(|invalid| invalid.error(ErrorCode::InvalidTerrain, "$"))?;
+        .map_err(|invalid| invalid.error(INVALID_TERRAIN, "$"))?;
     Ok(Arc::new(TerrainPath { settings, profile }))
 }
 

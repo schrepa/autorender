@@ -184,9 +184,25 @@ pub fn never(_: DrawKind) -> bool {
     false
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PassDepth {
+    pub bias: i32,
+    pub slope: f32,
+    pub clamped: bool,
+}
+
+impl PassDepth {
+    pub const PLAIN: Self = Self {
+        bias: 0,
+        slope: 0.0,
+        clamped: false,
+    };
+}
+
 pub trait PassName: 'static {
     const NAME: &'static str;
     const PASS: Pass;
+    const DEPTH: PassDepth = PassDepth::PLAIN;
 }
 
 pub struct DepthPass;
@@ -232,6 +248,7 @@ impl PassName for BlendedPass {
 pub struct PassEntry {
     pub name: &'static str,
     pub pass: Pass,
+    pub depth: PassDepth,
 }
 
 impl PassEntry {
@@ -239,6 +256,7 @@ impl PassEntry {
         Self {
             name: N::NAME,
             pass: N::PASS,
+            depth: N::DEPTH,
         }
     }
 }
@@ -288,6 +306,7 @@ pub struct ScenePass {
     pub name: &'static str,
     pub brick: &'static str,
     pub pass: Pass,
+    pub depth: PassDepth,
     pub bit: Option<PassBit>,
 }
 
@@ -343,6 +362,7 @@ impl ScenePasses {
                 name: entry.name,
                 brick,
                 pass: entry.pass,
+                depth: entry.depth,
                 bit,
             });
         }

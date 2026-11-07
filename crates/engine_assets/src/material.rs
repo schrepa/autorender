@@ -18,7 +18,6 @@ fields! {
         pub roughness: f32 = Surface::MATTE.roughness => range(0.0, 1.0),
         pub metalness: f32 = Surface::MATTE.metalness => range(0.0, 1.0),
         pub emission: f32 = Surface::MATTE.emission => range(0.0, Surface::MAX_EMISSION),
-        pub ripples: f32 = Surface::MATTE.ripples => range(0.0, 1.0),
     }
 }
 
@@ -27,7 +26,6 @@ impl Surface {
         roughness: 0.8,
         metalness: 0.0,
         emission: 0.0,
-        ripples: 0.0,
     };
 
     pub const MAX_EMISSION: f32 = 16.0;

@@ -19,15 +19,6 @@ const MAPS_AT: usize = 4 * (3 + MODULE_ROWS);
 
 #[gpu_bits]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum TraceDepth {
-    Solid = 0,
-    Thin = 1,
-    Surface = 2,
-    Opaque = 3,
-}
-
-#[gpu_bits]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Alpha {
     Opaque = 0,
     Mask = 1,
@@ -167,18 +158,11 @@ impl MaterialVariant {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SurfaceKind {
     pub name: &'static str,
-    pub depth: TraceDepth,
 }
 
 impl SurfaceKind {
-    pub const SOLID: Self = Self {
-        name: "solid",
-        depth: TraceDepth::Solid,
-    };
-    pub const THIN: Self = Self {
-        name: "thin",
-        depth: TraceDepth::Thin,
-    };
+    pub const SOLID: Self = Self { name: "solid" };
+    pub const THIN: Self = Self { name: "thin" };
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -468,7 +452,7 @@ fn transmission_factor() -> f32 {{
 
     pub(crate) fn slots_source(&self, full: bool) -> String {
         let mut imports = String::from(
-            "import package::engine::shading::{LightInputs, PositionInput, Shaded, SurfaceInput, SurfacePoint, unlit};\n",
+            "import package::engine::shading::{PositionInput, Shaded, SurfaceInput, SurfacePoint, unlit};\n",
         );
         let mut body = String::new();
         let surface = "input: SurfaceInput, point: SurfacePoint";
@@ -527,7 +511,7 @@ fn transmission_factor() -> f32 {{
             let _ = writeln!(body, "    return standard_{name}({args});\n}}");
         }
         if full {
-            imports.push_str("import package::face::lit::{finish, local_light};\n");
+            imports.push_str("import package::face::lit::{LightInputs, LightOutputs, finish};\n");
             body.push_str(
                 "\nfn shade_model(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    var shaded = modeled(point, pixel);\n    shaded.opacity = point.opacity;\n    return shaded;\n}\n",
             );
@@ -539,10 +523,12 @@ fn transmission_factor() -> f32 {{
                 let _ = writeln!(imports, "import package::{path}::finish as model_{id};");
                 let _ = writeln!(
                     body,
-                    "    if model == {id}u {{\n        return model_{id}(point, local_light(point, pixel));\n    }}"
+                    "    if model == {id}u {{\n        return model_{id}(point, pixel, vec3<f32>(0.0));\n    }}"
                 );
             }
-            body.push_str("    return finish(point, local_light(point, pixel));\n}\n");
+            body.push_str("    return finish(point, pixel, vec3<f32>(0.0));\n}\n");
+        } else {
+            body.push_str("\nalias LightInputs = u32;\n\nalias LightOutputs = u32;\n");
         }
         let mut used = vec![
             "material_module".to_owned(),
@@ -569,19 +555,10 @@ fn transmission_factor() -> f32 {{
     }
 
     pub(crate) fn surfaces_source(&self) -> String {
-        let mut source = String::from(<TraceDepth as BitValue>::WGSL);
+        let mut source = String::new();
         for (index, kind) in self.kinds.iter().enumerate() {
             let _ = writeln!(source, "const SURFACE_{}: u32 = {index}u;", upper(kind.name));
         }
-        source.push_str("\nfn surface_depth(kind: u32) -> u32 {\n");
-        for (index, kind) in self.kinds.iter().enumerate().skip(1) {
-            let _ = writeln!(
-                source,
-                "    if kind == {index}u {{\n        return {}u;\n    }}",
-                kind.depth.bits()
-            );
-        }
-        let _ = writeln!(source, "    return {}u;\n}}", self.kinds[0].depth.bits());
         source
     }
 

@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::fmt::Write as _;
 use std::ops::Range;
 
 use bevy_ecs::change_detection::Mut;
@@ -189,6 +190,40 @@ impl DrawnTable {
 
     pub fn kind(&self, kind: DrawKind) -> Option<&KindDecl> {
         self.kinds.iter().find(|decl| decl.kind == kind)
+    }
+
+    pub fn kind_id(&self, kind: DrawKind) -> Option<u32> {
+        self.kinds
+            .iter()
+            .position(|decl| decl.kind == kind)
+            .map(|at| at as u32 + 1)
+    }
+
+    pub fn kind_of(&self, id: u32) -> Option<DrawKind> {
+        let at = (id as usize).checked_sub(1)?;
+        self.kinds.get(at).map(|decl| decl.kind)
+    }
+
+    pub fn wgsl(&self) -> String {
+        let mut text = String::new();
+        for decl in &self.kinds {
+            let name: String = decl
+                .kind
+                .name()
+                .chars()
+                .map(|character| {
+                    if character.is_ascii_alphanumeric() {
+                        character.to_ascii_uppercase()
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            if let Some(id) = self.kind_id(decl.kind) {
+                let _ = writeln!(text, "const KIND_{name}: u32 = {id}u;");
+            }
+        }
+        text
     }
 
     pub fn reach(&self, material: &Material) -> f32 {
@@ -597,11 +632,7 @@ impl DrawnTable {
             order: i32::from(drawn.order),
             values: (at * self.stride) as u32,
             floats: drawn.values.floats.len() as u32,
-            kind: self
-                .kinds
-                .iter()
-                .position(|decl| decl.kind == drawn.kind)
-                .map_or(u32::MAX, |index| index as u32),
+            kind: self.kind_id(drawn.kind).unwrap_or(0),
             mobility: cx
                 .globals
                 .mobility(drawn.node)

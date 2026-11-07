@@ -7,7 +7,7 @@ use engine_core::{
     Cursor, Error, Events, Feed, FixedTime, FrameTime, GlobalTransforms, Section, Since, Transform,
 };
 use engine_math::collections::HashMap;
-use engine_places::sweeps::{Sweep, Sweeps};
+use engine_places_simulation::sweeps::{Sweep, Sweeps};
 use engine_places_simulation::physics::{
     Collide, Collider, ColliderShape, ColliderSolid, Collision, CollisionRay, QueryFilter, RayHit,
     SLIDE_STEPS, SensorEvent, SensorEventKind, SensorFilter, SensorPair, ShapeCastOptions,
@@ -803,7 +803,7 @@ pub(crate) fn sync(
         &globals,
     );
     stats.set_if_neq(world.stats());
-    sweeps.0 = Box::new(world.sweep());
+    sweeps.0 = Arc::new(world.sweep());
 }
 
 pub(crate) fn refresh(
@@ -823,7 +823,7 @@ pub(crate) fn refresh(
         &globals,
     );
     stats.set_if_neq(world.stats());
-    sweeps.0 = Box::new(world.sweep());
+    sweeps.0 = Arc::new(world.sweep());
 }
 
 pub(crate) fn detect(mut collision: ResMut<Collision>, time: Res<FixedTime>) {

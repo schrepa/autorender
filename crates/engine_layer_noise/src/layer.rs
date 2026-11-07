@@ -2,8 +2,8 @@ use std::any::Any;
 use std::sync::Arc;
 
 use engine_codec::{Reader, Writer};
-use engine_core::{Error, ErrorCode, fields, parse_value};
-use engine_heightfield::Blend;
+use engine_core::{Error, fields, parse_value};
+use engine_heightfield::{Blend, INVALID_TERRAIN};
 use engine_heightfield::layer::{
     Below, LayerFiles, LayerKind, LayerTile, Made, SamplePoint, TerrainLayer, TileFrame, same_as,
 };
@@ -66,7 +66,7 @@ impl Noise {
 fn made(params: NoiseLayer) -> Made {
     params
         .validate()
-        .map_err(|invalid| Error::from(invalid).coded(ErrorCode::InvalidTerrain))?;
+        .map_err(|invalid| Error::from(invalid).coded(INVALID_TERRAIN))?;
     Ok(Arc::new(Noise::new(params)))
 }
 

@@ -7,7 +7,7 @@ import package::meshes::debug::point_targets;
 import package::meshes::forward::drawn_pixel;
 import package::meshes::shade::{masked_depth, mesh_point, placed_fragment, shade};
 import package::meshes::slots::{instance_colors, instance_poses};
-import package::meshes::vertex::{pose_origin, slot_temporal};
+import package::meshes::vertex::{pose_origin, slot_motion};
 import package::place::instances::{AffinePose, CardDebugTargets, CardShaded, CardVertex,
     SlotColor, SlotExtras, SlotFragment, SlotVertex, SlotVertexExtended};
 
@@ -20,28 +20,28 @@ fn instance_color(slot: u32) -> SlotColor {
 }
 
 fn slot_vertex(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,
-        color: SlotColor, ground: vec4<u32>, fade: u32) -> SlotVertex {
-    let vertex = slot_temporal(input, pose, previous, color, ground, fade);
+        color: SlotColor, words: vec4<u32>, fade: u32) -> SlotVertex {
+    let vertex = slot_motion(input, pose, previous, color, fade);
     return SlotVertex(vertex.clip_position, vertex.normal_u, vertex.world_v, vertex.material,
-        vertex.previous, ground, pose_origin(pose));
+        vertex.previous, words, pose_origin(pose));
 }
 
 fn slot_vertex_extended(input: AffineVertexInput, extras: SlotExtras, pose: AffinePose,
-        previous: AffinePose, color: SlotColor, ground: vec4<u32>, fade: u32)
+        previous: AffinePose, color: SlotColor, words: vec4<u32>, fade: u32)
         -> SlotVertexExtended {
-    let vertex = slot_temporal(input, pose, previous, color, ground, fade);
+    let vertex = slot_motion(input, pose, previous, color, fade);
     return SlotVertexExtended(vertex.clip_position, vertex.normal_u, vertex.world_v,
-        vertex.material, vertex.previous, extras.color, extras.uv1, ground, pose_origin(pose));
+        vertex.material, vertex.previous, extras.color, extras.uv1, words, pose_origin(pose));
 }
 
 fn slot_fragment(input: SlotVertex) -> SlotFragment {
     return placed_fragment(input.clip_position, input.normal_u, input.world_v, input.material,
-        input.ground, input.origin);
+        input.words, input.origin);
 }
 
 fn slot_fragment_extended(input: SlotVertexExtended) -> SlotFragment {
     var values = placed_fragment(input.clip_position, input.normal_u, input.world_v,
-        input.material, input.ground, input.origin);
+        input.material, input.words, input.origin);
     values.color *= input.color;
     values.uv1 = input.uv1;
     return values;

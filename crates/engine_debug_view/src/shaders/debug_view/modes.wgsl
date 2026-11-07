@@ -1,10 +1,10 @@
-import package::debug_view::shown::{DEBUG_OTHER, DEBUG_SKY, debug_normal};
+import package::debug_view::shown::{DEBUG_EMPTY, DEBUG_OTHER, debug_normal};
+import package::engine::debug::debug_kind_color;
 import package::generated::debug_view::{DEBUG_VIEW_CARDS, DEBUG_VIEW_KINDS, DEBUG_VIEW_LEVELS,
     DEBUG_VIEW_NORMALS, DEBUG_VIEW_OVERDRAW};
 import package::generated::pieces::debug_view::piece;
-import package::place::debug::{DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS, DEBUG_KIND_MESH,
-    DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN, DEBUG_KIND_WATER,
-    DebugShade, DebugTargets, debug_record_fading, debug_record_kind, debug_record_level};
+import package::place::debug::{DebugShade, DebugTargets, debug_record_card, debug_record_fading,
+    debug_record_kind, debug_record_level};
 
 const DEBUG_CARDS = vec3<f32>(0.95, 0.25, 0.85);
 
@@ -21,79 +21,45 @@ const DEBUG_HEAT = array<vec3<f32>, 11>(
     vec3<f32>(0.8, 0.3, 0.7), vec3<f32>(1.0, 1.0, 1.0),
 );
 
-fn debug_kind_color(kind: u32) -> vec3<f32> {
-    switch kind {
-        case DEBUG_KIND_MESH: {
-            return vec3<f32>(0.55, 0.62, 0.78);
-        }
-        case DEBUG_KIND_PLACED: {
-            return vec3<f32>(0.2, 0.72, 0.66);
-        }
-        case DEBUG_KIND_CARD, DEBUG_KIND_PLACED_CARD: {
-            return DEBUG_CARDS;
-        }
-        case DEBUG_KIND_TERRAIN: {
-            return vec3<f32>(0.62, 0.46, 0.3);
-        }
-        case DEBUG_KIND_COVER: {
-            return vec3<f32>(0.35, 0.8, 0.3);
-        }
-        case DEBUG_KIND_WATER: {
-            return vec3<f32>(0.2, 0.45, 0.95);
-        }
-        case DEBUG_KIND_FALLS: {
-            return vec3<f32>(0.55, 0.75, 1.0);
-        }
-        case DEBUG_KIND_SKY: {
-            return vec3<f32>(0.75, 0.85, 0.95);
-        }
-        default: {
-            return vec3<f32>(0.0);
-        }
+fn debug_kind_shade(record: u32) -> vec3<f32> {
+    let kind = debug_record_kind(record);
+    if kind == 0u {
+        return DEBUG_EMPTY;
     }
+    if debug_record_card(record) {
+        return DEBUG_CARDS;
+    }
+    return debug_kind_color(kind);
 }
 
 fn debug_level_color(record: u32) -> vec3<f32> {
-    let level = min(debug_record_level(record), 7u);
-    switch debug_record_kind(record) {
-        case DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_TERRAIN: {
-            return DEBUG_LEVELS[level];
-        }
-        case DEBUG_KIND_CARD, DEBUG_KIND_PLACED_CARD: {
-            return DEBUG_CARDS;
-        }
-        case DEBUG_KIND_SKY: {
-            return DEBUG_SKY;
-        }
-        default: {
-            return DEBUG_OTHER;
-        }
+    if debug_record_kind(record) == 0u {
+        return DEBUG_EMPTY;
     }
+    if debug_record_card(record) {
+        return DEBUG_CARDS;
+    }
+    return DEBUG_LEVELS[min(debug_record_level(record), 7u)];
 }
 
 fn debug_card_color(record: u32) -> vec3<f32> {
-    switch debug_record_kind(record) {
-        case DEBUG_KIND_CARD, DEBUG_KIND_PLACED_CARD: {
-            return select(DEBUG_CARDS, vec3<f32>(0.98, 0.65, 0.88), debug_record_fading(record));
-        }
-        case DEBUG_KIND_SKY: {
-            return DEBUG_SKY;
-        }
-        default: {
-            return DEBUG_OTHER;
-        }
+    if debug_record_kind(record) == 0u {
+        return DEBUG_EMPTY;
     }
+    if debug_record_card(record) {
+        return select(DEBUG_CARDS, vec3<f32>(0.98, 0.65, 0.88), debug_record_fading(record));
+    }
+    return DEBUG_OTHER;
 }
 
 fn shade_kind(shade: DebugShade, targets: DebugTargets) -> DebugShade {
     let ids = targets.ids;
     let record = ids.x;
-    let kind = debug_record_kind(record);
-    let surface = kind != 0u && kind != DEBUG_KIND_SKY;
+    let surface = debug_record_kind(record) != 0u;
     var shaded = shade;
     switch piece().view.x {
         case DEBUG_VIEW_KINDS: {
-            shaded = DebugShade(debug_kind_color(kind), surface);
+            shaded = DebugShade(debug_kind_shade(record), surface);
         }
         case DEBUG_VIEW_LEVELS: {
             shaded = DebugShade(debug_level_color(record), surface);
@@ -106,7 +72,7 @@ fn shade_kind(shade: DebugShade, targets: DebugTargets) -> DebugShade {
             shaded = DebugShade(DEBUG_HEAT[min(count, 10u)], false);
         }
         case DEBUG_VIEW_NORMALS: {
-            shaded = DebugShade(select(debug_normal(ids.w) * 0.5 + 0.5, DEBUG_SKY, !surface), false);
+            shaded = DebugShade(select(debug_normal(ids.w) * 0.5 + 0.5, DEBUG_EMPTY, !surface), false);
         }
         default: {}
     }

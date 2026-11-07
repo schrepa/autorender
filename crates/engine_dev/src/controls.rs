@@ -382,17 +382,20 @@ fn parented(
     scene: Option<&SceneInstance>,
     (entity, parent): (&str, &str),
 ) -> Result<Value, Error> {
-    let refused = || Error::new(ErrorCode::CollisionInvalidTransform, "$");
     let world = engine.app.world_mut();
     let scene = scene
         .map(SceneInstance::operation_scene)
         .or_else(|| world.get_resource::<OperationScene>().cloned())
-        .ok_or_else(refused)?;
-    let (Some(child), Some(parent)) = (scene.entity(world, entity), scene.entity(world, parent))
-    else {
-        return Err(refused());
+        .ok_or_else(|| Error::new(ErrorCode::NoScene, "$"))?;
+    let found = |id: &str, path: &str| {
+        scene.entity(world, id).ok_or_else(|| {
+            Error::new(ErrorCode::UnknownEntity, path)
+                .expected(Expected::Entity)
+                .got(id)
+        })
     };
-    engine_core::set_parent(world, child, Some(parent)).map_err(|_| refused())?;
+    let (child, parent) = (found(entity, "$.entity")?, found(parent, "$.parent")?);
+    engine_core::set_parent(world, child, Some(parent))?;
     Ok(result::parent(ParentResult { temporary: true }))
 }
 

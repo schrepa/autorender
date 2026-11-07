@@ -20,6 +20,7 @@ settings! {
         pub bounce_columns: u32 = 64 => multiple(2, 8, 1024),
         pub bounce_levels: u32 = MAX_BOUNCE_LEVELS => range(1, MAX_BOUNCE_LEVELS),
         pub macro_resolution: u32 = 2048 => range(64, 4096),
+        pub tile_feed: u32 = 4096 => at_least(1),
     }
 }
 

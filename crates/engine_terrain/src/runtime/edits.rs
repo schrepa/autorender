@@ -3,7 +3,9 @@ use super::*;
 use crate::scene::{SceneTerrainEdit, SceneTerrainRiver};
 use crate::{MAX_GIVEN_RIVERS, StampOp};
 use engine_core::{Joined, Operation, SceneIds};
+use engine_heightfield::MISSING_LAYER;
 use engine_heightfield::given::{MAX_DEPTH, MAX_DISCHARGE, MAX_WIDTH};
+use engine_places_simulation::ground::UNKNOWN_TERRAIN;
 use engine_places_world::terrain::TerrainLayers;
 use serde_json::Value;
 
@@ -329,7 +331,7 @@ fn edit_terrain(
                 }
             })?;
             let before = terrains.layers(entity).ok_or_else(|| {
-                Error::new(ErrorCode::UnknownTerrain, "$.terrain").expected(Expected::Present)
+                Error::new(UNKNOWN_TERRAIN, "$.terrain").expected(Expected::Present)
             })?;
             let after = before.with_stamps(&[stamp], kinds).map_err(|error| Error {
                 code: ErrorCode::InvalidRequest,
@@ -420,10 +422,10 @@ fn draw_river(
 ) -> Result<TerrainEdited, Error> {
     let terrain = built(scenes, entity);
     if !terrain.layers.has_hydrology() {
-        return Err(Error::new(ErrorCode::MissingLayer, "$.terrain").variants(["hydrology"]));
+        return Err(Error::new(MISSING_LAYER, "$.terrain").variants(["hydrology"]));
     }
     if !rivers_listed {
-        return Err(Error::new(ErrorCode::MissingLayer, "$.terrain").variants([RIVERS]));
+        return Err(Error::new(MISSING_LAYER, "$.terrain").variants([RIVERS]));
     }
     valid_id(&drawing.id)?;
     let origin = Vec2::new(terrain.origin.x, terrain.origin.z);

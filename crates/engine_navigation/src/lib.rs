@@ -13,6 +13,7 @@ mod scene;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, JobKind, SceneComponents, Schedule, Source};
+use engine_places_simulation::ground::UNKNOWN_TERRAIN;
 
 pub use agents::{NavAgents, NavQuery, NavStats, Navigation, ObstacleColliders, SceneNavAgent};
 pub use dev::{
@@ -35,6 +36,7 @@ impl Brick for NavigationBrick {
         bricks
             .when(|navigation: Res<Navigation>| navigation.enabled)
             .settings::<Navigation>()
+            .errors(&[scene::INVALID_NAV_AGENT, UNKNOWN_TERRAIN])
             .resource::<NavAgents>()
             .stats::<NavStats>()
             .systems(Schedule::FixedMove, agents::walk_agents)

@@ -5,8 +5,12 @@ mod smokes;
 mod spline_mesh;
 mod views;
 
-use engine_core::{Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source};
+use engine_core::{
+    Brick, Bricks, ComponentKind, ErrorCode, Runs, SceneComponents, Schedule, Smoke, Source,
+};
 use engine_places_world::splines::SplineMesh;
+
+pub const INVALID_SPLINE: ErrorCode = ErrorCode::Brick("invalid_spline");
 
 pub struct SplinesBrick;
 
@@ -20,6 +24,7 @@ impl Brick for SplinesBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .errors(&[INVALID_SPLINE])
             .resource::<spline_mesh::SplineBuilds>()
             .join::<SceneComponents>(
                 ComponentKind::of::<SplineMesh>("spline")

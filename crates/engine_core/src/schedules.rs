@@ -33,7 +33,7 @@ pub(crate) struct BetweenFrames;
 pub(crate) struct Waiting;
 
 #[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct Stream;
+pub(crate) struct PreWorldSync;
 
 #[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct FrameStart;
@@ -50,7 +50,7 @@ impl Schedule {
         Self::ViewSync,
         Self::BetweenFrames,
         Self::Waiting,
-        Self::Stream,
+        Self::PreWorldSync,
     ];
 
     #[doc(hidden)]
@@ -66,7 +66,7 @@ impl Schedule {
             Self::ViewSync => ViewSync.intern(),
             Self::BetweenFrames => BetweenFrames.intern(),
             Self::Waiting => Waiting.intern(),
-            Self::Stream => Stream.intern(),
+            Self::PreWorldSync => PreWorldSync.intern(),
         }
     }
 }

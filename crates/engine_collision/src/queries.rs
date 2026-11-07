@@ -20,6 +20,8 @@ use crate::types::{
 };
 use crate::world::{CollisionWorld, SensorEvents, world_of};
 
+const EVENT_OFFSET: Rule = Rule::Range(0.0, 131_072.0);
+
 type Seen = (
     Res<'static, Collision>,
     SceneIds<'static, 'static>,
@@ -202,7 +204,7 @@ pub(crate) struct CollisionEventsQuery {
     #[serde(default)]
     pub entity: Option<String>,
     #[serde(default)]
-    #[schemars(transform = stated(bounds::EVENT_OFFSET))]
+    #[schemars(transform = stated(EVENT_OFFSET))]
     pub offset: usize,
     #[serde(default = "default_limit")]
     #[schemars(transform = stated(bounds::PAGE))]
@@ -227,7 +229,7 @@ impl Operation for CollisionEventsQuery {
         page(limit)?;
         bounded(
             offset,
-            bounds::EVENT_OFFSET,
+            EVENT_OFFSET,
             ErrorCode::InvalidPage,
             "$.offset",
         )?;

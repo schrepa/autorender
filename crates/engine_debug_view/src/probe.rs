@@ -2,10 +2,10 @@ use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::{clamp, half, max, pow};
 use engine_core::{
-    DrawnTable, Error, ErrorCode, GpuBits, Joined, Operation, PassMask, PrimaryView, Readable,
-    Readback, ScenePasses,
+    DrawKind, DrawnTable, Error, ErrorCode, GpuBits, Joined, Operation, PassMask, PrimaryView,
+    Readable, Readback, ScenePasses,
 };
-use engine_render::debug::{DebugKind, DebugRecord};
+use engine_render::debug::DebugRecord;
 use engine_render::{
     AfterRead, Buffer, Copied, CopyRegion, DEBUG_TARGETS, DebugModes, DebugShown, GpuPart, Install,
     Lifetime, Prepare, TargetName, wgpu,
@@ -17,7 +17,7 @@ const IDS: u64 = 0;
 const COUNT: u64 = 256;
 const SCENE: u64 = 512;
 const CANVAS: u64 = 768;
-const TERRAIN: u64 = 1024;
+const WORDS: u64 = 1024;
 const DEPTH: u64 = 1280;
 const CANVAS_ORDER: u64 = 1284;
 const PROBED_BYTES: u64 = 1288;
@@ -98,7 +98,9 @@ impl Probe {
     ) -> Value {
         let record = word(bytes, IDS);
         let decoded = DebugRecord::unpack(record);
-        let kind = decoded.and_then(|decoded| drawn_kind(decoded.kind));
+        let kind = decoded
+            .zip(table)
+            .and_then(|(decoded, table)| table.kind_of(decoded.kind));
         let object = word(bytes, IDS + 4);
         let detail = word(bytes, IDS + 8);
         let depth = f32::from_bits(word(bytes, DEPTH));
@@ -120,12 +122,8 @@ impl Probe {
             }
         };
         let canvas = word(bytes, CANVAS_ORDER);
-        let with_object = matches!(
-            kind,
-            Some(DrawnKind::Mesh | DrawnKind::Placed | DrawnKind::Card | DrawnKind::PlacedCard)
-        );
-        let with_detail = matches!(kind, Some(DrawnKind::Card | DrawnKind::PlacedCard));
-        let table = table.filter(|_| matches!(kind, Some(DrawnKind::Mesh | DrawnKind::Card)));
+        let drawn = kind.is_some();
+        let table = table.filter(|_| kind == Some(DrawKind::MESH));
         let entity = table.and_then(|table| table.owner(object));
         let membership = table
             .and_then(|table| table.records().get(object as usize))
@@ -133,14 +131,14 @@ impl Probe {
             .map(|(record, passes)| passes.decode(PassMask(record.passes)));
         let probe = PixelProbe {
             pixel: [self.pixel.0, self.pixel.1],
-            kind,
+            kind: kind.map(DrawKind::name),
+            card: decoded.is_some_and(|decoded| decoded.card),
             level: decoded.map_or(0, |decoded| decoded.level),
             fading: decoded.is_some_and(|decoded| decoded.fading),
             passes: membership,
-            object: with_object.then_some(object),
-            detail: with_detail.then_some(detail),
-            normal: (kind.is_some() && kind != Some(DrawnKind::Sky))
-                .then(|| unpacked_normal(word(bytes, IDS + 12))),
+            object: drawn.then_some(object),
+            detail: drawn.then_some(detail),
+            normal: drawn.then(|| unpacked_normal(word(bytes, IDS + 12))),
             fragments: max(fragments.round(), 0.0) as u32,
             depth,
             world: (depth > 0.0 && point.w != 0.0).then(|| (point.truncate() / point.w).to_array()),
@@ -150,15 +148,15 @@ impl Probe {
         let Ok(Value::Object(mut fields)) = serde_json::to_value(probe) else {
             return Value::Null;
         };
-        let ids = [record, object, detail, word(bytes, TERRAIN)];
+        let ids = [record, object, detail, word(bytes, WORDS)];
         let words = [
-            f32::from_bits(word(bytes, TERRAIN + 4)),
+            f32::from_bits(word(bytes, WORDS + 4)),
             fragments,
             depth,
             0.0,
         ];
         for mode in modes.all() {
-            if let Value::Object(decoded) = (mode.decode)(ids, words) {
+            if let Value::Object(decoded) = (mode.decode)(kind, ids, words) {
                 for (name, value) in decoded {
                     fields.entry(name).or_insert(value);
                 }
@@ -179,27 +177,11 @@ impl Readable for Probe {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum DrawnKind {
-    Mesh,
-    Placed,
-    Card,
-    PlacedCard,
-    #[serde(rename = "terrain")]
-    Ground,
-    #[serde(rename = "cover")]
-    Blades,
-    #[serde(rename = "water")]
-    Lakes,
-    Falls,
-    Sky,
-}
-
 #[derive(Debug, Serialize)]
 struct PixelProbe {
     pixel: [u32; 2],
-    kind: Option<DrawnKind>,
+    kind: Option<&'static str>,
+    card: bool,
     level: u32,
     fading: bool,
     passes: Option<Value>,
@@ -244,21 +226,6 @@ fn unpacked_normal(packed: u32) -> [f32; 3] {
     let y = y - if y >= 0.0 { fold } else { -fold };
     let length = max((x * x + y * y + z * z).sqrt(), 1.0e-6);
     [x / length, y / length, z / length]
-}
-
-fn drawn_kind(kind: DebugKind) -> Option<DrawnKind> {
-    Some(match kind {
-        DebugKind::Nothing => return None,
-        DebugKind::Mesh => DrawnKind::Mesh,
-        DebugKind::Placed => DrawnKind::Placed,
-        DebugKind::Card => DrawnKind::Card,
-        DebugKind::PlacedCard => DrawnKind::PlacedCard,
-        DebugKind::Terrain => DrawnKind::Ground,
-        DebugKind::Cover => DrawnKind::Blades,
-        DebugKind::Water => DrawnKind::Lakes,
-        DebugKind::Falls => DrawnKind::Falls,
-        DebugKind::Sky => DrawnKind::Sky,
-    })
 }
 
 pub(crate) fn advance(view: Res<PrimaryView>, mut steps: ResMut<ProbeSteps>, mut probe: ResMut<Probe>) {
@@ -400,7 +367,7 @@ impl GpuPart for ProbeGpu {
         match probe.stage {
             Stage::Debug => {
                 cx.allocate_buffer(self.probed, PROBED_BYTES);
-                for (debug, offset) in [(0, IDS), (1, COUNT), (2, TERRAIN)] {
+                for (debug, offset) in [(0, IDS), (1, COUNT), (2, WORDS)] {
                     cx.copy_at_end(
                         Copied::Target(DEBUG_TARGETS[debug as usize]),
                         Copied::Buffer(self.probed),

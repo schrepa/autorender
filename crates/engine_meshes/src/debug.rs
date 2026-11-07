@@ -1,5 +1,5 @@
 use engine_core::GpuBits;
-use engine_render::debug::{DebugKind, DebugRecord};
+use engine_render::debug::DebugRecord;
 use engine_render::wgpu;
 
 pub(crate) const RECORD_ATTRIBUTES: [wgpu::VertexAttribute; 1] =
@@ -18,13 +18,6 @@ pub(crate) enum DrawKind {
 
 impl DrawKind {
     const ALL: [Self; 2] = [Self::Mesh, Self::Card];
-
-    fn kind(self) -> DebugKind {
-        match self {
-            Self::Mesh => DebugKind::Mesh,
-            Self::Card => DebugKind::Card,
-        }
-    }
 }
 
 const LEVELS: u32 = 16;
@@ -54,9 +47,10 @@ impl DrawRecord {
 
     fn word(self) -> u32 {
         DebugRecord {
-            kind: self.kind.kind(),
+            kind: 0,
             level: self.level.min(LEVELS - 1),
             fading: false,
+            card: self.kind == DrawKind::Card,
             source: 0,
         }
         .pack()

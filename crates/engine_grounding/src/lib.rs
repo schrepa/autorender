@@ -18,6 +18,8 @@ use serde_json::{Value, json};
 
 const OFFSET: Rule = Rule::range(-10_000.0, 10_000.0);
 
+pub const INVALID_GROUNDED: ErrorCode = ErrorCode::Brick("invalid_grounded");
+
 pub struct GroundingBrick;
 
 impl Brick for GroundingBrick {
@@ -25,10 +27,11 @@ impl Brick for GroundingBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .errors(&[INVALID_GROUNDED])
             .join::<SceneComponents>(
                 ComponentKind::of::<Grounded>("grounded")
                     .check(check_grounded)
-                    .placement(Placement::Roots(ErrorCode::InvalidGrounded))
+                    .placement(Placement::Roots(INVALID_GROUNDED))
                     .schema(grounded_schema)
                     .example(grounded_example)
                     .view::<GroundedAt, GroundedView>(grounded_view),

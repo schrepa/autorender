@@ -20,7 +20,6 @@ macro_rules! contract {
 }
 
 pub mod meshes;
-pub mod sweeps;
 
 use engine_place::PlaceDecl;
 
@@ -169,5 +168,4 @@ pub mod contract {
 
 pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<meshes::Instances>(),
-    PlaceDecl::slot::<sweeps::Sweeps>(),
 ];

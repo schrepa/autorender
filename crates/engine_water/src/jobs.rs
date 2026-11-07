@@ -4,7 +4,7 @@ use engine_codec::{Expected, Reader, record};
 use engine_core::{Error, ErrorCode, Job, JobCx, JobKind, RecordKey, codec};
 use engine_heightfield::layer::LayerKind;
 use engine_heightfield::tile::{Recipe, Solid, TileJob};
-use engine_heightfield::{Layers, Pyramid, Stamp, TileKey};
+use engine_heightfield::{INVALID_TERRAIN, Layers, Pyramid, Stamp, TileKey};
 use engine_places_world::terrain::TerrainLayers;
 
 use crate::SOURCE;
@@ -147,7 +147,7 @@ impl SteadiedJob {
 }
 
 pub(crate) fn invalid_heights() -> Error {
-    Error::new(ErrorCode::InvalidTerrain, "$.heights").expected(Expected::Finite)
+    Error::new(INVALID_TERRAIN, "$.heights").expected(Expected::Finite)
 }
 
 pub(crate) fn kinds(cx: &JobCx<'_>) -> Vec<&'static LayerKind> {

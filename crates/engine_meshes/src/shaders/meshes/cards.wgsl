@@ -9,11 +9,11 @@ import package::engine::mesh::impostor_frames::{IMPOSTOR_CUTOFF, ImpostorRecord,
     impostor_index, impostor_met, impostor_over};
 import package::engine::mesh::vertex::origin_key;
 import package::engine::shading::{SurfacePoint, derived};
-import package::engine::standard::rippled;
 import package::engine::surfaces::{SURFACE_SOLID, SURFACE_THIN};
 import package::engine::view::{camera, fade_noise, material_detail, stable_normalize};
-import package::face::debug::debug_record_with_fading;
-import package::face::lit::{finish, lit_toward, local_light, widened};
+import package::face::debug::{debug_record_with_fading, debug_record_with_kind};
+import package::face::lit::{finish, lit_card, widened};
+import package::generated::kinds::KIND_MESH;
 import package::generated::meshes::{card_frames_first, card_frames_second, card_frames_third,
     card_frames_with_first, card_frames_with_origin, card_frames_with_second,
     card_frames_with_third};
@@ -273,22 +273,18 @@ fn card_point(input: CardVertex, record: ImpostorRecord) -> SurfacePoint {
     point.emissive = albedo_color * (slot_surface.z * SURFACE_EMISSION * emissive.a * unpremultiply)
         + record.emissive * emissive.rgb * unpremultiply;
     point.occlusion = surface.z * unpremultiply;
-    point.inputs.sun_blocked = 1.0 - saturate(surface.w * unpremultiply);
     point.roughness = slot_surface.x * surface.x * unpremultiply;
     point.metalness = slot_surface.y * surface.y * unpremultiply;
     point.kind = select(SURFACE_SOLID, SURFACE_THIN, impostor_flags_masked(record.flags));
     point.geometric = geometric;
     point.normal = geometric;
-    if slot_surface.w > 0.0 {
-        point.normal = rippled(geometric, world, slot_surface.w, camera.position.w);
-    }
     let to_eye = camera.position.xyz - world;
     point.distance = length(to_eye);
     point.view = stable_normalize(to_eye);
     point.world = world;
     let reach = select(1.0, 0.25, impostor_flags_hemisphere(record.flags));
-    point.inputs.shadow_shift = lit_toward(point) * (reach * length(input.depth_axis.xyz));
-    let lit = derived(point);
+    let lit = derived(lit_card(point, reach * length(input.depth_axis.xyz),
+        saturate(surface.w * unpremultiply)));
     return widened(lit, dpdx(lit.normal), dpdy(lit.normal));
 }
 
@@ -300,16 +296,13 @@ fn placed_card_point(input: CardVertex, impostor: ImpostorRecord) -> SurfacePoin
     return card_point(input, impostor);
 }
 
-fn card_shaded(input: CardVertex, point: SurfacePoint, light: vec3<f32>) -> CardShaded {
+fn card_lit(input: CardVertex, point: SurfacePoint) -> CardShaded {
+    let shaded = finish(point, input.clip_position.xy, vec3<f32>(0.0));
     if impostor_over(input.batch) {
-        return CardShaded(finish(point, light), input.clip_position.z);
+        return CardShaded(shaded, input.clip_position.z);
     }
     let clip = camera.view_projection * vec4<f32>(point.world, 1.0);
-    return CardShaded(finish(point, light), saturate(clip.z / clip.w));
-}
-
-fn card_lit(input: CardVertex, point: SurfacePoint) -> CardShaded {
-    return card_shaded(input, point, local_light(point, input.clip_position.xy));
+    return CardShaded(shaded, saturate(clip.z / clip.w));
 }
 
 fn mesh_card_lit(input: CardVertex) -> CardShaded {
@@ -322,11 +315,11 @@ fn placed_card_lit(input: CardVertex, impostor: ImpostorRecord) -> CardShaded {
 
 fn card_debug(input: CardVertex, point: SurfacePoint, record: u32, object: u32)
         -> CardDebugTargets {
-    let shaded = card_shaded(input, point, vec3<f32>(0.0));
+    let shaded = card_lit(input, point);
     let fading = impostor_fading(input.batch);
     let targets = point_targets(debug_record_with_fading(record, fading), object,
         impostor_index(input.batch), point);
-    return CardDebugTargets(targets.ids, targets.count, targets.terrain, shaded.depth);
+    return CardDebugTargets(targets.ids, targets.count, targets.words, shaded.depth);
 }
 
 @fragment
@@ -340,5 +333,6 @@ fn fs_card(input: CardOutput) -> DepthViewTargets {
 @fragment
 fn fs_debug_card(input: CardOutput) -> CardDebugTargets {
     let card = card_vertex(input);
-    return card_debug(card, mesh_card_point(card), input.object.x, input.object.y);
+    let record = debug_record_with_kind(input.object.x, KIND_MESH);
+    return card_debug(card, mesh_card_point(card), record, input.object.y);
 }

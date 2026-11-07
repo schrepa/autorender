@@ -10,11 +10,13 @@ mod smoke;
 use bevy_ecs::prelude::*;
 use engine_core::{
     Applies, Asked, Brick, Bricks, ComponentKind, Error, ErrorCode, Level, Operation, Pause,
-    PauseReason, Runs, SceneComponents, Schedule, Screens, Smoke, Source,
+    PauseReason, Runs, SceneComponents, Schedule, Smoke, Source,
 };
-use engine_places_rendering::screens::{Screen, ScreenAsk};
+use engine_places_rendering::screens::{Screen, ScreenAsk, Screens};
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+const SCREEN: PauseReason = PauseReason::Brick("screen");
 
 pub struct ScreensBrick;
 
@@ -34,7 +36,8 @@ impl Brick for ScreensBrick {
                     .example(screen_example),
                 None,
             )
-            .join::<Pause>(PauseReason::Screen, None)
+            .join::<Pause>(SCREEN, None)
+            .fill::<Screens>(None)
             .fill::<Asked<ScreenAsk>>(None)
             .systems(Schedule::Presentation, follow_top)
             .operation::<ScreenOperation>()
@@ -71,12 +74,12 @@ fn follow_top(
     let pauses = declared
         .iter()
         .any(|screen| screen.pauses && top == Some(screen.name.as_str()));
-    match (pauses, pause.holds(PauseReason::Screen)) {
+    match (pauses, pause.holds(SCREEN)) {
         (true, false) => {
-            pause.add(PauseReason::Screen);
+            pause.add(SCREEN);
         }
         (false, true) => {
-            pause.remove(PauseReason::Screen);
+            pause.remove(SCREEN);
         }
         (true, true) | (false, false) => {}
     }

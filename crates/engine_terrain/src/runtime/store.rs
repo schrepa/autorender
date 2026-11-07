@@ -1,5 +1,5 @@
 use super::*;
-use engine_core::{Feed, FeedSettings};
+use engine_core::Feed;
 use engine_places_world::ground::{TileChange, TileChangeKind, TileFace};
 
 struct Resident {
@@ -81,7 +81,7 @@ pub(super) struct TileStore {
 
 impl TileStore {
     pub(super) fn new(pyramid: Pyramid, generation: Generation) -> Self {
-        let log = Feed::new(FeedSettings::default().tiles as usize);
+        let log = Feed::new(TerrainSettings::default().tile_feed as usize);
         Self {
             pyramid,
             tiles: TileMap::default(),

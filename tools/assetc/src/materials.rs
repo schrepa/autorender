@@ -122,7 +122,6 @@ pub(crate) fn import(
                 roughness: pbr.roughness_factor(),
                 metalness: pbr.metallic_factor(),
                 emission: 0.0,
-                ripples: 0.0,
             }),
             opacity,
             metallic_roughness_texture,

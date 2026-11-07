@@ -9,7 +9,7 @@ use engine_places_world::ground::{Cover, GroundTiles, TerrainTiles};
 use engine_places_world::water::Waterline;
 use engine_render::{
     Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput, Encode,
-    GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Resolve, Sampler,
+    GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Sampler,
     SamplerDesc, Scene, SceneDraw, Shape, Texture, VertexLayout, pixels_per_meter, wgpu,
 };
 use glam::{Mat4, Vec3};
@@ -157,10 +157,7 @@ type Neighbors = (
     Res<'static, ProbeCaptures>,
 );
 
-type Frame = (
-    Res<'static, PrimaryView>,
-    Res<'static, Resolve>,
-);
+type Frame = Res<'static, PrimaryView>;
 
 impl GpuPart for TerrainGpu {
     type Reads = (
@@ -577,9 +574,9 @@ impl GpuPart for TerrainGpu {
     ) {
         let (settings, tiles, atlas, bakes, ground) = lists;
         let (water, cover, shadows, captures) = neighbors;
-        let (view, resolve) = frame;
+        let view = frame;
         self.debug = view.debug();
-        self.temporal = view.temporal();
+        self.temporal = view.jitter().is_some();
         let size = view.render_size();
         self.render = (size.x, size.y);
         let moves = AtlasMoves::since(&atlas, &mut self.cursor);
@@ -601,11 +598,9 @@ impl GpuPart for TerrainGpu {
         let h = &self.handles;
         let eye = view.eye();
         let culling = view.view_projection() * Mat4::from_translation(eye);
-        let jitter = if self.temporal {
-            engine_render::jitter_clip(resolve.offset.to_array(), size.x, size.y)
-        } else {
-            [0.0; 2]
-        };
+        let jitter = view.jitter().map_or([0.0; 2], |offset| {
+            engine_render::jitter_clip(offset.to_array(), size.x, size.y)
+        });
         let regions: Vec<(usize, KeptRefresh)> = shadows
             .views()
             .filter(|at| at.map != CasterMap::Moving)

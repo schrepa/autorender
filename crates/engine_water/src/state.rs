@@ -3,7 +3,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Cursor, Feed, FeedSettings, FrameBudget, FrameTime, Interest, JobFailures, Jobs, RecordKey,
+    Cursor, Feed, FrameBudget, FrameTime, Interest, JobFailures, Jobs, RecordKey,
     Records, Since, Spawner, VIEW_JOBS, PrimaryView, job_priority,
 };
 use engine_heightfield::tile::{Solid, TileJob};
@@ -484,13 +484,13 @@ pub(crate) fn follow(
     records: Res<Records>,
     view: Res<PrimaryView>,
     time: Res<FrameTime>,
-    (budget, feeds): (Res<FrameBudget>, Res<FeedSettings>),
+    (budget, settings): (Res<FrameBudget>, Res<Water>),
     mut jobs: Jobs,
     mut state: ResMut<WaterState>,
 ) {
     let eye = view.detail_eye();
     let frame = time.frame;
-    let feed = feeds.tiles as usize;
+    let feed = settings.tile_feed as usize;
     let state = &mut *state;
     state.dropped = false;
     let mut before = std::mem::take(&mut state.terrains);

@@ -177,7 +177,7 @@ fn shade_fall(input: FallOutput) -> FallShade {
         * water_scattered(view, sunlight, seen)
         * ((1.0 - reflectance) * scattering.x * input.sky);
     var shade: FallShade;
-    shade.shaded = finish(point, body + glow);
+    shade.shaded = finish(point, input.clip_position.xy, body + glow);
     shade.shown = shown;
     shade.coverage = coverage;
     return shade;
@@ -188,8 +188,8 @@ fn fall_mirroring(shade: FallShade, pixel: vec2<f32>) -> FallShade {
     let own = luminance(shade.shaded.linear) * shade.shown;
     let behind = luminance(textureLoad(water_scene, vec2<i32>(pixel), 0).rgb)
         * (1.0 - shade.coverage);
-    result.shaded.mirrored *= own / max(own + behind, 1.0e-6);
-    result.shaded.reflect *= shade.shown;
+    result.shaded.outputs.mirrored *= own / max(own + behind, 1.0e-6);
+    result.shaded.outputs.reflect *= shade.shown;
     return result;
 }
 

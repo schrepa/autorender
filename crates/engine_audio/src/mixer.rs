@@ -19,6 +19,8 @@ use crate::backend::{Backend, Decoded};
 use crate::scene::{MAX_PITCH, MAX_RADIUS, MIN_PITCH, MIN_RADIUS};
 use crate::settings::{Audio, AudioStats};
 
+pub const AUDIO_FAILED: ErrorCode = ErrorCode::Brick("audio_failed");
+
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
 
 fn fresh() -> u32 {
@@ -362,7 +364,7 @@ impl Mixer {
             }
             Err(failure) => {
                 let error =
-                    Error::new(ErrorCode::AudioFailed, "$.audio.sounds").got(failure.clone());
+                    Error::new(AUDIO_FAILED, "$.audio.sounds").got(failure.clone());
                 if self.sounds.fail(&key, ticket, error) {
                     self.fail(failure);
                 }
@@ -668,7 +670,7 @@ pub(crate) fn mix(
     mixer.sounds.settle(time.real_elapsed);
     mixer.publish(&mut stats);
     if was != Device::Failed && mixer.device == Device::Failed {
-        let error = Error::new(ErrorCode::AudioFailed, "$.audio.device").got(mixer.latest.clone());
+        let error = Error::new(AUDIO_FAILED, "$.audio.device").got(mixer.latest.clone());
         commands.queue(move |world: &mut World| fault_of::<AudioBrick>(world, error));
     }
 }

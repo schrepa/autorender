@@ -33,7 +33,6 @@ shader_modules! {
     "engine::standard" = "standard.wgsl";
     "engine::surface" = "surface.wgsl";
     "engine::transparency" = "transparency.wgsl";
-    "engine::particles" = "particles.wgsl";
     "engine::mesh::vertex" = "meshes/vertex.wgsl";
     "engine::impostor_bake" = "impostors/bake.wgsl";
     "engine::post::pixel" = "post/pixel.wgsl";
@@ -117,10 +116,18 @@ pub fn presentation_source() -> String {
 }
 
 pub fn debug_source() -> String {
-    use engine_core::{BitValue, GpuBits};
-    let mut source = String::from(<crate::debug::DebugKind as BitValue>::WGSL);
-    source.push_str(<crate::debug::DebugRecord as GpuBits>::WGSL);
+    use engine_core::GpuBits;
+    let mut source = String::from(<crate::debug::DebugRecord as GpuBits>::WGSL);
     unsigned(&mut source, "DEBUG_NO_MATERIAL", crate::debug::DEBUG_NO_MATERIAL);
+    source.push_str(
+        "
+fn debug_kind_color(kind: u32) -> vec3<f32> {
+    let hue = fract(f32(kind) * 0.618034 + 0.13);
+    let k = (vec3<f32>(0.0, 2.0, 4.0) / 6.0 + hue) * 6.0;
+    return 0.2 + 0.7 * saturate(abs(k % 6.0 - 3.0) - 1.0);
+}
+",
+    );
     source
 }
 

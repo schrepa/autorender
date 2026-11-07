@@ -13,7 +13,8 @@ use engine_core::{
     Brick, Bricks, ComponentKind, Error, ErrorCode, GpuStruct, Runs, SceneComponents, Schedule,
     Smoke, Source, fields,
 };
-use engine_render::{RenderBricks, SurfaceKind, TraceDepth};
+use engine_places_rendering::reflections::TraceDepths;
+use engine_render::{RenderBricks, SurfaceKind};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -41,10 +42,8 @@ impl Brick for PondBrick {
             )
             .systems(Schedule::ViewSync, water::publish_ponds)
             .generated(GENERATED)
-            .surface_kind(SurfaceKind {
-                name: "pond",
-                depth: TraceDepth::Opaque,
-            })
+            .surface_kind(SurfaceKind { name: "pond" })
+            .join::<TraceDepths>((), Some(shaders::pond::trace_depth::MODULE))
             .part::<part::PondGpu>();
     }
 }

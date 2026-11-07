@@ -1,11 +1,12 @@
-import package::face::debug::{DEBUG_KIND_SKY, DEBUG_KIND_WATER, DEBUG_OTHER, DEBUG_SKY, DebugShade,
-    DebugTargets, debug_record_kind};
+import package::face::debug::{DEBUG_EMPTY, DEBUG_OTHER, DebugShade, DebugTargets,
+    debug_record_kind};
+import package::generated::kinds::KIND_WATER;
 import package::generated::pieces::water::piece;
 import package::generated::water::{BREAK_FULL, BREAK_ONSET, DEBUG_SPAN_STEPS, SHOWN_WATER_DEPTH,
     SHOWN_WATER_EDDIES, SHOWN_WATER_FROUDE, SHOWN_WATER_ROUGHNESS, SHOWN_WATER_SPAN,
-    SHOWN_WATER_SPEED, SHOWN_WATER_TURBULENCE, SHOWN_WATER_WHITE, water_probe_detail_roughness,
-    water_probe_detail_span, water_probe_state_reach, water_probe_state_turbulence,
-    water_probe_state_white};
+    SHOWN_WATER_SPEED, SHOWN_WATER_TURBULENCE, SHOWN_WATER_WHITE, water_probe_detail_falls,
+    water_probe_detail_roughness, water_probe_detail_span, water_probe_state_reach,
+    water_probe_state_turbulence, water_probe_state_white};
 
 const DEBUG_WATER_DEEPEST: f32 = 2.0;
 const DEBUG_WATER_FASTEST: f32 = 6.0;
@@ -108,9 +109,9 @@ fn shade_kind(shade: DebugShade, targets: DebugTargets) -> DebugShade {
         return shade;
     }
     let kind = debug_record_kind(targets.ids.x);
-    var color = select(DEBUG_OTHER, DEBUG_SKY, kind == DEBUG_KIND_SKY);
-    if kind == DEBUG_KIND_WATER {
-        color = debug_water_color(shown.y, targets.ids, targets.terrain);
+    var color = select(DEBUG_OTHER, DEBUG_EMPTY, kind == 0u);
+    if kind == KIND_WATER && !water_probe_detail_falls(targets.ids.z) {
+        color = debug_water_color(shown.y, targets.ids, targets.words);
     }
     return DebugShade(color, false);
 }

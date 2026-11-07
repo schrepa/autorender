@@ -4,34 +4,6 @@ use serde::Serialize;
 
 use crate::{Census, Interest, Progress, Request, Requests, Ticket};
 
-#[derive(Resource, Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct Screens {
-    stack: Vec<String>,
-}
-
-impl Screens {
-    pub fn go(&mut self, name: impl Into<String>) {
-        self.stack.clear();
-        self.stack.push(name.into());
-    }
-
-    pub fn push(&mut self, name: impl Into<String>) {
-        self.stack.push(name.into());
-    }
-
-    pub fn pop(&mut self) -> Option<String> {
-        self.stack.pop()
-    }
-
-    pub fn top(&self) -> Option<&str> {
-        self.stack.last().map(String::as_str)
-    }
-
-    pub fn stack(&self) -> &[String] {
-        &self.stack
-    }
-}
-
 #[derive(Resource, Default, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Level {

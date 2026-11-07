@@ -1,5 +1,6 @@
 use super::*;
 use engine_core::{SceneIds, bounds};
+use engine_places_simulation::ground::UNKNOWN_TERRAIN;
 
 #[derive(Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
@@ -48,12 +49,12 @@ pub(super) fn terrain_entity(
         Some(name) => ids
             .entity(name)
             .filter(|&entity| built(entity))
-            .ok_or_else(|| Error::new(ErrorCode::UnknownTerrain, "$.terrain").got(name)),
+            .ok_or_else(|| Error::new(UNKNOWN_TERRAIN, "$.terrain").got(name)),
         None => scenes
             .iter()
             .find(|(_, scene)| scene.built.is_some())
             .map(|(entity, _)| entity)
-            .ok_or_else(|| Error::new(ErrorCode::UnknownTerrain, "$.terrain")),
+            .ok_or_else(|| Error::new(UNKNOWN_TERRAIN, "$.terrain")),
     }
 }
 

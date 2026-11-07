@@ -9,12 +9,12 @@ use std::any::Any;
 use std::sync::Arc;
 
 use engine_codec::{Reader, Writer};
-use engine_core::{Brick, Bricks, ErrorCode, Source, parse_value};
+use engine_core::{Brick, Bricks, Source, parse_value};
 use engine_heightfield::layer::{
     Below, LayerFiles, LayerKind, Made, Row, TerrainLayer, no_files, no_points, same_as,
 };
 use engine_heightfield::layers::reaches;
-use engine_heightfield::{Stamp, StampOp};
+use engine_heightfield::{INVALID_TERRAIN, Stamp, StampOp};
 use engine_places_world::terrain::TerrainLayers;
 use glam::Vec2;
 use serde_json::Value;
@@ -25,7 +25,9 @@ impl Brick for LayerStampsBrick {
     const SOURCE: &'static Source = &SOURCE;
 
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.join::<TerrainLayers>(&STAMP, None);
+        bricks
+            .errors(&[INVALID_TERRAIN])
+            .join::<TerrainLayers>(&STAMP, None);
     }
 }
 
@@ -47,7 +49,7 @@ pub struct StampLayer {
 fn made(stamp: Stamp) -> Made {
     stamp
         .validate()
-        .map_err(|error| error.coded(ErrorCode::InvalidTerrain))?;
+        .map_err(|error| error.coded(INVALID_TERRAIN))?;
     Ok(Arc::new(StampLayer { stamp }))
 }
 

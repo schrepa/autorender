@@ -37,11 +37,14 @@ mod white_water;
 mod windows;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Attributes, Brick, Bricks, Cut, JobKind, KindDecl, Schedule, Source, stats};
+use engine_core::{
+    Attributes, Brick, Bricks, Cut, JobKind, KindDecl, Schedule, Source, SurfaceSlot, stats,
+};
+use engine_places_rendering::reflections::TraceDepths;
 use engine_places_rendering::sky::EyeMedium;
 use engine_places_world::ground::Heightfield;
 use engine_places_world::water::Waterline;
-use engine_render::{DebugModes, DebugShown, RenderBricks, SurfaceKind, TraceDepth};
+use engine_render::{DebugModes, DebugShown, RenderBricks, SlotModule, SurfaceKind};
 
 pub(crate) use engine_codec as codec;
 pub(crate) use engine_heightfield::tile::Footprint;
@@ -114,14 +117,21 @@ impl Brick for WaterBrick {
             .when(|water: Res<Water>| water.enabled)
             .settings::<Water>()
             .stats::<WaterStats>()
+            .errors(&[engine_heightfield::INVALID_TERRAIN])
             .resource::<WaterState>()
             .resource::<SettleFeedback>()
             .resource::<ParticleTallies>()
             .resource::<LiveSteps>()
             .piece::<gpu::WaterPiece>()
-            .surface_kind(SurfaceKind {
-                name: "water",
-                depth: TraceDepth::Opaque,
+            .surface_kind(SurfaceKind { name: "water" })
+            .join::<TraceDepths>((), Some(shaders::water::trace_depth::MODULE))
+            .material_slot(SlotModule {
+                slot: SurfaceSlot::Normal,
+                name: "ripples",
+                module: shaders::water::ripples::MODULE,
+                maps: &[],
+                values: &["ripples"],
+                reach: 0.0,
             })
             .fill::<Waterline>(Some(shaders::water::faces::water::MODULE))
             .fill::<EyeMedium>(None)

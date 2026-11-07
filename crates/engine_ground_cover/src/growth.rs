@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::{Cut, DeviceLimits, FrameTime, Readable, Readback, PrimaryView};
-use engine_places_simulation::wind::Wind;
+use engine_places_rendering::wind::ViewWind;
 use engine_places_world::ground::{Foliage, GroundTiles, TerrainEntry, TerrainTiles};
 use engine_render::{pixels_per_meter, planes};
 
@@ -74,7 +74,7 @@ pub(crate) fn plan_cover(
         Res<GroundTiles>,
     ),
     (view, time, limits): (Res<PrimaryView>, Res<FrameTime>, Res<DeviceLimits>),
-    (wind, foliage): (Res<Wind>, Res<Foliage>),
+    (wind, foliage): (Res<ViewWind>, Res<Foliage>),
     mut plan: ResMut<CoverPlan>,
     mut counts: ResMut<BladeCounts>,
 ) {

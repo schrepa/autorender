@@ -10,6 +10,7 @@ pub mod audio;
 pub mod exposure;
 pub mod lighting;
 pub mod lights;
+pub mod obstruction;
 pub mod occlusion;
 pub mod particles;
 pub mod probes;
@@ -21,6 +22,7 @@ pub mod sun;
 pub mod text;
 pub mod tonemap;
 pub mod ui;
+pub mod wind;
 
 use engine_place::PlaceDecl;
 
@@ -32,6 +34,7 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<sun::SunPath>(),
     PlaceDecl::list::<sun::SunClocks>(),
     PlaceDecl::slot::<sun::Sun>(),
+    PlaceDecl::slot::<wind::ViewWind>(),
     PlaceDecl::slot::<sky::SkyLight>(),
     PlaceDecl::slot::<sky::EyeMedium>(),
     PlaceDecl::slot::<sky::OpenSky>(),
@@ -51,6 +54,7 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::component::<probes::ReflectionProbe>("reflection_probe"),
     PlaceDecl::slot::<reflections::TraceSource>(),
     PlaceDecl::list::<reflections::TraceReaders>(),
+    PlaceDecl::list::<reflections::TraceDepths>(),
     PlaceDecl::slot::<particles::Transparency>(),
     PlaceDecl::slot::<particles::ParticleFormula>(),
     PlaceDecl::slot::<particles::ParticleBursts>(),
@@ -64,6 +68,8 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::component::<ui::UiRoot>("ui"),
     PlaceDecl::slot::<audio::Sounds>(),
     PlaceDecl::component::<audio::SoundSource>("sound_source"),
+    PlaceDecl::slot::<screens::Screens>(),
     PlaceDecl::component::<screens::Screen>("screen"),
     PlaceDecl::ask::<screens::ScreenAsk>(),
+    PlaceDecl::slot::<obstruction::Obstructions>(),
 ];

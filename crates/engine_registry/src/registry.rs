@@ -411,6 +411,16 @@ impl Registry {
         }
     }
 
+    pub fn error_codes(&self) -> Vec<&'static str> {
+        let mut codes = ErrorCode::NAMES.to_vec();
+        for code in self.bricks.iter().flat_map(BrickRecord::error_codes) {
+            if !codes.contains(&code.as_str()) {
+                codes.push(code.as_str());
+            }
+        }
+        codes
+    }
+
     pub fn sections(&self) -> impl Iterator<Item = &SettingsEntry> + '_ {
         self.core_sections.iter().chain(
             self.bricks

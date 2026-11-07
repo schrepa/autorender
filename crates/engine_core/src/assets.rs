@@ -201,7 +201,7 @@ pub struct ResidentMesh {
     byte_len: u64,
     lods: Vec<(u32, u32, f32)>,
     plan: Vec<(u32, u32, f32)>,
-    casters: Vec<(u32, u32)>,
+    single_sided: Vec<(u32, u32)>,
     without_levels: bool,
 }
 
@@ -244,12 +244,8 @@ impl ResidentMesh {
         &self.plan
     }
 
-    pub fn casters(&self) -> &[(u32, u32)] {
-        &self.casters
-    }
-
-    pub fn caster_range(&self, level: usize, own: (u32, u32)) -> (u32, u32) {
-        self.casters.get(level).copied().unwrap_or(own)
+    pub fn single_sided_range(&self, level: usize, own: (u32, u32)) -> (u32, u32) {
+        self.single_sided.get(level).copied().unwrap_or(own)
     }
 
     pub fn without_levels(&self) -> bool {
@@ -284,13 +280,13 @@ fn resident_mesh(
         .ok()
         .and_then(|count| arena.insert(streams, mesh.vertices().len() as u32, count))
         .map_or(MeshResidence::Own, MeshResidence::Arena);
-    let (levels, casters) = match lods {
+    let (levels, single_sided) = match lods {
         Some(lods) => (
             lods.levels
                 .iter()
                 .map(|level| (level.first_index, level.index_count, level.error))
                 .collect(),
-            lods.casters.clone(),
+            lods.single_sided.clone(),
         ),
         None => (Vec::new(), Vec::new()),
     };
@@ -302,7 +298,7 @@ fn resident_mesh(
         byte_len: mesh.byte_len() as u64,
         plan: plan_levels(&levels),
         lods: levels,
-        casters,
+        single_sided,
         without_levels: lods.is_none(),
     }
 }

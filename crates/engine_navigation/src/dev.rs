@@ -3,7 +3,7 @@ use engine_core::{
     Error, ErrorCode, Expected, Filled, InvalidSetting, Jobs, Mover, Operation, Records, Rule,
     SceneIds, Setting, Slot, Transform,
 };
-use engine_places_simulation::ground::{Ground, GroundRead};
+use engine_places_simulation::ground::{Ground, GroundRead, UNKNOWN_TERRAIN};
 use engine_places_simulation::navigation::{NavAgent, NavStatus, NavWalk};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
@@ -380,7 +380,7 @@ fn walk(
     let terrain = match ground.0.source(from, to) {
         GroundRead::Ready(source) => Some(ground_key(ids, source.ground)),
         GroundRead::NotLoaded => None,
-        GroundRead::Off => return Err(Error::new(ErrorCode::UnknownTerrain, "$")),
+        GroundRead::Off => return Err(Error::new(UNKNOWN_TERRAIN, "$")),
     };
     let found = navigation.query(
         (settings, ground, colliders),

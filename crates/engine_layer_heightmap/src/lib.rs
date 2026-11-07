@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use engine_codec::{Reader, Writer};
 use engine_core::{
-    Brick, Bricks, Error, ErrorCode, InvalidSetting, Rule, Setting, Source, fields, parse_value,
+    Brick, Bricks, Error, InvalidSetting, Rule, Setting, Source, fields, parse_value,
 };
 use engine_heightfield::given::MAX_CREDIT;
 use engine_heightfield::layer::{
@@ -18,7 +18,7 @@ use engine_heightfield::layer::{
 };
 use engine_heightfield::layers::MAX_HEIGHT;
 use engine_heightfield::noise::smooth;
-use engine_heightfield::{Blend, HeightImage, Layers};
+use engine_heightfield::{Blend, HeightImage, INVALID_TERRAIN, Layers};
 use engine_math::{max, min};
 use engine_places_world::terrain::TerrainLayers;
 use glam::Vec2;
@@ -31,7 +31,9 @@ impl Brick for LayerHeightmapBrick {
     const SOURCE: &'static Source = &SOURCE;
 
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.join::<TerrainLayers>(&HEIGHTMAP, None);
+        bricks
+            .errors(&[INVALID_TERRAIN])
+            .join::<TerrainLayers>(&HEIGHTMAP, None);
     }
 }
 
@@ -110,7 +112,7 @@ fn files(settings: &Value) -> Vec<String> {
 }
 
 fn setting_error(invalid: InvalidSetting) -> Error {
-    invalid.error(ErrorCode::InvalidTerrain, "$")
+    invalid.error(INVALID_TERRAIN, "$")
 }
 
 impl HeightmapSettings {
@@ -118,14 +120,14 @@ impl HeightmapSettings {
         for (field, text) in [("source", &self.source), ("attribution", &self.attribution)] {
             let characters = text.as_ref().map_or(0, |text| text.chars().count());
             if characters > MAX_CREDIT {
-                return Err(Error::new(ErrorCode::InvalidTerrain, format!("$.{field}"))
+                return Err(Error::new(INVALID_TERRAIN, format!("$.{field}"))
                     .at_most(MAX_CREDIT as u64)
                     .got(characters));
             }
         }
         for (field, samples) in [("width", self.width), ("height", self.height)] {
             if !(2..=MAX_HEIGHTMAP).contains(&samples) {
-                return Err(Error::new(ErrorCode::InvalidTerrain, format!("$.{field}"))
+                return Err(Error::new(INVALID_TERRAIN, format!("$.{field}"))
                     .range(2.0, f64::from(MAX_HEIGHTMAP))
                     .got(samples));
             }
@@ -134,7 +136,7 @@ impl HeightmapSettings {
             Some(bytes) => {
                 HeightImage::from_le_bytes(self.width, self.height, &bytes).ok_or_else(|| {
                     let wanted = f64::from(self.width) * f64::from(self.height) * 2.0;
-                    Error::new(ErrorCode::InvalidTerrain, URI_PATH)
+                    Error::new(INVALID_TERRAIN, URI_PATH)
                         .range(wanted, wanted)
                         .got(bytes.len())
                 })?

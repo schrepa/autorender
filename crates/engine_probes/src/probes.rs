@@ -567,7 +567,7 @@ fn probe_camera(
         position: position.extend(seconds).to_array(),
         jitter: [0.0; 4],
         options: [1.0, pixel_angle(view_projection, size), 0.0, 0.0],
-        wind: [0.0, 0.0, 0.0, seconds],
+        previous: [0.0, 0.0, 0.0, seconds],
         region: [size as f32, size as f32, 1.0, 1.0],
         detail: position.extend(0.0).to_array(),
         view: [view, 0, 0, 0],

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use bevy_ecs::entity::Entity;
-use engine_core::{ColorSpace, Error, Mesh, ScenePath, Texture, Transform};
+use engine_core::{ColorSpace, Error, Mesh, Texture, Transform};
 
 use crate::{
     MeshSource, SceneDocument, SceneFile, SceneFileKind, SceneFiles, SceneKinds,
@@ -17,7 +17,7 @@ pub(crate) struct PreparedScene {
     pub textures: Vec<Texture>,
     pub transforms: Vec<Transform>,
     pub entities: Vec<ExpandedObject>,
-    pub paths: Vec<ScenePath>,
+    pub shares: crate::loading::Shares,
 }
 
 struct CpuAssets {
@@ -107,7 +107,7 @@ impl SceneDocument {
         }
         let named = crate::loading::named(self);
         let expanded = named.lenient(|| self.expand(&mesh_ids, &material_ids, kinds))?;
-        let paths = crate::loading::paths(self, kinds)?;
+        let shares = crate::loading::shares(self, kinds)?;
         let entities = expanded
             .entities
             .iter()
@@ -116,14 +116,21 @@ impl SceneDocument {
         let context = crate::loading::context(
             self,
             (named, BTreeMap::new()),
-            paths.clone(),
+            shares.clone(),
             Arc::new(entities),
             kinds,
             files.map(SceneFiles::buffers),
         );
-        if let (Some(section), Some(value)) = (kinds.streamed(), self.streamed_section()) {
-            section.check(&value, "$")?;
-            section.check_scene(&value, "$", &context)?;
+        if let Some(environment) = &self.environment {
+            for key in environment.keys() {
+                if let Some(section) = kinds.section(key) {
+                    section.check_scene(
+                        &environment.sections[key],
+                        &format!("$.environment.{key}"),
+                        &context,
+                    )?;
+                }
+            }
         }
         let cx = kinds.cx(Some(&context), None);
         context.scope(|| {
@@ -144,7 +151,7 @@ impl SceneDocument {
             textures,
             transforms: expanded.transforms,
             entities: expanded.entities,
-            paths,
+            shares,
         })
     }
 

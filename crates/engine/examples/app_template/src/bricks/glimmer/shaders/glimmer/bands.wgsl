@@ -2,9 +2,9 @@ import package::engine::shading::{Shaded, SurfacePoint, unlit};
 
 const GLIMMER_BANDS: f32 = 4.0;
 
-fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
+fn finish(point: SurfacePoint, pixel: vec2<f32>, added: vec3<f32>) -> Shaded {
     let band = ceil(saturate(point.n_v) * GLIMMER_BANDS) / GLIMMER_BANDS;
     var shaded = unlit(point);
-    shaded.linear = point.base_color * band + point.emissive + local;
+    shaded.linear = point.base_color * band + point.emissive + added;
     return shaded;
 }

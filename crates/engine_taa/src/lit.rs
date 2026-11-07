@@ -51,7 +51,7 @@ impl GpuPart for LitGpu {
     fn prepare(&mut self, (): (), _cx: &mut Prepare<'_, Self>) {}
 
     fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
-        if !view.temporal || view.debug || !view.target.surface() {
+        if view.jitter.is_none() {
             return;
         }
         let display = view.size();

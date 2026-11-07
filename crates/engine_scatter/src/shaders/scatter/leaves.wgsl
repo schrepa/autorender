@@ -1,4 +1,4 @@
-import package::engine::shading::{LightInputs, SurfaceInput, SurfacePoint};
+import package::engine::shading::{SurfaceInput, SurfacePoint};
 import package::engine::standard::base_color as standard_base_color;
 import package::engine::standard::cutoff as standard_cutoff;
 import package::engine::standard::metalness as standard_metalness;
@@ -7,6 +7,7 @@ import package::engine::standard::roughness as standard_roughness;
 import package::engine::surfaces::SURFACE_THIN;
 import package::engine::view::fade_noise;
 import package::face::foliage::foliage;
+import package::face::lighting::LightInputs;
 import package::scatter::grounding::{grounded_color, grounded_metalness, grounded_normal,
     grounded_roughness};
 

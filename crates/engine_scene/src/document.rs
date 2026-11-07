@@ -32,10 +32,6 @@ pub struct SceneDocument {
     pub prefabs: Vec<ScenePrefab>,
     pub entities: Vec<SceneObject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub streamed: Vec<Value>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub along: Vec<Value>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub views: Vec<crate::SceneView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub looks: Vec<crate::SceneLook>,
@@ -101,41 +97,9 @@ impl SceneDocument {
                 object.insert("additionalProperties".to_owned(), Value::Bool(false));
             }
         }
-        if let Some(section) = registry.section_schema(crate::environment::STREAMED) {
-            let mut streamed = serde_json::to_value(section).expect("schema_serializes");
-            if let (Some(Value::Object(nested)), Some(definitions)) = (
-                streamed
-                    .as_object_mut()
-                    .and_then(|fields| fields.remove("$defs")),
-                schema.get_mut("$defs").and_then(Value::as_object_mut),
-            ) {
-                for (name, definition) in nested {
-                    definitions.entry(name).or_insert(definition);
-                }
-            }
-            if let (Some(fields), Some(properties)) = (
-                streamed.get("properties").and_then(Value::as_object),
-                schema.get_mut("properties").and_then(Value::as_object_mut),
-            ) {
-                for field in ["streamed", "along"] {
-                    if let Some(property) = fields.get(field) {
-                        properties.insert(field.to_owned(), property.clone());
-                    }
-                }
-            }
-        }
         let mut source = serde_json::to_string_pretty(&schema).expect("schema_serializes");
         source.push('\n');
         source
-    }
-}
-
-impl SceneDocument {
-    pub(crate) fn streamed_section(&self) -> Option<Value> {
-        if self.streamed.is_empty() && self.along.is_empty() {
-            return None;
-        }
-        Some(serde_json::json!({ "streamed": self.streamed, "along": self.along }))
     }
 }
 
@@ -246,7 +210,6 @@ pub struct SceneSurface {
     pub roughness: f32,
     pub metalness: f32,
     pub emission: f32,
-    pub ripples: f32,
 }
 
 impl Default for SceneSurface {
@@ -256,7 +219,6 @@ impl Default for SceneSurface {
             roughness: matte.roughness,
             metalness: matte.metalness,
             emission: matte.emission,
-            ripples: matte.ripples,
         }
     }
 }
@@ -267,7 +229,6 @@ impl SceneSurface {
             roughness: self.roughness,
             metalness: self.metalness,
             emission: self.emission,
-            ripples: self.ripples,
         }
     }
 }

@@ -193,6 +193,11 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let scenes = read_json(root, SCENES)?;
     let components = scenes["documents"]["components"].to_string();
     let mut engine = engine_with_features()?;
+    let codes = engine
+        .app
+        .world()
+        .get_resource::<engine_registry::Registry>()
+        .map_or_else(|| ErrorCode::NAMES.to_vec(), engine_registry::Registry::error_codes);
     let scene = instantiate(&mut engine, &components)?;
     let mut bare = Engine::default();
     let mut other = engine_with_features()?;
@@ -269,7 +274,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         UNREACHED.windows(2).all(|pair| pair[0].0 < pair[1].0),
         || "UNREACHED (tools/xtask/src/pure/requests.rs) must be sorted and unique".to_owned(),
     );
-    for &(_, code) in ErrorCode::ALL {
+    for &code in &codes {
         let unreached = UNREACHED.iter().any(|(listed, _)| *listed == code);
         observed.check(reached.contains(code) != unreached, || {
             if unreached {
@@ -282,7 +287,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         });
     }
     for (code, _) in UNREACHED {
-        observed.check(ErrorCode::named(code).is_some(), || {
+        observed.check(codes.contains(code), || {
             format!("UNREACHED lists {code}, which is no code")
         });
     }

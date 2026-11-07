@@ -39,6 +39,7 @@ impl Brick for AudioBrick {
         bricks
             .settings::<Audio>()
             .stats::<AudioStats>()
+            .errors(&[mixer::AUDIO_FAILED])
             .resource::<mixer::Mixer>()
             .fill::<Sounds>(None)
             .join::<SceneComponents>(

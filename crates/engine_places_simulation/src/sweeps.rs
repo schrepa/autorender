@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bevy_ecs::prelude::{Entity, Resource};
 use engine_place::Slot;
 use glam::Vec3;
@@ -15,11 +17,11 @@ impl Sweep for NoSweep {
 }
 
 #[derive(Resource)]
-pub struct Sweeps(pub Box<dyn Sweep>);
+pub struct Sweeps(pub Arc<dyn Sweep>);
 
 impl Default for Sweeps {
     fn default() -> Self {
-        Self(Box::new(NoSweep))
+        Self(Arc::new(NoSweep))
     }
 }
 

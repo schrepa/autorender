@@ -126,13 +126,13 @@ fn shade_surface(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     var shaded: Shaded;
     shaded.normal = normal;
     shaded.roughness = point.roughness;
-    shaded.across = point.roughness - point.inputs.smoother_across;
+    shaded.outputs.across = point.roughness - point.inputs.smoother_across;
     shaded.kind = point.kind;
     shaded.linear = fogged;
     shaded.ambient = saturate(luminance(sky_light) / max(luminance(lit), 1.0e-6)) * (1.0 - covered)
         * transmission_occlusion(point);
-    shaded.reflect = saturate(luminance(brdf) * specular) * (1.0 - covered);
-    shaded.mirrored = saturate(luminance(reflection * (point.occlusion * open))
+    shaded.outputs.reflect = saturate(luminance(brdf) * specular) * (1.0 - covered);
+    shaded.outputs.mirrored = saturate(luminance(reflection * (point.occlusion * open))
         / max(luminance(sky_light), 1.0e-6));
     return shaded;
 }

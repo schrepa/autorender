@@ -8,6 +8,7 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod relief;
 
 use engine_core::{Brick, Bricks, Source};
+use engine_heightfield::{INVALID_TERRAIN, MISSING_LAYER};
 use engine_places_world::terrain::TerrainLayers;
 
 pub use relief::{HUMMOCKS, HummocksLayer, STEPS, StepsLayer};
@@ -19,6 +20,7 @@ impl Brick for LayerReliefBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .errors(&[INVALID_TERRAIN, MISSING_LAYER])
             .join::<TerrainLayers>(&STEPS, None)
             .join::<TerrainLayers>(&HUMMOCKS, None);
     }

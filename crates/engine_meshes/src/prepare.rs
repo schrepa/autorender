@@ -4,7 +4,8 @@ use engine_core::{
     ImpostorRecord, NodeInfo, NodePose, NodeStreams, PoseRows, Since, Views,
 };
 use engine_render::{
-    AfterRead, Allocation, CopyRegion, GpuPart, Prepare, mip_levels, pyramid_extents, wgpu,
+    AfterRead, Allocation, CopyRegion, GpuPart, Prepare, TargetName, mip_levels, pyramid_extents,
+    wgpu,
 };
 
 use crate::gpu::{Drawing, MeshesGpu, NODE_LEVELS, PYRAMID_LEVELS, VIEW_FRAME_BYTES};
@@ -51,7 +52,6 @@ impl MeshesGpu {
                 view,
                 detail,
                 impostors,
-                resolve,
                 time,
                 limits,
             ),
@@ -92,18 +92,17 @@ impl MeshesGpu {
         if self.state.capacity == 0 || slots > self.state.capacity {
             self.state.capacity = capacity_for(slots, limit);
         }
-        let temporal = view.temporal();
-        let fresh = self.prepare_instances(&table, &assets, temporal, cx);
+        let kept = cx.writes_target(TargetName::MOTION);
+        let fresh = self.prepare_instances(&table, &assets, kept, cx);
         let size = view.render_size();
-        let motion =
-            self.prepare_motion(generation, (temporal, view.history().valid(), fresh), cx);
+        let motion = self.prepare_motion(generation, (kept, view.history().valid(), fresh), cx);
         let shown = cx.ran(self.passes.presentation);
         let fade = self.fade_share(time.real_elapsed as f32, detail.fade_seconds, shown);
         if !decided.occlusion_enabled {
             self.release_pyramid(cx);
         }
         let culling = View {
-            view_projection: rasterized(&view, resolve.offset, temporal),
+            view_projection: rasterized(&view),
             eye: view.detail_eye(),
             viewport: (size.x, size.y),
             motion,
@@ -173,17 +172,16 @@ impl MeshesGpu {
     fn prepare_motion(
         &mut self,
         generation: u64,
-        (temporal, history, fresh): (bool, bool, bool),
+        (kept, history, fresh): (bool, bool, bool),
         cx: &mut Prepare<'_, Self>,
     ) -> bool {
         let shown = cx.ran(self.passes.presentation);
         let state = &mut self.state;
         let motion =
-            temporal && history && !fresh && shown && state.motion_generation == Some(generation);
-        state.motion_generation = temporal.then_some(generation);
-        state.temporal = temporal;
-        if temporal {
-            engine_core::profile::counter("render.taa_object_motion", f64::from(u8::from(motion)));
+            kept && history && !fresh && shown && state.motion_generation == Some(generation);
+        state.motion_generation = kept.then_some(generation);
+        if kept {
+            engine_core::profile::counter("render.object_motion", f64::from(u8::from(motion)));
             let bytes = (state.capacity * size_of::<PoseData>()) as u64;
             cx.copy(
                 self.passes.keep_poses,
@@ -224,7 +222,7 @@ impl MeshesGpu {
         &mut self,
         table: &DrawnTable,
         assets: &AssetLibrary,
-        temporal: bool,
+        kept: bool,
         cx: &mut Prepare<'_, Self>,
     ) -> bool {
         let _profile = engine_core::profile::span("render", "instance_buffer_and_packing");
@@ -242,7 +240,7 @@ impl MeshesGpu {
         state.poses_capacity = state.capacity;
         let colors =
             cx.allocate_buffer(instances.colors, capacity * size_of::<ColorData>() as u64);
-        let previous_bytes = if temporal {
+        let previous_bytes = if kept {
             capacity * size_of::<PoseData>() as u64
         } else {
             storage_bytes(0)
@@ -298,8 +296,8 @@ impl MeshesGpu {
         cx.count_upload(color_bytes);
         let (pose, color) = (size_of::<PoseData>() as u64, size_of::<ColorData>() as u64);
         cx.memory(
-            "memory.gpu_temporal_bytes",
-            if temporal { capacity * pose } else { 0 },
+            "memory.gpu_previous_pose_bytes",
+            if kept { capacity * pose } else { 0 },
         );
         cx.memory(
             "memory.render_staging_capacity_bytes",
@@ -764,7 +762,7 @@ impl MeshesGpu {
                 continue;
             };
             let drawn = self.scenes.iter().filter(|scene| scene.name == pass).any(|scene| {
-                matches!(scene.drawing, Drawing::Casters { .. } | Drawing::Views { .. })
+                matches!(scene.drawing, Drawing::DepthViews { .. } | Drawing::Views { .. })
             });
             if !drawn {
                 continue;

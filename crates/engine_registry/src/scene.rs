@@ -45,13 +45,13 @@ impl SceneEntity {
 pub struct OperationScene {
     pub id: String,
     pub entities: Arc<BTreeMap<String, Entity>>,
-    pub streamed: bool,
+    pub authored_later: bool,
 }
 
 impl OperationScene {
     pub fn entity(&self, world: &World, id: &str) -> Option<Entity> {
         self.entities.get(id).copied().or_else(|| {
-            if !self.streamed {
+            if !self.authored_later {
                 return None;
             }
             world
@@ -75,7 +75,7 @@ impl OperationScene {
 
     pub fn holds(&self, authored: &AuthoredId, entity: Entity) -> bool {
         authored.scene == self.id
-            && (self.streamed || self.entities.get(&authored.id) == Some(&entity))
+            && (self.authored_later || self.entities.get(&authored.id) == Some(&entity))
     }
 }
 

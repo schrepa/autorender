@@ -17,6 +17,7 @@ settings! {
         pub motion_detail: Option<MotionDetail> = None => any,
         pub cache_bytes: u64 = 256 << 20 => any,
         pub gpu_materials: bool = true => any,
+        pub tile_feed: u32 = 4096 => at_least(1),
     }
 }
 

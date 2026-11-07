@@ -4,7 +4,7 @@ use engine_places_simulation::ground::Ground;
 use engine_places_world::ground::{
     PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles,
 };
-use engine_core::{FeedSettings, Spawner};
+use engine_core::Spawner;
 use engine_places_world::water::Hydrology;
 
 #[derive(Component)]
@@ -206,7 +206,7 @@ fn same_bakes(
 }
 
 pub(crate) fn publish_terrains(
-    (settings, assets, feeds): (Res<TerrainSettings>, Res<AssetLibrary>, Res<FeedSettings>),
+    (settings, assets): (Res<TerrainSettings>, Res<AssetLibrary>),
     mut terrains: ResMut<Terrains>,
     (mut tiles, mut ground): (ResMut<TerrainTiles>, ResMut<Ground>),
     (mut hydrology, mut programs): (ResMut<Hydrology>, ResMut<SurfacePrograms>),
@@ -226,7 +226,7 @@ pub(crate) fn publish_terrains(
         }
         reshaped |= state.store.take_reshaped();
         changed |= std::mem::take(&mut state.changed);
-        changed |= state.store.settle_tiles(feeds.tiles as usize);
+        changed |= state.store.settle_tiles(settings.tile_feed as usize);
         changed |= state.store.settle_kept();
     }
     if changed {

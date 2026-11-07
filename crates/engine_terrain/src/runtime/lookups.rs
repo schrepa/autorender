@@ -1,10 +1,11 @@
 use super::operations::{coordinate, reply};
 use super::*;
 use crate::{HydrologySample, PATH_FAR};
-use engine_core::bounds::MAX_POINTS;
 use engine_core::{Operation, SceneIds};
 use engine_places_simulation::water::{WaterBody, WaterKind, WaterSample};
 use serde_json::Value;
+
+const MAX_POINTS: usize = 256;
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

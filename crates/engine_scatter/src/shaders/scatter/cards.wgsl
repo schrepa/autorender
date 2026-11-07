@@ -3,6 +3,8 @@ import package::face::instances::{
     placed_card_shade, placed_card_vertex
 };
 import package::engine::mesh::impostor_frames::impostor_index;
+import package::face::debug::debug_record_with_kind;
+import package::generated::kinds::KIND_PLACED;
 import package::generated::targets::{DepthViewTargets, depth_view_targets};
 import package::scatter::faces::placed_tiles::placed_impostor;
 
@@ -54,6 +56,6 @@ fn fs_placed_card(input: PlacedCardVertex) -> DepthViewTargets {
 @fragment
 fn fs_debug_placed_card(input: PlacedCardVertex) -> CardDebugTargets {
     let card = card_of(input);
-    return placed_card_debug(card, input.object.x, input.object.y,
-        placed_impostor(impostor_index(card.batch)));
+    return placed_card_debug(card, debug_record_with_kind(input.object.x, KIND_PLACED),
+        input.object.y, placed_impostor(impostor_index(card.batch)));
 }

@@ -15,8 +15,8 @@ mod temporal;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, Brick, Bricks, Pass, PassName, PassViews, Runs, Schedule, SlotSet, Smoke, Source,
-    Writes, never,
+    AttachPoint, Brick, Bricks, Jitter, Pass, PassName, PassViews, Runs, Schedule, SlotSet, Smoke,
+    Source, Writes, never,
 };
 use engine_render::{RenderBricks, Resolve};
 
@@ -52,9 +52,11 @@ impl Brick for TaaBrick {
             .stats::<TemporalAntialiasingStats>()
             .piece::<temporal::TaaPiece>()
             .fill::<Resolve>(Some(shaders::taa::resolve::MODULE))
+            .fill::<Jitter>(None)
             .view_target(previous::MOTION)
             .view_target(temporal::HISTORY)
             .pass::<TemporalPass>()
+            .systems(Schedule::WorldSync, temporal::jitter)
             .systems(Schedule::ViewSync, temporal::publish)
             .resolve_pass(temporal::PASS)
             .part::<lit::LitGpu>();

@@ -51,7 +51,7 @@ struct VertexOutput {
     @location(2) @interpolate(flat) material: vec4<u32>,
 }
 
-struct TemporalOutput {
+struct MotionOutput {
     @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,

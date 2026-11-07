@@ -2,13 +2,15 @@ use std::sync::Arc;
 
 use engine_core::{
     ComponentKind, ComponentKindOf, Error, ErrorCode, Expected, MaterialHandle, MeshHandle,
-    Placement, Rule, SceneCx, ScenePath, Setting, parse_value_at,
+    Placement, Rule, SceneCx, Setting, parse_value_at,
 };
 use engine_heightfield::layer::{LayerFiles, LayerKind};
+use engine_heightfield::{INVALID_TERRAIN, UNKNOWN_MAP, UNREADABLE_MAP};
 use engine_heightfield::tile::{
     AuthoredPlacement, Biome, Biomes, MacroCauses, PlacementLayer, SteepLayer,
 };
 use engine_places_world::ground::{SurfaceMaterial, SurfaceProjection};
+use engine_places_world::paths::{ScenePath, ScenePaths};
 use engine_places_world::terrain::TerrainLayers;
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
@@ -480,10 +482,10 @@ fn ground_height(
 impl SceneTerrain {
     fn surface(&self, path: &str, assets: &TerrainAssets<'_>) -> Result<TerrainSurface, Error> {
         let invalid = |field: String| {
-            Error::new(ErrorCode::InvalidTerrain, format!("{path}.surface.{field}"))
+            Error::new(INVALID_TERRAIN, format!("{path}.surface.{field}"))
         };
         let broken = |error: engine_core::InvalidSetting, at: &str| {
-            error.error(ErrorCode::InvalidTerrain, &format!("{path}.surface.{at}"))
+            error.error(INVALID_TERRAIN, &format!("{path}.surface.{at}"))
         };
         let Some(surface) = &self.surface else {
             return Ok(TerrainSurface::default());
@@ -555,10 +557,10 @@ impl SceneTerrain {
             macro_colors: surface.macro_colors,
         };
         let mut built = TerrainSurface::new(&biomes, looks).map_err(|error| {
-            let error = if matches!(error.code, ErrorCode::UnknownMap | ErrorCode::UnreadableMap) {
+            let error = if error.code == UNKNOWN_MAP || error.code == UNREADABLE_MAP {
                 error
             } else {
-                error.coded(ErrorCode::InvalidTerrain)
+                error.coded(INVALID_TERRAIN)
             };
             error.within(&format!("{path}.surface"))
         })?;
@@ -569,7 +571,7 @@ impl SceneTerrain {
             .map(|id| {
                 handle_of(&assets.materials, id).ok_or_else(|| {
                     unknown(
-                        Error::new(ErrorCode::InvalidTerrain, format!("{path}.surface.bridge")),
+                        Error::new(INVALID_TERRAIN, format!("{path}.surface.bridge")),
                         id,
                         ids_of(&assets.materials),
                     )
@@ -597,7 +599,7 @@ impl SceneTerrain {
         surface: TerrainSurface,
     ) -> Result<Terrain, Error> {
         let invalid =
-            |field: &str| Error::new(ErrorCode::InvalidTerrain, format!("{path}.{field}"));
+            |field: &str| Error::new(INVALID_TERRAIN, format!("{path}.{field}"));
         if !self.origin.iter().all(|value| value.is_finite()) {
             return Err(invalid("origin")
                 .expected(Expected::Finite)
@@ -609,7 +611,7 @@ impl SceneTerrain {
             blend: surroundings.blend,
         });
         if let Some(Err(error)) = surroundings.map(|surroundings| surroundings.validate()) {
-            return Err(error.error(ErrorCode::InvalidTerrain, &format!("{path}.surroundings")));
+            return Err(error.error(INVALID_TERRAIN, &format!("{path}.surroundings")));
         }
         if self.layers.is_empty() {
             return Err(invalid("layers").expected(Expected::NonEmpty));
@@ -623,7 +625,7 @@ impl SceneTerrain {
             return Err(invalid(field).expected(Expected::Present));
         };
         let pyramid = Pyramid::new(tiles, spacing)
-            .map_err(|error| error.coded(ErrorCode::InvalidTerrain).within(path))?;
+            .map_err(|error| error.coded(INVALID_TERRAIN).within(path))?;
         let source = self.layers(path, (files, kinds), &pyramid)?;
         surface
             .rules
@@ -649,7 +651,7 @@ impl SceneTerrain {
             unique_id(&edit.id, &mut ids, &format!("{at}.id"))?;
             edit.stamp.validate().map_err(|error| {
                 error
-                    .coded(ErrorCode::InvalidTerrain)
+                    .coded(INVALID_TERRAIN)
                     .within(&format!("{at}.stamp"))
             })?;
             edits.push(TerrainEdit {
@@ -663,7 +665,7 @@ impl SceneTerrain {
     fn built_rivers(&self, path: &str) -> Result<Arc<[TerrainRiver]>, Error> {
         if self.rivers.len() > crate::MAX_GIVEN_RIVERS {
             return Err(
-                Error::new(ErrorCode::InvalidTerrain, format!("{path}.rivers"))
+                Error::new(INVALID_TERRAIN, format!("{path}.rivers"))
                     .at_most(crate::MAX_GIVEN_RIVERS as u64)
                     .got(self.rivers.len()),
             );
@@ -675,7 +677,7 @@ impl SceneTerrain {
             unique_id(&drawn.id, &mut ids, &format!("{at}.id"))?;
             drawn.river.validate().map_err(|error| {
                 error
-                    .coded(ErrorCode::InvalidTerrain)
+                    .coded(INVALID_TERRAIN)
                     .within(&format!("{at}.river"))
             })?;
             rivers.push(TerrainRiver {
@@ -721,33 +723,36 @@ impl SceneTerrain {
                 named.push((id.to_owned(), Arc::new(through)));
             }
         }
-        Layers::new(layers).map_err(|error| error.coded(ErrorCode::InvalidTerrain).within(path))
+        Layers::new(layers).map_err(|error| error.coded(INVALID_TERRAIN).within(path))
     }
 
-    pub(crate) fn scene_paths(&self, kinds: &[&'static LayerKind], path: &str) -> Vec<ScenePath> {
-        self.layers
-            .iter()
-            .enumerate()
-            .filter_map(|(index, item)| {
-                let id = item.get(layer::ID_KEY).and_then(Value::as_str)?;
-                Some(ScenePath {
-                    id: id.to_owned(),
-                    origin: self.origin,
-                    points: layer_points(item, kinds)?,
-                    at: format!("{path}.layers[{index}].points"),
-                    ..ScenePath::default()
+    pub(crate) fn scene_paths(&self, kinds: &[&'static LayerKind], path: &str) -> ScenePaths {
+        ScenePaths(
+            self.layers
+                .iter()
+                .enumerate()
+                .filter_map(|(index, item)| {
+                    let id = item.get(layer::ID_KEY).and_then(Value::as_str)?;
+                    Some(ScenePath {
+                        id: id.to_owned(),
+                        origin: self.origin,
+                        points: layer_points(item, kinds)?,
+                        at: format!("{path}.layers[{index}].points"),
+                    })
                 })
-            })
-            .collect()
+                .collect(),
+        )
     }
 }
 
+pub const INVALID_STREAMED: ErrorCode = ErrorCode::Brick("invalid_streamed");
+
 pub(crate) fn terrain_kind() -> ComponentKindOf<TerrainScene> {
     ComponentKind::of::<TerrainScene>("terrain")
-        .placement(Placement::Entities(ErrorCode::InvalidStreamed))
+        .placement(Placement::Entities(INVALID_STREAMED))
         .prepare(prepare_terrain)
         .files_in(terrain_files)
-        .paths_in(terrain_paths)
+        .shares(terrain_paths)
         .schema_in(terrain_schema)
         .example(terrain_example)
 }
@@ -805,11 +810,7 @@ fn terrain_files(scene: &TerrainScene, cx: &SceneCx<'_>) -> Vec<String> {
         .collect()
 }
 
-fn terrain_paths(
-    scene: &TerrainScene,
-    cx: &SceneCx<'_>,
-    path: &str,
-) -> Result<Vec<ScenePath>, Error> {
+fn terrain_paths(scene: &TerrainScene, cx: &SceneCx<'_>, path: &str) -> Result<ScenePaths, Error> {
     Ok(scene.authored.scene_paths(&listed(cx), path))
 }
 

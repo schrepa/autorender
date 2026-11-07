@@ -337,7 +337,6 @@ pub(crate) fn schema_value(schema: impl serde::Serialize) -> Value {
 pub(crate) fn sections_schema(registry: &Registry) -> Value {
     let properties: serde_json::Map<String, Value> = registry
         .sections()
-        .filter(|section| section.key != engine_scene::STREAMED)
         .map(|section| {
             (
                 section.key.to_owned(),

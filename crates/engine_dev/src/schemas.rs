@@ -180,10 +180,7 @@ pub fn generated(world: &World) -> Result<Generated, String> {
         "queries": queries,
         "controls": controls,
         "bricks": registry.names().collect::<Vec<_>>(),
-        "errors": engine_settings::ErrorCode::ALL
-            .iter()
-            .map(|&(_, name)| name)
-            .collect::<Vec<_>>(),
+        "errors": registry.error_codes(),
     });
     let pretty = |value: &Value| {
         serde_json::to_string_pretty(value).map_err(|error| format!("cannot write JSON: {error}"))
@@ -663,8 +660,6 @@ const DOCUMENT: &[(&str, &str)] = &[
     ("revision", "structure"),
     ("entities", "structure"),
     ("prefabs", "structure"),
-    ("streamed", "structure"),
-    ("along", "structure"),
     ("views", "structure"),
     ("looks", "structure"),
     ("environment", "Environment"),

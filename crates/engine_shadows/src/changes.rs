@@ -1,12 +1,12 @@
 use bevy_ecs::prelude::*;
+use engine_core::glam::{Mat3, Vec3};
 use engine_core::{
-    Cursor, DRAWN_UNBOUNDED, DrawnTable, Events, GlobalTransforms, MaterialHandle, MeshHandle,
-    Mobility, PlanState, ScenePasses, Since,
+    Cursor, DRAWN_UNBOUNDED, DrawKind, DrawnTable, Events, GlobalTransforms, MaterialHandle,
+    MeshHandle, Mobility, PlanState, ScenePasses, Since,
 };
 use engine_places_rendering::shadows::{SHADOW_PASS, ShadowChange, ShadowChanges};
-use glam::{Mat3, Vec3};
 
-use crate::MESH;
+const MESH: DrawKind = DrawKind::MESH;
 
 type Group = (MeshHandle, Option<MaterialHandle>);
 

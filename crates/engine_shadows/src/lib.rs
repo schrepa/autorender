@@ -1,6 +1,7 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod atlas;
+mod changes;
 pub mod constants;
 mod debug;
 mod gpu_layouts;
@@ -15,8 +16,8 @@ mod smokes;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, Brick, Bricks, DrawKind, Pass, PassName, PassViews, Runs, Schedule, SlotSet,
-    Smoke, Source, Writes, never,
+    AttachPoint, Brick, Bricks, DrawKind, Pass, PassDepth, PassName, PassViews, Runs, Schedule,
+    SlotSet, Smoke, Source, Writes, never,
 };
 use engine_places_rendering::lighting::SunBlockers;
 use engine_places_rendering::shadows::{CasterRoutes, SHADOW_PASS, ShadowMaps};
@@ -34,6 +35,11 @@ impl PassName for ShadowPass {
         views: PassViews::Owned,
         at: AttachPoint::Depth,
         takes: casts,
+    };
+    const DEPTH: PassDepth = PassDepth {
+        bias: 1,
+        slope: 0.0,
+        clamped: true,
     };
 }
 
@@ -86,7 +92,14 @@ impl Brick for ShadowsBrick {
             bricks.join::<DebugModes>(debug::member(name), wgsl);
         }
         bricks
-            .systems(Schedule::ViewSync, (plan::plan_shadows, plan::shadow_stats))
+            .systems(
+                Schedule::ViewSync,
+                (
+                    changes::publish_shadow_changes,
+                    plan::plan_shadows,
+                    plan::shadow_stats,
+                ),
+            )
             .observation::<inspect::InspectShadowTile>()
             .generated(gpu_layouts::GENERATED)
             .pass::<ShadowPass>()

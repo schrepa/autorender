@@ -14,11 +14,13 @@ use std::any::Any;
 use std::sync::Arc;
 
 use engine_codec::{Codec, Reader, Writer};
-use engine_core::{Brick, Bricks, Error, ErrorCode, InvalidSetting, Source, parse_value};
+use engine_core::{Brick, Bricks, Error, InvalidSetting, Source, parse_value};
 use engine_heightfield::layer::{
     LayerFiles, LayerKind, Made, Place, TerrainLayer, maps, no_files, no_points, same_as,
 };
-use engine_heightfield::{GivenRiver, HydrologyBake, Layers, Pyramid, TileHeights};
+use engine_heightfield::{
+    GivenRiver, HydrologyBake, INVALID_TERRAIN, Layers, MISSING_LAYER, Pyramid, TileHeights,
+};
 use engine_places_world::terrain::TerrainLayers;
 use glam::Vec2;
 use serde::Serialize;
@@ -34,6 +36,7 @@ impl Brick for LayerHydrologyBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .errors(&[INVALID_TERRAIN, MISSING_LAYER])
             .join::<TerrainLayers>(&HYDROLOGY, None)
             .join::<TerrainLayers>(&RIVERS, None);
     }
@@ -169,7 +172,7 @@ impl TerrainLayer for RiversLayer {
         if place.above().iter().any(|layer| layer.makes_water()) {
             Ok(())
         } else {
-            Err(Error::new(ErrorCode::MissingLayer, "$").variants([HYDROLOGY.name]))
+            Err(Error::new(MISSING_LAYER, "$").variants([HYDROLOGY.name]))
         }
     }
 
@@ -183,13 +186,13 @@ fn settings_json(settings: &impl Serialize) -> Value {
 }
 
 fn valid(checked: Result<(), InvalidSetting>) -> Result<(), Error> {
-    checked.map_err(|invalid| Error::from(invalid).coded(ErrorCode::InvalidTerrain))
+    checked.map_err(|invalid| Error::from(invalid).coded(INVALID_TERRAIN))
 }
 
 fn rivers_valid(layer: &RiversLayer) -> Result<(), Error> {
     layer
         .validate()
-        .map_err(|error| error.coded(ErrorCode::InvalidTerrain))
+        .map_err(|error| error.coded(INVALID_TERRAIN))
 }
 
 fn hydrology_from_json(value: &Value, _files: &dyn LayerFiles) -> Made {

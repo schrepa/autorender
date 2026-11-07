@@ -1,11 +1,12 @@
 import package::engine::mesh::declarations::{AffineVertexInput, faded_entry_fade,
     faded_slot_slot};
-import package::face::debug::DebugTargets;
+import package::face::debug::{DebugTargets, debug_record_with_kind};
 import package::face::instances::{
     AffinePose, SlotColor, SlotExtras, SlotVertex, SlotVertexExtended,
     slot_debug, slot_fragment, slot_fragment_extended, slot_masked_depth, slot_pixel,
     slot_pixel_extended, slot_shade, slot_vertex, slot_vertex_extended
 };
+import package::generated::kinds::KIND_PLACED;
 import package::generated::targets::{ViewTargets, view_targets};
 
 @group(2) @binding(0) var<storage, read> poses: array<AffinePose>;
@@ -38,13 +39,13 @@ struct PlacedExtendedVertex {
 
 fn placed(vertex: SlotVertex, draw: vec4<u32>, slot: u32) -> PlacedVertex {
     return PlacedVertex(vertex.clip_position, vertex.normal_u, vertex.world_v, vertex.material,
-        vertex.previous, vec4<u32>(draw.x, slot, 0u, 0u), vertex.ground, vertex.origin);
+        vertex.previous, vec4<u32>(draw.x, slot, 0u, 0u), vertex.words, vertex.origin);
 }
 
 fn placed_extended(vertex: SlotVertexExtended, draw: vec4<u32>, slot: u32) -> PlacedExtendedVertex {
     return PlacedExtendedVertex(vertex.clip_position, vertex.normal_u, vertex.world_v,
         vertex.material, vertex.previous, vertex.color, vertex.uv1,
-        vec4<u32>(draw.x, slot, 0u, 0u), vertex.ground, vertex.origin);
+        vec4<u32>(draw.x, slot, 0u, 0u), vertex.words, vertex.origin);
 }
 
 fn slot_of(vertex: PlacedVertex) -> SlotVertex {
@@ -137,13 +138,13 @@ fn fs_masked_depth_extended(input: PlacedExtendedVertex) {
 
 @fragment
 fn fs_debug_object(input: PlacedVertex, @builtin(front_facing) front: bool) -> DebugTargets {
-    return slot_debug(slot_fragment(slot_of(input)), front, input.object.x, input.object.y,
-        input.object.z);
+    return slot_debug(slot_fragment(slot_of(input)), front,
+        debug_record_with_kind(input.object.x, KIND_PLACED), input.object.y, input.object.z);
 }
 
 @fragment
 fn fs_debug_object_extended(input: PlacedExtendedVertex, @builtin(front_facing) front: bool)
         -> DebugTargets {
-    return slot_debug(slot_fragment_extended(extended_of(input)), front, input.object.x,
-        input.object.y, input.object.z);
+    return slot_debug(slot_fragment_extended(extended_of(input)), front,
+        debug_record_with_kind(input.object.x, KIND_PLACED), input.object.y, input.object.z);
 }

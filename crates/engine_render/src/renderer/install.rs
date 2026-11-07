@@ -190,7 +190,7 @@ fn faces(
                 switches.push((id, gate));
                 id
             });
-            let implements: Vec<String> = contract
+            let mut implements: Vec<String> = contract
                 .answers
                 .iter()
                 .filter(|answer| {
@@ -205,6 +205,13 @@ fn faces(
             for answer in &implements {
                 roots.push((module.clone(), answer.clone()));
             }
+            implements.extend(
+                contract
+                    .aliases
+                    .iter()
+                    .filter(|alias| linker.provides(&module, alias))
+                    .cloned(),
+            );
             Some(Fed {
                 module,
                 switch,
@@ -606,6 +613,14 @@ fn install_with(
         crate::shared::PASSES_MODULE.to_owned(),
         CORE_PACKAGE,
         scene_passes(world).wgsl(),
+    );
+    linker.add_generated(
+        crate::shared::KINDS_MODULE.to_owned(),
+        CORE_PACKAGE,
+        world
+            .get_resource::<engine_core::DrawnTable>()
+            .map(engine_core::DrawnTable::wgsl)
+            .unwrap_or_default(),
     );
     let (pieces, placed, piece_texts) = pieces(registry, &mut linker, &mut problems);
     hand_generated(registry, &mut linker, piece_texts);

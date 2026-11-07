@@ -12,7 +12,6 @@ mod order;
 mod prepare;
 mod presentation;
 mod settings;
-mod shadow_changes;
 mod smokes;
 mod uploads;
 
@@ -78,7 +77,6 @@ impl Brick for MeshesBrick {
                 (
                     order::plan_draws,
                     assets::publish_assets,
-                    shadow_changes::publish_shadow_changes,
                     assets::impostor_policy,
                     settings::mesh_stats,
                 ),

@@ -1,15 +1,14 @@
+import package::engine::slots::{LightInputs, LightOutputs};
 import package::engine::surfaces::SURFACE_SOLID;
 
 struct Shaded {
     linear: vec3<f32>,
     ambient: f32,
-    reflect: f32,
-    mirrored: f32,
     normal: vec3<f32>,
     roughness: f32,
-    across: f32,
     kind: u32,
     opacity: f32,
+    outputs: LightOutputs,
 }
 
 struct PositionInput {
@@ -19,18 +18,6 @@ struct PositionInput {
     time: f32,
     pixels: f32,
     object: vec4<u32>,
-}
-
-struct LightInputs {
-    shadow_shift: vec3<f32>,
-    ignore_face: bool,
-    bounce: vec3<f32>,
-    sky_bend: vec3<f32>,
-    sun_blocked: f32,
-    smoother_across: f32,
-    shadow_softness: f32,
-    shadow_lift_first: u32,
-    shadow_lifts: vec4<f32>,
 }
 
 struct SurfacePoint {
@@ -87,11 +74,8 @@ fn flat(color: vec4<f32>) -> Shaded {
     var shaded: Shaded;
     shaded.linear = color.rgb;
     shaded.ambient = 0.0;
-    shaded.reflect = 0.0;
-    shaded.mirrored = 0.0;
     shaded.normal = vec3<f32>(0.0, 0.0, 1.0);
     shaded.roughness = 1.0;
-    shaded.across = 0.0;
     shaded.kind = SURFACE_SOLID;
     shaded.opacity = color.a;
     return shaded;

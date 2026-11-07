@@ -562,7 +562,6 @@ impl Library<'_> {
             roughness: pbr.roughness_factor(),
             metalness: pbr.metallic_factor(),
             emission: 0.0,
-            ripples: 0.0,
         })?;
         match material.alpha_mode() {
             gltf::material::AlphaMode::Opaque => {}

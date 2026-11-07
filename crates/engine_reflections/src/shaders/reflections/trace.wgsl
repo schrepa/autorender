@@ -1,7 +1,7 @@
 import package::engine::mesh::vertex::octahedral_normal;
 import package::engine::post::frame::{depth_texture, drawn_uv, linear, post};
 import package::engine::screen_points::{depth_normal, world_at};
-import package::engine::surfaces::{TRACE_DEPTH_OPAQUE, TRACE_DEPTH_SOLID, TRACE_DEPTH_THIN};
+import package::face::trace_depths::{TRACE_DEPTH_OPAQUE, TRACE_DEPTH_SOLID, TRACE_DEPTH_THIN};
 import package::face::trace_source::{trace_holds, trace_world};
 import package::generated::pieces::reflections::piece;
 import package::generated::targets::{output_reflectivity, output_surface};

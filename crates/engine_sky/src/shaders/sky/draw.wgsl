@@ -1,4 +1,4 @@
-import package::engine::color::{dither_hash, luminance};
+import package::engine::color::{hash3, luminance};
 import package::engine::shading::{ViewPixel, flat};
 import package::engine::view::{camera, stable_normalize};
 import package::face::sun::sun_direction;
@@ -80,7 +80,7 @@ fn turned(turn: vec4<f32>, direction: vec3<f32>) -> vec3<f32> {
 }
 
 fn sky_hash(cell: vec3<u32>) -> vec3<f32> {
-    return vec3<f32>(dither_hash(cell) >> vec3<u32>(8u)) * (1.0 / 16777216.0);
+    return vec3<f32>(hash3(cell) >> vec3<u32>(8u)) * (1.0 / 16777216.0);
 }
 
 fn sky_noise(p: vec2<f32>, salt: u32) -> f32 {
@@ -371,7 +371,7 @@ fn fs_sky(input: SkyOutput) -> ViewTargets {
     let ray = sky_ray(input.ndc);
     let light = clouded_sky(ray);
     var shaded = flat(vec4<f32>(light, 0.0));
-    shaded.across = 1.0;
+    shaded.outputs.across = 1.0;
     let previous = camera.previous_view_projection * vec4<f32>(ray, 0.0);
     return view_targets(shaded, ViewPixel(vec4<f32>(input.ndc, 0.0, 1.0), previous));
 }

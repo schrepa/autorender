@@ -12,6 +12,7 @@ mod tile;
 pub use layer::{Noise, NoiseLayer};
 
 use engine_core::{Brick, Bricks, Source};
+use engine_heightfield::INVALID_TERRAIN;
 use engine_heightfield::layer::{LayerKind, no_files, no_points};
 use engine_places_world::terrain::TerrainLayers;
 
@@ -21,7 +22,9 @@ impl Brick for LayerNoiseBrick {
     const SOURCE: &'static Source = &SOURCE;
 
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.join::<TerrainLayers>(&NOISE_KIND, None);
+        bricks
+            .errors(&[INVALID_TERRAIN])
+            .join::<TerrainLayers>(&NOISE_KIND, None);
     }
 }
 

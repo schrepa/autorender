@@ -68,6 +68,7 @@ impl Answer {
 pub struct Contract {
     pub imports: Vec<String>,
     pub types: Vec<String>,
+    pub aliases: Vec<String>,
     pub shared: Vec<Answer>,
     pub answers: Vec<Answer>,
 }
@@ -113,6 +114,7 @@ pub fn contract(source: &str) -> Result<Contract, String> {
             }
             GlobalDeclaration::TypeAlias(item) => {
                 contract.types.push(item.ident.to_string());
+                contract.aliases.push(item.ident.to_string());
                 fields.push(item.ty.to_string());
             }
             GlobalDeclaration::Declaration(item) => constants.push(Answer {
@@ -358,15 +360,31 @@ fn constant_value(expression: &Expression) -> bool {
     false
 }
 
-fn shared_imports(imports: &mut String, module: &str, contract: &Contract) {
+fn shared_imports(imports: &mut String, module: &str, contract: &Contract, filler: Option<&Fed>) {
+    let filled = |name: &str| {
+        filler.is_some_and(|filler| filler.implements.iter().any(|known| known == name))
+    };
     let names: Vec<&str> = contract
         .types
         .iter()
         .map(String::as_str)
+        .filter(|&name| !filled(name))
         .chain(contract.shared.iter().map(|answer| answer.name.as_str()))
         .collect();
     if !names.is_empty() {
         let _ = writeln!(imports, "import package::{module}::{{{}}};", names.join(", "));
+    }
+    let Some(filler) = filler else {
+        return;
+    };
+    let own: Vec<&str> = contract
+        .types
+        .iter()
+        .map(String::as_str)
+        .filter(|&name| filled(name))
+        .collect();
+    if !own.is_empty() {
+        let _ = writeln!(imports, "import package::{}::{{{}}};", filler.module, own.join(", "));
     }
 }
 
@@ -475,14 +493,14 @@ pub fn face_source(place: &str, contract: &Contract, answered: &Answered) -> Str
             for import in &contract.imports {
                 let _ = writeln!(imports, "{import}");
             }
-            shared_imports(&mut imports, &module, contract);
+            shared_imports(&mut imports, &module, contract, Some(filler));
             switched(&mut imports, &mut body, place, filler, contract);
         }
         Answered::Nobody => {
             for import in &contract.imports {
                 let _ = writeln!(imports, "{import}");
             }
-            shared_imports(&mut imports, &module, contract);
+            shared_imports(&mut imports, &module, contract, None);
             let names: Vec<&str> = contract.answers.iter().map(|answer| answer.name.as_str()).collect();
             if !names.is_empty() {
                 let _ = writeln!(imports, "import package::{module}::{{{}}};", names.join(", "));
@@ -492,7 +510,7 @@ pub fn face_source(place: &str, contract: &Contract, answered: &Answered) -> Str
             for import in &contract.imports {
                 let _ = writeln!(imports, "{import}");
             }
-            shared_imports(&mut imports, &module, contract);
+            shared_imports(&mut imports, &module, contract, None);
             let constants: Vec<&str> = contract
                 .answers
                 .iter()

@@ -14,11 +14,7 @@ fn decode_srgb(encoded: vec3<f32>) -> vec3<f32> {
     return select(high, low, encoded <= vec3<f32>(0.04045));
 }
 
-fn filmic(x: vec3<f32>) -> vec3<f32> {
-    return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
-}
-
-fn dither_hash(seed: vec3<u32>) -> vec3<u32> {
+fn hash3(seed: vec3<u32>) -> vec3<u32> {
     var v = seed * 1664525u + 1013904223u;
     v.x += v.y * v.z;
     v.y += v.z * v.x;
@@ -28,13 +24,4 @@ fn dither_hash(seed: vec3<u32>) -> vec3<u32> {
     v.y += v.z * v.x;
     v.z += v.x * v.y;
     return v;
-}
-
-fn dithered(encoded: vec3<f32>, pixel: vec2<f32>, turn: f32, salt: u32) -> vec3<f32> {
-    let bits = dither_hash(vec3<u32>(vec2<u32>(max(pixel, vec2<f32>(0.0))),
-        bitcast<u32>(turn) ^ salt));
-    let first = vec3<f32>(bits >> vec3<u32>(16u)) * (1.0 / 65536.0) - 0.5;
-    let second = vec3<f32>(bits & vec3<u32>(0xffffu)) * (1.0 / 65536.0) - 0.5;
-    let room = saturate(min(encoded, vec3<f32>(1.0) - encoded) * 510.0);
-    return encoded + (first + second * room) * (1.0 / 255.0);
 }

@@ -1,6 +1,7 @@
 import package::engine::shading::SurfacePoint;
-import package::face::debug::{DebugTargets, debug_targets};
+import package::face::debug::{DebugTargets, debug_record_with_kind, debug_targets};
 import package::face::lit::lit_debug;
+import package::generated::kinds::KIND_MESH;
 import package::meshes::shade::{extended_fragment, mesh_point};
 import package::meshes::vertex::{ExtendedMeshOutput, ExtendedOutput, MeshOutput};
 
@@ -11,7 +12,7 @@ fn point_targets(record: u32, object: u32, detail: u32, point: SurfacePoint) -> 
 fn debug_mesh(extended: ExtendedOutput, object: vec4<u32>, front: bool, tested: bool)
         -> DebugTargets {
     let point = mesh_point(extended_fragment(extended), front, tested);
-    return point_targets(object.x, object.y, object.z, point);
+    return point_targets(debug_record_with_kind(object.x, KIND_MESH), object.y, object.z, point);
 }
 
 fn plain_output(input: MeshOutput) -> ExtendedOutput {

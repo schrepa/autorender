@@ -8,7 +8,7 @@ struct Camera {
     position: vec4<f32>,
     jitter: vec4<f32>,
     options: vec4<f32>,
-    wind: vec4<f32>,
+    previous: vec4<f32>,
     region: vec4<f32>,
     detail: vec4<f32>,
     view: vec4<u32>,

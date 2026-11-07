@@ -15,6 +15,7 @@ settings! {
         pub foam_points: u32 = 1024 => range(64, 8192),
         pub subdivision_error: f32 = 1.0 => range(0.25, 64.0),
         pub subdivision_leaves: u32 = 65_536 => range(1024, 4_000_000),
+        pub tile_feed: u32 = 4096 => at_least(1),
     }
 }
 

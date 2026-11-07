@@ -26,7 +26,7 @@ struct SlotVertex {
     @location(1) world_v: vec4<f32>,
     @location(2) @interpolate(flat) material: vec4<u32>,
     @location(3) previous: vec3<f32>,
-    @location(8) @interpolate(flat) ground: vec4<u32>,
+    @location(8) @interpolate(flat) words: vec4<u32>,
     @location(9) @interpolate(flat) origin: vec3<f32>,
 }
 
@@ -38,7 +38,7 @@ struct SlotVertexExtended {
     @location(3) previous: vec3<f32>,
     @location(4) color: vec4<f32>,
     @location(5) uv1: vec2<f32>,
-    @location(8) @interpolate(flat) ground: vec4<u32>,
+    @location(8) @interpolate(flat) words: vec4<u32>,
     @location(9) @interpolate(flat) origin: vec3<f32>,
 }
 
@@ -50,7 +50,7 @@ struct SlotFragment {
     uv1: vec2<f32>,
     object: vec4<u32>,
     pixel: vec2<f32>,
-    ground: vec4<u32>,
+    words: vec4<u32>,
     origin: vec3<f32>,
 }
 
@@ -79,7 +79,7 @@ struct CardShaded {
 struct CardDebugTargets {
     @location(0) ids: vec4<u32>,
     @location(1) count: f32,
-    @location(2) terrain: vec2<u32>,
+    @location(2) words: vec2<u32>,
     @builtin(frag_depth) depth: f32,
 }
 
@@ -94,13 +94,13 @@ fn instance_color(slot: u32) -> SlotColor {
 }
 
 fn slot_vertex(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,
-        color: SlotColor, ground: vec4<u32>, fade: u32) -> SlotVertex {
+        color: SlotColor, words: vec4<u32>, fade: u32) -> SlotVertex {
     var vertex: SlotVertex;
     return vertex;
 }
 
 fn slot_vertex_extended(input: AffineVertexInput, extras: SlotExtras, pose: AffinePose,
-        previous: AffinePose, color: SlotColor, ground: vec4<u32>, fade: u32)
+        previous: AffinePose, color: SlotColor, words: vec4<u32>, fade: u32)
         -> SlotVertexExtended {
     var vertex: SlotVertexExtended;
     return vertex;

@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::Resource;
 use bytemuck::{Pod, Zeroable};
 use engine_core::{GpuBits, ImpostorRecord, gpu_bits, gpu_consts, gpu_struct};
-use engine_render::debug::{DebugKind, DebugRecord};
+use engine_render::debug::DebugRecord;
 use glam::Mat4;
 
 gpu_struct! {
@@ -182,13 +182,6 @@ pub(crate) enum DrawKind {
 
 impl DrawKind {
     const ALL: [Self; 2] = [Self::Placed, Self::PlacedCard];
-
-    fn kind(self) -> DebugKind {
-        match self {
-            Self::Placed => DebugKind::Placed,
-            Self::PlacedCard => DebugKind::PlacedCard,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,9 +209,10 @@ impl DrawRecord {
 
     fn word(self) -> u32 {
         DebugRecord {
-            kind: self.kind.kind(),
+            kind: 0,
             level: self.level.min(RECORD_LEVELS - 1),
             fading: false,
+            card: self.kind == DrawKind::PlacedCard,
             source: 0,
         }
         .pack()

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::body::{BodyProblem, BodyWater, check_change, check_push};
+use crate::INVALID_RIGID_BODY;
 use crate::world::PhysicsWorld;
 
 #[derive(Serialize)]
@@ -102,7 +103,7 @@ impl Operation for BodyPushOperation {
         })?;
         check_push(&request.push, "$.push")?;
         let mut push = bodies.get_mut(entity).map_err(|_| {
-            Error::new(ErrorCode::InvalidRigidBody, "$.entity").got(&request.entity)
+            Error::new(INVALID_RIGID_BODY, "$.entity").got(&request.entity)
         })?;
         *push = request.push;
         Ok(json!(request.push))
@@ -139,7 +140,7 @@ impl Operation for BodyAskOperation {
         })?;
         check_change(request.ask, "$.ask")?;
         if !bodies.contains(entity) {
-            return Err(Error::new(ErrorCode::InvalidRigidBody, "$.entity").got(&request.entity));
+            return Err(Error::new(INVALID_RIGID_BODY, "$.entity").got(&request.entity));
         }
         asked.ask(
             BodyAsk {

@@ -27,6 +27,8 @@ use engine_core::{
 use engine_places_simulation::physics::{BodyAsk, BodyPush, RigidBody};
 use engine_places_simulation::water::WaterObstacles;
 
+pub const INVALID_RIGID_BODY: ErrorCode = ErrorCode::Brick("invalid_rigid_body");
+
 pub struct PhysicsBrick;
 
 impl Brick for PhysicsBrick {
@@ -42,13 +44,14 @@ impl Brick for PhysicsBrick {
             .when(simulating)
             .settings::<Physics>()
             .stats::<PhysicsStats>()
+            .errors(&[INVALID_RIGID_BODY])
             .resource::<world::PhysicsWorld>()
             .fill::<WaterObstacles>(None)
             .fill::<Asked<BodyAsk>>(None)
             .join::<SceneComponents>(
                 ComponentKind::of::<RigidBody>("rigid_body")
                     .check(body::check_body)
-                    .placement(Placement::Roots(ErrorCode::InvalidRigidBody))
+                    .placement(Placement::Roots(INVALID_RIGID_BODY))
                     .schema(body::body_schema)
                     .example(body::body_example),
                 None,

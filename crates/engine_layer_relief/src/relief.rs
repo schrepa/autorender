@@ -2,8 +2,8 @@ use std::any::Any;
 use std::sync::Arc;
 
 use engine_codec::{Reader, Writer};
-use engine_core::{Error, ErrorCode, InvalidSetting, fields, parse_value};
-use engine_heightfield::HydrologyBake;
+use engine_core::{Error, InvalidSetting, fields, parse_value};
+use engine_heightfield::{HydrologyBake, INVALID_TERRAIN, MISSING_LAYER};
 use engine_heightfield::hydrology::{FLOW_RANGE, WETNESS_RANGE, WaterGrid, decode};
 use engine_heightfield::layer::{
     Below, LayerFiles, LayerKind, Made, Place, Row, TerrainLayer, no_files, no_points, same_as,
@@ -105,14 +105,14 @@ fn read_hummocks(input: &mut Reader<'_>) -> Made {
 }
 
 fn checked(valid: Result<(), InvalidSetting>) -> Result<(), Error> {
-    valid.map_err(|invalid| invalid.error(ErrorCode::InvalidTerrain, "$"))
+    valid.map_err(|invalid| invalid.error(INVALID_TERRAIN, "$"))
 }
 
 fn water_below(place: Place<'_>) -> Result<(), Error> {
     if place.below().iter().any(|layer| layer.makes_water()) {
         Ok(())
     } else {
-        Err(Error::new(ErrorCode::MissingLayer, "$").variants(["hydrology"]))
+        Err(Error::new(MISSING_LAYER, "$").variants(["hydrology"]))
     }
 }
 

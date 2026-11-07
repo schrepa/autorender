@@ -1,7 +1,11 @@
-import package::engine::color::{filmic, luminance};
+import package::engine::color::luminance;
 import package::engine::post::pixel::PostPixel;
 import package::generated::pieces::tonemap::piece;
 import package::tonemap::faces::tonemap::exposure;
+
+fn filmic(x: vec3<f32>) -> vec3<f32> {
+    return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
+}
 
 fn tonemap(color: vec3<f32>) -> vec3<f32> {
     let exposed = max(color, vec3<f32>(0.0)) * exposure();

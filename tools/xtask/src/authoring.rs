@@ -114,7 +114,7 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
                 &[("ErrorCode", "./errors")],
             ),
         ),
-        ("web/src/generated/errors.ts".to_owned(), error_codes()),
+        ("web/src/generated/errors.ts".to_owned(), error_codes(world)),
         (engine_checks::bricks::FILE.to_owned(), bricks),
     ]);
     for client in crate::process::clients()
@@ -161,10 +161,15 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
     Ok(files)
 }
 
-fn error_codes() -> String {
-    let codes: String = engine::ErrorCode::ALL
+fn error_codes(world: &bevy_ecs::world::World) -> String {
+    let codes: String = world
+        .get_resource::<engine_registry::Registry>()
+        .map_or_else(
+            || engine::ErrorCode::NAMES.to_vec(),
+            engine_registry::Registry::error_codes,
+        )
         .iter()
-        .map(|(_, code)| format!("\n  | \"{code}\""))
+        .map(|code| format!("\n  | \"{code}\""))
         .collect();
     let name = engine::JS_ERROR_NAME;
     format!(

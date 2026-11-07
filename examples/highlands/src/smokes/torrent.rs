@@ -68,7 +68,7 @@ fn probed(session: &mut dyn SmokeSession) -> Checked<()> {
     let mut probe = Value::Null;
     for [x, y] in pixels {
         probe = control(session, "probe", json!({"x": x as u32, "y": y as u32}))?;
-        if probe["kind"] == "water" {
+        if probe["kind"] == "water" && probe["water"].is_object() {
             break;
         }
     }

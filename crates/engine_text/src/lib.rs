@@ -213,6 +213,7 @@ impl Brick for TextBrick {
         bricks
             .settings::<TextSettings>()
             .stats::<TextStats>()
+            .errors(&[typeset::INVALID_FONT])
             .fill::<Text>(Some(shaders::text::faces::text::MODULE))
             .join::<SceneComponents>(
                 ComponentKind::of::<Label>("text")
