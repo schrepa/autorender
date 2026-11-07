@@ -163,7 +163,6 @@ static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::list::<SceneComponents>(),
     PlaceDecl::list::<CursorRequests>(),
     PlaceDecl::list::<Pause>(),
-    PlaceDecl::slot::<ImpostorPolicy>(),
     PlaceDecl::ledger::<FrameBudget>("frame_budget"),
     PlaceDecl::ledger::<Readiness>("readiness"),
     PlaceDecl::ledger::<AssetLibrary>("asset_library"),

@@ -33,7 +33,6 @@ pub(crate) fn new_assets(device: &wgpu::Device, queue: &crate::gpu_calls::Queue)
     Assets {
         meshes: GpuMeshes::new(device),
         materials: MaterialStore::new(device, queue),
-        impostors: crate::impostors::Impostors::new(device),
     }
 }
 

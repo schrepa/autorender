@@ -1,5 +1,6 @@
-import package::engine::mesh::declarations::AffineVertexInput;
-import package::engine::mesh::impostor_frames::ImpostorRecord;
+import package::engine::mesh::declarations::{AffineVertexInput, faded_entry_fade,
+    faded_slot_slot};
+import package::face::impostors::ImpostorRecord;
 import package::engine::shading::ViewPixel;
 import package::face::debug::DebugTargets;
 import package::meshes::cards::{card_debug, card_depth, placed_card, placed_card_lit,
@@ -79,7 +80,7 @@ fn placed_card_shade(input: CardVertex, impostor: ImpostorRecord) -> CardShaded 
 }
 
 fn placed_card_depth(input: CardVertex, impostor: ImpostorRecord) -> f32 {
-    return card_depth(input, placed_card_point(input, impostor));
+    return card_depth(input, placed_card_point(input, impostor), false);
 }
 
 fn placed_card_pixel(input: CardVertex) -> ViewPixel {
@@ -88,5 +89,6 @@ fn placed_card_pixel(input: CardVertex) -> ViewPixel {
 
 fn placed_card_debug(input: CardVertex, record: u32, object: u32, impostor: ImpostorRecord)
         -> CardDebugTargets {
-    return card_debug(input, placed_card_point(input, impostor), record, object);
+    return card_debug(input, placed_card_point(input, impostor), vec2<u32>(record, object),
+        faded_slot_slot(input.batch), faded_entry_fade(input.batch), false);
 }

@@ -1,12 +1,10 @@
-import package::engine::impostors::{impostor_albedo, impostor_sampler};
+import package::engine::mesh::declarations::faded_slot_slot;
 import package::engine::shading::{PositionInput, SurfaceInput};
 import package::engine::slots::slot_position;
 import package::engine::surface::opacity_cut;
-import package::engine::mesh::impostor_frames::{
-    impostor_basis, impostor_flags_hemisphere, impostor_frame_direction, impostor_frames,
-    impostor_grid, impostor_index
-};
 import package::engine::view::{camera, detail_across, view_clip};
+import package::face::impostors::{impostor_albedo, impostor_basis, impostor_flags_hemisphere,
+    impostor_frame_direction, impostor_frames, impostor_grid, impostor_levels, impostor_size};
 import package::face::instances::{AffinePose, SlotColor};
 import package::scatter::faces::placed_tiles::placed_impostor;
 
@@ -80,7 +78,7 @@ const CARD = array<vec2<f32>, 6>(
 fn vs_impostor_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
         @location(3) index: u32) -> CardOutput {
     let pose = poses[slot];
-    let record = placed_impostor(impostor_index(index));
+    let record = placed_impostor(faded_slot_slot(index));
     let clip = camera.view_projection;
     let toward = -vec3<f32>(clip[0].z, clip[1].z, clip[2].z);
     let x = vec3<f32>(pose.row_0.x, pose.row_1.x, pose.row_2.x);
@@ -109,18 +107,17 @@ fn vs_impostor_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
 
 @fragment
 fn fs_impostor_card(input: CardOutput) {
-    let size = f32(textureDimensions(impostor_albedo).x);
+    let size = f32(impostor_size());
     let dx = dpdx(input.uv) * size;
     let dy = dpdy(input.uv) * size;
-    let coarsest = f32(textureNumLevels(impostor_albedo) - 1u);
+    let coarsest = f32(impostor_levels() - 1u);
     let squared = max(max(dot(dx, dx), dot(dy, dy)), 1.0e-12);
     let level = clamp(0.5 * log2(squared), 0.0, coarsest);
     let span = 1.0 / f32(input.frame.w);
     let cell = vec2<f32>(input.frame.yz) * span;
     let inset = 0.5 * exp2(ceil(level)) / size;
     let uv = clamp(input.uv, cell + inset, cell + span - inset);
-    let coverage = textureSampleLevel(impostor_albedo, impostor_sampler, uv,
-        input.frame.x, level).a;
+    let coverage = impostor_albedo(uv, input.frame.x, level).a;
     if coverage * (1.0 + 0.25 * level) < 0.5 {
         discard;
     }

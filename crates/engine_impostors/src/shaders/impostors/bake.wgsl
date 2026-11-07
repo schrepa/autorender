@@ -1,16 +1,17 @@
 import package::engine::materials::alpha_test;
-import package::engine::mesh::impostor_frames::{
-    ImpostorBake, impostor_basis, impostor_flags_hemisphere, impostor_frame_direction,
-    impostor_frames
-};
 import package::engine::mesh::vertex::octahedral_normal;
 import package::engine::shading::SurfaceInput;
 import package::engine::standard::{base_texel, emissive_texel};
 import package::engine::surface::{masked_out, opacity_cut, surface_point};
+import package::engine::surfaces::SURFACE_THIN;
 import package::engine::view::stable_normalize;
+import package::generated::impostors::ImpostorBake;
+import package::impostors::faces::impostors::{impostor_basis, impostor_flags_hemisphere,
+    impostor_frame_direction, impostor_frames};
 
 @group(2) @binding(0) var<uniform> impostor_bake: ImpostorBake;
 @group(2) @binding(1) var impostor_shade: texture_depth_2d;
+@group(2) @binding(2) var<storage, read_write> bake_kinds: array<atomic<u32>>;
 
 fn bake_hemisphere() -> bool {
     return impostor_flags_hemisphere(impostor_bake.flags.x);
@@ -146,6 +147,9 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
     let base = base_texel(surface);
     if alpha_test() && masked_out(surface, point) {
         discard;
+    }
+    if point.kind == SURFACE_THIN {
+        atomicOr(&bake_kinds[0], 1u);
     }
     var targets: BakeTargets;
     targets.albedo = vec4<f32>(point.base_color, 1.0);

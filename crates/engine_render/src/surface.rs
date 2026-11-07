@@ -36,7 +36,6 @@ pub enum Lighting {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DrawState {
     pub alpha_test: bool,
-    pub fading: bool,
     pub fixed: bool,
     #[bits(2)]
     pub alpha: Alpha,
@@ -47,7 +46,6 @@ pub struct DrawState {
 impl DrawState {
     pub const PLAIN: Self = Self {
         alpha_test: false,
-        fading: false,
         fixed: false,
         alpha: Alpha::Opaque,
         no_depth_test: false,
@@ -110,7 +108,6 @@ impl MaterialVariant {
         let draw = self.draw();
         let state = DrawState {
             alpha_test: stated && draw.alpha_test,
-            fading: stated && draw.fading,
             fixed: stated && draw.fixed,
             alpha: if stated || styled {
                 draw.alpha
@@ -631,7 +628,6 @@ fn alpha_of(mode: AlphaMode) -> (Alpha, f32) {
 fn draw_of(state: engine_core::RenderState) -> DrawState {
     DrawState {
         alpha_test: state.alpha.masked(),
-        fading: false,
         fixed: false,
         alpha: alpha_of(state.alpha).0,
         no_depth_test: !state.depth_test,
@@ -667,10 +663,6 @@ fn material_functions(source: &mut String) {
         "
 fn alpha_test() -> bool {{
     return draw_state_alpha_test(DRAW_STATE);
-}}
-
-fn fade_list() -> bool {{
-    return draw_state_fading(DRAW_STATE);
 }}
 
 fn fixed_material() -> bool {{

@@ -1,5 +1,6 @@
 use bevy_ecs::prelude::*;
-use engine_core::{AssetResidency, Cut, Detail, DrawnTable, ImpostorRecords, settings, stats};
+use engine_core::{AssetResidency, Cut, Detail, DrawnTable, settings, stats};
+use engine_places::impostors::ImpostorRecords;
 
 use crate::assets::MeshAssets;
 use crate::MESH;
@@ -38,18 +39,6 @@ settings! {
     #[schemars(rename = "SceneSubpixelCulling")]
     pub struct SubpixelCulling {
         pub enabled: bool = true => any,
-    }
-}
-
-settings! {
-    #[section("impostors")]
-    #[serde(deny_unknown_fields)]
-    #[schemars(rename = "SceneImpostors")]
-    pub struct Impostors {
-        pub enabled: bool = false => any,
-        pub pixels: f32 = 128.0 => range(8.0, 4096.0),
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub max: Option<u32> = None => budget,
     }
 }
 

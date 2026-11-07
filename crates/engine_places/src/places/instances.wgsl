@@ -1,5 +1,5 @@
 import package::engine::mesh::declarations::AffineVertexInput;
-import package::engine::mesh::impostor_frames::ImpostorRecord;
+import package::place::impostors::ImpostorRecord;
 import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};
 import package::place::debug::DebugTargets;
 

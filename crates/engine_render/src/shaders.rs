@@ -8,6 +8,7 @@ macro_rules! shader_modules {
             $(ShaderText::generated($path, include_str!($file)),)*
             crate::shared::generated(crate::drawn::DRAWN_MODULE),
             crate::shared::generated(crate::drawn::DRAWN_CULL_MODULE),
+            crate::shared::generated(crate::drawn::DRAWN_FADES_MODULE),
             crate::shared::generated(crate::shared::TARGETS_MODULE),
             crate::shared::generated(crate::shared::APPLIED_MODULE),
             crate::shared::generated(crate::shared::COMPOSITE_MODULE),
@@ -28,7 +29,6 @@ shader_modules! {
     "engine::surface" = "surface.wgsl";
     "engine::transparency" = "transparency.wgsl";
     "engine::mesh::vertex" = "meshes/vertex.wgsl";
-    "engine::impostor_bake" = "impostors/bake.wgsl";
     "engine::post::pixel" = "post/pixel.wgsl";
     "engine::post::frame" = "effects.wgsl";
     "engine::post::resolve_plain" = "post/resolve_plain.wgsl";
@@ -56,8 +56,6 @@ pub(crate) fn core_module(path: &str) -> Module {
 pub const PRESENTATION_MODULE: &str = "engine::presentation";
 pub const DEBUG_MODULE: &str = "engine::debug";
 pub const DECLARATIONS_MODULE: &str = "engine::mesh::declarations";
-pub const IMPOSTOR_FRAMES_MODULE: &str = "engine::mesh::impostor_frames";
-pub const IMPOSTORS_MODULE: &str = "engine::impostors";
 pub const MATH_MODULE: &str = "engine::math";
 pub const VIEW_MODULE: &str = "engine::view";
 pub const PYRAMID_MODULE: &str = "engine::pyramid";
@@ -76,7 +74,6 @@ pub fn presentation_source() -> String {
     source.push_str(engine_core::PRESENTATION_WGSL);
     for (name, value) in [
         ("NO_PARENT", engine_core::NO_PARENT),
-        ("IMPOSTOR_VERTICES", crate::IMPOSTOR_VERTICES),
         (
             "POSE_FLOATS",
             (size_of::<engine_core::NodePose>() / 4) as u32,
@@ -129,26 +126,6 @@ pub fn declarations_source() -> String {
     source
 }
 
-pub fn impostor_frames_source() -> String {
-    use crate::slots::{
-        CardPhase, FADING_CARD_FADE_MAX, FADING_CARD_INDEX_MAX, FadingCard, SteadyCard,
-    };
-    use engine_core::{BitValue, GpuBits};
-    let mut source = String::from(include_str!("impostor_frames.wgsl"));
-    let words = [
-        <CardPhase as BitValue>::WGSL,
-        <SteadyCard as GpuBits>::WGSL,
-        <FadingCard as GpuBits>::WGSL,
-    ];
-    for wgsl in words {
-        source.push_str(wgsl);
-    }
-    unsigned(&mut source, "FADING_CARD_INDEX_MAX", FADING_CARD_INDEX_MAX);
-    unsigned(&mut source, "FADING_CARD_FADE_MAX", FADING_CARD_FADE_MAX);
-    source.push_str(&crate::impostors::layout_source());
-    source
-}
-
 pub fn math_source() -> String {
     let mut source = String::from(include_str!("math.wgsl"));
     float(&mut source, "GRAVITY", engine_core::math::GRAVITY);
@@ -165,7 +142,7 @@ pub fn view_source() -> String {
     source
 }
 
-pub fn generated_core() -> [(&'static str, String); 13] {
+pub fn generated_core() -> [(&'static str, String); 12] {
     let standard = crate::surface::MaterialLayout::standard();
     [
         (PRESENTATION_MODULE, presentation_source()),
@@ -174,13 +151,12 @@ pub fn generated_core() -> [(&'static str, String); 13] {
         (crate::surface::MATERIALS_MODULE, standard.materials_source()),
         (crate::surface::SLOTS_MODULE, standard.slots_source(false)),
         (crate::surface::SURFACES_MODULE, standard.surfaces_source()),
-        (IMPOSTOR_FRAMES_MODULE, impostor_frames_source()),
-        (IMPOSTORS_MODULE, crate::impostors::atlas_source()),
         (MATH_MODULE, math_source()),
         (VIEW_MODULE, view_source()),
         (PYRAMID_MODULE, crate::pyramid::source()),
         (crate::drawn::DRAWN_MODULE, crate::drawn::source()),
         (crate::drawn::DRAWN_CULL_MODULE, crate::drawn::cull_source()),
+        (crate::drawn::DRAWN_FADES_MODULE, crate::drawn::fades_source()),
     ]
 }
 

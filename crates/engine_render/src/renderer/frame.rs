@@ -14,8 +14,7 @@ use crate::readback::{Arrival, Reader};
 
 const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
 const OPAQUE_MESHES: &str = "opaque_meshes";
-const MEMORY: [&str; 9] = [
-    "memory.gpu_impostor_bytes",
+const MEMORY: [&str; 8] = [
     "memory.gpu_previous_pose_bytes",
     "memory.gpu_presentation_bytes",
     "memory.render_staging_capacity_bytes",
@@ -108,7 +107,6 @@ impl Renderer {
             return;
         };
         let (display, profiler) = (&mut self.core.display, &mut self.core.profiler);
-        let impostors = &mut run.assets.impostors;
         let mut parts = Vec::new();
         run.reading.list
             .take(|reader, written, deliver, arrival| match (reader, arrival) {
@@ -124,7 +122,6 @@ impl Renderer {
                 (Reader::Part { .. }, Arrival::Failed) => {}
                 (Reader::FrameTimer, arrival) => display.timed(written, arrival),
                 (Reader::Profiler(slot), arrival) => profiler.arrived(slot, arrival),
-                (Reader::Impostor(serial), arrival) => impostors.arrived(serial, arrival),
             });
         for (asked, read, deliver) in parts {
             run.arrived(asked, read, deliver);
@@ -139,7 +136,6 @@ impl Renderer {
             return;
         };
         run.deliver(world);
-        run.assets.impostors.deliver(world);
         let refused = run.assets.materials.take_refused();
         if !refused.is_empty()
             && let Some(mut registry) = world.get_resource_mut::<engine_registry::Registry>()
@@ -265,20 +261,11 @@ impl Renderer {
         let row_upload = engine_profile::timed(engine_profile::row("render.uploads"));
         let mesh_bytes = run.assets.meshes.sync(&device, &self.core.queue, world);
         let mut mips = None;
-        let written = run.written();
-        let (mut compiler, assets, readbacks) = run.split();
+        let (mut compiler, assets) = run.split();
         let (mut texture_bytes, mut mip_levels) =
             assets
                 .materials
                 .sync(&device, &self.core.queue, world, (&mut mips, &mut compiler));
-        assets.impostors.run(
-            &device,
-            &self.core.queue,
-            world,
-            (&assets.meshes, &assets.materials),
-            (&mut mips, &mut compiler),
-            (readbacks, written),
-        );
         if let Some(encoder) = mips.take() {
             self.core.queue.hand(Handover::from(encoder));
         }
@@ -371,7 +358,7 @@ impl Renderer {
             for texture in std::mem::take(&mut run.bindings.wanted_textures) {
                 if let Some(source) = library.texture(texture) {
                     let revision = library.revision_of(texture).unwrap_or_default();
-                    let (mut compiler, assets, _) = run.split();
+                    let (mut compiler, assets) = run.split();
                     let (bytes, levels) = assets.materials.upload_texture(
                         &device,
                         &self.core.queue,
@@ -753,7 +740,6 @@ impl Renderer {
             engine_profile::counter("render.camera_write_bytes", camera_bytes as f64);
             for name in MEMORY {
                 let held = match name {
-                    "memory.gpu_impostor_bytes" => run.assets.impostors.capacity_bytes(),
                     "memory.render_staging_capacity_bytes" => run.assets.meshes.staging_bytes(),
                     "memory.gpu_mesh_payload_bytes" => stats.resident_mesh_bytes,
                     "memory.gpu_mesh_arena_bytes" => run.assets.meshes.capacity_bytes(),

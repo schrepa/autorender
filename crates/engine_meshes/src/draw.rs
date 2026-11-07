@@ -1,5 +1,5 @@
 use engine_core::{MaterialHandle, MeshHandle};
-use engine_render::{Draw, MeshPass, Pipeline, Scene, SceneDraw, Shape};
+use engine_render::{Draw, Pipeline, Scene, SceneDraw, Shape};
 
 use crate::debug::{DrawKind, DrawRecord};
 use crate::gpu::{BlendedStreams, Drawing, Looked, MeshesGpu, Streams, ViewStreams};
@@ -89,21 +89,18 @@ impl MeshesGpu {
                     self.state
                         .groups
                         .draw_source(item.start, item.batch as usize, level);
-                draw.draw_timed_with(
+                draw.draw_timed(
                     pipeline,
-                    (
-                        Shape::MeshIndirect {
-                            mesh,
-                            material,
-                            args: streams.args,
-                            offset: args,
-                            streams: &[
-                                (streams.ids, ids),
-                                (streams.records, self.record(DrawKind::Mesh, level)),
-                            ],
-                        },
-                        MeshPass::default(),
-                    ),
+                    Shape::MeshIndirect {
+                        mesh,
+                        material,
+                        args: streams.args,
+                        offset: args,
+                        streams: &[
+                            (streams.ids, ids),
+                            (streams.records, self.record(DrawKind::Mesh, level)),
+                        ],
+                    },
                     || draw_label((mesh, material), (phase, level)),
                 );
                 drawn += 1;

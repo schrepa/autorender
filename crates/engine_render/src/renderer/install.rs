@@ -649,12 +649,6 @@ fn install_with(
             brick: None,
             fills: Vec::new(),
         },
-        Listed {
-            record: core_part::<crate::impostors::ImpostorBakes>(),
-            package: CORE_PACKAGE,
-            brick: None,
-            fills: Vec::new(),
-        },
     ];
     let mut draws: Vec<&KindDraw> = Vec::new();
     for (brick, record) in registry.iter() {
@@ -854,11 +848,7 @@ impl Renderer {
         crate::mesh_arena::configure(
             &self.core.device,
             world,
-            (
-                &mut assets.meshes,
-                &mut assets.materials,
-                &mut assets.impostors,
-            ),
+            (&mut assets.meshes, &mut assets.materials),
         );
         let mut run = Run::new(
             (

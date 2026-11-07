@@ -1,9 +1,4 @@
-import package::engine::color::decode_srgb;
 import package::engine::mesh::declarations::MASK_MIP_SCALE;
-import package::engine::mesh::impostor_frames::{
-    IMPOSTOR_CUTOFF, impostor_basis, impostor_facing, impostor_flags_hemisphere,
-    impostor_flags_texels, impostor_frame_direction, impostor_frames, impostor_grid, impostor_met,
-};
 import package::engine::post::frame::post;
 import package::engine::surfaces::{SURFACE_GROUND, SURFACE_SOLID};
 import package::engine::view::{camera, stable_normalize};
@@ -15,10 +10,14 @@ import package::face::ground_tiles::{
     macro_color, material_look, terrain_info, tile_height, tile_layer, tile_material, tile_peak,
     triangle_height,
 };
+import package::face::impostors::{
+    IMPOSTOR_CUTOFF, impostor_albedo, impostor_basis, impostor_facing, impostor_flags_hemisphere,
+    impostor_flags_texels, impostor_frame_direction, impostor_frames, impostor_geometry,
+    impostor_grid, impostor_met, impostor_surface,
+};
 import package::face::lighting::sun_visibility;
 import package::face::placed_tiles::{
-    Pose, placed_color, placed_frame, placed_frame_layers, placed_impostor, placed_pose,
-    placed_record, placed_shown,
+    Pose, placed_color, placed_impostor, placed_pose, placed_record, placed_shown,
 };
 import package::face::sky::{ambient as sky_ambient, atmospheric, sky_above, sky_average};
 import package::face::sun::{sun_color, sun_direction};
@@ -355,22 +354,21 @@ fn test_placed(slot: u32, p: vec3<f32>, direction: vec3<f32>, nearest: f32, spre
     let span_uv = 1.0 / f32(frames);
     let first = vec2<f32>(cell) * span_uv;
     let crossed = first + (0.5 + 0.5 * image) * span_uv;
-    let depths = 2u * placed_frame_layers() + impostor.layer;
     let scale = 1.0 + MASK_MIP_SCALE * level;
     var at = clamp(crossed, first + inset, first + span_uv - inset);
-    let probed = placed_frame(at, impostor.layer, level).a;
+    let probed = impostor_albedo(at, impostor.layer, level).a;
     if probed * scale < 1.0 / 255.0 {
         return;
     }
-    var along = clamp(impostor_met(placed_frame(at, depths, level).w, probed, depth, facing)
-        / probed, -1.0, 1.0);
+    var along = clamp(impostor_met(impostor_geometry(at, impostor.layer, level).w, probed, depth,
+        facing) / probed, -1.0, 1.0);
     at = clamp(crossed + slope * (0.5 * span_uv * along), first + inset,
         first + span_uv - inset);
-    let covered = placed_frame(at, impostor.layer, level).a;
+    let covered = impostor_albedo(at, impostor.layer, level).a;
     if covered * scale < IMPOSTOR_CUTOFF {
         return;
     }
-    along = clamp(impostor_met(placed_frame(at, depths, level).w,
+    along = clamp(impostor_met(impostor_geometry(at, impostor.layer, level).w,
         covered, depth, facing) / covered, -1.0, 1.0);
     let s = clamp(s0 - along * radius / rate, span.x, span.y);
     if s >= (*hit).s {
@@ -565,18 +563,17 @@ struct PlacedSurface {
 
 fn placed_surface(hit: WorldHit) -> PlacedSurface {
     let group = placed_record(hit.slot).group;
-    let layers = placed_frame_layers();
     let layer = placed_impostor(group).layer;
-    let albedo = placed_frame(hit.held.xy, layer, hit.held.z);
-    let geometry = placed_frame(hit.held.xy, 2u * layers + layer, hit.held.z);
-    let surface = placed_frame(hit.held.xy, 3u * layers + layer, hit.held.z);
+    let albedo = impostor_albedo(hit.held.xy, layer, hit.held.z);
+    let geometry = impostor_geometry(hit.held.xy, layer, hit.held.z);
+    let surface = impostor_surface(hit.held.xy, layer, hit.held.z);
     let unpremultiply = 1.0 / max(albedo.a, 1.0e-4);
     let tint = placed_color(group);
     let color = vec3<f32>(unpack2x16unorm(tint.x), unpack2x16unorm(tint.y).x);
     let mesh_normal = geometry.xyz * unpremultiply * 2.0 - 1.0;
     let unposed = unposed_pose(placed_pose(hit.slot));
     var placed: PlacedSurface;
-    placed.albedo = decode_srgb(albedo.rgb) * unpremultiply * color;
+    placed.albedo = albedo.rgb * unpremultiply * color;
     placed.normal = stable_normalize(unposed.x * mesh_normal.x + unposed.y * mesh_normal.y
         + unposed.z * mesh_normal.z);
     placed.occlusion = surface.z * unpremultiply;

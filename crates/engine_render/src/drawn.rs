@@ -12,6 +12,7 @@ use crate::{
 
 pub(crate) const DRAWN_MODULE: &str = "engine::drawn";
 pub(crate) const DRAWN_CULL_MODULE: &str = "engine::drawn_cull";
+pub(crate) const DRAWN_FADES_MODULE: &str = "engine::drawn_fades";
 const CULL_GROUP: u32 = 64;
 const SLOT_BITS: u32 = u32::BITS;
 const FIRST_SLOTS: u64 = 64;
@@ -21,6 +22,7 @@ const VARS: &str = "@group(0) @binding(0) var<storage, read> drawn_records: arra
 @group(0) @binding(0) var<storage, read> drawn_values: array<vec4<f32>>;
 @group(0) @binding(0) var<storage, read> drawn_culled: array<u32>;
 @group(0) @binding(0) var<uniform> drawn_view: vec4<u32>;
+@group(0) @binding(0) var<storage, read> drawn_fades: array<u32>;
 
 fn drawn_value(record: DrawnRecord, index: u32) -> f32 {
     if index >= record.floats {
@@ -40,6 +42,22 @@ fn drawn_in_view(view: u32, slot: u32) -> bool {
 
 fn drawn_shown(slot: u32) -> bool {
     return drawn_in_view(drawn_view.x, slot);
+}
+
+fn drawn_fade(slot: u32) -> u32 {
+    if slot >= arrayLength(&drawn_fades) {
+        return 0u;
+    }
+    return drawn_fades[slot];
+}
+";
+
+const FADES: &str = "@group(0) @binding(0) var<storage, read_write> drawn_fade_words: array<u32>;
+
+fn set_drawn_fade(slot: u32, fade: u32) {
+    if slot < arrayLength(&drawn_fade_words) {
+        drawn_fade_words[slot] = fade;
+    }
 }
 ";
 
@@ -91,6 +109,10 @@ pub(crate) fn source() -> String {
     source
 }
 
+pub(crate) fn fades_source() -> String {
+    String::from(FADES)
+}
+
 pub(crate) fn cull_source() -> String {
     let mut source = String::from(CULL_IMPORTS);
     source.push_str(CullView::WGSL);
@@ -101,6 +123,7 @@ pub(crate) fn cull_source() -> String {
 pub(crate) struct DrawnGpu {
     records: Buffer<Self>,
     values: Buffer<Self>,
+    fades: Buffer<Self>,
     culled: Buffer<Self>,
     views: Buffer<Self>,
     view: Buffer<Self>,
@@ -156,6 +179,9 @@ impl DrawnGpu {
             Allocation::Fresh
         ) | (stride != self.stride);
         self.stride = stride;
+        let fades = slots * 4;
+        cx.allocate_buffer(self.fades, fades);
+        cx.clear_buffer_range(self.fades, 0..fades);
         let changes = table.changes_since(&mut self.seen);
         if records.is_empty() {
             return;
@@ -200,6 +226,7 @@ impl GpuPart for DrawnGpu {
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let records = cx.buffer("drawn_records", Lifetime::Kept);
         let values = cx.buffer("drawn_values", Lifetime::Kept);
+        let fades = cx.buffer("drawn_fades", Lifetime::Kept);
         let culled = cx.buffer("drawn_culled", Lifetime::Kept);
         let views = cx.buffer("drawn_views", Lifetime::Kept);
         let view = cx.view_buffer("drawn_view", Lifetime::Kept);
@@ -207,6 +234,8 @@ impl GpuPart for DrawnGpu {
         cx.frame(var(DRAWN_MODULE, "drawn_values"), Bind::Buffer(values))?;
         cx.frame(var(DRAWN_MODULE, "drawn_culled"), Bind::Buffer(culled))?;
         cx.frame(var(DRAWN_MODULE, "drawn_view"), Bind::Buffer(view))?;
+        cx.frame(var(DRAWN_MODULE, "drawn_fades"), Bind::Buffer(fades))?;
+        cx.frame(var(DRAWN_FADES_MODULE, "drawn_fade_words"), Bind::Buffer(fades))?;
         let cull = cx.pass("drawn_cull").label("engine/drawn-cull").id();
         let pipeline = cx.compute_pipeline(
             cull,
@@ -219,6 +248,7 @@ impl GpuPart for DrawnGpu {
         Ok(Self {
             records,
             values,
+            fades,
             culled,
             views,
             view,

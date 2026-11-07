@@ -31,7 +31,6 @@ mod gpu_calls;
 mod gpu_data;
 mod gpu_layouts;
 mod graph;
-mod impostors;
 mod install;
 mod linker;
 mod machine;
@@ -85,8 +84,6 @@ pub use renderer::{
 pub use shaders::FULLSCREEN;
 #[doc(hidden)]
 pub use shaders::core_modules;
-
-pub const IMPOSTOR_VERTICES: u32 = 6;
 
 pub const DEV: bool = cfg!(feature = "dev");
 
@@ -413,6 +410,11 @@ pub enum CopyRegion {
         to: wgpu::TexelCopyBufferLayout,
         size: wgpu::Extent3d,
     },
+    LevelToBuffer {
+        from: (u32, wgpu::Origin3d),
+        to: wgpu::TexelCopyBufferLayout,
+        size: wgpu::Extent3d,
+    },
 }
 
 pub enum Attach<P> {
@@ -464,11 +466,11 @@ pub enum Shape<'a, P, S> {
         offset: u64,
         streams: &'a [(DrawInput<P, S>, u64)],
     },
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct MeshPass {
-    pub fading: bool,
+    Mesh {
+        mesh: MeshHandle,
+        material: Option<MaterialHandle>,
+        instances: Range<u32>,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -924,6 +926,11 @@ fn region_of(region: &CopyRegion) -> CopyRegion {
             to: *to,
             size: *size,
         },
+        CopyRegion::LevelToBuffer { from, to, size } => CopyRegion::LevelToBuffer {
+            from: *from,
+            to: *to,
+            size: *size,
+        },
     }
 }
 
@@ -938,6 +945,11 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn view_index(&self) -> u32 {
         self.core.uniforms.camera_slot
+    }
+
+    pub fn drawable(&self, mesh: MeshHandle, material: Option<MaterialHandle>) -> bool {
+        self.core.assets.meshes.get(mesh).is_some()
+            && self.core.assets.materials.group(material).is_some()
     }
 
     pub fn read_target(&self, name: TargetName) -> bool {
@@ -1254,15 +1266,11 @@ fn streams<P, S>(streams: &[(DrawInput<P, S>, u64)]) -> encode::Streams {
 
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
     pub fn draw(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>) {
-        self.issue(pipeline, (shape, &[], MeshPass::default()), None);
+        self.issue(pipeline, (shape, &[]), None);
     }
 
     pub fn draw_at(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>, offsets: &[u32]) {
-        self.issue(pipeline, (shape, offsets, MeshPass::default()), None);
-    }
-
-    pub fn draw_with(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>, mesh: MeshPass) {
-        self.issue(pipeline, (shape, &[], mesh), None);
+        self.issue(pipeline, (shape, offsets), None);
     }
 
     pub fn draw_timed<'l>(
@@ -1274,29 +1282,13 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         let timer = self.raw.timer();
         let mut label = Some(label);
         let mut named = || label.take().map_or_else(String::new, |label| label());
-        self.issue(
-            pipeline,
-            (shape, &[], MeshPass::default()),
-            Some((timer, &mut named)),
-        );
-    }
-
-    pub fn draw_timed_with<'l>(
-        &mut self,
-        pipeline: &Pipeline<P, S>,
-        (shape, mesh): (Shape<'_, P, S>, MeshPass),
-        label: impl FnOnce() -> String + 'l,
-    ) {
-        let timer = self.raw.timer();
-        let mut label = Some(label);
-        let mut named = || label.take().map_or_else(String::new, |label| label());
-        self.issue(pipeline, (shape, &[], mesh), Some((timer, &mut named)));
+        self.issue(pipeline, (shape, &[]), Some((timer, &mut named)));
     }
 
     fn issue(
         &mut self,
         pipeline: &Pipeline<P, S>,
-        (shape, offsets, mesh): (Shape<'_, P, S>, &[u32], MeshPass),
+        (shape, offsets): (Shape<'_, P, S>, &[u32]),
         timed: encode::TimedDraw<'_>,
     ) {
         let shape = match shape {
@@ -1353,11 +1345,20 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
                 offset,
                 streams: streams(given),
             },
+            Shape::Mesh {
+                mesh,
+                material,
+                instances,
+            } => encode::RawShape::Mesh {
+                mesh,
+                material,
+                instances,
+            },
         };
         let part = self.raw.part();
         let run = self.raw.run();
         let point = run.point;
-        run.draw(part, point, pipeline.0, (shape, offsets, mesh), timed);
+        run.draw(part, point, pipeline.0, (shape, offsets), timed);
     }
 }
 

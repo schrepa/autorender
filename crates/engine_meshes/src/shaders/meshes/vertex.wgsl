@@ -1,5 +1,5 @@
 import package::engine::mesh::declarations::{AffinePose as PoseRows, AffineVertexInput,
-    MotionOutput, slot_fade, slot_index, slot_moved};
+    MotionOutput, drawn_slot_moved, drawn_slot_slot};
 import package::engine::drawn::{DRAWN_OWN_PROJECTION, drawn_clip, drawn_records};
 import package::engine::mesh::vertex::{origin_key, pose_matrix, transform_vertex};
 import package::engine::shading::PositionInput;
@@ -76,14 +76,14 @@ fn own_projection(output: MotionOutput, slot: u32) -> MotionOutput {
 }
 
 fn vertex_affine_motion(input: AffineVertexInput) -> MotionOutput {
-    let slot = slot_index(input.slot);
-    let moved = slot_moved(input.slot);
+    let slot = drawn_slot_slot(input.slot);
+    let moved = drawn_slot_moved(input.slot);
     var previous: AffinePose;
     if moved {
         previous = instance_previous_poses[slot];
     }
     return own_projection(affine_motion(input, instance_poses[slot], previous, moved,
-        instance_colors[slot], slot_fade(input.slot)), slot);
+        instance_colors[slot], 0u), slot);
 }
 
 fn slot_motion(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,
@@ -103,7 +103,7 @@ struct MeshOutput {
 }
 
 fn drawn_object(input: AffineVertexInput, draw: vec4<u32>) -> vec4<u32> {
-    return vec4<u32>(draw.x, slot_index(input.slot), 0u, 0u);
+    return vec4<u32>(draw.x, drawn_slot_slot(input.slot), 0u, 0u);
 }
 
 @vertex

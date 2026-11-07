@@ -1,6 +1,4 @@
 import package::engine::mesh::declarations::{FADE_LEVEL_MAX, faded_slot, faded_slot_slot};
-import package::engine::mesh::impostor_frames::{CARD_PHASE_FADING, FADING_CARD_FADE_MAX,
-    FADING_CARD_INDEX_MAX, fading_card};
 import package::engine::view::seen_share;
 import package::generated::scatter::{
     CullFrame, CullGroup, CullView, DEAD, FADED, NO_LAYER, SCATTER_GROUP, SHOWN_CARD, SHOWN_NONE,
@@ -116,7 +114,7 @@ fn show(id: u32, record: Record, group: CullGroup, way: u32) {
         return;
     }
     if way == SHOWN_CARD {
-        card(0u, id, group.record);
+        card(0u, id, faded_slot(group.record, FADE_LEVEL_MAX, false));
         return;
     }
     list(0u, record, group, way, id);
@@ -127,14 +125,7 @@ fn show_fading(id: u32, record: Record, group: CullGroup, way: u32, fade: f32, o
         return;
     }
     if way == SHOWN_CARD {
-        if group.record > FADING_CARD_INDEX_MAX {
-            if !out {
-                card(0u, id, group.record);
-            }
-            return;
-        }
-        card(0u, id, fading_card(group.record, false, u32(fade * f32(FADING_CARD_FADE_MAX)), out,
-            CARD_PHASE_FADING));
+        card(0u, id, faded_slot(group.record, u32(fade * f32(FADE_LEVEL_MAX)), out));
         return;
     }
     if faded_slot_slot(id) != id {
@@ -230,7 +221,7 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         let impostor = group.impostor * record.scale;
         if frame.strides.z != 0u && impostor > 0.0 && impostor <= limits.y {
-            card(view, id.x, group.record);
+            card(view, id.x, faded_slot(group.record, FADE_LEVEL_MAX, false));
             continue;
         }
         append(view, record.group, group, caster_level(record, group, limits.x), id.x);

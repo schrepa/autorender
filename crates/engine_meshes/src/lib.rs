@@ -20,14 +20,12 @@ mod settings;
 mod smokes;
 mod uploads;
 
-use engine_core::{
-    Attributes, Brick, Bricks, DrawKind, ImpostorPolicy, KindDecl, Runs, Schedule, Smoke, Source,
-};
+use engine_core::{Attributes, Brick, Bricks, DrawKind, KindDecl, Runs, Schedule, Smoke, Source};
 use engine_places::meshes::Instances;
 use engine_render::RenderBricks;
 
 pub use settings::{
-    Culling, CullingStats, DetailStats, Impostors, MeshStats, OcclusionCulling, SubpixelCulling,
+    Culling, CullingStats, DetailStats, MeshStats, OcclusionCulling, SubpixelCulling,
 };
 
 pub const MESH: DrawKind = DrawKind::MESH;
@@ -66,7 +64,6 @@ impl Brick for MeshesBrick {
             .settings::<Culling>()
             .settings::<OcclusionCulling>()
             .settings::<SubpixelCulling>()
-            .settings::<Impostors>()
             .stats::<MeshStats>()
             .resource::<order::MeshPlan>()
             .resource::<presentation::PresentationTotals>()
@@ -76,13 +73,11 @@ impl Brick for MeshesBrick {
             .explain::<explain::Culled>()
             .explain::<explain::Level>()
             .fill::<Instances>(Some(shaders::meshes::faces::instances::MODULE))
-            .fill::<ImpostorPolicy>(None)
             .systems(
                 Schedule::ViewSync,
                 (
                     order::plan_draws,
                     assets::publish_assets,
-                    assets::impostor_policy,
                     settings::mesh_stats,
                 ),
             )

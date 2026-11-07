@@ -19,6 +19,7 @@ macro_rules! contract {
     }};
 }
 
+pub mod impostors;
 pub mod meshes;
 pub mod queries;
 
@@ -170,4 +171,7 @@ pub mod contract {
 pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<meshes::Instances>(),
     PlaceDecl::slot::<queries::SceneQueries>(),
+    PlaceDecl::slot::<impostors::Impostors>(),
+    PlaceDecl::component::<impostors::ImpostorAsks>("impostor_asks"),
+    PlaceDecl::component::<impostors::ImpostorRecords>("impostor_records"),
 ];

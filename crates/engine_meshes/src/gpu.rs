@@ -1,9 +1,9 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetLibrary, AssetResidency, Detail, DeviceLimits, DrawnPoses, DrawnTable, Error, FrameTime,
-    GlobalTransforms, ImpostorRecords, MAX_HIERARCHY_DEPTH, PassViews, PrimaryView, ScenePass,
-    Views,
+    GlobalTransforms, MAX_HIERARCHY_DEPTH, PassViews, PrimaryView, ScenePass, Views,
 };
+use engine_places::impostors::{ImpostorRecords, Impostors};
 use engine_render::{
     AttachPoint, Bind, Buffer, ComputePipeline, Copied, DepthUse, DrawInput, Encode, GpuPart,
     Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Scene, Scope,
@@ -17,7 +17,6 @@ use crate::drawn::WatchedSlot;
 use crate::layouts::PresentationFrame;
 use crate::order::{BatchLook, MeshPlan};
 use crate::presentation::{FrameState, PresentationTotals};
-use crate::settings::Impostors;
 use crate::shaders::meshes::{
     blended, cards, debug, forward, presentation, pyramid, vertex,
 };

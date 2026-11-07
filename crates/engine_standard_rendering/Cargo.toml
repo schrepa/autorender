@@ -17,6 +17,7 @@ engine_time_of_day.workspace = true
 engine_sun.workspace = true
 engine_lighting.workspace = true
 engine_meshes.workspace = true
+engine_impostors.workspace = true
 engine_shadows.workspace = true
 engine_lights.workspace = true
 engine_sky.workspace = true

@@ -1,4 +1,4 @@
-import package::engine::mesh::impostor_frames::ImpostorRecord;
+import package::place::impostors::ImpostorRecord;
 
 struct Record {
     center: vec3<f32>,
@@ -42,12 +42,4 @@ fn placed_impostor(group: u32) -> ImpostorRecord {
 
 fn placed_color(group: u32) -> vec2<u32> {
     return vec2<u32>(0u);
-}
-
-fn placed_frame(at: vec2<f32>, layer: u32, level: f32) -> vec4<f32> {
-    return vec4<f32>(0.0);
-}
-
-fn placed_frame_layers() -> u32 {
-    return 1u;
 }

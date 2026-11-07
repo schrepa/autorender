@@ -2,7 +2,7 @@ import package::face::instances::{
     AffinePose, CardDebugTargets, CardVertex, SlotColor, placed_card_debug, placed_card_depth,
     placed_card_pixel, placed_card_shade, placed_card_vertex
 };
-import package::engine::mesh::impostor_frames::impostor_index;
+import package::engine::mesh::declarations::faded_slot_slot;
 import package::face::debug::debug_record_with_kind;
 import package::generated::kinds::KIND_PLACED;
 import package::generated::targets::{DepthViewTargets, depth_view_targets};
@@ -40,7 +40,7 @@ fn vs_placed_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
         @location(3) batch: u32, @location(14) draw: vec4<u32>) -> PlacedCardVertex {
     let pose = poses[slot];
     let card = placed_card_vertex(vertex, batch, pose, pose, colors[slot],
-        placed_impostor(impostor_index(batch)));
+        placed_impostor(faded_slot_slot(batch)));
     return PlacedCardVertex(card.clip_position, card.frames_ab, card.frame_c, card.world,
         card.normal_x, card.normal_y, card.normal_z, card.depth_axis, card.material, card.batch,
         card.previous, card.crossings, card.slopes_ab, card.slope_c, vec2<u32>(draw.x, slot));
@@ -49,7 +49,7 @@ fn vs_placed_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
 @fragment
 fn fs_placed_card(input: PlacedCardVertex) -> DepthViewTargets {
     let card = card_of(input);
-    let shaded = placed_card_shade(card, placed_impostor(impostor_index(card.batch)));
+    let shaded = placed_card_shade(card, placed_impostor(faded_slot_slot(card.batch)));
     return depth_view_targets(shaded.point, shaded.shaded, placed_card_pixel(card),
         shaded.depth);
 }
@@ -57,12 +57,12 @@ fn fs_placed_card(input: PlacedCardVertex) -> DepthViewTargets {
 @fragment
 fn fs_placed_card_depth(input: PlacedCardVertex) -> @builtin(frag_depth) f32 {
     let card = card_of(input);
-    return placed_card_depth(card, placed_impostor(impostor_index(card.batch)));
+    return placed_card_depth(card, placed_impostor(faded_slot_slot(card.batch)));
 }
 
 @fragment
 fn fs_debug_placed_card(input: PlacedCardVertex) -> CardDebugTargets {
     let card = card_of(input);
     return placed_card_debug(card, debug_record_with_kind(input.object.x, KIND_PLACED),
-        input.object.y, placed_impostor(impostor_index(card.batch)));
+        input.object.y, placed_impostor(faded_slot_slot(card.batch)));
 }

@@ -46,7 +46,6 @@ pub(crate) struct Frames {
     pub(crate) current: u64,
     pub(crate) asked: u64,
     pub(crate) parity: usize,
-    pub(crate) atlas_generation: Option<u64>,
 }
 
 pub(crate) struct Bindings {

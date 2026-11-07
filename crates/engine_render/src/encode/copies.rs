@@ -1,5 +1,23 @@
 use super::*;
 
+fn to_buffer_copy(
+    encoder: &mut wgpu::CommandEncoder,
+    (source, mip, at): (&wgpu::Texture, u32, wgpu::Origin3d),
+    (target, layout): (&wgpu::Buffer, wgpu::TexelCopyBufferLayout),
+    size: wgpu::Extent3d,
+) {
+    let aspect = if source.format().has_depth_aspect() {
+        wgpu::TextureAspect::DepthOnly
+    } else {
+        wgpu::TextureAspect::All
+    };
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo { texture: source, mip_level: mip, origin: at, aspect },
+        wgpu::TexelCopyBufferInfo { buffer: target, layout },
+        size,
+    );
+}
+
 impl Run {
     pub(super) fn copied_texture(&self, copied: Copied) -> Option<wgpu::Texture> {
         match copied {
@@ -95,16 +113,12 @@ impl Run {
                 }
                 crate::CopyRegion::ToBuffer { from: at, to: layout, size } => {
                     if let (Some(source), Some(target)) = (&source, &to_buffer) {
-                        let aspect = if source.format().has_depth_aspect() {
-                            wgpu::TextureAspect::DepthOnly
-                        } else {
-                            wgpu::TextureAspect::All
-                        };
-                        encoder.copy_texture_to_buffer(
-                            wgpu::TexelCopyTextureInfo { texture: source, mip_level: 0, origin: *at, aspect },
-                            wgpu::TexelCopyBufferInfo { buffer: target, layout: *layout },
-                            *size,
-                        );
+                        to_buffer_copy(encoder, (source, 0, *at), (target, *layout), *size);
+                    }
+                }
+                crate::CopyRegion::LevelToBuffer { from: (mip, at), to: layout, size } => {
+                    if let (Some(source), Some(target)) = (&source, &to_buffer) {
+                        to_buffer_copy(encoder, (source, *mip, *at), (target, *layout), *size);
                     }
                 }
             }

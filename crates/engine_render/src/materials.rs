@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::world::World;
 use engine_core::{
-    AssetLibrary, AssetResidency, ColorSpace, Cull, Error, Filter, Material, MaterialHandle,
+    AssetLibrary, AssetResidency, ColorSpace, Error, Filter, Material, MaterialHandle,
     NORMAL_MAP, Sampler, Texture, TextureFormat, TextureHandle, Wrap,
 };
 
@@ -29,25 +29,9 @@ pub(crate) struct GpuTexture {
     revision: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct MaterialLook {
-    pub masked: bool,
-    pub two_sided: bool,
-}
-
-impl MaterialLook {
-    pub fn of(material: &Material) -> Self {
-        Self {
-            masked: material.alpha_mode().masked(),
-            two_sided: material.cull() == Cull::None,
-        }
-    }
-}
-
 pub(crate) struct GpuMaterial {
     group: wgpu::BindGroup,
     _uniform: wgpu::Buffer,
-    look: MaterialLook,
     variant: MaterialVariant,
     revision: u64,
     textures: Vec<(TextureHandle, u64)>,
@@ -319,7 +303,6 @@ impl MaterialStore {
                 &uniform,
             ),
             _uniform: uniform,
-            look: MaterialLook::of(material),
             variant,
             revision,
             textures: used,
@@ -334,19 +317,10 @@ impl MaterialStore {
         &self.mips
     }
 
-    pub fn group(&self, material: MaterialHandle) -> Option<&wgpu::BindGroup> {
-        self.materials
-            .get(&material)
-            .map(|material| &material.group)
-    }
-
-    pub fn binding(&self, material: Option<MaterialHandle>) -> (&wgpu::BindGroup, MaterialLook) {
+    pub fn group(&self, material: Option<MaterialHandle>) -> Option<&wgpu::BindGroup> {
         match material {
-            Some(handle) => {
-                let material = &self.materials[&handle];
-                (&material.group, material.look)
-            }
-            None => (&self.defaults.group, MaterialLook::default()),
+            Some(handle) => self.materials.get(&handle).map(|material| &material.group),
+            None => Some(&self.defaults.group),
         }
     }
 

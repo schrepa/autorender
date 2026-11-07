@@ -3,10 +3,12 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::{
     Asset, AssetLibrary, AssetResidency, AssetUses, Cut, Detail, DeviceLimits, FrameTime,
-    ImpostorAsks, ImpostorPolicy, ImpostorRecord, ImpostorRecords, Readable, Readback, Spawner,
-    PrimaryView,
+    Readable, Readback, Spawner, PrimaryView,
 };
 use engine_math::collections::HashMap;
+use engine_places::impostors::{
+    IMPOSTOR_VERTICES, ImpostorAsks, ImpostorRecord, ImpostorRecords, Impostors,
+};
 use engine_places_rendering::occlusion::OcclusionSource;
 use engine_places_rendering::shadows::{CasterMap, Refresh, ShadowChange, ShadowChanges, ShadowMaps};
 use engine_places_simulation::ground::TileKey;
@@ -448,7 +450,7 @@ pub(crate) fn place_pool(
 }
 
 pub(crate) fn plan_cull(
-    (view, detail, maps, policy): (Res<PrimaryView>, Res<Detail>, Res<ShadowMaps>, Res<ImpostorPolicy>),
+    (view, detail, maps, policy): (Res<PrimaryView>, Res<Detail>, Res<ShadowMaps>, Res<Impostors>),
     mut state: ResMut<ScatterState>,
     mut feedback: ResMut<ScatterFeedback>,
 ) {
@@ -526,7 +528,7 @@ pub(crate) fn plan_cull(
     plan.card_args.clear();
     plan.card_args.resize(
         view_count as usize,
-        [engine_render::IMPOSTOR_VERTICES, 0, 0, 0],
+        [IMPOSTOR_VERTICES, 0, 0, 0],
     );
     plan.card_args.push([0; 4]);
     plan.args.clear();
@@ -561,7 +563,7 @@ pub(crate) fn publish_assets(
             }
         }
         Err(_) => {
-            spawner.spawn((Placements, state.uses.clone(), asks));
+            spawner.spawn((Placements, state.uses.clone(), asks, ImpostorRecords::default()));
         }
     }
 }

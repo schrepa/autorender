@@ -16,7 +16,6 @@ pub(crate) enum Reader {
         expect(dead_code, reason = "only profiling builds read GPU spans")
     )]
     Profiler(u32),
-    Impostor(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

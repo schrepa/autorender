@@ -1,12 +1,11 @@
 use bevy_ecs::prelude::*;
-use engine_core::{
-    AssetLibrary, DrawnTable, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk, ImpostorAsks, ImpostorPolicy,
-    Spawner,
+use engine_core::{AssetLibrary, DrawnTable, Spawner};
+use engine_places::impostors::{
+    IMPOSTOR_MIN_TRIANGLES, ImpostorAsk, ImpostorAsks, ImpostorRecords,
 };
 
 use crate::MeshesBrick;
 use crate::order::MeshBatches;
-use crate::settings::Impostors;
 
 #[derive(Component)]
 pub(crate) struct MeshAssets;
@@ -52,15 +51,7 @@ pub(crate) fn publish_assets(
             }
         }
         Err(_) => {
-            spawner.spawn((MeshAssets, asked));
+            spawner.spawn((MeshAssets, asked, ImpostorRecords::default()));
         }
     }
-}
-
-pub(crate) fn impostor_policy(impostors: Res<Impostors>, mut policy: ResMut<ImpostorPolicy>) {
-    policy.set_if_neq(ImpostorPolicy {
-        enabled: impostors.enabled,
-        pixels: impostors.pixels,
-        max: impostors.max,
-    });
 }

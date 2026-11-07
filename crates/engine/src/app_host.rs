@@ -781,12 +781,6 @@ impl AppHost {
                     .map(|entry| (entry.key, u64::from(entry.pending(world))))
             })
             .collect();
-        features.push((
-            "impostors",
-            world
-                .get_resource::<engine_core::ImpostorBooks>()
-                .map_or(0, engine_core::ImpostorBooks::left),
-        ));
         features.push(("pipelines", u64::from(self.pipeline_list.making())));
         features
     }

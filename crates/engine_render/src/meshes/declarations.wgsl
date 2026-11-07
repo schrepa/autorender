@@ -1,4 +1,4 @@
-import package::engine::materials::{MASK_MIP_SCALE, fade_list};
+import package::engine::materials::MASK_MIP_SCALE;
 import package::engine::view::fade_noise;
 
 struct AffinePose {
@@ -7,26 +7,8 @@ struct AffinePose {
     row_2: vec4<f32>,
 }
 
-fn slot_index(entry: u32) -> u32 {
-    if fade_list() {
-        return faded_slot_slot(entry);
-    }
-    return drawn_slot_slot(entry);
-}
-
-fn slot_moved(entry: u32) -> bool {
-    return !fade_list() && drawn_slot_moved(entry);
-}
-
 fn faded_entry_fade(entry: u32) -> u32 {
     return fade_word(faded_slot_level(entry), faded_slot_out(entry), true);
-}
-
-fn slot_fade(entry: u32) -> u32 {
-    if fade_list() {
-        return faded_entry_fade(entry);
-    }
-    return 0u;
 }
 
 fn fade_hidden(fade: u32, position: vec2<f32>) -> bool {

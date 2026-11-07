@@ -77,7 +77,6 @@ pub(crate) enum Held {
     Targets,
     Cameras,
     Pieces,
-    Atlas,
 }
 
 #[derive(Default)]
@@ -87,7 +86,6 @@ pub(crate) struct Holders {
     targets: Vec<Holder>,
     cameras: Vec<Holder>,
     pieces: Vec<Holder>,
-    atlas: Vec<Holder>,
     post: Vec<Holder>,
 }
 
@@ -110,7 +108,6 @@ impl Holders {
                         .get(&binding)
                         .and_then(|slot| slot.core.as_ref())
                     {
-                        Some(CoreFrame::Impostor(_)) => holders.atlas.push(holder),
                         Some(CoreFrame::Target(_)) => holders.targets.push(holder),
                         Some(CoreFrame::Post) => holders.post.push(holder),
                         Some(CoreFrame::Linear) | None => {}
@@ -148,7 +145,6 @@ impl Holders {
             Held::Targets => &self.targets,
             Held::Cameras => &self.cameras,
             Held::Pieces => &self.pieces,
-            Held::Atlas => &self.atlas,
         }
     }
 
@@ -368,7 +364,6 @@ pub(crate) struct Open {
 pub(crate) struct Assets {
     pub(crate) meshes: crate::mesh_arena::GpuMeshes,
     pub(crate) materials: crate::materials::MaterialStore,
-    pub(crate) impostors: crate::impostors::Impostors,
 }
 
 #[derive(Default)]
@@ -448,6 +443,11 @@ pub(crate) enum RawShape {
         args: u32,
         offset: u64,
         streams: Streams,
+    },
+    Mesh {
+        mesh: MeshHandle,
+        material: Option<MaterialHandle>,
+        instances: Range<u32>,
     },
 }
 
@@ -718,7 +718,6 @@ impl Run {
                     Held::Targets => "targets",
                     Held::Cameras => "cameras",
                     Held::Pieces => "pieces",
-                    Held::Atlas => "impostors",
                 };
                 self.tallies.rebuilt.reasons.push(reason);
             }
