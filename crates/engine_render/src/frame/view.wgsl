@@ -1,19 +1,7 @@
 import package::engine::math::maximum_abs;
 import package::engine::shading::ViewPixel;
 
-struct Camera {
-    view_projection: mat4x4<f32>,
-    previous_view_projection: mat4x4<f32>,
-    inverse_view_projection: mat4x4<f32>,
-    position: vec4<f32>,
-    jitter: vec4<f32>,
-    options: vec4<f32>,
-    previous: vec4<f32>,
-    region: vec4<f32>,
-    detail: vec4<f32>,
-    view: vec4<u32>,
-}
-@group(0) @binding(0) var<uniform> camera: Camera;
+@group(0) @binding(0) var<uniform> camera: CameraUniform;
 
 override PASS_CLAMP_NEAR: bool = false;
 
@@ -43,7 +31,7 @@ fn detail_distance(world: vec3<f32>) -> f32 {
 }
 
 fn detail_across(world: vec3<f32>) -> f32 {
-    return detail_distance(world) * camera.options.y;
+    return detail_distance(world) * camera.pixel_angle;
 }
 
 fn detail_span(world: vec3<f32>, normal: vec3<f32>) -> vec4<f32> {
@@ -80,7 +68,7 @@ fn seen_share(pixels: f32) -> f32 {
 }
 
 fn material_bias() -> f32 {
-    return camera.options.w;
+    return camera.mip_bias;
 }
 
 fn material_detail() -> f32 {
@@ -96,7 +84,7 @@ fn stable_normalize(value: vec3<f32>) -> vec3<f32> {
 }
 
 fn noise_phase() -> f32 {
-    return camera.options.z;
+    return camera.noise_phase;
 }
 
 fn fade_noise(position: vec2<f32>) -> f32 {

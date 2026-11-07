@@ -7,7 +7,8 @@ use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, ShadowMa
 use engine_places_world::ground::{Cover, GroundTiles, TerrainTiles};
 use engine_places_world::water::Waterline;
 use engine_render::{
-    Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput, Encode,
+    Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND, DEBUG_TARGETS,
+    DepthUse, Draw, DrawInput, Encode,
     GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Sampler,
     SamplerDesc, Scene, SceneDraw, Shape, Texture, VertexLayout, pixels_per_meter, wgpu,
 };
@@ -136,7 +137,6 @@ pub(crate) struct TerrainGpu {
     cursor: Cursor,
     drawn: bool,
     deferred: bool,
-    debug: bool,
     temporal: bool,
     render: (u32, u32),
 }
@@ -390,10 +390,9 @@ impl GpuPart for TerrainGpu {
             let bound = reached(cx, subdivision::SUBDIVIDE_APPLY, slot_binds(slot));
             applies.push(cx.compute_pipeline(subdivide, subdivision::SUBDIVIDE_APPLY, &bound)?);
         }
-        let surface = |fragment, debug_fragment, front_face| RenderPipeline {
+        let surface = |fragment, front_face| RenderPipeline {
             vertex: draw::VS_TERRAIN,
             fragment: Some(fragment),
-            debug: debug_fragment,
             vertices: &[],
             primitive: surface_primitive(front_face),
             depth: DepthUse::Write {
@@ -404,17 +403,16 @@ impl GpuPart for TerrainGpu {
         };
         let ccw = wgpu::FrontFace::Ccw;
         let ids = [
-            cx.render_pipeline(ids_pass, &surface(draw::FS_TERRAIN_IDS, None, ccw), &[])?,
+            cx.render_pipeline(ids_pass, &surface(draw::FS_TERRAIN_IDS, ccw), &[])?,
             cx.render_pipeline(
                 ids_pass,
-                &surface(draw::FS_TERRAIN_IDS_HOLES, None, ccw),
+                &surface(draw::FS_TERRAIN_IDS_HOLES, ccw),
                 &[],
             )?,
         ];
         let resolve = |fragment| RenderPipeline {
             vertex: draw::VS_TERRAIN_RESOLVE,
             fragment: Some(fragment),
-            debug: None,
             vertices: &[],
             primitive: wgpu::PrimitiveState::default(),
             depth: DepthUse::Overwrite,
@@ -450,11 +448,15 @@ impl GpuPart for TerrainGpu {
         for listed in listed {
             let scene = Scene::named(listed.name);
             let lit = listed.pass.writes.contains(TargetName::COLOR);
+            let shows = listed.pass.writes.contains(DEBUG_TARGETS[0]);
             let owned = listed.pass.views == PassViews::Owned;
-            let made = if !owned && lit && listed.pass.at == AttachPoint::Opaque {
-                let debug_surface = |fragment| surface(fragment, Some(fragment), ccw);
+            let made = if !owned && shows {
+                let debug_surface = |fragment| RenderPipeline {
+                    blend: Some(DEBUG_BLEND),
+                    ..surface(fragment, ccw)
+                };
                 Joined::Surface {
-                    shown: |terrain| terrain.debug && terrain.drawn,
+                    shown: |terrain| terrain.drawn,
                     pipelines: [
                         cx.render_pipeline(scene, &debug_surface(debug::FS_DEBUG_TERRAIN), &[])?,
                         cx.render_pipeline(
@@ -469,8 +471,7 @@ impl GpuPart for TerrainGpu {
             } else if !owned && !lit && listed.pass.at != AttachPoint::Transparent {
                 let unlit = |fragment| RenderPipeline {
                     fragment,
-                    debug: None,
-                    ..surface(draw::FS_TERRAIN_DEPTH_HOLES, None, ccw)
+                    ..surface(draw::FS_TERRAIN_DEPTH_HOLES, ccw)
                 };
                 Joined::Surface {
                     shown: |terrain| terrain.deferred,
@@ -487,12 +488,12 @@ impl GpuPart for TerrainGpu {
                     pipelines: [
                         cx.render_pipeline(
                             scene,
-                            &surface(draw::FS_TERRAIN_PROBE, None, mirrored),
+                            &surface(draw::FS_TERRAIN_PROBE, mirrored),
                             &[],
                         )?,
                         cx.render_pipeline(
                             scene,
-                            &surface(draw::FS_TERRAIN_PROBE_HOLES, None, mirrored),
+                            &surface(draw::FS_TERRAIN_PROBE_HOLES, mirrored),
                             &[],
                         )?,
                     ],
@@ -506,7 +507,6 @@ impl GpuPart for TerrainGpu {
                         &RenderPipeline {
                             vertex: shadow::VS_TERRAIN_SHADOW,
                             fragment: None,
-                            debug: None,
                             vertices: &[VertexLayout::Buffer(patch_layout())],
                             primitive: wgpu::PrimitiveState::default(),
                             depth: DepthUse::Write { bias: CASTER_BIAS },
@@ -578,7 +578,6 @@ impl GpuPart for TerrainGpu {
             cursor: Cursor::default(),
             drawn: false,
             deferred: false,
-            debug: false,
             temporal: false,
             render: (0, 0),
             handles,
@@ -597,7 +596,6 @@ impl GpuPart for TerrainGpu {
         let (settings, tiles, atlas, bakes, ground) = lists;
         let (water, cover, shadows, captures) = neighbors;
         let view = frame;
-        self.debug = view.debug();
         self.temporal = view.jitter().is_some();
         let size = view.render_size();
         self.render = (size.x, size.y);
@@ -787,7 +785,7 @@ impl GpuPart for TerrainGpu {
                 engine_render::AfterRead::Keep,
             );
         }
-        self.deferred = !self.debug && !self.frame.terrains.is_empty();
+        self.deferred = !self.frame.terrains.is_empty();
         if self.deferred {
             let display = view.display_size();
             let size = wgpu::Extent3d {

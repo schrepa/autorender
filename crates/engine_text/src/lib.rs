@@ -411,7 +411,6 @@ impl GpuPart for TextGpu {
             &RenderPipeline {
                 vertex: draw::VS_TEXT,
                 fragment: Some(draw::FS_TEXT),
-                debug: None,
                 vertices: &[],
                 primitive: wgpu::PrimitiveState::default(),
                 depth: DepthUse::None,
@@ -444,7 +443,6 @@ impl GpuPart for TextGpu {
                 &RenderPipeline {
                     vertex: draw::VS_LABEL,
                     fragment: Some(fragment),
-                    debug: None,
                     vertices: &[],
                     primitive: wgpu::PrimitiveState::default(),
                     depth: DepthUse::Write {

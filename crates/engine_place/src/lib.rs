@@ -46,7 +46,8 @@ pub use readiness::Readiness;
 pub use requests::{Census, Interest, Progress, Request, Requests, Ticket};
 pub use level::{Level, LevelView};
 pub use views::{
-    Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory, ViewLayer,
+    Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory, ViewJitter,
+    ViewLayer,
 };
 
 pub trait Slot: Resource + Default {

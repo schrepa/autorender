@@ -2,8 +2,9 @@ use bevy_ecs::prelude::*;
 use engine_core::{AttachPoint, DrawKind, Error, PassViews, ScenePass, TargetName};
 use engine_places_world::ground::PALETTE_ENTRIES;
 use engine_render::{
-    AfterRead, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput, Encode, GpuPart,
-    Install, Lifetime, Pass, Pipeline, Prepare, RenderPipeline, Scene, SceneDraw, Shape, wgpu,
+    AfterRead, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND, DEBUG_TARGETS, DepthUse, Draw,
+    DrawInput, Encode, GpuPart, Install, Lifetime, Pass, Pipeline, Prepare, RenderPipeline, Scene,
+    SceneDraw, Shape, wgpu,
 };
 
 pub(crate) const COVER: DrawKind = DrawKind("cover");
@@ -99,8 +100,11 @@ impl GpuPart for CoverGpu {
         let mut scenes = Vec::with_capacity(listed.len());
         for listed in listed {
             let scene = Scene::named(listed.name);
-            let (fragment, debug) = if listed.pass.writes.contains(TargetName::COLOR) {
-                (Some(draw::FS_COVER), Some(debug::FS_DEBUG_COVER))
+            let writes = listed.pass.writes;
+            let (fragment, blend) = if writes.contains(DEBUG_TARGETS[0]) {
+                (Some(debug::FS_DEBUG_COVER), Some(DEBUG_BLEND))
+            } else if writes.contains(TargetName::COLOR) {
+                (Some(draw::FS_COVER), None)
             } else {
                 (None, None)
             };
@@ -109,7 +113,6 @@ impl GpuPart for CoverGpu {
                 &RenderPipeline {
                     vertex: draw::VS_COVER,
                     fragment,
-                    debug,
                     vertices: &[],
                     primitive: wgpu::PrimitiveState {
                         topology: wgpu::PrimitiveTopology::TriangleStrip,
@@ -119,7 +122,7 @@ impl GpuPart for CoverGpu {
                     depth: DepthUse::Write {
                         bias: wgpu::DepthBiasState::default(),
                     },
-                    blend: None,
+                    blend,
                     writes: wgpu::ColorWrites::ALL,
                 },
                 &[

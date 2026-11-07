@@ -357,7 +357,7 @@ impl CloudPlan {
         &mut self,
         (settings, noise, (eye, surface), seconds): CloudInputs<'_>,
         light: CloudLight<'_>,
-        (marches, budget): (bool, &mut FrameBudget),
+        budget: &mut FrameBudget,
     ) {
         self.rows = 0;
         self.job = None;
@@ -386,10 +386,6 @@ impl CloudPlan {
             self.ready = false;
             self.cycle = None;
             self.completes = false;
-        }
-        if !marches {
-            self.write_domes(eye, settings);
-            return;
         }
         if self.completes {
             self.completes = false;
@@ -567,7 +563,6 @@ fn composite_pipeline(
         &RenderPipeline {
             vertex: draw::VS_SKY,
             fragment: Some(draw::FS_VIEW_CLOUDS_POST),
-            debug: None,
             vertices: &[],
             primitive: wgpu::PrimitiveState::default(),
             depth: DepthUse::None,

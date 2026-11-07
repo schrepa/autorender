@@ -3,11 +3,10 @@ use std::fmt::Write as _;
 use engine_core::{AttachPoint, Error, ErrorCode, PassViews, PlaceDecl, ShaderText, Source};
 
 use crate::install::{PassDecl, Work};
-use crate::machine::OutputDecl;
+use crate::machine::{OutputDecl, layered};
 use crate::{DebugModes, DebugShown, GpuPart, Install, Lit, Pass, Prepare, Resolve};
 
 pub(crate) const COMPOSITE: &str = "composite";
-pub(crate) const DEBUG_VIEW: &str = "debug_view";
 pub(crate) const OUTPUT_PREFIX: &str = "output_";
 pub(crate) const POST: &str = "post";
 pub(crate) const LINEAR: &str = "linear";
@@ -105,7 +104,7 @@ pub(crate) fn applied_source(applied: &[AppliedModule]) -> String {
 }
 
 pub(crate) fn composites(pass: &PassDecl) -> bool {
-    pass.name == COMPOSITE || pass.name == DEBUG_VIEW
+    pass.name == COMPOSITE
 }
 
 pub(crate) fn draws_canvas(pass: &PassDecl) -> bool {
@@ -158,15 +157,12 @@ impl GpuPart for ScenePart {
 pub(crate) struct Composite {
     pass: Pass<Self>,
     pipeline: crate::Pipeline<Self, crate::Own>,
-    debug_pass: Pass<Self>,
-    debug_pipeline: crate::Pipeline<Self, crate::Own>,
 }
 
 fn fullscreen(fragment: engine_core::Entry) -> crate::RenderPipeline<'static> {
     crate::RenderPipeline {
         vertex: crate::shaders::FULLSCREEN,
         fragment: Some(fragment),
-        debug: None,
         vertices: &[],
         primitive: wgpu::PrimitiveState::default(),
         depth: crate::DepthUse::None,
@@ -188,36 +184,19 @@ impl GpuPart for Composite {
             .span("post_composite")
             .id();
         let pipeline = cx.render_pipeline(pass, &fullscreen(crate::shaders::FS_COMPOSITE), &[])?;
-        let debug_pass = cx.pass(DEBUG_VIEW).after(pass).id();
-        let debug_pipeline =
-            cx.render_pipeline(debug_pass, &fullscreen(crate::shaders::FS_DEBUG_VIEW), &[])?;
-        Ok(Self {
-            pass,
-            pipeline,
-            debug_pass,
-            debug_pipeline,
-        })
+        Ok(Self { pass, pipeline })
     }
 
     fn prepare(&mut self, (): (), _cx: &mut Prepare<'_, Self>) {}
 
-    fn view(&mut self, view: &engine_core::ViewFacts, cx: &mut Prepare<'_, Self>) {
-        if view.debug {
-            cx.run(self.debug_pass);
-        } else {
-            cx.run(self.pass);
-        }
+    fn view(&mut self, _view: &engine_core::ViewFacts, cx: &mut Prepare<'_, Self>) {
+        cx.run(self.pass);
     }
 
-    fn encode(&mut self, pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
-        let pipeline = if pass == self.debug_pass {
-            &self.debug_pipeline
-        } else {
-            &self.pipeline
-        };
+    fn encode(&mut self, _pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
         let mut draw = cx.render(crate::Attach::Declared);
         draw.draw(
-            pipeline,
+            &self.pipeline,
             crate::Shape::Pulled {
                 vertices: 0..3,
                 instances: 0..1,
@@ -315,11 +294,10 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
             body,
             "\nstruct {name} {{\n    @location(0) color: vec4<f32>,"
         );
-        for (index, output) in outputs.iter().enumerate() {
+        for (location, output) in (1..).zip(outputs.iter().filter(|output| layered(output))) {
             let _ = writeln!(
                 body,
-                "    @location({}) {}: {},",
-                index + 1,
+                "    @location({location}) {}: {},",
                 output.name,
                 output_type(output.format)
             );
@@ -338,7 +316,7 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
         "    var targets: ViewTargets;\n    targets.color = vec4<f32>(shaded.linear, 1.0);"
     );
     for (index, output) in outputs.iter().enumerate() {
-        if output.module.is_some() {
+        if output.module.is_some() && layered(output) {
             let _ = writeln!(
                 body,
                 "    targets.{} = member_{index}(point, shaded, at);",
@@ -367,7 +345,7 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
         body,
         "    let targets = view_targets(point, shaded, at);\n    var out: DepthViewTargets;\n    out.color = targets.color;"
     );
-    for output in outputs {
+    for output in outputs.iter().filter(|output| layered(output)) {
         let _ = writeln!(body, "    out.{name} = targets.{name};", name = output.name);
     }
     let _ = writeln!(
@@ -383,26 +361,9 @@ import package::engine::post::resolve_plain::{post_pixel, scene_color};
 import package::engine::color::encode_srgb;
 import package::generated::applied::{applied_color, applied_display};
 import package::face::resolve::resolved;
-import package::face::debug::{DebugShade, DebugTargets, shown};
-import package::face::debug_modes::shade_kind;
-
-@group(0) @binding(0) var debug_ids: texture_2d<u32>;
-@group(0) @binding(0) var debug_count: texture_2d<f32>;
-@group(0) @binding(0) var debug_words: texture_2d<u32>;
 
 fn uncovered(pixel: vec2<i32>) -> bool {
     return post.kept.x > 0.5 && textureLoad(depth_texture, pixel, 0) <= 0.0;
-}
-
-@fragment
-fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let pixel = vec2<i32>(position.xy);
-    var targets: DebugTargets;
-    targets.ids = textureLoad(debug_ids, pixel, 0);
-    targets.count = textureLoad(debug_count, pixel, 0).r;
-    targets.words = textureLoad(debug_words, pixel, 0).xy;
-    var shade: DebugShade;
-    return shown(shade_kind(shade, targets), targets);
 }
 
 @fragment

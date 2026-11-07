@@ -587,7 +587,6 @@ fn placed_pipelines(
         } else {
             masked.then_some(draw::FS_SKINNED_DEPTH)
         },
-        debug: None,
         vertices: LIT_STREAMS,
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
@@ -617,7 +616,6 @@ fn caster_pipelines(
     let desc = |vertex, fragment| RenderPipeline {
         vertex,
         fragment,
-        debug: None,
         vertices: CASTER_STREAMS,
         primitive: wgpu::PrimitiveState::default(),
         depth: DepthUse::Write {

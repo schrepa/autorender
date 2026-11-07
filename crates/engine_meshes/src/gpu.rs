@@ -5,7 +5,8 @@ use engine_core::{
     Views,
 };
 use engine_render::{
-    AttachPoint, Bind, Buffer, ComputePipeline, Copied, DepthUse, DrawInput, Encode, GpuPart,
+    AttachPoint, Bind, Buffer, ComputePipeline, Copied, DEBUG_BLEND, DEBUG_TARGETS, DepthUse,
+    DrawInput, Encode, GpuPart,
     Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Scene, Scope,
     TargetName, Texture, VertexLayout, wgpu,
 };
@@ -684,11 +685,7 @@ fn install_computes(
 }
 
 fn mesh_pipeline(
-    (vertex, fragment, debug): (
-        engine_core::Entry,
-        engine_core::Entry,
-        Option<engine_core::Entry>,
-    ),
+    (vertex, fragment): (engine_core::Entry, engine_core::Entry),
     (vertices, double_sided, mirrored): (&'static [VertexLayout], bool, bool),
     depth: DepthUse,
     writes: wgpu::ColorWrites,
@@ -696,7 +693,6 @@ fn mesh_pipeline(
     RenderPipeline {
         vertex,
         fragment: Some(fragment),
-        debug,
         vertices,
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
@@ -743,7 +739,7 @@ fn unlit_looks(
             (vertex::VS_MESH, MESH_STREAMS, forward::FS_MASKED_DEPTH)
         };
         let mut pipeline = mesh_pipeline(
-            (vertex, masked_depth, None),
+            (vertex, masked_depth),
             (streams, double_sided, false),
             WRITE,
             wgpu::ColorWrites::ALL,
@@ -759,11 +755,12 @@ fn unlit_looks(
 fn lit_looks<S: Scope<MeshesGpu> + Copy>(
     cx: &mut Install<'_, MeshesGpu>,
     scope: S,
+    shown: bool,
 ) -> Result<Looked<Pipeline<MeshesGpu, S::Tag>>, Error> {
     let mut looks = Vec::with_capacity(8);
     for index in 0..8_usize {
         let (_, double_sided, extended) = look_of(index);
-        let (vertex, streams, lit, shown) = if extended {
+        let (vertex, streams, lit, debugged) = if extended {
             (
                 vertex::VS_MESH_EXTENDED,
                 EXTENDED_STREAMS,
@@ -778,16 +775,14 @@ fn lit_looks<S: Scope<MeshesGpu> + Copy>(
                 debug::FS_DEBUG_MESH,
             )
         };
-        looks.push(cx.render_pipeline(
-            scope,
-            &mesh_pipeline(
-                (vertex, lit, Some(shown)),
-                (streams, double_sided, false),
-                WRITE,
-                wgpu::ColorWrites::ALL,
-            ),
-            &[],
-        )?);
+        let mut pipeline = mesh_pipeline(
+            (vertex, if shown { debugged } else { lit }),
+            (streams, double_sided, false),
+            WRITE,
+            wgpu::ColorWrites::ALL,
+        );
+        pipeline.blend = shown.then_some(DEBUG_BLEND);
+        looks.push(cx.render_pipeline(scope, &pipeline, &[])?);
     }
     Ok(Looked { looks })
 }
@@ -811,7 +806,7 @@ fn blended_looks(
         looks.push(cx.render_pipeline(
             scene,
             &mesh_pipeline(
-                (vertex, shown, None),
+                (vertex, shown),
                 (streams, double_sided, false),
                 WRITE,
                 wgpu::ColorWrites::ALL,
@@ -851,7 +846,7 @@ fn view_looks(
             wgpu::ColorWrites::empty()
         };
         let mut pipeline = mesh_pipeline(
-            (vertex, if lit { shown } else { depth }, None),
+            (vertex, if lit { shown } else { depth }),
             (streams, double_sided, mirrored),
             WRITE,
             writes,
@@ -867,19 +862,20 @@ fn view_looks(
 fn card_pipeline<S: Scope<MeshesGpu>>(
     cx: &mut Install<'_, MeshesGpu>,
     scope: S,
-    lit: bool,
+    (lit, shown): (bool, bool),
 ) -> Result<Pipeline<MeshesGpu, S::Tag>, Error> {
-    let (fragment, debug) = if lit {
-        (cards::FS_CARD, Some(cards::FS_DEBUG_CARD))
+    let fragment = if shown {
+        cards::FS_DEBUG_CARD
+    } else if lit {
+        cards::FS_CARD
     } else {
-        (cards::FS_CARD_DEPTH, None)
+        cards::FS_CARD_DEPTH
     };
     cx.render_pipeline(
         scope,
         &RenderPipeline {
             vertex: cards::VS_CARD,
             fragment: Some(fragment),
-            debug,
             vertices: CARD_STREAMS,
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -887,7 +883,7 @@ fn card_pipeline<S: Scope<MeshesGpu>>(
                 ..Default::default()
             },
             depth: WRITE,
-            blend: None,
+            blend: shown.then_some(DEBUG_BLEND),
             writes: wgpu::ColorWrites::ALL,
         },
         &[],
@@ -926,6 +922,7 @@ fn install_scenes(
     for listed in listed {
         let scene = Scene::named(listed.name);
         let lit = listed.pass.writes.contains(TargetName::COLOR);
+        let shown = listed.pass.writes.contains(DEBUG_TARGETS[0]);
         let drawing = if listed.pass.at == AttachPoint::Transparent {
             Drawing::Blended {
                 looks: blended_looks(cx, scene)?,
@@ -948,12 +945,12 @@ fn install_scenes(
             }
         } else {
             Drawing::Placed {
-                looks: if lit {
-                    lit_looks(cx, scene)?
+                looks: if lit || shown {
+                    lit_looks(cx, scene, shown)?
                 } else {
                     unlit_looks(cx, scene)?
                 },
-                card: card_pipeline(cx, scene, lit)?,
+                card: card_pipeline(cx, scene, (lit, shown))?,
                 streams: streams(cx, scene, (instances, presented), 0),
             }
         };
@@ -972,8 +969,8 @@ fn install_occluded(
     presented: &Presented,
 ) -> Result<Occluded, Error> {
     Ok(Occluded {
-        lit: lit_looks(cx, pass)?,
-        card: card_pipeline(cx, pass, true)?,
+        lit: lit_looks(cx, pass, false)?,
+        card: card_pipeline(cx, pass, (true, false))?,
         streams: streams(cx, pass, (instances, presented), 1),
     })
 }

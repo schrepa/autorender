@@ -159,9 +159,6 @@ impl GpuPart for TraceGpu {
     fn prepare(&mut self, (): (), _cx: &mut Prepare<'_, Self>) {}
 
     fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
-        if view.debug {
-            return;
-        }
         let display = view.size();
         let render = view.render;
         self.render = (render.x, render.y);
@@ -249,7 +246,6 @@ fn screen(fragment: Entry) -> RenderPipeline<'static> {
     RenderPipeline {
         vertex: FULLSCREEN,
         fragment: Some(fragment),
-        debug: None,
         vertices: &[],
         primitive: wgpu::PrimitiveState::default(),
         depth: DepthUse::None,

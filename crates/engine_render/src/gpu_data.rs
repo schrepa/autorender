@@ -13,7 +13,10 @@ impl CameraUniform {
             inverse_view_projection: view_projection.inverse().to_cols_array_2d(),
             position: position.extend(seconds).to_array(),
             jitter: [0.0; 4],
-            options: [0.0; 4],
+            capture: 0,
+            pixel_angle: 0.0,
+            noise_phase: 0.0,
+            mip_bias: 0.0,
             previous: [0.0, 0.0, 0.0, seconds],
             region: [0.0; 4],
             detail: position.extend(0.0).to_array(),
@@ -22,8 +25,8 @@ impl CameraUniform {
     }
 
     pub fn set_region(&mut self, view_projection: Mat4, region: FrameRegion) {
-        self.options[1] = pixel_angle(view_projection, region.display.height);
-        self.options[3] = region.mip_bias();
+        self.pixel_angle = pixel_angle(view_projection, region.display.height);
+        self.mip_bias = region.mip_bias();
         self.region = region.uniform();
     }
 

@@ -317,7 +317,7 @@ fn with_night_sky(light: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
     var beyond = vec3<f32>(0.0);
     if night.x > 0.0 && dark > 0.0 {
         let galactic = turned(sky_piece.star_turn, ray);
-        let spread = max(0.8 * camera.options.y, 1.0e-5);
+        let spread = max(0.8 * camera.pixel_angle, 1.0e-5);
         beyond = star_light(galactic, spread) * (night.x * dark);
         let deep = dark * (1.0 - 0.85 * night.w * saturate(sky_piece.moon.y * 4.0)
             * min(night.y, 1.0)) * (1.0 - smoothstep(-0.26, -0.14, sun_direction().y));

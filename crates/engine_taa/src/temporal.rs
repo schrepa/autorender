@@ -1,5 +1,7 @@
 use bevy_ecs::prelude::*;
-use engine_core::{FrameTime, GpuStruct, Jitter, PrimaryView, ViewHistory, gpu_struct, profile};
+use engine_core::{
+    FrameTime, GpuStruct, Jitter, PrimaryView, View, ViewHistory, ViewJitter, gpu_struct, profile,
+};
 
 use crate::antialiasing::{TemporalAntialiasing, TemporalAntialiasingStats};
 use crate::previous::{JITTER_SAMPLES, jitter_offset, turn_of};
@@ -30,11 +32,19 @@ fn cycled(view: &PrimaryView) -> bool {
     })
 }
 
-pub(crate) fn jitter(time: Res<FrameTime>, mut jitter: ResMut<Jitter>) {
-    jitter.set_if_neq(Jitter {
-        offset: Some(jitter_offset(time.frame)),
-        turn: turn_of(time.frame),
-    });
+pub(crate) fn jitter(time: Res<FrameTime>, views: Query<(Entity, &View)>, mut jitter: ResMut<Jitter>) {
+    let (offset, noise) = (jitter_offset(time.frame), turn_of(time.frame));
+    let mut given: Vec<ViewJitter> = views
+        .iter()
+        .filter(|(_, view)| view.target.surface())
+        .map(|(view, _)| ViewJitter {
+            view,
+            offset,
+            noise,
+        })
+        .collect();
+    given.sort_by_key(|given| given.view);
+    jitter.set_if_neq(Jitter { views: given });
 }
 
 pub(crate) fn publish(

@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     Camera, Clear, Cursor, Cut, DeviceLimits, Events, FrameBudget, GlobalTransforms, Mobility,
-    Mover, Moves, Node, OwnedView, OwnedViews, Pace, PassName, PrimaryView, Readable, Readback,
+    Mover, Moves, Node, OwnedView, OwnedViews, Pace, PassName, Readable, Readback,
     Spawner, StoreId, Transform, ViewLayer, mover_of,
 };
 use engine_math as math;
@@ -406,7 +406,6 @@ impl ProbeState {
 pub(crate) fn plan_captures(
     settings: Res<ReflectionProbeSettings>,
     limits: Res<DeviceLimits>,
-    view: Res<PrimaryView>,
     sky: Res<SkyLight>,
     (globals, mut budget): (Res<GlobalTransforms>, ResMut<FrameBudget>),
     gathered: Res<ProbeList>,
@@ -448,7 +447,7 @@ pub(crate) fn plan_captures(
     let counted = |count: u64| count.min(u64::from(u32::MAX)) as u32;
     let probe_cut = Cut::of(counted(asked), counted(kept));
     let mut drawn = 0;
-    state.captures = !view.debug() && state.listed;
+    state.captures = state.listed;
     if state.captures && state.views {
         drawn = state.capture(probes, &mut budget);
     }
@@ -492,6 +491,7 @@ fn capture_views(state: &ProbeState, cameras: &[Entity]) -> OwnedViews {
                         rect: [0, 0, state.size, state.size],
                     },
                     clear: Clear::All,
+                    capture: true,
                     passes: None,
                     draws: captured.is_some(),
                     planes: None,

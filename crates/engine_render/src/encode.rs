@@ -11,9 +11,8 @@ use crate::install::{
 };
 use crate::linker::Ty;
 use crate::machine::{
-    CAMERA_STRIDE, CoreFrame, DEBUG_COUNT, DEBUG_FORMATS, DEPTH_FORMAT, Machine, Ready, SetFormat,
-    Target, final_target, own_colors_only, pass_layer, reads_depth_direct, set_formats, shared,
-    target_read,
+    CAMERA_STRIDE, CoreFrame, DEPTH_FORMAT, Machine, Ready, SetFormat, Target, final_target,
+    lit_set, pass_layer, pass_set, reads_depth_direct, shared, target_read,
 };
 use crate::profiling::GpuProfiler;
 use crate::readback::{Deliver, Keep, Reader, Readbacks};
@@ -192,7 +191,7 @@ pub(crate) struct PassLayout {
     formats: [Option<wgpu::TextureFormat>; MOST_COLORS],
     count: usize,
     depth: Option<(wgpu::TextureFormat, bool)>,
-    debug: bool,
+    plain: bool,
     main: bool,
 }
 
@@ -207,7 +206,7 @@ pub(crate) struct Compiled {
     program: u64,
     formats: Vec<Option<wgpu::TextureFormat>>,
     depth: Option<(wgpu::TextureFormat, bool)>,
-    debug: bool,
+    plain: bool,
     main: bool,
     variant: Option<crate::surface::MaterialVariant>,
 }
@@ -488,12 +487,10 @@ fn target_key(target: Target) -> u64 {
         Target::Depth => (1, 0),
         Target::Canvas => (2, 0),
         Target::Output(index) => (3, u64::from(index)),
-        Target::Debug(index) => (4, u64::from(index)),
         Target::Copy(layer, view) => {
             let view = match view {
                 ViewTarget::Scene => 0,
                 ViewTarget::Depth => 1,
-                ViewTarget::Debug(index) => 2 + u64::from(index),
             };
             (5, view << 8 | layer as u64)
         }
@@ -584,9 +581,6 @@ fn target_format(
         Target::Scene | Target::Copy(_, ViewTarget::Scene) => Some(crate::machine::SCENE_FORMAT),
         Target::Depth | Target::Copy(_, ViewTarget::Depth) => Some(DEPTH_FORMAT),
         Target::Output(index) => outputs.get(index as usize).map(|output| output.format),
-        Target::Debug(index) | Target::Copy(_, ViewTarget::Debug(index)) => {
-            DEBUG_FORMATS.get(index as usize).copied()
-        }
         Target::Canvas => None,
     }
 }

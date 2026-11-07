@@ -127,7 +127,6 @@ pub struct Ops {
     pub store: bool,
 }
 
-pub const SCENE_CLEAR: [f64; 4] = [0.009, 0.015, 0.025, 1.0];
 pub const TRANSPARENT: [f64; 4] = [0.0, 0.0, 0.0, 0.0];
 pub const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
 pub const FAR: f32 = 0.0;

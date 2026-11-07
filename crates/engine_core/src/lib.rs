@@ -78,7 +78,8 @@ pub use engine_place::{
     smoke_check, smoke_eq,
 };
 pub use engine_place::{
-    Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory, ViewLayer,
+    Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory, ViewJitter,
+    ViewLayer,
 };
 pub use engine_registry::{
     AuthoredId, ExplainAsk, ExplainRecord, FrameFacts, RecordParity, fault_of,
@@ -115,7 +116,7 @@ pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
 pub use ticks::ScanClock;
 pub(crate) use transform_edits::edit_transform;
-pub use views::{DrawnView, Hit, Picking, Ray, ViewFacts, Views, main_camera};
+pub use views::{DrawnView, Hit, Picking, Ray, ViewFacts, Views, WholeFrames, main_camera};
 
 pub mod codec {
     pub use engine_codec::{decode, encode};
@@ -162,6 +163,7 @@ pub const MAX_DEV_TICKS: u32 = 120;
 static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::list::<SceneComponents>(),
     PlaceDecl::list::<CursorRequests>(),
+    PlaceDecl::list::<WholeFrames>(),
     PlaceDecl::list::<Pause>(),
     PlaceDecl::slot::<ImpostorPolicy>(),
     PlaceDecl::ledger::<FrameBudget>("frame_budget"),
@@ -423,6 +425,7 @@ impl Engine {
             .init_resource::<PointerInput>()
             .init_resource::<MenuInput>()
             .init_resource::<CursorRequests>()
+            .init_resource::<WholeFrames>()
             .init_resource::<ProvidedAssets>()
             .init_resource::<PresentationState>()
             .init_resource::<DrawnPoses>()

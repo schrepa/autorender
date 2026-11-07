@@ -29,7 +29,6 @@ impl crate::GpuPart for Mipmaps {
             Program::Render(RenderDecl {
                 vertex: Entry::generated(module, "vs_mip"),
                 fragment: Some(Entry::generated(module, "fs_mip")),
-                debug: None,
                 vertices: Vec::new(),
                 primitive: wgpu::PrimitiveState::default(),
                 depth: crate::DepthUse::None,

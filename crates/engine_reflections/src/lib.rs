@@ -11,7 +11,7 @@ mod settings;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, Pass, PassName, PassViews, PrimaryView, Schedule, SlotSet, Source, Writes, never,
+    Brick, Bricks, Pass, PassName, PassViews, Schedule, SlotSet, Source, Writes, never,
 };
 use engine_render::{AttachPoint, RenderBricks, TargetDecl, TargetName, wgpu};
 
@@ -77,11 +77,10 @@ fn reflecting(reflections: Res<Reflections>) -> bool {
 
 fn publish_piece(
     reflections: Res<Reflections>,
-    view: Res<PrimaryView>,
     mut piece: ResMut<ReflectionsPiece>,
     mut stats: ResMut<ReflectionsStats>,
 ) {
-    let active = reflections.reflects() && !view.debug();
+    let active = reflections.reflects();
     piece.set_if_neq(ReflectionsPiece {
         surface: [reflections.max_roughness, 0.0, 0.0, 0.0],
         trace: [reflections.distance, 0.0, 0.0, 0.0],

@@ -110,10 +110,14 @@ pub struct View {
     pub viewport: Rect,
     pub layers: Layers,
     pub clear: Clear,
+    pub clear_color: [f32; 4],
     pub order: i32,
+    pub steady: bool,
 }
 
 impl View {
+    pub const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+
     pub const fn new(camera: NodeId) -> Self {
         Self {
             camera,
@@ -121,7 +125,9 @@ impl View {
             viewport: Rect::FULL,
             layers: Layers::ALL,
             clear: Clear::All,
+            clear_color: Self::BLACK,
             order: 0,
+            steady: false,
         }
     }
 }
@@ -152,10 +158,16 @@ impl Ask for ViewCut {
     const AT: ApplyAt = ApplyAt::FrameStart;
 }
 
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewJitter {
+    pub view: Entity,
+    pub offset: [f32; 2],
+    pub noise: f32,
+}
+
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct Jitter {
-    pub offset: Option<[f32; 2]>,
-    pub turn: f32,
+    pub views: Vec<ViewJitter>,
 }
 
 impl Slot for Jitter {
@@ -173,6 +185,7 @@ pub struct OwnedView {
     pub camera: NodeId,
     pub target: ViewLayer,
     pub clear: Clear,
+    pub capture: bool,
     pub passes: Option<PassMask>,
     pub draws: bool,
     pub planes: Option<[[f32; 4]; 6]>,

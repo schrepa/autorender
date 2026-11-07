@@ -340,7 +340,6 @@ pub(crate) fn plan_sky(
 ) {
     let plan = &mut *plan;
     plan.clouds.acknowledge(&mut cloud_steps);
-    let debug = view.debug();
     let eye = view.eye();
     let view_projection = view.view_projection();
     let seconds = time.elapsed;
@@ -360,7 +359,7 @@ pub(crate) fn plan_sky(
         enabled: clouds.enabled && shows,
         ..*clouds
     };
-    let hazes = !debug && haze_runs(&haze);
+    let hazes = haze_runs(&haze);
     plan.piece = sky_piece(&sky, shows, sun_direction, &plan.piece);
     apply_night(&mut plan.piece, &night, &path, sun_direction);
     apply_haze(&mut plan.piece, &haze, view_projection, eye, hazes);
@@ -369,7 +368,7 @@ pub(crate) fn plan_sky(
     plan.clouds.prepare(
         (&clouds, tables.cloud_noise(), (eye, medium.surface), seconds),
         (&*sun, &plan.piece),
-        (!debug, &mut budget),
+        &mut budget,
     );
     plan.clouds.prepare_view(
         (&clouds, eye, seconds),
@@ -403,7 +402,7 @@ pub(crate) fn plan_sky(
         frame: time.frame,
     };
     plan.piece.haze = plan.haze.prepare((hazes, haze_steps.missed()), &haze_frame);
-    plan.frame = if debug { None } else { plan.clouds.frame() };
+    plan.frame = plan.clouds.frame();
 }
 
 pub(crate) struct AirTables {
@@ -607,7 +606,6 @@ fn dome_pipeline(
         &RenderPipeline {
             vertex: draw::VS_SKY,
             fragment: Some(draw::FS_SKY),
-            debug: None,
             vertices: &[],
             primitive: wgpu::PrimitiveState::default(),
             depth: DepthUse::Compare {

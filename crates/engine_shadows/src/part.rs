@@ -75,7 +75,6 @@ fn compose_pipeline(
     RenderPipeline {
         vertex,
         fragment,
-        debug: None,
         vertices,
         primitive: wgpu::PrimitiveState::default(),
         depth: DepthUse::Overwrite,
@@ -261,7 +260,6 @@ impl GpuPart for ShadowsGpu {
             &RenderPipeline {
                 vertex: FULLSCREEN,
                 fragment: Some(sky_shaders::FS_SKY_OCCLUSION),
-                debug: None,
                 vertices: &[],
                 primitive: wgpu::PrimitiveState::default(),
                 depth: DepthUse::None,
@@ -374,7 +372,7 @@ impl GpuPart for ShadowsGpu {
 
     fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
         self.opened = None;
-        if !self.sky_live || view.debug || !view.target.surface() || cx.view_index() != 0 {
+        if !self.sky_live || !view.target.surface() || cx.view_index() != 0 {
             cx.release(self.sky_open);
             return;
         }

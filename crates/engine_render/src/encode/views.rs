@@ -120,11 +120,6 @@ impl Run {
     pub(super) fn view_of(&self, target: Target) -> Option<&wgpu::TextureView> {
         match target {
             Target::Canvas => self.canvas.view.as_ref(),
-            Target::Debug(index) => self
-                .set()
-                .debug_targets
-                .get(index as usize)
-                .map(|made| &made.view),
             Target::Output(_) | Target::Scene | Target::Depth | Target::Copy(..) => {
                 self.set().target(target)
             }
@@ -433,7 +428,17 @@ impl Run {
             .targets
             .iter()
             .any(|(target, made)| *target == Target::Canvas && made.texture.format() == self.canvas.format);
-        if self.debug != set.debug_targets.is_empty()
+        let live: Vec<Target> = (0..self.machine.outputs.len())
+            .filter(|&index| self.planning.live.get(index).copied().unwrap_or(true))
+            .map(|index| Target::Output(index as u32))
+            .collect();
+        let kept: Vec<Target> = set
+            .targets
+            .iter()
+            .map(|(target, _)| *target)
+            .filter(|target| matches!(target, Target::Output(_)))
+            .collect();
+        if live == kept
             && split == held
             && set
                 .targets
@@ -463,11 +468,12 @@ impl Run {
             ),
             (Target::Depth, made("engine/depth", DEPTH_FORMAT)),
         ];
-        for (index, output) in self.machine.outputs.iter().enumerate() {
-            targets.push((
-                Target::Output(index as u32),
-                made(output.name, output.format),
-            ));
+        for target in live {
+            if let Target::Output(index) = target
+                && let Some(output) = self.machine.outputs.get(index as usize)
+            {
+                targets.push((target, made(output.name, output.format)));
+            }
         }
         for (target, _) in &self.machine.ids.targets {
             if matches!(target, Target::Copy(..))
@@ -479,14 +485,8 @@ impl Run {
         if split {
             targets.push((Target::Canvas, made("engine/view-canvas", self.canvas.format)));
         }
-        let debug_targets = DEBUG_FORMATS
-            .iter()
-            .filter(|_| self.debug)
-            .map(|format| made("engine/debug-target", *format))
-            .collect();
         let set = self.set_mut();
         set.targets = targets;
-        set.debug_targets = debug_targets;
         self.tallies.rebuilt.textures += 1;
         self.touch(Held::Targets);
     }
@@ -631,7 +631,6 @@ impl Tables {
 pub(crate) struct ViewSet {
     pub(crate) view: bevy_ecs::entity::Entity,
     pub(crate) targets: Vec<(Target, Allocated)>,
-    pub(crate) debug_targets: Vec<Allocated>,
     pub(crate) tables: Tables,
     pub(crate) post_buffer: wgpu::Buffer,
     pub(crate) groups: std::collections::BTreeMap<Holder, [Option<wgpu::BindGroup>; 2]>,
@@ -649,7 +648,6 @@ impl ViewSet {
         Self {
             view,
             targets: Vec::new(),
-            debug_targets: Vec::new(),
             tables: Tables::of(machine),
             post_buffer: uniform_buffer(
                 device,

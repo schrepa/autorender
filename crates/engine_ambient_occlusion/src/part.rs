@@ -24,7 +24,6 @@ fn fullscreen(fragment: Entry) -> RenderPipeline<'static> {
     RenderPipeline {
         vertex: FULLSCREEN,
         fragment: Some(fragment),
-        debug: None,
         vertices: &[],
         primitive: wgpu::PrimitiveState::default(),
         depth: DepthUse::None,
@@ -80,7 +79,7 @@ impl GpuPart for AmbientGpu {
     fn prepare(&mut self, (): (), _cx: &mut Prepare<'_, Self>) {}
 
     fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
-        if view.debug || !view.target.surface() || cx.view_index() != 0 {
+        if !view.target.surface() || cx.view_index() != 0 {
             cx.release(self.occlusion);
             return;
         }

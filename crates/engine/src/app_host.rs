@@ -724,23 +724,22 @@ impl AppHost {
     ) -> Result<(f64, f64, RenderStats)> {
         let before_extraction = now_ms();
         self.engine.start_frame();
+        let whole = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<engine_core::WholeFrames>()
+            .is_some_and(|mut whole| whole.asked());
         let world = self.engine.app.world();
-        let shown = world
-            .get_resource::<engine_render::DebugShown>()
-            .copied()
-            .unwrap_or_default();
-        let debug = shown.next_debug;
         let post = self.renderer.post(world);
         let display_size = self.display_size((width, height));
-        let render_size = if !debug && !shown.next_whole && post {
+        let render_size = if !whole && post {
             glam::UVec2::new(render_width, render_height)
                 .clamp(glam::UVec2::ONE, display_size.max(glam::UVec2::ONE))
         } else {
             display_size
         };
         let facts = FrameFacts {
-            capture: shown.next_whole,
-            debug,
             display_size,
             render_size,
             pixel_ratio: self.pixel_ratio as f32,

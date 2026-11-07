@@ -5,8 +5,9 @@ use engine_core::{
 };
 use engine_places_world::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
-    Access, AfterRead, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw,
-    DrawInput, Encode, GpuPart, Install, Lifetime, MeshPass, Own, Pass, Pipeline, Prepare,
+    Access, AfterRead, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND,
+    DEBUG_TARGETS, DepthUse, Draw, DrawInput, Encode, GpuPart, Install, Lifetime, MeshPass, Own,
+    Pass, Pipeline, Prepare,
     RenderPipeline, SamplerDesc, Scene, SceneDraw, Shape, Texture, VertexLayout, wgpu,
 };
 use glam::Vec3;
@@ -354,7 +355,6 @@ impl ScatterGpu {
         let target = |vertex, fragment| RenderPipeline {
             vertex,
             fragment: Some(fragment),
-            debug: None,
             vertices: &[],
             primitive: wgpu::PrimitiveState::default(),
             depth: DepthUse::None,
@@ -427,7 +427,7 @@ impl ScatterGpu {
         cx: &mut Install<'_, Self>,
         scene: Scene,
         buffers: (Buffer<Self>, Buffer<Self>),
-        (lit, owned): (bool, bool),
+        (lit, owned, shows): (bool, bool, bool),
     ) -> Result<Looks, Error> {
         use crate::shaders::scatter::draw;
         let vars = (draw::POSES, draw::COLORS);
@@ -463,34 +463,37 @@ impl ScatterGpu {
             } else {
                 wgpu::ColorWrites::ALL
             };
-            let desc = |vertex, fragment, debug, mirrored| RenderPipeline {
+            let desc = |vertex, fragment, mirrored| RenderPipeline {
                 vertex,
                 fragment,
-                debug,
                 vertices,
                 primitive: primitive(double_sided, mirrored),
                 depth: DepthUse::Write {
                     bias: wgpu::DepthBiasState::default(),
                 },
-                blend: None,
+                blend: shows.then_some(DEBUG_BLEND),
                 writes,
             };
-            let pair = match (owned, lit) {
-                (false, true) => [
-                    desc(vertex, Some(shaded), Some(shown), false),
-                    desc(fading, Some(shaded), Some(shown), false),
+            let pair = match (owned, lit, shows) {
+                (false, _, true) => [
+                    desc(vertex, Some(shown), false),
+                    desc(fading, Some(shown), false),
                 ],
-                (false, false) => [
-                    desc(vertex, masked.then_some(cut), None, false),
-                    desc(fading, Some(cut), None, false),
+                (false, true, false) => [
+                    desc(vertex, Some(shaded), false),
+                    desc(fading, Some(shaded), false),
                 ],
-                (true, true) => [
-                    desc(vertex, Some(viewed), None, false),
-                    desc(vertex, Some(viewed), None, true),
+                (false, false, false) => [
+                    desc(vertex, masked.then_some(cut), false),
+                    desc(fading, Some(cut), false),
                 ],
-                (true, false) => [
-                    desc(vertex, masked.then_some(cut), None, false),
-                    desc(vertex, masked.then_some(cut), None, true),
+                (true, true, _) => [
+                    desc(vertex, Some(viewed), false),
+                    desc(vertex, Some(viewed), true),
+                ],
+                (true, false, _) => [
+                    desc(vertex, masked.then_some(cut), false),
+                    desc(vertex, masked.then_some(cut), true),
                 ],
             };
             let [first, second] = &pair;
@@ -506,20 +509,21 @@ impl ScatterGpu {
         cx: &mut Install<'_, Self>,
         scene: Scene,
         (poses, colors): (Buffer<Self>, Buffer<Self>),
-        lit: bool,
+        (lit, shows): (bool, bool),
     ) -> Result<Pipeline<Self, Scene>, Error> {
         use crate::shaders::scatter::cards;
-        let (fragment, debug) = if lit {
-            (cards::FS_PLACED_CARD, Some(cards::FS_DEBUG_PLACED_CARD))
+        let fragment = if shows {
+            cards::FS_DEBUG_PLACED_CARD
+        } else if lit {
+            cards::FS_PLACED_CARD
         } else {
-            (cards::FS_PLACED_CARD_DEPTH, None)
+            cards::FS_PLACED_CARD_DEPTH
         };
         cx.render_pipeline(
             scene,
             &RenderPipeline {
                 vertex: cards::VS_PLACED_CARD,
                 fragment: Some(fragment),
-                debug,
                 vertices: CARD_STREAMS,
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -529,7 +533,7 @@ impl ScatterGpu {
                 depth: DepthUse::Write {
                     bias: wgpu::DepthBiasState::default(),
                 },
-                blend: None,
+                blend: shows.then_some(DEBUG_BLEND),
                 writes: wgpu::ColorWrites::ALL,
             },
             &[
@@ -550,7 +554,6 @@ impl ScatterGpu {
             &RenderPipeline {
                 vertex: casters::VS_IMPOSTOR_CARD,
                 fragment: Some(casters::FS_IMPOSTOR_CARD),
-                debug: None,
                 vertices: SHADOW_CARD_STREAMS,
                 primitive: wgpu::PrimitiveState::default(),
                 depth: DepthUse::Write {
@@ -586,7 +589,8 @@ impl ScatterGpu {
                 listed.pass.views == PassViews::Owned,
                 listed.pass.writes.contains(TargetName::COLOR),
             );
-            let looks = Self::look_pipelines(cx, scene, (poses, colors), (lit, owned))?;
+            let shows = listed.pass.writes.contains(DEBUG_TARGETS[0]);
+            let looks = Self::look_pipelines(cx, scene, (poses, colors), (lit, owned, shows))?;
             let made = if owned {
                 Joined::Views {
                     looks,
@@ -598,7 +602,7 @@ impl ScatterGpu {
             } else {
                 Joined::Placed {
                     looks,
-                    card: Self::card_pipeline(cx, scene, (poses, colors), lit)?,
+                    card: Self::card_pipeline(cx, scene, (poses, colors), (lit, shows))?,
                 }
             };
             let streams = Streams {

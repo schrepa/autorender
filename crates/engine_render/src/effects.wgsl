@@ -22,14 +22,3 @@ fn drawn_texels(size: vec2<f32>, settings: Post) -> vec2<f32> {
     let share = max(floor(size * settings.size.xy * settings.extent.zw), vec2<f32>(1.0));
     return select(share, size, settings.size.xy == settings.extent.xy);
 }
-
-fn inverse_distance_at(depth: texture_depth_2d, pixel: vec2<i32>, settings: Post) -> f32 {
-    let value = textureLoad(depth, pixel, 0);
-    if value <= 0.0 {
-        return 0.0;
-    }
-    let uv = (vec2<f32>(pixel) + 0.5) * settings.size.zw;
-    let point = settings.inverse_view_projection
-        * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, value, 1.0);
-    return 1.0 / max(length(point.xyz / point.w - settings.eye.xyz), 1.0e-4);
-}

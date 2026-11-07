@@ -8,7 +8,7 @@ use crate::bindings::Stages;
 use crate::frame_group::{Class, FrameVariable, Reach};
 use crate::graph::{
     Access as GraphAccess, Clear, Declared as GraphPass, FAR, Life, PassEntry, PassId,
-    ResourceEntry, ResourceId, SCENE_CLEAR, StaticGraph, TRANSPARENT,
+    BLACK, ResourceEntry, ResourceId, StaticGraph, TRANSPARENT,
 };
 use crate::install::{
     Bound, Copied, Declared, PassDecl, PipelineDecl, Program, Scoped, ViewTarget, Work,
@@ -18,12 +18,6 @@ use crate::{Access, DepthUse, Lifetime, VertexLayout};
 
 pub const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-pub(crate) const DEBUG_FORMATS: [wgpu::TextureFormat; 3] = [
-    wgpu::TextureFormat::Rgba32Uint,
-    wgpu::TextureFormat::R16Float,
-    wgpu::TextureFormat::Rg32Uint,
-];
-pub(crate) const DEBUG_COUNT: usize = 1;
 pub(crate) const CAMERA_STRIDE: u64 = 512;
 
 #[derive(Clone, Debug)]
@@ -41,14 +35,12 @@ pub(crate) enum Target {
     Output(u32),
     Canvas,
     Copy(AttachPoint, ViewTarget),
-    Debug(u32),
 }
 
 pub(crate) fn final_target(view: ViewTarget) -> Target {
     match view {
         ViewTarget::Scene => Target::Scene,
         ViewTarget::Depth => Target::Depth,
-        ViewTarget::Debug(index) => Target::Debug(index),
     }
 }
 
@@ -240,11 +232,34 @@ pub(crate) fn shared(pass: &PassDecl) -> bool {
     pass.scene.is_some_and(|scene| scene.core)
 }
 
-pub(crate) fn own_colors_only(pass: &PassDecl) -> bool {
+pub(crate) fn pass_set(outputs: &[OutputDecl], pass: &PassDecl) -> Vec<SetFormat> {
+    let Some(layer) = pass_layer(pass) else {
+        return Vec::new();
+    };
     match pass.scene.as_ref().filter(|scene| scene.core) {
-        Some(scene) => !scene.pass.writes.contains(engine_core::TargetName::COLOR),
-        None => pass_layer(pass).is_some() && !pass.colors.is_empty(),
+        Some(scene) if !scene.pass.writes.contains(engine_core::TargetName::COLOR) => scene
+            .pass
+            .writes
+            .targets()
+            .iter()
+            .filter_map(|name| outputs.iter().position(|output| output.name == name.name()))
+            .map(|index| {
+                (
+                    Target::Output(index as u32),
+                    outputs[index].format,
+                    Clear::Color(TRANSPARENT),
+                    true,
+                )
+            })
+            .collect(),
+        Some(_) => set_formats(outputs, layer),
+        None if !pass.colors.is_empty() => Vec::new(),
+        None => set_formats(outputs, layer),
     }
+}
+
+pub(crate) fn lit_set(set: &[SetFormat]) -> bool {
+    set.iter().any(|(target, ..)| *target == Target::Scene)
 }
 
 pub(crate) fn decl_in_pass(decl: &PipelineDecl, index: u32, pass: &PassDecl) -> bool {
@@ -369,16 +384,10 @@ pub(crate) fn core_target(name: &str, outputs: &[OutputDecl]) -> Option<Target> 
     match name {
         crate::shared::SCENE => Some(Target::Scene),
         crate::shared::DEPTH => Some(Target::Depth),
-        _ => match crate::DEBUG_TARGETS
-            .iter()
-            .position(|known| known.name() == name)
-        {
-            Some(index) => Some(Target::Debug(index as u32)),
-            None => name
-                .strip_prefix(crate::shared::OUTPUT_PREFIX)
-                .and_then(|output| outputs.iter().position(|known| known.name == output))
-                .map(|index| Target::Output(index as u32)),
-        },
+        _ => name
+            .strip_prefix(crate::shared::OUTPUT_PREFIX)
+            .and_then(|output| outputs.iter().position(|known| known.name == output))
+            .map(|index| Target::Output(index as u32)),
     }
 }
 
@@ -413,15 +422,10 @@ fn attachments(
             found.push(Handle::whole(texture));
         }
     }
-    if let Some(layer) = pass_layer(pass) {
-        if !own_colors_only(pass) {
-            for (target, _, _, written) in set_formats(outputs, layer) {
-                if written {
-                    found.push(Handle::Target(target));
-                }
-            }
-            for index in 0..DEBUG_FORMATS.len() {
-                found.push(Handle::Target(Target::Debug(index as u32)));
+    if pass_layer(pass).is_some() {
+        for (target, _, _, written) in pass_set(outputs, pass) {
+            if written {
+                found.push(Handle::Target(target));
             }
         }
         if shared(pass) || depth_writes {
@@ -733,10 +737,7 @@ impl Machine {
             for (module, found, _) in &reached {
                 if found.group == 0 {
                     if linker.is_core(module) {
-                        view_reads.extend(
-                            core_target(&found.name, &outputs)
-                                .filter(|target| !matches!(target, Target::Debug(_))),
-                        );
+                        view_reads.extend(core_target(&found.name, &outputs));
                     }
                     if let Some(bound) = linker
                         .binding_of(module, &found.name)
@@ -1016,9 +1017,6 @@ fn filterable_bound(bound: Option<&Bound>, declared: &Declared) -> bool {
             .get(*texture as usize)
             .map(|texture| texture.format),
         Some(Bound::Target(ViewTarget::Depth)) => Some(DEPTH_FORMAT),
-        Some(Bound::Target(ViewTarget::Debug(index))) => {
-            DEBUG_FORMATS.get(*index as usize).copied()
-        }
         Some(_) | None => None,
     };
     format.is_none_or(|format| {
@@ -1039,16 +1037,21 @@ fn graph_access(access: Access, clear: Clear) -> GraphAccess {
     }
 }
 
+pub(crate) fn layered(output: &OutputDecl) -> bool {
+    !output.layers.is_empty()
+}
+
 pub(crate) fn cover_location(outputs: &[OutputDecl]) -> Option<usize> {
     outputs
         .iter()
+        .filter(|output| layered(output))
         .position(|output| output.name == engine_core::TargetName::TRANSPARENCY.name())
         .map(|at| at + 1)
 }
 
-pub(crate) fn set_formats(outputs: &[OutputDecl], layer: AttachPoint) -> Vec<SetFormat> {
-    let mut set = vec![(Target::Scene, SCENE_FORMAT, Clear::Color(SCENE_CLEAR), true)];
-    for (index, output) in outputs.iter().enumerate() {
+fn set_formats(outputs: &[OutputDecl], layer: AttachPoint) -> Vec<SetFormat> {
+    let mut set = vec![(Target::Scene, SCENE_FORMAT, Clear::Color(BLACK), true)];
+    for (index, output) in outputs.iter().enumerate().filter(|(_, output)| layered(output)) {
         set.push((
             Target::Output(index as u32),
             output.format,
@@ -1065,7 +1068,6 @@ pub(crate) fn target_read(
     direct_depth: bool,
 ) -> Target {
     match (layer, view) {
-        (_, ViewTarget::Debug(index)) => Target::Debug(index),
         (Some(_), ViewTarget::Depth) if direct_depth => Target::Depth,
         (Some(layer), view) => Target::Copy(layer, view),
         (None, view) => final_target(view),
@@ -1115,15 +1117,6 @@ fn graph_of(
         target(
             Target::Output(index as u32),
             output.name,
-            true,
-            Life::Output,
-            &mut ids,
-        );
-    }
-    for (index, name) in crate::DEBUG_TARGETS.iter().enumerate() {
-        target(
-            Target::Debug(index as u32),
-            name.name(),
             true,
             Life::Output,
             &mut ids,
@@ -1230,27 +1223,15 @@ fn graph_of(
             Work::Clear(buffer) => writes.extend(ids.buffers.get(buffer as usize).copied()),
             Work::Render => {}
         }
-        if let Some(layer) = scene {
-            if !own_colors_only(pass) {
-                for (target, _, clear, written) in set_formats(outputs, layer) {
-                    if let Some(id) = ids.target(target).filter(|_| written) {
-                        let access = if entry.shared {
-                            GraphAccess::Draw(clear)
-                        } else {
-                            GraphAccess::Load
-                        };
-                        colors.push((id, access));
-                    }
-                }
-                for index in 0..DEBUG_FORMATS.len() {
-                    if let Some(id) = ids.target(Target::Debug(index as u32)) {
-                        let access = if entry.shared {
-                            GraphAccess::Draw(Clear::Color(TRANSPARENT))
-                        } else {
-                            GraphAccess::Load
-                        };
-                        colors.push((id, access));
-                    }
+        if scene.is_some() {
+            for (target, _, clear, written) in pass_set(outputs, pass) {
+                if let Some(id) = ids.target(target).filter(|_| written) {
+                    let access = if entry.shared {
+                        GraphAccess::Draw(clear)
+                    } else {
+                        GraphAccess::Load
+                    };
+                    colors.push((id, access));
                 }
             }
             if let Some(id) = ids.target(Target::Depth) {
@@ -1316,27 +1297,6 @@ fn graph_of(
         for target in [Target::Scene, Target::Depth] {
             passes[at].reads.extend(ids.target(target));
         }
-    }
-    if let (Some(at), Some(canvas)) = (
-        declared
-            .passes
-            .iter()
-            .position(|pass| pass.name == crate::shared::DEBUG_VIEW),
-        canvas,
-    ) {
-        passes[at].colors.insert(
-            0,
-            (
-                canvas,
-                GraphAccess::Clear(Clear::Color(crate::graph::BLACK)),
-            ),
-        );
-        for index in 0..DEBUG_FORMATS.len() {
-            passes[at]
-                .reads
-                .extend(ids.target(Target::Debug(index as u32)));
-        }
-        passes[at].reads.extend(ids.target(Target::Depth));
     }
     let screens: Vec<PassId> = declared
         .passes

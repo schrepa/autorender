@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, FrameTime, PrimaryView, ViewFacts};
+use engine_core::{Error, FrameTime, ViewFacts};
 use engine_places_rendering::sky::SkyLight;
 use engine_places_rendering::tonemap::Display;
 use engine_render::{
@@ -74,7 +74,6 @@ impl GpuPart for MeterGpu {
         Res<'static, SkyLight>,
         Res<'static, Display>,
         Res<'static, FrameTime>,
-        Res<'static, PrimaryView>,
     );
     const NAME: &'static str = "exposure";
     const LAZY: bool = true;
@@ -122,7 +121,7 @@ impl GpuPart for MeterGpu {
     }
 
     fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
-        let (settings, sky, display, time, view) = reads;
+        let (settings, sky, display, time) = reads;
         cx.allocate_buffer(self.bins, BIN_BYTES);
         let authored = display.exposure[0];
         let seconds = if time.real_seconds > 0.0 {
@@ -131,9 +130,7 @@ impl GpuPart for MeterGpu {
             -1.0
         };
         self.frame = Some((ExposureUniform::of(&settings, &sky, authored, seconds, [0, 0]), authored));
-        if !view.debug() {
-            cx.read_back::<ExposureFeedback>(STATE_READ, self.state, 0..STATE_BYTES, AfterRead::Keep);
-        }
+        cx.read_back::<ExposureFeedback>(STATE_READ, self.state, 0..STATE_BYTES, AfterRead::Keep);
     }
 
     fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
@@ -148,10 +145,7 @@ impl GpuPart for MeterGpu {
             };
             cx.write(self.state, 0, &[state]);
         }
-        if view.debug {
-            return;
-        }
-        if view.capture || !view.history.valid() {
+        if !view.history.valid() {
             values.frame[1] = 0.0;
         }
         values.drawn = [view.render.x as f32, view.render.y as f32, 0.0, 0.0];
