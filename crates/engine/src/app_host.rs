@@ -112,7 +112,6 @@ pub(crate) struct AppHost {
     pipeline_list: crate::host::PipelineList,
     pixel_ratio: f64,
     refresh: Refresh,
-    between_ms: f64,
     dynamic: crate::host::DynamicScale,
     gpu_ms: Option<f32>,
     #[cfg(feature = "profiling")]
@@ -157,7 +156,6 @@ impl AppHost {
             pipeline_list: crate::host::PipelineList::default(),
             pixel_ratio: 1.0,
             refresh: Refresh::Measured(FRAME_INTERVAL_MS),
-            between_ms: 0.0,
             dynamic: crate::host::DynamicScale::default(),
             gpu_ms: None,
             #[cfg(feature = "profiling")]
@@ -269,9 +267,8 @@ impl AppHost {
     }
 
     pub(crate) fn paced(&mut self) {
-        let interval = self.engine.frame_time().real_seconds * 1000.0 - self.between_ms;
+        let interval = self.engine.frame_time().real_seconds * 1000.0;
         self.refresh = self.refresh.measured(interval);
-        self.between_ms = 0.0;
     }
 
     fn resolution_settings(&self) -> (Resolution, DynamicResolution) {
@@ -368,18 +365,10 @@ impl AppHost {
         if world.get_resource::<engine_core::Viewport>() != Some(&viewport) {
             world.insert_resource(viewport);
         }
-        self.engine.stream_now();
     }
 
-    pub fn work_between_frames(&mut self, milliseconds: f64) -> bool {
-        if !milliseconds.is_finite() || milliseconds <= 0.0 {
-            return false;
-        }
-        let micros = (milliseconds * 1000.0).min(f64::from(u32::MAX)) as u32;
-        let start = now_ms();
-        let remaining = self.engine.between_frames(micros);
-        self.between_ms += now_ms() - start;
-        remaining
+    pub fn set_spare_time(&mut self, milliseconds: f64) {
+        self.engine.set_spare_time(milliseconds);
     }
 
     pub fn set_job_workers(&mut self, workers: u32) {

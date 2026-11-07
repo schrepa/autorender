@@ -1,5 +1,5 @@
 use engine_settings::ErrorCode;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bevy_ecs::entity::Entity;
@@ -173,7 +173,7 @@ impl SceneInstance {
             world
                 .get_resource::<OperationScene>()
                 .filter(|scene| Arc::ptr_eq(&scene.entities, &self.entities))?
-                .entity(world, id)
+                .entity(id)
         })
     }
 
@@ -230,7 +230,7 @@ impl SceneInstance {
         OperationScene {
             id: self.id.clone(),
             entities: self.entities.clone(),
-            authored_later: false,
+            installed: BTreeMap::new(),
         }
     }
 
@@ -248,10 +248,11 @@ impl SceneInstance {
 
     pub fn despawn(self, world: &mut World) {
         assert_eq!(self.world_id, world.id(), "scene_world_matches");
-        if world
+        let installed: Option<Vec<Entity>> = world
             .get_resource::<OperationScene>()
-            .is_some_and(|scene| Arc::ptr_eq(&scene.entities, &self.entities))
-        {
+            .filter(|scene| Arc::ptr_eq(&scene.entities, &self.entities))
+            .map(|scene| scene.installed.values().copied().collect());
+        if installed.is_some() {
             world.remove_resource::<OperationScene>();
         }
         if world
@@ -260,28 +261,14 @@ impl SceneInstance {
         {
             world.remove_resource::<SceneContext>();
         }
-        self.remove_authored_later(world);
+        for entity in installed.into_iter().flatten() {
+            let _ = world.try_despawn(entity);
+        }
         for &entity in self.entities.values() {
             world.despawn(entity);
         }
         if let Some(mut assets) = world.get_resource_mut::<AssetLibrary>() {
             self.owned.remove(&mut assets);
-        }
-    }
-
-    fn remove_authored_later(&self, world: &mut World) {
-        let mut kept: BTreeSet<Entity> = self.entities.values().copied().collect();
-        if let Some(current) = world.get_resource::<OperationScene>() {
-            kept.extend(current.entities.values().copied());
-        }
-        let later: Vec<Entity> = world
-            .query::<(Entity, &SceneEntity)>()
-            .iter(world)
-            .filter(|(entity, authored)| authored.scene_id == self.id && !kept.contains(entity))
-            .map(|(entity, _)| entity)
-            .collect();
-        for entity in later {
-            let _ = world.try_despawn(entity);
         }
     }
 }
@@ -315,7 +302,6 @@ impl SceneDocument {
         if let Some(first) = skipped.first().filter(|_| !chose_left_out) {
             return Err(first.clone());
         }
-        let bounds = crate::loading::bounds(self, &prepared.meshes);
         let replaced = Replaced::of(world);
         let (assets, owned) = self.insert_assets(world, &mut prepared)?;
         let table = Arc::new(self.table(&assets));
@@ -329,8 +315,7 @@ impl SceneDocument {
         let entities = Arc::new(entities);
         let context = crate::loading::context(
             self,
-            (table, bounds),
-            prepared.shares.clone(),
+            table,
             entities.clone(),
             &kinds,
             Some(files.buffers()),
@@ -341,7 +326,7 @@ impl SceneDocument {
                 world.insert_resource(OperationScene {
                     id: self.id.clone(),
                     entities: entities.clone(),
-                    authored_later: false,
+                    installed: BTreeMap::new(),
                 });
                 then(world, &entities)
             });

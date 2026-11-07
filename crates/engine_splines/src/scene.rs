@@ -1,5 +1,6 @@
-use engine_core::{Error, Expected, MaterialHandle, MeshHandle, Reach};
+use engine_core::{Error, Expected, MaterialHandle, MeshHandle, parse_value};
 use engine_places_world::splines::SplineMesh;
+use engine_places_world::streaming::StreamedAt;
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -55,20 +56,16 @@ pub(crate) fn check_spline(spline: &SplineMesh, path: &str) -> Result<(), Error>
     SceneSpline::from(spline).validate(path)
 }
 
-pub(crate) fn spline_reach(spline: &SplineMesh, reach: &Reach<'_>, extend: &mut dyn FnMut(f32)) {
-    let size = match serde_json::to_value(spline.mesh) {
-        Ok(Value::String(mesh)) => reach.mesh_size(&mesh),
-        _ => 0.0,
+pub(crate) fn spline_reach(value: &Value, at: &StreamedAt<'_>) -> f32 {
+    let Ok(spline) = parse_value::<SplineMesh>(value.clone()) else {
+        return 0.0;
     };
-    for point in &spline.points {
-        extend(
-            reach
-                .world
-                .transform_point3(*point)
-                .distance(reach.position)
-                + size,
-        );
-    }
+    let size = at.mesh_size(spline.mesh);
+    spline
+        .points
+        .iter()
+        .map(|point| at.world.transform_point3(*point).distance(at.position) + size)
+        .fold(0.0, engine_math::max)
 }
 
 pub(crate) fn spline_schema() -> Value {

@@ -19,16 +19,22 @@ pub struct FrameBudget {
     #[cfg_attr(feature = "schema", schemars(skip))]
     clock: Option<fn() -> f64>,
     deadline: f64,
+    spare_ms: f64,
     upload_left: u64,
     uses: Vec<BudgetUse>,
 }
 
 impl FrameBudget {
     #[doc(hidden)]
-    pub fn start(clock: Option<fn() -> f64>, millis: f64, upload_bytes: u64) -> Self {
+    pub fn start(
+        clock: Option<fn() -> f64>,
+        (work_ms, spare_ms): (f64, f64),
+        upload_bytes: u64,
+    ) -> Self {
         Self {
             clock,
-            deadline: clock.map_or(0.0, |clock| clock() + millis),
+            deadline: clock.map_or(0.0, |clock| clock() + work_ms + spare_ms),
+            spare_ms,
             upload_left: upload_bytes,
             uses: Vec::new(),
         }

@@ -9,7 +9,9 @@ use engine_core::{
     fields, is_id, math, parse_value_at, state, valid_global_matrix,
 };
 use engine_places_simulation::ground::Grounded;
-use engine_places_world::paths::{ScenePath, ScenePaths};
+use engine_places_world::paths::{ScenePath, ScenePathSources, ScenePaths};
+use engine_places_world::streaming::{StreamedKey, StreamedKeys, Streams};
+use engine_places_world::terrain::{LayerKind, TerrainLayers};
 use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -364,8 +366,9 @@ impl StreamedScene {
                 );
             }
         }
+        let keys: Vec<StreamedKey> = scene.members::<StreamedKeys>().copied().collect();
         for entity in &streamed.entities {
-            check_streamed(&entity.source, &entity.path, kinds)?;
+            check_streamed(&entity.source, &entity.path, &keys)?;
         }
         Ok(Expanded { streamed, kept })
     }
@@ -409,29 +412,41 @@ impl StreamedScene {
     }
 }
 
-fn along_path<'a>(
-    along: &StreamedAlong,
-    path: &str,
-    scene: &'a SceneContext,
-) -> Result<&'a ScenePath, Error> {
-    let walked = |paths: &&ScenePaths| !paths.0.is_empty();
-    let Some(found) = scene.shared::<ScenePaths>(&along.terrain).filter(walked) else {
-        return Err(
-            Error::new(ErrorCode::UnknownReference, format!("{path}.terrain"))
-                .got(&along.terrain)
-                .variants(
-                    scene
-                        .sharing::<ScenePaths>()
-                        .filter(|(_, paths)| walked(paths))
-                        .map(|(entity, _)| entity.to_owned()),
-                ),
-        );
+fn along_path(along: &StreamedAlong, path: &str, scene: &SceneContext) -> Result<ScenePath, Error> {
+    let layers: Vec<&'static LayerKind> = scene.members::<TerrainLayers>().copied().collect();
+    let at = format!("{path}.terrain");
+    let walked = |entity: &str| -> Result<Option<ScenePaths>, Error> {
+        for source in scene.members::<ScenePathSources>() {
+            if let Some(value) = scene.component(entity, source.key) {
+                let paths = (source.paths)(value, &layers, &at)?;
+                if !paths.0.is_empty() {
+                    return Ok(Some(paths));
+                }
+            }
+        }
+        Ok(None)
     };
-    found.0.iter().find(|answer| answer.id == along.layer).ok_or_else(|| {
-        Error::new(ErrorCode::UnknownReference, format!("{path}.layer"))
-            .got(&along.layer)
-            .variants(found.0.iter().map(|answer| answer.id.clone()))
-    })
+    let Some(found) = walked(along.terrain.as_str())? else {
+        let known: Vec<String> = scene
+            .components
+            .keys()
+            .filter(|entity| walked(entity.as_str()).ok().flatten().is_some())
+            .cloned()
+            .collect();
+        return Err(Error::new(ErrorCode::UnknownReference, at)
+            .got(&along.terrain)
+            .variants(known));
+    };
+    let ids: Vec<String> = found.0.iter().map(|answer| answer.id.clone()).collect();
+    found
+        .0
+        .into_iter()
+        .find(|answer| answer.id == along.layer)
+        .ok_or_else(|| {
+            Error::new(ErrorCode::UnknownReference, format!("{path}.layer"))
+                .got(&along.layer)
+                .variants(ids)
+        })
 }
 
 fn expand_list(
@@ -587,31 +602,32 @@ fn check_placement(
     if entity.parent.is_none() {
         return Ok(());
     }
-    refused_placement(entity, path, kinds, |placement| match placement {
-        Placement::Roots(code) => Some(code),
-        Placement::Anywhere | Placement::Entities(_) => None,
+    refused(entity, path, |name| {
+        kind(kinds, name).and_then(|kind| match kind.placement() {
+            Placement::Roots(code) => Some(code),
+            Placement::Anywhere => None,
+        })
     })
 }
 
-fn check_streamed(
-    entity: &StreamedObject,
-    path: &str,
-    kinds: &[ComponentKind],
-) -> Result<(), Error> {
-    refused_placement(entity, path, kinds, |placement| match placement {
-        Placement::Entities(code) => Some(code),
-        Placement::Anywhere | Placement::Roots(_) => None,
+fn check_streamed(entity: &StreamedObject, path: &str, keys: &[StreamedKey]) -> Result<(), Error> {
+    refused(entity, path, |name| {
+        keys.iter()
+            .filter(|key| key.key == name)
+            .find_map(|key| match key.streams {
+                Streams::Never(code) => Some(code),
+                Streams::Reaching(_) => None,
+            })
     })
 }
 
-fn refused_placement(
+fn refused(
     entity: &StreamedObject,
     path: &str,
-    kinds: &[ComponentKind],
-    refused: fn(Placement) -> Option<ErrorCode>,
+    refusal: impl Fn(&str) -> Option<ErrorCode>,
 ) -> Result<(), Error> {
     for (name, _) in entity.authored() {
-        if let Some(code) = kind(kinds, name).and_then(|kind| refused(kind.placement())) {
+        if let Some(code) = refusal(name) {
             return Err(Error::new(code, format!("{path}.{name}")).expected(Expected::Absent));
         }
     }

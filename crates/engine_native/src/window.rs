@@ -362,9 +362,6 @@ impl<G: Game> Running<G> {
         self.exchange_jobs();
         if phase == FramePhase::Playing {
             self.title.frame(&self.window, timestamp, &self.host);
-            if self.host.load_between_frames() {
-                self.exchange_jobs();
-            }
         }
         Ok(phase)
     }

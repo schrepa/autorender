@@ -22,8 +22,8 @@ use serde_json::Value;
 
 use crate::moves::NodeKind;
 use crate::{
-    Authored, Error, ErrorCode, Explain, GpuStruct, JobKind, KindDecl, List, Module, Mover,
-    MoverId, Operation, Pace, PlaceDecl, SceneContext, SceneIds, Section, Slot, Smoke, Source,
+    Error, ErrorCode, Explain, GpuStruct, JobKind, KindDecl, List, Module, Mover, MoverId,
+    Operation, Pace, PlaceDecl, SceneContext, SceneIds, Section, Slot, Smoke, Source, SubScene,
 };
 
 pub trait Brick: 'static {
@@ -706,15 +706,16 @@ impl<B: Brick> Spawner<'_, '_, B> {
             .queue(move |world: &mut World| despawned::<B>(world, entity));
     }
 
-    pub fn author(&mut self, entity: Entity, authored: Authored) {
+    pub fn install(&mut self, scene: SubScene) -> Vec<Entity> {
+        let entities: Vec<Entity> = scene
+            .entities
+            .iter()
+            .map(|_| self.commands.spawn_empty().id())
+            .collect();
+        let reserved = entities.clone();
         self.commands
-            .queue(move |world: &mut World| authored_by::<B>(world, entity, authored));
-    }
-
-    pub fn insert_scene(&mut self, entity: Entity, key: &str, value: Value) {
-        let key = key.to_owned();
-        self.commands
-            .queue(move |world: &mut World| scene_inserted::<B>(world, entity, &key, &value));
+            .queue(move |world: &mut World| installed::<B>(world, &reserved, &scene));
+        entities
     }
 
     pub fn set_parent(&mut self, child: Entity, parent: Option<Entity>) {
@@ -854,54 +855,72 @@ fn despawned<B: Brick>(world: &mut World, entity: Entity) {
     world.despawn(entity);
 }
 
-fn authored_by<B: Brick>(world: &mut World, entity: Entity, authored: Authored) {
-    if !owned::<B>(world, entity) {
-        foreign::<B>(world, entity);
-        return;
-    }
-    let scene_id = if let Some(mut scene) = world.get_resource_mut::<OperationScene>() {
-        scene.authored_later = true;
-        scene.id.clone()
-    } else {
-        world
-            .get_resource::<SceneContext>()
-            .map_or_else(String::new, |context| context.id.clone())
+fn installed<B: Brick>(world: &mut World, entities: &[Entity], scene: &SubScene) {
+    let context = world.get_resource::<SceneContext>().cloned();
+    let landed = match &context {
+        Some(context) => context.scope(|| install::<B>(world, entities, scene)),
+        None => install::<B>(world, entities, scene),
     };
-    if let Ok(mut owned) = world.get_entity_mut(entity) {
-        owned.insert(SceneEntity {
-            scene_id,
-            authored_id: authored.id,
-            name: authored.name,
-            tags: authored.tags,
-            authored_parent: authored.parent,
-            prefab_id: authored.prefab_id,
-            prefab_instance: authored.prefab_instance,
-            prefab_local_id: authored.prefab_local_id,
-        });
+    if let Err(error) = landed {
+        for &entity in entities {
+            let _ = world.try_despawn(entity);
+        }
+        let path = format!("$.bricks.{}.spawner.install", B::SOURCE.package());
+        report(world, error.within(&path));
     }
 }
 
-fn scene_inserted<B: Brick>(world: &mut World, entity: Entity, key: &str, value: &Value) {
-    if !owned::<B>(world, entity) {
-        foreign::<B>(world, entity);
-        return;
-    }
-    let path = format!("$.bricks.{}.spawner.{key}", B::SOURCE.package());
-    let read = match crate::scene_component(world, key) {
-        Some(kind) => {
-            let context = world.get_resource::<SceneContext>().cloned();
-            let mut insert = || kind.read(world, entity, value);
-            match context {
-                Some(context) => context.scope(insert),
-                None => insert(),
-            }
-            .map_err(|error| error.within(&path))
+fn install<B: Brick>(world: &mut World, entities: &[Entity], scene: &SubScene) -> Result<(), Error> {
+    let scene_id = world
+        .get_resource::<OperationScene>()
+        .map(|scene| scene.id.clone())
+        .or_else(|| {
+            world
+                .get_resource::<SceneContext>()
+                .map(|context| context.id.clone())
+        })
+        .unwrap_or_default();
+    let mut parents = Vec::new();
+    for (index, (&entity, item)) in entities.iter().zip(&scene.entities).enumerate() {
+        let at = format!("$.entities[{index}]");
+        let authored = item.authored.clone();
+        world
+            .get_entity_mut(entity)
+            .map_err(|_| Error::new(ErrorCode::UnknownEntity, &at).got(entity.to_string()))?
+            .insert((
+                item.transform,
+                SpawnedBy::<B>::new(),
+                SceneEntity {
+                    scene_id: scene_id.clone(),
+                    authored_id: authored.id,
+                    name: authored.name,
+                    tags: authored.tags,
+                    authored_parent: authored.parent,
+                    prefab_id: authored.prefab_id,
+                    prefab_instance: authored.prefab_instance,
+                    prefab_local_id: authored.prefab_local_id,
+                },
+            ));
+        if let Some(parent) = item.parent {
+            let parent = entities.get(parent).copied().ok_or_else(|| {
+                Error::new(ErrorCode::UnknownParent, format!("{at}.parent")).got(parent)
+            })?;
+            parents.push((entity, Some(parent)));
         }
-        None => Err(Error::new(ErrorCode::SectionUnlisted, path).got(key)),
-    };
-    if let Err(error) = read {
-        report(world, error);
     }
+    for (index, (&entity, item)) in entities.iter().zip(&scene.entities).enumerate() {
+        for (key, value) in &item.components {
+            let at = format!("$.entities[{index}].{key}");
+            let kind = crate::scene_component(world, key)
+                .ok_or_else(|| Error::new(ErrorCode::SectionUnlisted, &at).got(key))?;
+            if let (crate::Placement::Roots(code), Some(_)) = (kind.placement(), item.parent) {
+                return Err(Error::new(code, at).expected(crate::Expected::Absent));
+            }
+            kind.read(world, entity, value)
+                .map_err(|error| error.within(&at))?;
+        }
+    }
+    crate::set_parents(world, &parents).map_err(|error| error.within("$.entities"))
 }
 
 fn parented<B: Brick>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
@@ -1006,7 +1025,4 @@ pub enum Schedule {
     Presentation,
     WorldSync,
     ViewSync,
-    BetweenFrames,
-    Waiting,
-    PreWorldSync,
 }

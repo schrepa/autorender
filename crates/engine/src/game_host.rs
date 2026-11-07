@@ -257,21 +257,6 @@ impl<G: Game> GameHost<G> {
         self.app.prepare_pipelines(|engine| game.content(engine))
     }
 
-    pub fn work_while_compiling(&mut self, width: u32, height: u32) -> bool {
-        if !self.frames.preparing() || self.frame_stats().readiness.compiling == 0 {
-            return false;
-        }
-        self.work(width, height);
-        true
-    }
-
-    pub fn load_between_frames(&mut self) -> bool {
-        let mut frames = std::mem::take(&mut self.frames);
-        let remaining = frames.between(self);
-        self.frames = frames;
-        remaining
-    }
-
     pub fn set_preparation(&mut self, enabled: bool) {
         self.frames.set_preparation(enabled);
     }
@@ -340,8 +325,8 @@ impl<G: Game> GameHost<G> {
         self.app.work(width, height);
     }
 
-    pub fn work_between_frames(&mut self, milliseconds: f64) -> bool {
-        self.app.work_between_frames(milliseconds)
+    pub fn set_spare_time(&mut self, milliseconds: f64) {
+        self.app.set_spare_time(milliseconds);
     }
 
     pub fn set_job_workers(&mut self, workers: u32) -> bool {

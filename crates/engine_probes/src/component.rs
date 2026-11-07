@@ -1,4 +1,4 @@
-use engine_core::{Error, ErrorCode, Reach, fields};
+use engine_core::{Error, ErrorCode, fields};
 use engine_places_rendering::probes::ReflectionProbe;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -50,10 +50,6 @@ pub(crate) fn check(probe: &ReflectionProbe, path: &str) -> Result<(), Error> {
     SceneReflectionProbe::from(probe)
         .validate()
         .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, path))
-}
-
-pub(crate) fn reach(probe: &ReflectionProbe, reach: &Reach<'_>, extend: &mut dyn FnMut(f32)) {
-    extend(reach.from + probe.extent.length());
 }
 
 pub(crate) fn schema() -> Value {

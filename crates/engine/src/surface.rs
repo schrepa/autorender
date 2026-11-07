@@ -15,8 +15,6 @@ macro_rules! __game_surface {
                 fn pad(buttons: u32, axes: Vec<f32>);
                 fn clear_input();
                 fn animation_frame(timestamp: f64, width: u32, height: u32) -> Result<u32, $crate::__private::JsValue>;
-                fn work_while_compiling(width: u32, height: u32) -> bool;
-                fn load_between_frames() -> bool;
                 fn set_preparation(enabled: bool);
                 fn set_job_workers(workers: u32) -> bool;
                 fn set_job_cache(caching: bool, verify: bool);

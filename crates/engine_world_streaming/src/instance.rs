@@ -1,24 +1,18 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::math::max;
 use engine_core::{
-    Authored, DrawKind, Drawn, MaterialHandle, MeshHandle, Reach, SceneContext, Spawner, Transform,
+    Aabb, AssetLibrary, Authored, MeshHandle, SceneContext, SubScene, SubSceneEntity, Transform,
 };
+use engine_places_world::streaming::{StreamedAt, StreamedKey, StreamedKeys, Streams};
 use glam::{Mat4, Vec3};
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use crate::WorldStreamingBrick;
 use crate::scene::{ExpandedList, ExpandedObject, StreamedScene, kind};
 
-struct Prepared {
-    transform: Transform,
-    mesh: Option<(MeshHandle, MaterialHandle)>,
-    authored: Authored,
-    components: Vec<(String, Value)>,
-}
+const DRAWN: &str = "drawn";
 
 pub(crate) struct TreeItem {
     pub(crate) id: Arc<str>,
@@ -29,7 +23,7 @@ pub(crate) struct TreeItem {
 
 #[derive(Default)]
 pub(crate) struct Tree {
-    entities: Vec<Prepared>,
+    entities: Vec<SubSceneEntity>,
     parents: Vec<Option<usize>>,
     pub(crate) items: Vec<TreeItem>,
 }
@@ -40,17 +34,56 @@ pub(crate) struct Content {
     pub(crate) kept: Tree,
 }
 
-pub(crate) fn content(scene: &StreamedScene, context: &SceneContext) -> Content {
+pub(crate) fn content(
+    scene: &StreamedScene,
+    context: &SceneContext,
+    assets: &AssetLibrary,
+) -> Content {
     let Ok(expanded) = scene.expand(context) else {
         return Content::default();
     };
+    let keys: Vec<StreamedKey> = context.members::<StreamedKeys>().copied().collect();
+    let bounds = |mesh: MeshHandle| assets.mesh(mesh).map(|mesh| mesh.bounds());
+    let sizes = |mesh: MeshHandle| bounds(mesh).map_or(0.0, |bounds| size(&bounds));
+    let reaching = Reaching {
+        keys: &keys,
+        bounds: &bounds,
+        sizes: &sizes,
+    };
     Content {
-        streamed: tree(expanded.streamed, context),
-        kept: tree(expanded.kept, context),
+        streamed: tree(expanded.streamed, context, &reaching),
+        kept: tree(expanded.kept, context, &reaching),
     }
 }
 
-fn tree(list: ExpandedList, context: &SceneContext) -> Tree {
+struct Reaching<'a> {
+    keys: &'a [StreamedKey],
+    bounds: &'a dyn Fn(MeshHandle) -> Option<Aabb>,
+    sizes: &'a dyn Fn(MeshHandle) -> f32,
+}
+
+fn size(bounds: &Aabb) -> f32 {
+    (bounds.max() - bounds.min()).length()
+}
+
+fn of_box(at: &StreamedAt<'_>, bounds: &Aabb) -> f32 {
+    let (min, max) = (bounds.min(), bounds.max());
+    (0..8)
+        .map(|corner| {
+            let pick = |bit: u32, low: f32, high: f32| {
+                if corner & (1 << bit) == 0 { low } else { high }
+            };
+            let point = Vec3::new(
+                pick(0, min.x, max.x),
+                pick(1, min.y, max.y),
+                pick(2, min.z, max.z),
+            );
+            at.world.transform_point3(point).distance(at.position)
+        })
+        .fold(0.0, max)
+}
+
+fn tree(list: ExpandedList, context: &SceneContext, reaching: &Reaching<'_>) -> Tree {
     let ExpandedList {
         entities,
         transforms,
@@ -91,12 +124,6 @@ fn tree(list: ExpandedList, context: &SceneContext) -> Tree {
             }));
         }
     }
-    let sizes = |id: &str| {
-        context
-            .bounds
-            .get(id)
-            .map_or(0.0, |bounds| (bounds.max() - bounds.min()).length())
-    };
     let mut items: Vec<TreeItem> = Vec::new();
     let mut item_of = HashMap::default();
     for (index, &root) in roots.iter().enumerate() {
@@ -116,21 +143,29 @@ fn tree(list: ExpandedList, context: &SceneContext) -> Tree {
         let position = items[item].position;
         let world = worlds[index].expect("world_matrix_composed");
         let from = world.w_axis.truncate().distance(position);
-        let standing = Reach {
+        let standing = StreamedAt {
             world,
             position,
             from,
-            mesh_sizes: &sizes,
+            mesh_sizes: reaching.sizes,
         };
         let source = &entities[index].source;
         let mut reach = from;
         let mut extend = |value: f32| reach = max(reach, value);
-        if let Some(bounds) = source.mesh.as_ref().and_then(|id| context.bounds.get(id)) {
-            extend(standing.of_box(bounds.min(), bounds.max()));
+        let mesh = source
+            .mesh
+            .as_ref()
+            .and_then(|id| context.assets.meshes.get(id))
+            .and_then(|&mesh| (reaching.bounds)(mesh));
+        if let Some(bounds) = mesh {
+            extend(of_box(&standing, &bounds));
         }
         for (name, value) in source.authored() {
-            if let Some(kind) = kind(&context.kinds, name) {
-                kind.extend_reach(value, &standing, &mut extend);
+            for key in reaching.keys.iter().filter(|key| key.key == name) {
+                match key.streams {
+                    Streams::Reaching(of) => extend(of(value, &standing)),
+                    Streams::Never(_) => {}
+                }
             }
         }
         if reach.is_finite() {
@@ -159,25 +194,25 @@ fn tree(list: ExpandedList, context: &SceneContext) -> Tree {
     }
 }
 
-fn prepared(entity: ExpandedObject, transform: Transform, context: &SceneContext) -> Prepared {
+fn prepared(entity: ExpandedObject, transform: Transform, context: &SceneContext) -> SubSceneEntity {
     let source = entity.source;
-    let mesh = match (&source.mesh, &source.material) {
-        (Some(mesh), Some(material)) => context
-            .assets
-            .meshes
-            .get(mesh)
-            .zip(context.assets.materials.get(material))
-            .map(|(&mesh, &material)| (mesh, material)),
+    let drawn = match (&source.mesh, &source.material) {
+        (Some(mesh), Some(material)) => {
+            Some((DRAWN.to_owned(), json!({ "mesh": mesh, "material": material })))
+        }
         (Some(_), None) | (None, Some(_)) | (None, None) => None,
     };
-    let components = source
-        .authored()
-        .filter(|&(name, _)| kind(&context.kinds, name).is_some())
-        .map(|(name, value)| (name.to_owned(), value.clone()))
-        .collect();
-    Prepared {
+    let components = drawn
+        .into_iter()
+        .chain(
+            source
+                .authored()
+                .filter(|&(name, _)| kind(&context.kinds, name).is_some())
+                .map(|(name, value)| (name.to_owned(), value.clone())),
+        )
+        .collect::<Vec<(String, Value)>>();
+    SubSceneEntity {
         transform,
-        mesh,
         authored: Authored {
             id: source.id,
             name: source.name,
@@ -187,6 +222,7 @@ fn prepared(entity: ExpandedObject, transform: Transform, context: &SceneContext
             prefab_instance: entity.prefab_instance,
             prefab_local_id: entity.prefab_local_id,
         },
+        parent: None,
         components,
     }
 }
@@ -207,45 +243,23 @@ impl Tree {
         self.items[item].entities.len() as u32
     }
 
-    pub(crate) fn spawn(
-        &self,
-        item: usize,
-        spawner: &mut Spawner<WorldStreamingBrick>,
-        spawned: &mut Vec<Entity>,
-    ) {
+    pub(crate) fn sub_scene(&self, item: usize) -> SubScene {
         let item = &self.items[item];
-        let mine: Vec<Entity> = item
-            .entities
-            .iter()
-            .map(|&index| {
-                let prepared = &self.entities[index];
-                let entity = spawner.spawn(prepared.transform);
-                spawner.author(entity, prepared.authored.clone());
-                if let Some((mesh, material)) = prepared.mesh {
-                    spawner.insert(entity, Drawn::new(DrawKind::MESH, mesh, material, entity));
-                }
-                for (key, value) in &prepared.components {
-                    spawner.insert_scene(entity, key, value.clone());
-                }
-                entity
-            })
-            .collect();
-        let entity_of = |index: usize| {
-            mine[item
-                .entities
+        let local = |index: usize| {
+            item.entities
                 .iter()
                 .position(|&own| own == index)
-                .expect("reference_within_item")]
+                .expect("reference_within_item")
         };
-        let parents: Vec<_> = item
-            .entities
-            .iter()
-            .zip(&mine)
-            .filter_map(|(&index, &entity)| {
-                self.parents[index].map(|parent| (entity, Some(entity_of(parent))))
-            })
-            .collect();
-        spawner.set_parents(parents);
-        spawned.extend(mine);
+        SubScene {
+            entities: item
+                .entities
+                .iter()
+                .map(|&index| SubSceneEntity {
+                    parent: self.parents[index].map(local),
+                    ..self.entities[index].clone()
+                })
+                .collect(),
+        }
     }
 }

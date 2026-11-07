@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
-use engine_assets::{Aabb, SceneAssets};
-use engine_core::{Error, Mesh, SceneBuffers, SceneContext, SceneShare};
+use engine_assets::SceneAssets;
+use engine_core::{SceneBuffers, SceneContext};
 
 use crate::{SceneDocument, SceneKinds};
 
@@ -28,35 +28,9 @@ pub(crate) fn named(document: &SceneDocument) -> Arc<SceneAssets> {
     })
 }
 
-pub(crate) type Shares = Arc<BTreeMap<String, Vec<SceneShare>>>;
-
-pub(crate) fn shares(document: &SceneDocument, kinds: &SceneKinds) -> Result<Shares, Error> {
-    let cx = kinds.cx(None, None);
-    named(document).lenient(|| {
-        let mut shares = BTreeMap::new();
-        for (index, entity) in document.entities.iter().enumerate() {
-            let shared = kinds.shares(entity, &format!("$.entities[{index}]"), &cx)?;
-            if !shared.is_empty() {
-                shares.insert(entity.id.clone(), shared);
-            }
-        }
-        Ok(Arc::new(shares))
-    })
-}
-
-pub(crate) fn bounds(document: &SceneDocument, meshes: &[Mesh]) -> BTreeMap<String, Aabb> {
-    document
-        .meshes
-        .iter()
-        .zip(meshes)
-        .map(|(source, mesh)| (source.id.clone(), mesh.bounds()))
-        .collect()
-}
-
 pub(crate) fn context(
     document: &SceneDocument,
-    (assets, bounds): (Arc<SceneAssets>, BTreeMap<String, Aabb>),
-    shares: Shares,
+    assets: Arc<SceneAssets>,
     entities: Arc<BTreeMap<String, Entity>>,
     kinds: &SceneKinds,
     files: Option<Arc<SceneBuffers>>,
@@ -75,10 +49,22 @@ pub(crate) fn context(
                 })
                 .collect(),
         ),
-        shares,
+        components: Arc::new(
+            document
+                .entities
+                .iter()
+                .map(|entity| {
+                    let authored = entity
+                        .authored()
+                        .map(|(key, value)| (key.to_owned(), value.clone()))
+                        .collect();
+                    (entity.id.clone(), authored)
+                })
+                .collect(),
+        ),
         entities,
         kinds: kinds.listed_kinds().into(),
-        bounds: Arc::new(bounds),
+        list: kinds.job_list(),
         files,
     }
 }

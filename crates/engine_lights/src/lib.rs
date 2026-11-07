@@ -43,7 +43,6 @@ impl Brick for LightsBrick {
             .join::<SceneComponents>(
                 ComponentKind::of::<LocalLight>("light")
                     .check(scene::check_light)
-                    .reach(scene::light_reach)
                     .schema(scene::light_schema)
                     .example(scene::light_example),
                 None,

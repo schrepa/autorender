@@ -1,4 +1,4 @@
-use engine_core::{Error, ErrorCode, ExtraRules, InvalidSetting, Reach, Setting, fields};
+use engine_core::{Error, ErrorCode, ExtraRules, InvalidSetting, Setting, fields};
 use engine_places_rendering::particles::{
     MAX_SPREAD_DEGREES, ParticleBlend, ParticleEmitter, ParticleShape,
 };
@@ -131,25 +131,6 @@ pub(crate) fn check_emitter(emitter: &ParticleEmitter, path: &str) -> Result<(),
     SceneEmitter::from(emitter)
         .validate()
         .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, path))
-}
-
-pub(crate) fn emitter_reach(
-    emitter: &ParticleEmitter,
-    reach: &Reach<'_>,
-    extend: &mut dyn FnMut(f32),
-) {
-    let look = &emitter.look;
-    let shape = match look.shape {
-        ParticleShape::Box => look.extent.length(),
-        ParticleShape::Ball => look.extent.max_element(),
-    };
-    extend(
-        reach.from
-            + emitter.offset.length()
-            + shape
-            + look.speed * look.lifetime
-            + 0.5 * look.acceleration.length() * look.lifetime * look.lifetime,
-    );
 }
 
 pub(crate) fn emitter_schema() -> Value {

@@ -1,4 +1,4 @@
-use engine_core::{Error, ErrorCode, ExtraRules, InvalidSetting, Reach, Setting, fields};
+use engine_core::{Error, ErrorCode, ExtraRules, InvalidSetting, Setting, fields};
 use engine_places_rendering::lights::{
     LightRegion, LocalLight, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES, Spot,
 };
@@ -108,10 +108,6 @@ pub(crate) fn check_light(light: &LocalLight, path: &str) -> Result<(), Error> {
     SceneLight::from(light)
         .validate()
         .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, path))
-}
-
-pub(crate) fn light_reach(light: &LocalLight, reach: &Reach<'_>, extend: &mut dyn FnMut(f32)) {
-    extend(reach.from + light.range);
 }
 
 pub(crate) fn light_schema() -> Value {

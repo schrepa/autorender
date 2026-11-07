@@ -17,7 +17,6 @@ pub(crate) struct PreparedScene {
     pub textures: Vec<Texture>,
     pub transforms: Vec<Transform>,
     pub entities: Vec<ExpandedObject>,
-    pub shares: crate::loading::Shares,
 }
 
 struct CpuAssets {
@@ -107,7 +106,6 @@ impl SceneDocument {
         }
         let named = crate::loading::named(self);
         let expanded = named.lenient(|| self.expand(&mesh_ids, &material_ids, kinds))?;
-        let shares = crate::loading::shares(self, kinds)?;
         let entities = expanded
             .entities
             .iter()
@@ -115,8 +113,7 @@ impl SceneDocument {
             .collect();
         let context = crate::loading::context(
             self,
-            (named, BTreeMap::new()),
-            shares.clone(),
+            named,
             Arc::new(entities),
             kinds,
             files.map(SceneFiles::buffers),
@@ -151,7 +148,6 @@ impl SceneDocument {
             textures,
             transforms: expanded.transforms,
             entities: expanded.entities,
-            shares,
         })
     }
 
