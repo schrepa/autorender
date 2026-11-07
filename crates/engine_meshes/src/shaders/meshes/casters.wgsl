@@ -5,7 +5,7 @@ import package::face::caster_routes::{caster_box, caster_in_region, caster_in_sk
 import package::face::wind::{slot_sway, wind_sway};
 import package::generated::meshes::{BatchData as Batch, CULL_GROUP, CandidateData as Candidate,
     CasterFrame, MOVING_MAP, MOVING_PAIRS, SKY_MAP};
-import package::meshes::presentation::{Rows, VALID};
+import package::meshes::presentation::{Rows, VALID, pose_key};
 import package::meshes::slots::{instance_colors, instance_poses};
 
 struct DrawArgs {
@@ -33,26 +33,6 @@ const MOVING_UNTIL_RESTLESS: u32 = 236u;
 const LEVELED: u32 = 0x2000000u;
 const RESTLESS: u32 = 0x80000000u;
 const FOOTPRINT_UNIT: f32 = 4.0;
-
-fn mix_key(key: u32, value: u32) -> u32 {
-    var x = (key ^ value) * 0x9e3779b1u;
-    return x ^ (x >> 15u);
-}
-
-fn pose_key(pose: Rows, group: u32) -> u32 {
-    var key = mix_key(0x2545f491u, group);
-    for (var row = 0u; row < 3u; row++) {
-        var values: vec4<f32>;
-        switch row {
-            case 0u: { values = pose.r0; }
-            case 1u: { values = pose.r1; }
-            default: { values = pose.r2; }
-        }
-        let bits = bitcast<vec4<u32>>(values);
-        key = mix_key(mix_key(mix_key(mix_key(key, bits.x), bits.y), bits.z), bits.w);
-    }
-    return key;
-}
 
 fn group_start(group: u32) -> u32 {
     return ids[map_start(SKY_MAP + 1u) + group];
@@ -133,7 +113,7 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     let bounds = caster_box(world_center, world_half);
     let low = bounds[0];
     let high = bounds[1];
-    let key = pose_key(pose, batch.group);
+    let key = pose_key(pose);
     let state = stillness[candidate.slot];
     var count = state.y & 0xffu;
     var leveled = state.y & LEVELED;
@@ -157,6 +137,9 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let moving = count < select(MOVING_UNTIL, MOVING_UNTIL_RESTLESS, restless != 0u);
     let kept = count >= keep_after;
+    if kept && !moving {
+        restless = 0u;
+    }
     if kept {
         leveled = LEVELED;
         footprint = vec2<u32>(

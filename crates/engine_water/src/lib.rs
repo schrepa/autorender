@@ -38,7 +38,7 @@ mod work;
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Cut, JobKind, Jobs, Schedule, Source, Spawner, stats};
 use engine_places::ground::Heightfield;
-use engine_places::water::Waterline;
+use engine_places::water::{WaterWork, Waterline};
 use engine_render::{DebugModes, DebugShown, RenderBricks};
 
 pub(crate) use engine_codec as codec;
@@ -116,6 +116,7 @@ impl Brick for WaterBrick {
             .resource::<ParticleTallies>()
             .piece::<gpu::WaterPiece>()
             .fill::<Waterline>(Some(shaders::water::faces::water::MODULE))
+            .fill::<WaterWork>(None)
             .observation::<views::WaterFlowQuery>();
         for (index, mode) in debug::modes().enumerate() {
             let wgsl = (index == 0).then_some(shaders::water::modes::MODULE);
@@ -132,6 +133,7 @@ impl Brick for WaterBrick {
                     drawn::draw,
                     water_settle::plan_settles,
                     water_blocks::place_blocks,
+                    work::publish_work,
                     water_sim::plan_sim,
                     water_particles::plan_particles,
                     state::publish_waterline,
@@ -157,7 +159,6 @@ impl Brick for WaterBrick {
 }
 
 fn water_stats(
-    water: Res<Water>,
     state: Res<WaterState>,
     tallies: Res<ParticleTallies>,
     heightfield: Res<Heightfield>,
@@ -167,7 +168,7 @@ fn water_stats(
         PARTICLE_FOAM_BORN, PARTICLE_FOAM_DROPPED, PARTICLE_FOAM_LIVE, PARTICLE_WAVES_BORN,
         PARTICLE_WAVES_DROPPED, PARTICLE_WAVES_LIVE,
     };
-    let frame = water.enabled && !state.watered.is_empty();
+    let frame = !state.watered.is_empty();
     let (cell_cut, [live_cut, live_steps, live_behind, live_setup, live_waiting]) = if frame {
         state.live.cells()
     } else {

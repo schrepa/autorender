@@ -4,7 +4,7 @@ use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
     AssetLibrary, GlobalTransforms, Material, MaterialBinding, MaterialHandle, Mesh3d, MeshHandle,
-    Shown, Surface, Switches, Transform,
+    Revision, Shown, Surface, Switches, Transform,
 };
 use engine_places::meshes::{Cube, FirstPersonLayer, Instances, Tint};
 use engine_places::splines::SplineMesh;
@@ -198,7 +198,7 @@ pub(crate) struct RetainedRender {
     materials: Materials,
     asset_revision: Option<(u64, u64)>,
     material_revision: Option<u64>,
-    topology: Option<u64>,
+    topology: Option<Revision>,
     switches: Switches,
     color_writes: Vec<u32>,
     color_sequence: u64,

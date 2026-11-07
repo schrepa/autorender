@@ -1,0 +1,853 @@
+{
+  "id": "render-particles",
+  "revision": 1,
+  "camera": {
+    "position": [
+      0,
+      8,
+      -30
+    ],
+    "target": [
+      0,
+      3,
+      0
+    ],
+    "fov_degrees": 55,
+    "near": 0.1,
+    "far": 300
+  },
+  "textures": [
+    {
+      "id": "grate",
+      "width": 2,
+      "height": 2,
+      "rgba8": "/////////wD///8A/////w=="
+    }
+  ],
+  "materials": [
+    {
+      "id": "ground",
+      "color": [
+        0.18,
+        0.18,
+        0.2,
+        1
+      ],
+      "surface": {
+        "roughness": 0.85
+      }
+    },
+    {
+      "id": "screen",
+      "color": [
+        0.7,
+        0.72,
+        0.75,
+        1
+      ],
+      "texture": {
+        "id": "grate",
+        "mag_filter": "nearest",
+        "scale": [
+          24,
+          24
+        ]
+      },
+      "alpha_mode": "mask",
+      "alpha_cutoff": 0.5,
+      "double_sided": true
+    }
+  ],
+  "meshes": [
+    {
+      "id": "floor",
+      "source": {
+        "kind": "plane"
+      }
+    }
+  ],
+  "entities": [
+    {
+      "id": "floor",
+      "mesh": "floor",
+      "material": "ground",
+      "transform": {
+        "scale": [
+          80,
+          1,
+          80
+        ]
+      }
+    },
+    {
+      "id": "screen-0",
+      "mesh": "floor",
+      "material": "screen",
+      "transform": {
+        "translation": [
+          -8,
+          3,
+          -12
+        ],
+        "rotation_degrees": [
+          90,
+          0,
+          0
+        ],
+        "scale": [
+          14,
+          1,
+          6
+        ]
+      }
+    },
+    {
+      "id": "screen-1",
+      "mesh": "floor",
+      "material": "screen",
+      "transform": {
+        "translation": [
+          8,
+          3,
+          -4
+        ],
+        "rotation_degrees": [
+          90,
+          0,
+          0
+        ],
+        "scale": [
+          14,
+          1,
+          6
+        ]
+      }
+    },
+    {
+      "id": "screen-2",
+      "mesh": "floor",
+      "material": "screen",
+      "transform": {
+        "translation": [
+          -8,
+          3,
+          4
+        ],
+        "rotation_degrees": [
+          90,
+          0,
+          0
+        ],
+        "scale": [
+          14,
+          1,
+          6
+        ]
+      }
+    },
+    {
+      "id": "screen-3",
+      "mesh": "floor",
+      "material": "screen",
+      "transform": {
+        "translation": [
+          8,
+          3,
+          12
+        ],
+        "rotation_degrees": [
+          90,
+          0,
+          0
+        ],
+        "scale": [
+          14,
+          1,
+          6
+        ]
+      }
+    },
+    {
+      "id": "emitter-0-0",
+      "transform": {
+        "translation": [
+          -9.0,
+          0.2,
+          -9.0
+        ]
+      },
+      "particles": {
+        "rate": 300,
+        "lifetime": 4,
+        "lifetime_spread": 0.3,
+        "speed": 1.5,
+        "spread_degrees": 20,
+        "size": [
+          0.6,
+          1.8
+        ],
+        "acceleration": [
+          0,
+          0.3,
+          0
+        ],
+        "color": [
+          [
+            0.55,
+            0.55,
+            0.58,
+            0.5
+          ],
+          [
+            0.4,
+            0.4,
+            0.42,
+            0
+          ]
+        ],
+        "blend": "alpha",
+        "seed": 1
+      }
+    },
+    {
+      "id": "emitter-0-1",
+      "transform": {
+        "translation": [
+          -9.0,
+          0.2,
+          -3.0
+        ]
+      },
+      "particles": {
+        "rate": 1500,
+        "lifetime": 1.2,
+        "lifetime_spread": 0.4,
+        "speed": 6,
+        "spread_degrees": 35,
+        "size": [
+          0.05,
+          0.02
+        ],
+        "stretch": 2,
+        "acceleration": [
+          0,
+          -9.8,
+          0
+        ],
+        "color": [
+          [
+            1,
+            0.7,
+            0.3,
+            1
+          ],
+          [
+            1,
+            0.3,
+            0.1,
+            0
+          ]
+        ],
+        "brightness": 4,
+        "blend": "additive",
+        "seed": 2
+      }
+    },
+    {
+      "id": "emitter-0-2",
+      "transform": {
+        "translation": [
+          -9.0,
+          0.2,
+          3.0
+        ]
+      },
+      "particles": {
+        "rate": 80,
+        "lifetime": 6,
+        "speed": 0.4,
+        "spread_degrees": 90,
+        "size": [
+          3,
+          6
+        ],
+        "shape": "box",
+        "extent": [
+          3,
+          0.5,
+          3
+        ],
+        "color": [
+          [
+            0.8,
+            0.85,
+            0.9,
+            0.25
+          ],
+          [
+            0.8,
+            0.85,
+            0.9,
+            0
+          ]
+        ],
+        "blend": "mist",
+        "seed": 3
+      }
+    },
+    {
+      "id": "emitter-0-3",
+      "transform": {
+        "translation": [
+          -9.0,
+          0.2,
+          9.0
+        ]
+      },
+      "particles": {
+        "rate": 300,
+        "lifetime": 4,
+        "lifetime_spread": 0.3,
+        "speed": 1.5,
+        "spread_degrees": 20,
+        "size": [
+          0.6,
+          1.8
+        ],
+        "acceleration": [
+          0,
+          0.3,
+          0
+        ],
+        "color": [
+          [
+            0.55,
+            0.55,
+            0.58,
+            0.5
+          ],
+          [
+            0.4,
+            0.4,
+            0.42,
+            0
+          ]
+        ],
+        "blend": "alpha",
+        "seed": 4
+      }
+    },
+    {
+      "id": "emitter-1-0",
+      "transform": {
+        "translation": [
+          -3.0,
+          0.2,
+          -9.0
+        ]
+      },
+      "particles": {
+        "rate": 1500,
+        "lifetime": 1.2,
+        "lifetime_spread": 0.4,
+        "speed": 6,
+        "spread_degrees": 35,
+        "size": [
+          0.05,
+          0.02
+        ],
+        "stretch": 2,
+        "acceleration": [
+          0,
+          -9.8,
+          0
+        ],
+        "color": [
+          [
+            1,
+            0.7,
+            0.3,
+            1
+          ],
+          [
+            1,
+            0.3,
+            0.1,
+            0
+          ]
+        ],
+        "brightness": 4,
+        "blend": "additive",
+        "seed": 5
+      }
+    },
+    {
+      "id": "emitter-1-1",
+      "transform": {
+        "translation": [
+          -3.0,
+          0.2,
+          -3.0
+        ]
+      },
+      "particles": {
+        "rate": 80,
+        "lifetime": 6,
+        "speed": 0.4,
+        "spread_degrees": 90,
+        "size": [
+          3,
+          6
+        ],
+        "shape": "box",
+        "extent": [
+          3,
+          0.5,
+          3
+        ],
+        "color": [
+          [
+            0.8,
+            0.85,
+            0.9,
+            0.25
+          ],
+          [
+            0.8,
+            0.85,
+            0.9,
+            0
+          ]
+        ],
+        "blend": "mist",
+        "seed": 6
+      }
+    },
+    {
+      "id": "emitter-1-2",
+      "transform": {
+        "translation": [
+          -3.0,
+          0.2,
+          3.0
+        ]
+      },
+      "particles": {
+        "rate": 300,
+        "lifetime": 4,
+        "lifetime_spread": 0.3,
+        "speed": 1.5,
+        "spread_degrees": 20,
+        "size": [
+          0.6,
+          1.8
+        ],
+        "acceleration": [
+          0,
+          0.3,
+          0
+        ],
+        "color": [
+          [
+            0.55,
+            0.55,
+            0.58,
+            0.5
+          ],
+          [
+            0.4,
+            0.4,
+            0.42,
+            0
+          ]
+        ],
+        "blend": "alpha",
+        "seed": 7
+      }
+    },
+    {
+      "id": "emitter-1-3",
+      "transform": {
+        "translation": [
+          -3.0,
+          0.2,
+          9.0
+        ]
+      },
+      "particles": {
+        "rate": 1500,
+        "lifetime": 1.2,
+        "lifetime_spread": 0.4,
+        "speed": 6,
+        "spread_degrees": 35,
+        "size": [
+          0.05,
+          0.02
+        ],
+        "stretch": 2,
+        "acceleration": [
+          0,
+          -9.8,
+          0
+        ],
+        "color": [
+          [
+            1,
+            0.7,
+            0.3,
+            1
+          ],
+          [
+            1,
+            0.3,
+            0.1,
+            0
+          ]
+        ],
+        "brightness": 4,
+        "blend": "additive",
+        "seed": 8
+      }
+    },
+    {
+      "id": "emitter-2-0",
+      "transform": {
+        "translation": [
+          3.0,
+          0.2,
+          -9.0
+        ]
+      },
+      "particles": {
+        "rate": 80,
+        "lifetime": 6,
+        "speed": 0.4,
+        "spread_degrees": 90,
+        "size": [
+          3,
+          6
+        ],
+        "shape": "box",
+        "extent": [
+          3,
+          0.5,
+          3
+        ],
+        "color": [
+          [
+            0.8,
+            0.85,
+            0.9,
+            0.25
+          ],
+          [
+            0.8,
+            0.85,
+            0.9,
+            0
+          ]
+        ],
+        "blend": "mist",
+        "seed": 9
+      }
+    },
+    {
+      "id": "emitter-2-1",
+      "transform": {
+        "translation": [
+          3.0,
+          0.2,
+          -3.0
+        ]
+      },
+      "particles": {
+        "rate": 300,
+        "lifetime": 4,
+        "lifetime_spread": 0.3,
+        "speed": 1.5,
+        "spread_degrees": 20,
+        "size": [
+          0.6,
+          1.8
+        ],
+        "acceleration": [
+          0,
+          0.3,
+          0
+        ],
+        "color": [
+          [
+            0.55,
+            0.55,
+            0.58,
+            0.5
+          ],
+          [
+            0.4,
+            0.4,
+            0.42,
+            0
+          ]
+        ],
+        "blend": "alpha",
+        "seed": 10
+      }
+    },
+    {
+      "id": "emitter-2-2",
+      "transform": {
+        "translation": [
+          3.0,
+          0.2,
+          3.0
+        ]
+      },
+      "particles": {
+        "rate": 1500,
+        "lifetime": 1.2,
+        "lifetime_spread": 0.4,
+        "speed": 6,
+        "spread_degrees": 35,
+        "size": [
+          0.05,
+          0.02
+        ],
+        "stretch": 2,
+        "acceleration": [
+          0,
+          -9.8,
+          0
+        ],
+        "color": [
+          [
+            1,
+            0.7,
+            0.3,
+            1
+          ],
+          [
+            1,
+            0.3,
+            0.1,
+            0
+          ]
+        ],
+        "brightness": 4,
+        "blend": "additive",
+        "seed": 11
+      }
+    },
+    {
+      "id": "emitter-2-3",
+      "transform": {
+        "translation": [
+          3.0,
+          0.2,
+          9.0
+        ]
+      },
+      "particles": {
+        "rate": 80,
+        "lifetime": 6,
+        "speed": 0.4,
+        "spread_degrees": 90,
+        "size": [
+          3,
+          6
+        ],
+        "shape": "box",
+        "extent": [
+          3,
+          0.5,
+          3
+        ],
+        "color": [
+          [
+            0.8,
+            0.85,
+            0.9,
+            0.25
+          ],
+          [
+            0.8,
+            0.85,
+            0.9,
+            0
+          ]
+        ],
+        "blend": "mist",
+        "seed": 12
+      }
+    },
+    {
+      "id": "emitter-3-0",
+      "transform": {
+        "translation": [
+          9.0,
+          0.2,
+          -9.0
+        ]
+      },
+      "particles": {
+        "rate": 300,
+        "lifetime": 4,
+        "lifetime_spread": 0.3,
+        "speed": 1.5,
+        "spread_degrees": 20,
+        "size": [
+          0.6,
+          1.8
+        ],
+        "acceleration": [
+          0,
+          0.3,
+          0
+        ],
+        "color": [
+          [
+            0.55,
+            0.55,
+            0.58,
+            0.5
+          ],
+          [
+            0.4,
+            0.4,
+            0.42,
+            0
+          ]
+        ],
+        "blend": "alpha",
+        "seed": 13
+      }
+    },
+    {
+      "id": "emitter-3-1",
+      "transform": {
+        "translation": [
+          9.0,
+          0.2,
+          -3.0
+        ]
+      },
+      "particles": {
+        "rate": 1500,
+        "lifetime": 1.2,
+        "lifetime_spread": 0.4,
+        "speed": 6,
+        "spread_degrees": 35,
+        "size": [
+          0.05,
+          0.02
+        ],
+        "stretch": 2,
+        "acceleration": [
+          0,
+          -9.8,
+          0
+        ],
+        "color": [
+          [
+            1,
+            0.7,
+            0.3,
+            1
+          ],
+          [
+            1,
+            0.3,
+            0.1,
+            0
+          ]
+        ],
+        "brightness": 4,
+        "blend": "additive",
+        "seed": 14
+      }
+    },
+    {
+      "id": "emitter-3-2",
+      "transform": {
+        "translation": [
+          9.0,
+          0.2,
+          3.0
+        ]
+      },
+      "particles": {
+        "rate": 80,
+        "lifetime": 6,
+        "speed": 0.4,
+        "spread_degrees": 90,
+        "size": [
+          3,
+          6
+        ],
+        "shape": "box",
+        "extent": [
+          3,
+          0.5,
+          3
+        ],
+        "color": [
+          [
+            0.8,
+            0.85,
+            0.9,
+            0.25
+          ],
+          [
+            0.8,
+            0.85,
+            0.9,
+            0
+          ]
+        ],
+        "blend": "mist",
+        "seed": 15
+      }
+    },
+    {
+      "id": "emitter-3-3",
+      "transform": {
+        "translation": [
+          9.0,
+          0.2,
+          9.0
+        ]
+      },
+      "particles": {
+        "rate": 300,
+        "lifetime": 4,
+        "lifetime_spread": 0.3,
+        "speed": 1.5,
+        "spread_degrees": 20,
+        "size": [
+          0.6,
+          1.8
+        ],
+        "acceleration": [
+          0,
+          0.3,
+          0
+        ],
+        "color": [
+          [
+            0.55,
+            0.55,
+            0.58,
+            0.5
+          ],
+          [
+            0.4,
+            0.4,
+            0.42,
+            0
+          ]
+        ],
+        "blend": "alpha",
+        "seed": 16
+      }
+    }
+  ]
+}

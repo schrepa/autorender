@@ -16,7 +16,7 @@ mod switches;
 pub(crate) mod tracking;
 mod validation;
 mod views;
-pub use global::GlobalTransform;
+pub use global::{GlobalTransform, Revision};
 pub(crate) use global::ValueIds;
 pub(crate) use switches::SeesDisabled;
 pub use switches::{DisabledByParent, EvenDisabled, Hidden, HiddenByParent, Shown, Switches};
@@ -408,10 +408,9 @@ pub struct GlobalTransforms {
     local_revisions: Vec<u64>,
     links: Vec<Link>,
     globals: Vec<PoseRows>,
-    revisions: Vec<u64>,
+    revisions: Vec<Option<Revision>>,
     indices: EntityIndices,
     order: Vec<usize>,
-    validity_epoch: u64,
     path: Vec<usize>,
     dirty: Dirty,
     changes: ChangeLog,
@@ -420,7 +419,7 @@ pub struct GlobalTransforms {
     incomplete: bool,
     limit: usize,
     report: HierarchyReport,
-    topology_revision: u64,
+    topology_revision: Revision,
     revision: u64,
 }
 
@@ -442,7 +441,6 @@ impl FromWorld for GlobalTransforms {
             revisions: Vec::new(),
             indices: EntityIndices::default(),
             order: Vec::new(),
-            validity_epoch: 0,
             path: Vec::new(),
             dirty: Dirty::default(),
             changes: ChangeLog::default(),
@@ -451,7 +449,7 @@ impl FromWorld for GlobalTransforms {
             incomplete: true,
             limit: node_limit(world),
             report: HierarchyReport::default(),
-            topology_revision: 0,
+            topology_revision: ValueIds::default().next(),
             revision: 0,
         }
     }
@@ -605,10 +603,9 @@ struct Nodes<'a> {
     locals: &'a mut [NodePose],
     links: &'a mut [Link],
     globals: &'a mut [PoseRows],
-    revisions: &'a mut [u64],
+    revisions: &'a mut [Option<Revision>],
     flags: &'a mut [bool],
     invalid_transforms: &'a mut usize,
-    validity_epoch: &'a mut u64,
     changes: &'a mut ChangeLog,
     moved: &'a mut Moved,
 }
@@ -652,7 +649,6 @@ impl Nodes<'_> {
             revisions,
             flags,
             invalid_transforms,
-            validity_epoch,
             changes,
             moved,
         } = self;
@@ -664,7 +660,6 @@ impl Nodes<'_> {
             revisions: &mut revisions[..len],
             flags: &mut flags[..len],
             invalid_transforms,
-            validity_epoch,
             changes,
             moved,
         }
@@ -729,15 +724,14 @@ impl Nodes<'_> {
             } else {
                 *self.invalid_transforms += 1;
             }
-            *self.validity_epoch += 1;
             link.valid = valid;
         }
-        if (validity_changed || *revision == 0)
+        if (validity_changed || revision.is_none())
             && let Some(observer) = observer
         {
             observer.observe_validity(self.entities[index], &self.locals[index], valid);
         }
-        let publish = changed || *revision == 0;
+        let publish = changed || revision.is_none();
         if let Some(rows) = rows
             && changed
         {
@@ -746,7 +740,7 @@ impl Nodes<'_> {
         self.flags[index] = false;
         work.evaluated += 1;
         if publish {
-            *revision = work.value_ids.next();
+            *revision = Some(work.value_ids.next());
             work.written += 1;
             self.changes.record(index);
             self.moved.push(self.entities[index]);
@@ -761,7 +755,7 @@ impl GlobalTransforms {
         Some(self.value_at(index))
     }
 
-    pub fn get_with_revision(&self, entity: Entity) -> Option<(GlobalTransform, u64)> {
+    pub fn get_with_revision(&self, entity: Entity) -> Option<(GlobalTransform, Option<Revision>)> {
         let index = *self.indices.get(&entity)?;
         Some((self.value_at(index), self.revisions[index]))
     }
@@ -860,7 +854,6 @@ impl GlobalTransforms {
             report,
             changes,
             moved,
-            validity_epoch,
             ..
         } = self;
         let Dirty {
@@ -882,7 +875,6 @@ impl GlobalTransforms {
             revisions,
             flags,
             invalid_transforms: &mut report.invalid_transforms,
-            validity_epoch,
             changes,
             moved,
         }
@@ -1100,7 +1092,7 @@ impl GlobalTransforms {
             self.local_revisions.push(self.revision.wrapping_add(1));
             self.links.push(Link::DETACHED);
             self.globals.push(pose_rows(Mat4::IDENTITY));
-            self.revisions.push(0);
+            self.revisions.push(None);
         }
         self.indices.clear();
         self.indices.reserve(admitted);
@@ -1150,7 +1142,6 @@ impl GlobalTransforms {
         self.moved.forget(self.links.len());
         report.invalid_transforms = report.transforms;
         self.report = report;
-        self.validity_epoch += 1;
         self.topology_revision = work.value_ids.next();
     }
 
@@ -1173,7 +1164,6 @@ impl GlobalTransforms {
             report,
             changes,
             moved,
-            validity_epoch,
             ..
         } = self;
         let len = links.len();
@@ -1185,7 +1175,6 @@ impl GlobalTransforms {
             revisions,
             flags: &mut dirty.flags,
             invalid_transforms: &mut report.invalid_transforms,
-            validity_epoch,
             changes,
             moved,
         }

@@ -381,10 +381,16 @@ pub(crate) fn stop_walks(
     mut navigation: ResMut<NavAgents>,
     mut jobs: Jobs,
     mut stats: ResMut<NavStats>,
+    mut walks: Query<&mut NavWalk>,
 ) {
     navigation.tick = time.tick;
     navigation.stop(&mut jobs);
     *stats = NavStats::default();
+    for mut walk in &mut walks {
+        if walk.status != NavStatus::Idle {
+            *walk = NavWalk::default();
+        }
+    }
 }
 
 fn walk(

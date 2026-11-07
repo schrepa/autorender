@@ -46,13 +46,10 @@ pub(crate) fn release(
     mut assets: ResMut<AssetLibrary>,
     mut spawner: Spawner<SplinesBrick>,
 ) {
-    let Some(chunks) = builds.built.get(&entity) else {
+    let Some(chunks) = builds.built.remove(&entity) else {
         return;
     };
-    discard(chunks, &alive, &mut assets, &mut spawner);
-    if !alive.contains(entity) {
-        builds.built.remove(&entity);
-    }
+    discard(&chunks, &alive, &mut assets, &mut spawner);
 }
 
 fn discard(

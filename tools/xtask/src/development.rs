@@ -276,7 +276,8 @@ fn scene_command(arguments: &[String]) -> Result<Value, Error> {
                 Path::new(path),
                 &source,
                 revision,
-                &crate::bricks::standard_kinds()?
+                &crate::bricks::standard_kinds()?,
+                crate::checkouts::alive
             )?))
         }
         [command] if command == "schema" => {

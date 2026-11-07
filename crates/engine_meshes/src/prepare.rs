@@ -13,8 +13,8 @@ use crate::layouts::{
 };
 use crate::order::MeshPlan;
 use crate::presentation::{
-    CASTER_TOTALS_BYTES, CasterTotals, FADE_MARGIN, Kept, PresentationTotals, TOTALS_BYTES,
-    UploadSources, WATCHED, frustum_uniform, grow, rasterized, storage_bytes,
+    CASTER_TOTALS_BYTES, CasterTotals, FADE_MARGIN, FrameState, Kept, PresentationTotals,
+    TOTALS_BYTES, UploadSources, WATCHED, frustum_uniform, grow, rasterized, storage_bytes,
 };
 use crate::retained::RetainedRender;
 use crate::uploads::{ColorData, PoseData, UploadRange, color_data, listed_ranges};
@@ -65,6 +65,9 @@ impl MeshesGpu {
         ): SystemParamItem<'_, '_, <Self as GpuPart>::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        if cx.fresh() {
+            self.state = FrameState::default();
+        }
         if let Some(error) = &plan.refused {
             cx.refuse(error.clone());
             return;

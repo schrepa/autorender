@@ -41,6 +41,7 @@ pub struct DevSession<G: Game> {
     paused: bool,
     started: Instant,
     instance: String,
+    id: Option<Value>,
 }
 
 impl<G: Game> DevSession<G> {
@@ -67,6 +68,7 @@ impl<G: Game> DevSession<G> {
             paused: true,
             started: Instant::now(),
             instance,
+            id: None,
         }
     }
 
@@ -147,7 +149,12 @@ impl<G: Game> DevSession<G> {
             };
             match lines.recv_timeout(wait) {
                 Ok(line) => {
-                    let reply = self.request(&line);
+                    let (id, line) = request_id(&line);
+                    self.id = id;
+                    let mut reply = self.request(&line);
+                    if let Some(id) = self.id.take() {
+                        reply["id"] = id;
+                    }
                     self.reply(&reply);
                 }
                 Err(RecvTimeoutError::Timeout) => {}
@@ -268,7 +275,7 @@ impl<G: Game> DevSession<G> {
             },
             Effect::Stream { records } => {
                 for record in records {
-                    self.reply(&json!({ "verb": "watch", "record": record }));
+                    self.reply(&json!({ "verb": "watch", "record": record, "id": self.id }));
                 }
                 Outcome::default()
             }
@@ -494,6 +501,16 @@ impl<G: Game> DevSession<G> {
 
 fn adapter<G: Game>(host: &GameHost<G>) -> Value {
     json!(engine::host::AdapterStatus::of(host.adapter()))
+}
+
+fn request_id(line: &str) -> (Option<Value>, String) {
+    match serde_json::from_str::<Value>(line) {
+        Ok(Value::Object(mut command)) if command.contains_key("id") => {
+            let id = command.remove("id");
+            (id, Value::Object(command).to_string())
+        }
+        _ => (None, line.to_owned()),
+    }
 }
 
 fn read_lines() -> Receiver<String> {

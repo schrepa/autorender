@@ -1,0 +1,149 @@
+{
+  "id": "render-world",
+  "revision": 1,
+  "camera": {
+    "position": [
+      -430,
+      280,
+      -430
+    ],
+    "target": [
+      40,
+      40,
+      40
+    ],
+    "fov_degrees": 55,
+    "near": 0.5,
+    "far": 4000
+  },
+  "environment": {
+    "ground_cover": {
+      "looks": {
+        "meadow": {
+          "density": 60
+        }
+      }
+    }
+  },
+  "materials": [],
+  "meshes": [],
+  "entities": [
+    {
+      "id": "ground",
+      "terrain": {
+        "origin": [
+          -512,
+          0,
+          -512
+        ],
+        "tiles": [
+          4,
+          4
+        ],
+        "spacing": 1,
+        "collision": false,
+        "layers": [
+          {
+            "type": "noise",
+            "seed": 11,
+            "height": 180,
+            "wavelength": 700
+          },
+          {
+            "type": "erosion",
+            "level": 1,
+            "rounds": 8,
+            "incision": 0.002,
+            "creep": 4
+          },
+          {
+            "type": "stamp",
+            "center": [
+              560,
+              470
+            ],
+            "radius": 90,
+            "falloff": 120,
+            "op": {
+              "lower": 25
+            }
+          },
+          {
+            "type": "hydrology",
+            "level": 1,
+            "discharge": 4
+          }
+        ],
+        "surface": {
+          "materials": [
+            {
+              "id": "meadow",
+              "color": [
+                0.12,
+                0.2,
+                0.06
+              ]
+            },
+            {
+              "id": "rock",
+              "color": [
+                0.3,
+                0.28,
+                0.26
+              ],
+              "roughness": 0.8
+            },
+            {
+              "id": "snow",
+              "color": [
+                0.85,
+                0.87,
+                0.9
+              ],
+              "roughness": 0.5
+            }
+          ],
+          "biomes": [
+            {
+              "id": "lowland",
+              "layers": [
+                {
+                  "material": "meadow"
+                },
+                {
+                  "material": "rock",
+                  "mask": {
+                    "ramp": {
+                      "map": "slope",
+                      "from": 25,
+                      "to": 35
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "id": "summit",
+              "fitness": {
+                "ramp": {
+                  "map": "height",
+                  "from": 130,
+                  "to": 150
+                }
+              },
+              "layers": [
+                {
+                  "material": "snow"
+                }
+              ]
+            }
+          ]
+        },
+        "surroundings": {
+          "reach": 3000,
+          "blend": 128
+        }
+      }
+    }
+  ]
+}

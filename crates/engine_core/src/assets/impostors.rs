@@ -1258,6 +1258,10 @@ fn settle_books(
     }
     let asked: Vec<(Entity, &ImpostorAsks)> = asks.iter().collect();
     if asked.is_empty() {
+        if let Some(book) = held.as_mut() {
+            book.poll(&mut cx, records);
+            retain_book(book, &mut cx, sources);
+        }
         return Vec::new();
     }
     let created = held.is_none();

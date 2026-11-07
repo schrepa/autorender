@@ -234,6 +234,14 @@ impl Statics {
         });
     }
 
+    pub fn clear(&mut self, solver: &mut Solver) {
+        for ground in self.ground.drain(..) {
+            solver.remove_collider(ground.handle);
+        }
+        self.ground_revision = None;
+        self.forget_near(solver);
+    }
+
     fn forget_near(&mut self, solver: &mut Solver) {
         for (_, handle) in self.placed.drain() {
             solver.remove_collider(handle);

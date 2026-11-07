@@ -282,6 +282,8 @@ impl PhysicsWorld {
                     .binary_search_by_key(&entity, |body| body.entity)
                     .is_ok()
             });
+        } else {
+            self.statics.clear(solver);
         }
         let samples = push(&mut self.bodies, solver, around, pushes);
         {

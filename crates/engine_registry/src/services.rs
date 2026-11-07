@@ -143,8 +143,8 @@ impl InputState {
         self.shown.released.contains(&action)
     }
 
-    pub fn clear(&mut self) {
-        *self = Self::default();
+    pub fn drop_tick_edges(&mut self) {
+        self.next_tick = Edges::default();
     }
 
     pub fn begin_tick(&mut self) {

@@ -119,7 +119,8 @@ export async function launchNativeSession({ program, args = [], session = random
   await mkdir(artifacts, { recursive: true });
   const child = spawn(program, [...args, "--dev", "--dev-artifacts", artifacts], { cwd: workspace, stdio: ["pipe", "pipe", "pipe"] });
   const diagnostics = [];
-  const waiting = [];
+  const waiting = new Map();
+  let sent = 0;
   let closing, invalidated = false, invalidationCallback, ready;
   let panic;
   const panicked = () => ({ ok: false, error: { code: "runtime_panicked", path: "$", got: panic } });
@@ -138,21 +139,26 @@ export async function launchNativeSession({ program, args = [], session = random
     let value;
     try { value = JSON.parse(line); } catch { diagnostic("stdout", line); return; }
     if (ready) { const first = ready; ready = undefined; first.resolve(value); return; }
-    if (value && typeof value === "object" && "record" in value && !("ok" in value)) {
-      waiting[0]?.onRecord?.(value.record);
+    const pending = waiting.get(value?.id);
+    if (!pending) { diagnostic("stdout", line); return; }
+    if ("record" in value && !("ok" in value)) {
+      pending.onRecord?.(value.record);
       return;
     }
-    waiting.shift()?.resolve(value);
+    waiting.delete(value.id);
+    delete value.id;
+    pending.resolve(value);
   });
   function invalidate() {
     if (invalidated) return;
     invalidated = true;
     const error = new AgentError("session_unavailable", "$", { expected: "live", got: { diagnostics: diagnostics.slice(-5) } });
     ready?.reject(error);
-    for (const pending of waiting.splice(0)) {
+    for (const pending of waiting.values()) {
       if (panic) pending.resolve(panicked());
       else pending.reject(error);
     }
+    waiting.clear();
     try { invalidationCallback?.(); } finally { void close(); }
   }
   child.on("error", error => { diagnostic("spawn", String(error)); invalidate(); });
@@ -179,8 +185,9 @@ export async function launchNativeSession({ program, args = [], session = random
     if (panic && invalidated) return Promise.resolve(panicked());
     if (invalidated || closing) return Promise.reject(new AgentError("session_unavailable", "$", { expected: "live" }));
     return new Promise((resolveReply, rejectReply) => {
-      waiting.push({ resolve: resolveReply, reject: rejectReply, onRecord });
-      child.stdin.write(`${JSON.stringify(command)}\n`);
+      const id = ++sent;
+      waiting.set(id, { resolve: resolveReply, reject: rejectReply, onRecord });
+      child.stdin.write(`${JSON.stringify({ ...command, id })}\n`);
     }).then(reply => {
       recordReceived(reply);
       return reply;

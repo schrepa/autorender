@@ -1,0 +1,6 @@
+{
+  "project": "crates/engine_player",
+  "options": {
+    "source": "web/scripts/fixtures/render-world.scene.json"
+  }
+}

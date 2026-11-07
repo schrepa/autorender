@@ -198,14 +198,19 @@ pub(crate) fn advance(
     books.ticked.retain(|entity, _| animators.contains(*entity));
     for (entity, mut animator) in &mut animators {
         let root = globals.pose(entity).map_or(Mat4::IDENTITY, Mat4::from);
-        let ticked = books
-            .ticked
-            .entry(entity)
-            .or_insert_with(|| Ticked::new(animator.rig()));
+        let mut fresh = false;
+        let ticked = books.ticked.entry(entity).or_insert_with(|| {
+            fresh = true;
+            Ticked::new(animator.rig())
+        });
         if !Arc::ptr_eq(&ticked.rig, animator.rig()) {
             *ticked = Ticked::new(animator.rig());
+            fresh = true;
         }
         step(&mut animator, ticked, time.delta_seconds, root);
+        if fresh {
+            ticked.previous.clone_from(&ticked.locals);
+        }
     }
 }
 

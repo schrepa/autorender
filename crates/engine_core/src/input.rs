@@ -45,9 +45,8 @@ impl ActionInput {
         self.state.ingest(held, pressed, released);
     }
 
-    #[doc(hidden)]
-    pub fn clear(&mut self) {
-        self.state.clear();
+    pub(crate) fn drop_tick_edges(&mut self) {
+        self.state.drop_tick_edges();
     }
 
     pub(crate) fn begin_tick(&mut self) {

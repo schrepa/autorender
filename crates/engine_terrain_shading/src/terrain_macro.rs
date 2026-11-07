@@ -56,6 +56,12 @@ impl MacroMaps {
         self.held.iter().flatten().count() as u32
     }
 
+    pub(crate) fn forget(&mut self) {
+        self.shape = None;
+        self.empty = false;
+        self.held.clear();
+    }
+
     pub(crate) fn prepare(
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,

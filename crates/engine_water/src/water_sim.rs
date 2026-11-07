@@ -22,7 +22,7 @@ use crate::water::WaterGpu;
 use crate::water_kernels::{Capacity, Kernels, Layout, SetupHandles, SlotHandles, grid, squares};
 use crate::windows::WaterRead;
 use crate::{
-    BLOCK_CELLS, BLOCK_SIDE, Footprint, LiveWater, NO_BLOCK, SteadyWater, StoredBlocks, Water,
+    BLOCK_CELLS, BLOCK_SIDE, Footprint, LiveWater, NO_BLOCK, SteadyWater, StoredBlocks,
     WaterWindow, live_steps,
 };
 
@@ -258,9 +258,7 @@ impl LiveSim {
     ) {
         self.work = SimWork::default();
         let Some(live) = live else {
-            if self.window.take().is_some() {
-                self.generation += 1;
-            }
+            self.window = None;
             (self.steps, self.behind, self.tick, self.touches) = (0, 0, None, [0; 2]);
             return;
         };
@@ -293,16 +291,12 @@ impl LiveSim {
         if live.sweep {
             current.sweep_left = current.held.len();
         }
-        let ready = current.ready;
         let (table, listed) = current.set_up(window, sets_up, resident);
         self.work.table = table;
         self.work.listed = listed.map(|mut listed| {
             listed.frame.terrain = [live.ground.unwrap_or(0), 0, 0, 0];
             listed
         });
-        if current.ready != ready {
-            self.generation += 1;
-        }
         let (cells, cell) = (window.cells, window.cell);
         let step = step_seconds(cell);
         let tick = (seconds / f64::from(step)).floor() as i64;
@@ -353,11 +347,8 @@ impl LiveSim {
         });
     }
 
-    fn rest(&mut self, enabled: bool) {
+    fn rest(&mut self) {
         self.prepare(None, &|_| false, 0.0);
-        if !enabled {
-            self.made = false;
-        }
     }
 
     pub(crate) fn cells(&self) -> (Cut, [u32; 5]) {
@@ -763,7 +754,6 @@ fn touching(window: &WaterWindow, touches: &[WaterObstacle]) -> Option<SimTouche
 }
 
 pub(crate) fn plan_sim(
-    water: Res<Water>,
     obstacles: Res<WaterObstacles>,
     (ground, time, camera): (Res<GroundTiles>, Res<FrameTime>, Res<Camera>),
     (tiles, baking): (Res<TerrainTiles>, Res<GroundBaking>),
@@ -777,8 +767,8 @@ pub(crate) fn plan_sim(
         moved |= std::mem::take(&mut terrain.window_moved);
         changed.append(&mut terrain.window_changed);
     }
-    if !water.enabled || state.watered.is_empty() {
-        state.live.rest(water.enabled);
+    if state.watered.is_empty() {
+        state.live.rest();
         return;
     }
     let eye = camera.position;

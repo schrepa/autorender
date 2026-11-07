@@ -77,6 +77,7 @@ pub fn save_scene(
     candidate: &str,
     expected_revision: u64,
     kinds: &SceneKinds,
+    alive: impl Fn(u64) -> bool,
 ) -> Result<SaveReport, Error> {
     let candidate_scene = SceneDocument::from_json(candidate)?;
     candidate_scene.validate(kinds)?;
@@ -95,23 +96,7 @@ pub fn save_scene(
             Error::new(ErrorCode::InvalidPath, path.display().to_string()).expected(Expected::File)
         })?
         .to_string_lossy();
-    let lock_path = path.with_file_name(format!(".{name}.engine-dev.lock"));
-    let lock_file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&lock_path)
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::AlreadyExists {
-                Error::new(ErrorCode::SourceLocked, lock_path.display().to_string())
-                    .expected(Expected::Absent)
-            } else {
-                io_error(&lock_path, &error)
-            }
-        })?;
-    let _lock = TemporaryFile {
-        path: lock_path,
-        file: Some(lock_file),
-    };
+    let _lock = hold_lock(path.with_file_name(format!(".{name}.engine-dev.lock")), alive)?;
     let original = read_scene_source(&path)?;
     let current = SceneDocument::from_json(&original)?;
     current.validate(kinds)?;
@@ -161,6 +146,44 @@ pub fn save_scene(
         path,
         persisted: true,
     })
+}
+
+fn hold_lock(path: PathBuf, alive: impl Fn(u64) -> bool) -> Result<TemporaryFile, Error> {
+    let create = || OpenOptions::new().write(true).create_new(true).open(&path);
+    let opened = match create() {
+        Err(error)
+            if error.kind() == std::io::ErrorKind::AlreadyExists
+                && lock_owner(&path).is_some_and(|pid| !alive(pid)) =>
+        {
+            fs::remove_file(&path).map_err(|error| io_error(&path, &error))?;
+            create()
+        }
+        opened => opened,
+    };
+    let file = opened.map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            Error::new(ErrorCode::SourceLocked, path.display().to_string())
+                .expected(Expected::Absent)
+        } else {
+            io_error(&path, &error)
+        }
+    })?;
+    let mut lock = TemporaryFile {
+        path,
+        file: Some(file),
+    };
+    let owner = serde_json::json!({ "pid": std::process::id() }).to_string();
+    lock.file
+        .as_mut()
+        .expect("lock_file_open")
+        .write_all(owner.as_bytes())
+        .map_err(|error| io_error(&lock.path, &error))?;
+    Ok(lock)
+}
+
+fn lock_owner(path: &Path) -> Option<u64> {
+    let text = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<serde_json::Value>(&text).ok()?["pid"].as_u64()
 }
 
 struct TemporaryFile {

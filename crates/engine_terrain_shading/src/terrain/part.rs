@@ -548,6 +548,9 @@ impl GpuPart for TerrainGpu {
         let (settings, tiles, atlas, bakes, totals) = lists;
         let (water, cover, shadows, captures) = neighbors;
         let (view, shown, resolve, camera) = frame;
+        if cx.fresh() {
+            self.forget();
+        }
         self.debug = shown.owner.is_some();
         self.temporal = view.temporal();
         let size = view.render_size();
@@ -789,6 +792,21 @@ impl GpuPart for TerrainGpu {
 }
 
 impl TerrainGpu {
+    fn forget(&mut self) {
+        self.atlas.rest();
+        self.tables = TerrainTables::default();
+        self.surface = SurfaceTrees::default();
+        self.patches = PatchDraws::default();
+        self.horizons.rest();
+        self.maps.forget();
+        self.sky.forget();
+        self.bounce.forget();
+        self.macro_maps.forget();
+        self.frame = TerrainFrame::default();
+        self.drawn = false;
+        self.deferred = false;
+    }
+
     fn deliver_stats(&self, cx: &mut Prepare<'_, Self>) {
         let wanted = self.surface.slots().count() as u32 + self.surface.dropped();
         let stats = DrawnStats {

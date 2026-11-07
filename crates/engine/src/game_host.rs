@@ -302,9 +302,10 @@ impl<G: Game> GameHost<G> {
         self.app.work_between_frames(milliseconds)
     }
 
-    pub fn set_job_workers(&mut self, workers: u32) {
-        self.jobs.set_workers(workers);
+    pub fn set_job_workers(&mut self, workers: u32) -> bool {
+        let set = self.jobs.set_workers(workers);
         self.app.set_job_workers(self.jobs.working());
+        set
     }
 
     pub fn set_job_cache(&mut self, caching: bool, verify: bool) {

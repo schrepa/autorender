@@ -434,8 +434,14 @@ fn authoring(root: &Path, refusal: &Value) -> Result<Option<Error>, String> {
                 expected => expected.as_u64().unwrap_or_default(),
             };
             let kinds = crate::bricks::standard_kinds().map_err(|error| error.to_string())?;
-            engine_dev::authoring::save_scene(&target, &candidate.to_string(), expected, &kinds)
-                .err()
+            engine_dev::authoring::save_scene(
+                &target,
+                &candidate.to_string(),
+                expected,
+                &kinds,
+                crate::checkouts::alive,
+            )
+            .err()
         }
     };
     Ok(error.map(|mut error| {

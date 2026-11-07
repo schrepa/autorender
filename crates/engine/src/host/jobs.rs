@@ -71,8 +71,16 @@ pub struct JobScheduler {
 }
 
 impl JobScheduler {
-    pub(crate) fn set_workers(&mut self, workers: u32) {
-        self.workers.resize_with(workers as usize, Load::default);
+    pub(crate) fn set_workers(&mut self, workers: u32) -> bool {
+        let busy = self
+            .workers
+            .iter()
+            .skip(workers as usize)
+            .any(|load| !load.jobs.is_empty());
+        if !busy {
+            self.workers.resize_with(workers as usize, Load::default);
+        }
+        !busy
     }
 
     pub(crate) fn working(&self) -> u32 {

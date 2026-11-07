@@ -100,7 +100,7 @@ impl From<&ParticleEmitter> for SceneEmitter {
             speed: look.speed,
             speed_spread: look.speed_spread,
             direction: look.direction.to_array(),
-            spread_degrees: look.authored_degrees.unwrap_or(look.spread.to_degrees()),
+            spread_degrees: look.spread.to_degrees(),
             acceleration: look.acceleration.to_array(),
             shape: match look.shape {
                 ParticleShape::Box => SceneParticleShape::Box,

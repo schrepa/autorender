@@ -294,7 +294,7 @@ impl Drop for Lock {
     }
 }
 
-fn alive(pid: u64) -> bool {
+pub(crate) fn alive(pid: u64) -> bool {
     let listed = if cfg!(windows) {
         Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])

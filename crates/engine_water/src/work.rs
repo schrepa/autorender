@@ -1,33 +1,27 @@
 use std::cell::Cell;
 
+use bevy_ecs::prelude::*;
 use engine_core::WorkClock;
 use engine_places::ground::GroundWork;
+use engine_places::water::WaterWork;
+
+use crate::state::WaterState;
 
 pub(crate) struct Work {
     clock: Option<fn() -> f64>,
     end: f64,
-    upload: Cell<u64>,
+    budget: u64,
+    uploaded: Cell<u64>,
 }
 
 impl Work {
-    pub(crate) fn of(clock: &WorkClock, ground: &GroundWork) -> Self {
-        Self::until(
-            clock,
-            ground,
-            clock.now().map_or(0.0, |now| now + ground.millis),
-        )
-    }
-
-    pub(crate) fn until(clock: &WorkClock, ground: &GroundWork, end: f64) -> Self {
+    pub(crate) fn of(clock: &WorkClock, ground: &GroundWork, uploaded: u64) -> Self {
         Self {
             clock: clock.reading,
-            end,
-            upload: Cell::new(ground.upload),
+            end: ground.end,
+            budget: ground.upload,
+            uploaded: Cell::new(uploaded),
         }
-    }
-
-    pub(crate) fn end(&self) -> f64 {
-        self.end
     }
 
     pub(crate) fn expired(&self) -> bool {
@@ -35,10 +29,20 @@ impl Work {
     }
 
     pub(crate) fn uploads(&self) -> bool {
-        self.upload.get() > 0
+        self.uploaded.get() < self.budget
     }
 
     pub(crate) fn upload(&self, bytes: u64) {
-        self.upload.set(self.upload.get().saturating_sub(bytes));
+        self.uploaded.set(self.uploaded.get().saturating_add(bytes));
     }
+
+    pub(crate) fn uploaded(&self) -> u64 {
+        self.uploaded.get()
+    }
+}
+
+pub(crate) fn publish_work(state: Res<WaterState>, mut work: ResMut<WaterWork>) {
+    work.set_if_neq(WaterWork {
+        uploaded: state.uploaded,
+    });
 }

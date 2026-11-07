@@ -211,6 +211,11 @@ impl Bounce {
         self.records.clear();
     }
 
+    pub(crate) fn forget(&mut self) {
+        self.framed = false;
+        self.release();
+    }
+
     pub(crate) fn prepare(
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,

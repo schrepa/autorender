@@ -65,7 +65,7 @@ pub(crate) struct GpuInputs {
     identity: u64,
     sequence: u64,
     alpha: f32,
-    gathered: Option<u64>,
+    gathered: Option<crate::Revision>,
     current_stamps: Vec<u64>,
     previous: Vec<NodePose>,
     previous_stamps: Vec<u64>,

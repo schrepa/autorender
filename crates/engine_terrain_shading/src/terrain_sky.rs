@@ -40,7 +40,7 @@ impl SkyMaps {
         self.held.iter().flatten().count() as u32
     }
 
-    fn release(&mut self) {
+    pub(crate) fn forget(&mut self) {
         self.uploaded = 0;
         self.shape = None;
         self.held.clear();
@@ -52,7 +52,7 @@ impl SkyMaps {
         (tiles, bakes, settings, layers): (&TerrainTiles, &Bakes, &TerrainShading, u32),
     ) {
         if !settings.sky_visibility || tiles.terrains.is_empty() {
-            self.release();
+            self.forget();
             return;
         }
         self.uploaded = 0;

@@ -49,7 +49,6 @@ pub struct ParticleLook {
     pub seed: u32,
     pub formula: u32,
     pub params: [f32; 8],
-    pub authored_degrees: Option<f32>,
 }
 
 impl Default for ParticleLook {
@@ -74,7 +73,6 @@ impl Default for ParticleLook {
             seed: 0,
             formula: 0,
             params: [0.0; 8],
-            authored_degrees: None,
         }
     }
 }
@@ -169,7 +167,6 @@ impl From<AuthoredEmitter> for ParticleEmitter {
                 seed: authored.seed,
                 formula: authored.formula,
                 params: authored.params,
-                authored_degrees: Some(authored.spread_degrees),
             },
         }
     }

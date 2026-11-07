@@ -324,6 +324,7 @@ fn pose_all(
     slots: &[Slot],
     alpha: f32,
     place: impl Fn(Entity) -> Option<Mat4>,
+    blends: impl Fn(Entity) -> bool,
 ) -> Posed {
     let mut posed = Posed {
         rows: Vec::new(),
@@ -340,7 +341,8 @@ fn pose_all(
         }
         let start = posed.rows.len() as u32;
         let world = place(entity);
-        presented_pose(animator, ticked.get(&entity), alpha, &mut model);
+        let drawn = if blends(entity) { alpha } else { 1.0 };
+        presented_pose(animator, ticked.get(&entity), drawn, &mut model);
         let placed = world.unwrap_or(Mat4::IDENTITY);
         for bound in &animator.rig().palette {
             let held = model.get(bound.joint as usize).copied();
@@ -787,12 +789,19 @@ impl GpuPart for SkinningGpu {
         }
         let nodes = presented.gpu_presentation(&globals);
         let place = |entity| presented_node(&nodes, globals.node_index(entity)?);
+        let blends = |entity| {
+            globals
+                .node_index(entity)
+                .and_then(|node| nodes.info.get(node))
+                .is_some_and(|&[_, flags]| flags & NODE_BLEND != 0)
+        };
         let mut posed = pose_all(
             &listed,
             &books.ticked,
             &self.held.slots,
             presentation.alpha(),
             place,
+            blends,
         );
         previous_rows(&mut self.held, &mut posed);
         self.stage(&posed, (&*residency, &*assets, &*view), cx);

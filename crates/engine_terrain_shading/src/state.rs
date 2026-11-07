@@ -53,6 +53,10 @@ impl<T> Default for Bake<T> {
 }
 
 impl<T: engine_codec::Codec> Bake<T> {
+    fn waiting(&self) -> bool {
+        self.failed.is_none() && (self.asked.is_some() || self.made.is_none())
+    }
+
     fn drop_asked(&mut self, jobs: &mut Jobs<'_, '_>) {
         if let Some((ticket, _)) = self.asked.take() {
             jobs.cancel(ticket);
@@ -150,12 +154,16 @@ impl TerrainBakes {
         self.flow.shown(tile)
     }
 
-    fn unbounced(&self, settings: &TerrainShading, entry: &TerrainEntry) -> bool {
-        let bounce = &self.bounce;
+    fn lighting_left(&self, settings: &TerrainShading, entry: &TerrainEntry) -> bool {
+        settings.lit() && entry.recipe.is_some() && self.lighting.waiting()
+    }
+
+    fn bounce_left(&self, settings: &TerrainShading, entry: &TerrainEntry) -> bool {
         settings.bounces()
+            && entry.recipe.is_some()
             && !entry.surroundings
-            && self.lighting.failed.is_none()
-            && (bounce.asked.is_some() || (bounce.made.is_none() && bounce.failed.is_none()))
+            && (self.lighting.made.is_some() || self.lighting.waiting())
+            && self.bounce.waiting()
     }
 
     fn forget(
@@ -712,8 +720,8 @@ pub(crate) fn bake(
         let Some(held) = bakes.terrains.get(&entry.terrain) else {
             continue;
         };
-        lighting += u32::from(held.lighting.asked.is_some());
-        unbounced += u32::from(held.unbounced(&settings, entry));
+        lighting += u32::from(held.lighting_left(&settings, entry));
+        unbounced += u32::from(held.bounce_left(&settings, entry));
     }
     baking.set_if_neq(GroundBaking {
         lighting,
@@ -959,12 +967,8 @@ fn records_left(settings: &TerrainShading, tiles: &TerrainTiles, bakes: &Bakes) 
         let Some(held) = bakes.of(entry.terrain) else {
             continue;
         };
-        if settings.lit() {
-            left += u32::from(held.lighting.asked.is_some() || held.lighting.made.is_none());
-        }
-        if !entry.surroundings && settings.bounces() {
-            left += u32::from(held.bounce.asked.is_some() || held.bounce.made.is_none());
-        }
+        left += u32::from(held.lighting_left(settings, entry));
+        left += u32::from(held.bounce_left(settings, entry));
         let colors = &held.colors;
         left += u32::from(colors.wanted.as_ref().is_some_and(|wanted| {
             colors

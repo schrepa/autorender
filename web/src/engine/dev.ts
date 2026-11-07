@@ -145,7 +145,7 @@ export function connectDevelopment(host: Host): () => void {
       if (closed()) return refuse(CLOSED);
       const stopped = host.stopped();
       if (stopped) return { ok: false, error: { code: "runtime_panicked", path: "$", got: stopped } };
-      if (busy || host.isBusy?.()) return refuse({ code: "command_busy", path: "$" });
+      if (busy || host.isBusy?.()) return { ok: false, error: { code: "command_busy", path: "$" } };
       let line: string;
       try { line = JSON.stringify(command) ?? "null"; }
       catch { return refuse({ code: "invalid_request", path: "$.command", expected: "json" }); }

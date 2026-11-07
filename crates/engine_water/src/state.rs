@@ -389,22 +389,21 @@ pub(crate) struct WaterState {
     pub(crate) settling_records: u32,
     pub(crate) settles_left: u64,
     pub(crate) looks_left: u64,
-    pub(crate) work_end: f64,
+    pub(crate) uploaded: u64,
 }
 
 #[derive(Default)]
 pub(crate) struct SettleQueue {
     pub(crate) asked: Vec<crate::water_settle::SettleAsk>,
-    pub(crate) settled: Vec<crate::water_settle::SettleMade>,
+    pub(crate) settled: Vec<(Vec<u8>, Result<Arc<[u8]>, String>)>,
 }
 
 impl SettleQueue {
-    pub(crate) fn take(&mut self, input: &[u8]) -> Option<Result<Vec<u8>, String>> {
-        let at = self
-            .settled
+    pub(crate) fn made(&self, input: &[u8]) -> Option<Result<Arc<[u8]>, String>> {
+        self.settled
             .iter()
-            .position(|(held, _)| held[..] == *input)?;
-        Some(self.settled.swap_remove(at).1)
+            .find(|(held, _)| held[..] == *input)
+            .map(|(_, made)| made.clone())
     }
 }
 
@@ -436,6 +435,7 @@ impl WaterState {
         self.settling_records = 0;
         self.settles_left = 0;
         self.looks_left = 0;
+        self.uploaded = 0;
     }
 }
 
@@ -561,8 +561,8 @@ pub(crate) fn follow(
     let eye = view.detail_eye();
     let frame = time.frame;
     let state = &mut *state;
-    let work = Work::of(&clock, &ground);
-    state.work_end = work.end();
+    state.uploaded = 0;
+    let work = Work::of(&clock, &ground, state.uploaded);
     state.dropped = false;
     let mut before = std::mem::take(&mut state.terrains);
     state.baking.clear();

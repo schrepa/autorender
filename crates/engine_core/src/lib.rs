@@ -561,6 +561,9 @@ impl Engine {
         for _ in 0..fixed_steps {
             self.run_fixed_tick();
         }
+        if self.time_rate() == 0.0 {
+            modify(self.app.world_mut(), ActionInput::drop_tick_edges);
+        }
         records::exchange(self.app.world_mut());
         jobs::exchange_orders(self.app.world_mut());
         modify(self.app.world_mut(), ActionInput::begin_frame);
@@ -638,7 +641,7 @@ impl Engine {
         self.clock.reset();
         let world = self.app.world_mut();
         reset_all_interpolation(world);
-        modify(world, ActionInput::clear);
+        modify(world, ActionInput::drop_tick_edges);
         modify(world, |frame: &mut FrameTime| {
             frame.delta_seconds = 0.0;
             frame.game_delta_seconds = 0.0;

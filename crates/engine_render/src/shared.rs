@@ -243,8 +243,6 @@ pub(crate) struct PostUniform {
     pub(crate) eye: [f32; 4],
     pub(crate) size: [f32; 4],
     pub(crate) extent: [f32; 4],
-    pub(crate) previous_view_projection: [[f32; 4]; 4],
-    pub(crate) previous_eye: [f32; 4],
     pub(crate) detail: [f32; 4],
 }
 
@@ -265,8 +263,6 @@ pub(crate) fn post_uniform(
         eye: position.extend(focal * height * 0.5).to_array(),
         size: [width, height, 1.0 / width, 1.0 / height],
         extent: [wide, tall, 1.0 / wide, 1.0 / tall],
-        previous_view_projection: view_projection.to_cols_array_2d(),
-        previous_eye: position.extend(0.0).to_array(),
         detail: detail.extend(0.0).to_array(),
     }
 }

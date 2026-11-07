@@ -99,6 +99,16 @@ impl TerrainMaps {
         self.means[layer as usize]
     }
 
+    pub(crate) fn forget(&mut self) {
+        self.filled = false;
+        self.layers.clear();
+        self.listed.clear();
+        self.means.clear();
+        self.materials = 1;
+        self.size = (1, 1);
+        self.dropped = 0;
+    }
+
     pub(crate) fn material(maps: &SurfaceMaps, assets: &AssetLibrary) -> Option<MapMaterial> {
         let material = assets.material(maps.material)?;
         let color = material.color();

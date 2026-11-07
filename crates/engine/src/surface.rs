@@ -18,7 +18,7 @@ macro_rules! __game_surface {
                 fn work_while_compiling(width: u32, height: u32) -> bool;
                 fn load_between_frames() -> bool;
                 fn set_preparation(enabled: bool);
-                fn set_job_workers(workers: u32);
+                fn set_job_workers(workers: u32) -> bool;
                 fn set_job_cache(caching: bool, verify: bool);
                 fn take_jobs() -> $crate::__private::js_sys::Array;
                 fn job_kept(id: f64, key: String, output: Option<Vec<u8>>);

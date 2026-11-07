@@ -577,6 +577,7 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn dev_refusal(&mut self, error: &Error) -> Value {
+        self.dev_pending = None;
         let status = self.dev_run(status(), (1, 1), true);
         json!({"ok": false, "observation": status["observation"], "error": error})
     }
@@ -617,7 +618,11 @@ impl<G: Game> GameHost<G> {
                             .got(workers),
                     );
                 }
-                self.set_job_workers(workers);
+                if !self.set_job_workers(workers) {
+                    return self.dev_refused(
+                        Error::new(ErrorCode::RuntimeBusy, "$.args.workers").got(workers),
+                    );
+                }
                 let status = self.dev_invoke(status(), context);
                 self.dev_done(status, context)
             }
@@ -987,7 +992,6 @@ impl<G: Game> GameHost<G> {
     }
 
     fn dev_refused(&mut self, error: Error) -> Step {
-        self.dev_pending = None;
         Step::Reply(self.dev_refusal(&error))
     }
 

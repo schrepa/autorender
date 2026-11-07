@@ -930,8 +930,8 @@ fn take_arrived(
             }
             Phase::Settling => cx
                 .queue
-                .take(&asked.record.bytes)
-                .map(|output| output.map(Arc::from).map_err(Some)),
+                .made(&asked.record.bytes)
+                .map(|output| output.map_err(Some)),
             Phase::Starting => None,
         };
         let Some(output) = output else {
@@ -1437,7 +1437,7 @@ pub(crate) fn request_settle(
 ) {
     let eye = view.detail_eye();
     let state = &mut *state;
-    let work = Work::until(&clock, &ground, state.work_end);
+    let work = Work::of(&clock, &ground, state.uploaded);
     let limits_changed = limits.is_changed();
     let mut cx = Follow {
         jobs: &mut jobs,
@@ -1454,11 +1454,12 @@ pub(crate) fn request_settle(
             terrain.settled.stir(true);
         }
         let watering = water.enabled && !terrain.surroundings;
-        if cook.cooking && watering && terrain.recipe.is_some() {
-            if !terrain.settled.cooking {
-                terrain.settled.cooking = true;
-                terrain.settled.stir(true);
-            }
+        let cooks = cook.cooking && watering && terrain.recipe.is_some();
+        if terrain.settled.cooking != cooks {
+            terrain.settled.cooking = cooks;
+            terrain.settled.stir(true);
+        }
+        if cooks {
             settles_left += terrain.settled.left();
         }
         let local = Vec2::new(eye.x - terrain.origin.x, eye.z - terrain.origin.z);
@@ -1471,4 +1472,5 @@ pub(crate) fn request_settle(
     state.settled_records = settled_records;
     state.settling_records = settling_records;
     state.settles_left = settles_left;
+    state.uploaded = work.uploaded();
 }

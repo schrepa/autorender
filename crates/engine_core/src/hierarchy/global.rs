@@ -1,14 +1,23 @@
 use glam::{Mat4, Vec3};
+use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_VALUE: AtomicU64 = AtomicU64::new(1);
-const UNSTAMPED: u64 = u64::MAX;
 const BLOCK: u64 = 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Revision(NonZeroU64);
+
+impl Revision {
+    pub fn get(self) -> u64 {
+        self.0.get()
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct GlobalTransform {
     matrix: Mat4,
-    value: u64,
+    revision: Option<Revision>,
     valid: bool,
 }
 
@@ -16,7 +25,7 @@ impl Default for GlobalTransform {
     fn default() -> Self {
         Self {
             matrix: Mat4::IDENTITY,
-            value: 0,
+            revision: None,
             valid: false,
         }
     }
@@ -40,14 +49,14 @@ impl GlobalTransform {
         self.matrix().map(|matrix| matrix.w_axis.truncate())
     }
 
-    pub fn revision(&self) -> u64 {
-        self.value
+    pub fn revision(&self) -> Option<Revision> {
+        self.revision
     }
 
-    pub(crate) fn read_value(matrix: Option<Mat4>, revision: u64) -> Self {
+    pub(crate) fn read_value(matrix: Option<Mat4>, revision: Option<Revision>) -> Self {
         Self {
             matrix: matrix.unwrap_or(Mat4::IDENTITY),
-            value: revision,
+            revision,
             valid: matrix.is_some(),
         }
     }
@@ -60,22 +69,18 @@ pub(crate) struct ValueIds {
 }
 
 impl ValueIds {
-    pub(crate) fn next(&mut self) -> u64 {
-        self.next_from(&NEXT_VALUE)
-    }
-
-    fn next_from(&mut self, source: &AtomicU64) -> u64 {
+    pub(crate) fn next(&mut self) -> Revision {
         if self.next == self.end {
-            let Ok(start) = source.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
-                next.checked_add(BLOCK)
-            }) else {
-                return UNSTAMPED;
-            };
+            let start = NEXT_VALUE
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                    next.checked_add(BLOCK)
+                })
+                .expect("value_ids_left");
             self.next = start;
             self.end = start + BLOCK;
         }
         let value = self.next;
         self.next += 1;
-        value
+        Revision(NonZeroU64::new(value).expect("value_ids_start_at_one"))
     }
 }

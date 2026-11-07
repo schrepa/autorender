@@ -124,7 +124,7 @@ pub(crate) fn rewater(
     ground: Res<GroundWork>,
     mut state: ResMut<WaterState>,
 ) {
-    let work = Work::until(&clock, &ground, state.work_end);
+    let work = Work::of(&clock, &ground, state.uploaded);
     let state = &mut *state;
     let mut stale = 0;
     for terrain in &mut state.terrains {

@@ -58,7 +58,6 @@ struct Square {
     since_look: u32,
     stirred: u32,
     looks: Vec<Look>,
-    settled: bool,
     stepping: u64,
     flowing: u64,
     phase: Phase,
@@ -196,7 +195,7 @@ impl SettleFeedback {
                 continue;
             }
             if ask.start.stored.stored() == 0 {
-                let made = ask.start.finish(&[], &[], 0, true);
+                let made = ask.start.finish(&[], &[], 0);
                 self.made.extend(
                     ask.inputs
                         .into_iter()
@@ -207,6 +206,31 @@ impl SettleFeedback {
             }
             self.waiting.push_back(ask);
         }
+    }
+
+    fn evict(&mut self, live: &[Entity]) {
+        let gone = |terrain: &Entity| !live.contains(terrain);
+        let mut dropped = Vec::new();
+        for held in &mut self.squares {
+            if held.as_ref().is_some_and(|square| gone(&square.terrain))
+                && let Some(square) = held.take()
+            {
+                dropped.extend(square.inputs);
+            }
+        }
+        for ask in std::mem::take(&mut self.waiting) {
+            if gone(&ask.terrain) {
+                dropped.extend(ask.inputs);
+            } else {
+                self.waiting.push_back(ask);
+            }
+        }
+        self.made.extend(dropped.into_iter().map(|input| {
+            (
+                input.to_vec(),
+                Err("settling stopped because its terrain left".to_owned()),
+            )
+        }));
     }
 
     pub(crate) fn looks_left(&self) -> u64 {
@@ -357,7 +381,6 @@ impl SettleFeedback {
                 since_look: 0,
                 stirred: 0,
                 looks: Vec::new(),
-                settled: false,
                 stepping: steps,
                 flowing: 0,
                 phase: Phase::Stepping,
@@ -577,7 +600,6 @@ impl SettleFeedback {
                 continue;
             }
             if square.phase == Phase::Stepping {
-                square.settled = square.steps < SETTLE_STEPS[1];
                 square.phase = Phase::Stirring;
                 square.looks.clear();
                 square.since_look = 0;
@@ -614,8 +636,7 @@ impl SettleFeedback {
             .iter()
             .map(|&chunk| f32::from_le_bytes(chunk))
             .collect();
-        let settled = square.settled && square.stirred < STIR_STEPS[1];
-        let made = start.finish(&means, &ground, square.steps + square.stirred, settled);
+        let made = start.finish(&means, &ground, square.steps + square.stirred);
         if cooking {
             say_made(&square, &made);
         }
@@ -838,13 +859,15 @@ pub(crate) fn plan_settles(
             .map(|&(_, index)| index)
     };
     let feedback = &mut *feedback;
+    let live: Vec<Entity> = state.terrains.iter().map(|terrain| terrain.entity).collect();
+    feedback.evict(&live);
     feedback.prepare((cook.cooking, limits.storage_room, time.frame), &index_of);
     for (input, made) in std::mem::take(&mut feedback.made) {
         if let Ok(bytes) = &made {
             let kept = jobs.keep(&SETTLED, &input, bytes.clone());
             jobs.cancel(kept);
         }
-        state.settling.settled.push((input, made));
+        state.settling.settled.push((input, made.map(Arc::from)));
     }
     state.looks_left = feedback.looks_left();
 }

@@ -45,7 +45,6 @@ pub struct SteadyStats {
     pub volume: f32,
     pub flowing: u32,
     pub steps: u32,
-    pub settled: bool,
     pub clamped: u32,
     pub friction: [f32; REACHES],
     pub fast: [f32; REACHES],
@@ -57,7 +56,6 @@ record!(SteadyStats {
     volume,
     flowing,
     steps,
-    settled,
     clamped,
     friction,
     fast,
@@ -1332,13 +1330,7 @@ impl SettleStart {
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
-    pub fn finish(
-        &self,
-        means: &[[f32; 4]],
-        ground: &[f32],
-        steps: u32,
-        settled: bool,
-    ) -> Vec<SteadyWater> {
+    pub fn finish(&self, means: &[[f32; 4]], ground: &[f32], steps: u32) -> Vec<SteadyWater> {
         let raised = SlotGround(ground);
         let split = self.split;
         let area = f64::from(self.cell * self.cell);
@@ -1487,7 +1479,6 @@ impl SettleStart {
                     volume: (volume * area) as f32,
                     flowing,
                     steps,
-                    settled,
                     clamped,
                     friction: std::array::from_fn(|reach| mean(friction[reach], counted[reach])),
                     fast: std::array::from_fn(|reach| mean(f64::from(fast[reach]), counted[reach])),

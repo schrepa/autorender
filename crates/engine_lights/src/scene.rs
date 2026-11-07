@@ -90,16 +90,10 @@ impl From<&LocalLight> for SceneLight {
             intensity: light.intensity,
             range: light.range,
             offset: light.offset.to_array(),
-            spot: light.spot.map(|spot| {
-                let [inner, outer] = spot.authored_degrees.unwrap_or([
-                    spot.inner_angle.to_degrees(),
-                    spot.outer_angle.to_degrees(),
-                ]);
-                SceneSpot {
-                    direction: spot.direction.to_array(),
-                    inner_angle_degrees: inner,
-                    outer_angle_degrees: outer,
-                }
+            spot: light.spot.map(|spot| SceneSpot {
+                direction: spot.direction.to_array(),
+                inner_angle_degrees: spot.inner_angle.to_degrees(),
+                outer_angle_degrees: spot.outer_angle.to_degrees(),
             }),
             radius: light.radius,
             length: light.length,

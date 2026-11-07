@@ -4,8 +4,6 @@ struct Post {
     eye: vec4<f32>,
     size: vec4<f32>,
     extent: vec4<f32>,
-    previous_view_projection: mat4x4<f32>,
-    previous_eye: vec4<f32>,
     detail: vec4<f32>,
 }
 

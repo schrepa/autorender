@@ -15,7 +15,6 @@ pub struct Spot {
     pub direction: Vec3,
     pub inner_angle: f32,
     pub outer_angle: f32,
-    pub authored_degrees: Option<[f32; 2]>,
 }
 
 impl Default for Spot {
@@ -24,7 +23,6 @@ impl Default for Spot {
             direction: Vec3::NEG_Y,
             inner_angle: 25.0_f32.to_radians(),
             outer_angle: 40.0_f32.to_radians(),
-            authored_degrees: None,
         }
     }
 }
@@ -49,7 +47,6 @@ impl From<AuthoredSpot> for Spot {
             direction: authored.direction,
             inner_angle: authored.inner_angle_degrees.to_radians(),
             outer_angle: authored.outer_angle_degrees.to_radians(),
-            authored_degrees: Some([authored.inner_angle_degrees, authored.outer_angle_degrees]),
         }
     }
 }
@@ -127,7 +124,6 @@ impl LocalLight {
                 direction,
                 inner_angle,
                 outer_angle,
-                authored_degrees: None,
             }),
             ..Self::point(color, intensity, range)
         }

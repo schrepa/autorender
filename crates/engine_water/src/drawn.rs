@@ -407,7 +407,7 @@ pub(crate) fn draw(
     mut state: ResMut<WaterState>,
 ) {
     let state = &mut *state;
-    let work = Work::until(&clock, &ground, state.work_end);
+    let work = Work::of(&clock, &ground, state.uploaded);
     for ask in std::mem::take(&mut state.draw_asks) {
         let Some(held) = state
             .terrains
@@ -474,6 +474,7 @@ pub(crate) fn draw(
                 if made.is_some() {
                     state.rewatered_tiles += 1;
                     held.hold(made);
+                    held.given = None;
                 }
                 held.watered = to;
                 terrain.flow_moved = true;

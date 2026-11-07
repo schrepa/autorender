@@ -166,14 +166,17 @@ fn derive_light() {
     let glow = max(luminance(toward - away), 0.0) / max(luminance(sun_color), 1e-4);
     let falling = luminance(sun_color) * max(sun.y, 0.0)
         + SKY_PI * luminance(0.5 * (zenith + horizon));
-    let noon = sky_air.ozone.w * NOON_LIGHT;
-    let adapted = clamp(pow(noon / max(falling, 1e-5), sky_air.radii.z * ADAPTATION_POWER),
-        1.0, ADAPTATION_MOST);
-    let wanted = sky_air.sun.w * adapted;
-    let previous = derived[6].x;
-    var exposure = wanted;
-    if sky_air.frame.x > 0.0 && previous > 0.0 {
-        exposure = mix(previous, wanted, 1.0 - exp(-sky_air.frame.x / 0.8));
+    var exposure = sky_air.sun.w;
+    if sky_air.frame.y > 0.0 {
+        let noon = sky_air.ozone.w * NOON_LIGHT;
+        let adapted = clamp(pow(noon / max(falling, 1e-5), sky_air.radii.z * ADAPTATION_POWER),
+            1.0, ADAPTATION_MOST);
+        let wanted = sky_air.sun.w * adapted;
+        let previous = derived[6].x;
+        exposure = wanted;
+        if sky_air.frame.x > 0.0 && previous > 0.0 {
+            exposure = mix(previous, wanted, 1.0 - exp(-sky_air.frame.x / 0.8));
+        }
     }
     derived[0] = vec4<f32>(sun_color, 0.0);
     derived[1] = vec4<f32>(max(zenith, night), 0.0);

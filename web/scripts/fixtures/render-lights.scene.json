@@ -1,0 +1,2378 @@
+{
+  "id": "render-lights",
+  "revision": 1,
+  "camera": {
+    "position": [
+      -95,
+      45,
+      -95
+    ],
+    "target": [
+      0,
+      0,
+      0
+    ],
+    "fov_degrees": 55,
+    "near": 0.1,
+    "far": 800
+  },
+  "environment": {
+    "time_of_day": {
+      "hours": 18.3
+    }
+  },
+  "materials": [
+    {
+      "id": "ground",
+      "color": [
+        0.3,
+        0.3,
+        0.3,
+        1
+      ],
+      "surface": {
+        "roughness": 0.7
+      }
+    },
+    {
+      "id": "column",
+      "color": [
+        0.7,
+        0.68,
+        0.64,
+        1
+      ],
+      "surface": {
+        "roughness": 0.6
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "id": "box",
+      "source": {
+        "kind": "cube"
+      }
+    },
+    {
+      "id": "floor",
+      "source": {
+        "kind": "plane"
+      }
+    }
+  ],
+  "prefabs": [
+    {
+      "id": "lamps",
+      "entities": [
+        {
+          "id": "lamp-0-0",
+          "transform": {
+            "translation": [
+              -14.0,
+              1.6,
+              -14.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-0-1",
+          "transform": {
+            "translation": [
+              -14.0,
+              1.6,
+              -10.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-0-2",
+          "transform": {
+            "translation": [
+              -14.0,
+              1.6,
+              -6.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-0-3",
+          "transform": {
+            "translation": [
+              -14.0,
+              1.6,
+              -2.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-0-4",
+          "transform": {
+            "translation": [
+              -14.0,
+              1.6,
+              2.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-0-5",
+          "transform": {
+            "translation": [
+              -14.0,
+              1.6,
+              6.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-0-6",
+          "transform": {
+            "translation": [
+              -14.0,
+              1.6,
+              10.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-0-7",
+          "transform": {
+            "translation": [
+              -14.0,
+              1.6,
+              14.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-1-0",
+          "transform": {
+            "translation": [
+              -10.0,
+              1.6,
+              -14.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-1-1",
+          "transform": {
+            "translation": [
+              -10.0,
+              1.6,
+              -10.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-1-2",
+          "transform": {
+            "translation": [
+              -10.0,
+              1.6,
+              -6.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-1-3",
+          "transform": {
+            "translation": [
+              -10.0,
+              1.6,
+              -2.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-1-4",
+          "transform": {
+            "translation": [
+              -10.0,
+              1.6,
+              2.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-1-5",
+          "transform": {
+            "translation": [
+              -10.0,
+              1.6,
+              6.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-1-6",
+          "transform": {
+            "translation": [
+              -10.0,
+              1.6,
+              10.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-1-7",
+          "transform": {
+            "translation": [
+              -10.0,
+              1.6,
+              14.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-2-0",
+          "transform": {
+            "translation": [
+              -6.0,
+              1.6,
+              -14.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-2-1",
+          "transform": {
+            "translation": [
+              -6.0,
+              1.6,
+              -10.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-2-2",
+          "transform": {
+            "translation": [
+              -6.0,
+              1.6,
+              -6.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-2-3",
+          "transform": {
+            "translation": [
+              -6.0,
+              1.6,
+              -2.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-2-4",
+          "transform": {
+            "translation": [
+              -6.0,
+              1.6,
+              2.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-2-5",
+          "transform": {
+            "translation": [
+              -6.0,
+              1.6,
+              6.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-2-6",
+          "transform": {
+            "translation": [
+              -6.0,
+              1.6,
+              10.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-2-7",
+          "transform": {
+            "translation": [
+              -6.0,
+              1.6,
+              14.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-3-0",
+          "transform": {
+            "translation": [
+              -2.0,
+              1.6,
+              -14.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-3-1",
+          "transform": {
+            "translation": [
+              -2.0,
+              1.6,
+              -10.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-3-2",
+          "transform": {
+            "translation": [
+              -2.0,
+              1.6,
+              -6.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-3-3",
+          "transform": {
+            "translation": [
+              -2.0,
+              1.6,
+              -2.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-3-4",
+          "transform": {
+            "translation": [
+              -2.0,
+              1.6,
+              2.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-3-5",
+          "transform": {
+            "translation": [
+              -2.0,
+              1.6,
+              6.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-3-6",
+          "transform": {
+            "translation": [
+              -2.0,
+              1.6,
+              10.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-3-7",
+          "transform": {
+            "translation": [
+              -2.0,
+              1.6,
+              14.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-4-0",
+          "transform": {
+            "translation": [
+              2.0,
+              1.6,
+              -14.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-4-1",
+          "transform": {
+            "translation": [
+              2.0,
+              1.6,
+              -10.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-4-2",
+          "transform": {
+            "translation": [
+              2.0,
+              1.6,
+              -6.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-4-3",
+          "transform": {
+            "translation": [
+              2.0,
+              1.6,
+              -2.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-4-4",
+          "transform": {
+            "translation": [
+              2.0,
+              1.6,
+              2.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-4-5",
+          "transform": {
+            "translation": [
+              2.0,
+              1.6,
+              6.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-4-6",
+          "transform": {
+            "translation": [
+              2.0,
+              1.6,
+              10.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-4-7",
+          "transform": {
+            "translation": [
+              2.0,
+              1.6,
+              14.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-5-0",
+          "transform": {
+            "translation": [
+              6.0,
+              1.6,
+              -14.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-5-1",
+          "transform": {
+            "translation": [
+              6.0,
+              1.6,
+              -10.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-5-2",
+          "transform": {
+            "translation": [
+              6.0,
+              1.6,
+              -6.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-5-3",
+          "transform": {
+            "translation": [
+              6.0,
+              1.6,
+              -2.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-5-4",
+          "transform": {
+            "translation": [
+              6.0,
+              1.6,
+              2.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-5-5",
+          "transform": {
+            "translation": [
+              6.0,
+              1.6,
+              6.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-5-6",
+          "transform": {
+            "translation": [
+              6.0,
+              1.6,
+              10.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-5-7",
+          "transform": {
+            "translation": [
+              6.0,
+              1.6,
+              14.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-6-0",
+          "transform": {
+            "translation": [
+              10.0,
+              1.6,
+              -14.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-6-1",
+          "transform": {
+            "translation": [
+              10.0,
+              1.6,
+              -10.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-6-2",
+          "transform": {
+            "translation": [
+              10.0,
+              1.6,
+              -6.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-6-3",
+          "transform": {
+            "translation": [
+              10.0,
+              1.6,
+              -2.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-6-4",
+          "transform": {
+            "translation": [
+              10.0,
+              1.6,
+              2.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-6-5",
+          "transform": {
+            "translation": [
+              10.0,
+              1.6,
+              6.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-6-6",
+          "transform": {
+            "translation": [
+              10.0,
+              1.6,
+              10.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-6-7",
+          "transform": {
+            "translation": [
+              10.0,
+              1.6,
+              14.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-7-0",
+          "transform": {
+            "translation": [
+              14.0,
+              1.6,
+              -14.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-7-1",
+          "transform": {
+            "translation": [
+              14.0,
+              1.6,
+              -10.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-7-2",
+          "transform": {
+            "translation": [
+              14.0,
+              1.6,
+              -6.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-7-3",
+          "transform": {
+            "translation": [
+              14.0,
+              1.6,
+              -2.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-7-4",
+          "transform": {
+            "translation": [
+              14.0,
+              1.6,
+              2.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.7,
+              1,
+              0.65
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-7-5",
+          "transform": {
+            "translation": [
+              14.0,
+              1.6,
+              6.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.5,
+              0.4
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-7-6",
+          "transform": {
+            "translation": [
+              14.0,
+              1.6,
+              10.0
+            ]
+          },
+          "light": {
+            "color": [
+              0.6,
+              0.75,
+              1
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        },
+        {
+          "id": "lamp-7-7",
+          "transform": {
+            "translation": [
+              14.0,
+              1.6,
+              14.0
+            ]
+          },
+          "light": {
+            "color": [
+              1,
+              0.78,
+              0.5
+            ],
+            "intensity": 20,
+            "range": 7
+          }
+        }
+      ]
+    },
+    {
+      "id": "columns",
+      "entities": [
+        {
+          "id": "column-0-0",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              -12.0,
+              3.5,
+              -12.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-0-1",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              -12.0,
+              3.5,
+              -4.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-0-2",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              -12.0,
+              3.5,
+              4.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-0-3",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              -12.0,
+              3.5,
+              12.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-1-0",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              -4.0,
+              3.5,
+              -12.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-1-1",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              -4.0,
+              3.5,
+              -4.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-1-2",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              -4.0,
+              3.5,
+              4.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-1-3",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              -4.0,
+              3.5,
+              12.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-2-0",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              4.0,
+              3.5,
+              -12.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-2-1",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              4.0,
+              3.5,
+              -4.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-2-2",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              4.0,
+              3.5,
+              4.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-2-3",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              4.0,
+              3.5,
+              12.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-3-0",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              12.0,
+              3.5,
+              -12.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-3-1",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              12.0,
+              3.5,
+              -4.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-3-2",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              12.0,
+              3.5,
+              4.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        },
+        {
+          "id": "column-3-3",
+          "mesh": "box",
+          "material": "column",
+          "transform": {
+            "translation": [
+              12.0,
+              3.5,
+              12.0
+            ],
+            "scale": [
+              1,
+              7,
+              1
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "id": "floor",
+      "mesh": "floor",
+      "material": "ground",
+      "transform": {
+        "scale": [
+          160,
+          1,
+          160
+        ]
+      }
+    },
+    {
+      "id": "lamps-0-0",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          -48.0,
+          0,
+          -48.0
+        ]
+      }
+    },
+    {
+      "id": "columns-0-0",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          -48.0,
+          0,
+          -48.0
+        ]
+      }
+    },
+    {
+      "id": "spot-0-0",
+      "transform": {
+        "translation": [
+          -48.0,
+          12,
+          -48.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-0-1",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          -48.0,
+          0,
+          -16.0
+        ]
+      }
+    },
+    {
+      "id": "columns-0-1",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          -48.0,
+          0,
+          -16.0
+        ]
+      }
+    },
+    {
+      "id": "spot-0-1",
+      "transform": {
+        "translation": [
+          -48.0,
+          12,
+          -16.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-0-2",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          -48.0,
+          0,
+          16.0
+        ]
+      }
+    },
+    {
+      "id": "columns-0-2",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          -48.0,
+          0,
+          16.0
+        ]
+      }
+    },
+    {
+      "id": "spot-0-2",
+      "transform": {
+        "translation": [
+          -48.0,
+          12,
+          16.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-0-3",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          -48.0,
+          0,
+          48.0
+        ]
+      }
+    },
+    {
+      "id": "columns-0-3",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          -48.0,
+          0,
+          48.0
+        ]
+      }
+    },
+    {
+      "id": "spot-0-3",
+      "transform": {
+        "translation": [
+          -48.0,
+          12,
+          48.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-1-0",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          -16.0,
+          0,
+          -48.0
+        ]
+      }
+    },
+    {
+      "id": "columns-1-0",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          -16.0,
+          0,
+          -48.0
+        ]
+      }
+    },
+    {
+      "id": "spot-1-0",
+      "transform": {
+        "translation": [
+          -16.0,
+          12,
+          -48.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-1-1",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          -16.0,
+          0,
+          -16.0
+        ]
+      }
+    },
+    {
+      "id": "columns-1-1",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          -16.0,
+          0,
+          -16.0
+        ]
+      }
+    },
+    {
+      "id": "spot-1-1",
+      "transform": {
+        "translation": [
+          -16.0,
+          12,
+          -16.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-1-2",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          -16.0,
+          0,
+          16.0
+        ]
+      }
+    },
+    {
+      "id": "columns-1-2",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          -16.0,
+          0,
+          16.0
+        ]
+      }
+    },
+    {
+      "id": "spot-1-2",
+      "transform": {
+        "translation": [
+          -16.0,
+          12,
+          16.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-1-3",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          -16.0,
+          0,
+          48.0
+        ]
+      }
+    },
+    {
+      "id": "columns-1-3",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          -16.0,
+          0,
+          48.0
+        ]
+      }
+    },
+    {
+      "id": "spot-1-3",
+      "transform": {
+        "translation": [
+          -16.0,
+          12,
+          48.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-2-0",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          16.0,
+          0,
+          -48.0
+        ]
+      }
+    },
+    {
+      "id": "columns-2-0",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          16.0,
+          0,
+          -48.0
+        ]
+      }
+    },
+    {
+      "id": "spot-2-0",
+      "transform": {
+        "translation": [
+          16.0,
+          12,
+          -48.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-2-1",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          16.0,
+          0,
+          -16.0
+        ]
+      }
+    },
+    {
+      "id": "columns-2-1",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          16.0,
+          0,
+          -16.0
+        ]
+      }
+    },
+    {
+      "id": "spot-2-1",
+      "transform": {
+        "translation": [
+          16.0,
+          12,
+          -16.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-2-2",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          16.0,
+          0,
+          16.0
+        ]
+      }
+    },
+    {
+      "id": "columns-2-2",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          16.0,
+          0,
+          16.0
+        ]
+      }
+    },
+    {
+      "id": "spot-2-2",
+      "transform": {
+        "translation": [
+          16.0,
+          12,
+          16.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-2-3",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          16.0,
+          0,
+          48.0
+        ]
+      }
+    },
+    {
+      "id": "columns-2-3",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          16.0,
+          0,
+          48.0
+        ]
+      }
+    },
+    {
+      "id": "spot-2-3",
+      "transform": {
+        "translation": [
+          16.0,
+          12,
+          48.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-3-0",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          48.0,
+          0,
+          -48.0
+        ]
+      }
+    },
+    {
+      "id": "columns-3-0",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          48.0,
+          0,
+          -48.0
+        ]
+      }
+    },
+    {
+      "id": "spot-3-0",
+      "transform": {
+        "translation": [
+          48.0,
+          12,
+          -48.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-3-1",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          48.0,
+          0,
+          -16.0
+        ]
+      }
+    },
+    {
+      "id": "columns-3-1",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          48.0,
+          0,
+          -16.0
+        ]
+      }
+    },
+    {
+      "id": "spot-3-1",
+      "transform": {
+        "translation": [
+          48.0,
+          12,
+          -16.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-3-2",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          48.0,
+          0,
+          16.0
+        ]
+      }
+    },
+    {
+      "id": "columns-3-2",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          48.0,
+          0,
+          16.0
+        ]
+      }
+    },
+    {
+      "id": "spot-3-2",
+      "transform": {
+        "translation": [
+          48.0,
+          12,
+          16.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    },
+    {
+      "id": "lamps-3-3",
+      "prefab": "lamps",
+      "transform": {
+        "translation": [
+          48.0,
+          0,
+          48.0
+        ]
+      }
+    },
+    {
+      "id": "columns-3-3",
+      "prefab": "columns",
+      "transform": {
+        "translation": [
+          48.0,
+          0,
+          48.0
+        ]
+      }
+    },
+    {
+      "id": "spot-3-3",
+      "transform": {
+        "translation": [
+          48.0,
+          12,
+          48.0
+        ]
+      },
+      "light": {
+        "color": [
+          1,
+          0.95,
+          0.85
+        ],
+        "intensity": 60,
+        "range": 20,
+        "spot": {
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "inner_angle_degrees": 20,
+          "outer_angle_degrees": 35
+        }
+      }
+    }
+  ]
+}

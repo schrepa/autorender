@@ -1,7 +1,8 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::math::{max, min};
-use engine_core::{Camera, Error, FrameTime, View};
+use engine_core::{Camera, Error, Filled, FrameTime, View};
+use engine_places::exposure::Exposure;
 use engine_places::probes::{ProbeCaptures, ProbeView, ProbeViews};
 use engine_places::sun::{Sun, SunPath};
 use engine_places::tonemap::Display;
@@ -101,7 +102,7 @@ impl AirPlan {
 
     fn prepare(
         &mut self,
-        (settings, tables): (&Sky, Option<&StaticTable<SkyTables>>),
+        (settings, tables, adapts): (&Sky, Option<&StaticTable<SkyTables>>, bool),
         (sun, eye, exposure, seconds, moon): AirInputs,
         air: &mut SkyAir,
     ) {
@@ -124,7 +125,7 @@ impl AirPlan {
             .last_seconds
             .replace(seconds)
             .map_or(0.0, |last| max((seconds - last) as f32, 0.0));
-        write_air(air, settings, (sun, exposure, height, elapsed, moon));
+        write_air(air, settings, (sun, exposure, height, elapsed, moon), adapts);
         self.built += 1;
         let sun_bits = sun.to_array().map(f32::to_bits);
         let environment_height = (height / ENVIRONMENT_HEIGHT_STEP).floor() as i32;
@@ -140,6 +141,7 @@ fn write_air(
     air: &mut SkyAir,
     settings: &Sky,
     (sun, exposure, height, elapsed, moon): (Vec3, f32, f32, f32, [f32; 4]),
+    adapts: bool,
 ) {
     air.rayleigh = [
         settings.rayleigh[0],
@@ -172,7 +174,7 @@ fn write_air(
         height * 0.001,
     ];
     air.sun = sun.extend(exposure).to_array();
-    air.frame = [elapsed, 0.0, 0.0, 0.0];
+    air.frame = [elapsed, f32::from(adapts), 0.0, 0.0];
     air.moon = moon;
 }
 
@@ -306,6 +308,7 @@ type SkyLights<'w> = (
     Res<'w, SunPath>,
     Res<'w, Display>,
     Res<'w, Wind>,
+    Filled<'w, Exposure>,
 );
 
 type SkyFrame<'w> = (
@@ -318,7 +321,7 @@ type SkyFrame<'w> = (
 
 pub(crate) fn plan_sky(
     (sky, clouds, haze, night): SkySections<'_>,
-    (sun, path, display, wind): SkyLights<'_>,
+    (sun, path, display, wind, metered): SkyLights<'_>,
     (tables, under, view, camera, time): SkyFrame<'_>,
     mut plan: ResMut<SkyPlan>,
 ) {
@@ -361,7 +364,7 @@ pub(crate) fn plan_sky(
     plan.piece.domes_layers = plan.clouds.dome_layers();
     let [night_light, _, moon] = night_lighting(&night, &path, sun_direction);
     plan.tables.prepare(
-        (&*sky, tables.sky()),
+        (&*sky, tables.sky(), !metered.on()),
         (
             sun_direction,
             eye,

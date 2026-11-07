@@ -354,10 +354,12 @@ pub(crate) fn place_blocks(
     if blocks.waiting.is_empty() {
         return;
     }
-    let work = Work::until(&clock, &work, state.work_end);
+    let work = Work::of(&clock, &work, state.uploaded);
     if blocks.place(&ground, &state.terrains, limits.texture_layers, &work) {
         state.watered = blocks.holding();
     }
+    work.upload(u64::from(blocks.uploads) * PATCH_BYTES as u64);
+    state.uploaded = work.uploaded();
 }
 
 pub(crate) struct BlocksGpu {
