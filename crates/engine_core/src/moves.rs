@@ -16,8 +16,9 @@ use serde_json::{Value, json};
 
 use crate::hierarchy::tracking::Invalidation;
 use crate::{
-    ApplyAt, Ask, Asked, Brick, Error, FixedTime, FrameTime, GlobalTransforms, Moment, Mover,
-    MoverId, Operation, Pace, Transform, edit_transform,
+    ApplyAt, Ask, Asked, Brick, Error, ErrorCode, Expected, FixedTime, FrameTime,
+    GlobalTransforms, Moment, Mover, MoverId, Operation, Pace, SceneIds, Transform,
+    edit_transform,
 };
 
 mod key {
@@ -231,10 +232,8 @@ pub(crate) fn end_tick(world: &mut World) -> bool {
     true
 }
 
-fn tick_paced(world: &World, node: Entity) -> bool {
-    world
-        .get::<Mover>(node)
-        .is_some_and(|mover| mover.pace == Pace::Tick)
+fn tick_paced(mover: Option<&Mover>) -> bool {
+    mover.is_some_and(|mover| mover.pace == Pace::Tick)
 }
 
 fn frame_teleports(world: &mut World) -> Vec<Teleport> {
@@ -242,7 +241,7 @@ fn frame_teleports(world: &mut World) -> Vec<Teleport> {
         .get_resource::<Asked<Teleport>>()
         .into_iter()
         .flat_map(Asked::pending)
-        .filter(|teleport| !tick_paced(world, teleport.node))
+        .filter(|teleport| !tick_paced(world.get::<Mover>(teleport.node)))
         .map(|teleport| teleport.node)
         .collect();
     if framed.is_empty() {
@@ -361,5 +360,49 @@ impl Operation for MovesState {
                     .collect()
             });
         Ok(json!({ "asks": asks, "moved_static": moved_static }))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TeleportControl {
+    entity: String,
+    translation: [f32; 3],
+}
+
+impl Operation for TeleportControl {
+    const NAME: &'static str = Teleport::NAME;
+    type Params = (
+        SceneIds<'static, 'static>,
+        Query<'static, 'static, (&'static Transform, Option<&'static Mover>)>,
+        Asks<'static, 'static, Teleport>,
+    );
+    type Request = Self;
+
+    fn run(
+        (ids, nodes, mut asks): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Value, Error> {
+        let node = ids
+            .entity(&request.entity)
+            .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&request.entity))?;
+        let (held, mover) = nodes.get(node).map_err(|_| {
+            Error::new(ErrorCode::MissingComponent, "$.entity.transform")
+                .expected(Expected::Present)
+                .got(node.to_bits())
+        })?;
+        asks.send(Teleport {
+            node,
+            to: Transform {
+                translation: glam::Vec3::from_array(request.translation),
+                ..*held
+            },
+        });
+        let at = if tick_paced(mover) {
+            ApplyAt::TickEnd
+        } else {
+            ApplyAt::FrameStart
+        };
+        Ok(json!({ "at": at }))
     }
 }

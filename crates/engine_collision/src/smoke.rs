@@ -197,7 +197,7 @@ fn sensor(session: &mut dyn SmokeSession, ray: &Value) -> Checked<()> {
     let mut z = 0.0_f32;
     for tick in 0..36 {
         z -= TICK_DISTANCE;
-        let moved = match edit(session, "player", [0.0, 0.6, z]) {
+        let moved = match teleport(session, "player", [0.0, 0.6, z]) {
             Ok(()) => json!("moved"),
             Err(error) => json!({"tick": tick, "error": error}),
         };
@@ -225,7 +225,7 @@ fn sensor(session: &mut dyn SmokeSession, ray: &Value) -> Checked<()> {
 
 fn sweep(session: &mut dyn SmokeSession) -> Checked<()> {
     smoke_eq!(
-        edit(session, "player", [0.0, 0.6, 0.0]).err(),
+        teleport(session, "player", [0.0, 0.6, 0.0]).err(),
         None,
         "player_returns"
     );
@@ -281,7 +281,7 @@ fn changes(session: &mut dyn SmokeSession, ray: &Value) -> Checked<()> {
     load(session, &fixture(true, &[flat]))?;
     control(
         session,
-        "edit_transform",
+        "teleport",
         json!({"entity": "flat", "translation": [MAX_COLLISION_COORDINATE + 1000.0, 0.5, 0.0]}),
     )?;
     session.step(1);
@@ -321,11 +321,11 @@ fn load(session: &mut dyn SmokeSession, scene: &Value) -> Checked<()> {
     Ok(())
 }
 
-fn edit(session: &mut dyn SmokeSession, id: &str, translation: [f32; 3]) -> Result<(), Value> {
+fn teleport(session: &mut dyn SmokeSession, id: &str, translation: [f32; 3]) -> Result<(), Value> {
     session
         .request(
             "control",
-            json!({"name": "edit_transform", "args": {"entity": id, "translation": translation}}),
+            json!({"name": "teleport", "args": {"entity": id, "translation": translation}}),
         )
         .map(drop)
         .map_err(|mut refused| refused["error"].take())

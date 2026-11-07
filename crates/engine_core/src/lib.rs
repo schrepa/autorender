@@ -52,7 +52,7 @@ pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
 pub use drawn::{
-    DRAWN_OWN_PROJECTION, DRAWN_RECEIVES_SHADOWS, DRAWN_UNBOUNDED, DrawnBatch, DrawnCensus,
+    DRAWN_OWN_PROJECTION, DRAWN_UNBOUNDED, DrawnBatch, DrawnCensus,
     DrawnRecord, DrawnSettings, DrawnState, DrawnTable, PlanState, drawn_wgsl,
 };
 pub use engine_assets::{
@@ -114,7 +114,7 @@ pub use services::{
 pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
 pub use ticks::ScanClock;
-pub use transform_edits::*;
+pub(crate) use transform_edits::edit_transform;
 pub use views::{DrawnView, Hit, Picking, Ray, ViewFacts, Views, main_camera};
 
 pub mod codec {
@@ -250,10 +250,12 @@ fn core_entries(registry: &mut RegistryBuilder) {
         true,
         bricks::run_operation::<services::ViewControl>,
     ));
-    registry.core_operation(OperationEntry::of::<()>(
-        transform_edits::EDIT_TRANSFORM,
-        true,
-        transform_edits::run_edit_transform,
+    registry.core_operation(OperationEntry::of::<
+        <moves::TeleportControl as Operation>::Params,
+    >(
+        moves::TeleportControl::NAME,
+        moves::TeleportControl::CONTROL,
+        bricks::run_operation::<moves::TeleportControl>,
     ));
     registry.core_operation(OperationEntry::of::<()>(
         authoring::COMPONENT,

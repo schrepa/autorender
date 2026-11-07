@@ -58,16 +58,10 @@ pub struct DrawnForm {
     pub layers: Layers,
     #[serde(default)]
     pub order: i16,
-    #[serde(default = "receives_shadows")]
-    pub receives_shadows: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projection: Option<DrawnProjection>,
     #[serde(default)]
     pub values: InstanceValues,
-}
-
-fn receives_shadows() -> bool {
-    true
 }
 
 const TINT_RULE: Rule = Rule::range(0.0, 1.0);
@@ -132,7 +126,6 @@ impl SceneForm for DrawnForm {
             passes,
             layers: self.layers,
             order: self.order,
-            receives_shadows: self.receives_shadows,
             projection: self.projection,
             values: self.values,
         });
@@ -153,7 +146,6 @@ impl SceneForm for DrawnForm {
             passes,
             layers: drawn.layers,
             order: drawn.order,
-            receives_shadows: drawn.receives_shadows,
             projection: drawn.projection,
             values: drawn.values.clone(),
         })

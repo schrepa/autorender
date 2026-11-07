@@ -28,7 +28,6 @@ settings! {
 }
 
 crate::gpu_consts! {
-    pub const DRAWN_RECEIVES_SHADOWS: u32 = 1;
     pub const DRAWN_OWN_PROJECTION: u32 = 2;
     pub const DRAWN_UNBOUNDED: u32 = 4;
 }
@@ -597,9 +596,6 @@ impl DrawnTable {
             [cosine / sine, own.depth_scale, 0.0, 0.0]
         });
         let mut flags = 0;
-        if drawn.receives_shadows {
-            flags |= DRAWN_RECEIVES_SHADOWS;
-        }
         if drawn.projection.is_some() {
             flags |= DRAWN_OWN_PROJECTION;
         }

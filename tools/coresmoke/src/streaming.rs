@@ -2,8 +2,8 @@ use std::path::Path;
 
 use engine_core::glam::Vec3;
 use engine_core::{
-    BrickList, Camera, Engine, Projection, Readiness, Transform, edit_transform, main_camera,
-    place_camera,
+    BrickList, Camera, Engine, Projection, Readiness, Teleport, Transform, main_camera,
+    place_camera, send_ask,
 };
 use engine_registry::Registry;
 use engine_scene::{SceneDocument, SceneKinds};
@@ -58,8 +58,7 @@ pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
         if cut {
             place_camera(world, main, at, lens());
         } else {
-            edit_transform(world, main, |transform| *transform = at)
-                .map_err(|error| error.to_string())?;
+            send_ask(world, Teleport { node: main, to: at });
         }
         engine.step_fixed(1).map_err(|error| error.to_string())?;
         let world = engine

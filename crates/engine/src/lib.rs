@@ -45,7 +45,7 @@ mod games {
         MaterialHandle, MenuInput, Mesh, MeshHandle, MeshVertex, MoveInput, Parent,
         Pause, PauseReason, PointerInput, Poses, Projection, ProvidedAssets, ResolutionStats, Sampler,
         Surface, Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage,
-        Transform, UvTransform, Wrap, edit_transform, make_fresh, math,
+        Transform, UvTransform, Wrap, make_fresh, math,
         set_parent, set_parents, Span, TimeScale, trim_cards,
     };
 }

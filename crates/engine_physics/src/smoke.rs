@@ -185,7 +185,7 @@ fn pushed(session: &mut dyn SmokeSession) -> Checked<()> {
 fn placed(session: &mut dyn SmokeSession) -> Checked<()> {
     control(
         session,
-        "edit_transform",
+        "teleport",
         json!({"entity": "crate", "translation": [0.0, PLACED, ASIDE]}),
     )?;
     seconds(session, 1);

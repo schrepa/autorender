@@ -290,7 +290,7 @@ fn motion(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let translation = placed + Vec3::new(0.0, 0.0, -0.65);
     let edited = session.request(
         "control",
-        json!({"name": "edit_transform", "args": {"entity": "player", "translation": translation.to_array()}}),
+        json!({"name": "teleport", "args": {"entity": "player", "translation": translation.to_array()}}),
     );
     let wanted = json!(true);
     smoke_eq!(

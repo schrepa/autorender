@@ -359,10 +359,6 @@
             }
           ]
         },
-        "receives_shadows": {
-          "default": true,
-          "type": "boolean"
-        },
         "values": {
           "$ref": "#/$defs/InstanceValues",
           "default": {

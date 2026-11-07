@@ -88,7 +88,6 @@ pub struct Drawn {
     pub passes: Option<PassMask>,
     pub layers: Layers,
     pub order: i16,
-    pub receives_shadows: bool,
     pub projection: Option<DrawnProjection>,
     pub values: InstanceValues,
 }
@@ -116,7 +115,6 @@ impl Drawn {
             passes: None,
             layers: Layers::FIRST,
             order: 0,
-            receives_shadows: true,
             projection: None,
             values: InstanceValues::default(),
         }
