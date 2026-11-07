@@ -1,5 +1,6 @@
 import package::engine::shading::SurfaceInput;
 import package::engine::view::stable_normalize;
+import package::scatter::values::placed_values_of;
 
 struct Grounding {
     amount: f32,
@@ -9,16 +10,15 @@ struct Grounding {
 
 fn grounding(input: SurfaceInput) -> Grounding {
     var at: Grounding;
-    let reach = bitcast<f32>(input.words.z);
-    if !(reach > 0.0) || input.words.w == 0u {
+    let values = placed_values_of(input.kind, input.object);
+    if !(values.reach > 0.0) || values.texel == 0u {
         return at;
     }
-    let tilt = unpack2x16snorm(input.words.x);
+    let tilt = unpack2x16snorm(values.tilt);
     let up = sqrt(max(1.0 - dot(tilt, tilt), 0.01));
-    let above = input.world.y - input.origin.y - bitcast<f32>(input.words.y)
-        + dot(tilt, input.world.xz - input.origin.xz) / up;
-    at.amount = 1.0 - smoothstep(0.0, reach, above);
-    at.texel = unpack4x8unorm(input.words.w);
+    let above = input.world.y + dot(tilt, input.world.xz) / up - values.ground;
+    at.amount = 1.0 - smoothstep(0.0, values.reach, above);
+    at.texel = unpack4x8unorm(values.texel);
     at.up = vec3<f32>(tilt.x, up, tilt.y);
     return at;
 }

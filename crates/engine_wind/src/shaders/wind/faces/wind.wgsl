@@ -55,8 +55,3 @@ fn wind_sway(time: f32, pixels: f32, root: vec3<f32>, height: f32, local: vec3<f
     return offset + vec3<f32>(toward.x, 1.0, toward.y) * (bob * bobbing)
         + vec3<f32>(-toward.y, 1.0, toward.x) * (shiver * shivering);
 }
-
-fn slot_sway(flags: u32) -> f32 {
-    let sway = bitcast<f32>(flags);
-    return select(0.0, sway, sway > 1.0e-6 && sway <= 10.0);
-}

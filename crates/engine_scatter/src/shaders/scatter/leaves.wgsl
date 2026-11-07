@@ -10,6 +10,7 @@ import package::face::foliage::foliage;
 import package::face::lighting::LightInputs;
 import package::scatter::grounding::{grounded_color, grounded_metalness, grounded_normal,
     grounded_roughness};
+import package::scatter::values::placed_values_of;
 
 fn leafiness(color: vec3<f32>) -> f32 {
     return saturate(4.0 * (color.g - max(color.r, color.b)) / max(color.g, 1.0e-4));
@@ -27,7 +28,8 @@ fn plant_tint(plant: u32, leaf: f32) -> vec3<f32> {
 
 fn base_color(input: SurfaceInput, point: SurfacePoint) -> vec3<f32> {
     let color = standard_base_color(input, point);
-    return grounded_color(input, color * plant_tint(input.object.w, leafiness(color)));
+    let plant = placed_values_of(input.kind, input.object).tint;
+    return grounded_color(input, color * plant_tint(plant, leafiness(color)));
 }
 
 fn normal(input: SurfaceInput, point: SurfacePoint) -> vec3<f32> {

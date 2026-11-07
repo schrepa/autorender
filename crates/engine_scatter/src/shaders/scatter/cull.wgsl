@@ -1,3 +1,4 @@
+import package::engine::drawn::drawn_in_view;
 import package::engine::mesh::declarations::{FADE_LEVEL_MAX, faded_slot, faded_slot_slot};
 import package::engine::mesh::impostor_frames::{CARD_PHASE_FADING, FADING_CARD_FADE_MAX,
     FADING_CARD_INDEX_MAX, fading_card};
@@ -87,10 +88,42 @@ fn list(view: u32, record: Record, group: CullGroup, level: u32, entry: u32) {
     }
 }
 
-fn caster_level(record: Record, group: CullGroup, half_texel: f32) -> u32 {
+fn append_caster(view: u32, index: u32, drawn: CullGroup, level: u32, entry: u32) {
+    if drawn.casters == 0u {
+        return;
+    }
+    append(view, index, drawn, min(level, drawn.casters - 1u), entry);
+}
+
+fn list_casters(view: u32, record: Record, group: CullGroup, level: u32, entry: u32) {
+    append_caster(view, record.group, group, level, entry);
+    for (var part = 1u; part <= group.parts; part++) {
+        append_caster(view, record.group + part, groups[record.group + part], level, entry);
+    }
+}
+
+fn fits(view: CullView, error: f32, radius: f32, away: f32) -> bool {
+    let reach = error * view.eye.w;
+    if view.shape.x != 0u {
+        return reach + radius <= away;
+    }
+    return reach <= 1.0;
+}
+
+fn seen_in(view: CullView, radius: f32, away: f32) -> bool {
+    if view.eye.w <= 0.0 {
+        return true;
+    }
+    return radius * view.eye.w >= select(1.0, away, view.shape.x != 0u);
+}
+
+fn view_level(view: CullView, record: Record, group: CullGroup, away: f32) -> u32 {
     var level = 0u;
-    for (var l = 1u; l < group.casters; l++) {
-        if group.errors[l - 1u] * record.scale <= half_texel {
+    if view.eye.w <= 0.0 {
+        return level;
+    }
+    for (var l = 1u; l < group.camera; l++) {
+        if fits(view, group.errors[l - 1u] * record.scale, record.radius, away) {
             level = l;
         }
     }
@@ -207,11 +240,14 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         records[id.x].state = scatter_fade(shown, previous, progress, false);
     }
     let fade = f32(progress) / f32(FADED);
+    let kept = select(shown, previous, shown == SHOWN_NONE && progress < FADED);
     for (var view = 0u; view < frame.counts.w; view++) {
+        let wanted = views[view];
+        if !drawn_in_view(wanted.shape.w, frame.drawn.x)
+                || !inside(view, record.center, record.radius) {
+            continue;
+        }
         if view == 0u {
-            if !inside(0u, record.center, record.radius) {
-                continue;
-            }
             if progress < FADED {
                 show_fading(id.x, record, group, shown, fade, false);
                 show_fading(id.x, record, group, previous, fade, true);
@@ -220,19 +256,20 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
             }
             continue;
         }
-        let casts = select(shown, previous, shown == SHOWN_NONE && progress < FADED);
-        if casts == SHOWN_NONE || group.casters == 0u {
+        let near = distance(record.center, wanted.eye.xyz);
+        if kept == SHOWN_NONE || !seen_in(wanted, record.radius, near) {
             continue;
         }
-        let limits = views[view].limits;
-        if record.radius < limits.x || !inside(view, record.center, record.radius) {
-            continue;
-        }
-        let impostor = group.impostor * record.scale;
-        if frame.strides.z != 0u && impostor > 0.0 && impostor <= limits.y {
+        if wanted.shape.y != 0u && frame.strides.z != 0u && group.impostor > 0.0
+                && fits(wanted, group.impostor * record.scale, record.radius, near) {
             card(view, id.x, group.record);
             continue;
         }
-        append(view, record.group, group, caster_level(record, group, limits.x), id.x);
+        let level = view_level(wanted, record, group, near);
+        if wanted.shape.z != 0u {
+            list_casters(view, record, group, level, id.x);
+        } else {
+            list(view, record, group, level, id.x);
+        }
     }
 }

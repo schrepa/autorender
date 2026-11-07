@@ -17,7 +17,6 @@ pub struct LodLevel {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MeshLods {
     pub levels: Vec<LodLevel>,
-    pub single_sided: Vec<(u32, u32)>,
     pub indices: Vec<u32>,
 }
 
@@ -26,21 +25,16 @@ const INPUT_MAGIC: &[u8; 4] = b"ELDI";
 
 impl MeshLods {
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(
-            16 + self.levels.len() * 12 + self.single_sided.len() * 8 + self.indices.len() * 4,
-        );
+        let mut bytes =
+            Vec::with_capacity(12 + self.levels.len() * 12 + self.indices.len() * 4);
         bytes.extend_from_slice(LODS_MAGIC);
-        for count in [self.levels.len(), self.single_sided.len(), self.indices.len()] {
+        for count in [self.levels.len(), self.indices.len()] {
             bytes.extend_from_slice(&(count as u32).to_le_bytes());
         }
         for level in &self.levels {
             bytes.extend_from_slice(&level.first_index.to_le_bytes());
             bytes.extend_from_slice(&level.index_count.to_le_bytes());
             bytes.extend_from_slice(&level.error.to_le_bytes());
-        }
-        for &(first, count) in &self.single_sided {
-            bytes.extend_from_slice(&first.to_le_bytes());
-            bytes.extend_from_slice(&count.to_le_bytes());
         }
         for index in &self.indices {
             bytes.extend_from_slice(&index.to_le_bytes());
@@ -51,17 +45,15 @@ impl MeshLods {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
         let mut words = Words::new(bytes, LODS_MAGIC)
             .ok_or_else(|| invalid("$.lods").expected(Expected::Matching))?;
-        let counts = [words.next(), words.next(), words.next()];
-        let [Some(levels), Some(single_sided), Some(indices)] = counts else {
+        let (Some(levels), Some(indices)) = (words.next(), words.next()) else {
             return Err(invalid("$.lods")
                 .expected(Expected::Present)
                 .got(bytes.len()));
         };
         let expected = (levels as usize)
             .checked_mul(12)
-            .and_then(|levels| levels.checked_add(single_sided as usize * 8))
             .and_then(|size| size.checked_add(indices as usize * 4))
-            .and_then(|size| size.checked_add(16));
+            .and_then(|size| size.checked_add(12));
         if expected != Some(bytes.len()) {
             return Err(sized("$.lods", expected, bytes.len()));
         }
@@ -78,14 +70,6 @@ impl MeshLods {
                 index_count,
                 error: f32::from_bits(error),
             });
-        }
-        for range in 0..single_sided {
-            let (Some(first), Some(count)) = (words.next(), words.next()) else {
-                return Err(
-                    invalid(format!("$.lods.single_sided[{range}]")).expected(Expected::Present)
-                );
-            };
-            lods.single_sided.push((first, count));
         }
         lods.indices = (0..indices).filter_map(|_| words.next()).collect();
         Ok(lods)
@@ -122,20 +106,6 @@ impl MeshLods {
             }
             last = level.error;
         }
-        if !(self.single_sided.is_empty() || self.single_sided.len() == self.levels.len() + 1) {
-            return Err(invalid("$.lods.single_sided")
-                .expected(Expected::Matching)
-                .got(self.single_sided.len())
-                .nearest(self.levels.len() + 1));
-        }
-        if let Some(index) = self
-            .single_sided
-            .iter()
-            .position(|&(first, count)| !within(first, count))
-        {
-            let (first, count) = self.single_sided[index];
-            return Err(outside(format!("$.lods.single_sided[{index}]"), first, count));
-        }
         if let Some(index) = self
             .indices
             .iter()
@@ -149,7 +119,7 @@ impl MeshLods {
     }
 
     pub fn byte_len(&self) -> usize {
-        self.indices.len() * 4 + self.levels.len() * 12 + self.single_sided.len() * 8
+        self.indices.len() * 4 + self.levels.len() * 12
     }
 }
 

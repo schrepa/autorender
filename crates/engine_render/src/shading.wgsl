@@ -12,7 +12,8 @@ struct PositionInput {
     origin: vec3<f32>,
     time: f32,
     pixels: f32,
-    object: vec4<u32>,
+    kind: u32,
+    object: u32,
 }
 
 struct SurfacePoint {
@@ -56,9 +57,8 @@ struct SurfaceInput {
     eye: vec3<f32>,
     bias: f32,
     time: f32,
-    object: vec4<u32>,
-    words: vec4<u32>,
-    origin: vec3<f32>,
+    kind: u32,
+    object: u32,
 }
 
 struct ViewPixel {

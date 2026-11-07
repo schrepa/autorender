@@ -2,22 +2,23 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asset, AssetLibrary, AssetResidency, AssetUses, Cut, Detail, DeviceLimits, FrameTime,
-    ImpostorAsks, ImpostorPolicy, ImpostorRecord, ImpostorRecords, Readable, Readback, Spawner,
-    PrimaryView,
+    Asset, AssetLibrary, AssetResidency, AssetUses, Cut, Detail, DeviceLimits, Drawn, FrameTime,
+    ImpostorAsks, ImpostorPolicy, ImpostorRecord, ImpostorRecords, PrimaryView, Readable,
+    Readback, Spawner, Transform,
 };
 use engine_math::collections::HashMap;
 use engine_places_rendering::occlusion::OcclusionSource;
-use engine_places_rendering::shadows::{CasterMap, Refresh, ShadowChange, ShadowChanges, ShadowMaps};
+use engine_places_rendering::shadows::{ShadowChange, ShadowChanges};
 use engine_places_simulation::ground::TileKey;
 use engine_places_world::ground::{Foliage, PlacedTiles, PooledTile, TerrainTiles, TileFace};
 use glam::Vec3;
 
 use crate::ScatterBrick;
 use crate::far_cover::FarCoverTable;
+use crate::gpu::PLACED;
 use crate::groups::{Groups, Kept, Resolved, resolve};
 use crate::layouts::{
-    CanopyPiece, CullFrame, CullGroup, CullView, DrawArgs, GroundData, LEVELS, PlacedRecord,
+    CanopyPiece, CullFrame, CullGroup, CullView, DrawArgs, LEVELS, PlacedRecord, PlacedValues,
     PoseData, SlotColor, draw_args,
 };
 use crate::occupancy::{OccupancyWindows, canopy, texel_share};
@@ -30,33 +31,12 @@ const SLOT_STRIDES: [u64; 4] = [
     size_of::<PoseData>() as u64,
     size_of::<SlotColor>() as u64,
     size_of::<PlacedRecord>() as u64,
-    size_of::<GroundData>() as u64,
+    size_of::<PlacedValues>() as u64,
 ];
 
-const SLOT_FIRST: [u64; 4] = [size_of::<PoseData>() as u64, 16, 32, 16];
+const SLOT_FIRST: [u64; 4] = [size_of::<PoseData>() as u64, 16, 32, 32];
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Sizes {
-    pub(crate) groups: u64,
-    pub(crate) views: u64,
-    pub(crate) ids: u64,
-    pub(crate) draws: u64,
-    pub(crate) cards: u64,
-    pub(crate) card_args: u64,
-}
-
-impl Default for Sizes {
-    fn default() -> Self {
-        Self {
-            groups: 32,
-            views: size_of::<CullView>() as u64,
-            ids: 16,
-            draws: 20,
-            cards: 8,
-            card_args: 16,
-        }
-    }
-}
+const GROUPS_FIRST: u64 = 32;
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct GroupLists {
@@ -67,13 +47,8 @@ pub(crate) struct GroupLists {
 #[derive(Default)]
 pub(crate) struct CullPlan {
     pub(crate) prepared: bool,
-    pub(crate) views: Vec<CullView>,
-    pub(crate) maps: Vec<u32>,
-    pub(crate) fading_view: usize,
+    pub(crate) main: Option<CullView>,
     pub(crate) frame: Option<CullFrame>,
-    pub(crate) card_args: Vec<[u32; 4]>,
-    pub(crate) args: Vec<DrawArgs>,
-    pub(crate) lists_left: bool,
     pub(crate) cards: bool,
     pub(crate) atlas: bool,
 }
@@ -95,7 +70,7 @@ pub(crate) struct ScatterState {
     pub(crate) resident: u32,
     pub(crate) group_data: GroupData,
     pub(crate) slot_bytes: [u64; 4],
-    pub(crate) sizes: Sizes,
+    pub(crate) group_bytes: u64,
     pub(crate) room: u64,
     pub(crate) generation: u64,
     pub(crate) slot_sequence: u64,
@@ -126,7 +101,7 @@ impl Default for ScatterState {
             resident: 0,
             group_data: GroupData::default(),
             slot_bytes: SLOT_FIRST,
-            sizes: Sizes::default(),
+            group_bytes: GROUPS_FIRST,
             room: u64::MAX,
             generation: 0,
             slot_sequence: 0,
@@ -308,7 +283,7 @@ fn set_groups(state: &mut ScatterState) {
     }
     held.ids_per_view = ids;
     if grow(
-        &mut state.sizes.groups,
+        &mut state.group_bytes,
         (held.data.len() * size_of::<CullGroup>()) as u64,
         state.room,
     ) {
@@ -370,9 +345,9 @@ pub(crate) fn place_pool(
         .terrains
         .iter()
         .any(|terrain| !terrain.placement.is_empty());
-    if !placing && (state.slot_bytes != SLOT_FIRST || state.sizes != Sizes::default()) {
+    if !placing && (state.slot_bytes != SLOT_FIRST || state.group_bytes != GROUPS_FIRST) {
         state.slot_bytes = SLOT_FIRST;
-        state.sizes = Sizes::default();
+        state.group_bytes = GROUPS_FIRST;
         state.generation += 1;
     }
     let (resolved, kept) = resolve_all(&tiles, &settings, &library);
@@ -448,13 +423,11 @@ pub(crate) fn place_pool(
 }
 
 pub(crate) fn plan_cull(
-    (view, detail, maps, policy): (Res<PrimaryView>, Res<Detail>, Res<ShadowMaps>, Res<ImpostorPolicy>),
+    (view, detail, policy): (Res<PrimaryView>, Res<Detail>, Res<ImpostorPolicy>),
     mut state: ResMut<ScatterState>,
-    mut feedback: ResMut<ScatterFeedback>,
 ) {
     let state = &mut *state;
     let plan = &mut state.plan;
-    plan.maps.clear();
     plan.prepared = false;
     plan.atlas = state.impostors.iter().any(|record| record.sphere[3] > 0.0);
     plan.cards = plan.atlas;
@@ -470,74 +443,24 @@ pub(crate) fn plan_cull(
     let spanned = y_row * height * 0.5;
     let pixels = pixel_error.map_or(0.0, |error| spanned / error);
     let cards = impostors.map_or(0.0, |size| y_row * height / size);
-    plan.views.clear();
-    plan.views.push(CullView {
+    plan.main = Some(CullView {
         planes: engine_render::planes(view_projection),
-        limits: [0.0; 4],
+        eye: eye.extend(pixels).to_array(),
+        shape: [1, 1, 0, 0],
     });
-    for at in maps.views() {
-        let (CasterMap::Region, Refresh::Kept(kept)) = (at.map, at.refresh) else {
-            continue;
-        };
-        plan.views.push(CullView {
-            planes: kept.planes,
-            limits: [0.5 * kept.texel, kept.texel, 0.0, 0.0],
-        });
-        plan.maps.push(at.view());
-    }
-    let view_count = plan.views.len() as u32;
     let group_count = state.groups.layouts.len() as u32;
-    let draws_per_view = group_count * LEVELS;
-    plan.fading_view = plan.views.len();
-    let lists = view_count + 1;
-    let list_count = u64::from(lists);
-    let ids = u64::from(state.group_data.ids_per_view) * list_count * 4;
-    let draws = u64::from(draws_per_view) * list_count * size_of::<DrawArgs>() as u64;
-    let cards_bytes = u64::from(state.objects) * u64::from(view_count) * 8;
-    let sizes = &mut state.sizes;
-    let room = state.room;
-    let mut replaced = grow(
-        &mut sizes.views,
-        u64::from(view_count) * size_of::<CullView>() as u64,
-        room,
-    );
-    replaced |= grow(&mut sizes.ids, ids, room);
-    replaced |= grow(&mut sizes.draws, draws, room);
-    replaced |= grow(&mut sizes.cards, cards_bytes, room);
-    replaced |= grow(&mut sizes.card_args, list_count * 16, room);
-    if replaced {
-        state.generation += 1;
-    }
-    plan.lists_left = ids > room || cards_bytes > room;
-    if !plan.lists_left {
-        feedback.entries = 0;
-    }
     plan.frame = Some(CullFrame {
         eye: eye.extend(pixels).to_array(),
-        counts: [state.objects, group_count, LEVELS, view_count],
+        counts: [state.objects, group_count, LEVELS, 0],
         strides: [
             state.group_data.ids_per_view,
-            draws_per_view,
+            group_count * LEVELS,
             u32::from(impostors.is_some()),
             state.objects,
         ],
         fade: [state.fade, FADE_MARGIN, cards, spanned],
+        drawn: [0; 4],
     });
-    plan.card_args.clear();
-    plan.card_args.resize(
-        view_count as usize,
-        [engine_render::IMPOSTOR_VERTICES, 0, 0, 0],
-    );
-    plan.card_args.push([0; 4]);
-    plan.args.clear();
-    for list in 0..lists {
-        let shadow = list > 0 && list < view_count;
-        plan.args.extend_from_slice(if shadow {
-            &state.group_data.casters
-        } else {
-            &state.group_data.template
-        });
-    }
     plan.prepared = true;
 }
 
@@ -561,7 +484,8 @@ pub(crate) fn publish_assets(
             }
         }
         Err(_) => {
-            spawner.spawn((Placements, state.uses.clone(), asks));
+            let entity = spawner.spawn((Placements, Transform::default(), state.uses.clone(), asks));
+            spawner.insert(entity, Drawn::procedural(PLACED, entity));
         }
     }
 }
@@ -646,7 +570,7 @@ pub(crate) fn scatter_stats(
     ),
     mut stats: ResMut<ScatterStats>,
 ) {
-    let entries = if state.plan.lists_left {
+    let entries = if state.objects > 0 {
         feedback.entries
     } else {
         0

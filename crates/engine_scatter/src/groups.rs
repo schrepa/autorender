@@ -12,40 +12,52 @@ use engine_render::{pack_color, pack_surface};
 use glam::Vec3;
 
 use crate::layouts::{
-    Cover, LEVELS, NO_LAYER, PlacedRecord, RANK_MAX, ScatterFade, ScatterTerrain, SlotColor,
-    TERRAIN_INDEX, WIND_REACH, pose_rows,
+    Cover, LEVELS, NO_LAYER, PlacedRecord, PlacedValues, RANK_MAX, ScatterFade, ScatterTerrain,
+    SlotColor, TERRAIN_INDEX, WIND_REACH, pose_rows,
 };
 use crate::pool::TileObjects;
 use crate::settings::{PlacedLook, ScatterSettings};
 
 pub(crate) const GROUNDING_HEIGHT: &str = "grounding_height";
 
-fn ground_data(height: Option<f32>, normal: [f32; 2], sink: f32, scale: f32) -> [u32; 4] {
+fn origin_tint(origin: Vec3) -> u32 {
+    let cell = |value: f32| (value * 4.0).floor() as i32 as u32;
+    let mut hash =
+        cell(origin.x).wrapping_mul(0x8da6_b343) ^ cell(origin.z).wrapping_mul(0xd816_3841);
+    hash = (hash ^ (hash >> 16)).wrapping_mul(0x7feb_352d);
+    hash = (hash ^ (hash >> 15)).wrapping_mul(0x846c_a68b);
+    (hash ^ (hash >> 16)) & 0xffff_0000
+}
+
+fn placed_values(
+    height: Option<f32>,
+    (origin, normal): (Vec3, [f32; 2]),
+    (sink, scale): (f32, f32),
+    sway: f32,
+) -> PlacedValues {
+    let mut values = PlacedValues {
+        tint: origin_tint(origin),
+        sway,
+        ..PlacedValues::default()
+    };
     let Some(height) = height else {
-        return [0; 4];
+        return values;
     };
-    let snorm = |value: f32| {
-        u32::from((engine_math::clamp(value, -1.0, 1.0) * 32767.0).round() as i16 as u16)
-    };
-    [
-        snorm(normal[0]) | snorm(normal[1]) << 16,
-        sink.to_bits(),
-        (height * scale).to_bits(),
-        0,
-    ]
+    let snorm = |value: f32| (engine_math::clamp(value, -1.0, 1.0) * 32767.0).round() as i16;
+    let tilt = normal.map(snorm);
+    let [x, z] = tilt.map(|held| engine_math::max(f32::from(held) / 32767.0, -1.0));
+    let up = engine_math::max(1.0 - (x * x + z * z), 0.01).sqrt();
+    values.tilt = u32::from(tilt[0] as u16) | u32::from(tilt[1] as u16) << 16;
+    values.ground = origin.y + sink + (x * origin.x + z * origin.z) / up;
+    values.reach = height * scale;
+    values
 }
 
 type Range3 = (u32, u32, i32);
 
 type PartLevels = (Vec<Range3>, Vec<MeshHandle>);
 
-type Levels = (
-    Vec<Range3>,
-    Vec<Range3>,
-    Vec<MeshHandle>,
-    [f32; LEVELS as usize - 1],
-    u32,
-);
+type Levels = (Vec<Range3>, Vec<MeshHandle>, [f32; LEVELS as usize - 1], u32);
 
 #[derive(Clone, Copy)]
 pub(crate) struct ResolvedMesh<'a> {
@@ -171,12 +183,13 @@ pub(crate) struct DrawGroup {
     pub(crate) source: Material,
     pub(crate) extended: bool,
     pub(crate) color: SlotColor,
+    pub(crate) sway: f32,
     pub(crate) sphere: (Vec3, f32),
     pub(crate) objects: u32,
     pub(crate) part: Option<usize>,
     pub(crate) count: u32,
-    pub(crate) casts: Option<bool>,
     pub(crate) casters: Vec<MeshHandle>,
+    pub(crate) proxy: Option<bool>,
 }
 
 impl DrawGroup {
@@ -222,8 +235,7 @@ impl Groups {
                 let Some(asset) = asset else {
                     continue;
                 };
-                let Some((levels, casters, meshes, errors, camera)) =
-                    scatter_levels(residency, asset)
+                let Some((levels, meshes, errors, camera)) = scatter_levels(residency, asset)
                 else {
                     continue;
                 };
@@ -244,20 +256,18 @@ impl Groups {
                         (low.min(held.min()), high.max(held.max()))
                     });
                 let material = asset.material.material;
-                let (casts, casters, caster_meshes) = match proxy {
-                    Some((mesh, range)) => (Some(false), vec![range], vec![mesh.handle]),
-                    None => (
-                        Some(matches!(material.alpha_mode(), AlphaMode::Mask { .. })),
-                        casters,
-                        meshes.clone(),
-                    ),
+                let (casters, caster_meshes, shadow) = match proxy {
+                    Some((mesh, (range, extended))) => {
+                        (vec![range], vec![mesh.handle], Some(extended))
+                    }
+                    None => (levels.clone(), meshes.clone(), None),
                 };
                 let objects = groups.len() as u32;
                 indices.insert((*terrain, asset_index), objects);
                 let color = SlotColor {
                     color: pack_color(material.color()),
                     surface: pack_surface(material.surface()),
-                    flags: asset.sway.to_bits(),
+                    pad: 0,
                 };
                 let reach = if material.slot(SurfaceSlot::Position) == Some(crate::WIND) {
                     WIND_REACH
@@ -272,12 +282,13 @@ impl Groups {
                     source: material.clone(),
                     extended,
                     color,
+                    sway: asset.sway,
                     sphere,
                     objects,
                     part: None,
                     count: 0,
-                    casts,
                     casters: caster_meshes,
+                    proxy: shadow,
                 });
                 layouts.push(GroupLayout {
                     levels,
@@ -295,8 +306,12 @@ impl Groups {
                     let extended = residency
                         .mesh(part_meshes[0])
                         .is_some_and(ResidentMesh::extended);
+                    let (part_casters, part_caster_meshes) = match shadow {
+                        Some(_) => (Vec::new(), Vec::new()),
+                        None => (part_levels.clone(), part_meshes.clone()),
+                    };
                     layouts.push(GroupLayout {
-                        casters: Vec::new(),
+                        casters: part_casters,
                         camera: part_levels.len() as u32,
                         levels: part_levels,
                         errors,
@@ -310,12 +325,13 @@ impl Groups {
                         source: rendered.material.material.clone(),
                         extended,
                         color,
+                        sway: asset.sway,
                         sphere,
                         objects,
                         part: Some(part),
                         count: 0,
-                        casts: None,
-                        casters: Vec::new(),
+                        casters: part_caster_meshes,
+                        proxy: None,
                     });
                     covers.push(cover);
                     colors.push(color.color);
@@ -340,6 +356,7 @@ impl Groups {
             && self.groups.len() == other.groups.len()
             && self.groups.iter().zip(&other.groups).all(|(a, b)| {
                 a.color == b.color
+                    && a.sway == b.sway
                     && a.sphere == b.sphere
                     && a.objects == b.objects
                     && a.source.value(GROUNDING_HEIGHT) == b.source.value(GROUNDING_HEIGHT)
@@ -393,11 +410,11 @@ impl Groups {
                 state: ScatterFade::word(false),
                 pad: [0; 3],
             });
-            objects.3.push(ground_data(
+            objects.3.push(placed_values(
                 draw.source.value(GROUNDING_HEIGHT),
-                placed.ground,
-                placed.sink,
-                placed.scale,
+                (model.w_axis.truncate(), placed.ground),
+                (placed.sink, placed.scale),
+                draw.sway,
             ));
         }
         objects
@@ -494,16 +511,10 @@ fn terrain_indices(terrains: &[(Entity, Vec<Option<Resolved<'_>>>)]) -> HashMap<
 
 fn scatter_levels(residency: &AssetResidency, asset: &Resolved<'_>) -> Option<Levels> {
     let mesh = residency.mesh(asset.mesh.handle)?;
-    let level = |mesh: &ResidentMesh, level: usize, own: (u32, u32)| {
-        let (first, count) = mesh.single_sided_range(level, own);
-        (
-            (own.1, mesh.first_index() + own.0, mesh.base_vertex()),
-            (count, mesh.first_index() + first, mesh.base_vertex()),
-        )
+    let level = |mesh: &ResidentMesh, (first, count): (u32, u32)| {
+        (count, mesh.first_index() + first, mesh.base_vertex())
     };
-    let (finest, finest_casters) = level(mesh, 0, (0, mesh.index_count()));
-    let mut levels = vec![finest];
-    let mut casters = vec![finest_casters];
+    let mut levels = vec![level(mesh, (0, mesh.index_count()))];
     let mut meshes = vec![asset.mesh.handle];
     let mut errors = [0.0; LEVELS as usize - 1];
     if asset.lods.is_empty() {
@@ -512,13 +523,11 @@ fn scatter_levels(residency: &AssetResidency, asset: &Resolved<'_>) -> Option<Le
                 break;
             }
             errors[levels.len() - 1] = error;
-            let (drawn, cast) = level(mesh, levels.len(), (first_index, index_count));
-            levels.push(drawn);
-            casters.push(cast);
+            levels.push(level(mesh, (first_index, index_count)));
             meshes.push(asset.mesh.handle);
         }
         let camera = levels.len() as u32;
-        return Some((levels, casters, meshes, errors, camera));
+        return Some((levels, meshes, errors, camera));
     }
     for (lod, error) in asset.lods.iter().take(LEVELS as usize - 1) {
         let Some(coarser) = residency.mesh(lod.handle) else {
@@ -528,13 +537,11 @@ fn scatter_levels(residency: &AssetResidency, asset: &Resolved<'_>) -> Option<Le
             break;
         }
         errors[levels.len() - 1] = *error;
-        let (drawn, cast) = level(coarser, 0, (0, coarser.index_count()));
-        levels.push(drawn);
-        casters.push(cast);
+        levels.push(level(coarser, (0, coarser.index_count())));
         meshes.push(lod.handle);
     }
     let camera = levels.len() as u32;
-    Some((levels, casters, meshes, errors, camera))
+    Some((levels, meshes, errors, camera))
 }
 
 fn resident_parts(
@@ -571,8 +578,10 @@ fn part_levels(
     Some((ranges, meshes))
 }
 
-fn proxy_caster(residency: &AssetResidency, proxy: &ResolvedMesh<'_>) -> Option<Range3> {
+fn proxy_caster(residency: &AssetResidency, proxy: &ResolvedMesh<'_>) -> Option<(Range3, bool)> {
     let mesh = residency.mesh(proxy.handle)?;
-    let (first, count) = mesh.single_sided_range(0, (0, mesh.index_count()));
-    Some((count, mesh.first_index() + first, mesh.base_vertex()))
+    Some((
+        (mesh.index_count(), mesh.first_index(), mesh.base_vertex()),
+        mesh.extended(),
+    ))
 }

@@ -1,7 +1,7 @@
 import package::engine::mesh::declarations::{AffinePose as PoseRows, AffineVertexInput,
     MotionOutput, slot_fade, slot_index, slot_moved};
 import package::engine::drawn::{DRAWN_OWN_PROJECTION, drawn_clip, drawn_records};
-import package::engine::mesh::vertex::{origin_key, pose_matrix, transform_vertex};
+import package::engine::mesh::vertex::{pose_matrix, transform_vertex};
 import package::engine::shading::PositionInput;
 import package::engine::slots::slot_position;
 import package::engine::view::{camera, detail_across, view_clip};
@@ -12,12 +12,8 @@ fn posed(pose: AffinePose) -> mat4x4<f32> {
     return pose_matrix(PoseRows(pose.row_0, pose.row_1, pose.row_2));
 }
 
-fn pose_origin(pose: AffinePose) -> vec3<f32> {
-    return vec3<f32>(pose.row_0.w, pose.row_1.w, pose.row_2.w);
-}
-
-fn placed_position(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>,
-        material: SlotColor, time: f32) -> vec3<f32> {
+fn placed_position(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>, time: f32)
+        -> vec3<f32> {
     let origin = model[3].xyz;
     var input: PositionInput;
     input.local = position;
@@ -25,7 +21,6 @@ fn placed_position(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>,
     input.origin = origin;
     input.time = time;
     input.pixels = 1.0 / max(detail_across(origin), 1.0e-6);
-    input.object = vec4<u32>(material.color, material.surface, material.flags);
     return slot_position(input);
 }
 
@@ -34,19 +29,18 @@ fn affine_motion(input: AffineVertexInput, pose: AffinePose, previous: AffinePos
     let model = posed(pose);
     var vertex = transform_vertex(input.position, input.normal, material.color,
         material.surface, input.uv, model);
-    vertex.material.w = fade | origin_key(model[3].xyz);
+    vertex.material.w = fade;
     let point = vec4<f32>(input.position, 1.0);
     var world = model * point;
     if moved {
         world = vec4<f32>(dot(previous.row_0, point), dot(previous.row_1, point),
             dot(previous.row_2, point), 1.0);
     }
-    let current = placed_position(model, input.position, vertex.world_v.xyz, material,
-        camera.position.w);
+    let current = placed_position(model, input.position, vertex.world_v.xyz, camera.position.w);
     vertex.world_v = vec4<f32>(current, vertex.world_v.w);
     vertex.clip_position = view_clip(current);
-    world = vec4<f32>(placed_position(model, input.position, world.xyz, material,
-        camera.previous.w), 1.0);
+    world = vec4<f32>(placed_position(model, input.position, world.xyz, camera.previous.w),
+        1.0);
     let shown = camera.previous_view_projection * world;
     var output: MotionOutput;
     output.clip_position = vertex.clip_position;

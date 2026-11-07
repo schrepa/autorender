@@ -11,8 +11,7 @@ fn unposed() -> AffinePose {
 
 @vertex
 fn vs_skinned(input: AffineVertexInput, @location(3) previous: vec3<f32>) -> SlotVertex {
-    var vertex = slot_vertex(input, unposed(), unposed(), instance_color(input.slot),
-        vec4<u32>(0u), 0u);
+    var vertex = slot_vertex(input, unposed(), unposed(), instance_color(input.slot), 0u);
     let shown = camera.previous_view_projection * vec4<f32>(previous, 1.0);
     vertex.previous = shown.xyw;
     return vertex;

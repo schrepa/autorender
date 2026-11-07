@@ -133,7 +133,6 @@ fn levels(mesh: &Mesh, observed: &mut Observations) -> Result<(), String> {
         json!({
             "triangles": lods.levels.iter().map(|level| level.index_count / 3).collect::<Vec<_>>(),
             "errors": lods.levels.iter().map(|level| level.error).collect::<Vec<_>>(),
-            "casters": lods.single_sided.len(),
             "hash": super::hash(&bytes),
         }),
     );

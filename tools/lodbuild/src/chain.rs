@@ -2,7 +2,6 @@ use engine_codec::Error;
 use engine_math::max;
 use glam::Vec3;
 
-use crate::single_sided::single_sided_ranges;
 use crate::distance::{mean_edge, surface_distance};
 use crate::{LodInput, LodLevel, MeshLods};
 
@@ -103,12 +102,6 @@ pub(crate) fn levels(input: &LodInput) -> Result<MeshLods, Error> {
             error: max(error * ERROR_GROWTH, gone.error * EMPTY_ERROR_SCALE),
         });
     }
-    let ranges: Vec<(u32, u32, f32)> = lods
-        .levels
-        .iter()
-        .map(|level| (level.first_index, level.index_count, level.error))
-        .collect();
-    lods.single_sided = single_sided_ranges(&mut indices, own.len() as u32, &ranges);
     lods.indices = indices.split_off(own.len());
     Ok(lods)
 }

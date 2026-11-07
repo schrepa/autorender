@@ -9,7 +9,7 @@ pub(crate) type PoseData = engine_core::PoseRows;
 pub(crate) struct ColorData {
     pub color: [u32; 2],
     pub surface: u32,
-    pub flags: u32,
+    pub pad: u32,
 }
 
 fn tinted(color: [f32; 4], tint: [f32; 4]) -> [f32; 4] {
@@ -33,7 +33,7 @@ pub(crate) fn color_data(table: &DrawnTable, assets: &AssetLibrary, slot: usize)
     ColorData {
         color: pack_color(tinted(material.map_or([1.0; 4], Material::color), tint)),
         surface: pack_surface(material.map_or(Surface::MATTE, Material::surface)),
-        flags: 0,
+        pad: 0,
     }
 }
 

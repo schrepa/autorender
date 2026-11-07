@@ -1,17 +1,18 @@
-import package::engine::mesh::declarations::{AffineVertexInput, faded_entry_fade,
-    faded_slot_slot};
-import package::face::debug::{DebugTargets, debug_record_with_kind};
-import package::face::instances::{
-    AffinePose, SlotColor, SlotExtras, SlotVertex, SlotVertexExtended,
-    slot_debug, slot_fragment, slot_fragment_extended, slot_masked_depth, slot_pixel,
-    slot_pixel_extended, slot_shade, slot_vertex, slot_vertex_extended
-};
+import package::engine::materials::alpha_test;
+import package::engine::mesh::declarations::{AffinePose, AffineVertexInput, faded_entry_fade,
+    faded_slot_slot, fade_hidden};
+import package::engine::mesh::vertex::{output_color, pose_matrix, transform_vertex};
+import package::engine::shading::{PositionInput, Shaded, SurfaceInput, SurfacePoint};
+import package::engine::slots::{shade_model, slot_output, slot_position};
+import package::engine::surface::{masked_out, opacity_cut, surface_point};
+import package::engine::view::{camera, detail_across, material_bias, view_clip, view_pixel};
+import package::face::debug::{DebugTargets, debug_record_with_kind, debug_targets};
+import package::face::debug_modes::point_source;
 import package::generated::kinds::KIND_PLACED;
 import package::generated::targets::{ViewTargets, view_targets};
 
 @group(2) @binding(0) var<storage, read> poses: array<AffinePose>;
-@group(2) @binding(1) var<storage, read> colors: array<SlotColor>;
-@group(2) @binding(2) var<storage, read> grounds: array<vec4<u32>>;
+@group(2) @binding(1) var<storage, read> colors: array<vec4<u32>>;
 
 struct PlacedVertex {
     @invariant @builtin(position) clip_position: vec4<f32>,
@@ -20,8 +21,6 @@ struct PlacedVertex {
     @location(2) @interpolate(flat) material: vec4<u32>,
     @location(3) previous: vec3<f32>,
     @location(6) @interpolate(flat) object: vec4<u32>,
-    @location(8) @interpolate(flat) ground: vec4<u32>,
-    @location(9) @interpolate(flat) origin: vec3<f32>,
 }
 
 struct PlacedExtendedVertex {
@@ -33,51 +32,113 @@ struct PlacedExtendedVertex {
     @location(4) color: vec4<f32>,
     @location(5) uv1: vec2<f32>,
     @location(6) @interpolate(flat) object: vec4<u32>,
-    @location(8) @interpolate(flat) ground: vec4<u32>,
-    @location(9) @interpolate(flat) origin: vec3<f32>,
 }
 
-fn placed(vertex: SlotVertex, draw: vec4<u32>, slot: u32) -> PlacedVertex {
-    return PlacedVertex(vertex.clip_position, vertex.normal_u, vertex.world_v, vertex.material,
-        vertex.previous, vec4<u32>(draw.x, slot, 0u, 0u), vertex.words, vertex.origin);
+struct PlacedShaded {
+    point: SurfacePoint,
+    shaded: Shaded,
 }
 
-fn placed_extended(vertex: SlotVertexExtended, draw: vec4<u32>, slot: u32) -> PlacedExtendedVertex {
+fn placed_position(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>, slot: u32,
+        time: f32) -> vec3<f32> {
+    let origin = model[3].xyz;
+    var input: PositionInput;
+    input.local = position;
+    input.world = world;
+    input.origin = origin;
+    input.time = time;
+    input.pixels = 1.0 / max(detail_across(origin), 1.0e-6);
+    input.kind = KIND_PLACED;
+    input.object = slot;
+    return slot_position(input);
+}
+
+fn placed_vertex(input: AffineVertexInput, slot: u32, fade: u32, draw: vec4<u32>)
+        -> PlacedVertex {
+    let model = pose_matrix(poses[slot]);
+    let color = colors[slot];
+    let vertex = transform_vertex(input.position, input.normal, color.xy, color.z, input.uv,
+        model);
+    let world = placed_position(model, input.position, vertex.world_v.xyz, slot,
+        camera.position.w);
+    let before = placed_position(model, input.position, vertex.world_v.xyz, slot,
+        camera.previous.w);
+    var output: PlacedVertex;
+    output.clip_position = view_clip(world);
+    output.normal_u = vertex.normal_u;
+    output.world_v = vec4<f32>(world, vertex.world_v.w);
+    output.material = vec4<u32>(color.xy, color.z, fade);
+    output.previous = (camera.previous_view_projection * vec4<f32>(before, 1.0)).xyw;
+    output.object = vec4<u32>(draw.x, slot, 0u, 0u);
+    return output;
+}
+
+fn placed_extended_vertex(input: AffineVertexInput, color: vec4<f32>, uv1: vec2<f32>, slot: u32,
+        fade: u32, draw: vec4<u32>) -> PlacedExtendedVertex {
+    let vertex = placed_vertex(input, slot, fade, draw);
     return PlacedExtendedVertex(vertex.clip_position, vertex.normal_u, vertex.world_v,
-        vertex.material, vertex.previous, vertex.color, vertex.uv1,
-        vec4<u32>(draw.x, slot, 0u, 0u), vertex.words, vertex.origin);
+        vertex.material, vertex.previous, color, uv1, vertex.object);
 }
 
-fn slot_of(vertex: PlacedVertex) -> SlotVertex {
-    return SlotVertex(vertex.clip_position, vertex.normal_u, vertex.world_v, vertex.material,
-        vertex.previous, vertex.ground, vertex.origin);
+fn extended_of(input: PlacedVertex) -> PlacedExtendedVertex {
+    return PlacedExtendedVertex(input.clip_position, input.normal_u, input.world_v,
+        input.material, input.previous, vec4<f32>(1.0), vec2<f32>(input.normal_u.w,
+        input.world_v.w), input.object);
 }
 
-fn extended_of(vertex: PlacedExtendedVertex) -> SlotVertexExtended {
-    return SlotVertexExtended(vertex.clip_position, vertex.normal_u, vertex.world_v,
-        vertex.material, vertex.previous, vertex.color, vertex.uv1, vertex.ground, vertex.origin);
+fn placed_surface(input: PlacedExtendedVertex, front: bool) -> SurfaceInput {
+    if fade_hidden(input.material.w, input.clip_position.xy) {
+        discard;
+    }
+    var surface: SurfaceInput;
+    surface.color = output_color(input.material) * input.color;
+    surface.normal = input.normal_u.xyz;
+    surface.world = input.world_v.xyz;
+    surface.world_dx = dpdx(input.world_v.xyz);
+    surface.world_dy = dpdy(input.world_v.xyz);
+    surface.uv = vec2<f32>(input.normal_u.w, input.world_v.w);
+    surface.uv1 = input.uv1;
+    surface.surface = unpack4x8unorm(input.material.z);
+    surface.pixel = input.clip_position.xy;
+    surface.front = front;
+    surface.eye = camera.position.xyz;
+    surface.bias = material_bias();
+    surface.time = camera.position.w;
+    surface.kind = KIND_PLACED;
+    surface.object = input.object.y;
+    return surface;
 }
 
-fn placed_vertex(input: AffineVertexInput, slot: u32, fade: u32, draw: vec4<u32>) -> PlacedVertex {
-    let pose = poses[slot];
-    return placed(slot_vertex(input, pose, pose, colors[slot], grounds[slot], fade), draw, slot);
+fn placed_point(surface: SurfaceInput) -> SurfacePoint {
+    let point = surface_point(surface);
+    if alpha_test() && masked_out(surface, point) {
+        discard;
+    }
+    return point;
 }
 
-fn placed_extended_vertex(input: AffineVertexInput, extras: SlotExtras, slot: u32, fade: u32,
-        draw: vec4<u32>) -> PlacedExtendedVertex {
-    let pose = poses[slot];
-    return placed_extended(slot_vertex_extended(input, extras, pose, pose, colors[slot],
-        grounds[slot], fade), draw, slot);
+fn placed_shade(input: PlacedExtendedVertex, front: bool) -> PlacedShaded {
+    let surface = placed_surface(input, front);
+    let point = placed_point(surface);
+    return PlacedShaded(point, slot_output(surface, point, shade_model(point, surface.pixel)));
 }
 
-fn lit(vertex: SlotVertex, front: bool) -> ViewTargets {
-    let shaded = slot_shade(slot_fragment(vertex), front);
-    return view_targets(shaded.point, shaded.shaded, slot_pixel(vertex));
+fn lit(input: PlacedExtendedVertex, front: bool) -> ViewTargets {
+    let shaded = placed_shade(input, front);
+    return view_targets(shaded.point, shaded.shaded, view_pixel(input.clip_position,
+        vec4<f32>(input.previous.xy, 0.0, input.previous.z)));
 }
 
-fn lit_extended(vertex: SlotVertexExtended, front: bool) -> ViewTargets {
-    let shaded = slot_shade(slot_fragment_extended(vertex), front);
-    return view_targets(shaded.point, shaded.shaded, slot_pixel_extended(vertex));
+fn masked_depth(input: PlacedExtendedVertex) {
+    if alpha_test() && opacity_cut(placed_surface(input, true)) {
+        discard;
+    }
+}
+
+fn debug_object(input: PlacedExtendedVertex, front: bool) -> DebugTargets {
+    let point = placed_point(placed_surface(input, front));
+    return debug_targets(debug_record_with_kind(input.object.x, KIND_PLACED), input.object.y,
+        input.object.z, point.normal, point_source(0u, point));
 }
 
 @vertex
@@ -87,54 +148,61 @@ fn vs_object(input: AffineVertexInput, @location(14) draw: vec4<u32>) -> PlacedV
 
 @vertex
 fn vs_object_fading(input: AffineVertexInput, @location(14) draw: vec4<u32>) -> PlacedVertex {
-    let slot = faded_slot_slot(input.slot);
-    return placed_vertex(input, slot, faded_entry_fade(input.slot), draw);
+    return placed_vertex(input, faded_slot_slot(input.slot), faded_entry_fade(input.slot), draw);
 }
 
 @vertex
 fn vs_object_extended(input: AffineVertexInput, @location(9) color: vec4<f32>,
         @location(10) uv1: vec2<f32>, @location(14) draw: vec4<u32>) -> PlacedExtendedVertex {
-    return placed_extended_vertex(input, SlotExtras(color, uv1), input.slot, 0u, draw);
+    return placed_extended_vertex(input, color, uv1, input.slot, 0u, draw);
 }
 
 @vertex
 fn vs_object_extended_fading(input: AffineVertexInput, @location(9) color: vec4<f32>,
         @location(10) uv1: vec2<f32>, @location(14) draw: vec4<u32>) -> PlacedExtendedVertex {
-    let slot = faded_slot_slot(input.slot);
-    return placed_extended_vertex(input, SlotExtras(color, uv1), slot,
+    return placed_extended_vertex(input, color, uv1, faded_slot_slot(input.slot),
         faded_entry_fade(input.slot), draw);
 }
 
 @fragment
 fn fs_object(input: PlacedVertex, @builtin(front_facing) front: bool) -> ViewTargets {
-    return lit(slot_of(input), front);
+    return lit(extended_of(input), front);
 }
 
 @fragment
 fn fs_object_extended(input: PlacedExtendedVertex, @builtin(front_facing) front: bool)
         -> ViewTargets {
-    return lit_extended(extended_of(input), front);
+    return lit(input, front);
+}
+
+@fragment
+fn fs_view(input: PlacedVertex, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return vec4<f32>(placed_shade(extended_of(input), front).shaded.linear, 1.0);
+}
+
+@fragment
+fn fs_view_extended(input: PlacedExtendedVertex, @builtin(front_facing) front: bool)
+        -> @location(0) vec4<f32> {
+    return vec4<f32>(placed_shade(input, front).shaded.linear, 1.0);
 }
 
 @fragment
 fn fs_masked_depth(input: PlacedVertex) {
-    slot_masked_depth(slot_fragment(slot_of(input)));
+    masked_depth(extended_of(input));
 }
 
 @fragment
 fn fs_masked_depth_extended(input: PlacedExtendedVertex) {
-    slot_masked_depth(slot_fragment_extended(extended_of(input)));
+    masked_depth(input);
 }
 
 @fragment
 fn fs_debug_object(input: PlacedVertex, @builtin(front_facing) front: bool) -> DebugTargets {
-    return slot_debug(slot_fragment(slot_of(input)), front,
-        debug_record_with_kind(input.object.x, KIND_PLACED), input.object.y, input.object.z);
+    return debug_object(extended_of(input), front);
 }
 
 @fragment
 fn fs_debug_object_extended(input: PlacedExtendedVertex, @builtin(front_facing) front: bool)
         -> DebugTargets {
-    return slot_debug(slot_fragment_extended(extended_of(input)), front,
-        debug_record_with_kind(input.object.x, KIND_PLACED), input.object.y, input.object.z);
+    return debug_object(input, front);
 }

@@ -17,15 +17,12 @@ fn surface_input(input: SlotFragment, front: bool) -> SurfaceInput {
     surface.world_dy = dpdy(input.world);
     surface.uv = input.uv;
     surface.uv1 = input.uv1;
-    surface.surface = unpack4x8unorm(input.object.z);
+    surface.surface = unpack4x8unorm(input.material.z);
     surface.pixel = input.pixel;
     surface.front = front;
     surface.eye = camera.position.xyz;
     surface.bias = material_bias();
     surface.time = camera.position.w;
-    surface.object = input.object;
-    surface.words = input.words;
-    surface.origin = input.origin;
     return surface;
 }
 
@@ -42,17 +39,15 @@ fn mesh_point(input: SlotFragment, front: bool) -> SurfacePoint {
 }
 
 fn fragment_values(clip_position: vec4<f32>, normal_u: vec4<f32>, world_v: vec4<f32>,
-        material: vec4<u32>, words: vec4<u32>, origin: vec3<f32>) -> SlotFragment {
+        material: vec4<u32>) -> SlotFragment {
     var values: SlotFragment;
     values.color = output_color(material);
     values.normal = normal_u.xyz;
     values.world = world_v.xyz;
     values.uv = vec2<f32>(normal_u.w, world_v.w);
     values.uv1 = values.uv;
-    values.object = material;
+    values.material = material;
     values.pixel = clip_position.xy;
-    values.words = words;
-    values.origin = origin;
     return values;
 }
 
@@ -60,8 +55,7 @@ fn fragment(input: VertexOutput) -> SlotFragment {
     if fade_list() && fade_hidden(input.material.w, input.clip_position.xy) {
         discard;
     }
-    return fragment_values(input.clip_position, input.normal_u, input.world_v, input.material,
-        vec4<u32>(0u), vec3<f32>(0.0));
+    return fragment_values(input.clip_position, input.normal_u, input.world_v, input.material);
 }
 
 fn extended_fragment(input: ExtendedOutput) -> SlotFragment {
@@ -69,18 +63,18 @@ fn extended_fragment(input: ExtendedOutput) -> SlotFragment {
         discard;
     }
     var values = fragment_values(input.clip_position, input.normal_u, input.world_v,
-        input.material, vec4<u32>(0u), vec3<f32>(0.0));
+        input.material);
     values.color *= input.color;
     values.uv1 = input.uv1;
     return values;
 }
 
 fn placed_fragment(clip_position: vec4<f32>, normal_u: vec4<f32>, world_v: vec4<f32>,
-        material: vec4<u32>, words: vec4<u32>, origin: vec3<f32>) -> SlotFragment {
+        material: vec4<u32>) -> SlotFragment {
     if fade_hidden(material.w, clip_position.xy) {
         discard;
     }
-    return fragment_values(clip_position, normal_u, world_v, material, words, origin);
+    return fragment_values(clip_position, normal_u, world_v, material);
 }
 
 fn masked_depth(input: SlotFragment) {

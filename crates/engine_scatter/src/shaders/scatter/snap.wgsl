@@ -4,7 +4,7 @@ import package::face::ground_tiles::{
     macro_color, material_look, terrain_info, tile_height, tile_material, true_height
 };
 import package::generated::scatter::{
-    DEAD, SCATTER_GROUP, Snap, scatter_terrain_index, scatter_terrain_near,
+    DEAD, PlacedValues, SCATTER_GROUP, Snap, scatter_terrain_index, scatter_terrain_near,
     scatter_terrain_with_hidden
 };
 import package::place::placed_tiles::{Pose, Record};
@@ -12,7 +12,7 @@ import package::place::placed_tiles::{Pose, Record};
 @group(1) @binding(0) var<uniform> snap: Snap;
 @group(1) @binding(1) var<storage, read_write> records: array<Record>;
 @group(1) @binding(2) var<storage, read_write> poses: array<Pose>;
-@group(1) @binding(3) var<storage, read_write> grounds: array<vec4<u32>>;
+@group(1) @binding(3) var<storage, read_write> values: array<PlacedValues>;
 
 struct FinestGround {
     height: f32,
@@ -89,7 +89,12 @@ fn snap_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         + true_height(ground_terrain, local, ground.level, ground.tile) - record.sink;
     poses[id.x].r1.w = base;
     records[id.x].center.y = record.center.y + (base - pose.r1.w);
-    if grounds[id.x].z != 0u {
-        grounds[id.x].w = ground_color(terrain, info, ground_terrain, local, ground);
+    let held = values[id.x];
+    if held.reach != 0.0 {
+        let tilt = unpack2x16snorm(held.tilt);
+        let up = sqrt(max(1.0 - dot(tilt, tilt), 0.01));
+        values[id.x].ground = base + record.sink
+            + dot(tilt, vec2<f32>(pose.r0.w, pose.r2.w)) / up;
+        values[id.x].texel = ground_color(terrain, info, ground_terrain, local, ground);
     }
 }
