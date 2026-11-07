@@ -1,7 +1,7 @@
 import package::engine::view::{DetailLevel, PI, detail_across, detail_level, fade_noise};
 import package::generated::pieces::shadows::piece;
 import package::generated::shadows::{LEVEL_BAND, LEVEL_BEFORE, LEVEL_WINDOW, SHADOW_APRON,
-    TILE_OLD_SUN};
+    tile_entry_moving, tile_entry_old_sun, tile_entry_still};
 import package::place::sun_blockers::SunAt;
 
 @group(0) @binding(0) var shadow_atlas: texture_depth_2d;
@@ -125,7 +125,8 @@ fn level_slots(level: u32, point: LevelPoint) -> vec3<u32> {
     let side = u32(piece().atlas.x);
     let entry = textureLoad(shadow_tiles, vec2<u32>(point.cell.x, level * side + point.cell.y),
         0).r;
-    return vec3<u32>(entry & (TILE_OLD_SUN - 1u), entry >> 16u, entry & TILE_OLD_SUN);
+    return vec3<u32>(tile_entry_still(entry), tile_entry_moving(entry),
+        select(0u, 1u, tile_entry_old_sun(entry)));
 }
 
 fn slot_texel(slot: u32, across: vec2<f32>) -> vec2<f32> {
@@ -194,6 +195,8 @@ fn level_visibility(level: u32, sun: SunAt, spread: bool) -> f32 {
     if slots.x == 0u {
         return -1.0;
     }
+    let current = at;
+    let moving_slot = slots.y;
     if slots.z != 0u {
         band = level_before(level);
         rows = piece().before;
@@ -219,9 +222,10 @@ fn level_visibility(level: u32, sun: SunAt, spread: bool) -> f32 {
     if spread && point.soft > 0.0 && visible < 1.0 {
         visible = crown_spread(level, window, band, light, point, at, slots.x, visible);
     }
-    if slots.y != 0u {
+    if moving_slot != 0u {
         var moving = point;
-        moving.texel = slot_texel(slots.y - 1u, at.across);
+        moving.texel = slot_texel(moving_slot - 1u, current.across);
+        moving.depth = current.depth;
         visible = min(visible, plane_visibility(atlas_depths(moving), moving));
     }
     return visible;

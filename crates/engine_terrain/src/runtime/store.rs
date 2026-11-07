@@ -1,12 +1,6 @@
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use super::*;
-use engine_places_world::ground::{TileChange, TileChangeKind, TileChanges, TileFace};
-
-const RECENT_CHANGES: usize = 4096;
-
-static STORES: AtomicU64 = AtomicU64::new(1);
+use engine_core::{Feed, FeedSettings};
+use engine_places_world::ground::{TileChange, TileChangeKind, TileFace};
 
 struct Resident {
     tile: Arc<Tile>,
@@ -75,10 +69,9 @@ pub(super) struct TileStore {
     errors: Vec<f32>,
     cache: TileMap<CachedTile>,
     cached_bytes: u64,
-    recent: VecDeque<TileChange>,
-    end: u64,
+    log: Feed<TileChange>,
     faces: Arc<[TileFace]>,
-    changes: TileChanges,
+    changes: Arc<Feed<TileChange>>,
     kept: Arc<[(TileKey, engine_core::Stamp)]>,
     tiles_moved: bool,
     kept_moved: bool,
@@ -86,7 +79,7 @@ pub(super) struct TileStore {
 
 impl TileStore {
     pub(super) fn new(pyramid: Pyramid, generation: Generation) -> Self {
-        let end = STORES.fetch_add(1, Ordering::Relaxed) << 32;
+        let log = Feed::new(FeedSettings::default().tiles as usize);
         Self {
             pyramid,
             tiles: TileMap::default(),
@@ -94,10 +87,9 @@ impl TileStore {
             errors: vec![0.0; pyramid.levels() as usize],
             cache: TileMap::default(),
             cached_bytes: 0,
-            recent: VecDeque::new(),
-            end,
+            changes: Arc::new(log.clone()),
+            log,
             faces: Arc::from(Vec::new()),
-            changes: TileChanges::new(end, Arc::from(Vec::new())),
             kept: Arc::from(Vec::new()),
             tiles_moved: false,
             kept_moved: false,
@@ -143,7 +135,7 @@ impl TileStore {
         &self.faces
     }
 
-    pub(super) fn changes(&self) -> &TileChanges {
+    pub(super) fn changes(&self) -> &Arc<Feed<TileChange>> {
         &self.changes
     }
 
@@ -155,7 +147,8 @@ impl TileStore {
         &self.errors
     }
 
-    pub(super) fn settle_tiles(&mut self) -> bool {
+    pub(super) fn settle_tiles(&mut self, size: usize) -> bool {
+        self.log.resize(size);
         if !std::mem::take(&mut self.tiles_moved) {
             return false;
         }
@@ -164,7 +157,7 @@ impl TileStore {
             .iter()
             .map(|(_, resident)| resident.face.clone())
             .collect();
-        self.changes = TileChanges::new(self.end, self.recent.iter().copied().collect());
+        self.changes = Arc::new(self.log.clone());
         true
     }
 
@@ -181,11 +174,7 @@ impl TileStore {
     }
 
     fn log(&mut self, key: TileKey, kind: TileChangeKind) {
-        if self.recent.len() == RECENT_CHANGES {
-            self.recent.pop_front();
-        }
-        self.recent.push_back(TileChange { key, kind });
-        self.end += 1;
+        self.log.push(TileChange { key, kind });
         self.tiles_moved = true;
     }
 
@@ -331,7 +320,7 @@ impl TileStore {
         self.cached_bytes
     }
 
-    pub(super) fn restore(&mut self, missing: &[(TileKey, u32)], work: &Work) -> u64 {
+    pub(super) fn restore(&mut self, missing: &[(TileKey, u32)], work: &Work<'_>) -> u64 {
         let mut restored = 0;
         for &(key, _) in missing {
             if self.cache.is_empty() {
@@ -340,13 +329,12 @@ impl TileStore {
             if self.tiles.contains_key(&key) || !self.cache.contains_key(&key) {
                 continue;
             }
-            if restored > 0 && !work.uploads() {
+            if !work.spend(2 * TILE_ARRAY_BYTES) {
                 break;
             }
             if let Some(cached) = self.cache.remove(&key) {
                 self.cached_bytes -= cached.bytes;
                 self.kept_moved = true;
-                work.upload(2 * TILE_ARRAY_BYTES);
                 let made = self.generation;
                 let face = TileFace {
                     current: true,

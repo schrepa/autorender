@@ -1,7 +1,7 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use engine_codec::record;
+use engine_core::RecordKey;
 use engine_math::{max, min};
 use glam::{Mat3, Vec2, Vec3};
 
@@ -15,8 +15,6 @@ const HELD_ROUNDS: usize = 6;
 const DRAINED: f32 = 1.0e-3;
 const DEEPEST: f32 = 40.0;
 const STRETCH: usize = 16;
-
-static RUNNINGS: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Block {
@@ -56,15 +54,18 @@ record!(Levels {
 
 #[derive(Debug)]
 pub struct Running {
-    serial: u64,
+    name: [u8; 32],
     rivers: Vec<(u32, Levels)>,
 }
 
 impl Running {
+    fn of(rivers: Vec<(u32, Levels)>) -> Self {
+        let name = RecordKey::shared(&engine_codec::encode(&rivers)).hash();
+        Self { name, rivers }
+    }
+
     pub(crate) fn name(&self) -> [u8; 32] {
-        let mut name = [0; 32];
-        name[..8].copy_from_slice(&self.serial.to_le_bytes());
-        name
+        self.name
     }
 
     pub(crate) fn encoded(&self) -> Vec<u8> {
@@ -332,14 +333,13 @@ impl RiverFlow {
             .map(|river| river.as_ref().map(|river| river.surface.clone()))
             .collect();
         self.flows = flows;
-        self.running = Some(Arc::new(Running {
-            serial: RUNNINGS.fetch_add(1, Ordering::Relaxed),
-            rivers: rivers
+        self.running = Some(Arc::new(Running::of(
+            rivers
                 .into_iter()
                 .enumerate()
                 .filter_map(|(river, levels)| Some((river as u32, levels?)))
                 .collect(),
-        }));
+        )));
         true
     }
 

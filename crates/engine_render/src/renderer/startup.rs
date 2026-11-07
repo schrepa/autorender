@@ -103,7 +103,7 @@ impl Renderer {
             device.limits().max_texture_dimension_2d,
         )?;
         let scope = crate::gpu_calls::validation_scope(&device);
-        display.configure(&device);
+        display.configure(&device, queue.get_timestamp_period());
         let assets = new_assets(&device, &queue);
         let validation = Box::pin(scope.pop());
         let profiler = GpuProfiler::new(required_features, f64::from(queue.get_timestamp_period()));

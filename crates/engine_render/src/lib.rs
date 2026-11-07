@@ -12,8 +12,8 @@ use std::ops::Range;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
-    Bricks, DrawPoint, Entry, Error, List, MaterialHandle, MeshHandle, Read, Readback, Slot,
-    TextureHandle, Var, gpu_struct,
+    Bricks, DrawPoint, Entry, Error, List, MaterialHandle, MeshHandle, Read, Readable, Readback,
+    Slot, TextureHandle, Var, gpu_struct,
 };
 use engine_registry::RecordExt;
 
@@ -43,14 +43,15 @@ mod registration;
 mod shaders;
 mod shared;
 mod sizes;
+pub mod slots;
 
-mod buffers;
 mod materials;
 mod memory;
 mod mesh_arena;
 mod mipmaps;
 mod platform;
 mod profiling;
+mod readback;
 mod renderer;
 mod targets;
 
@@ -101,29 +102,37 @@ pub fn level_region(view: &engine_core::View, level: u32) -> (u32, u32) {
 }
 
 pub mod debug {
-    macro_rules! debug_consts {
-        ($($name:ident = $value:expr;)*) => {
-            $(pub const $name: u32 = $value;)*
-            pub(crate) const DECLARED: &[(&str, u32)] = &[$((stringify!($name), $name)),*];
-        };
+    use engine_core::gpu_bits;
+
+    #[gpu_bits]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum DebugKind {
+        Nothing = 0,
+        Mesh = 1,
+        Placed = 2,
+        Card = 3,
+        PlacedCard = 4,
+        Terrain = 6,
+        Cover = 7,
+        Water = 8,
+        Falls = 10,
+        Sky = 11,
     }
 
-    debug_consts! {
-        DEBUG_KIND_MESH = 1;
-        DEBUG_KIND_PLACED = 2;
-        DEBUG_KIND_CARD = 3;
-        DEBUG_KIND_PLACED_CARD = 4;
-        DEBUG_KIND_TERRAIN = 6;
-        DEBUG_KIND_COVER = 7;
-        DEBUG_KIND_WATER = 8;
-        DEBUG_KIND_FALLS = 10;
-        DEBUG_KIND_SKY = 11;
-        DEBUG_LEVEL_SHIFT = 4;
-        DEBUG_FADING = 0x100;
-        DEBUG_CASTS = 0x200;
-        DEBUG_SOURCE_SHIFT = 16;
-        DEBUG_NO_MATERIAL = 0xff;
+    #[gpu_bits]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct DebugRecord {
+        #[bits(4)]
+        pub kind: DebugKind,
+        #[bits(4)]
+        pub level: u32,
+        pub fading: bool,
+        pub casts: bool,
+        #[bits(8, at = 16)]
+        pub source: u32,
     }
+
+    pub const DEBUG_NO_MATERIAL: u32 = 0xff;
 }
 
 engine_core::settings! {
@@ -268,6 +277,12 @@ pub enum Lifetime {
     Frame,
     Kept,
     Previous,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Allocation {
+    Kept,
+    Fresh,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -744,12 +759,11 @@ impl<P: GpuPart> PassBuilder<'_, P> {
 
 pub struct Prepare<'f, P> {
     core: &'f mut encode::FrameCore,
-    fresh: bool,
     part: PhantomData<fn() -> P>,
 }
 
-fn delivered<R: Readback>(world: &mut bevy_ecs::world::World, frame: u64, tag: u32, bytes: &[u8]) {
-    world.get_resource_or_init::<R>().arrived(frame, tag, bytes);
+fn delivered<R: Readable>(world: &mut bevy_ecs::world::World, tag: u32, read: Readback<&[u8]>) {
+    world.get_resource_or_init::<R>().arrived(tag, read);
 }
 
 fn region_of(region: &CopyRegion) -> CopyRegion {
@@ -782,16 +796,16 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.run_pass(pass.0);
     }
 
+    pub fn ran(&self, pass: Pass<P>) -> bool {
+        self.core.ran.contains(pass.0 as usize)
+    }
+
     pub fn want_overlay(&mut self) {
         self.core.want_overlay();
     }
 
-    pub fn fresh(&self) -> bool {
-        self.fresh
-    }
-
-    pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) {
-        self.core.allocate(texture.0, size, mips);
+    pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) -> Allocation {
+        self.core.allocate(texture.0, size, mips)
     }
 
     pub fn allocate_as(
@@ -800,28 +814,28 @@ impl<P: GpuPart> Prepare<'_, P> {
         format: wgpu::TextureFormat,
         size: wgpu::Extent3d,
         mips: u32,
-    ) {
-        self.core.allocate_as(texture.0, format, size, mips);
+    ) -> Allocation {
+        self.core.allocate_as(texture.0, format, size, mips)
     }
 
-    pub fn grow(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) {
-        self.core.grow(texture.0, size, mips);
+    pub fn grow(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) -> Allocation {
+        self.core.grow(texture.0, size, mips)
     }
 
     pub fn release(&mut self, texture: Texture<P>) {
         self.core.release(texture.0);
     }
 
-    pub fn allocate_buffer(&mut self, buffer: Buffer<P>, bytes: u64) {
-        self.core.allocate_buffer(buffer.0, bytes);
+    pub fn allocate_buffer(&mut self, buffer: Buffer<P>, bytes: u64) -> Allocation {
+        self.core.allocate_buffer(buffer.0, bytes)
     }
 
     pub fn release_buffer(&mut self, buffer: Buffer<P>) {
         self.core.release_buffer(buffer.0);
     }
 
-    pub fn renew_buffer(&mut self, buffer: Buffer<P>, bytes: u64) {
-        self.core.renew_buffer(buffer.0, bytes);
+    pub fn renew_buffer(&mut self, buffer: Buffer<P>, bytes: u64) -> Allocation {
+        self.core.renew_buffer(buffer.0, bytes)
     }
 
     pub fn clear_buffer_range(&mut self, buffer: Buffer<P>, range: Range<u64>) {
@@ -833,8 +847,8 @@ impl<P: GpuPart> Prepare<'_, P> {
             .write(buffer.0, offset, bytemuck::cast_slice(data));
     }
 
-    pub fn grow_buffer(&mut self, buffer: Buffer<P>, bytes: u64) {
-        self.core.grow_buffer(buffer.0, bytes);
+    pub fn grow_buffer(&mut self, buffer: Buffer<P>, bytes: u64) -> Allocation {
+        self.core.grow_buffer(buffer.0, bytes)
     }
 
     pub fn count_upload(&mut self, bytes: u64) {
@@ -898,8 +912,9 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn copy(&mut self, pass: Pass<P>, regions: &[CopyRegion]) {
         let regions = regions.iter().map(region_of).collect();
-        self.core.copies.retain(|(known, _)| *known != pass.0);
-        self.core.copies.push((pass.0, regions));
+        let copies = &mut self.core.queued.copies;
+        copies.retain(|(known, _)| *known != pass.0);
+        copies.push((pass.0, regions));
         self.core.run_pass(pass.0);
     }
 
@@ -923,7 +938,7 @@ impl<P: GpuPart> Prepare<'_, P> {
         Pipeline(self.core.fill(pipeline.0, textures), PhantomData)
     }
 
-    pub fn read_back<R: Readback>(
+    pub fn read_back<R: Readable>(
         &mut self,
         tag: u32,
         buffer: Buffer<P>,
@@ -942,7 +957,7 @@ impl<P: GpuPart> Prepare<'_, P> {
         })
     }
 
-    pub fn read_back_once<R: Readback>(
+    pub fn read_back_once<R: Readable>(
         &mut self,
         tag: u32,
         buffer: Buffer<P>,
@@ -961,8 +976,16 @@ impl<P: GpuPart> Prepare<'_, P> {
         })
     }
 
-    pub fn deliver<R: Readback>(&mut self, tag: u32, bytes: Vec<u8>) {
-        self.core.deliver_bytes(tag, bytes, delivered::<R>);
+    pub fn deliver<R: Readable>(&mut self, tag: u32, bytes: Vec<u8>) {
+        let (part, written) = (self.core.part, self.core.written());
+        self.core.arrived(
+            (part, tag),
+            Readback {
+                value: bytes,
+                written,
+            },
+            delivered::<R>,
+        );
     }
 
     pub fn refuse(&mut self, error: Error) {

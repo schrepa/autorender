@@ -1,6 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Filled, FixedTime, InterpolateTransform, Parent, Transform};
-use engine_places_simulation::physics::{BodyMotion, BodyPush, Collider, RigidBody};
+use engine_places_simulation::physics::{
+    BodyMotion, BodyPush, Collide, Collider, Collision, RigidBody,
+};
 use engine_places_simulation::water::{WaterBody, WaterObstacle};
 use engine_places_simulation::wind::Wind;
 use glam::{Quat, Vec3};
@@ -11,7 +13,6 @@ use crate::coupling::{self, AIR_SPIN, Form, Motion};
 use crate::obstacles::sorted;
 use crate::settings::{Physics, PhysicsStats};
 use crate::shapes::body_shape;
-use crate::solids::Solids;
 use crate::solver::Solver;
 use crate::statics::{Statics, groups};
 
@@ -54,7 +55,7 @@ struct Surroundings<'a> {
     settings: &'a Physics,
     time: &'a FixedTime,
     wind: Option<&'a Wind>,
-    solids: &'a Solids,
+    collision: &'a dyn Collide,
     waters: &'a [&'a WaterBody],
 }
 
@@ -275,16 +276,12 @@ impl PhysicsWorld {
             }
         }
         let reach = reach(&self.bodies, solver);
-        if around.solids.collides() {
-            let bodies = &self.bodies;
-            self.statics.sync(solver, around.solids, reach, |entity| {
-                bodies
-                    .binary_search_by_key(&entity, |body| body.entity)
-                    .is_ok()
-            });
-        } else {
-            self.statics.clear(solver);
-        }
+        let bodies = &self.bodies;
+        self.statics.sync(solver, around.collision, reach, |entity| {
+            bodies
+                .binary_search_by_key(&entity, |body| body.entity)
+                .is_ok()
+        });
         let samples = push(&mut self.bodies, solver, around, pushes);
         {
             let _profile = engine_core::profile::span("physics", "solve");
@@ -476,7 +473,7 @@ pub(crate) fn step(
     time: Res<FixedTime>,
     wind: Res<Wind>,
     wind_on: Filled<Wind>,
-    solids: Res<Solids>,
+    collision: Res<Collision>,
     waters: Query<&WaterBody>,
     mut poses: Query<BodyQuery>,
     mut markers: Markers,
@@ -504,7 +501,7 @@ pub(crate) fn step(
         settings: &settings,
         time: &time,
         wind: wind_on.on().then_some(&*wind),
-        solids: &solids,
+        collision: &*collision.0,
         waters: &waters,
     };
     physics.tick(wanted, &around, &mut poses, &mut markers, &mut pushes);

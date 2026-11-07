@@ -45,6 +45,7 @@ stats! {
     #[section("reflection_probes_stats")]
     pub struct ReflectionProbeStats {
         pub ready: u32,
+        #[pending] pub waiting: u32,
         pub faces: u32,
         pub probe_cut: Cut,
     }
@@ -65,6 +66,7 @@ impl Brick for ReflectionProbesBrick {
             .resource::<gather::ProbeList>()
             .resource::<probes::ProbeState>()
             .resource::<probes::ProbeWords>()
+            .resource::<probes::ProbeAcks>()
             .join::<SceneComponents>(
                 ComponentKind::of::<ReflectionProbe>("reflection_probe")
                     .check(component::check)
@@ -85,7 +87,6 @@ impl Brick for ReflectionProbesBrick {
                     probes::publish_captures,
                 ),
             )
-            .off(probes::forget_probes)
             .generated(GENERATED)
             .part::<captures::ProbesGpu>()
             .draws::<captures::ProbesGpu, EnvironmentLayers>(

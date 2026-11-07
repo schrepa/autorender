@@ -50,6 +50,8 @@ export const WHEEL_PIXELS = 100.0;
 
 export const BENCHMARK_LIMIT_MS = 10000;
 
+export const READ_BACK_LIMIT_MS = 120000;
+
 export const DYNAMIC_STEP = 0.03125;
 
 export const DYNAMIC_OVER = 1.05;

@@ -38,7 +38,6 @@ impl Brick for NavigationBrick {
             .resource::<NavAgents>()
             .stats::<NavStats>()
             .systems(Schedule::FixedMove, agents::walk_agents)
-            .off_in(Schedule::FixedMove, agents::stop_walks)
             .operation::<NavGoControl>()
             .operation::<NavPathQuery>()
             .observation::<NavAgentQuery>()

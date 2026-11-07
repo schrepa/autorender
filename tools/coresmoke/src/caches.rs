@@ -412,7 +412,7 @@ fn bits(matrix: engine_core::glam::Mat4) -> [u32; 16] {
 
 fn frame(engine: &mut Engine) -> Result<Frame, String> {
     let world = engine
-        .extract_frame(ASPECT, 1.0)
+        .extract_frame(ASPECT, engine_core::Presented::Tick)
         .map_err(|error| format!("extract_frame: {error}"))?
         .world();
     let globals = world
@@ -578,7 +578,7 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
         );
         let Some((mut engine, _, map)) = fresh else {
             living
-                .extract_frame(ASPECT, 1.0)
+                .extract_frame(ASPECT, engine_core::Presented::Tick)
                 .map_err(|error| format!("extract_frame: {error}"))?;
             continue;
         };

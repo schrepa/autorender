@@ -1,7 +1,10 @@
 use crate::collections::HashMap;
 use crate::interpolation::{InterpolationState, Observer, pose_rows};
 use crate::ticks::{ChangeWindow, STAMP_BLOCK, ScanClock, consume_through};
-use crate::{InterpolateTransform, NodePose, PoseRows, Transform, entity_indices::EntityIndices};
+use crate::{
+    Cursor, Feed, FeedSettings, InterpolateTransform, NodePose, PoseRows, Since, Transform,
+    entity_indices::EntityIndices,
+};
 use bevy_ecs::change_detection::ContiguousRef;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;
@@ -413,8 +416,7 @@ pub struct GlobalTransforms {
     order: Vec<usize>,
     path: Vec<usize>,
     dirty: Dirty,
-    changes: ChangeLog,
-    moved: Moved,
+    changes: Feed<u32>,
     scans: ScanClock,
     incomplete: bool,
     limit: usize,
@@ -443,8 +445,12 @@ impl FromWorld for GlobalTransforms {
             order: Vec::new(),
             path: Vec::new(),
             dirty: Dirty::default(),
-            changes: ChangeLog::default(),
-            moved: Moved::default(),
+            changes: Feed::new(
+                world
+                    .get_resource::<FeedSettings>()
+                    .map_or(FeedSettings::default().transforms, |feeds| feeds.transforms)
+                    as usize,
+            ),
             scans: ScanClock::default(),
             incomplete: true,
             limit: node_limit(world),
@@ -485,114 +491,6 @@ impl Dirty {
     }
 }
 
-pub(crate) struct ChangeLog {
-    nodes: Vec<u32>,
-    marks: Vec<u32>,
-    generation: u32,
-    limit: usize,
-    overflow: bool,
-}
-
-impl Default for ChangeLog {
-    fn default() -> Self {
-        Self {
-            nodes: Vec::new(),
-            marks: Vec::new(),
-            generation: 1,
-            limit: 0,
-            overflow: true,
-        }
-    }
-}
-
-impl ChangeLog {
-    fn reset(&mut self, nodes: usize) {
-        self.nodes.clear();
-        self.marks.clear();
-        self.marks.resize(nodes, 0);
-        self.generation = 1;
-        self.limit = nodes / 4;
-        self.overflow = true;
-    }
-
-    #[inline(always)]
-    fn record(&mut self, index: usize) {
-        if self.overflow {
-            return;
-        }
-        let mark = &mut self.marks[index];
-        if *mark != self.generation {
-            *mark = self.generation;
-            if self.nodes.len() == self.limit {
-                self.overflow = true;
-            } else {
-                self.nodes.push(index as u32);
-            }
-        }
-    }
-
-    pub(crate) fn take(&mut self) -> Option<Vec<u32>> {
-        (!self.overflow).then(|| std::mem::take(&mut self.nodes))
-    }
-
-    pub(crate) fn restore(&mut self, nodes: Option<Vec<u32>>) {
-        if let Some(nodes) = nodes {
-            self.nodes = nodes;
-        }
-        self.nodes.clear();
-        self.overflow = false;
-        self.generation = self.generation.wrapping_add(1);
-        if self.generation == 0 {
-            self.marks.fill(0);
-            self.generation = 1;
-        }
-    }
-}
-
-const MOVED_FLOOR: usize = 4096;
-
-pub enum TransformsSince<'a> {
-    Same,
-    Listed(&'a [Entity]),
-    All,
-}
-
-#[derive(Default)]
-struct Moved {
-    end: u64,
-    recent: Vec<Entity>,
-    limit: usize,
-}
-
-impl Moved {
-    fn forget(&mut self, nodes: usize) {
-        self.end += 1;
-        self.recent.clear();
-        self.limit = (nodes / 4).max(MOVED_FLOOR);
-    }
-
-    #[inline(always)]
-    fn push(&mut self, entity: Entity) {
-        if self.recent.len() == self.limit * 2 {
-            self.recent.drain(..self.limit);
-        }
-        self.recent.push(entity);
-        self.end += 1;
-    }
-
-    fn since(&self, seen: &mut u64) -> TransformsSince<'_> {
-        let start = self.end - self.recent.len() as u64;
-        let at = std::mem::replace(seen, self.end);
-        if at == self.end {
-            TransformsSince::Same
-        } else if at < start || at > self.end {
-            TransformsSince::All
-        } else {
-            TransformsSince::Listed(&self.recent[(at - start) as usize..])
-        }
-    }
-}
-
 struct Scan {
     topology_changed: bool,
     observed: usize,
@@ -606,8 +504,7 @@ struct Nodes<'a> {
     revisions: &'a mut [Option<Revision>],
     flags: &'a mut [bool],
     invalid_transforms: &'a mut usize,
-    changes: &'a mut ChangeLog,
-    moved: &'a mut Moved,
+    changes: &'a mut Feed<u32>,
 }
 
 #[cold]
@@ -650,7 +547,6 @@ impl Nodes<'_> {
             flags,
             invalid_transforms,
             changes,
-            moved,
         } = self;
         Self {
             entities: &entities[..len],
@@ -661,7 +557,6 @@ impl Nodes<'_> {
             flags: &mut flags[..len],
             invalid_transforms,
             changes,
-            moved,
         }
     }
 
@@ -742,8 +637,7 @@ impl Nodes<'_> {
         if publish {
             *revision = Some(work.value_ids.next());
             work.written += 1;
-            self.changes.record(index);
-            self.moved.push(self.entities[index]);
+            self.changes.push(index as u32);
         }
         changed
     }
@@ -765,8 +659,16 @@ impl GlobalTransforms {
         self.global(index).map(glam::Affine3A::from_mat4)
     }
 
-    pub fn changes_since(&self, cursor: &mut u64) -> TransformsSince<'_> {
-        self.moved.since(cursor)
+    pub fn changes_since(&self, cursor: &mut Cursor) -> Since<'_, u32> {
+        self.changes.since(cursor)
+    }
+
+    pub fn entity_at(&self, index: u32) -> Option<Entity> {
+        self.entities.get(index as usize).copied()
+    }
+
+    pub(crate) fn resize_changes(&mut self, size: usize) {
+        self.changes.resize(size);
     }
 
     pub fn len(&self) -> usize {
@@ -853,7 +755,6 @@ impl GlobalTransforms {
             dirty,
             report,
             changes,
-            moved,
             ..
         } = self;
         let Dirty {
@@ -876,7 +777,6 @@ impl GlobalTransforms {
             flags,
             invalid_transforms: &mut report.invalid_transforms,
             changes,
-            moved,
         }
         .trimmed(len);
         let mut observer = interpolation
@@ -939,7 +839,7 @@ impl GlobalTransforms {
                         continue;
                     }
                     local_revisions[index] = next_revision;
-                    nodes.changes.record(index);
+                    nodes.changes.push(index as u32);
                     let link = &nodes.links[index];
                     if !link.has_children()
                         && link.parent().is_none_or(|parent| !nodes.flags[parent])
@@ -973,7 +873,7 @@ impl GlobalTransforms {
         let _profile = engine_profile::span("hierarchy", "change_tick_scan");
         engine_profile::counter("hierarchy.full_scan", 1.0);
         self.dirty.clear();
-        self.changes.overflow = true;
+        self.changes.replace();
         let threshold = self.dense_threshold();
         let mut count = 0;
         let mut metadata = 0;
@@ -1138,8 +1038,7 @@ impl GlobalTransforms {
         }
         self.dirty.flags.resize(self.links.len(), true);
         self.dirty.count = self.links.len();
-        self.changes.reset(self.links.len());
-        self.moved.forget(self.links.len());
+        self.changes.replace();
         report.invalid_transforms = report.transforms;
         self.report = report;
         self.topology_revision = work.value_ids.next();
@@ -1163,7 +1062,6 @@ impl GlobalTransforms {
             dirty,
             report,
             changes,
-            moved,
             ..
         } = self;
         let len = links.len();
@@ -1176,7 +1074,6 @@ impl GlobalTransforms {
             flags: &mut dirty.flags,
             invalid_transforms: &mut report.invalid_transforms,
             changes,
-            moved,
         }
         .trimmed(len);
         let mut observer = interpolation

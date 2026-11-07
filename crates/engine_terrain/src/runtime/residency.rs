@@ -1,6 +1,5 @@
 use super::*;
-
-pub(super) const RETRY_AFTER: u64 = 120;
+use engine_core::RecordKey;
 
 pub(super) const LOAD_REACH: f32 = 2.0;
 
@@ -27,31 +26,6 @@ impl HydrologyState {
     }
 }
 
-#[derive(Clone, Copy, Default)]
-pub(super) struct Stale {
-    pub(super) tiles: bool,
-    pub(super) ground: bool,
-    pub(super) water: bool,
-    pub(super) programs: bool,
-}
-
-impl Stale {
-    pub(super) const ALL: Self = Self {
-        tiles: true,
-        ground: true,
-        water: true,
-        programs: true,
-    };
-
-    pub(super) fn with(self, other: Self) -> Self {
-        Self {
-            tiles: self.tiles || other.tiles,
-            ground: self.ground || other.ground,
-            water: self.water || other.water,
-            programs: self.programs || other.programs,
-        }
-    }
-}
 
 fn with_edits(
     base: Arc<Layers>,
@@ -69,7 +43,7 @@ pub(super) struct TerrainState {
     pub(super) entity: Entity,
     pub(super) terrain: Terrain,
     pub(super) store: TileStore,
-    pub(super) failed: TileMap<u64>,
+    pub(super) failed: TileMap<Interest<RecordKey>>,
     pub(super) drawn: bool,
     pub(super) collision: Vec<TileKey>,
     pub(super) ranges: Vec<f32>,
@@ -78,27 +52,45 @@ pub(super) struct TerrainState {
     pub(super) hydrology: HydrologyState,
     pub(super) bridges: Arc<[Bridge]>,
     pub(super) current: Arc<Layers>,
-    pub(super) stale: Stale,
+    pub(super) changed: bool,
+    pub(super) reshaped: Option<Vec<(Vec2, Vec2)>>,
     pub(super) around: Option<Around>,
     pub(super) missing: Vec<(TileKey, u32)>,
     pub(super) target: HashSet<TileKey>,
     pub(super) keep: HashSet<TileKey>,
     pub(super) recipe: Option<SharedRecipe>,
-    pub(super) dispatched: TileMap<(Ticket, Generation, u32)>,
-    pub(super) bake: BakeRecord,
+    pub(super) dispatched: TileMap<(Interest<RecordKey>, Generation, u32)>,
+    pub(super) bake: TerrainBake,
     pub(super) failures: JobFailures,
-    pub(super) prefetched: TileMap<(Ticket, Generation)>,
+    pub(super) prefetched: TileMap<(Interest<RecordKey>, Generation)>,
     pub(super) cook: Option<CookTiles>,
     pub(super) surface: Option<(Arc<Layers>, Option<Arc<SurfaceData>>)>,
     pub(super) materials: bool,
 }
 
 #[derive(Default)]
-pub(super) struct BakeRecord {
-    pub(super) job: Option<Ticket>,
-    pub(super) failed: Option<u64>,
-    pub(super) asked: bool,
-    pub(super) drawn: Option<Arc<[TerrainRiver]>>,
+pub(super) enum TerrainBake {
+    #[default]
+    Unasked,
+    Asked {
+        interest: Interest<RecordKey>,
+        drawn: Arc<[TerrainRiver]>,
+    },
+    Failed {
+        interest: Interest<RecordKey>,
+        drawn: Arc<[TerrainRiver]>,
+    },
+    Made,
+}
+
+impl TerrainBake {
+    pub(super) fn asked(&self) -> bool {
+        !matches!(self, Self::Unasked)
+    }
+
+    pub(super) fn baking(&self) -> bool {
+        matches!(self, Self::Asked { .. })
+    }
 }
 
 pub(super) const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as u64) * 4;
@@ -107,13 +99,14 @@ pub(super) struct Around {
     pub(super) base: Arc<Layers>,
     pub(super) surroundings: Surroundings,
     pub(super) cutout: (Vec2, Vec2),
+    pub(super) entity: Option<Entity>,
 }
 
 impl TerrainState {
     pub(super) fn new(entity: Entity, terrain: Terrain, kinds: &[&'static LayerKind]) -> Self {
         Self {
             entity,
-            store: TileStore::new(terrain.pyramid, Generation::of(&terrain.edits, &[], true)),
+            store: TileStore::new(terrain.pyramid, Generation::of(&terrain.edits, None)),
             current: with_edits(terrain.layers.clone(), &terrain.edits, kinds),
             terrain,
             failed: TileMap::default(),
@@ -124,14 +117,15 @@ impl TerrainState {
             baked_rivers: Arc::from(Vec::new()),
             hydrology: HydrologyState::default(),
             bridges: Arc::from(Vec::new()),
-            stale: Stale::ALL,
+            changed: true,
+            reshaped: None,
             around: None,
             missing: Vec::new(),
             target: HashSet::default(),
             keep: HashSet::default(),
             recipe: None,
             dispatched: TileMap::default(),
-            bake: BakeRecord::default(),
+            bake: TerrainBake::default(),
             failures: JobFailures::default(),
             prefetched: TileMap::default(),
             cook: None,
@@ -143,8 +137,7 @@ impl TerrainState {
     pub(super) fn show(&mut self, drawn: bool) {
         if self.drawn != drawn {
             self.drawn = drawn;
-            self.stale.tiles = true;
-            self.stale.programs = true;
+            self.changed = true;
         }
     }
 
@@ -166,8 +159,7 @@ impl TerrainState {
             if !current {
                 let data = SurfaceData::new(&self.terrain.surface.rules, layers).map(Arc::new);
                 self.surface = Some((layers.clone(), data));
-                self.stale.tiles = true;
-                self.stale.programs = true;
+                self.changed = true;
             }
             self.surface.as_ref().is_none_or(|(_, data)| data.is_none())
         } else {
@@ -175,35 +167,24 @@ impl TerrainState {
         };
         if materials != self.materials {
             self.materials = materials;
-            self.stale.tiles = true;
-            self.stale.programs = true;
-            self.store.invalidate(
-                Generation::of(&self.terrain.edits, &self.baked_rivers, materials),
-                |_| true,
-            );
+            self.changed = true;
         }
     }
 
     pub(super) fn retire(self, retired: &mut Retired) {
-        retired.jobs.extend(
-            self.dispatched
-                .into_values()
-                .into_iter()
-                .map(|(ticket, _, _)| ticket),
-        );
-        retired.jobs.extend(self.bake.job);
-        retired.jobs.extend(
-            self.prefetched
-                .into_values()
-                .into_iter()
-                .map(|(ticket, _)| ticket),
-        );
-        retired
-            .jobs
-            .extend(self.cook.into_iter().flat_map(CookTiles::asked));
         retired
             .shares
             .extend(self.recipe.as_ref().map(|recipe| recipe.key));
+        retired
+            .entities
+            .extend(self.around.and_then(|around| around.entity));
+    }
+
+    pub(super) fn generation(&self) -> Generation {
+        Generation::of(
+            &self.terrain.edits,
+            self.recipe.as_ref().map(|recipe| recipe.key),
+        )
     }
 
     fn cut_out(&self, local: Vec2) -> bool {
@@ -227,14 +208,13 @@ impl TerrainState {
             .collect();
         self.terrain.edits = edits;
         self.refresh_layers(kinds);
-        self.stale.tiles = true;
-        self.stale.ground = true;
+        self.changed = true;
         if changed.is_empty() {
             return;
         }
         let pyramid = self.terrain.pyramid;
         let under = |key: &TileKey| changed.iter().any(|stamp| reaches(stamp, &pyramid, *key));
-        let generation = Generation::of(&self.terrain.edits, &self.baked_rivers, self.materials);
+        let generation = self.generation();
         self.store.invalidate(generation, under);
     }
 
@@ -258,18 +238,26 @@ impl TerrainState {
 
     pub(super) fn redrawn(&mut self, drawn: Arc<[TerrainRiver]>, before: Option<&Layers>) {
         self.baked_rivers = drawn;
-        let changed = match (before, self.baked.as_deref()) {
+        self.reshaped = match (before, self.baked.as_deref()) {
             (Some(before), Some(after)) => after.changes_from(before),
             _ => None,
         };
+    }
+
+    pub(super) fn recipe_changed(&mut self, materials: Option<bool>) {
+        let regions = self
+            .reshaped
+            .take()
+            .filter(|_| materials == Some(self.materials));
         let pyramid = self.terrain.pyramid;
         let under = |key: &TileKey| {
-            changed
+            regions
                 .as_ref()
                 .is_none_or(|regions| regions.iter().any(|&bounds| covers(bounds, &pyramid, *key)))
         };
-        let generation = Generation::of(&self.terrain.edits, &self.baked_rivers, self.materials);
+        let generation = self.generation();
         self.store.invalidate(generation, under);
+        self.changed = true;
     }
 
     fn reaching_stamps(&self, key: TileKey) -> impl Iterator<Item = Stamp> + '_ {
@@ -299,9 +287,7 @@ impl TerrainState {
         }
         self.baked = Some(baked);
         self.refresh_layers(kinds);
-        self.stale.tiles = true;
-        self.stale.ground = true;
-        self.stale.water = true;
+        self.changed = true;
     }
 
     pub(super) fn loads(&self, key: &TileKey) -> bool {
@@ -347,19 +333,16 @@ pub struct Terrains {
     pub(super) velocity: Vec3,
     pub(super) seconds: f32,
     pub(super) fast_ago: Option<f32>,
-    pub(super) loaded: bool,
-    pub(super) settled: bool,
-    pub(super) stacks: Vec<(Arc<Layers>, engine_core::RecordKey)>,
+    pub(super) stacks: Vec<(Arc<Layers>, RecordKey)>,
     pub(super) retired: Retired,
     pub(super) restored: u64,
-    pub(super) upload_left: u64,
     pub(super) between: u64,
-    pub(super) stale: Stale,
+    pub(super) changed: bool,
     pub(super) grounds: u64,
 }
 
 #[derive(Default)]
 pub(super) struct Retired {
-    pub(super) jobs: Vec<Ticket>,
-    pub(super) shares: Vec<engine_core::RecordKey>,
+    pub(super) shares: Vec<RecordKey>,
+    pub(super) entities: Vec<Entity>,
 }

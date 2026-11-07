@@ -1,4 +1,3 @@
-use bevy_ecs::component::Mutable;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{SystemParam, SystemParamItem};
 use engine_registry::{ExplainAsk, ExplainRecord};
@@ -76,8 +75,4 @@ pub trait Explain: Send + Sync + 'static {
         params: SystemParamItem<'_, '_, Self::Params>,
         ask: &ExplainAsk<'_>,
     ) -> Option<ExplainRecord>;
-}
-
-pub trait Readback: Resource<Mutability = Mutable> + Default {
-    fn arrived(&mut self, frame: u64, tag: u32, bytes: &[u8]);
 }

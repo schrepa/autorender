@@ -3,8 +3,6 @@ use engine_core::View;
 use engine_core::glam::UVec2;
 use engine_render::{Layer, Output, wgpu};
 
-use crate::antialiasing::TemporalAntialiasingStats;
-
 const JITTER_SAMPLES: u32 = 8;
 
 pub(crate) const MOTION: Output = Output {
@@ -71,9 +69,4 @@ fn jitter_offset(frame: u32) -> [f32; 2] {
 fn turn_of(frame: u32) -> f32 {
     let turn = (u64::from(frame) % 1024) as f32 * 0.618_034;
     turn - turn.floor()
-}
-
-pub(crate) fn forget(mut history: ResMut<History>, mut stats: ResMut<TemporalAntialiasingStats>) {
-    *history = History::default();
-    stats.set_if_neq(TemporalAntialiasingStats { active: false });
 }

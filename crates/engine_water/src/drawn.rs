@@ -3,15 +3,11 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use bytemuck::Pod;
 use engine_codec::{Codec, Reader, record};
-use engine_core::{
-    Error, ErrorCode, FrameTime, Job, JobCx, JobExchange, JobRef, VIEW_JOBS, WorkClock,
-    job_priority,
-};
+use engine_core::{Error, ErrorCode, FrameBudget, FrameTime, Job, JobCx, RecordKey, Records};
 use engine_heightfield::tile::{
     Footprint, PATCH_QUADS, PATCHES_PER_TILE, TILE_STRIDE, TileJob, bed_at,
 };
 use engine_heightfield::{ErrorPyramid, TileKey};
-use engine_places_world::ground::GroundWork;
 use glam::Vec2;
 
 use crate::flow::{Levels, rivers_over};
@@ -20,7 +16,6 @@ use crate::jobs::{DRAWN, Finished, kinds, outside, recipe};
 use crate::shallow_water::roughness;
 use crate::state::{Base, Drawing, HeldWater, WaterState};
 use crate::tile_water::rewatered;
-use crate::work::Work;
 use crate::{TileWater, WaterMesh};
 
 pub(crate) const SURFACE_BYTES: u32 = 8;
@@ -49,14 +44,6 @@ impl DrawnWater {
     pub(crate) fn info(&self, at: usize) -> &[u8] {
         &self.texels[at + SURFACES..at + PATCH_BYTES]
     }
-}
-
-pub(crate) struct DrawAsk {
-    pub(crate) terrain: Entity,
-    pub(crate) key: TileKey,
-    pub(crate) stamp: engine_core::Stamp,
-    pub(crate) record: Arc<[u8]>,
-    pub(crate) drawing: Drawing,
 }
 
 pub(crate) fn is_dry(record: &[u8]) -> Result<bool, Error> {
@@ -326,7 +313,8 @@ pub(crate) fn start_rewater(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn 
     let rivers = if running.is_empty() {
         Arc::clone(&hydrology.rivers)
     } else {
-        cx.held(head.flow, || {
+        let held = RecordKey::shared(&[head.tile.recipe, head.flow].concat()).hash();
+        cx.held(held, || {
             let levels: Vec<(u32, Levels)> = engine_codec::decode(running)?;
             Ok(rivers_over(&hydrology.rivers, levels))
         })?
@@ -401,105 +389,81 @@ pub(crate) fn flood_input(
 }
 
 pub(crate) fn draw(
-    mut exchange: ResMut<JobExchange>,
-    time: Res<FrameTime>,
-    (clock, ground): (Res<WorkClock>, Res<GroundWork>),
+    records: Res<Records>,
+    (time, budget): (Res<FrameTime>, Res<FrameBudget>),
     mut state: ResMut<WaterState>,
 ) {
     let state = &mut *state;
-    let work = Work::of(&clock, &ground, state.uploaded);
-    for ask in std::mem::take(&mut state.draw_asks) {
-        let Some(held) = state
-            .terrains
-            .iter_mut()
-            .find(|terrain| terrain.entity == ask.terrain)
-            .and_then(|terrain| terrain.held.get_mut(&ask.key))
-            .filter(|held| held.face.stamp == ask.stamp)
-        else {
-            continue;
-        };
-        let job = exchange.submit(
-            JobRef::from(&DRAWN),
-            draw_input(held, &ask.record),
-            job_priority(VIEW_JOBS, 0),
-        );
-        held.drawing = Some((job, ask.drawing));
-        state.flights.push((job, ask.terrain, ask.key));
-    }
+    let frame = time.frame;
     let mut landed_any = false;
-    let flights = std::mem::take(&mut state.flights);
-    for (job, terrain, key) in flights {
-        if landed_any && work.expired() {
-            state.flights.push((job, terrain, key));
-            continue;
-        }
-        let Some(output) = exchange.take(job) else {
-            state.flights.push((job, terrain, key));
-            continue;
-        };
-        landed_any = true;
-        let Some(terrain) = state
-            .terrains
-            .iter_mut()
-            .find(|held| held.entity == terrain)
-        else {
-            continue;
-        };
-        let Some(held) = terrain.held.get_mut(&key) else {
-            continue;
-        };
-        if !held.drawing.as_ref().is_some_and(|(at, _)| *at == job) {
-            continue;
-        }
-        let Some((_, drawing)) = held.drawing.take() else {
-            continue;
-        };
-        let made = output.and_then(|bytes| {
-            landed(&bytes)
-                .map_err(|error| format!("{}: its output does not decode: {error}", DRAWN.name()))
-        });
-        let frame = time.frame;
-        match (made, drawing) {
-            (Ok(made), Drawing::Base) => {
-                held.base = Base::Made;
-                held.hold(made);
-                held.watered = None;
+    for terrain in &mut state.terrains {
+        let drawing: Vec<TileKey> = terrain
+            .held
+            .iter()
+            .filter(|(_, held)| matches!(held.base, Base::Drawing(_)) || held.drawing.is_some())
+            .map(|(&key, _)| key)
+            .collect();
+        for key in drawing {
+            if landed_any && budget.expired() {
+                return;
             }
-            (Ok(made), Drawing::Given(record)) => {
-                held.hold(made);
-                held.watered = None;
-                held.given = Some(record);
-            }
-            (Ok(made), Drawing::Flood(to)) => {
-                if made.is_some() {
-                    state.rewatered_tiles += 1;
-                    held.hold(made);
-                    held.given = None;
+            let Some(held) = terrain.held.get_mut(&key) else {
+                continue;
+            };
+            let asked = if let Base::Drawing(asked) = &held.base {
+                asked
+            } else if let Some((asked, _)) = &held.drawing {
+                asked
+            } else {
+                continue;
+            };
+            let Some(output) = records.get(asked) else {
+                continue;
+            };
+            landed_any = true;
+            let made = output.map_err(|error| error.to_string()).and_then(|bytes| {
+                landed(&bytes).map_err(|error| {
+                    format!("{}: its output does not decode: {error}", DRAWN.name())
+                })
+            });
+            if matches!(held.base, Base::Drawing(_)) {
+                match made {
+                    Ok(made) => {
+                        held.base = Base::Made;
+                        held.hold(made);
+                        held.watered = None;
+                    }
+                    Err(error) => {
+                        held.base = Base::Failed;
+                        state.failures.record(frame, error);
+                    }
                 }
-                held.watered = to;
-                terrain.flow_moved = true;
+            } else if let Some((_, drawing)) = held.drawing.take() {
+                match (made, drawing) {
+                    (Ok(made), Drawing::Given(record)) => {
+                        held.hold(made);
+                        held.watered = None;
+                        held.given = Some(record);
+                    }
+                    (Ok(made), Drawing::Flood(to)) => {
+                        if made.is_some() {
+                            state.rewatered_tiles += 1;
+                            held.hold(made);
+                            held.given = None;
+                        }
+                        held.watered = to;
+                    }
+                    (Err(error), Drawing::Given(_)) => {
+                        terrain.settled.water_failed(key);
+                        state.failures.record(frame, error);
+                    }
+                    (Err(error), Drawing::Flood(to)) => {
+                        held.watered = to;
+                        state.failures.record(frame, error);
+                    }
+                }
             }
-            (Err(error), Drawing::Base) => {
-                held.base = Base::Failed(frame);
-                state.failures.record(frame, error);
-            }
-            (Err(error), Drawing::Given(_)) => {
-                terrain.settled.water_failed(key, frame);
-                state.failures.record(frame, error);
-            }
-            (Err(error), Drawing::Flood(to)) => {
-                held.watered = to;
-                terrain.flow_moved = true;
-                state.failures.record(frame, error);
-            }
+            terrain.touch(key);
         }
-        terrain.touch(key);
     }
-}
-
-pub(crate) fn stop_draws(mut exchange: ResMut<JobExchange>, mut state: ResMut<WaterState>) {
-    for (job, _, _) in std::mem::take(&mut state.flights) {
-        exchange.cancel(job);
-    }
-    state.draw_asks.clear();
 }

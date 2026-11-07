@@ -1,6 +1,7 @@
 use std::any::TypeId;
 
-use engine_render::debug::{DEBUG_KIND_TERRAIN, DEBUG_NO_MATERIAL};
+use engine_core::GpuBits;
+use engine_render::debug::{DEBUG_NO_MATERIAL, DebugKind, DebugRecord};
 use engine_render::{DebugMode, DebugShown};
 use serde_json::{Value, json};
 
@@ -32,7 +33,7 @@ pub(crate) fn shown(shown: &DebugShown) -> u32 {
 }
 
 fn terrain([record, object, detail, tiles]: [u32; 4], [ids, ..]: [f32; 4]) -> Value {
-    if record & 0xf != DEBUG_KIND_TERRAIN {
+    if DebugRecord::unpack(record).map(|record| record.kind) != Some(DebugKind::Terrain) {
         return json!({ "terrain": null });
     }
     let ids = ids.to_bits();

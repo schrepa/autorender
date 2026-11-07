@@ -8,6 +8,8 @@ use bevy_ecs::world::World;
 use engine_assets::{AssetLibrary, MaterialHandle, Mesh, MeshHandle, MeshLods, TextureHandle};
 pub use engine_textures::solid_block;
 
+use crate::Feed;
+
 mod impostors;
 
 pub use impostors::*;
@@ -275,15 +277,27 @@ struct Named {
     textures: BTreeSet<TextureHandle>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Table {
     meshes: BTreeMap<MeshHandle, ResidentMesh>,
     materials: BTreeMap<MaterialHandle, u64>,
     textures: BTreeSet<TextureHandle>,
     arena: Option<Arena>,
-    generation: u64,
+    placed: Feed<MeshHandle>,
     materials_generation: u64,
-    layout: u64,
+}
+
+impl Default for Table {
+    fn default() -> Self {
+        Self {
+            meshes: BTreeMap::new(),
+            materials: BTreeMap::new(),
+            textures: BTreeSet::new(),
+            arena: None,
+            placed: Feed::new(crate::FeedSettings::default().mesh_residency as usize),
+            materials_generation: 0,
+        }
+    }
 }
 
 impl Table {
@@ -291,6 +305,7 @@ impl Table {
         let Some(arena) = self.arena.as_mut() else {
             return;
         };
+        let placed = &mut self.placed;
         let settled = |handle: MeshHandle| {
             library.mesh(handle).is_some() && library.mesh_lods(handle).is_some()
         };
@@ -300,18 +315,16 @@ impl Table {
             .copied()
             .filter(|&handle| settled(handle))
             .collect();
-        let resident = self.meshes.len();
-        self.meshes.retain(|handle, mesh| {
-            let keep = wanted.contains(handle);
-            if !keep && let Some(placement) = mesh.placement {
-                arena.remove(placement);
+        self.meshes.retain(|&handle, mesh| {
+            let keep = wanted.contains(&handle);
+            if !keep {
+                if let Some(placement) = mesh.placement {
+                    arena.remove(placement);
+                }
+                placed.push(handle);
             }
             keep
         });
-        let mut changed = self.meshes.len() != resident;
-        if changed {
-            self.layout += 1;
-        }
         for &handle in &named.meshes {
             if !wanted.contains(&handle) || self.meshes.contains_key(&handle) {
                 continue;
@@ -321,11 +334,7 @@ impl Table {
             };
             let held = resident_mesh(mesh, lods.map(|lods| &**lods), arena);
             self.meshes.insert(handle, held);
-            self.layout += 1;
-            changed = true;
-        }
-        if changed {
-            self.generation = self.generation.wrapping_add(1);
+            placed.push(handle);
         }
         let materials: BTreeMap<MaterialHandle, u64> = named
             .materials
@@ -374,8 +383,8 @@ impl AssetResidency {
         self.table.meshes.contains_key(&mesh)
     }
 
-    pub fn generation(&self) -> u64 {
-        self.table.generation
+    pub fn placed(&self) -> &Feed<MeshHandle> {
+        &self.table.placed
     }
 
     pub fn mesh(&self, mesh: MeshHandle) -> Option<&ResidentMesh> {
@@ -414,11 +423,6 @@ impl AssetResidency {
     #[doc(hidden)]
     pub fn materials_generation(&self) -> u64 {
         self.table.materials_generation
-    }
-
-    #[doc(hidden)]
-    pub fn layout(&self) -> u64 {
-        self.table.layout
     }
 
     #[doc(hidden)]
@@ -466,6 +470,11 @@ fn settle_residency(world: &mut World) {
         return;
     }
     let named = names(world);
+    let size = world
+        .get_resource::<crate::FeedSettings>()
+        .map_or(crate::FeedSettings::default().mesh_residency, |feeds| {
+            feeds.mesh_residency
+        });
     let Some(mut table) = world
         .modify_resource(|residency: &mut AssetResidency| std::mem::take(&mut residency.table))
         .ok()
@@ -473,6 +482,7 @@ fn settle_residency(world: &mut World) {
     else {
         return;
     };
+    table.placed.resize(size as usize);
     table.settle(&named, world.resource::<AssetLibrary>());
     let _ = world.modify_resource(|residency: &mut AssetResidency| residency.table = table);
 }
@@ -490,18 +500,10 @@ pub fn configure_assets(world: &mut World, arena: ArenaShape, atlas: AtlasDevice
         table.materials.clear();
         table.textures.clear();
         table.arena = Some(Arena::new(arena));
-        table.generation = table.generation.wrapping_add(1);
+        table.placed.replace();
         table.materials_generation = table.materials_generation.wrapping_add(1);
-        table.layout += 1;
     });
     impostors::configure(world, atlas);
-}
-
-#[doc(hidden)]
-pub fn assets_pending(world: &World) -> u64 {
-    world
-        .get_resource::<ImpostorBooks>()
-        .map_or(0, ImpostorBooks::left)
 }
 
 #[doc(hidden)]

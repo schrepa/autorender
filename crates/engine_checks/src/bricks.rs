@@ -274,6 +274,7 @@ pub fn bricks_json(
         "bricks": bricks,
         "places": places(registry, &uses),
         "left_out": registry.left_out(),
+        "ownership": registry.ownership(),
         "frame": frame(&installed),
     }))
     .map_err(|error| format!("cannot write {FILE}: {error}"))?;

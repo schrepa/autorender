@@ -71,6 +71,7 @@ pub(crate) struct CollisionEventsResult {
     pub candidate_pairs: usize,
     pub active_pairs: usize,
     pub error: Option<Error>,
+    pub feed: serde_json::Value,
     pub total: usize,
     pub events: Vec<SensorEventRow>,
     pub next_offset: Option<usize>,

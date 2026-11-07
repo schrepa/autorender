@@ -67,10 +67,6 @@ impl State {
         self.queue.iter().chain(&self.shown).cloned().collect()
     }
 
-    pub(crate) fn forget_atlas(&mut self) {
-        self.atlas.forget();
-    }
-
     pub(crate) fn atlas_side(&self) -> u32 {
         self.atlas.side()
     }

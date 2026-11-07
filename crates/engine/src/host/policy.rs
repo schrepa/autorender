@@ -10,7 +10,6 @@ macro_rules! policy {
 }
 
 policy! {
-    pub const QUIET_FRAMES: u32 = 3;
     pub const PREPARE_LIMIT_MS: u64 = 60_000;
     pub const FRAME_INTERVAL_MS: f64 = 1000.0 / 60.0;
     pub const PACE_SMOOTHING: f64 = 0.1;
@@ -23,6 +22,7 @@ policy! {
     pub const LOOK_LIMIT: f32 = 1000.0;
     pub const WHEEL_PIXELS: f32 = 100.0;
     pub const BENCHMARK_LIMIT_MS: u64 = 10_000;
+    pub const READ_BACK_LIMIT_MS: u64 = 120_000;
     pub const DYNAMIC_STEP: f64 = 1.0 / 32.0;
     pub const DYNAMIC_OVER: f64 = 1.05;
     pub const DYNAMIC_UNDER: f64 = 0.85;

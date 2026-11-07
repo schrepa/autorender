@@ -205,8 +205,8 @@ export async function launchNativeSession({ program, args = [], session = random
       if (response.result?.paused !== true) throw new AgentError("runtime_not_paused", "$", { expected: "paused" });
     }
     const compiled = Date.now() + READY_TIMEOUT_MS;
-    while ((await request(status))?.result?.rendering?.pipelines_compiling === true) {
-      if (Date.now() > compiled) throw new AgentError("runtime_busy", "$", { allowed: atMost(READY_TIMEOUT_MS), got: { pipelines_compiling: true } });
+    while ((await request(status))?.result?.rendering?.readiness?.compiling > 0) {
+      if (Date.now() > compiled) throw new AgentError("runtime_busy", "$", { allowed: atMost(READY_TIMEOUT_MS), got: { compiling: true } });
       await delay(50);
     }
     const owned = {

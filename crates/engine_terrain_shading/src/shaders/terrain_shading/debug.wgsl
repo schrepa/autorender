@@ -1,7 +1,7 @@
 import package::face::lighting::sun_debug;
 import package::face::sun_blockers::SunAt;
 import package::engine::view::eye_world;
-import package::face::debug::{DEBUG_KIND_TERRAIN, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL, DebugTargets,
+import package::face::debug::{DEBUG_KIND_TERRAIN, DEBUG_NO_MATERIAL, DebugTargets, debug_record,
     debug_targets};
 import package::generated::terrain_shading::{DEBUG_PATCH_EDGE, DEBUG_PATCH_SHIFT, DEBUG_TILE_EDGE};
 import package::terrain_shading::draw::{TerrainOutput, terrain_forward_look, terrain_holes_test, terrain_seen, terrain_shared_ground, terrain_shares};
@@ -39,7 +39,7 @@ fn debug_terrain(input: TerrainOutput, holes: bool) -> DebugTargets {
     let width = fwidth(input.cell) * 1.5;
     let tile_edge = abs(fract(input.cell / 256.0 + 0.5) - 0.5) * 256.0;
     let patch_edge = abs(fract(input.cell / 16.0 + 0.5) - 0.5) * 16.0;
-    let record = DEBUG_KIND_TERRAIN | (level << DEBUG_LEVEL_SHIFT)
+    let record = debug_record(DEBUG_KIND_TERRAIN, level, false, false, 0u)
         | select(0u, DEBUG_TILE_EDGE, any(tile_edge < width * 2.0))
         | select(0u, DEBUG_PATCH_EDGE, any(patch_edge < width))
         | ((within.x | (within.y << 4u)) << DEBUG_PATCH_SHIFT);

@@ -243,9 +243,9 @@ impl Operation for CollisionEventsQuery {
         let matches = |event: &&SensorEvent| {
             entity.is_none_or(|entity| event.pair.first == entity || event.pair.second == entity)
         };
-        let total = events.events().iter().filter(matches).count();
+        let total = events.last().iter().filter(matches).count();
         let rows: Vec<_> = events
-            .events()
+            .last()
             .iter()
             .filter(matches)
             .skip(offset)
@@ -269,6 +269,7 @@ impl Operation for CollisionEventsQuery {
             candidate_pairs: events.candidate_pairs(),
             active_pairs: events.pairs().len(),
             error: events.error(),
+            feed: serde_json::to_value(events.feed()).unwrap_or(Value::Null),
             total,
             events: rows,
             next_offset: (next < total).then_some(next),

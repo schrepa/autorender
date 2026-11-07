@@ -1,5 +1,5 @@
 import package::face::debug::{DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN, DEBUG_NO_MATERIAL, DEBUG_OTHER,
-    DEBUG_SKY, DebugShade, DebugTargets};
+    DEBUG_SKY, DebugShade, DebugTargets, debug_record_kind};
 import package::generated::pieces::terrain_shading::piece;
 import package::generated::terrain_shading::{DEBUG_PATCH_EDGE, DEBUG_SHOWN_DETAIL,
     DEBUG_SHOWN_MATERIALS, DEBUG_SHOWN_SKY, DEBUG_SHOWN_TILES, DEBUG_TILE_EDGE};
@@ -45,7 +45,7 @@ fn shade_kind(shade: DebugShade, targets: DebugTargets) -> DebugShade {
     }
     let ids = targets.ids;
     let record = ids.x;
-    let kind = record & 0xfu;
+    let kind = debug_record_kind(record);
     let made = unpack4x8unorm(ids.y);
     var color = vec3<f32>(0.0);
     if kind != DEBUG_KIND_TERRAIN {

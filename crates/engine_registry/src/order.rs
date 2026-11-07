@@ -17,6 +17,7 @@ use serde_json::{Map, Value, json};
 
 use crate::BrickId;
 use crate::access::AccessRule;
+use crate::owners::{Used, note};
 
 type Found = (SystemKey, BrickId, FilteredAccessSet);
 
@@ -27,6 +28,9 @@ pub(crate) struct PlaceProblems(pub(crate) Vec<Error>);
 
 #[derive(Resource, Default)]
 struct PlaceCycles(Vec<(InternedScheduleLabel, Value)>);
+
+#[derive(Resource, Default)]
+struct PlaceUses(Vec<Used>);
 
 #[derive(Clone, Debug)]
 pub(crate) struct PlaceRules {
@@ -85,6 +89,11 @@ impl ScheduleBuildPass for PlaceRules {
                     self.rule.check_exclusive(brick, &name, &mut problems);
                 }
                 found.push((system, brick, access));
+            }
+        }
+        if let Some(mut uses) = world.get_resource_mut::<PlaceUses>() {
+            for (_, brick, access) in &found {
+                note(&mut uses.0, *brick, access);
             }
         }
         for (key, system, _) in graph.systems.iter() {
@@ -304,7 +313,11 @@ pub(crate) fn order(schedule: &mut Schedule, rules: PlaceRules) {
     schedule.add_build_pass(AutoInsertApplyDeferredPass::default());
 }
 
-pub(crate) fn build(world: &mut World, labels: &[InternedScheduleLabel]) -> Vec<Error> {
+pub(crate) fn build(
+    world: &mut World,
+    labels: &[InternedScheduleLabel],
+) -> (Vec<Error>, Vec<Used>) {
+    world.init_resource::<PlaceUses>();
     let mut refused: Vec<Error> = Vec::new();
     for &label in labels {
         let built =
@@ -322,7 +335,11 @@ pub(crate) fn build(world: &mut World, labels: &[InternedScheduleLabel]) -> Vec<
         .unwrap_or_default();
     problems.append(&mut refused);
     world.remove_resource::<PlaceCycles>();
-    problems
+    let uses = world
+        .remove_resource::<PlaceUses>()
+        .map(|uses| uses.0)
+        .unwrap_or_default();
+    (problems, uses)
 }
 
 fn refusal(

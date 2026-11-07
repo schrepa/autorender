@@ -13,9 +13,10 @@ use bevy_ecs::system::{
 };
 use bevy_ecs::world::World;
 use engine_registry::{
-    BrickRecord, ExplainAsk, ExplainEntry, ExplainRecord, GateFn, Gates, JobList, MembersOf,
-    NamedField, OperationEntry, OperationScene, PlainSystems, Registry, Removal, SceneEntity,
-    SectionRule, SettingsEntry, Settle, SpawnedBy, StatsEntry,
+    BrickRecord, BrickStates, ExplainAsk, ExplainEntry, ExplainRecord, GateFn, JobList,
+    MembersOf, NamedField, OperationEntry, OperationScene, PlainSystems, Registry,
+    RegistryBuilder, Removal, SceneEntity, SectionRule, SettingsEntry, Settle, SpawnedBy,
+    StatsEntry,
 };
 use serde_json::Value;
 
@@ -68,26 +69,6 @@ impl Bricks<'_> {
         self.record.enter(gate_of(gate));
         items(self);
         self.record.leave();
-        self
-    }
-
-    pub fn off<M>(
-        &mut self,
-        system: impl IntoSystem<(), (), M> + Send + Sync + 'static,
-    ) -> &mut Self {
-        self.record.off(Box::new(IntoSystem::into_system(system)));
-        self
-    }
-
-    pub fn off_in<M>(
-        &mut self,
-        schedule: Schedule,
-        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + PlainSystems<M>,
-    ) -> &mut Self
-    where
-        M: 'static,
-    {
-        self.record.off_in(schedule.label(), systems);
         self
     }
 
@@ -438,7 +419,7 @@ pub struct BrickList {
     bricks: Vec<Listed>,
     left: Vec<Listed>,
     places: Vec<&'static [PlaceDecl]>,
-    core: Vec<fn(&mut Registry)>,
+    core: Vec<fn(&mut RegistryBuilder)>,
 }
 
 impl BrickList {
@@ -458,7 +439,7 @@ impl BrickList {
         &self.left
     }
 
-    pub fn core_places(&self) -> &[fn(&mut Registry)] {
+    pub fn core_places(&self) -> &[fn(&mut RegistryBuilder)] {
         &self.core
     }
 
@@ -490,7 +471,7 @@ impl BrickList {
     }
 
     #[must_use]
-    pub fn with_core(mut self, register: fn(&mut Registry)) -> Self {
+    pub fn with_core(mut self, register: fn(&mut RegistryBuilder)) -> Self {
         self.core.push(register);
         self
     }
@@ -595,15 +576,22 @@ read_tuples!(
 #[derive(SystemParam)]
 pub struct Joined<'w, L: List> {
     members: Option<Res<'w, engine_registry::MembersOf<L>>>,
+    states: Option<Res<'w, BrickStates>>,
 }
 
 impl<L: List> Joined<'_, L> {
     pub fn iter(&self) -> impl Iterator<Item = &L::Member> + '_ {
-        self.members.iter().flat_map(|members| members.live())
+        self.members
+            .iter()
+            .zip(self.states.iter())
+            .flat_map(|(members, states)| members.live(states))
     }
 
     pub fn owned(&self) -> impl Iterator<Item = (std::any::TypeId, u32, &L::Member)> + '_ {
-        self.members.iter().flat_map(|members| members.owned())
+        self.members
+            .iter()
+            .zip(self.states.iter())
+            .flat_map(|(members, states)| members.owned(states))
     }
 
     pub fn all(&self) -> impl Iterator<Item = &L::Member> + '_ {
@@ -625,7 +613,7 @@ pub fn members_in<L: List>(world: &World) -> &[L::Member] {
 #[derive(SystemParam)]
 pub struct Filled<'w, S: Slot> {
     registry: Option<Res<'w, Registry>>,
-    gates: Option<Res<'w, Gates>>,
+    states: Option<Res<'w, BrickStates>>,
     slot: PhantomData<fn() -> S>,
 }
 
@@ -633,8 +621,8 @@ impl<S: Slot> Filled<'_, S> {
     pub fn on(&self) -> bool {
         self.registry
             .as_ref()
-            .zip(self.gates.as_ref())
-            .is_some_and(|(registry, gates)| registry.slot_on(gates, TypeId::of::<S>()))
+            .zip(self.states.as_ref())
+            .is_some_and(|(registry, states)| registry.slot_on(states, TypeId::of::<S>()))
     }
 
     pub fn listed(&self) -> bool {

@@ -2,13 +2,12 @@ use std::any::TypeId;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
 
 use bevy_ecs::world::World;
-use engine_core::{Error, ErrorCode, MaterialHandle, MeshHandle, TextureHandle};
+use engine_core::{Error, ErrorCode, FrameId, MaterialHandle, MeshHandle, Readback, TextureHandle};
 
 use crate::graph::{Bits, Clear, FAR, Load, Ops, Plan, Planned};
-use crate::install::{Bound, Copied, PassDecl, Program, Scoped, Work};
+use crate::install::{Bound, Copied, DrawEntry, PassDecl, Program, Reinstall, Scoped, Work};
 use crate::linker::Ty;
 use crate::machine::{
     CAMERA_STRIDE, CoreFrame, DEBUG_COUNT, DEBUG_FORMATS, DEPTH_FORMAT, Machine, Ready, SetFormat,
@@ -16,15 +15,19 @@ use crate::machine::{
     target_read,
 };
 use crate::profiling::GpuProfiler;
+use crate::readback::{Deliver, Keep, Reader, Readbacks};
 use crate::registration::Installed;
-use crate::{AfterRead, CameraUniform, DepthUse, PassNames, VertexLayout, ViewTarget};
+use crate::{AfterRead, Allocation, CameraUniform, DepthUse, PassNames, VertexLayout, ViewTarget};
 
 mod compile;
 mod copies;
 mod draw;
 mod passes;
+mod recording;
 mod resources;
 mod views;
+
+pub(crate) use recording::{Ended, Recording, Step};
 
 pub(crate) type FrameCore = Run;
 pub(crate) type EncodeCore = Run;
@@ -312,29 +315,14 @@ pub(crate) struct Asked {
     pub(crate) range: Range<u64>,
     pub(crate) then: AfterRead,
     pub(crate) once: bool,
-    pub(crate) deliver: fn(&mut World, u64, u32, &[u8]),
+    pub(crate) deliver: Deliver,
 }
 
-type Deliver = fn(&mut World, u64, u32, &[u8]);
-
-pub(crate) struct Slot {
-    buffer: wgpu::Buffer,
-    bytes: u64,
-    state: Arc<AtomicU8>,
-    asked: Option<(u64, Deliver)>,
-    once: bool,
-}
-
-pub(crate) struct Ring {
-    pub(crate) part: u32,
-    pub(crate) tag: u32,
-    pub(crate) slots: Vec<Slot>,
-}
-
-impl Ring {
-    fn kept(&self) -> usize {
-        self.slots.iter().filter(|slot| !slot.once).count()
-    }
+pub(crate) struct Arrived {
+    part: u32,
+    tag: u32,
+    read: Readback<Vec<u8>>,
+    deliver: Deliver,
 }
 
 pub(crate) struct Filled {
@@ -370,21 +358,14 @@ pub(crate) struct Assets {
     pub(crate) impostors: crate::impostors::Impostors,
 }
 
-pub(crate) struct Delivered {
-    frame: u64,
-    tag: u32,
-    bytes: Vec<u8>,
-    deliver: fn(&mut World, u64, u32, &[u8]),
-}
-
 #[derive(Default)]
 pub(crate) struct Queued {
     pub(crate) before: Option<wgpu::CommandEncoder>,
-    pub(crate) delivered: Vec<Delivered>,
     pub(crate) refused: Option<Error>,
     pub(crate) cleared: Vec<u32>,
     pub(crate) ending: Vec<(Copied, Copied, Vec<crate::CopyRegion>)>,
-    pub(crate) immediate: u32,
+    pub(crate) copies: Vec<(u32, Vec<crate::CopyRegion>)>,
+    pub(crate) asked: Vec<Asked>,
 }
 
 #[derive(Default)]
@@ -401,11 +382,13 @@ pub(crate) struct Timed {
 
 pub(crate) struct Run {
     pub(crate) device: wgpu::Device,
-    pub(crate) queue: wgpu::Queue,
+    pub(crate) queue: crate::gpu_calls::Queue,
     pub(crate) machine: Machine,
     pub(crate) parts: Vec<Option<Box<dyn Installed>>>,
-    pub(crate) live: Vec<bool>,
-    pub(crate) faulted: Vec<Option<Error>>,
+    pub(crate) turned: Vec<Option<u64>>,
+    pub(crate) faults: Vec<(u32, Error)>,
+    pub(crate) reinstalls: Vec<Reinstall>,
+    pub(crate) draw_entries: Vec<DrawEntry>,
     pub(crate) part: u32,
     pub(crate) pass: u32,
     pub(crate) point: Option<TypeId>,
@@ -430,12 +413,12 @@ pub(crate) struct Run {
     pub(crate) canvas: Option<wgpu::TextureView>,
     pub(crate) canvas_texture: Option<wgpu::Texture>,
     pub(crate) runs: Bits,
-    pub(crate) asked: Vec<Asked>,
-    pub(crate) copies: Vec<(u32, Vec<crate::CopyRegion>)>,
-    pub(crate) rings: Vec<Ring>,
+    pub(crate) ran: Bits,
+    pub(crate) installed: Vec<FrameId>,
+    pub(crate) readbacks: Readbacks,
+    pub(crate) arrived: Vec<Arrived>,
     pub(crate) readback_slots: usize,
     pub(crate) readback_slot_bytes: Option<u64>,
-    pub(crate) overflows: u64,
     pub(crate) cameras: Vec<CameraUniform>,
     pub(crate) views: Vec<(u32, u32, u32)>,
     pub(crate) camera: wgpu::Buffer,
@@ -448,9 +431,7 @@ pub(crate) struct Run {
     pub(crate) switches: Vec<(u32, bool)>,
     pub(crate) reached: Reached,
     pub(crate) placeholders: Vec<((Ty, u64), Placeholder)>,
-    pub(crate) encoder: Option<wgpu::CommandEncoder>,
-    pub(crate) open: Option<Open>,
-    pub(crate) computing: Option<(u32, wgpu::ComputePass<'static>)>,
+    pub(crate) recording: Recording,
     pub(crate) timed: Timed,
     pub(crate) queued: Queued,
     pub(crate) resolve: Option<(PassNames, &'static str)>,
@@ -732,7 +713,7 @@ fn layer_sets_of(machine: &Machine) -> Vec<(Option<crate::Layer>, Arc<[SetFormat
 impl Run {
     pub(crate) fn new(
         device: wgpu::Device,
-        queue: wgpu::Queue,
+        queue: crate::gpu_calls::Queue,
         machine: Machine,
         parts: Vec<Option<Box<dyn Installed>>>,
         assets: Assets,
@@ -764,6 +745,7 @@ impl Run {
         let sizes = machine.declared.textures.iter().map(|_| None).collect();
         let buffers = machine.declared.buffers.iter().map(|_| None).collect();
         let runs = Bits::of(machine.graph.passes());
+        let ran = Bits::of(machine.graph.passes());
         let frame_groups = machine.variants.iter().map(|_| Groups::fresh()).collect();
         let own_groups = machine
             .pipelines
@@ -784,8 +766,10 @@ impl Run {
             queue,
             machine,
             parts,
-            live: vec![true; count],
-            faulted: (0..count).map(|_| None).collect(),
+            turned: vec![Some(0); count],
+            faults: Vec::new(),
+            reinstalls: Vec::new(),
+            draw_entries: Vec::new(),
             part: 0,
             pass: 0,
             point: None,
@@ -810,12 +794,12 @@ impl Run {
             canvas: None,
             canvas_texture: None,
             runs,
-            asked: Vec::new(),
-            copies: Vec::new(),
-            rings: Vec::new(),
+            ran,
+            installed: vec![FrameId::default(); count],
+            readbacks: Readbacks::default(),
+            arrived: Vec::new(),
             readback_slots: 3,
             readback_slot_bytes: None,
-            overflows: 0,
             cameras: vec![bytemuck::Zeroable::zeroed()],
             views: Vec::new(),
             camera,
@@ -828,9 +812,7 @@ impl Run {
             switches: Vec::new(),
             reached: Reached::default(),
             placeholders: Vec::new(),
-            encoder: None,
-            open: None,
-            computing: None,
+            recording: Recording::Idle,
             timed: Timed::default(),
             queued: Queued::default(),
             resolve: None,
@@ -934,16 +916,49 @@ impl Run {
     }
 
     pub(crate) fn fault(&mut self, error: Error) {
-        if let Some(slot) = self.faulted.get_mut(self.part as usize)
-            && slot.is_none()
+        let part = self.part;
+        if let Some(turned) = self.turned.get_mut(part as usize)
+            && turned.take().is_some()
         {
-            *slot = Some(error);
+            self.faults.push((part, error));
         }
     }
 
     pub(crate) fn drawable(&self, part: u32) -> bool {
-        self.live.get(part as usize).copied().unwrap_or(false)
-            && self.faulted.get(part as usize).is_some_and(Option::is_none)
+        self.turned.get(part as usize).is_some_and(Option::is_some)
+    }
+
+    pub(crate) fn take_states(&mut self, states: Option<&engine_registry::BrickStates>) {
+        for part in 0..self.parts.len() {
+            let present = self.parts[part].is_some();
+            let turned = match self.gates.get(part).copied().flatten() {
+                Some(gate) => states.and_then(|states| states.installed(gate)),
+                None => Some(0),
+            };
+            if let Some(slot) = self.turned.get_mut(part) {
+                *slot = turned.filter(|_| present);
+            }
+        }
+        self.settle_parts(states);
+    }
+
+    pub(crate) fn settle_parts(&mut self, states: Option<&engine_registry::BrickStates>) {
+        for part in 0..self.parts.len() {
+            let turned = self.turned.get(part).copied().flatten();
+            let wanted = match self.gates.get(part).copied().flatten() {
+                Some(gate) => states.and_then(|states| states.installed(gate)),
+                None => turned,
+            };
+            if turned == wanted && (turned.is_some() || self.parts[part].is_none()) {
+                continue;
+            }
+            if let Some(slot) = self.turned.get_mut(part) {
+                *slot = None;
+            }
+            if self.parts[part].take().is_some() {
+                self.release_part(part as u32);
+            }
+        }
     }
 
     pub(crate) fn take_member(&mut self, part: u32) -> Option<Box<dyn Installed>> {
@@ -991,8 +1006,8 @@ impl Run {
             .unwrap_or(false)
     }
 
-    pub(crate) fn allocate(&mut self, texture: u32, size: wgpu::Extent3d, mips: u32) {
-        self.allocate_with(texture, None, size, mips);
+    pub(crate) fn allocate(&mut self, texture: u32, size: wgpu::Extent3d, mips: u32) -> Allocation {
+        self.allocate_with(texture, None, size, mips)
     }
 
     pub(crate) fn allocate_as(
@@ -1001,8 +1016,8 @@ impl Run {
         format: wgpu::TextureFormat,
         size: wgpu::Extent3d,
         mips: u32,
-    ) {
-        self.allocate_with(texture, Some(format), size, mips);
+    ) -> Allocation {
+        self.allocate_with(texture, Some(format), size, mips)
     }
 
     fn allocate_with(
@@ -1011,9 +1026,9 @@ impl Run {
         format: Option<wgpu::TextureFormat>,
         size: wgpu::Extent3d,
         mips: u32,
-    ) {
+    ) -> Allocation {
         let Some(decl) = self.machine.declared.textures.get(texture as usize) else {
-            return;
+            return Allocation::Fresh;
         };
         let at = texture as usize;
         let wanted = format.unwrap_or(decl.format);
@@ -1021,7 +1036,7 @@ impl Run {
             .as_ref()
             .is_some_and(|made| made.texture.format() == wanted);
         if self.sizes[at] == Some((size, mips)) && same {
-            return;
+            return Allocation::Kept;
         }
         let dimension = self
             .dimensions
@@ -1054,21 +1069,20 @@ impl Run {
         self.sizes[at] = Some((size, mips));
         self.rebuilt.textures += 1;
         self.touch(Held::Texture(texture));
+        Allocation::Fresh
     }
 
-    pub(crate) fn grow(&mut self, texture: u32, size: wgpu::Extent3d, mips: u32) {
+    pub(crate) fn grow(&mut self, texture: u32, size: wgpu::Extent3d, mips: u32) -> Allocation {
         let at = texture as usize;
         let Some(Some((known, levels))) = self.sizes.get(at).copied() else {
-            self.allocate(texture, size, mips);
-            return;
+            return self.allocate(texture, size, mips);
         };
         if (known, levels) == (size, mips) {
-            self.allocate(texture, size, mips);
-            return;
+            return self.allocate(texture, size, mips);
         }
         let previous = std::mem::take(&mut self.textures[at]);
         self.sizes[at] = None;
-        self.allocate(texture, size, mips);
+        let mut allocation = self.allocate(texture, size, mips);
         if levels == mips {
             let mut encoder = self
                 .device
@@ -1102,12 +1116,13 @@ impl Run {
                     );
                 }
             }
-            crate::gpu_calls::submit(&self.queue, [encoder.finish()]);
-            self.queued.immediate += 1;
+            self.queue.submit_now([encoder.finish()]);
+            allocation = Allocation::Kept;
         }
         for held in previous.iter().flatten() {
             crate::memory::release_any(&held.texture);
         }
+        allocation
     }
 
     pub(crate) fn release(&mut self, texture: u32) {
@@ -1126,9 +1141,9 @@ impl Run {
         self.touch(Held::Texture(texture));
     }
 
-    pub(crate) fn renew_buffer(&mut self, buffer: u32, bytes: u64) {
+    pub(crate) fn renew_buffer(&mut self, buffer: u32, bytes: u64) -> Allocation {
         self.release_buffer(buffer);
-        self.allocate_buffer(buffer, bytes);
+        self.allocate_buffer(buffer, bytes)
     }
 
     pub(crate) fn clear_buffer_range(&mut self, buffer: u32, range: Range<u64>) {
@@ -1179,20 +1194,59 @@ impl Run {
         for buffer in buffers {
             self.release_buffer(buffer);
         }
+        self.installed_anew(part);
     }
 
-    pub(crate) fn deliver_bytes(
+    pub(crate) fn installed_anew(&mut self, part: u32) {
+        let next = self.written().next();
+        if let Some(installed) = self.installed.get_mut(part as usize) {
+            *installed = next;
+        }
+        self.forget_ran(part);
+    }
+
+    pub(crate) fn written(&self) -> FrameId {
+        FrameId(self.asked_frame)
+    }
+
+    pub(crate) fn arrived(
         &mut self,
-        tag: u32,
-        bytes: Vec<u8>,
-        deliver: fn(&mut World, u64, u32, &[u8]),
+        (part, tag): (u32, u32),
+        read: Readback<Vec<u8>>,
+        deliver: Deliver,
     ) {
-        self.queued.delivered.push(Delivered {
-            frame: self.asked_frame,
+        self.arrived.push(Arrived {
+            part,
             tag,
-            bytes,
+            read,
             deliver,
         });
+    }
+
+    pub(crate) fn deliver(&mut self, world: &mut World) {
+        for arrived in std::mem::take(&mut self.arrived) {
+            let installed = self
+                .installed
+                .get(arrived.part as usize)
+                .copied()
+                .unwrap_or_default();
+            if arrived.read.written < installed {
+                continue;
+            }
+            let read = Readback {
+                value: arrived.read.value.as_slice(),
+                written: arrived.read.written,
+            };
+            (arrived.deliver)(world, arrived.tag, read);
+        }
+    }
+
+    pub(crate) fn forget_ran(&mut self, part: u32) {
+        for (pass, declared) in self.machine.declared.passes.iter().enumerate() {
+            if declared.part == part {
+                self.ran.remove(pass);
+            }
+        }
     }
 
     pub(crate) fn refuse(&mut self, error: Error) {
@@ -1201,9 +1255,9 @@ impl Run {
         }
     }
 
-    pub(crate) fn allocate_buffer(&mut self, buffer: u32, bytes: u64) {
+    pub(crate) fn allocate_buffer(&mut self, buffer: u32, bytes: u64) -> Allocation {
         let Some(decl) = self.machine.declared.buffers.get(buffer as usize) else {
-            return;
+            return Allocation::Fresh;
         };
         let at = buffer as usize;
         let bytes = bytes.max(16).next_multiple_of(4);
@@ -1211,7 +1265,7 @@ impl Run {
             .as_ref()
             .is_some_and(|(_, known)| *known == bytes)
         {
-            return;
+            return Allocation::Kept;
         }
         if let Some((held, _)) = &self.buffers[at] {
             crate::memory::release_buffer(held);
@@ -1229,6 +1283,7 @@ impl Run {
         self.buffers[at] = Some((made, bytes));
         self.rebuilt.buffers += 1;
         self.touch(Held::Buffer(buffer));
+        Allocation::Fresh
     }
 
     pub(crate) fn write(&mut self, buffer: u32, offset: u64, bytes: &[u8]) {
@@ -1242,7 +1297,7 @@ impl Run {
             self.fault(error);
             return;
         }
-        crate::gpu_calls::upload_buffer(&self.queue, made, offset, bytes);
+        self.queue.write_buffer(made, offset, bytes);
     }
 
     fn written_texture(&self, texture: u32) -> Option<&Allocated> {
@@ -1269,8 +1324,7 @@ impl Run {
             self.fault(error);
             return;
         }
-        crate::gpu_calls::upload_texture(
-            &self.queue,
+        self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &made.texture,
                 mip_level: level,

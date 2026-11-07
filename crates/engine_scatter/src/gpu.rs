@@ -1,11 +1,11 @@
 use bevy_ecs::prelude::*;
-use engine_core::{AssetResidency, Error, MaterialHandle, MeshHandle, Var};
+use engine_core::{AssetResidency, Cursor, Error, MaterialHandle, MeshHandle, Since, Var};
 use engine_places_rendering::shadows::{CasterMap, CasterView, ShadowCasters};
 use engine_places_world::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
-    Access, AfterRead, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput,
-    Encode, GpuPart, Install, Lifetime, MainView, MeshPass, Own, Pass, Pipeline, Prepare,
-    RenderPipeline, SamplerDesc, Shape, Texture, VertexLayout, wgpu,
+    Access, AfterRead, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw,
+    DrawInput, Encode, GpuPart, Install, Lifetime, MainView, MeshPass, Own, Pass, Pipeline,
+    Prepare, RenderPipeline, SamplerDesc, Shape, Texture, VertexLayout, wgpu,
 };
 
 use crate::far_cover::FarCoverTable;
@@ -14,7 +14,7 @@ use crate::layouts::{
     MAX_OCCUPANCY_LEVELS, PlacedGroup, PlacedRecord, PoseData, QUAD, SCATTER_GROUP, SlotColor,
     Snap, Splat, placed_group, record_words,
 };
-use crate::occupancy::{LISTED_RESET, OccupancyWindows};
+use crate::occupancy::{ALL_CELLS, LISTED_RESET, OccupancyWindows};
 use crate::pool::{SlotWrite, dead};
 use crate::systems::{ScatterFeedback, ScatterState};
 
@@ -132,9 +132,21 @@ struct Held {
     cards: bool,
     atlas: bool,
     occupancy: [(bool, bool); MAX_OCCUPANCY_LEVELS],
+    occupancy_seen: Cursor,
+    occupancy_asked: bool,
     workgroups: u32,
     covers: u64,
     listed: u64,
+}
+
+type CellWords = [[u32; 4]; 2];
+
+fn joined(held: &mut CellWords, more: CellWords) {
+    for (row, more) in held.iter_mut().zip(more) {
+        for (word, more) in row.iter_mut().zip(more) {
+            *word |= more;
+        }
+    }
 }
 
 struct Lit {
@@ -542,14 +554,15 @@ impl ScatterGpu {
             size_of::<PlacedRecord>(),
             size_of::<GroundData>(),
         ];
+        let mut fresh = false;
         for ((buffer, bytes), stride) in buffers.into_iter().zip(state.slot_bytes).zip(strides) {
-            cx.allocate_buffer(buffer, bytes.max(stride as u64));
+            fresh |= cx.allocate_buffer(buffer, bytes.max(stride as u64)) == Allocation::Fresh;
         }
         let objects = state.objects;
-        if self.held.uploaded != Some(state.slot_sequence) {
+        if fresh || self.held.uploaded != Some(state.slot_sequence) {
             let mut wrote = false;
             let missed = self.held.uploaded.map(|seen| seen + 1) != Some(state.slot_sequence);
-            if missed || state.whole {
+            if fresh || missed || state.whole {
                 for write in state.pool.whole(&state.groups) {
                     wrote |= self.write_slot(cx, &write, objects);
                 }
@@ -669,7 +682,7 @@ impl ScatterGpu {
         } else {
             (1, 1)
         };
-        cx.allocate(self.occupancy_map, layer(texels, layers), 1);
+        let fresh = cx.allocate(self.occupancy_map, layer(texels, layers), 1) == Allocation::Fresh;
         cx.allocate(self.unfiner, layer(1, 1), 1);
         let cover = size_of::<Cover>() as u64;
         let word = size_of::<u32>() as u64;
@@ -695,20 +708,56 @@ impl ScatterGpu {
             cx.allocate_buffer(splat, size_of::<Splat>() as u64);
             cx.allocate_buffer(listed, size_of::<ListedDraw>() as u64);
         }
-        if !windows.drawn() {
-            return;
-        }
+        let missed = std::mem::take(&mut held.occupancy_asked) && !cx.ran(self.occupancy);
+        let mut wanted = [(CellWords::default(), CellWords::default()); MAX_OCCUPANCY_LEVELS];
+        let whole = match windows.changes.since(&mut held.occupancy_seen) {
+            Since::Same => false,
+            Since::Listed(changes) => {
+                for change in changes {
+                    if let Some((dirty, means)) = wanted.get_mut(change.map) {
+                        joined(dirty, change.dirty);
+                        joined(means, change.means);
+                    }
+                }
+                false
+            }
+            Since::All => true,
+        } || fresh
+            || missed;
         for (map, frame) in windows.frames.iter().enumerate() {
-            if !frame.redraw && !frame.average {
+            let Some((dirty, means)) = wanted.get_mut(map).filter(|_| frame.held) else {
+                continue;
+            };
+            if whole {
+                *dirty = ALL_CELLS;
+                if frame.splat.finer[2] != 0 {
+                    *means = ALL_CELLS;
+                }
+            }
+            let redraw = *dirty != CellWords::default();
+            let average = *means != CellWords::default();
+            if !redraw && !average {
                 continue;
             }
-            cx.write(self.splats[map], 0, &[frame.splat]);
-            if frame.redraw {
+            let splat = Splat {
+                dirty: *dirty,
+                means: *means,
+                ..frame.splat
+            };
+            cx.write(self.splats[map], 0, &[splat]);
+            if redraw {
                 cx.write(self.listed_draws[map], 0, &[LISTED_RESET]);
             }
-            held.occupancy[map] = (frame.redraw, frame.average);
+            held.occupancy[map] = (redraw, average);
         }
-        cx.run(self.occupancy);
+        if held
+            .occupancy
+            .iter()
+            .any(|&(redraw, average)| redraw || average)
+        {
+            held.occupancy_asked = true;
+            cx.run(self.occupancy);
+        }
     }
 
     fn draw_source(&self, view: usize, group: usize, level: usize) -> Option<(u64, u64)> {

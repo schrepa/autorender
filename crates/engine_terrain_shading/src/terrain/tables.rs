@@ -6,7 +6,7 @@ use engine_places_world::ground::{
     PALETTE_ENTRIES, SurfaceMaps, SurfaceMaterial, SurfaceProjection, TerrainEntry, TerrainTiles,
     TileFace,
 };
-use engine_render::Prepare;
+use engine_render::{Allocation, Prepare};
 
 use super::part::{Handles, TerrainGpu};
 use super::{DIRECTORY_AT, HOLE_WORDS, NO_HOLES, VIEWS};
@@ -14,7 +14,7 @@ use crate::gpu::{
     NOT_RESIDENT, PaletteEntry, TABLE_FADES, TABLE_NOW, TABLE_TERRAINS, TABLE_VIEWS, TERRAIN_WORDS,
     TerrainUniform, VIEW_WORDS, ViewUniform,
 };
-use crate::state::{Atlas, TileId, Upload, listed_tile};
+use crate::state::{Atlas, AtlasMoves, TileId, Upload, listed_tile};
 use crate::terrain_maps::TerrainMaps;
 
 const FADE_HELD: f32 = 1.0e30;
@@ -44,7 +44,7 @@ impl TerrainTables {
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
-        (tiles, atlas, moved): (&TerrainTiles, &Atlas, bool),
+        (tiles, atlas, moves, moved): (&TerrainTiles, &Atlas, &AtlasMoves, bool),
         views: usize,
     ) {
         let laid_out = self.directory_layout.len() == tiles.terrains.len()
@@ -61,7 +61,7 @@ impl TerrainTables {
             .views_room
             .max(views.max(VIEWS as usize) as u32 * VIEW_WORDS);
         self.layers_room = self.layers_room.max(atlas.capacity.max(1));
-        for &(id, layer, upload) in &atlas.uploads {
+        for &(id, layer, upload) in &moves.uploads {
             if upload == Upload::Whole
                 && tile_of(tiles, id).is_some_and(|tile| tile.holes.is_some())
             {
@@ -74,23 +74,23 @@ impl TerrainTables {
         self.fades_at = self.views_at + self.views_room;
         self.hole_table = self.fades_at + 2 * self.layers_room;
         let total = self.hole_table + self.layers_room + self.holes_room * HOLE_WORDS as u32;
-        let fresh = total != self.total;
+        let allocation = cx.allocate_buffer(handles.tables, u64::from(total) * 4);
+        let fresh = total != self.total || allocation == Allocation::Fresh || moves.all;
         self.total = total;
-        cx.allocate_buffer(handles.tables, u64::from(total) * 4);
         if fresh || !laid_out {
             self.write_directory(cx, handles, tiles, atlas);
         } else {
             if moved {
                 self.write_reaches(cx, handles, tiles);
             }
-            self.write_changed_layers(cx, handles, tiles, atlas);
+            self.write_changed_layers(cx, handles, (tiles, atlas), moves);
         }
         if fresh {
             self.write_all_fades(cx, handles, tiles, atlas);
             self.write_all_holes(cx, handles, tiles, atlas);
         } else {
-            self.write_moved_fades(cx, handles, tiles, atlas);
-            self.write_moved_holes(cx, handles, tiles, atlas);
+            self.write_moved_fades(cx, handles, (tiles, atlas), moves);
+            self.write_moved_holes(cx, handles, tiles, moves);
         }
     }
 
@@ -163,10 +163,10 @@ impl TerrainTables {
         &self,
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
-        tiles: &TerrainTiles,
-        atlas: &Atlas,
+        (tiles, atlas): (&TerrainTiles, &Atlas),
+        moves: &AtlasMoves,
     ) {
-        for &(id, key) in &atlas.changed {
+        for &(id, key) in &moves.changed {
             let Some(index) = tiles
                 .terrains
                 .iter()
@@ -211,13 +211,13 @@ impl TerrainTables {
         &self,
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
-        tiles: &TerrainTiles,
-        atlas: &Atlas,
+        (tiles, atlas): (&TerrainTiles, &Atlas),
+        moves: &AtlasMoves,
     ) {
-        for &layer in &atlas.vacated {
+        for &layer in &moves.vacated {
             self.write_fade(cx, handles, layer, [FADE_DONE; 2]);
         }
-        for &id in &atlas.changed {
+        for &id in &moves.changed {
             if let Some(layer) = atlas.layer_of(id.0, id.1) {
                 self.write_fade(cx, handles, layer, fades_of(tiles, atlas, id));
             }
@@ -256,13 +256,13 @@ impl TerrainTables {
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
         tiles: &TerrainTiles,
-        atlas: &Atlas,
+        moves: &AtlasMoves,
     ) {
-        for &layer in &atlas.vacated {
+        for &layer in &moves.vacated {
             let at = self.hole_table + layer;
             cx.write(handles.tables, u64::from(at) * 4, &[NO_HOLES]);
         }
-        for &(id, layer, upload) in &atlas.uploads {
+        for &(id, layer, upload) in &moves.uploads {
             if upload != Upload::Whole {
                 continue;
             }
@@ -353,27 +353,36 @@ impl TerrainTables {
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
-        (tiles, maps, assets): (&TerrainTiles, &TerrainMaps, &AssetLibrary),
+        (tiles, layout): (&TerrainTiles, &[(Entity, Option<u32>)]),
+        (maps, assets): (&TerrainMaps, &AssetLibrary),
     ) {
         self.palette.clear();
         self.palette_bases.clear();
         self.dropped_materials = maps.dropped;
         for terrain in tiles.terrains.iter() {
-            let room = PALETTE_ENTRIES as usize - self.palette.len();
-            let kept = terrain.materials.len().min(room);
-            self.dropped_materials += (terrain.materials.len() - kept) as u32;
-            self.palette_bases.push(if kept == terrain.materials.len() {
-                self.palette.len() as u32
-            } else {
-                0
-            });
+            let base = layout
+                .iter()
+                .find(|(entity, _)| *entity == terrain.terrain)
+                .and_then(|&(_, base)| base);
+            let Some(base) = base else {
+                self.dropped_materials += terrain.materials.len() as u32;
+                self.palette_bases.push(0);
+                continue;
+            };
+            self.palette_bases.push(base);
+            let end = (base as usize + terrain.materials.len()).min(PALETTE_ENTRIES as usize);
+            if self.palette.len() < end {
+                self.palette.resize(end, bytemuck::Zeroable::zeroed());
+            }
             let terrain_maps = terrain.maps.iter().chain(std::iter::repeat(&None));
-            self.palette.extend(
-                terrain.materials[..kept]
-                    .iter()
-                    .zip(terrain_maps)
-                    .map(|(look, terrain_maps)| palette_entry(look, terrain_maps, (maps, assets))),
-            );
+            let entries = terrain
+                .materials
+                .iter()
+                .zip(terrain_maps)
+                .map(|(look, terrain_maps)| palette_entry(look, terrain_maps, (maps, assets)));
+            for (held, entry) in self.palette[base as usize..end].iter_mut().zip(entries) {
+                *held = entry;
+            }
         }
         cx.allocate_buffer(handles.palette, crate::gpu::PALETTE_BYTES as u64);
         if !self.palette.is_empty() {

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use engine_core::Error;
 use engine_places_world::ground::{TerrainEntry, TerrainTiles};
-use engine_render::{Install, Lifetime, Prepare, Texture, wgpu};
+use engine_render::{Allocation, Install, Lifetime, Prepare, Texture, wgpu};
 
 use crate::gpu::{HORIZON_RECORD_VECTORS, HORIZON_RECORDS};
 use crate::lighting::{HORIZON_LAYERS, TerrainLighting};
@@ -73,12 +73,9 @@ impl Horizons {
         self.uploaded = 0;
         let size = settings.shadow_resolution;
         let (count, _) = room(layers, tiles.terrains.len());
-        if self.shape != Some((size, count, slots)) {
-            self.shape = Some((size, count, slots));
-            self.held = vec![None; count];
-        }
+        self.shape = Some((size, count, slots));
         let total = (HORIZON_LAYERS * count) as u32 + BOUNCE_LAYERS as u32 * slots;
-        cx.allocate(
+        let allocation = cx.allocate(
             self.texture,
             wgpu::Extent3d {
                 width: size,
@@ -87,6 +84,9 @@ impl Horizons {
             },
             1,
         );
+        if allocation == Allocation::Fresh || self.held.len() != count {
+            self.held = vec![None; count];
+        }
         for (index, terrain) in tiles.terrains.iter().take(count).enumerate() {
             let lighting = bakes
                 .of(terrain.terrain)

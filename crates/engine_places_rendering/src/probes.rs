@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{Component, Resource};
-use engine_place::{DrawPoint, Slot};
+use engine_place::{DrawPoint, Slot, StoreId};
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -115,6 +115,7 @@ pub struct ProbeCaptures {
     pub faces: Vec<ProbeFace>,
     pub size: u32,
     pub cubes: u32,
+    pub layout: StoreId,
     pub finished: Option<u32>,
     pub views: bool,
     pub still: bool,

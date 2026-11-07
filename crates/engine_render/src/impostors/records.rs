@@ -1,9 +1,7 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
-use engine_core::{impostor_assembly_input, impostor_level_rows};
+use engine_core::{FrameId, impostor_assembly_input, impostor_level_rows};
 
 use super::*;
+use crate::readback::{Arrival, Keep, Reader, Readbacks};
 
 const ROW: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
 
@@ -31,18 +29,10 @@ fn level_regions(shape: AtlasShape) -> (Vec<Region>, u64) {
     (regions, bytes)
 }
 
-enum Mapped {
-    Recorded,
-    Mapping,
-    Read(Vec<u8>),
-    Failed,
-}
-
-pub(super) struct Readback {
+pub(super) struct Pending {
+    serial: u32,
     identity: ImpostorIdentity,
     shape: AtlasShape,
-    buffer: wgpu::Buffer,
-    mapped: Rc<RefCell<Mapped>>,
 }
 
 impl Atlas {
@@ -84,94 +74,79 @@ impl Atlas {
 
     pub(super) fn read_back(
         &mut self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
+        recording: (&wgpu::Device, &mut wgpu::CommandEncoder),
+        (readbacks, written, serial): (&mut Readbacks, FrameId, u32),
         (identity, shape): (ImpostorIdentity, AtlasShape),
     ) {
         let baked = &self.targets.as_ref().expect("targets_drawn").layer;
         let (regions, bytes) = level_regions(shape);
-        let buffer = crate::memory::buffer(
-            device,
-            &wgpu::BufferDescriptor {
-                label: Some("engine/impostor-readback"),
-                size: bytes,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
+        let levels = shape.levels();
+        let recorded = readbacks.record_with(
+            recording,
+            bytes,
+            (Reader::Impostor(serial), written, None),
+            Keep::Once,
+            |encoder, buffer| {
+                for (index, region) in regions.iter().enumerate() {
+                    let level = index as u32 % levels;
+                    let size = shape.size() >> level;
+                    encoder.copy_texture_to_buffer(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &baked[index / levels as usize],
+                            mip_level: level,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::TexelCopyBufferInfo {
+                            buffer,
+                            layout: wgpu::TexelCopyBufferLayout {
+                                offset: region.offset,
+                                bytes_per_row: Some(region.stride),
+                                rows_per_image: Some(region.rows),
+                            },
+                        },
+                        wgpu::Extent3d {
+                            width: size,
+                            height: size,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
             },
         );
-        let levels = shape.levels();
-        for (index, region) in regions.iter().enumerate() {
-            let level = index as u32 % levels;
-            let size = shape.size() >> level;
-            encoder.copy_texture_to_buffer(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &baked[index / levels as usize],
-                    mip_level: level,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &buffer,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: region.offset,
-                        bytes_per_row: Some(region.stride),
-                        rows_per_image: Some(region.rows),
-                    },
-                },
-                wgpu::Extent3d {
-                    width: size,
-                    height: size,
-                    depth_or_array_layers: 1,
-                },
-            );
+        if recorded {
+            self.readbacks.push(Pending {
+                serial,
+                identity,
+                shape,
+            });
+        } else {
+            self.made.push((identity, None));
         }
-        self.readbacks.push(Readback {
-            identity,
-            shape,
-            buffer,
-            mapped: Rc::new(RefCell::new(Mapped::Recorded)),
-        });
+    }
+
+    pub(super) fn arrived(&mut self, serial: u32, arrival: Arrival<'_>) {
+        let Some(at) = self
+            .readbacks
+            .iter()
+            .position(|pending| pending.serial == serial)
+        else {
+            return;
+        };
+        let pending = self.readbacks.swap_remove(at);
+        let input = match arrival {
+            Arrival::Read(bytes) => Some(impostor_assembly_input(
+                pending.shape,
+                self.format,
+                ROW,
+                bytes,
+            )),
+            Arrival::Failed => None,
+        };
+        self.made.push((pending.identity, input));
     }
 
     pub(super) fn take_made(&mut self, out: &mut Vec<(ImpostorIdentity, Option<Vec<u8>>)>) {
-        self.readbacks.retain(|readback| {
-            let read = match &mut *readback.mapped.borrow_mut() {
-                Mapped::Read(input) => Some(std::mem::take(input)),
-                Mapped::Failed => None,
-                Mapped::Recorded | Mapped::Mapping => return true,
-            };
-            out.push((readback.identity, read));
-            false
-        });
-    }
-
-    pub(super) fn after_submit(&mut self) {
-        let format = self.format;
-        for readback in &self.readbacks {
-            if !matches!(*readback.mapped.borrow(), Mapped::Recorded) {
-                continue;
-            }
-            *readback.mapped.borrow_mut() = Mapped::Mapping;
-            let buffer = readback.buffer.clone();
-            let mapped = Rc::clone(&readback.mapped);
-            let shape = readback.shape;
-            readback.buffer.slice(..).map_async(
-                wgpu::MapMode::Read,
-                crate::platform::map_callback(move |result| {
-                    let read = if result.is_ok() {
-                        let input = buffer
-                            .slice(..)
-                            .get_mapped_range()
-                            .ok()
-                            .map(|view| impostor_assembly_input(shape, format, ROW, &view));
-                        buffer.unmap();
-                        input
-                    } else {
-                        None
-                    };
-                    *mapped.borrow_mut() = read.map_or(Mapped::Failed, Mapped::Read);
-                }),
-            );
-        }
+        out.append(&mut self.made);
     }
 }

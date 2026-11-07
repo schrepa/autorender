@@ -49,8 +49,6 @@ impl Brick for ParticlesBrick {
                 Schedule::ViewSync,
                 (emitters::gather_emitters, emitters::particle_stats),
             )
-            .off(emitters::forget)
-            .off_in(Schedule::ViewSync, emitters::drop_bursts)
             .generated(GENERATED)
             .part::<part::ParticlesGpu>();
     }

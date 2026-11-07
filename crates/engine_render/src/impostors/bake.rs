@@ -54,6 +54,7 @@ impl Atlas {
             encoder,
             mips,
             pipelines,
+            readbacks,
         } = gpu;
         let encoder = mip_encoder(device, encoder);
         let shape = AtlasShape {
@@ -67,7 +68,7 @@ impl Atlas {
         for texture in &targets.layer {
             mips.record(device, encoder, texture);
         }
-        self.read_back(device, encoder, (identity, shape));
+        self.read_back((device, encoder), readbacks, (identity, shape));
     }
 }
 

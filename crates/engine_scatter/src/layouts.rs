@@ -1,9 +1,7 @@
 use bevy_ecs::prelude::Resource;
 use bytemuck::{Pod, Zeroable};
-use engine_core::{ImpostorRecord, gpu_consts, gpu_struct};
-use engine_render::debug::{
-    DEBUG_CASTS, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_LEVEL_SHIFT,
-};
+use engine_core::{GpuBits, ImpostorRecord, gpu_bits, gpu_consts, gpu_struct};
+use engine_render::debug::{DebugKind, DebugRecord};
 use glam::Mat4;
 
 gpu_struct! {
@@ -104,22 +102,59 @@ gpu_consts! {
     pub(crate) const SHOWN_CARD: u32 = 5;
     pub(crate) const SHOWN_NONE: u32 = 6;
     pub(crate) const FADED: u32 = 65535;
-    pub(crate) const STATE_ADOPT: u32 = 0xffffffff;
     pub(crate) const DEAD: u32 = 0xffffffff;
-    pub(crate) const HIDDEN: u32 = 0x80000000;
-    pub(crate) const TERRAIN_INDEX: u32 = 0x1ff;
-    pub(crate) const LAYER_SHIFT: u32 = 9;
     pub(crate) const NO_LAYER: u32 = 0x7f;
-    pub(crate) const NEAR_LEVEL_SHIFT: u32 = 16;
-    pub(crate) const RANK_SHIFT: u32 = 21;
     pub(crate) const CELLS: u32 = 16;
     pub(crate) const QUAD: u32 = 6;
     pub(crate) const SCATTER_GROUP: u32 = 64;
     pub(crate) const OCCUPANCY_GROUP: u32 = 64;
 }
 
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ScatterFade {
+    #[bits(3)]
+    pub(crate) shown: u32,
+    #[bits(3)]
+    pub(crate) previous: u32,
+    #[bits(16)]
+    pub(crate) progress: u32,
+    #[bits(1, at = 31)]
+    pub(crate) adopt: bool,
+}
+
+impl ScatterFade {
+    pub(crate) fn word(adopt: bool) -> u32 {
+        Self {
+            shown: SHOWN_NONE,
+            previous: SHOWN_NONE,
+            progress: FADED,
+            adopt,
+        }
+        .pack()
+    }
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ScatterTerrain {
+    #[bits(9)]
+    pub(crate) index: u32,
+    #[bits(7)]
+    pub(crate) layer: u32,
+    #[bits(5)]
+    pub(crate) near: u32,
+    #[bits(10)]
+    pub(crate) rank: u32,
+    pub(crate) hidden: bool,
+}
+
+pub(crate) const TERRAIN_INDEX: u32 = 0x1ff;
+
 pub(crate) const GENERATED: &[&str] = &[
     WGSL,
+    <ScatterFade as GpuBits>::WGSL,
+    <ScatterTerrain as GpuBits>::WGSL,
     <CullFrame as engine_core::GpuStruct>::WGSL,
     <CullView as engine_core::GpuStruct>::WGSL,
     <CullGroup as engine_core::GpuStruct>::WGSL,
@@ -131,13 +166,8 @@ pub(crate) const GENERATED: &[&str] = &[
     <PlacedGroup as engine_core::GpuStruct>::WGSL,
 ];
 
-const _: () = assert!(HIDDEN > RANK_MASK << RANK_SHIFT, "hidden_above_rank");
-
 pub(crate) const LEVELS: u32 = SHOWN_CARD;
-pub(crate) const STATE_FRESH: u32 = SHOWN_NONE | SHOWN_NONE << 3 | FADED << 6;
-pub(crate) const NEAR_LEVEL_MASK: u32 = 0x1f;
 pub(crate) const RANK_MAX: f32 = 1023.0;
-const RANK_MASK: u32 = 0x3ff;
 pub(crate) const MAX_OCCUPANCY_LEVELS: usize = crate::settings::MAX_OCCUPANCY_LEVELS as usize;
 
 pub(crate) const RECORD_LEVELS: u32 = 16;
@@ -152,10 +182,10 @@ pub(crate) enum DrawKind {
 impl DrawKind {
     const ALL: [Self; 2] = [Self::Placed, Self::PlacedCard];
 
-    fn kind(self) -> u32 {
+    fn kind(self) -> DebugKind {
         match self {
-            Self::Placed => DEBUG_KIND_PLACED,
-            Self::PlacedCard => DEBUG_KIND_PLACED_CARD,
+            Self::Placed => DebugKind::Placed,
+            Self::PlacedCard => DebugKind::PlacedCard,
         }
     }
 }
@@ -187,11 +217,14 @@ impl DrawRecord {
     }
 
     fn word(self) -> u32 {
-        let mut word = self.kind.kind() | (self.level.min(RECORD_LEVELS - 1) << DEBUG_LEVEL_SHIFT);
-        if self.casts {
-            word |= DEBUG_CASTS;
+        DebugRecord {
+            kind: self.kind.kind(),
+            level: self.level.min(RECORD_LEVELS - 1),
+            fading: false,
+            casts: self.casts,
+            source: 0,
         }
-        word
+        .pack()
     }
 }
 

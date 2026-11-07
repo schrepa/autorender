@@ -127,7 +127,7 @@ mod measured {
                 return;
             };
             let frames = frames + 1;
-            let settled = settled || (!self.loading() && !self.renderer.pipelines_compiling());
+            let settled = settled || self.engine.readiness().settled();
             self.attribution.warmup = if settled && frames >= WARMUP_FRAMES {
                 self.renderer.end_gpu_warmup();
                 Warmup::Warm

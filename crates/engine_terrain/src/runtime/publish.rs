@@ -4,7 +4,11 @@ use engine_places_simulation::ground::Ground;
 use engine_places_world::ground::{
     PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles,
 };
+use engine_core::{FeedSettings, Spawner};
 use engine_places_world::water::Hydrology;
+
+#[derive(Component)]
+pub(crate) struct SurroundingsGround;
 
 fn sample_offset(state: &TerrainState) -> Vec2 {
     state
@@ -108,8 +112,11 @@ fn placed_layers(rules: &Biomes) -> Vec<PlacedLayer> {
 }
 
 fn entry_entity(state: &TerrainState) -> Entity {
-    let around = u64::from(state.around.is_some()) << 63;
-    Entity::from_bits(state.entity.to_bits() ^ around)
+    state
+        .around
+        .as_ref()
+        .and_then(|around| around.entity)
+        .unwrap_or(state.entity)
 }
 
 fn entry_of(
@@ -142,7 +149,6 @@ fn entry_of(
         baked: (state.around.is_none() && terrains.bake_asked(state.entity))
             .then(|| terrains.layers(state.entity))
             .flatten(),
-        baking: state.around.is_none() && state.bake.job.is_some(),
         macro_map: None,
         materials: Arc::from(surface.materials.as_slice()),
         maps: surface
@@ -160,7 +166,7 @@ fn entry_of(
             .collect(),
         layers: Arc::from(placed_layers(surface.rules.authored())),
         tiles: Arc::clone(state.store.faces()),
-        changes: state.store.changes().clone(),
+        changes: Arc::clone(state.store.changes()),
         sample_offset: sample_offset(state),
         kept: Arc::clone(state.store.kept_faces()),
     }
@@ -196,28 +202,60 @@ fn assets_moved(terrains: &Terrains, tiles: &TerrainTiles, assets: &AssetLibrary
         })
 }
 
+fn same_bakes(
+    held: &[(Entity, Arc<crate::HydrologyBake>)],
+    next: &[(Entity, Arc<crate::HydrologyBake>)],
+) -> bool {
+    held.len() == next.len()
+        && held
+            .iter()
+            .zip(next)
+            .all(|((a, held), (b, next))| a == b && Arc::ptr_eq(held, next))
+}
+
 pub(crate) fn publish_terrains(
-    (settings, assets): (Res<TerrainSettings>, Res<AssetLibrary>),
+    (settings, assets, feeds): (Res<TerrainSettings>, Res<AssetLibrary>, Res<FeedSettings>),
     mut terrains: ResMut<Terrains>,
     (mut tiles, mut ground): (ResMut<TerrainTiles>, ResMut<Ground>),
     (mut hydrology, mut programs): (ResMut<Hydrology>, ResMut<SurfacePrograms>),
+    mut spawner: Spawner<TerrainBrick>,
 ) {
-    let mut stale = std::mem::take(&mut terrains.stale);
-    for state in &mut terrains.entries {
-        stale = stale.with(std::mem::take(&mut state.stale));
-        let moved = state.store.settle_tiles();
-        let kept = state.store.settle_kept();
-        stale.tiles |= moved || kept;
-        stale.ground |= moved;
+    for entity in std::mem::take(&mut terrains.retired.entities) {
+        spawner.despawn(entity);
     }
-    if stale.ground {
+    let mut changed = std::mem::take(&mut terrains.changed);
+    for state in &mut terrains.entries {
+        if let Some(around) = state.around.as_mut()
+            && around.entity.is_none()
+        {
+            around.entity = Some(spawner.spawn(SurroundingsGround));
+            state.changed = true;
+        }
+        changed |= std::mem::take(&mut state.changed);
+        changed |= state.store.settle_tiles(feeds.tiles as usize);
+        changed |= state.store.settle_kept();
+    }
+    if changed {
         terrains.grounds += 1;
     }
     let terrains = &*terrains;
-    if stale.ground {
+    if changed {
         *ground = Ground(Arc::new(TerrainGround::of(terrains)));
+        let bakes: Vec<(Entity, Arc<crate::HydrologyBake>)> = terrains
+            .entries
+            .iter()
+            .filter(|state| state.around.is_none())
+            .filter_map(|state| Some((state.entity, Arc::clone(state.hydrology.bake.as_ref()?))))
+            .collect();
+        if !same_bakes(&hydrology.bakes, &bakes) {
+            hydrology.bakes = bakes;
+        }
+        let next = SurfacePrograms::of(terrains);
+        if *programs != next {
+            *programs = next;
+        }
     }
-    if stale.tiles
+    if changed
         || settings.is_changed()
         || (assets.is_changed() && assets_moved(terrains, &tiles, &assets))
     {
@@ -229,16 +267,5 @@ pub(crate) fn publish_terrains(
                 .map(|state| entry_of((terrains, state), &settings, &assets))
                 .collect(),
         };
-    }
-    if stale.water {
-        hydrology.bakes = terrains
-            .entries
-            .iter()
-            .filter(|state| state.around.is_none())
-            .filter_map(|state| Some((state.entity, Arc::clone(state.hydrology.bake.as_ref()?))))
-            .collect();
-    }
-    if stale.programs {
-        *programs = SurfacePrograms::of(terrains);
     }
 }

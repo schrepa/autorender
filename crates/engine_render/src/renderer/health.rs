@@ -1,19 +1,58 @@
 use super::*;
+use bevy_ecs::world::World;
 use std::task::{Context, Poll, Waker};
+
+#[derive(Clone, Debug, Default)]
+enum Health {
+    #[default]
+    Live,
+    Failed(Error),
+    Lost(Error),
+    Faulted(Error),
+}
+
+enum Change {
+    Failed(Error),
+    Lost(Error),
+    BricksFaulted,
+}
+
+impl Health {
+    fn after(&mut self, change: Change) {
+        *self = match (std::mem::take(self), change) {
+            (Self::Live, Change::Failed(error)) => Self::Failed(error),
+            (Self::Live | Self::Failed(_), Change::Lost(error)) => Self::Lost(error),
+            (Self::Lost(error), Change::BricksFaulted) => Self::Faulted(error),
+            (state @ (Self::Failed(_) | Self::Lost(_) | Self::Faulted(_)), Change::Failed(_))
+            | (state @ (Self::Lost(_) | Self::Faulted(_)), Change::Lost(_))
+            | (
+                state @ (Self::Live | Self::Failed(_) | Self::Faulted(_)),
+                Change::BricksFaulted,
+            ) => state,
+        };
+    }
+
+    fn error(&self) -> Option<&Error> {
+        match self {
+            Self::Live => None,
+            Self::Failed(error) | Self::Lost(error) | Self::Faulted(error) => Some(error),
+        }
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Reports {
-    fatal: Option<Error>,
+    health: Health,
     messages: Vec<String>,
 }
 
 impl Reports {
     pub(super) fn lost(&mut self, reason: wgpu::DeviceLostReason, message: &str) {
-        self.fatal.get_or_insert_with(|| {
+        self.health.after(Change::Lost(
             failed("$.device")
                 .expected(Expected::Live)
-                .got_whole((format!("{reason:?}"), message))
-        });
+                .got_whole((format!("{reason:?}"), message)),
+        ));
     }
 
     pub(super) fn uncaptured(&mut self, error: &wgpu::Error) {
@@ -56,7 +95,7 @@ impl Renderer {
         let linked = self.core.pipeline_counts.take_errors();
         if let Ok(mut reports) = self.core.health.lock() {
             if let Some(error) = linked.into_iter().next() {
-                reports.fatal.get_or_insert(error);
+                reports.health.after(Change::Failed(error));
             }
             for message in std::mem::take(&mut reports.messages) {
                 let named = self
@@ -75,29 +114,46 @@ impl Renderer {
                         run.part = saved;
                     }
                     (Some(_) | None, _) => {
-                        reports
-                            .fatal
-                            .get_or_insert_with(|| failed("$.gpu").got_whole(message));
+                        let error = failed("$.gpu").got_whole(message);
+                        reports.health.after(Change::Failed(error));
                     }
                 }
             }
-            if let Some(fatal) = &reports.fatal {
+            if let Some(fatal) = reports.health.error() {
                 return Err(fatal.clone());
             }
         }
         Ok(())
     }
 
-    pub fn faulted_parts(&self) -> Vec<&'static str> {
-        let Some(run) = self.run.as_ref() else {
-            return Vec::new();
+    pub(super) fn fault_bricks(&mut self, world: &mut World) {
+        let lost = self
+            .core
+            .health
+            .lock()
+            .ok()
+            .and_then(|reports| match &reports.health {
+                Health::Lost(error) => Some(error.clone()),
+                Health::Live | Health::Failed(_) | Health::Faulted(_) => None,
+            });
+        let Some(error) = lost else {
+            return;
         };
-        run.faulted
+        let states = world.get_resource::<engine_registry::BrickStates>();
+        let mut bricks: Vec<engine_registry::BrickId> = self
+            .run
             .iter()
-            .zip(&run.machine.declared.parts)
-            .filter(|(fault, _)| fault.is_some())
-            .map(|(_, part)| part.name)
-            .collect()
+            .flat_map(|run| run.gates.iter().flatten())
+            .filter_map(|gate| states.and_then(|states| states.brick(*gate)))
+            .collect();
+        bricks.sort_unstable();
+        bricks.dedup();
+        for brick in bricks {
+            engine_registry::fault(world, brick, error.clone());
+        }
+        if let Ok(mut reports) = self.core.health.lock() {
+            reports.health.after(Change::BricksFaulted);
+        }
     }
 
     #[cfg(feature = "dev")]

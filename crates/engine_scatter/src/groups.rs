@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk, ImpostorRecord,
-    Material, MaterialHandle, Mesh, MeshHandle, ResidentMesh, TextureHandle,
+    AlphaMode, AssetLibrary, AssetResidency, GpuBits, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk,
+    ImpostorRecord, Material, MaterialHandle, Mesh, MeshHandle, ResidentMesh, TextureHandle,
 };
 use engine_math::collections::HashMap;
 use engine_places_world::ground::{Placed, PlacedAsset};
@@ -11,8 +11,8 @@ use engine_render::{ground_data, pack_color, pack_surface};
 use glam::Vec3;
 
 use crate::layouts::{
-    Cover, LAYER_SHIFT, LEVELS, NEAR_LEVEL_SHIFT, NO_LAYER, PlacedRecord, RANK_MAX, RANK_SHIFT,
-    STATE_FRESH, SlotColor, TERRAIN_INDEX, pose_rows,
+    Cover, LEVELS, NO_LAYER, PlacedRecord, RANK_MAX, ScatterFade, ScatterTerrain, SlotColor,
+    TERRAIN_INDEX, pose_rows,
 };
 use crate::pool::TileObjects;
 use crate::settings::{PlacedLook, ScatterSettings};
@@ -358,12 +358,16 @@ impl Groups {
                 radius: radius * placed.scale,
                 group,
                 scale: placed.scale,
-                terrain: index
-                    | layer << LAYER_SHIFT
-                    | near << NEAR_LEVEL_SHIFT
-                    | rank << RANK_SHIFT,
+                terrain: ScatterTerrain {
+                    index,
+                    layer,
+                    near,
+                    rank,
+                    hidden: false,
+                }
+                .pack(),
                 sink: placed.sink,
-                state: STATE_FRESH,
+                state: ScatterFade::word(false),
                 pad: [0; 3],
             });
             objects.3.push(ground_data(

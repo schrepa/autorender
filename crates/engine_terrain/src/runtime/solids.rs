@@ -2,7 +2,8 @@ use engine_places_simulation::physics::ColliderShape;
 use engine_places_simulation::solids::{
     FieldSamples, FieldTile, SolidField, SolidSource, SolidTree, WorldSolid,
 };
-use engine_places_world::ground::{TileChange, TilesSince};
+use engine_core::{Cursor, Since};
+use engine_places_world::ground::TileChange;
 use glam::Quat;
 
 use super::*;
@@ -154,7 +155,7 @@ fn placed_solids(state: &TerrainState, solids: &mut Vec<WorldSolid>) -> HashSet<
 
 #[derive(Default)]
 pub(crate) struct Published {
-    cursor: u64,
+    cursor: Cursor,
     fields: Vec<(Arc<Tile>, Arc<FieldTile>)>,
     bridges: Arc<[Bridge]>,
     colliders: Vec<Option<PlacedCollider>>,
@@ -185,9 +186,9 @@ impl Published {
     fn update(&mut self, state: &TerrainState) -> Option<Arc<SolidField>> {
         let since = state.store.changes().since(&mut self.cursor);
         let touched = match since {
-            TilesSince::Same => false,
-            TilesSince::Listed(changes) => self.touched(state, changes),
-            TilesSince::All => true,
+            Since::Same => false,
+            Since::Listed(changes) => self.touched(state, changes),
+            Since::All => true,
         };
         let assets = &state.terrain.surface.assets;
         let moved = touched
@@ -205,7 +206,7 @@ impl Published {
         self.colliders
             .extend(assets.iter().map(|asset| asset.collider));
         let mut kept = std::mem::take(&mut self.fields);
-        if matches!(since, TilesSince::All) {
+        if matches!(since, Since::All) {
             kept.clear();
         }
         self.fields = collision_tiles(state)

@@ -8,7 +8,7 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 pub mod constants;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, FrameTime, Schedule, Source, ViewWind, settings};
+use engine_core::{Brick, Bricks, Schedule, Source, ViewWind, settings};
 use engine_places_simulation::wind::{GustWaves, Wind};
 use engine_render::RenderBricks;
 
@@ -51,21 +51,20 @@ impl Brick for WindBrick {
             .fill::<Wind>(Some(shaders::wind::faces::wind::MODULE))
             .fill::<ViewWind>(None)
             .generated(GENERATED)
-            .systems(Schedule::FixedSimulation, publish_wind)
-            .systems(Schedule::ViewSync, (publish_wind, publish_view_wind));
+            .systems(Schedule::Presentation, publish_wind);
     }
 }
 
-fn publish_wind(settings: Res<WindSettings>, time: Res<FrameTime>, mut wind: ResMut<Wind>) {
+fn publish_wind(
+    settings: Res<WindSettings>,
+    mut wind: ResMut<Wind>,
+    mut view: ResMut<ViewWind>,
+) {
     wind.set_if_neq(Wind {
         velocity: settings.velocity,
         gusts: settings.gusts,
-        clock: time.game_elapsed_seconds as f32,
         waves: WAVES,
     });
-}
-
-fn publish_view_wind(settings: Res<WindSettings>, mut view: ResMut<ViewWind>) {
     view.set_if_neq(ViewWind {
         velocity: settings.velocity,
         gusts: settings.gusts,

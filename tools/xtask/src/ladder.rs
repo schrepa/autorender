@@ -336,7 +336,7 @@ impl Runner<'_> {
                 let printed = json!({
                     "frames": printed["frames"],
                     "prepare_ms": printed["prepare_ms"],
-                    "loading": printed["stats"]["loading"],
+                    "readiness": printed["stats"]["readiness"],
                 });
                 (printed, measured)
             }

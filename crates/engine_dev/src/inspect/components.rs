@@ -1,6 +1,6 @@
 use engine_core::{
-    AssetResidency, AxisInput, CursorMode, IMPOSTOR_MIN_TRIANGLES, ImpostorBooks, MenuInput,
-    PointerInput, ResidentMesh,
+    AssetResidency, AxisInput, CursorMode, CursorRequests, IMPOSTOR_MIN_TRIANGLES, ImpostorBooks,
+    MenuInput, PointerInput, ResidentMesh,
 };
 
 use super::*;
@@ -68,6 +68,7 @@ fn input_view(world: &World, _: Option<Entity>, _: &Context<'_>) -> Option<Value
     let actions = world.get_resource::<ActionInput>();
     let pointer = current::<PointerInput>(world);
     let menu = current::<MenuInput>(world);
+    let cursor = world.get_resource::<CursorRequests>();
     let pressed = [
         (menu.up, MenuPress::Up),
         (menu.down, MenuPress::Down),
@@ -95,7 +96,15 @@ fn input_view(world: &World, _: Option<Entity>, _: &Context<'_>) -> Option<Value
             .map(|&(_, press)| press)
             .collect(),
         menu_wanted: menu.wanted,
-        cursor: current::<CursorMode>(world).name(),
+        cursor: cursor.map_or(CursorMode::default(), CursorRequests::applied).name(),
+        cursor_wanted: cursor.map_or(CursorMode::default(), CursorRequests::wanted).name(),
+        cursor_asked: cursor.map_or_else(Vec::new, |cursor| {
+            cursor
+                .asked()
+                .into_iter()
+                .map(|(by, mode)| [by, mode.name()])
+                .collect()
+        }),
     }))
 }
 

@@ -1,20 +1,31 @@
 fn impostor_frames(flags: u32) -> u32 {
-    return (flags >> IMPOSTOR_FRAMES_SHIFT) & 31u;
+    return impostor_flags_frames(flags);
+}
+
+fn impostor_fading(batch: u32) -> bool {
+    return steady_card_phase(batch) == CARD_PHASE_FADING;
 }
 
 fn impostor_index(batch: u32) -> u32 {
-    return select(batch, batch & 0x7fffu, (batch & IMPOSTOR_FADING) != 0u);
+    if impostor_fading(batch) {
+        return fading_card_index(batch);
+    }
+    return steady_card_index(batch);
 }
 
 fn impostor_over(batch: u32) -> bool {
-    return (batch & IMPOSTOR_FADING) != 0u && (batch & IMPOSTOR_OVER) != 0u;
+    return impostor_fading(batch) && fading_card_over(batch);
+}
+
+fn impostor_fading_out(batch: u32) -> bool {
+    return impostor_fading(batch) && fading_card_out(batch);
 }
 
 fn impostor_fade(batch: u32) -> f32 {
-    if (batch & IMPOSTOR_FADING) == 0u {
+    if !impostor_fading(batch) {
         return 1.0;
     }
-    return f32((batch >> 16u) & 0x3fffu) / 16383.0;
+    return f32(fading_card_fade(batch)) / f32(FADING_CARD_FADE_MAX);
 }
 
 fn impostor_octahedral(d: vec3<f32>) -> vec2<f32> {

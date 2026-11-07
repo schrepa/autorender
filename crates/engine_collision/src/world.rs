@@ -4,14 +4,14 @@ use std::sync::{Arc, Mutex, PoisonError};
 use bevy_ecs::prelude::*;
 use engine_core::profile::{Aggregate, span};
 use engine_core::{
-    Error, FixedTime, FrameTime, GlobalTransforms, Section, Transform, TransformsSince,
+    Cursor, Error, Events, Feed, FixedTime, FrameTime, GlobalTransforms, Section, Since, Transform,
 };
 use engine_math::collections::HashMap;
 use engine_places::sweeps::{Sweep, Sweeps};
 use engine_places_simulation::physics::{
-    Collide, Collider, ColliderShape, Collision, CollisionRay, QueryFilter, RayHit, SLIDE_STEPS,
-    SensorEvent, SensorEventKind, SensorFilter, SensorPair, ShapeCastOptions, ShapeHit, Slid,
-    SlideHit,
+    Collide, Collider, ColliderShape, ColliderSolid, Collision, CollisionRay, QueryFilter, RayHit,
+    SLIDE_STEPS, SensorEvent, SensorEventKind, SensorFilter, SensorPair, ShapeCastOptions,
+    ShapeHit, Slid, SlideHit,
 };
 use engine_places_simulation::solids::{Bounds, Bvh, SolidField, SolidSource};
 use glam::{Mat4, Vec2, Vec3};
@@ -56,6 +56,48 @@ struct Solids {
     ready: Result<(), Fault>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Synced {
+    #[default]
+    Never,
+    Complete,
+    Incomplete(Fault),
+}
+
+impl Synced {
+    fn of(valid: bool, report: &CollisionReport) -> Self {
+        if !valid {
+            Self::Incomplete(Fault::InvalidConfig)
+        } else if report.invalid_colliders > 0 || report.overflow_colliders > 0 {
+            Self::Incomplete(Fault::IncompleteWorld)
+        } else {
+            Self::Complete
+        }
+    }
+
+    fn ready(self) -> Result<(), Fault> {
+        match self {
+            Self::Complete => Ok(()),
+            Self::Incomplete(fault) => Err(fault),
+            Self::Never => Err(Fault::IncompleteWorld),
+        }
+    }
+}
+
+struct Slides {
+    staged: Mutex<Vec<SlideHit>>,
+    feed: Feed<SlideHit>,
+}
+
+impl Default for Slides {
+    fn default() -> Self {
+        Self {
+            staged: Mutex::default(),
+            feed: Feed::new(1),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct CollisionWorld {
     config: CollisionConfig,
@@ -63,13 +105,13 @@ pub struct CollisionWorld {
     entries: Arc<Vec<Entry>>,
     bounds: Vec<Bounds>,
     bvh: Arc<Bvh>,
-    moved: u64,
+    moved: Cursor,
     disabled: u64,
     next_pairs: Vec<SensorPair>,
     report: CollisionReport,
-    last_error: Option<Fault>,
+    synced: Synced,
     sources: Vec<Arc<SolidField>>,
-    hits: Mutex<Vec<SlideHit>>,
+    slides: Slides,
     pub(crate) sensors: SensorEvents,
 }
 
@@ -88,7 +130,7 @@ pub(crate) fn world_of(collision: &Collision) -> Option<&CollisionWorld> {
 
 impl CollisionWorld {
     pub(crate) fn stats(&self) -> CollisionStats {
-        CollisionStats::of(&self.report, &self.config)
+        CollisionStats::of(&self.report, &self.config, self.synced == Synced::Complete)
     }
     pub(crate) fn collider_status(&self, entity: Entity) -> Option<ColliderStatus> {
         self.held.get(&entity).map(|slot| match slot {
@@ -101,7 +143,7 @@ impl CollisionWorld {
         terrain::owners(&self.sources)
     }
 
-    fn solids(&self) -> Solids {
+    fn sweep(&self) -> Solids {
         Solids {
             entries: Arc::clone(&self.entries),
             bvh: Arc::clone(&self.bvh),
@@ -112,11 +154,7 @@ impl CollisionWorld {
     }
 
     fn ready(&self) -> Result<(), Fault> {
-        if self.report.complete {
-            Ok(())
-        } else {
-            Err(self.last_error.unwrap_or(Fault::IncompleteWorld))
-        }
+        self.synced.ready()
     }
 
     fn sync_ground(&mut self, sources: &Query<'_, '_, Sources>) {
@@ -142,15 +180,15 @@ impl CollisionWorld {
         self.report.tick = tick;
         let since = globals.changes_since(&mut self.moved);
         let disabled = std::mem::replace(&mut self.disabled, globals.switches().disabled);
-        let settled = (self.report.complete || self.last_error.is_some())
+        let settled = self.synced != Synced::Never
             && config == self.config
             && disabled == self.disabled
             && colliders.iter().len() == self.report.colliders
             && edited.is_empty()
             && match since {
-                TransformsSince::Same => true,
-                TransformsSince::Listed(moved) => self.sync_moved(moved, colliders, globals),
-                TransformsSince::All => false,
+                Since::Same => true,
+                Since::Listed(moved) => self.sync_moved(moved, colliders, globals),
+                Since::All => false,
             };
         if !settled {
             self.sync_all(config, colliders, globals);
@@ -211,25 +249,19 @@ impl CollisionWorld {
             + self.entries.capacity() * size_of::<Entry>()
             + self.bounds.capacity() * size_of::<Bounds>()
             + self.bvh.bytes();
-        self.report.complete = configuration_valid
-            && self.report.invalid_colliders == 0
-            && self.report.overflow_colliders == 0;
-        self.last_error = if !configuration_valid {
-            Some(Fault::InvalidConfig)
-        } else if !self.report.complete {
-            Some(Fault::IncompleteWorld)
-        } else {
-            None
-        };
+        self.synced = Synced::of(configuration_valid, &self.report);
     }
 
     fn sync_moved(
         &mut self,
-        moved: &[Entity],
+        moved: &[u32],
         colliders: &Query<'_, '_, ColliderData>,
         globals: &GlobalTransforms,
     ) -> bool {
-        for &entity in moved {
+        for &index in moved {
+            let Some(entity) = globals.entity_at(index) else {
+                continue;
+            };
             let Some(&slot) = self.held.get(&entity) else {
                 continue;
             };
@@ -308,12 +340,19 @@ impl CollisionWorld {
     }
 
     fn detect(&mut self, tick: u64) {
-        self.report.slide_hits = self
-            .hits
-            .get_mut()
-            .unwrap_or_else(PoisonError::into_inner)
-            .len();
+        let staged = std::mem::take(
+            self.slides
+                .staged
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        self.report.slide_hits = staged.len();
+        self.slides.feed.resize(self.config.slide_feed as usize);
+        for hit in staged {
+            self.slides.feed.push(hit);
+        }
         let mut events = std::mem::take(&mut self.sensors);
+        events.events.resize(self.config.sensor_feed as usize);
         self.detect_into(&mut events, tick);
         self.sensors = events;
     }
@@ -324,7 +363,7 @@ impl CollisionWorld {
         let mut broad = Aggregate::new("collision.broad", "bvh_traversal");
         events.sequence = events.sequence.saturating_add(1);
         events.tick = Some(tick);
-        events.events.clear();
+        events.last = 0;
         events.candidate_pairs = 0;
         self.next_pairs.clear();
         let result = (|| {
@@ -361,8 +400,7 @@ impl CollisionWorld {
             Ok(())
         })();
         events.error = result.err();
-        events.complete = events.error.is_none();
-        if !events.complete {
+        if events.error.is_some() {
             self.next_pairs.clear();
             return;
         }
@@ -377,21 +415,21 @@ impl CollisionWorld {
                     new += 1;
                 }
                 (Some(a), Some(b)) if a < b => {
-                    events.events.push(SensorEvent {
+                    events.push(SensorEvent {
                         pair: a,
                         kind: SensorEventKind::Exit,
                     });
                     old += 1;
                 }
                 (Some(a), None) => {
-                    events.events.push(SensorEvent {
+                    events.push(SensorEvent {
                         pair: a,
                         kind: SensorEventKind::Exit,
                     });
                     old += 1;
                 }
                 (_, Some(b)) => {
-                    events.events.push(SensorEvent {
+                    events.push(SensorEvent {
                         pair: b,
                         kind: SensorEventKind::Enter,
                     });
@@ -407,8 +445,27 @@ impl CollisionWorld {
 }
 
 impl Collide for CollisionWorld {
-    fn colliders(&self) -> Option<usize> {
-        Some(self.config.colliders())
+    fn grounds(&self) -> &[Arc<SolidField>] {
+        &self.sources
+    }
+
+    fn solids(&self, min: Vec3, max: Vec3, found: &mut Vec<ColliderSolid>) {
+        let bounds = Bounds { min, max };
+        found.extend(
+            self.bvh
+                .query(move |node| node.overlaps(bounds))
+                .map(|index| self.entries[index])
+                .filter(|entry| {
+                    !entry.collider.is_sensor() && entry.affine.bounds.overlaps(bounds)
+                })
+                .map(|entry| ColliderSolid {
+                    entity: entry.entity,
+                    layers: entry.collider.layers(),
+                    shape: entry.affine.shape,
+                    center: entry.affine.center,
+                    axes: entry.affine.basis,
+                }),
+        );
     }
 
     fn raycast(&self, ray: CollisionRay, filter: QueryFilter) -> Result<Option<RayHit>, Error> {
@@ -563,7 +620,8 @@ impl Collide for CollisionWorld {
             left *= 1.0 - hit.fraction;
             left -= hit.normal * left.dot(hit.normal);
             *found = Some(hit);
-            self.hits
+            self.slides
+                .staged
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .push(SlideHit {
@@ -574,14 +632,11 @@ impl Collide for CollisionWorld {
         Ok(Slid { position: at, hits })
     }
 
-    fn slide_hits(&self) -> Vec<SlideHit> {
-        self.hits
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+    fn slide_hits(&self) -> &Feed<SlideHit> {
+        &self.slides.feed
     }
 
-    fn events(&self) -> &[SensorEvent] {
+    fn events(&self) -> &Feed<SensorEvent> {
         &self.sensors.events
     }
 
@@ -697,20 +752,47 @@ fn candidate(count: &mut usize, limit: usize) -> Result<(), Fault> {
     Ok(())
 }
 
-#[derive(Default)]
 pub(crate) struct SensorEvents {
-    events: Vec<SensorEvent>,
+    events: Feed<SensorEvent>,
+    last: usize,
     pairs: Vec<SensorPair>,
     sequence: u64,
     tick: Option<u64>,
     committed_tick: Option<u64>,
-    complete: bool,
     candidate_pairs: usize,
     error: Option<Fault>,
 }
 
+impl Default for SensorEvents {
+    fn default() -> Self {
+        Self {
+            events: Feed::new(1),
+            last: 0,
+            pairs: Vec::new(),
+            sequence: 0,
+            tick: None,
+            committed_tick: None,
+            candidate_pairs: 0,
+            error: None,
+        }
+    }
+}
+
 impl SensorEvents {
-    pub(crate) fn events(&self) -> &[SensorEvent] {
+    fn push(&mut self, event: SensorEvent) {
+        self.events.push(event);
+        self.last += 1;
+    }
+
+    pub(crate) fn last(&self) -> &[SensorEvent] {
+        let mut cursor = Cursor::default();
+        match self.events.events(&mut cursor) {
+            Events::Listed(all) => &all[all.len().saturating_sub(self.last)..],
+            Events::Missed(_) => &[],
+        }
+    }
+
+    pub(crate) fn feed(&self) -> &Feed<SensorEvent> {
         &self.events
     }
     pub(crate) fn pairs(&self) -> &[SensorPair] {
@@ -726,7 +808,7 @@ impl SensorEvents {
         self.committed_tick
     }
     pub(crate) fn complete(&self) -> bool {
-        self.complete
+        self.tick.is_some() && self.error.is_none()
     }
     pub(crate) fn candidate_pairs(&self) -> usize {
         self.candidate_pairs
@@ -734,14 +816,6 @@ impl SensorEvents {
     pub(crate) fn error(&self) -> Option<Error> {
         self.error.map(Fault::error)
     }
-}
-
-pub(crate) fn clear_hits(mut collision: ResMut<Collision>) {
-    installed(&mut collision)
-        .hits
-        .get_mut()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clear();
 }
 
 pub(crate) fn sync_ground(sources: Query<Sources>, mut collision: ResMut<Collision>) {
@@ -764,7 +838,7 @@ pub(crate) fn sync(
         &globals,
     );
     stats.set_if_neq(world.stats());
-    sweeps.0 = Box::new(world.solids());
+    sweeps.0 = Box::new(world.sweep());
 }
 
 pub(crate) fn refresh(
@@ -784,13 +858,9 @@ pub(crate) fn refresh(
         &globals,
     );
     stats.set_if_neq(world.stats());
-    sweeps.0 = Box::new(world.solids());
+    sweeps.0 = Box::new(world.sweep());
 }
 
 pub(crate) fn detect(mut collision: ResMut<Collision>, time: Res<FixedTime>) {
     installed(&mut collision).detect(time.tick);
-}
-
-pub(crate) fn forget(mut stats: ResMut<CollisionStats>) {
-    stats.set_if_neq(CollisionStats::default());
 }

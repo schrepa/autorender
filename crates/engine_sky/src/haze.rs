@@ -1,4 +1,5 @@
-use engine_core::Error;
+use bevy_ecs::prelude::Resource;
+use engine_core::{Error, Readable, Readback};
 use engine_render::{
     Access, Attach, Bind, Buffer, DepthUse, Encode, FULLSCREEN, Install, Lifetime, Own, Pass,
     Pipeline, Prepare, RenderPipeline, Shape, Texture, ViewTarget, wgpu,
@@ -9,6 +10,23 @@ use crate::gpu_layouts::HazeView;
 use crate::sky::{SkyGpu, inverse_or_identity};
 
 const HAZE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+#[derive(Resource, Default)]
+pub(crate) struct HazeSteps {
+    missed: bool,
+}
+
+impl HazeSteps {
+    pub(crate) fn missed(&mut self) -> bool {
+        std::mem::take(&mut self.missed)
+    }
+}
+
+impl Readable for HazeSteps {
+    fn arrived(&mut self, _: u32, read: Readback<&[u8]>) {
+        self.missed |= read.value.first().is_none_or(|&ran| ran == 0);
+    }
+}
 
 #[derive(Clone, Copy)]
 struct History {
@@ -40,14 +58,11 @@ impl HazePlan {
         self.runs
     }
 
-    pub(crate) fn submitted(&mut self) {
-        self.history = self.kept.take();
+    pub(crate) fn prepare(&mut self, (runs, missed): (bool, bool), frame: &HazeFrame) -> [f32; 4] {
+        self.history = self.kept.take().filter(|_| !missed);
         if self.history.is_some() {
             self.frames = self.frames.wrapping_add(1);
         }
-    }
-
-    pub(crate) fn prepare(&mut self, runs: bool, frame: &HazeFrame) -> [f32; 4] {
         self.runs = false;
         if !runs {
             self.release();
@@ -104,6 +119,7 @@ pub(crate) struct Haze {
     marching: Pipeline<SkyGpu, Own>,
     filtering: Pipeline<SkyGpu, Own>,
     drawn: (u32, u32),
+    stepped: bool,
 }
 
 impl Haze {
@@ -166,10 +182,14 @@ impl Haze {
             marching,
             filtering,
             drawn: (0, 0),
+            stepped: false,
         })
     }
 
     pub(crate) fn prepare(&mut self, cx: &mut Prepare<'_, SkyGpu>, plan: &HazePlan) {
+        if std::mem::take(&mut self.stepped) {
+            cx.deliver::<HazeSteps>(0, vec![u8::from(cx.ran(self.filter_pass))]);
+        }
         let Some(size) = plan.size.filter(|_| plan.runs) else {
             return;
         };
@@ -186,6 +206,7 @@ impl Haze {
         cx.write(self.uniform, 0, &[plan.uniform]);
         cx.run(self.march_pass);
         cx.run(self.filter_pass);
+        self.stepped = true;
     }
 
     pub(crate) fn owns(&self, pass: Pass<SkyGpu>) -> bool {

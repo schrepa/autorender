@@ -112,7 +112,7 @@ impl Terrains {
                 kept.push(state);
             } else {
                 state.retire(&mut self.retired);
-                self.stale = Stale::ALL;
+                self.changed = true;
             }
         }
         self.entries = kept;
@@ -149,6 +149,7 @@ impl Terrains {
                 base,
                 surroundings,
                 cutout,
+                entity: None,
             });
             self.entries.push(state);
         }

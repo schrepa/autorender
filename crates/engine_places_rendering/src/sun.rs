@@ -86,12 +86,6 @@ gpu_struct! {
     }
 }
 
-impl Sun {
-    pub const NONE: Self = Self {
-        direction: [0.0, 1.0, 0.0, 0.0],
-    };
-}
-
 impl Slot for Sun {
     const NAME: &'static str = "sun";
     const WGSL: Option<&'static str> = Some(include_str!("places/sun.wgsl"));

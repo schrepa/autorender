@@ -1,12 +1,10 @@
 use super::*;
 use engine_core::{
-    CookMode, DeviceLimits, FrameTime, GlobalTransforms, Joined, Projection, View, WorkClock,
-    WorkRemaining,
+    CookMode, DeviceLimits, FrameBudget, FrameTime, GlobalTransforms, Joined, Projection, View,
+    WorkClock, WorkRemaining,
 };
-use engine_places_world::ground::{GroundBaking, GroundWork};
 use engine_places_world::streaming::StreamingFocus;
 use engine_places_world::terrain::TerrainLayers;
-use engine_places_world::water::WaterWork;
 use glam::UVec2;
 
 pub(super) fn vertical_fov(camera: &Camera) -> f32 {
@@ -23,14 +21,6 @@ fn device_tiles(limits: &DeviceLimits) -> Option<u32> {
 }
 
 impl Terrains {
-    pub fn loading(&self) -> bool {
-        !self.loaded && self.entries.iter().any(|state| state.around.is_none())
-    }
-
-    pub fn begin_loading(&mut self) {
-        self.loaded = false;
-    }
-
     pub fn streaming(&self) -> bool {
         self.entries.iter().any(|state| !state.missing.is_empty())
     }
@@ -40,15 +30,12 @@ impl Terrains {
         settings: &TerrainSettings,
         (clock, milliseconds): (Option<fn() -> f64>, f64),
         asking: &mut Asking<'_, '_, '_>,
+        budget: &mut FrameBudget,
     ) -> bool {
         let Some(clock) = clock else {
             return false;
         };
-        let work = Work {
-            clock: Some(clock),
-            end: clock() + milliseconds,
-            upload: std::cell::Cell::new(self.upload_left),
-        };
+        let work = Work::between(budget, (clock, clock() + milliseconds));
         let frame = self.frame;
         let mut remaining = false;
         for state in &mut self.entries {
@@ -80,8 +67,7 @@ impl Terrains {
                 break;
             }
         }
-        self.between += self.upload_left - work.upload.get();
-        self.upload_left = work.upload.get();
+        self.between += work.spent();
         #[cfg(debug_assertions)]
         for state in &self.entries {
             state.check();
@@ -99,7 +85,6 @@ impl Terrains {
         };
         if moved.length() > JUMP {
             self.velocity = Vec3::ZERO;
-            self.loaded = false;
         } else if seconds > 0.0 {
             self.velocity = self.velocity.lerp(moved / seconds, 0.25);
         }
@@ -116,19 +101,15 @@ impl Terrains {
     fn stream(
         &mut self,
         settings: &TerrainSettings,
-        (camera, clock): (&Camera, Option<fn() -> f64>),
+        camera: &Camera,
         (eye, ahead): (Vec3, Vec3),
         (size, device_tiles): (UVec2, Option<u32>),
         (focus, places): (&[Vec3], &[(Vec3, f32)]),
-        asking: &mut Asking<'_, '_, '_>,
-    ) -> GroundWork {
+        (asking, budget): (&mut Asking<'_, '_, '_>, &mut FrameBudget),
+    ) {
         self.frame += 1;
         self.sync_surroundings(asking.kinds);
-        let retired = std::mem::take(&mut self.retired);
-        for ticket in retired.jobs {
-            asking.jobs.cancel(ticket);
-        }
-        let mut released = retired.shares;
+        let mut released = std::mem::take(&mut self.retired.shares);
         let mut stats = TerrainStats {
             terrains: self
                 .entries
@@ -158,20 +139,8 @@ impl Terrains {
         } else {
             vertical_fov(&Camera::default())
         };
-        let work = Work {
-            clock,
-            end: clock.map_or(0.0, |clock| {
-                clock()
-                    + if self.loaded {
-                        f64::from(settings.work_ms)
-                    } else {
-                        f64::from(settings.loading_work_ms)
-                    }
-            }),
-            upload: std::cell::Cell::new(
-                u64::from(settings.upload_bytes).saturating_sub(std::mem::take(&mut self.between)),
-            ),
-        };
+        let work = Work::frame(budget);
+        work.carry(std::mem::take(&mut self.between));
         let (waiting, unsettled) = match settings.motion_detail {
             Some(detail) => {
                 let speed = self.velocity.length();
@@ -197,6 +166,7 @@ impl Terrains {
         let mut remaining = limit.map_or(usize::MAX, |limit| limit as usize);
         let frame = self.frame;
         for state in &mut self.entries {
+            state.cook = None;
             if state.terrain.validate().is_err() {
                 continue;
             }
@@ -216,7 +186,7 @@ impl Terrains {
                 state
                     .ranges
                     .extend((0..pyramid.levels()).map(|level| ranges.range(level)));
-                state.stale.tiles = true;
+                state.changed = true;
             }
             let Plan {
                 collision,
@@ -288,7 +258,7 @@ impl Terrains {
                 frame,
                 asking,
             ) {
-                stats.baking += 1;
+                stats.baking += u32::from(state.bake.baking());
                 continue;
             }
             let missing = std::mem::take(&mut state.missing);
@@ -298,6 +268,11 @@ impl Terrains {
                 .collect();
             stats.resident_tiles += state.store.len() as u32;
             stats.missing_tiles += state.missing.len() as u32;
+            stats.pending += state
+                .missing
+                .iter()
+                .filter(|(key, _)| !state.failed.contains_key(key))
+                .count() as u32;
             stats.cached_tiles += state.store.kept_tiles() as u32;
             stats.cached_bytes += state.store.cached_bytes();
             stats.prefetching_tiles += state.prefetched.len() as u32;
@@ -348,13 +323,8 @@ impl Terrains {
             .iter()
             .map(|state| state.store.kept_tiles() as u32)
             .sum();
-        self.upload_left = work.upload.get();
         release(&self.entries, &mut self.stacks, released, asking.jobs);
-        self.settled = stats.terrains > 0
-            && stats.baking == 0
-            && stats.loading_tiles == 0
-            && stats.fallback_tiles == 0;
-        stats.loading = self.loading();
+        stats.pending += stats.baking;
         stats.dropped_tiles = stats.tile_cut.cut;
         let (failed_jobs, latest) = self.job_failures();
         stats.failed_jobs = failed_jobs;
@@ -363,12 +333,6 @@ impl Terrains {
         #[cfg(debug_assertions)]
         for state in &self.entries {
             state.check();
-        }
-        GroundWork {
-            slice: u64::from(settings.samples_per_frame),
-            millis: clock.map_or(0.0, |clock| work.end - clock()),
-            end: clock.map_or(0.0, |_| work.end),
-            upload: work.upload.get(),
         }
     }
 }
@@ -383,7 +347,6 @@ pub(crate) type StreamReads<'w> = (
     Res<'w, Camera>,
     Res<'w, View>,
     Res<'w, FrameTime>,
-    Res<'w, WorkClock>,
     Res<'w, CookMode>,
     Res<'w, DeviceLimits>,
     Res<'w, GlobalTransforms>,
@@ -396,7 +359,7 @@ pub(crate) type StreamReads<'w> = (
 )]
 pub(crate) fn stream_terrains(
     settings: Res<TerrainSettings>,
-    (camera, view, time, clock, cooking, limits, globals, records): StreamReads<'_>,
+    (camera, view, time, cooking, limits, globals, records): StreamReads<'_>,
     kinds: Joined<TerrainLayers>,
     focus: Query<Entity, With<StreamingFocus>>,
     prefetch: Query<(Entity, &TerrainPrefetch)>,
@@ -404,7 +367,7 @@ pub(crate) fn stream_terrains(
     mut jobs: Jobs,
     mut terrains: ResMut<Terrains>,
     mut stats: ResMut<TerrainStats>,
-    mut ground: ResMut<GroundWork>,
+    mut budget: ResMut<FrameBudget>,
     mut streaming: Local<TerrainStreaming>,
 ) {
     let _profile = engine_core::profile::span("cpu", "terrain_stream");
@@ -441,66 +404,23 @@ pub(crate) fn stream_terrains(
         records: &records,
         kinds: &kinds,
     };
-    let work = terrains.stream(
+    terrains.stream(
         &settings,
-        (&*camera, clock.reading),
+        &camera,
         (eye, ahead),
         (view.display_size(), device_tiles(&limits)),
         (&streaming.points, &streaming.places),
-        &mut asking,
+        (&mut asking, &mut *budget),
     );
-    ground.slice = work.slice;
-    ground.millis = work.millis;
-    ground.end = work.end;
-    ground.upload = work.upload;
     let pending = if cooking.cooking {
         terrains.cook(&settings, &mut asking)
     } else {
-        u32::from(terrains.loading())
+        terrains.stats.pending
     };
     stats.set_if_neq(TerrainStats {
         pending,
         ..terrains.stats.clone()
     });
-}
-
-pub(crate) fn settle_view(
-    (baking, water, cooking): (Res<GroundBaking>, Res<WaterWork>, Res<CookMode>),
-    mut terrains: ResMut<Terrains>,
-    mut stats: ResMut<TerrainStats>,
-) {
-    terrains.upload_left = terrains.upload_left.saturating_sub(water.uploaded);
-    settle_loading(&baking, cooking.cooking, &mut terrains, &mut stats);
-}
-
-pub(crate) fn settle_waiting(
-    (baking, cooking): (Res<GroundBaking>, Res<CookMode>),
-    mut terrains: ResMut<Terrains>,
-    mut stats: ResMut<TerrainStats>,
-) {
-    settle_loading(&baking, cooking.cooking, &mut terrains, &mut stats);
-}
-
-fn settle_loading(
-    baking: &GroundBaking,
-    cooking: bool,
-    terrains: &mut Terrains,
-    stats: &mut ResMut<'_, TerrainStats>,
-) {
-    if !terrains.loaded && terrains.settled && baking.lighting == 0 && baking.unbounced == 0 {
-        terrains.loaded = true;
-    }
-    let loading = terrains.loading();
-    terrains.stats.loading = loading;
-    let pending = if cooking {
-        stats.pending
-    } else {
-        u32::from(loading)
-    };
-    if stats.loading != loading || stats.pending != pending {
-        stats.loading = loading;
-        stats.pending = pending;
-    }
 }
 
 pub(crate) fn work_between_frames(
@@ -510,6 +430,7 @@ pub(crate) fn work_between_frames(
     mut jobs: Jobs,
     mut terrains: ResMut<Terrains>,
     mut remaining: ResMut<WorkRemaining>,
+    mut budget: ResMut<FrameBudget>,
 ) {
     let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
     let mut asking = Asking {
@@ -522,6 +443,7 @@ pub(crate) fn work_between_frames(
         &settings,
         (clock.reading, milliseconds),
         &mut asking,
+        &mut *budget,
     ));
 }
 
@@ -533,7 +455,7 @@ impl Terrains {
                 kept.push(state);
             } else {
                 state.retire(&mut self.retired);
-                self.stale = Stale::ALL;
+                self.changed = true;
             }
         }
         self.entries = kept;
@@ -548,7 +470,6 @@ impl Terrains {
                         let old =
                             std::mem::replace(state, TerrainState::new(entity, terrain, kinds));
                         old.retire(&mut self.retired);
-                        self.loaded = false;
                     } else {
                         if !Arc::ptr_eq(&terrain.edits, &state.terrain.edits) {
                             state.edit(terrain.edits.clone(), kinds);
@@ -560,14 +481,12 @@ impl Terrains {
                         {
                             state.terrain.surface.assets = terrain.surface.assets;
                             state.terrain.surface.bridge = terrain.surface.bridge;
-                            state.stale.tiles = true;
-                            state.stale.ground = true;
+                            state.changed = true;
                         }
                     }
                 }
                 None => {
                     self.entries.push(TerrainState::new(entity, terrain, kinds));
-                    self.loaded = false;
                 }
             }
         }

@@ -65,18 +65,14 @@ impl Run {
             let raw = bytemuck::bytes_of(camera);
             staged[at..at + raw.len()].copy_from_slice(raw);
         }
-        crate::gpu_calls::upload_buffer(&self.queue, &self.camera, 0, &staged);
+        self.queue.write_buffer(&self.camera, 0, &staged);
         self.spare.cameras = staged;
         size_of::<CameraUniform>() as u64
     }
 
     pub(crate) fn write_post(&mut self) {
-        crate::gpu_calls::upload_buffer(
-            &self.queue,
-            &self.post_buffer,
-            0,
-            bytemuck::bytes_of(&self.post),
-        );
+        self.queue
+            .write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&self.post));
     }
 
     pub(crate) fn write_pieces(&mut self, staged: &mut Vec<u8>) -> u64 {
@@ -97,29 +93,18 @@ impl Run {
             self.touch(Held::Pieces);
         }
         staged.resize(size as usize, 0);
-        crate::gpu_calls::upload_buffer(&self.queue, &self.pieces, 0, staged);
+        self.queue.write_buffer(&self.pieces, 0, staged);
         size
     }
 
     pub(crate) fn read_back(&mut self, asked: Asked) -> bool {
-        let slots = self.readback_slots;
-        let free = asked.once
-            || match self
-                .rings
-                .iter()
-                .find(|ring| ring.part == asked.part && ring.tag == asked.tag)
-            {
-                Some(ring) => {
-                    ring.kept() < slots
-                        || ring
-                            .slots
-                            .iter()
-                            .any(|slot| !slot.once && slot.state.load(Ordering::Acquire) == 0)
-                }
-                None => true,
-            };
+        let reader = Reader::Part {
+            part: asked.part,
+            tag: asked.tag,
+        };
+        let free = asked.once || self.readbacks.room(reader, self.readback_slots);
         if free {
-            self.asked.push(asked);
+            self.queued.asked.push(asked);
         }
         free
     }

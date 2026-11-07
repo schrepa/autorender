@@ -1,7 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Detail, DeviceLimits, View};
-use engine_places::meshes::{Instances, MOVED_SLOT};
+use engine_places::meshes::Instances;
 use engine_render::Resolve;
+use engine_render::slots::DRAWN_SLOTS;
 
 use crate::batches::BatchPlan;
 use crate::presentation::{frustum_uniform, rasterized};
@@ -30,7 +31,7 @@ pub(crate) struct MeshPlan {
 fn instance_limit(limits: &DeviceLimits) -> Option<usize> {
     let record = size_of::<PoseData>().max(6 * size_of::<u32>()) as u64;
     (limits.storage_room != 0)
-        .then(|| (limits.storage_room / record).min(u64::from(MOVED_SLOT)) as usize)
+        .then(|| (limits.storage_room / record).min(DRAWN_SLOTS as u64) as usize)
 }
 
 #[expect(

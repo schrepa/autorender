@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
-use engine_places_world::ground::{Cover, PALETTE_ENTRIES, TerrainEntry, TerrainTiles};
+use engine_places_world::ground::{Cover, GroundTiles, TerrainEntry, TerrainTiles};
 
 use crate::layouts::{CoverMaterial, CoverTerrain};
 use crate::settings::{CoverLook, GroundCover};
@@ -43,37 +43,45 @@ impl CoverTable {
         self.terrains.get(index).map_or(0, |terrain| terrain.base)
     }
 
-    fn fill(&mut self, looks: &BTreeMap<String, CoverLook>, terrains: &[TerrainEntry]) {
+    fn fill(
+        &mut self,
+        looks: &BTreeMap<String, CoverLook>,
+        (terrains, palette): (&[TerrainEntry], &[(Entity, Option<u32>)]),
+    ) {
         self.terrains.clear();
         self.materials.clear();
         for terrain in terrains {
-            let room = PALETTE_ENTRIES as usize - self.materials.len();
+            let base = palette
+                .iter()
+                .find(|(entity, _)| *entity == terrain.terrain)
+                .and_then(|&(_, base)| base);
             let surface = &terrain.materials;
-            let kept = &surface[..surface.len().min(room)];
-            let whole = kept.len() == surface.len();
-            let terms = if whole {
-                densest_cover(
-                    kept.iter()
+            let terms = match base {
+                Some(_) => densest_cover(
+                    surface
+                        .iter()
                         .filter_map(|material| looks.get(&*material.name)),
-                )
-            } else {
-                CoverTerms::default()
+                ),
+                None => CoverTerms::default(),
             };
             self.terrains.push(CoverTerrain {
-                base: if whole {
-                    self.materials.len() as u32
-                } else {
-                    0
-                },
+                base: base.unwrap_or(0),
                 densest: terms.densest,
                 width: terms.width,
                 pad: 0,
             });
-            self.materials.extend(kept.iter().map(|material| {
-                looks
+            let Some(base) = base else {
+                continue;
+            };
+            let end = base as usize + surface.len();
+            if self.materials.len() < end {
+                self.materials.resize(end, CoverMaterial::default());
+            }
+            for (held, material) in self.materials[base as usize..end].iter_mut().zip(surface.iter()) {
+                *held = looks
                     .get(&*material.name)
-                    .map_or(CoverMaterial::default(), cover_material)
-            }));
+                    .map_or(CoverMaterial::default(), cover_material);
+            }
         }
         self.tallest = self
             .materials
@@ -85,14 +93,14 @@ impl CoverTable {
 
 pub(crate) fn write_covers(
     cover: Res<GroundCover>,
-    tiles: Res<TerrainTiles>,
+    (tiles, ground): (Res<TerrainTiles>, Res<GroundTiles>),
     mut table: ResMut<CoverTable>,
     mut shown: ResMut<Cover>,
     mut spare: Local<CoverTable>,
 ) {
-    let inputs = cover.is_changed() || tiles.is_changed();
+    let inputs = cover.is_changed() || tiles.is_changed() || ground.is_changed();
     if inputs {
-        spare.fill(&cover.looks, &tiles.terrains);
+        spare.fill(&cover.looks, (&tiles.terrains, &ground.palette));
         if *spare != *table {
             std::mem::swap(&mut *table, &mut *spare);
         }

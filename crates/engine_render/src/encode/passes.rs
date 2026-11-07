@@ -8,7 +8,7 @@ impl Run {
             .passes
             .get(pass as usize)
             .is_some_and(shared);
-        if self.merge && shares && self.open.as_ref().is_some_and(|open| open.shared) {
+        if self.merge && shares && self.recording.open().is_some_and(|open| open.shared) {
             return false;
         }
         if self
@@ -78,7 +78,7 @@ impl Run {
             return;
         };
         self.end_render();
-        if let (Some(span), Some(encoder)) = (self.encode_span(timer, name), self.encoder.as_mut())
+        if let (Some(span), Some(encoder)) = (self.encode_span(timer, name), self.recording.encoder())
         {
             span.mark(encoder, false);
         }
@@ -104,7 +104,7 @@ impl Run {
             return;
         };
         self.end_render();
-        if let (Some(span), Some(encoder)) = (self.encode_span(timer, name), self.encoder.as_mut())
+        if let (Some(span), Some(encoder)) = (self.encode_span(timer, name), self.recording.encoder())
         {
             span.mark(encoder, true);
         }
@@ -117,7 +117,7 @@ impl Run {
         self.end_render();
         for buffer in std::mem::take(&mut self.queued.cleared) {
             if let (Some(Some((made, _))), Some(encoder)) =
-                (self.buffers.get(buffer as usize), self.encoder.as_mut())
+                (self.buffers.get(buffer as usize), self.recording.encoder())
             {
                 encoder.clear_buffer(made, 0, None);
             }
@@ -133,7 +133,7 @@ impl Run {
             return;
         }
         let name = self.group_of(pass);
-        if let Some(encoder) = self.encoder.as_mut() {
+        if let Some(encoder) = self.recording.encoder() {
             if self.labelled.is_some() {
                 encoder.pop_debug_group();
             }
@@ -146,7 +146,7 @@ impl Run {
         self.end_render();
         if GROUPED
             && self.labelled.take().is_some()
-            && let Some(encoder) = self.encoder.as_mut()
+            && let Some(encoder) = self.recording.encoder()
         {
             encoder.pop_debug_group();
         }
@@ -425,7 +425,7 @@ impl Run {
                 .map(|(key, ..)| *key)
                 .chain(depth.as_ref().map(|(key, ..)| *key)),
         );
-        if let Some(open) = &mut self.open
+        if let Some(open) = self.recording.open_mut()
             && self.merge
             && open.shared
             && is_shared
@@ -458,7 +458,7 @@ impl Run {
                 .map(|(_, _, format, _, view)| (*format, *view)),
             (self.debug && layer.is_some(), main),
         );
-        let Some(encoder) = self.encoder.as_mut() else {
+        let Some(encoder) = self.recording.encoder() else {
             return false;
         };
         let color_attachments: [Option<wgpu::RenderPassColorAttachment<'_>>; MOST_COLORS] =
@@ -495,7 +495,7 @@ impl Run {
         {
             crate::targets::draw_within(&mut render, region);
         }
-        self.open = Some(Open {
+        self.recording.transition(Step::Render(Box::new(Open {
             pass: render,
             attachments,
             layout,
@@ -504,7 +504,7 @@ impl Run {
             layered: layer.is_some(),
             label: None,
             set: Set::default(),
-        });
+        })));
         colors.clear();
         self.spare.colors = colors;
         true
@@ -593,12 +593,25 @@ impl Run {
     }
 
     pub(crate) fn end_render(&mut self) {
-        self.computing = None;
-        self.end_open();
+        let ended = self.recording.transition(Step::EndPass);
+        self.closed(ended);
     }
 
     pub(super) fn end_open(&mut self) {
-        if let Some(mut open) = self.open.take() {
+        let ended = self.recording.transition(Step::EndRender);
+        self.closed(ended);
+    }
+
+    pub(crate) fn take_encoder(&mut self) -> Option<wgpu::CommandEncoder> {
+        self.end_render();
+        match self.recording.transition(Step::Take) {
+            Ended::Encoder(encoder) => Some(encoder),
+            Ended::Nothing | Ended::Render(_) => None,
+        }
+    }
+
+    fn closed(&mut self, ended: Ended) {
+        if let Ended::Render(mut open) = ended {
             if GROUPED && open.label.is_some() {
                 open.pass.pop_debug_group();
             }

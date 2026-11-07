@@ -63,7 +63,6 @@ gpu_struct! {
         pub ground: [f32; 4],
         pub radii: [f32; 4],
         pub sun: [f32; 4],
-        pub frame: [f32; 4],
         pub moon: [f32; 4],
     }
 }
@@ -85,9 +84,6 @@ gpu_consts! {
     pub(crate) const EYE_LAYER: u32 = 0;
     pub(crate) const MIRROR_LAYER: u32 = 1;
     pub(crate) const DOME_LAYERS: u32 = MIRROR_LAYER + 1;
-    pub(crate) const NOON_LIGHT: f32 = 1.1;
-    pub(crate) const ADAPTATION_POWER: f32 = 0.75;
-    pub(crate) const ADAPTATION_MOST: f32 = 16.0;
     pub(crate) const CLOUD_GROUP: u32 = 8;
     pub(crate) const SKY_TABLE_GROUP: u32 = 8;
     pub(crate) const SKY_VIEW_WIDTH: u32 = 192;
@@ -96,13 +92,6 @@ gpu_consts! {
     pub(crate) const CLOUD_REACH: f32 = 60000.0;
     pub(crate) const SKY_MULTIPLE_SIZE: f32 = 32.0;
 }
-
-const _: () = assert!(
-    NOON_LIGHT == engine_places_rendering::sky::NOON_LIGHT
-        && ADAPTATION_POWER == engine_places_rendering::sky::ADAPTATION_POWER
-        && ADAPTATION_MOST == engine_places_rendering::sky::ADAPTATION_MOST,
-    "the sky's adaptation constants are the sky place's"
-);
 
 pub(crate) const GENERATED: &[&str] = &[
     WGSL,

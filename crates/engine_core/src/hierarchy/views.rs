@@ -58,12 +58,4 @@ impl GlobalTransforms {
     pub(crate) fn stamp(&self) -> (u64, u64) {
         (self.topology_revision.get(), self.revision)
     }
-
-    pub(crate) fn take_changes(&mut self) -> Option<Vec<u32>> {
-        self.changes.take()
-    }
-
-    pub(crate) fn restore_changes(&mut self, nodes: Option<Vec<u32>>) {
-        self.changes.restore(nodes);
-    }
 }

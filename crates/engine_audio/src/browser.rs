@@ -5,6 +5,7 @@ use std::sync::Arc;
 use engine_places_rendering::audio::Bus;
 use glam::Vec3;
 use js_sys::Uint8Array;
+use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{
@@ -46,7 +47,8 @@ struct Voice {
     rate: f32,
     heard: bool,
     paused: bool,
-    remaining: f64,
+    ended: bool,
+    _on_end: Closure<dyn FnMut()>,
 }
 
 impl Voice {
@@ -101,7 +103,6 @@ struct Page {
     sounds: BTreeMap<u32, Entry>,
     voices: BTreeMap<u32, Voice>,
     paused: [bool; Bus::ALL.len()],
-    clock: f64,
 }
 
 impl Page {
@@ -151,12 +152,15 @@ impl Page {
                 None
             }
         };
+        let on_end = Closure::<dyn FnMut()>::new(move || {
+            PAGE.with_borrow_mut(|page| {
+                if let Some(held) = page.voices.get_mut(&voice) {
+                    held.ended = true;
+                }
+            });
+        });
+        source.set_onended(Some(on_end.as_ref().unchecked_ref()));
         source.start()?;
-        let remaining = if play.looping {
-            f64::INFINITY
-        } else {
-            buffer.duration()
-        };
         self.voices.insert(
             voice,
             Voice {
@@ -168,7 +172,8 @@ impl Page {
                 rate: play.pitch,
                 heard,
                 paused,
-                remaining,
+                ended: false,
+                _on_end: on_end,
             },
         );
         Ok(())
@@ -178,14 +183,6 @@ impl Page {
         let Some(graph) = self.graph.as_ref() else {
             return;
         };
-        let now = graph.context.current_time();
-        let elapsed = now - self.clock;
-        self.clock = now;
-        for voice in self.voices.values_mut() {
-            if !voice.paused {
-                voice.remaining -= elapsed * f64::from(voice.rate);
-            }
-        }
         if graph.context.state() == AudioContextState::Suspended {
             let _ = graph.context.resume();
         }
@@ -272,6 +269,7 @@ impl Backend {
         PAGE.with_borrow_mut(|page| {
             let now = page.now();
             if let Some(voice) = page.voices.remove(&voice) {
+                voice.source.set_onended(None);
                 glide(&voice.gain.gain(), 0.0, now);
                 let _ = web_sys::AudioScheduledSourceNode::stop_with_when(
                     &voice.source,
@@ -285,7 +283,7 @@ impl Backend {
         PAGE.with_borrow(|page| {
             page.voices
                 .get(&voice)
-                .is_none_or(|voice| voice.remaining <= 0.0)
+                .is_none_or(|voice| voice.ended)
         })
     }
 

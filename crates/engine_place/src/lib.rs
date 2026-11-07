@@ -1,13 +1,27 @@
+mod budget;
+mod feeds;
+mod readback;
+mod readiness;
+mod requests;
 mod screens;
 
 use std::any::{Any, TypeId};
 
-use bevy_ecs::{component::Component, resource::Resource, world::World};
+use bevy_ecs::{
+    component::{Component, Mutable},
+    resource::Resource,
+    world::World,
+};
 use serde_json::Value;
 
+pub use budget::{BudgetUse, FrameBudget};
 pub use engine_assets::{MaterialHandle, MeshHandle, TextureHandle};
 pub use engine_settings::{Error, ErrorCode};
-pub use screens::{LevelProgress, LevelRequest, Screens};
+pub use feeds::{Cursor, CursorView, Events, Feed, FeedView, Ring, Since, StoreId};
+pub use readback::{FrameId, Readable, Readback};
+pub use readiness::Readiness;
+pub use requests::{Census, Interest, Progress, Request, Requests, Ticket};
+pub use screens::{Level, LevelView, Screens};
 
 pub trait Slot: Resource + Default {
     const NAME: &'static str;
@@ -38,6 +52,7 @@ pub struct PlaceDecl {
     smokes: &'static [Smoke],
     insert: fn(&mut World),
     read: ReadMembers,
+    reset: Option<fn(&mut World)>,
     ty: fn() -> TypeId,
 }
 
@@ -50,6 +65,7 @@ impl PlaceDecl {
             smokes: S::SMOKES,
             insert: insert_slot::<S>,
             read: read_slot::<S>,
+            reset: None,
             ty: TypeId::of::<S>,
         }
     }
@@ -62,6 +78,7 @@ impl PlaceDecl {
             smokes: L::SMOKES,
             insert: insert_nothing,
             read: read_nothing,
+            reset: None,
             ty: TypeId::of::<L>,
         }
     }
@@ -74,8 +91,27 @@ impl PlaceDecl {
             smokes: &[],
             insert: insert_component::<C>,
             read: read_nothing,
+            reset: None,
             ty: TypeId::of::<C>,
         }
+    }
+
+    pub const fn state<C: Component<Mutability = Mutable> + Default>(name: &'static str) -> Self {
+        Self {
+            name,
+            kind: PlaceKind::Component,
+            wgsl: None,
+            smokes: &[],
+            insert: insert_component::<C>,
+            read: read_nothing,
+            reset: Some(reset_component::<C>),
+            ty: TypeId::of::<C>,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn reset(&self) -> Option<fn(&mut World)> {
+        self.reset
     }
 
     #[doc(hidden)]
@@ -128,6 +164,13 @@ fn insert_slot<S: Slot>(world: &mut World) {
 
 fn insert_component<C: Component>(world: &mut World) {
     world.register_component::<C>();
+}
+
+fn reset_component<C: Component<Mutability = Mutable> + Default>(world: &mut World) {
+    let mut held = world.query::<&mut C>();
+    for mut value in held.iter_mut(world) {
+        *value = C::default();
+    }
 }
 
 fn insert_nothing(_: &mut World) {}
@@ -308,6 +351,115 @@ macro_rules! smoke_eq {
 pub trait GpuStruct: bytemuck::Pod + Send + Sync + 'static {
     const WGSL_NAME: &'static str;
     const WGSL: &'static str;
+}
+
+pub use engine_gpu_bits::gpu_bits;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BitField {
+    pub name: &'static str,
+    pub at: u32,
+    pub width: u32,
+    pub values: &'static [(u32, &'static str)],
+}
+
+impl BitField {
+    pub const fn mask(&self) -> u32 {
+        if self.width >= 32 {
+            u32::MAX
+        } else {
+            (1 << self.width) - 1
+        }
+    }
+
+    pub const fn read(&self, word: u32) -> u32 {
+        (word >> self.at) & self.mask()
+    }
+}
+
+pub trait BitValue: Copy + Sized {
+    const WIDTH: u32;
+    const VALUES: &'static [(u32, &'static str)] = &[];
+    const WGSL: &'static str = "";
+    fn bits(self) -> u32;
+    fn of_bits(bits: u32) -> Option<Self>;
+}
+
+impl BitValue for bool {
+    const WIDTH: u32 = 1;
+
+    fn bits(self) -> u32 {
+        u32::from(self)
+    }
+
+    fn of_bits(bits: u32) -> Option<Self> {
+        Some(bits != 0)
+    }
+}
+
+impl BitValue for u8 {
+    const WIDTH: u32 = 8;
+
+    fn bits(self) -> u32 {
+        u32::from(self)
+    }
+
+    fn of_bits(bits: u32) -> Option<Self> {
+        Self::try_from(bits).ok()
+    }
+}
+
+impl BitValue for u16 {
+    const WIDTH: u32 = 16;
+
+    fn bits(self) -> u32 {
+        u32::from(self)
+    }
+
+    fn of_bits(bits: u32) -> Option<Self> {
+        Self::try_from(bits).ok()
+    }
+}
+
+impl BitValue for u32 {
+    const WIDTH: u32 = 32;
+
+    fn bits(self) -> u32 {
+        self
+    }
+
+    fn of_bits(bits: u32) -> Option<Self> {
+        Some(bits)
+    }
+}
+
+pub trait GpuBits: Copy + Sized + Send + Sync + 'static {
+    const WGSL: &'static str;
+    const FIELDS: &'static [BitField];
+    fn pack(self) -> u32;
+    fn unpack(word: u32) -> Option<Self>;
+
+    fn decoded(word: u32) -> Value {
+        decode_bits(Self::FIELDS, word)
+    }
+}
+
+pub fn decode_bits(fields: &[BitField], word: u32) -> Value {
+    let mut decoded = serde_json::Map::new();
+    for field in fields {
+        let bits = field.read(word);
+        let value = if field.values.is_empty() {
+            Value::from(bits)
+        } else {
+            field
+                .values
+                .iter()
+                .find(|(known, _)| *known == bits)
+                .map_or(Value::Null, |(_, name)| Value::from(*name))
+        };
+        decoded.insert(field.name.to_owned(), value);
+    }
+    Value::Object(decoded)
 }
 
 #[macro_export]

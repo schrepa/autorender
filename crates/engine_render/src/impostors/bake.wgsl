@@ -4,7 +4,8 @@ import package::engine::materials::{
     material_maps, material_texels, top_layer_amount
 };
 import package::engine::mesh::impostor_frames::{
-    IMPOSTOR_HEMISPHERE, ImpostorBake, impostor_basis, impostor_frame_direction, impostor_frames
+    ImpostorBake, impostor_basis, impostor_flags_hemisphere, impostor_frame_direction,
+    impostor_frames
 };
 import package::engine::mesh::vertex::octahedral_normal;
 import package::engine::view::stable_normalize;
@@ -13,7 +14,7 @@ import package::engine::view::stable_normalize;
 @group(2) @binding(16) var impostor_shade: texture_depth_2d;
 
 fn bake_hemisphere() -> bool {
-    return (impostor_bake.flags.x & IMPOSTOR_HEMISPHERE) != 0u;
+    return impostor_flags_hemisphere(impostor_bake.flags.x);
 }
 
 fn impostor_self_visibility(position: vec3<f32>, normal: vec3<f32>) -> f32 {

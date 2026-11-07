@@ -282,15 +282,3 @@ pub(crate) fn publish_assets(
         }
     }
 }
-
-pub(crate) fn forget(
-    own: Query<Entity, With<SkinAssets>>,
-    mut books: ResMut<Books>,
-    mut spawner: Spawner<AnimationBrick>,
-) {
-    for entity in &own {
-        spawner.despawn(entity);
-    }
-    books.ticked.clear();
-    books.epoch += 1;
-}

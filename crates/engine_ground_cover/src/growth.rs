@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{Cut, DeviceLimits, FrameTime, Readback, View};
+use engine_core::{Cut, DeviceLimits, FrameTime, Readable, Readback, View};
 use engine_places_simulation::wind::Wind;
 use engine_places_world::ground::{Foliage, GroundTiles, TerrainEntry, TerrainTiles};
 use engine_render::{pixels_per_meter, planes};
@@ -35,8 +35,9 @@ pub(crate) struct BladeCounts {
     latest: Option<Cut>,
 }
 
-impl Readback for BladeCounts {
-    fn arrived(&mut self, _: u64, _: u32, bytes: &[u8]) {
+impl Readable for BladeCounts {
+    fn arrived(&mut self, _: u32, read: Readback<&[u8]>) {
+        let bytes = read.value;
         self.latest = Some(Cut::of(
             word(bytes, APPENDED_WORD),
             word(bytes, CAPACITY_WORD),

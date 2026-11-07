@@ -54,6 +54,7 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<probes::ProbeCaptures>(),
     PlaceDecl::component::<probes::ReflectionProbe>("reflection_probe"),
     PlaceDecl::slot::<reflections::TraceSource>(),
+    PlaceDecl::list::<reflections::TraceReaders>(),
     PlaceDecl::slot::<particles::Transparency>(),
     PlaceDecl::slot::<particles::ParticleFormula>(),
     PlaceDecl::slot::<particles::ParticleBursts>(),

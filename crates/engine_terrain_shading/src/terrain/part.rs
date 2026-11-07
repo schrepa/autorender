@@ -1,10 +1,10 @@
 use bevy_ecs::prelude::*;
-use engine_core::{AssetLibrary, Camera, DeviceLimits, Error, View};
+use engine_core::{AssetLibrary, Camera, Cursor, DeviceLimits, Error, View};
 use engine_places_rendering::probes::{MIRRORED, ProbeCaptures, ProbeView, ProbeViews};
 use engine_places_rendering::shadows::{
     CasterMap, CasterView, KeptRefresh, Refresh, ShadowCasters, ShadowMaps,
 };
-use engine_places_world::ground::{Cover, TerrainTiles};
+use engine_places_world::ground::{Cover, GroundTiles, TerrainTiles};
 use engine_places_world::water::Waterline;
 use engine_render::{
     Attach, Bind, Buffer, ComputePipeline, Count, DebugShown, DepthUse, Draw, DrawInput, Encode,
@@ -22,7 +22,7 @@ use super::{IDS_FORMAT, SURFACE_SLOTS, TerrainFrame, reached};
 use crate::gpu::{HEIGHT_FORMAT, SURFACE_ERROR_MIPS};
 use crate::settings::TerrainShading;
 use crate::state::{
-    Atlas, Bakes, DrawnStats, PART_STATS, PartStats, SURFACE_TOTALS, SurfaceTotals,
+    Atlas, AtlasMoves, Bakes, DrawnStats, PART_STATS, PartStats, SURFACE_TOTALS, SurfaceTotals,
 };
 use crate::terrain_bounce::{Bounce, BounceSources};
 use crate::terrain_horizons::Horizons;
@@ -123,6 +123,7 @@ pub(crate) struct TerrainGpu {
     bounce: Bounce,
     macro_maps: MacroMaps,
     frame: TerrainFrame,
+    cursor: Cursor,
     drawn: bool,
     deferred: bool,
     debug: bool,
@@ -135,7 +136,7 @@ type Lists = (
     Res<'static, TerrainTiles>,
     Res<'static, Atlas>,
     Res<'static, Bakes>,
-    Res<'static, SurfaceTotals>,
+    Res<'static, GroundTiles>,
 );
 
 type Neighbors = (
@@ -531,6 +532,7 @@ impl GpuPart for TerrainGpu {
             bounce,
             macro_maps,
             frame: TerrainFrame::default(),
+            cursor: Cursor::default(),
             drawn: false,
             deferred: false,
             debug: false,
@@ -545,16 +547,14 @@ impl GpuPart for TerrainGpu {
         (lists, neighbors, frame, (limits, assets)): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        let (settings, tiles, atlas, bakes, totals) = lists;
+        let (settings, tiles, atlas, bakes, ground) = lists;
         let (water, cover, shadows, captures) = neighbors;
         let (view, shown, resolve, camera) = frame;
-        if cx.fresh() {
-            self.forget();
-        }
         self.debug = shown.owner.is_some();
         self.temporal = view.temporal();
         let size = view.render_size();
         self.render = (size.x, size.y);
+        let moves = AtlasMoves::since(&atlas, &mut self.cursor);
         if tiles.terrains.is_empty() && atlas.slots.is_empty() {
             self.atlas.rest();
             self.tables = TerrainTables::default();
@@ -567,6 +567,7 @@ impl GpuPart for TerrainGpu {
                 PART_STATS,
                 bytemuck::bytes_of(&DrawnStats::default()).to_vec(),
             );
+            cx.deliver::<SurfaceTotals>(SURFACE_TOTALS, Vec::new());
             return;
         }
         let h = &self.handles;
@@ -601,8 +602,21 @@ impl GpuPart for TerrainGpu {
             cover: canopy,
         };
         let watered = water.is_changed();
-        self.atlas
-            .upload(cx, h, (&tiles, &atlas, &bakes), (&water, watered));
+        let p = &self.passes;
+        let ran = [
+            cx.ran(p.normals),
+            cx.ran(p.control),
+            cx.ran(p.peaks),
+            cx.ran(p.ancestors),
+        ];
+        let subdivided = cx.ran(p.subdivide);
+        self.atlas.upload(
+            cx,
+            h,
+            (&tiles, &atlas, &bakes),
+            (&moves, ran),
+            (&water, watered),
+        );
         if self.atlas.normal_jobs() > 0 {
             cx.run(self.passes.normals);
         }
@@ -616,19 +630,30 @@ impl GpuPart for TerrainGpu {
             cx.run(self.passes.ancestors);
         }
         let view_list = view_uniforms(&views, &captures);
-        self.tables
-            .prepare(cx, h, (&tiles, &atlas, tiles.is_changed()), view_list.len());
+        self.tables.prepare(
+            cx,
+            h,
+            (&tiles, &atlas, &moves, tiles.is_changed()),
+            view_list.len(),
+        );
         self.tables.write_header(cx, h, atlas.now);
         self.tables.write_views(cx, h, &view_list);
         self.maps.prepare(cx, (&tiles, &assets));
-        self.tables
-            .write_palette(cx, h, (&tiles, &self.maps, &assets));
+        self.tables.write_palette(
+            cx,
+            h,
+            (&tiles, &ground.palette),
+            (&self.maps, &assets),
+        );
         self.sky
             .prepare(cx, (&tiles, &bakes, &settings, limits.texture_layers));
         self.macro_maps
             .prepare(cx, (&tiles, &bakes, &assets, limits.texture_layers));
-        let slots =
-            crate::terrain_bounce::relit_slots(&tiles.terrains, &settings, limits.texture_layers);
+        let slots = crate::terrain_bounce::relit_slots(&crate::terrain_bounce::slots(
+            &tiles.terrains,
+            &settings,
+            limits.texture_layers,
+        ));
         self.horizons.prepare(
             cx,
             (&tiles, &bakes, &settings, shadows.on, limits.texture_layers),
@@ -665,6 +690,7 @@ impl GpuPart for TerrainGpu {
             self.frame = TerrainFrame::default();
             self.deferred = false;
             cx.release(h.ids);
+            cx.deliver::<SurfaceTotals>(SURFACE_TOTALS, Vec::new());
             self.deliver_stats(cx);
             return;
         }
@@ -682,7 +708,7 @@ impl GpuPart for TerrainGpu {
             cx,
             h,
             (&tiles, &views, limits.storage_room, &drawn),
-            totals.epoch(),
+            subdivided,
         );
         self.frame = self.patches.lay_out(
             cx,
@@ -792,21 +818,6 @@ impl GpuPart for TerrainGpu {
 }
 
 impl TerrainGpu {
-    fn forget(&mut self) {
-        self.atlas.rest();
-        self.tables = TerrainTables::default();
-        self.surface = SurfaceTrees::default();
-        self.patches = PatchDraws::default();
-        self.horizons.rest();
-        self.maps.forget();
-        self.sky.forget();
-        self.bounce.forget();
-        self.macro_maps.forget();
-        self.frame = TerrainFrame::default();
-        self.drawn = false;
-        self.deferred = false;
-    }
-
     fn deliver_stats(&self, cx: &mut Prepare<'_, Self>) {
         let wanted = self.surface.slots().count() as u32 + self.surface.dropped();
         let stats = DrawnStats {

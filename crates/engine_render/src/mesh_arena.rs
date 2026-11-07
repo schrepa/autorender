@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::world::World;
 use engine_core::{
-    ArenaShape, AssetLibrary, AssetResidency, Mesh, MeshHandle, MeshLods, MeshPlacement,
-    MeshStreams, ResidentMesh,
+    ArenaShape, AssetLibrary, AssetResidency, Cursor, Mesh, MeshHandle, MeshLods, MeshPlacement,
+    MeshStreams, ResidentMesh, Since,
 };
 
 use crate::gpu_calls::Queue;
@@ -53,7 +53,7 @@ pub(crate) fn configure(
         &mut crate::impostors::Impostors,
     ),
 ) {
-    meshes.synced = None;
+    meshes.placed = engine_core::Cursor::default();
     materials.forget_sync();
     impostors.forget();
     engine_core::configure_assets(
@@ -257,7 +257,7 @@ pub struct GpuMeshes {
     meshes: BTreeMap<MeshHandle, GpuMesh>,
     arena: MeshArena,
     staging: Vec<Vertex>,
-    synced: Option<u64>,
+    placed: Cursor,
 }
 
 impl GpuMeshes {
@@ -269,7 +269,7 @@ impl GpuMeshes {
                 [size_of::<Vertex>(), size_of::<ExtraVertex>()].map(|bytes| bytes as u64),
             ),
             staging: Vec::new(),
-            synced: None,
+            placed: Cursor::default(),
         }
     }
 
@@ -304,30 +304,38 @@ impl GpuMeshes {
         ) else {
             return 0;
         };
-        if self.synced == Some(residency.layout()) {
-            return 0;
-        }
         let Some((vertices, indices)) = residency.capacities() else {
             return 0;
         };
-        self.meshes.retain(|&handle, mesh| {
-            residency
-                .mesh(handle)
-                .is_some_and(|resident| resident.placement() == mesh.placement)
-        });
+        let all: Vec<MeshHandle>;
+        let changed = match residency.placed().since(&mut self.placed) {
+            Since::Same => return 0,
+            Since::Listed(handles) => handles,
+            Since::All => {
+                self.meshes.retain(|&handle, mesh| {
+                    residency
+                        .mesh(handle)
+                        .is_some_and(|resident| resident.placement() == mesh.placement)
+                });
+                all = residency.meshes().map(|(handle, _)| handle).collect();
+                all.as_slice()
+            }
+        };
         self.arena.fit(device, queue, vertices, indices);
         let mut bytes = 0;
-        for (handle, resident) in residency.meshes() {
-            if self.meshes.contains_key(&handle) {
+        for &handle in changed {
+            let resident = residency.mesh(handle);
+            let current = self.meshes.get(&handle).map(|mesh| mesh.placement);
+            if resident.is_some_and(|resident| current == Some(resident.placement())) {
                 continue;
             }
-            let Some(source) = library.mesh(handle) else {
+            self.meshes.remove(&handle);
+            let (Some(resident), Some(source)) = (resident, library.mesh(handle)) else {
                 continue;
             };
             let lods = library.mesh_lods(handle).flatten().map(|lods| &**lods);
             bytes += self.upload(device, queue, (handle, resident), source, lods);
         }
-        self.synced = Some(residency.layout());
         bytes
     }
 

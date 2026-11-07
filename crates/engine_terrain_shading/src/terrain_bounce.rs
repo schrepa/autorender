@@ -3,8 +3,8 @@ use std::sync::Arc;
 use engine_core::Error;
 use engine_places_world::ground::{TerrainEntry, TerrainTiles};
 use engine_render::{
-    Bind, Buffer, ComputePipeline, Count, Encode, Install, Lifetime, Pass, Prepare, SamplerDesc,
-    Texture, wgpu,
+    Allocation, Bind, Buffer, ComputePipeline, Count, Encode, Install, Lifetime, Pass, Prepare,
+    SamplerDesc, Texture, wgpu,
 };
 use glam::{Vec2, Vec3};
 
@@ -211,11 +211,6 @@ impl Bounce {
         self.records.clear();
     }
 
-    pub(crate) fn forget(&mut self) {
-        self.framed = false;
-        self.release();
-    }
-
     pub(crate) fn prepare(
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,
@@ -364,18 +359,8 @@ impl Bounce {
         (bakes, settings, eye): (&Bakes, &TerrainShading, Vec3),
         limits: (u32, u64),
     ) {
-        let (casting, slots) = crate::terrain_horizons::room(limits.0, terrains.len());
-        let on = settings.sun_shadows && settings.bounce;
-        let mut next = 0;
-        self.slots.clear();
-        self.slots
-            .extend(terrains.iter().enumerate().map(|(index, terrain)| {
-                let relit = on && !terrain.surroundings && index < casting && next < slots;
-                let slot = relit.then_some(next);
-                next += u32::from(relit);
-                slot
-            }));
-        self.windows = windows(terrains, bakes, (eye, settings), limits);
+        self.slots = slots(terrains, settings, limits.0);
+        self.windows = windows(terrains, bakes, &self.slots, (eye, settings), limits.1);
         self.dropped = self
             .slots
             .iter()
@@ -412,30 +397,31 @@ impl Bounce {
         let Some(side) = side.filter(|_| horizons.bounces()) else {
             return false;
         };
-        if self
-            .maps
-            .is_none_or(|(held, slots)| held < side || slots != count)
-        {
-            let layers = count.max(1) as u32;
-            cx.allocate(
-                self.ground,
-                wgpu::Extent3d {
-                    width: side,
-                    height: side,
-                    depth_or_array_layers: GROUND_LAYERS * layers,
-                },
-                1,
-            );
-            cx.allocate(
-                self.light,
-                wgpu::Extent3d {
-                    width: side,
-                    height: side,
-                    depth_or_array_layers: layers,
-                },
-                u32::BITS - side.leading_zeros(),
-            );
-            self.maps = Some((side, count));
+        let side = match self.maps {
+            Some((held, slots)) if held >= side && slots == count => held,
+            Some(_) | None => side,
+        };
+        self.maps = Some((side, count));
+        let layers = count.max(1) as u32;
+        let ground = cx.allocate(
+            self.ground,
+            wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: GROUND_LAYERS * layers,
+            },
+            1,
+        );
+        let light = cx.allocate(
+            self.light,
+            wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: layers,
+            },
+            u32::BITS - side.leading_zeros(),
+        );
+        if ground == Allocation::Fresh || light == Allocation::Fresh || self.held.len() != count {
             self.held = vec![None; count];
         }
         true
@@ -528,40 +514,42 @@ fn terrain_record(
     }
 }
 
-pub(crate) fn relit_slots(
+pub(crate) fn slots(
     terrains: &[TerrainEntry],
     settings: &TerrainShading,
     layers: u32,
-) -> u32 {
-    let (casting, slots) = crate::terrain_horizons::room(layers, terrains.len());
-    if !(settings.sun_shadows && settings.bounce) {
-        return 0;
-    }
-    let wanted = terrains
+) -> Vec<Option<u32>> {
+    let (casting, room) = crate::terrain_horizons::room(layers, terrains.len());
+    let on = settings.bounces();
+    let mut next = 0;
+    terrains
         .iter()
-        .take(casting)
-        .filter(|terrain| !terrain.surroundings)
-        .count();
-    (wanted as u32).min(slots)
+        .enumerate()
+        .map(|(index, terrain)| {
+            let relit = on && !terrain.surroundings && index < casting && next < room;
+            let slot = relit.then_some(next);
+            next += u32::from(relit);
+            slot
+        })
+        .collect()
+}
+
+pub(crate) fn relit_slots(slots: &[Option<u32>]) -> u32 {
+    slots.iter().flatten().count() as u32
 }
 
 pub(crate) fn windows(
     terrains: &[TerrainEntry],
     bakes: &Bakes,
+    slots: &[Option<u32>],
     (eye, settings): (Vec3, &TerrainShading),
-    (layers, storage_room): (u32, u64),
+    storage_room: u64,
 ) -> Vec<Option<BounceLevels>> {
-    let (casting, slots) = crate::terrain_horizons::room(layers, terrains.len());
-    let on = settings.sun_shadows && settings.bounce;
-    let mut next = 0;
     let mut room = [storage_room / 16 * 16; 3];
     terrains
         .iter()
-        .enumerate()
-        .map(|(index, terrain)| {
-            let relit = on && !terrain.surroundings && index < casting && next < slots;
-            let slot = relit.then_some(next);
-            next += u32::from(relit);
+        .zip(slots)
+        .map(|(terrain, &slot)| {
             let bounce = bakes.of(terrain.terrain)?.bounce.made.as_ref()?;
             levels(terrain, (bounce, slot?), eye, settings).filter(|levels| {
                 let blocks = u64::from(bounce.texels());

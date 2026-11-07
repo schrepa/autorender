@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::World;
-use engine_registry::{Gates, Registry};
+use engine_registry::{BrickStates, Registry};
 use engine_scene::SceneEnvironment;
 use engine_settings::{Error, ErrorCode, Expected};
 use serde::Deserialize;
@@ -62,16 +62,30 @@ pub(crate) fn missing_brick(name: &str, path: impl Into<String>) -> Error {
 }
 
 fn gated_off(world: &World, brick: &str) -> bool {
-    let (Some(registry), Some(gates)) = (
+    let (Some(registry), Some(states)) = (
         world.get_resource::<Registry>(),
-        world.get_resource::<Gates>(),
+        world.get_resource::<BrickStates>(),
     ) else {
         return false;
     };
-    registry
-        .id(brick)
-        .and_then(|id| registry.brick_gate(id))
-        .is_some_and(|gate| !gates.on(gate))
+    registry.id(brick).is_some_and(|id| !states.brick_on(id))
+}
+
+fn brick_states(world: &World) -> Value {
+    let (Some(registry), Some(states)) = (
+        world.get_resource::<Registry>(),
+        world.get_resource::<BrickStates>(),
+    ) else {
+        return json!({});
+    };
+    states
+        .iter()
+        .filter_map(|(brick, state)| {
+            let record = registry.record(brick)?;
+            Some((record.package.to_owned(), json!(state)))
+        })
+        .collect::<serde_json::Map<String, Value>>()
+        .into()
 }
 
 fn registered(world: &World, name: &str, control: bool) -> Result<Option<&'static str>, Error> {
@@ -264,6 +278,30 @@ impl DevTools {
                 },
             );
         }
+        inspectors.insert(
+            "Bricks".to_owned(),
+            Inspector {
+                descriptor: InspectorDescriptor::new("Bricks", json!({ "type": "object" })),
+                kind: InspectorKind::Resource,
+                has: Box::new(|_, _| true),
+                read: Box::new(|world, _, _| Some(brick_states(world))),
+                brick: None,
+            },
+        );
+        inspectors.insert(
+            "Ownership".to_owned(),
+            Inspector {
+                descriptor: InspectorDescriptor::new("Ownership", json!({ "type": "array" })),
+                kind: InspectorKind::Resource,
+                has: Box::new(|_, _| true),
+                read: Box::new(|world, _, _| {
+                    world
+                        .get_resource::<Registry>()
+                        .map(|registry| json!(registry.ownership()))
+                }),
+                brick: None,
+            },
+        );
         inspectors.insert(
             "Environment".to_owned(),
             Inspector {

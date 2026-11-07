@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Cut, DeviceLimits, Error, Readback, View};
+use engine_core::{Cut, DeviceLimits, Error, Readable, Readback, View};
 use engine_places_rendering::lighting::Lighting;
 use engine_places_rendering::lights::{LIGHT_EXTERIOR, LIGHT_INTERIOR, LightRegion};
 use engine_places_rendering::probes::ProbeCaptures;
@@ -109,15 +109,9 @@ impl From<&RenderLight> for LightInput {
 #[derive(Resource, Default)]
 pub(crate) struct LightTotals {
     read: Option<[u32; 4]>,
-    epoch: u32,
 }
 
 impl LightTotals {
-    pub(crate) fn forget(&mut self) {
-        self.read = None;
-        self.epoch = self.epoch.wrapping_add(1);
-    }
-
     pub(crate) fn found(&self) -> Option<(u32, Cut)> {
         self.read.map(|[reached, lost, needed, capacity]| {
             let stored = needed.min(capacity);
@@ -130,11 +124,9 @@ impl LightTotals {
     }
 }
 
-impl Readback for LightTotals {
-    fn arrived(&mut self, _: u64, epoch: u32, bytes: &[u8]) {
-        if epoch != self.epoch {
-            return;
-        }
+impl Readable for LightTotals {
+    fn arrived(&mut self, _: u32, read: Readback<&[u8]>) {
+        let bytes = read.value;
         let mut words = [0; 4];
         for (word, read) in words.iter_mut().zip(bytes.as_chunks::<4>().0) {
             *word = u32::from_le_bytes(*read);
@@ -175,12 +167,10 @@ pub(crate) struct LightsGpu {
     regions: bool,
     count: u32,
     views: u32,
-    epoch: u32,
 }
 
 impl LightsGpu {
-    fn reset(&mut self, epoch: u32, room: u64) {
-        self.epoch = epoch;
+    fn reset(&mut self, room: u64) {
         self.room = room;
         self.capacity = 1;
         self.arena = 1;
@@ -337,7 +327,6 @@ impl GpuPart for LightsGpu {
             regions: false,
             count: 0,
             views: 1,
-            epoch: 0,
         })
     }
 
@@ -354,8 +343,8 @@ impl GpuPart for LightsGpu {
             return;
         }
         let room = limits.storage_room / 16 * 16;
-        if totals.epoch != self.epoch || list.lights.is_empty() || room != self.room {
-            self.reset(totals.epoch, room);
+        if list.lights.is_empty() || room != self.room {
+            self.reset(room);
         }
         let count = list.lights.len();
         if count > self.capacity {
@@ -388,7 +377,7 @@ impl GpuPart for LightsGpu {
             return;
         }
         cx.run(self.binning);
-        cx.read_back::<LightTotals>(self.epoch, self.totals, 0..TOTALS_BYTES, AfterRead::Keep);
+        cx.read_back::<LightTotals>(0, self.totals, 0..TOTALS_BYTES, AfterRead::Keep);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

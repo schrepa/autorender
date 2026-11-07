@@ -20,7 +20,6 @@ stats! {
         pub bridges: u32,
         pub tunnels: u32,
         pub surroundings_tiles: u32,
-        pub loading: bool,
         pub failed_jobs: u64,
         pub latest_job_failure: Option<String>,
     }

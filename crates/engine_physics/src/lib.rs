@@ -43,7 +43,6 @@ impl Brick for PhysicsBrick {
             .settings::<Physics>()
             .stats::<PhysicsStats>()
             .resource::<world::PhysicsWorld>()
-            .resource::<solids::Solids>()
             .fill::<WaterObstacles>(None)
             .join::<SceneComponents>(
                 ComponentKind::of::<RigidBody>("rigid_body")
@@ -61,14 +60,9 @@ impl Brick for PhysicsBrick {
                 None,
             )
             .systems(
-                Schedule::FixedPreSimulation,
-                (solids::sync_sources, solids::sync_colliders),
-            )
-            .systems(
                 Schedule::FixedSimulation,
                 (world::step, obstacles::obstruct),
             )
-            .systems(Schedule::FixedPostSimulation, solids::sync_colliders)
             .observation::<views::PhysicsBody>()
             .operation::<views::BodyPushOperation>();
     }

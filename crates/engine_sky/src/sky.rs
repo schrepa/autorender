@@ -1,34 +1,34 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::math::{max, min};
-use engine_core::{Camera, Error, Filled, FrameTime, View, ViewWind};
-use engine_places_rendering::exposure::Exposure;
+use engine_core::{Camera, Error, FrameTime, View, ViewWind};
 use engine_places_rendering::probes::{ProbeCaptures, ProbeView, ProbeViews};
 use engine_places_rendering::sky::EyeMedium;
 use engine_places_rendering::sun::{Sun, SunPath};
-use engine_places_rendering::tonemap::Display;
 use engine_render::{
-    AfterRead, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse, Draw, Encode,
-    GpuPart, Install, Lifetime, MainView, Pass, Pipeline, Prepare, RenderPipeline, Sampler,
-    SamplerDesc, Shape, Texture, wgpu,
+    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse,
+    Draw, Encode, GpuPart, Install, Lifetime, MainView, Pass, Pipeline, Prepare, RenderPipeline,
+    Sampler, SamplerDesc, Shape, Texture, wgpu,
 };
 use glam::{Mat4, Vec3};
 
-use crate::clouds::{CloudFrame, CloudPass, CloudPlan, cloud_regions, shadow_lighting};
+use crate::clouds::{
+    CloudFrame, CloudPass, CloudPlan, CloudSteps, cloud_regions, shadow_lighting,
+};
 use crate::environment::{Environment, EnvironmentLight, EnvironmentPlan};
 use crate::gpu_layouts::{SKY_TABLE_GROUP, SKY_VIEW_HEIGHT, SKY_VIEW_WIDTH, SkyAir, SkyPiece};
-use crate::haze::{Haze, HazeFrame, HazePlan};
+use crate::haze::{Haze, HazeFrame, HazePlan, HazeSteps};
 use crate::settings::{Clouds, Haze as HazeSettings, NightSky, Sky, haze_runs};
 use crate::tables::sky::{MULTIPLE_SIZE, SkyTables, TRANSMITTANCE_SIZE};
 use crate::tables::{StaticTable, StaticTables};
-use crate::views::SkyExposure;
+use crate::views::SkyLightLevel;
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const VIEW_SIZE: (u32, u32) = (SKY_VIEW_WIDTH, SKY_VIEW_HEIGHT);
 const NO_VIEW_SIZE: (u32, u32) = (1, 1);
 const ENVIRONMENT_HEIGHT_STEP: f32 = 200.0;
-const DERIVED_BYTES: u64 = 7 * 16;
-const DERIVED_EXPOSURE: u64 = DERIVED_HORIZON * 16 + 12;
+const DERIVED_BYTES: u64 = 6 * 16;
+const DERIVED_LIGHT: u64 = DERIVED_HORIZON * 16 + 12;
 
 pub(crate) const DERIVED_SUN: u64 = 0;
 pub(crate) const DERIVED_ZENITH: u64 = 1;
@@ -72,22 +72,36 @@ fn piece_regions() -> [CopyRegion; 6] {
     ]
 }
 
-type AirInputs = (Vec3, Vec3, f32, f64, [f32; 4]);
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Air {
+    #[default]
+    Off,
+    Waiting,
+    Shown(u64),
+}
 
 #[derive(Default)]
 pub(crate) struct AirPlan {
-    tables: Option<u64>,
+    air: Air,
     sun: Option<[u32; 3]>,
-    last_seconds: Option<f64>,
     generation: u64,
     environment_height: i32,
-    active: bool,
-    pub(crate) built: u32,
 }
 
 impl AirPlan {
+    fn shown(&self) -> Option<u64> {
+        match self.air {
+            Air::Shown(tables) => Some(tables),
+            Air::Off | Air::Waiting => None,
+        }
+    }
+
+    pub(crate) fn shows(&self) -> bool {
+        self.shown().is_some()
+    }
+
     fn environment_key(&self) -> [f32; 4] {
-        if self.active {
+        if self.shows() {
             [
                 1.0,
                 self.generation as f32,
@@ -101,31 +115,23 @@ impl AirPlan {
 
     fn prepare(
         &mut self,
-        (settings, tables, adapts): (&Sky, Option<&StaticTable<SkyTables>>, bool),
-        (sun, eye, exposure, seconds, moon): AirInputs,
+        (settings, tables): (&Sky, Option<&StaticTable<SkyTables>>),
+        (sun, eye, moon): (Vec3, Vec3, [f32; 4]),
         air: &mut SkyAir,
     ) {
-        self.built = 0;
-        let uploaded = match tables {
-            Some(tables) if settings.enabled && self.tables != Some(tables.id) => {
-                self.tables = Some(tables.id);
-                self.built += 2;
-                true
-            }
-            _ => false,
+        let next = match (settings.enabled, tables) {
+            (false, _) => Air::Off,
+            (true, Some(tables)) => Air::Shown(tables.id),
+            (true, None) => Air::Waiting,
         };
-        self.active = settings.enabled && self.tables.is_some();
-        if !self.active {
+        let uploaded = next != self.air;
+        self.air = next;
+        if !self.shows() {
             self.sun = None;
             return;
         }
         let height = max(eye.y + settings.altitude, 0.5);
-        let elapsed = self
-            .last_seconds
-            .replace(seconds)
-            .map_or(0.0, |last| max((seconds - last) as f32, 0.0));
-        write_air(air, settings, (sun, exposure, height, elapsed, moon), adapts);
-        self.built += 1;
+        write_air(air, settings, (sun, height, moon));
         let sun_bits = sun.to_array().map(f32::to_bits);
         let environment_height = (height / ENVIRONMENT_HEIGHT_STEP).floor() as i32;
         if uploaded || self.sun != Some(sun_bits) || environment_height != self.environment_height {
@@ -139,8 +145,7 @@ impl AirPlan {
 fn write_air(
     air: &mut SkyAir,
     settings: &Sky,
-    (sun, exposure, height, elapsed, moon): (Vec3, f32, f32, f32, [f32; 4]),
-    adapts: bool,
+    (sun, height, moon): (Vec3, f32, [f32; 4]),
 ) {
     air.rayleigh = [
         settings.rayleigh[0],
@@ -172,8 +177,7 @@ fn write_air(
         settings.adaptation,
         height * 0.001,
     ];
-    air.sun = sun.extend(exposure).to_array();
-    air.frame = [elapsed, f32::from(adapts), 0.0, 0.0];
+    air.sun = sun.extend(0.0).to_array();
     air.moon = moon;
 }
 
@@ -192,8 +196,8 @@ fn night_lighting(night: &NightSky, path: &SunPath, sun: Vec3) -> [[f32; 4]; 3] 
     ]
 }
 
-fn sky_piece(sky: &Sky, exposure: f32, kept: &SkyPiece) -> SkyPiece {
-    let (aerial, sun_light) = if sky.enabled {
+fn sky_piece(sky: &Sky, shows: bool, sun: Vec3, kept: &SkyPiece) -> SkyPiece {
+    let (aerial, sun_light, light) = if shows {
         let altitude = sky.altitude * 0.001;
         let rayleigh = (sky.rayleigh[0] + sky.rayleigh[1] + sky.rayleigh[2]) / 3.0
             * (-altitude / sky.rayleigh_height).exp();
@@ -207,14 +211,19 @@ fn sky_piece(sky: &Sky, exposure: f32, kept: &SkyPiece) -> SkyPiece {
         (
             [0.0, extinction * 0.001 * sky.aerial, 0.001 / height, 0.0],
             [0.0; 4],
+            0.0,
         )
     } else {
         let white = sky.sun_intensity;
-        ([0.0; 4], [white, white, white, 0.0])
+        (
+            [0.0; 4],
+            [white, white, white, 0.0],
+            white * max(sun.y, 0.0),
+        )
     };
     SkyPiece {
         zenith: [0.0, 0.0, 0.0, sky.ambient],
-        horizon: [0.0, 0.0, 0.0, exposure],
+        horizon: [0.0, 0.0, 0.0, light],
         ground: [0.0; 4],
         aerial,
         aerial_color: [0.0; 4],
@@ -282,8 +291,8 @@ impl SkyPlan {
         self.environment.beyond()
     }
 
-    pub(crate) fn tables_built(&self) -> u32 {
-        self.tables.built
+    pub(crate) fn tables(&self) -> u32 {
+        if self.tables.shows() { 3 } else { 0 }
     }
 
     pub(crate) fn cloud_rows(&self) -> (u32, u32) {
@@ -305,9 +314,7 @@ type SkySections<'w> = (
 type SkyLights<'w> = (
     Res<'w, Sun>,
     Res<'w, SunPath>,
-    Res<'w, Display>,
     Res<'w, ViewWind>,
-    Filled<'w, Exposure>,
 );
 
 type SkyFrame<'w> = (
@@ -320,25 +327,35 @@ type SkyFrame<'w> = (
 
 pub(crate) fn plan_sky(
     (sky, clouds, haze, night): SkySections<'_>,
-    (sun, path, display, wind, metered): SkyLights<'_>,
+    (sun, path, wind): SkyLights<'_>,
     (tables, medium, view, camera, time): SkyFrame<'_>,
+    (mut cloud_steps, mut haze_steps): (ResMut<CloudSteps>, ResMut<HazeSteps>),
     mut plan: ResMut<SkyPlan>,
 ) {
     let plan = &mut *plan;
-    plan.clouds.submitted(plan.frame.take());
-    plan.haze.submitted();
+    plan.clouds.acknowledge(&mut cloud_steps);
     let debug = view.debug();
     let eye = camera.eye();
     let view_projection = view.view_projection();
     let seconds = time.presented_seconds;
     let sun_direction = Vec3::from_slice(&sun.direction[..3]);
+    let [night_light, _, moon] = night_lighting(&night, &path, sun_direction);
+    plan.tables.prepare(
+        (&*sky, tables.sky()),
+        (
+            sun_direction,
+            eye,
+            [moon[0], moon[1], moon[2], night_light[1] * night_light[3]],
+        ),
+        &mut plan.air,
+    );
+    let shows = plan.tables.shows();
     let clouds = Clouds {
-        enabled: clouds.enabled && sky.enabled && tables.sky().is_some(),
+        enabled: clouds.enabled && shows,
         ..*clouds
     };
-    let exposure = display.exposure[0];
     let hazes = !debug && haze_runs(&haze);
-    plan.piece = sky_piece(&sky, exposure, &plan.piece);
+    plan.piece = sky_piece(&sky, shows, sun_direction, &plan.piece);
     apply_night(&mut plan.piece, &night, &path, sun_direction);
     apply_haze(&mut plan.piece, &haze, view_projection, eye, hazes);
     (plan.piece.cloud_shadow, plan.piece.cloud_layer) = shadow_lighting(&clouds, eye);
@@ -346,6 +363,7 @@ pub(crate) fn plan_sky(
     plan.clouds.prepare(
         (&clouds, tables.cloud_noise(), (eye, medium.surface), seconds),
         (&*sun, &plan.piece),
+        !debug,
     );
     plan.clouds.prepare_view(
         (&clouds, eye, seconds),
@@ -361,18 +379,6 @@ pub(crate) fn plan_sky(
         plan.piece.domes_view,
     ] = plan.clouds.dome_piece();
     plan.piece.domes_layers = plan.clouds.dome_layers();
-    let [night_light, _, moon] = night_lighting(&night, &path, sun_direction);
-    plan.tables.prepare(
-        (&*sky, tables.sky(), !metered.on()),
-        (
-            sun_direction,
-            eye,
-            exposure,
-            seconds,
-            [moon[0], moon[1], moon[2], night_light[1] * night_light[3]],
-        ),
-        &mut plan.air,
-    );
     let light: EnvironmentLight = [
         sun.direction,
         plan.piece.sun_light,
@@ -388,7 +394,7 @@ pub(crate) fn plan_sky(
         display: view.display_size(),
         render: view.render_size(),
     };
-    plan.piece.haze = plan.haze.prepare(hazes, &haze_frame);
+    plan.piece.haze = plan.haze.prepare((hazes, haze_steps.missed()), &haze_frame);
     plan.frame = if debug { None } else { plan.clouds.frame() };
 }
 
@@ -518,25 +524,33 @@ impl AirTables {
         cx: &mut Prepare<'_, SkyGpu>,
         (plan, tables): (&AirPlan, Option<&StaticTable<SkyTables>>),
     ) {
-        cx.allocate(self.transmittance, extent(TRANSMITTANCE_SIZE), 1);
-        cx.allocate(self.multiple, extent(MULTIPLE_SIZE), 1);
-        let view = if plan.active { VIEW_SIZE } else { NO_VIEW_SIZE };
+        let shown = plan.shown();
+        let transmittance = cx.allocate(self.transmittance, extent(TRANSMITTANCE_SIZE), 1);
+        let multiple = cx.allocate(self.multiple, extent(MULTIPLE_SIZE), 1);
+        if transmittance == Allocation::Fresh || multiple == Allocation::Fresh {
+            self.uploaded = None;
+        }
+        let view = if shown.is_some() {
+            VIEW_SIZE
+        } else {
+            NO_VIEW_SIZE
+        };
         cx.allocate(self.view, extent(view), 1);
         cx.allocate_buffer(self.derived, DERIVED_BYTES);
-        if !plan.active {
+        if shown.is_none() {
             return;
         }
-        if let Some(tables) = tables.filter(|tables| Some(tables.id) == plan.tables)
-            && self.uploaded != plan.tables
+        if let Some(tables) = tables.filter(|tables| Some(tables.id) == shown)
+            && self.uploaded != shown
         {
             self.upload(cx, &tables.table);
-            self.uploaded = plan.tables;
+            self.uploaded = shown;
         }
         cx.run(self.pass);
-        cx.read_back::<SkyExposure>(
+        cx.read_back::<SkyLightLevel>(
             0,
             self.derived,
-            DERIVED_EXPOSURE..DERIVED_EXPOSURE + 4,
+            DERIVED_LIGHT..DERIVED_LIGHT + 4,
             AfterRead::Keep,
         );
         let regions = [
@@ -666,7 +680,7 @@ impl GpuPart for SkyGpu {
 
     fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
         let (plan, tables, captures) = reads;
-        self.dome_shows = plan.tables.active;
+        self.dome_shows = plan.tables.shows();
         self.tables.prepare(cx, (&plan.tables, tables.sky()));
         self.clouds
             .prepare(cx, (&plan.clouds, tables.cloud_noise()), plan.frame);

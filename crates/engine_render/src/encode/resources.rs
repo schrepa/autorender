@@ -33,28 +33,32 @@ impl Run {
         }
     }
 
-    pub(crate) fn grow_buffer(&mut self, buffer: u32, bytes: u64) {
+    pub(crate) fn grow_buffer(&mut self, buffer: u32, bytes: u64) -> Allocation {
         let Some(held) = self.buffers.get_mut(buffer as usize) else {
-            return;
+            return Allocation::Fresh;
         };
         if held.as_ref().is_some_and(|(_, known)| *known >= bytes) {
-            return;
+            return Allocation::Kept;
         }
         let previous = held.take();
-        self.allocate_buffer(buffer, bytes.max(16).next_power_of_two());
+        let allocation = self.allocate_buffer(buffer, bytes.max(16).next_power_of_two());
         let Some((old, kept)) = previous else {
-            return;
+            return allocation;
         };
-        if let Some(Some((new, _))) = self.buffers.get(buffer as usize) {
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("engine/part-grow"),
-                });
-            encoder.copy_buffer_to_buffer(&old, 0, new, 0, kept);
-            crate::gpu_calls::submit(&self.queue, [encoder.finish()]);
-            self.queued.immediate += 1;
-        }
+        let copied = match self.buffers.get(buffer as usize) {
+            Some(Some((new, _))) => {
+                let mut encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("engine/part-grow"),
+                        });
+                encoder.copy_buffer_to_buffer(&old, 0, new, 0, kept);
+                self.queue.submit_now([encoder.finish()]);
+                Allocation::Kept
+            }
+            Some(None) | None => Allocation::Fresh,
+        };
         crate::memory::release_buffer(&old);
+        copied
     }
 }

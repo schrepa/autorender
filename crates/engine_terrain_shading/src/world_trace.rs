@@ -7,7 +7,7 @@ use engine_places_simulation::ground::TileKey;
 use engine_places_world::ground::{
     Cover, GroundTiles, PALETTE_ENTRIES, PlacedTiles, PooledTile, TerrainEntry, TerrainTiles,
 };
-use engine_render::{Buffer, Prepare};
+use engine_render::{Allocation, Buffer, Prepare};
 
 use crate::gpu::{NO_PLACED, TraceTerrain};
 use crate::trace::TraceGpu;
@@ -85,10 +85,6 @@ pub(crate) fn traced<'a>(
 }
 
 impl WorldTrace {
-    pub(crate) fn forget(&mut self) {
-        *self = Self::default();
-    }
-
     pub(crate) fn prepare(
         &mut self,
         cx: &mut Prepare<'_, TraceGpu>,
@@ -267,9 +263,10 @@ impl WorldTrace {
         let mut dirty = std::mem::take(&mut self.dirty);
         if let Some(size) = grown(self.placed, bytes, room) {
             self.placed = size;
+        }
+        if cx.allocate_buffer(buffer, self.placed) == Allocation::Fresh {
             dirty = std::iter::once(0..self.words.len()).collect();
         }
-        cx.allocate_buffer(buffer, self.placed);
         let held = ((self.placed / 4) as usize).min(self.words.len());
         for run in dirty {
             let run = run.start.min(held)..run.end.min(held);

@@ -32,7 +32,8 @@ mod games {
     pub use crate::resolution::{DynamicResolution, Resolution};
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, AxisId,
-        AxisInput, BrickList, Camera, CursorMode, DynamicResolutionStats, Engine, EngineConfig,
+        AxisInput, BrickList, Camera, CursorAsk, CursorMode, CursorRequests, DynamicResolutionStats,
+        Engine, EngineConfig,
         Filter, FixedTime, FrameLimits, FrameReport, FrameTime, GlobalTransform, GlobalTransforms,
         Grounding, Hidden, InterpolateTransform, Listing, MakeSources, MakeTextures, Material,
         MaterialHandle, MenuInput, Mesh, Mesh3d, MeshHandle, MeshVertex, MoveInput, Parent,

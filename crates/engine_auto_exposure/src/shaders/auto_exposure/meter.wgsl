@@ -1,7 +1,6 @@
 import package::engine::color::luminance;
-import package::engine::view::PI;
-import package::face::sky::{horizon, zenith};
-import package::face::sun::{sun_color, sun_direction};
+import package::face::sky::light_level;
+import package::face::sun::sun_direction;
 import package::generated::auto_exposure::{EXPOSURE_BINS, EXPOSURE_GRID, EXPOSURE_GROUP, ExposureState, ExposureUniform};
 
 @group(1) @binding(0) var<uniform> settings: ExposureUniform;
@@ -82,8 +81,7 @@ fn adapt_exposure() {
     } else if !held {
         return;
     }
-    let falling = luminance(sun_color()) * max(sun_direction().y, 0.0)
-        + PI * luminance(0.5 * (zenith() + horizon()));
+    let falling = light_level(sun_direction());
     let view = metered - log2(max(falling, 1.0e-12)) - VIEW_LIGHT;
     var day = 0.0;
     if settings.day.x > 0.0 {

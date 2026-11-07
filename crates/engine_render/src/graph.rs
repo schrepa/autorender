@@ -66,7 +66,7 @@ impl Bits {
         }
     }
 
-    fn remove(&mut self, index: usize) {
+    pub fn remove(&mut self, index: usize) {
         if let Some(word) = self.0.get_mut(index / 64) {
             *word &= !(1 << (index % 64));
         }

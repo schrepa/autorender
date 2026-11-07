@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::Resource;
 use bytemuck::{Pod, Zeroable};
-use engine_core::{GpuStruct, gpu_struct};
+use engine_core::{GpuBits, GpuStruct, gpu_bits, gpu_struct};
 use engine_places_rendering::shadows::SHADOW_REGIONS;
 
 use crate::constants::SKY_LAYERS;
@@ -10,10 +10,21 @@ const _: () = assert!(SKY_LAYERS == 26, "sky_views_hold_every_layer");
 
 pub(crate) const GENERATED: &[&str] = &[
     crate::constants::WGSL,
+    <TileEntry as GpuBits>::WGSL,
     CasterCull::WGSL,
     Route::WGSL,
     SkyViews::WGSL,
 ];
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TileEntry {
+    #[bits(15)]
+    pub still: u16,
+    pub old_sun: bool,
+    #[bits(16)]
+    pub moving: u16,
+}
 
 gpu_struct! {
     #[derive(Resource)]

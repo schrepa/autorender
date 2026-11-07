@@ -5,8 +5,8 @@ use crate::host::{
     LevelStep,
 };
 use engine_core::{
-    ActionInput, BrickList, CookMode, CursorMode, Engine, ErrorCode, LevelProgress, LevelRequest,
-    MenuInput, MoveInput, WorkRemaining,
+    ActionInput, BrickList, CookMode, CursorMode, CursorRequests, Engine, ErrorCode, Level,
+    MenuInput, MoveInput, Progress,
 };
 use engine_render::RenderTarget;
 use engine_scene::SceneFiles;
@@ -105,18 +105,21 @@ impl<G: Game> GameHost<G> {
         self.suspend();
     }
 
-    pub fn take_level_request(&mut self) -> Option<String> {
+    fn level_mut(&mut self) -> bevy_ecs::world::Mut<'_, Level> {
         self.app
             .engine_mut()
             .app
             .world_mut()
-            .resource_mut::<LevelRequest>()
-            .path
-            .take()
+            .resource_mut::<Level>()
+    }
+
+    pub fn take_level_request(&mut self) -> Option<String> {
+        self.level_mut().take_asked()
     }
 
     pub fn report_level(&mut self, done: u32, total: u32) {
-        self.show_level(LevelProgress::Reading { done, total });
+        self.level_mut()
+            .progress(Progress::of(u64::from(done), u64::from(total)));
     }
 
     pub fn fail_level(&mut self, message: &str) {
@@ -125,23 +128,11 @@ impl<G: Game> GameHost<G> {
 
     fn level_failed(&mut self, error: crate::Error) {
         self.level = LevelLoad::Idle;
-        self.show_level(LevelProgress::Failed { error });
-    }
-
-    fn show_level(&mut self, progress: LevelProgress) {
-        self.app
-            .engine_mut()
-            .app
-            .world_mut()
-            .insert_resource(progress);
+        self.level_mut().fail(error);
     }
 
     fn level_built(&mut self) {
-        let world = self.app.engine().app.world();
-        if *world.resource::<LevelProgress>() != LevelProgress::Idle {
-            self.level = LevelLoad::Building { quiet: 0 };
-            self.show_level(LevelProgress::Building);
-        }
+        self.level_mut().built();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -165,10 +156,8 @@ impl<G: Game> GameHost<G> {
         if matches!(self.level, LevelLoad::Idle) {
             return;
         }
-        let world = self.app.engine().app.world();
-        let busy = self.app.loading() || world.resource::<WorkRemaining>().remaining();
-        match self.level.step(busy) {
-            Ok(LevelStep::Progress(progress)) => self.show_level(progress),
+        match self.level.step() {
+            Ok(LevelStep::Progress(progress)) => self.level_mut().progress(progress),
             #[cfg(not(target_arch = "wasm32"))]
             Ok(LevelStep::Ready { source, files }) => {
                 if let Err(error) = self.reload_scene(&source, &files) {
@@ -197,7 +186,9 @@ impl<G: Game> GameHost<G> {
         } else {
             input.state
         };
-        self.app.frame(timestamp, width, height, state)
+        let framed = self.app.frame(timestamp, width, height, state);
+        self.apply_cursor();
+        framed
     }
 
     fn frame_input(&mut self, timestamp: f64) -> FrameInput {
@@ -230,7 +221,7 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn work_while_compiling(&mut self, width: u32, height: u32) -> bool {
-        if !self.frames.preparing() || !self.frame_stats().pipelines_compiling {
+        if !self.frames.preparing() || self.frame_stats().readiness.compiling == 0 {
             return false;
         }
         self.work(width, height);
@@ -287,7 +278,21 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn cursor_mode(&self) -> CursorMode {
-        *self.app.engine().app.world().resource::<CursorMode>()
+        self.app
+            .engine()
+            .app
+            .world()
+            .resource::<CursorRequests>()
+            .applied()
+    }
+
+    pub(crate) fn apply_cursor(&mut self) {
+        self.app
+            .engine_mut()
+            .app
+            .world_mut()
+            .resource_mut::<CursorRequests>()
+            .apply();
     }
 
     pub fn clear_input(&mut self) {

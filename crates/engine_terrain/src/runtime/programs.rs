@@ -1,6 +1,6 @@
 use super::*;
 use engine_core::gpu_struct;
-use engine_render::{Bind, Buffer, GpuPart, Install, Lifetime, Prepare};
+use engine_render::{Allocation, Bind, Buffer, GpuPart, Install, Lifetime, Prepare};
 
 gpu_struct! {
     pub struct SurfaceEntry {
@@ -13,7 +13,7 @@ gpu_struct! {
     }
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, PartialEq)]
 pub struct SurfacePrograms {
     program: Vec<u32>,
     entries: Vec<SurfaceEntry>,
@@ -97,12 +97,11 @@ impl GpuPart for SurfaceProgramGpu {
         programs: SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        if !programs.is_changed() {
-            return;
+        let program = cx.allocate_buffer(self.program, programs.program_bytes());
+        let materials = cx.allocate_buffer(self.materials, programs.material_bytes());
+        if programs.is_changed() || program == Allocation::Fresh || materials == Allocation::Fresh {
+            cx.write(self.program, 0, programs.program());
+            cx.write(self.materials, 0, programs.materials());
         }
-        cx.allocate_buffer(self.program, programs.program_bytes());
-        cx.write(self.program, 0, programs.program());
-        cx.allocate_buffer(self.materials, programs.material_bytes());
-        cx.write(self.materials, 0, programs.materials());
     }
 }

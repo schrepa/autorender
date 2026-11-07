@@ -32,21 +32,16 @@ pub(crate) fn step(
         if terrain.surroundings {
             continue;
         }
-        let Some(rivers) = terrain.rivers().cloned() else {
-            terrain.flow_moved |= terrain.flow.take().is_some();
+        let Some(rivers) = terrain.rivers().filter(|rivers| !rivers.is_empty()).cloned() else {
+            terrain.flow = None;
             continue;
         };
-        if rivers.is_empty() {
-            terrain.flow_moved |= terrain.flow.take().is_some();
-            continue;
-        }
         if terrain
             .flow
             .as_ref()
             .is_some_and(|flow| !Arc::ptr_eq(flow.base(), &rivers))
         {
             terrain.flow = None;
-            terrain.flow_moved = true;
         }
         let origin = terrain.origin;
         let (low, high) = rivers.bounds();
@@ -69,6 +64,6 @@ pub(crate) fn step(
                 flow.block(obstacle.center - origin, obstacle.axes, obstacle.round)
             })
             .collect();
-        terrain.flow_moved |= flow.step(&blocks, time.delta_seconds * EVERY as f32);
+        flow.step(&blocks, time.delta_seconds * EVERY as f32);
     }
 }

@@ -29,8 +29,8 @@ use serde::Serialize;
 
 use engine_core::math::{max, min};
 use engine_core::{
-    Brick, Bricks, Camera, EvenDisabled, FrameTime, GlobalTransforms, Runs, SceneContext, Schedule,
-    Smoke, Source, Spawner, settings, stats,
+    Brick, Bricks, Camera, EvenDisabled, FrameTime, GlobalTransforms, Interest, Request, Requests,
+    Runs, SceneContext, Schedule, Smoke, Source, Spawner, settings, stats,
 };
 use engine_places_world::streaming::StreamingFocus;
 
@@ -84,7 +84,7 @@ stats! {
     pub struct CellStats {
         pub cells: u32,
         pub loaded: u32,
-        pub pending: u32,
+        #[pending] pub pending: u32,
         pub items: u32,
         pub entities: u32,
         pub spawned: u32,
@@ -124,63 +124,56 @@ impl WorldChanges {
     }
 }
 
+enum Load {
+    Unloaded,
+    Loaded(Vec<Interest<usize>>),
+}
+
 struct Cell {
     grid: u8,
     key: [i32; 2],
     reach: f32,
-    items: Vec<Item>,
-    loaded: bool,
-    spawned: u32,
+    items: Vec<usize>,
+    load: Load,
     distance: f32,
 }
 
-struct Item {
-    index: usize,
-    id: Arc<str>,
-    spawned: Vec<Entity>,
-    spawned_in: u64,
-}
+type Items = Requests<usize, Vec<Entity>>;
 
 struct Acting<'a, 'w, 's> {
     live: &'a dyn Fn(Entity) -> bool,
     spawner: &'a mut Spawner<'w, 's, WorldStreamingBrick>,
-    pass: u64,
 }
 
 impl Acting<'_, '_, '_> {
-    fn despawn(&mut self, entity: Entity, fresh: bool) -> bool {
-        let present = fresh || (self.live)(entity);
-        if present {
-            self.spawner.despawn(entity);
-        }
-        present
-    }
-}
-
-impl Item {
-    fn spawn(&mut self, tree: &Tree, act: &mut Acting<'_, '_, '_>) -> u32 {
-        tree.spawn(self.index, act.spawner, &mut self.spawned);
-        if let Some(&root) = self.spawned.first() {
-            act.spawner.insert(root, StreamedId(self.id.clone()));
-        }
-        self.spawned_in = act.pass;
-        self.spawned.len() as u32
-    }
-
-    fn despawn(&mut self, act: &mut Acting<'_, '_, '_>) -> u32 {
-        let fresh = self.spawned_in == act.pass;
+    fn despawn(&mut self, entities: &[Entity]) -> u32 {
         let mut count = 0;
-        for entity in self.spawned.drain(..) {
-            if act.despawn(entity, fresh) {
+        for &entity in entities {
+            if (self.live)(entity) {
+                self.spawner.despawn(entity);
                 count += 1;
             }
         }
         count
     }
 
-    fn removed(&self, changes: &WorldChanges) -> bool {
-        changes.is_removed(&self.id)
+    fn spawn(&mut self, tree: &Tree, index: usize) -> Vec<Entity> {
+        let mut spawned = Vec::new();
+        tree.spawn(index, self.spawner, &mut spawned);
+        if let Some(&root) = spawned.first() {
+            self.spawner
+                .insert(root, StreamedId(tree.items[index].id.clone()));
+        }
+        spawned
     }
+}
+
+fn miss(items: &mut Items, index: usize) -> Option<Vec<Entity>> {
+    let spawned = items.get(&index).and_then(Request::ready).cloned();
+    if let Some(ticket) = items.ask_again(&index) {
+        items.miss(&index, ticket);
+    }
+    spawned
 }
 
 impl Cell {
@@ -192,61 +185,36 @@ impl Cell {
         outside.length()
     }
 
-    fn unload(&mut self, act: &mut Acting<'_, '_, '_>) -> u32 {
-        let count = self.items.iter_mut().map(|item| item.despawn(act)).sum();
-        self.loaded = false;
-        self.spawned = 0;
-        count
+    fn loaded(&self) -> bool {
+        match self.load {
+            Load::Loaded(_) => true,
+            Load::Unloaded => false,
+        }
     }
 
-    fn load(&mut self, tree: &Tree, changes: &WorldChanges, act: &mut Acting<'_, '_, '_>) -> u32 {
-        let mut count = 0;
-        for item in &mut self.items {
-            if !item.removed(changes) {
-                count += item.spawn(tree, act);
-            }
-        }
-        self.loaded = true;
-        self.spawned = count;
-        count
+    fn waiting(&self, items: &Items) -> bool {
+        self.loaded()
+            && self
+                .items
+                .iter()
+                .any(|index| items.ticket(index).is_some())
     }
 
-    fn reconcile(
-        &mut self,
-        tree: &Tree,
-        act: &mut Acting<'_, '_, '_>,
-        changes: &mut WorldChanges,
-        (revised, removed): (&mut bool, &mut bool),
-    ) -> [u32; 2] {
-        let mut counts = [0, 0];
-        for item in &mut self.items {
-            let gone = item.spawned_in != act.pass
-                && item.spawned.first().is_some_and(|&root| !(act.live)(root));
-            if gone {
-                counts[0] += item.despawn(act);
-                let added = changes.remove(&item.id);
-                *revised |= added;
-                *removed |= added;
-            } else if *revised {
-                if item.removed(changes) {
-                    counts[0] += item.despawn(act);
-                } else if item.spawned.is_empty() {
-                    counts[1] += item.spawn(tree, act);
-                }
-            }
+    fn spawned(&self, items: &Items) -> u32 {
+        if !self.loaded() {
+            return 0;
         }
-        self.spawned = self
-            .items
+        self.items
             .iter()
-            .map(|item| item.spawned.len() as u32)
-            .sum();
-        counts
+            .filter_map(|index| items.get(index).and_then(Request::ready))
+            .map(|spawned| spawned.len() as u32)
+            .sum()
     }
 
     fn entities(&self, tree: &Tree) -> u32 {
         self.items
             .iter()
-            .map(|item| tree.entities_of(item.index))
+            .map(|&index| tree.entities_of(index))
             .sum()
     }
 }
@@ -262,9 +230,9 @@ pub struct WorldCells {
     cells: Vec<Cell>,
     index: HashMap<(u8, [i32; 2]), usize>,
     content: Arc<Content>,
+    spawns: Items,
     kept: Vec<Vec<Entity>>,
     from_scene: bool,
-    pass: u64,
     motion: Motion,
     stats: CellStats,
     sources: Vec<Vec2>,
@@ -304,8 +272,7 @@ impl WorldCells {
                     key,
                     reach: 0.0,
                     items: Vec::new(),
-                    loaded: false,
-                    spawned: 0,
+                    load: Load::Unloaded,
                     distance: f32::INFINITY,
                 });
                 cells.len() - 1
@@ -318,24 +285,26 @@ impl WorldCells {
                 max(local.x + reach - side, local.y + reach - side),
             );
             cell.reach = max(cell.reach, past);
-            cell.items.push(Item {
-                index,
-                id: item.id.clone(),
-                spawned: Vec::new(),
-                spawned_in: 0,
-            });
+            cell.items.push(index);
         }
     }
 
     fn replace(&mut self, content: Arc<Content>, act: &mut Acting<'_, '_, '_>) {
-        for item in self.cells.iter_mut().flat_map(|cell| cell.items.iter_mut()) {
-            item.despawn(act);
+        for cell in &self.cells {
+            for spawned in cell
+                .items
+                .iter()
+                .filter_map(|index| self.spawns.get(index).and_then(Request::ready))
+            {
+                act.despawn(spawned);
+            }
         }
-        for entity in self.kept.drain(..).flatten() {
-            act.despawn(entity, false);
+        for spawned in self.kept.drain(..) {
+            act.despawn(&spawned);
         }
         self.cells.clear();
         self.index.clear();
+        self.spawns = Items::default();
         self.content = content;
         self.add();
         let kept = &self.content.kept;
@@ -346,6 +315,122 @@ impl WorldCells {
                 spawned
             })
             .collect();
+    }
+
+    fn reconcile(
+        &mut self,
+        changes: &mut WorldChanges,
+        revised: bool,
+        act: &mut Acting<'_, '_, '_>,
+    ) -> (u32, bool) {
+        let tree = &self.content.streamed;
+        let mut removed = false;
+        for cell in self.cells.iter().filter(|cell| cell.loaded()) {
+            for &index in &cell.items {
+                let gone = self
+                    .spawns
+                    .get(&index)
+                    .and_then(Request::ready)
+                    .and_then(|spawned| spawned.first())
+                    .is_some_and(|&root| !(act.live)(root));
+                if gone {
+                    removed |= changes.remove(&tree.items[index].id);
+                }
+            }
+        }
+        let mut despawned = 0;
+        if !revised && !removed {
+            return (despawned, removed);
+        }
+        for cell in self.cells.iter().filter(|cell| cell.loaded()) {
+            for &index in &cell.items {
+                let missing = matches!(self.spawns.get(&index), Some(Request::Missing));
+                if changes.is_removed(&tree.items[index].id) {
+                    if !missing && let Some(spawned) = miss(&mut self.spawns, index) {
+                        despawned += act.despawn(&spawned);
+                    }
+                } else if missing {
+                    self.spawns.ask_again(&index);
+                }
+            }
+        }
+        (despawned, removed)
+    }
+
+    fn load_and_unload(
+        &mut self,
+        settings: WorldStreaming,
+        now: f64,
+        act: &mut Acting<'_, '_, '_>,
+    ) {
+        let WorldCells {
+            cells,
+            spawns,
+            sources,
+            wanted,
+            stats,
+            ..
+        } = self;
+        wanted.clear();
+        for (index, cell) in cells.iter_mut().enumerate() {
+            cell.distance = sources
+                .iter()
+                .map(|&source| cell.distance_to(source))
+                .fold(f32::INFINITY, min);
+            let range = STREAMING_GRIDS[cell.grid as usize].range * settings.distance;
+            let leaving = !settings.enabled || cell.distance > range * settings.unload;
+            let coming = settings.enabled && cell.distance <= range;
+            if !settings.frozen {
+                match cell.load {
+                    Load::Loaded(_) if leaving => cell.load = Load::Unloaded,
+                    Load::Unloaded if coming => {
+                        let asked = cell.items.iter().map(|&item| spawns.ask(item)).collect();
+                        cell.load = Load::Loaded(asked);
+                    }
+                    Load::Loaded(_) | Load::Unloaded => {}
+                }
+            }
+            if cell.waiting(spawns) {
+                wanted.push((cell.distance / range, index));
+            }
+        }
+        wanted.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (_, request) in spawns.settle(now) {
+            if let Request::Ready(spawned) = request {
+                stats.despawned += act.despawn(&spawned);
+            }
+        }
+    }
+
+    fn spawn(
+        &mut self,
+        changes: &WorldChanges,
+        settings: WorldStreaming,
+        act: &mut Acting<'_, '_, '_>,
+    ) {
+        if settings.frozen {
+            return;
+        }
+        let tree = &self.content.streamed;
+        let mut cells = 0;
+        for &(_, at) in &self.wanted {
+            if cells > 0 && self.stats.spawned >= settings.spawns_per_frame {
+                break;
+            }
+            for &index in &self.cells[at].items {
+                let Some(ticket) = self.spawns.ticket(&index) else {
+                    continue;
+                };
+                if changes.is_removed(&tree.items[index].id) {
+                    self.spawns.miss(&index, ticket);
+                    continue;
+                }
+                let spawned = act.spawn(tree, index);
+                self.stats.spawned += spawned.len() as u32;
+                self.spawns.ready(&index, ticket, spawned);
+            }
+            cells += 1;
+        }
     }
 
     pub fn stats(&self) -> CellStats {
@@ -370,7 +455,7 @@ impl WorldCells {
                 key: cell.key,
                 items: cell.items.len() as u32,
                 entities: cell.entities(tree),
-                loaded: cell.loaded,
+                loaded: cell.loaded() && !cell.waiting(&self.spawns),
                 distance: cell.distance,
             })
             .collect();
@@ -382,8 +467,9 @@ impl WorldCells {
     pub fn grids(&self) -> [[u32; 2]; 3] {
         let mut grids = [[0; 2]; 3];
         for cell in &self.cells {
+            let loaded = cell.loaded() && !cell.waiting(&self.spawns);
             grids[cell.grid as usize][0] += 1;
-            grids[cell.grid as usize][1] += u32::from(cell.loaded);
+            grids[cell.grid as usize][1] += u32::from(loaded);
         }
         grids
     }
@@ -411,12 +497,10 @@ pub(crate) fn stream_cells(
 ) {
     let settings = *settings;
     let cells = &mut *cells;
-    cells.pass += 1;
     let alive = |entity: Entity| live.contains(entity);
     let mut act = Acting {
         live: &alive,
         spawner: &mut spawner,
-        pass: cells.pass,
     };
     let context_changed = context
         .as_ref()
@@ -431,32 +515,32 @@ pub(crate) fn stream_cells(
     let _profile = engine_core::profile::span("cpu", "world_streaming");
     cells.stats.spawned = 0;
     cells.stats.despawned = 0;
-    cells.stats.pending = 0;
     if !cells.cells.is_empty() {
         sources(camera.eye(), &frame, (&*globals, &focus), cells, settings);
-        let mut revised = tracked.is_changed();
-        let mut removed = false;
+        let revised = tracked.is_changed();
         let changes = tracked.bypass_change_detection();
-        let tree = cells.content.clone();
-        for cell in cells.cells.iter_mut().filter(|cell| cell.loaded) {
-            let [despawned, spawned] = cell.reconcile(
-                &tree.streamed,
-                &mut act,
-                changes,
-                (&mut revised, &mut removed),
-            );
-            cells.stats.despawned += despawned;
-            cells.stats.spawned += spawned;
-        }
-        load_and_unload(cells, &tree.streamed, changes, settings, &mut act);
+        let (despawned, removed) = cells.reconcile(changes, revised, &mut act);
+        cells.stats.despawned += despawned;
+        cells.load_and_unload(settings, frame.elapsed_seconds, &mut act);
+        cells.spawn(changes, settings, &mut act);
         if removed {
             tracked.set_changed();
         }
     }
+    let spawns = &cells.spawns;
     cells.stats.cells = cells.cells.len() as u32;
-    cells.stats.loaded = cells.cells.iter().filter(|cell| cell.loaded).count() as u32;
+    cells.stats.loaded = cells
+        .cells
+        .iter()
+        .filter(|cell| cell.loaded() && !cell.waiting(spawns))
+        .count() as u32;
+    cells.stats.pending = cells
+        .cells
+        .iter()
+        .filter(|cell| cell.waiting(spawns))
+        .count() as u32;
     cells.stats.items = cells.items() as u32;
-    cells.stats.entities = cells.cells.iter().map(|cell| cell.spawned).sum();
+    cells.stats.entities = cells.cells.iter().map(|cell| cell.spawned(spawns)).sum();
     *published = cells.stats;
 }
 
@@ -506,48 +590,6 @@ fn sources(
             cells.sources.push(flat(position));
         }
     }
-}
-
-fn load_and_unload(
-    cells: &mut WorldCells,
-    tree: &Tree,
-    changes: &WorldChanges,
-    settings: WorldStreaming,
-    act: &mut Acting<'_, '_, '_>,
-) {
-    let WorldCells {
-        cells: list,
-        sources,
-        wanted,
-        stats,
-        ..
-    } = cells;
-    wanted.clear();
-    for (index, cell) in list.iter_mut().enumerate() {
-        cell.distance = sources
-            .iter()
-            .map(|&source| cell.distance_to(source))
-            .fold(f32::INFINITY, min);
-        let range = STREAMING_GRIDS[cell.grid as usize].range * settings.distance;
-        let leaving = !settings.enabled || cell.distance > range * settings.unload;
-        if cell.loaded && leaving && !settings.frozen {
-            stats.despawned += cell.unload(act);
-        } else if !cell.loaded && settings.enabled && cell.distance <= range {
-            wanted.push((cell.distance / range, index));
-        }
-    }
-    wanted.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let mut loaded = 0;
-    if !settings.frozen {
-        for &(_, index) in wanted.iter() {
-            if loaded > 0 && stats.spawned >= settings.spawns_per_frame {
-                break;
-            }
-            stats.spawned += list[index].load(tree, changes, act);
-            loaded += 1;
-        }
-    }
-    stats.pending = (wanted.len() - loaded) as u32;
 }
 
 pub struct WorldStreamingBrick;

@@ -86,12 +86,10 @@ impl Brick for TerrainShadingBrick {
                     state::place_tiles,
                     state::publish_changes,
                     state::publish_piece,
-                    state::rest_surface,
                     state::publish_heightfield,
                     state::count,
                 ),
             )
-            .off(state::forget)
             .part::<TerrainGpu>()
             .part::<trace::TraceGpu>()
             .draws::<TerrainGpu, MainView>(Layer::Opaque, TerrainGpu::draw_main)

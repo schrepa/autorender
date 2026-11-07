@@ -449,7 +449,11 @@ async function start() {
     disposeDevelopment = connectDevelopment({
       game: created, signal: lifecycle.signal, paused: () => live()?.paused ?? false,
       setPaused, exclusive,
-      size: () => [pixelWidth, pixelHeight], poll: () => options.poll?.(created),
+      size: () => [pixelWidth, pixelHeight],
+      poll: () => {
+        input.setCursorMode(created.cursor_mode());
+        options.poll?.(created);
+      },
       frame(timestamp) {
         created.frame(timestamp, pixelWidth, pixelHeight);
         jobs?.exchange();

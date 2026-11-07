@@ -33,6 +33,7 @@ const CLOSED: &[(&str, &[&str])] = &[
         &[
             "engine_ecs",
             "engine_place",
+            "engine_gpu_bits",
             "engine_core",
             "engine_render",
             "engine_assets",
@@ -61,6 +62,7 @@ const RINGS: &[(&str, &[&str])] = &[
         &[
             "engine_ecs",
             "engine_place",
+            "engine_gpu_bits",
             "engine_core",
             "engine_registry",
             "engine_render",

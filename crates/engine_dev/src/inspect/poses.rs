@@ -1,5 +1,7 @@
 use super::*;
 
+type StateRegister = fn(&mut DevTools, &Value, &str) -> Result<(), Error>;
+
 impl DevTools {
     pub(super) fn register_poses(&mut self, schemas: &Value) {
         self.register_component::<Transform>(
@@ -23,11 +25,17 @@ impl DevTools {
             |_| json!(InterpolateTransformView { enabled: true }),
         )
         .expect("descriptor_bounded");
-        self.register_resource::<PresentationState>(
-            InspectorDescriptor::generated(schemas, "PresentationState"),
-            presentation_value,
-        )
-        .expect("descriptor_bounded");
+        let states: [(&str, StateRegister); 6] = [
+            ("PresentationState", Self::register_state::<PresentationState>),
+            ("Readiness", Self::register_state::<engine_core::Readiness>),
+            ("FrameBudget", Self::register_state::<engine_core::FrameBudget>),
+            ("Level", Self::register_state::<engine_core::Level>),
+            ("Records", Self::register_state::<engine_core::Records>),
+            ("MeshLevels", Self::register_state::<engine_core::MeshLevels>),
+        ];
+        for (name, register) in states {
+            register(self, schemas, name).expect("descriptor_bounded");
+        }
         self.insert(Inspector {
             brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "Hierarchy"),
@@ -99,20 +107,3 @@ pub(super) fn transform_value(value: &Transform) -> Value {
     })
 }
 
-pub(super) fn presentation_value(value: &PresentationState) -> Value {
-    json!(presentation_view(value))
-}
-
-pub(super) fn presentation_view(value: &PresentationState) -> PresentationStateView {
-    PresentationStateView {
-        frame: value.frame().map(|frame| frame.to_string()),
-        tick: value.tick().map(|tick| tick.to_string()),
-        alpha: value.alpha(),
-        history_nodes: value.history_nodes(),
-        history_capacity: value.history_capacity(),
-        history_bytes: value.history_bytes(),
-        presentation_scratch_bytes: value.presentation_scratch_bytes(),
-        blended_nodes: value.blended_nodes(),
-        largest_blend_distance: value.largest_blend_distance(),
-    }
-}

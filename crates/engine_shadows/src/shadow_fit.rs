@@ -1,11 +1,12 @@
 use engine_core::{
-    Cut,
+    Cut, GpuBits,
     glam::{Mat4, Vec3, Vec4},
     math,
 };
 use engine_places_rendering::shadows::SHADOW_REGIONS;
 
-use crate::constants::{SHADOW_APRON, TILE_OLD_SUN};
+use crate::constants::SHADOW_APRON;
+use crate::gpu_layouts::TileEntry;
 
 const LOW_SUN: f32 = 0.1;
 
@@ -170,6 +171,17 @@ pub(crate) struct TileState {
     pub moving: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+enum Turning {
+    #[default]
+    Still,
+    Turned {
+        from: LightBasis,
+    },
+}
+
+pub(crate) type DrawnTile = (usize, usize, u16);
+
 #[derive(Debug, Default)]
 pub(crate) struct ClipPlan {
     pub regions: Vec<Region>,
@@ -183,6 +195,7 @@ pub(crate) struct ClipStats {
     pub resident: u32,
     pub drawn: u32,
     pub reclaimed: u32,
+    pub waiting: u32,
     pub moving: u32,
     pub tile_cut: Cut,
     pub moving_cut: Cut,
@@ -191,7 +204,7 @@ pub(crate) struct ClipStats {
 #[derive(Debug, Default)]
 pub(crate) struct Clipmap {
     basis: Option<LightBasis>,
-    before: Option<LightBasis>,
+    turning: Turning,
     settings: Option<ClipSettings>,
     side: u32,
     levels: Vec<ClipLevel>,
@@ -201,12 +214,13 @@ pub(crate) struct Clipmap {
     changed: Vec<bool>,
     moving: Vec<(usize, usize)>,
     order: Vec<(i32, u16)>,
+    drawing: Vec<DrawnTile>,
     frame: u32,
     stats: ClipStats,
 }
 
-fn entry(slot: Option<u16>, moving: Option<u32>) -> u32 {
-    slot.map_or(0, |slot| u32::from(slot) + 1) | moving.map_or(0, |slot| (slot + 1) << 16)
+fn tile_of(word: u32) -> TileEntry {
+    TileEntry::unpack(word).unwrap_or_default()
 }
 
 impl Clipmap {
@@ -219,7 +233,7 @@ impl Clipmap {
         let restart = self.settings != Some(settings);
         if restart {
             self.basis = Some(sun);
-            self.before = Some(sun);
+            self.turning = Turning::Still;
             self.settings = Some(settings);
             self.side = (LEVEL_TEXELS / settings.tile_texels).max(1);
             let cells = (self.side * self.side) as usize;
@@ -231,12 +245,7 @@ impl Clipmap {
             self.moving.clear();
         }
         self.frame += 1;
-        let held = self.basis.unwrap_or(sun);
-        let basis = if held.rows == sun.rows || self.old_sun_wanted() {
-            held
-        } else {
-            self.turn(held, sun, eye)
-        };
+        let basis = self.follow(sun, eye);
         let light = basis.apply(eye);
         let rise = basis.rows[1].y.abs();
         let sine = basis.sine();
@@ -278,14 +287,41 @@ impl Clipmap {
         (basis, restart)
     }
 
+    fn follow(&mut self, sun: LightBasis, eye: Vec3) -> LightBasis {
+        let held = self.basis.unwrap_or(sun);
+        if let Turning::Turned { .. } = self.turning {
+            if self.old_sun_wanted() {
+                return held;
+            }
+            if !self.old_sun_held() {
+                self.turning = Turning::Still;
+            }
+        }
+        if held.rows == sun.rows {
+            return held;
+        }
+        self.turn(held, sun, eye)
+    }
+
     fn old_sun_wanted(&self) -> bool {
         let (frame, cells) = (self.frame, (self.side * self.side) as usize);
         self.levels.iter().enumerate().any(|(level, clip)| {
             clip.live.iter().map(|&cell| usize::from(cell)).any(|cell| {
                 clip.cells[cell].marked_at(frame)
-                    && self.table[level * cells + cell] & TILE_OLD_SUN != 0
+                    && tile_of(self.table[level * cells + cell]).old_sun
             })
         })
+    }
+
+    fn old_sun_held(&self) -> bool {
+        let cells = (self.side * self.side) as usize;
+        self.owners.iter().flatten().any(|&(level, cell)| {
+            tile_of(self.table[level as usize * cells + usize::from(cell)]).old_sun
+        })
+    }
+
+    fn tile(&self, level: usize, cell: usize) -> TileEntry {
+        tile_of(self.table[level * (self.side * self.side) as usize + cell])
     }
 
     fn turn(&mut self, held: LightBasis, sun: LightBasis, eye: Vec3) -> LightBasis {
@@ -294,14 +330,14 @@ impl Clipmap {
             ..sun
         };
         self.basis = Some(basis);
-        self.before = Some(held);
+        self.turning = Turning::Turned { from: held };
         for level in &mut self.levels {
             level.before = [
                 level.depth - level.half_depth,
                 level.depth + level.half_depth,
             ];
         }
-        let (frame, cells) = (self.frame, (self.side * self.side) as usize);
+        let frame = self.frame;
         for slot in 0..self.owners.len() {
             let Some((level, cell)) = self.owners[slot] else {
                 continue;
@@ -312,8 +348,11 @@ impl Clipmap {
                 self.release(level, cell);
             } else if tile.drawn {
                 tile.dirty = true;
-                let kept = self.table[level * cells + cell] | TILE_OLD_SUN;
-                self.set_entry(level, cell, kept);
+                let kept = TileEntry {
+                    old_sun: true,
+                    ..self.tile(level, cell)
+                };
+                self.set_entry(level, cell, kept.pack());
             }
         }
         basis
@@ -384,6 +423,10 @@ impl Clipmap {
 
     pub(crate) fn stats(&self) -> ClipStats {
         self.stats
+    }
+
+    pub(crate) fn idle(&mut self) {
+        self.stats = ClipStats::default();
     }
 
     fn marked_cells(&self, words: &[u32]) -> Vec<(usize, usize)> {
@@ -461,13 +504,38 @@ impl Clipmap {
 
     pub(crate) fn invalidate(&mut self) {
         let cells = (self.side * self.side) as usize;
+        self.drawing.clear();
         for level in 0..self.levels.len() {
             for cell in 0..cells {
-                let held = &mut self.levels[level].cells[cell];
-                held.drawn = false;
-                held.dirty = false;
-                let moving = self.table[level * cells + cell] & 0xffff_0000;
-                self.set_entry(level, cell, moving);
+                self.undraw_cell(level, cell);
+            }
+        }
+    }
+
+    fn undraw_cell(&mut self, level: usize, cell: usize) {
+        let held = &mut self.levels[level].cells[cell];
+        held.drawn = false;
+        held.dirty = false;
+        let moving = TileEntry {
+            moving: self.tile(level, cell).moving,
+            ..TileEntry::default()
+        };
+        self.set_entry(level, cell, moving.pack());
+    }
+
+    pub(crate) fn take_drawing(&mut self) -> Vec<DrawnTile> {
+        std::mem::take(&mut self.drawing)
+    }
+
+    pub(crate) fn undraw(&mut self, tiles: &[DrawnTile]) {
+        for &(level, cell, slot) in tiles {
+            let held = self
+                .levels
+                .get(level)
+                .and_then(|clip| clip.cells.get(cell))
+                .is_some_and(|held| held.drawn && held.slot == Some(slot));
+            if held {
+                self.undraw_cell(level, cell);
             }
         }
     }
@@ -481,6 +549,7 @@ impl Clipmap {
         out.regions.clear();
         out.composes.clear();
         out.moving.clear();
+        self.drawing.clear();
         self.stats = ClipStats::default();
         self.prune_live();
         self.allocate();
@@ -493,6 +562,7 @@ impl Clipmap {
                 let cell = &clip.cells[cell as usize];
                 self.stats.marked += 1;
                 slotted += u32::from(cell.slot.is_some());
+                self.stats.waiting += u32::from(cell.slot.is_some() && (!cell.drawn || cell.dirty));
                 moving += u32::from(cell.drawn && cell.moving_at(frame));
             }
         }
@@ -621,8 +691,13 @@ impl Clipmap {
                     let held = &mut self.levels[level].cells[cell];
                     held.drawn = true;
                     held.dirty = false;
-                    let moving = self.table[level * (side * side) as usize + cell] & 0xffff_0000;
-                    self.set_entry(level, cell, moving | entry(Some(slot), None));
+                    let drawn = TileEntry {
+                        still: slot + 1,
+                        old_sun: false,
+                        moving: self.tile(level, cell).moving,
+                    };
+                    self.set_entry(level, cell, drawn.pack());
+                    self.drawing.push((level, cell, slot));
                     left -= 1;
                 }
             }
@@ -650,10 +725,12 @@ impl Clipmap {
     }
 
     fn draw_moving(&mut self, budget: u32, out: &mut ClipPlan) {
-        let cells = (self.side * self.side) as usize;
         for (level, cell) in std::mem::take(&mut self.moving) {
-            let still = self.table[level * cells + cell] & 0xffff;
-            self.set_entry(level, cell, still);
+            let still = TileEntry {
+                moving: 0,
+                ..self.tile(level, cell)
+            };
+            self.set_entry(level, cell, still.pack());
         }
         let frame = self.frame;
         let side = self.side as i32;
@@ -674,9 +751,12 @@ impl Clipmap {
                 let index = out.moving.len() as u16;
                 out.moving.push(MovingTile { level, tile, index });
                 self.moving.push((level, cell));
-                let slot = self.owners.len() as u32 + u32::from(index);
-                let still = self.table[level * cells + cell] & 0xffff;
-                self.set_entry(level, cell, still | entry(None, Some(slot)));
+                let slot = self.owners.len() + usize::from(index) + 1;
+                let routed = TileEntry {
+                    moving: u16::try_from(slot).unwrap_or(0),
+                    ..self.tile(level, cell)
+                };
+                self.set_entry(level, cell, routed.pack());
             }
         }
         self.order = order;
@@ -708,7 +788,10 @@ impl Clipmap {
     }
 
     pub(crate) fn before(&self) -> Option<LightBasis> {
-        self.before
+        match self.turning {
+            Turning::Still => None,
+            Turning::Turned { from } => Some(from),
+        }
     }
 
     pub(crate) fn window(&self, level: usize) -> [f32; 4] {

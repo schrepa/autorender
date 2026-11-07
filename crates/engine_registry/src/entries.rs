@@ -11,28 +11,40 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::gates::{GateId, Scope};
-use crate::members::{add_member, each_member, init_members, refresh_members};
+use crate::members::{add_member, each_member, init_members};
 use crate::registry::MemberEach;
+use crate::state::{GateId, Scope};
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Kept {
+    Dropped(fn(&mut World)),
+    Survives(fn(&mut World)),
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Owned {
     pub type_id: TypeId,
     pub name: &'static str,
     pub(crate) init: fn(&mut World),
+    pub(crate) kept: Kept,
 }
 
 impl Owned {
-    pub fn of<T: ?Sized + 'static>(init: fn(&mut World)) -> Self {
+    pub fn of<T: Resource + Default>() -> Self {
         Self {
             type_id: TypeId::of::<T>(),
             name: std::any::type_name::<T>(),
-            init,
+            init: init_of::<T>,
+            kept: Kept::Dropped(remove_of::<T>),
         }
     }
 
     pub fn init(&self, world: &mut World) {
         (self.init)(world);
+    }
+
+    pub fn survives(&self) -> bool {
+        matches!(self.kept, Kept::Survives(_))
     }
 }
 
@@ -76,7 +88,6 @@ pub struct JoinEntry {
     pub(crate) member: Option<Box<dyn Any + Send + Sync>>,
     pub(crate) add: MemberAdd,
     pub(crate) init: fn(&mut World),
-    pub(crate) refresh: fn(&mut World),
     pub(crate) each: MemberEach,
 }
 
@@ -94,7 +105,6 @@ impl JoinEntry {
             member: Some(Box::new(member)),
             add: add_member::<L>,
             init: init_members::<L>,
-            refresh: refresh_members::<L>,
             each: each_member::<L>,
         }
     }
@@ -120,6 +130,7 @@ pub struct SettingsEntry {
     check: fn(&Value, &str) -> Result<(), Error>,
     set: fn(&mut World, &Value, &str) -> Result<(), Error>,
     reset: fn(&mut World),
+    touch: fn(&mut World),
     current: fn(&World) -> Value,
     default: fn() -> Value,
     present: fn(&World) -> bool,
@@ -149,6 +160,7 @@ impl SettingsEntry {
             check,
             set,
             reset: reset_of::<T>,
+            touch: touch_of::<T>,
             current: current_of::<T>,
             default: default_of::<T>,
             present: present_of::<T>,
@@ -168,6 +180,7 @@ impl SettingsEntry {
             type_id: self.type_id,
             name: self.type_name,
             init: self.init,
+            kept: Kept::Survives(self.touch),
         }
     }
 
@@ -220,6 +233,7 @@ pub struct StatsEntry {
     pub type_name: &'static str,
     pub at: &'static Location<'static>,
     init: fn(&mut World),
+    remove: fn(&mut World),
     read: fn(&World) -> Value,
     pending: fn(&World) -> u32,
     schema: fn() -> schemars::Schema,
@@ -242,6 +256,7 @@ impl StatsEntry {
             type_name: std::any::type_name::<T>(),
             at: Location::caller(),
             init: init_of::<T>,
+            remove: remove_of::<T>,
             read: current_of::<T>,
             pending,
             schema,
@@ -253,6 +268,7 @@ impl StatsEntry {
             type_id: self.type_id,
             name: self.type_name,
             init: self.init,
+            kept: Kept::Dropped(self.remove),
         }
     }
 
@@ -405,6 +421,14 @@ pub(crate) fn init_of<T: Resource + Default>(world: &mut World) {
 
 fn reset_of<T: Resource + Default>(world: &mut World) {
     world.insert_resource(T::default());
+}
+
+fn remove_of<T: Resource>(world: &mut World) {
+    world.remove_resource::<T>();
+}
+
+fn touch_of<T: Resource>(world: &mut World) {
+    let _ = world.modify_resource::<T, ()>(|_| {});
 }
 
 fn resource_id_of<T: Resource>(world: &mut World) -> ComponentId {

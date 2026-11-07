@@ -43,6 +43,6 @@ fn sunlight() -> vec3<f32> {
     return vec3<f32>(1.0);
 }
 
-fn adapted_exposure(authored: f32) -> f32 {
-    return authored;
+fn light_level(sun: vec3<f32>) -> f32 {
+    return max(sun.y, 0.0);
 }

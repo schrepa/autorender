@@ -1,4 +1,5 @@
-use engine_render::debug::{DEBUG_CASTS, DEBUG_KIND_CARD, DEBUG_KIND_MESH, DEBUG_LEVEL_SHIFT};
+use engine_core::GpuBits;
+use engine_render::debug::{DebugKind, DebugRecord};
 use engine_render::wgpu;
 
 pub(crate) const RECORD_ATTRIBUTES: [wgpu::VertexAttribute; 1] =
@@ -18,10 +19,10 @@ pub(crate) enum DrawKind {
 impl DrawKind {
     const ALL: [Self; 2] = [Self::Mesh, Self::Card];
 
-    fn kind(self) -> u32 {
+    fn kind(self) -> DebugKind {
         match self {
-            Self::Mesh => DEBUG_KIND_MESH,
-            Self::Card => DEBUG_KIND_CARD,
+            Self::Mesh => DebugKind::Mesh,
+            Self::Card => DebugKind::Card,
         }
     }
 }
@@ -55,11 +56,14 @@ impl DrawRecord {
     }
 
     fn word(self) -> u32 {
-        let mut word = self.kind.kind() | (self.level.min(LEVELS - 1) << DEBUG_LEVEL_SHIFT);
-        if self.casts {
-            word |= DEBUG_CASTS;
+        DebugRecord {
+            kind: self.kind.kind(),
+            level: self.level.min(LEVELS - 1),
+            fading: false,
+            casts: self.casts,
+            source: 0,
         }
-        word
+        .pack()
     }
 
     pub(crate) fn offset(self) -> u64 {

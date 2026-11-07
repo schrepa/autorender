@@ -1,7 +1,6 @@
 use super::now_ms;
 use super::policy::{
     BETWEEN_MARGIN_MS, FRAME_INTERVAL_MS, PACE_INTERVAL_LIMIT_MS, PACE_SMOOTHING, PREPARE_LIMIT_MS,
-    QUIET_FRAMES,
 };
 use crate::{Game, GameHost};
 
@@ -28,7 +27,6 @@ impl FramePhase {
 #[derive(Clone, Copy, Debug)]
 struct Preparing {
     since: Option<f64>,
-    quiet: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -49,10 +47,7 @@ pub struct FrameLoop {
 impl Default for FrameLoop {
     fn default() -> Self {
         Self {
-            preparing: Some(Preparing {
-                since: None,
-                quiet: 0,
-            }),
+            preparing: Some(Preparing { since: None }),
             pace: Pace {
                 last: None,
                 interval: FRAME_INTERVAL_MS,
@@ -66,10 +61,7 @@ impl Default for FrameLoop {
 
 impl FrameLoop {
     pub fn set_preparation(&mut self, enabled: bool) {
-        self.preparing = enabled.then_some(Preparing {
-            since: None,
-            quiet: 0,
-        });
+        self.preparing = enabled.then_some(Preparing { since: None });
     }
 
     pub fn preparing(&self) -> bool {
@@ -110,19 +102,14 @@ impl FrameLoop {
             host.work(width, height);
             return Ok(FramePhase::Preparing);
         }
-        if host.frame_stats().pipelines_compiling && !late {
+        if host.frame_stats().readiness.compiling > 0 && !late {
             host.work(width, height);
             return Ok(FramePhase::Compiling);
         }
         host.suspend();
         host.frame(timestamp, width, height)?;
         let after = host.frame_stats();
-        preparing.quiet = if after.render.pipelines_created == 0 {
-            preparing.quiet + 1
-        } else {
-            0
-        };
-        if (preparing.quiet < QUIET_FRAMES || after.loading) && !late {
+        if (after.render.pipelines_created > 0 || !after.readiness.settled()) && !late {
             return Ok(FramePhase::Preparing);
         }
         self.preparing = None;

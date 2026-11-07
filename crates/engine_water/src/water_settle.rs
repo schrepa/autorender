@@ -1,10 +1,10 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::ops::Range;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
-use engine_core::{CookMode, DeviceLimits, Error, FrameTime, Jobs, Readback};
+use engine_core::{CookMode, DeviceLimits, Error, Jobs, Readable, Readback};
 use engine_places_world::ground::GroundTiles;
 use engine_render::{AfterRead, ComputePipeline, Count, Encode, Install, Pass, Prepare};
 
@@ -25,21 +25,26 @@ use crate::{BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, SettleStart, SteadyWater};
 const LOOK_EVERY: u32 = 256;
 const SETTLE_STEPS: [u32; 2] = [1024, 16_384];
 const STIR_STEPS: [u32; 2] = [1024, SETTLE_STEPS[1] / 2];
-const SETTLE_LOOKS: u64 = ((SETTLE_STEPS[1] + STIR_STEPS[1]) / LOOK_EVERY) as u64;
 const STILL_LOOKS: usize = 3;
 const STILL_CHANGE: f64 = 0.01;
 const COOK_BYTES: u64 = 1 << 30;
 const PLAY_BYTES: u64 = 128 << 20;
 const COOK_CELL_STEPS: u64 = 160_000_000;
 const PLAY_CELL_STEPS: u64 = 2_000_000;
-const LOST_FRAMES: u64 = 120;
 pub(crate) const TALLIES: u32 = 0;
 const LOOK: u32 = 0;
 const MEANS: u32 = 1;
 const GROUND: u32 = 2;
+const LOADS: u32 = 1 << 20;
 
-fn tag(slot: usize, kind: u32) -> u32 {
-    1 + 3 * slot as u32 + kind
+fn tag(slot: usize, kind: u32, load: u32) -> u32 {
+    1 + kind + 3 * (slot as u32 + SIM_SLOTS * (load % LOADS))
+}
+
+fn untag(tag: u32) -> (usize, u32, u32) {
+    let at = tag.saturating_sub(1);
+    let rest = at / 3;
+    ((rest % SIM_SLOTS) as usize, at % 3, rest / SIM_SLOTS)
 }
 
 pub(crate) struct SettleAsk {
@@ -61,7 +66,6 @@ struct Square {
     stepping: u64,
     flowing: u64,
     phase: Phase,
-    asked_means: Option<u64>,
     means: Option<Vec<u8>>,
     ground: Option<Vec<u8>>,
 }
@@ -123,9 +127,9 @@ pub(crate) struct Raise {
 
 #[derive(Default)]
 pub(crate) struct SettleWork {
-    pub(crate) layout: Option<(Layout, u64)>,
+    pub(crate) layout: Option<Layout>,
     pub(crate) loads: Vec<Option<(u32, Arc<SettleStart>)>>,
-    pub(crate) room: Option<(usize, u64)>,
+    pub(crate) room: Option<usize>,
     pub(crate) raise: Option<Raise>,
     pub(crate) squares: Vec<SimSlot>,
     pub(crate) steps: u32,
@@ -143,19 +147,16 @@ pub struct SettleFeedback {
     squares: Vec<Option<Square>>,
     loads: u32,
     layout: Option<Layout>,
-    layout_generation: u64,
     room: Option<usize>,
-    room_generation: u64,
     steps: u32,
-    asked: BTreeMap<(u32, u64), (usize, u32)>,
-    arrivals: Vec<(u64, u32, Vec<u8>)>,
+    arrivals: Vec<(u32, Vec<u8>)>,
     made: Vec<SettleMade>,
     pub(crate) work: SettleWork,
 }
 
-impl Readback for SettleFeedback {
-    fn arrived(&mut self, frame: u64, tag: u32, bytes: &[u8]) {
-        self.arrivals.push((frame, tag, bytes.to_vec()));
+impl Readable for SettleFeedback {
+    fn arrived(&mut self, tag: u32, read: Readback<&[u8]>) {
+        self.arrivals.push((tag, read.value.to_vec()));
     }
 }
 
@@ -164,25 +165,6 @@ fn needs(start: &SettleStart) -> Capacity {
 }
 
 impl SettleFeedback {
-    pub(crate) fn restart(&mut self) {
-        for square in std::mem::take(&mut self.squares)
-            .into_iter()
-            .flatten()
-            .rev()
-        {
-            self.waiting.push_front(SettleAsk {
-                terrain: square.terrain,
-                inputs: square.inputs,
-                start: square.start,
-            });
-        }
-        self.layout = None;
-        self.room = None;
-        self.steps = 0;
-        self.asked.clear();
-        self.arrivals.clear();
-    }
-
     fn settle(&mut self, starts: Vec<SettleAsk>) {
         for ask in starts {
             let asked = self.waiting.iter().any(|held| held.inputs == ask.inputs)
@@ -233,34 +215,19 @@ impl SettleFeedback {
         }));
     }
 
-    pub(crate) fn looks_left(&self) -> u64 {
-        let waiting = self.waiting.len() as u64 * SETTLE_LOOKS;
-        let settling = self.squares.iter().flatten().map(|square| {
-            let taken = u64::from((square.steps + square.stirred) / LOOK_EVERY);
-            SETTLE_LOOKS.saturating_sub(taken)
-        });
-        waiting + settling.sum::<u64>()
+    pub(crate) fn squares_left(&self) -> u32 {
+        (self.waiting.len() + self.squares.iter().flatten().count()) as u32
     }
 
-    fn reading(&self) -> bool {
-        !self.asked.is_empty()
-    }
-
-    fn prepare(
-        &mut self,
-        (cooking, binding, frame): (bool, u64, u64),
-        ground: &dyn Fn(Entity) -> Option<u32>,
-    ) {
+    fn prepare(&mut self, (cooking, binding): (bool, u64), ground: &dyn Fn(Entity) -> Option<u32>) {
         self.work = SettleWork::default();
         let ran = std::mem::take(&mut self.steps);
-        let wanted = self.take_readbacks(ran, cooking, frame);
+        let wanted = self.take_readbacks(ran, cooking);
         let idle = self.waiting.is_empty() && self.squares.iter().all(Option::is_none);
         if idle {
-            if !self.reading() {
-                self.layout = None;
-                self.room = None;
-                self.squares.clear();
-            }
+            self.layout = None;
+            self.room = None;
+            self.squares.clear();
             return;
         }
         self.ensure_buffers(binding, cooking);
@@ -268,9 +235,9 @@ impl SettleFeedback {
         let Some(layout) = self.layout else {
             return;
         };
-        self.work.layout = Some((layout, self.layout_generation));
+        self.work.layout = Some(layout);
         self.raise(&layout, ground);
-        self.work.room = self.room.map(|room| (room, self.room_generation));
+        self.work.room = self.room;
         self.work.loads = self
             .squares
             .iter()
@@ -297,7 +264,7 @@ impl SettleFeedback {
             self.steps = 1 << (u32::BITS - 1 - most.leading_zeros());
         }
         let looks = self.write_squares();
-        self.ask_readbacks(&layout, (looks, wanted), frame);
+        self.ask_readbacks(&layout, (looks, wanted));
     }
 
     fn raise(&mut self, layout: &Layout, ground: &dyn Fn(Entity) -> Option<u32>) {
@@ -317,7 +284,6 @@ impl SettleFeedback {
         let entries = 2 * blocks + blocks * window;
         if self.room.is_none_or(|room| room < entries) {
             self.room = Some(entries.max(1).next_power_of_two());
-            self.room_generation += 1;
         }
         let side = i64::from(BLOCK_SIDE);
         let first = (slot as u32) * layout.capacity.blocks;
@@ -384,7 +350,6 @@ impl SettleFeedback {
                 stepping: steps,
                 flowing: 0,
                 phase: Phase::Stepping,
-                asked_means: None,
                 means: None,
                 ground: None,
             });
@@ -450,12 +415,7 @@ impl SettleFeedback {
         looks
     }
 
-    fn ask_readbacks(
-        &mut self,
-        layout: &Layout,
-        (looks, wanted): (Vec<usize>, Vec<usize>),
-        frame: u64,
-    ) {
+    fn ask_readbacks(&mut self, layout: &Layout, (looks, wanted): (Vec<usize>, Vec<usize>)) {
         let held = layout.held();
         let means = CELL_MEANS as u64;
         for slot in looks {
@@ -466,25 +426,13 @@ impl SettleFeedback {
             let offset =
                 (layout.averages_at(slot as u32) + (u64::from(SIM_CELL_SUMS) + means) * held) * 16;
             let bytes = u64::from(SIM_BLOCK_LOOKS) * blocks * 16;
-            self.asked
-                .insert((tag(slot, LOOK), frame), (slot, square.load));
             self.work.reads.push(Read {
-                tag: tag(slot, LOOK),
+                tag: tag(slot, LOOK, square.load),
                 source: Source::Averages,
                 range: offset..offset + bytes,
             });
         }
-        let lost: Vec<usize> = self
-            .squares
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, square)| {
-                let square = square.as_ref()?;
-                let asked = square.asked_means?;
-                (square.phase == Phase::Reading && frame >= asked + LOST_FRAMES).then_some(slot)
-            })
-            .collect();
-        for slot in wanted.into_iter().chain(lost) {
+        for slot in wanted {
             let Some(square) = self.squares[slot].as_mut() else {
                 continue;
             };
@@ -492,20 +440,15 @@ impl SettleFeedback {
             let blocks = square.start.stored.stored() as u64;
             let offset = (layout.averages_at(slot as u32) + u64::from(SIM_CELL_SUMS) * held) * 16;
             let ground = layout.ground_at(slot as u32) * 4;
-            square.asked_means = Some(frame);
             square.means = None;
             square.ground = None;
-            for kind in [MEANS, GROUND] {
-                self.asked
-                    .insert((tag(slot, kind), frame), (slot, square.load));
-            }
             self.work.reads.push(Read {
-                tag: tag(slot, MEANS),
+                tag: tag(slot, MEANS, square.load),
                 source: Source::Averages,
                 range: offset..offset + means * cells * 16,
             });
             self.work.reads.push(Read {
-                tag: tag(slot, GROUND),
+                tag: tag(slot, GROUND, square.load),
                 source: Source::Ground,
                 range: ground..ground + blocks * BLOCK_GROUND as u64 * 4,
             });
@@ -538,7 +481,7 @@ impl SettleFeedback {
             .map(|ask| &ask.start)
             .chain(self.squares.iter().flatten().map(|square| &square.start))
             .fold(Capacity::default(), |most, start| most.max(needs(start)));
-        let settling = self.squares.iter().any(Option::is_some) || self.reading();
+        let settling = self.squares.iter().any(Option::is_some);
         let fits = self
             .layout
             .is_some_and(|layout| layout.capacity.holds(largest));
@@ -554,25 +497,19 @@ impl SettleFeedback {
             slots,
             live: false,
         });
-        self.layout_generation += 1;
         self.room = None;
         self.squares = (0..slots).map(|_| None).collect();
     }
 
-    fn take_readbacks(&mut self, ran: u32, cooking: bool, frame: u64) -> Vec<usize> {
+    fn take_readbacks(&mut self, ran: u32, cooking: bool) -> Vec<usize> {
         let mut wanted = Vec::new();
-        let mut arrivals = std::mem::take(&mut self.arrivals);
-        arrivals.sort_by_key(|(asked, tag, _)| (*asked, *tag));
-        for (asked, tag, bytes) in arrivals {
-            let Some((slot, load)) = self.asked.remove(&(tag, asked)) else {
-                continue;
-            };
-            let kind = (tag - 1) % 3;
+        for (tag, bytes) in std::mem::take(&mut self.arrivals) {
+            let (slot, kind, load) = untag(tag);
             let Some(square) = self
                 .squares
                 .get_mut(slot)
                 .and_then(Option::as_mut)
-                .filter(|square| square.load == load)
+                .filter(|square| square.load % LOADS == load)
             else {
                 continue;
             };
@@ -608,8 +545,6 @@ impl SettleFeedback {
                 wanted.push(slot);
             }
         }
-        self.asked
-            .retain(|&(_, asked), _| frame < asked + LOST_FRAMES);
         wanted
     }
 
@@ -846,7 +781,7 @@ pub(crate) fn hand_settles(mut state: ResMut<WaterState>, mut feedback: ResMut<S
 
 pub(crate) fn plan_settles(
     ground: Res<GroundTiles>,
-    (limits, cook, time): (Res<DeviceLimits>, Res<CookMode>, Res<FrameTime>),
+    (limits, cook): (Res<DeviceLimits>, Res<CookMode>),
     mut jobs: Jobs,
     mut state: ResMut<WaterState>,
     mut feedback: ResMut<SettleFeedback>,
@@ -861,15 +796,14 @@ pub(crate) fn plan_settles(
     let feedback = &mut *feedback;
     let live: Vec<Entity> = state.terrains.iter().map(|terrain| terrain.entity).collect();
     feedback.evict(&live);
-    feedback.prepare((cook.cooking, limits.storage_room, time.frame), &index_of);
+    feedback.prepare((cook.cooking, limits.storage_room), &index_of);
     for (input, made) in std::mem::take(&mut feedback.made) {
         if let Ok(bytes) = &made {
-            let kept = jobs.keep(&SETTLED, &input, bytes.clone());
-            jobs.cancel(kept);
+            jobs.keep(&SETTLED, &input, bytes.clone());
         }
         state.settling.settled.push((input, made.map(Arc::from)));
     }
-    state.looks_left = feedback.looks_left();
+    state.squares_left = feedback.squares_left();
 }
 
 fn load(
@@ -923,8 +857,8 @@ pub(crate) struct SettleGpu {
     raising: ComputePipeline<WaterGpu>,
     raise: Pass<WaterGpu>,
     pass: Pass<WaterGpu>,
-    layout: Option<(Layout, u64)>,
-    room: Option<(usize, u64)>,
+    layout: Option<Layout>,
+    room: Option<usize>,
     loaded: Vec<u32>,
     raised: u32,
     run: Option<(u32, u32, u32, bool, u32)>,
@@ -982,7 +916,7 @@ impl SettleGpu {
     pub(crate) fn prepare(&mut self, work: &SettleWork, cx: &mut Prepare<'_, WaterGpu>) {
         self.run = None;
         self.raised = 0;
-        let Some((layout, generation)) = work.layout else {
+        let Some(layout) = work.layout else {
             self.layout = None;
             self.room = None;
             self.slots.release(cx);
@@ -990,12 +924,12 @@ impl SettleGpu {
             self.loaded.clear();
             return;
         };
-        let fresh = self.layout.is_none_or(|(_, held)| held != generation);
+        let fresh = self.layout != Some(layout);
         self.slots.hold(layout, fresh, cx);
         if fresh {
             self.loaded = vec![0; layout.slots as usize];
         }
-        self.layout = Some((layout, generation));
+        self.layout = Some(layout);
         for (slot, wanted) in work.loads.iter().enumerate() {
             let Some((count, start)) = wanted else {
                 continue;
@@ -1009,10 +943,10 @@ impl SettleGpu {
             }
         }
         match work.room {
-            Some((room, generation)) => {
-                let fresh = fresh || self.room != Some((room, generation));
+            Some(room) => {
+                let fresh = fresh || self.room != Some(room);
                 self.setup.hold((room, 0), fresh, cx);
-                self.room = Some((room, generation));
+                self.room = Some(room);
             }
             None => {
                 self.room = None;
@@ -1042,14 +976,13 @@ impl SettleGpu {
                 Source::Averages => self.slots.averages,
                 Source::Ground => self.slots.ground,
             };
-            cx.read_back::<SettleFeedback>(read.tag, buffer, read.range.clone(), AfterRead::Keep);
+            cx.read_back_once::<SettleFeedback>(
+                read.tag,
+                buffer,
+                read.range.clone(),
+                AfterRead::Keep,
+            );
         }
-    }
-
-    pub(crate) fn forget(&mut self) {
-        self.layout = None;
-        self.room = None;
-        self.loaded.clear();
     }
 
     pub(crate) fn encode(&mut self, pass: Pass<WaterGpu>, cx: &mut Encode<'_, WaterGpu>) -> bool {

@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::math::{clamp, max};
-use engine_core::{Cut, DeviceLimits, Error, FrameTime, Readback, View};
+use engine_core::{Cut, DeviceLimits, Error, FrameTime, Readable, Readback, View};
 use engine_places_simulation::wind::Wind;
 use engine_places_world::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
@@ -41,9 +41,9 @@ pub(crate) struct ParticleTallies {
     pub(crate) counts: [u32; TALLY_WORDS],
 }
 
-impl Readback for ParticleTallies {
-    fn arrived(&mut self, _: u64, _: u32, bytes: &[u8]) {
-        for (count, word) in self.counts.iter_mut().zip(bytes.as_chunks::<4>().0) {
+impl Readable for ParticleTallies {
+    fn arrived(&mut self, _: u32, read: Readback<&[u8]>) {
+        for (count, word) in self.counts.iter_mut().zip(read.value.as_chunks::<4>().0) {
             *count = u32::from_le_bytes(*word);
         }
     }
@@ -81,10 +81,6 @@ pub(crate) struct Grid {
     pub(crate) points: u32,
     pub(crate) pixels: f32,
     pub(crate) ridden: f32,
-    held: Option<[i64; 2]>,
-    read: u32,
-    window: [i64; 2],
-    pub(crate) generation: u64,
 }
 
 #[derive(Default)]
@@ -92,16 +88,13 @@ pub(crate) struct Particles {
     pub(crate) grid: Option<Grid>,
     last: Option<f64>,
     step: Option<u32>,
-    generation: u64,
     pub(crate) frame: Option<ParticleFrame>,
 }
 
 impl Particles {
     fn rest(&mut self) {
         self.frame = None;
-        if self.grid.take().is_some() {
-            self.generation += 1;
-        }
+        self.grid = None;
         self.last = None;
         self.step = None;
     }
@@ -111,10 +104,6 @@ impl Particles {
         (terrain, seen, limits): (u32, ParticleView, &DeviceLimits),
         (settings, ridden, wind, seconds): (&Water, f32, [f32; 2], f64),
     ) {
-        if let Some(grid) = self.grid.as_mut() {
-            grid.held = Some(grid.window);
-            grid.read ^= 1;
-        }
         let texel = settings.simulation_cell / TEXEL_SPLIT as f32;
         let asked = wanted(limits, seen);
         let kept = self.grid.as_ref().filter(|grid| {
@@ -128,7 +117,6 @@ impl Particles {
                 && grid.sizes.pools[0] <= 2 * sizes.pools[0]
         });
         if !keeps {
-            self.generation += 1;
             self.grid = Some(Grid {
                 sizes,
                 texel,
@@ -136,10 +124,6 @@ impl Particles {
                 points: lattice_points(sizes.square),
                 pixels: HANDOVER_PIXELS,
                 ridden: 0.0,
-                held: None,
-                read: 0,
-                window: [0; 2],
-                generation: self.generation,
             });
         }
         let Some(grid) = self.grid.as_mut() else {
@@ -155,7 +139,6 @@ impl Particles {
         let half = i64::from(grid.sizes.texels / 2);
         let window = [seen.detail.x, seen.detail.z]
             .map(|at| (f64::from(at) / f64::from(texel)).floor() as i64 - half);
-        grid.window = window;
         let elapsed = self.last.map_or(0.0, |last| {
             clamp((seconds - last) as f32, 0.0, LONGEST_FRAME as f32)
         });
@@ -165,7 +148,6 @@ impl Particles {
         let begun = self.step.unwrap_or(step);
         self.step = Some(step);
         let least = ((LONGEST_FRAME / f64::from(tick)).ceil() as u32).next_power_of_two();
-        let held = grid.held.unwrap_or(window);
         let spacing = f64::from(texel) * f64::from(PARTICLE_LATTICE);
         let before = i64::from(grid.sizes.square / 2 + PARTICLE_MARGIN);
         let lattice = [seen.detail.x, seen.detail.z]
@@ -174,8 +156,8 @@ impl Particles {
             window: [
                 window[0] as i32,
                 window[1] as i32,
-                held[0] as i32,
-                held[1] as i32,
+                window[0] as i32,
+                window[1] as i32,
             ],
             lattice: [
                 lattice[0] as i32,
@@ -184,11 +166,11 @@ impl Particles {
                 grid.sizes.texels as i32,
             ],
             step: [texel, elapsed, wind[0], wind[1]],
-            flags: [u32::from(grid.held.is_none()), begun, step, least],
+            flags: [1, begun, step, least],
             pool: [
                 grid.sizes.pools[0],
                 grid.sizes.pools[1],
-                grid.read,
+                0,
                 grid.points * grid.points,
             ],
             eddies: [tick, ridden, 0.0, 0.0],
@@ -295,7 +277,7 @@ pub(crate) fn plan_particles(
 ) {
     let state = &mut *state;
     let seen = ParticleView::of(&view);
-    let carried = (water.enabled && !state.watered.is_empty())
+    let carried = (!state.watered.is_empty())
         .then(|| particle_terrain(&state.watered, (&*ground, &*tiles), seen.detail))
         .flatten();
     let seconds = time.presented_seconds;
@@ -343,8 +325,16 @@ pub(crate) struct ParticlesGpu {
     splat_pipeline: ComputePipeline<WaterGpu>,
     look: ComputePipeline<WaterGpu>,
     down: Vec<ComputePipeline<WaterGpu>>,
-    generation: Option<u64>,
+    sized: Option<(ParticleSizes, f32)>,
+    grid: GridState,
+    planned: Option<([i32; 2], u32)>,
     running: Option<(u32, u32)>,
+}
+
+#[derive(Clone, Copy)]
+enum GridState {
+    Fresh,
+    Running { held: [i32; 2], read: u32 },
 }
 
 pub(crate) fn levels(
@@ -501,7 +491,9 @@ impl ParticlesGpu {
             splat_pipeline,
             look,
             down,
-            generation: None,
+            sized: None,
+            grid: GridState::Fresh,
+            planned: None,
             running: None,
         })
     }
@@ -532,7 +524,9 @@ impl ParticlesGpu {
         self.running = None;
         cx.allocate_buffer(self.frame, size_of::<ParticleFrame>() as u64);
         let (Some(grid), Some(frame)) = (particles.grid.as_ref(), particles.frame.as_ref()) else {
-            self.generation = None;
+            self.sized = None;
+            self.grid = GridState::Fresh;
+            self.planned = None;
             for buffer in [self.lattice, self.pool, self.counts, self.splat] {
                 cx.allocate_buffer(buffer, 256);
             }
@@ -554,8 +548,12 @@ impl ParticlesGpu {
             pools,
         } = grid.sizes;
         let points = grid.points;
-        if self.generation != Some(grid.generation) {
-            self.generation = Some(grid.generation);
+        let sized = Some((grid.sizes, grid.texel));
+        let ran = self.planned.take().filter(|_| cx.ran(self.splat_pass));
+        let resized = self.sized != sized;
+        if resized {
+            self.sized = sized;
+            self.grid = GridState::Fresh;
             let area = u64::from(texels) * u64::from(texels);
             let pooled = u64::from(pools[0]) + u64::from(pools[1]);
             let sites = u64::from(points) * u64::from(points);
@@ -586,7 +584,23 @@ impl ParticlesGpu {
                 TEXTURE_LEVELS + 1,
             );
         }
-        cx.write(self.frame, 0, &[*frame]);
+        if !resized && let Some((held, read)) = ran {
+            self.grid = GridState::Running {
+                held,
+                read: read ^ 1,
+            };
+        }
+        let mut frame = *frame;
+        let (held, read, fresh) = match self.grid {
+            GridState::Running { held, read } => (held, read, false),
+            GridState::Fresh => ([frame.window[0], frame.window[1]], 0, true),
+        };
+        frame.window[2] = held[0];
+        frame.window[3] = held[1];
+        frame.flags[0] = u32::from(fresh);
+        frame.pool[2] = read;
+        self.planned = Some(([frame.window[0], frame.window[1]], read));
+        cx.write(self.frame, 0, &[frame]);
         self.running = Some((points.div_ceil(PARTICLE_SIDE), texels));
         let args = u64::from(PARTICLE_ARGS) * 4;
         cx.run(self.lattice_pass);
@@ -625,10 +639,6 @@ impl ParticlesGpu {
 
     pub(crate) fn running(&self) -> bool {
         self.running.is_some()
-    }
-
-    pub(crate) fn forget(&mut self) {
-        self.generation = None;
     }
 
     pub(crate) fn encode(&mut self, pass: Pass<WaterGpu>, cx: &mut Encode<'_, WaterGpu>) -> bool {

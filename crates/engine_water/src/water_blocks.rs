@@ -2,11 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_core::{DeviceLimits, WorkClock};
+use engine_core::{Cursor, DeviceLimits, FrameBudget, Since};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::PATCHES_PER_TILE;
-use engine_places_world::ground::{GroundTiles, GroundWork, HeldTile};
-use engine_render::{Buffer, Prepare, Texture, wgpu};
+use engine_places_world::ground::{GroundTiles, HeldTile};
+use engine_render::{Allocation, Buffer, Prepare, Texture, wgpu};
 
 use crate::TileWater;
 use crate::drawn::{DrawnWater, INFO_BYTES, PATCH_BYTES, SURFACE_BYTES};
@@ -14,9 +14,8 @@ use crate::gpu::{
     NO_WATER_BLOCK, WATER_BLOCK as BLOCK, WATER_BLOCKS_SIDE as SIDE,
     WATER_TILE_WORDS as TILE_WORDS, WATER_WAITING,
 };
-use crate::state::{HeldWater, WaterState, WaterTerrain};
+use crate::state::{Base, HeldWater, WaterState, WaterTerrain};
 use crate::water::WaterGpu;
-use crate::work::Work;
 
 const PER_LAYER: u32 = SIDE * SIDE;
 const LAYER_TEXELS: u32 = BLOCK * SIDE;
@@ -51,12 +50,50 @@ fn ground_tile(ground: &GroundTiles, slot: Slot) -> Option<&HeldTile> {
         .map(|at| &ground.held[at])
 }
 
-fn tile_water<'a>(terrains: &'a [WaterTerrain], tile: &HeldTile) -> Option<&'a HeldWater> {
-    terrains
+enum Shown<'a> {
+    Ready(&'a HeldWater),
+    Coming,
+    Gone,
+}
+
+fn tile_water<'a>(terrains: &'a [WaterTerrain], tile: &HeldTile) -> Shown<'a> {
+    let Some(water) = terrains
         .iter()
         .find(|terrain| terrain.entity == tile.terrain)
         .and_then(|terrain| terrain.held.get(&tile.key))
-        .filter(|water| water.resident() && water.face.stamp == tile.stamp)
+    else {
+        return Shown::Gone;
+    };
+    if water.face.stamp != tile.stamp {
+        return Shown::Coming;
+    }
+    match water.base {
+        Base::Made => Shown::Ready(water),
+        Base::Waiting | Base::Asking(_) | Base::Drawing(_) => Shown::Coming,
+        Base::Failed => Shown::Gone,
+    }
+}
+
+fn patch_writes(tile: &HeldWater, before: Option<&TileBlocks>) -> u64 {
+    let (Some(water), Some(drawn)) = (tile.water.as_deref(), tile.drawn.as_ref()) else {
+        return 0;
+    };
+    let patches = PATCHES_PER_TILE as usize;
+    let kept = before.filter(|before| before.stamp == tile.face.stamp);
+    let mut writes = 0;
+    for pz in 0..patches {
+        for px in 0..patches {
+            let index = pz * patches + px;
+            if !water.patch_holds_water(px as u32, pz as u32) {
+                continue;
+            }
+            let held = kept.is_some_and(|before| before.blocks[index] != NO_WATER_BLOCK);
+            if !held || drawn.changed(index) {
+                writes += 1;
+            }
+        }
+    }
+    writes
 }
 
 #[derive(Default)]
@@ -74,6 +111,7 @@ pub(crate) struct Blocks {
     waiting: BTreeSet<Slot>,
     frames: u64,
     waited: BTreeMap<Slot, u64>,
+    cursors: BTreeMap<Entity, Cursor>,
 }
 
 impl Blocks {
@@ -142,31 +180,20 @@ impl Blocks {
         ground: &GroundTiles,
         terrains: &[WaterTerrain],
         max_layers: u32,
-        work: &Work,
+        budget: &mut FrameBudget,
     ) -> bool {
         let mut changed = false;
         let mut replacing = Vec::new();
         let mut arriving = Vec::new();
         for slot in std::mem::take(&mut self.waiting) {
             let tile = ground_tile(ground, slot);
-            let Some(water) = tile.and_then(|tile| tile_water(terrains, tile)) else {
-                let Some(gone) = self.tiles.remove(&slot) else {
+            let water = match tile.map_or(Shown::Gone, |tile| tile_water(terrains, tile)) {
+                Shown::Ready(water) => water,
+                Shown::Coming => continue,
+                Shown::Gone => {
+                    changed |= self.drop_tile(slot, tile, terrains);
                     continue;
-                };
-                changed = true;
-                self.free.extend(
-                    gone.blocks
-                        .iter()
-                        .copied()
-                        .filter(|&block| block != NO_WATER_BLOCK),
-                );
-                if let Some(tile) = tile {
-                    self.layer_writes.push((tile.layer, slot));
-                    if knows(terrains, slot.0) {
-                        self.waited.insert(slot, self.frames);
-                    }
                 }
-                continue;
             };
             match self.tiles.get(&slot) {
                 Some(held)
@@ -179,7 +206,8 @@ impl Blocks {
         self.free.sort_unstable_by(|a, b| b.cmp(a));
         let mut uploaded = false;
         for (slot, water) in replacing {
-            if uploaded && work.expired() {
+            let bytes = patch_writes(water, self.tiles.get(&slot)) * PATCH_BYTES as u64;
+            if (uploaded && budget.expired()) || !budget.spend("water", bytes) {
                 self.waiting.insert(slot);
                 continue;
             }
@@ -193,7 +221,8 @@ impl Blocks {
             }
         }
         for (slot, water) in arriving {
-            if uploaded && work.expired() {
+            let bytes = patch_writes(water, None) * PATCH_BYTES as u64;
+            if (uploaded && budget.expired()) || !budget.spend("water", bytes) {
                 self.waiting.insert(slot);
                 continue;
             }
@@ -207,6 +236,30 @@ impl Blocks {
             }
         }
         changed
+    }
+
+    fn drop_tile(
+        &mut self,
+        slot: Slot,
+        tile: Option<&HeldTile>,
+        terrains: &[WaterTerrain],
+    ) -> bool {
+        let Some(gone) = self.tiles.remove(&slot) else {
+            return false;
+        };
+        self.free.extend(
+            gone.blocks
+                .iter()
+                .copied()
+                .filter(|&block| block != NO_WATER_BLOCK),
+        );
+        if let Some(tile) = tile {
+            self.layer_writes.push((tile.layer, slot));
+            if knows(terrains, slot.0) {
+                self.waited.insert(slot, self.frames);
+            }
+        }
+        true
     }
 
     fn count_wait(&mut self, (terrain, key): Slot, blocks: &[u32]) {
@@ -333,40 +386,43 @@ impl Blocks {
 
 pub(crate) fn place_blocks(
     ground: Res<GroundTiles>,
-    (limits, clock, work): (Res<DeviceLimits>, Res<WorkClock>, Res<GroundWork>),
+    limits: Res<DeviceLimits>,
+    mut budget: ResMut<FrameBudget>,
     mut state: ResMut<WaterState>,
 ) {
     let state = &mut *state;
     let blocks = &mut state.blocks;
     blocks.begin();
-    let whole = limits.is_changed()
-        || state.dropped
-        || state.terrains.iter().any(|terrain| terrain.touched_all);
+    let mut whole = limits.is_changed() || state.dropped;
+    let mut touched = Vec::new();
+    let cursors = std::mem::take(&mut blocks.cursors);
+    for terrain in &state.terrains {
+        let mut cursor = cursors.get(&terrain.entity).copied().unwrap_or_default();
+        match terrain.touched.since(&mut cursor) {
+            Since::Same => {}
+            Since::Listed(keys) => touched.extend(keys.iter().map(|&key| (terrain.entity, key))),
+            Since::All => whole = true,
+        }
+        blocks.cursors.insert(terrain.entity, cursor);
+    }
     if whole || ground.is_changed() {
         blocks.whole_directory = whole;
         blocks.walk(&ground, &state.terrains);
     } else {
-        for terrain in &state.terrains {
-            let slots = terrain.touched.iter().map(|&key| (terrain.entity, key));
-            blocks.waiting.extend(slots);
-        }
+        blocks.waiting.extend(touched);
     }
     if blocks.waiting.is_empty() {
         return;
     }
-    let work = Work::of(&clock, &work, state.uploaded);
-    if blocks.place(&ground, &state.terrains, limits.texture_layers, &work) {
+    if blocks.place(&ground, &state.terrains, limits.texture_layers, &mut budget) {
         state.watered = blocks.holding();
     }
-    work.upload(u64::from(blocks.uploads) * PATCH_BYTES as u64);
-    state.uploaded = work.uploaded();
 }
 
 pub(crate) struct BlocksGpu {
     pub(crate) surface: Texture<WaterGpu>,
     pub(crate) info: Texture<WaterGpu>,
     pub(crate) directory: Buffer<WaterGpu>,
-    directory_layers: Option<u32>,
 }
 
 impl BlocksGpu {
@@ -379,12 +435,7 @@ impl BlocksGpu {
             surface,
             info,
             directory,
-            directory_layers: None,
         }
-    }
-
-    pub(crate) fn forget(&mut self) {
-        self.directory_layers = None;
     }
 
     pub(crate) fn prepare(
@@ -439,10 +490,8 @@ impl BlocksGpu {
         }
         let entry = TILE_WORDS as usize;
         let words = ground.layers as usize * entry;
-        cx.allocate_buffer(self.directory, (words * 4) as u64);
-        let whole = blocks.whole_directory || self.directory_layers != Some(ground.layers);
-        self.directory_layers = Some(ground.layers);
-        if whole {
+        let made = cx.allocate_buffer(self.directory, (words * 4) as u64);
+        if blocks.whole_directory || made == Allocation::Fresh {
             let mut directory = vec![NO_WATER_BLOCK; words];
             for tile in &ground.held {
                 let at = tile.layer as usize * entry;

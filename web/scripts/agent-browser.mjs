@@ -212,8 +212,8 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
       if (expectedBuild !== undefined && build !== expectedBuild) throw new AgentError("build_mismatch", "build", { allowed: variants([expectedBuild]), got: build });
       await readyRequest({ verb: "control", name: "render" }, FIRST_RENDER_MS);
       const compiled = Date.now() + FIRST_RENDER_MS;
-      while ((await readyRequest(status, FIRST_RENDER_MS)).result.rendering?.pipelines_compiling === true) {
-        if (Date.now() > compiled) throw new AgentError("runtime_busy", "$", { allowed: atMost(FIRST_RENDER_MS), got: { pipelines_compiling: true } });
+      while ((await readyRequest(status, FIRST_RENDER_MS)).result.rendering?.readiness?.compiling > 0) {
+        if (Date.now() > compiled) throw new AgentError("runtime_busy", "$", { allowed: atMost(FIRST_RENDER_MS), got: { compiling: true } });
         await delay(50);
       }
     } catch (error) {

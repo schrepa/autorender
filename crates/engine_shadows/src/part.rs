@@ -4,14 +4,14 @@ use engine_places_rendering::shadows::{
     CasterMap, CasterView, SHADOW_REGIONS, ShadowCasters, ShadowMaps,
 };
 use engine_render::{
-    Access, AfterRead, Attach, Bind, Buffer, ComputePipeline, Count, DebugShown, DepthUse,
-    DrawInput, Draws, Encode, FULLSCREEN, GpuPart, Install, Layer, Lifetime, Own, Pass, Pipeline,
-    Prepare, RenderPipeline, SamplerDesc, Shape, Texture, VertexLayout, ViewTarget, wgpu,
+    Access, AfterRead, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DebugShown,
+    DepthUse, DrawInput, Draws, Encode, FULLSCREEN, GpuPart, Install, Layer, Lifetime, Own, Pass,
+    Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, VertexLayout, ViewTarget, wgpu,
 };
 
 use crate::constants::{LEVEL_WORDS, MARK_GROUP, SKY_LAYERS};
 use crate::gpu_layouts::{CasterCull, ComposeData, Route, SkyViews};
-use crate::plan::{DEPTH_MARKS, MAP_MARKS, MASKS, ShadowFeedback, ShadowPlan};
+use crate::plan::{MarkKind, ShadowDrawn, ShadowFeedback, ShadowPlan};
 use crate::regions::{MOVING_VIEW, SKY_VIEW};
 use crate::shaders;
 use crate::sky::RESOLUTION;
@@ -65,7 +65,7 @@ pub(crate) struct ShadowsGpu {
     moving: u32,
     marked: Option<[u32; 3]>,
     opened: Option<(u32, u32)>,
-    made: Option<u64>,
+    drawing: Option<u32>,
     written_table: Vec<u64>,
     compose_bytes: u64,
 }
@@ -185,18 +185,14 @@ impl ShadowsGpu {
         let Some(key) = plan.key else {
             return;
         };
-        if self.made != Some(plan.made) {
-            self.made = Some(plan.made);
-            for texture in [self.atlas, self.regions, self.tiles] {
-                cx.release(texture);
-            }
-        }
         let (width, height) = key.atlas.size();
         let side = key.region_side();
         let (columns, rows) = key.table_size();
         cx.allocate(self.atlas, extent(width, height, 1), 1);
         cx.allocate(self.regions, extent(side, side, SHADOW_REGIONS), 1);
-        cx.allocate(self.tiles, extent(columns, rows, 1), 1);
+        if cx.allocate(self.tiles, extent(columns, rows, 1), 1) == Allocation::Fresh {
+            self.written_table.clear();
+        }
         if plan.sky.live {
             cx.allocate(self.sky, extent(RESOLUTION, RESOLUTION, SKY_LAYERS), 1);
         } else {
@@ -334,7 +330,7 @@ impl GpuPart for ShadowsGpu {
             moving: 0,
             marked: None,
             opened: None,
-            made: None,
+            drawing: None,
             written_table: Vec::new(),
             compose_bytes: 0,
         })
@@ -345,6 +341,9 @@ impl GpuPart for ShadowsGpu {
         (maps, plan, view, shown): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        if let Some(batch) = self.drawing.take() {
+            cx.deliver::<ShadowDrawn>(batch, vec![u8::from(cx.ran(self.maps))]);
+        }
         self.open_sky(&plan, &view, *shown, cx);
         self.allocate(&plan, cx);
         self.upload(&plan, cx);
@@ -364,6 +363,9 @@ impl GpuPart for ShadowsGpu {
         if !self.at.is_empty() || self.composed > 0 {
             cx.run(self.maps);
         }
+        if self.composed > 0 {
+            self.drawing = Some(plan.batch);
+        }
         let size = view.render_size();
         self.marked = (plan.mask_words != 0 && size.x != 0 && size.y != 0).then_some([
             size.x.div_ceil(MARK_GROUP),
@@ -377,15 +379,20 @@ impl GpuPart for ShadowsGpu {
         if self.marked.is_some() {
             cx.run(self.marks);
             cx.read_back::<ShadowFeedback>(
-                DEPTH_MARKS,
+                plan.tag(MarkKind::Depth),
                 self.depth_marks,
                 bytes.clone(),
                 AfterRead::Clear,
             );
         }
-        cx.read_back::<ShadowFeedback>(MAP_MARKS, self.map_marks, bytes.clone(), AfterRead::Clear);
         cx.read_back::<ShadowFeedback>(
-            MASKS,
+            plan.tag(MarkKind::Map),
+            self.map_marks,
+            bytes.clone(),
+            AfterRead::Clear,
+        );
+        cx.read_back::<ShadowFeedback>(
+            plan.tag(MarkKind::Masks),
             self.map_marks,
             bytes.end..2 * bytes.end,
             AfterRead::Clear,

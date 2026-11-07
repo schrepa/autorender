@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, GpuPresentation, MaterialHandle, MeshHandle, NodeInfo,
-    NodePose, Readback, ResidentMesh,
+    AlphaMode, AssetLibrary, AssetResidency, Cursor, GpuPresentation, MaterialHandle, MeshHandle,
+    NodeInfo, NodePose, Readable, Readback, ResidentMesh,
 };
 use glam::{Mat4, Vec3};
 
@@ -106,8 +106,9 @@ fn word(bytes: &[u8], index: usize) -> u32 {
     })
 }
 
-impl Readback for PresentationTotals {
-    fn arrived(&mut self, frame: u64, tag: u32, bytes: &[u8]) {
+impl Readable for PresentationTotals {
+    fn arrived(&mut self, tag: u32, read: Readback<&[u8]>) {
+        let (frame, bytes) = (read.written.0, read.value);
         if tag == WATCHED {
             self.watching.push((frame, word(bytes, 0)));
             return;
@@ -147,9 +148,9 @@ impl CasterTotals {
     }
 }
 
-impl Readback for CasterTotals {
-    fn arrived(&mut self, _frame: u64, _tag: u32, bytes: &[u8]) {
-        self.last = Some([word(bytes, 0), word(bytes, 1)]);
+impl Readable for CasterTotals {
+    fn arrived(&mut self, _tag: u32, read: Readback<&[u8]>) {
+        self.last = Some([word(read.value, 0), word(read.value, 1)]);
     }
 }
 
@@ -524,7 +525,6 @@ impl Stillness {
 
 #[derive(Default)]
 pub(crate) struct Pyramid {
-    pub base: (u32, u32),
     pub count: u32,
     pub written: Vec<(u32, u32)>,
 }
@@ -542,18 +542,16 @@ pub(crate) struct CasterDraws {
 #[derive(Default)]
 pub(crate) struct FrameState {
     pub capacity: usize,
-    pub capacity_grown: Option<u64>,
-    pub capacity_generation: u64,
     pub color_staging: Vec<ColorData>,
     pub color_ranges: Vec<UploadRange>,
     pub color_bits: Vec<u64>,
-    pub colors_written: Option<u64>,
+    pub colors_seen: Cursor,
     pub temporal: bool,
-    pub motion_key: Option<(u64, u64, glam::UVec2)>,
-    pub presented_seconds: f32,
+    pub motion_key: Option<(u64, glam::UVec2)>,
+    pub prepared_at: Option<f32>,
+    pub faded_at: Option<f32>,
     pub cards: bool,
     pub casts: bool,
-    pub records_written: bool,
     pub draws: Draws,
     pub nodes: NodeInputs,
     pub groups: DrawGroups,

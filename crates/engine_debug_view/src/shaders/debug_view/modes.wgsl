@@ -2,9 +2,9 @@ import package::debug_view::shown::{DEBUG_OTHER, DEBUG_SKY, debug_normal};
 import package::generated::debug_view::{DEBUG_VIEW_CARDS, DEBUG_VIEW_KINDS, DEBUG_VIEW_LEVELS,
     DEBUG_VIEW_NORMALS, DEBUG_VIEW_OVERDRAW};
 import package::generated::pieces::debug_view::piece;
-import package::place::debug::{DEBUG_FADING, DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS,
-    DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN,
-    DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT, DebugShade, DebugTargets};
+import package::place::debug::{DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS, DEBUG_KIND_MESH,
+    DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN, DEBUG_KIND_WATER,
+    DebugShade, DebugTargets, debug_record_fading, debug_record_kind, debug_record_level};
 
 const DEBUG_CARDS = vec3<f32>(0.95, 0.25, 0.85);
 
@@ -54,8 +54,8 @@ fn debug_kind_color(kind: u32) -> vec3<f32> {
 }
 
 fn debug_level_color(record: u32) -> vec3<f32> {
-    let level = min((record >> DEBUG_LEVEL_SHIFT) & 0xfu, 7u);
-    switch record & 0xfu {
+    let level = min(debug_record_level(record), 7u);
+    switch debug_record_kind(record) {
         case DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_TERRAIN: {
             return DEBUG_LEVELS[level];
         }
@@ -72,9 +72,9 @@ fn debug_level_color(record: u32) -> vec3<f32> {
 }
 
 fn debug_card_color(record: u32) -> vec3<f32> {
-    switch record & 0xfu {
+    switch debug_record_kind(record) {
         case DEBUG_KIND_CARD, DEBUG_KIND_PLACED_CARD: {
-            return select(DEBUG_CARDS, vec3<f32>(0.98, 0.65, 0.88), (record & DEBUG_FADING) != 0u);
+            return select(DEBUG_CARDS, vec3<f32>(0.98, 0.65, 0.88), debug_record_fading(record));
         }
         case DEBUG_KIND_SKY: {
             return DEBUG_SKY;
@@ -88,7 +88,7 @@ fn debug_card_color(record: u32) -> vec3<f32> {
 fn shade_kind(shade: DebugShade, targets: DebugTargets) -> DebugShade {
     let ids = targets.ids;
     let record = ids.x;
-    let kind = record & 0xfu;
+    let kind = debug_record_kind(record);
     let surface = kind != 0u && kind != DEBUG_KIND_SKY;
     var shaded = shade;
     switch piece().view.x {

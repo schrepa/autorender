@@ -7,33 +7,34 @@ struct AffinePose {
     row_2: vec4<f32>,
 }
 
-const MOVED_SLOT: u32 = 0x80000000u;
-
-const FADE_SLOT: u32 = 0x00ffffffu;
-const FADE_WORD_ON: u32 = 0x100u;
-const FADE_WORD_OUT: u32 = 0x80u;
-
 fn slot_index(entry: u32) -> u32 {
     if FADE_LIST {
-        return entry & FADE_SLOT;
+        return faded_slot_slot(entry);
     }
-    return entry & ~MOVED_SLOT;
+    return drawn_slot_slot(entry);
 }
 
 fn slot_moved(entry: u32) -> bool {
-    return !FADE_LIST && (entry & MOVED_SLOT) != 0u;
+    return !FADE_LIST && drawn_slot_moved(entry);
+}
+
+fn faded_entry_fade(entry: u32) -> u32 {
+    return fade_word(faded_slot_level(entry), faded_slot_out(entry), true);
 }
 
 fn slot_fade(entry: u32) -> u32 {
-    return select(0u, (entry >> 24u) | FADE_WORD_ON, FADE_LIST);
+    if FADE_LIST {
+        return faded_entry_fade(entry);
+    }
+    return 0u;
 }
 
 fn fade_hidden(fade: u32, position: vec2<f32>) -> bool {
-    if (fade & FADE_WORD_ON) == 0u {
+    if !fade_word_on(fade) {
         return false;
     }
-    let shows = fade_noise(position) < f32(fade & 0x7fu) / 127.0;
-    return shows == ((fade & FADE_WORD_OUT) != 0u);
+    let shows = fade_noise(position) < f32(fade_word_level(fade)) / f32(FADE_LEVEL_MAX);
+    return shows == fade_word_out(fade);
 }
 
 struct AffineVertexInput {

@@ -3,10 +3,10 @@ use std::any::TypeId;
 use bevy_ecs::world::World;
 use engine_core::{Error, Module, Section};
 use engine_place::PlaceKind;
-use engine_registry::{GateId, MembersOf, Registry, SettingsEntry};
+use engine_registry::{BrickStates, GateId, MembersOf, Registry, RegistryBuilder, SettingsEntry};
 
 use super::*;
-use crate::install::{DrawEntry, InstallCore, PartInfo};
+use crate::install::{DrawEntry, InstallCore, PartInfo, Reinstall};
 use crate::linker::{CORE_PACKAGE, Linker, Part};
 use crate::machine::{Machine, OutputDecl};
 use crate::places::{Answered, Fed, checked, face_module, face_source, place_module};
@@ -22,6 +22,8 @@ struct Listed {
 pub(crate) struct Built {
     pub(crate) run_parts: Vec<Option<Box<dyn Installed>>>,
     pub(crate) gates: Vec<Option<GateId>>,
+    pub(crate) reinstalls: Vec<Reinstall>,
+    pub(crate) draws: Vec<DrawEntry>,
     pub(crate) machine: Machine,
     pub(crate) pieces: Vec<(usize, crate::pieces::PieceAt)>,
     pub(crate) passes: Vec<&'static str>,
@@ -562,10 +564,12 @@ fn install_with(
     }
     let mut parts: Vec<Option<Box<dyn Installed>>> = Vec::with_capacity(listed.len());
     let mut gates = Vec::with_capacity(listed.len());
+    let mut reinstalls = Vec::with_capacity(listed.len());
     for (index, entry) in listed.iter().enumerate() {
         core.part = index as u32;
         core.package = entry.package;
         core.fills.clone_from(&entry.fills);
+        let from = core.declared.counts();
         let _owner = core.declared.parts[index].owned();
         match (entry.record.install)(world, &mut core) {
             Ok(held) => parts.push(Some(held)),
@@ -574,6 +578,13 @@ fn install_with(
                 parts.push(None);
             }
         }
+        reinstalls.push(Reinstall {
+            install: entry.record.install,
+            package: entry.package,
+            fills: entry.fills.clone(),
+            from,
+            to: core.declared.counts(),
+        });
         gates.push(
             entry
                 .brick
@@ -583,6 +594,7 @@ fn install_with(
     let InstallCore {
         declared,
         linker,
+        draws: entries,
         problems: mut declared_problems,
         ..
     } = core;
@@ -632,6 +644,8 @@ fn install_with(
         Ok(Built {
             run_parts: parts,
             gates,
+            reinstalls,
+            draws: entries,
             machine,
             pieces,
             passes,
@@ -664,7 +678,7 @@ fn set_render(world: &mut World, value: &serde_json::Value, path: &str) -> Resul
 
 impl Renderer {
     #[doc(hidden)]
-    pub fn register_places(registry: &mut Registry) {
+    pub fn register_places(registry: &mut RegistryBuilder) {
         registry.places(crate::shared::PLACES);
         registry.fill_core::<crate::MainView>();
         registry.fill_core::<crate::Overlay>();
@@ -698,7 +712,7 @@ impl Renderer {
         );
         let mut run = Run::new(
             self.core.device.clone(),
-            wgpu::Queue::clone(&self.core.queue),
+            self.core.queue.clone(),
             installed.machine,
             installed.run_parts,
             assets,
@@ -707,6 +721,9 @@ impl Renderer {
             adopt(&mut run, kept, world);
         }
         run.gates = installed.gates;
+        run.reinstalls = installed.reinstalls;
+        run.draw_entries = installed.draws;
+        run.take_states(world.get_resource::<BrickStates>());
         run.piece_layout = installed.pieces;
         run.surface = self.core.display.format();
         run.resolve = installed.resolve.map(|(names, _)| {
@@ -771,13 +788,13 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     let scope = crate::gpu_calls::validation_scope(&device);
     let mut run = Run::new(
         device.clone(),
-        wgpu::Queue::clone(&queue),
+        queue.clone(),
         installed.machine,
         installed.run_parts,
         assets,
     );
     run.gates = installed.gates;
-    run.switches = switches_of(&run.machine, world, &[]);
+    run.switches = switches_of(&run.machine, world);
     run.warm(true);
     run.make_all_shaders();
     match crate::platform::ready(scope.pop()) {
@@ -793,7 +810,9 @@ struct Kept {
     sizes: Vec<Option<(wgpu::Extent3d, u32)>>,
     buffers: Vec<Option<(wgpu::Buffer, u64)>>,
     filled: Vec<crate::encode::Filled>,
-    rings: Vec<crate::encode::Ring>,
+    frames: (u64, u64),
+    installed: Vec<engine_core::FrameId>,
+    readbacks: crate::readback::Readbacks,
 }
 
 fn kept_of(run: Run) -> (Assets, Kept) {
@@ -805,7 +824,10 @@ fn kept_of(run: Run) -> (Assets, Kept) {
         sizes,
         buffers,
         filled,
-        rings,
+        frame,
+        asked_frame,
+        installed,
+        readbacks,
         ..
     } = run;
     let kept = Kept {
@@ -815,7 +837,9 @@ fn kept_of(run: Run) -> (Assets, Kept) {
         sizes,
         buffers,
         filled,
-        rings,
+        frames: (frame, asked_frame),
+        installed,
+        readbacks,
     };
     (assets, kept)
 }
@@ -880,9 +904,13 @@ fn same_shape(old: &crate::install::Declared, new: &crate::install::Declared) ->
 }
 
 fn adopt(run: &mut Run, kept: Kept, world: &mut World) {
+    (run.frame, run.asked_frame) = kept.frames;
+    run.readbacks = kept.readbacks;
+    run.installed.fill(run.written().next());
     if !same_shape(&kept.declared, &run.machine.declared) {
         return;
     }
+    run.installed = kept.installed;
     for (slot, held) in run.parts.iter_mut().zip(kept.parts) {
         if let Some(mut held) = held {
             held.rebind(world);
@@ -900,25 +928,55 @@ fn adopt(run: &mut Run, kept: Kept, world: &mut World) {
             filled
         })
         .collect();
-    run.rings = kept.rings;
 }
 
-pub(crate) fn switches_of(
-    machine: &Machine,
-    world: &World,
-    faulted: &[GateId],
-) -> Vec<(u32, bool)> {
-    let gates = world.get_resource::<engine_registry::Gates>();
+pub(crate) fn switches_of(machine: &Machine, world: &World) -> Vec<(u32, bool)> {
+    let states = world.get_resource::<BrickStates>();
     machine
         .switches
         .iter()
-        .map(|&(id, gate)| {
-            (
-                id,
-                !faulted.contains(&gate) && gates.is_none_or(|gates| gates.on(gate)),
-            )
-        })
+        .map(|&(id, gate)| (id, states.is_none_or(|states| states.on(gate))))
         .collect()
+}
+
+pub(crate) fn reinstall(
+    run: &mut Run,
+    world: &mut World,
+    part: u32,
+) -> Result<Box<dyn Installed>, Error> {
+    let name = run
+        .machine
+        .declared
+        .parts
+        .get(part as usize)
+        .map_or("", |info| info.name);
+    let Some(again) = run.reinstalls.get(part as usize).cloned() else {
+        return Err(failed(&format!("$.parts.{name}")));
+    };
+    let linker = std::mem::replace(
+        &mut run.machine.linker,
+        Linker::new(crate::shared::core_source()),
+    );
+    let mut core = InstallCore::new(linker, run.device.features());
+    core.limits = device_limits(&run.device, world);
+    core.part = part;
+    core.package = again.package;
+    core.fills = again.fills;
+    core.declared = run.machine.declared.before(again.from);
+    core.draws.clone_from(&run.draw_entries);
+    let made = {
+        let _owner = core.declared.parts.get(part as usize).map(PartInfo::owned);
+        (again.install)(world, &mut core)
+    };
+    run.machine.linker = core.linker;
+    let held = made?;
+    if let Some(problem) = core.problems.into_iter().next() {
+        return Err(problem);
+    }
+    if core.declared.counts() != again.to {
+        return Err(failed(&format!("$.parts.{name}.install")).got("declared_differently"));
+    }
+    Ok(held)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

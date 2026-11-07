@@ -102,7 +102,7 @@ impl Renderer {
     }
 
     pub fn readback_overflows(&self) -> u64 {
-        self.run.as_ref().map_or(0, |run| run.overflows)
+        self.run.as_ref().map_or(0, |run| run.readbacks.overflows())
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

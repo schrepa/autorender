@@ -234,8 +234,6 @@ pub(crate) struct LiveSim {
     tick: Option<i64>,
     generation: u64,
     touches: [u32; 2],
-    grounded: bool,
-    made: bool,
     pub(crate) work: SimWork,
 }
 
@@ -262,10 +260,7 @@ impl LiveSim {
             (self.steps, self.behind, self.tick, self.touches) = (0, 0, None, [0; 2]);
             return;
         };
-        if live.ground.is_some() {
-            self.grounded = true;
-        }
-        let sets_up = self.made && live.ground.is_some();
+        let sets_up = live.ground.is_some();
         let window = live.window;
         if self.window.is_none() || live.moved {
             let same_size = self.window.as_ref().is_some_and(|current| {
@@ -811,11 +806,7 @@ pub(crate) fn plan_sim(
         beyond,
         ground,
     });
-    let sim = &mut state.live;
-    sim.prepare(live, &resident, seconds);
-    if sim.grounded {
-        sim.made = true;
-    }
+    state.live.prepare(live, &resident, seconds);
 }
 
 pub(crate) struct SimGpu {
@@ -974,11 +965,6 @@ impl SimGpu {
             .map(|touches| [touches.blocks[2], touches.blocks[3]]);
         self.run = Some((work.steps, work.sourced, work.blocks, touched));
         cx.run(self.pass);
-    }
-
-    pub(crate) fn forget(&mut self) {
-        self.layout = None;
-        self.setup_held = None;
     }
 
     pub(crate) fn encode(&mut self, pass: Pass<WaterGpu>, cx: &mut Encode<'_, WaterGpu>) -> bool {

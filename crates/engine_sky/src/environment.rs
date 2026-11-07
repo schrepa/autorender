@@ -1,9 +1,9 @@
-use engine_core::Error;
+use engine_core::{Error, StoreId};
 use engine_places_rendering::probes::ProbeCaptures;
 use engine_places_rendering::sky::{EnvironmentFaces, EnvironmentLayers};
 use engine_render::{
-    Attach, Bind, DepthUse, Draws, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare,
-    RenderPipeline, SamplerDesc, Shape, Texture, mip_levels, wgpu,
+    Allocation, Attach, Bind, DepthUse, Draws, Encode, Install, Lifetime, Own, Pass, Pipeline,
+    Prepare, RenderPipeline, SamplerDesc, Shape, Texture, mip_levels, wgpu,
 };
 
 use crate::sky::SkyGpu;
@@ -63,7 +63,7 @@ pub(crate) struct Environment {
     prefilter: Pipeline<SkyGpu, Own>,
     layers: Draws<EnvironmentLayers>,
     levels: u32,
-    placed: Option<(u32, u32)>,
+    layout: Option<StoreId>,
     drawn: Option<u64>,
     runs: bool,
     finished: Option<u32>,
@@ -145,7 +145,7 @@ impl Environment {
             prefilter,
             layers,
             levels: 1,
-            placed: None,
+            layout: None,
             drawn: None,
             runs: false,
             finished: None,
@@ -178,20 +178,15 @@ impl Environment {
             height: size,
             depth_or_array_layers: layers,
         };
-        let kept = self
-            .placed
-            .is_some_and(|(known, held)| known == size && cubes > held);
-        if self.placed != Some((size, cubes)) {
-            if !kept {
-                self.drawn = None;
-            }
-            self.placed = Some((size, cubes));
-        }
+        let kept = self.layout.replace(captures.layout) == Some(captures.layout);
         cx.allocate(self.radiance, extent(FACES), self.levels);
-        if kept {
-            cx.grow(self.maps, extent(cubes * FACES), self.levels);
+        let maps = if kept {
+            cx.grow(self.maps, extent(cubes * FACES), self.levels)
         } else {
-            cx.allocate(self.maps, extent(cubes * FACES), self.levels);
+            cx.allocate(self.maps, extent(cubes * FACES), self.levels)
+        };
+        if maps == Allocation::Fresh {
+            self.drawn = None;
         }
         self.runs = self.drawn != Some(plan.changes);
         if self.runs {

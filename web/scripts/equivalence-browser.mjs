@@ -10,20 +10,8 @@ if (!planPath || !resultPath) {
   process.exit(1);
 }
 const plan = JSON.parse(await readFile(planPath, "utf8"));
-const QUIET = 3;
 const TAIL = 30;
 const SETTLE_MS = 300_000;
-const NOT_WORK = new Set(["frame", "tick", "read_back_age", "simulation_ms", "extraction_ms", "render_ms", "bricks_cost.measuring_ms"]);
-
-function work(stats, prefix = "", out = {}) {
-  for (const [key, value] of Object.entries(stats ?? {})) {
-    const path = prefix ? `${prefix}.${key}` : key;
-    if (Array.isArray(value)) out[path] = value.length;
-    else if (value && typeof value === "object") work(value, path, out);
-    else if ((typeof value === "number" || typeof value === "boolean") && !NOT_WORK.has(path)) out[path] = value;
-  }
-  return out;
-}
 
 const { page, close } = await launchContext({ viewport: { width: plan.size[0] + 100, height: plan.size[1] + 100 }, deviceScaleFactor: 1 });
 page.setDefaultTimeout(600_000);
@@ -64,18 +52,16 @@ function settling(capture) {
 
 async function settle(frame) {
   const started = Date.now();
-  let previous, quiet = 0;
   for (let drawn = 1; ; drawn++) {
     const stats = (await ok(frame)).rendering;
-    const busy = stats.loading === true || stats.pipelines_compiling === true;
+    const readiness = stats.readiness ?? {};
+    if (readiness.failed?.length) return `failed ${JSON.stringify(readiness.failed)}`;
+    const settled = readiness.loading?.total === 0 && readiness.compiling === 0 && readiness.settling === 0;
     const lag = stats.read_back_age;
     const stale = typeof lag === "number" && lag >= drawn;
-    const counters = JSON.stringify(work(stats));
-    quiet = !busy && !stale && counters === previous ? quiet + 1 : 0;
-    if (quiet >= Math.max(QUIET, (typeof lag === "number" ? lag : 0) + 1)) break;
-    if (Date.now() - started > SETTLE_MS) return `${busy ? "loading or compiling; " : ""}${stale ? "read-backs older than settling; " : ""}counters changing`;
-    previous = counters;
-    if (busy) await delay(5);
+    if (settled && !stale) break;
+    if (Date.now() - started > SETTLE_MS) return [settled ? "" : `readiness ${JSON.stringify(readiness)}`, stale ? "read-backs older than settling" : ""].filter(Boolean).join("; ");
+    if (!settled) await delay(5);
   }
   for (let frame_ = 0; frame_ < TAIL; frame_++) await ok(frame);
   return undefined;

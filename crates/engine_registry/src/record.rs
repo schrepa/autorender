@@ -1,19 +1,20 @@
 use std::any::{Any, TypeId};
 
-use bevy_ecs::component::Mutable;
+use bevy_ecs::component::{ComponentId, Mutable};
 use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::{InternedScheduleLabel, IntoScheduleConfigs, ScheduleConfigs};
-use bevy_ecs::system::{BoxedSystem, ScheduleSystem};
+use bevy_ecs::system::ScheduleSystem;
 use bevy_ecs::world::World;
 use engine_place::{Error, ErrorCode, GpuStruct, List, PlaceDecl, Slot, Smoke};
 
 use crate::entries::{
-    Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry, init_of,
+    Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry,
 };
 use crate::explain::ExplainEntry;
-use crate::gates::{GateFn, Scope};
 use crate::hooks::{NamedField, Removal, Settle};
 use crate::jobs::JobMember;
+use crate::scene::SpawnedBy;
+use crate::state::{GateFn, Scope};
 
 pub type SectionRule = fn(&World) -> Result<(), Error>;
 
@@ -43,7 +44,6 @@ plain_markers!(
 pub(crate) struct ScopeEntry {
     pub(crate) parent: Option<Scope>,
     pub(crate) condition: Option<GateFn>,
-    gated: bool,
 }
 
 type MakeSystems = Box<dyn FnOnce() -> ScheduleConfigs<ScheduleSystem> + Send + Sync>;
@@ -52,7 +52,6 @@ pub(crate) struct SystemsCall {
     pub(crate) scope: Scope,
     pub(crate) schedule: InternedScheduleLabel,
     pub(crate) make: MakeSystems,
-    pub(crate) off: bool,
 }
 
 pub struct BrickRecord {
@@ -68,7 +67,7 @@ pub struct BrickRecord {
     smokes: &'static [Smoke],
     pub(crate) scopes: Vec<ScopeEntry>,
     current: Scope,
-    pub(crate) offs: Vec<BoxedSystem>,
+    pub(crate) spawned: fn(&mut World) -> ComponentId,
     pub(crate) systems: Vec<SystemsCall>,
     pub(crate) fills: Vec<Filled>,
     pub(crate) joins: Vec<JoinEntry>,
@@ -106,10 +105,9 @@ impl BrickRecord {
             scopes: vec![ScopeEntry {
                 parent: None,
                 condition: None,
-                gated: false,
             }],
             current: Scope::BRICK,
-            offs: Vec::new(),
+            spawned: spawned_id::<B>,
             systems: Vec::new(),
             fills: Vec::new(),
             joins: Vec::new(),
@@ -171,20 +169,6 @@ impl BrickRecord {
         self.scopes
             .get(scope.index())
             .and_then(|entry| entry.parent)
-    }
-
-    pub fn gated(&self, scope: Scope) -> bool {
-        let mut at = Some(scope);
-        while let Some(current) = at {
-            let Some(entry) = self.scopes.get(current.index()) else {
-                return false;
-            };
-            if entry.gated {
-                return true;
-            }
-            at = entry.parent;
-        }
-        false
     }
 
     pub fn fills(&self) -> &[Filled] {
@@ -268,9 +252,7 @@ impl BrickRecord {
                 .push(Error::new(ErrorCode::NameTwice, path).got(self.package));
             return;
         }
-        let brick = &mut self.scopes[Scope::BRICK.index()];
-        brick.condition = Some(condition);
-        brick.gated = true;
+        self.scopes[Scope::BRICK.index()].condition = Some(condition);
     }
 
     pub fn enter(&mut self, condition: GateFn) -> Scope {
@@ -278,7 +260,6 @@ impl BrickRecord {
         self.scopes.push(ScopeEntry {
             parent: Some(self.current),
             condition: Some(condition),
-            gated: true,
         });
         self.current = scope;
         scope
@@ -286,10 +267,6 @@ impl BrickRecord {
 
     pub fn leave(&mut self) {
         self.current = self.parent(self.current).unwrap_or(Scope::BRICK);
-    }
-
-    pub fn off(&mut self, system: BoxedSystem) {
-        self.offs.push(system);
     }
 
     pub fn systems<M: 'static>(
@@ -301,20 +278,6 @@ impl BrickRecord {
             scope: self.current,
             schedule,
             make: Box::new(move || systems.chain()),
-            off: false,
-        });
-    }
-
-    pub fn off_in<M: 'static>(
-        &mut self,
-        schedule: InternedScheduleLabel,
-        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + PlainSystems<M>,
-    ) {
-        self.systems.push(SystemsCall {
-            scope: Scope::BRICK,
-            schedule,
-            make: Box::new(move || systems.chain()),
-            off: true,
         });
     }
 
@@ -338,7 +301,7 @@ impl BrickRecord {
     }
 
     pub fn resource<R: Resource + Default>(&mut self) {
-        self.own(Owned::of::<R>(init_of::<R>));
+        self.own(Owned::of::<R>());
     }
 
     pub fn settings(&mut self, mut entry: SettingsEntry) {
@@ -371,7 +334,7 @@ impl BrickRecord {
             return;
         }
         self.piece = Some(PieceEntry::of::<T>());
-        self.own(Owned::of::<T>(init_of::<T>));
+        self.own(Owned::of::<T>());
     }
 
     pub fn operation(&mut self, mut entry: OperationEntry) {
@@ -422,6 +385,10 @@ impl BrickRecord {
             self.owned.push(owned);
         }
     }
+}
+
+fn spawned_id<B: 'static>(world: &mut World) -> ComponentId {
+    world.register_component::<SpawnedBy<B>>()
 }
 
 pub(crate) fn crate_segment(path: &str) -> &str {

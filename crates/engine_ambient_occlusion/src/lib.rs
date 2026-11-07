@@ -30,13 +30,12 @@ impl Brick for AmbientOcclusionBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|ambient: Res<AmbientOcclusion>| ambient.occludes())
+            .when(|ambient: Res<AmbientOcclusion>| ambient.enabled)
             .settings::<AmbientOcclusion>()
             .stats::<AmbientOcclusionStats>()
             .piece::<AmbientPiece>()
             .join::<PostScene>((), Some(shaders::ambient_occlusion::apply::MODULE))
             .systems(Schedule::ViewSync, (publish_piece, publish_stats))
-            .off(forget_stats)
             .part::<part::AmbientGpu>();
     }
 }
@@ -51,22 +50,14 @@ fn publish_piece(
             ambient.radius,
             ambient.intensity,
             0.0,
-            if ambient.occludes() { 1.0 } else { 0.0 },
+            1.0,
         ],
         canopy: [source.texel_share, 0.0, 0.0, 0.0],
     });
 }
 
-fn publish_stats(
-    ambient: Res<AmbientOcclusion>,
-    shown: Res<DebugShown>,
-    mut stats: ResMut<AmbientOcclusionStats>,
-) {
+fn publish_stats(shown: Res<DebugShown>, mut stats: ResMut<AmbientOcclusionStats>) {
     stats.set_if_neq(AmbientOcclusionStats {
-        active: ambient.occludes() && shown.owner.is_none(),
+        active: shown.owner.is_none(),
     });
-}
-
-fn forget_stats(mut stats: ResMut<AmbientOcclusionStats>) {
-    stats.set_if_neq(AmbientOcclusionStats::default());
 }

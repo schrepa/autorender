@@ -19,8 +19,6 @@ const COMMAND_LIMIT: Duration = Duration::from_secs(240);
 
 const SETTLE_LIMIT: Duration = Duration::from_secs(300);
 
-const QUIET_RENDERS: usize = 3;
-
 const TAIL_RENDERS: usize = 30;
 
 struct Session {
@@ -295,38 +293,34 @@ fn settling_frame(capture: Capture) -> Option<Value> {
 
 fn settle(session: &mut Session, frame: &Value, log: &Path) -> Result<Option<String>, String> {
     let started = Instant::now();
-    let (mut previous, mut quiet): (Option<Map<String, Value>>, usize) = (None, 0);
     for drawn in 1_u64.. {
         let result = session.ok(frame, log)?;
         let stats = &result["rendering"];
-        let busy = stats["loading"] == true || stats["pipelines_compiling"] == true;
-        let lag = stats["read_back_age"].as_u64();
-        let stale = lag.is_some_and(|lag| lag >= drawn);
-        let work = measure::work_counters(stats);
-        quiet = if !busy && !stale && previous.as_ref() == Some(&work) {
-            quiet + 1
-        } else {
-            0
-        };
-        let wanted = QUIET_RENDERS.max(usize::try_from(lag.unwrap_or(0)).unwrap_or(usize::MAX) + 1);
-        if quiet >= wanted {
+        let readiness = &stats["readiness"];
+        if readiness["failed"]
+            .as_array()
+            .is_some_and(|failed| !failed.is_empty())
+        {
+            return Ok(Some(format!("failed {}", readiness["failed"])));
+        }
+        let settled = readiness["loading"]["total"] == 0
+            && readiness["compiling"] == 0
+            && readiness["settling"] == 0;
+        let stale = stats["read_back_age"]
+            .as_u64()
+            .is_some_and(|lag| lag >= drawn);
+        if settled && !stale {
             break;
         }
         if started.elapsed() > SETTLE_LIMIT {
-            let changing: Vec<String> = previous
-                .iter()
-                .flat_map(|previous| {
-                    work.iter()
-                        .filter(|(name, value)| previous.get(*name) != Some(value))
-                        .map(|(name, value)| format!("{name} {value}"))
-                })
-                .chain(busy.then(|| "loading or compiling".to_owned()))
+            let unsettled: Vec<String> = (!settled)
+                .then(|| format!("readiness {readiness}"))
+                .into_iter()
                 .chain(stale.then(|| "read-backs older than settling".to_owned()))
                 .collect();
-            return Ok(Some(changing.join(", ")));
+            return Ok(Some(unsettled.join(", ")));
         }
-        previous = Some(work);
-        if busy {
+        if !settled {
             std::thread::sleep(Duration::from_millis(5));
         }
     }

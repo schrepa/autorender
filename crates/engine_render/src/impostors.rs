@@ -12,14 +12,16 @@ use bevy_ecs::world::World;
 use engine_core::collections::HashMap;
 use engine_core::glam::Vec3;
 use engine_core::{
-    AtlasDevice, AtlasFormat, AtlasShape, AtlasWork, IMPOSTOR_KINDS as KINDS, ImpostorBooks,
-    ImpostorIdentity, ImpostorRecord, MaterialHandle, MeshHandle,
+    AtlasDevice, AtlasFormat, AtlasShape, AtlasWork, Cursor, Events, FrameId,
+    IMPOSTOR_KINDS as KINDS, ImpostorBooks, ImpostorIdentity, ImpostorRecord, MaterialHandle,
+    MeshHandle,
 };
 
 use crate::bindings::IMPOSTOR_BAKE;
 use crate::materials::{MaterialStore, Variant};
 use crate::mesh_arena::{GpuMeshes, MeshDraw};
 use crate::mipmaps::MipGenerator;
+use crate::readback::{Arrival, Readbacks};
 use crate::shaders::{Entry, Stage};
 
 const FORMATS: [wgpu::TextureFormat; 4] = [
@@ -57,7 +59,7 @@ const BAKE_MODULE: &str = "engine::impostor_bake";
 
 pub(crate) fn layout_source() -> String {
     [
-        engine_core::impostor_flags::WGSL,
+        <engine_core::ImpostorFlags as engine_core::GpuBits>::WGSL,
         <ImpostorRecord as engine_core::GpuStruct>::WGSL,
         <ImpostorBake as engine_core::GpuStruct>::WGSL,
     ]
@@ -203,7 +205,8 @@ struct Atlas {
     format: AtlasFormat,
     arrays: Option<Arrays>,
     targets: Option<bake::BakeTargets>,
-    readbacks: Vec<records::Readback>,
+    readbacks: Vec<records::Pending>,
+    made: Vec<(ImpostorIdentity, Option<Vec<u8>>)>,
 }
 
 impl Atlas {
@@ -214,6 +217,7 @@ impl Atlas {
             arrays: None,
             targets: None,
             readbacks: Vec::new(),
+            made: Vec::new(),
         }
     }
 
@@ -231,12 +235,14 @@ impl Atlas {
         self.arrays = None;
         self.targets = None;
         self.readbacks.clear();
+        self.made.clear();
     }
 
     fn release(&mut self) {
         self.arrays = None;
         self.targets = None;
         self.readbacks.clear();
+        self.made.clear();
     }
 
     fn grow(
@@ -341,8 +347,10 @@ pub(crate) struct Impostors {
     pipelines: ImpostorPipelines,
     atlas: Option<Atlas>,
     unbaked: Vec<ImpostorIdentity>,
-    done: u64,
+    cursor: Cursor,
+    missed: bool,
     generation: u64,
+    serial: u32,
     _stand_in: wgpu::Texture,
     stand_in: wgpu::TextureView,
 }
@@ -366,8 +374,10 @@ impl Impostors {
             pipelines: ImpostorPipelines::new(device),
             atlas: None,
             unbaked: Vec::new(),
-            done: 0,
+            cursor: Cursor::default(),
+            missed: false,
             generation: 0,
+            serial: 0,
             _stand_in: stand_in,
             stand_in: view,
         }
@@ -413,6 +423,7 @@ impl Impostors {
         world: &World,
         (meshes, materials): (&GpuMeshes, &MaterialStore),
         encoder: &mut Option<wgpu::CommandEncoder>,
+        (readbacks, written): (&mut Readbacks, FrameId),
     ) {
         let Some(books) = world.get_resource::<ImpostorBooks>() else {
             return;
@@ -420,11 +431,16 @@ impl Impostors {
         let Some(facts) = books.device() else {
             return;
         };
-        for (at, work) in books.work() {
-            if at <= self.done {
-                continue;
+        let works = match books.log().events(&mut self.cursor) {
+            Events::Listed(works) => works,
+            Events::Missed(_) => {
+                self.atlas = None;
+                self.generation += 1;
+                self.missed = true;
+                return;
             }
-            self.done = at;
+        };
+        for work in works {
             if let AtlasWork::Reset { shape } = work {
                 self.atlas
                     .get_or_insert_with(|| Atlas::new(*shape, facts.format))
@@ -448,7 +464,10 @@ impl Impostors {
                     atlas.grow(device, encoder, *layers);
                     self.generation += 1;
                 }
-                AtlasWork::Load { layer, bytes } => atlas.load(queue, *layer, bytes),
+                AtlasWork::Load { layer, bytes } => match bytes.upgrade() {
+                    Some(bytes) => atlas.load(queue, *layer, &bytes),
+                    None => self.missed = true,
+                },
                 AtlasWork::Bake {
                     identity,
                     mesh,
@@ -463,11 +482,13 @@ impl Impostors {
                         self.unbaked.push(*identity);
                         continue;
                     };
+                    self.serial = self.serial.wrapping_add(1);
                     let gpu = BakeGpu {
                         device,
                         encoder: &mut *encoder,
                         mips: materials.mips(),
                         pipelines: &mut self.pipelines,
+                        readbacks: (&mut *readbacks, written, self.serial),
                     };
                     atlas.bake(gpu, &source, *identity, *hemisphere);
                 }
@@ -476,9 +497,9 @@ impl Impostors {
         }
     }
 
-    pub(crate) fn after_submit(&mut self) {
+    pub(crate) fn arrived(&mut self, serial: u32, arrival: Arrival<'_>) {
         if let Some(atlas) = self.atlas.as_mut() {
-            atlas.after_submit();
+            atlas.arrived(serial, arrival);
         }
     }
 
@@ -488,7 +509,7 @@ impl Impostors {
             atlas.take_made(&mut made);
         }
         made.extend(self.unbaked.drain(..).map(|identity| (identity, None)));
-        engine_core::deliver_impostors(world, self.done, made);
+        engine_core::deliver_impostors(world, std::mem::take(&mut self.missed), made);
     }
 }
 
@@ -537,4 +558,5 @@ struct BakeGpu<'a> {
     encoder: &'a mut Option<wgpu::CommandEncoder>,
     mips: &'a MipGenerator,
     pipelines: &'a mut ImpostorPipelines,
+    readbacks: (&'a mut Readbacks, FrameId, u32),
 }

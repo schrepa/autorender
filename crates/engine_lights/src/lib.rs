@@ -49,12 +49,11 @@ impl Brick for LightsBrick {
                 Schedule::ViewSync,
                 (lights::gather_lights, lights::light_stats),
             )
-            .off(lights::forget_lights)
             .generated(GENERATED)
             .part::<part::LightsGpu>();
     }
 }
 
 fn lit(settings: Res<LocalLightSettings>, lights: Query<(), With<LocalLight>>) -> bool {
-    settings.active() && !lights.is_empty()
+    settings.enabled && !lights.is_empty()
 }

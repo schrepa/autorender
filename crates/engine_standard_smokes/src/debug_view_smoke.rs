@@ -300,7 +300,7 @@ fn settle(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
     let mut compiling = true;
     for _ in 0..600 {
         let rendering = present(session)?;
-        compiling = rendering["pipelines_compiling"] == true;
+        compiling = engine_core::smoke::compiling(&rendering);
         if !compiling {
             break;
         }

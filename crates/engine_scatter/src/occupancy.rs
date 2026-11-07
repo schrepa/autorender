@@ -1,4 +1,5 @@
 use bevy_ecs::prelude::Resource;
+use engine_core::Feed;
 use glam::Vec3;
 
 use crate::layouts::{
@@ -146,11 +147,19 @@ fn cells(window: Window) -> impl Iterator<Item = [i32; 2]> {
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct MapFrame {
     pub(crate) splat: Splat,
-    pub(crate) redraw: bool,
-    pub(crate) average: bool,
+    pub(crate) held: bool,
 }
 
-#[derive(Resource, Default)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct MapDirty {
+    pub(crate) map: usize,
+    pub(crate) dirty: [[u32; 4]; 2],
+    pub(crate) means: [[u32; 4]; 2],
+}
+
+pub(crate) const ALL_CELLS: [[u32; 4]; 2] = [[u32::MAX; 4]; 2];
+
+#[derive(Resource)]
 pub(crate) struct OccupancyWindows {
     pub(crate) resolution: u32,
     pub(crate) maps: usize,
@@ -158,11 +167,31 @@ pub(crate) struct OccupancyWindows {
     reference: f32,
     dirty: Vec<Cells>,
     pub(crate) frames: Vec<MapFrame>,
+    pub(crate) changes: Feed<MapDirty>,
     pub(crate) workgroups: u32,
     pub(crate) slots: u32,
     pub(crate) runs: bool,
     pub(crate) redraws: u32,
     pub(crate) averages: u32,
+}
+
+impl Default for OccupancyWindows {
+    fn default() -> Self {
+        Self {
+            resolution: 0,
+            maps: 0,
+            windows: Vec::new(),
+            reference: 0.0,
+            dirty: Vec::new(),
+            frames: Vec::new(),
+            changes: Feed::new(MAX_OCCUPANCY_LEVELS),
+            workgroups: 0,
+            slots: 0,
+            runs: false,
+            redraws: 0,
+            averages: 0,
+        }
+    }
 }
 
 pub(crate) const LISTED_RESET: ListedDraw = ListedDraw {
@@ -184,8 +213,7 @@ impl OccupancyWindows {
         (covers, slots): (&[Cover], u32),
     ) -> Option<Lit> {
         for frame in &mut self.frames {
-            frame.redraw = false;
-            frame.average = false;
+            frame.held = false;
         }
         self.runs = settings.runs();
         if !self.runs {
@@ -276,10 +304,6 @@ impl OccupancyWindows {
             let center = [corner[0] + size * 0.5, corner[1] + size * 0.5];
             lit.centers[map / 2][2 * (map % 2)] = center[0];
             lit.centers[map / 2][2 * (map % 2) + 1] = center[1];
-            let (redraw, average) = (dirty.any(), means.any());
-            if !redraw && !average {
-                continue;
-            }
             self.frames[map] = MapFrame {
                 splat: Splat {
                     area: [corner[0], corner[1], size, self.reference],
@@ -290,13 +314,22 @@ impl OccupancyWindows {
                         texels,
                         0,
                     ],
-                    dirty: bytemuck::cast(dirty.0),
+                    dirty: [[0; 4]; 2],
                     finer: finer.map_or([0; 4], |finer| [finer.origin[0], finer.origin[1], 1, 0]),
-                    means: bytemuck::cast(means.0),
+                    means: [[0; 4]; 2],
                 },
-                redraw,
-                average,
+                held: true,
             };
+            let (redraw, average) = (dirty.any(), means.any());
+            if redraw || average {
+                self.redraws += u32::from(redraw);
+                self.averages += u32::from(average);
+                self.changes.push(MapDirty {
+                    map,
+                    dirty: bytemuck::cast(dirty.0),
+                    means: bytemuck::cast(means.0),
+                });
+            }
         }
         let (_, reach) = finest(settings);
         let finest_side = self.windows[0].map_or(1.0, |window| window.cell * CELLS as f32);
@@ -363,24 +396,13 @@ impl OccupancyWindows {
         eye: Vec3,
         placed: (&[Cover], u32),
     ) -> Option<Lit> {
-        let lit = self.prepare_windows(settings, eye, placed);
-        for frame in &self.frames {
-            self.redraws += u32::from(frame.redraw);
-            self.averages += u32::from(frame.average);
-        }
-        lit
+        self.prepare_windows(settings, eye, placed)
     }
 
     pub(crate) fn moved(&mut self, moved: &[(Vec3, Vec3)]) {
         for &(min, max) in moved {
             self.dirty_box(min, max);
         }
-    }
-
-    pub(crate) fn drawn(&self) -> bool {
-        self.frames
-            .iter()
-            .any(|frame| frame.redraw || frame.average)
     }
 }
 

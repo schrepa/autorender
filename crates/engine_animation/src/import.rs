@@ -21,8 +21,31 @@ pub struct Model {
 
 #[derive(Default)]
 pub struct ImportShared {
-    textures: BTreeMap<Vec<u8>, TextureHandle>,
+    textures: BTreeMap<String, BTreeMap<Vec<u8>, TextureHandle>>,
     materials: Vec<(Material, MaterialHandle)>,
+}
+
+impl ImportShared {
+    fn texture(&self, assets: &AssetLibrary, mime: &str, bytes: &[u8]) -> Option<TextureHandle> {
+        let held = *self.textures.get(mime)?.get(bytes)?;
+        assets.texture(held).is_some().then_some(held)
+    }
+
+    fn material(&self, assets: &AssetLibrary, built: &Material) -> Option<MaterialHandle> {
+        self.materials
+            .iter()
+            .find(|(held, handle)| held == built && assets.material(*handle) == Some(built))
+            .map(|&(_, handle)| handle)
+    }
+
+    fn settle(&mut self, assets: &AssetLibrary) {
+        self.materials
+            .retain(|(held, handle)| assets.material(*handle) == Some(held));
+        for by_bytes in self.textures.values_mut() {
+            by_bytes.retain(|_, handle| assets.texture(*handle).is_some());
+        }
+        self.textures.retain(|_, by_bytes| !by_bytes.is_empty());
+    }
 }
 
 struct Placed<'a> {
@@ -66,6 +89,7 @@ pub fn import_glb(
     assets: &mut AssetLibrary,
     shared: &mut ImportShared,
 ) -> Result<Model, Error> {
+    shared.settle(assets);
     let gltf =
         gltf::Gltf::from_slice(bytes).map_err(|error| malformed("$").got(error.to_string()))?;
     let binary = gltf.blob.as_deref().unwrap_or_default();
@@ -519,13 +543,8 @@ impl Library<'_> {
                 .map_err(|error| error.within(&format!("$.materials[{index}]")))?,
             None => Material::new([1.0; 4])?,
         };
-        let shared = self
-            .shared
-            .materials
-            .iter()
-            .find(|(held, _)| *held == built);
-        let handle = match shared {
-            Some(&(_, handle)) => handle,
+        let handle = match self.shared.material(self.assets, &built) {
+            Some(handle) => handle,
             None => {
                 let handle = self.assets.insert_material(built)?;
                 self.shared.materials.push((built, handle));
@@ -615,7 +634,7 @@ impl Library<'_> {
             .binary
             .get(view.offset()..view.offset() + view.length())
             .ok_or_else(|| malformed(format!("{path}.bufferView")))?;
-        if let Some(&held) = self.shared.textures.get(bytes) {
+        if let Some(held) = self.shared.texture(self.assets, mime_type, bytes) {
             self.textures.insert(index, held);
             return Ok(held);
         }
@@ -636,7 +655,11 @@ impl Library<'_> {
         let texture =
             Texture::from_rgba(width, height, pixels).map_err(|error| error.within(&path))?;
         let handle = self.assets.insert_texture(texture)?;
-        self.shared.textures.insert(bytes.to_vec(), handle);
+        self.shared
+            .textures
+            .entry(mime_type.to_owned())
+            .or_default()
+            .insert(bytes.to_vec(), handle);
         self.textures.insert(index, handle);
         Ok(handle)
     }

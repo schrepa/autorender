@@ -143,7 +143,6 @@ const CASTER_STREAMS: &[VertexLayout] = &[
 
 #[derive(Resource, Default)]
 pub(crate) struct Books {
-    pub(crate) epoch: u64,
     pub(crate) ticked: HashMap<Entity, Ticked>,
 }
 
@@ -199,7 +198,6 @@ pub(crate) struct SkinningGpu {
     casting: [Pipeline<Self, ShadowCasters>; 2],
     buffers: Buffers,
     inputs: Inputs,
-    epoch: u64,
     held: Held,
 }
 
@@ -757,7 +755,6 @@ impl GpuPart for SkinningGpu {
             casting,
             buffers,
             inputs,
-            epoch: 0,
             held: Held::default(),
         })
     }
@@ -771,10 +768,6 @@ impl GpuPart for SkinningGpu {
         >,
         cx: &mut Prepare<'_, Self>,
     ) {
-        if cx.fresh() || books.epoch != self.epoch {
-            self.held = Held::default();
-            self.epoch = books.epoch;
-        }
         let mut listed: Vec<(Entity, &Animator)> = animators.iter().collect();
         listed.sort_unstable_by_key(|(entity, _)| *entity);
         let key = layout_key(&listed, &residency, &assets);

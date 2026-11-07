@@ -10,7 +10,7 @@ use engine_core::{
     SceneComponents, Schedule, Source,
 };
 use engine_places_simulation::ground::Ground;
-use engine_places_world::ground::{GroundSurface, GroundWork, TerrainTiles};
+use engine_places_world::ground::{GroundSurface, TerrainTiles};
 use engine_places_world::terrain::TerrainLayers;
 use engine_places_world::water::Hydrology;
 use engine_render::RenderBricks;
@@ -34,7 +34,6 @@ impl Brick for TerrainBrick {
             .fill::<Ground>(None)
             .fill::<TerrainTiles>(None)
             .fill::<Hydrology>(None)
-            .fill::<GroundWork>(None)
             .fill::<GroundSurface>(Some(crate::shaders::terrain::faces::surface::MODULE))
             .join::<SceneComponents>(terrain_kind(), None)
             .join::<SceneComponents>(prefetch_kind(), None)
@@ -44,12 +43,8 @@ impl Brick for TerrainBrick {
                 Schedule::ViewSync,
                 (stream_terrains, publish_terrains, sync_solids),
             )
-            .systems(Schedule::ViewSync, settle_view)
             .systems(Schedule::Stream, bridges::sync)
-            .systems(
-                Schedule::Waiting,
-                (stream_terrains, publish_terrains, settle_waiting),
-            )
+            .systems(Schedule::Waiting, (stream_terrains, publish_terrains))
             .systems(
                 Schedule::BetweenFrames,
                 (work_between_frames, publish_terrains),

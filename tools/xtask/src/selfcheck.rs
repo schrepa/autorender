@@ -183,7 +183,11 @@ fn measure_task(sha: &str, scene: &str) -> (Value, Value) {
                         "--settings", "bench/settings/default.json",
                     ]}},
                     "settle": {
-                        "stats": {"loading": false, "pipelines_compiling": false},
+                        "stats": {
+                            "readiness.loading.total": 0,
+                            "readiness.compiling": 0,
+                            "readiness.settling": 0,
+                        },
                         "quiet_frames": 3,
                         "min_ms": 2000,
                         "max_ms": 120_000,

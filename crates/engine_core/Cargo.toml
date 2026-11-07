@@ -10,7 +10,7 @@ default = []
 dev = ["engine_profile/bricks", "engine_registry/profiling"]
 profiling = ["engine_profile/enabled", "engine_registry/profiling"]
 attribution = []
-schema = ["engine_assets/schema", "engine_settings/schema"]
+schema = ["engine_assets/schema", "engine_settings/schema", "engine_place/schema"]
 
 [dependencies]
 engine_place.workspace = true

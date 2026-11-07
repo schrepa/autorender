@@ -59,6 +59,6 @@ fn sunlight() -> vec3<f32> {
     return sky_piece.sun_light.rgb;
 }
 
-fn adapted_exposure(authored: f32) -> f32 {
+fn light_level(sun: vec3<f32>) -> f32 {
     return sky_piece.horizon.w;
 }

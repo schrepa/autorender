@@ -943,6 +943,12 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "waiting": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -1144,13 +1150,19 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "tiles_waiting": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "type": "object"
     },
     "SkyStats": {
       "properties": {
-        "exposure": {
+        "light": {
           "default": 0.0,
           "format": "float",
           "type": "number"

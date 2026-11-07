@@ -9,7 +9,7 @@ use engine_heightfield::tile::{
     OP_LAKE, OP_MAX, OP_MIN, OP_MULTIPLY, OP_NOISE, OP_PATH, OP_POWER, OP_REMAP, OP_RIVER,
     OP_VALUE, OP_WETNESS, OP_WORN,
 };
-use engine_place::{List, MaterialHandle, MeshHandle, Slot, Stamp, TextureHandle};
+use engine_place::{Feed, List, MaterialHandle, MeshHandle, Slot, Stamp, TextureHandle};
 use engine_places_simulation::ground::{Pyramid, TILE_QUADS, TileKey};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
@@ -110,51 +110,6 @@ pub struct TileChange {
     pub kind: TileChangeKind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TilesSince<'a> {
-    Same,
-    Listed(&'a [TileChange]),
-    All,
-}
-
-#[derive(Clone, Debug)]
-pub struct TileChanges {
-    end: u64,
-    recent: Arc<[TileChange]>,
-}
-
-impl Default for TileChanges {
-    fn default() -> Self {
-        Self {
-            end: 0,
-            recent: Arc::from(Vec::new()),
-        }
-    }
-}
-
-impl TileChanges {
-    pub fn new(end: u64, recent: Arc<[TileChange]>) -> Self {
-        Self { end, recent }
-    }
-
-    pub fn end(&self) -> u64 {
-        self.end
-    }
-
-    pub fn since(&self, cursor: &mut u64) -> TilesSince<'_> {
-        let seen = *cursor;
-        *cursor = self.end;
-        let start = self.end - self.recent.len() as u64;
-        if seen == self.end {
-            TilesSince::Same
-        } else if seen < start || seen > self.end {
-            TilesSince::All
-        } else {
-            TilesSince::Listed(&self.recent[(seen - start) as usize..])
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct TerrainEntry {
     pub terrain: Entity,
@@ -174,14 +129,13 @@ pub struct TerrainEntry {
     pub level_errors: Arc<[f32]>,
     pub surface_program: bool,
     pub baked: Option<Arc<engine_heightfield::Layers>>,
-    pub baking: bool,
     pub macro_map: Option<TextureHandle>,
     pub materials: Arc<[SurfaceMaterial]>,
     pub maps: Arc<[Option<SurfaceMaps>]>,
     pub placement: Arc<[PlacedAsset]>,
     pub layers: Arc<[PlacedLayer]>,
     pub tiles: Arc<[TileFace]>,
-    pub changes: TileChanges,
+    pub changes: Arc<Feed<TileChange>>,
     pub sample_offset: Vec2,
     pub kept: Arc<[(TileKey, Stamp)]>,
 }
@@ -262,22 +216,24 @@ impl Slot for Heightfield {
     const WGSL: Option<&'static str> = Some(include_str!("places/heightfield.wgsl"));
 }
 
-#[derive(Resource, Clone, Debug, Default)]
-pub struct GroundWork {
-    pub slice: u64,
-    pub millis: f64,
-    pub end: f64,
-    pub upload: u64,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GroundBake {
+    Off,
+    Asked,
+    Made,
+    Failed,
 }
 
-impl Slot for GroundWork {
-    const NAME: &'static str = "ground_work";
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GroundBakes {
+    pub terrain: Entity,
+    pub lighting: GroundBake,
+    pub bounce: GroundBake,
 }
 
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub struct GroundBaking {
-    pub lighting: u32,
-    pub unbounced: u32,
+    pub terrains: Vec<GroundBakes>,
 }
 
 impl Slot for GroundBaking {
@@ -298,6 +254,7 @@ pub struct GroundTiles {
     pub held: Vec<HeldTile>,
     pub layers: u32,
     pub tables: Vec<(Entity, u32)>,
+    pub palette: Vec<(Entity, Option<u32>)>,
 }
 
 impl Slot for GroundTiles {

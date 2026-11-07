@@ -7,7 +7,7 @@ use engine_render::{
     Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, wgpu,
 };
 
-use crate::probes::{FACES, ProbeState, ProbeWords, SETS};
+use crate::probes::{FACES, ProbeAcks, ProbeState, ProbeWords, SETS};
 use crate::shaders;
 
 const PROBE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -27,9 +27,9 @@ pub(crate) struct ProbesGpu {
     views: Draws<ProbeViews>,
     drawn: Vec<(ProbeView, u32)>,
     finished: Option<(u32, u32)>,
+    proposed: Option<(u32, bool)>,
     timed: bool,
     levels: u32,
-    placed: Option<(u32, u32)>,
     grid: u64,
 }
 
@@ -120,9 +120,9 @@ impl GpuPart for ProbesGpu {
             views,
             drawn: Vec::new(),
             finished: None,
+            proposed: None,
             timed: false,
             levels: 1,
-            placed: None,
             grid: 0,
         })
     }
@@ -132,6 +132,10 @@ impl GpuPart for ProbesGpu {
         (state, words, limits): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        if let Some((proposal, finished)) = self.proposed.take() {
+            let ran = cx.ran(self.captures) && (!finished || cx.ran(self.filter));
+            cx.deliver::<ProbeAcks>(proposal, vec![u8::from(ran)]);
+        }
         let size = state.size;
         self.levels = mip_levels(size);
         let extent = |layers: u32| wgpu::Extent3d {
@@ -139,11 +143,6 @@ impl GpuPart for ProbesGpu {
             height: size,
             depth_or_array_layers: layers,
         };
-        let placed = (state.size, state.cubes);
-        if self.placed != Some(placed) {
-            cx.release(self.radiance);
-            self.placed = Some(placed);
-        }
         cx.allocate(self.radiance, extent(SETS * SIDES), self.levels);
         if words.is_changed() {
             let room = limits.storage_room / 16 * 16;
@@ -174,6 +173,9 @@ impl GpuPart for ProbesGpu {
         }
         if self.finished.is_some() {
             cx.run(self.filter);
+        }
+        if state.captures && !self.drawn.is_empty() {
+            self.proposed = Some((state.proposal, self.finished.is_some()));
         }
     }
 

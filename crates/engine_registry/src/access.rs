@@ -164,6 +164,10 @@ impl AccessRule {
     }
 }
 
+pub(crate) fn core_type(type_name: &str) -> bool {
+    CORE_CRATES.contains(&crate_segment(type_name))
+}
+
 fn foreign(package: &str, system: &str, type_name: &str) -> Error {
     Error::new(
         ErrorCode::ForeignAccess,

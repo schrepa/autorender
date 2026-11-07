@@ -1,13 +1,10 @@
 use engine_core::{
     CookMode, Engine, JobExchange, JobId, MISSING_RECORD, RecordKey, URGENT_JOBS, job_priority,
 };
-use engine_registry::Registry;
 use engine_render::Renderer;
 use sha2::{Digest, Sha256};
 
 const KIND: &str = "pipeline_list";
-
-const QUIET_FRAMES: u32 = 30;
 
 #[derive(Debug, Default)]
 pub(crate) struct PipelineList {
@@ -24,7 +21,6 @@ enum State {
     },
     Making {
         key: RecordKey,
-        quiet: u32,
     },
     Done,
 }
@@ -82,7 +78,7 @@ impl PipelineList {
         }
         let key = key_of(&identity);
         if cooking(engine) {
-            self.state = State::Making { key, quiet: 0 };
+            self.state = State::Making { key };
             return;
         }
         self.state = match engine.app.world_mut().get_resource_mut::<JobExchange>() {
@@ -107,26 +103,17 @@ impl PipelineList {
         };
         self.state = match output.map(|record| renderer.create_listed_pipelines(&record)) {
             Ok(Ok(_)) => State::Done,
-            Ok(Err(_)) => State::Making { key, quiet: 0 },
-            Err(error) if error == MISSING_RECORD => State::Making { key, quiet: 0 },
+            Ok(Err(_)) => State::Making { key },
+            Err(error) if error == MISSING_RECORD => State::Making { key },
             Err(_) => State::Done,
         };
     }
 
     pub(crate) fn after_frame(&mut self, engine: &mut Engine, renderer: &Renderer, created: u32) {
-        let State::Making { key, quiet } = &mut self.state else {
+        let State::Making { key } = self.state else {
             return;
         };
-        let key = *key;
-        let world = engine.app.world();
-        let others = cooking(engine).then(|| {
-            world
-                .get_resource::<Registry>()
-                .map_or(0, |registry| registry.pending(world))
-        });
-        let still = created == 0 && others.is_none_or(|others| others == 0);
-        *quiet = if still { *quiet + 1 } else { 0 };
-        if *quiet < QUIET_FRAMES {
+        if created > 0 || !engine.readiness().settled() {
             return;
         }
         if let Some(mut jobs) = engine.app.world_mut().get_resource_mut::<JobExchange>() {

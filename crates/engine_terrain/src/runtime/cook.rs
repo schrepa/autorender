@@ -5,20 +5,20 @@ const COOK_VIEW_HEIGHT: f32 = 2160.0;
 pub(super) struct CookTiles {
     keys: Vec<TileKey>,
     next: usize,
-    flight: TileMap<Ticket>,
+    made: Generation,
+    flight: TileMap<Interest<engine_core::RecordKey>>,
+    failed: Vec<Interest<engine_core::RecordKey>>,
 }
 
 impl CookTiles {
-    fn of(keys: Vec<TileKey>) -> Self {
+    fn of(keys: Vec<TileKey>, made: Generation) -> Self {
         Self {
             keys,
             next: 0,
+            made,
             flight: TileMap::default(),
+            failed: Vec::new(),
         }
-    }
-
-    pub(super) fn asked(self) -> Vec<Ticket> {
-        self.flight.into_values()
     }
 
     fn take(
@@ -31,11 +31,12 @@ impl CookTiles {
             let Some(output) = self.flight.get(&key).and_then(|ticket| asking.take(ticket)) else {
                 continue;
             };
-            if let Some(ticket) = self.flight.remove(&key) {
-                asking.jobs.cancel(ticket);
-            }
+            let Some(interest) = self.flight.remove(&key) else {
+                continue;
+            };
             if let Err(error) = job_output(kind, output, |_| Ok::<_, Error>(())) {
                 failures.record(frame, error);
+                self.failed.push(interest);
             }
         }
     }
@@ -70,10 +71,12 @@ impl Terrains {
             let Some(recipe) = state.recipe.as_ref().map(|recipe| recipe.key) else {
                 continue;
             };
+            let generation = state.store.generation();
             let mut cook = state
                 .cook
                 .take()
-                .unwrap_or_else(|| CookTiles::of(cooked_tiles(state, settings)));
+                .filter(|cook| cook.made == generation)
+                .unwrap_or_else(|| CookTiles::of(cooked_tiles(state, settings), generation));
             cook.take(TILE_BUILD.name(), asking, (&mut state.failures, frame));
             while let Some(&key) = cook.keys.get(cook.next) {
                 let priority = job_priority(VIEW_JOBS, cook.next as u32);

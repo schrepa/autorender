@@ -1,5 +1,5 @@
 import package::face::debug::{DEBUG_KIND_SKY, DEBUG_KIND_WATER, DEBUG_OTHER, DEBUG_SKY, DebugShade,
-    DebugTargets};
+    DebugTargets, debug_record_kind};
 import package::generated::pieces::water::piece;
 import package::generated::water::{BREAK_FULL, BREAK_ONSET, DEBUG_SPAN_STEPS};
 
@@ -107,7 +107,7 @@ fn shade_kind(shade: DebugShade, targets: DebugTargets) -> DebugShade {
     if shown.x == 0u {
         return shade;
     }
-    let kind = targets.ids.x & 0xfu;
+    let kind = debug_record_kind(targets.ids.x);
     var color = select(DEBUG_OTHER, DEBUG_SKY, kind == DEBUG_KIND_SKY);
     if kind == DEBUG_KIND_WATER {
         color = debug_water_color(shown.y, targets.ids, targets.terrain);

@@ -1,4 +1,4 @@
-use engine_core::LevelProgress;
+use engine_core::Progress;
 #[cfg(not(target_arch = "wasm32"))]
 use engine_core::{Error, ErrorCode};
 #[cfg(not(target_arch = "wasm32"))]
@@ -7,8 +7,6 @@ use engine_scene::{SceneFiles, SceneKinds};
 #[cfg(not(target_arch = "wasm32"))]
 use super::{FileRead, SceneLoad};
 use crate::Result;
-
-const QUIET_FRAMES: u32 = 8;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
@@ -59,13 +57,10 @@ pub(crate) enum LevelLoad {
     Idle,
     #[cfg(not(target_arch = "wasm32"))]
     Reading(Box<LevelRead>),
-    Building {
-        quiet: u32,
-    },
 }
 
 pub(crate) enum LevelStep {
-    Progress(LevelProgress),
+    Progress(Progress),
     #[cfg(not(target_arch = "wasm32"))]
     Ready {
         source: String,
@@ -79,34 +74,26 @@ impl LevelLoad {
         Ok(Self::Reading(Box::new(LevelRead::open(path, kinds)?)))
     }
 
-    pub(crate) fn step(&mut self, busy: bool) -> Result<LevelStep> {
+    pub(crate) fn step(&mut self) -> Result<LevelStep> {
         match self {
-            Self::Idle => Ok(LevelStep::Progress(LevelProgress::Idle)),
+            Self::Idle => Ok(LevelStep::Progress(Progress::default())),
             #[cfg(not(target_arch = "wasm32"))]
             Self::Reading(reading) => {
                 if let Some(read) = reading.reads.pop() {
                     reading.read_one(&read)?;
-                    return Ok(LevelStep::Progress(LevelProgress::Reading {
-                        done: reading.total - reading.reads.len() as u32,
-                        total: reading.total,
-                    }));
+                    return Ok(LevelStep::Progress(Progress::of(
+                        u64::from(reading.total) - reading.reads.len() as u64,
+                        u64::from(reading.total),
+                    )));
                 }
                 let Self::Reading(finished) = std::mem::take(self) else {
-                    return Ok(LevelStep::Progress(LevelProgress::Idle));
+                    return Ok(LevelStep::Progress(Progress::default()));
                 };
                 let LevelRead { source, load, .. } = *finished;
                 Ok(LevelStep::Ready {
                     source,
                     files: load.finish()?,
                 })
-            }
-            Self::Building { quiet } => {
-                *quiet = if busy { 0 } else { *quiet + 1 };
-                if *quiet < QUIET_FRAMES {
-                    return Ok(LevelStep::Progress(LevelProgress::Building));
-                }
-                *self = Self::Idle;
-                Ok(LevelStep::Progress(LevelProgress::Idle))
             }
         }
     }

@@ -7,7 +7,7 @@ use engine_heightfield::tile::shaded_elsewhere;
 use engine_places_simulation::ground::TileKey;
 use engine_places_world::ground::{TerrainEntry, TerrainTiles, TileFace};
 use engine_places_world::water::Waterline;
-use engine_render::{Buffer, ComputePipeline, Count, Encode, Prepare, Texture, wgpu};
+use engine_render::{Allocation, Buffer, ComputePipeline, Count, Encode, Prepare, Texture, wgpu};
 use glam::Vec2;
 
 use super::LAYER_SIZE;
@@ -16,7 +16,9 @@ use crate::gpu::{
     ANCESTORS_GROUP, AncestorJob, CONTROL_GROUP, ControlJob, NORMALS_GROUP, NOT_RESIDENT,
     NormalJob, PEAKS_GROUP, RIVER_BEDS, RIVER_EDGES, SURFACE_ERROR_MIPS,
 };
-use crate::state::{Atlas, Bakes, TerrainBakes, TileId, Upload, listed_tile};
+use crate::state::{
+    Atlas, AtlasMoves, Bakes, TerrainBakes, TileId, Upload, all_uploads, listed_tile,
+};
 
 const HEIGHT_MIPS: u32 = 1 + SURFACE_ERROR_MIPS;
 const ERROR_CELLS: u32 = engine_heightfield::TILE_QUADS / 2;
@@ -115,19 +117,13 @@ impl TileAtlas {
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
         (tiles, atlas, bakes): (&TerrainTiles, &Atlas, &Bakes),
+        (moves, [normals, control, peaks, ancestors]): (&AtlasMoves, [bool; 4]),
         (line, watered): (&Waterline, bool),
     ) {
-        self.normal_jobs.clear();
-        self.control_jobs.clear();
-        self.peak_layers.clear();
-        self.control_ancestors.clear();
-        self.normal_ancestors.clear();
         let capacity = atlas.capacity.max(1);
         let needed = atlas.next_layer.min(capacity);
-        let whole = needed > self.layers;
-        if whole {
+        if needed > self.layers {
             self.layers = needed.next_power_of_two().max(FEWEST_LAYERS).min(capacity);
-            self.water.clear();
         }
         let layers = self.layers.max(1);
         let gpu = tiles.terrains.iter().any(|entry| entry.surface_program);
@@ -141,12 +137,13 @@ impl TileAtlas {
                 mips,
             )
         };
+        let mut allocations = Vec::new();
         let (size, mips) = array(HEIGHT_MIPS, layers);
-        cx.allocate(handles.heights, size, mips);
+        allocations.push(cx.allocate(handles.heights, size, mips));
         let (size, mips) = array(1, layers);
-        cx.allocate(handles.normals, size, mips);
-        cx.allocate(handles.control, size, mips);
-        cx.allocate(
+        allocations.push(cx.allocate(handles.normals, size, mips));
+        allocations.push(cx.allocate(handles.control, size, mips));
+        allocations.push(cx.allocate(
             handles.rivers,
             wgpu::Extent3d {
                 width: RIVER_PLANES * LAYER_SIZE,
@@ -154,9 +151,9 @@ impl TileAtlas {
                 depth_or_array_layers: if gpu { layers } else { 1 },
             },
             1,
-        );
+        ));
         for errors in [handles.errors, handles.water_errors] {
-            cx.allocate(
+            allocations.push(cx.allocate(
                 errors,
                 wgpu::Extent3d {
                     width: ERROR_CELLS,
@@ -164,25 +161,36 @@ impl TileAtlas {
                     depth_or_array_layers: layers,
                 },
                 SURFACE_ERROR_MIPS,
-            );
+            ));
         }
-        if !atlas.vacated.is_empty() {
-            self.water.retain(|id, _| atlas.slots.contains_key(id));
+        let whole = moves.all || allocations.contains(&Allocation::Fresh);
+        if whole {
+            self.water.clear();
         }
         let uploads: Vec<(TileId, u32, Upload)> = if whole {
-            let mut all: Vec<(TileId, u32, Upload)> = atlas
-                .slots
-                .iter()
-                .map(|(&id, &layer)| (id, layer, Upload::Whole))
-                .collect();
-            all.sort_unstable_by_key(|((terrain, key), _, _)| {
-                (std::cmp::Reverse(key.level), *terrain, key.x, key.z)
-            });
-            all
+            all_uploads(atlas)
         } else {
-            atlas.uploads.clone()
+            moves.uploads.clone()
         };
+        let touched: Vec<u32> = moves
+            .vacated
+            .iter()
+            .copied()
+            .chain(uploads.iter().map(|&(_, layer, _)| layer))
+            .collect();
+        let kept = |ran: bool, layer: u32| !whole && !ran && !touched.contains(&layer);
+        self.normal_jobs.retain(|job| kept(normals, job.layer));
+        self.control_jobs.retain(|job| kept(control, job.layer));
+        self.peak_layers.retain(|&layer| kept(peaks, layer));
+        self.control_ancestors
+            .retain(|job| kept(ancestors, job.layer));
+        self.normal_ancestors
+            .retain(|job| kept(ancestors, job.layer));
+        if !moves.vacated.is_empty() {
+            self.water.retain(|id, _| atlas.slots.contains_key(id));
+        }
         let found = water_errors(line, watered || !uploads.is_empty());
+        let placed: Vec<TileId> = uploads.iter().map(|&(id, _, _)| id).collect();
         for (id, layer, upload) in uploads {
             let Some(index) = tiles
                 .terrains
@@ -218,6 +226,9 @@ impl TileAtlas {
                 self.give_control(cx, handles, &placing, (atlas, bakes));
             }
         }
+        if !whole {
+            self.rederive((tiles, atlas, bakes), &placed);
+        }
         if watered {
             self.rewater(cx, handles, atlas, &found);
         }
@@ -227,6 +238,51 @@ impl TileAtlas {
         write_jobs(cx, handles.control_ancestors, &self.control_ancestors);
         write_jobs(cx, handles.normal_ancestors, &self.normal_ancestors);
         self.controls = self.control_jobs.len() as u32;
+    }
+
+    fn rederive(&mut self, (tiles, atlas, bakes): (&TerrainTiles, &Atlas, &Bakes), placed: &[TileId]) {
+        if placed.is_empty() {
+            return;
+        }
+        let below = |(terrain, key): TileId| {
+            placed.iter().any(|&(held, at)| {
+                let shift = u32::from(at.level).saturating_sub(u32::from(key.level));
+                held == terrain
+                    && at.level > key.level
+                    && shift < u16::BITS
+                    && key.x >> shift == at.x
+                    && key.z >> shift == at.z
+            })
+        };
+        let mut derived: Vec<(TileId, u32)> = atlas
+            .slots
+            .iter()
+            .map(|(&id, &layer)| (id, layer))
+            .filter(|&(id, _)| !placed.contains(&id) && below(id))
+            .collect();
+        derived.sort_unstable_by_key(|&((terrain, key), _)| {
+            (std::cmp::Reverse(key.level), terrain, key.x, key.z)
+        });
+        for ((terrain, key), layer) in derived {
+            let Some(entry) = tiles.terrains.iter().find(|entry| entry.terrain == terrain) else {
+                continue;
+            };
+            let Some(tile) = listed_tile(&entry.tiles, key) else {
+                continue;
+            };
+            let held = bakes.of(terrain);
+            if shaded_elsewhere(key.level, entry.surroundings) {
+                if held.and_then(|held| held.shading(tile)).is_none() {
+                    self.control_ancestors
+                        .push(ancestor_job(atlas, (entry, held), (layer, key), true));
+                    self.normal_ancestors
+                        .push(ancestor_job(atlas, (entry, held), (layer, key), false));
+                }
+            } else if tile.control.is_none() && !entry.surface_program {
+                self.control_ancestors
+                    .push(ancestor_job(atlas, (entry, held), (layer, key), true));
+            }
+        }
     }
 
     fn give_ground(

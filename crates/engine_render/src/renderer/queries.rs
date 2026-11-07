@@ -33,9 +33,10 @@ impl Renderer {
     pub fn motion(&self, world: &World) -> bool {
         world
             .get_resource::<engine_registry::MembersOf<crate::ViewOutputs>>()
-            .is_some_and(|members| {
+            .zip(world.get_resource::<engine_registry::BrickStates>())
+            .is_some_and(|(members, states)| {
                 members
-                    .live()
+                    .live(states)
                     .any(|output| MOTION_OUTPUTS.contains(&output.name))
             })
     }
@@ -53,11 +54,11 @@ impl Renderer {
     }
 
     pub fn view_size(&self) -> Option<(u32, u32)> {
-        (!self.core.display.suspended).then(|| self.core.display.size().pixels())
+        (!self.core.display.suspended()).then(|| self.core.display.size().pixels())
     }
 
     pub fn render_size(&self) -> Option<(u32, u32)> {
-        (!self.core.display.suspended).then(|| self.core.display.region.render.pixels())
+        (!self.core.display.suspended()).then(|| self.core.display.region.render.pixels())
     }
 
     pub fn times_frames(&self) -> bool {
@@ -75,7 +76,7 @@ impl Renderer {
 
     #[cfg(feature = "profiling")]
     pub fn profile_poll(&mut self) {
-        self.core.profiler.poll();
+        self.collect();
     }
 
     #[cfg(feature = "profiling")]
@@ -85,6 +86,7 @@ impl Renderer {
 
     #[cfg(feature = "profiling")]
     pub fn profile_report(&mut self) -> serde_json::Value {
+        self.collect();
         self.core.profiler.report()
     }
 
@@ -93,7 +95,7 @@ impl Renderer {
             .is_some_and(|assets| assets.materials.is_texture_resident(handle))
     }
 
-    pub fn pipelines_compiling(&self) -> bool {
+    pub fn pipelines_compiling(&self) -> u32 {
         crate::platform::poll(&self.core.device);
         self.core.pipeline_counts.compiling()
     }
@@ -134,12 +136,22 @@ impl Renderer {
         (up_front + made, unlisted + missed)
     }
 
-    pub fn disabled_features(&self) -> engine_core::Names {
+    pub fn disabled_features(&self, world: &World) -> engine_core::Names {
+        let states = world.get_resource::<engine_registry::BrickStates>();
+        let faulted = |gate: engine_registry::GateId| {
+            states
+                .and_then(|states| states.state(states.brick(gate)?))
+                .is_some_and(|state| matches!(state, engine_registry::BrickState::Faulted(_)))
+        };
         let bits = self.run.as_ref().map_or(0, |run| {
-            run.faulted
+            run.gates
                 .iter()
+                .zip(&run.turned)
                 .enumerate()
-                .filter(|(_, fault)| fault.is_some())
+                .filter(|(_, (gate, turned))| match gate {
+                    Some(gate) => faulted(*gate),
+                    None => turned.is_none(),
+                })
                 .fold(0_u128, |bits, (at, _)| {
                     bits | 1_u128.checked_shl(at as u32).unwrap_or(0)
                 })

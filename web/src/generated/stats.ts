@@ -260,6 +260,7 @@ export interface ReflectionProbeStats {
   faces: number;
   probe_cut: Cut;
   ready: number;
+  waiting: number;
 }
 
 export interface ReflectionsStats {
@@ -300,10 +301,11 @@ export interface ShadowStats {
   tiles_marked: number;
   tiles_reclaimed: number;
   tiles_resident: number;
+  tiles_waiting: number;
 }
 
 export interface SkyStats {
-  exposure: number;
+  light: number;
   tables: number;
 }
 

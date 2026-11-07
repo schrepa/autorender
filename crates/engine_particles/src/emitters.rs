@@ -193,7 +193,6 @@ pub(crate) struct Packed {
     pub(crate) mist: u32,
     pub(crate) total: u32,
     pub(crate) emits: bool,
-    pub(crate) epoch: u64,
     cut: u64,
 }
 
@@ -419,25 +418,6 @@ pub(crate) fn particle_stats(
         drawn,
         particle_cut: Cut::of(drawn.saturating_add(cut), drawn),
     });
-}
-
-pub(crate) fn drop_bursts(bursts: Res<ParticleBursts>) {
-    drop(bursts.take_bursts());
-    bursts.take_cut();
-}
-
-pub(crate) fn forget(
-    mut gather: ResMut<Gather>,
-    mut packed: ResMut<Packed>,
-    mut stats: ResMut<ParticleStats>,
-) {
-    let epoch = packed.epoch.wrapping_add(1);
-    *gather = Gather::default();
-    *packed = Packed {
-        epoch,
-        ..Packed::default()
-    };
-    stats.set_if_neq(ParticleStats::default());
 }
 
 fn pack_emitters(emitters: &[RenderEmitter], records: &mut Vec<Emitter>) -> (u32, u32, u32, u64) {

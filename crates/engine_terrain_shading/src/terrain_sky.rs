@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use engine_core::Error;
 use engine_places_world::ground::TerrainTiles;
-use engine_render::{Install, Lifetime, Prepare, Texture, wgpu};
+use engine_render::{Allocation, Install, Lifetime, Prepare, Texture, wgpu};
 
 use crate::lighting::{SKY_LAYERS, TerrainLighting};
 use crate::settings::TerrainShading;
@@ -13,7 +13,6 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 pub(crate) struct SkyMaps {
     pub(crate) texture: Texture<TerrainGpu>,
-    shape: Option<(u32, usize)>,
     held: Vec<Option<Arc<TerrainLighting>>>,
     pub(crate) uploaded: u32,
 }
@@ -22,7 +21,6 @@ impl SkyMaps {
     pub(crate) fn install(cx: &mut Install<'_, TerrainGpu>) -> Result<Self, Error> {
         Ok(Self {
             texture: cx.texture("sky", FORMAT, Lifetime::Kept),
-            shape: None,
             held: Vec::new(),
             uploaded: 0,
         })
@@ -40,9 +38,8 @@ impl SkyMaps {
         self.held.iter().flatten().count() as u32
     }
 
-    pub(crate) fn forget(&mut self) {
+    pub(crate) fn release(&mut self) {
         self.uploaded = 0;
-        self.shape = None;
         self.held.clear();
     }
 
@@ -52,17 +49,13 @@ impl SkyMaps {
         (tiles, bakes, settings, layers): (&TerrainTiles, &Bakes, &TerrainShading, u32),
     ) {
         if !settings.sky_visibility || tiles.terrains.is_empty() {
-            self.forget();
+            self.release();
             return;
         }
         self.uploaded = 0;
         let size = settings.sky_resolution;
         let count = tiles.terrains.len().min(layers as usize / SKY_LAYERS);
-        if self.shape != Some((size, count)) {
-            self.shape = Some((size, count));
-            self.held = vec![None; count];
-        }
-        cx.allocate(
+        let allocation = cx.allocate(
             self.texture,
             wgpu::Extent3d {
                 width: size,
@@ -71,6 +64,9 @@ impl SkyMaps {
             },
             1,
         );
+        if allocation == Allocation::Fresh || self.held.len() != count {
+            self.held = vec![None; count];
+        }
         for (index, terrain) in tiles.terrains.iter().take(count).enumerate() {
             let lighting = bakes
                 .of(terrain.terrain)

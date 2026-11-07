@@ -73,11 +73,4 @@ impl<V> TileMap<V> {
         }
         taken
     }
-
-    pub(super) fn into_values(mut self) -> Vec<V> {
-        let keys = self.keys();
-        keys.into_iter()
-            .filter_map(|key| self.0.remove(&key))
-            .collect()
-    }
 }

@@ -2,15 +2,15 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_assets::{AssetLibrary, TextureHandle};
-use engine_settings::Error;
+use engine_settings::{Error, ErrorCode};
 pub use engine_textures::{
     Family as TextureFamily, Source as TextureSource, Usage as TextureUsage,
 };
 
 use crate::jobs::record_key;
 use crate::{
-    CookMode, JobExchange, JobFailures, JobId, JobKind, JobRef, RecordKey, TEXTURE_COOK,
-    URGENT_JOBS, VIEW_JOBS, job_priority,
+    Census, CookMode, Interest, JobExchange, JobId, JobKind, JobRef, RecordKey, Requests,
+    TEXTURE_COOK, URGENT_JOBS, VIEW_JOBS, job_priority,
 };
 
 const TEXTURE_RECORD: &str = "texture";
@@ -79,11 +79,17 @@ enum Stage {
     Cooking(JobId),
 }
 
-struct Request {
-    key: RecordKey,
+struct Asking {
+    interest: Interest<RecordKey>,
     make: Make,
     deliver: Option<DeliverRecord>,
     stage: Stage,
+}
+
+impl Asking {
+    fn key(&self) -> RecordKey {
+        *self.interest.key()
+    }
 }
 
 struct AskedSet {
@@ -108,12 +114,12 @@ struct Batch {
 #[derive(Resource, Default)]
 pub struct RecordExchange {
     sampling: Option<TextureSampling>,
-    requests: Vec<Request>,
+    asking: Vec<Asking>,
     sets: Vec<AskedSet>,
     batches: Vec<Batch>,
     next_batch: u64,
-    failures: JobFailures,
-    frame: u64,
+    records: Requests<RecordKey, ()>,
+    failed: Vec<Interest<RecordKey>>,
 }
 
 impl RecordExchange {
@@ -131,8 +137,9 @@ impl RecordExchange {
         make: impl FnOnce() -> Result<Vec<u8>, String> + Send + Sync + 'static,
         deliver: impl FnOnce(&mut World, &[u8]) -> Result<(), String> + Send + Sync + 'static,
     ) {
-        self.requests.push(Request {
-            key,
+        let interest = self.records.ask(key);
+        self.asking.push(Asking {
+            interest,
             make: Make::Here(Some(Box::new(make))),
             deliver: Some(Box::new(deliver)),
             stage: Stage::Asking,
@@ -157,27 +164,43 @@ impl RecordExchange {
         Ok(handles)
     }
 
-    pub fn loading(&self) -> bool {
-        let unasked = self.sampling.is_some_and(|sampling| {
+    pub fn census(&self) -> Census {
+        let mut census = self.records.census();
+        let unasked = self.sampling.map_or(0, |sampling| {
             let shown = family_slot(sampling.family());
-            self.sets.iter().any(|asked| !asked.asked[shown])
+            self.sets.iter().filter(|asked| !asked.asked[shown]).count() as u64
         });
-        unasked
-            || self
-                .requests
-                .iter()
-                .any(|request| request.deliver.is_some())
+        census.loading.total += unasked;
+        census
     }
 
-    pub fn pending(&self) -> usize {
-        self.requests.len()
+    pub fn failures(&self) -> impl Iterator<Item = (&RecordKey, &Error)> + '_ {
+        self.failed.iter().filter_map(|held| match self.records.of(held)? {
+            crate::Request::Failed(error) => Some((held.key(), error)),
+            crate::Request::Asked(_) | crate::Request::Ready(()) | crate::Request::Missing => None,
+        })
     }
 
-    pub fn failures(&self) -> (u64, Option<&str>) {
-        (
-            self.failures.count,
-            self.failures.last.as_ref().map(|(_, error)| error.as_str()),
-        )
+    fn end(
+        &mut self,
+        key: RecordKey,
+        held: Option<Interest<RecordKey>>,
+        outcome: Result<(), String>,
+    ) {
+        let Some(ticket) = self.records.ticket(&key) else {
+            return;
+        };
+        match outcome {
+            Ok(()) => {
+                self.records.ready(&key, ticket, ());
+            }
+            Err(error) => {
+                let error = Error::new(ErrorCode::InvalidRecord, format!("$.records.{}", key.hex()))
+                    .got(error);
+                self.records.fail(&key, ticket, error);
+                self.failed.extend(held);
+            }
+        }
     }
 
     fn ask_textures(&mut self, cooking: bool) {
@@ -205,8 +228,8 @@ impl RecordExchange {
                 asked.asked[slot] = true;
                 for (index, &handle) in asked.handles.iter().enumerate() {
                     let key = asked.set.key(index, family);
-                    self.requests.push(Request {
-                        key,
+                    self.asking.push(Asking {
+                        interest: self.records.ask(key),
                         make: Make::Texture {
                             batch,
                             index,
@@ -305,18 +328,18 @@ fn deliver_texture(
 }
 
 enum Step {
-    Waiting(Request),
+    Waiting(Asking),
     Arrived {
-        request: Request,
+        request: Asking,
         bytes: Arc<[u8]>,
         made: bool,
     },
-    Failed(RecordKey, String),
+    Failed(Asking, String),
 }
 
 fn step(
     records: &mut RecordExchange,
-    mut request: Request,
+    mut request: Asking,
     (jobs, place): (&mut JobExchange, u32),
 ) -> Step {
     let make_priority = job_priority(VIEW_JOBS, place);
@@ -327,7 +350,7 @@ fn step(
                     Make::Here(_) => None,
                     Make::Texture { .. } => Some(JobRef::from(&TEXTURE_COOK)),
                 };
-                let id = jobs.fetch(kind, request.key, job_priority(URGENT_JOBS, place));
+                let id = jobs.fetch(kind, request.key(), job_priority(URGENT_JOBS, place));
                 request.stage = Stage::Fetching(id);
             }
             Stage::Fetching(id) => match jobs.take(id) {
@@ -345,7 +368,7 @@ fn step(
             Stage::Making => match &mut request.make {
                 Make::Here(make) => {
                     let Some(make) = make.take() else {
-                        return Step::Failed(request.key, "it was made already".into());
+                        return Step::Failed(request, "it was made already".into());
                     };
                     return match make() {
                         Ok(bytes) => Step::Arrived {
@@ -353,7 +376,7 @@ fn step(
                             bytes: Arc::from(bytes),
                             made: true,
                         },
-                        Err(error) => Step::Failed(request.key, error),
+                        Err(error) => Step::Failed(request, error),
                     };
                 }
                 &mut Make::Texture {
@@ -374,12 +397,13 @@ fn step(
                             request.stage = Stage::Cooking(id);
                         }
                         Some(Sources::Made(Err(error))) => {
-                            return Step::Failed(request.key, error.clone());
+                            let error = error.clone();
+                            return Step::Failed(request, error);
                         }
                         Some(Sources::Unmade | Sources::Making(_)) => {
                             return Step::Waiting(request);
                         }
-                        None => return Step::Failed(request.key, "its sources are gone".into()),
+                        None => return Step::Failed(request, "its sources are gone".into()),
                     }
                 }
             },
@@ -391,7 +415,7 @@ fn step(
                         bytes,
                         made: true,
                     },
-                    Some(Err(error)) => Step::Failed(request.key, error),
+                    Some(Err(error)) => Step::Failed(request, error),
                 };
             }
         }
@@ -402,22 +426,25 @@ pub(crate) fn exchange(world: &mut World) {
     let cooking = world
         .get_resource::<CookMode>()
         .is_some_and(|mode| mode.cooking);
-    let requests = {
+    let now = world
+        .get_resource::<crate::FrameTime>()
+        .map_or(0.0, |time| time.elapsed_seconds);
+    let asking = {
         let mut records = world.resource_mut::<RecordExchange>();
-        records.frame += 1;
         records.ask_textures(cooking);
-        std::mem::take(&mut records.requests)
+        records.records.settle(now);
+        std::mem::take(&mut records.asking)
     };
-    if requests.is_empty() {
+    if asking.is_empty() {
         return;
     }
-    let mut waiting = Vec::with_capacity(requests.len());
+    let mut waiting = Vec::with_capacity(asking.len());
     let mut arrived = Vec::new();
-    let mut failed = Vec::new();
+    let mut ends = Vec::new();
     world.resource_scope(|world, mut jobs: Mut<JobExchange>| {
         let verifying = jobs.verifying();
         let mut records = world.resource_mut::<RecordExchange>();
-        for (place, request) in requests.into_iter().enumerate() {
+        for (place, request) in asking.into_iter().enumerate() {
             match step(&mut records, request, (&mut *jobs, place as u32)) {
                 Step::Waiting(request) => waiting.push(request),
                 Step::Arrived {
@@ -425,7 +452,7 @@ pub(crate) fn exchange(world: &mut World) {
                     bytes,
                     made,
                 } => {
-                    let key = request.key;
+                    let key = request.key();
                     if made {
                         let kind = match request.make {
                             Make::Here(_) => None,
@@ -434,34 +461,36 @@ pub(crate) fn exchange(world: &mut World) {
                         jobs.keep(key, kind, bytes.to_vec());
                     }
                     let deliver = request.deliver.take();
-                    if !made && verifying {
+                    let held = if !made && verifying {
                         waiting.push(request);
-                    }
-                    arrived.push((key, deliver, bytes));
+                        None
+                    } else {
+                        Some(request.interest)
+                    };
+                    arrived.push((key, held, deliver, bytes));
                 }
-                Step::Failed(key, error) => failed.push(format!("record {}: {error}", key.hex())),
+                Step::Failed(request, error) => {
+                    ends.push((request.key(), Some(request.interest), Err(error)));
+                }
             }
         }
     });
-    for (key, deliver, bytes) in arrived {
-        if let Some(deliver) = deliver
-            && let Err(error) = deliver(world, &bytes)
-        {
-            failed.push(format!("record {}: {error}", key.hex()));
-        }
+    for (key, held, deliver, bytes) in arrived {
+        let delivered = match deliver {
+            Some(deliver) => deliver(world, &bytes),
+            None => Ok(()),
+        };
+        ends.push((key, held, delivered));
     }
     let mut records = world.resource_mut::<RecordExchange>();
-    let frame = records.frame;
-    for error in failed {
-        records.failures.record(frame, error);
+    for (key, held, outcome) in ends {
+        records.end(key, held, outcome);
     }
-    waiting.append(&mut records.requests);
-    records.requests = waiting;
-    let RecordExchange {
-        requests, batches, ..
-    } = &mut *records;
+    waiting.append(&mut records.asking);
+    records.asking = waiting;
+    let RecordExchange { asking, batches, .. } = &mut *records;
     batches.retain(|batch| {
-        requests.iter().any(
+        asking.iter().any(
             |request| matches!(request.make, Make::Texture { batch: id, .. } if id == batch.id),
         )
     });

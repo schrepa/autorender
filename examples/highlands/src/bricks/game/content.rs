@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetLibrary, Error, ErrorCode, Job, JobCx, JobKind, Jobs, Mesh, MeshHandle, ProvidedAssets,
-    RecordExchange, Records, Ticket, URGENT_JOBS, job_priority,
+    Interest, RecordExchange, RecordKey, Records, URGENT_JOBS, job_priority,
 };
 use glam::Vec3;
 
@@ -29,7 +29,7 @@ pub(crate) static CAVE: JobKind = JobKind::new("highlands::cave", &SOURCE, start
 
 #[derive(Resource, Default)]
 pub(crate) struct Content {
-    asked: Vec<(Ticket, MeshHandle, &'static JobKind)>,
+    asked: Vec<(Interest<RecordKey>, MeshHandle, &'static JobKind)>,
     pub(crate) boulders: Vec<MeshHandle>,
     failures: u64,
     latest: Option<String>,
@@ -110,7 +110,6 @@ pub(crate) fn arrive(
     records: Res<Records>,
     mut assets: ResMut<AssetLibrary>,
     mut content: ResMut<Content>,
-    mut jobs: Jobs,
 ) {
     let content = &mut *content;
     let asked = std::mem::take(&mut content.asked);
@@ -119,7 +118,6 @@ pub(crate) fn arrive(
             content.asked.push((ticket, handle, kind));
             continue;
         };
-        jobs.cancel(ticket);
         let filled = record
             .and_then(|bytes| Mesh::from_record(&bytes))
             .and_then(|mesh| assets.fill_mesh(handle, mesh));

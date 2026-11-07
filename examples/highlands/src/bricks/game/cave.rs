@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Jobs, MaterialHandle, Mesh, Mesh3d, MeshHandle, Records, Spawner, Ticket,
-    Transform, math,
+    AssetLibrary, Interest, Jobs, MaterialHandle, Mesh, Mesh3d, MeshHandle, RecordKey, Records,
+    Spawner, Transform, math,
 };
 use engine_places_rendering::lights::{LightRegion, LocalLight};
 use engine_places_rendering::probes::{Interior, ReflectionProbe};
@@ -37,7 +37,7 @@ impl Cave {
 }
 
 struct Asked {
-    ticket: Ticket,
+    ticket: Interest<RecordKey>,
     mesh: MeshHandle,
     points: [Vec3; CAVE_POINTS],
     inward: Vec3,
@@ -70,13 +70,7 @@ pub(crate) fn open(
     mut spawner: Spawner<HighlandsBrick>,
 ) {
     let (cave, content) = (&mut *cave, &mut *content);
-    arrive(
-        cave,
-        content,
-        (&*records, &mut jobs),
-        &mut assets,
-        &mut spawner,
-    );
+    arrive(cave, content, &records, &mut assets, &mut spawner);
     if cave.opened {
         return;
     }
@@ -175,7 +169,7 @@ pub(crate) fn open(
 fn arrive(
     cave: &mut Cave,
     content: &mut Content,
-    (records, jobs): (&Records, &mut Jobs<'_, '_>),
+    records: &Records,
     assets: &mut AssetLibrary,
     spawner: &mut Spawner<HighlandsBrick>,
 ) {
@@ -189,7 +183,6 @@ fn arrive(
     let Some(asked) = cave.asked.take() else {
         return;
     };
-    jobs.cancel(asked.ticket);
     let built = match record.and_then(|bytes| Mesh::from_record(&bytes)) {
         Ok(built) => built,
         Err(error) => {

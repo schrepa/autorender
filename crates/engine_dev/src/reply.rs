@@ -2,7 +2,7 @@ use engine_settings::Error;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::views::PresentationStateView;
+use engine_core::PresentationState;
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
@@ -28,7 +28,7 @@ pub struct Observation {
     pub frame: Option<String>,
     pub tick: Option<String>,
     pub scene: Option<SceneObservation>,
-    pub presentation: PresentationStateView,
+    pub presentation: PresentationState,
 }
 
 #[derive(Serialize)]

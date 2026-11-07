@@ -1,9 +1,11 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode, Expected, FrameTime, GlobalTransforms, Operation, SceneIds};
+use engine_core::{
+    Error, ErrorCode, Expected, FrameTime, GlobalTransforms, GpuBits, Operation, SceneIds,
+};
 use engine_places::meshes::Instances;
 use serde_json::{Value, json};
 
-use crate::layouts::LOD_STATE;
+use crate::layouts::LodFade;
 use crate::presentation::PresentationTotals;
 use crate::retained::RetainedRender;
 
@@ -46,18 +48,20 @@ impl Operation for MeshDrawn {
             return Ok(json!({ "slot": null, "drawn_level": null, "read_back": null }));
         };
         watched.slot = Some(slot);
-        let read_back = totals
+        let watched = totals
             .last()
             .and_then(|last| last.watched)
             .filter(|&(seen, _)| seen == slot)
-            .map(|(_, state)| (state & LOD_STATE != 0).then_some(state & 3));
+            .map(|(_, word)| word);
         let age = totals.age(time.frame);
         Ok(json!({
             "slot": slot,
-            "drawn_level": read_back.flatten(),
-            "read_back": read_back
-                .zip(age)
-                .map(|(level, age)| json!({ "level": level, "age": age })),
+            "drawn_level": watched.and_then(LodFade::drawn_level),
+            "read_back": watched.zip(age).map(|(word, age)| json!({
+                "level": LodFade::drawn_level(word),
+                "word": <LodFade as GpuBits>::decoded(word),
+                "age": age,
+            })),
         }))
     }
 }

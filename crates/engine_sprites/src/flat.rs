@@ -1,7 +1,7 @@
 use engine_core::{Error, View};
 use engine_render::{
-    Bind, DepthUse, Draw, Install, Lifetime, MainView, Pipeline, Prepare, RenderPipeline,
-    SamplerDesc, Shape, Texture, wgpu,
+    Allocation, Bind, DepthUse, Draw, Install, Lifetime, MainView, Pipeline, Prepare,
+    RenderPipeline, SamplerDesc, Shape, Texture, wgpu,
 };
 
 use crate::SpritesGpu;
@@ -22,7 +22,6 @@ const CHECKER_SIZE: wgpu::Extent3d = wgpu::Extent3d {
 pub(crate) struct Flat {
     checker: Texture<SpritesGpu>,
     pipeline: Pipeline<SpritesGpu, MainView>,
-    written: bool,
     drawn: bool,
 }
 
@@ -56,15 +55,13 @@ impl Flat {
         Ok(Self {
             checker,
             pipeline,
-            written: false,
             drawn: false,
         })
     }
 
     pub(crate) fn prepare(&mut self, view: &View, cx: &mut Prepare<'_, SpritesGpu>) {
         self.drawn = !view.debug() && !view.temporal();
-        cx.allocate(self.checker, CHECKER_SIZE, 1);
-        if self.written {
+        if cx.allocate(self.checker, CHECKER_SIZE, 1) == Allocation::Kept {
             return;
         }
         cx.write_texture(
@@ -78,7 +75,6 @@ impl Flat {
             },
             CHECKER_SIZE,
         );
-        self.written = true;
     }
 
     pub(crate) fn draw(&self, draw: &mut Draw<'_, SpritesGpu, MainView>) -> u32 {

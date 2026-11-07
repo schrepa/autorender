@@ -1,11 +1,52 @@
-use engine_core::{gpu_consts, gpu_struct};
+use engine_core::{GpuBits, gpu_bits, gpu_consts, gpu_struct};
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CandidateState {
+    pub visible: bool,
+    pub moving: bool,
+    pub valid: bool,
+    pub phase_one: bool,
+    pub phase_two: bool,
+    pub occluded: bool,
+    pub subpixel: bool,
+    pub probe: bool,
+    #[bits(2)]
+    pub level: u32,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LodHistory {
+    Unset = 0,
+    Held = 1,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LodFade {
+    #[bits(2)]
+    pub shown: u32,
+    #[bits(2)]
+    pub previous: u32,
+    #[bits(16)]
+    pub progress: u32,
+    #[bits(1, at = 31)]
+    pub history: LodHistory,
+}
+
+impl LodFade {
+    pub(crate) fn drawn_level(word: u32) -> Option<u32> {
+        Self::unpack(word)
+            .filter(|fade| fade.history == LodHistory::Held)
+            .map(|fade| fade.shown)
+    }
+}
 
 gpu_consts! {
-    pub const VISIBLE: u32 = 1;
-    pub const PHASE1: u32 = 8;
-    pub const PHASE2: u32 = 16;
-    pub const PROBE: u32 = 128;
     pub const LOD_LEVELS: u32 = 3;
+    pub const LOD_FADED: u32 = <LodFade as GpuBits>::FIELDS[2].mask();
+    pub const NO_NODE: u32 = u32::MAX;
     pub const CULL_GROUP: u32 = 256;
     pub const GROUP: u32 = 64;
     pub const PARENT_GROUP: u32 = 64;
@@ -13,7 +54,6 @@ gpu_consts! {
     pub const MOVING_MAP: u32 = 7;
     pub const SKY_MAP: u32 = 8;
     pub const MOVING_PAIRS: u32 = 8;
-    pub const LOD_STATE: u32 = 1 << 31;
     pub const UNWATCHED: u32 = u32::MAX;
     pub const FIRST_PERSON_BATCH: f32 = 1.0;
 }

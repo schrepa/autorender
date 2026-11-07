@@ -74,6 +74,8 @@ settings! {
         pub max_sensor_pairs: Option<u32> = None => budget,
         pub max_query_candidates: Option<u32> = None => budget,
         pub max_query_hits: Option<u32> = None => budget,
+        pub sensor_feed: u32 = 1024 => at_least(1),
+        pub slide_feed: u32 = 1024 => at_least(1),
     }
 }
 
@@ -113,7 +115,6 @@ pub(crate) struct CollisionReport {
     pub overflow_colliders: usize,
     pub bvh_nodes: usize,
     pub cache_bytes: usize,
-    pub complete: bool,
     pub placed_colliders: usize,
     pub slide_hits: usize,
 }
@@ -199,7 +200,7 @@ stats! {
 }
 
 impl CollisionStats {
-    pub(crate) fn of(report: &CollisionReport, config: &CollisionConfig) -> Self {
+    pub(crate) fn of(report: &CollisionReport, config: &CollisionConfig, complete: bool) -> Self {
         Self {
             frame: Count(report.frame),
             tick: Count(report.tick),
@@ -209,7 +210,7 @@ impl CollisionStats {
             overflow_colliders: report.overflow_colliders,
             bvh_nodes: report.bvh_nodes,
             cache_bytes: report.cache_bytes,
-            complete: report.complete,
+            complete,
             placed_colliders: report.placed_colliders,
             slide_hits: report.slide_hits,
             limits: CollisionLimits::of(config),

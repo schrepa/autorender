@@ -1,4 +1,5 @@
-import package::generated::shadows::{CasterCull, LEVEL_WINDOW, Route, SKY_REFRESH};
+import package::generated::shadows::{CasterCull, LEVEL_WINDOW, Route, SKY_REFRESH,
+    tile_entry_moving, tile_entry_still};
 import package::shadows::sample::{level_words, shadow_tiles};
 
 @group(0) @binding(0) var<uniform> caster_cull: CasterCull;
@@ -59,7 +60,7 @@ fn mark_caster(level: u32, tile: vec2<i32>, moving: bool) -> u32 {
     let last = i32(side) - 1;
     let cell = vec2<u32>(tile & vec2<i32>(last));
     let entry = textureLoad(shadow_tiles, vec2<u32>(cell.x, level * side + cell.y), 0).r;
-    if (entry & 0xffffu) == 0u {
+    if tile_entry_still(entry) == 0u {
         return 0u;
     }
     let bit = (level * side + cell.y) * side + cell.x;
@@ -68,7 +69,7 @@ fn mark_caster(level: u32, tile: vec2<i32>, moving: bool) -> u32 {
     if (atomicLoad(&caster_marks[word]) & flag) == 0u {
         atomicOr(&caster_marks[word], flag);
     }
-    let routed = entry >> 16u;
+    let routed = tile_entry_moving(entry);
     if !moving || routed == 0u {
         return 0u;
     }

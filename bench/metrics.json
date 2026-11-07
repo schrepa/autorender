@@ -1927,7 +1927,7 @@
       "direction": null
     },
     {
-      "name": "sky_stats.exposure",
+      "name": "sky_stats.light",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame_late",
@@ -2466,17 +2466,6 @@
       "direction": "lower"
     },
     {
-      "name": "terrain_stats.loading",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "boolean",
-      "direction": null
-    },
-    {
       "name": "terrain_stats.loading_tiles",
       "kind": "work",
       "rule": "shown",
@@ -2906,7 +2895,7 @@
       "direction": "lower"
     },
     {
-      "name": "water_stats.looks_left",
+      "name": "water_stats.squares_left",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",

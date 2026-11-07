@@ -4,7 +4,6 @@ use std::sync::Arc;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{SystemBuffer, SystemMeta};
 use bevy_ecs::world::{DeferredWorld, FromWorld, World};
-use engine_math::collections::HashMap;
 use engine_place::{Error, ErrorCode, JobRef, List};
 use sha2::{Digest, Sha256};
 
@@ -156,9 +155,6 @@ pub enum JobOrder {
         source: [u8; 32],
         priority: u32,
     },
-    Cancel {
-        key: [u8; 32],
-    },
     Share {
         key: [u8; 32],
         bytes: Arc<[u8]>,
@@ -233,75 +229,5 @@ impl JobQueue {
     fn owner(&mut self) -> u32 {
         self.owners = self.owners.wrapping_add(1);
         self.owners
-    }
-}
-
-struct Held {
-    record: Option<Result<Arc<[u8]>, Error>>,
-    interests: u32,
-    idle: u32,
-}
-
-#[derive(Default)]
-pub struct RecordStore {
-    held: HashMap<[u8; 32], Held>,
-}
-
-impl RecordStore {
-    pub fn get(&self, key: &[u8; 32]) -> Option<Result<Arc<[u8]>, Error>> {
-        self.held.get(key)?.record.clone()
-    }
-
-    pub fn waiting(&self, key: &[u8; 32]) -> bool {
-        self.held
-            .get(key)
-            .is_some_and(|held| held.record.is_none() && held.interests > 0)
-    }
-
-    pub fn want(&mut self, key: [u8; 32]) {
-        let held = self.held.entry(key).or_insert(Held {
-            record: None,
-            interests: 0,
-            idle: 0,
-        });
-        held.interests = held.interests.saturating_add(1);
-        held.idle = 0;
-    }
-
-    pub fn release(&mut self, key: &[u8; 32]) -> bool {
-        let Some(held) = self.held.get_mut(key) else {
-            return false;
-        };
-        held.interests = held.interests.saturating_sub(1);
-        held.interests == 0
-    }
-
-    pub fn arrive(&mut self, key: [u8; 32], record: Result<Arc<[u8]>, Error>) {
-        let held = self.held.entry(key).or_insert(Held {
-            record: None,
-            interests: 0,
-            idle: 0,
-        });
-        held.record = Some(record);
-    }
-
-    pub fn evict(&mut self, keep_frames: u32) -> usize {
-        let before = self.held.len();
-        self.held.retain(|_, held| {
-            if held.interests > 0 {
-                return true;
-            }
-            held.idle = held.idle.saturating_add(1);
-            held.idle <= keep_frames
-        });
-        before - self.held.len()
-    }
-
-    pub fn len(&self) -> usize {
-        self.held.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.held.is_empty()
     }
 }

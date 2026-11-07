@@ -1,8 +1,9 @@
 import package::engine::view::seen_share;
 import package::face::instances::FADE_SLOT;
 import package::generated::scatter::{
-    CullFrame, CullGroup, CullView, DEAD, FADED, HIDDEN, LAYER_SHIFT, NO_LAYER, RANK_SHIFT,
-    SCATTER_GROUP, SHOWN_CARD, SHOWN_NONE, STATE_ADOPT
+    CullFrame, CullGroup, CullView, DEAD, FADED, NO_LAYER, SCATTER_GROUP, SHOWN_CARD, SHOWN_NONE,
+    scatter_fade, scatter_fade_adopt, scatter_fade_previous, scatter_fade_progress,
+    scatter_fade_shown, scatter_terrain_hidden, scatter_terrain_layer, scatter_terrain_rank
 };
 import package::place::placed_tiles::Record;
 
@@ -160,10 +161,10 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let group = groups[record.group];
     let away = distance(record.center, frame.eye.xyz);
-    let layer = (record.terrain >> LAYER_SHIFT) & NO_LAYER;
+    let layer = scatter_terrain_layer(record.terrain);
     let retires = layer != NO_LAYER;
-    let rank = f32((record.terrain >> RANK_SHIFT) & 0x3ffu) / 1023.0;
-    let hidden = (record.terrain & HIDDEN) != 0u;
+    let rank = f32(scatter_terrain_rank(record.terrain)) / 1023.0;
+    let hidden = scatter_terrain_hidden(record.terrain);
     var shown = SHOWN_NONE;
     var previous = SHOWN_NONE;
     var progress = FADED;
@@ -180,15 +181,15 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
             nearer = shown_at(record, group, retires, rank, away * (1.0 - margin));
             farther = shown_at(record, group, retires, rank, away * (1.0 + margin));
         }
-        if record.state == STATE_ADOPT {
+        if scatter_fade_adopt(record.state) {
             if !hidden {
                 shown = shown_at(record, group, retires, rank, away);
             }
             previous = shown;
         } else {
-            shown = record.state & 7u;
-            previous = (record.state >> 3u) & 7u;
-            progress = record.state >> 6u;
+            shown = scatter_fade_shown(record.state);
+            previous = scatter_fade_previous(record.state);
+            progress = scatter_fade_progress(record.state);
             var wanted = max(nearer, min(shown, farther));
             if shown == SHOWN_NONE && previous == SHOWN_NONE && !hidden {
                 wanted = shown_at(record, group, retires, rank, away);
@@ -206,7 +207,7 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
             }
             progress = min(progress + u32(frame.fade.x * f32(FADED)), FADED);
         }
-        records[id.x].state = shown | (previous << 3u) | (progress << 6u);
+        records[id.x].state = scatter_fade(shown, previous, progress, false);
     }
     let fade = f32(progress) / f32(FADED);
     for (var view = 0u; view < frame.counts.w; view++) {

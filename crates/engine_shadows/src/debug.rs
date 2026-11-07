@@ -3,7 +3,8 @@ use std::any::TypeId;
 use engine_places_rendering::shadows::{
     DEBUG_SHADOWED, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL,
 };
-use engine_render::debug::DEBUG_SOURCE_SHIFT;
+use engine_core::GpuBits;
+use engine_render::debug::DebugRecord;
 use engine_render::{DebugMode, DebugShown};
 use serde::Serialize;
 use serde_json::Value;
@@ -53,7 +54,7 @@ fn sun_lookup(source: u32) -> (SunLookup, u32) {
 }
 
 fn sun([record, ..]: [u32; 4], _: [f32; 4]) -> Value {
-    let sun = (record >> DEBUG_SOURCE_SHIFT) & 0xff;
+    let sun = DebugRecord::unpack(record).map_or(0, |record| record.source);
     let (lookup, sun_index) = sun_lookup(sun & (DEBUG_SHADOWED - 1));
     serde_json::to_value(SunProbe {
         sun: lookup,

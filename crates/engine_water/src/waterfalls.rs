@@ -9,7 +9,6 @@ use glam::Vec3;
 
 use crate::WaterBrick;
 use crate::shallow_water::DENSITY;
-use crate::state::WaterState;
 
 const SPLASH_WATTS: f32 = 2.0e3;
 const SPLASH_RATE: [f32; 2] = [20.0, 600.0];
@@ -178,24 +177,16 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
     spawned
 }
 
-pub(crate) fn sync(mut state: ResMut<WaterState>, mut spawner: Spawner<WaterBrick>) {
-    let state = state.bypass_change_detection();
-    for entity in state.gone.drain(..) {
-        spawner.despawn(entity);
-    }
-    for terrain in &mut state.terrains {
-        if !std::mem::take(&mut terrain.falls_fresh) {
-            continue;
-        }
-        for entity in terrain.fall_entities.drain(..) {
-            spawner.despawn(entity);
-        }
-        for (index, fall) in terrain.falls.iter().enumerate() {
-            for (transform, emitter) in emitters(fall, terrain.origin, index as u32) {
-                terrain
-                    .fall_entities
-                    .push(spawner.spawn((transform, emitter)));
-            }
+pub(crate) fn spawn_falls(
+    falls: &[Fall],
+    origin: Vec3,
+    spawner: &mut Spawner<WaterBrick>,
+) -> Vec<Entity> {
+    let mut entities = Vec::new();
+    for (index, fall) in falls.iter().enumerate() {
+        for (transform, emitter) in emitters(fall, origin, index as u32) {
+            entities.push(spawner.spawn((transform, emitter)));
         }
     }
+    entities
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::math::{max, min, sin_cos};
-use engine_core::{Camera, DeviceLimits, Projection, View};
+use engine_core::{Camera, DeviceLimits, Projection, Since, View};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::{TILE_STRIDE, on_triangle, tile_cell};
 use engine_places_simulation::water::WaterObstacle;
@@ -224,24 +224,32 @@ pub(crate) fn place_water_windows(
     };
     let eye = view.detail_eye();
     for terrain in &mut state.terrains {
-        let settled = terrain.settled.cell();
-        if Some(terrain.entity) != wanted || !(settled.is_finite() && settled > 0.0) {
+        let settled = terrain
+            .settled
+            .cell()
+            .filter(|cell| cell.is_finite() && *cell > 0.0);
+        let (Some(settled), true) = (settled, Some(terrain.entity) == wanted) else {
             terrain.window = None;
             continue;
-        }
+        };
         let cell = live_cell(settled, terrain.pyramid.spacing(0));
         let reach = live_reach(cell, height, fov);
         let device = (limits.storage_room, limits.is_changed());
-        follow(terrain, (reach, cell, budget), eye, device);
+        follow(terrain, (reach, cell, settled, budget), eye, device);
     }
 }
 
 fn follow(
     state: &mut WaterTerrain,
-    (reach, cell, budget): (f32, f32, u32),
+    (reach, cell, settled, budget): (f32, f32, f32, u32),
     eye: Vec3,
     (binding, refit): (u64, bool),
 ) {
+    let touched: Option<Vec<TileKey>> = match state.touched.since(&mut state.window_cursor) {
+        Since::Same => Some(Vec::new()),
+        Since::Listed(keys) => Some(keys.to_vec()),
+        Since::All => None,
+    };
     let side = BLOCK_SIDE as f32;
     let snap_blocks = max((SNAP / (cell * side)).round(), 1.0);
     let snap = snap_blocks * side * cell;
@@ -253,7 +261,7 @@ fn follow(
     let asked = asked as u32 * BLOCK_SIDE;
     let size = cells as f32 * cell;
     let pixels = LIVE_PIXELS * max(reach / max(0.5 * size - FOLLOW * snap, cell), 1.0);
-    let split = (state.settled.cell() / cell).round() as u32;
+    let split = (settled / cell).round() as u32;
     let eye = Vec2::new(eye.x, eye.z);
     let flat = Vec2::new(state.origin.x, state.origin.z);
     let before = state
@@ -285,11 +293,11 @@ fn follow(
     if let Some(window) = staying
         && !refit
         && (window.asked, window.placed_pixels) == (asked, pixels)
-        && !reads_moved(state, window)
+        && !reads_moved(state, window, touched.as_deref())
     {
         return;
     }
-    let reads = reads(state, first, (cells, cell));
+    let reads = reads(state, first, (cells, cell), settled);
     let changed: Vec<[Vec2; 2]> = state
         .window
         .as_ref()
@@ -305,7 +313,7 @@ fn follow(
         split,
         snap: snap_blocks as u32,
         datum,
-        sources: sources(state, (first, cells, cell)),
+        sources: sources(state, (first, cells, cell), settled),
         solids: solids(state, (low, low + Vec2::splat(size))),
         reads,
         placed: (first, cells),
@@ -318,18 +326,18 @@ fn follow(
     state.window_changed.extend(changed);
 }
 
-fn reads_moved(state: &WaterTerrain, window: &WaterWindow) -> bool {
-    if !state.touched_all && state.touched.is_empty() {
+fn reads_moved(state: &WaterTerrain, window: &WaterWindow, touched: Option<&[TileKey]>) -> bool {
+    if touched.is_some_and(<[TileKey]>::is_empty) {
         return false;
     }
     let pyramid = &state.pyramid;
     window.reads.iter().any(|read| {
         let middle = 0.5 * (read.square[0] + read.square[1]);
-        let covered = state.touched_all
-            || state
-                .touched
+        let covered = touched.is_none_or(|touched| {
+            touched
                 .iter()
-                .any(|&key| pyramid.tile_at(u32::from(key.level), middle) == Some(key));
+                .any(|&key| pyramid.tile_at(u32::from(key.level), middle) == Some(key))
+        });
         covered && !read.same(&read_at(state, read.key))
     })
 }
@@ -380,7 +388,12 @@ fn lowest(state: &WaterTerrain, first: [i64; 2], (cells, cell): (u32, f32)) -> O
     Some(state.origin.y + lowest)
 }
 
-fn reads(state: &WaterTerrain, first: [i64; 2], (cells, cell): (u32, f32)) -> Vec<WaterRead> {
+fn reads(
+    state: &WaterTerrain,
+    first: [i64; 2],
+    (cells, cell): (u32, f32),
+    settled: f32,
+) -> Vec<WaterRead> {
     let pyramid = &state.pyramid;
     let size = pyramid.tile_size(0);
     let [columns, rows] = pyramid.tiles(0);
@@ -389,7 +402,7 @@ fn reads(state: &WaterTerrain, first: [i64; 2], (cells, cell): (u32, f32)) -> Ve
         let last = min((high / size).floor(), count as f32 - 1.0) as u32;
         first..=last
     };
-    let margin = Vec2::splat(state.settled.cell());
+    let margin = Vec2::splat(settled);
     let low = Vec2::new(first[0] as f32, first[1] as f32) * cell - margin;
     let high = Vec2::new(
         (first[0] + i64::from(cells)) as f32,
@@ -452,8 +465,8 @@ fn solids(state: &WaterTerrain, (low, high): (Vec2, Vec2)) -> Vec<Footprint> {
 fn sources(
     state: &WaterTerrain,
     (first, cells, cell): ([i64; 2], u32, f32),
+    settled: f32,
 ) -> Vec<WaterSourceCell> {
-    let settled = state.settled.cell();
     let pyramid = &state.pyramid;
     let n = i64::from(cells);
     let area = settled * settled;

@@ -39,6 +39,7 @@ impl Brick for DebugViewBrick {
         }
         if engine_render::DEV {
             bricks
+                .resource::<probe::ProbeSteps>()
                 .systems(Schedule::ViewSync, (probe::advance, modes::publish))
                 .operation::<ProbePixel>()
                 .observation::<ProbedPixel>()

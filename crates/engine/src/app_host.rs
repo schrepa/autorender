@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use engine_core::{
     BrickList, Engine, ErrorCode, FrameFacts, FrameReport, FrameStats, JobExchange, JobId, JobRef,
-    MenuInput, MoveInput, RecordExchange, RenderStats, WorkClock,
+    MenuInput, MoveInput, Presented, RecordExchange, RenderStats, WorkClock,
 };
 use engine_registry::Registry;
 use engine_render::{RenderTarget, Renderer};
@@ -477,7 +477,9 @@ impl AppHost {
                 height,
                 simulation_ms,
                 report,
-                report.interpolation,
+                Presented::Paced {
+                    alpha: report.interpolation,
+                },
                 interval,
             )?;
         }
@@ -512,7 +514,7 @@ impl AppHost {
                 report.fixed_steps += self.engine.step_fixed(1)?.fixed_steps;
             }
             let simulation_ms = now_ms() - start;
-            self.render_frame(width, height, simulation_ms, report, 1.0, None)?;
+            self.render_frame(width, height, simulation_ms, report, Presented::Tick, None)?;
         }
         drop(profile);
         self.end_attribution();
@@ -552,7 +554,14 @@ impl AppHost {
         {
             let _core = attribution::core_scope();
             self.deliver();
-            self.render_frame(width, height, 0.0, FrameReport::default(), 1.0, None)?;
+            self.render_frame(
+                width,
+                height,
+                0.0,
+                FrameReport::default(),
+                Presented::Tick,
+                None,
+            )?;
         }
         self.end_attribution();
         Ok(())
@@ -566,7 +575,14 @@ impl AppHost {
         {
             let _core = attribution::core_scope();
             self.deliver();
-            self.render_frame(width, height, 0.0, FrameReport::default(), alpha, None)?;
+            self.render_frame(
+                width,
+                height,
+                0.0,
+                FrameReport::default(),
+                Presented::Between { alpha },
+                None,
+            )?;
         }
         self.end_attribution();
         Ok(())
@@ -612,7 +628,7 @@ impl AppHost {
         height: u32,
         simulation_ms: f64,
         report: FrameReport,
-        alpha: f32,
+        presented: Presented,
         interval: Option<f64>,
     ) -> Result<()> {
         if self.size != (width, height) {
@@ -639,7 +655,7 @@ impl AppHost {
         let acquired = self.renderer.acquire_frame()?;
         let acquire_ms = now_ms() - before_acquire;
         let (extraction_ms, draw_ms, rendered) = if acquired {
-            self.draw_frame((width, height), (render_width, render_height), alpha)?
+            self.draw_frame((width, height), (render_width, render_height), presented)?
         } else {
             (0.0, 0.0, RenderStats::default())
         };
@@ -652,15 +668,15 @@ impl AppHost {
             fixed_steps: report.fixed_steps,
             dropped_seconds: self.stats.dropped_seconds + report.dropped_seconds,
             cut_seconds: self.stats.cut_seconds + report.cut_seconds,
-            pipelines_compiling: false,
             pipelines_listed: 0,
             pipelines_unlisted: 0,
-            loading: false,
+            readiness: self.engine.readiness().clone(),
+            budget: self.engine.budget().uses().to_vec(),
             resolution: self.resolution_stats((width, height)),
             dynamic_resolution,
             jobs: engine_core::JobStats::default(),
             camera_refusals: engine_core::CameraRefusals::default(),
-            disabled_features: self.renderer.disabled_features(),
+            disabled_features: self.renderer.disabled_features(self.engine.app.world()),
             render: rendered,
             bricks_cost: None,
             bricks: std::collections::BTreeMap::new(),
@@ -677,7 +693,7 @@ impl AppHost {
         &mut self,
         (width, height): (u32, u32),
         (render_width, render_height): (u32, u32),
-        alpha: f32,
+        presented: Presented,
     ) -> Result<(f64, f64, RenderStats)> {
         let before_extraction = now_ms();
         let aspect = width.max(1) as f32 / height.max(1) as f32;
@@ -705,7 +721,10 @@ impl AppHost {
             pixel_ratio: self.pixel_ratio as f32,
         };
         self.engine.set_frame(facts);
-        let frame = self.engine.extract_frame(aspect, alpha)?;
+        let compiling =
+            self.renderer.pipelines_compiling() + u32::from(self.pipeline_list.waiting());
+        self.engine.set_compiling(compiling);
+        let frame = self.engine.extract_frame(aspect, presented)?;
         let after_extraction = now_ms();
         let rendered = self.renderer.render_frame(frame)?;
         Ok((
@@ -713,20 +732,6 @@ impl AppHost {
             now_ms() - after_extraction,
             rendered,
         ))
-    }
-
-    fn engine_loading(&self) -> bool {
-        let world = self.engine.app.world();
-        world
-            .get_resource::<Registry>()
-            .is_some_and(|registry| registry.pending(world) > 0)
-            || world
-                .get_resource::<RecordExchange>()
-                .is_some_and(RecordExchange::loading)
-    }
-
-    pub(crate) fn loading(&self) -> bool {
-        self.engine_loading() || self.pipeline_list.waiting()
     }
 
     pub(crate) fn cook_features(&self) -> Vec<(&'static str, u64)> {
@@ -740,7 +745,12 @@ impl AppHost {
                     .map(|entry| (entry.key, u64::from(entry.pending(world))))
             })
             .collect();
-        features.push(("impostors", engine_core::assets_pending(world)));
+        features.push((
+            "impostors",
+            world
+                .get_resource::<engine_core::ImpostorBooks>()
+                .map_or(0, engine_core::ImpostorBooks::left),
+        ));
         features.push(("pipelines", u64::from(self.pipeline_list.making())));
         features
     }
@@ -757,10 +767,8 @@ impl AppHost {
         let (pipelines_listed, pipelines_unlisted) = self.renderer.pipelines_listed();
         let world = self.engine.app.world();
         FrameStats {
-            pipelines_compiling: self.renderer.pipelines_compiling(),
             pipelines_listed,
             pipelines_unlisted,
-            loading: self.loading(),
             jobs: world
                 .get_resource::<JobExchange>()
                 .map(JobExchange::stats)

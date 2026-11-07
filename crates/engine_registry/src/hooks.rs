@@ -1,4 +1,5 @@
 use std::any::TypeId;
+use std::collections::VecDeque;
 
 use bevy_ecs::change_detection::CheckChangeTicks;
 use bevy_ecs::component::Component;
@@ -10,8 +11,7 @@ use bevy_ecs::world::{DeferredWorld, World};
 use engine_place::{Error, ErrorCode};
 use serde_json::Value;
 
-use crate::gates::{GateId, Gates};
-use crate::registry::Registry;
+use crate::state::{BrickStates, GateId, fault};
 
 pub struct Removal {
     pub(crate) component: TypeId,
@@ -108,7 +108,7 @@ impl Named {
 struct Hooked<S> {
     brick: &'static str,
     gate: GateId,
-    system: Option<S>,
+    system: S,
 }
 
 #[derive(Resource, Default)]
@@ -121,16 +121,59 @@ pub struct BrickHooks {
 impl BrickHooks {
     pub fn check_change_ticks(&mut self, check: CheckChangeTicks) {
         for (_, hooked) in &mut self.removals {
-            if let Some(system) = &mut hooked.system {
-                system.check_change_tick(check);
-            }
+            hooked.system.check_change_tick(check);
         }
         for (_, hooked) in &mut self.settles {
-            if let Some(system) = &mut hooked.system {
-                system.check_change_tick(check);
+            hooked.system.check_change_tick(check);
+        }
+    }
+
+    fn run(&mut self, world: &mut World, run: HookRun) {
+        match run {
+            HookRun::Removal(component, entity) => {
+                for (of, hooked) in &mut self.removals {
+                    if *of == component && on(world, hooked.gate) {
+                        let ran = hooked.system.run(entity, world);
+                        failed(world, hooked, "on_remove", ran);
+                    }
+                }
+            }
+            HookRun::Settle(operation) => {
+                for (of, hooked) in &mut self.settles {
+                    if *of == operation && on(world, hooked.gate) {
+                        let ran = hooked.system.run((), world);
+                        failed(world, hooked, operation, ran);
+                    }
+                }
             }
         }
     }
+
+    fn settle_named(&self, operation: &str) -> Option<&'static str> {
+        self.settles
+            .iter()
+            .find(|(of, _)| *of == operation)
+            .map(|(of, _)| *of)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum HookPhase {
+    #[default]
+    Idle,
+    Running,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum HookRun {
+    Removal(TypeId, Entity),
+    Settle(&'static str),
+}
+
+#[derive(Resource, Default)]
+struct HookQueue {
+    phase: HookPhase,
+    queued: VecDeque<HookRun>,
 }
 
 pub(crate) fn add_removal(
@@ -161,7 +204,7 @@ pub(crate) fn add_removal(
         Hooked {
             brick,
             gate,
-            system: Some(removal.system),
+            system: removal.system,
         },
     ));
     Ok(())
@@ -173,7 +216,7 @@ pub(crate) fn add_settle(world: &mut World, brick: &'static str, gate: GateId, s
         Hooked {
             brick,
             gate,
-            system: Some(settle.system),
+            system: settle.system,
         },
     ));
 }
@@ -196,84 +239,55 @@ fn hook_removal<C: Component>(world: &mut World) -> bool {
 fn removed<C: Component>(mut world: DeferredWorld, context: HookContext) {
     let entity = context.entity;
     world.commands().queue(move |world: &mut World| {
-        run_removals(world, TypeId::of::<C>(), entity);
+        hook_run(world, HookRun::Removal(TypeId::of::<C>(), entity));
     });
 }
 
-fn run_removals(world: &mut World, component: TypeId, entity: Entity) {
-    let count = world
-        .get_resource::<BrickHooks>()
-        .map_or(0, |hooks| hooks.removals.len());
-    for index in 0..count {
-        let taken = world
-            .get_resource_mut::<BrickHooks>()
-            .and_then(|mut hooks| {
-                let (of, hooked) = hooks.removals.get_mut(index)?;
-                if *of != component {
-                    return None;
-                }
-                Some((hooked.brick, hooked.system.take()?))
-            });
-        let Some((brick, mut system)) = taken else {
-            continue;
-        };
-        let ran = system.run(entity, world);
-        if let Some(mut hooks) = world.get_resource_mut::<BrickHooks>()
-            && let Some((_, hooked)) = hooks.removals.get_mut(index)
-        {
-            hooked.system = Some(system);
-        }
-        if let Err(error) = ran {
-            fault(world, brick, "on_remove", &error);
-        }
-    }
-}
-
 pub fn run_settles(world: &mut World, operation: &str) {
-    let count = world
+    let named = world
         .get_resource::<BrickHooks>()
-        .map_or(0, |hooks| hooks.settles.len());
-    for index in 0..count {
-        let gate = world
-            .get_resource::<BrickHooks>()
-            .and_then(|hooks| hooks.settles.get(index))
-            .filter(|(of, _)| *of == operation)
-            .map(|(_, hooked)| hooked.gate);
-        let Some(gate) = gate else {
-            continue;
-        };
-        if !world
-            .get_resource::<Gates>()
-            .is_some_and(|gates| gates.on(gate))
-        {
-            continue;
-        }
-        let taken = world
-            .get_resource_mut::<BrickHooks>()
-            .and_then(|mut hooks| {
-                let (_, hooked) = hooks.settles.get_mut(index)?;
-                Some((hooked.brick, hooked.system.take()?))
-            });
-        let Some((brick, mut system)) = taken else {
-            continue;
-        };
-        let ran = system.run((), world);
-        if let Some(mut hooks) = world.get_resource_mut::<BrickHooks>()
-            && let Some((_, hooked)) = hooks.settles.get_mut(index)
-        {
-            hooked.system = Some(system);
-        }
-        if let Err(error) = ran {
-            fault(world, brick, operation, &error);
-        }
+        .and_then(|hooks| hooks.settle_named(operation));
+    if let Some(operation) = named {
+        hook_run(world, HookRun::Settle(operation));
     }
 }
 
-fn fault(world: &mut World, brick: &str, at: &str, error: &RunSystemError) {
-    if let Some(mut registry) = world.get_resource_mut::<Registry>() {
-        registry.report(
-            Error::new(ErrorCode::MissingResource, format!("$.bricks.{brick}.{at}"))
-                .got(error.to_string()),
-        );
+fn hook_run(world: &mut World, run: HookRun) {
+    let mut queue = world.get_resource_or_init::<HookQueue>();
+    queue.queued.push_back(run);
+    if queue.phase == HookPhase::Running {
+        return;
+    }
+    queue.phase = HookPhase::Running;
+    loop {
+        let next = world.resource_mut::<HookQueue>().queued.pop_front();
+        let Some(next) = next else {
+            break;
+        };
+        world.try_resource_scope::<BrickHooks, _>(|world, mut hooks| hooks.run(world, next));
+    }
+    world.resource_mut::<HookQueue>().phase = HookPhase::Idle;
+}
+
+fn on(world: &World, gate: GateId) -> bool {
+    world
+        .get_resource::<BrickStates>()
+        .is_some_and(|states| states.on(gate))
+}
+
+fn failed<S>(world: &mut World, hooked: &Hooked<S>, at: &str, ran: Result<(), RunSystemError>) {
+    let Err(error) = ran else {
+        return;
+    };
+    let brick = world
+        .get_resource::<BrickStates>()
+        .and_then(|states| states.brick(hooked.gate));
+    let refused = Error::new(
+        ErrorCode::MissingResource,
+        format!("$.bricks.{}.{at}", hooked.brick),
+    )
+    .got(error.to_string());
+    if let Some(brick) = brick {
+        fault(world, brick, refused);
     }
 }

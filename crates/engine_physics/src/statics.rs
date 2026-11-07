@@ -3,14 +3,14 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
 use engine_core::collections::HashMap;
-use engine_places_simulation::physics::CollisionLayers;
-use engine_places_simulation::solids::FieldTile;
+use engine_places_simulation::physics::{Collide, ColliderSolid, CollisionLayers};
+use engine_places_simulation::solids::{Bounds, FieldTile, SolidField};
 use glam::Vec3;
 use parry3d::shape::Shape;
 use rapier3d::prelude as rp;
 
 use crate::shapes::solid_shape;
-use crate::solids::{Solid, Solids};
+use crate::solids::Solid;
 use crate::solver::Solver;
 
 const SLACK: f32 = 8.0;
@@ -72,10 +72,11 @@ pub(crate) fn groups(layers: CollisionLayers) -> rp::InteractionGroups {
 
 #[derive(Default)]
 pub(crate) struct Statics {
+    sources: Vec<Arc<SolidField>>,
     ground: Vec<Ground>,
-    ground_revision: Option<u64>,
     placed: HashMap<PlacedKey, rp::ColliderHandle>,
     colliders: hashbrown::HashMap<Entity, Mirror, EntityHash>,
+    found: Vec<ColliderSolid>,
     reach: Option<(Vec3, Vec3)>,
     pass: u64,
 }
@@ -94,15 +95,20 @@ impl Statics {
     pub fn sync(
         &mut self,
         solver: &mut Solver,
-        solids: &Solids,
+        collision: &dyn Collide,
         bodies: Option<(Vec3, Vec3)>,
         is_body: impl Fn(Entity) -> bool,
     ) {
-        let revision = Some(solids.ground_revision());
-        let regrounded = revision != self.ground_revision;
+        let grounds = collision.grounds();
+        let regrounded = self.sources.len() != grounds.len()
+            || self
+                .sources
+                .iter()
+                .zip(grounds)
+                .any(|(held, source)| !Arc::ptr_eq(held, source));
         if regrounded {
-            self.ground_revision = revision;
-            self.sync_ground(solver, solids);
+            self.sources = grounds.to_vec();
+            self.sync_ground(solver);
         }
         let Some((min, max)) = bodies else {
             self.forget_near(solver);
@@ -114,16 +120,16 @@ impl Statics {
         if !inside || regrounded {
             let reach = (min - Vec3::splat(SLACK), max + Vec3::splat(SLACK));
             self.reach = Some(reach);
-            self.sync_placed(solver, solids, reach);
+            self.sync_placed(solver, reach);
         }
         if let Some(reach) = self.reach {
-            self.sync_colliders(solver, solids, reach, is_body);
+            self.sync_colliders(solver, collision, reach, is_body);
         }
     }
 
-    fn sync_ground(&mut self, solver: &mut Solver, solids: &Solids) {
+    fn sync_ground(&mut self, solver: &mut Solver) {
         let mut kept = std::mem::take(&mut self.ground);
-        for field in solids.ground() {
+        for field in self.sources.iter().flat_map(|source| &source.fields) {
             if let Some(index) = kept
                 .iter()
                 .position(|ground| Arc::ptr_eq(&ground.field, field))
@@ -150,14 +156,24 @@ impl Statics {
         }
     }
 
-    fn sync_placed(&mut self, solver: &mut Solver, solids: &Solids, reach: (Vec3, Vec3)) {
+    fn sync_placed(&mut self, solver: &mut Solver, reach: (Vec3, Vec3)) {
+        let bounds = Bounds {
+            min: reach.0,
+            max: reach.1,
+        };
         let mut wanted: HashMap<PlacedKey, Solid> = HashMap::default();
-        for placed in solids.placed_in(reach.0, reach.1) {
-            let center = placed.solid.center.to_array().map(f32::to_bits);
-            wanted.insert(
-                (placed.terrain, placed.part.layer, placed.part.asset, center),
-                placed.solid,
-            );
+        for placed in self
+            .sources
+            .iter()
+            .flat_map(|source| source.solids.query(move |node| node.overlaps(bounds)))
+        {
+            let Some(solid) = Solid::new(placed.shape, placed.model)
+                .filter(|solid| solid.bounds().overlaps(bounds))
+            else {
+                continue;
+            };
+            let center = solid.center.to_array().map(f32::to_bits);
+            wanted.insert((placed.owner, placed.layer, placed.asset, center), solid);
         }
         self.placed.retain(|key, handle| {
             let keep = wanted.remove(key).is_some();
@@ -177,54 +193,57 @@ impl Statics {
     fn sync_colliders(
         &mut self,
         solver: &mut Solver,
-        solids: &Solids,
+        collision: &dyn Collide,
         reach: (Vec3, Vec3),
         is_body: impl Fn(Entity) -> bool,
     ) {
         self.pass += 1;
         let pass = self.pass;
-        for found in solids.colliders_in(reach.0, reach.1) {
-            if is_body(found.entity) {
+        let mut found = std::mem::take(&mut self.found);
+        found.clear();
+        collision.solids(reach.0, reach.1, &mut found);
+        for held in &found {
+            if is_body(held.entity) {
                 continue;
             }
-            if let Some(mirror) = self.colliders.get_mut(&found.entity) {
+            let (solid, layers) = (Solid::of(held), held.layers);
+            if let Some(mirror) = self.colliders.get_mut(&held.entity) {
                 mirror.seen = pass;
-                if mirror.solid == found.solid && mirror.layers == found.layers {
+                if mirror.solid == solid && mirror.layers == layers {
                     continue;
                 }
                 if let Some(collider) = solver.colliders.get_mut(mirror.handle) {
-                    if mirror.solid.shape == found.solid.shape
-                        && mirror.solid.axes == found.solid.axes
-                    {
-                        collider.set_translation(found.solid.center);
-                    } else if let Some((shape, pose)) = solid_shape(&found.solid) {
+                    if mirror.solid.shape == solid.shape && mirror.solid.axes == solid.axes {
+                        collider.set_translation(solid.center);
+                    } else if let Some((shape, pose)) = solid_shape(&solid) {
                         collider.set_shape(shape);
                         collider.set_position(pose);
                     }
-                    collider.set_collision_groups(groups(found.layers));
+                    collider.set_collision_groups(groups(layers));
                 }
-                mirror.solid = found.solid;
-                mirror.layers = found.layers;
+                mirror.solid = solid;
+                mirror.layers = layers;
                 continue;
             }
-            let Some((shape, pose)) = solid_shape(&found.solid) else {
+            let Some((shape, pose)) = solid_shape(&solid) else {
                 continue;
             };
             let handle = solver.add_solid(
                 fixed(shape, pose, SOLID_FRICTION)
-                    .collision_groups(groups(found.layers))
+                    .collision_groups(groups(layers))
                     .build(),
             );
             self.colliders.insert(
-                found.entity,
+                held.entity,
                 Mirror {
-                    solid: found.solid,
-                    layers: found.layers,
+                    solid,
+                    layers,
                     handle,
                     seen: pass,
                 },
             );
         }
+        self.found = found;
         self.colliders.retain(|_, mirror| {
             let keep = mirror.seen == pass;
             if !keep {
@@ -232,14 +251,6 @@ impl Statics {
             }
             keep
         });
-    }
-
-    pub fn clear(&mut self, solver: &mut Solver) {
-        for ground in self.ground.drain(..) {
-            solver.remove_collider(ground.handle);
-        }
-        self.ground_revision = None;
-        self.forget_near(solver);
     }
 
     fn forget_near(&mut self, solver: &mut Solver) {

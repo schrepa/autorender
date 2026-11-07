@@ -18,7 +18,7 @@ gpu_consts! {
     pub const SUBDIVISION_REFUSED: u32 = 10;
     pub const SUBDIVISION_COUNTED: u32 = 8;
     pub const SUBDIVISION_MEASURE: u32 = 11;
-    pub const SUBDIVISION_EPOCH: u32 = 12;
+
     pub const HORIZON_DIRECTIONS: u32 = 16;
     pub const HORIZON_LAYERS: u32 = 9;
     pub const HORIZON_RECORD_VECTORS: u32 = 6;
@@ -74,8 +74,7 @@ const _: () = assert!(
     SUBDIVISION_MEASURE > SUBDIVISION_DRAW + 4
         && SUBDIVISION_MEASURE != SUBDIVISION_RESERVED
         && SUBDIVISION_MEASURE != SUBDIVISION_REFUSED
-        && SUBDIVISION_EPOCH > SUBDIVISION_MEASURE
-        && SUBDIVISION_EPOCH < SUBDIVISION_ARGS,
+        && SUBDIVISION_MEASURE < SUBDIVISION_ARGS,
     "subdivision_counters_keep_their_words"
 );
 

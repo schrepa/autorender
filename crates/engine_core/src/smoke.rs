@@ -97,14 +97,16 @@ pub fn compiled(session: &mut dyn SmokeSession) -> Checked<Value> {
     smoke_check!(
         !compiling(&rendering),
         "pipelines_compile",
-        &rendering["pipelines_compiling"],
-        &false
+        &rendering["readiness"]["compiling"],
+        &0
     );
     Ok(rendering)
 }
 
 pub fn compiling(rendering: &Value) -> bool {
-    rendering["pipelines_compiling"] == true
+    rendering["readiness"]["compiling"]
+        .as_u64()
+        .is_some_and(|compiling| compiling > 0)
 }
 
 pub fn shot(session: &mut dyn SmokeSession, body: Value) -> Checked<Value> {

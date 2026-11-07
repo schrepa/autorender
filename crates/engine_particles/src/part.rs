@@ -153,7 +153,6 @@ pub(crate) struct ParticlesGpu {
     mist: Pipeline<Self, Own>,
     additive: Pipeline<Self, Own>,
     compositing: Pipeline<Self, Own>,
-    epoch: u64,
     targets: bool,
     emitter_bytes: Option<u64>,
     drawing: Option<Counts>,
@@ -295,7 +294,6 @@ impl GpuPart for ParticlesGpu {
             mist,
             additive,
             compositing,
-            epoch: 0,
             targets: false,
             emitter_bytes: None,
             drawing: None,
@@ -308,11 +306,6 @@ impl GpuPart for ParticlesGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         self.drawing = None;
-        if self.epoch != packed.epoch {
-            self.epoch = packed.epoch;
-            self.drop_held(cx);
-            self.release_targets(cx);
-        }
         if !packed.emits {
             self.drop_held(cx);
         }

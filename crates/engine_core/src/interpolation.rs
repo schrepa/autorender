@@ -10,6 +10,7 @@ use crate::collections::HashSet;
 
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;
+use serde::Serialize;
 
 use crate::entity_indices::EntityIndices;
 
@@ -76,9 +77,33 @@ pub(crate) fn check_alpha(alpha: f32) -> Result<(), engine_settings::Error> {
     Ok(())
 }
 
-#[derive(Resource, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Presented {
+    #[default]
+    Tick,
+    Between {
+        alpha: f32,
+    },
+    Paced {
+        alpha: f32,
+    },
+}
+
+impl Presented {
+    pub fn alpha(self) -> f32 {
+        match self {
+            Self::Tick => 1.0,
+            Self::Between { alpha } | Self::Paced { alpha } => alpha,
+        }
+    }
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PresentationState {
-    alpha: f32,
+    presented: Presented,
     frame: Option<u64>,
     tick: Option<u64>,
     history_nodes: usize,
@@ -90,8 +115,11 @@ pub struct PresentationState {
 }
 
 impl PresentationState {
+    pub fn presented(&self) -> Presented {
+        self.presented
+    }
     pub fn alpha(&self) -> f32 {
-        self.alpha
+        self.presented.alpha()
     }
     pub fn frame(&self) -> Option<u64> {
         self.frame
@@ -675,7 +703,8 @@ pub(crate) fn end_tick(world: &mut World) {
     });
 }
 
-pub(crate) fn prepare(world: &mut World, alpha: f32) {
+pub(crate) fn prepare(world: &mut World, presented: Presented) {
+    let alpha = presented.alpha();
     let _profile = engine_profile::span("interpolation", "prepare_gpu_presentation");
     world.resource_scope(|world, mut interpolation: Mut<InterpolationState>| {
         interpolation.observe_invalid();
@@ -685,7 +714,7 @@ pub(crate) fn prepare(world: &mut World, alpha: f32) {
         let frame = world.get_resource::<FrameTime>().map(|time| time.frame);
         let tick = world.get_resource::<FixedTime>().map(|time| time.tick);
         let mut state = world.resource_mut::<PresentationState>();
-        state.alpha = alpha;
+        state.presented = presented;
         state.frame = frame;
         state.tick = tick;
         (state.blended_nodes, state.largest_blend_distance) = interpolation.gpu.blend();

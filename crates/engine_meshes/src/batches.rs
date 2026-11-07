@@ -29,7 +29,6 @@ pub struct BatchPlan {
     changed: bool,
     pub instance_limit: Option<usize>,
     pub instance_capacity: usize,
-    pub capacity_grown: u64,
     pub refused: Option<Error>,
     valid: bool,
 }
@@ -37,13 +36,12 @@ pub struct BatchPlan {
 impl BatchPlan {
     pub(crate) fn limit(&self) -> usize {
         self.instance_limit
-            .unwrap_or(engine_places::meshes::MOVED_SLOT as usize)
+            .unwrap_or(engine_render::slots::DRAWN_SLOTS)
     }
 
     pub(crate) fn grow_capacity(&mut self, payload: usize) {
         if self.instance_capacity == 0 || payload > self.instance_capacity {
             self.instance_capacity = capacity_for(payload, self.limit());
-            self.capacity_grown += 1;
         }
     }
 

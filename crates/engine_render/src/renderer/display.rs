@@ -1,11 +1,39 @@
 use std::cell::Cell;
-use std::rc::Rc;
 
 use super::*;
-use crate::buffers::ReadbackRing;
 use crate::gpu_data::clamped_extent;
+use crate::readback::{Arrival, Keep, Reader, Readbacks};
 use crate::targets::{FrameRegion, FrameSize};
-use engine_core::Expected;
+use engine_core::{Expected, FrameId};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SurfaceState {
+    Ready,
+    Stale,
+    Suspended,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SurfaceChange {
+    Hidden,
+    Sized,
+    Configured,
+    Outdated,
+}
+
+impl SurfaceState {
+    fn after(self, change: SurfaceChange) -> Self {
+        match (self, change) {
+            (_, SurfaceChange::Hidden) => Self::Suspended,
+            (_, SurfaceChange::Sized) | (Self::Ready | Self::Stale, SurfaceChange::Outdated) => {
+                Self::Stale
+            }
+            (Self::Stale, SurfaceChange::Configured) => Self::Ready,
+            (state @ (Self::Ready | Self::Suspended), SurfaceChange::Configured)
+            | (state @ Self::Suspended, SurfaceChange::Outdated) => state,
+        }
+    }
+}
 
 pub struct Display {
     instance: wgpu::Instance,
@@ -14,10 +42,9 @@ pub struct Display {
     target: RenderTarget,
     configuration: wgpu::SurfaceConfiguration,
     pub(crate) max_dimension: u32,
-    pub(crate) suspended: bool,
-    reconfigure_next_frame: bool,
+    state: SurfaceState,
     pub region: FrameRegion,
-    timer: Option<Rc<FrameTimer>>,
+    timer: Option<FrameTimer>,
 }
 
 impl Display {
@@ -57,20 +84,27 @@ impl Display {
             target,
             configuration,
             max_dimension,
-            suspended: extent.is_none(),
-            reconfigure_next_frame: false,
+            state: if extent.is_some() {
+                SurfaceState::Stale
+            } else {
+                SurfaceState::Suspended
+            },
             region: FrameRegion::whole(FrameSize { width, height }),
             timer: None,
         })
     }
 
-    pub(crate) fn configure(&mut self, device: &wgpu::Device) {
-        self.timer = FrameTimer::new(device).map(Rc::new);
-        if !self.suspended {
+    pub(crate) fn configure(&mut self, device: &wgpu::Device, period: f32) {
+        self.timer = FrameTimer::new(device, period);
+        if !self.suspended() {
             self.target
                 .set_size((self.configuration.width, self.configuration.height));
             self.configure_surface(device);
         }
+    }
+
+    pub(crate) fn suspended(&self) -> bool {
+        self.state == SurfaceState::Suspended
     }
 
     fn configure_surface(&mut self, device: &wgpu::Device) {
@@ -91,6 +125,7 @@ impl Display {
                 ));
             }
         }
+        self.state = self.state.after(SurfaceChange::Configured);
     }
 
     pub fn size(&self) -> FrameSize {
@@ -133,54 +168,61 @@ impl Display {
         }
     }
 
-    pub(crate) fn time_end(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
-        if let Some(timer) = &self.timer {
-            timer.end(device, encoder, self.region.render.pixels());
+    pub(crate) fn time_end(
+        &mut self,
+        recording: (&wgpu::Device, &mut wgpu::CommandEncoder),
+        (readbacks, written, slots): (&mut Readbacks, FrameId, usize),
+    ) {
+        let size = self.region.render.pixels();
+        if let Some(timer) = &mut self.timer {
+            timer.end(recording, (readbacks, written, slots), size);
+        }
+    }
+
+    pub(crate) fn timed(&mut self, written: FrameId, arrival: Arrival<'_>) {
+        if let Some(timer) = &mut self.timer {
+            timer.arrived(written, arrival);
         }
     }
 
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         let Some((width, height)) = clamped_extent(width, height, self.max_dimension) else {
-            self.suspended = true;
+            self.state = self.state.after(SurfaceChange::Hidden);
             return;
         };
-        if !self.suspended
+        if !self.suspended()
             && self.configuration.width == width
             && self.configuration.height == height
         {
             return;
         }
-        self.suspended = false;
         self.configuration.width = width;
         self.configuration.height = height;
         self.target.set_size((width, height));
-        self.reconfigure_next_frame = true;
+        self.state = self.state.after(SurfaceChange::Sized);
     }
 
     pub(crate) fn acquire(&mut self, device: &wgpu::Device) -> Result<Option<DisplayFrame>, Error> {
         let _profile = engine_profile::span("render", "surface_acquisition");
-        if self.reconfigure_next_frame {
+        if self.state == SurfaceState::Stale {
             self.configure_surface(device);
-            self.reconfigure_next_frame = false;
         }
-        let timer = self.timer.clone();
         let Some(surface) = &self.surface else {
             return Ok(self.offscreen.clone().map(|texture| DisplayFrame {
                 shown: Shown::Offscreen(texture),
-                timer,
             }));
         };
         let frame = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                self.reconfigure_next_frame = true;
+                self.state = self.state.after(SurfaceChange::Outdated);
                 frame
             }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
                 return Ok(None);
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
-                self.reconfigure_next_frame = true;
+                self.state = self.state.after(SurfaceChange::Outdated);
                 return Ok(None);
             }
             wgpu::CurrentSurfaceTexture::Lost => {
@@ -188,7 +230,7 @@ impl Display {
                     .target
                     .surface(&self.instance)
                     .map_err(|error| failed_with("$.surface", error))?;
-                self.reconfigure_next_frame = true;
+                self.state = self.state.after(SurfaceChange::Outdated);
                 return Ok(None);
             }
             wgpu::CurrentSurfaceTexture::Validation => {
@@ -197,7 +239,6 @@ impl Display {
         };
         Ok(Some(DisplayFrame {
             shown: Shown::Surface(frame),
-            timer,
         }))
     }
 
@@ -209,7 +250,6 @@ impl Display {
 
 pub(crate) struct DisplayFrame {
     shown: Shown,
-    timer: Option<Rc<FrameTimer>>,
 }
 
 enum Shown {
@@ -226,9 +266,6 @@ impl DisplayFrame {
     }
 
     pub(crate) fn present(self, queue: &crate::gpu_calls::Queue) {
-        if let Some(timer) = &self.timer {
-            timer.after_submit(queue.get_timestamp_period());
-        }
         if let Shown::Surface(frame) = self.shown {
             queue.present(frame);
         }
@@ -238,8 +275,9 @@ impl DisplayFrame {
 pub(crate) struct FrameTimer {
     queries: wgpu::QuerySet,
     resolved: wgpu::Buffer,
-    readbacks: ReadbackRing<(u32, u32)>,
-    read: Rc<Cell<Option<ReadFrame>>>,
+    period: f64,
+    sizes: Vec<(FrameId, (u32, u32))>,
+    read: Cell<Option<ReadFrame>>,
 }
 
 type ReadFrame = (f64, (u32, u32));
@@ -247,7 +285,7 @@ type ReadFrame = (f64, (u32, u32));
 const FRAME_STAMP_BYTES: u64 = 16;
 
 impl FrameTimer {
-    fn new(device: &wgpu::Device) -> Option<Self> {
+    fn new(device: &wgpu::Device, period: f32) -> Option<Self> {
         if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
             return None;
         }
@@ -266,8 +304,9 @@ impl FrameTimer {
                     mapped_at_creation: false,
                 },
             ),
-            readbacks: ReadbackRing::new("engine/frame-timer-readback"),
-            read: Rc::default(),
+            period: f64::from(period),
+            sizes: Vec::new(),
+            read: Cell::new(None),
         })
     }
 
@@ -282,7 +321,12 @@ impl FrameTimer {
         });
     }
 
-    fn end(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, size: (u32, u32)) {
+    fn end(
+        &mut self,
+        (device, encoder): (&wgpu::Device, &mut wgpu::CommandEncoder),
+        (readbacks, written, slots): (&mut Readbacks, FrameId, usize),
+        size: (u32, u32),
+    ) {
         encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("engine/frame-timer"),
             timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
@@ -292,20 +336,37 @@ impl FrameTimer {
             }),
         });
         encoder.resolve_query_set(&self.queries, 0..2, &self.resolved, 0);
-        self.readbacks
-            .record(device, encoder, &self.resolved, FRAME_STAMP_BYTES, size);
+        let recorded = readbacks.record(
+            (device, encoder),
+            (&self.resolved, 0..FRAME_STAMP_BYTES),
+            (Reader::FrameTimer, written, None),
+            Keep::Ring(slots),
+        );
+        if recorded {
+            self.sizes.push((written, size));
+        }
     }
 
-    fn after_submit(&self, period: f32) {
-        let read = Rc::clone(&self.read);
-        let period = f64::from(period);
-        self.readbacks.after_submit(move |words, size| {
-            let stamp =
-                |word: usize| u64::from(words.get(word)) | (u64::from(words.get(word + 1)) << 32);
-            let (begin, end) = (stamp(0), stamp(2));
-            if end > begin {
-                read.set(Some(((end - begin) as f64 * period / 1.0e6, size)));
-            }
-        });
+    fn arrived(&mut self, written: FrameId, arrival: Arrival<'_>) {
+        let size = self
+            .sizes
+            .iter()
+            .position(|(known, _)| *known == written)
+            .map(|at| self.sizes.remove(at).1);
+        self.sizes.retain(|(known, _)| *known >= written);
+        let (Some(size), Arrival::Read(bytes)) = (size, arrival) else {
+            return;
+        };
+        let stamp = |at: usize| {
+            bytes
+                .get(at..at + 8)
+                .and_then(|word| word.try_into().ok())
+                .map_or(0, u64::from_le_bytes)
+        };
+        let (begin, end) = (stamp(0), stamp(8));
+        if end > begin {
+            self.read
+                .set(Some(((end - begin) as f64 * self.period / 1.0e6, size)));
+        }
     }
 }

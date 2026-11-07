@@ -9,7 +9,7 @@ use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{NavAgents, NavOptions, NavQuery, NavStats, ObstacleColliders};
+use crate::{NavAgents, NavOptions, NavQuery, NavStats, Navigation, ObstacleColliders};
 
 const COORDINATE: Rule = Rule::Range(-1.0e6, 1.0e6);
 const FIRST_AGENTS: usize = 16;
@@ -295,7 +295,7 @@ impl Operation for NavPathQuery {
     const NAME: &'static str = "nav_path";
     const CONTROL: bool = false;
     type Params = (
-        Res<'static, Ground>,
+        (Res<'static, Navigation>, Res<'static, Ground>),
         Filled<'static, Ground>,
         Res<'static, Records>,
         SceneIds<'static, 'static>,
@@ -306,7 +306,7 @@ impl Operation for NavPathQuery {
     type Request = Self;
 
     fn run(
-        (ground, filled, records, ids, mut navigation, mut jobs, colliders): SystemParamItem<
+        ((settings, ground), filled, records, ids, mut navigation, mut jobs, colliders): SystemParamItem<
             '_,
             '_,
             Self::Params,
@@ -314,7 +314,7 @@ impl Operation for NavPathQuery {
         request: Self,
     ) -> Result<Value, Error> {
         walk(
-            ((&*ground, &colliders), filled.listed(), &*records, &ids),
+            ((&*settings, &*ground, &colliders), filled.listed(), &*records, &ids),
             (&mut *navigation, &mut jobs),
             request,
         )
@@ -341,8 +341,8 @@ fn out_of_range(invalid: InvalidSetting, path: &str) -> Error {
 }
 
 fn walk(
-    ((ground, colliders), listed, records, ids): (
-        (&Ground, &ObstacleColliders),
+    ((settings, ground, colliders), listed, records, ids): (
+        (&Navigation, &Ground, &ObstacleColliders),
         bool,
         &Records,
         &SceneIds,
@@ -370,7 +370,12 @@ fn walk(
         GroundRead::NotLoaded => None,
         GroundRead::Off => return Err(Error::new(ErrorCode::UnknownTerrain, "$")),
     };
-    let found = navigation.query((ground, colliders), (records, jobs), (from, to), &options);
+    let found = navigation.query(
+        (settings, ground, colliders),
+        (records, jobs),
+        (from, to),
+        &options,
+    );
     let round = |value: f32| (f64::from(value) * 100.0).round() / 100.0;
     Ok(json!(NavPathResult {
         terrain,

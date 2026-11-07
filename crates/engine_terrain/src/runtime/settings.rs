@@ -12,14 +12,11 @@ settings! {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_tiles: Option<u32> = None => budget,
         pub samples_per_frame: u32 = 24_576 => at_least(1),
-        pub loading_work_ms: f32 = 50.0 => range(0.1, 1000.0),
-        pub work_ms: f32 = 4.0 => range(0.1, 1000.0),
         pub collision_radius: f32 = 192.0 => range(0.0, 4096.0),
         pub surroundings: bool = true => any,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub motion_detail: Option<MotionDetail> = None => any,
         pub cache_bytes: u64 = 256 << 20 => any,
-        pub upload_bytes: u32 = 8 << 20 => at_least(1),
         pub gpu_materials: bool = true => any,
     }
 }

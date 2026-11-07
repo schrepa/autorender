@@ -1,8 +1,6 @@
 mod components;
 mod poses;
 
-use poses::presentation_view;
-
 use engine_settings::{Error, ErrorCode, Expected};
 use std::{collections::BTreeMap, io::Write};
 
@@ -32,8 +30,8 @@ use crate::{
     MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
     views::{
         CameraView, GlobalTransformView, HierarchyView, InputView, InterpolateTransformView,
-        LodLevelView, Mesh3dView, MeshBoundsView, MeshRenderView, MeshView, PresentationStateView,
-        TextureView, TransformView,
+        LodLevelView, Mesh3dView, MeshBoundsView, MeshRenderView, MeshView, TextureView,
+        TransformView,
     },
 };
 
@@ -158,7 +156,7 @@ fn observe(engine: &Engine, scene: Option<&SceneInstance>) -> Observation {
             id: scene.id().to_owned(),
             revision: scene.revision().to_string(),
         }),
-        presentation: presentation_view(engine.presentation()),
+        presentation: *engine.presentation(),
     }
 }
 
@@ -317,6 +315,16 @@ impl DevTools {
             }),
             read: Box::new(move |world, entity, _context| world.get::<T>(entity?).map(&inspect)),
             brick: None,
+        })
+    }
+
+    pub fn register_state<T: Resource + Serialize>(
+        &mut self,
+        schemas: &Value,
+        name: &str,
+    ) -> Result<(), Error> {
+        self.register_resource::<T>(InspectorDescriptor::generated(schemas, name), |value| {
+            json!(value)
         })
     }
 
@@ -508,7 +516,7 @@ impl DevTools {
             inspectors: self.all_inspectors(&bricks).count(),
             culling_enabled: frustum_culling(world),
             features: registry.map(|registry| registry.names().collect()),
-            presentation: presentation_view(engine.presentation()),
+            presentation: *engine.presentation(),
             collision: registry
                 .and_then(|registry| registry.stats_section("collision_stats"))
                 .map(|stats| stats.read(world)),

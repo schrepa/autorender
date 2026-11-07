@@ -80,22 +80,27 @@ impl GpuProfiler {
     }
 
     #[inline(always)]
-    pub fn end_frame(&mut self, _encoder: &mut wgpu::CommandEncoder) {}
+    pub(crate) fn end_frame(
+        &mut self,
+        _recording: (&wgpu::Device, &mut wgpu::CommandEncoder),
+        _readbacks: &mut crate::readback::Readbacks,
+        _written: engine_core::FrameId,
+    ) {
+    }
 
     #[inline(always)]
-    pub fn submitted(&mut self) {}
+    pub(crate) fn arrived(&mut self, _slot: u32, _arrival: crate::readback::Arrival<'_>) {}
 }
 
 #[cfg(feature = "profiling")]
 mod capture {
-    use std::{
-        cell::{Cell, RefCell},
-        rc::Rc,
-    };
+    use std::cell::{Cell, RefCell};
 
+    use engine_core::FrameId;
     use serde_json::{Value, json};
 
     use super::{Draw, Span};
+    use crate::readback::{Arrival, Keep, Reader, Readbacks};
 
     const SLOTS: usize = 3;
     const SAMPLE_LIMIT: usize = 4_096;
@@ -120,18 +125,9 @@ mod capture {
         submission: u64,
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum MapState {
-        Pending,
-        Ready,
-        Failed,
-    }
-
     struct Slot {
         queries: wgpu::QuerySet,
         resolve: wgpu::Buffer,
-        readback: wgpu::Buffer,
-        mapped: Rc<Cell<MapState>>,
         origin: Option<Origin>,
         spans: RefCell<Vec<(&'static str, Option<&'static str>)>>,
         draw_stamps: Option<wgpu::QuerySet>,
@@ -170,16 +166,6 @@ mod capture {
                         mapped_at_creation: false,
                     },
                 ),
-                readback: crate::memory::buffer(
-                    device,
-                    &wgpu::BufferDescriptor {
-                        label: Some("engine/profile-readback"),
-                        size: SLOT_BYTES,
-                        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                        mapped_at_creation: false,
-                    },
-                ),
-                mapped: Rc::new(Cell::new(MapState::Pending)),
                 origin: None,
                 spans: RefCell::new(Vec::with_capacity(SPANS)),
                 draw_stamps,
@@ -187,32 +173,30 @@ mod capture {
                 draws: RefCell::new(Vec::new()),
             }
         }
+    }
 
-        fn read(&self, spans: usize, draws: usize) -> Option<Readback> {
-            let bytes = self.readback.get_mapped_range(..).ok()?;
-            let word = |at: usize| {
-                bytes
-                    .get(at..at + 8)
-                    .and_then(|word| word.try_into().ok())
-                    .map_or(0, u64::from_le_bytes)
-            };
-            let stamp = |query: usize| word(query * 8);
-            let draw_stamp = |query: usize| word(DRAW_STAMPS_AT as usize + query * 8);
-            let statistic = |draw: usize, counter: usize| {
-                word(DRAW_STATISTICS_AT as usize + draw * 24 + counter * 8)
-            };
-            Some((
-                (0..spans)
-                    .map(|span| (stamp(2 * span), stamp(2 * span + 1)))
-                    .collect(),
-                (0..draws)
-                    .map(|draw| (draw_stamp(2 * draw), draw_stamp(2 * draw + 1)))
-                    .collect(),
-                (0..draws)
-                    .map(|draw| [0, 1, 2].map(|counter| statistic(draw, counter)))
-                    .collect(),
-            ))
-        }
+    fn read(bytes: &[u8], spans: usize, draws: usize) -> Readback {
+        let word = |at: usize| {
+            bytes
+                .get(at..at + 8)
+                .and_then(|word| word.try_into().ok())
+                .map_or(0, u64::from_le_bytes)
+        };
+        let stamp = |query: usize| word(query * 8);
+        let draw_stamp = |query: usize| word(DRAW_STAMPS_AT as usize + query * 8);
+        let statistic =
+            |draw: usize, counter: usize| word(DRAW_STATISTICS_AT as usize + draw * 24 + counter * 8);
+        (
+            (0..spans)
+                .map(|span| (stamp(2 * span), stamp(2 * span + 1)))
+                .collect(),
+            (0..draws)
+                .map(|draw| (draw_stamp(2 * draw), draw_stamp(2 * draw + 1)))
+                .collect(),
+            (0..draws)
+                .map(|draw| [0, 1, 2].map(|counter| statistic(draw, counter)))
+                .collect(),
+        )
     }
 
     fn idle(
@@ -335,7 +319,6 @@ mod capture {
         }
 
         pub fn begin(&mut self, device: &wgpu::Device, capture: u64) {
-            self.poll();
             self.capture = Some(capture);
             self.attempted = 0;
             self.submitted = 0;
@@ -369,7 +352,6 @@ mod capture {
             self.current = None;
             self.drawing = false;
             self.submission = self.submission.saturating_add(1);
-            self.poll();
             let capture = engine_profile::capture_id();
             if let Some(capture) = capture {
                 if self.capture != Some(capture) {
@@ -403,7 +385,6 @@ mod capture {
                 frame: engine_profile::current_frame(),
                 submission: self.submission,
             });
-            slot.mapped.set(MapState::Pending);
             slot.spans.get_mut().clear();
             slot.draws.get_mut().clear();
             if capture.is_some() {
@@ -491,11 +472,16 @@ mod capture {
             }
         }
 
-        pub fn end_frame(&mut self, encoder: &mut wgpu::CommandEncoder) {
-            let Some(index) = self.current else {
+        pub(crate) fn end_frame(
+            &mut self,
+            (device, encoder): (&wgpu::Device, &mut wgpu::CommandEncoder),
+            readbacks: &mut Readbacks,
+            written: FrameId,
+        ) {
+            let Some(index) = self.current.take() else {
                 return;
             };
-            let slot = &self.slots[index];
+            let slot = &mut self.slots[index];
             let queries = 2 * slot.spans.borrow().len() as u32;
             if queries != 0 {
                 encoder.resolve_query_set(&slot.queries, 0..queries, &slot.resolve, 0);
@@ -514,195 +500,172 @@ mod capture {
                     );
                 }
             }
-            if queries != 0 || draws != 0 {
-                encoder.copy_buffer_to_buffer(&slot.resolve, 0, &slot.readback, 0, SLOT_BYTES);
-            }
-        }
-
-        pub fn submitted(&mut self) {
-            let Some(index) = self.current.take() else {
-                return;
-            };
-            let slot = &self.slots[index];
-            let mapped = Rc::clone(&slot.mapped);
-            slot.readback.map_async(
-                wgpu::MapMode::Read,
-                ..,
-                crate::platform::map_callback(move |result| {
-                    mapped.set(if result.is_ok() {
-                        MapState::Ready
-                    } else {
-                        MapState::Failed
-                    });
-                }),
+            let recorded = readbacks.record(
+                (device, encoder),
+                (&slot.resolve, 0..SLOT_BYTES),
+                (Reader::Profiler(index as u32), written, None),
+                Keep::Ring(1),
             );
+            if !recorded {
+                slot.origin = None;
+                self.dropped = self.dropped.saturating_add(1);
+            }
         }
 
         #[expect(
             clippy::too_many_lines,
             reason = "longer than the line ceiling; it may only shrink"
         )]
-        pub fn poll(&mut self) {
-            for index in 0..self.slots.len() {
-                if Some(index) == self.current {
-                    continue;
-                }
-                let slot = &mut self.slots[index];
-                let Some(origin) = slot.origin else { continue };
-                let state = slot.mapped.get();
-                if state == MapState::Pending {
-                    continue;
-                }
-                slot.origin = None;
-                if state == MapState::Failed {
-                    if Some(origin.capture) == self.capture {
-                        self.errors = self.errors.saturating_add(1);
-                    }
-                    continue;
-                }
-                let recorded = slot.spans.get_mut().clone();
-                let labels = std::mem::take(slot.draws.get_mut());
-                let (timed, counted) = (slot.draw_stamps.is_some(), slot.draw_statistics.is_some());
-                let names: Vec<&'static str> = recorded.iter().map(|&(name, _)| name).collect();
-                let mut groups: Vec<&'static str> = Vec::new();
-                for group in recorded.iter().filter_map(|&(_, group)| group) {
-                    if group != BUSY && !groups.contains(&group) {
-                        groups.push(group);
-                    }
-                }
-                let read = slot.read(names.len(), labels.len());
-                slot.readback.unmap();
-                let Some((stamps, draw_stamps, draw_statistics)) = read else {
+        pub(crate) fn arrived(&mut self, index: u32, arrival: Arrival<'_>) {
+            let Some(slot) = self.slots.get_mut(index as usize) else {
+                return;
+            };
+            let Some(origin) = slot.origin.take() else {
+                return;
+            };
+            let Arrival::Read(bytes) = arrival else {
+                if Some(origin.capture) == self.capture {
                     self.errors = self.errors.saturating_add(1);
-                    continue;
-                };
-                let period_ns = self.period_ns;
-                let to_ms = |ticks: u64| ticks as f64 * period_ns / 1_000_000.0;
-                let duration = |(begin, end): (u64, u64)| {
-                    end.checked_sub(begin)
-                        .map(to_ms)
-                        .filter(|value| value.is_finite())
-                };
-                let across = |group: &str| {
-                    let spans: Vec<(u64, u64)> = recorded
-                        .iter()
-                        .zip(&stamps)
-                        .filter(|((_, of), _)| *of == Some(group))
-                        .map(|(_, &stamps)| stamps)
-                        .collect();
-                    let begin = spans.iter().map(|&(begin, _)| begin).min()?;
-                    let end = spans.iter().map(|&(_, end)| end).max()?;
-                    duration((begin, end))
-                };
-                let span = stamps
-                    .iter()
-                    .flat_map(|&(begin, end)| [begin, end])
-                    .min()
-                    .zip(stamps.iter().flat_map(|&(begin, end)| [begin, end]).max());
-                let frame_ms = span.and_then(|(first, last)| duration((first, last)));
-                let previous = self.last_span.filter(|&(frame, _, _)| frame < origin.frame);
-                let gap_ms = span
-                    .zip(previous)
-                    .and_then(|((first, _), (frame, _, end))| {
-                        (frame + 1 == origin.frame)
-                            .then(|| first.checked_sub(end))
-                            .flatten()
-                            .map(to_ms)
-                    });
-                let interval_ms = span
-                    .zip(previous)
-                    .and_then(|((first, _), (frame, start, _))| {
-                        first
-                            .checked_sub(start)
-                            .map(|ticks| to_ms(ticks) / (origin.frame - frame) as f64)
-                    });
-                if let Some((first, last)) = span {
-                    self.last_span = Some((origin.frame, first, last));
                 }
-                let idle_ms = span.and_then(|span| idle(&recorded, &stamps, span).map(to_ms));
-                self.latest = frame_ms.map(|ms| Latest::of(ms, idle_ms, &names, &stamps, duration));
-                if Some(origin.capture) != self.capture {
-                    continue;
+                return;
+            };
+            let recorded = slot.spans.get_mut().clone();
+            let labels = std::mem::take(slot.draws.get_mut());
+            let (timed, counted) = (slot.draw_stamps.is_some(), slot.draw_statistics.is_some());
+            let names: Vec<&'static str> = recorded.iter().map(|&(name, _)| name).collect();
+            let mut groups: Vec<&'static str> = Vec::new();
+            for group in recorded.iter().filter_map(|&(_, group)| group) {
+                if group != BUSY && !groups.contains(&group) {
+                    groups.push(group);
                 }
-                let opaque = names
-                    .iter()
-                    .position(|name| *name == OPAQUE)
-                    .and_then(|index| duration(stamps[index]));
-                let Some(opaque) = opaque else {
-                    self.errors = self.errors.saturating_add(1);
-                    continue;
-                };
-                let mut spans = vec![(OPAQUE, opaque)];
-                spans.extend(
-                    names
-                        .iter()
-                        .zip(&stamps)
-                        .filter(|(name, _)| **name != OPAQUE)
-                        .filter_map(|(name, &stamps)| Some((*name, duration(stamps)?))),
-                );
-                spans.extend(
-                    groups
-                        .iter()
-                        .filter_map(|&group| across(group).map(|whole| (group, whole))),
-                );
-                let mut stages: Vec<(&str, u64, u64)> = names
-                    .iter()
-                    .zip(&stamps)
-                    .filter(|(name, _)| name.starts_with("stage_"))
-                    .map(|(name, &(begin, end))| (*name, begin, end))
-                    .filter(|&(_, begin, end)| begin != 0 && end >= begin)
-                    .collect();
-                stages.sort_by_key(|&(_, begin, _)| begin);
-                if let (Some((first, last)), Some(&(_, begin, _)), Some(&(_, _, end))) =
-                    (span, stages.first(), stages.last())
-                {
-                    spans.extend(duration((first, begin)).map(|lead| ("stage_lead", lead)));
-                    spans.extend(duration((end, last)).map(|tail| ("stage_tail", tail)));
-                    let gaps = stages
-                        .windows(2)
-                        .filter_map(|pair| duration((pair[0].2, pair[1].1)))
-                        .sum::<f64>();
-                    spans.push(("stage_gaps", gaps));
-                }
-                spans.extend(frame_ms.map(|frame| ("frame_gpu", frame)));
-                spans.extend(idle_ms.map(|idle| ("gpu_idle", idle)));
-                spans.extend(
-                    gap_ms
-                        .filter(|value| value.is_finite())
-                        .map(|gap| ("frame_gpu_gap", gap)),
-                );
-                spans.extend(
-                    interval_ms
-                        .filter(|value| value.is_finite())
-                        .map(|interval| ("frame_gpu_interval", interval)),
-                );
-                let start_of = |begin: u64| {
-                    span.filter(|_| begin != 0)
-                        .and_then(|(first, _)| begin.checked_sub(first))
-                        .map(to_ms)
-                };
-                let starts = names
-                    .iter()
-                    .zip(&stamps)
-                    .filter_map(|(name, &(begin, _))| Some((*name, start_of(begin)?)))
-                    .collect();
-                let draws = labels
-                    .into_iter()
-                    .zip(draw_stamps.into_iter().zip(draw_statistics))
-                    .map(|(label, (stamps, statistics))| DrawSample {
-                        label,
-                        start_ms: timed.then(|| start_of(stamps.0)).flatten(),
-                        duration_ms: timed.then(|| duration(stamps)).flatten(),
-                        statistics: counted.then_some(statistics),
-                    })
-                    .collect();
-                self.samples.push(Sample {
-                    origin,
-                    spans,
-                    starts,
-                    draws,
-                });
             }
+            let (stamps, draw_stamps, draw_statistics) = read(bytes, names.len(), labels.len());
+            let period_ns = self.period_ns;
+            let to_ms = |ticks: u64| ticks as f64 * period_ns / 1_000_000.0;
+            let duration = |(begin, end): (u64, u64)| {
+                end.checked_sub(begin)
+                    .map(to_ms)
+                    .filter(|value| value.is_finite())
+            };
+            let across = |group: &str| {
+                let spans: Vec<(u64, u64)> = recorded
+                    .iter()
+                    .zip(&stamps)
+                    .filter(|((_, of), _)| *of == Some(group))
+                    .map(|(_, &stamps)| stamps)
+                    .collect();
+                let begin = spans.iter().map(|&(begin, _)| begin).min()?;
+                let end = spans.iter().map(|&(_, end)| end).max()?;
+                duration((begin, end))
+            };
+            let span = stamps
+                .iter()
+                .flat_map(|&(begin, end)| [begin, end])
+                .min()
+                .zip(stamps.iter().flat_map(|&(begin, end)| [begin, end]).max());
+            let frame_ms = span.and_then(|(first, last)| duration((first, last)));
+            let previous = self.last_span.filter(|&(frame, _, _)| frame < origin.frame);
+            let gap_ms = span
+                .zip(previous)
+                .and_then(|((first, _), (frame, _, end))| {
+                    (frame + 1 == origin.frame)
+                        .then(|| first.checked_sub(end))
+                        .flatten()
+                        .map(to_ms)
+                });
+            let interval_ms = span
+                .zip(previous)
+                .and_then(|((first, _), (frame, start, _))| {
+                    first
+                        .checked_sub(start)
+                        .map(|ticks| to_ms(ticks) / (origin.frame - frame) as f64)
+                });
+            if let Some((first, last)) = span {
+                self.last_span = Some((origin.frame, first, last));
+            }
+            let idle_ms = span.and_then(|span| idle(&recorded, &stamps, span).map(to_ms));
+            self.latest = frame_ms.map(|ms| Latest::of(ms, idle_ms, &names, &stamps, duration));
+            if Some(origin.capture) != self.capture {
+                return;
+            }
+            let opaque = names
+                .iter()
+                .position(|name| *name == OPAQUE)
+                .and_then(|index| duration(stamps[index]));
+            let Some(opaque) = opaque else {
+                self.errors = self.errors.saturating_add(1);
+                return;
+            };
+            let mut spans = vec![(OPAQUE, opaque)];
+            spans.extend(
+                names
+                    .iter()
+                    .zip(&stamps)
+                    .filter(|(name, _)| **name != OPAQUE)
+                    .filter_map(|(name, &stamps)| Some((*name, duration(stamps)?))),
+            );
+            spans.extend(
+                groups
+                    .iter()
+                    .filter_map(|&group| across(group).map(|whole| (group, whole))),
+            );
+            let mut stages: Vec<(&str, u64, u64)> = names
+                .iter()
+                .zip(&stamps)
+                .filter(|(name, _)| name.starts_with("stage_"))
+                .map(|(name, &(begin, end))| (*name, begin, end))
+                .filter(|&(_, begin, end)| begin != 0 && end >= begin)
+                .collect();
+            stages.sort_by_key(|&(_, begin, _)| begin);
+            if let (Some((first, last)), Some(&(_, begin, _)), Some(&(_, _, end))) =
+                (span, stages.first(), stages.last())
+            {
+                spans.extend(duration((first, begin)).map(|lead| ("stage_lead", lead)));
+                spans.extend(duration((end, last)).map(|tail| ("stage_tail", tail)));
+                let gaps = stages
+                    .windows(2)
+                    .filter_map(|pair| duration((pair[0].2, pair[1].1)))
+                    .sum::<f64>();
+                spans.push(("stage_gaps", gaps));
+            }
+            spans.extend(frame_ms.map(|frame| ("frame_gpu", frame)));
+            spans.extend(idle_ms.map(|idle| ("gpu_idle", idle)));
+            spans.extend(
+                gap_ms
+                    .filter(|value| value.is_finite())
+                    .map(|gap| ("frame_gpu_gap", gap)),
+            );
+            spans.extend(
+                interval_ms
+                    .filter(|value| value.is_finite())
+                    .map(|interval| ("frame_gpu_interval", interval)),
+            );
+            let start_of = |begin: u64| {
+                span.filter(|_| begin != 0)
+                    .and_then(|(first, _)| begin.checked_sub(first))
+                    .map(to_ms)
+            };
+            let starts = names
+                .iter()
+                .zip(&stamps)
+                .filter_map(|(name, &(begin, _))| Some((*name, start_of(begin)?)))
+                .collect();
+            let draws = labels
+                .into_iter()
+                .zip(draw_stamps.into_iter().zip(draw_statistics))
+                .map(|(label, (stamps, statistics))| DrawSample {
+                    label,
+                    start_ms: timed.then(|| start_of(stamps.0)).flatten(),
+                    duration_ms: timed.then(|| duration(stamps)).flatten(),
+                    statistics: counted.then_some(statistics),
+                })
+                .collect();
+            self.samples.push(Sample {
+                origin,
+                spans,
+                starts,
+                draws,
+            });
         }
 
         pub fn status(&self) -> Value {
@@ -744,8 +707,7 @@ mod capture {
             })
         }
 
-        pub fn report(&mut self) -> Value {
-            self.poll();
+        pub fn report(&self) -> Value {
             let mut report = self.status();
             report["samples"] = Value::Array(
                 self.samples

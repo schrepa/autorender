@@ -1,15 +1,17 @@
 use std::any::TypeId;
 
 use bevy_ecs::world::World;
-use engine_core::{AssetResidency, FrameTime, RenderFrame, RenderStats, View};
+use engine_core::{AssetResidency, FrameTime, Readback, RenderFrame, RenderStats, View};
 
 use super::*;
 use crate::CameraUniform;
+use crate::encode::{Queued, Recording};
 use crate::gpu_calls::Handover;
 use crate::graph::Bits;
 use crate::install::Work;
 use crate::machine::Target;
 use crate::profiling::{GpuProfiler, Span};
+use crate::readback::{Arrival, Reader};
 
 const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
 const OPAQUE_MESHES: &str = "opaque_meshes";
@@ -120,7 +122,39 @@ fn camera_of(
 }
 
 impl Renderer {
+    pub(super) fn collect(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::platform::run_arrived_maps();
+        let Some(run) = self.run.as_mut() else {
+            return;
+        };
+        let (display, profiler) = (&mut self.core.display, &mut self.core.profiler);
+        let impostors = &mut run.assets.impostors;
+        let mut parts = Vec::new();
+        run.readbacks
+            .take(|reader, written, deliver, arrival| match (reader, arrival) {
+                (Reader::Part { part, tag }, Arrival::Read(bytes)) => {
+                    if let Some(deliver) = deliver {
+                        let read = Readback {
+                            value: bytes.to_vec(),
+                            written,
+                        };
+                        parts.push(((part, tag), read, deliver));
+                    }
+                }
+                (Reader::Part { .. }, Arrival::Failed) => {}
+                (Reader::FrameTimer, arrival) => display.timed(written, arrival),
+                (Reader::Profiler(slot), arrival) => profiler.arrived(slot, arrival),
+                (Reader::Impostor(serial), arrival) => impostors.arrived(serial, arrival),
+            });
+        for (asked, read, deliver) in parts {
+            run.arrived(asked, read, deliver);
+        }
+    }
+
     pub fn deliver(&mut self, world: &mut World) {
+        self.fault_bricks(world);
+        self.collect();
         let Some(run) = self.run.as_mut() else {
             return;
         };
@@ -133,50 +167,51 @@ impl Renderer {
         if world.get_resource::<engine_core::PartDraws>() != Some(&draws) {
             world.insert_resource(draws);
         }
-        let mut faults = engine_core::PartFaults::default();
-        for (part, fault) in run.machine.declared.parts.iter().zip(&run.faulted) {
-            if fault.is_some() {
-                faults.add(part.ty);
-            }
-        }
-        if world.get_resource::<engine_core::PartFaults>() != Some(&faults) {
-            world.insert_resource(faults);
-        }
-        if let Some(mut gates) = world.get_resource_mut::<engine_registry::Gates>() {
-            for (fault, gate) in run.faulted.iter().zip(&run.gates) {
-                if let (Some(_), Some(gate)) = (fault, gate)
-                    && !gates.faulted(*gate)
-                {
-                    gates.fault(*gate);
+        for (part, error) in std::mem::take(&mut run.faults) {
+            let brick = run.gates.get(part as usize).copied().flatten().and_then(|gate| {
+                world
+                    .get_resource::<engine_registry::BrickStates>()
+                    .and_then(|states| states.brick(gate))
+            });
+            match brick {
+                Some(brick) => engine_registry::fault(world, brick, error),
+                None => {
+                    if let Some(mut registry) = world.get_resource_mut::<engine_registry::Registry>() {
+                        registry.report(error);
+                    }
                 }
             }
         }
-        self.follow_gates(world);
+        self.follow_states(world);
     }
 
-    pub fn follow_gates(&mut self, world: &mut World) {
+    pub fn follow_states(&mut self, world: &mut World) {
         let Some(run) = self.run.as_mut() else {
             return;
         };
-        let gates = world.get_resource::<engine_registry::Gates>();
-        let live: Vec<bool> = run
-            .gates
-            .iter()
-            .map(|gate| gate.is_none_or(|gate| gates.is_some_and(|gates| gates.on(gate))))
-            .collect();
-        for (index, on) in live.iter().enumerate() {
-            let was = run.live.get(index).copied().unwrap_or(true);
-            if *on
-                && !was
-                && let Some(Some(held)) = run.parts.get_mut(index)
-            {
-                held.refresh(world);
+        run.settle_parts(world.get_resource::<engine_registry::BrickStates>());
+        for part in 0..run.parts.len() {
+            let Some(gate) = run.gates.get(part).copied().flatten() else {
+                continue;
+            };
+            let states = world.get_resource::<engine_registry::BrickStates>();
+            let (Some(count), Some(brick)) = (
+                states.and_then(|states| states.installed(gate)),
+                states.and_then(|states| states.brick(gate)),
+            ) else {
+                continue;
+            };
+            if run.turned.get(part).copied().flatten().is_some() {
+                continue;
             }
-            if !*on && was {
-                run.release_part(index as u32);
+            match super::install::reinstall(run, world, part as u32) {
+                Ok(held) => {
+                    run.parts[part] = Some(held);
+                    run.turned[part] = Some(count);
+                }
+                Err(error) => engine_registry::fault(world, brick, error),
             }
         }
-        run.live = live;
     }
 
     fn mark(
@@ -213,7 +248,7 @@ impl Renderer {
         let _row = engine_profile::timed(engine_profile::row("render.acquire"));
         self.check_health()?;
         drop(self.surface.take());
-        if self.core.display.suspended || self.run.is_none() {
+        if self.core.display.suspended() || self.run.is_none() {
             return Ok(false);
         }
         self.surface = self.core.display.acquire(&self.core.device)?;
@@ -249,12 +284,14 @@ impl Renderer {
             run.assets
                 .materials
                 .sync(&device, &self.core.queue, world, &mut mips);
+        let written = run.written();
         run.assets.impostors.run(
             &device,
             &self.core.queue,
             world,
             (&run.assets.meshes, &run.assets.materials),
             &mut mips,
+            (&mut run.readbacks, written),
         );
         if let Some(encoder) = mips.take() {
             self.core.queue.hand(Handover::from(encoder));
@@ -268,7 +305,10 @@ impl Renderer {
         run.drawn = 0;
         run.uploads.counted = 0;
         run.uploads.memory.clear();
-        run.queued.ending.clear();
+        run.queued = Queued {
+            before: run.queued.before.take(),
+            ..Queued::default()
+        };
         run.part_draws.fill(0);
         run.region = region.upscales().then(|| region.render.pixels());
         run.asked_frame = world
@@ -280,14 +320,8 @@ impl Renderer {
             .unwrap_or_default();
         run.readback_slots = settings.readback_slots.max(1) as usize;
         run.readback_slot_bytes = settings.readback_slot_bytes;
-        let faulted: Vec<engine_registry::GateId> = run
-            .faulted
-            .iter()
-            .zip(&run.gates)
-            .filter(|(fault, _)| fault.is_some())
-            .filter_map(|(_, gate)| *gate)
-            .collect();
-        run.set_switches(super::install::switches_of(&run.machine, world, &faulted));
+        run.settle_parts(world.get_resource::<engine_registry::BrickStates>());
+        run.set_switches(super::install::switches_of(&run.machine, world));
         warm_on_flip(run, &mut self.installing, &device, world);
         run.drop_unfilled();
         let viewed = match view {
@@ -365,6 +399,7 @@ impl Renderer {
             if let Err(error) = held.prepare(world, run) {
                 run.fault(error);
             }
+            run.forget_ran(index as u32);
             run.parts[index] = Some(held);
         }
         if let Some(library) = world.get_resource::<engine_core::AssetLibrary>() {
@@ -410,7 +445,7 @@ impl Renderer {
         if let Some(canvas) = run.machine.ids.target(Target::Canvas) {
             outputs.insert(canvas.index());
         }
-        for asked in &run.asked {
+        for asked in &run.queued.asked {
             if let Some(id) = run.machine.ids.buffers.get(asked.buffer as usize) {
                 outputs.insert(id.index());
             }
@@ -426,7 +461,7 @@ impl Renderer {
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
         };
-        run.encoder = Some(encoder);
+        run.recording = Recording::Encoding(encoder);
         let mut batch = 0;
         let mut timed: Option<&'static str> = None;
         let mut parted: Option<(&'static str, u32)> = None;
@@ -441,7 +476,7 @@ impl Renderer {
                 run.leave();
                 mark_span(
                     &self.core.profiler,
-                    run.encoder.as_mut(),
+                    run.recording.encoder(),
                     OPAQUE_MESHES,
                     true,
                 );
@@ -450,7 +485,7 @@ impl Renderer {
             if planned.batch != batch {
                 let Some(run) = self.run.as_mut() else { break };
                 run.leave();
-                let mut ended = run.encoder.take();
+                let mut ended = run.take_encoder();
                 self.mark(ended.as_mut(), timed.take(), None);
                 if let Some(mut encoder) = ended {
                     self.close_batch(&mut encoder, batch);
@@ -458,7 +493,7 @@ impl Renderer {
                 }
                 let encoder = self.frame_encoder(&device, planned.batch);
                 let Some(run) = self.run.as_mut() else { break };
-                run.encoder = Some(encoder);
+                run.recording = Recording::Encoding(encoder);
                 batch = planned.batch;
             }
             let index = planned.pass.index();
@@ -483,6 +518,7 @@ impl Renderer {
             run.planned_at = at;
             if let Work::Clear(buffer) = work {
                 run.queued.cleared.push(buffer);
+                run.ran.insert(index);
                 continue;
             }
             let continues = ran_last
@@ -501,7 +537,7 @@ impl Renderer {
                 let span = run
                     .stage_of(index as u32)
                     .or_else(|| self.spans.get(index).copied());
-                let mut encoder = run.encoder.take();
+                let mut encoder = run.take_encoder();
                 if !keeps && let Some((open, _)) = parted.take() {
                     mark_span(&self.core.profiler, encoder.as_mut(), open, true);
                 }
@@ -518,7 +554,7 @@ impl Renderer {
                     parted = Some((began, part));
                 }
                 let Some(run) = self.run.as_mut() else { break };
-                run.encoder = encoder;
+                run.recording = Recording::of(encoder);
                 run.group(index as u32);
             }
             let Some(run) = self.run.as_mut() else { break };
@@ -530,13 +566,18 @@ impl Renderer {
                 .get(part as usize)
                 .map(crate::install::PartInfo::owned);
             match work {
-                Work::Copy { .. } => run.copy(index as u32),
+                Work::Copy { .. } => {
+                    if run.copy(index as u32) {
+                        run.ran.insert(index);
+                    }
+                }
                 Work::Clear(_) => {}
                 Work::Render | Work::Shared(_) => {
                     let Some(mut held) = run.parts[part as usize].take() else {
                         continue;
                     };
                     let drawn = held.encode(index as u32, run, &self.core.profiler);
+                    run.ran.insert(index);
                     let next = plan.passes.get(at + 1).map(|next| next.pass.index() as u32);
                     if !next.is_some_and(|next| {
                         next != index as u32 && run.same_group(index as u32, next)
@@ -559,7 +600,7 @@ impl Renderer {
         run.close_encode_span(&self.core.profiler);
         run.flush_clears();
         run.leave();
-        let mut encoder = run.encoder.take().unwrap_or_else(|| {
+        let mut encoder = run.take_encoder().unwrap_or_else(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("engine/frame-encoder"),
             })
@@ -574,32 +615,39 @@ impl Renderer {
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
         };
-        run.encoder = Some(encoder);
+        run.recording = Recording::Encoding(encoder);
         run.copy_at_end();
         run.record_readbacks();
-        let mut encoder = run.encoder.take().unwrap_or_else(|| {
+        let mut encoder = run.take_encoder().unwrap_or_else(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("engine/frame-encoder"),
             })
         });
-        self.core.display.time_end(&device, &mut encoder);
+        let (written, slots) = (run.written(), run.readback_slots);
+        self.core.display.time_end(
+            (&device, &mut encoder),
+            (&mut run.readbacks, written, slots),
+        );
         self.close_batch(&mut encoder, batch);
-        self.core.profiler.end_frame(&mut encoder);
+        let Some(run) = self.run.as_mut() else {
+            return Ok(RenderStats::default());
+        };
+        self.core
+            .profiler
+            .end_frame((&device, &mut encoder), &mut run.readbacks, written);
         drop(profile_encoding);
         drop(row_encoding);
         let profile_submit = engine_profile::span("render", "submit_and_present");
         let row_submit = engine_profile::timed(engine_profile::row("render.submit"));
         self.core.queue.hand(Handover::from(encoder));
         self.core.queue.settle();
-        self.core.profiler.submitted();
         surface.present(&self.core.queue);
         let pipelines_created = self.core.pipeline_counts.frame_submitted(&self.core.queue);
         let render_passes = self.ran_passes(&ran);
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
         };
-        run.assets.impostors.after_submit();
-        run.map_readbacks();
+        run.readbacks.map();
         crate::platform::poll(&device);
         drop(profile_submit);
         drop(row_submit);
@@ -627,11 +675,10 @@ impl Renderer {
             pipelines_created,
             render_passes,
             linked: self.linked,
-            readback_overflows: run.overflows,
+            readback_overflows: run.readbacks.overflows(),
             ..RenderStats::default()
         };
-        let immediate =
-            self.core.queue.take_immediate() + std::mem::take(&mut run.queued.immediate);
+        let immediate = self.core.queue.take_immediate();
         rebuilt_counters(&mut run.rebuilt);
         if engine_profile::active() {
             stat_counters(&stats);
@@ -746,8 +793,8 @@ fn warm_on_flip(
     world: &World,
 ) {
     let generation = world
-        .get_resource::<engine_registry::Gates>()
-        .map_or(0, engine_registry::Gates::generation);
+        .get_resource::<engine_registry::BrickStates>()
+        .map_or(0, engine_registry::BrickStates::generation);
     if run.reached.generation == Some(generation) {
         return;
     }
@@ -758,7 +805,6 @@ fn warm_on_flip(
     let scope = crate::gpu_calls::validation_scope(device);
     run.warm_reached(world);
     *installing = Some(Box::pin(scope.pop()));
-    run.release_off_parts(world);
 }
 
 fn piece_bytes(world: &World, layout: &[(usize, crate::pieces::PieceAt)], bytes: &mut Vec<u8>) {

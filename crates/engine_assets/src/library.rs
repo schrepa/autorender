@@ -384,22 +384,32 @@ impl<T> Storage<T> {
     }
 }
 
+enum Levels {
+    Awaiting,
+    Built(Arc<MeshLods>),
+    Without,
+}
+
 struct HeldMesh {
     mesh: Arc<Mesh>,
-    lods: Option<Option<Arc<MeshLods>>>,
+    lods: Levels,
 }
 
 impl HeldMesh {
     fn new(mesh: Mesh) -> Self {
         let lods = match mesh.lods() {
-            Some(lods) => Some(Some(Arc::clone(lods))),
-            None if takes_levels(&mesh) => None,
-            None => Some(None),
+            Some(lods) => Levels::Built(Arc::clone(lods)),
+            None if takes_levels(&mesh) => Levels::Awaiting,
+            None => Levels::Without,
         };
         Self {
             mesh: Arc::new(mesh),
             lods,
         }
+    }
+
+    fn awaits(&self) -> bool {
+        matches!(self.lods, Levels::Awaiting)
     }
 }
 
@@ -460,7 +470,7 @@ impl AssetLibrary {
         }
         self.reserve_bytes(mesh.byte_len())?;
         let held = HeldMesh::new(mesh);
-        let awaits = held.lods.is_none();
+        let awaits = held.awaits();
         let handle = MeshHandle(self.meshes.insert(self.id, held));
         if awaits {
             self.awaiting_lods.push(handle);
@@ -492,7 +502,7 @@ impl AssetLibrary {
         }
         self.reserve_bytes(mesh.byte_len())?;
         let held = HeldMesh::new(mesh);
-        if held.lods.is_none() {
+        if held.awaits() {
             self.awaiting_lods.push(handle);
         }
         self.meshes.fill(self.id, handle.0, held);
@@ -503,25 +513,32 @@ impl AssetLibrary {
         std::mem::take(&mut self.awaiting_lods)
     }
 
-    pub fn settle_lods(&mut self, handle: MeshHandle, lods: Option<MeshLods>) -> Result<(), Error> {
+    pub fn settle_lods(
+        &mut self,
+        handle: MeshHandle,
+        lods: Option<Arc<MeshLods>>,
+    ) -> Result<(), Error> {
         let held = self
             .meshes
             .get_mut(self.id, handle.0)
-            .filter(|held| held.lods.is_none())
+            .filter(|held| held.awaits())
             .ok_or_else(|| dead(ErrorCode::InvalidMesh, "$.mesh"))?;
         if let Some(lods) = &lods {
             lods.check(held.mesh.indices().len(), held.mesh.vertices().len())?;
         }
-        let bytes = lods.as_ref().map_or(0, MeshLods::byte_len);
-        held.lods = Some(lods.map(Arc::new));
+        let bytes = lods.as_deref().map_or(0, MeshLods::byte_len);
+        held.lods = lods.map_or(Levels::Without, Levels::Built);
         self.resident_bytes += bytes;
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
 
     pub fn mesh_lods(&self, handle: MeshHandle) -> Option<Option<&Arc<MeshLods>>> {
-        let held = self.meshes.get(self.id, handle.0)?;
-        held.lods.as_ref().map(Option::as_ref)
+        match &self.meshes.get(self.id, handle.0)?.lods {
+            Levels::Awaiting => None,
+            Levels::Built(lods) => Some(Some(lods)),
+            Levels::Without => Some(None),
+        }
     }
 
     pub fn insert_material(&mut self, material: Material) -> Result<MaterialHandle, Error> {
@@ -622,12 +639,11 @@ impl AssetLibrary {
             return false;
         };
         self.resident_bytes -= mesh.map_or(0, |held| {
-            held.mesh.byte_len()
-                + held
-                    .lods
-                    .flatten()
-                    .filter(|_| held.mesh.lods().is_none())
-                    .map_or(0, |lods| lods.byte_len())
+            let settled = match &held.lods {
+                Levels::Built(lods) if held.mesh.lods().is_none() => lods.byte_len(),
+                Levels::Built(_) | Levels::Awaiting | Levels::Without => 0,
+            };
+            held.mesh.byte_len() + settled
         });
         self.revision = self.revision.saturating_add(1);
         true

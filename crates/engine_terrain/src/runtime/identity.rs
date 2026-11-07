@@ -1,19 +1,18 @@
 use std::sync::Arc;
 
-use super::{Terrain, TerrainEdit, TerrainRiver, TerrainSurface};
-use crate::{GivenRiver, Stamp};
+use super::{Terrain, TerrainEdit, TerrainSurface};
+use crate::Stamp;
 use super::content_hash;
+use engine_core::RecordKey;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Generation(u128);
 
 impl Generation {
-    pub(super) fn of(edits: &[TerrainEdit], drawn: &[TerrainRiver], materials: bool) -> Self {
+    pub(super) fn of(edits: &[TerrainEdit], recipe: Option<RecordKey>) -> Self {
         let stamps: Vec<Stamp> = edits.iter().map(|edit| edit.stamp).collect();
-        let rivers: Vec<GivenRiver> = drawn.iter().map(|drawn| drawn.river.clone()).collect();
         let mut bytes = crate::codec::encode(&stamps);
-        bytes.extend(crate::codec::encode(&rivers));
-        bytes.push(u8::from(materials));
+        bytes.extend(recipe.map_or([0; 32], |recipe| recipe.hash()));
         Self(content_hash(&bytes))
     }
 }

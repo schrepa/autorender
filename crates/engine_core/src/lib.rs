@@ -27,6 +27,7 @@ mod scene;
 mod schedules;
 mod section;
 mod services;
+mod shared;
 pub mod smoke;
 mod source;
 mod statistics;
@@ -51,9 +52,11 @@ pub use engine_assets::{
     Texture, TextureFormat, TextureRef, TopLayer, UvTransform, Wrap, lod_input, trim_cards,
 };
 pub use engine_place::{
-    DrawPoint, Error, ErrorCode, GpuStruct, InterpolateTransform, JobRef, LevelProgress,
-    LevelRequest, List, MaterialHandle, Mesh3d, MeshHandle, PlaceDecl, Runs, Screens, Slot, Smoke,
-    SmokeFailure, SmokeSession, Stamp, TextureHandle, gpu_consts, smoke_check, smoke_eq,
+    BudgetUse, Census, Cursor, CursorView, DrawPoint, Error, ErrorCode, Events, Feed, FeedView,
+    FrameBudget, GpuStruct, Interest, InterpolateTransform, JobRef, Level, LevelView, List,
+    MaterialHandle, Mesh3d, MeshHandle, PlaceDecl, Progress, Readiness, Request, Requests, Ring,
+    Runs, Screens, Since, Slot, Smoke, SmokeFailure, SmokeSession, Stamp, StoreId, TextureHandle,
+    Ticket, gpu_consts, smoke_check, smoke_eq,
 };
 pub use engine_registry::{AuthoredId, ExplainAsk, ExplainRecord, FrameFacts, RecordParity};
 pub use engine_settings::{
@@ -66,13 +69,18 @@ pub use hierarchy::*;
 pub use input::*;
 pub use interpolation::*;
 pub use jobs::*;
+pub use mesh_lods::MeshLevels;
 pub use nearest::Nearest;
 pub use provided::*;
 pub use records::*;
 pub use scene::*;
-pub use section::{Cut, Explain, Operation, RESERVED_REPLY_KEYS, Readback, Section};
+pub use engine_place::{
+    BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,
+};
+pub use section::{Cut, Explain, Operation, RESERVED_REPLY_KEYS, Section};
+pub use shared::{FeedSettings, FrameBudgetSettings};
 pub use services::{
-    Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, PartFaults, Placed,
+    Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, Placed,
     Placement, Prepared, Reach, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneIds,
     ScenePath, View, ViewWind, WorkClock, WorkRemaining, scene_component, scene_components,
 };
@@ -103,7 +111,7 @@ macro_rules! gpu_struct {
 use std::sync::Arc;
 
 use bevy_ecs::change_detection::CheckChangeTicks;
-use bevy_ecs::component::Immutable;
+use bevy_ecs::component::{ComponentId, Immutable};
 use bevy_ecs::hierarchy::ChildOf;
 use bevy_ecs::lifecycle::Add;
 use bevy_ecs::observer::On;
@@ -114,6 +122,7 @@ use bevy_ecs::world::World;
 use clock::FixedClock;
 use engine_registry::{
     BrickHooks, GateDriver, JobList, JobListed, MembersOf, OperationEntry, Registry,
+    RegistryBuilder,
 };
 use interpolation::{InterpolationState, ResetWatch};
 use schedules::{
@@ -125,6 +134,7 @@ pub const MAX_DEV_TICKS: u32 = 120;
 
 static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::list::<SceneComponents>(),
+    PlaceDecl::list::<CursorRequests>(),
     PlaceDecl::slot::<ImpostorPolicy>(),
     PlaceDecl::slot::<ViewWind>(),
 ];
@@ -189,9 +199,10 @@ fn has_systems(world: &World, label: impl ScheduleLabel) -> bool {
         .is_some_and(|schedule| schedule.systems_len() != 0)
 }
 
-fn core_entries(registry: &mut Registry) {
+fn core_entries(registry: &mut RegistryBuilder) {
     registry.core_settings(bricks::settings_entry::<Detail>());
-    registry.core_settings(bricks::settings_entry::<JobSettings>());
+    registry.core_settings(bricks::settings_entry::<FeedSettings>());
+    registry.core_settings(bricks::settings_entry::<FrameBudgetSettings>());
     registry.core_settings(bricks::settings_entry::<FrameLimits>());
     registry.core_operation(OperationEntry::of::<
         <services::ViewControl as Operation>::Params,
@@ -281,32 +292,33 @@ impl Engine {
             .init_resource::<TimeControl>()
             .init_resource::<FrameLimits>()
             .init_resource::<Screens>()
-            .init_resource::<LevelRequest>()
-            .init_resource::<LevelProgress>()
+            .init_resource::<Level>()
+            .init_resource::<Readiness>()
+            .init_resource::<FrameBudget>()
             .init_resource::<Camera>()
             .init_resource::<CameraRefusals>()
             .init_resource::<Detail>()
-            .init_resource::<JobSettings>()
+            .init_resource::<FeedSettings>()
+            .init_resource::<FrameBudgetSettings>()
             .init_resource::<CookMode>()
             .insert_resource(exchange)
             .insert_resource(listed)
             .init_resource::<engine_registry::JobQueue>()
-            .insert_resource(Records::empty())
+            .init_resource::<Records>()
             .init_resource::<RecordExchange>()
             .insert_resource(View::empty())
             .insert_resource(DeviceLimits::without_device(cores))
             .init_resource::<WorkClock>()
             .init_resource::<PartDraws>()
-            .init_resource::<PartFaults>()
             .init_resource::<WorkRemaining>()
-            .init_resource::<mesh_lods::MeshLevels>()
+            .init_resource::<MeshLevels>()
             .init_resource::<Viewport>()
             .init_resource::<MoveInput>()
             .init_resource::<ActionInput>()
             .init_resource::<AxisInput>()
             .init_resource::<PointerInput>()
             .init_resource::<MenuInput>()
-            .init_resource::<CursorMode>()
+            .init_resource::<CursorRequests>()
             .init_resource::<ProvidedAssets>()
             .init_resource::<PresentationState>()
             .init_resource::<InterpolationState>()
@@ -335,7 +347,7 @@ impl Engine {
 
     fn install(&mut self, list: &BrickList) -> Result<(), Error> {
         let jobs = list.job_list()?;
-        let mut registry = Registry::default();
+        let mut registry = RegistryBuilder::default();
         registry.places(CORE_PLACES);
         for &places in list.place_sets() {
             registry.places(places);
@@ -354,16 +366,28 @@ impl Engine {
         world.insert_resource(JobListed::of(&jobs));
         world.resource_mut::<JobExchange>().set_list(jobs);
         let labels: [InternedScheduleLabel; 11] = Schedule::ALL.map(Schedule::label);
-        self.gates = Some(registry.install(world, &labels));
+        let mut gates = registry.install(world, &labels);
         let twice = world
             .get_resource::<MembersOf<SceneComponents>>()
             .map(|members| members.names_twice(|kind| kind.key()))
             .unwrap_or_default();
+        let registrars: Vec<fn(&mut World) -> ComponentId> = world
+            .get_resource::<MembersOf<SceneComponents>>()
+            .map(|members| members.all().iter().map(ComponentKind::registrar).collect())
+            .unwrap_or_default();
+        let authored: Vec<ComponentId> = registrars
+            .into_iter()
+            .map(|register| register(world))
+            .collect();
         let mut registry = world.resource_mut::<Registry>();
+        registry.keep_authored(&authored);
         for error in twice {
             registry.report(error);
         }
-        refused(registry.problems())
+        let checked = refused(registry.problems());
+        gates.run(world);
+        self.gates = Some(gates);
+        checked
     }
 
     #[track_caller]
@@ -388,6 +412,16 @@ impl Engine {
         self
     }
 
+    pub fn ask_on(&mut self, package: &str) -> Result<(), Error> {
+        let world = self.app.world_mut();
+        let brick = world
+            .get_resource::<Registry>()
+            .and_then(|registry| registry.id(package))
+            .ok_or_else(|| Error::new(ErrorCode::UnknownValue, "$.brick").got(package))?;
+        engine_registry::ask_on(world, brick);
+        Ok(())
+    }
+
     #[doc(hidden)]
     pub fn set_frame(&mut self, facts: FrameFacts) {
         self.facts = Some(facts);
@@ -405,22 +439,19 @@ impl Engine {
         self.app.world().resource::<JobExchange>().shared_list()
     }
 
-    pub fn pending(&self) -> u32 {
-        let world = self.app.world();
-        let bricks = world
-            .get_resource::<Registry>()
-            .map_or(0, |registry| registry.pending(world));
-        let records = world
-            .get_resource::<RecordExchange>()
-            .map_or(0, RecordExchange::pending);
-        let levels = world
-            .get_resource::<mesh_lods::MeshLevels>()
-            .map_or(0, mesh_lods::MeshLevels::waiting);
-        let impostors = assets::assets_pending(world);
-        let core = u64::try_from(records + levels)
-            .unwrap_or(u64::MAX)
-            .saturating_add(impostors);
-        bricks.saturating_add(u32::try_from(core).unwrap_or(u32::MAX))
+    pub fn readiness(&self) -> &Readiness {
+        self.app.world().resource::<Readiness>()
+    }
+
+    pub fn budget(&self) -> &FrameBudget {
+        self.app.world().resource::<FrameBudget>()
+    }
+
+    pub fn set_compiling(&mut self, compiling: u32) {
+        let world = self.app.world_mut();
+        if world.resource::<Readiness>().compiling != compiling {
+            world.resource_mut::<Readiness>().compiling = compiling;
+        }
     }
 
     pub fn advance(&mut self, delta_seconds: f64) -> FrameReport {
@@ -482,7 +513,7 @@ impl Engine {
                 let _profile = engine_profile::span("ecs", "BetweenFrames");
                 world.run_schedule(BetweenFrames);
             }
-            jobs::admit_orders(world);
+            jobs::exchange_orders(world);
         }
         world.resource::<WorkRemaining>().remaining()
     }
@@ -505,7 +536,7 @@ impl Engine {
             let _profile = engine_profile::span("ecs", "Waiting");
             world.run_schedule(Waiting);
         }
-        jobs::admit_orders(world);
+        jobs::exchange_orders(world);
     }
 
     fn run_gates(&mut self) {
@@ -513,22 +544,8 @@ impl Engine {
             return;
         };
         let world = self.app.world_mut();
-        {
-            let _profile = engine_profile::span("ecs", "Gates");
-            gates.run(world);
-        }
-        let faults = gates.take_faults();
-        if faults.is_empty() {
-            return;
-        }
-        if let Some(mut registry) = world.get_resource_mut::<Registry>() {
-            for (brick, fault) in faults {
-                registry.report(
-                    Error::new(ErrorCode::MissingResource, format!("$.bricks.{brick}.when"))
-                        .got(fault.to_string()),
-                );
-            }
-        }
+        let _profile = engine_profile::span("ecs", "Gates");
+        gates.run(world);
     }
 
     fn check_gate_ticks(&mut self) {
@@ -656,16 +673,22 @@ impl Engine {
         self.app.world().resource::<PresentationState>()
     }
 
-    pub fn extract_frame(&mut self, aspect: f32, alpha: f32) -> Result<RenderFrame<'_>, Error> {
+    pub fn extract_frame(
+        &mut self,
+        aspect: f32,
+        presented: Presented,
+    ) -> Result<RenderFrame<'_>, Error> {
         let _profile = engine_profile::span("cpu", "extraction");
+        let alpha = presented.alpha();
         interpolation::check_alpha(alpha)?;
         self.finalize();
         self.run_gates();
         self.mark_presented_time(alpha);
         self.sync_world();
         self.refresh_transforms();
-        interpolation::prepare(self.app.world_mut(), alpha);
+        interpolation::prepare(self.app.world_mut(), presented);
         self.sync_view(aspect);
+        shared::settle_readiness(self.app.world_mut());
         modify(self.app.world_mut(), ActionInput::hide_edges);
         Ok(RenderFrame {
             world: self.app.world(),
@@ -674,6 +697,7 @@ impl Engine {
 
     fn sync_world(&mut self) {
         let _profile = engine_profile::span("ecs", "WorldSync");
+        shared::start_frame(self.app.world_mut());
         records::exchange(self.app.world_mut());
         jobs::exchange_orders(self.app.world_mut());
         mesh_lods::settle(self.app.world_mut());

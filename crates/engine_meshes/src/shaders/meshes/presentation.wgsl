@@ -1,16 +1,24 @@
 import package::engine::math::maximum_abs;
-import package::engine::mesh::impostor_frames::{IMPOSTOR_FADING as CARD_FADING,
-    IMPOSTOR_FADING_OUT as CARD_FADING_OUT, IMPOSTOR_OVER as CARD_OVER};
+import package::engine::mesh::declarations::drawn_slot;
+import package::engine::mesh::impostor_frames::{CARD_PHASE_FADING, CARD_PHASE_STEADY,
+    FADING_CARD_FADE_MAX, FADING_CARD_INDEX_MAX, fading_card, steady_card};
 import package::engine::presentation::{COEFFICIENT_LIMIT, COMMON_DETERMINANT_MARGIN,
     IMPOSTOR_VERTICES, LINEAR_ROTATION_DOT, MAX_COEFFICIENT, MAX_PRODUCT_BOUND, MIN_LINEAR_SCALE,
     NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID, NO_PARENT, POSE_FLOATS,
     ROUNDING_MARGIN};
 import package::generated::meshes::{ARGS_GROUP, BatchData as Batch, CULL_GROUP,
-    CandidateData as Candidate, FIRST_PERSON_BATCH, GROUP, LOD_LEVELS, LOD_STATE, PARENT_GROUP,
-    PHASE1, PHASE2, PROBE, PresentationFrame as Frame, UNWATCHED, VISIBLE};
+    CandidateData as Candidate, FIRST_PERSON_BATCH, GROUP, LOD_FADED, LOD_HISTORY_HELD,
+    LOD_LEVELS, NO_NODE, PARENT_GROUP, PresentationFrame as Frame, UNWATCHED,
+    candidate_state_level, candidate_state_moving, candidate_state_occluded,
+    candidate_state_phase_one, candidate_state_phase_two, candidate_state_probe,
+    candidate_state_subpixel, candidate_state_valid, candidate_state_visible,
+    candidate_state_with_level, candidate_state_with_moving, candidate_state_with_occluded,
+    candidate_state_with_phase_one, candidate_state_with_phase_two, candidate_state_with_probe,
+    candidate_state_with_subpixel, candidate_state_with_valid, candidate_state_with_visible,
+    lod_fade, lod_fade_history, lod_fade_previous, lod_fade_progress, lod_fade_shown};
 import package::meshes::screen_cull::{F32_MAX, covers_no_pixel, hidden};
 import package::meshes::slots::{instance_poses, instance_still};
-import package::place::instances::{MOVED_SLOT, STILL_FRAMES};
+import package::place::instances::STILL_FRAMES;
 
 struct Rows {
     r0: vec4<f32>,
@@ -65,13 +73,7 @@ struct Level {
 @group(1) @binding(29) var<storage, read> node_ranges: array<vec4<u32>>;
 @group(2) @binding(0) var<uniform> level: Level;
 
-const MOVING: u32 = 2u;
-const VALID: u32 = 4u;
-const OCCLUDED: u32 = 32u;
-const SUBPIXEL: u32 = 64u;
-const LOD_SHIFT: u32 = 8u;
 const IMPOSTOR: u32 = LOD_LEVELS;
-const LOD_FADED: u32 = 65535u;
 
 var<workgroup> shared_values: array<u32, GROUP>;
 var<workgroup> shared_counts: array<vec4<u32>, GROUP>;
@@ -292,11 +294,11 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let candidate = slot_candidates[id.x];
-    let previous = scan[candidate.position] & OCCLUDED;
-    var visible = previous;
-    let flags = info[candidate.node].y;
-    if (flags & NODE_VALID) != 0u {
-        visible = previous | VALID;
+    let previous = frame.occlusion != 0u && candidate_state_occluded(scan[candidate.position]);
+    var state = candidate_state_with_occluded(0u, previous);
+    if candidate.node != NO_NODE && (info[candidate.node].y & NODE_VALID) != 0u {
+        let flags = info[candidate.node].y;
+        state = candidate_state_with_valid(state, true);
         var model: mat4x4<f32>;
         if (flags & NODE_ACTIVE) != 0u {
             model = rows_matrix(compose(candidate.node).display);
@@ -306,26 +308,23 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         poses[candidate.slot] = matrix_rows(model);
         let batch = batches[candidate.batch];
         let first_person = batch.bounds_max.w == FIRST_PERSON_BATCH;
-        if first_person || !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz) {
-            visible |= VISIBLE;
-        }
-        if (visible & VISIBLE) != 0u && frame.subpixel != 0u && !first_person
+        var visible = first_person || !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz);
+        if visible && frame.subpixel != 0u && !first_person
                 && covers_no_pixel(frame.view_projection * model, batch.bounds_min.xyz,
                     batch.bounds_max.xyz, frame.viewport.xy) {
-            visible = (visible & ~VISIBLE) | SUBPIXEL;
+            visible = false;
+            state = candidate_state_with_subpixel(state, true);
         }
-        if (visible & VISIBLE) != 0u {
-            if frame.motion != 0u && (flags & NODE_ACTIVE) != 0u {
-                visible |= MOVING;
-            }
+        if visible {
             let occludable = frame.occlusion != 0u && batch.bounds_max.w == 0.0;
-            if !occludable || previous == 0u {
-                visible |= PHASE1;
-            }
-            visible |= lod_level(batch, model) << LOD_SHIFT;
+            state = candidate_state_with_visible(state, true);
+            state = candidate_state_with_moving(state,
+                frame.motion != 0u && (flags & NODE_ACTIVE) != 0u);
+            state = candidate_state_with_phase_one(state, !occludable || !previous);
+            state = candidate_state_with_level(state, lod_level(batch, model));
         }
     }
-    scan[candidate.position] = visible;
+    scan[candidate.position] = state;
 }
 
 fn lod_level(batch: Batch, model: mat4x4<f32>) -> u32 {
@@ -389,16 +388,15 @@ fn fade_levels(@builtin(global_invocation_id) id: vec3<u32>) {
         lod_states[candidate.slot] = 0u;
         return;
     }
-    let level = (flags >> LOD_SHIFT) & 3u;
-    let tag = (candidate.batch & 0xffu) << 23u;
+    let level = candidate_state_level(flags);
     let state = lod_states[candidate.slot];
     var shown = level;
     var previous = level;
     var progress = LOD_FADED;
-    if (state & LOD_STATE) != 0u && (state & (0xffu << 23u)) == tag {
-        shown = state & 3u;
-        previous = (state >> 2u) & 3u;
-        progress = (state >> 4u) & 0xffffu;
+    if lod_fade_history(state) == LOD_HISTORY_HELD {
+        shown = lod_fade_shown(state);
+        previous = lod_fade_previous(state);
+        progress = lod_fade_progress(state);
         let model = rows_matrix(slot_rows(candidate.slot));
         let nearer = lod_level_at(batch, model, 1.0 - frame.fade.y);
         let farther = lod_level_at(batch, model, 1.0 + frame.fade.y);
@@ -416,23 +414,23 @@ fn fade_levels(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         let cards = frame.eye.w != 0.0 && batch.lod_errors.w > 0.0;
         let card_switch = (shown == IMPOSTOR) != (previous == IMPOSTOR);
-        if !card_switch || !cards || (flags & MOVING) != 0u || candidate.batch >= CARD_OVER {
+        if !card_switch || !cards || candidate_state_moving(flags)
+                || candidate.batch > FADING_CARD_INDEX_MAX {
             progress = LOD_FADED;
         }
         progress = min(progress + u32(frame.fade.x * f32(LOD_FADED)), LOD_FADED);
     }
-    lod_states[candidate.slot] = LOD_STATE | tag | shown | (previous << 2u) | (progress << 4u);
+    lod_states[candidate.slot] = lod_fade(shown, previous, progress, LOD_HISTORY_HELD);
     var steady = shown;
     if progress < LOD_FADED {
         steady = select(shown, previous, shown == IMPOSTOR);
-        let fade = u32(f32(progress) / f32(LOD_FADED) * 16383.0);
-        let word = candidate.batch | CARD_OVER | CARD_FADING | (fade << 16u)
-            | select(CARD_FADING_OUT, 0u, shown == IMPOSTOR);
+        let fade = u32(f32(progress) / f32(LOD_FADED) * f32(FADING_CARD_FADE_MAX));
+        let word = fading_card(candidate.batch, true, fade, shown != IMPOSTOR, CARD_PHASE_FADING);
         let index = atomicAdd(&fade_cards[1], 1u);
-        atomicStore(&fade_cards[4u + 2u * index], candidate.slot);
+        atomicStore(&fade_cards[4u + 2u * index], drawn_slot(candidate.slot, false));
         atomicStore(&fade_cards[5u + 2u * index], word);
     }
-    scan[candidate.position] = (flags & ~(3u << LOD_SHIFT)) | (steady << LOD_SHIFT);
+    scan[candidate.position] = candidate_state_with_level(flags, steady);
 }
 
 @compute @workgroup_size(CULL_GROUP)
@@ -442,7 +440,7 @@ fn occlusion_test(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let candidate = slot_candidates[id.x];
     var flags = scan[candidate.position];
-    if (flags & VISIBLE) == 0u {
+    if !candidate_state_visible(flags) {
         return;
     }
     let batch = batches[candidate.batch];
@@ -451,12 +449,12 @@ fn occlusion_test(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let is_hidden = hidden(frame.view_projection * rows_matrix(slot_rows(candidate.slot)),
         batch.bounds_min.xyz, batch.bounds_max.xyz, depth_pyramid, frame.viewport);
-    flags = (flags & ~OCCLUDED) | select(0u, OCCLUDED, is_hidden);
-    if (flags & PHASE1) == 0u {
+    flags = candidate_state_with_occluded(flags, is_hidden);
+    if !candidate_state_phase_one(flags) {
         if is_hidden {
             atomicAdd(&occlusion_counts[0], 1u);
         } else {
-            flags |= PHASE2;
+            flags = candidate_state_with_phase_two(flags, true);
         }
     }
     scan[candidate.position] = flags;
@@ -485,7 +483,7 @@ fn count_still(@builtin(global_invocation_id) id: vec3<u32>) {
     let state = still_frames[candidate.slot];
     var key = 0u;
     var count = 0u;
-    if (scan[candidate.position] & VALID) != 0u {
+    if candidate_state_valid(scan[candidate.position]) {
         key = pose_key(slot_rows(candidate.slot));
         count = select(1u, min(state.y + 1u, STILL_FRAMES), key == state.x && state.y != 0u);
     }
@@ -500,22 +498,22 @@ fn probe_cull(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let candidate = slot_candidates[id.x];
-    var flags = scan[candidate.position] & ~PROBE;
+    var flags = candidate_state_with_probe(scan[candidate.position], false);
     let batch = batches[candidate.batch];
     let still = instance_still[candidate.slot].y >= STILL_FRAMES;
-    if (flags & VALID) != 0u && still && batch.bounds_max.w != FIRST_PERSON_BATCH {
+    if candidate_state_valid(flags) && still && batch.bounds_max.w != FIRST_PERSON_BATCH {
         let model = rows_matrix(slot_rows(candidate.slot));
         if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz)
                 && !(frame.subpixel != 0u && covers_no_pixel(frame.view_projection * model,
                     batch.bounds_min.xyz, batch.bounds_max.xyz, frame.viewport.xy)) {
-            flags |= PROBE;
+            flags = candidate_state_with_probe(flags, true);
         }
     }
     scan[candidate.position] = flags;
 }
 
 fn bucket(flags: u32) -> u32 {
-    return select(0u, (flags >> LOD_SHIFT) & 3u, frame.lod_error > 0.0);
+    return select(0u, candidate_state_level(flags), frame.lod_error > 0.0);
 }
 
 fn gathered(flags: u32) -> vec4<u32> {
@@ -551,7 +549,8 @@ fn sum_groups(
     if id.x < frame.candidates {
         let flags = scan[id.x];
         counts = gathered(flags);
-        if (flags & SUBPIXEL) != 0u && (frame.mask & (PHASE2 | PROBE)) == 0u {
+        if candidate_state_subpixel(flags) && !candidate_state_phase_two(frame.mask)
+                && !candidate_state_probe(frame.mask) {
             subpixel = 1u;
         }
     }
@@ -656,7 +655,7 @@ fn batch_args(@builtin(global_invocation_id) id: vec3<u32>) {
         batch_bases[4u * id.x + level] = base[level];
     }
     draws[id.x] = DrawArgs(batch.index_count, instances, batch.first_index, batch.base_vertex, batch.first_instance);
-    if (frame.mask & PROBE) == 0u {
+    if !candidate_state_probe(frame.mask) {
         let triangles = saturating_add(saturating_add(
             saturating_mul(batch.index_count / 3u, instances),
             saturating_mul(batch.lod_ranges.y / 3u, visible.y)),
@@ -711,13 +710,14 @@ fn scatter(
         if level == IMPOSTOR {
             let candidate = candidates[id.x];
             impostor_ids[global] = vec2<u32>(
-                candidate.slot | select(0u, MOVED_SLOT, (stored & MOVING) != 0u), candidate.batch);
+                drawn_slot(candidate.slot, candidate_state_moving(stored)),
+                steady_card(candidate.batch, CARD_PHASE_STEADY));
         } else if level != 0u || global < frame.budget {
             let candidate = candidates[id.x];
             let batch = candidate.batch;
             visible_ids[level * frame.plane + batches[batch].start
                 + (global - batch_bases[4u * batch + level])] =
-                candidate.slot | select(0u, MOVED_SLOT, (stored & MOVING) != 0u);
+                drawn_slot(candidate.slot, candidate_state_moving(stored));
         }
     }
 }

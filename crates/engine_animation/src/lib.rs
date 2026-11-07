@@ -70,7 +70,6 @@ impl Brick for AnimationBrick {
                 (animator::advance, animator::follow_joints),
             )
             .systems(Schedule::Presentation, animator::publish_assets)
-            .off(animator::forget)
             .generated(GENERATED)
             .draws::<part::SkinningGpu, MainView>(Layer::Opaque, part::SkinningGpu::draw_lit)
             .draws::<part::SkinningGpu, ShadowCasters>((), part::SkinningGpu::draw_casters);

@@ -55,7 +55,7 @@ pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
         *engine.app.world_mut().resource_mut::<Camera>() = camera(frame);
         engine.advance(1.0 / 60.0);
         let world = engine
-            .extract_frame(ASPECT, 1.0)
+            .extract_frame(ASPECT, engine_core::Presented::Tick)
             .map_err(|error| format!("extract_frame: {error}"))?
             .world();
         let mut line = format!("{frame}: {}", stats(world)?);

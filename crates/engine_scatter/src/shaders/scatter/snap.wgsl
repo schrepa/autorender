@@ -4,7 +4,8 @@ import package::face::ground_tiles::{
     macro_color, material_look, terrain_info, tile_height, tile_material, true_height
 };
 import package::generated::scatter::{
-    DEAD, HIDDEN, NEAR_LEVEL_SHIFT, SCATTER_GROUP, Snap, TERRAIN_INDEX
+    DEAD, SCATTER_GROUP, Snap, scatter_terrain_index, scatter_terrain_near,
+    scatter_terrain_with_hidden
 };
 import package::place::placed_tiles::{Pose, Record};
 
@@ -69,7 +70,7 @@ fn snap_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let record = records[id.x];
-    let terrain = record.terrain & TERRAIN_INDEX;
+    let terrain = scatter_terrain_index(record.terrain);
     if record.group == DEAD || terrain >= snap.counts.y {
         return;
     }
@@ -78,9 +79,9 @@ fn snap_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     let pose = poses[id.x];
     let local = vec2<f32>(pose.r0.w, pose.r2.w) - info.origin.xz;
     let ground = finest_ground(info, ground_terrain, local);
-    let near = (record.terrain >> NEAR_LEVEL_SHIFT) & 0x1fu;
+    let near = scatter_terrain_near(record.terrain);
     let hidden = near != 0u && ground.found && ground.level < near;
-    records[id.x].terrain = select(record.terrain & ~HIDDEN, record.terrain | HIDDEN, hidden);
+    records[id.x].terrain = scatter_terrain_with_hidden(record.terrain, hidden);
     if !ground.found {
         return;
     }

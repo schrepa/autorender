@@ -120,7 +120,7 @@ impl LiveProfile {
             render.pipelines_created as f64,
             stats.resolution.render_width as f64,
             stats.dynamic_resolution.scale as f64,
-            f64::from(u8::from(stats.pipelines_compiling)),
+            f64::from(stats.readiness.compiling),
             std::mem::take(&mut self.motion),
             engine::profiling::frame_mark() as f64,
             engine::profiling::allocation_snapshot().live_bytes as f64,

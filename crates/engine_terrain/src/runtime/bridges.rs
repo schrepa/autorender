@@ -38,7 +38,16 @@ pub(crate) struct TerrainBridges {
 struct Spawned {
     bridges: Arc<[Bridge]>,
     material: Option<MaterialHandle>,
+    drawn: MaterialHandle,
+    meshes: Vec<MeshHandle>,
     entities: Vec<Entity>,
+}
+
+impl Spawned {
+    fn held(&self, assets: &AssetLibrary) -> bool {
+        assets.material(self.drawn).is_some()
+            && self.meshes.iter().all(|&mesh| assets.mesh(mesh).is_some())
+    }
 }
 
 fn cuboid(min: Vec3, max: Vec3, vertices: &mut Vec<MeshVertex>, indices: &mut Vec<u32>) {
@@ -238,13 +247,18 @@ pub(crate) fn sync(
 ) {
     let wanted: Vec<BridgeSet> = terrains.bridge_sets().collect();
     let bridges = &mut *bridges;
+    bridges.stone = bridges.stone.filter(|&stone| assets.material(stone).is_some());
+    bridges.pier = bridges.pier.filter(|&pier| assets.mesh(pier).is_some());
+    bridges.decks.retain(|&(_, deck)| assets.mesh(deck).is_some());
+    bridges.tubes.retain(|&(_, tube)| assets.mesh(tube).is_some());
     let mut stale = Vec::new();
     bridges.spawned.retain(|terrain, spawned| {
-        let keep = wanted.iter().any(|(entity, wanted, _, material)| {
-            entity == terrain
-                && Arc::ptr_eq(wanted, &spawned.bridges)
-                && *material == spawned.material
-        });
+        let keep = spawned.held(&assets)
+            && wanted.iter().any(|(entity, wanted, _, material)| {
+                entity == terrain
+                    && Arc::ptr_eq(wanted, &spawned.bridges)
+                    && *material == spawned.material
+            });
         if !keep {
             stale.append(&mut spawned.entities);
         }
@@ -258,6 +272,7 @@ pub(crate) fn sync(
             continue;
         }
         let mut entities = Vec::new();
+        let mut meshes = vec![];
         let chosen = material;
         let material = match material.or(bridges.stone) {
             Some(material) => material,
@@ -303,6 +318,7 @@ pub(crate) fn sync(
                     deck
                 }
             };
+            meshes.push(deck);
             entities.push(spawner.spawn((
                 Transform {
                     translation: origin,
@@ -319,6 +335,7 @@ pub(crate) fn sync(
                 if high <= low {
                     continue;
                 }
+                meshes.push(pier);
                 entities.push(spawner.spawn((
                     Transform {
                         translation: origin + Vec3::new(top.x, 0.5 * (high + low), top.z),
@@ -337,6 +354,8 @@ pub(crate) fn sync(
             Spawned {
                 bridges: set,
                 material: chosen,
+                drawn: material,
+                meshes,
                 entities,
             },
         );

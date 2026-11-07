@@ -1,6 +1,6 @@
-import package::face::debug::{DEBUG_CARDS, DEBUG_CASTS, DEBUG_KIND_CARD, DEBUG_KIND_MESH,
-    DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN, DEBUG_OTHER,
-    DEBUG_SKY, DEBUG_SOURCE_SHIFT, DebugShade, DebugTargets};
+import package::face::debug::{DEBUG_CARDS, DEBUG_KIND_CARD, DEBUG_KIND_MESH, DEBUG_KIND_PLACED,
+    DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN, DEBUG_OTHER, DEBUG_SKY, DebugShade,
+    DebugTargets, debug_record_casts, debug_record_kind, debug_record_source};
 import package::generated::pieces::shadows::piece;
 import package::generated::shadows::{DEBUG_SHOWN_CASTERS, DEBUG_SHOWN_SHADOWS};
 import package::place::sun_blockers::{DEBUG_SHADOWED, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON,
@@ -26,14 +26,14 @@ fn debug_sun_color(sun: u32) -> vec3<f32> {
 }
 
 fn debug_caster_color(record: u32) -> vec3<f32> {
-    let kind = record & 0xfu;
+    let kind = debug_record_kind(record);
     if kind == DEBUG_KIND_SKY {
         return DEBUG_SKY;
     }
     if kind == DEBUG_KIND_TERRAIN {
         return vec3<f32>(0.62, 0.46, 0.3);
     }
-    if (record & DEBUG_CASTS) == 0u {
+    if !debug_record_casts(record) {
         return DEBUG_OTHER;
     }
     switch kind {
@@ -54,12 +54,12 @@ fn debug_caster_color(record: u32) -> vec3<f32> {
 
 fn shade_kind(shade: DebugShade, targets: DebugTargets) -> DebugShade {
     let record = targets.ids.x;
-    let kind = record & 0xfu;
+    let kind = debug_record_kind(record);
     let surface = kind != 0u && kind != DEBUG_KIND_SKY;
     var shaded = shade;
     switch u32(piece().state.z) {
         case DEBUG_SHOWN_SHADOWS: {
-            shaded = DebugShade(select(debug_sun_color(record >> DEBUG_SOURCE_SHIFT), DEBUG_SKY,
+            shaded = DebugShade(select(debug_sun_color(debug_record_source(record)), DEBUG_SKY,
                 kind == DEBUG_KIND_SKY), surface);
         }
         case DEBUG_SHOWN_CASTERS: {

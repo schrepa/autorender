@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use engine_core::collections::HashMap;
@@ -45,15 +46,27 @@ pub(crate) type Finished = (JobId, Result<Arc<[u8]>, String>);
 
 #[derive(Debug, Default)]
 struct Load {
-    jobs: HashMap<u64, u32>,
     tasks: u32,
     lost: bool,
 }
 
+#[derive(Debug, Default)]
+struct Made {
+    keep: Option<(RecordKey, JobRef)>,
+    verifying: Option<Arc<[u8]>>,
+}
+
 #[derive(Debug)]
-enum Looking {
-    Job(JobRequest),
-    Fetch,
+enum Job {
+    Looking(JobRequest),
+    Fetching,
+    Waiting(JobRequest, Made),
+    Here(Made),
+    Running {
+        worker: u32,
+        priority: u32,
+        made: Made,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -61,22 +74,17 @@ pub struct JobScheduler {
     workers: Vec<Load>,
     caching: bool,
     verify: bool,
-    running: HashMap<u64, u32>,
-    keys: HashMap<u64, (RecordKey, JobRef)>,
-    verifying: HashMap<u64, Arc<[u8]>>,
+    jobs: BTreeMap<u64, Job>,
     fetched: HashMap<String, Arc<[u8]>>,
-    looking: HashMap<u64, Looking>,
-    here: Vec<JobRequest>,
     orders: Vec<JobOrder>,
 }
 
 impl JobScheduler {
     pub(crate) fn set_workers(&mut self, workers: u32) -> bool {
-        let busy = self
-            .workers
-            .iter()
-            .skip(workers as usize)
-            .any(|load| !load.jobs.is_empty());
+        let busy = self.jobs.values().any(|job| match job {
+            Job::Running { worker, .. } => *worker >= workers,
+            Job::Looking(_) | Job::Fetching | Job::Waiting(..) | Job::Here(_) => false,
+        });
         if !busy {
             self.workers.resize_with(workers as usize, Load::default);
         }
@@ -100,37 +108,27 @@ impl JobScheduler {
         for message in messages {
             match message {
                 JobMessage::Cancel(id) => {
-                    self.looking.remove(&id.0);
-                    self.keys.remove(&id.0);
-                    self.verifying.remove(&id.0);
-                    self.here.retain(|request| request.id != id);
-                    if let Some(worker) = self.running.remove(&id.0) {
-                        self.workers[worker as usize].jobs.remove(&id.0);
+                    if let Some(Job::Running { worker, .. }) = self.jobs.remove(&id.0) {
                         self.orders.push(JobOrder::Cancel { worker, id });
                     }
                 }
                 JobMessage::Share(JobShare::Clear) => {
-                    for load in &mut self.workers {
-                        load.jobs.clear();
-                    }
-                    self.running.clear();
-                    self.keys.clear();
-                    self.verifying.clear();
+                    self.jobs.clear();
                     self.fetched.clear();
-                    self.looking.clear();
-                    self.here.clear();
                     self.orders.push(JobOrder::Share(JobShare::Clear));
                 }
                 JobMessage::Share(share) => self.orders.push(JobOrder::Share(share)),
                 JobMessage::Run(request) => match request.record {
                     Some(record) if self.caching => {
                         let kind = Some(request.kind.clone());
-                        self.lookup(request.id, record, kind, Looking::Job(request));
+                        self.lookup(request.id, record, kind);
+                        self.jobs.insert(request.id.0, Job::Looking(request));
                     }
-                    _ => self.dispatch(request),
+                    _ => self.dispatch(request, Made::default()),
                 },
                 JobMessage::Fetch(fetch) if self.caching => {
-                    self.lookup(fetch.id, fetch.record, fetch.kind, Looking::Fetch);
+                    self.lookup(fetch.id, fetch.record, fetch.kind);
+                    self.jobs.insert(fetch.id.0, Job::Fetching);
                 }
                 JobMessage::Fetch(fetch) => {
                     finished.push((fetch.id, Err(MISSING_RECORD.to_owned())));
@@ -151,13 +149,12 @@ impl JobScheduler {
         std::mem::take(&mut self.orders)
     }
 
-    fn lookup(&mut self, id: JobId, record: RecordKey, kind: Option<JobRef>, looking: Looking) {
+    fn lookup(&mut self, id: JobId, record: RecordKey, kind: Option<JobRef>) {
         self.orders.push(JobOrder::Lookup {
             id,
             key: record.hex(),
             kind,
         });
-        self.looking.insert(id.0, looking);
     }
 
     pub(crate) fn kept(
@@ -167,50 +164,73 @@ impl JobScheduler {
         output: Option<Arc<[u8]>>,
         finished: &mut Vec<Finished>,
     ) {
-        let Some(looking) = self.looking.remove(&id.0) else {
-            return;
-        };
-        let request = match looking {
-            Looking::Fetch => {
+        let request = match self.jobs.remove(&id.0) {
+            Some(Job::Fetching) => {
                 if let (true, Some(output)) = (self.verify, &output) {
                     self.fetched.insert(key, output.clone());
                 }
                 finished.push((id, output.ok_or_else(|| MISSING_RECORD.to_owned())));
                 return;
             }
-            Looking::Job(request) => request,
+            Some(Job::Looking(request)) => request,
+            Some(job @ (Job::Waiting(..) | Job::Here(_) | Job::Running { .. })) => {
+                self.jobs.insert(id.0, job);
+                return;
+            }
+            None => return,
         };
-        match output {
+        let made = match output {
             Some(output) if self.verify => {
                 finished.push((id, Ok(output.clone())));
-                self.verifying.insert(id.0, output);
+                Made {
+                    keep: None,
+                    verifying: Some(output),
+                }
             }
             Some(output) => {
                 finished.push((id, Ok(output)));
                 return;
             }
-            None => {}
-        }
-        if let Some(record) = request.record {
-            self.keys.insert(id.0, (record, request.kind.clone()));
-        }
-        self.dispatch(request);
+            None => Made {
+                keep: request.record.map(|record| (record, request.kind.clone())),
+                verifying: None,
+            },
+        };
+        self.dispatch(request, made);
     }
 
-    fn dispatch(&mut self, request: JobRequest) {
+    fn dispatch(&mut self, request: JobRequest, made: Made) {
+        let id = request.id.0;
         let Some(worker) = self.least() else {
-            self.here.push(request);
+            self.jobs.insert(id, Job::Waiting(request, made));
             return;
         };
-        self.workers[worker as usize]
-            .jobs
-            .insert(request.id.0, request.priority);
-        self.running.insert(request.id.0, worker);
+        self.jobs.insert(
+            id,
+            Job::Running {
+                worker,
+                priority: request.priority,
+                made,
+            },
+        );
         self.orders.push(JobOrder::Run { worker, request });
     }
 
     pub(crate) fn take_here(&mut self) -> Vec<JobRequest> {
-        std::mem::take(&mut self.here)
+        let waiting: Vec<u64> = self
+            .jobs
+            .iter()
+            .filter(|(_, job)| matches!(job, Job::Waiting(..)))
+            .map(|(&id, _)| id)
+            .collect();
+        let mut here = Vec::with_capacity(waiting.len());
+        for id in waiting {
+            if let Some(Job::Waiting(request, made)) = self.jobs.remove(&id) {
+                self.jobs.insert(id, Job::Here(made));
+                here.push(request);
+            }
+        }
+        here
     }
 
     fn least(&self) -> Option<u32> {
@@ -218,22 +238,38 @@ impl JobScheduler {
             .iter()
             .enumerate()
             .filter(|(_, load)| !load.lost)
-            .min_by_key(|(_, load)| {
-                let urgent = load.jobs.values().min().copied().unwrap_or(u32::MAX);
+            .min_by_key(|&(worker, load)| {
+                let (count, urgent) = self.running_on(worker as u32);
                 (
-                    load.jobs.len() + load.tasks as usize,
+                    count + load.tasks as usize,
                     std::cmp::Reverse(urgent),
                 )
             })
             .map(|(worker, _)| worker as u32)
     }
 
+    fn running_on(&self, on: u32) -> (usize, u32) {
+        self.jobs
+            .values()
+            .filter_map(|job| match job {
+                Job::Running {
+                    worker, priority, ..
+                } if *worker == on => Some(*priority),
+                Job::Running { .. }
+                | Job::Looking(_)
+                | Job::Fetching
+                | Job::Waiting(..)
+                | Job::Here(_) => None,
+            })
+            .fold((0, u32::MAX), |(count, urgent), priority| {
+                (count + 1, urgent.min(priority))
+            })
+    }
+
     pub(crate) fn done(&mut self, id: JobId, output: Arc<[u8]>, finished: &mut Vec<Finished>) {
-        let Some(worker) = self.running.remove(&id.0) else {
-            return;
-        };
-        self.workers[worker as usize].jobs.remove(&id.0);
-        self.made(id, Ok(output), finished);
+        if let Some(made) = self.ended(id) {
+            self.made(id, made, Ok(output), finished);
+        }
     }
 
     pub(crate) fn ran_here(
@@ -242,13 +278,35 @@ impl JobScheduler {
         output: Result<Vec<u8>, String>,
         finished: &mut Vec<Finished>,
     ) {
-        self.made(id, output.map(Arc::from), finished);
+        match self.jobs.remove(&id.0) {
+            Some(Job::Here(made)) => self.made(id, made, output.map(Arc::from), finished),
+            Some(job) => {
+                self.jobs.insert(id.0, job);
+            }
+            None => {}
+        }
     }
 
-    fn made(&mut self, id: JobId, output: Result<Arc<[u8]>, String>, finished: &mut Vec<Finished>) {
-        let key = self.keys.remove(&id.0);
-        if let Some(kept) = self.verifying.remove(&id.0) {
-            if let (Some((key, kind)), Ok(output)) = (key, &output)
+    fn ended(&mut self, id: JobId) -> Option<Made> {
+        match self.jobs.remove(&id.0)? {
+            Job::Running { made, .. } => Some(made),
+            job @ (Job::Looking(_) | Job::Fetching | Job::Waiting(..) | Job::Here(_)) => {
+                self.jobs.insert(id.0, job);
+                None
+            }
+        }
+    }
+
+    fn made(
+        &mut self,
+        id: JobId,
+        made: Made,
+        output: Result<Arc<[u8]>, String>,
+        finished: &mut Vec<Finished>,
+    ) {
+        let Made { keep, verifying } = made;
+        if let Some(kept) = verifying {
+            if let (Some((key, kind)), Ok(output)) = (keep, &output)
                 && kept != *output
             {
                 self.orders.push(JobOrder::Mismatch {
@@ -258,7 +316,7 @@ impl JobScheduler {
             }
             return;
         }
-        if let (Some((key, kind)), Ok(output)) = (key, &output) {
+        if let (Some((key, kind)), Ok(output)) = (keep, &output) {
             self.orders.push(JobOrder::Keep {
                 key: key.hex(),
                 kind: Some(kind),
@@ -269,11 +327,9 @@ impl JobScheduler {
     }
 
     pub(crate) fn failed(&mut self, id: JobId, error: String, finished: &mut Vec<Finished>) {
-        let Some(worker) = self.running.remove(&id.0) else {
-            return;
-        };
-        self.workers[worker as usize].jobs.remove(&id.0);
-        self.made(id, Err(error), finished);
+        if let Some(made) = self.ended(id) {
+            self.made(id, made, Err(error), finished);
+        }
     }
 
     pub(crate) fn lost(
@@ -286,13 +342,18 @@ impl JobScheduler {
         let Some(load) = self.workers.get_mut(worker as usize) else {
             return;
         };
-        let jobs: Vec<u64> = load.jobs.drain().map(|(id, _)| id).collect();
         load.tasks = 0;
         load.lost = !replaced;
-        for id in jobs {
-            self.running.remove(&id);
-            self.keys.remove(&id);
-            if self.verifying.remove(&id).is_none() {
+        let gone: Vec<u64> = self
+            .jobs
+            .iter()
+            .filter(|(_, job)| matches!(job, Job::Running { worker: on, .. } if *on == worker))
+            .map(|(&id, _)| id)
+            .collect();
+        for id in gone {
+            if let Some(Job::Running { made, .. }) = self.jobs.remove(&id)
+                && made.verifying.is_none()
+            {
                 finished.push((JobId(id), Err(error.to_owned())));
             }
         }
@@ -305,7 +366,7 @@ impl JobScheduler {
     }
 
     pub(crate) fn held(&self) -> u32 {
-        (self.running.len() + self.looking.len() + self.here.len()) as u32
+        self.jobs.len() as u32
     }
 
     pub(crate) fn task_done(&mut self, worker: u32) {

@@ -1,7 +1,7 @@
 import package::engine::view::stable_normalize;
 import package::face::sun::sun_direction;
 import package::generated::pieces::debug_view::piece;
-import package::place::debug::{DEBUG_SOURCE_SHIFT, DebugShade, DebugTargets};
+import package::place::debug::{DebugShade, DebugTargets, debug_record_with_source};
 
 const DEBUG_OTHER: vec3<f32> = vec3<f32>(0.4, 0.4, 0.42);
 const DEBUG_SKY: vec3<f32> = vec3<f32>(0.12, 0.13, 0.16);
@@ -15,7 +15,7 @@ fn debug_octahedral(normal: vec3<f32>) -> vec2<f32> {
 fn debug_targets(record: u32, object: u32, detail: u32, normal: vec3<f32>, sun: u32)
         -> DebugTargets {
     var targets: DebugTargets;
-    targets.ids = vec4<u32>(record | (sun << DEBUG_SOURCE_SHIFT), object, detail,
+    targets.ids = vec4<u32>(debug_record_with_source(record, sun), object, detail,
         pack2x16snorm(debug_octahedral(stable_normalize(normal))));
     targets.count = 1.0;
     targets.terrain = vec2<u32>(0u);

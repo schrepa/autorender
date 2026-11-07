@@ -2,7 +2,9 @@ use std::any::TypeId;
 
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{Cut, DeviceLimits, FrameTime, PartDraws, Readback, View, ViewWind};
+use engine_core::{
+    Cut, DeviceLimits, FrameTime, GpuBits, PartDraws, Readable, Readback, View, ViewWind, gpu_bits,
+};
 use engine_places_rendering::shadows::{
     ExtraCasters, GROUND_TEXELS, Region as MapView, ShadowChanges, ShadowMaps,
 };
@@ -14,28 +16,57 @@ use crate::constants::LEVEL_WORDS;
 use crate::gpu_layouts::{CasterCull, ComposeData, Route, ShadowPiece};
 use crate::part::ShadowsGpu;
 use crate::regions::FrameRegions;
-use crate::shadow_fit::{ClipPlan, ClipSettings, Clipmap, LightBasis, region_tiles};
+use crate::shadow_fit::{ClipPlan, ClipSettings, Clipmap, DrawnTile, LightBasis, region_tiles};
 use crate::sky::{SkyDraw, SkyMaps};
 use crate::{ShadowSettings, ShadowStats, SkyOcclusion};
 
-pub(crate) const MAP_MARKS: u32 = 0;
-pub(crate) const DEPTH_MARKS: u32 = 1;
-pub(crate) const MASKS: u32 = 2;
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MarkKind {
+    Map = 0,
+    Depth = 1,
+    Masks = 2,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MarkTag {
+    #[bits(2)]
+    pub kind: MarkKind,
+    #[bits(8)]
+    pub layout: u8,
+}
 
 #[derive(Resource, Default)]
 pub(crate) struct ShadowFeedback {
-    arrived: Vec<(u64, u32, Vec<u32>)>,
+    arrived: Vec<(MarkTag, Vec<u32>)>,
 }
 
-impl Readback for ShadowFeedback {
-    fn arrived(&mut self, frame: u64, tag: u32, bytes: &[u8]) {
-        let words = bytes
+impl Readable for ShadowFeedback {
+    fn arrived(&mut self, tag: u32, read: Readback<&[u8]>) {
+        let Some(tag) = MarkTag::unpack(tag) else {
+            return;
+        };
+        let words = read
+            .value
             .as_chunks::<4>()
             .0
             .iter()
             .map(|word| u32::from_le_bytes(*word))
             .collect();
-        self.arrived.push((frame, tag, words));
+        self.arrived.push((tag, words));
+    }
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct ShadowDrawn {
+    acks: Vec<(u32, bool)>,
+}
+
+impl Readable for ShadowDrawn {
+    fn arrived(&mut self, batch: u32, read: Readback<&[u8]>) {
+        let ran = read.value.first().is_some_and(|&ran| ran != 0);
+        self.acks.push((batch, ran));
     }
 }
 
@@ -47,18 +78,18 @@ struct Masks {
 }
 
 impl ShadowFeedback {
-    fn take(&mut self, since: u64, words: usize, into: &mut Masks) {
+    fn take(&mut self, layout: u8, words: usize, into: &mut Masks) {
         for read in [&mut into.marked, &mut into.dirty, &mut into.moving] {
             read.clear();
         }
-        for (frame, tag, arrived) in self.arrived.drain(..) {
-            if frame < since {
+        for (tag, arrived) in self.arrived.drain(..) {
+            if tag.layout != layout {
                 continue;
             }
-            let read = match tag {
-                MAP_MARKS => &mut into.dirty,
-                DEPTH_MARKS => &mut into.marked,
-                _ => &mut into.moving,
+            let read = match tag.kind {
+                MarkKind::Map => &mut into.dirty,
+                MarkKind::Depth => &mut into.marked,
+                MarkKind::Masks => &mut into.moving,
             };
             read.resize(words, 0);
             for (word, bits) in read.iter_mut().zip(arrived) {
@@ -73,8 +104,9 @@ pub(crate) struct ShadowPlan {
     clipmap: Clipmap,
     plan: ClipPlan,
     pub(crate) key: Option<MapsKey>,
-    pub(crate) made: u64,
-    since: u64,
+    pub(crate) layout: u8,
+    pub(crate) batch: u32,
+    drawing: Vec<(u32, Vec<DrawnTile>)>,
     masks: Masks,
     pub(crate) sky: SkyMaps,
     pub(crate) sky_draw: Option<SkyDraw>,
@@ -104,17 +136,23 @@ impl ShadowPlan {
         u64::from(self.mask_words) * 4
     }
 
+    pub(crate) fn tag(&self, kind: MarkKind) -> u32 {
+        MarkTag {
+            kind,
+            layout: self.layout,
+        }
+        .pack()
+    }
+
     fn place(
         &mut self,
         settings: &ShadowSettings,
         limit: u32,
         (sun, eye): (Vec3, Vec3),
-        frame: u64,
     ) -> LightBasis {
         let key = MapsKey::new(settings, limit);
         let made = self.key != Some(key);
         self.key = Some(key);
-        self.made += u64::from(made);
         let (basis, restarted) = self.clipmap.place(
             LightBasis::toward(sun),
             eye,
@@ -128,15 +166,49 @@ impl ShadowPlan {
         if made && !restarted {
             self.clipmap.invalidate();
         }
-        if restarted || self.since == u64::MAX {
-            self.since = frame;
+        if made || restarted {
+            self.layout = self.layout.wrapping_add(1);
+            self.drawing.clear();
         }
         basis
     }
 
+    fn acknowledge(&mut self, drawn: &mut ShadowDrawn) {
+        for (batch, ran) in drawn.acks.drain(..) {
+            let Some(at) = self.drawing.iter().position(|(held, _)| *held == batch) else {
+                continue;
+            };
+            let Some((_, tiles)) = self.drawing.drain(..=at).last() else {
+                continue;
+            };
+            if !ran {
+                self.clipmap.undraw(&tiles);
+            }
+        }
+    }
+
+    fn drew(&mut self) {
+        let tiles = self.clipmap.take_drawing();
+        if !tiles.is_empty() {
+            self.batch = self.batch.wrapping_add(1);
+            self.drawing.push((self.batch, tiles));
+        }
+    }
+
+    fn idle(&mut self) {
+        self.clipmap.idle();
+        self.sky_draw = None;
+        self.views.clear();
+        self.cameras.clear();
+        self.routes.clear();
+        self.composes.clear();
+        self.moving = 0;
+        self.mask_words = 0;
+    }
+
     fn merge(&mut self, feedback: &mut ShadowFeedback) -> bool {
         let words = self.clipmap.mask_words();
-        feedback.take(self.since, words, &mut self.masks);
+        feedback.take(self.layout, words, &mut self.masks);
         let still_changed = self.masks.dirty.iter().any(|&word| word != 0);
         self.clipmap.merge_marks(&self.masks.marked);
         self.clipmap.merge_dirty(&self.masks.dirty);
@@ -169,40 +241,33 @@ impl ShadowPlan {
             }
         }
     }
-
-    pub(crate) fn forget(&mut self) {
-        self.key = None;
-        self.since = u64::MAX;
-        self.sky.release();
-        self.sky_draw = None;
-        self.sky_view = None;
-        self.views.clear();
-    }
 }
 
 pub(crate) fn plan_shadows(
     (settings, sky): (Res<ShadowSettings>, Res<SkyOcclusion>),
     (sun, view, limits, time): (Res<Sun>, Res<View>, Res<DeviceLimits>, Res<FrameTime>),
     (casters, wind, shown): (Res<ExtraCasters>, Res<ViewWind>, Res<DebugShown>),
-    mut feedback: ResMut<ShadowFeedback>,
+    (mut feedback, mut drawn): (ResMut<ShadowFeedback>, ResMut<ShadowDrawn>),
     changes: Query<&ShadowChanges, Changed<ShadowChanges>>,
     (mut plan, mut piece): (ResMut<ShadowPlan>, ResMut<ShadowPiece>),
     mut maps: ResMut<ShadowMaps>,
 ) {
     let plan = &mut *plan;
     let eye = view.detail_eye();
-    let published = Vec3::from_slice(&sun.direction[..3]);
-    let sun = if published == Vec3::ZERO {
-        Vec3::from_slice(&Sun::NONE.direction[..3])
-    } else {
-        published
-    };
-    let basis = plan.place(
-        &settings,
-        limits.max_texture_dimension_2d,
-        (sun, eye),
-        time.frame,
-    );
+    let sun = Vec3::from_slice(&sun.direction[..3]);
+    if sun == Vec3::ZERO {
+        plan.idle();
+        feedback.arrived.clear();
+        drawn.acks.clear();
+        piece.set_if_neq(ShadowPiece::default());
+        if maps.on {
+            maps.on = false;
+            maps.regions.clear();
+        }
+        return;
+    }
+    let basis = plan.place(&settings, limits.max_texture_dimension_2d, (sun, eye));
+    plan.acknowledge(&mut drawn);
     let still_changed = plan.merge(&mut feedback);
     let mut casters_changed = false;
     for change in &changes {
@@ -217,6 +282,7 @@ pub(crate) fn plan_shadows(
         key.atlas.moving,
         &mut plan.plan,
     );
+    plan.drew();
     plan.sky_draw = plan
         .sky
         .prepare(&sky, eye, still_changed || casters_changed);
@@ -285,6 +351,7 @@ pub(crate) fn shadow_stats(
         tiles_resident: tiles.resident,
         tiles_drawn: tiles.drawn,
         tiles_reclaimed: tiles.reclaimed,
+        tiles_waiting: tiles.waiting,
         sky_maps,
         sky_drawn,
         tile_cut: tiles.tile_cut,
@@ -292,14 +359,4 @@ pub(crate) fn shadow_stats(
         level_cut: Cut::of(settings.levels, levels),
         moving_slot_cut: Cut::of(settings.moving_tiles, moving),
     });
-}
-
-pub(crate) fn forget_shadows(
-    mut plan: ResMut<ShadowPlan>,
-    mut feedback: ResMut<ShadowFeedback>,
-    mut stats: ResMut<ShadowStats>,
-) {
-    plan.forget();
-    feedback.arrived.clear();
-    stats.set_if_neq(ShadowStats::default());
 }

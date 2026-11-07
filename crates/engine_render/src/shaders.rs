@@ -28,7 +28,6 @@ shader_modules! {
     "engine::view" = "frame/view.wgsl";
     "engine::shading" = "shading.wgsl";
     "engine::particles" = "particles.wgsl";
-    "engine::mesh::declarations" = "meshes/declarations.wgsl";
     "engine::mesh::vertex" = "meshes/vertex.wgsl";
     "engine::impostor_bake" = "impostors/bake.wgsl";
     "engine::post::pixel" = "post/pixel.wgsl";
@@ -56,6 +55,7 @@ pub const FS_DEBUG_VIEW: engine_core::Entry = engine_core::Entry::generated(
 
 pub const PRESENTATION_MODULE: &str = "engine::presentation";
 pub const DEBUG_MODULE: &str = "engine::debug";
+pub const DECLARATIONS_MODULE: &str = "engine::mesh::declarations";
 pub const MATERIALS_MODULE: &str = "engine::materials";
 pub const IMPOSTOR_FRAMES_MODULE: &str = "engine::mesh::impostor_frames";
 pub const IMPOSTORS_MODULE: &str = "engine::impostors";
@@ -106,10 +106,10 @@ pub fn presentation_source() -> String {
 }
 
 pub fn debug_source() -> String {
-    let mut source = String::new();
-    for &(name, value) in crate::debug::DECLARED {
-        unsigned(&mut source, name, value);
-    }
+    use engine_core::{BitValue, GpuBits};
+    let mut source = String::from(<crate::debug::DebugKind as BitValue>::WGSL);
+    source.push_str(<crate::debug::DebugRecord as GpuBits>::WGSL);
+    unsigned(&mut source, "DEBUG_NO_MATERIAL", crate::debug::DEBUG_NO_MATERIAL);
     source
 }
 
@@ -126,11 +126,33 @@ pub fn materials_source() -> String {
     source
 }
 
-pub fn impostor_frames_source() -> String {
-    let mut source = String::from(include_str!("impostor_frames.wgsl"));
-    for (name, value) in crate::gpu_layouts::constants::CARD_FLAGS {
-        unsigned(&mut source, name, value);
+pub fn declarations_source() -> String {
+    use crate::slots::{DrawnSlot, FADE_LEVEL_MAX, FadeWord, FadedSlot};
+    use engine_core::GpuBits;
+    let mut source = String::from(include_str!("meshes/declarations.wgsl"));
+    for wgsl in [DrawnSlot::WGSL, FadedSlot::WGSL, FadeWord::WGSL] {
+        source.push_str(wgsl);
     }
+    unsigned(&mut source, "FADE_LEVEL_MAX", FADE_LEVEL_MAX);
+    source
+}
+
+pub fn impostor_frames_source() -> String {
+    use crate::slots::{
+        CardPhase, FADING_CARD_FADE_MAX, FADING_CARD_INDEX_MAX, FadingCard, SteadyCard,
+    };
+    use engine_core::{BitValue, GpuBits};
+    let mut source = String::from(include_str!("impostor_frames.wgsl"));
+    let words = [
+        <CardPhase as BitValue>::WGSL,
+        <SteadyCard as GpuBits>::WGSL,
+        <FadingCard as GpuBits>::WGSL,
+    ];
+    for wgsl in words {
+        source.push_str(wgsl);
+    }
+    unsigned(&mut source, "FADING_CARD_INDEX_MAX", FADING_CARD_INDEX_MAX);
+    unsigned(&mut source, "FADING_CARD_FADE_MAX", FADING_CARD_FADE_MAX);
     source.push_str(&crate::impostors::layout_source());
     source
 }
@@ -151,10 +173,11 @@ pub fn view_source() -> String {
     source
 }
 
-pub fn generated_core() -> [(&'static str, String); 8] {
+pub fn generated_core() -> [(&'static str, String); 9] {
     [
         (PRESENTATION_MODULE, presentation_source()),
         (DEBUG_MODULE, debug_source()),
+        (DECLARATIONS_MODULE, declarations_source()),
         (MATERIALS_MODULE, materials_source()),
         (IMPOSTOR_FRAMES_MODULE, impostor_frames_source()),
         (IMPOSTORS_MODULE, crate::impostors::atlas_source()),

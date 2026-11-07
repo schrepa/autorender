@@ -1,6 +1,7 @@
-import package::engine::debug::{DEBUG_CASTS, DEBUG_FADING, DEBUG_KIND_CARD, DEBUG_KIND_COVER,
-    DEBUG_KIND_FALLS, DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SKY,
-    DEBUG_KIND_TERRAIN, DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL, DEBUG_SOURCE_SHIFT};
+import package::engine::debug::{DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS, DEBUG_KIND_MESH,
+    DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN, DEBUG_KIND_WATER,
+    DEBUG_NO_MATERIAL, debug_record, debug_record_casts, debug_record_fading, debug_record_kind,
+    debug_record_level, debug_record_source, debug_record_with_fading, debug_record_with_source};
 
 struct DebugTargets {
     @location(0) ids: vec4<u32>,

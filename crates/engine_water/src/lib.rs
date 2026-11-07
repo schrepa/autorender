@@ -9,6 +9,7 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod debug;
 mod drawn;
+mod emitters;
 mod eye;
 pub mod flow;
 mod flow_step;
@@ -34,13 +35,12 @@ mod water_source;
 mod waterfalls;
 mod white_water;
 mod windows;
-mod work;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Cut, JobKind, Jobs, Schedule, Source, Spawner, stats};
+use engine_core::{Brick, Bricks, Cut, JobKind, Schedule, Source, stats};
 use engine_places_rendering::sky::EyeMedium;
 use engine_places_world::ground::Heightfield;
-use engine_places_world::water::{WaterWork, Waterline};
+use engine_places_world::water::Waterline;
 use engine_render::{DebugModes, DebugShown, RenderBricks};
 
 pub(crate) use engine_codec as codec;
@@ -57,13 +57,13 @@ pub use windows::{
     LIVE_PIXELS, LONGEST_FRAME, WaterRead, WaterSourceCell, WaterWindow, live_steps,
 };
 
-use state::{RiverBody, WaterState};
+use state::WaterState;
 use water_particles::ParticleTallies;
 
 stats! {
     #[section("water_stats")]
     pub struct WaterStats {
-        #[pending] pub looks_left: u32,
+        #[pending] pub squares_left: u32,
         #[pending] pub settles_left: u32,
         pub blocks: u32,
         pub dropped_blocks: u32,
@@ -118,7 +118,6 @@ impl Brick for WaterBrick {
             .resource::<ParticleTallies>()
             .piece::<gpu::WaterPiece>()
             .fill::<Waterline>(Some(shaders::water::faces::water::MODULE))
-            .fill::<WaterWork>(None)
             .fill::<EyeMedium>(None)
             .observation::<views::WaterFlowQuery>();
         for (index, mode) in debug::modes().enumerate() {
@@ -136,7 +135,6 @@ impl Brick for WaterBrick {
                     drawn::draw,
                     water_settle::plan_settles,
                     water_blocks::place_blocks,
-                    work::publish_work,
                     water_sim::plan_sim,
                     water_particles::plan_particles,
                     state::publish_waterline,
@@ -148,15 +146,9 @@ impl Brick for WaterBrick {
             )
             .systems(
                 Schedule::WorldSync,
-                (
-                    waterfalls::sync,
-                    white_water::sync,
-                    windows::place_water_windows,
-                ),
+                (emitters::sync, windows::place_water_windows),
             )
             .systems(Schedule::FixedSimulation, flow_step::step)
-            .off(despawn_water)
-            .off(drawn::stop_draws)
             .generated(gpu::GENERATED)
             .part::<water::WaterGpu>();
     }
@@ -197,7 +189,7 @@ fn water_stats(
         }
     };
     let next = WaterStats {
-        looks_left: state.looks_left.min(u64::from(u32::MAX)) as u32,
+        squares_left: state.squares_left,
         settles_left: state.settles_left.min(u64::from(u32::MAX)) as u32,
         blocks: if frame { state.blocks.resident() } else { 0 },
         dropped_blocks: if frame { state.blocks.dropped } else { 0 },
@@ -227,7 +219,11 @@ fn water_stats(
             .iter()
             .map(|terrain| terrain.falls.len() as u32)
             .sum(),
-        white_water: stats.white_water,
+        white_water: state
+            .emitters
+            .values()
+            .map(emitters::Emitters::white_water)
+            .sum(),
         failed_jobs: state.failures.count,
     };
     stats.set_if_neq(next);
@@ -238,27 +234,4 @@ fn publish_piece(shown: Res<DebugShown>, mut piece: ResMut<gpu::WaterPiece>) {
     piece.set_if_neq(gpu::WaterPiece {
         debug: [u32::from(mine), shown.local, 0, 0],
     });
-}
-
-fn despawn_water(
-    owned: Query<Entity, With<RiverBody>>,
-    (mut state, mut feedback): (ResMut<WaterState>, ResMut<SettleFeedback>),
-    mut stats: ResMut<WaterStats>,
-    mut line: ResMut<Waterline>,
-    mut medium: ResMut<EyeMedium>,
-    mut jobs: Jobs,
-    mut spawner: Spawner<WaterBrick>,
-) {
-    for entity in &owned {
-        spawner.despawn(entity);
-    }
-    for entity in state.take_emitters() {
-        spawner.despawn(entity);
-    }
-    state.clear(&mut jobs);
-    feedback.restart();
-    *stats = WaterStats::default();
-    line.watered.clear();
-    line.errors.clear();
-    *medium = EyeMedium::default();
 }

@@ -811,25 +811,6 @@ impl PartDraws {
     }
 }
 
-#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
-#[component(immutable)]
-pub struct PartFaults {
-    faulted: Vec<TypeId>,
-}
-
-impl PartFaults {
-    pub fn faulted(&self, part: TypeId) -> bool {
-        self.faulted.contains(&part)
-    }
-
-    #[doc(hidden)]
-    pub fn add(&mut self, part: TypeId) {
-        if !self.faulted.contains(&part) {
-            self.faulted.push(part);
-        }
-    }
-}
-
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WorkRemaining {
     remaining: bool,

@@ -173,8 +173,8 @@ pub fn run<G: Game, E: Into<engine::Error>>(
         game.frame(at(frame))?;
         times.push(started.elapsed().as_secs_f64() * 1000.0);
         let stats = game.host().frame_stats();
-        loading |= stats.loading;
-        compiling |= stats.pipelines_compiling;
+        loading |= stats.readiness.loading.total > 0;
+        compiling |= stats.readiness.compiling > 0;
         costs.extend(stats.bricks_cost);
         frame += 1;
     }

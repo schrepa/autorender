@@ -119,7 +119,8 @@ fn quiet(session: &mut dyn SmokeSession) -> Checked<Value> {
     let mut changing: Vec<String> = Vec::new();
     for _ in 0..QUIET_FRAMES {
         rendering = render(session)?;
-        let busy = rendering["loading"] == true || rendering["pipelines_compiling"] == true;
+        let readiness = &rendering["readiness"];
+        let busy = readiness["loading"]["total"] != 0 || readiness["compiling"] != 0;
         let mut counters = Vec::new();
         work(&rendering, "", &mut counters);
         changing = counters
@@ -138,8 +139,7 @@ fn quiet(session: &mut dyn SmokeSession) -> Checked<Value> {
         }
     }
     let unsettled = json!({
-        "loading": rendering["loading"],
-        "pipelines_compiling": rendering["pipelines_compiling"],
+        "readiness": rendering["readiness"],
         "changing": changing,
     });
     smoke_eq!(

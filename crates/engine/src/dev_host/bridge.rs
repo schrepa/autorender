@@ -14,7 +14,7 @@ use engine_settings::Expected;
 use serde_json::{Map, Value, json};
 
 use super::{Call, Handled, Looped};
-use crate::host::policy::BENCHMARK_LIMIT_MS;
+use crate::host::policy::{BENCHMARK_LIMIT_MS, READ_BACK_LIMIT_MS};
 use crate::host::{AdapterStatus, Distribution, HostEnvironment, KNOWN_DIFFERENCES, now_ms};
 use crate::{Game, GameHost};
 
@@ -38,22 +38,27 @@ pub(crate) enum Pending {
         revision: String,
     },
     Benchmark(Box<BenchmarkRun>),
-    Probe {
-        alpha: Option<f64>,
-        waits: u32,
-    },
-    DeviceLoss {
-        waits: u32,
+    ReadBack {
+        awaited: Awaited,
+        since: f64,
     },
     Profile(Box<ProfileRun>),
+    ExplainScene,
+    Watch(Box<WatchRun>),
+}
+
+#[derive(Debug)]
+pub(crate) enum Awaited {
+    Probe {
+        alpha: Option<f64>,
+    },
+    DeviceLoss,
     Explain {
         id: String,
         entity: Entity,
         slot: u32,
-        waits: u32,
+        asked: u64,
     },
-    ExplainScene,
-    Watch(Box<WatchRun>),
 }
 
 impl Pending {
@@ -62,14 +67,6 @@ impl Pending {
             || matches!(self, Self::Benchmark(run) if matches!(run.mode, BenchmarkMode::Paced))
     }
 }
-
-const LOSS_WAITS: u32 = 120;
-
-const PROBE_WAITS: u32 = 120;
-
-const READ_BACK_WAITS: u32 = 120;
-
-const EXPLAIN_FRAMES: u32 = 2;
 
 pub(crate) struct ProfileRun {
     request: ProfileRequest,
@@ -410,29 +407,13 @@ impl<G: Game> GameHost<G> {
                 })
             }
             Pending::Benchmark(run) => self.dev_benchmark(run, &outcome, context),
-            Pending::Probe { alpha, waits } => {
+            Pending::ReadBack { awaited, since } => {
                 if let Some(failed) = outcome.failed {
                     return self.dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(failed));
                 }
-                let reply = self.dev_invoke(shown(alpha), context);
-                if reply["ok"] != true {
-                    return self.dev_done(reply, context);
-                }
-                self.dev_probe(alpha, waits, context)
+                self.dev_read_back(awaited, since, context)
             }
-            Pending::DeviceLoss { waits } => self.dev_device_lost(waits, context),
             Pending::Profile(run) => self.dev_profile(run, &outcome, context),
-            Pending::Explain {
-                id,
-                entity,
-                slot,
-                waits,
-            } => {
-                if let Some(failed) = outcome.failed {
-                    return self.dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(failed));
-                }
-                self.dev_explain_wait((id, entity), slot, waits, context)
-            }
             Pending::ExplainScene => {
                 if outcome.missing.is_some() {
                     return self.dev_refused(
@@ -449,22 +430,85 @@ impl<G: Game> GameHost<G> {
         }
     }
 
-    fn dev_device_lost(&mut self, waits: u32, context: &HostContext) -> Step {
-        let reply = self.dev_invoke(render(), context);
-        if reply["ok"] != true {
-            return self.dev_done(reply, context);
+    fn dev_read_back(&mut self, awaited: Awaited, since: f64, context: &HostContext) -> Step {
+        let drawn = match &awaited {
+            Awaited::Probe { alpha } => Some(shown(*alpha)),
+            Awaited::DeviceLoss => Some(render()),
+            Awaited::Explain { .. } => None,
+        };
+        if let Some(call) = drawn {
+            let reply = self.dev_invoke(call, context);
+            if reply["ok"] != true {
+                return self.dev_done(reply, context);
+            }
         }
-        if waits >= LOSS_WAITS {
-            return self.dev_refused(
-                Error::new(ErrorCode::RenderFailed, "$")
-                    .at_most(u64::from(LOSS_WAITS))
-                    .got(waits),
-            );
+        #[cfg(not(target_arch = "wasm32"))]
+        if !matches!(awaited, Awaited::DeviceLoss) {
+            if let Err(error) = self.wait_for_gpu() {
+                return self.dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(error));
+            }
+            self.deliver_readbacks();
         }
-        self.dev_effect(
-            Pending::DeviceLoss { waits: waits + 1 },
-            Effect::Wait { within_ms: 1000.0 },
-        )
+        let awaited = match self.dev_arrived(awaited, context) {
+            Ok(step) => return step,
+            Err(awaited) => awaited,
+        };
+        let waited = now_ms() - since;
+        if waited >= READ_BACK_LIMIT_MS as f64 {
+            return match awaited {
+                Awaited::Explain {
+                    id, entity, slot, ..
+                } => self.dev_explained((id, entity), Some(slot), DrawState::Unread, context),
+                Awaited::Probe { .. } | Awaited::DeviceLoss => self.dev_refused(
+                    Error::new(ErrorCode::RenderFailed, "$")
+                        .at_most(READ_BACK_LIMIT_MS)
+                        .got(waited),
+                ),
+            };
+        }
+        let effect = match awaited {
+            Awaited::Explain { .. } => Effect::Frame { timestamp: 0.0 },
+            Awaited::Probe { .. } | Awaited::DeviceLoss => Effect::Wait { within_ms: 1000.0 },
+        };
+        self.dev_effect(Pending::ReadBack { awaited, since }, effect)
+    }
+
+    fn dev_arrived(&mut self, awaited: Awaited, context: &HostContext) -> Result<Step, Awaited> {
+        match awaited {
+            Awaited::Probe { alpha } => {
+                let probed = self.dev_invoke(query("probed_pixel"), context);
+                if probed["ok"] == true && probed["result"]["probing"] == true {
+                    return Err(Awaited::Probe { alpha });
+                }
+                Ok(self.dev_probed(probed, context))
+            }
+            Awaited::DeviceLoss => Err(Awaited::DeviceLoss),
+            Awaited::Explain {
+                id,
+                entity,
+                slot,
+                asked,
+            } => match self.mesh_read_back(&id).1 {
+                Some((level, age)) if self.frame_now().saturating_sub(age) > asked => {
+                    let drawn = level.map_or(DrawState::Culled, DrawState::Level);
+                    Ok(self.dev_explained((id, entity), Some(slot), drawn, context))
+                }
+                Some(_) | None => Err(Awaited::Explain {
+                    id,
+                    entity,
+                    slot,
+                    asked,
+                }),
+            },
+        }
+    }
+
+    fn frame_now(&self) -> u64 {
+        self.engine()
+            .app
+            .world()
+            .get_resource::<engine_core::FrameTime>()
+            .map_or(0, |time| time.frame)
     }
 
     fn dev_probe_start(
@@ -480,63 +524,33 @@ impl<G: Game> GameHost<G> {
         if armed["ok"] != true {
             return self.dev_done(armed, context);
         }
-        for _ in 0..2 {
-            let reply = self.dev_invoke(shown(alpha), context);
-            if reply["ok"] != true {
-                return self.dev_done(reply, context);
-            }
+        let reply = self.dev_invoke(shown(alpha), context);
+        if reply["ok"] != true {
+            return self.dev_done(reply, context);
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Err(error) = self.wait_for_gpu() {
-                return self.dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(error));
-            }
-            self.deliver_readbacks();
-        }
-        self.dev_probe(alpha, 0, context)
+        self.dev_read_back(Awaited::Probe { alpha }, now_ms(), context)
     }
 
-    fn dev_probe(&mut self, alpha: Option<f64>, waits: u32, context: &HostContext) -> Step {
-        let mut probed = self.dev_invoke(query("probed_pixel"), context);
+    fn dev_probed(&mut self, mut probed: Value, context: &HostContext) -> Step {
         if probed["ok"] != true {
             return self.dev_done(probed, context);
         }
-        if probed["result"]["probing"] != true {
-            let mut probe = match probed["result"]["probe"].take() {
-                Value::Object(probe) => probe,
-                Value::Null
-                | Value::Bool(_)
-                | Value::Number(_)
-                | Value::String(_)
-                | Value::Array(_) => {
-                    return self.dev_refused(
-                        Error::new(ErrorCode::RenderFailed, "$.probe").expected(Expected::Present),
-                    );
-                }
-            };
-            let entity = probe
-                .remove("entity")
-                .as_ref()
-                .and_then(Value::as_u64)
-                .and_then(Entity::try_from_bits)
-                .map(|entity| AuthoredEntity::of(self.engine().app.world(), entity));
-            probed["result"] = result::probe(ProbeResult { probe, entity });
-            return self.dev_done(probed, context);
-        }
-        if waits >= PROBE_WAITS {
-            return self.dev_refused(
-                Error::new(ErrorCode::RenderFailed, "$")
-                    .at_most(u64::from(PROBE_WAITS))
-                    .got(waits),
-            );
-        }
-        self.dev_effect(
-            Pending::Probe {
-                alpha,
-                waits: waits + 1,
-            },
-            Effect::Wait { within_ms: 1000.0 },
-        )
+        let mut probe = match probed["result"]["probe"].take() {
+            Value::Object(probe) => probe,
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => {
+                return self.dev_refused(
+                    Error::new(ErrorCode::RenderFailed, "$.probe").expected(Expected::Present),
+                );
+            }
+        };
+        let entity = probe
+            .remove("entity")
+            .as_ref()
+            .and_then(Value::as_u64)
+            .and_then(Entity::try_from_bits)
+            .map(|entity| AuthoredEntity::of(self.engine().app.world(), entity));
+        probed["result"] = result::probe(ProbeResult { probe, entity });
+        self.dev_done(probed, context)
     }
 
     pub fn dev_reloaded(
@@ -629,7 +643,10 @@ impl<G: Game> GameHost<G> {
             BrowserControl::DebugDeviceLoss {} => {
                 self.lose_device();
                 self.dev_effect(
-                    Pending::DeviceLoss { waits: 0 },
+                    Pending::ReadBack {
+                        awaited: Awaited::DeviceLoss,
+                        since: now_ms(),
+                    },
                     Effect::Wait { within_ms: 1000.0 },
                 )
             }
@@ -790,43 +807,20 @@ impl<G: Game> GameHost<G> {
                     return self.dev_explained((id, entity), slot, DrawState::Unread, context);
                 };
                 self.suspend();
+                let asked = self.frame_now();
                 self.dev_effect(
-                    Pending::Explain {
-                        id,
-                        entity,
-                        slot,
-                        waits: 1,
+                    Pending::ReadBack {
+                        awaited: Awaited::Explain {
+                            id,
+                            entity,
+                            slot,
+                            asked,
+                        },
+                        since: now_ms(),
                     },
                     Effect::Frame { timestamp: 0.0 },
                 )
             }
-        }
-    }
-
-    fn dev_explain_wait(
-        &mut self,
-        (id, entity): (String, Entity),
-        slot: u32,
-        waits: u32,
-        context: &HostContext,
-    ) -> Step {
-        match self.mesh_read_back(&id).1 {
-            Some((level, age)) if age <= 1 && waits >= EXPLAIN_FRAMES => {
-                let drawn = level.map_or(DrawState::Culled, DrawState::Level);
-                self.dev_explained((id, entity), Some(slot), drawn, context)
-            }
-            Some(_) | None if waits >= READ_BACK_WAITS => {
-                self.dev_explained((id, entity), Some(slot), DrawState::Unread, context)
-            }
-            Some(_) | None => self.dev_effect(
-                Pending::Explain {
-                    id,
-                    entity,
-                    slot,
-                    waits: waits + 1,
-                },
-                Effect::Frame { timestamp: 0.0 },
-            ),
         }
     }
 
@@ -974,6 +968,7 @@ impl<G: Game> GameHost<G> {
 
     fn dev_done(&mut self, mut reply: Value, context: &HostContext) -> Step {
         self.dev_pending = None;
+        self.apply_cursor();
         if reply["ok"] == true {
             let rendering = self.stats_value();
             let observation = reply["observation"].clone();

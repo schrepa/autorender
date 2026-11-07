@@ -19,7 +19,7 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::component::<ground::Grounded>("grounded"),
     PlaceDecl::component::<ground::GroundedAt>("grounded_at"),
     PlaceDecl::component::<navigation::NavAgent>("nav_agent"),
-    PlaceDecl::component::<navigation::NavWalk>("nav_walk"),
+    PlaceDecl::state::<navigation::NavWalk>("nav_walk"),
     PlaceDecl::slot::<water::WaterObstacles>(),
     PlaceDecl::component::<water::WaterBody>("water_body"),
     PlaceDecl::slot::<wind::Wind>(),

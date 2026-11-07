@@ -18,7 +18,6 @@ pub struct GustWaves {
 pub struct Wind {
     pub velocity: [f32; 2],
     pub gusts: f32,
-    pub clock: f32,
     pub waves: GustWaves,
 }
 

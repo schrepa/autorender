@@ -11,13 +11,10 @@ mod gpu_layouts;
 mod meter;
 mod settings;
 
-use std::any::TypeId;
 use std::mem::offset_of;
 
 use bevy_ecs::prelude::*;
-use engine_core::{
-    Brick, Bricks, FrameTime, GpuStruct, PartFaults, Readback, Schedule, Source, View,
-};
+use engine_core::{Brick, Bricks, GpuStruct, Readable, Readback, Schedule, Source, View};
 use engine_places_rendering::exposure::Exposure;
 use engine_render::RenderBricks;
 
@@ -40,7 +37,6 @@ impl Brick for AutoExposureBrick {
             .resource::<ExposureFeedback>()
             .fill::<Exposure>(Some(shaders::auto_exposure::faces::exposure::MODULE))
             .systems(Schedule::ViewSync, exposure_stats)
-            .off(forget_exposure)
             .generated(GENERATED)
             .part::<meter::MeterGpu>();
     }
@@ -49,14 +45,11 @@ impl Brick for AutoExposureBrick {
 #[derive(Resource, Default)]
 pub(crate) struct ExposureFeedback {
     read: Option<[f32; 3]>,
-    forgot: Option<u64>,
 }
 
-impl Readback for ExposureFeedback {
-    fn arrived(&mut self, frame: u64, _: u32, bytes: &[u8]) {
-        if self.forgot.is_some_and(|forgot| frame < forgot) {
-            return;
-        }
+impl Readable for ExposureFeedback {
+    fn arrived(&mut self, _: u32, read: Readback<&[u8]>) {
+        let bytes = read.value;
         let word = |offset: usize| {
             bytes
                 .get(offset..offset + 4)
@@ -81,10 +74,9 @@ fn hundredths(stops: f32) -> i32 {
 fn exposure_stats(
     feedback: Res<ExposureFeedback>,
     view: Res<View>,
-    faults: Res<PartFaults>,
     mut stats: ResMut<ExposureStats>,
 ) {
-    let active = !view.debug() && !faults.faulted(TypeId::of::<meter::MeterGpu>());
+    let active = !view.debug();
     let [stops, metered, viewed] = feedback.read.filter(|_| active).unwrap_or_default();
     stats.set_if_neq(ExposureStats {
         active,
@@ -92,14 +84,4 @@ fn exposure_stats(
         metered: hundredths(metered),
         view: hundredths(viewed),
     });
-}
-
-fn forget_exposure(
-    time: Res<FrameTime>,
-    mut feedback: ResMut<ExposureFeedback>,
-    mut stats: ResMut<ExposureStats>,
-) {
-    feedback.read = None;
-    feedback.forgot = Some(time.frame);
-    stats.set_if_neq(ExposureStats::default());
 }

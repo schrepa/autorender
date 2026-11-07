@@ -52,14 +52,12 @@ impl Brick for CollisionBrick {
             )
             .systems(
                 Schedule::FixedPreSimulation,
-                (world::clear_hits, world::sync_ground, world::sync),
+                (world::sync_ground, world::sync),
             )
-            .systems(Schedule::FrameStart, world::clear_hits)
             .systems(
                 Schedule::FixedPostSimulation,
                 (world::sync_ground, world::sync, world::detect),
             )
-            .off(world::forget)
             .settled::<queries::RaycastQuery, _>(world::refresh)
             .settled::<queries::OverlapQuery, _>(world::refresh)
             .settled::<queries::ShapeCastQuery, _>(world::refresh)

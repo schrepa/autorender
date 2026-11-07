@@ -1,8 +1,7 @@
-use engine_core::Distribution;
+use engine_core::{Distribution, PresentationState};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::views::PresentationStateView;
 use crate::{InspectorDescriptor, InspectorKind};
 
 pub const UNTYPED_RESULTS: &[&str] = &["benchmark", "debug_device_loss", "debug_panic", "reload"];
@@ -65,7 +64,7 @@ pub struct StatusResult {
     pub inspectors: usize,
     pub culling_enabled: bool,
     pub features: Option<Vec<&'static str>>,
-    pub presentation: PresentationStateView,
+    pub presentation: PresentationState,
     #[cfg_attr(
         not(target_arch = "wasm32"),
         schemars(with = "Option<serde_json::Map<String, Value>>")

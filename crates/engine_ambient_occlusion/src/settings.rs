@@ -12,12 +12,6 @@ settings! {
     }
 }
 
-impl AmbientOcclusion {
-    pub fn occludes(&self) -> bool {
-        self.enabled && self.intensity > 0.0
-    }
-}
-
 stats! {
     #[section("ambient_occlusion_stats")]
     pub struct AmbientOcclusionStats {

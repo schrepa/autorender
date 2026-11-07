@@ -2,17 +2,18 @@ mod access;
 mod attribution;
 mod entries;
 mod explain;
-mod gates;
 mod hooks;
 mod jobs;
 #[cfg(feature = "profiling")]
 mod measured;
 mod members;
 mod order;
+mod owners;
 mod record;
 mod registry;
 mod scene;
 mod services;
+mod state;
 
 pub use access::AccessRule;
 pub use attribution::{
@@ -24,16 +25,19 @@ pub use entries::{
     parse_section, set_section,
 };
 pub use explain::{ExplainAsk, ExplainEntry, ExplainRecord, explain};
-pub use gates::{GateDriver, GateFn, GateId, Gates, Scope, gate_off, gate_on};
 pub use hooks::{BrickHooks, NamedField, Removal, Settle, run_settles};
 pub use jobs::{
     JobBatch, JobKindRef, JobList, JobListed, JobMember, JobOrder, JobOrders, JobQueue,
-    RecordParity, RecordStore, Shares,
+    RecordParity, Shares,
 };
 pub use members::MembersOf;
+pub use owners::{Shared, ValueKind};
 pub use record::{BrickRecord, PlainSystems, RecordExt, SectionRule};
-pub use registry::{BrickId, BrickSet, Registry, check_sections, settings};
+pub use registry::{BrickId, BrickSet, Registry, RegistryBuilder, check_sections, settings};
 pub use scene::{
     AuthoredId, OperationScene, SceneEntity, SceneRead, SpawnedBy, authored_entity, authored_id,
 };
 pub use services::{FrameFacts, InputState, ViewState};
+pub use state::{
+    BrickState, BrickStates, GateDriver, GateFn, GateId, Scope, ask_on, fault, fault_of,
+};

@@ -9,8 +9,8 @@ mod smoke;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, LevelProgress, LevelRequest, Operation, Runs,
-    SceneComponents, Schedule, Screens, Smoke, Source, TimeControl,
+    Brick, Bricks, ComponentKind, Error, ErrorCode, Level, Operation, Runs, SceneComponents,
+    Schedule, Screens, Smoke, Source, TimeControl,
 };
 use engine_places_rendering::screens::Screen;
 use serde::Deserialize;
@@ -148,15 +148,15 @@ pub(crate) struct LevelOperation;
 
 impl Operation for LevelOperation {
     const NAME: &'static str = "level";
-    type Params = ResMut<'static, LevelRequest>;
+    type Params = ResMut<'static, Level>;
     type Request = LevelAsk;
 
     fn run(
         mut level: SystemParamItem<'_, '_, Self::Params>,
         request: LevelAsk,
     ) -> Result<Value, Error> {
-        level.path = Some(request.path);
-        Ok(json!({"path": level.path}))
+        level.load(request.path.clone());
+        Ok(json!({"path": request.path}))
     }
 }
 
@@ -164,10 +164,10 @@ pub(crate) struct LevelState;
 
 impl Operation for LevelState {
     const NAME: &'static str = "level_progress";
-    type Params = Res<'static, LevelProgress>;
+    type Params = Res<'static, Level>;
     type Request = NoRequest;
 
-    fn run(progress: SystemParamItem<'_, '_, Self::Params>, _: NoRequest) -> Result<Value, Error> {
-        Ok(json!(*progress))
+    fn run(level: SystemParamItem<'_, '_, Self::Params>, _: NoRequest) -> Result<Value, Error> {
+        Ok(json!(level.view()))
     }
 }

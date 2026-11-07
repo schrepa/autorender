@@ -58,7 +58,7 @@ pub(crate) struct SurfaceTrees {
     targets: [f32; 2],
     leaves_bytes: u64,
     indexed: bool,
-    frames: u64,
+    parity: u32,
     shallow: u32,
     dropped: u32,
 }
@@ -122,7 +122,7 @@ impl SurfaceTrees {
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
         (tiles, views, room, drawn): (&TerrainTiles, &TerrainViews<'_>, u64, &[bool]),
-        epoch: u32,
+        subdivided: bool,
     ) {
         if !self.indexed {
             let indices = meshlet_indices();
@@ -133,7 +133,7 @@ impl SurfaceTrees {
             cx.write(handles.meshlet, 0, &indices);
             self.indexed = true;
         }
-        self.frames += 1;
+        self.parity ^= u32::from(subdivided);
         self.shallow = 0;
         self.dropped = 0;
         self.frame.clear();
@@ -169,14 +169,14 @@ impl SurfaceTrees {
             }
             let leaves = (index as u32 * rooms[0], rooms[0]);
             let tree = (terrain, index, Measure::Ground);
-            self.lay_out(cx, handles, (tree, room), (depth, leaves), (planes, epoch));
+            self.lay_out(cx, handles, (tree, room), (depth, leaves), planes);
         }
         self.grounds = count;
         let after_ground = count as u32 * rooms[0];
         for (place, &index) in watered.iter().enumerate() {
             let leaves = (after_ground + place as u32 * rooms[1], rooms[1]);
             let tree = (&tiles.terrains[index], index, Measure::Water);
-            self.lay_out(cx, handles, (tree, room), (depth, leaves), (planes, epoch));
+            self.lay_out(cx, handles, (tree, room), (depth, leaves), planes);
         }
         let held: Vec<(Entity, Measure)> = self
             .frame
@@ -212,7 +212,7 @@ impl SurfaceTrees {
         handles: &Handles,
         ((terrain, index, measure), room): ((&TerrainEntry, usize, Measure), u64),
         (depth, (first, capacity)): (u32, (u32, u32)),
-        (planes, epoch): ([[f32; 4]; 6], u32),
+        planes: [[f32; 4]; 6],
     ) {
         let Some(slot) = self.slot_of((terrain.terrain, measure)) else {
             self.dropped += 1;
@@ -233,7 +233,7 @@ impl SurfaceTrees {
         let uniform = SubdivisionUniform {
             square: [side, target, measure.code(), 0.0],
             tree: [depth, counts_words(depth), first, capacity],
-            frame: [(self.frames % 2) as u32, slot as u32, index as u32, epoch],
+            frame: [self.parity, slot as u32, index as u32, 0],
             extent: {
                 let extent = terrain.pyramid.extent();
                 [0.0, 0.0, extent.x, extent.y]

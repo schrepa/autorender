@@ -3,10 +3,6 @@ use engine_math::{clamp, sin_cos};
 use engine_place::Slot;
 use serde::{Deserialize, Serialize};
 
-pub const MOVED_SLOT: u32 = 0x8000_0000;
-pub const FADE_SLOT: u32 = 0x00ff_ffff;
-pub const FADE_WORD_ON: u32 = 0x100;
-pub const FADE_WORD_OUT: u32 = 0x80;
 pub const STILL_FRAMES: u32 = 16;
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
@@ -25,14 +21,7 @@ impl Instances {
 
 impl Slot for Instances {
     const NAME: &'static str = "instances";
-    const WGSL: Option<&'static str> = Some(contract!(
-        "places/instances.wgsl",
-        MOVED_SLOT,
-        FADE_SLOT,
-        FADE_WORD_ON,
-        FADE_WORD_OUT,
-        STILL_FRAMES,
-    ));
+    const WGSL: Option<&'static str> = Some(contract!("places/instances.wgsl", STILL_FRAMES));
 }
 
 #[derive(Component, Debug, Clone, Copy)]

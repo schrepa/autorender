@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    AssetLibrary, GlobalTransforms, Material, MaterialBinding, MaterialHandle, Mesh3d, MeshHandle,
-    Revision, Shown, Surface, Switches, Transform,
+    AssetLibrary, Feed, FeedSettings, GlobalTransforms, Material, MaterialBinding, MaterialHandle,
+    Mesh3d, MeshHandle, Revision, Shown, Surface, Switches, Transform,
 };
 use engine_places::meshes::{Cube, FirstPersonLayer, Instances, Tint};
 use glam::Mat4;
@@ -172,7 +172,7 @@ impl Materials {
     }
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub(crate) struct RetainedRender {
     instances: Vec<Instance>,
     owners: Vec<Option<Entity>>,
@@ -186,11 +186,33 @@ pub(crate) struct RetainedRender {
     material_revision: Option<u64>,
     topology: Option<Revision>,
     switches: Switches,
-    color_writes: Vec<u32>,
-    color_sequence: u64,
+    colors: Feed<u32>,
     changed: bool,
     render_candidates: usize,
     invalid_matrices: usize,
+}
+
+impl Default for RetainedRender {
+    fn default() -> Self {
+        Self {
+            instances: Vec::new(),
+            owners: Vec::new(),
+            free: Vec::new(),
+            removed: Vec::new(),
+            homeless: BTreeSet::new(),
+            unresolved: BTreeSet::new(),
+            unbuilt: BTreeSet::new(),
+            materials: Materials::default(),
+            asset_revision: None,
+            material_revision: None,
+            topology: None,
+            switches: Switches::default(),
+            colors: Feed::new(FeedSettings::default().instance_colors as usize),
+            changed: false,
+            render_candidates: 0,
+            invalid_matrices: 0,
+        }
+    }
 }
 
 struct Inputs<'a, 'w, 's> {
@@ -204,6 +226,7 @@ pub(crate) fn retain_instances(
     changes: SourceChanges,
     globals: Res<GlobalTransforms>,
     assets: Res<AssetLibrary>,
+    feeds: Res<FeedSettings>,
     mut retained: ResMut<RetainedRender>,
     mut instances: ResMut<Instances>,
 ) {
@@ -215,8 +238,7 @@ pub(crate) fn retain_instances(
     };
     let retained = &mut *retained;
     retained.changed = false;
-    retained.color_writes.clear();
-    retained.color_sequence += 1;
+    retained.colors.resize(feeds.instance_colors as usize);
     let assets_moved = retained.settle_assets(&inputs, &mut instances);
     for entity in &changes {
         retained.refresh(entity, &inputs, &mut instances);
@@ -268,12 +290,8 @@ impl RetainedRender {
             .map(|(slot, (_, instance))| (slot, instance))
     }
 
-    pub(crate) fn color_writes(&self) -> &[u32] {
-        &self.color_writes
-    }
-
-    pub(crate) fn color_sequence(&self) -> u64 {
-        self.color_sequence
+    pub(crate) fn colors(&self) -> &Feed<u32> {
+        &self.colors
     }
 
     pub(crate) fn render_candidates(&self) -> usize {
@@ -506,7 +524,7 @@ impl RetainedRender {
             || record.flags != next.flags;
         *record = next;
         if restyled {
-            self.color_writes.push(slot as u32);
+            self.colors.push(slot as u32);
         }
     }
 

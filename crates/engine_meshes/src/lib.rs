@@ -34,6 +34,9 @@ pub use settings::{
 
 const GENERATED: &[&str] = &[
     layouts::WGSL,
+    <layouts::CandidateState as engine_core::GpuBits>::WGSL,
+    <layouts::LodHistory as engine_core::BitValue>::WGSL,
+    <layouts::LodFade as engine_core::GpuBits>::WGSL,
     <layouts::PresentationFrame as engine_core::GpuStruct>::WGSL,
     <layouts::CandidateData as engine_core::GpuStruct>::WGSL,
     <layouts::BatchData as engine_core::GpuStruct>::WGSL,

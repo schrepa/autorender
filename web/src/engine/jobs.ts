@@ -46,21 +46,21 @@ export function useJobs(bindings: JobBindings, worker: JobWorkerClass, pinned?: 
   game ??= { index: bindings, module: bindings.JobWorker.module(), worker, bindings: pinned };
 }
 
-interface Slot {
-  worker: Worker;
-  tasks: Map<number, boolean>;
-  broken: boolean;
-}
-
 interface Task {
+  counted: boolean;
   resolve(value: unknown): void;
   reject(error: Error): void;
 }
 
+type Slot =
+  | { state: "live"; worker: Worker; tasks: Map<number, Task> }
+  | { state: "broken" };
+
+type Live = Extract<Slot, { state: "live" }>;
+
 export class JobPool {
   private readonly slots: Slot[] = [];
   private readonly shares = new Map<string, Blob>();
-  private readonly tasks = new Map<number, Task>();
   private runtime: JobRuntime | undefined;
   private hash: Uint8Array | undefined;
   private failed: ((error: unknown) => void) | undefined;
@@ -73,11 +73,11 @@ export class JobPool {
 
   constructor(private readonly count: number, private readonly game: JobGame) {
     this.store = openStore(game.index, (bytes, raw) => this.unpack(bytes, raw));
-    for (let index = 0; index < count; index++) this.slots.push(this.spawn());
+    for (let index = 0; index < count; index++) this.slots.push(this.spawn(index));
   }
 
   get size(): number {
-    return this.slots.filter(slot => !slot.broken).length;
+    return this.slots.filter(slot => slot.state === "live").length;
   }
 
   attach(runtime: JobRuntime, failed: (error: unknown) => void) {
@@ -107,12 +107,12 @@ export class JobPool {
 
   terminate() {
     this.detach();
-    for (const slot of this.slots) {
-      slot.broken = true;
+    for (const [index, slot] of this.slots.entries()) {
+      if (slot.state !== "live") continue;
       slot.worker.terminate();
+      for (const task of slot.tasks.values()) task.reject(new Error("the engine stopped"));
+      this.slots[index] = { state: "broken" };
     }
-    for (const task of this.tasks.values()) task.reject(new Error("the engine stopped"));
-    this.tasks.clear();
     if (pool === this) pool = undefined;
   }
 
@@ -198,41 +198,48 @@ export class JobPool {
   private task(message: Record<string, unknown>, transfer: Transferable[]): Promise<unknown> {
     const counted = this.call(runtime => runtime.job_task());
     const slot = counted !== undefined ? this.slots[counted] : this.fewestTasks();
-    if (!slot || slot.broken) return Promise.reject(new Error("no workers"));
+    if (slot?.state !== "live") return Promise.reject(new Error("no workers"));
     const task = this.nextTask++;
-    slot.tasks.set(task, counted !== undefined);
     return new Promise((resolve, reject) => {
-      this.tasks.set(task, { resolve, reject });
+      slot.tasks.set(task, { counted: counted !== undefined, resolve, reject });
       this.post(slot, { ...message, task }, transfer);
     });
   }
 
-  private fewestTasks(): Slot | undefined {
-    let best: Slot | undefined;
-    for (const slot of this.slots) if (!slot.broken && (!best || slot.tasks.size < best.tasks.size)) best = slot;
+  private fewestTasks(): Live | undefined {
+    let best: Live | undefined;
+    for (const slot of this.slots) if (slot.state === "live" && (!best || slot.tasks.size < best.tasks.size)) best = slot;
     return best;
   }
 
-  private spawn(): Slot {
+  private spawn(index: number): Live {
     const worker = new this.game.worker({ name: "engine-jobs" });
-    const slot: Slot = { worker, tasks: new Map(), broken: false };
-    worker.onmessage = (event: MessageEvent<WorkerMessage>) => this.receive(slot, event.data);
-    worker.onerror = (event) => { event.preventDefault(); this.lose(slot, event.message || "worker error"); };
+    const slot: Live = { state: "live", worker, tasks: new Map() };
+    worker.onmessage = (event: MessageEvent<WorkerMessage>) => this.receive(index, worker, event.data);
+    worker.onerror = (event) => { event.preventDefault(); this.lose(index, worker, event.message || "worker error"); };
     this.post(slot, { type: "init", bindings: this.game.bindings, module: this.game.module });
     if (this.hash) this.post(slot, { type: "list", hash: this.hash });
     for (const [key, blob] of this.shares) this.post(slot, { type: "share", key, blob });
     return slot;
   }
 
-  private post(slot: Slot, message: unknown, transfer: Transferable[] = []) {
+  private live(index: number, worker: Worker): Live | undefined {
+    const slot = this.slots[index];
+    return slot?.state === "live" && slot.worker === worker ? slot : undefined;
+  }
+
+  private post(slot: Slot | undefined, message: unknown, transfer: Transferable[] = []) {
+    if (slot?.state !== "live") return;
     slot.worker.postMessage(message, transfer);
   }
 
   private broadcast(message: Record<string, unknown>) {
-    for (const slot of this.slots) if (!slot.broken) this.post(slot, message);
+    for (const slot of this.slots) this.post(slot, message);
   }
 
-  private receive(slot: Slot, message: WorkerMessage) {
+  private receive(index: number, worker: Worker, message: WorkerMessage) {
+    const slot = this.live(index, worker);
+    if (!slot) return;
     switch (message.type) {
       case "done":
         this.call(runtime => runtime.complete_job(message.id, message.output));
@@ -242,17 +249,15 @@ export class JobPool {
         break;
       case "task":
       case "task_failed": {
-        const index = this.slots.indexOf(slot);
-        if (slot.tasks.get(message.task)) this.call(runtime => runtime.job_task_done(index));
+        const task = slot.tasks.get(message.task);
         slot.tasks.delete(message.task);
-        const task = this.tasks.get(message.task);
-        this.tasks.delete(message.task);
+        if (task?.counted) this.call(runtime => runtime.job_task_done(index));
         if (message.type === "task") task?.resolve(message.result);
         else task?.reject(new Error(message.error));
         break;
       }
       case "broken":
-        this.lose(slot, message.error);
+        this.lose(index, worker, message.error);
         break;
       case "panicked":
         this.stop(message.report ? new Error(`${PANIC_PREFIX}${JSON.stringify(message.report)}`)
@@ -261,21 +266,15 @@ export class JobPool {
     }
   }
 
-  private lose(slot: Slot, error: string) {
-    if (slot.broken) return;
-    slot.broken = true;
+  private lose(index: number, worker: Worker, error: string) {
+    const slot = this.live(index, worker);
+    if (!slot) return;
     slot.worker.terminate();
     console.warn(`An engine worker stopped: ${error}`);
-    for (const task of slot.tasks.keys()) {
-      this.tasks.get(task)?.reject(new Error(error));
-      this.tasks.delete(task);
-    }
-    const index = this.slots.indexOf(slot);
+    for (const task of slot.tasks.values()) task.reject(new Error(error));
     const replaced = this.restarts < this.count;
-    if (replaced) {
-      this.restarts++;
-      this.slots[index] = this.spawn();
-    }
+    if (replaced) this.restarts++;
+    this.slots[index] = replaced ? this.spawn(index) : { state: "broken" };
     this.call(runtime => runtime.lose_job_worker(index, error, replaced));
   }
 }

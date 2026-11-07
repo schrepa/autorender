@@ -1,7 +1,5 @@
 import package::engine::color::luminance;
-import package::generated::sky::{
-    ADAPTATION_MOST, ADAPTATION_POWER, NOON_LIGHT, SKY_MULTIPLE_SIZE, SKY_TABLE_GROUP
-};
+import package::generated::sky::{SKY_MULTIPLE_SIZE, SKY_TABLE_GROUP};
 import package::sky::common::{
     SKY_PI, air_radius, air_sky, air_transmittance, sky_view_parameters, sphere_hit, to_sub_uv,
     transmittance_uv
@@ -13,7 +11,7 @@ import package::sky::piece::sky_air;
 @group(1) @binding(3) var view_table: texture_2d<f32>;
 @group(1) @binding(4) var table_sampler: sampler;
 @group(1) @binding(5) var table_out: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(6) var<storage, read_write> derived: array<vec4<f32>, 7>;
+@group(1) @binding(6) var<storage, read_write> derived: array<vec4<f32>, 6>;
 
 const VIEW_STEPS: u32 = 30u;
 const NIGHT: vec3<f32> = vec3<f32>(0.004, 0.006, 0.012);
@@ -166,22 +164,9 @@ fn derive_light() {
     let glow = max(luminance(toward - away), 0.0) / max(luminance(sun_color), 1e-4);
     let falling = luminance(sun_color) * max(sun.y, 0.0)
         + SKY_PI * luminance(0.5 * (zenith + horizon));
-    var exposure = sky_air.sun.w;
-    if sky_air.frame.y > 0.0 {
-        let noon = sky_air.ozone.w * NOON_LIGHT;
-        let adapted = clamp(pow(noon / max(falling, 1e-5), sky_air.radii.z * ADAPTATION_POWER),
-            1.0, ADAPTATION_MOST);
-        let wanted = sky_air.sun.w * adapted;
-        let previous = derived[6].x;
-        exposure = wanted;
-        if sky_air.frame.x > 0.0 && previous > 0.0 {
-            exposure = mix(previous, wanted, 1.0 - exp(-sky_air.frame.x / 0.8));
-        }
-    }
     derived[0] = vec4<f32>(sun_color, 0.0);
     derived[1] = vec4<f32>(max(zenith, night), 0.0);
-    derived[2] = vec4<f32>(max(horizon, night), exposure);
-    derived[6] = vec4<f32>(exposure, 0.0, 0.0, 0.0);
+    derived[2] = vec4<f32>(max(horizon, night), falling);
     derived[3] = vec4<f32>(ground, 0.0);
     derived[4] = vec4<f32>(max(away, night), 0.0);
     derived[5] = vec4<f32>(min(glow, 4.0), 0.0, 0.0, 0.0);

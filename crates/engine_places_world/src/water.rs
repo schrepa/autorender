@@ -36,15 +36,6 @@ impl Slot for WaterFlow {
     const NAME: &'static str = "water_flow";
 }
 
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct WaterWork {
-    pub uploaded: u64,
-}
-
-impl Slot for WaterWork {
-    const NAME: &'static str = "water_work";
-}
-
 #[derive(Resource, Clone, Default)]
 pub struct Hydrology {
     pub bakes: Vec<(Entity, Arc<HydrologyBake>)>,

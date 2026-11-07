@@ -5,7 +5,7 @@ pub(super) struct CookGraph {
     gait: Gait,
     tiles: Vec<TileKey>,
     next: usize,
-    pub(super) flight: Vec<Ticket>,
+    pub(super) flight: Vec<Interest<RecordKey>>,
 }
 
 impl NavAgents {
@@ -25,7 +25,9 @@ impl NavAgents {
                 GroundRead::Ready(walked) => {
                     let gait = options(agent).gait(&walked.source.pyramid);
                     if !self.cook.iter().any(|graph| {
-                        graph.walked.source.ground == walked.source.ground && graph.gait == gait
+                        graph.walked.source.identity == walked.source.identity
+                            && graph.walked.grid == walked.grid
+                            && graph.gait == gait
                     }) {
                         self.cook.push(CookGraph {
                             tiles: walked.source.pyramid.level_tiles(gait.level).collect(),
@@ -42,12 +44,12 @@ impl NavAgents {
         }
         for graph in &mut self.cook {
             let mut flying = Vec::with_capacity(graph.flight.len());
-            for ticket in std::mem::take(&mut graph.flight) {
-                let Some(output) = records.get(&ticket) else {
-                    flying.push(ticket);
+            for interest in std::mem::take(&mut graph.flight) {
+                let Some(output) = records.get(&interest) else {
+                    flying.push(interest);
                     continue;
                 };
-                jobs.cancel(ticket);
+                drop(interest);
                 if let Err(error) = made(PORTALS_NAME, output, portals_output) {
                     self.failures.record(self.tick, error);
                 }

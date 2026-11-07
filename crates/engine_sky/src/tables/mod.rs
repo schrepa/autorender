@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Error, ErrorCode, Job, JobCx, JobKind, Jobs, Records, Ticket, URGENT_JOBS, job_priority,
+    Error, ErrorCode, Interest, Job, JobCx, JobKind, Jobs, RecordKey, Records, URGENT_JOBS,
+    job_priority,
 };
 
 use crate::SOURCE;
@@ -24,7 +25,6 @@ pub static CLOUD_TABLES: JobKind = JobKind::new(CLOUD_NOISE_KIND, &SOURCE, start
 
 const SKY_TABLES_NAME: &str = "sky_tables";
 const CLOUD_NOISE_NAME: &str = "cloud_noise";
-const RETRY_AFTER: u64 = 120;
 
 #[derive(Clone, Debug)]
 pub(crate) struct StaticTable<T> {
@@ -64,11 +64,10 @@ impl Failures {
     }
 }
 
-struct Part {
-    identity: Vec<u8>,
-    ticket: Option<Ticket>,
-    arrived: bool,
-    failed: Option<u64>,
+enum Part {
+    Asked(Interest<RecordKey>),
+    Arrived,
+    Failed(Interest<RecordKey>),
 }
 
 struct TableState<T> {
@@ -96,68 +95,44 @@ impl<T: Assembly> TableState<T> {
         if wanted == self.wanted {
             return;
         }
-        for part in &mut self.parts {
-            if let Some(ticket) = part.ticket.take() {
-                jobs.cancel(ticket);
-            }
-        }
+        let kind = self.kind;
         self.parts = wanted
             .iter()
             .flatten()
-            .map(|identity| Part {
-                identity: identity.clone(),
-                ticket: None,
-                arrived: false,
-                failed: None,
+            .enumerate()
+            .map(|(place, identity)| {
+                let priority = job_priority(URGENT_JOBS, place as u32);
+                Part::Asked(jobs.fetch(kind, identity, priority))
             })
             .collect();
         self.assembling = None;
         self.wanted = wanted;
     }
 
-    fn update(
-        &mut self,
-        (jobs, records): (&mut Jobs<'_, '_>, &Records),
-        (frame, next): (u64, &mut u64),
-        failures: &mut Failures,
-    ) {
-        if self.parts.is_empty() || self.parts.iter().all(|part| part.arrived) {
-            return;
-        }
+    fn update(&mut self, records: &Records, next: &mut u64, failures: &mut Failures) {
         let name = self.name;
-        for (place, part) in self.parts.iter_mut().enumerate() {
-            if part.arrived {
-                continue;
-            }
-            if part.ticket.is_none() {
-                let waiting = part.failed.is_some_and(|at| frame < at + RETRY_AFTER);
-                if !waiting {
-                    let priority = job_priority(URGENT_JOBS, place as u32);
-                    part.ticket = Some(jobs.fetch(self.kind, &part.identity, priority));
-                }
-                continue;
-            }
-            let Some(output) = part.ticket.as_ref().and_then(|ticket| records.get(ticket)) else {
+        for part in &mut self.parts {
+            let output = match &*part {
+                Part::Asked(interest) => records.get(interest),
+                Part::Arrived | Part::Failed(_) => None,
+            };
+            let Some(output) = output else {
                 continue;
             };
-            if let Some(ticket) = part.ticket.take() {
-                jobs.cancel(ticket);
-            }
             let taken = output
                 .map_err(|error| format!("{name}: {error}"))
                 .and_then(|bytes| {
                     T::take(&mut self.assembling, &bytes)
                         .map_err(|error| format!("{name}: its output does not decode: {error}"))
                 });
-            match taken {
-                Ok(()) => part.arrived = true,
-                Err(error) => {
-                    failures.record(error);
-                    part.failed = Some(frame);
-                }
+            let asked = std::mem::replace(part, Part::Arrived);
+            if let (Err(error), Part::Asked(interest)) = (taken, asked) {
+                failures.record(error);
+                *part = Part::Failed(interest);
             }
         }
-        if self.parts.iter().all(|part| part.arrived)
+        if !self.parts.is_empty()
+            && self.parts.iter().all(|part| matches!(part, Part::Arrived))
             && let Some(table) = self.assembling.take()
         {
             *next += 1;
@@ -168,16 +143,19 @@ impl<T: Assembly> TableState<T> {
         }
     }
 
+    fn count(&self, state: fn(&Part) -> bool) -> u64 {
+        self.parts.iter().filter(|part| state(part)).count() as u64
+    }
+
     fn left(&self) -> u64 {
-        self.parts.iter().filter(|part| !part.arrived).count() as u64
+        self.count(|part| matches!(part, Part::Asked(_)))
     }
 
     fn row(&self) -> StaticTableRow {
-        let parts = self.parts.len() as u64;
         StaticTableRow {
             kind: self.name.to_owned(),
-            parts,
-            arrived: parts - self.left(),
+            parts: self.parts.len() as u64,
+            arrived: self.count(|part| matches!(part, Part::Arrived)),
             showing: self.ready.is_some(),
         }
     }
@@ -188,7 +166,6 @@ pub(crate) struct StaticTables {
     cloud_noise: TableState<CloudNoise>,
     sky: TableState<SkyTables>,
     wants: Option<Wants>,
-    frame: u64,
     made: u64,
     failures: Failures,
 }
@@ -199,7 +176,6 @@ impl Default for StaticTables {
             cloud_noise: TableState::new(&CLOUD_TABLES, CLOUD_NOISE_NAME),
             sky: TableState::new(&SKY_TABLES, SKY_TABLES_NAME),
             wants: None,
-            frame: 0,
             made: 0,
             failures: Failures::default(),
         }
@@ -271,21 +247,15 @@ pub(crate) fn ask_tables(
 ) {
     let wants = Wants::of(*clouds, *sky);
     let tables = &mut *tables;
-    tables.frame += 1;
     if tables.wants != Some(wants) {
         tables.wants = Some(wants);
         let [cloud_noise, sky] = wants.identities();
         tables.cloud_noise.want(cloud_noise, &mut jobs);
         tables.sky.want(sky, &mut jobs);
     }
-    let frame = tables.frame;
     let (made, failures) = (&mut tables.made, &mut tables.failures);
-    tables
-        .cloud_noise
-        .update((&mut jobs, &records), (frame, &mut *made), &mut *failures);
-    tables
-        .sky
-        .update((&mut jobs, &records), (frame, &mut *made), &mut *failures);
+    tables.cloud_noise.update(&records, made, failures);
+    tables.sky.update(&records, made, failures);
 }
 
 pub(crate) fn table_stats(tables: Res<StaticTables>, mut stats: ResMut<StaticTablesView>) {

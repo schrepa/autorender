@@ -3,25 +3,31 @@ use bevy_ecs::system::SystemParamItem;
 use engine_core::{Detail, Explain, ExplainAsk, ExplainRecord, FrameTime};
 use engine_places::meshes::Instances;
 
-use crate::layouts::LOD_STATE;
+use crate::layouts::{LOD_LEVELS, LodFade};
 use crate::presentation::PresentationTotals;
 use crate::settings::{Impostors, OcclusionCulling, SubpixelCulling};
 
-const IMPOSTOR_LEVEL: u32 = 3;
-
 type Drawn<'w> = (Res<'w, Instances>, Res<'w, PresentationTotals>, Res<'w, FrameTime>);
 
-fn drawn(
-    (instances, totals, time): &Drawn<'_>,
-    ask: &ExplainAsk<'_>,
-) -> Option<(String, u32, Option<u32>)> {
+struct Watched {
+    id: String,
+    slot: u32,
+    level: Option<u32>,
+    age: Option<u64>,
+}
+
+fn drawn((instances, totals, time): &Drawn<'_>, ask: &ExplainAsk<'_>) -> Option<Watched> {
     let ExplainAsk::Entity { id, entity } = ask else {
         return None;
     };
     let slot = instances.drawn(*entity)?;
-    let (seen, state) = totals.last()?.watched?;
-    (seen == slot && totals.age(time.frame).is_some_and(|age| age <= 1))
-        .then(|| ((*id).to_owned(), slot, (state & LOD_STATE != 0).then_some(state & 3)))
+    let (seen, word) = totals.last()?.watched?;
+    (seen == slot).then(|| Watched {
+        id: (*id).to_owned(),
+        slot,
+        level: LodFade::drawn_level(word),
+        age: totals.age(time.frame),
+    })
 }
 
 pub(crate) struct Culled;
@@ -37,14 +43,15 @@ impl Explain for Culled {
         (read, occlusion, subpixel): SystemParamItem<'_, '_, Self::Params>,
         ask: &ExplainAsk<'_>,
     ) -> Option<ExplainRecord> {
-        let (id, slot, level) = drawn(&read, ask)?;
-        if level.is_some() {
+        let watched = drawn(&read, ask)?;
+        if watched.level.is_some() {
             return None;
         }
         Some(
             ExplainRecord::new("culled")
-                .with("entity", &id)
-                .with("slot", slot)
+                .with("entity", &watched.id)
+                .with("slot", watched.slot)
+                .with("read_back_age", watched.age)
                 .with("occlusion_culling", occlusion.enabled)
                 .with("subpixel_culling", subpixel.enabled),
         )
@@ -60,13 +67,14 @@ impl Explain for Level {
         (read, detail, impostors): SystemParamItem<'_, '_, Self::Params>,
         ask: &ExplainAsk<'_>,
     ) -> Option<ExplainRecord> {
-        let (id, _, level) = drawn(&read, ask)?;
-        let level = level?;
+        let watched = drawn(&read, ask)?;
+        let level = watched.level?;
         Some(
             ExplainRecord::new("level")
-                .with("entity", &id)
+                .with("entity", &watched.id)
                 .with("level", level)
-                .with("impostor", level == IMPOSTOR_LEVEL)
+                .with("read_back_age", watched.age)
+                .with("impostor", level == LOD_LEVELS)
                 .with("pixel_error", detail.pixel_error)
                 .with("impostor_pixels", impostors.pixels),
         )

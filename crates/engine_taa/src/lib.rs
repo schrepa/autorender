@@ -40,7 +40,6 @@ impl Brick for TaaBrick {
             .join::<ViewOutputs>(previous::MOTION, Some(shaders::taa::motion::MODULE))
             .join::<ViewOutputs>(temporal::HISTORY, Some(shaders::taa::history::MODULE))
             .systems(Schedule::ViewSync, temporal::publish)
-            .off(previous::forget)
             .resolve_pass(temporal::PASS)
             .part::<lit::LitGpu>();
     }

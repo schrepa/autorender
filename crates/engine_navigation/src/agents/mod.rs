@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    CookMode, Error, ErrorCode, Filled, FixedTime, GAMEPLAY_JOBS, IDLE_JOBS, JobFailures, JobKind,
-    JobRef, Jobs, Parent, Records, Ticket, Transform, fields, job_output, job_priority, settings,
-    stats,
+    CookMode, Error, ErrorCode, Filled, FixedTime, GAMEPLAY_JOBS, IDLE_JOBS, Interest, JobFailures,
+    JobKind, JobRef, Jobs, Parent, RecordKey, Records, Request, Requests, Transform, fields,
+    job_output, job_priority, settings, stats,
 };
 use engine_math::{atan2, clamp, max};
 use engine_places_simulation::ground::{
@@ -29,7 +29,7 @@ use crate::jobs::{
 use crate::{Gait, NavOptions, NavPath, TilePortals, WalkData, WalkGround, WalkSearch, Want};
 use cook::CookGraph;
 pub use obstacles::ObstacleColliders;
-use records::{Resolved, WalkRecords};
+use records::{Interests, Resolved, WalkRecords};
 
 settings! {
     #[section("navigation")]
@@ -39,6 +39,9 @@ settings! {
         pub enabled: bool = true => any,
         pub samples_per_tick: u32 = 32_768 => at_least(1024),
         pub obstacle_layers: u32 = 0 => any,
+        pub grounds_per_tick: u32 = 1 => at_least(1),
+        pub kept_grounds: u32 = 64 => any,
+        pub kept_portals: u32 = 8192 => any,
     }
 }
 
@@ -121,6 +124,7 @@ pub struct NavAgents {
     cook: Vec<CookGraph>,
     turn: usize,
     tick: u64,
+    elapsed: f64,
     failures: JobFailures,
 }
 
@@ -142,6 +146,7 @@ struct Running {
     walked: Walked,
     search: WalkSearch,
     held: Held,
+    interests: Interests,
     asked_ahead: usize,
 }
 
@@ -180,7 +185,6 @@ impl Search {
         (ground, colliders): (&Ground, &ObstacleColliders),
         (records, jobs): (&mut WalkRecords, &mut Jobs),
         budget: &mut u64,
-        tick: u64,
     ) -> Option<Found> {
         if let Self::Starting { from, to, options } = self {
             let walked = match ground_source(ground, *from, *to) {
@@ -201,6 +205,7 @@ impl Search {
                 walked,
                 search,
                 held: Held::default(),
+                interests: Interests::default(),
                 asked_ahead: 0,
             }));
         }
@@ -209,19 +214,26 @@ impl Search {
         };
         let origin = running.walked.source.origin;
         loop {
-            records.ask_ahead(running, jobs, tick);
+            records.ask_ahead(running, jobs);
             if let Some(found) = running.search.step(budget, &running.held) {
                 return Some((origin, found));
             }
-            records.ask_ahead(running, jobs, tick);
+            records.ask_ahead(running, jobs);
             if running.search.wants().is_empty() {
                 return None;
             }
-            match records.resolve(running, jobs, tick) {
+            match records.resolve(running, jobs) {
                 Resolved::Progress => {}
                 Resolved::Waiting => return None,
                 Resolved::Failed => return Some((origin, None)),
             }
+        }
+    }
+
+    fn interests(self) -> Interests {
+        match self {
+            Self::Starting { .. } => Interests::default(),
+            Self::Running(running) => running.interests,
         }
     }
 }
@@ -247,13 +259,16 @@ impl NavAgents {
 
     pub fn query(
         &mut self,
-        (ground, colliders): (&Ground, &ObstacleColliders),
+        (settings, ground, colliders): (&Navigation, &Ground, &ObstacleColliders),
         (records, jobs): (&Records, &mut Jobs),
         ends: (Vec2, Vec2),
         options: &NavOptions,
     ) -> NavQuery {
-        self.records
-            .take(records, jobs, self.tick, &mut self.failures);
+        self.records.settle(
+            (records, self.elapsed, self.tick),
+            settings,
+            &mut self.failures,
+        );
         let mut asked = self
             .query
             .take()
@@ -264,16 +279,14 @@ impl NavAgents {
                 search: Search::new(ends.0, ends.1, *options),
             });
         let mut unlimited = u64::MAX;
-        let found = asked.search.advance(
-            (ground, colliders),
-            (&mut self.records, jobs),
-            &mut unlimited,
-            self.tick,
-        );
+        let found = asked
+            .search
+            .advance((ground, colliders), (&mut self.records, jobs), &mut unlimited);
         let Some((origin, found)) = found else {
             self.query = Some(asked);
             return NavQuery::Searching;
         };
+        self.records.keep(asked.search.interests(), settings);
         match found {
             Some(mut path) => {
                 for point in &mut path.points {
@@ -283,17 +296,6 @@ impl NavAgents {
             }
             None => NavQuery::Unreachable,
         }
-    }
-
-    fn stop(&mut self, jobs: &mut Jobs) {
-        for graph in std::mem::take(&mut self.cook) {
-            for ticket in graph.flight {
-                jobs.cancel(ticket);
-            }
-        }
-        self.searches.clear();
-        self.query = None;
-        self.records.clear(jobs);
     }
 }
 
@@ -378,23 +380,6 @@ pub(crate) fn walk_agents(
     );
 }
 
-pub(crate) fn stop_walks(
-    time: Res<FixedTime>,
-    mut navigation: ResMut<NavAgents>,
-    mut jobs: Jobs,
-    mut stats: ResMut<NavStats>,
-    mut walks: Query<&mut NavWalk>,
-) {
-    navigation.tick = time.tick;
-    navigation.stop(&mut jobs);
-    *stats = NavStats::default();
-    for mut walk in &mut walks {
-        if walk.status != NavStatus::Idle {
-            *walk = NavWalk::default();
-        }
-    }
-}
-
 fn walk(
     (settings, time, cooking): (&Navigation, FixedTime, bool),
     ((ground, colliders), records, (jobs, cooks)): (
@@ -408,9 +393,12 @@ fn walk(
 ) -> NavStats {
     let mut stats = NavStats::default();
     navigation.tick = time.tick;
-    navigation
-        .records
-        .take(records, jobs, navigation.tick, &mut navigation.failures);
+    navigation.elapsed = time.elapsed_seconds;
+    navigation.records.settle(
+        (records, navigation.elapsed, navigation.tick),
+        settings,
+        &mut navigation.failures,
+    );
     for (entity, agent, mut walk, transform) in agents.iter_mut() {
         if let Err(invalid) = SceneNavAgent::from(*agent).validate() {
             let field = invalid.field.into_owned();
@@ -506,7 +494,6 @@ fn search(
             (ground, colliders),
             (&mut navigation.records, &mut *jobs),
             &mut budget,
-            navigation.tick,
         ) {
             finished.push((index, *entity, found));
         }
@@ -520,7 +507,8 @@ fn search(
         .count() as u32;
     finished.sort_by_key(|&(index, ..)| std::cmp::Reverse(index));
     for (index, entity, (origin, found)) in finished {
-        navigation.searches.swap_remove(index);
+        let (_, search) = navigation.searches.swap_remove(index);
+        navigation.records.keep(search.interests(), settings);
         let Ok((_, _, mut walk, _)) = agents.get_mut(entity) else {
             continue;
         };

@@ -1,14 +1,13 @@
 use bevy_ecs::prelude::*;
 use engine_core::math::{GRAVITY, clamp, max};
-use engine_core::{RecordKey, Spawner, Transform};
+use engine_core::{Spawner, Transform};
 use engine_heightfield::{Fall, TileKey};
 use engine_places_rendering::particles::{
     ParticleBlend, ParticleEmitter, ParticleLook, ParticleShape,
 };
 use glam::{Vec2, Vec3};
 
-use crate::state::{WaterState, WaterTerrain};
-use crate::{SteadyCell, SteadyWater, WaterBrick, WaterStats};
+use crate::{SteadyCell, SteadyWater, WaterBrick};
 
 const SPRAY_ENERGY: f32 = 200.0;
 const SPRAY_LIP: f32 = 0.2;
@@ -22,12 +21,6 @@ const SPRAY_RISE: f32 = 1.5;
 const MIST_POWER: f32 = 4.0e4;
 const MIST_WATTS: f32 = 2.0e4;
 const MIST_RATE: [f32; 2] = [1.0, 6.0];
-
-pub(crate) struct Spawned {
-    origin: Vec3,
-    record: RecordKey,
-    pub(crate) entities: Vec<Entity>,
-}
 
 struct Breaking {
     strength: f32,
@@ -199,80 +192,17 @@ fn seed_of(key: TileKey, number: usize) -> u32 {
     tile.wrapping_add((number as u32).wrapping_mul(0xc2b2_ae35))
 }
 
-fn follow_tile(
-    terrain: &mut WaterTerrain,
-    key: TileKey,
+pub(crate) fn spawn_tile(
+    water: &SteadyWater,
+    falls: &[Fall],
+    (key, origin): (TileKey, Vec3),
     spawner: &mut Spawner<WaterBrick>,
-) -> bool {
-    let origin = terrain.origin;
-    let wanted = terrain.settled.held.get(&key);
-    let keeps = terrain.white.get(&key).is_some_and(|spawned| {
-        spawned.origin == origin && wanted.is_some_and(|(_, made)| made.record == spawned.record)
-    });
-    if keeps {
-        return false;
-    }
-    let left = terrain.white.remove(&key);
-    let changed = left.is_some() || wanted.is_some();
-    for entity in left.into_iter().flat_map(|spawned| spawned.entities) {
-        spawner.despawn(entity);
-    }
-    if let Some((water, made)) = wanted {
-        let mut entities = Vec::new();
-        for (number, site) in sites(water, &terrain.falls).iter().enumerate() {
-            for (transform, emitter) in emitters(site, origin, seed_of(key, number)) {
-                entities.push(spawner.spawn((transform, emitter)));
-            }
-        }
-        terrain.white.insert(
-            key,
-            Spawned {
-                origin,
-                record: made.record,
-                entities,
-            },
-        );
-    }
-    changed
-}
-
-pub(crate) fn sync(
-    mut state: ResMut<WaterState>,
-    mut stats: ResMut<WaterStats>,
-    mut spawner: Spawner<WaterBrick>,
-) {
-    let state = state.bypass_change_detection();
-    let mut changed = state.dropped;
-    for terrain in &mut state.terrains {
-        let keys: Vec<TileKey> = if terrain.touched_all {
-            terrain
-                .white
-                .keys()
-                .chain(terrain.settled.held.keys())
-                .copied()
-                .collect()
-        } else {
-            terrain
-                .touched
-                .iter()
-                .copied()
-                .filter(|key| key.level == 0)
-                .collect()
-        };
-        for key in keys {
-            changed |= follow_tile(terrain, key, &mut spawner);
+) -> Vec<Entity> {
+    let mut entities = Vec::new();
+    for (number, site) in sites(water, falls).iter().enumerate() {
+        for (transform, emitter) in emitters(site, origin, seed_of(key, number)) {
+            entities.push(spawner.spawn((transform, emitter)));
         }
     }
-    if !changed {
-        return;
-    }
-    let count: u32 = state
-        .terrains
-        .iter()
-        .flat_map(|terrain| terrain.white.values())
-        .map(|spawned| spawned.entities.len() as u32)
-        .sum();
-    if stats.white_water != count {
-        stats.white_water = count;
-    }
+    entities
 }

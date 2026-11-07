@@ -9,9 +9,11 @@ use engine_places_world::ground::Placed;
 use glam::Vec3;
 
 use crate::groups::Groups;
+use engine_core::GpuBits;
+
 use crate::layouts::{
-    DEAD, GroundData, NEAR_LEVEL_MASK, NEAR_LEVEL_SHIFT, PlacedRecord, PoseData, STATE_ADOPT,
-    STATE_FRESH, SlotColor,
+    DEAD, GroundData, NO_LAYER, PlacedRecord, PoseData, ScatterFade, ScatterTerrain, SlotColor,
+    TERRAIN_INDEX,
 };
 
 pub(crate) type TileObjects = (
@@ -53,23 +55,18 @@ pub(crate) struct ScatterPool {
     tiles: HashMap<PoolKey, Pooled>,
     free: Vec<Range<u32>>,
     moved: Vec<(Vec3, Vec3)>,
-    refilling: bool,
 }
 
 impl ScatterPool {
     pub(crate) fn clear(&mut self, groups: usize) {
         *self = Self {
             counts: vec![0; groups],
-            refilling: true,
             ..Self::default()
         };
     }
 
     pub(crate) fn settle(&mut self) {
-        if !self.writes.is_empty() {
-            self.writes.clear();
-            self.refilling = false;
-        }
+        self.writes.clear();
     }
 
     pub(crate) fn tiles(&self) -> Vec<(PoolKey, &Pooled)> {
@@ -115,17 +112,14 @@ impl ScatterPool {
         (id, key): PoolKey,
         (placed, stamp, origin): (Arc<[Placed]>, Stamp, Vec3),
         mut objects: TileObjects,
+        refill: bool,
     ) {
         let count = objects.2.len() as u32;
         if count == 0 {
             return;
         }
         let slots = self.allocate(count);
-        let state = if self.refilling {
-            STATE_ADOPT
-        } else {
-            STATE_FRESH
-        };
+        let state = ScatterFade::word(refill);
         let mut groups: Vec<(u32, u32)> = Vec::new();
         let mut far = 0;
         for record in &mut objects.2 {
@@ -252,7 +246,7 @@ impl ScatterPool {
 
 fn adopted(mut objects: TileObjects) -> TileObjects {
     for record in &mut objects.2 {
-        record.state = STATE_ADOPT;
+        record.state = ScatterFade::word(true);
     }
     objects
 }
@@ -269,7 +263,7 @@ fn bounds(records: &[PlacedRecord]) -> Option<(Vec3, Vec3)> {
 }
 
 fn stands_far(record: &PlacedRecord) -> bool {
-    (record.terrain >> NEAR_LEVEL_SHIFT) & NEAR_LEVEL_MASK != 0
+    ScatterTerrain::unpack(record.terrain).is_some_and(|terrain| terrain.near != 0)
 }
 
 pub(crate) fn dead() -> PlacedRecord {
@@ -278,9 +272,16 @@ pub(crate) fn dead() -> PlacedRecord {
         radius: 0.0,
         group: DEAD,
         scale: 0.0,
-        terrain: u32::MAX,
+        terrain: ScatterTerrain {
+            index: TERRAIN_INDEX,
+            layer: NO_LAYER,
+            near: 0,
+            rank: 0,
+            hidden: true,
+        }
+        .pack(),
         sink: 0.0,
-        state: STATE_ADOPT,
+        state: ScatterFade::word(true),
         pad: [0; 3],
     }
 }

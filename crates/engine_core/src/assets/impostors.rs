@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use bevy_ecs::change_detection::Mut;
 use bevy_ecs::component::Component;
@@ -15,8 +15,9 @@ use glam::Vec3;
 use super::AssetResidency;
 use crate::collections::{HashMap, HashSet};
 use crate::{
-    CookMode, Detail, Error, ErrorCode, IDLE_JOBS, Job, JobCx, JobExchange, JobId, JobKind, JobRef,
-    Jobs, Records, Slot, Source, Ticket, VIEW_JOBS, WorkClock, content_hash, job_priority,
+    Census, CookMode, Detail, Error, ErrorCode, Feed, FeedSettings, FrameBudget, GpuBits,
+    IDLE_JOBS, Interest, Job, JobCx, JobExchange, JobId, JobKind, JobRef, Jobs, RecordKey,
+    Records, Request, Requests, Slot, Source, VIEW_JOBS, WorkClock, content_hash, job_priority,
 };
 
 pub const IMPOSTOR_MIN_TRIANGLES: usize = 64;
@@ -27,13 +28,17 @@ const BAKE_DELAY_MS: f64 = 1000.0;
 
 const BLOCK_ROWS: u32 = 4;
 
-pub mod impostor_flags {
-    crate::gpu_consts! {
-        pub const IMPOSTOR_HEMISPHERE: u32 = 0x10000;
-        pub const IMPOSTOR_MASKED: u32 = 0x20000;
-        pub const IMPOSTOR_FRAMES_SHIFT: u32 = 19;
-        pub const IMPOSTOR_FOLIAGE: u32 = 0x1000000;
-    }
+#[crate::gpu_bits(crate = crate)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImpostorFlags {
+    #[bits(16)]
+    pub texels: u32,
+    pub hemisphere: bool,
+    pub masked: bool,
+    #[bits(5, at = 19)]
+    pub frames: u32,
+    #[bits(1, at = 24)]
+    pub foliage: bool,
 }
 
 pub mod impostor_atlas {
@@ -43,10 +48,6 @@ pub mod impostor_atlas {
 }
 
 pub use impostor_atlas::IMPOSTOR_KINDS;
-
-use impostor_flags::{
-    IMPOSTOR_FOLIAGE, IMPOSTOR_FRAMES_SHIFT, IMPOSTOR_HEMISPHERE, IMPOSTOR_MASKED,
-};
 
 crate::gpu_struct! {
     pub struct ImpostorRecord {
@@ -74,14 +75,21 @@ impl ImpostorRecord {
             extent: half.to_array(),
             layer,
             emissive,
-            flags: shape.flags()
-                | if masked { IMPOSTOR_MASKED } else { 0 }
-                | if foliage { IMPOSTOR_FOLIAGE } else { 0 },
+            flags: ImpostorFlags {
+                masked,
+                foliage,
+                ..shape.flags()
+            }
+            .pack(),
         }
     }
 
+    fn texels(&self) -> u32 {
+        ImpostorFlags::unpack(self.flags).map_or(0, |flags| flags.texels)
+    }
+
     pub fn error(&self) -> f32 {
-        let texels = self.flags & (IMPOSTOR_HEMISPHERE - 1);
+        let texels = self.texels();
         if texels == 0 {
             return 0.0;
         }
@@ -89,15 +97,13 @@ impl ImpostorRecord {
     }
 
     pub fn framed(&self) -> bool {
-        self.flags & (IMPOSTOR_HEMISPHERE - 1) != 0 && self.sphere[3] > 0.0
+        self.texels() != 0 && self.sphere[3] > 0.0
     }
 }
 
 const RGBA8_SIZE: u32 = 512;
 
 const ATLAS_FRAMES: u32 = 12;
-
-const LOAD_BUDGET: usize = 16 << 20;
 
 const FIRST_BYTES: u64 = 16 << 20;
 
@@ -135,14 +141,14 @@ impl AtlasShape {
         self.texels.trailing_zeros()
     }
 
-    fn flags(self) -> u32 {
-        self.texels
-            | if self.hemisphere {
-                IMPOSTOR_HEMISPHERE
-            } else {
-                0
-            }
-            | (self.frames << IMPOSTOR_FRAMES_SHIFT)
+    fn flags(self) -> ImpostorFlags {
+        ImpostorFlags {
+            texels: self.texels,
+            hemisphere: self.hemisphere,
+            masked: false,
+            frames: self.frames,
+            foliage: false,
+        }
     }
 
     fn held(self, format: AtlasFormat) -> Self {
@@ -606,9 +612,9 @@ struct Baked {
 }
 
 struct Supply {
-    identity: ImpostorIdentity,
     material: Option<Material>,
-    ticket: Option<Ticket>,
+    interest: Interest<ImpostorIdentity>,
+    fetch: Option<Interest<RecordKey>>,
     since: Option<f64>,
 }
 
@@ -648,7 +654,7 @@ pub enum AtlasWork {
     },
     Load {
         layer: u32,
-        bytes: Arc<[u8]>,
+        bytes: Weak<[u8]>,
     },
     Bake {
         identity: ImpostorIdentity,
@@ -670,27 +676,20 @@ struct Book {
     baked: HashMap<ImpostorKey, Baked>,
     supplies: HashMap<ImpostorKey, Supply>,
     supplied: HashSet<ImpostorKey>,
-    answers: HashMap<ImpostorIdentity, Option<Arc<[u8]>>>,
+    answers: Requests<ImpostorIdentity, Arc<[u8]>>,
     baking: BTreeSet<ImpostorIdentity>,
-    loaded: usize,
-    work: Vec<(u64, AtlasWork)>,
 }
 
 struct Supplying<'a, 'w, 's> {
     device: AtlasDevice,
     jobs: &'a mut Jobs<'w, 's>,
-    next: &'a mut u64,
+    log: &'a mut Feed<AtlasWork>,
+    budget: &'a mut FrameBudget,
     cooking: bool,
     now: Option<f64>,
 }
 
 impl Supplying<'_, '_, '_> {
-    fn cancel(&mut self, supply: Supply) {
-        if let Some(ticket) = supply.ticket {
-            self.jobs.cancel(ticket);
-        }
-    }
-
     fn lasted(&self, since: Option<f64>) -> bool {
         match (since, self.now) {
             (Some(since), Some(now)) => now - since >= BAKE_DELAY_MS,
@@ -710,22 +709,13 @@ impl Book {
             baked: HashMap::default(),
             supplies: HashMap::default(),
             supplied: HashSet::default(),
-            answers: HashMap::default(),
+            answers: Requests::default(),
             baking: BTreeSet::new(),
-            loaded: 0,
-            work: Vec::new(),
         }
     }
 
     fn push(&mut self, cx: &mut Supplying<'_, '_, '_>, work: AtlasWork) {
-        *cx.next += 1;
-        self.work.push((*cx.next, work));
-    }
-
-    fn drop_supplies(&mut self, cx: &mut Supplying<'_, '_, '_>) {
-        for (_, supply) in self.supplies.drain() {
-            cx.cancel(supply);
-        }
+        cx.log.push(work);
     }
 
     fn fit(&mut self, cx: &mut Supplying<'_, '_, '_>, shape: AtlasShape) {
@@ -733,15 +723,18 @@ impl Book {
         if shape == self.shape {
             return;
         }
+        self.restart(cx, shape);
+    }
+
+    fn restart(&mut self, cx: &mut Supplying<'_, '_, '_>, shape: AtlasShape) {
         self.shape = shape;
         self.capacity = 0;
         self.targets = false;
         self.drawn = false;
         self.layers = Layers::default();
         self.baked.clear();
-        self.drop_supplies(cx);
+        self.supplies.clear();
         self.supplied.clear();
-        self.answers.clear();
         self.baking.clear();
         self.push(cx, AtlasWork::Reset { shape });
     }
@@ -761,9 +754,8 @@ impl Book {
         self.drawn = false;
         self.layers = Layers::default();
         self.baked.clear();
-        self.drop_supplies(cx);
+        self.supplies.clear();
         self.supplied.clear();
-        self.answers.clear();
         self.baking.clear();
         self.push(cx, AtlasWork::Release);
     }
@@ -792,22 +784,10 @@ impl Book {
             .copied()
             .collect();
         for key in dropped {
-            if let Some(supply) = self.supplies.remove(&key) {
-                cx.cancel(supply);
-            }
+            self.supplies.remove(&key);
         }
         let kept = self.supplies.len();
-        let unsupplied: Vec<ImpostorKey> = self
-            .supplies
-            .keys()
-            .filter(|&key| !supplied.contains(key))
-            .copied()
-            .collect();
-        for key in unsupplied {
-            if let Some(supply) = self.supplies.remove(&key) {
-                cx.cancel(supply);
-            }
-        }
+        self.supplies.retain(|key, _| supplied.contains(key));
         if cx.cooking && self.supplies.len() < kept {
             let record = serde_json::json!({
                 "event": "impostor_supplies_dropped",
@@ -816,9 +796,6 @@ impl Book {
             });
             eprintln!("{record}");
         }
-        let supplies = &self.supplies;
-        self.answers
-            .retain(|identity, _| supplies.values().any(|supply| supply.identity == *identity));
     }
 
     fn enforce_budget(&mut self, budget: Option<u32>, cooking: bool) {
@@ -848,59 +825,50 @@ impl Book {
         self.supplied.insert(key);
         let budget = budget.filter(|_| !cx.cooking);
         if self.layers.live() >= cx.device.layer_limit(budget) {
-            if let Some(supply) = self.supplies.remove(&key) {
-                cx.cancel(supply);
-            }
+            self.supplies.remove(&key);
             return Supplied::Refused;
         }
         let asked = self
             .supplies
             .get(&key)
             .filter(|supply| supply.material.as_ref() == bake.material.as_ref())
-            .map(|supply| (supply.identity, supply.since));
+            .map(|supply| (*supply.interest.key(), supply.since));
         let Some((identity, since)) = asked else {
             let identity = identity(self.shape.facing(key.2), cx.device.format, bake.content);
-            let ticket = cx
+            let fetch = cx
                 .jobs
                 .fetch(&IMPOSTOR, &identity, job_priority(VIEW_JOBS, 0));
             let supply = Supply {
-                identity,
                 material: bake.material,
-                ticket: Some(ticket),
+                interest: self.answers.ask(identity),
+                fetch: Some(fetch),
                 since: cx.now,
             };
-            if let Some(replaced) = self.supplies.insert(key, supply) {
-                cx.cancel(replaced);
-            }
+            self.supplies.insert(key, supply);
             return Supplied::Coming;
         };
-        if self.loaded >= LOAD_BUDGET && self.answers.get(&identity).is_some_and(Option::is_some) {
-            return Supplied::Coming;
-        }
-        let Some(answer) = self.answers.remove(&identity) else {
-            return Supplied::Coming;
-        };
-        if answer.is_some()
-            && self
-                .supplies
-                .iter()
-                .any(|(other, supply)| *other != key && supply.identity == identity)
-        {
-            self.answers.insert(identity, answer.clone());
-        }
-        if let Some(bytes) = answer
-            && self.load(cx, key, bake, &bytes, budget)
-        {
-            if let Some(supply) = self.supplies.remove(&key) {
-                cx.cancel(supply);
+        match self.answers.get(&identity) {
+            Some(Request::Ready(bytes)) => {
+                if !cx.budget.spend("impostors", bytes.len() as u64) {
+                    return Supplied::Coming;
+                }
+                let bytes = Arc::clone(bytes);
+                if self.load(cx, key, bake, &bytes, budget) {
+                    self.supplies.remove(&key);
+                    return self.supplied(key, bake);
+                }
             }
-            return self.supplied(key, bake);
+            Some(Request::Failed(_)) => {
+                self.supplies.remove(&key);
+                return Supplied::Refused;
+            }
+            Some(Request::Missing) => {}
+            Some(Request::Asked(_)) | None => return Supplied::Coming,
         }
-        if self.baking.contains(&identity) {
-            return Supplied::Coming;
-        }
-        if self.baking.len() >= BAKES_IN_FLIGHT || !cx.lasted(since) {
-            self.answers.insert(identity, None);
+        if self.baking.contains(&identity)
+            || self.baking.len() >= BAKES_IN_FLIGHT
+            || !cx.lasted(since)
+        {
             return Supplied::Coming;
         }
         self.bake(cx, key, bake, identity);
@@ -956,10 +924,9 @@ impl Book {
             cx,
             AtlasWork::Load {
                 layer,
-                bytes: Arc::clone(bytes),
+                bytes: Arc::downgrade(bytes),
             },
         );
-        self.loaded += bytes.len();
         self.resident(key, bake, layer);
         true
     }
@@ -991,6 +958,7 @@ impl Book {
     ) {
         self.targets = true;
         self.baking.insert(identity);
+        self.answers.ask_again(&identity);
         self.push(
             cx,
             AtlasWork::Bake {
@@ -1010,32 +978,38 @@ impl Book {
         }
     }
 
-    fn poll(&mut self, cx: &mut Supplying<'_, '_, '_>, records: &Records) {
-        let mut answered = Vec::new();
-        for (key, supply) in &self.supplies {
-            let Some(ticket) = supply.ticket.as_ref() else {
+    fn poll(&mut self, records: &Records, now: f64) {
+        self.answers.settle(now);
+        let answers = &mut self.answers;
+        for supply in self.supplies.values_mut() {
+            let Some(fetch) = supply.fetch.as_ref() else {
                 continue;
             };
-            let Some(found) = records.get(ticket) else {
+            let Some(found) = records.get(fetch) else {
                 continue;
             };
-            answered.push((*key, supply.identity, found.ok()));
-        }
-        for (key, identity, bytes) in answered {
-            if let Some(ticket) = self
-                .supplies
-                .get_mut(&key)
-                .and_then(|supply| supply.ticket.take())
-            {
-                cx.jobs.cancel(ticket);
-            }
-            self.answers.insert(identity, bytes);
+            supply.fetch = None;
+            let identity = *supply.interest.key();
+            let Some(ticket) = answers.ticket(&identity) else {
+                continue;
+            };
+            match found {
+                Ok(bytes) => answers.ready(&identity, ticket, bytes),
+                Err(_) => answers.miss(&identity, ticket),
+            };
         }
     }
 
-    fn answer(&mut self, identity: ImpostorIdentity, bytes: Option<Arc<[u8]>>) {
+    fn answer(&mut self, identity: ImpostorIdentity, made: Option<Result<Arc<[u8]>, Error>>) {
         self.baking.remove(&identity);
-        self.answers.insert(identity, bytes);
+        let Some(ticket) = self.answers.ticket(&identity) else {
+            return;
+        };
+        match made {
+            Some(Ok(bytes)) => self.answers.ready(&identity, ticket, bytes),
+            Some(Err(error)) => self.answers.fail(&identity, ticket, error),
+            None => self.answers.miss(&identity, ticket),
+        };
     }
 
     fn left(&self) -> u64 {
@@ -1044,15 +1018,29 @@ impl Book {
 }
 
 #[doc(hidden)]
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct ImpostorBooks {
     device: Option<AtlasDevice>,
     book: Option<Book>,
-    next: u64,
-    acked: u64,
+    log: Feed<AtlasWork>,
+    missed: bool,
     read: Vec<(ImpostorIdentity, Option<Vec<u8>>)>,
     assembling: Vec<(JobId, ImpostorIdentity)>,
-    made: Vec<(ImpostorIdentity, Option<Arc<[u8]>>)>,
+    made: Vec<(ImpostorIdentity, Option<Result<Arc<[u8]>, Error>>)>,
+}
+
+impl Default for ImpostorBooks {
+    fn default() -> Self {
+        Self {
+            device: None,
+            book: None,
+            log: Feed::new(FeedSettings::default().impostor_work as usize),
+            missed: false,
+            read: Vec::new(),
+            assembling: Vec::new(),
+            made: Vec::new(),
+        }
+    }
 }
 
 impl ImpostorBooks {
@@ -1086,7 +1074,11 @@ impl ImpostorBooks {
             let Some(output) = exchange.take(job) else {
                 return true;
             };
-            made.push((identity, output.ok()));
+            let output = output.map_err(|message| {
+                Error::new(ErrorCode::InvalidRecord, "$.jobs.engine::impostor_assembly")
+                    .got(message)
+            });
+            made.push((identity, Some(output)));
             false
         });
     }
@@ -1101,10 +1093,14 @@ impl ImpostorBooks {
     }
 
     #[doc(hidden)]
-    pub fn work(&self) -> impl Iterator<Item = (u64, &AtlasWork)> + '_ {
+    pub fn log(&self) -> &Feed<AtlasWork> {
+        &self.log
+    }
+
+    pub fn census(&self) -> Census {
         self.book
-            .iter()
-            .flat_map(|book| book.work.iter().map(|(at, work)| (*at, work)))
+            .as_ref()
+            .map_or_else(Census::default, |book| book.answers.census())
     }
 
     #[doc(hidden)]
@@ -1116,21 +1112,26 @@ impl ImpostorBooks {
 #[doc(hidden)]
 pub fn deliver_impostors(
     world: &mut World,
-    done: u64,
+    missed: bool,
     made: Vec<(ImpostorIdentity, Option<Vec<u8>>)>,
 ) {
     if let Some(mut books) = world.get_resource_mut::<ImpostorBooks>() {
-        books.acked = books.acked.max(done);
+        books.missed |= missed;
         books.read.extend(made);
     }
 }
 
 pub(super) fn configure(world: &mut World, atlas: AtlasDevice) {
-    let (next, assembling) = world
+    let (log, assembling) = world
         .get_resource_mut::<ImpostorBooks>()
-        .map_or((0, Vec::new()), |mut books| {
-            (books.next, std::mem::take(&mut books.assembling))
-        });
+        .map_or_else(
+            || (ImpostorBooks::default().log, Vec::new()),
+            |mut books| {
+                let mut log = books.log.clone();
+                log.replace();
+                (log, std::mem::take(&mut books.assembling))
+            },
+        );
     if let Some(mut exchange) = world.get_resource_mut::<JobExchange>() {
         for (job, _) in assembling {
             exchange.cancel(job);
@@ -1138,8 +1139,7 @@ pub(super) fn configure(world: &mut World, atlas: AtlasDevice) {
     }
     world.insert_resource(ImpostorBooks {
         device: Some(atlas),
-        next,
-        acked: next,
+        log,
         ..ImpostorBooks::default()
     });
 }
@@ -1160,6 +1160,7 @@ struct Frame {
     detail: bool,
     cooking: bool,
     now: Option<f64>,
+    seconds: f64,
 }
 
 type Sources<'a> = (&'a AssetLibrary, &'a AssetResidency);
@@ -1171,10 +1172,15 @@ pub(super) fn settle_impostors(world: &mut World) {
     {
         return;
     }
+    let size = world
+        .get_resource::<FeedSettings>()
+        .cloned()
+        .unwrap_or_default()
+        .impostor_work;
     world.resource_scope(|world, mut exchange: Mut<JobExchange>| {
-        world
-            .resource_mut::<ImpostorBooks>()
-            .assemble(&mut exchange);
+        let mut books = world.resource_mut::<ImpostorBooks>();
+        books.log.resize(size as usize);
+        books.assemble(&mut exchange);
     });
     let cooking = world.resource::<CookMode>().cooking;
     let frame = Frame {
@@ -1185,6 +1191,7 @@ pub(super) fn settle_impostors(world: &mut World) {
         detail: world.resource::<Detail>().enabled,
         cooking,
         now: world.resource::<WorkClock>().now().filter(|_| !cooking),
+        seconds: world.resource::<crate::FrameTime>().elapsed_seconds,
     };
     if !world.contains_resource::<ImpostorInputs>() {
         let state = SystemState::<Inputs>::new(world);
@@ -1192,16 +1199,19 @@ pub(super) fn settle_impostors(world: &mut World) {
     }
     let written = world.resource_scope(|world, mut inputs: Mut<ImpostorInputs>| {
         let written = world.resource_scope(|world, mut books: Mut<ImpostorBooks>| {
-            let Ok((mut jobs, records, library, residency, asks)) = inputs.0.get_mut(world) else {
-                return Default::default();
-            };
-            settle_books(
-                &mut books,
-                &frame,
-                (&mut jobs, &*records),
-                (&*library, &*residency),
-                &asks,
-            )
+            world.resource_scope(|world, mut budget: Mut<FrameBudget>| {
+                let Ok((mut jobs, records, library, residency, asks)) = inputs.0.get_mut(world)
+                else {
+                    return Default::default();
+                };
+                settle_books(
+                    &mut books,
+                    &frame,
+                    (&mut jobs, &*records, &mut budget),
+                    (&*library, &*residency),
+                    &asks,
+                )
+            })
         });
         inputs.0.apply(world);
         written
@@ -1225,42 +1235,43 @@ pub(super) fn settle_impostors(world: &mut World) {
 fn settle_books(
     books: &mut ImpostorBooks,
     frame: &Frame,
-    (jobs, records): (&mut Jobs<'_, '_>, &Records),
+    (jobs, records, budget): (&mut Jobs<'_, '_>, &Records, &mut FrameBudget),
     sources: Sources<'_>,
     asks: &Query<'_, '_, (Entity, &'static ImpostorAsks)>,
 ) -> Vec<(Entity, ImpostorRecords)> {
     let Some(device) = books.device else {
         return Vec::new();
     };
-    let acked = books.acked;
     let made = std::mem::take(&mut books.made);
+    let missed = std::mem::take(&mut books.missed);
     let ImpostorBooks {
-        book: held, next, ..
+        book: held, log, ..
     } = books;
     let mut cx = Supplying {
         device,
         jobs,
-        next,
+        log,
+        budget,
         cooking: frame.cooking,
         now: frame.now,
     };
-    if let Some(book) = held.as_mut() {
-        book.work.retain(|(at, _)| *at > acked);
+    if missed && let Some(book) = held.as_mut() {
+        let shape = book.shape;
+        book.restart(&mut cx, shape);
     }
-    for (identity, bytes) in made {
-        if let Some(bytes) = &bytes {
-            let ticket = cx.jobs.keep(&IMPOSTOR, &identity, bytes.to_vec());
-            cx.jobs.cancel(ticket);
+    for (identity, made) in made {
+        if let Some(Ok(bytes)) = &made {
+            cx.jobs.keep(&IMPOSTOR, &identity, bytes.to_vec());
         }
         if let Some(book) = held.as_mut() {
-            book.answer(identity, bytes);
+            book.answer(identity, made);
         }
     }
     let asked: Vec<(Entity, &ImpostorAsks)> = asks.iter().collect();
     if asked.is_empty() {
         if let Some(book) = held.as_mut() {
-            book.poll(&mut cx, records);
-            retain_book(book, &mut cx, sources);
+            book.supplies.clear();
+            book.poll(records, frame.seconds);
         }
         return Vec::new();
     }
@@ -1270,8 +1281,7 @@ fn settle_books(
         let shape = book.shape;
         book.push(&mut cx, AtlasWork::Reset { shape });
     }
-    book.poll(&mut cx, records);
-    book.loaded = 0;
+    book.poll(records, frame.seconds);
     settle(book, &mut cx, frame, sources, &asked)
 }
 

@@ -27,25 +27,26 @@ impl Run {
         }
     }
 
-    pub(crate) fn copy(&mut self, pass: u32) {
+    pub(crate) fn copy(&mut self, pass: u32) -> bool {
         self.end_render();
-        let Some(at) = self.copies.iter().position(|(known, _)| *known == pass) else {
-            return;
+        let Some(at) = self.queued.copies.iter().position(|(known, _)| *known == pass) else {
+            return false;
         };
-        let (_, regions) = self.copies.swap_remove(at);
+        let (_, regions) = self.queued.copies.swap_remove(at);
         let Some(decl) = self.pass_decls.get(pass as usize).cloned() else {
-            return;
+            return false;
         };
         if decl.part != self.part {
             let error = fault(self.path("copy"), ErrorCode::PassMismatch);
             self.fault(error);
-            return;
+            return false;
         }
         let Work::Copy { from, to } = decl.work else {
-            return;
+            return false;
         };
         self.group(pass);
         self.record_copy(from, to, &regions);
+        true
     }
 
     pub(crate) fn copy_at_end(&mut self) {
@@ -62,7 +63,7 @@ impl Run {
             Copied::Texture(_) | Copied::Target(_) | Copied::Canvas => None,
         };
         let (from_buffer, to_buffer) = (buffer(from), buffer(to));
-        let Some(encoder) = self.encoder.as_mut() else {
+        let Some(encoder) = self.recording.encoder() else {
             return;
         };
         for region in regions {
@@ -116,7 +117,7 @@ impl Run {
         let made = made.clone();
         let current = self.pass;
         self.group(current);
-        if let Some(encoder) = self.encoder.as_mut() {
+        if let Some(encoder) = self.recording.encoder() {
             encoder.clear_buffer(&made, 0, None);
         }
     }
@@ -126,112 +127,38 @@ impl Run {
         let from = final_target(view);
         let source = self.targets.iter().find(|(known, _)| *known == from).map(|(_, made)| made.texture.clone());
         let target = self.targets.iter().find(|(known, _)| *known == Target::Copy(layer, view)).map(|(_, made)| made.texture.clone());
-        if let (Some(source), Some(target), Some(encoder)) = (source, target, self.encoder.as_mut()) {
+        if let (Some(source), Some(target), Some(encoder)) = (source, target, self.recording.encoder()) {
             encoder.copy_texture_to_texture(source.as_image_copy(), target.as_image_copy(), source.size());
         }
     }
 
     pub(crate) fn record_readbacks(&mut self) {
         self.leave();
-        let asked = std::mem::take(&mut self.asked);
+        let asked = std::mem::take(&mut self.queued.asked);
         let (slots, most) = (self.readback_slots, self.readback_slot_bytes);
+        let written = self.written();
+        let device = self.device.clone();
         for request in asked {
             let Some(Some(buffer)) = self.buffers.get(request.buffer as usize).map(|made| made.as_ref().map(|(buffer, _)| buffer.clone())) else {
                 continue;
             };
             let bytes = request.range.end.saturating_sub(request.range.start).next_multiple_of(4);
-            let ring = match self.rings.iter().position(|ring| ring.part == request.part && ring.tag == request.tag) {
-                Some(at) => at,
-                None => {
-                    self.rings.push(Ring { part: request.part, tag: request.tag, slots: Vec::new() });
-                    self.rings.len() - 1
-                }
-            };
             let over = most.is_some_and(|most| bytes > most);
-            let once = request.once || over;
-            let idle = |slot: &Slot| !slot.once && slot.state.load(Ordering::Acquire) == 0 && slot.bytes >= bytes;
-            if !self.rings[ring].slots.iter().any(idle) {
-                self.rings[ring].slots.retain(|slot| slot.once || slot.state.load(Ordering::Acquire) != 0 || slot.bytes >= bytes);
+            if over {
+                self.readbacks.overflowed();
             }
-            if once || (!self.rings[ring].slots.iter().any(idle) && self.rings[ring].kept() < slots) {
-                let staging = crate::memory::buffer(
-                    &self.device,
-                    &wgpu::BufferDescriptor {
-                        label: Some("engine/readback"),
-                        size: bytes.max(4),
-                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    },
-                );
-                self.rings[ring].slots.push(Slot {
-                    buffer: staging,
-                    bytes,
-                    state: Arc::new(AtomicU8::new(0)),
-                    asked: None,
-                    once,
-                });
-                if over {
-                    self.overflows += 1;
-                }
-            }
-            let found = if once {
-                self.rings[ring].slots.last_mut()
-            } else {
-                self.rings[ring].slots.iter_mut().find(|slot| idle(slot))
-            };
-            let Some(slot) = found else {
+            let keep = if request.once || over { Keep::Once } else { Keep::Ring(slots) };
+            let reader = Reader::Part { part: request.part, tag: request.tag };
+            let Some(encoder) = self.recording.encoder() else {
                 continue;
             };
-            let Some(encoder) = self.encoder.as_mut() else {
+            let asked = (reader, written, Some(request.deliver));
+            if !self.readbacks.record((&device, encoder), (&buffer, request.range.clone()), asked, keep) {
                 continue;
-            };
-            encoder.copy_buffer_to_buffer(&buffer, request.range.start, &slot.buffer, 0, bytes);
+            }
             if request.then == AfterRead::Clear {
                 encoder.clear_buffer(&buffer, request.range.start, Some(bytes));
             }
-            slot.state.store(1, Ordering::Release);
-            slot.asked = Some((self.asked_frame, request.deliver));
-        }
-    }
-
-    pub(crate) fn map_readbacks(&mut self) {
-        for ring in &self.rings {
-            for slot in &ring.slots {
-                if slot.state.load(Ordering::Acquire) != 1 {
-                    continue;
-                }
-                slot.state.store(2, Ordering::Release);
-                let mapped = Arc::clone(&slot.state);
-                slot.buffer.slice(..slot.bytes).map_async(
-                    wgpu::MapMode::Read,
-                    crate::platform::map_callback(move |result| {
-                        mapped.store(if result.is_ok() { 3 } else { 0 }, Ordering::Release);
-                    }),
-                );
-            }
-        }
-    }
-
-    pub(crate) fn deliver(&mut self, world: &mut World) {
-        for delivered in std::mem::take(&mut self.queued.delivered) {
-            (delivered.deliver)(world, delivered.frame, delivered.tag, &delivered.bytes);
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        crate::platform::run_arrived_maps();
-        for ring in &mut self.rings {
-            for slot in &mut ring.slots {
-                if slot.state.load(Ordering::Acquire) != 3 {
-                    continue;
-                }
-                if let Some((frame, deliver)) = slot.asked.take()
-                    && let Ok(view) = slot.buffer.slice(..slot.bytes).get_mapped_range()
-                {
-                    deliver(world, frame, ring.tag, &view);
-                }
-                slot.buffer.unmap();
-                slot.state.store(0, Ordering::Release);
-            }
-            ring.slots.retain(|slot| !(slot.once && slot.state.load(Ordering::Acquire) == 0 && slot.asked.is_none()));
         }
     }
 }

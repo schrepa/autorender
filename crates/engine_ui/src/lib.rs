@@ -15,9 +15,9 @@ use std::collections::BTreeSet;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetUses, Brick, Bricks, ComponentKind, CursorMode, Error, ErrorCode, MenuInput, PointerInput,
-    Runs, SceneComponents, SceneContext, SceneCx, Schedule, Screens, Smoke, Source, Spawner, View,
-    gpu_struct, settings, stats,
+    AssetUses, Brick, Bricks, ComponentKind, CursorMode, CursorRequests, Error, ErrorCode,
+    MenuInput, PointerInput, Runs, SceneComponents, SceneContext, SceneCx, Schedule, Screens, Smoke,
+    Source, Spawner, View, gpu_struct, settings, stats,
 };
 use engine_places_rendering::text::Text;
 use engine_places_rendering::ui::{UiEvents, UiLength, UiNode, UiRoot, UiValues};
@@ -76,7 +76,7 @@ type Reading<'w, 's> = (
 
 type Steering<'w> = (
     ResMut<'w, MenuInput>,
-    ResMut<'w, CursorMode>,
+    ResMut<'w, CursorRequests>,
     ResMut<'w, Screens>,
     ResMut<'w, UiEvents>,
 );
@@ -186,7 +186,7 @@ fn follow(
         events.clear();
     }
     let pointer = PointerInput {
-        inside: pointer.inside && *cursor != CursorMode::Captured,
+        inside: pointer.inside && cursor.applied() != CursorMode::Captured,
         ..*pointer
     };
     interact::run(&mut state, &pointer, &menu, &mut screens, &mut events);
@@ -203,12 +203,7 @@ fn follow(
     if wanted != state.wanting {
         state.wanting = wanted;
         menu.wanted = wanted;
-        if wanted {
-            state.held_cursor = Some(*cursor);
-            *cursor = CursorMode::Free;
-        } else if let Some(previous) = state.held_cursor.take() {
-            *cursor = previous;
-        }
+        state.cursor = wanted.then(|| cursor.ask("engine_ui", CursorMode::Free));
     }
     let over = interact::over(&state, &pointer);
     if events.pointer_over() != over {

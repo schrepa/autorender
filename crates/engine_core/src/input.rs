@@ -3,6 +3,8 @@ use std::collections::BTreeSet;
 use bevy_ecs::prelude::Resource;
 use glam::Vec2;
 
+use crate::{Interest, List, Requests, Ticket};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ActionId(u32);
 
@@ -132,7 +134,7 @@ pub struct MenuInput {
     pub wanted: bool,
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[repr(u32)]
 pub enum CursorMode {
     #[default]
@@ -150,5 +152,51 @@ impl CursorMode {
 
     pub const fn name(self) -> &'static str {
         Self::ALL[self as usize].1
+    }
+}
+
+pub type CursorAsk = (&'static str, CursorMode);
+
+#[derive(Resource, Debug, Default)]
+pub struct CursorRequests {
+    requests: Requests<CursorAsk, ()>,
+    applied: CursorMode,
+}
+
+impl List for CursorRequests {
+    const NAME: &'static str = "cursor";
+    type Member = CursorAsk;
+}
+
+impl CursorRequests {
+    pub fn ask(&mut self, by: &'static str, mode: CursorMode) -> Interest<CursorAsk> {
+        self.requests.ask((by, mode))
+    }
+
+    pub fn wanted(&self) -> CursorMode {
+        self.requests
+            .asked()
+            .max_by_key(|&(_, ticket)| ticket)
+            .map_or_else(CursorMode::default, |(&(_, mode), _)| mode)
+    }
+
+    pub fn asked(&self) -> Vec<CursorAsk> {
+        let mut asked: Vec<(Ticket, CursorAsk)> = self
+            .requests
+            .asked()
+            .map(|(&ask, ticket)| (ticket, ask))
+            .collect();
+        asked.sort_unstable_by_key(|&(ticket, _)| ticket);
+        asked.into_iter().map(|(_, ask)| ask).collect()
+    }
+
+    pub fn applied(&self) -> CursorMode {
+        self.applied
+    }
+
+    #[doc(hidden)]
+    pub fn apply(&mut self) {
+        self.requests.settle(0.0);
+        self.applied = self.wanted();
     }
 }

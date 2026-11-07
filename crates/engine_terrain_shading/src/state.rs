@@ -4,16 +4,16 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    AssetLibrary, DeviceLimits, FrameTime, JobFailures, JobKind, Jobs, MakeSources, Readback,
-    RecordExchange, RecordKey, Records, Spawner, Stamp, TextureHandle, TextureSet, TextureUsage,
-    Ticket, View, codec, content_hash,
+    AssetLibrary, Cursor, DeviceLimits, Error, Feed, FeedSettings, FrameId, FrameTime, Interest,
+    JobFailures, JobKind, Jobs, MakeSources, Readable, Readback, RecordExchange, RecordKey, Records,
+    Since, Spawner, Stamp, TextureHandle, TextureSet, TextureUsage, View, codec, content_hash,
 };
 use engine_heightfield::tile::shaded_elsewhere;
 use engine_places_rendering::shadows::ShadowChanges;
 use engine_places_simulation::ground::{Pyramid, TileKey};
 use engine_places_world::ground::{
-    GroundBaking, GroundTiles, Heightfield, HeldTile, TerrainEntry, TerrainTiles, TileFace,
-    TilesSince,
+    GroundBake, GroundBakes, GroundBaking, GroundTiles, Heightfield, HeldTile, PALETTE_ENTRIES,
+    TerrainEntry, TerrainTiles, TileChange, TileFace,
 };
 use engine_render::DebugShown;
 use glam::{Vec2, Vec3};
@@ -28,7 +28,6 @@ use crate::shadings::Shadings;
 use crate::world_trace::traced;
 use crate::{TerrainShadingBrick, terrain_bounce, terrain_horizons};
 
-pub(crate) const RETRY_AFTER: u64 = 120;
 const VIEW_PRIORITY: u32 = 0;
 const SKIRT_SPACINGS: f32 = 4.0;
 const MOST_PROBES: u32 = 512;
@@ -36,110 +35,219 @@ const FEWEST_PROBES: u32 = 16;
 
 pub(crate) type TileId = (Entity, TileKey);
 
+enum Baking {
+    Off,
+    Asked {
+        interest: Interest<RecordKey>,
+        input: Vec<u8>,
+    },
+    Made {
+        input: Vec<u8>,
+    },
+    Failed {
+        interest: Interest<RecordKey>,
+        input: Vec<u8>,
+    },
+}
+
 pub(crate) struct Bake<T> {
-    asked: Option<(Ticket, Vec<u8>)>,
     pub(crate) made: Option<Arc<T>>,
-    from: Option<Vec<u8>>,
-    failed: Option<u64>,
+    baking: Baking,
 }
 
 impl<T> Default for Bake<T> {
     fn default() -> Self {
         Self {
-            asked: None,
             made: None,
-            from: None,
-            failed: None,
+            baking: Baking::Off,
         }
     }
 }
 
 impl<T: engine_codec::Codec> Bake<T> {
     fn waiting(&self) -> bool {
-        self.failed.is_none() && (self.asked.is_some() || self.made.is_none())
-    }
-
-    fn drop_asked(&mut self, jobs: &mut Jobs<'_, '_>) {
-        if let Some((ticket, _)) = self.asked.take() {
-            jobs.cancel(ticket);
+        match self.baking {
+            Baking::Off | Baking::Asked { .. } => true,
+            Baking::Made { .. } | Baking::Failed { .. } => false,
         }
     }
 
-    fn take(
+    fn asked(&self) -> bool {
+        matches!(self.baking, Baking::Asked { .. })
+    }
+
+    fn state(&self) -> GroundBake {
+        match self.baking {
+            Baking::Off => GroundBake::Off,
+            Baking::Asked { .. } => GroundBake::Asked,
+            Baking::Made { .. } => GroundBake::Made,
+            Baking::Failed { .. } => GroundBake::Failed,
+        }
+    }
+
+    fn step(
         &mut self,
         (records, jobs): (&Records, &mut Jobs<'_, '_>),
-        kind: &JobKind,
+        (kind, wanted): (&'static JobKind, Option<Vec<u8>>),
         (failures, frame): (&mut JobFailures, u64),
     ) {
-        let Some(arrived) = self
-            .asked
-            .as_ref()
-            .and_then(|(ticket, _)| records.get(ticket))
-        else {
+        let Some(wanted) = wanted else {
+            *self = Self::default();
             return;
         };
-        let Some((ticket, input)) = self.asked.take() else {
-            return;
-        };
-        jobs.cancel(ticket);
-        let made = match arrived {
-            Ok(bytes) => codec::decode::<T>(&bytes)
-                .map_err(|error| format!("{}: its output does not decode: {error}", kind.name())),
-            Err(error) => Err(format!("{}: {error}", kind.name())),
-        };
-        match made {
-            Ok(made) => {
-                self.made = Some(Arc::new(made));
-                self.from = Some(input);
-                self.failed = None;
+        self.baking = match std::mem::replace(&mut self.baking, Baking::Off) {
+            Baking::Asked { interest, input } if input == wanted => match records.get(&interest) {
+                None => Baking::Asked { interest, input },
+                Some(arrived) => match arrived
+                    .map_err(|error| format!("{}: {error}", kind.name()))
+                    .and_then(|bytes| {
+                        codec::decode::<T>(&bytes).map_err(|error| {
+                            format!("{}: its output does not decode: {error}", kind.name())
+                        })
+                    }) {
+                    Ok(made) => {
+                        self.made = Some(Arc::new(made));
+                        Baking::Made { input }
+                    }
+                    Err(error) => {
+                        failures.record(frame, error);
+                        Baking::Failed { interest, input }
+                    }
+                },
+            },
+            Baking::Made { input } if input == wanted => Baking::Made { input },
+            Baking::Failed { interest, input } if input == wanted => {
+                Baking::Failed { interest, input }
             }
-            Err(error) => {
-                failures.record(frame, error);
-                self.failed = Some(frame);
+            Baking::Off | Baking::Asked { .. } | Baking::Made { .. } | Baking::Failed { .. } => {
+                Baking::Asked {
+                    interest: jobs.fetch(kind, &wanted, VIEW_PRIORITY),
+                    input: wanted,
+                }
             }
-        }
+        };
     }
+}
 
-    fn ask(&mut self, jobs: &mut Jobs<'_, '_>, kind: &'static JobKind, input: Vec<u8>, frame: u64) {
-        if self.failed.is_some_and(|at| frame < at + RETRY_AFTER) {
-            return;
+#[derive(Default)]
+enum Coloring {
+    #[default]
+    Unasked,
+    Loading {
+        job: MacroJob,
+        handle: TextureHandle,
+        shown: Option<TextureHandle>,
+    },
+    Shown {
+        job: MacroJob,
+        handle: TextureHandle,
+    },
+    Failed {
+        job: MacroJob,
+        shown: Option<TextureHandle>,
+    },
+}
+
+impl Coloring {
+    fn job(&self) -> Option<&MacroJob> {
+        match self {
+            Self::Unasked => None,
+            Self::Loading { job, .. } | Self::Shown { job, .. } | Self::Failed { job, .. } => {
+                Some(job)
+            }
         }
-        if self.from.as_ref() == Some(&input) {
-            self.drop_asked(jobs);
-            return;
-        }
-        if self
-            .asked
-            .as_ref()
-            .is_some_and(|(_, asked)| *asked == input)
-        {
-            return;
-        }
-        self.drop_asked(jobs);
-        let ticket = jobs.fetch(kind, &input, VIEW_PRIORITY);
-        self.asked = Some((ticket, input));
     }
 }
 
 #[derive(Default)]
 pub(crate) struct Colors {
     wanted: Option<MacroJob>,
-    asked: Option<(MacroJob, Option<TextureHandle>)>,
-    pub(crate) shown: Option<(MacroJob, TextureHandle)>,
+    coloring: Coloring,
 }
 
 impl Colors {
-    fn asking(&self) -> bool {
-        self.asked.as_ref().is_some_and(|(job, held)| {
-            held.is_some() && self.shown.as_ref().is_none_or(|(shown, _)| shown != job)
-        })
+    pub(crate) fn shown(&self) -> Option<TextureHandle> {
+        match self.coloring {
+            Coloring::Unasked => None,
+            Coloring::Loading { shown, .. } | Coloring::Failed { shown, .. } => shown,
+            Coloring::Shown { handle, .. } => Some(handle),
+        }
     }
 
-    fn handles(&self) -> impl Iterator<Item = TextureHandle> + '_ {
-        self.asked
-            .iter()
-            .filter_map(|(_, held)| *held)
-            .chain(self.shown.iter().map(|&(_, handle)| handle))
+    fn asking(&self) -> bool {
+        matches!(self.coloring, Coloring::Loading { .. })
+    }
+
+    fn left(&self) -> bool {
+        let settled = match &self.coloring {
+            Coloring::Shown { job, .. } | Coloring::Failed { job, .. } => Some(job),
+            Coloring::Unasked | Coloring::Loading { .. } => None,
+        };
+        self.wanted
+            .as_ref()
+            .is_some_and(|wanted| settled != Some(wanted))
+    }
+
+    fn handles(&self) -> Vec<TextureHandle> {
+        match self.coloring {
+            Coloring::Unasked => Vec::new(),
+            Coloring::Loading { handle, shown, .. } => {
+                std::iter::once(handle).chain(shown).collect()
+            }
+            Coloring::Shown { handle, .. } => vec![handle],
+            Coloring::Failed { shown, .. } => shown.into_iter().collect(),
+        }
+    }
+
+    fn step(
+        &mut self,
+        (records, assets): (&mut RecordExchange, &mut AssetLibrary),
+        gone: &mut Vec<TextureHandle>,
+    ) -> Option<Error> {
+        let coloring = std::mem::take(&mut self.coloring);
+        let coloring = match coloring {
+            Coloring::Loading { job, handle, shown } if assets.texture(handle).is_some() => {
+                gone.extend(shown);
+                Coloring::Shown { job, handle }
+            }
+            Coloring::Unasked
+            | Coloring::Loading { .. }
+            | Coloring::Shown { .. }
+            | Coloring::Failed { .. } => coloring,
+        };
+        let Some(wanted) = self
+            .wanted
+            .clone()
+            .filter(|wanted| coloring.job() != Some(wanted))
+        else {
+            self.coloring = coloring;
+            return None;
+        };
+        let shown = match coloring {
+            Coloring::Unasked => None,
+            Coloring::Loading { handle, shown, .. } => {
+                gone.push(handle);
+                shown
+            }
+            Coloring::Shown { handle, .. } => Some(handle),
+            Coloring::Failed { shown, .. } => shown,
+        };
+        let (coloring, error) = match records.textures(assets, colors_set(&wanted)) {
+            Ok(handles) => match handles.first() {
+                Some(&handle) => (
+                    Coloring::Loading {
+                        job: wanted,
+                        handle,
+                        shown,
+                    },
+                    None,
+                ),
+                None => (Coloring::Failed { job: wanted, shown }, None),
+            },
+            Err(error) => (Coloring::Failed { job: wanted, shown }, Some(error)),
+        };
+        self.coloring = coloring;
+        error
     }
 }
 
@@ -168,15 +276,9 @@ impl TerrainBakes {
             && self.bounce.waiting()
     }
 
-    fn forget(
-        mut self,
-        jobs: &mut Jobs<'_, '_>,
-        colors_gone: &mut Vec<TextureHandle>,
-    ) -> BTreeSet<RecordKey> {
-        self.lighting.drop_asked(jobs);
-        self.bounce.drop_asked(jobs);
+    fn release(self, colors_gone: &mut Vec<TextureHandle>) -> BTreeSet<RecordKey> {
         colors_gone.extend(self.colors.handles());
-        self.flow.forget(jobs)
+        self.flow.release()
     }
 }
 
@@ -193,11 +295,7 @@ impl Bakes {
     }
 
     pub(crate) fn macro_map(&self, terrain: Entity) -> Option<TextureHandle> {
-        self.of(terrain)?
-            .colors
-            .shown
-            .as_ref()
-            .map(|&(_, handle)| handle)
+        self.of(terrain)?.colors.shown()
     }
 }
 
@@ -205,6 +303,88 @@ impl Bakes {
 pub(crate) enum Upload {
     Whole,
     Shaded,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AtlasChange {
+    Placed(TileId, u32, Upload),
+    Vacated(u32),
+    Moved(TileId),
+}
+
+#[derive(Default)]
+pub(crate) struct AtlasMoves {
+    pub(crate) all: bool,
+    pub(crate) uploads: Vec<(TileId, u32, Upload)>,
+    pub(crate) vacated: Vec<u32>,
+    pub(crate) changed: Vec<TileId>,
+}
+
+impl AtlasMoves {
+    pub(crate) fn since(atlas: &Atlas, cursor: &mut Cursor) -> Self {
+        let changes = match atlas.changes.since(cursor) {
+            Since::Same => return Self::default(),
+            Since::All => {
+                return Self {
+                    all: true,
+                    uploads: all_uploads(atlas),
+                    ..Self::default()
+                };
+            }
+            Since::Listed(changes) => changes,
+        };
+        let mut moves = Self::default();
+        let mut listed: HashMap<TileId, usize> = HashMap::default();
+        for &change in changes {
+            match change {
+                AtlasChange::Placed(id, layer, upload) => {
+                    if atlas.slots.get(&id) != Some(&layer) {
+                        continue;
+                    }
+                    match listed.get(&id) {
+                        Some(&at) if upload == Upload::Whole => moves.uploads[at].2 = upload,
+                        Some(_) => {}
+                        None => {
+                            listed.insert(id, moves.uploads.len());
+                            moves.uploads.push((id, layer, upload));
+                        }
+                    }
+                }
+                AtlasChange::Vacated(layer) => moves.vacated.push(layer),
+                AtlasChange::Moved(id) => moves.changed.push(id),
+            }
+        }
+        moves.changed.sort_unstable();
+        moves.changed.dedup();
+        moves
+    }
+}
+
+pub(crate) fn all_uploads(atlas: &Atlas) -> Vec<(TileId, u32, Upload)> {
+    let mut all: Vec<(TileId, u32, Upload)> = atlas
+        .slots
+        .iter()
+        .map(|(&id, &layer)| (id, layer, Upload::Whole))
+        .collect();
+    all.sort_unstable_by_key(|((terrain, key), _, _)| {
+        (std::cmp::Reverse(key.level), *terrain, key.x, key.z)
+    });
+    all
+}
+
+pub(crate) fn palette_layout(terrains: &[TerrainEntry]) -> Vec<(Entity, Option<u32>)> {
+    let mut used = 0_u32;
+    terrains
+        .iter()
+        .map(|terrain| {
+            let count = u32::try_from(terrain.materials.len()).unwrap_or(u32::MAX);
+            let base = (count <= PALETTE_ENTRIES - used).then_some(used);
+            if base.is_some() {
+                used += count;
+            }
+            (terrain.terrain, base)
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -215,11 +395,11 @@ struct PlacedTile {
     control: bool,
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub(crate) struct Atlas {
     pub(crate) slots: HashMap<TileId, u32>,
     placed: HashMap<TileId, PlacedTile>,
-    cursors: HashMap<Entity, u64>,
+    cursors: HashMap<Entity, Cursor>,
     pub(crate) arrivals: HashMap<TileId, f32>,
     pub(crate) surfaced: HashMap<TileId, f32>,
     pub(crate) unplaced: BTreeSet<TileId>,
@@ -227,10 +407,27 @@ pub(crate) struct Atlas {
     pub(crate) next_layer: u32,
     pub(crate) capacity: u32,
     pub(crate) now: f32,
-    pub(crate) uploads: Vec<(TileId, u32, Upload)>,
-    pub(crate) vacated: Vec<u32>,
-    pub(crate) changed: Vec<TileId>,
+    changes: Feed<AtlasChange>,
     pub(crate) ground_changes: Vec<(Vec3, Vec3, f32)>,
+}
+
+impl Default for Atlas {
+    fn default() -> Self {
+        Self {
+            slots: HashMap::default(),
+            placed: HashMap::default(),
+            cursors: HashMap::default(),
+            arrivals: HashMap::default(),
+            surfaced: HashMap::default(),
+            unplaced: BTreeSet::new(),
+            free: Vec::new(),
+            next_layer: 0,
+            capacity: 0,
+            now: 0.0,
+            changes: Feed::new(FeedSettings::default().tiles as usize),
+            ground_changes: Vec::new(),
+        }
+    }
 }
 
 impl Atlas {
@@ -252,8 +449,8 @@ impl Atlas {
             return;
         };
         self.free.push(layer);
-        self.vacated.push(layer);
-        self.changed.push(id);
+        self.changes.push(AtlasChange::Vacated(layer));
+        self.changes.push(AtlasChange::Moved(id));
         self.placed.remove(&id);
         self.arrivals.remove(&id);
         self.surfaced.remove(&id);
@@ -288,7 +485,7 @@ impl Atlas {
                     && tile.control.is_none()
                     && !shaded_elsewhere(key.level, entry.surroundings);
                 if unsurfaced && self.surfaced.remove(&id).is_some() {
-                    self.changed.push(id);
+                    self.changes.push(AtlasChange::Moved(id));
                 }
             }
             (Some(tile), Some(held)) => {
@@ -363,15 +560,17 @@ impl Atlas {
                 control: tile.control.is_some(),
             },
         );
-        self.changed.push(id);
-        self.uploads.push((id, layer, Upload::Whole));
+        self.changes.push(AtlasChange::Moved(id));
+        self.changes
+            .push(AtlasChange::Placed(id, layer, Upload::Whole));
         true
     }
 
     fn show_shading(&mut self, id: TileId, layer: u32) {
         self.surfaced.insert(id, self.now);
-        self.changed.push(id);
-        self.uploads.push((id, layer, Upload::Shaded));
+        self.changes.push(AtlasChange::Moved(id));
+        self.changes
+            .push(AtlasChange::Placed(id, layer, Upload::Shaded));
     }
 }
 
@@ -379,11 +578,11 @@ fn heights_of(tile: &TileFace) -> (f32, f32) {
     (tile.bounds.0.y, tile.bounds.1.y)
 }
 
-fn tile_keys(atlas: &Atlas, entry: &TerrainEntry, since: TilesSince<'_>) -> Vec<TileKey> {
+fn tile_keys(atlas: &Atlas, entry: &TerrainEntry, since: Since<'_, TileChange>) -> Vec<TileKey> {
     let mut keys: Vec<TileKey> = match since {
-        TilesSince::Same => Vec::new(),
-        TilesSince::Listed(changes) => changes.iter().map(|change| change.key).collect(),
-        TilesSince::All => entry
+        Since::Same => Vec::new(),
+        Since::Listed(changes) => changes.iter().map(|change| change.key).collect(),
+        Since::All => entry
             .tiles
             .iter()
             .map(|tile| tile.key)
@@ -403,18 +602,19 @@ fn tile_keys(atlas: &Atlas, entry: &TerrainEntry, since: TilesSince<'_>) -> Vec<
 }
 
 pub(crate) fn place_tiles(
-    tiles: Res<TerrainTiles>,
-    limits: Res<DeviceLimits>,
-    time: Res<FrameTime>,
+    (tiles, limits, time, feeds): (
+        Res<TerrainTiles>,
+        Res<DeviceLimits>,
+        Res<FrameTime>,
+        Res<FeedSettings>,
+    ),
     bakes: Res<Bakes>,
     mut atlas: ResMut<Atlas>,
     mut ground: ResMut<GroundTiles>,
 ) {
     let atlas = &mut *atlas;
     atlas.now = time.elapsed_seconds as f32;
-    atlas.uploads.clear();
-    atlas.vacated.clear();
-    atlas.changed.clear();
+    atlas.changes.resize(feeds.tiles as usize);
     atlas.ground_changes.clear();
     let attached = |entry: &TerrainEntry| {
         bakes
@@ -439,6 +639,7 @@ pub(crate) fn place_tiles(
         .enumerate()
         .map(|(index, entry)| (entry.terrain, index as u32))
         .collect();
+    let palette = palette_layout(&tiles.terrains);
     if capacity == 0 {
         let now = atlas.now;
         *atlas = Atlas {
@@ -449,6 +650,7 @@ pub(crate) fn place_tiles(
             held: Vec::new(),
             layers: 0,
             tables,
+            palette,
         });
         return;
     }
@@ -468,7 +670,7 @@ pub(crate) fn place_tiles(
     atlas.cursors.retain(|terrain, _| listed(terrain));
     let mut missing: Vec<(TileId, Option<u32>)> = Vec::new();
     for entry in tiles.terrains.iter() {
-        let mut cursor = atlas.cursors.get(&entry.terrain).copied().unwrap_or(0);
+        let mut cursor = atlas.cursors.get(&entry.terrain).copied().unwrap_or_default();
         let keys = tile_keys(atlas, entry, entry.changes.since(&mut cursor));
         atlas.cursors.insert(entry.terrain, cursor);
         for key in keys {
@@ -526,6 +728,7 @@ pub(crate) fn place_tiles(
         held,
         layers: atlas.capacity,
         tables,
+        palette,
     };
     ground.set_if_neq(published);
 }
@@ -657,7 +860,7 @@ pub(crate) fn bake(
     let mut released = BTreeSet::new();
     for terrain in gone {
         if let Some(held) = bakes.terrains.remove(&terrain) {
-            released.extend(held.forget(&mut jobs, &mut bakes.colors_gone));
+            released.extend(held.release(&mut bakes.colors_gone));
         }
     }
     for key in released {
@@ -680,55 +883,49 @@ pub(crate) fn bake(
         let Some(recipe) = entry.recipe else {
             continue;
         };
-        if !settings.lit() {
-            held.lighting.drop_asked(&mut jobs);
-            held.lighting = Bake::default();
-        } else {
-            held.lighting
-                .take((&records, &mut jobs), &LIGHTING, (&mut *failures, frame));
-            let level = lighting_level(&entry.pyramid, entry.pinned_levels);
-            let job = LightingJob {
+        let level = lighting_level(&entry.pyramid, entry.pinned_levels);
+        let lit = settings.lit().then(|| {
+            codec::encode(&LightingJob {
                 recipe,
                 level,
                 tiles: ground_tiles(entry, level),
                 sky: settings.sky_resolution,
                 horizons: settings.shadow_resolution,
-            };
-            held.lighting
-                .ask(&mut jobs, &LIGHTING, codec::encode(&job), frame);
-        }
-        if !settings.bounces() || entry.surroundings {
-            held.bounce.drop_asked(&mut jobs);
-            held.bounce = Bake::default();
-            continue;
-        }
-        held.bounce
-            .take((&records, &mut jobs), &BOUNCE, (&mut *failures, frame));
-        if held.lighting.made.is_none() {
-            continue;
-        }
-        let level = lighting_level(&entry.pyramid, entry.pinned_levels);
-        let job = BounceJob {
-            recipe,
-            level,
-            tiles: ground_tiles(entry, level),
-            probes: probe_columns(&entry.pyramid, &settings),
-        };
-        held.bounce
-            .ask(&mut jobs, &BOUNCE, codec::encode(&job), frame);
+            })
+        });
+        held.lighting.step(
+            (&records, &mut jobs),
+            (&LIGHTING, lit),
+            (&mut *failures, frame),
+        );
+        let bounced = (settings.bounces() && !entry.surroundings && held.lighting.made.is_some())
+            .then(|| {
+                codec::encode(&BounceJob {
+                    recipe,
+                    level,
+                    tiles: ground_tiles(entry, level),
+                    probes: probe_columns(&entry.pyramid, &settings),
+                })
+            });
+        held.bounce.step(
+            (&records, &mut jobs),
+            (&BOUNCE, bounced),
+            (&mut *failures, frame),
+        );
     }
-    let (mut lighting, mut unbounced) = (0, 0);
-    for entry in tiles.terrains.iter() {
-        let Some(held) = bakes.terrains.get(&entry.terrain) else {
-            continue;
-        };
-        lighting += u32::from(held.lighting_left(&settings, entry));
-        unbounced += u32::from(held.bounce_left(&settings, entry));
-    }
-    baking.set_if_neq(GroundBaking {
-        lighting,
-        unbounced,
-    });
+    let terrains = tiles
+        .terrains
+        .iter()
+        .filter_map(|entry| {
+            let held = bakes.terrains.get(&entry.terrain)?;
+            Some(GroundBakes {
+                terrain: entry.terrain,
+                lighting: held.lighting.state(),
+                bounce: held.bounce.state(),
+            })
+        })
+        .collect();
+    baking.set_if_neq(GroundBaking { terrains });
 }
 
 fn macro_texels(settings: &TerrainShading) -> u32 {
@@ -762,45 +959,14 @@ pub(crate) fn color(
     let frame = time.frame;
     let bakes = &mut *bakes;
     for held in bakes.terrains.values_mut() {
-        let colors = &mut held.colors;
-        if let Some((job, Some(handle))) = &colors.asked
-            && assets.texture(*handle).is_some()
-            && colors
-                .shown
-                .as_ref()
-                .is_none_or(|(_, shown)| shown != handle)
-            && let Some((_, replaced)) = colors.shown.replace((job.clone(), *handle))
+        if let Some(error) = held
+            .colors
+            .step((&mut records, &mut assets), &mut bakes.colors_gone)
         {
-            bakes.colors_gone.push(replaced);
+            bakes
+                .failures
+                .record(frame, format!("macro colors: {error}"));
         }
-        let Some(job) = colors.wanted.clone() else {
-            continue;
-        };
-        if colors
-            .asked
-            .as_ref()
-            .is_some_and(|(asked, _)| *asked == job)
-        {
-            continue;
-        }
-        if let Some((_, Some(handle))) = colors.asked.take()
-            && colors
-                .shown
-                .as_ref()
-                .is_none_or(|(_, shown)| *shown != handle)
-        {
-            bakes.colors_gone.push(handle);
-        }
-        let asked = match records.textures(&mut assets, colors_set(&job)) {
-            Ok(handles) => handles.first().copied(),
-            Err(error) => {
-                bakes
-                    .failures
-                    .record(frame, format!("macro colors: {error}"));
-                None
-            }
-        };
-        colors.asked = Some((job, asked));
     }
     bakes
         .colors_gone
@@ -817,6 +983,7 @@ pub(crate) fn publish_piece(
     shown: Res<DebugShown>,
     mut piece: ResMut<HorizonsPiece>,
 ) {
+    let slots = terrain_bounce::slots(&tiles.terrains, &settings, limits.texture_layers);
     let records = terrain_horizons::records(
         &tiles.terrains,
         &bakes,
@@ -824,8 +991,9 @@ pub(crate) fn publish_piece(
         terrain_bounce::windows(
             &tiles.terrains,
             &bakes,
+            &slots,
             (view.detail_eye(), &settings),
-            (limits.texture_layers, limits.storage_room),
+            limits.storage_room,
         ),
         limits.texture_layers,
     );
@@ -851,29 +1019,23 @@ pub(crate) const SURFACE_TOTALS: u32 = 0;
 pub(crate) struct SurfaceTotals {
     pub(crate) grounds: [u32; 2],
     pub(crate) waters: [u32; 2],
-    pub(crate) rests: u32,
-    resting: bool,
+    written: FrameId,
 }
 
-impl SurfaceTotals {
-    pub(crate) fn epoch(&self) -> u32 {
-        self.rests.wrapping_add(1).max(1)
-    }
-}
-
-impl Readback for SurfaceTotals {
-    fn arrived(&mut self, _: u64, _: u32, bytes: &[u8]) {
-        let words: &[u32] = bytemuck::cast_slice(bytes);
+impl Readable for SurfaceTotals {
+    fn arrived(&mut self, _: u32, read: Readback<&[u8]>) {
+        if read.written < self.written {
+            return;
+        }
+        self.written = read.written;
+        let words: Vec<u32> = read
+            .value
+            .chunks_exact(4)
+            .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+            .collect();
         let args = crate::gpu::SUBDIVISION_ARGS as usize;
         let mut sums = [0_u32; 4];
         for counters in words.chunks_exact(args) {
-            let epoch = counters[crate::gpu::SUBDIVISION_EPOCH as usize];
-            if epoch == 0 {
-                continue;
-            }
-            if epoch != self.epoch() {
-                return;
-            }
             let sum = if counters[crate::gpu::SUBDIVISION_MEASURE as usize] == 0 {
                 0
             } else {
@@ -916,8 +1078,9 @@ pub(crate) struct PartStats {
     pool: engine_core::Cut,
 }
 
-impl Readback for PartStats {
-    fn arrived(&mut self, _: u64, tag: u32, bytes: &[u8]) {
+impl Readable for PartStats {
+    fn arrived(&mut self, tag: u32, read: Readback<&[u8]>) {
+        let bytes = read.value;
         if tag == TRACE_STATS {
             if let Ok([asked, kept]) = bytemuck::try_pod_read_unaligned::<[u32; 2]>(bytes) {
                 self.pool = engine_core::Cut::of(asked, kept);
@@ -928,31 +1091,6 @@ impl Readback for PartStats {
     }
 }
 
-pub(crate) fn rest_surface(
-    tiles: Res<TerrainTiles>,
-    atlas: Res<Atlas>,
-    mut totals: ResMut<SurfaceTotals>,
-) {
-    let held = tiles.terrains.iter().any(|entry| {
-        atlas
-            .slots
-            .keys()
-            .any(|(terrain, _)| *terrain == entry.terrain)
-    });
-    if held {
-        if totals.resting {
-            totals.resting = false;
-        }
-        return;
-    }
-    if !totals.resting {
-        let totals = &mut *totals;
-        totals.resting = true;
-        totals.rests = totals.rests.wrapping_add(1);
-        totals.grounds = [0; 2];
-        totals.waters = [0; 2];
-    }
-}
 
 pub(crate) fn publish_heightfield(
     settings: Res<TerrainShading>,
@@ -979,13 +1117,7 @@ fn records_left(settings: &TerrainShading, tiles: &TerrainTiles, bakes: &Bakes) 
         };
         left += u32::from(held.lighting_left(settings, entry));
         left += u32::from(held.bounce_left(settings, entry));
-        let colors = &held.colors;
-        left += u32::from(colors.wanted.as_ref().is_some_and(|wanted| {
-            colors
-                .shown
-                .as_ref()
-                .is_none_or(|(shown, _)| shown != wanted)
-        }));
+        left += u32::from(held.colors.left());
         left = left.saturating_add(u32::try_from(held.flow.left()).unwrap_or(u32::MAX));
     }
     left
@@ -1017,7 +1149,7 @@ pub(crate) fn count(
     let lighting = bakes
         .terrains
         .values()
-        .filter(|held| held.lighting.asked.is_some())
+        .filter(|held| held.lighting.asked())
         .count() as u32;
     let bounced = bakes
         .terrains
@@ -1027,12 +1159,12 @@ pub(crate) fn count(
     let bouncing = bakes
         .terrains
         .values()
-        .filter(|held| held.bounce.asked.is_some())
+        .filter(|held| held.bounce.asked())
         .count() as u32;
     let colored = bakes
         .terrains
         .values()
-        .filter(|held| held.colors.shown.is_some())
+        .filter(|held| held.colors.shown().is_some())
         .count() as u32;
     let coloring = bakes
         .terrains
@@ -1074,27 +1206,4 @@ pub(crate) fn count(
         latest_job_failure: bakes.failures.last.as_ref().map(|(_, error)| error.clone()),
     };
     stats.set_if_neq(next);
-}
-
-pub(crate) fn forget(
-    own: Query<Entity, With<GroundChanges>>,
-    mut spawner: Spawner<TerrainShadingBrick>,
-    mut atlas: ResMut<Atlas>,
-    mut bakes: ResMut<Bakes>,
-    mut baking: ResMut<GroundBaking>,
-    mut jobs: Jobs,
-) {
-    for entity in &own {
-        spawner.despawn(entity);
-    }
-    *atlas = Atlas::default();
-    baking.set_if_neq(GroundBaking::default());
-    let bakes = &mut *bakes;
-    let mut released = BTreeSet::new();
-    for (_, held) in std::mem::take(&mut bakes.terrains) {
-        released.extend(held.forget(&mut jobs, &mut bakes.colors_gone));
-    }
-    for key in released {
-        jobs.unshare(key);
-    }
 }

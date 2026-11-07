@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::Component;
 use serde::{Deserialize, Serialize};
 
-pub use engine_place::{LevelProgress, LevelRequest, Screens};
+pub use engine_place::{Level, LevelView, Screens};
 
 #[derive(
     Component, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,

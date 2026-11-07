@@ -13,13 +13,14 @@ use serde_json::Value;
 
 use crate::access::AccessRule;
 use crate::attribution::CORE_ROW;
-use crate::entries::{OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
+use crate::entries::{Kept, OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
 use crate::explain::ExplainEntry;
-use crate::gates::{Gate, GateDriver, GateId, GateReset, Gates, Off, Scope, gate_off, gate_on};
 use crate::hooks::{Named, add_removal, add_settle};
 use crate::jobs::JobQueue;
 use crate::order::{self, PlaceRules};
+use crate::owners::{Shared, Used, Values, note, ownership};
 use crate::record::BrickRecord;
+use crate::state::{BrickStates, GateDriver, GateFn, GateId, Reset, Scope, Turning, state_on};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BrickId(pub(crate) u32);
@@ -45,66 +46,154 @@ pub struct Registry {
     core_sections: Vec<SettingsEntry>,
     core_operations: Vec<OperationEntry>,
     bases: Vec<u32>,
-    listed: Vec<&'static str>,
     left_out: Vec<&'static str>,
-    left_owned: Vec<(TypeId, &'static str)>,
     rule: AccessRule,
     named: Vec<Named>,
     eachers: Vec<(TypeId, MemberEach)>,
+    owners: Vec<Shared>,
+    private: Vec<Vec<(ComponentId, Reset)>>,
+    problems: Vec<Error>,
+}
+
+#[derive(Default)]
+pub struct RegistryBuilder {
+    registry: Registry,
+    listed: Vec<&'static str>,
+    left_owned: Vec<(TypeId, &'static str)>,
     firsts: Vec<TypeId>,
     orders: Vec<(&'static str, &'static str)>,
-    problems: Vec<Error>,
 }
 
 pub(crate) type MemberEach = fn(&World, &mut dyn FnMut(&dyn Any));
 
-type ListRefresh = (TypeId, fn(&mut World));
+type Orders = Vec<(&'static str, &'static str)>;
 
-impl Registry {
+impl RegistryBuilder {
     pub fn add(&mut self, mut record: BrickRecord) {
-        self.problems.append(&mut record.take_problems());
+        let registry = &mut self.registry;
+        registry.problems.append(&mut record.take_problems());
         let package = record.package;
         if record.owner().is_none() {
             let path = format!("$.bricks.{package}");
-            self.problems
+            registry
+                .problems
                 .push(Error::new(ErrorCode::ForeignAccess, path).got(record.type_name()));
         }
-        let at = match self
+        let at = match registry
             .bricks
             .binary_search_by(|known| known.package.cmp(package))
         {
             Ok(_) => {
                 let path = format!("$.bricks.{package}");
-                self.problems
+                registry
+                    .problems
                     .push(Error::new(ErrorCode::NameTwice, path).got(package));
                 return;
             }
             Err(at) => at,
         };
-        self.check_names(&record);
-        self.left_out.retain(|&left| left != package);
+        registry.check_names(&record);
+        registry.left_out.retain(|&left| left != package);
         self.listed.push(package);
-        self.bricks.insert(at, record);
+        registry.bricks.insert(at, record);
     }
 
     pub fn places(&mut self, places: &'static [PlaceDecl]) {
         for decl in places {
-            self.catalog_add(*decl);
+            self.registry.catalog_add(*decl);
         }
     }
 
     pub fn fill_core<S: Slot>(&mut self) {
+        let registry = &mut self.registry;
         let slot = TypeId::of::<S>();
-        if let Some(filler) = self.filler(slot) {
+        if let Some(filler) = registry.filler(slot) {
             let path = format!("$.places.{}", S::NAME);
-            self.problems
+            registry
+                .problems
                 .push(Error::new(ErrorCode::SlotFilledTwice, path).got(filler));
             return;
         }
         let decl = PlaceDecl::slot::<S>();
-        self.core_fills.push(decl);
-        self.catalog_add(decl);
+        registry.core_fills.push(decl);
+        registry.catalog_add(decl);
     }
+
+    pub fn core_settings(&mut self, entry: SettingsEntry) {
+        self.registry.core_settings(entry);
+    }
+
+    pub fn core_operation(&mut self, entry: OperationEntry) {
+        self.registry.core_operation(entry);
+    }
+
+    pub fn writers_first<T: 'static>(&mut self) {
+        let type_id = TypeId::of::<T>();
+        if !self.firsts.contains(&type_id) {
+            self.firsts.push(type_id);
+        }
+    }
+
+    pub fn leave_out(&mut self, record: &BrickRecord) {
+        let package = record.package;
+        if self.registry.has(package) {
+            return;
+        }
+        if !self.registry.left_out.contains(&package) {
+            self.registry.left_out.push(package);
+        }
+        self.left_owned
+            .extend(record.owned().iter().map(|owned| (owned.type_id, package)));
+    }
+
+    pub fn install(self, world: &mut World, schedules: &[InternedScheduleLabel]) -> GateDriver {
+        let Self {
+            mut registry,
+            listed,
+            left_owned,
+            firsts,
+            orders,
+        } = self;
+        registry.number();
+        registry.catalog_records();
+        registry.check_smokes();
+        registry.rule = registry.rule_of(&left_owned);
+        registry.check_owned();
+        for decl in &registry.catalog {
+            decl.insert(world);
+        }
+        for entry in &registry.core_sections {
+            entry.owned().init(world);
+        }
+        for record in &registry.bricks {
+            for owned in record.owned() {
+                owned.init(world);
+            }
+        }
+        registry.join_members(world);
+        registry.resolve_named(world);
+        world.insert_resource(registry.states());
+        if !world.contains_resource::<JobQueue>() {
+            world.init_resource::<JobQueue>();
+        }
+        let orders = registry.order_games(&listed, orders);
+        registry.order_schedules(world, schedules, &firsts, &orders);
+        registry.add_systems(world, &listed);
+        let mut uses: Vec<Used> = Vec::new();
+        let conditions = registry.conditions(world, &mut uses);
+        registry.add_hooks(world, &mut uses);
+        registry.check_operations(world, &mut uses);
+        let (mut refused, mut found) = order::build(world, schedules);
+        registry.problems.append(&mut refused);
+        uses.append(&mut found);
+        let needs = registry.analyze(world, &uses);
+        world.resource_mut::<BrickStates>().set_needs(needs);
+        world.insert_resource(registry);
+        GateDriver::new(conditions)
+    }
+}
+
+impl Registry {
 
     pub fn core_settings(&mut self, mut entry: SettingsEntry) {
         entry.brick = CORE_ROW;
@@ -138,33 +227,8 @@ impl Registry {
         self.core_operations.push(entry);
     }
 
-    pub fn writers_first<T: 'static>(&mut self) {
-        let type_id = TypeId::of::<T>();
-        if !self.firsts.contains(&type_id) {
-            self.firsts.push(type_id);
-        }
-    }
-
-    fn order(&mut self, first: &'static str, then: &'static str) {
-        if !self.orders.contains(&(first, then)) {
-            self.orders.push((first, then));
-        }
-    }
-
     pub fn profile_names(&self) -> Vec<&'static str> {
         std::iter::once(CORE_ROW).chain(self.names()).collect()
-    }
-
-    pub fn leave_out(&mut self, record: &BrickRecord) {
-        let package = record.package;
-        if self.has(package) {
-            return;
-        }
-        if !self.left_out.contains(&package) {
-            self.left_out.push(package);
-        }
-        self.left_owned
-            .extend(record.owned().iter().map(|owned| (owned.type_id, package)));
     }
 
     pub fn left_out(&self) -> &[&'static str] {
@@ -178,6 +242,22 @@ impl Registry {
                 .bricks
                 .iter()
                 .any(|record| record.owner() == owner && record.owns(type_id))
+    }
+
+    pub fn ownership(&self) -> &[Shared] {
+        &self.owners
+    }
+
+    pub(crate) fn private(&self, brick: BrickId) -> &[(ComponentId, Reset)] {
+        self.private.get(brick.index()).map_or(&[], Vec::as_slice)
+    }
+
+    pub fn keep_authored(&mut self, authored: &[ComponentId]) {
+        for resets in &mut self.private {
+            resets.retain(|(id, reset)| {
+                !(authored.contains(id) && matches!(reset, Reset::Remove(_)))
+            });
+        }
     }
 
     pub fn report(&mut self, error: Error) {
@@ -379,7 +459,7 @@ impl Registry {
         Some(schema)
     }
 
-    pub fn slot_on(&self, gates: &Gates, slot: TypeId) -> bool {
+    pub fn slot_on(&self, states: &BrickStates, slot: TypeId) -> bool {
         if self.core_fills.iter().any(|decl| decl.type_id() == slot) {
             return true;
         }
@@ -392,7 +472,7 @@ impl Registry {
                     .map(|filled| (brick, filled.scope))
             })
             .and_then(|(brick, scope)| self.gate(brick, scope))
-            .is_some_and(|gate| gates.on(gate))
+            .is_some_and(|gate| states.on(gate))
     }
 
     pub fn each_member(&self, world: &World, list: TypeId, each: &mut dyn FnMut(&dyn Any)) {
@@ -433,39 +513,37 @@ impl Registry {
             .fold(0_u32, |sum, entry| sum.saturating_add(entry.pending(world)))
     }
 
-    pub fn install(mut self, world: &mut World, schedules: &[InternedScheduleLabel]) -> GateDriver {
-        self.number();
-        self.catalog_records();
-        self.check_smokes();
-        self.rule = self.rule_of();
-        self.check_owned();
-        for decl in &self.catalog {
-            decl.insert(world);
+    pub(crate) fn turning(&self, brick: BrickId, gate: GateId) -> Turning {
+        let (Some(record), Some(&base)) = (self.record(brick), self.bases.get(brick.index())) else {
+            return Turning::default();
+        };
+        let scope = Scope(gate.0.saturating_sub(base));
+        let slots = record
+            .fills()
+            .iter()
+            .filter(|filled| filled.scope == scope)
+            .map(|filled| filled.reset)
+            .collect();
+        if scope != Scope::BRICK {
+            return Turning {
+                slots,
+                ..Turning::default()
+            };
         }
-        for entry in &self.core_sections {
-            entry.owned().init(world);
-        }
-        for record in &self.bricks {
-            for owned in record.owned() {
-                owned.init(world);
+        let mut turning = Turning {
+            slots,
+            private: self.private(brick).iter().map(|&(_, reset)| reset).collect(),
+            spawned: Some(record.spawned),
+            ..Turning::default()
+        };
+        for owned in record.owned() {
+            match owned.kept {
+                Kept::Survives(touch) => turning.settings.push(touch),
+                Kept::Dropped(_) if self.rule.catalogued(owned.type_id) => {}
+                Kept::Dropped(remove) => turning.resources.push((owned.init, remove)),
             }
         }
-        let refresh = self.join_members(world);
-        self.resolve_named(world);
-        world.insert_resource(self.gates());
-        if !world.contains_resource::<JobQueue>() {
-            world.init_resource::<JobQueue>();
-        }
-        self.order_games();
-        self.order_schedules(world, schedules);
-        self.add_systems(world);
-        let driver = self.driver(world, refresh);
-        self.add_hooks(world);
-        self.check_operations(world);
-        let mut refused = order::build(world, schedules);
-        self.problems.append(&mut refused);
-        world.insert_resource(self);
-        driver
+        turning
     }
 
     fn check_names(&mut self, record: &BrickRecord) {
@@ -580,7 +658,7 @@ impl Registry {
         self.problems.append(&mut twice);
     }
 
-    fn rule_of(&self) -> AccessRule {
+    fn rule_of(&self, left_owned: &[(TypeId, &'static str)]) -> AccessRule {
         let mut rule = AccessRule::new(
             self.bricks
                 .iter()
@@ -595,7 +673,7 @@ impl Registry {
             };
             rule.place(decl.type_id(), decl.kind(), filler);
         }
-        for &(type_id, package) in &self.left_owned {
+        for &(type_id, package) in left_owned {
             if !self.bricks.iter().any(|record| record.owns(type_id)) {
                 rule.left_out(type_id, package);
             }
@@ -632,8 +710,7 @@ impl Registry {
         }
     }
 
-    fn join_members(&mut self, world: &mut World) -> Vec<fn(&mut World)> {
-        let mut lists: Vec<ListRefresh> = Vec::new();
+    fn join_members(&mut self, world: &mut World) {
         for (index, record) in self.bricks.iter_mut().enumerate() {
             let base = self.bases[index];
             let (package, brick) = (record.package, record.brick());
@@ -643,13 +720,11 @@ impl Registry {
                     let owner = (package, brick);
                     (joined.add)(world, member, GateId(base + joined.scope.0), owner);
                 }
-                if !lists.iter().any(|(list, _)| *list == joined.list) {
-                    lists.push((joined.list, joined.refresh));
+                if !self.eachers.iter().any(|(list, _)| *list == joined.list) {
                     self.eachers.push((joined.list, joined.each));
                 }
             }
         }
-        lists.into_iter().map(|(_, refresh)| refresh).collect()
     }
 
     fn resolve_named(&mut self, world: &World) {
@@ -680,7 +755,7 @@ impl Registry {
         }
     }
 
-    fn add_hooks(&mut self, world: &mut World) {
+    fn add_hooks(&mut self, world: &mut World, uses: &mut Vec<Used>) {
         for (index, record) in self.bricks.iter_mut().enumerate() {
             let brick = BrickId(index as u32);
             let root = GateId(self.bases[index]);
@@ -690,6 +765,7 @@ impl Registry {
                 let name = removal.system.name();
                 self.rule
                     .check_into(brick, &name, &access, world, &mut self.problems);
+                note(uses, brick, &access);
                 if let Err(error) = add_removal(world, package, root, removal) {
                     self.problems.push(error);
                 }
@@ -699,12 +775,13 @@ impl Registry {
                 let name = settle.system.name();
                 self.rule
                     .check_into(brick, &name, &access, world, &mut self.problems);
+                note(uses, brick, &access);
                 add_settle(world, package, root, settle);
             }
         }
     }
 
-    fn gates(&self) -> Gates {
+    fn states(&self) -> BrickStates {
         let mut parents: Vec<Option<GateId>> = Vec::new();
         let mut bricks: Vec<BrickId> = Vec::new();
         for (index, record) in self.bricks.iter().enumerate() {
@@ -715,12 +792,18 @@ impl Registry {
                 bricks.push(BrickId(index as u32));
             }
         }
-        Gates::new(parents, bricks)
+        let roots = self.bases.iter().map(|&base| GateId(base)).collect();
+        let types = self.bricks.iter().map(BrickRecord::brick).collect();
+        BrickStates::new(parents, bricks, roots, types)
     }
 
-    fn order_games(&mut self) {
-        let games: Vec<&'static str> = self
-            .listed
+    fn order_games(&self, listed: &[&'static str], mut orders: Orders) -> Orders {
+        let mut order = |first: &'static str, then: &'static str| {
+            if !orders.contains(&(first, then)) {
+                orders.push((first, then));
+            }
+        };
+        let games: Vec<&'static str> = listed
             .iter()
             .copied()
             .filter(|&package| self.brick(package).is_some_and(BrickRecord::game))
@@ -733,15 +816,22 @@ impl Registry {
             .collect();
         for (at, &game) in games.iter().enumerate() {
             for &brick in &engine {
-                self.order(brick, game);
+                order(brick, game);
             }
             for &later in &games[at + 1..] {
-                self.order(game, later);
+                order(game, later);
             }
         }
+        orders
     }
 
-    fn order_schedules(&self, world: &mut World, schedules: &[InternedScheduleLabel]) {
+    fn order_schedules(
+        &self,
+        world: &mut World,
+        schedules: &[InternedScheduleLabel],
+        firsts: &[TypeId],
+        orders: &[(&'static str, &'static str)],
+    ) {
         let bricks: Box<[_]> = self
             .iter()
             .map(|(id, record)| (BrickSet(record.package).intern(), id))
@@ -755,13 +845,11 @@ impl Registry {
                 Some((id, self.filler_id(decl.type_id())))
             })
             .collect();
-        let firsts: Box<[ComponentId]> = self
-            .firsts
+        let firsts: Box<[ComponentId]> = firsts
             .iter()
             .filter_map(|&type_id| world.components().get_id(type_id))
             .collect();
-        let orders: Box<[(BrickId, BrickId)]> = self
-            .orders
+        let orders: Box<[(BrickId, BrickId)]> = orders
             .iter()
             .filter_map(|&(first, then)| Some((self.id(first)?, self.id(then)?)))
             .collect();
@@ -779,10 +867,9 @@ impl Registry {
         }
     }
 
-    fn add_systems(&mut self, world: &mut World) {
+    fn add_systems(&mut self, world: &mut World, listed: &[&'static str]) {
         let mut all = world.get_resource_or_init::<Schedules>();
-        for index in 0..self.listed.len() {
-            let package = self.listed[index];
+        for &package in listed {
             let Some(brick) = self.id(package) else {
                 continue;
             };
@@ -790,14 +877,8 @@ impl Registry {
             let mut groups: Vec<Group> = Vec::new();
             for call in calls {
                 let mut configs = (call.make)();
-                if call.off {
-                    if let Some(gate) = self.gate(brick, Scope::BRICK) {
-                        configs.run_if_dyn(Box::new(IntoSystem::into_system(gate_off(gate))));
-                    }
-                } else if self.bricks[brick.index()].gated(call.scope)
-                    && let Some(gate) = self.gate(brick, call.scope)
-                {
-                    configs.run_if_dyn(Box::new(IntoSystem::into_system(gate_on(gate))));
+                if let Some(gate) = self.gate(brick, call.scope) {
+                    configs.run_if_dyn(Box::new(IntoSystem::into_system(state_on(gate))));
                 }
                 match groups
                     .iter_mut()
@@ -831,48 +912,60 @@ impl Registry {
         }
     }
 
-    fn driver(&mut self, world: &mut World, refresh: Vec<fn(&mut World)>) -> GateDriver {
-        let mut gates: Vec<Gate> = Vec::new();
-        let mut offs: Vec<Off> = Vec::new();
-        let mut resets: Vec<GateReset> = Vec::new();
+    fn conditions(&mut self, world: &mut World, uses: &mut Vec<Used>) -> Vec<Option<GateFn>> {
+        let mut conditions: Vec<Option<GateFn>> = Vec::new();
         for (index, record) in self.bricks.iter_mut().enumerate() {
             let brick = BrickId(index as u32);
-            let base = self.bases[index];
-            let package = record.package;
-            for (local, scope) in record.scopes.iter_mut().enumerate() {
-                let Some(mut condition) = scope.condition.take() else {
-                    continue;
-                };
-                let access = condition.initialize(world);
-                let name = condition.name();
-                self.rule
-                    .check_into(brick, &name, &access, world, &mut self.problems);
-                gates.push(Gate {
-                    id: GateId(base + local as u32),
-                    brick: package,
-                    condition,
-                    on: true,
+            for scope in &mut record.scopes {
+                let condition = scope.condition.take().map(|mut condition| {
+                    let access = condition.initialize(world);
+                    let name = condition.name();
+                    self.rule
+                        .check_into(brick, &name, &access, world, &mut self.problems);
+                    note(uses, brick, &access);
+                    condition
                 });
-            }
-            for mut system in record.offs.drain(..) {
-                let access = system.initialize(world);
-                let name = system.name();
-                self.rule
-                    .check_into(brick, &name, &access, world, &mut self.problems);
-                offs.push(Off {
-                    root: GateId(base),
-                    brick: package,
-                    system,
-                });
-            }
-            for filled in &record.fills {
-                resets.push((GateId(base + filled.scope.0), filled.reset));
+                conditions.push(condition);
             }
         }
-        GateDriver::new(gates, offs, resets, refresh)
+        conditions
     }
 
-    fn check_operations(&mut self, world: &mut World) {
+    fn analyze(&mut self, world: &World, uses: &[Used]) -> Vec<Vec<BrickId>> {
+        let rule = &self.rule;
+        let catalog = &self.catalog;
+        let catalogued = |type_id: TypeId| {
+            rule.catalogued(type_id).then(|| {
+                catalog
+                    .iter()
+                    .find(|decl| decl.type_id() == type_id)
+                    .and_then(PlaceDecl::reset)
+            })
+        };
+        let dropped: Vec<Vec<TypeId>> = self
+            .bricks
+            .iter()
+            .map(|record| {
+                record
+                    .owned()
+                    .iter()
+                    .filter(|owned| !owned.survives() && !rule.catalogued(owned.type_id))
+                    .map(|owned| owned.type_id)
+                    .collect()
+            })
+            .collect();
+        let values = Values {
+            bricks: &self.bricks,
+            catalogued: &catalogued,
+            dropped: &dropped,
+        };
+        let held = ownership(world, &values, uses);
+        self.owners = held.shared;
+        self.private = held.private;
+        held.needs
+    }
+
+    fn check_operations(&mut self, world: &mut World, uses: &mut Vec<Used>) {
         let operations: Vec<(BrickId, OperationEntry)> = self
             .iter()
             .flat_map(|(id, record)| record.operations().iter().map(move |entry| (id, *entry)))
@@ -881,6 +974,7 @@ impl Registry {
             let access = entry.access(world);
             self.rule
                 .check_into(brick, entry.name, &access, world, &mut self.problems);
+            note(uses, brick, &access);
         }
         let explainers: Vec<(BrickId, ExplainEntry)> = self
             .iter()
@@ -890,6 +984,7 @@ impl Registry {
             let access = entry.access(world);
             self.rule
                 .check_into(brick, "explain", &access, world, &mut self.problems);
+            note(uses, brick, &access);
         }
     }
 }

@@ -1,9 +1,12 @@
 use std::any::Any;
+use std::sync::Arc;
 
 use bevy_ecs::prelude::{Component, Entity, Resource};
-use engine_place::{Error, ErrorCode, InterpolateTransform, Slot};
-use glam::{Mat4, Vec2, Vec3};
+use engine_place::{Error, ErrorCode, Feed, InterpolateTransform, Slot};
+use glam::{Mat3, Mat4, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
+
+use crate::solids::SolidField;
 
 pub const MIN_COLLIDER_EXTENT: f32 = 1.0e-4;
 pub const MAX_COLLIDER_EXTENT: f32 = 1.0e4;
@@ -371,6 +374,15 @@ pub struct SensorEvent {
     pub kind: SensorEventKind,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColliderSolid {
+    pub entity: Entity,
+    pub layers: CollisionLayers,
+    pub shape: ColliderShape,
+    pub center: Vec3,
+    pub axes: Mat3,
+}
+
 pub trait Collide: Any + Send + Sync + 'static {
     fn raycast(&self, ray: CollisionRay, filter: QueryFilter) -> Result<Option<RayHit>, Error>;
 
@@ -408,18 +420,23 @@ pub trait Collide: Any + Send + Sync + 'static {
         filter: QueryFilter,
     ) -> Result<Slid, Error>;
 
-    fn slide_hits(&self) -> Vec<SlideHit>;
+    fn slide_hits(&self) -> &Feed<SlideHit>;
 
-    fn events(&self) -> &[SensorEvent];
+    fn events(&self) -> &Feed<SensorEvent>;
 
     fn pairs(&self) -> &[SensorPair];
 
-    fn colliders(&self) -> Option<usize>;
+    fn grounds(&self) -> &[Arc<SolidField>];
+
+    fn solids(&self, min: Vec3, max: Vec3, found: &mut Vec<ColliderSolid>);
 
     fn holds(&self, at: Vec2) -> bool;
 }
 
-struct NoCollision;
+struct NoCollision {
+    hits: Feed<SlideHit>,
+    events: Feed<SensorEvent>,
+}
 
 impl Collide for NoCollision {
     fn raycast(&self, _: CollisionRay, _: QueryFilter) -> Result<Option<RayHit>, Error> {
@@ -471,21 +488,23 @@ impl Collide for NoCollision {
         })
     }
 
-    fn slide_hits(&self) -> Vec<SlideHit> {
-        Vec::new()
+    fn slide_hits(&self) -> &Feed<SlideHit> {
+        &self.hits
     }
 
-    fn events(&self) -> &[SensorEvent] {
-        &[]
+    fn events(&self) -> &Feed<SensorEvent> {
+        &self.events
     }
 
     fn pairs(&self) -> &[SensorPair] {
         &[]
     }
 
-    fn colliders(&self) -> Option<usize> {
-        None
+    fn grounds(&self) -> &[Arc<SolidField>] {
+        &[]
     }
+
+    fn solids(&self, _: Vec3, _: Vec3, _: &mut Vec<ColliderSolid>) {}
 
     fn holds(&self, _: Vec2) -> bool {
         false
@@ -497,7 +516,10 @@ pub struct Collision(pub Box<dyn Collide>);
 
 impl Default for Collision {
     fn default() -> Self {
-        Self(Box::new(NoCollision))
+        Self(Box::new(NoCollision {
+            hits: Feed::new(1),
+            events: Feed::new(1),
+        }))
     }
 }
 

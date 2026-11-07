@@ -38,6 +38,7 @@ impl Brick for ShadowsBrick {
             .settings::<SkyOcclusion>()
             .stats::<ShadowStats>()
             .resource::<plan::ShadowFeedback>()
+            .resource::<plan::ShadowDrawn>()
             .resource::<plan::ShadowPlan>()
             .piece::<gpu_layouts::ShadowPiece>()
             .fill::<ShadowMaps>(Some(shaders::shadows::faces::shadows::MODULE))
@@ -51,7 +52,6 @@ impl Brick for ShadowsBrick {
         }
         bricks
             .systems(Schedule::ViewSync, (plan::plan_shadows, plan::shadow_stats))
-            .off(plan::forget_shadows)
             .observation::<inspect::InspectShadowTile>()
             .generated(gpu_layouts::GENERATED)
             .part::<part::ShadowsGpu>();

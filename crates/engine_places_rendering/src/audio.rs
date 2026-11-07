@@ -134,41 +134,46 @@ impl Slot for Sounds {
 }
 
 impl Sounds {
-    pub fn load(&self, bytes: impl Into<Arc<[u8]>>) -> SoundHandle {
+    pub fn load(&self, bytes: impl Into<Arc<[u8]>>) -> Option<SoundHandle> {
         let mut queue = self.lock();
-        queue.next_sound += 1;
-        let sound = SoundHandle(queue.next_sound);
-        queue.order(SoundOrder::Load {
-            sound,
-            bytes: bytes.into(),
-        });
-        sound
+        let sound = SoundHandle(queue.next_sound + 1);
+        queue
+            .order(SoundOrder::Load {
+                sound,
+                bytes: bytes.into(),
+            })
+            .then(|| {
+                queue.next_sound += 1;
+                sound
+            })
     }
 
-    pub fn play(&self, sound: SoundHandle, shot: OneShot) -> VoiceHandle {
+    pub fn play(&self, sound: SoundHandle, shot: OneShot) -> Option<VoiceHandle> {
         let mut queue = self.lock();
-        let voice = queue.voice();
-        queue.order(SoundOrder::Play { voice, sound, shot });
-        voice
+        let voice = VoiceHandle(queue.next_voice + 1);
+        queue
+            .order(SoundOrder::Play { voice, sound, shot })
+            .then(|| queue.took(voice))
     }
 
-    pub fn play_bytes(&self, bytes: impl Into<Arc<[u8]>>, shot: OneShot) -> VoiceHandle {
+    pub fn play_bytes(&self, bytes: impl Into<Arc<[u8]>>, shot: OneShot) -> Option<VoiceHandle> {
         let mut queue = self.lock();
-        let voice = queue.voice();
-        queue.order(SoundOrder::PlayBytes {
-            voice,
-            bytes: bytes.into(),
-            shot,
-        });
-        voice
+        let voice = VoiceHandle(queue.next_voice + 1);
+        queue
+            .order(SoundOrder::PlayBytes {
+                voice,
+                bytes: bytes.into(),
+                shot,
+            })
+            .then(|| queue.took(voice))
     }
 
-    pub fn stop(&self, voice: VoiceHandle) {
-        self.lock().order(SoundOrder::Stop(voice));
+    pub fn stop(&self, voice: VoiceHandle) -> bool {
+        self.lock().order(SoundOrder::Stop(voice))
     }
 
-    pub fn set_volume(&self, voice: VoiceHandle, volume: f32) {
-        self.lock().order(SoundOrder::Volume(voice, volume));
+    pub fn set_volume(&self, voice: VoiceHandle, volume: f32) -> bool {
+        self.lock().order(SoundOrder::Volume(voice, volume))
     }
 
     #[doc(hidden)]
@@ -187,16 +192,18 @@ impl Sounds {
 }
 
 impl Queue {
-    fn voice(&mut self) -> VoiceHandle {
-        self.next_voice += 1;
-        VoiceHandle(self.next_voice)
+    fn took(&mut self, voice: VoiceHandle) -> VoiceHandle {
+        self.next_voice = voice.0;
+        voice
     }
 
-    fn order(&mut self, order: SoundOrder) {
-        if self.orders.len() < MAX_ORDERS {
+    fn order(&mut self, order: SoundOrder) -> bool {
+        let room = self.orders.len() < MAX_ORDERS;
+        if room {
             self.orders.push(order);
         } else {
             self.cut = self.cut.saturating_add(1);
         }
+        room
     }
 }

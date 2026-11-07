@@ -2,11 +2,10 @@ use std::cmp::Reverse;
 
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashSet;
-use engine_places_simulation::physics::ColliderShape;
+use engine_places_simulation::physics::{ColliderShape, Collision};
 use engine_places_simulation::water::{WaterBody, WaterObstacle, WaterObstacles};
 use glam::Vec3;
 
-use crate::solids::Solids;
 use crate::world::PhysicsWorld;
 
 pub(crate) fn sorted<'a>(waters: impl Iterator<Item = &'a WaterBody>) -> Vec<&'a WaterBody> {
@@ -17,7 +16,7 @@ pub(crate) fn sorted<'a>(waters: impl Iterator<Item = &'a WaterBody>) -> Vec<&'a
 
 pub(crate) fn obstruct(
     physics: Res<PhysicsWorld>,
-    solids: Res<Solids>,
+    collision: Res<Collision>,
     waters: Query<&WaterBody>,
     mut obstacles: ResMut<WaterObstacles>,
 ) {
@@ -33,20 +32,21 @@ pub(crate) fn obstruct(
     }
     let listed = &mut obstacles.obstacles;
     listed.clear();
-    if solids.collides() {
-        let mut seen = HashSet::default();
-        for &(low, high) in &reaches {
-            for found in solids.colliders_in(low, high) {
-                if physics.holds(found.entity) || !seen.insert(found.entity) {
-                    continue;
-                }
-                listed.push(WaterObstacle {
-                    center: found.solid.center,
-                    axes: found.solid.axes,
-                    round: matches!(found.solid.shape, ColliderShape::Sphere { .. }),
-                    velocity: Vec3::ZERO,
-                });
+    let mut seen = HashSet::default();
+    let mut found = Vec::new();
+    for &(low, high) in &reaches {
+        found.clear();
+        collision.0.solids(low, high, &mut found);
+        for solid in &found {
+            if physics.holds(solid.entity) || !seen.insert(solid.entity) {
+                continue;
             }
+            listed.push(WaterObstacle {
+                center: solid.center,
+                axes: solid.axes,
+                round: matches!(solid.shape, ColliderShape::Sphere { .. }),
+                velocity: Vec3::ZERO,
+            });
         }
     }
     listed.extend(physics.solids());

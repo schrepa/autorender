@@ -140,7 +140,7 @@ impl Run {
         };
         let Self {
             machine,
-            open,
+            recording,
             frame_groups,
             own_groups,
             filled: fills,
@@ -150,7 +150,7 @@ impl Run {
             ..
         } = self;
         let parity = *parity;
-        let Some(open) = open.as_mut() else {
+        let Some(open) = recording.open_mut() else {
             return;
         };
         let built = &machine.pipelines[pipeline as usize];
@@ -354,14 +354,14 @@ impl Run {
     }
 
     pub(crate) fn scissor(&mut self, rect: [u32; 4]) {
-        if let Some(open) = self.open.as_mut() {
+        if let Some(open) = self.recording.open_mut() {
             open.pass
                 .set_scissor_rect(rect[0], rect[1], rect[2], rect[3]);
         }
     }
 
     pub(crate) fn within(&mut self, size: (u32, u32)) {
-        if let Some(open) = self.open.as_mut() {
+        if let Some(open) = self.recording.open_mut() {
             crate::targets::draw_within(&mut open.pass, size);
         }
     }
@@ -372,7 +372,7 @@ impl Run {
             .first()
             .map(|(_, made)| (made.size.width, made.size.height));
         if let (Some(open), Some((width, height))) = (
-            self.open.as_mut().filter(|open| open.layered),
+            self.recording.open_mut().filter(|open| open.layered),
             self.region.or(size),
         ) {
             open.pass.set_scissor_rect(0, 0, width, height);
@@ -407,15 +407,11 @@ impl Run {
             return 0;
         }
         let current = self.pass;
-        if self
-            .computing
-            .as_ref()
-            .is_none_or(|(known, _)| *known != current)
-        {
-            self.computing = None;
+        if self.recording.computing(current).is_none() {
+            self.end_render();
             self.group(current);
             let label = self.label_of(current).unwrap_or("engine/part-dispatch");
-            let Some(encoder) = self.encoder.as_mut() else {
+            let Some(encoder) = self.recording.encoder() else {
                 return 0;
             };
             let begun = encoder
@@ -424,11 +420,11 @@ impl Run {
                     timestamp_writes: None,
                 })
                 .forget_lifetime();
-            self.computing = Some((current, begun));
+            self.recording.transition(Step::Compute(current, begun));
         }
         let Self {
             machine,
-            computing,
+            recording,
             frame_groups,
             own_groups,
             buffers,
@@ -436,7 +432,7 @@ impl Run {
             ..
         } = self;
         let parity = *parity;
-        let Some((_, pass)) = computing.as_mut() else {
+        let Some(pass) = recording.computing(current) else {
             return 0;
         };
         let built = &machine.pipelines[handle as usize];

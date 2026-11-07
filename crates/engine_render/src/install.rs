@@ -180,7 +180,7 @@ impl PartInfo {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Declared {
     pub(crate) parts: Vec<PartInfo>,
     pub(crate) textures: Vec<TextureDecl>,
@@ -193,6 +193,58 @@ pub(crate) struct Declared {
     pub(crate) claims: Vec<Claim>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Counts {
+    textures: usize,
+    buffers: usize,
+    passes: usize,
+    pipelines: usize,
+    inputs: usize,
+    frame: usize,
+    claims: usize,
+}
+
+impl Declared {
+    pub(crate) fn counts(&self) -> Counts {
+        Counts {
+            textures: self.textures.len(),
+            buffers: self.buffers.len(),
+            passes: self.passes.len(),
+            pipelines: self.pipelines.len(),
+            inputs: self.inputs.len(),
+            frame: self.frame.len(),
+            claims: self.claims.len(),
+        }
+    }
+
+    pub(crate) fn before(&self, counts: Counts) -> Self {
+        fn kept<T: Clone>(all: &[T], count: usize) -> Vec<T> {
+            all.iter().take(count).cloned().collect()
+        }
+        Self {
+            parts: self.parts.clone(),
+            textures: kept(&self.textures, counts.textures),
+            buffers: kept(&self.buffers, counts.buffers),
+            samplers: self.samplers.clone(),
+            passes: kept(&self.passes, counts.passes),
+            pipelines: kept(&self.pipelines, counts.pipelines),
+            inputs: kept(&self.inputs, counts.inputs),
+            frame: kept(&self.frame, counts.frame),
+            claims: kept(&self.claims, counts.claims),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct Reinstall {
+    pub(crate) install: crate::registration::InstallFn,
+    pub(crate) package: &'static str,
+    pub(crate) fills: Vec<TypeId>,
+    pub(crate) from: Counts,
+    pub(crate) to: Counts,
+}
+
+#[derive(Clone)]
 pub(crate) struct DrawEntry {
     pub(crate) part: u32,
     pub(crate) record: std::sync::Arc<dyn Any + Send + Sync>,

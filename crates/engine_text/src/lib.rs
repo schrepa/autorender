@@ -248,9 +248,6 @@ impl GpuPart for TextGpu {
             return;
         };
         let mut state = typesetter.lock();
-        if cx.fresh() {
-            state.forget_atlas();
-        }
         state.frame(
             labels.iter(),
             &settings,

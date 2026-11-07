@@ -4,8 +4,8 @@ import package::face::caster_routes::{caster_box, caster_in_region, caster_in_sk
     caster_regions, caster_span, mark_caster, outside_route, route};
 import package::face::wind::{slot_sway, wind_sway};
 import package::generated::meshes::{BatchData as Batch, CULL_GROUP, CandidateData as Candidate,
-    CasterFrame, MOVING_MAP, MOVING_PAIRS, SKY_MAP};
-import package::meshes::presentation::{Rows, VALID, pose_key};
+    CasterFrame, MOVING_MAP, MOVING_PAIRS, SKY_MAP, candidate_state_valid};
+import package::meshes::presentation::{Rows, pose_key};
 import package::meshes::slots::{instance_colors, instance_poses};
 
 struct DrawArgs {
@@ -96,7 +96,7 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let candidate = candidates[id.x];
-    if (flags[candidate.position] & VALID) == 0u {
+    if !candidate_state_valid(flags[candidate.position]) {
         return;
     }
     let pose = poses[candidate.slot];

@@ -39,14 +39,10 @@ impl Atlas {
     pub(crate) fn resize(&mut self, side: u32) {
         if self.side != side {
             self.side = side;
-            self.forget();
+            self.uploads.clear();
+            self.empty();
+            self.full = false;
         }
-    }
-
-    pub(crate) fn forget(&mut self) {
-        self.uploads.clear();
-        self.empty();
-        self.full = false;
     }
 
     pub(crate) fn take_uploads(&mut self) -> Vec<Upload> {

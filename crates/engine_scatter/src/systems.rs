@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetLibrary, AssetResidency, AssetUses, Cut, Detail, DeviceLimits, FrameTime, ImpostorAsks,
-    ImpostorPolicy, ImpostorRecord, ImpostorRecords, MaterialHandle, MeshHandle, Readback, Spawner,
+    ImpostorPolicy, ImpostorRecord, ImpostorRecords, MaterialHandle, MeshHandle, Readable, Readback, Spawner,
     TextureHandle, View,
 };
 use engine_math::collections::HashMap;
@@ -154,9 +154,9 @@ pub(crate) struct ScatterFeedback {
     entries: u32,
 }
 
-impl Readback for ScatterFeedback {
-    fn arrived(&mut self, _frame: u64, _tag: u32, bytes: &[u8]) {
-        self.entries = bytes.get(4..8).map_or(0, |word| {
+impl Readable for ScatterFeedback {
+    fn arrived(&mut self, _tag: u32, read: Readback<&[u8]>) {
+        self.entries = read.value.get(4..8).map_or(0, |word| {
             u32::from_le_bytes([word[0], word[1], word[2], word[3]])
         });
     }
@@ -440,6 +440,7 @@ pub(crate) fn place_pool(
                     (terrain.terrain, tile.key),
                     (Arc::clone(&tile.placed), tile.stamp, terrain.origin),
                     objects,
+                    refill,
                 );
             }
         }

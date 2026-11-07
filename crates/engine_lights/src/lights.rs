@@ -27,12 +27,6 @@ settings! {
     }
 }
 
-impl LocalLightSettings {
-    pub fn active(&self) -> bool {
-        self.enabled && self.intensity > 0.0
-    }
-}
-
 stats! {
     #[section("local_light_stats")]
     pub struct LightStats {
@@ -214,14 +208,10 @@ pub(crate) fn light_stats(
     list: Res<LightList>,
     gather: Res<LightGather>,
     view: Res<View>,
-    mut totals: ResMut<LightTotals>,
+    totals: Res<LightTotals>,
     mut stats: ResMut<LightStats>,
 ) {
-    let listed = !list.lights.is_empty();
-    if !listed && !view.debug() {
-        totals.forget();
-    }
-    let lit = listed && !view.debug();
+    let lit = !list.lights.is_empty() && !view.debug();
     let found = totals.found().filter(|_| lit);
     let kept = list.lights.len().min(u32::MAX as usize) as u32;
     let cut = gather.cut.min(u32::MAX as usize) as u32;
@@ -231,16 +221,4 @@ pub(crate) fn light_stats(
         light_cut: Cut::of(kept.saturating_add(cut), kept),
         cluster_cut: found.map_or_else(Cut::default, |(_, cut)| cut),
     });
-}
-
-pub(crate) fn forget_lights(
-    mut gather: ResMut<LightGather>,
-    mut list: ResMut<LightList>,
-    mut totals: ResMut<LightTotals>,
-    mut stats: ResMut<LightStats>,
-) {
-    *gather = LightGather::default();
-    list.lights.clear();
-    totals.forget();
-    *stats = LightStats::default();
 }

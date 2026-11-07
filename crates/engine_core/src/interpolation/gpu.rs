@@ -66,6 +66,7 @@ pub(crate) struct GpuInputs {
     sequence: u64,
     alpha: f32,
     gathered: Option<crate::Revision>,
+    cursor: crate::Cursor,
     current_stamps: Vec<u64>,
     previous: Vec<NodePose>,
     previous_stamps: Vec<u64>,
@@ -103,6 +104,7 @@ impl Default for GpuInputs {
             sequence: 0,
             alpha: 1.0,
             gathered: None,
+            cursor: crate::Cursor::default(),
             current_stamps: Vec::new(),
             previous: Vec::new(),
             previous_stamps: Vec::new(),
@@ -275,9 +277,14 @@ impl InterpolationState {
             return;
         }
         let _profile = engine_profile::span("interpolation", "gather_gpu_inputs");
-        let changes = hierarchy.take_changes();
-        self.gather_nodes(hierarchy, changes.as_deref());
-        hierarchy.restore_changes(changes);
+        let mut cursor = self.gpu.cursor;
+        let changes = match hierarchy.changes_since(&mut cursor) {
+            crate::Since::Same => Some(&[][..]),
+            crate::Since::Listed(changes) => Some(changes),
+            crate::Since::All => None,
+        };
+        self.gpu.cursor = cursor;
+        self.gather_nodes(hierarchy, changes);
     }
 
     fn gather_nodes(&mut self, hierarchy: &HierarchyScratch, changes: Option<&[u32]>) {

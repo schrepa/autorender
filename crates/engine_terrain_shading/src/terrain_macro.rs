@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use engine_core::{AssetLibrary, Error, Texture, TextureFormat};
 use engine_places_world::ground::TerrainTiles;
-use engine_render::{Install, Lifetime, Prepare, wgpu};
+use engine_render::{Allocation, Install, Lifetime, Prepare, wgpu};
 
 use crate::state::Bakes;
 use crate::terrain::TerrainGpu;
@@ -56,12 +56,6 @@ impl MacroMaps {
         self.held.iter().flatten().count() as u32
     }
 
-    pub(crate) fn forget(&mut self) {
-        self.shape = None;
-        self.empty = false;
-        self.held.clear();
-    }
-
     pub(crate) fn prepare(
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,
@@ -75,18 +69,18 @@ impl MacroMaps {
         let Some(shape) = first.map(|texture| Shape::of(texture)) else {
             self.shape = None;
             self.held.clear();
-            if !self.empty {
+            let allocation = cx.allocate_as(
+                self.texture,
+                wgpu::TextureFormat::Rgba8Unorm,
+                wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                1,
+            );
+            if allocation == Allocation::Fresh || !self.empty {
                 self.empty = true;
-                cx.allocate_as(
-                    self.texture,
-                    wgpu::TextureFormat::Rgba8Unorm,
-                    wgpu::Extent3d {
-                        width: 1,
-                        height: 1,
-                        depth_or_array_layers: 1,
-                    },
-                    1,
-                );
                 cx.write_level(
                     self.texture,
                     (0, 0),
@@ -98,20 +92,20 @@ impl MacroMaps {
             return;
         };
         let count = tiles.terrains.len().min(max_layers as usize);
-        if self.shape != Some((shape, count)) {
+        self.empty = false;
+        let allocation = cx.allocate_as(
+            self.texture,
+            engine_render::texture_format(shape.format, false).0,
+            wgpu::Extent3d {
+                width: shape.size,
+                height: shape.size,
+                depth_or_array_layers: count as u32,
+            },
+            shape.levels as u32,
+        );
+        if allocation == Allocation::Fresh || self.shape != Some((shape, count)) {
             self.shape = Some((shape, count));
-            self.empty = false;
             self.held = vec![None; count];
-            cx.allocate_as(
-                self.texture,
-                engine_render::texture_format(shape.format, false).0,
-                wgpu::Extent3d {
-                    width: shape.size,
-                    height: shape.size,
-                    depth_or_array_layers: count as u32,
-                },
-                shape.levels as u32,
-            );
         }
         for index in 0..count {
             let wanted = map(index).filter(|texture| Shape::of(texture) == shape);

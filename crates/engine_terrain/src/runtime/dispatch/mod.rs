@@ -1,5 +1,7 @@
 use super::*;
-use engine_core::RecordKey;
+use engine_core::{FrameBudget, RecordKey};
+
+const BUDGET: &str = "terrain";
 
 pub(super) struct Asking<'a, 'w, 's> {
     pub(super) jobs: &'a mut Jobs<'w, 's>,
@@ -8,28 +10,55 @@ pub(super) struct Asking<'a, 'w, 's> {
 }
 
 impl Asking<'_, '_, '_> {
-    pub(super) fn take(&self, ticket: &Ticket) -> Option<Result<Arc<[u8]>, Error>> {
+    pub(super) fn take(&self, ticket: &Interest<RecordKey>) -> Option<Result<Arc<[u8]>, Error>> {
         self.records.get(ticket)
     }
 }
 
-pub(super) struct Work {
-    pub(super) clock: Option<fn() -> f64>,
-    pub(super) end: f64,
-    pub(super) upload: std::cell::Cell<u64>,
+pub(super) struct Work<'a> {
+    until: Option<(fn() -> f64, f64)>,
+    budget: std::cell::RefCell<&'a mut FrameBudget>,
+    spent: std::cell::Cell<u64>,
 }
 
-impl Work {
+impl<'a> Work<'a> {
+    pub(super) fn frame(budget: &'a mut FrameBudget) -> Self {
+        Self {
+            until: None,
+            budget: std::cell::RefCell::new(budget),
+            spent: std::cell::Cell::new(0),
+        }
+    }
+
+    pub(super) fn between(budget: &'a mut FrameBudget, until: (fn() -> f64, f64)) -> Self {
+        Self {
+            until: Some(until),
+            budget: std::cell::RefCell::new(budget),
+            spent: std::cell::Cell::new(0),
+        }
+    }
+
     pub(super) fn expired(&self) -> bool {
-        self.clock.is_some_and(|clock| clock() >= self.end)
+        match self.until {
+            Some((clock, end)) => clock() >= end,
+            None => self.budget.borrow().expired(),
+        }
     }
 
-    pub(super) fn uploads(&self) -> bool {
-        self.upload.get() > 0
+    pub(super) fn spend(&self, bytes: u64) -> bool {
+        let spent = self.budget.borrow_mut().spend(BUDGET, bytes);
+        if spent {
+            self.spent.set(self.spent.get() + bytes);
+        }
+        spent
     }
 
-    pub(super) fn upload(&self, bytes: u64) {
-        self.upload.set(self.upload.get().saturating_sub(bytes));
+    pub(super) fn carry(&self, bytes: u64) {
+        self.budget.borrow_mut().spend(BUDGET, bytes);
+    }
+
+    pub(super) fn spent(&self) -> u64 {
+        self.spent.get()
     }
 }
 
@@ -37,7 +66,7 @@ pub(super) fn load_tiles(
     state: &mut TerrainState,
     missing: &[(TileKey, u32)],
     (target, keep, named): (&HashSet<TileKey>, &HashSet<TileKey>, &[TileKey]),
-    work: &Work,
+    work: &Work<'_>,
     frame: u64,
     asking: &mut Asking<'_, '_, '_>,
 ) -> bool {
@@ -53,7 +82,7 @@ fn load_records(
     state: &mut TerrainState,
     missing: &[(TileKey, u32)],
     (target, keep, named): (&HashSet<TileKey>, &HashSet<TileKey>, &[TileKey]),
-    work: &Work,
+    work: &Work<'_>,
     asking: &mut Asking<'_, '_, '_>,
     frame: u64,
 ) {
@@ -72,20 +101,18 @@ fn load_records(
     };
     let generation = state.store.generation();
     let store = &state.store;
-    for (ticket, _, _) in state.dispatched.take_where(|key, &(_, made, _)| {
+    drop(state.dispatched.take_where(|key, &(_, made, _)| {
         !(made == generation && keep.contains(key) && store.loads(key))
-    }) {
-        asking.jobs.cancel(ticket);
-    }
+    }));
+    drop(state.failed.take_where(|key, _| !keep.contains(key)));
     let mut handed: Vec<(TileKey, Generation, u32)> = state
         .dispatched
         .iter()
         .map(|(key, &(_, made, priority))| (key, made, priority))
         .collect();
     handed.sort_by_key(|&(_, _, priority)| priority);
-    let mut inserted = false;
     for (key, made, _) in handed {
-        if inserted && (work.expired() || !work.uploads()) {
+        if work.spent() > 0 && work.expired() {
             break;
         }
         let Some(output) = state
@@ -95,36 +122,41 @@ fn load_records(
         else {
             continue;
         };
-        if let Some((ticket, _, _)) = state.dispatched.remove(&key) {
-            asking.jobs.cancel(ticket);
-        }
         match job_output(TILE_BUILD.name(), output, crate::jobs::tile_output) {
             Ok(tile) if made == generation && target.contains(&key) && tile.key() == key => {
-                work.upload(2 * TILE_ARRAY_BYTES);
-                state.failed.remove(&key);
+                if !work.spend(2 * TILE_ARRAY_BYTES) {
+                    break;
+                }
+                state.dispatched.remove(&key);
                 let stamps = state.reaching(key);
                 state.store.arrive(Arc::new(tile), stamps);
-                inserted = true;
             }
-            Ok(_) => {}
+            Ok(_) => {
+                state.dispatched.remove(&key);
+            }
             Err(error) => {
-                state.failed.insert(key, frame);
+                if let Some((interest, _, _)) = state.dispatched.remove(&key) {
+                    state.failed.insert(key, interest);
+                }
                 state.failures.record(frame, error);
             }
         }
     }
     for &(key, priority) in missing {
-        if state.dispatched.contains_key(&key)
-            || !state.store.loads(&key)
-            || state
-                .failed
-                .get(&key)
-                .is_some_and(|&at| frame < at + RETRY_AFTER)
-        {
+        if state.dispatched.contains_key(&key) || !state.store.loads(&key) {
             continue;
         }
         let job = state.tile_job(recipe.hash(), key);
-        let ticket = asking.jobs.fetch(&TILE_BUILD, &job.identity(), priority);
+        let input = job.identity();
+        if state
+            .failed
+            .get(&key)
+            .is_some_and(|held| *held.key() == RecordKey::of(&TILE_BUILD, &input))
+        {
+            continue;
+        }
+        state.failed.remove(&key);
+        let ticket = asking.jobs.fetch(&TILE_BUILD, &input, priority);
         state.dispatched.insert(key, (ticket, generation, priority));
     }
     prefetch(state, (missing, named), (recipe, generation), asking, frame);
@@ -148,9 +180,7 @@ fn prefetch(
             .get(&key)
             .and_then(|(ticket, _)| asking.take(ticket));
         if let Some(output) = output {
-            if let Some((ticket, _)) = state.prefetched.remove(&key) {
-                asking.jobs.cancel(ticket);
-            }
+            state.prefetched.remove(&key);
             if let Ok(tile) = job_output(TILE_BUILD.name(), output, crate::jobs::tile_output)
                 && made == generation
                 && tile.key() == key
@@ -159,10 +189,8 @@ fn prefetch(
                 let stamps = state.reaching(key);
                 state.store.keep_unseen(Arc::new(tile), stamps, frame);
             }
-        } else if (made != generation || !named.contains(&key))
-            && let Some((ticket, _)) = state.prefetched.remove(&key)
-        {
-            asking.jobs.cancel(ticket);
+        } else if made != generation || !named.contains(&key) {
+            state.prefetched.remove(&key);
         }
     }
     if !missing.is_empty() || !state.dispatched.is_empty() {
@@ -218,6 +246,7 @@ pub(crate) fn share_recipe(
     }) {
         return;
     }
+    let materials = state.recipe.as_ref().map(|recipe| recipe.materials);
     let shared = stacks
         .iter()
         .find(|(shared, _)| Arc::ptr_eq(shared, &stack))
@@ -246,8 +275,7 @@ pub(crate) fn share_recipe(
     if let Some(old) = state.recipe.replace(shared) {
         released.push(old.key);
     }
-    state.stale.tiles = true;
-    state.stale.ground = true;
+    state.recipe_changed(materials);
 }
 
 pub(super) fn release(

@@ -1,11 +1,11 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Error, FrameTime, View};
 use engine_math::max;
-use engine_places_rendering::sky::{ADAPTATION_MOST, ADAPTATION_POWER, NOON_LIGHT, SkyLight};
+use engine_places_rendering::sky::SkyLight;
 use engine_places_rendering::tonemap::Display;
 use engine_render::{
-    AfterRead, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime, Pass,
-    Prepare, ViewTarget,
+    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install,
+    Lifetime, Pass, Prepare, ViewTarget,
 };
 
 use crate::gpu_layouts::{
@@ -17,6 +17,9 @@ const STATE_BYTES: u64 = size_of::<ExposureState>() as u64;
 const UNIFORM_BYTES: u64 = size_of::<ExposureUniform>() as u64;
 const BIN_BYTES: u64 = EXPOSURE_BINS as u64 * 4;
 const STATE_READ: u32 = 0;
+const NOON_LIGHT: f32 = 1.1;
+const ADAPTATION_POWER: f32 = 0.75;
+const ADAPTATION_MOST: f32 = 16.0;
 
 pub(crate) struct MeterGpu {
     meter: Pass<Self>,
@@ -125,16 +128,13 @@ impl GpuPart for MeterGpu {
         let (settings, sky, display, time, view) = reads;
         cx.allocate_buffer(self.uniform, UNIFORM_BYTES);
         cx.allocate_buffer(self.bins, BIN_BYTES);
-        cx.allocate_buffer(self.state, STATE_BYTES);
         let authored = display.exposure[0];
-        if cx.fresh() {
+        if cx.allocate_buffer(self.state, STATE_BYTES) == Allocation::Fresh {
             let state = ExposureState {
                 exposure: authored,
                 ..ExposureState::default()
             };
             cx.write(self.state, 0, &[state]);
-            self.last_seconds = None;
-            self.last_camera = [0; 16];
         }
         if view.debug() {
             return;

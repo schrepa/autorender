@@ -18,6 +18,8 @@ pub struct InputView {
     pub menu: Vec<crate::MenuPress>,
     pub menu_wanted: bool,
     pub cursor: &'static str,
+    pub cursor_wanted: &'static str,
+    pub cursor_asked: Vec<[&'static str; 2]>,
 }
 
 #[derive(Serialize)]
@@ -60,20 +62,6 @@ pub struct GlobalTransformView {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct InterpolateTransformView {
     pub enabled: bool,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct PresentationStateView {
-    pub frame: Option<String>,
-    pub tick: Option<String>,
-    pub alpha: f32,
-    pub history_nodes: usize,
-    pub history_capacity: usize,
-    pub history_bytes: usize,
-    pub presentation_scratch_bytes: usize,
-    pub blended_nodes: usize,
-    pub largest_blend_distance: f32,
 }
 
 #[derive(Serialize)]

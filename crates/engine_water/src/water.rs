@@ -7,9 +7,9 @@ use engine_core::{Entry, Error, Var};
 use engine_heightfield::Fall;
 use engine_places_world::ground::{GroundTiles, Heightfield};
 use engine_render::{
-    Access, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, DrawInput, Encode, GpuPart,
-    Install, Layer, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape,
-    Texture, VertexLayout, ViewTarget, wgpu,
+    Access, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, DrawInput, Encode,
+    GpuPart, Install, Layer, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, SamplerDesc,
+    Shape, Texture, VertexLayout, ViewTarget, wgpu,
 };
 use glam::Vec3;
 
@@ -299,19 +299,17 @@ impl GpuPart for WaterGpu {
         (water, state, feedback, view, ground, heightfield): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        if cx.fresh() {
-            self.forget();
-        }
         let pattern = &heightfield.leaf_indices;
-        let fresh = self
-            .pattern_written
-            .as_ref()
-            .is_none_or(|written| !Arc::ptr_eq(written, pattern));
+        let made = cx.allocate_buffer(
+            self.leaf_pattern,
+            std::mem::size_of_val(&pattern[..]) as u64,
+        );
+        let fresh = made == Allocation::Fresh
+            || self
+                .pattern_written
+                .as_ref()
+                .is_none_or(|written| !Arc::ptr_eq(written, pattern));
         if fresh {
-            cx.allocate_buffer(
-                self.leaf_pattern,
-                std::mem::size_of_val(&pattern[..]) as u64,
-            );
             if !pattern.is_empty() {
                 cx.write(self.leaf_pattern, 0, &pattern[..]);
             }
@@ -323,8 +321,8 @@ impl GpuPart for WaterGpu {
             .prepare(&state.blocks, (&ground, &state.terrains), cx);
         self.sim.prepare(&state.live, cx);
         self.particles.prepare(&state.particles, cx);
-        let watering = water.enabled && !state.watered.is_empty();
-        self.prepare_falls(&state, &ground, water.enabled, cx);
+        let watering = !state.watered.is_empty();
+        self.prepare_falls(&state, &ground, cx);
         let terrains = ground.tables.len() as u32;
         cx.allocate_buffer(
             self.leaf_args,
@@ -432,20 +430,10 @@ impl GpuPart for WaterGpu {
 }
 
 impl WaterGpu {
-    fn forget(&mut self) {
-        self.pattern_written = None;
-        self.built.clear();
-        self.blocks.forget();
-        self.settle.forget();
-        self.sim.forget();
-        self.particles.forget();
-    }
-
     fn prepare_falls(
         &mut self,
         state: &WaterState,
         ground: &GroundTiles,
-        enabled: bool,
         cx: &mut Prepare<'_, Self>,
     ) {
         let index_of = |entity: Entity| {
@@ -459,7 +447,7 @@ impl WaterGpu {
             state
                 .terrains
                 .iter()
-                .filter(move |terrain| enabled && !terrain.falls.is_empty())
+                .filter(|terrain| !terrain.falls.is_empty())
                 .map(|terrain| {
                     let drawn = index_of(terrain.entity)
                         .filter(|_| state.watered.contains(&terrain.entity));

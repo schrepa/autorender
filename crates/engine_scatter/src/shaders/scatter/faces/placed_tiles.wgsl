@@ -1,6 +1,6 @@
 import package::engine::impostors::{IMPOSTOR_KINDS, impostor_atlas};
 import package::engine::mesh::impostor_frames::ImpostorRecord;
-import package::generated::scatter::{DEAD, HIDDEN, PlacedGroup};
+import package::generated::scatter::{DEAD, PlacedGroup, scatter_terrain_hidden};
 import package::place::placed_tiles::{Pose, Record};
 
 @group(0) @binding(0) var<storage, read> placed_records: array<Record>;
@@ -9,7 +9,7 @@ import package::place::placed_tiles::{Pose, Record};
 @group(0) @binding(0) var placed_frames_sampler: sampler;
 
 fn placed_shown(record: Record) -> bool {
-    return record.group != DEAD && (record.terrain & HIDDEN) == 0u;
+    return record.group != DEAD && !scatter_terrain_hidden(record.terrain);
 }
 
 fn placed_count() -> u32 {

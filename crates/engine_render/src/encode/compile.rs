@@ -200,7 +200,7 @@ impl Run {
         pipeline: u32,
         variant: Option<crate::materials::Variant>,
     ) -> Option<usize> {
-        let layout = self.open.as_ref()?.layout;
+        let layout = self.recording.open()?.layout;
         let bits = variant.map(crate::materials::Variant::bits);
         let built = self.machine.pipelines.get(pipeline as usize)?;
         if let Some(at) = built
@@ -516,7 +516,7 @@ impl Run {
     }
 
     pub(crate) fn warm_reached(&mut self, world: &World) {
-        let gates = world.get_resource::<engine_registry::Gates>();
+        let states = world.get_resource::<engine_registry::BrickStates>();
         let in_play: Vec<engine_registry::GateId> = self
             .gates
             .iter()
@@ -535,13 +535,13 @@ impl Run {
                 .collect()
         };
         self.reached = Reached {
-            generation: Some(gates.map_or(0, engine_registry::Gates::generation)),
+            generation: Some(states.map_or(0, engine_registry::BrickStates::generation)),
             parts: self
                 .gates
                 .iter()
                 .map(|gate| {
                     gate.is_none_or(|gate| {
-                        in_play.contains(&gate) || gates.is_none_or(|gates| gates.on(gate))
+                        in_play.contains(&gate) || states.is_none_or(|states| states.on(gate))
                     })
                 })
                 .collect(),
@@ -563,17 +563,6 @@ impl Run {
             work(self);
         }
         self.switches = real;
-    }
-
-    pub(crate) fn release_off_parts(&mut self, world: &World) {
-        let gates = world.get_resource::<engine_registry::Gates>();
-        for part in 0..self.gates.len() {
-            let on = self.gates[part].is_none_or(|gate| gates.is_some_and(|gates| gates.on(gate)));
-            if !on {
-                self.live[part] = false;
-                self.release_part(part as u32);
-            }
-        }
     }
 
     pub(super) fn compile_listed(&mut self) {

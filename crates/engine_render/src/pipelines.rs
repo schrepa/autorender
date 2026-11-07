@@ -755,8 +755,11 @@ impl PipelineCounts {
         self.created
     }
 
-    pub(crate) fn compiling(&self) -> bool {
-        self.compiled.load(Ordering::Relaxed) < self.frames
+    pub(crate) fn compiling(&self) -> u32 {
+        let left = self
+            .frames
+            .saturating_sub(self.compiled.load(Ordering::Relaxed));
+        u32::try_from(left).unwrap_or(u32::MAX)
     }
 }
 

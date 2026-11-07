@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_core::{JobExchange, JobId, JobRef, VIEW_JOBS, WorkClock, job_priority};
-use engine_heightfield::{TILE_SAMPLES, TileKey};
-use engine_places_world::ground::GroundWork;
+use engine_core::{FrameBudget, Jobs, VIEW_JOBS, job_priority};
+use engine_heightfield::TILE_SAMPLES;
 use glam::Vec2;
 
 use crate::RiverFlow;
@@ -12,7 +11,6 @@ use crate::flow::Running;
 use crate::jobs::REWATER;
 use crate::state::{Drawing, WaterState, WaterTerrain, Watered};
 use crate::water_blocks::Blocks;
-use crate::work::Work;
 
 const REACH_SAMPLES: f32 = 2.25;
 
@@ -24,19 +22,12 @@ fn same(a: &Watered, b: &Watered) -> bool {
     }
 }
 
-type Flights = Vec<(JobId, Entity, TileKey)>;
-
 fn rewater_terrain(
     terrain: &mut WaterTerrain,
-    (exchange, flights): (&mut JobExchange, &mut Flights),
+    jobs: &mut Jobs,
     blocks: &Blocks,
-    work: &Work,
+    budget: &FrameBudget,
 ) -> u32 {
-    let touched = terrain.touched_all || !terrain.touched.is_empty();
-    let due = std::mem::take(&mut terrain.flow_moved) || (terrain.flow.is_some() && touched);
-    if !due {
-        return 0;
-    }
     let layers = Arc::clone(&terrain.baked);
     let Some(hydrology) = layers.hydrology() else {
         return 0;
@@ -54,11 +45,20 @@ fn rewater_terrain(
     stale.sort_unstable_by_key(|key| (key.level, key.x, key.z));
     let pyramid = terrain.pyramid;
     let entity = terrain.entity;
+    let mut waiting = 0;
+    stale.retain(|key| {
+        let flying = terrain
+            .held
+            .get(key)
+            .is_some_and(|held| held.drawing.is_some());
+        waiting += u32::from(flying);
+        !flying
+    });
     let flow = running.as_ref().map_or(([0; 32], Vec::new()), |running| {
         (running.name(), running.encoded())
     });
     let mut regions: Vec<(Watered, Vec<(Vec2, Vec2)>)> = Vec::new();
-    let (mut waiting, mut sent) = (0, false);
+    let mut sent = false;
     for key in stale {
         let Some(from) = terrain.resident(&key).map(|held| held.watered.clone()) else {
             continue;
@@ -95,12 +95,10 @@ fn rewater_terrain(
             }
             continue;
         }
-        let blocked = held.drawing.is_some()
-            || !blocks.caught_up(entity, key, held.water.as_ref())
-            || (sent && work.expired());
+        let blocked =
+            !blocks.caught_up(entity, key, held.water.as_ref()) || (sent && budget.expired());
         if blocked {
             waiting += 1;
-            terrain.flow_moved |= held.drawing.is_none();
             continue;
         }
         let Some(tile) = terrain.tile_job(key) else {
@@ -110,30 +108,22 @@ fn rewater_terrain(
             continue;
         };
         let input = flood_input(held, tile, (flow.0, &flow.1), reached);
-        let job = exchange.submit(JobRef::from(&REWATER), input, job_priority(VIEW_JOBS, 0));
+        let job = jobs.start(&REWATER, input, job_priority(VIEW_JOBS, 0));
         held.drawing = Some((job, Drawing::Flood(running.clone())));
-        flights.push((job, entity, key));
         sent = true;
     }
     waiting
 }
 
 pub(crate) fn rewater(
-    mut exchange: ResMut<JobExchange>,
-    clock: Res<WorkClock>,
-    ground: Res<GroundWork>,
+    budget: Res<FrameBudget>,
+    mut jobs: Jobs,
     mut state: ResMut<WaterState>,
 ) {
-    let work = Work::of(&clock, &ground, state.uploaded);
     let state = &mut *state;
     let mut stale = 0;
     for terrain in &mut state.terrains {
-        stale += rewater_terrain(
-            terrain,
-            (&mut exchange, &mut state.flights),
-            &state.blocks,
-            &work,
-        );
+        stale += rewater_terrain(terrain, &mut jobs, &state.blocks, &budget);
     }
     state.rewatered_tiles = 0;
     state.stale_water_tiles = stale;
