@@ -19,9 +19,7 @@ pub(crate) const APPLIED_MODULE: &str = "generated::applied";
 pub(crate) const PASSES_MODULE: &str = "generated::passes";
 pub(crate) const KINDS_MODULE: &str = "generated::kinds";
 pub(crate) const TRANSPARENCY_MODULE: &str = "engine::transparency";
-pub(crate) const NORMALS_MODULE: &str = "engine::normals";
 pub(crate) const COVER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
-pub(crate) const NORMALS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgb10a2Unorm;
 pub(crate) const MOST_APPLIED: usize = 128;
 pub(crate) static PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<Resolve>(),
@@ -32,7 +30,6 @@ pub(crate) static PLACES: &[PlaceDecl] = &[
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Stage {
-    Light,
     Color,
     Display,
 }
@@ -61,11 +58,11 @@ pub(crate) fn stage_of(
         .and_then(|answer| answer.parameters.first())
         .map(|(_, ty)| ty.replace(' ', ""));
     match (at, first.as_deref()) {
-        (AttachPoint::Post, Some("SceneLight")) => Ok(Stage::Light),
         (AttachPoint::Post, Some("vec3<f32>")) => Ok(Stage::Color),
         (AttachPoint::Display, Some("vec3<f32>")) => Ok(Stage::Display),
         (
             AttachPoint::Depth
+            | AttachPoint::Inputs
             | AttachPoint::Opaque
             | AttachPoint::Sky
             | AttachPoint::Transparent
@@ -81,9 +78,9 @@ pub(crate) fn stage_of(
 
 pub(crate) fn applied_source(applied: &[AppliedModule]) -> String {
     let mut imports = String::from(
-        "import package::engine::post::frame::post;\nimport package::engine::post::pixel::{PostPixel, SceneLight};\n",
+        "import package::engine::post::frame::post;\nimport package::engine::post::pixel::PostPixel;\n",
     );
-    let mut bodies = [String::new(), String::new(), String::new()];
+    let mut bodies = [String::new(), String::new()];
     for (bit, member) in applied.iter().enumerate() {
         let _ = writeln!(
             imports,
@@ -93,18 +90,17 @@ pub(crate) fn applied_source(applied: &[AppliedModule]) -> String {
         let word = ["x", "y", "z", "w"][bit / 32 % 4];
         let mask = 1_u32 << (bit % 32);
         let body = match member.stage {
-            Stage::Light => &mut bodies[0],
-            Stage::Color => &mut bodies[1],
-            Stage::Display => &mut bodies[2],
+            Stage::Color => &mut bodies[0],
+            Stage::Display => &mut bodies[1],
         };
         let _ = writeln!(
             body,
             "    if (post.applied.{word} & {mask}u) != 0u {{\n        folded = apply_{bit}(folded, at);\n    }}"
         );
     }
-    let [light, color, display] = bodies;
+    let [color, display] = bodies;
     format!(
-        "{imports}\nfn applied_light(light: SceneLight, at: PostPixel) -> SceneLight {{\n    var folded = light;\n{light}    return folded;\n}}\n\nfn applied_color(color: vec3<f32>, at: PostPixel) -> vec3<f32> {{\n    var folded = color;\n{color}    return folded;\n}}\n\nfn applied_display(color: vec3<f32>, at: PostPixel) -> vec3<f32> {{\n    var folded = color;\n{display}    return folded;\n}}\n"
+        "{imports}\nfn applied_color(color: vec3<f32>, at: PostPixel) -> vec3<f32> {{\n    var folded = color;\n{color}    return folded;\n}}\n\nfn applied_display(color: vec3<f32>, at: PostPixel) -> vec3<f32> {{\n    var folded = color;\n{display}    return folded;\n}}\n"
     )
 }
 
@@ -291,7 +287,7 @@ fn sampled_type(format: wgpu::TextureFormat) -> &'static str {
 
 pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
     let mut imports = String::from(
-        "import package::engine::shading::{Shaded, SurfacePoint, ViewPixel, unlit};\n",
+        "import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};\n",
     );
     let mut body = String::new();
     for (index, output) in outputs.iter().enumerate() {
@@ -333,27 +329,13 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
         }
         let _ = writeln!(body, "}}");
     }
-    let at_depth = |output: &&OutputDecl| output.layers.contains(&AttachPoint::Depth);
-    let _ = writeln!(body, "\nstruct DepthTargets {{");
-    for (index, output) in outputs.iter().enumerate() {
-        if at_depth(&output) {
-            let _ = writeln!(
-                body,
-                "    @location({}) {}: {},",
-                index + 1,
-                output.name,
-                output_type(output.format)
-            );
-        }
-    }
-    let _ = writeln!(body, "}}");
     let _ = writeln!(
         body,
         "\nfn view_targets(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> ViewTargets {{"
     );
     let _ = writeln!(
         body,
-        "    var targets: ViewTargets;\n    targets.color = vec4<f32>(shaded.linear, shaded.ambient);"
+        "    var targets: ViewTargets;\n    targets.color = vec4<f32>(shaded.linear, 1.0);"
     );
     for (index, output) in outputs.iter().enumerate() {
         if output.module.is_some() {
@@ -390,26 +372,16 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
     }
     let _ = writeln!(
         body,
-        "    out.depth = depth;\n    return out;\n}}\n\nfn depth_targets(point: SurfacePoint, at: ViewPixel) -> DepthTargets {{\n    let shaded = unlit(point);\n    var targets: DepthTargets;"
+        "    out.depth = depth;\n    return out;\n}}"
     );
-    for (index, output) in outputs.iter().enumerate() {
-        if at_depth(&output) && output.module.is_some() {
-            let _ = writeln!(
-                body,
-                "    targets.{} = member_{index}(point, shaded, at);",
-                output.name
-            );
-        }
-    }
-    let _ = writeln!(body, "    return targets;\n}}");
     format!("{imports}\n{body}")
 }
 
 pub(crate) fn composite_source() -> String {
     "import package::engine::post::frame::{depth_texture, post};
-import package::engine::post::resolve_plain::{post_pixel, scene_light};
+import package::engine::post::resolve_plain::{post_pixel, scene_color};
 import package::engine::color::encode_srgb;
-import package::generated::applied::{applied_color, applied_display, applied_light};
+import package::generated::applied::{applied_color, applied_display};
 import package::face::resolve::resolved;
 import package::face::debug::{DebugShade, DebugTargets, shown};
 import package::face::debug_modes::shade_kind;
@@ -441,7 +413,7 @@ fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     }
     var light = resolved(at);
     if light.a == 0.0 {
-        light = vec4<f32>(applied_light(scene_light(at), at).color, 1.0);
+        light = scene_color(at);
     }
     let color = applied_display(applied_color(light.rgb, at), at);
     return vec4<f32>(encode_srgb(color), 1.0);

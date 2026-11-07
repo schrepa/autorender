@@ -84,7 +84,7 @@ fn blade_vertex(instance: u32, vertex: u32) -> BladeVertex {
 }
 
 struct CoverOutput {
-    @builtin(position) clip_position: vec4<f32>,
+    @invariant @builtin(position) clip_position: vec4<f32>,
     @location(1) world: vec3<f32>,
     @location(2) normal: vec3<f32>,
     @location(3) color: vec3<f32>,

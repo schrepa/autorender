@@ -16,10 +16,10 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::World;
 use engine_core::{
-    AttachPoint, Attributes, Brick, Bricks, ColorPass, ComponentKind, DrawKind, Drawn, DrawnPoses,
+    AttachPoint, Attributes, Brick, Bricks, ComponentKind, DrawKind, Drawn, DrawnPoses,
     DrawnTable, Error, ErrorCode, GlobalTransforms, KindDecl, PassName, PassViews, PrimaryView,
-    Runs, SceneComponents, SceneCx, SceneForm, Schedule, SlotSet, Smoke, Source, Writes,
-    gpu_struct, never, settings, stats,
+    Runs, SceneComponents, SceneCx, SceneForm, ScenePass, Schedule, SlotSet, Smoke, Source,
+    TargetName, Writes, gpu_struct, never, settings, stats,
 };
 use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Glyph, Text, TextAlign};
 use engine_render::{
@@ -33,8 +33,6 @@ use serde_json::{Value, json};
 use typeset::{Placed, Typesetter, ensure};
 
 pub const TEXT: DrawKind = DrawKind("text");
-
-const PLACED_IN: Scene = Scene::of::<ColorPass>();
 
 const GENERATED: &[&str] = &[
     <GlyphInstance as engine_core::GpuStruct>::WGSL,
@@ -311,7 +309,7 @@ impl Brick for TextBrick {
 struct TextGpu {
     pass: Pass<Self>,
     pipeline: Pipeline<Self, Own>,
-    placing: Pipeline<Self, Scene>,
+    placings: Vec<(&'static str, Pipeline<Self, Scene>)>,
     instances: Buffer<Self>,
     labels: Buffer<Self>,
     atlas: Texture<Self>,
@@ -324,11 +322,18 @@ struct TextGpu {
 
 impl TextGpu {
     fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
-        if scene.pass != PLACED_IN || self.labeled.is_empty() {
+        if self.labeled.is_empty() {
             return 0;
         }
+        let Some((_, placing)) = self
+            .placings
+            .iter()
+            .find(|(name, _)| *name == scene.pass.name())
+        else {
+            return 0;
+        };
         draw.draw(
-            &self.placing,
+            placing,
             Shape::Pulled {
                 vertices: 0..6,
                 instances: 0..self.labeled.len() as u32,
@@ -415,26 +420,47 @@ impl GpuPart for TextGpu {
             },
             &[(draw::INSTANCES, Bind::Buffer(instances))],
         )?;
-        let placing = cx.render_pipeline(
-            PLACED_IN,
-            &RenderPipeline {
-                vertex: draw::VS_LABEL,
-                fragment: Some(draw::FS_LABEL),
-                debug: None,
-                vertices: &[],
-                primitive: wgpu::PrimitiveState::default(),
-                depth: DepthUse::Write {
-                    bias: wgpu::DepthBiasState::default(),
+        let listed: Vec<ScenePass> = cx
+            .passes()
+            .listed()
+            .iter()
+            .filter(|listed| {
+                listed.bit.is_some()
+                    && (listed.pass.takes)(TEXT)
+                    && listed.pass.views != PassViews::Owned
+                    && listed.pass.at != AttachPoint::Transparent
+            })
+            .copied()
+            .collect();
+        let mut placings = Vec::with_capacity(listed.len());
+        for listed in listed {
+            let fragment = if listed.pass.writes.contains(TargetName::COLOR) {
+                draw::FS_LABEL
+            } else {
+                draw::FS_LABEL_DEPTH
+            };
+            let placing = cx.render_pipeline(
+                Scene::named(listed.name),
+                &RenderPipeline {
+                    vertex: draw::VS_LABEL,
+                    fragment: Some(fragment),
+                    debug: None,
+                    vertices: &[],
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth: DepthUse::Write {
+                        bias: wgpu::DepthBiasState::default(),
+                    },
+                    blend: None,
+                    writes: wgpu::ColorWrites::ALL,
                 },
-                blend: None,
-                writes: wgpu::ColorWrites::ALL,
-            },
-            &[(draw::LABELS, Bind::Buffer(labels))],
-        )?;
+                &[(draw::LABELS, Bind::Buffer(labels))],
+            )?;
+            placings.push((listed.name, placing));
+        }
         Ok(Self {
             pass,
             pipeline,
-            placing,
+            placings,
             instances,
             labels,
             atlas,

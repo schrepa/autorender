@@ -31,3 +31,11 @@ impl Slot for OpenSky {
     const NAME: &'static str = "open_sky";
     const WGSL: Option<&'static str> = Some(include_str!("places/open_sky.wgsl"));
 }
+
+#[derive(Resource, Default)]
+pub struct SkyVisibility;
+
+impl Slot for SkyVisibility {
+    const NAME: &'static str = "sky_visibility";
+    const WGSL: Option<&'static str> = Some(include_str!("places/sky_visibility.wgsl"));
+}

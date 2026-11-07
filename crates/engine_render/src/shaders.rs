@@ -27,7 +27,6 @@ shader_modules! {
     "engine::standard" = "standard.wgsl";
     "engine::surface" = "surface.wgsl";
     "engine::transparency" = "transparency.wgsl";
-    "engine::normals" = "normals.wgsl";
     "engine::mesh::vertex" = "meshes/vertex.wgsl";
     "engine::impostor_bake" = "impostors/bake.wgsl";
     "engine::post::pixel" = "post/pixel.wgsl";

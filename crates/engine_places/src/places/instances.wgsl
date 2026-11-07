@@ -55,7 +55,7 @@ struct SlotFragment {
 }
 
 struct CardVertex {
-    @builtin(position) clip_position: vec4<f32>,
+    @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) frames_ab: vec4<f32>,
     @location(1) frame_c: vec2<f32>,
     @location(2) world: vec3<f32>,
@@ -122,17 +122,12 @@ fn slot_fragment_extended(input: SlotVertexExtended) -> SlotFragment {
     return fragment;
 }
 
-fn slot_shade(fragment: SlotFragment, front: bool, pretested: bool) -> SlotShaded {
+fn slot_shade(fragment: SlotFragment, front: bool) -> SlotShaded {
     var shaded: SlotShaded;
     return shaded;
 }
 
 fn slot_masked_depth(fragment: SlotFragment) {
-}
-
-fn slot_depth(fragment: SlotFragment, front: bool) -> SurfacePoint {
-    var point: SurfacePoint;
-    return point;
 }
 
 fn slot_pixel(input: SlotVertex) -> ViewPixel {
@@ -160,6 +155,10 @@ fn placed_card_vertex(vertex: u32, batch: u32, pose: AffinePose, previous: Affin
 fn placed_card_shade(input: CardVertex, impostor: ImpostorRecord) -> CardShaded {
     var shaded: CardShaded;
     return shaded;
+}
+
+fn placed_card_depth(input: CardVertex, impostor: ImpostorRecord) -> f32 {
+    return 0.0;
 }
 
 fn placed_card_pixel(input: CardVertex) -> ViewPixel {

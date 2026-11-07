@@ -1,11 +1,12 @@
 import package::engine::mesh::declarations::AffineVertexInput;
 import package::engine::mesh::impostor_frames::ImpostorRecord;
-import package::engine::shading::{SurfacePoint, ViewPixel};
+import package::engine::shading::ViewPixel;
 import package::face::debug::DebugTargets;
-import package::meshes::cards::{card_debug, placed_card, placed_card_lit, placed_card_point};
+import package::meshes::cards::{card_debug, card_depth, placed_card, placed_card_lit,
+    placed_card_point};
 import package::meshes::debug::point_targets;
 import package::meshes::forward::drawn_pixel;
-import package::meshes::shade::{depth_point, masked_depth, mesh_point, placed_fragment, shade};
+import package::meshes::shade::{masked_depth, mesh_point, placed_fragment, shade};
 import package::meshes::slots::{instance_colors, instance_poses};
 import package::meshes::vertex::{pose_origin, slot_motion};
 import package::place::instances::{AffinePose, CardDebugTargets, CardShaded, CardVertex,
@@ -47,16 +48,12 @@ fn slot_fragment_extended(input: SlotVertexExtended) -> SlotFragment {
     return values;
 }
 
-fn slot_shade(fragment: SlotFragment, front: bool, pretested: bool) -> SlotShaded {
-    return shade(fragment, front, pretested);
+fn slot_shade(fragment: SlotFragment, front: bool) -> SlotShaded {
+    return shade(fragment, front);
 }
 
 fn slot_masked_depth(fragment: SlotFragment) {
     masked_depth(fragment);
-}
-
-fn slot_depth(fragment: SlotFragment, front: bool) -> SurfacePoint {
-    return depth_point(fragment, front);
 }
 
 fn slot_pixel(input: SlotVertex) -> ViewPixel {
@@ -69,7 +66,7 @@ fn slot_pixel_extended(input: SlotVertexExtended) -> ViewPixel {
 
 fn slot_debug(fragment: SlotFragment, front: bool, record: u32, object: u32, detail: u32)
         -> DebugTargets {
-    return point_targets(record, object, detail, mesh_point(fragment, front, true));
+    return point_targets(record, object, detail, mesh_point(fragment, front));
 }
 
 fn placed_card_vertex(vertex: u32, batch: u32, pose: AffinePose, previous: AffinePose,
@@ -79,6 +76,10 @@ fn placed_card_vertex(vertex: u32, batch: u32, pose: AffinePose, previous: Affin
 
 fn placed_card_shade(input: CardVertex, impostor: ImpostorRecord) -> CardShaded {
     return placed_card_lit(input, impostor);
+}
+
+fn placed_card_depth(input: CardVertex, impostor: ImpostorRecord) -> f32 {
+    return card_depth(input, placed_card_point(input, impostor));
 }
 
 fn placed_card_pixel(input: CardVertex) -> ViewPixel {

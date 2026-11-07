@@ -21,19 +21,13 @@ impl MeshesGpu {
             return 0;
         };
         match &joined.drawing {
-            Drawing::Lit {
+            Drawing::Placed {
                 looks,
                 card,
                 streams,
             } => {
-                self.draw_meshes(draw, streams, looks, (PHASE_ONE, false))
+                self.draw_meshes(draw, streams, looks, PHASE_ONE)
                     + self.draw_cards(draw, streams, card, PHASE_ONE)
-            }
-            Drawing::Depth { looks, streams } => {
-                if !self.state.draws.masked {
-                    return 0;
-                }
-                self.draw_meshes(draw, streams, looks, (PHASE_ONE, true))
             }
             Drawing::Views { looks, streams } => {
                 let Some(slot) = self.state.view_slot(scene.pass.name(), scene.view) else {
@@ -78,11 +72,11 @@ impl MeshesGpu {
         draw: &mut Draw<'_, Self, S>,
         streams: &Streams<S>,
         looks: &Looked<Pipeline<Self, S>>,
-        (phase, prepass): (usize, bool),
+        phase: usize,
     ) -> u32 {
         let mut drawn = 0;
         for item in &self.state.draws.items {
-            if item.blended || (prepass && !item.look.masked) {
+            if item.blended {
                 continue;
             }
             let pipeline = looks.of(item.look);
@@ -110,7 +104,7 @@ impl MeshesGpu {
                         },
                         MeshPass::default(),
                     ),
-                    || draw_label((mesh, material), (phase, level), prepass),
+                    || draw_label((mesh, material), (phase, level)),
                 );
                 drawn += 1;
             }
@@ -188,11 +182,9 @@ impl MeshesGpu {
 fn draw_label(
     (mesh, material): (MeshHandle, Option<MaterialHandle>),
     (phase, level): (usize, usize),
-    prepass: bool,
 ) -> String {
     let material =
         material.map_or_else(|| "none".to_owned(), |material| material.slot().to_string());
     let mesh = mesh.slot();
-    let stage = if prepass { " depth pre-pass" } else { "" };
-    format!("mesh {mesh} material {material} phase {phase} level {level}{stage}")
+    format!("mesh {mesh} material {material} phase {phase} level {level}")
 }

@@ -1,10 +1,10 @@
-use engine_core::{Error, PrimaryView};
+use engine_core::{Error, PrimaryView, ScenePass, TargetName};
 use engine_render::{
     Allocation, Bind, DepthUse, Draw, Install, Lifetime, Pipeline, Prepare, RenderPipeline,
     SamplerDesc, Scene, Shape, Texture, wgpu,
 };
 
-use crate::{DRAWN_IN, SpritesGpu};
+use crate::SpritesGpu;
 use crate::shaders::sprites::flat;
 
 pub const LIGHT: [u8; 4] = [224, 64, 32, 255];
@@ -21,40 +21,48 @@ const CHECKER_SIZE: wgpu::Extent3d = wgpu::Extent3d {
 
 pub(crate) struct Flat {
     checker: Texture<SpritesGpu>,
-    pipeline: Pipeline<SpritesGpu, Scene>,
+    pipelines: Vec<(&'static str, Pipeline<SpritesGpu, Scene>)>,
     drawn: bool,
 }
 
 impl Flat {
-    pub(crate) fn install(cx: &mut Install<'_, SpritesGpu>) -> Result<Self, Error> {
+    pub(crate) fn install(
+        cx: &mut Install<'_, SpritesGpu>,
+        listed: &[ScenePass],
+    ) -> Result<Self, Error> {
         let checker = cx.texture(
             "checker",
             wgpu::TextureFormat::Rgba8UnormSrgb,
             Lifetime::Kept,
         );
         let sampler = cx.sampler(SamplerDesc::NEAREST);
-        let pipeline = cx.render_pipeline(
-            DRAWN_IN,
-            &RenderPipeline {
-                vertex: flat::VS_SPRITE,
-                fragment: Some(flat::FS_SPRITE),
-                debug: None,
-                vertices: &[],
-                primitive: wgpu::PrimitiveState::default(),
-                depth: DepthUse::Write {
-                    bias: wgpu::DepthBiasState::default(),
+        let mut pipelines = Vec::with_capacity(listed.len());
+        for listed in listed {
+            let lit = listed.pass.writes.contains(TargetName::COLOR);
+            let pipeline = cx.render_pipeline(
+                Scene::named(listed.name),
+                &RenderPipeline {
+                    vertex: flat::VS_SPRITE,
+                    fragment: lit.then_some(flat::FS_SPRITE),
+                    debug: None,
+                    vertices: &[],
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth: DepthUse::Write {
+                        bias: wgpu::DepthBiasState::default(),
+                    },
+                    blend: None,
+                    writes: wgpu::ColorWrites::ALL,
                 },
-                blend: None,
-                writes: wgpu::ColorWrites::ALL,
-            },
-            &[
-                (flat::CHECKER, Bind::Texture(checker)),
-                (flat::CHECKER_SAMPLER, Bind::Sampler(sampler)),
-            ],
-        )?;
+                &[
+                    (flat::CHECKER, Bind::Texture(checker)),
+                    (flat::CHECKER_SAMPLER, Bind::Sampler(sampler)),
+                ],
+            )?;
+            pipelines.push((listed.name, pipeline));
+        }
         Ok(Self {
             checker,
-            pipeline,
+            pipelines,
             drawn: false,
         })
     }
@@ -77,12 +85,15 @@ impl Flat {
         );
     }
 
-    pub(crate) fn draw(&self, draw: &mut Draw<'_, SpritesGpu, Scene>) -> u32 {
+    pub(crate) fn draw(&self, name: &str, draw: &mut Draw<'_, SpritesGpu, Scene>) -> u32 {
         if !self.drawn {
             return 0;
         }
+        let Some((_, pipeline)) = self.pipelines.iter().find(|(pass, _)| *pass == name) else {
+            return 0;
+        };
         draw.draw(
-            &self.pipeline,
+            pipeline,
             Shape::Pulled {
                 vertices: 0..6,
                 instances: 0..1,

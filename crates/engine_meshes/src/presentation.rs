@@ -215,7 +215,6 @@ pub(crate) struct DrawItem {
 #[derive(Default)]
 pub(crate) struct Draws {
     pub items: Vec<DrawItem>,
-    pub masked: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -343,7 +342,6 @@ impl Draws {
                 item.batch,
             )
         });
-        self.masked = self.items.iter().any(|item| item.look.masked);
     }
 }
 

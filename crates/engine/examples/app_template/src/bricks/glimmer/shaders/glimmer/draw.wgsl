@@ -10,7 +10,7 @@ const GLIMMER_SIDE: vec3<f32> = vec3<f32>(1.0, 0.0, 0.0);
 const GLIMMER_RING: f32 = 1.75;
 const GLIMMER_RING_INNER: f32 = 0.8;
 
-struct Corner { @builtin(position) clip: vec4<f32>, @location(0) unit: vec2<f32>, @location(1) color: vec4<f32>, @location(2) previous: vec4<f32> }
+struct Corner { @invariant @builtin(position) clip: vec4<f32>, @location(0) unit: vec2<f32>, @location(1) color: vec4<f32>, @location(2) previous: vec4<f32> }
 
 fn placed(corner: u32, glimmer: GlimmerInstance, grow: f32, color: vec4<f32>) -> Corner {
     if !drawn_shown(glimmer.drawn.x) {
@@ -46,6 +46,10 @@ fn placed(corner: u32, glimmer: GlimmerInstance, grow: f32, color: vec4<f32>) ->
     if dot(corner.unit, corner.unit) > 1.0 { discard; }
     return view_targets(flat_point(corner.color), flat(corner.color),
         view_pixel(corner.clip, corner.previous));
+}
+
+@fragment fn fs_glimmer_depth(corner: Corner) {
+    if dot(corner.unit, corner.unit) > 1.0 { discard; }
 }
 
 @fragment fn fs_ring(corner: Corner) -> ViewTargets {

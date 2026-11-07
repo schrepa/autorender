@@ -1702,6 +1702,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_prepass"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_ecs",
+ "engine_render",
+ "engine_sources",
+]
+
+[[package]]
 name = "engine_probes"
 version = "0.1.0"
 dependencies = [
@@ -1966,6 +1976,7 @@ dependencies = [
  "engine_particles",
  "engine_places",
  "engine_places_rendering",
+ "engine_prepass",
  "engine_probes",
  "engine_reflections",
  "engine_screens",

@@ -67,7 +67,7 @@ pub use engine_textures::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image
 pub use engine_place::{
     Applied, ApplyAt, Ask, Asked, AttachPoint, BlendedPass, BudgetUse, CORE_PASSES, Census,
     Clock, ColorPass, PositionReach,
-    Cursor, CursorView, DepthPass, DrawKind, Drawn, DrawnProjection, Error, ErrorCode, Events,
+    Cursor, CursorView, DrawKind, Drawn, DrawnProjection, Error, ErrorCode, Events,
     Feed, FeedView, FrameBudget, GeometryHandle, GpuStruct, InstanceValues, Interest, JobRef,
     KindDecl, Layers, Level, LevelView, List, MaterialHandle, MeshHandle, Mobility, Moment,
     Mover, MoverId, Node, NodeId, NodeWord, PASS_BITS, Pace, Pass, PassBit, PassCull, PassEntry,

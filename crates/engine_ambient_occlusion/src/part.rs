@@ -1,11 +1,11 @@
-use engine_core::{Entry, Error, PassName, ViewFacts};
+use engine_core::{AttachPoint, Entry, Error, PassViews, ViewFacts};
 use engine_render::{
     Access, Attach, Bind, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
     Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, wgpu,
 };
 
-use crate::OcclusionPass;
-use crate::shaders::ambient_occlusion::{apply, occlusion as shading};
+use crate::shaders::ambient_occlusion::faces::ambient_occlusion as face;
+use crate::shaders::ambient_occlusion::occlusion as shading;
 
 const RAW_OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
@@ -41,21 +41,23 @@ impl GpuPart for AmbientGpu {
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let raw = cx.view_texture("raw_occlusion", RAW_OCCLUSION_FORMAT, Lifetime::Kept);
-        let occlusion = cx.view_texture("occlusion", OCCLUSION_FORMAT, Lifetime::Frame);
-        cx.frame(apply::OCCLUSION, Bind::Texture(occlusion))?;
+        let occlusion = cx.view_texture("occlusion", OCCLUSION_FORMAT, Lifetime::Kept);
+        cx.frame(face::OCCLUSION, Bind::Texture(occlusion))?;
         let occluding = cx
-            .screen::<OcclusionPass>()
+            .pass("ambient_occlusion")
+            .at(AttachPoint::Inputs)
+            .views(PassViews::Main)
             .label("engine/ambient-occlusion")
             .span("ambient_occlusion")
             .color(raw, Access::Load)
             .id();
         let filtering = cx
             .pass("effects_filter")
-            .at(OcclusionPass::PASS.at)
-            .views(OcclusionPass::PASS.views)
+            .at(AttachPoint::Inputs)
+            .views(PassViews::Main)
             .label("engine/ambient-occlusion-filter")
             .span("effects_filter")
-            .color_cleared(occlusion, wgpu::Color::WHITE)
+            .color(occlusion, Access::Clear)
             .id();
         let occlusion_pipeline =
             cx.render_pipeline(occluding, &fullscreen(shading::FS_OCCLUSION), &[])?;
@@ -78,7 +80,8 @@ impl GpuPart for AmbientGpu {
     fn prepare(&mut self, (): (), _cx: &mut Prepare<'_, Self>) {}
 
     fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
-        if view.debug {
+        if view.debug || !view.target.surface() || cx.view_index() != 0 {
+            cx.release(self.occlusion);
             return;
         }
         let display = view.size();

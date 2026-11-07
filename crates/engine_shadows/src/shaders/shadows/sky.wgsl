@@ -49,12 +49,12 @@ fn fs_sky_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) f32 
     let pixel = vec2<i32>(position.xy);
     let center = world_at(pixel);
     if center.w == 0.0 {
-        return 1.0;
+        return 0.0;
     }
     let p = center.xyz;
     let normal = depth_normal(pixel, p);
     if all(normal == vec3<f32>(0.0)) {
-        return 1.0;
+        return 0.0;
     }
-    return sky_occlusion(p, normal);
+    return 1.0 - sky_occlusion(p, normal);
 }

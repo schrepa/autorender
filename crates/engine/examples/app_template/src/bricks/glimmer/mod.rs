@@ -5,10 +5,11 @@ use std::collections::BTreeMap;
 use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{
-    AttachPoint, Attributes, Brick, Bricks, Camera, Clear, ColorPass, Cursor, DrawKind, Drawn,
-    DrawnPoses, DrawnTable, Error, Events, Feed, FrameTime, GlobalTransforms, GpuStruct, Interest,
-    KindDecl, Node, Pass, PassName, PassViews, Rect, Requests, Schedule, SlotSet, Source, Spawner,
-    SurfaceSlot, Ticket, Transform, View, Writes, gpu_struct, settings, stats,
+    AttachPoint, Attributes, Brick, Bricks, Camera, Clear, Cursor, DrawKind, Drawn, DrawnPoses,
+    DrawnTable, Error, Events, Feed, FrameTime, GlobalTransforms, GpuStruct, Interest, KindDecl,
+    Node, Pass, PassName, PassViews, Rect, Requests, ScenePass, Schedule, SlotSet, Source,
+    Spawner, SurfaceSlot, TargetName, Ticket, Transform, View, Writes, gpu_struct, settings,
+    stats,
 };
 use engine_render::{
     Bind, Buffer, DepthUse, Draw, GpuPart, Install, LightingModule, Lifetime, Pipeline, Prepare,
@@ -16,8 +17,6 @@ use engine_render::{
 };
 
 pub const GLIMMER: DrawKind = DrawKind("glimmer");
-
-const SOLID: Scene = Scene::of::<ColorPass>();
 
 const RING: Scene = Scene::of::<GlimmerPass>();
 
@@ -202,7 +201,7 @@ fn answer(
 
 struct GlimmerGpu {
     instances: Buffer<Self>,
-    solid: Pipeline<Self, Scene>,
+    solids: Vec<(&'static str, Pipeline<Self, Scene>)>,
     ring: Pipeline<Self, Scene>,
     staged: Vec<GlimmerInstance>,
 }
@@ -237,11 +236,33 @@ impl GpuPart for GlimmerGpu {
         let written = DepthUse::Write {
             bias: wgpu::DepthBiasState::default(),
         };
-        let solid = cx.render_pipeline(
-            SOLID,
-            &quad(draw::VS_GLIMMER, draw::FS_GLIMMER, written),
-            &[(draw::GLIMMERS, Bind::Buffer(instances))],
-        )?;
+        let listed: Vec<ScenePass> = cx
+            .passes()
+            .listed()
+            .iter()
+            .filter(|listed| {
+                listed.bit.is_some()
+                    && listed.name != GlimmerPass::NAME
+                    && (listed.pass.takes)(GLIMMER)
+                    && listed.pass.views != PassViews::Owned
+                    && listed.pass.at != AttachPoint::Transparent
+            })
+            .copied()
+            .collect();
+        let mut solids = Vec::with_capacity(listed.len());
+        for listed in listed {
+            let fragment = if listed.pass.writes.contains(TargetName::COLOR) {
+                draw::FS_GLIMMER
+            } else {
+                draw::FS_GLIMMER_DEPTH
+            };
+            let solid = cx.render_pipeline(
+                Scene::named(listed.name),
+                &quad(draw::VS_GLIMMER, fragment, written),
+                &[(draw::GLIMMERS, Bind::Buffer(instances))],
+            )?;
+            solids.push((listed.name, solid));
+        }
         let ring = cx.render_pipeline(
             RING,
             &quad(draw::VS_RING, draw::FS_RING, DepthUse::Test),
@@ -249,7 +270,7 @@ impl GpuPart for GlimmerGpu {
         )?;
         Ok(Self {
             instances,
-            solid,
+            solids,
             ring,
             staged: Vec::new(),
         })
@@ -287,10 +308,15 @@ impl GpuPart for GlimmerGpu {
 
 impl GlimmerGpu {
     fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
-        let pipeline = if scene.pass == SOLID {
-            &self.solid
-        } else if scene.pass == RING {
+        let solid = self
+            .solids
+            .iter()
+            .find(|(name, _)| *name == scene.pass.name())
+            .map(|(_, solid)| solid);
+        let pipeline = if scene.pass == RING {
             &self.ring
+        } else if let Some(solid) = solid {
+            solid
         } else {
             return 0;
         };

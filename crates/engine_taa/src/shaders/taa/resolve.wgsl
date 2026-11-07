@@ -5,7 +5,7 @@ import package::generated::pieces::taa::piece;
 import package::generated::targets::{blended_cover, output_motion};
 import package::generated::taa::TaaView;
 
-@group(1) @binding(0) var lit: texture_2d<f32>;
+@group(1) @binding(0) var scene_color: texture_2d<f32>;
 @group(1) @binding(1) var history: texture_2d<f32>;
 @group(1) @binding(2) var<uniform> taa_view: TaaView;
 
@@ -87,17 +87,17 @@ fn nearest_motion(pixel: vec2<i32>, last: vec2<i32>) -> vec2<f32> {
 
 fn neighbor(pixel: vec2<i32>, offset: vec2<i32>, last: vec2<i32>) -> vec3<f32> {
     let at = clamp(pixel + offset, vec2<i32>(0), last);
-    return ycocg(weighed(textureLoad(lit, at, 0).rgb));
+    return ycocg(weighed(textureLoad(scene_color, at, 0).rgb));
 }
 
 fn upsampled(position: vec2<f32>, last: vec2<i32>) -> vec3<f32> {
     let base = position - 0.5;
     let first = vec2<i32>(floor(base));
     let f = base - floor(base);
-    let a = textureLoad(lit, clamp(first, vec2<i32>(0), last), 0).rgb;
-    let b = textureLoad(lit, clamp(first + vec2<i32>(1, 0), vec2<i32>(0), last), 0).rgb;
-    let c = textureLoad(lit, clamp(first + vec2<i32>(0, 1), vec2<i32>(0), last), 0).rgb;
-    let d = textureLoad(lit, clamp(first + vec2<i32>(1, 1), vec2<i32>(0), last), 0).rgb;
+    let a = textureLoad(scene_color, clamp(first, vec2<i32>(0), last), 0).rgb;
+    let b = textureLoad(scene_color, clamp(first + vec2<i32>(1, 0), vec2<i32>(0), last), 0).rgb;
+    let c = textureLoad(scene_color, clamp(first + vec2<i32>(0, 1), vec2<i32>(0), last), 0).rgb;
+    let d = textureLoad(scene_color, clamp(first + vec2<i32>(1, 1), vec2<i32>(0), last), 0).rgb;
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
@@ -118,7 +118,7 @@ fn fs_temporal_resolve(@builtin(position) position: vec4<f32>) -> Resolved {
     let jittered = tap.jittered;
     let last = tap.last;
     let pixel = tap.pixel;
-    let current = weighed(textureLoad(lit, pixel, 0).rgb);
+    let current = weighed(textureLoad(scene_color, pixel, 0).rgb);
     let away = (vec2<f32>(pixel) + 0.5 - taa_view.offset - rendered)
         / (post.size.xy * post.extent.zw);
     let near = saturate(2.0 - 2.0 * max(abs(away.x), abs(away.y)));

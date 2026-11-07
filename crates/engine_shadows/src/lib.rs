@@ -22,9 +22,10 @@ mod smokes;
 use bevy_ecs::prelude::*;
 use engine_core::{
     AttachPoint, Brick, Bricks, DrawKind, Pass, PassCull, PassName, PassRaster, PassViews, Runs,
-    Schedule, SlotSet, Smoke, Source, Writes, never,
+    Schedule, SlotSet, Smoke, Source, Writes,
 };
 use engine_places_rendering::lighting::SunBlockers;
+use engine_places_rendering::sky::SkyVisibility;
 use engine_places_rendering::shadows::{CasterRoutes, SHADOW_PASS, ShadowMaps};
 use engine_render::{DebugModes, RenderBricks};
 
@@ -46,19 +47,6 @@ impl PassName for ShadowPass {
         slope: 0.0,
         clamp_near: true,
         cull: PassCull::None,
-    };
-}
-
-pub(crate) struct SkyOpenPass;
-
-impl PassName for SkyOpenPass {
-    const NAME: &'static str = "sky_occlusion";
-    const PASS: Pass = Pass {
-        writes: Writes::NOTHING,
-        reads: SlotSet::NONE,
-        views: PassViews::Main,
-        at: AttachPoint::Post,
-        takes: never,
     };
 }
 
@@ -92,7 +80,7 @@ impl Brick for ShadowsBrick {
             .fill::<ShadowMaps>(Some(shaders::shadows::faces::shadows::MODULE))
             .fill::<CasterRoutes>(Some(shaders::shadows::faces::routes::MODULE))
             .join::<SunBlockers>((), Some(shaders::shadows::blockers::MODULE))
-            .applies::<SkyOpenPass>(shaders::shadows::sky_open::MODULE);
+            .fill::<SkyVisibility>(Some(shaders::shadows::faces::sky_visibility::MODULE));
         for (index, (name, _)) in debug::MODES.into_iter().enumerate() {
             let wgsl = (index == 0).then_some(shaders::shadows::debug::MODULE);
             bricks.join::<DebugModes>(debug::member(name), wgsl);

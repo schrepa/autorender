@@ -35,7 +35,7 @@ struct CardInput {
 }
 
 struct CardOutput {
-    @builtin(position) clip_position: vec4<f32>,
+    @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) frames_ab: vec4<f32>,
     @location(1) frame_c: vec2<f32>,
     @location(2) world: vec3<f32>,
@@ -298,13 +298,17 @@ fn placed_card_point(input: CardVertex, impostor: ImpostorRecord) -> SurfacePoin
     return card_point(input, impostor);
 }
 
-fn card_lit(input: CardVertex, point: SurfacePoint) -> CardShaded {
-    let shaded = finish(point, input.clip_position.xy, vec3<f32>(0.0));
+fn card_depth(input: CardVertex, point: SurfacePoint) -> f32 {
     if impostor_over(input.batch) {
-        return CardShaded(point, shaded, input.clip_position.z);
+        return input.clip_position.z;
     }
     let clip = camera.view_projection * vec4<f32>(point.world, 1.0);
-    return CardShaded(point, shaded, saturate(clip.z / clip.w));
+    return saturate(clip.z / clip.w);
+}
+
+fn card_lit(input: CardVertex, point: SurfacePoint) -> CardShaded {
+    let shaded = finish(point, input.clip_position.xy, vec3<f32>(0.0));
+    return CardShaded(point, shaded, card_depth(input, point));
 }
 
 fn mesh_card_lit(input: CardVertex) -> CardShaded {
@@ -330,6 +334,12 @@ fn fs_card(input: CardOutput) -> DepthViewTargets {
     let shaded = mesh_card_lit(card);
     return depth_view_targets(shaded.point, shaded.shaded,
         drawn_pixel(input.clip_position, input.previous), shaded.depth);
+}
+
+@fragment
+fn fs_card_depth(input: CardOutput) -> @builtin(frag_depth) f32 {
+    let card = card_vertex(input);
+    return card_depth(card, mesh_card_point(card));
 }
 
 @fragment

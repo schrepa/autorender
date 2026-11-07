@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 
-use crate::lit::RESOLVE_PASS;
+use crate::resolve::RESOLVE_PASS;
 
 const SIDE: usize = 12;
 const FRAME_MS: f64 = 1000.0 / 60.0;

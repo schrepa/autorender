@@ -15,11 +15,12 @@ pub(super) const OUTDOOR_WITHOUT_TREES: Smoke = Smoke {
     run: outdoor_without_trees,
 };
 
-const ROOM_KEPT: [&str; 8] = [
+const ROOM_KEPT: [&str; 9] = [
     "engine_sun",
     "engine_lighting",
     "engine_meshes",
     "engine_shadows",
+    "engine_prepass",
     "engine_lights",
     "engine_tonemap",
     "engine_bloom",
@@ -42,10 +43,11 @@ const ROOM_LEFT_OUT: [&str; 13] = [
     "engine_debug_view",
 ];
 
-const OUTDOOR_KEPT: [&str; 6] = [
+const OUTDOOR_KEPT: [&str; 7] = [
     "engine_terrain",
     "engine_terrain_shading",
     "engine_shadows",
+    "engine_prepass",
     "engine_sky",
     "engine_probes",
     "engine_meshes",

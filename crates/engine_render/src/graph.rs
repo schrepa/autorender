@@ -223,7 +223,7 @@ impl Node {
         match self.entry.layer {
             None if positioned_before => 2,
             None => 0,
-            Some(AttachPoint::Depth | AttachPoint::Opaque) => 1,
+            Some(AttachPoint::Depth | AttachPoint::Inputs | AttachPoint::Opaque) => 1,
             Some(AttachPoint::Sky) if self.entry.shared => 1,
             Some(
                 AttachPoint::Sky

@@ -3,7 +3,7 @@ import package::engine::mesh::declarations::{MotionOutput, VertexOutput, fade_hi
 import package::engine::mesh::vertex::output_color;
 import package::engine::shading::{SurfaceInput, SurfacePoint};
 import package::engine::slots::{shade_model, slot_output};
-import package::engine::surface::{depth_surface, masked_out, opacity_cut, surface_point};
+import package::engine::surface::{masked_out, opacity_cut, surface_point};
 import package::engine::view::{camera, material_bias};
 import package::meshes::vertex::{ExtendedOutput, ExtendedMotionOutput};
 import package::place::instances::{SlotFragment, SlotShaded};
@@ -29,16 +29,16 @@ fn surface_input(input: SlotFragment, front: bool) -> SurfaceInput {
     return surface;
 }
 
-fn lit_point(surface: SurfaceInput, tested: bool) -> SurfacePoint {
+fn lit_point(surface: SurfaceInput) -> SurfacePoint {
     let point = surface_point(surface);
-    if alpha_test() && !tested && masked_out(surface, point) {
+    if alpha_test() && masked_out(surface, point) {
         discard;
     }
     return point;
 }
 
-fn mesh_point(input: SlotFragment, front: bool, tested: bool) -> SurfacePoint {
-    return lit_point(surface_input(input, front), tested);
+fn mesh_point(input: SlotFragment, front: bool) -> SurfacePoint {
+    return lit_point(surface_input(input, front));
 }
 
 fn fragment_values(clip_position: vec4<f32>, normal_u: vec4<f32>, world_v: vec4<f32>,
@@ -84,23 +84,14 @@ fn placed_fragment(clip_position: vec4<f32>, normal_u: vec4<f32>, world_v: vec4<
 }
 
 fn masked_depth(input: SlotFragment) {
-    if opacity_cut(surface_input(input, true)) {
+    if alpha_test() && opacity_cut(surface_input(input, true)) {
         discard;
     }
 }
 
-fn depth_point(input: SlotFragment, front: bool) -> SurfacePoint {
+fn shade(input: SlotFragment, front: bool) -> SlotShaded {
     let surface = surface_input(input, front);
-    let point = depth_surface(surface);
-    if masked_out(surface, point) {
-        discard;
-    }
-    return point;
-}
-
-fn shade(input: SlotFragment, front: bool, tested: bool) -> SlotShaded {
-    let surface = surface_input(input, front);
-    let point = lit_point(surface, tested);
+    let point = lit_point(surface);
     return SlotShaded(point, slot_output(surface, point, shade_model(point, input.pixel)));
 }
 

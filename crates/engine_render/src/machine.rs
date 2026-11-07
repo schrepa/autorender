@@ -241,7 +241,10 @@ pub(crate) fn shared(pass: &PassDecl) -> bool {
 }
 
 pub(crate) fn own_colors_only(pass: &PassDecl) -> bool {
-    !shared(pass) && pass_layer(pass).is_some() && !pass.colors.is_empty()
+    match pass.scene.as_ref().filter(|scene| scene.core) {
+        Some(scene) => !scene.pass.writes.contains(engine_core::TargetName::COLOR),
+        None => pass_layer(pass).is_some() && !pass.colors.is_empty(),
+    }
 }
 
 pub(crate) fn decl_in_pass(decl: &PipelineDecl, index: u32, pass: &PassDecl) -> bool {

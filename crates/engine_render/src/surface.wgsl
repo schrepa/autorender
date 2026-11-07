@@ -49,13 +49,6 @@ fn surface_point(input: SurfaceInput) -> SurfacePoint {
     return point;
 }
 
-fn depth_surface(input: SurfaceInput) -> SurfacePoint {
-    var point = placed(input);
-    point.opacity = slot_opacity(input, point);
-    point.normal = slot_normal(input, point);
-    return point;
-}
-
 fn mask_coverage(input: SurfaceInput) -> f32 {
     let uv = map_uv(MAP_BASE_COLOR, input.uv, input.uv1);
     let size = vec2<f32>(textureDimensions(base_color_map)) * exp2(input.bias);

@@ -22,6 +22,7 @@
     "engine_navigation",
     "engine_particles",
     "engine_physics",
+    "engine_prepass",
     "engine_probes",
     "engine_reflections",
     "engine_scatter",

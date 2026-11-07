@@ -35,7 +35,7 @@ pub use engine_settings::{Error, ErrorCode};
 pub use feeds::{Cursor, CursorView, Events, Feed, FeedView, Ring, Since, StoreId};
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{
-    AttachPoint, BlendedPass, CORE_BRICK, CORE_PASSES, ColorPass, DepthPass, PASS_BITS, Pass,
+    AttachPoint, BlendedPass, CORE_BRICK, CORE_PASSES, ColorPass, PASS_BITS, Pass,
     PassBit, PassCull, PassEntry, PassMask, PassName, PassRaster, PassViews, ScenePass, ScenePasses,
     SlotSet,
     TargetName, Writes,

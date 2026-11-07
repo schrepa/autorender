@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Cursor, DeviceLimits, Error, PassViews, PrimaryView, ScenePass,
+    AssetLibrary, Cursor, DeviceLimits, Error, PassViews, PrimaryView, ScenePass, TargetName,
 };
 use engine_places_rendering::probes::{MIRRORED, ProbeCaptures};
 use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, ShadowMaps};
@@ -101,7 +101,7 @@ struct Inputs {
 
 enum Joined {
     Surface {
-        debug: bool,
+        shown: fn(&TerrainGpu) -> bool,
         pipelines: [Pipeline<TerrainGpu, Scene>; 2],
         args: DrawInput<TerrainGpu, Scene>,
         meshlet: DrawInput<TerrainGpu, Scene>,
@@ -449,12 +449,12 @@ impl GpuPart for TerrainGpu {
         let mut joined = Vec::with_capacity(listed.len());
         for listed in listed {
             let scene = Scene::named(listed.name);
-            let lit = listed.pass.reads.base_color;
+            let lit = listed.pass.writes.contains(TargetName::COLOR);
             let owned = listed.pass.views == PassViews::Owned;
             let made = if !owned && lit && listed.pass.at == AttachPoint::Opaque {
                 let debug_surface = |fragment| surface(fragment, Some(fragment), ccw);
                 Joined::Surface {
-                    debug: true,
+                    shown: |terrain| terrain.debug && terrain.drawn,
                     pipelines: [
                         cx.render_pipeline(scene, &debug_surface(debug::FS_DEBUG_TERRAIN), &[])?,
                         cx.render_pipeline(
@@ -466,9 +466,24 @@ impl GpuPart for TerrainGpu {
                     args: cx.draw_input(scene, h.args),
                     meshlet: cx.draw_input(scene, h.meshlet),
                 }
+            } else if !owned && !lit && listed.pass.at != AttachPoint::Transparent {
+                let unlit = |fragment| RenderPipeline {
+                    fragment,
+                    debug: None,
+                    ..surface(draw::FS_TERRAIN_DEPTH_HOLES, None, ccw)
+                };
+                Joined::Surface {
+                    shown: |terrain| terrain.deferred,
+                    pipelines: [
+                        cx.render_pipeline(scene, &unlit(None), &[])?,
+                        cx.render_pipeline(scene, &unlit(Some(draw::FS_TERRAIN_DEPTH_HOLES)), &[])?,
+                    ],
+                    args: cx.draw_input(scene, h.args),
+                    meshlet: cx.draw_input(scene, h.meshlet),
+                }
             } else if owned && lit {
                 Joined::Surface {
-                    debug: false,
+                    shown: |_| true,
                     pipelines: [
                         cx.render_pipeline(
                             scene,
@@ -926,12 +941,12 @@ impl TerrainGpu {
         };
         match joined {
             Joined::Surface {
-                debug,
+                shown,
                 pipelines,
                 args,
                 meshlet,
             } => {
-                if *debug && !(self.debug && self.drawn) {
+                if !shown(self) {
                     return 0;
                 }
                 self.draw_surface(draw, pipelines, (*args, *meshlet))

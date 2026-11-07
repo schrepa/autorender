@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetResidency, AttachPoint, Cull, Cursor, Error, MaterialHandle, MeshHandle, PassViews,
-    ScenePass, Since, Var,
+    ScenePass, Since, TargetName, Var,
 };
 use engine_places_world::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
@@ -96,7 +96,6 @@ struct LitLevel {
     group: u32,
     level: u32,
     look: usize,
-    masked: bool,
 }
 
 struct CastLevel {
@@ -156,12 +155,9 @@ type DrawBuffers = (
 );
 
 enum Joined {
-    Lit {
+    Placed {
         looks: Looks,
         card: Pipeline<ScatterGpu, Scene>,
-    },
-    Depth {
-        looks: Looks,
     },
     Casters {
         casting: [Pipeline<ScatterGpu, Scene>; 2],
@@ -356,7 +352,7 @@ impl ScatterGpu {
         cx: &mut Install<'_, Self>,
         scene: Scene,
         (poses, colors, grounds): (Buffer<Self>, Buffer<Self>, Buffer<Self>),
-        depth_only: bool,
+        lit: bool,
     ) -> Result<Looks, Error> {
         use crate::shaders::scatter::draw;
         let vars = (draw::POSES, draw::COLORS, draw::GROUNDS);
@@ -373,56 +369,41 @@ impl ScatterGpu {
             } else {
                 (PLAIN_STREAMS, draw::VS_OBJECT, draw::VS_OBJECT_FADING)
             };
-            let (fragment, debug) = match (extended, masked) {
-                (false, false) => (draw::FS_OBJECT, draw::FS_DEBUG_OBJECT),
-                (false, true) => (draw::FS_OBJECT_PRETESTED, draw::FS_DEBUG_OBJECT),
-                (true, false) => (draw::FS_OBJECT_EXTENDED, draw::FS_DEBUG_OBJECT_EXTENDED),
-                (true, true) => (
-                    draw::FS_OBJECT_EXTENDED_PRETESTED,
+            let (shaded, shown, cut) = if extended {
+                (
+                    draw::FS_OBJECT_EXTENDED,
                     draw::FS_DEBUG_OBJECT_EXTENDED,
-                ),
-            };
-            let (depth_fragment, masked_depth) = if extended {
-                (draw::FS_DEPTH_EXTENDED, draw::FS_MASKED_DEPTH_EXTENDED)
+                    draw::FS_MASKED_DEPTH_EXTENDED,
+                )
             } else {
-                (draw::FS_DEPTH, draw::FS_MASKED_DEPTH)
+                (draw::FS_OBJECT, draw::FS_DEBUG_OBJECT, draw::FS_MASKED_DEPTH)
             };
-            let written = DepthUse::Write {
-                bias: wgpu::DepthBiasState::default(),
-            };
-            let (shaded, shown, depth, writes) = match (depth_only, masked) {
-                (true, false) => continue,
-                (true, true) => (
-                    depth_fragment,
-                    masked_depth,
-                    written,
-                    wgpu::ColorWrites::ALL,
-                ),
-                (false, true) => (
-                    fragment,
-                    debug,
-                    DepthUse::Compare {
-                        compare: wgpu::CompareFunction::Equal,
-                        write: false,
-                        bias: wgpu::DepthBiasState::default(),
-                    },
-                    wgpu::ColorWrites::ALL,
-                ),
-                (false, false) => (fragment, debug, written, wgpu::ColorWrites::ALL),
-            };
-            let desc = |vertex| RenderPipeline {
+            let desc = |vertex, fragment, debug| RenderPipeline {
                 vertex,
-                fragment: Some(shaded),
-                debug: Some(shown),
+                fragment,
+                debug,
                 vertices,
                 primitive: primitive(double_sided),
-                depth,
+                depth: DepthUse::Write {
+                    bias: wgpu::DepthBiasState::default(),
+                },
                 blend: None,
-                writes,
+                writes: wgpu::ColorWrites::ALL,
+            };
+            let (still, faded) = if lit {
+                (
+                    desc(vertex, Some(shaded), Some(shown)),
+                    desc(fading, Some(shaded), Some(shown)),
+                )
+            } else {
+                (
+                    desc(vertex, masked.then_some(cut), None),
+                    desc(fading, Some(cut), None),
+                )
             };
             looks.push([
-                cx.render_pipeline(scene, &desc(vertex), &objects(vars, buffers))?,
-                cx.render_pipeline(scene, &desc(fading), &objects(vars, buffers))?,
+                cx.render_pipeline(scene, &still, &objects(vars, buffers))?,
+                cx.render_pipeline(scene, &faded, &objects(vars, buffers))?,
             ]);
         }
         Ok(looks)
@@ -432,14 +413,20 @@ impl ScatterGpu {
         cx: &mut Install<'_, Self>,
         scene: Scene,
         (poses, colors): (Buffer<Self>, Buffer<Self>),
+        lit: bool,
     ) -> Result<Pipeline<Self, Scene>, Error> {
         use crate::shaders::scatter::cards;
+        let (fragment, debug) = if lit {
+            (cards::FS_PLACED_CARD, Some(cards::FS_DEBUG_PLACED_CARD))
+        } else {
+            (cards::FS_PLACED_CARD_DEPTH, None)
+        };
         cx.render_pipeline(
             scene,
             &RenderPipeline {
                 vertex: cards::VS_PLACED_CARD,
-                fragment: Some(cards::FS_PLACED_CARD),
-                debug: Some(cards::FS_DEBUG_PLACED_CARD),
+                fragment: Some(fragment),
+                debug,
                 vertices: CARD_STREAMS,
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -532,18 +519,15 @@ impl ScatterGpu {
             let scene = Scene::named(listed.name);
             let (owned, lit) = (
                 listed.pass.views == PassViews::Owned,
-                listed.pass.reads.base_color,
+                listed.pass.writes.contains(TargetName::COLOR),
             );
             let made = match (owned, lit) {
-                (false, true) if listed.pass.at != AttachPoint::Transparent => Joined::Lit {
-                    looks: Self::look_pipelines(cx, scene, objects, false)?,
-                    card: Self::card_pipeline(cx, scene, (poses, colors))?,
-                },
-                (false, false) => Joined::Depth {
-                    looks: Self::look_pipelines(cx, scene, objects, true)?,
+                (false, _) if listed.pass.at != AttachPoint::Transparent => Joined::Placed {
+                    looks: Self::look_pipelines(cx, scene, objects, lit)?,
+                    card: Self::card_pipeline(cx, scene, (poses, colors), lit)?,
                 },
                 (true, false) => Self::caster_pipelines(cx, scene, (poses, colors))?,
-                (false | true, true) => continue,
+                (false, _) | (true, true) => continue,
             };
             let streams = Streams {
                 ids: cx.draw_input(scene, ids),
@@ -575,8 +559,11 @@ impl ScatterGpu {
             if drawn.count == 0 {
                 continue;
             }
-            let masked = drawn.masked();
-            let shape = look(masked, drawn.source.cull() == Cull::None, drawn.extended);
+            let shape = look(
+                drawn.masked(),
+                drawn.source.cull() == Cull::None,
+                drawn.extended,
+            );
             for (level, &mesh) in drawn.meshes.iter().enumerate() {
                 if residency.resident(mesh) {
                     held.lit.push(LitLevel {
@@ -585,7 +572,6 @@ impl ScatterGpu {
                         group: group as u32,
                         level: level as u32,
                         look: shape,
-                        masked,
                     });
                 }
             }
@@ -901,8 +887,7 @@ impl ScatterGpu {
         };
         let streams = &joined.streams;
         match &joined.joined {
-            Joined::Lit { looks, card } => self.draw_objects(draw, streams, looks, Some(card)),
-            Joined::Depth { looks } => self.draw_objects(draw, streams, looks, None),
+            Joined::Placed { looks, card } => self.draw_objects(draw, streams, looks, card),
             Joined::Casters { casting, card } => {
                 self.draw_casters(scene.view, draw, streams, (casting, card))
             }
@@ -914,24 +899,16 @@ impl ScatterGpu {
         draw: &mut Draw<'_, Self, Scene>,
         inputs: &Streams,
         looks: &Looks,
-        card: Option<&Pipeline<Self, Scene>>,
+        card: &Pipeline<Self, Scene>,
     ) -> u32 {
         let held = &self.held;
         if !held.prepared {
             return 0;
         }
-        let prepass = card.is_none();
         let mut draws = 0;
         for (view, fades) in [(0, false), (held.fading_view, true)] {
             for item in &held.lit {
-                let pipeline = if prepass {
-                    if !item.masked {
-                        continue;
-                    }
-                    &looks[item.look & 3][usize::from(fades)]
-                } else {
-                    &looks[item.look][usize::from(fades)]
-                };
+                let pipeline = &looks[item.look][usize::from(fades)];
                 let level = item.level as usize;
                 let Some((ids, offset)) = self.draw_source(view, item.group as usize, level) else {
                     continue;
@@ -951,9 +928,9 @@ impl ScatterGpu {
                 draws += 1;
             }
         }
-        let Some(card) = card.filter(|_| held.cards) else {
+        if !held.cards {
             return draws;
-        };
+        }
         if let Some((cards, offset)) = self.card_source(0) {
             let record = DrawRecord::of(DrawKind::PlacedCard, 0);
             draw.draw(

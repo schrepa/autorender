@@ -1,9 +1,10 @@
-import package::engine::color::luminance;
 import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::view::{PI, camera};
 import package::face::ambient::{EnvironmentAt, EnvironmentLight, environment};
+import package::face::ambient_occlusion::ambient_occlusion;
 import package::face::lights::{cluster_light, light_cluster, lights_on};
 import package::face::sky::atmospheric;
+import package::face::sky_visibility::sky_visibility;
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::{DEBUG_SUN_NONE, SunAt, SunOpen, sun_flags, sun_open};
 import package::place::lighting::{LightInputs, Reflecting};
@@ -113,12 +114,11 @@ fn finish(surface: SurfacePoint, pixel: vec2<f32>, added: vec3<f32>) -> Shaded {
     }
     let around = environment(toon_environment(), EnvironmentAt(point.world, point.normal,
         TOON_UP, point.normal, point.roughness, point.alpha, point.kind));
-    let skylight = point.diffuse_color * around.sky * point.occlusion;
+    let skylight = point.diffuse_color * around.sky * point.occlusion
+        * ambient_occlusion(pixel) * sky_visibility(pixel);
     let lit = skylight + sunlit * shown + point.emissive + local_light(point, pixel) + added;
     let through = atmospheric(lit, camera.position.xyz, point.world, -point.view);
     var shaded: Shaded;
     shaded.linear = through.rgb;
-    shaded.ambient = saturate(luminance(skylight) / max(luminance(lit), TOON_DARK))
-        * (1.0 - through.a);
     return shaded;
 }

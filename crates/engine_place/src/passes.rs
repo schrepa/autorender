@@ -11,6 +11,7 @@ use crate::{DrawKind, Error, ErrorCode, gpu_bits};
 #[serde(rename_all = "snake_case")]
 pub enum AttachPoint {
     Depth,
+    Inputs,
     Opaque,
     Sky,
     Transparent,
@@ -20,8 +21,9 @@ pub enum AttachPoint {
 }
 
 impl AttachPoint {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Depth,
+        Self::Inputs,
         Self::Opaque,
         Self::Sky,
         Self::Transparent,
@@ -33,6 +35,7 @@ impl AttachPoint {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Depth => "depth",
+            Self::Inputs => "inputs",
             Self::Opaque => "opaque",
             Self::Sky => "sky",
             Self::Transparent => "transparent",
@@ -45,7 +48,7 @@ impl AttachPoint {
     pub const fn scene(self) -> bool {
         match self {
             Self::Depth | Self::Opaque | Self::Sky | Self::Transparent => true,
-            Self::Post | Self::Display | Self::Overlay => false,
+            Self::Inputs | Self::Post | Self::Display | Self::Overlay => false,
         }
     }
 }
@@ -57,13 +60,11 @@ impl TargetName {
     pub const COLOR: Self = Self("color");
     pub const DEPTH: Self = Self("depth");
     pub const MOTION: Self = Self("motion");
-    pub const NORMALS: Self = Self("normals");
     pub const TRANSPARENCY: Self = Self("transparency");
-    pub const CORE: [Self; 5] = [
+    pub const CORE: [Self; 4] = [
         Self::COLOR,
         Self::DEPTH,
         Self::MOTION,
-        Self::NORMALS,
         Self::TRANSPARENCY,
     ];
 
@@ -137,10 +138,6 @@ impl SlotSet {
         position: true,
         opacity: true,
         ..Self::NONE
-    };
-    pub const DEPTH: Self = Self {
-        normal: true,
-        ..Self::MASK
     };
     pub const ALL: Self = Self {
         position: true,
@@ -216,19 +213,6 @@ pub trait PassName: 'static {
     const NAME: &'static str;
     const PASS: Pass;
     const RASTER: PassRaster = PassRaster::PLAIN;
-}
-
-pub struct DepthPass;
-
-impl PassName for DepthPass {
-    const NAME: &'static str = "depth";
-    const PASS: Pass = Pass {
-        writes: Writes(&[TargetName::DEPTH, TargetName::NORMALS]),
-        reads: SlotSet::DEPTH,
-        views: PassViews::Every,
-        at: AttachPoint::Depth,
-        takes: every,
-    };
 }
 
 pub struct ColorPass;
@@ -328,8 +312,7 @@ pub struct ScenePasses {
     listed: Vec<ScenePass>,
 }
 
-pub const CORE_PASSES: [PassEntry; 3] = [
-    PassEntry::of::<DepthPass>(),
+pub const CORE_PASSES: [PassEntry; 2] = [
     PassEntry::of::<ColorPass>(),
     PassEntry::of::<BlendedPass>(),
 ];

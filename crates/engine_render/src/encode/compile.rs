@@ -110,9 +110,9 @@ fn depth_stencil_state(
         DepthUse::Write { bias } => (
             true,
             if view_depth {
-                wgpu::CompareFunction::Greater
+                wgpu::CompareFunction::GreaterEqual
             } else {
-                wgpu::CompareFunction::Less
+                wgpu::CompareFunction::LessEqual
             },
             bias,
         ),

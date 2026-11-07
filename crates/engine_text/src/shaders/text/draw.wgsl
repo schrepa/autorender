@@ -20,7 +20,7 @@ struct Corner { @builtin(position) clip: vec4<f32>, @location(0) texel: vec2<f32
     let coverage = glyph_coverage(vec2<i32>(corner.texel));
     return vec4<f32>(corner.color.rgb, corner.color.a * coverage);
 }
-struct Placed { @builtin(position) clip: vec4<f32>, @location(0) texel: vec2<f32>, @location(1) color: vec4<f32>, @location(2) previous: vec4<f32> }
+struct Placed { @invariant @builtin(position) clip: vec4<f32>, @location(0) texel: vec2<f32>, @location(1) color: vec4<f32>, @location(2) previous: vec4<f32> }
 fn facing(lens: mat4x4<f32>, origin: vec4<f32>, at: vec2<f32>) -> vec4<f32> {
     let right = normalize(vec3<f32>(lens[0].x, lens[1].x, lens[2].x));
     let up = normalize(vec3<f32>(lens[0].y, lens[1].y, lens[2].y));
@@ -47,4 +47,8 @@ fn facing(lens: mat4x4<f32>, origin: vec4<f32>, at: vec2<f32>) -> vec4<f32> {
     if placed.color.a * coverage < 0.5 { discard; }
     let color = vec4<f32>(placed.color.rgb, 1.0);
     return view_targets(flat_point(color), flat(color), view_pixel(placed.clip, placed.previous));
+}
+@fragment fn fs_label_depth(placed: Placed) {
+    let coverage = glyph_coverage(vec2<i32>(placed.texel));
+    if placed.color.a * coverage < 0.5 { discard; }
 }

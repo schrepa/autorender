@@ -81,7 +81,7 @@ fn terrain_tint(world: vec3<f32>, ground: TerrainGround, site: TerrainSite) -> v
 }
 
 struct TerrainOutput {
-    @builtin(position) clip_position: vec4<f32>,
+    @invariant @builtin(position) clip_position: vec4<f32>,
     @location(1) relative: vec4<f32>,
     @location(2) cell: vec2<f32>,
     @location(3) @interpolate(flat) terrain: u32,
@@ -1352,6 +1352,12 @@ fn fs_terrain_ids(input: TerrainOutput) -> @location(0) vec2<u32> {
 @fragment
 fn fs_terrain_ids_holes(input: TerrainOutput) -> @location(0) vec2<u32> {
     return terrain_ids(input, true);
+}
+
+@fragment
+fn fs_terrain_depth_holes(input: TerrainOutput) {
+    use_terrain(input.terrain);
+    terrain_holes_test(input.cell, true);
 }
 
 fn terrain_relative_at(pixel: vec2<f32>, depth: f32, size: vec2<f32>) -> vec3<f32> {

@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{ColorPass, DrawKind, Error};
+use engine_core::{AttachPoint, DrawKind, Error, PassViews, ScenePass, TargetName};
 use engine_places_world::ground::PALETTE_ENTRIES;
 use engine_render::{
     AfterRead, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput, Encode, GpuPart,
@@ -31,8 +31,7 @@ pub(crate) struct CoverGpu {
     growing: ComputePipeline<Self>,
     stepping: ComputePipeline<Self>,
     finishing: ComputePipeline<Self>,
-    lit: Pipeline<Self, Scene>,
-    indirect: DrawInput<Self, Scene>,
+    scenes: Vec<(&'static str, Pipeline<Self, Scene>, DrawInput<Self, Scene>)>,
     cells: Vec<u32>,
     blade_bytes: u64,
     row_bytes: u64,
@@ -79,30 +78,51 @@ impl GpuPart for CoverGpu {
                 (grow::ARGS, Bind::Buffer(args)),
             ],
         )?;
-        let lit = cx.render_pipeline(
-            Scene::of::<ColorPass>(),
-            &RenderPipeline {
-                vertex: draw::VS_COVER,
-                fragment: Some(draw::FS_COVER),
-                debug: Some(debug::FS_DEBUG_COVER),
-                vertices: &[],
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleStrip,
-                    cull_mode: None,
-                    ..Default::default()
+        let listed: Vec<ScenePass> = cx
+            .passes()
+            .listed()
+            .iter()
+            .filter(|listed| {
+                listed.bit.is_some()
+                    && (listed.pass.takes)(COVER)
+                    && listed.pass.views != PassViews::Owned
+                    && listed.pass.at != AttachPoint::Transparent
+            })
+            .copied()
+            .collect();
+        let mut scenes = Vec::with_capacity(listed.len());
+        for listed in listed {
+            let scene = Scene::named(listed.name);
+            let (fragment, debug) = if listed.pass.writes.contains(TargetName::COLOR) {
+                (Some(draw::FS_COVER), Some(debug::FS_DEBUG_COVER))
+            } else {
+                (None, None)
+            };
+            let pipeline = cx.render_pipeline(
+                scene,
+                &RenderPipeline {
+                    vertex: draw::VS_COVER,
+                    fragment,
+                    debug,
+                    vertices: &[],
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleStrip,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth: DepthUse::Write {
+                        bias: wgpu::DepthBiasState::default(),
+                    },
+                    blend: None,
+                    writes: wgpu::ColorWrites::ALL,
                 },
-                depth: DepthUse::Write {
-                    bias: wgpu::DepthBiasState::default(),
-                },
-                blend: None,
-                writes: wgpu::ColorWrites::ALL,
-            },
-            &[
-                (draw::COVER_BLADES, Bind::Buffer(blades)),
-                (draw::COVER_FRAME, Bind::Buffer(frame)),
-            ],
-        )?;
-        let indirect = cx.draw_input(Scene::of::<ColorPass>(), args);
+                &[
+                    (draw::COVER_BLADES, Bind::Buffer(blades)),
+                    (draw::COVER_FRAME, Bind::Buffer(frame)),
+                ],
+            )?;
+            scenes.push((listed.name, pipeline, cx.draw_input(scene, args)));
+        }
         Ok(Self {
             grow: grow_pass,
             rows,
@@ -114,8 +134,7 @@ impl GpuPart for CoverGpu {
             growing,
             stepping,
             finishing,
-            lit,
-            indirect,
+            scenes,
             cells: Vec::new(),
             blade_bytes: BLADE_BYTES,
             row_bytes: ROW_BYTES,
@@ -188,16 +207,23 @@ impl GpuPart for CoverGpu {
 
 impl CoverGpu {
     pub(crate) fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
-        if !self.drawn || scene.pass != Scene::of::<ColorPass>() {
+        if !self.drawn {
             return 0;
         }
+        let Some((_, pipeline, indirect)) = self
+            .scenes
+            .iter()
+            .find(|(name, _, _)| *name == scene.pass.name())
+        else {
+            return 0;
+        };
         for offset in [0, DRAW_ARGS] {
             draw.draw(
-                &self.lit,
+                pipeline,
                 Shape::Indirect {
                     vertices: &[],
                     indices: None,
-                    args: self.indirect,
+                    args: *indirect,
                     offset,
                 },
             );

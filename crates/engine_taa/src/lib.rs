@@ -9,31 +9,15 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod antialiasing;
 mod brick_smokes;
-mod lit;
 mod previous;
+mod resolve;
 mod temporal;
 
 use bevy_ecs::prelude::*;
-use engine_core::{
-    AttachPoint, Brick, Bricks, Jitter, Pass, PassName, PassViews, Runs, Schedule, SlotSet, Smoke,
-    Source, Writes, never,
-};
+use engine_core::{Brick, Bricks, Jitter, Runs, Schedule, Smoke, Source};
 use engine_render::{RenderBricks, Resolve};
 
 pub use antialiasing::{TemporalAntialiasing, TemporalAntialiasingStats};
-
-pub(crate) struct TemporalPass;
-
-impl PassName for TemporalPass {
-    const NAME: &'static str = "temporal_lit";
-    const PASS: Pass = Pass {
-        writes: Writes::NOTHING,
-        reads: SlotSet::NONE,
-        views: PassViews::Main,
-        at: AttachPoint::Post,
-        takes: never,
-    };
-}
 
 pub struct TaaBrick;
 
@@ -55,9 +39,8 @@ impl Brick for TaaBrick {
             .fill::<Resolve>(Some(shaders::taa::resolved::MODULE))
             .fill::<Jitter>(None)
             .view_target(previous::MOTION)
-            .pass::<TemporalPass>()
             .systems(Schedule::WorldSync, temporal::jitter)
             .systems(Schedule::ViewSync, temporal::publish)
-            .part::<lit::LitGpu>();
+            .part::<resolve::ResolveGpu>();
     }
 }

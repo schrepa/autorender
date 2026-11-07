@@ -3,7 +3,6 @@ import package::engine::surfaces::SURFACE_SOLID;
 
 struct Shaded {
     linear: vec3<f32>,
-    ambient: f32,
     opacity: f32,
 }
 
@@ -70,7 +69,6 @@ struct ViewPixel {
 fn flat(color: vec4<f32>) -> Shaded {
     var shaded: Shaded;
     shaded.linear = color.rgb;
-    shaded.ambient = 0.0;
     shaded.opacity = color.a;
     return shaded;
 }

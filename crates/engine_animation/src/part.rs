@@ -6,7 +6,7 @@ use engine_core::math::max;
 use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, AttachPoint, Cull, DrawKind, DrawnPoses, DrawnTable,
     Error, GlobalTransforms, MaterialHandle, MeshHandle, MeshVertex, PassViews,
-    PrimaryView, ScenePass, Views, gpu_struct,
+    PrimaryView, ScenePass, TargetName, Views, gpu_struct,
 };
 use engine_places_rendering::animation::{Animator, Rig, RigPart, VertexSkin};
 use engine_render::{
@@ -178,7 +178,7 @@ struct Streams {
 }
 
 enum Drawing {
-    Lit([Pipeline<SkinningGpu, Scene>; 2]),
+    Placed([Pipeline<SkinningGpu, Scene>; 4]),
     Casters([Pipeline<SkinningGpu, Scene>; 2]),
 }
 
@@ -543,11 +543,12 @@ impl SkinningGpu {
         let mut drawn = 0;
         for (index, slot) in self.held.slots.iter().enumerate() {
             let (pipeline, material) = match &joined.drawing {
-                Drawing::Lit(lit) => {
+                Drawing::Placed(placed) => {
                     if slot.material.is_none() {
                         continue;
                     }
-                    (&lit[usize::from(slot.double_sided)], slot.material)
+                    let look = usize::from(slot.masked) << 1 | usize::from(slot.double_sided);
+                    (&placed[look], slot.material)
                 }
                 Drawing::Casters(casting) => (
                     &casting[usize::from(slot.masked)],
@@ -573,33 +574,39 @@ impl SkinningGpu {
     }
 }
 
-fn lit_pipeline(
+fn placed_pipelines(
     cx: &mut Install<'_, SkinningGpu>,
     scene: Scene,
-    double_sided: bool,
-) -> Result<Pipeline<SkinningGpu, Scene>, Error> {
+    lit: bool,
+) -> Result<[Pipeline<SkinningGpu, Scene>; 4], Error> {
     use shaders::animation::draw;
-    cx.render_pipeline(
-        scene,
-        &RenderPipeline {
-            vertex: draw::VS_SKINNED,
-            fragment: Some(draw::FS_SKINNED),
-            debug: None,
-            vertices: LIT_STREAMS,
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: (!double_sided).then_some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth: DepthUse::Write {
-                bias: wgpu::DepthBiasState::default(),
-            },
-            blend: None,
-            writes: wgpu::ColorWrites::ALL,
+    let desc = |masked: bool, double_sided: bool| RenderPipeline {
+        vertex: draw::VS_SKINNED,
+        fragment: if lit {
+            Some(draw::FS_SKINNED)
+        } else {
+            masked.then_some(draw::FS_SKINNED_DEPTH)
         },
-        &[],
-    )
+        debug: None,
+        vertices: LIT_STREAMS,
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: (!double_sided).then_some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth: DepthUse::Write {
+            bias: wgpu::DepthBiasState::default(),
+        },
+        blend: None,
+        writes: wgpu::ColorWrites::ALL,
+    };
+    Ok([
+        cx.render_pipeline(scene, &desc(false, false), &[])?,
+        cx.render_pipeline(scene, &desc(false, true), &[])?,
+        cx.render_pipeline(scene, &desc(true, false), &[])?,
+        cx.render_pipeline(scene, &desc(true, true), &[])?,
+    ])
 }
 
 fn caster_pipelines(
@@ -645,14 +652,14 @@ fn scene_pipelines(
         let scene = Scene::named(listed.name);
         let (owned, lit) = (
             listed.pass.views == PassViews::Owned,
-            listed.pass.reads.base_color,
+            listed.pass.writes.contains(TargetName::COLOR),
         );
         let drawing = match (owned, lit) {
-            (false, true) if listed.pass.at == AttachPoint::Opaque => Drawing::Lit([
-                lit_pipeline(cx, scene, false)?,
-                lit_pipeline(cx, scene, true)?,
-            ]),
             (true, false) => Drawing::Casters(caster_pipelines(cx, scene)?),
+            (false, true) if listed.pass.at != AttachPoint::Opaque => continue,
+            (false, _) if listed.pass.at != AttachPoint::Transparent => {
+                Drawing::Placed(placed_pipelines(cx, scene, lit)?)
+            }
             (false | true, true | false) => continue,
         };
         let streams = Streams {

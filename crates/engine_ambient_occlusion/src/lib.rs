@@ -9,27 +9,11 @@ mod part;
 mod settings;
 
 use bevy_ecs::prelude::*;
-use engine_core::{
-    AttachPoint, Brick, Bricks, Pass, PassName, PassViews, PrimaryView, Schedule, SlotSet, Source,
-    Writes, gpu_struct, never,
-};
-use engine_places_rendering::occlusion::OcclusionSource;
+use engine_core::{Brick, Bricks, PrimaryView, Schedule, Source, gpu_struct};
+use engine_places_rendering::occlusion::{AmbientVisibility, OcclusionSource};
 use engine_render::RenderBricks;
 
 pub use settings::{AmbientOcclusion, AmbientOcclusionStats};
-
-pub(crate) struct OcclusionPass;
-
-impl PassName for OcclusionPass {
-    const NAME: &'static str = "ambient_occlusion";
-    const PASS: Pass = Pass {
-        writes: Writes::NOTHING,
-        reads: SlotSet::NONE,
-        views: PassViews::Main,
-        at: AttachPoint::Post,
-        takes: never,
-    };
-}
 
 gpu_struct! {
     #[derive(Resource)]
@@ -50,7 +34,9 @@ impl Brick for AmbientOcclusionBrick {
             .settings::<AmbientOcclusion>()
             .stats::<AmbientOcclusionStats>()
             .piece::<AmbientPiece>()
-            .applies::<OcclusionPass>(shaders::ambient_occlusion::apply::MODULE)
+            .fill::<AmbientVisibility>(Some(
+                shaders::ambient_occlusion::faces::ambient_occlusion::MODULE,
+            ))
             .systems(Schedule::ViewSync, (publish_piece, publish_stats))
             .part::<part::AmbientGpu>();
     }

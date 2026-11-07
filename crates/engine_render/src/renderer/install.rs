@@ -357,23 +357,13 @@ fn applied_modules(
 
 fn outputs(registry: &Registry, roots: &mut Vec<(String, String)>) -> Vec<OutputDecl> {
     let cover = engine_core::TargetName::TRANSPARENCY.name();
-    let normals = engine_core::TargetName::NORMALS.name();
     roots.push((crate::shared::TRANSPARENCY_MODULE.to_owned(), cover.to_owned()));
-    roots.push((crate::shared::NORMALS_MODULE.to_owned(), normals.to_owned()));
-    let mut found = vec![
-        OutputDecl {
-            name: cover,
-            format: crate::shared::COVER_FORMAT,
-            layers: vec![engine_core::AttachPoint::Transparent],
-            module: Some(crate::shared::TRANSPARENCY_MODULE.to_owned()),
-        },
-        OutputDecl {
-            name: normals,
-            format: crate::shared::NORMALS_FORMAT,
-            layers: vec![engine_core::AttachPoint::Depth],
-            module: Some(crate::shared::NORMALS_MODULE.to_owned()),
-        },
-    ];
+    let mut found = vec![OutputDecl {
+        name: cover,
+        format: crate::shared::COVER_FORMAT,
+        layers: vec![engine_core::AttachPoint::Transparent],
+        module: Some(crate::shared::TRANSPARENCY_MODULE.to_owned()),
+    }];
     for (_, record) in registry.iter() {
         for target in record.render_entries::<crate::TargetDecl>() {
             let module = target.module.as_ref().and_then(module_path);
@@ -521,7 +511,6 @@ fn names_twice(registry: &Registry, world: &World, problems: &mut Vec<Error>) {
             let name = target.name.name();
             if crate::install::ViewTarget::of(target.name).is_some()
                 || target.name == engine_core::TargetName::TRANSPARENCY
-                || target.name == engine_core::TargetName::NORMALS
                 || seen.contains(&name)
             {
                 problems.push(

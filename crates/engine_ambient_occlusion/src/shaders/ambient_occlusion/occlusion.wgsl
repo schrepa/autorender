@@ -128,5 +128,5 @@ fn filtered_occlusion(pixel: vec2<i32>) -> f32 {
 
 @fragment
 fn fs_effects_filter(@builtin(position) position: vec4<f32>) -> @location(0) f32 {
-    return filtered_occlusion(vec2<i32>(position.xy));
+    return 1.0 - filtered_occlusion(vec2<i32>(position.xy));
 }

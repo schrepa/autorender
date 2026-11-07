@@ -1,7 +1,7 @@
 import package::engine::post::frame::{drawn_uv, linear, post, scene};
-import package::engine::post::pixel::{PostPixel, SceneLight};
+import package::engine::post::pixel::PostPixel;
 
-fn upscaled_scene(pixel: vec2<f32>) -> vec4<f32> {
+fn upscaled_scene(pixel: vec2<f32>) -> vec3<f32> {
     let center = floor(pixel - 0.5) + 0.5;
     let f = pixel - center;
     let w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
@@ -20,12 +20,11 @@ fn upscaled_scene(pixel: vec2<f32>) -> vec4<f32> {
         + scene_tap(vec2<f32>(before.x, middle.y)) * weights.y
         + scene_tap(vec2<f32>(after.x, middle.y)) * weights.z
         + scene_tap(vec2<f32>(middle.x, after.y)) * weights.w;
-    let filtered = color / sum;
-    return vec4<f32>(max(filtered.rgb, vec3<f32>(0.0)), saturate(filtered.a));
+    return max(color / sum, vec3<f32>(0.0));
 }
 
-fn scene_tap(pixel: vec2<f32>) -> vec4<f32> {
-    return textureSampleLevel(scene, linear, drawn_uv(pixel, post), 0.0);
+fn scene_tap(pixel: vec2<f32>) -> vec3<f32> {
+    return textureSampleLevel(scene, linear, drawn_uv(pixel, post), 0.0).rgb;
 }
 
 fn post_pixel(position: vec4<f32>) -> PostPixel {
@@ -36,10 +35,9 @@ fn post_pixel(position: vec4<f32>) -> PostPixel {
     return PostPixel(position.xy, uv, pixel);
 }
 
-fn scene_light(at: PostPixel) -> SceneLight {
-    var texel = textureLoad(scene, at.pixel, 0);
+fn scene_color(at: PostPixel) -> vec4<f32> {
     if any(post.size.xy != post.extent.xy) {
-        texel = upscaled_scene(at.uv * post.size.xy);
+        return vec4<f32>(upscaled_scene(at.uv * post.size.xy), 1.0);
     }
-    return SceneLight(texel.rgb, texel.a);
+    return vec4<f32>(textureLoad(scene, at.pixel, 0).rgb, 1.0);
 }

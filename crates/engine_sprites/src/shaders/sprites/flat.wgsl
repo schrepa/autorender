@@ -5,7 +5,7 @@ import package::generated::targets::{ViewTargets, view_targets};
 @group(1) @binding(1) var checker_sampler: sampler;
 
 struct SpriteOutput {
-    @builtin(position) clip_position: vec4<f32>,
+    @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) ndc: vec2<f32>,
 }

@@ -123,5 +123,5 @@ fn reflecting(point: SurfacePoint) -> Reflecting {
 
 fn finish(surface: SurfacePoint, pixel: vec2<f32>, added: vec3<f32>) -> Shaded {
     let point = widened(surface);
-    return shade_surface(point, local_light(point, pixel) + added);
+    return shade_surface(point, pixel, local_light(point, pixel) + added);
 }

@@ -9,3 +9,11 @@ pub struct OcclusionSource {
 impl Slot for OcclusionSource {
     const NAME: &'static str = "occlusion_source";
 }
+
+#[derive(Resource, Default)]
+pub struct AmbientVisibility;
+
+impl Slot for AmbientVisibility {
+    const NAME: &'static str = "ambient_occlusion";
+    const WGSL: Option<&'static str> = Some(include_str!("places/ambient_occlusion.wgsl"));
+}

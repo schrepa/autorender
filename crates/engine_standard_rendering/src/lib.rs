@@ -16,6 +16,7 @@ pub use engine_lighting::LightingModelBrick;
 pub use engine_lights::LightsBrick;
 pub use engine_meshes::MeshesBrick;
 pub use engine_particles::ParticlesBrick;
+pub use engine_prepass::PrepassBrick;
 pub use engine_probes::ReflectionProbesBrick;
 pub use engine_reflections::ReflectionsBrick;
 pub use engine_screens::ScreensBrick;
@@ -36,6 +37,7 @@ pub fn rendering<L: Listing>(list: L) -> L {
         .with::<ShadowsBrick>()
         .with::<LightsBrick>()
         .with::<SkyBrick>()
+        .with::<PrepassBrick>()
         .with::<AmbientOcclusionBrick>()
         .with::<BloomBrick>()
         .with::<TaaBrick>()

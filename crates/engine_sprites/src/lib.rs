@@ -8,9 +8,10 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asset, AssetResidency, AssetUses, Attributes, Brick, Bricks, ColorPass, ComponentKind,
-    DrawKind, Drawn, DrawnPoses, DrawnTable, Error, GlobalTransforms, KindDecl, PrimaryView, Runs,
-    SceneComponents, Schedule, Smoke, Source, Spawner, TextureHandle, gpu_struct,
+    Asset, AssetResidency, AssetUses, AttachPoint, Attributes, Brick, Bricks, ComponentKind,
+    DrawKind, Drawn, DrawnPoses, DrawnTable, Error, GlobalTransforms, KindDecl, PassViews,
+    PrimaryView, Runs, SceneComponents, ScenePass, Schedule, Smoke, Source, Spawner, TargetName,
+    TextureHandle, gpu_struct,
 };
 use engine_render::{
     Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare, RenderBricks,
@@ -22,8 +23,6 @@ use serde_json::{Value, json};
 pub use flat::{DARK, LIGHT};
 
 pub const SPRITES: DrawKind = DrawKind("sprites");
-
-const DRAWN_IN: Scene = Scene::of::<ColorPass>();
 
 const GENERATED: &[&str] = &[<SpriteInstance as engine_core::GpuStruct>::WGSL];
 
@@ -134,11 +133,25 @@ fn publish_sheets(
 
 struct SpritesGpu {
     flat: flat::Flat,
-    pipeline: Pipeline<Self, Scene>,
+    pipelines: Vec<(&'static str, Pipeline<Self, Scene>)>,
     instances: Buffer<Self>,
     staged: Vec<SpriteInstance>,
     runs: Vec<(TextureHandle, Range<u32>)>,
-    drawn: Vec<(Pipeline<Self, Scene>, Range<u32>)>,
+    drawn: Vec<(&'static str, Pipeline<Self, Scene>, Range<u32>)>,
+}
+
+fn drawn_in(cx: &Install<'_, SpritesGpu>) -> Vec<ScenePass> {
+    cx.passes()
+        .listed()
+        .iter()
+        .filter(|listed| {
+            listed.bit.is_some()
+                && (listed.pass.takes)(SPRITES)
+                && listed.pass.views != PassViews::Owned
+                && listed.pass.at != AttachPoint::Transparent
+        })
+        .copied()
+        .collect()
 }
 
 impl GpuPart for SpritesGpu {
@@ -150,30 +163,38 @@ impl GpuPart for SpritesGpu {
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use shaders::sprites::draw;
-        let flat = flat::Flat::install(cx)?;
+        let listed = drawn_in(cx);
+        let flat = flat::Flat::install(cx, &listed)?;
         let instances = cx.buffer("instances", Lifetime::Kept);
         let sampler = cx.sampler(SamplerDesc::NEAREST);
-        let pipeline = cx.render_pipeline(
-            DRAWN_IN,
-            &RenderPipeline {
-                vertex: draw::VS_SPRITE,
-                fragment: Some(draw::FS_SPRITE),
-                debug: None,
-                vertices: &[],
-                primitive: wgpu::PrimitiveState::default(),
-                depth: DepthUse::None,
-                blend: None,
-                writes: wgpu::ColorWrites::ALL,
-            },
-            &[
-                (draw::INSTANCES, Bind::Buffer(instances)),
-                (draw::SHEET, Bind::Asset),
-                (draw::SHEET_SAMPLER, Bind::Sampler(sampler)),
-            ],
-        )?;
+        let mut pipelines = Vec::with_capacity(listed.len());
+        for listed in listed
+            .iter()
+            .filter(|listed| listed.pass.writes.contains(TargetName::COLOR))
+        {
+            let pipeline = cx.render_pipeline(
+                Scene::named(listed.name),
+                &RenderPipeline {
+                    vertex: draw::VS_SPRITE,
+                    fragment: Some(draw::FS_SPRITE),
+                    debug: None,
+                    vertices: &[],
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth: DepthUse::None,
+                    blend: None,
+                    writes: wgpu::ColorWrites::ALL,
+                },
+                &[
+                    (draw::INSTANCES, Bind::Buffer(instances)),
+                    (draw::SHEET, Bind::Asset),
+                    (draw::SHEET_SAMPLER, Bind::Sampler(sampler)),
+                ],
+            )?;
+            pipelines.push((listed.name, pipeline));
+        }
         Ok(Self {
             flat,
-            pipeline,
+            pipelines,
             instances,
             staged: Vec::new(),
             runs: Vec::new(),
@@ -199,19 +220,20 @@ impl GpuPart for SpritesGpu {
         );
         cx.write(self.instances, 0, &self.staged);
         self.drawn.clear();
-        for (sheet, range) in &self.runs {
-            self.drawn
-                .push((cx.fill(&self.pipeline, &[*sheet]), range.clone()));
+        for (name, pipeline) in &self.pipelines {
+            for (sheet, range) in &self.runs {
+                self.drawn
+                    .push((*name, cx.fill(pipeline, &[*sheet]), range.clone()));
+            }
         }
     }
 }
 
 impl SpritesGpu {
     fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
-        if scene.pass != DRAWN_IN {
-            return 0;
-        }
-        for (pipeline, range) in &self.drawn {
+        let name = scene.pass.name();
+        let mut drawn = 0;
+        for (_, pipeline, range) in self.drawn.iter().filter(|(pass, _, _)| *pass == name) {
             draw.draw(
                 pipeline,
                 Shape::Pulled {
@@ -219,8 +241,9 @@ impl SpritesGpu {
                     instances: range.clone(),
                 },
             );
+            drawn += 1;
         }
-        self.drawn.len() as u32 + self.flat.draw(draw)
+        drawn + self.flat.draw(name, draw)
     }
 }
 

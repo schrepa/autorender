@@ -2,7 +2,9 @@ import package::engine::color::luminance;
 import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::view::camera;
 import package::face::ambient::{EnvironmentAt, EnvironmentLight, environment};
+import package::face::ambient_occlusion::ambient_occlusion;
 import package::face::sky::{atmospheric, atmospheric_cover};
+import package::face::sky_visibility::sky_visibility;
 import package::face::sun::{sun_color, sun_direction};
 import package::face::tonemap::exposure;
 import package::generated::pieces::lighting_model::piece;
@@ -93,7 +95,7 @@ fn reflected(point: SurfacePoint) -> Reflecting {
     return result;
 }
 
-fn shade_surface(point: SurfacePoint, local: vec3<f32>) -> Shaded {
+fn shade_surface(point: SurfacePoint, pixel: vec2<f32>, local: vec3<f32>) -> Shaded {
     let normal = point.normal;
     let view = point.view;
     let sun = sun_direction();
@@ -126,9 +128,11 @@ fn shade_surface(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let inside = light.inside;
     let open = light.open;
     let bounce = point.inputs.bounce + light.bounce * point.occlusion;
-    let sky_light = (point.diffuse_color * (ambient_light(light) + light.horizon * rim)
+    let seen = mix(1.0, ambient_occlusion(pixel) * sky_visibility(pixel),
+        transmission_occlusion(point));
+    let sky_light = ((point.diffuse_color * (ambient_light(light) + light.horizon * rim)
         * inside.x + reflection) * point.occlusion * open
-        + point.diffuse_color * bounce * open * inside.x;
+        + point.diffuse_color * bounce * open * inside.x) * seen;
     let sunlit = (point.diffuse_color * wrapped + highlight * specular + transmitted(point))
         * sun_color();
     var visible = 1.0;
@@ -139,11 +143,7 @@ fn shade_surface(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let emitted = point.emissive * piece().model.y;
     let lit = sky_light + sun_light + emitted + local;
     let through = atmospheric(lit, camera.position.xyz, point.world, -view);
-    let fogged = through.rgb;
-    let covered = through.a;
     var shaded: Shaded;
-    shaded.linear = fogged;
-    shaded.ambient = saturate(luminance(sky_light) / max(luminance(lit), 1.0e-6)) * (1.0 - covered)
-        * transmission_occlusion(point);
+    shaded.linear = through.rgb;
     return shaded;
 }
