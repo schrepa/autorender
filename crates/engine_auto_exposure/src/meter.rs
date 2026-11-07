@@ -139,7 +139,7 @@ impl GpuPart for MeterGpu {
         if view.debug() {
             return;
         }
-        let seconds = time.real_presented_seconds();
+        let seconds = time.real_elapsed;
         let camera = view.view_projection().to_cols_array().map(f32::to_bits);
         let moved = std::mem::replace(&mut self.last_camera, camera) != camera;
         let elapsed = self

@@ -11,14 +11,14 @@ pub(super) struct Interests {
 #[derive(Clone, Copy)]
 enum Decode {
     Ground { key: TileKey, pyramid: Pyramid },
-    Portals,
+    Portals { key: TileKey },
 }
 
 impl Decode {
     fn ground(self) -> bool {
         match self {
             Self::Ground { .. } => true,
-            Self::Portals => false,
+            Self::Portals { .. } => false,
         }
     }
 }
@@ -127,8 +127,8 @@ impl WalkRecords {
                     });
                     end(&mut self.grounds, &input, made, (tick, failures));
                 }
-                Decode::Portals => {
-                    let made = made(PORTALS_NAME, output, portals_output);
+                Decode::Portals { key } => {
+                    let made = made(PORTALS_NAME, output, |bytes| walk_portals(key, bytes));
                     end(&mut self.portals, &input, made, (tick, failures));
                 }
             }
@@ -158,7 +158,7 @@ impl WalkRecords {
                     let input = portals_input(&running.walked, key, &gait);
                     let found = wanted(&mut self.portals, &mut running.interests.portals, &input);
                     if let Found::Asked = found {
-                        self.fly(jobs, (&PORTALS, &input), priority, Decode::Portals);
+                        self.fly(jobs, (&PORTALS, &input), priority, Decode::Portals { key });
                     }
                     found.map(|portals| running.held.portals.insert(key, portals))
                 }
@@ -183,7 +183,7 @@ impl WalkRecords {
             let input = portals_input(&running.walked, key, &gait);
             let found = wanted(&mut self.portals, &mut running.interests.portals, &input);
             if let Found::Asked = found
-                && !self.fly(jobs, (&PORTALS, &input), priority, Decode::Portals)
+                && !self.fly(jobs, (&PORTALS, &input), priority, Decode::Portals { key })
             {
                 return;
             }
@@ -292,6 +292,19 @@ fn walk_ground(key: TileKey, pyramid: &Pyramid, bytes: &[u8]) -> Result<WalkGrou
     }
     let water = grid.water.take();
     Ok(WalkGround::new(&grid, water, pyramid))
+}
+
+fn walk_portals(key: TileKey, bytes: &[u8]) -> Result<TilePortals, Error> {
+    let portals = portals_output(bytes)?;
+    let held = portals.key();
+    if held != key {
+        return Err(engine_codec::invalid("$.key").got([
+            u16::from(held.level),
+            held.x,
+            held.z,
+        ]));
+    }
+    Ok(portals)
 }
 
 impl<T> Found<T> {

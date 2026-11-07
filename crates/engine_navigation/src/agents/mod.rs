@@ -7,15 +7,15 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    CookMode, Error, ErrorCode, Filled, FixedTime, GAMEPLAY_JOBS, IDLE_JOBS, Interest, JobFailures,
-    JobKind, JobRef, Jobs, Parent, RecordKey, Records, Request, Requests, Transform, fields,
-    job_output, job_priority, settings, stats,
+    CookMode, Error, ErrorCode, Filled, FixedTime, GAMEPLAY_JOBS, GlobalTransforms, IDLE_JOBS,
+    Interest, JobFailures, JobKind, JobRef, Jobs, Parent, RecordKey, Records, Request, Requests,
+    Transform, fields, job_output, job_priority, settings, stats,
 };
-use engine_math::{atan2, clamp, max};
+use engine_math::{atan2, max};
 use engine_places_simulation::ground::{
     Ground, GroundGrid, GroundObstacle, GroundRead, GroundSource, Pyramid, TileKey,
 };
-use engine_places_simulation::navigation::{NavAgent, NavStatus, NavWalk};
+use engine_places_simulation::navigation::{NavAgent, NavStatus, NavStep, NavWalk};
 use engine_places_simulation::physics::{
     Collider, ColliderShape, Collision, QueryFilter, SensorFilter, Slid,
 };
@@ -26,7 +26,9 @@ use serde_json::Value;
 use crate::jobs::{
     GroundJob, PORTALS, PORTALS_NAME, PortalsJob, WALK_GROUND, WALK_GROUND_NAME, portals_output,
 };
-use crate::{Gait, NavOptions, NavPath, TilePortals, WalkData, WalkGround, WalkSearch, Want};
+use crate::{
+    Gait, NavOptions, NavPath, Stepped, TilePortals, WalkData, WalkGround, WalkSearch, Want,
+};
 use cook::CookGraph;
 pub use obstacles::ObstacleColliders;
 use records::{Interests, Resolved, WalkRecords};
@@ -54,7 +56,6 @@ fields! {
         pub destination: Option<[f32; 2]> = NavAgent::default().destination => finite,
         pub speed: f32 = NavAgent::default().speed => range(0.01, 100.0),
         pub turn: f32 = NavAgent::default().turn => range(1.0, 10_000.0),
-        pub offset: f32 = NavAgent::default().offset => range(-10_000.0, 10_000.0),
         pub radius: f32 = NavAgent::default().radius => same(NavOptions::rule_of("radius")),
         pub max_slope: f32 = NavAgent::default().max_slope
             => same(NavOptions::rule_of("max_slope")),
@@ -70,7 +71,6 @@ impl From<NavAgent> for SceneNavAgent {
             destination,
             speed,
             turn,
-            offset,
             radius,
             max_slope,
             max_water,
@@ -80,7 +80,6 @@ impl From<NavAgent> for SceneNavAgent {
             destination,
             speed,
             turn,
-            offset,
             radius,
             max_slope,
             max_water,
@@ -215,11 +214,13 @@ impl Search {
         let origin = running.walked.source.origin;
         loop {
             records.ask_ahead(running, jobs);
-            if let Some(found) = running.search.step(budget, &running.held) {
-                return Some((origin, found));
-            }
+            let blocked = match running.search.step(budget, &running.held) {
+                Stepped::Found(found) => return Some((origin, found)),
+                Stepped::Spent => false,
+                Stepped::Blocked => true,
+            };
             records.ask_ahead(running, jobs);
-            if running.search.wants().is_empty() {
+            if !blocked {
                 return None;
             }
             match records.resolve(running, jobs) {
@@ -306,7 +307,7 @@ type Agents<'w, 's> = Query<
         Entity,
         &'static NavAgent,
         &'static mut NavWalk,
-        &'static mut Transform,
+        &'static Transform,
     ),
     Without<Parent>,
 >;
@@ -369,14 +370,14 @@ pub(crate) fn walk_agents(
     (mut jobs, mut cooks): (Jobs, Jobs),
     mut navigation: ResMut<NavAgents>,
     mut stats: ResMut<NavStats>,
-    mut agents: Agents,
+    (mut agents, globals): (Agents, Res<GlobalTransforms>),
 ) {
     *stats = walk(
         (&*settings, *time, cook.cooking),
         ((&*ground, &colliders), &*records, (&mut jobs, &mut cooks)),
         (collides.on().then_some(&*collision), &bodies),
         &mut navigation,
-        &mut agents,
+        (&mut agents, &globals),
     );
 }
 
@@ -389,7 +390,7 @@ fn walk(
     ),
     bodies: (Option<&Collision>, &Query<&Collider>),
     navigation: &mut NavAgents,
-    agents: &mut Agents,
+    (agents, globals): (&mut Agents, &GlobalTransforms),
 ) -> NavStats {
     let mut stats = NavStats::default();
     navigation.tick = time.tick;
@@ -445,8 +446,7 @@ fn walk(
     stats.grounds = grounds;
     stats.portals = portals;
     let seconds = time.delta_seconds;
-    let mut moved = Vec::new();
-    for (entity, agent, mut walk, mut transform) in agents.iter_mut() {
+    for (entity, agent, mut walk, transform) in agents.iter_mut() {
         stats.agents += 1;
         match walk.status {
             NavStatus::Searching => stats.searching += 1,
@@ -455,22 +455,17 @@ fn walk(
             NavStatus::Refused => stats.refused += 1,
             NavStatus::Idle | NavStatus::Walking => {}
         }
-        if walk.status != NavStatus::Walking {
+        if walk.status != NavStatus::Walking || !globals.active(entity) {
+            if walk.step.is_some() {
+                walk.step = None;
+            }
             continue;
         }
         stats.walking += 1;
-        let body = Body::of(bodies, entity, &transform);
-        let step = step(agent, &mut walk, &mut transform, seconds, body);
-        stats.collision_errors += u32::from(step.failed);
-        moved.push((entity, step));
-    }
-    for (_, step) in &mut moved {
-        step.settle(ground);
-    }
-    for (entity, step) in moved {
-        if let Ok((_, _, _, mut transform)) = agents.get_mut(entity) {
-            transform.translation = step.position;
-        }
+        let body = Body::of(bodies, entity, transform);
+        let (next, failed) = step(agent, &mut walk, transform, seconds, body);
+        stats.collision_errors += u32::from(failed);
+        walk.step = Some(next);
     }
     stats
 }
@@ -570,41 +565,18 @@ impl<'a> Body<'a> {
     }
 }
 
-struct Step {
-    position: Vec3,
-    walked: f32,
-    offset: f32,
-    failed: bool,
-}
-
-impl Step {
-    fn settle(&mut self, ground: &Ground) {
-        let walked = self.walked;
-        let ground = ground
-            .point(Vec2::new(self.position.x, self.position.z))
-            .solid()
-            .map_or(walked, |point| {
-                if walked > point.height + DECK_ABOVE {
-                    walked
-                } else {
-                    point.height
-                }
-            });
-        self.position.y = ground + self.offset;
-    }
-}
-
 fn step(
     agent: &NavAgent,
     walk: &mut NavWalk,
-    transform: &mut Transform,
+    transform: &Transform,
     seconds: f32,
     body: Option<Body<'_>>,
-) -> Step {
+) -> (NavStep, bool) {
     let mut position = transform.translation;
     let mut travel = agent.speed * seconds;
     let mut heading = None;
     let mut failed = false;
+    let mut blocked = None;
     while travel > 0.0 && walk.next < walk.points.len() {
         let target = walk.points[walk.next];
         let to = Vec2::new(target.x - position.x, target.z - position.z);
@@ -618,6 +590,7 @@ fn step(
             Some(Ok(slid)) if slid.hits.iter().any(Option::is_some) => {
                 position.x = slid.position.x;
                 position.z = slid.position.z;
+                blocked = slid.hits.iter().flatten().next().map(|hit| hit.entity);
                 walk.next += usize::from(reached);
                 break;
             }
@@ -638,44 +611,26 @@ fn step(
             travel = 0.0;
         }
     }
-    let walked = walk_height(walk, position);
+    position.y = walk
+        .walked(Vec2::new(position.x, position.z))
+        .unwrap_or(position.y);
     if walk.next >= walk.points.len() {
         walk.status = NavStatus::Arrived;
     }
-    if let Some(heading) = heading {
+    let facing = heading.map_or(transform.rotation, |heading| {
         let target = Quat::from_rotation_y(atan2(-heading.x, -heading.y));
         let angle = transform.rotation.angle_between(target);
         let turn = agent.turn.to_radians() * seconds;
         let share = if angle > turn { turn / angle } else { 1.0 };
-        transform.rotation = transform
+        transform
             .rotation
             .slerp(target, max(share, 0.0))
-            .normalize();
-    }
-    Step {
-        position,
-        walked,
-        offset: agent.offset,
-        failed,
-    }
-}
-
-const DECK_ABOVE: f32 = 1.0;
-
-fn walk_height(walk: &NavWalk, position: Vec3) -> f32 {
-    let last = walk.points.len().saturating_sub(1);
-    let (Some(a), Some(b)) = (
-        walk.points.get(walk.next.saturating_sub(1).min(last)),
-        walk.points.get(walk.next.min(last)),
-    ) else {
-        return position.y;
+            .normalize()
+    });
+    let next = NavStep {
+        to: position,
+        facing,
+        blocked,
     };
-    let span = Vec2::new(b.x - a.x, b.z - a.z);
-    let along = Vec2::new(position.x - a.x, position.z - a.z);
-    let t = if span.length_squared() > 1.0e-8 {
-        clamp(along.dot(span) / span.length_squared(), 0.0, 1.0)
-    } else {
-        1.0
-    };
-    a.y + (b.y - a.y) * t
+    (next, failed)
 }

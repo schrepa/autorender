@@ -1,12 +1,12 @@
 use crate::app_host::AppHost;
 use crate::game::Game;
 use crate::host::{
-    FrameInput, FrameLoop, FramePhase, InputGatherer, JobId, JobOrder, JobScheduler, LevelLoad,
-    LevelStep,
+    FrameInput, FrameLoop, FramePhase, HostPause, InputGatherer, InputSource, JobId, JobOrder,
+    JobScheduler, LevelLoad, LevelStep,
 };
 use engine_core::{
-    ActionInput, BrickList, CookMode, CursorMode, CursorRequests, Engine, ErrorCode, Level,
-    MenuInput, MoveInput, Progress,
+    BrickList, CookMode, CursorMode, CursorRequests, Engine, ErrorCode, Level, MenuInput, Pause,
+    Progress,
 };
 use engine_render::RenderTarget;
 use engine_scene::SceneFiles;
@@ -74,10 +74,6 @@ impl<G: Game> GameHost<G> {
 
     pub fn cook_features(&self) -> Vec<(&'static str, u64)> {
         self.app.cook_features()
-    }
-
-    pub fn cook_left(&self) -> u64 {
-        self.cook_features().iter().map(|(_, left)| left).sum()
     }
 
     pub fn jobs_held(&self) -> u32 {
@@ -171,36 +167,65 @@ impl<G: Game> GameHost<G> {
     pub fn frame(&mut self, timestamp: f64, width: u32, height: u32) -> crate::Result<()> {
         self.step_level();
         self.prepare_pipelines();
-        let input = self.frame_input(timestamp);
+        let input = self.frame_input(self.input_source());
         self.app.set_gathered(&input);
-        let engine = self.app.engine_mut();
-        self.game.before_frame(engine);
-        let _ = engine
-            .app
-            .world_mut()
-            .modify_resource(|actions: &mut ActionInput| {
-                actions.ingest(&input.held, &input.pressed, &input.released);
-            });
-        let state = if engine.app.world().resource::<MenuInput>().wanted {
-            MoveInput::default()
-        } else {
-            input.state
-        };
-        let framed = self.app.frame(timestamp, width, height, state);
+        self.game.before_frame(self.app.engine_mut());
+        self.app.accept(&input);
+        let framed = self.app.frame(timestamp, width, height);
         self.apply_cursor();
         framed
     }
 
-    fn frame_input(&mut self, timestamp: f64) -> FrameInput {
+    pub fn input_source(&self) -> InputSource {
         #[cfg(feature = "dev")]
-        if self
-            .dev_pending
-            .as_ref()
-            .is_some_and(crate::dev_host::bridge::Pending::takes_agent_input)
-        {
-            return self.development.take_input();
+        if let Some(pending) = &self.dev_pending {
+            return pending.input_source();
         }
-        self.input.take(timestamp)
+        InputSource::Player
+    }
+
+    fn frame_input(&mut self, source: InputSource) -> FrameInput {
+        match source {
+            InputSource::Agent => {
+                self.input.drop_edges();
+                self.agent_input()
+            }
+            InputSource::Player => {
+                let seconds = self.app.engine().frame_time().real_seconds;
+                self.input.take(seconds as f32)
+            }
+        }
+    }
+
+    #[cfg(feature = "dev")]
+    fn agent_input(&mut self) -> FrameInput {
+        self.development.take_input()
+    }
+
+    #[cfg(not(feature = "dev"))]
+    fn agent_input(&mut self) -> FrameInput {
+        FrameInput::default()
+    }
+
+    pub fn pause(&mut self, pause: HostPause) {
+        let reason = pause.reason();
+        if self.app.engine().app.world().resource::<Pause>().holds(reason) {
+            return;
+        }
+        self.app.engine_mut().pause(reason);
+        self.input.clear();
+    }
+
+    pub fn resume(&mut self, pause: HostPause) {
+        self.app.engine_mut().resume(pause.reason());
+    }
+
+    pub fn refresh_interval(&self) -> f64 {
+        self.app.refresh_interval()
+    }
+
+    pub(crate) fn paced(&mut self) {
+        self.app.paced();
     }
 
     pub fn animation_frame(
@@ -388,13 +413,12 @@ impl<G: Game> GameHost<G> {
     pub fn suspend(&mut self) {
         self.suspend_live();
         #[cfg(feature = "dev")]
-        self.development.clear_input();
+        self.development.drop_edges();
     }
 
     pub(crate) fn suspend_live(&mut self) {
         self.app.suspend();
-        self.input.clear();
-        self.frames.skip();
+        self.input.drop_edges();
     }
 
     pub fn reset_camera(&mut self) {
@@ -414,6 +438,10 @@ impl<G: Game> GameHost<G> {
 
     pub fn set_setting(&mut self, key: &str, value: serde_json::Value) -> crate::Result<()> {
         self.app.set_setting(key, value)
+    }
+
+    pub fn set_settings(&mut self, entries: &[(String, serde_json::Value)]) -> crate::Result<()> {
+        self.app.set_settings(entries)
     }
 
     pub fn set_pixel_ratio(&mut self, ratio: f64) {

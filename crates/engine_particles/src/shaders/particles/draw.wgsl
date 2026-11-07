@@ -49,7 +49,7 @@ fn vs_particle(@builtin(vertex_index) vertex: u32,
         @builtin(instance_index) instance: u32) -> ParticleOutput {
     let emitter = emitters[owner_of(instance)];
     let lane = instance - emitter.first;
-    let time = camera.position.w;
+    let time = emitter.now;
     var k = lane;
     var age = time - emitter.start;
     if emitter.rate > 0.0 {

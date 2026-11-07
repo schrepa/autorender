@@ -66,10 +66,10 @@ enum Done {
 }
 
 impl DevHost {
-    pub fn clear_input(&mut self) {
-        self.input = InputBatch::default();
+    pub fn drop_edges(&mut self) {
+        self.input.drop_edges();
         if let Some(gatherer) = &mut self.gatherer {
-            gatherer.clear();
+            gatherer.drop_edges();
         }
     }
 

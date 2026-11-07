@@ -12,7 +12,6 @@ use crate::{Report, hash};
 const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const ASPECT: f32 = 16.0 / 9.0;
 const FRAMES: u32 = 400;
-const SAMPLES_PER_FRAME: u32 = 1 << 18;
 const LISTING: &str = "terrain_listing";
 const SECTIONS: [&str; 3] = ["terrain_stats", "water_stats", "terrain_shading_stats"];
 const FIELDS: [&str; 30] = [
@@ -53,9 +52,9 @@ pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
     let mut lines = Vec::with_capacity(FRAMES as usize);
     for frame in 0..FRAMES {
         *engine.app.world_mut().resource_mut::<Camera>() = camera(frame);
-        engine.advance(1.0 / 60.0);
+        engine.step_fixed(1).map_err(|error| error.to_string())?;
         let world = engine
-            .extract_frame(ASPECT, engine_core::Presented::Tick)
+            .extract_frame(ASPECT)
             .map_err(|error| format!("extract_frame: {error}"))?
             .world();
         let mut line = format!("{frame}: {}", stats(world)?);
@@ -193,11 +192,5 @@ fn load() -> Result<Engine, String> {
     let _scene = document
         .instantiate_with(engine.app.world_mut(), &files)
         .map_err(|error| format!("{FIXTURE}: {error}"))?;
-    engine::host::apply_setting(
-        engine.app.world_mut(),
-        "terrain.samples_per_frame",
-        &json!(SAMPLES_PER_FRAME),
-    )
-    .map_err(|error| error.to_string())?;
     Ok(engine)
 }

@@ -20,9 +20,10 @@ use engine_registry::{
 };
 use serde_json::Value;
 
+use crate::moves::NodeKind;
 use crate::{
-    Authored, Error, ErrorCode, Explain, GpuStruct, JobKind, List, Module, Operation, PlaceDecl,
-    SceneContext, SceneIds, Section, Slot, Smoke, Source,
+    Authored, Error, ErrorCode, Explain, GpuStruct, JobKind, List, Module, Mover, MoverId,
+    Operation, Pace, PlaceDecl, SceneContext, SceneIds, Section, Slot, Smoke, Source,
 };
 
 pub trait Brick: 'static {
@@ -193,6 +194,26 @@ impl Bricks<'_> {
     {
         self.record
             .explain(ExplainEntry::of::<E::Params>(run_explain::<E>));
+        self
+    }
+
+    pub fn moves<C: Component>(&mut self, pace: Pace) -> &mut Self {
+        let by = if self.record.game() {
+            MoverId::Game
+        } else {
+            MoverId::Brick(self.record.package)
+        };
+        self.record.entries.push(Box::new(NodeKind::Claimed {
+            claim: crate::moves::claim::<C>,
+            mover: Mover { by, pace },
+        }));
+        self
+    }
+
+    pub fn moving<C: Component>(&mut self) -> &mut Self {
+        self.record.entries.push(Box::new(NodeKind::Moving {
+            track: crate::moves::moving::<C>,
+        }));
         self
     }
 

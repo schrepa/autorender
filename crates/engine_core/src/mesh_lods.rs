@@ -127,7 +127,7 @@ pub(crate) fn settle(world: &mut World) {
         .is_some_and(|mode| mode.cooking);
     let now = world
         .get_resource::<crate::FrameTime>()
-        .map_or(0.0, |time| time.elapsed_seconds);
+        .map_or(0.0, |time| time.real_elapsed);
     let awaiting = world.resource_mut::<AssetLibrary>().take_awaiting_lods();
     world.resource_scope(|world, mut levels: Mut<MeshLevels>| {
         world.resource_scope(|world, mut jobs: Mut<JobExchange>| {

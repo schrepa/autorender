@@ -6,7 +6,9 @@ use engine_core::{
     AlphaMode, AssetLibrary, Error, ErrorCode, Expected, Filter, Material, MaterialHandle, Mesh,
     Mesh3d, MeshVertex, Sampler, Surface, Texture, TextureHandle, TextureRef, UvTransform, Wrap,
 };
-use engine_places_rendering::animation::{Bound, Clip, Joint, Keys, Rig, RigPart, Track, VertexSkin};
+use engine_places_rendering::animation::{
+    Bound, Clip, Joint, JointKeys, Keys, Rig, RigPart, VertexSkin,
+};
 use glam::{Mat3, Mat4, Quat, Vec3};
 use gltf::animation::util::ReadOutputs;
 use gltf::animation::{Interpolation, Property};
@@ -453,7 +455,7 @@ fn keys_of<T>(times: Vec<f32>, values: Vec<T>, interpolation: Interpolation) -> 
 fn clips_of(document: &gltf::Document, binary: &[u8], joints: &BTreeMap<usize, u32>) -> Vec<Clip> {
     let mut clips = Vec::new();
     for (at, animation) in document.animations().enumerate() {
-        let mut tracks: BTreeMap<u32, Track> = BTreeMap::new();
+        let mut tracks: BTreeMap<u32, JointKeys> = BTreeMap::new();
         let mut duration = 0.0;
         for channel in animation.channels() {
             let Some(&joint) = joints.get(&channel.target().node().index()) else {
@@ -468,7 +470,7 @@ fn clips_of(document: &gltf::Document, binary: &[u8], joints: &BTreeMap<usize, u
                 .iter()
                 .fold(duration, |longest, &time| max(longest, time));
             let interpolation = channel.sampler().interpolation();
-            let track = tracks.entry(joint).or_insert(Track {
+            let track = tracks.entry(joint).or_insert(JointKeys {
                 joint,
                 translation: None,
                 rotation: None,

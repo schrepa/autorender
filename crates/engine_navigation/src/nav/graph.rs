@@ -136,7 +136,8 @@ impl Graph {
 enum Seen {
     Walled,
     Open,
-    Waiting,
+    Blocked,
+    Spent,
 }
 
 impl WalkSearch {
@@ -151,7 +152,8 @@ impl WalkSearch {
         };
         match self.walled(&mut graph, budget, data) {
             Seen::Walled => return Flow::Found(None),
-            Seen::Waiting => return Flow::Stay(Stage::Graph(graph)),
+            Seen::Blocked => return Flow::Blocked(Stage::Graph(graph)),
+            Seen::Spent => return Flow::Spent(Stage::Graph(graph)),
             Seen::Open => {}
         }
         while *budget > 0 {
@@ -180,7 +182,7 @@ impl WalkSearch {
                 .collect();
             if !self.wants.is_empty() {
                 graph.next = Some(id);
-                return Flow::Stay(Stage::Graph(graph));
+                return Flow::Blocked(Stage::Graph(graph));
             }
             graph.nodes[id as usize].closed = true;
             *budget = budget.saturating_sub(NODE_COST);
@@ -213,7 +215,7 @@ impl WalkSearch {
                 }
             }
         }
-        Flow::Stay(Stage::Graph(graph))
+        Flow::Spent(Stage::Graph(graph))
     }
 
     fn walled(&mut self, graph: &mut Graph, budget: &mut u64, data: &dyn WalkData) -> Seen {
@@ -225,7 +227,7 @@ impl WalkSearch {
         if walled.seen.is_empty() {
             let Some(portals) = self.portals(goal_tile, data) else {
                 graph.walled = Some(walled);
-                return Seen::Waiting;
+                return Seen::Blocked;
             };
             let first = self.pyramid.first_sample(goal_tile);
             for (portal, &cost) in portals.portals().iter().zip(&graph.reach.costs[1]) {
@@ -253,7 +255,7 @@ impl WalkSearch {
             if !self.wants.is_empty() {
                 walled.next = Some(at);
                 graph.walled = Some(walled);
-                return Seen::Waiting;
+                return Seen::Blocked;
             }
             *budget = budget.saturating_sub(NODE_COST);
             self.searched += 1;
@@ -275,7 +277,7 @@ impl WalkSearch {
             }
         }
         graph.walled = Some(walled);
-        Seen::Waiting
+        Seen::Spent
     }
 
     fn leave_start(&self, graph: &mut Graph, portals: &TilePortals) {

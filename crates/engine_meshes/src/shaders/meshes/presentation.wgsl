@@ -2,23 +2,22 @@ import package::engine::math::maximum_abs;
 import package::engine::mesh::declarations::drawn_slot;
 import package::engine::mesh::impostor_frames::{CARD_PHASE_FADING, CARD_PHASE_STEADY,
     FADING_CARD_FADE_MAX, FADING_CARD_INDEX_MAX, fading_card, steady_card};
-import package::engine::presentation::{COEFFICIENT_LIMIT, COMMON_DETERMINANT_MARGIN,
-    IMPOSTOR_VERTICES, LINEAR_ROTATION_DOT, MAX_COEFFICIENT, MAX_PRODUCT_BOUND, MIN_LINEAR_SCALE,
-    NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID, NO_PARENT, POSE_FLOATS,
-    ROUNDING_MARGIN};
+import package::engine::presentation::{IMPOSTOR_VERTICES, MAX_COEFFICIENT, MAX_PRODUCT_BOUND,
+    NO_PARENT, POSE_FLOATS, Pose, ROUNDING_MARGIN, drawn_local, pose_admitted, pose_trs,
+    pose_word_blend, pose_word_composed, pose_word_parent_composed, pose_word_valid};
 import package::generated::meshes::{ARGS_GROUP, BatchData as Batch, CULL_GROUP,
     CandidateData as Candidate, FIRST_PERSON_BATCH, GROUP, LOD_FADED, LOD_HISTORY_HELD,
-    LOD_LEVELS, NO_NODE, PARENT_GROUP, PresentationFrame as Frame, UNWATCHED,
+    LOD_LEVELS, MOBILITY_STATIC, NO_NODE, PARENT_GROUP, PresentationFrame as Frame, UNWATCHED,
     candidate_state_level, candidate_state_moving, candidate_state_occluded,
     candidate_state_phase_one, candidate_state_phase_two, candidate_state_probe,
     candidate_state_subpixel, candidate_state_valid, candidate_state_visible,
     candidate_state_with_level, candidate_state_with_moving, candidate_state_with_occluded,
     candidate_state_with_phase_one, candidate_state_with_phase_two, candidate_state_with_probe,
     candidate_state_with_subpixel, candidate_state_with_valid, candidate_state_with_visible,
-    lod_fade, lod_fade_history, lod_fade_previous, lod_fade_progress, lod_fade_shown};
+    lod_fade, lod_fade_history, lod_fade_previous, lod_fade_progress, lod_fade_shown,
+    node_word_mobility};
 import package::meshes::screen_cull::{F32_MAX, covers_no_pixel, hidden};
-import package::meshes::slots::{instance_poses, instance_still};
-import package::place::instances::STILL_FRAMES;
+import package::meshes::slots::instance_poses;
 
 struct Rows {
     r0: vec4<f32>,
@@ -60,17 +59,14 @@ struct Level {
 @group(1) @binding(10) var<storage, read_write> batch_bases: array<u32>;
 @group(1) @binding(11) var<storage, read_write> visible_ids: array<u32>;
 @group(1) @binding(12) var<storage, read_write> draws: array<DrawArgs>;
-@group(1) @binding(13) var<storage, read_write> locals_shift: array<f32>;
 @group(1) @binding(14) var<storage, read> slot_candidates: array<Candidate>;
 @group(1) @binding(18) var depth_pyramid: texture_2d<f32>;
 @group(1) @binding(19) var<storage, read_write> occlusion_counts: array<atomic<u32>>;
-@group(1) @binding(23) var<storage, read_write> still_frames: array<vec2<u32>>;
+@group(1) @binding(23) var<storage, read> node_words: array<u32>;
 @group(1) @binding(24) var<storage, read_write> impostor_ids: array<vec2<u32>>;
 @group(1) @binding(25) var<storage, read_write> lod_states: array<u32>;
 @group(1) @binding(26) var<storage, read_write> fade_cards: array<atomic<u32>>;
 @group(1) @binding(27) var<storage, read_write> totals: array<u32, 14>;
-@group(1) @binding(28) var<storage, read> node_staging: array<f32>;
-@group(1) @binding(29) var<storage, read> node_ranges: array<vec4<u32>>;
 @group(2) @binding(0) var<uniform> level: Level;
 
 const IMPOSTOR: u32 = LOD_LEVELS;
@@ -92,74 +88,22 @@ fn slot_rows(slot: u32) -> Rows {
     return Rows(pose.row_0, pose.row_1, pose.row_2);
 }
 
-fn trs(translation: vec3<f32>, rotation: vec4<f32>, scale: vec3<f32>) -> mat4x4<f32> {
-    let x = rotation.x;
-    let y = rotation.y;
-    let z = rotation.z;
-    let w = rotation.w;
-    let x2 = x + x;
-    let y2 = y + y;
-    let z2 = z + z;
-    let xx = x * x2;
-    let xy = x * y2;
-    let xz = x * z2;
-    let yy = y * y2;
-    let yz = y * z2;
-    let zz = z * z2;
-    let wx = w * x2;
-    let wy = w * y2;
-    let wz = w * z2;
-    return mat4x4<f32>(
-        vec4<f32>(1.0 - (yy + zz), xy + wz, xz - wy, 0.0) * scale.x,
-        vec4<f32>(xy - wz, 1.0 - (xx + zz), yz + wx, 0.0) * scale.y,
-        vec4<f32>(xz + wy, yz - wx, 1.0 - (xx + yy), 0.0) * scale.z,
-        vec4<f32>(translation, 1.0),
-    );
-}
-
-fn blend_rotation(previous: vec4<f32>, current: vec4<f32>, alpha: f32) -> vec4<f32> {
-    let p = normalize(previous);
-    var c = normalize(current);
-    let d = dot(p, c);
-    if abs(d) >= LINEAR_ROTATION_DOT {
-        if d < 0.0 {
-            c = -c;
-        }
-        return normalize(p * (1.0 - alpha) + c * alpha);
-    }
-    var cosine = d;
-    if cosine < 0.0 {
-        c = -c;
-        cosine = -cosine;
-    }
-    let theta = acos(cosine);
-    let start = sin(theta * (1.0 - alpha));
-    let end = sin(theta * alpha);
-    return normalize((p * start + c * end) * (1.0 / sin(theta)));
-}
-
 fn finite(value: vec4<f32>) -> bool {
     return all(abs(value) <= vec4<f32>(F32_MAX));
 }
 
-fn admitted(m: mat4x4<f32>) -> bool {
-    if !(finite(m[0]) && finite(m[1]) && finite(m[2]) && finite(m[3])) {
-        return false;
-    }
-    let x = m[0].xyz;
-    let y = m[1].xyz;
-    let z = m[2].xyz;
-    let scale = max(maximum_abs(x), max(maximum_abs(y), maximum_abs(z)));
-    let determinant = dot(x, cross(y, z));
-    return scale >= MIN_LINEAR_SCALE && scale <= COEFFICIENT_LIMIT
-        && maximum_abs(m[3].xyz) <= COEFFICIENT_LIMIT
-        && abs(determinant) >= COMMON_DETERMINANT_MARGIN * ((scale * scale) * scale);
+fn node_pose(at: u32) -> Pose {
+    return Pose(
+        vec3<f32>(locals[at], locals[at + 1u], locals[at + 2u]),
+        vec4<f32>(locals[at + 4u], locals[at + 5u], locals[at + 6u], locals[at + 7u]),
+        vec3<f32>(locals[at + 3u], locals[at + 8u], locals[at + 9u]),
+    );
 }
 
 fn compose(node: u32) -> Composed {
     let record = info[node];
     let parent = record.x;
-    let flags = record.y;
+    let word = record.y;
     var base_display = mat4x4<f32>(
         vec4<f32>(1.0, 0.0, 0.0, 0.0),
         vec4<f32>(0.0, 1.0, 0.0, 0.0),
@@ -168,7 +112,7 @@ fn compose(node: u32) -> Composed {
     );
     var base_current = base_display;
     var parent_fallback = false;
-    if (flags & NODE_PARENT_ACTIVE) != 0u {
+    if pose_word_parent_composed(word) {
         let above = composed[parent];
         base_display = rows_matrix(above.display);
         base_current = rows_matrix(above.current);
@@ -177,34 +121,14 @@ fn compose(node: u32) -> Composed {
         base_display = rows_matrix(authority[parent]);
         base_current = base_display;
     }
-    let now = node * POSE_FLOATS;
-    let now_translation = vec3<f32>(locals[now], locals[now + 1u], locals[now + 2u]);
-    let now_rotation = vec4<f32>(locals[now + 4u], locals[now + 5u], locals[now + 6u], locals[now + 7u]);
-    let now_scale = vec3<f32>(locals[now + 3u], locals[now + 8u], locals[now + 9u]);
-    let current = base_current * trs(now_translation, now_rotation, now_scale);
+    let now = node_pose(node * POSE_FLOATS);
+    let current = base_current * pose_trs(now);
     var result: Composed;
     result.current = matrix_rows(current);
     if !parent_fallback {
-        var local = trs(now_translation, now_rotation, now_scale);
-        let alpha = frame.alpha;
-        if (flags & NODE_BLEND) != 0u && frame.blend != 0u && alpha < 1.0 {
-            let was = (frame.node_capacity + node) * POSE_FLOATS;
-            let previous_translation = vec3<f32>(locals[was], locals[was + 1u], locals[was + 2u]);
-            let previous_rotation = vec4<f32>(locals[was + 4u], locals[was + 5u], locals[was + 6u], locals[was + 7u]);
-            let previous_scale = vec3<f32>(locals[was + 3u], locals[was + 8u], locals[was + 9u]);
-            if alpha == 0.0 {
-                local = trs(previous_translation, previous_rotation, previous_scale);
-            } else {
-                let inverse = 1.0 - alpha;
-                local = trs(
-                    previous_translation * inverse + now_translation * alpha,
-                    blend_rotation(previous_rotation, now_rotation, alpha),
-                    previous_scale * inverse + now_scale * alpha,
-                );
-            }
-        }
-        let display = base_display * local;
-        if admitted(display) {
+        let was = node_pose((frame.node_capacity + node) * POSE_FLOATS);
+        let display = base_display * drawn_local(was, now, frame.alpha, pose_word_blend(word));
+        if pose_admitted(display) {
             result.display = matrix_rows(display);
             result.status = vec4<u32>(0u);
             return result;
@@ -256,28 +180,6 @@ fn outside(m: mat4x4<f32>, bounds_min: vec3<f32>, bounds_max: vec3<f32>) -> bool
     return false;
 }
 
-@compute @workgroup_size(CULL_GROUP)
-fn shift_previous(@builtin(global_invocation_id) id: vec3<u32>) {
-    let node = id.x;
-    if node >= arrayLength(&info) || (info[node].y & NODE_ACTIVE) == 0u {
-        return;
-    }
-    let half = arrayLength(&locals_shift) / 2u;
-    let start = node * POSE_FLOATS;
-    for (var index = start; index < start + POSE_FLOATS; index++) {
-        locals_shift[half + index] = locals_shift[index];
-    }
-}
-
-@compute @workgroup_size(PARENT_GROUP)
-fn apply_locals(@builtin(local_invocation_index) lane: u32,
-        @builtin(workgroup_id) group: vec3<u32>) {
-    let range = node_ranges[group.x];
-    for (var index = lane; index < range.y; index += PARENT_GROUP) {
-        locals_shift[range.x + index] = node_staging[range.z + index];
-    }
-}
-
 @compute @workgroup_size(PARENT_GROUP)
 fn compose_parents(@builtin(global_invocation_id) id: vec3<u32>) {
     let position = level.start + id.x;
@@ -296,11 +198,11 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
     let candidate = slot_candidates[id.x];
     let previous = frame.occlusion != 0u && candidate_state_occluded(scan[candidate.position]);
     var state = candidate_state_with_occluded(0u, previous);
-    if candidate.node != NO_NODE && (info[candidate.node].y & NODE_VALID) != 0u {
-        let flags = info[candidate.node].y;
+    if candidate.node != NO_NODE && pose_word_valid(info[candidate.node].y) {
+        let word = info[candidate.node].y;
         state = candidate_state_with_valid(state, true);
         var model: mat4x4<f32>;
-        if (flags & NODE_ACTIVE) != 0u {
+        if pose_word_composed(word) {
             model = rows_matrix(compose(candidate.node).display);
         } else {
             model = rows_matrix(authority[candidate.node]);
@@ -319,7 +221,7 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
             let occludable = frame.occlusion != 0u && batch.bounds_max.w == 0.0;
             state = candidate_state_with_visible(state, true);
             state = candidate_state_with_moving(state,
-                frame.motion != 0u && (flags & NODE_ACTIVE) != 0u);
+                frame.motion != 0u && pose_word_composed(word));
             state = candidate_state_with_phase_one(state, !occludable || !previous);
             state = candidate_state_with_level(state, lod_level(batch, model));
         }
@@ -475,24 +377,6 @@ fn pose_key(pose: Rows) -> u32 {
 }
 
 @compute @workgroup_size(CULL_GROUP)
-fn count_still(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x >= frame.candidates {
-        return;
-    }
-    let candidate = slot_candidates[id.x];
-    let state = still_frames[candidate.slot];
-    var key = 0u;
-    var count = 0u;
-    if candidate_state_valid(scan[candidate.position]) {
-        key = pose_key(slot_rows(candidate.slot));
-        count = select(1u, min(state.y + 1u, STILL_FRAMES), key == state.x && state.y != 0u);
-    }
-    if key != state.x || count != state.y {
-        still_frames[candidate.slot] = vec2<u32>(key, count);
-    }
-}
-
-@compute @workgroup_size(CULL_GROUP)
 fn probe_cull(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= frame.candidates {
         return;
@@ -500,8 +384,8 @@ fn probe_cull(@builtin(global_invocation_id) id: vec3<u32>) {
     let candidate = slot_candidates[id.x];
     var flags = candidate_state_with_probe(scan[candidate.position], false);
     let batch = batches[candidate.batch];
-    let still = instance_still[candidate.slot].y >= STILL_FRAMES;
-    if candidate_state_valid(flags) && still && batch.bounds_max.w != FIRST_PERSON_BATCH {
+    if candidate_state_valid(flags) && batch.bounds_max.w != FIRST_PERSON_BATCH
+            && node_word_mobility(node_words[candidate.node]) == MOBILITY_STATIC {
         let model = rows_matrix(slot_rows(candidate.slot));
         if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz)
                 && !(frame.subpixel != 0u && covers_no_pixel(frame.view_projection * model,

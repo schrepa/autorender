@@ -1,5 +1,6 @@
-import package::face::instances::{AffinePose, STILL_FRAMES, instance_pose, instance_still_frames};
-import package::generated::lights::{GROUP_LIGHTS, LightInput, NO_SLOT, SHAPED_LIGHTS};
+import package::face::instances::{AffinePose, instance_pose};
+import package::generated::lights::{GROUP_LIGHTS, LightInput, NO_SLOT, SHAPED_LIGHTS,
+    light_place_moving, light_place_region};
 import package::lights::clusters::clusters;
 
 @group(1) @binding(0) var<storage, read> inputs: array<LightInput>;
@@ -66,10 +67,9 @@ fn place(view: u32, index: u32, fill: bool) -> LightBox {
         arena[row + 1u] = vec4<u32>(bitcast<vec3<u32>>(input.color), bitcast<u32>(input.cos_outer));
         arena[row + 2u] = vec4<u32>(bitcast<vec3<u32>>(direction), bitcast<u32>(input.cos_inner));
         arena[row + 3u] = vec4<u32>(bitcast<u32>(input.radius * size), bitcast<u32>(tube),
-            input.region, 0u);
+            light_place_region(input.place), 0u);
     }
-    if clusters[view].lights.w != 0u && input.slot != NO_SLOT
-            && instance_still_frames(input.slot) < STILL_FRAMES {
+    if clusters[view].lights.w != 0u && light_place_moving(input.place) {
         return none;
     }
     if !all(abs(position) < vec3<f32>(1.0e30)) {

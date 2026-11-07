@@ -337,7 +337,7 @@ pub(crate) fn plan_sky(
     let debug = view.debug();
     let eye = camera.eye();
     let view_projection = view.view_projection();
-    let seconds = time.presented_seconds;
+    let seconds = time.elapsed;
     let sun_direction = Vec3::from_slice(&sun.direction[..3]);
     let [night_light, _, moon] = night_lighting(&night, &path, sun_direction);
     plan.tables.prepare(

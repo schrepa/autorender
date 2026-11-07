@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Cut, Expected, GlobalTransforms, InvalidSetting, Nearest, Rule, Shown, View, fields, settings,
-    stats,
+    Cut, DrawnPoses, Expected, GlobalTransforms, InvalidSetting, Mobility, Nearest, Rule, View,
+    fields, settings, stats,
 };
 use engine_places::meshes::Instances;
 use engine_places_rendering::lights::{
@@ -86,12 +86,18 @@ pub(crate) struct RenderLight {
     pub(crate) shape: [f32; 2],
     pub(crate) region: LightRegion,
     pub(crate) slot: Option<u32>,
+    pub(crate) moving: bool,
 }
 
 impl RenderLight {
     pub(crate) const POINT: [f32; 2] = [-2.0, -2.0];
 
-    fn new(light: &LocalLight, scale: f32, model: Option<Mat4>, slot: Option<u32>) -> Self {
+    fn new(
+        light: &LocalLight,
+        scale: f32,
+        (model, slot): (Option<Mat4>, Option<u32>),
+        mobility: Option<Mobility>,
+    ) -> Self {
         let (position, direction) = match light.spot {
             Some(spot) => (light.offset, spot.direction),
             None if light.length > 0.0 => (light.offset, Vec3::Y),
@@ -127,6 +133,7 @@ impl RenderLight {
             shape: [light.radius * size, length * size],
             region: light.region,
             slot,
+            moving: mobility == Some(Mobility::Moving),
         }
     }
 }
@@ -146,20 +153,25 @@ pub(crate) struct LightGather {
 fn render_light(
     (entity, light): (Entity, &LocalLight),
     settings: &LocalLightSettings,
-    (instances, globals): (&Instances, &GlobalTransforms),
+    (instances, globals, poses): (&Instances, &GlobalTransforms, &DrawnPoses),
 ) -> Option<RenderLight> {
     let slot = instances.drawn(entity);
     let model = match slot {
         Some(_) => None,
-        None => Some(Mat4::from(globals.pose(entity)?)),
+        None => Some(poses.drawn_pose(globals, entity)?),
     };
-    Some(RenderLight::new(light, settings.intensity, model, slot))
+    Some(RenderLight::new(
+        light,
+        settings.intensity,
+        (model, slot),
+        globals.mobility(entity),
+    ))
 }
 
 pub(crate) fn gather_lights(
     settings: Res<LocalLightSettings>,
-    lights: Query<(Entity, &'static LocalLight), Shown>,
-    (instances, globals): (Res<Instances>, Res<GlobalTransforms>),
+    lights: Query<(Entity, &'static LocalLight)>,
+    (instances, globals, poses): (Res<Instances>, Res<GlobalTransforms>, Res<DrawnPoses>),
     view: Res<View>,
     mut gather: ResMut<LightGather>,
     mut list: ResMut<LightList>,
@@ -171,20 +183,22 @@ pub(crate) fn gather_lights(
     } = &mut *gather;
     *cut = 0;
     list.lights.clear();
-    let held = (&*instances, &*globals);
+    let held = (&*instances, &*globals, &*poses);
     let budget = settings
         .max_lights
         .map_or(usize::MAX, |budget| budget as usize);
-    if lights.iter().len() <= budget {
+    let drawn = |&(entity, _): &(Entity, &LocalLight)| globals.drawn(entity);
+    if lights.iter().filter(drawn).count() <= budget {
         let shown = lights
             .iter()
+            .filter(drawn)
             .filter_map(|light| render_light(light, &settings, held));
         list.lights.extend(shown);
         return;
     }
     let eye = view.detail_eye();
     ranked.clear();
-    for (entity, light) in &lights {
+    for (entity, light) in lights.iter().filter(drawn) {
         let Some(model) = globals.pose(entity) else {
             continue;
         };

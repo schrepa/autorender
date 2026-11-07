@@ -14,9 +14,9 @@ mod views;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, GpuStruct, Runs, SceneComponents, Schedule, Smoke, Source,
+    Asked, Brick, Bricks, ComponentKind, GpuStruct, Runs, SceneComponents, Schedule, Smoke, Source,
 };
-use engine_places_rendering::animation::{Animator, Attachment};
+use engine_places_rendering::animation::{Animate, Animator, Attachment};
 use engine_places_rendering::shadows::ShadowCasters;
 use engine_render::{Layer, MainView, RenderBricks};
 
@@ -47,7 +47,8 @@ impl Brick for AnimationBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .when(animated)
-            .resource::<part::Books>()
+            .resource::<animator::Books>()
+            .fill::<Asked<Animate>>(None)
             .join::<SceneComponents>(
                 ComponentKind::of::<Animator>("animator")
                     .check(scene::check_animator)
@@ -61,15 +62,24 @@ impl Brick for AnimationBrick {
                     .example(scene::attachment_example),
                 None,
             )
+            .moving::<Animator>()
             .operation::<AnimationPlay>()
             .operation::<AnimationLayer>()
             .operation::<AnimationAim>()
             .observation::<AnimationState>()
+            .on_remove::<Animator, _>(animator::release)
             .systems(
-                Schedule::FixedPostSimulation,
-                (animator::advance, animator::follow_joints),
+                Schedule::FixedPreSimulation,
+                (animator::command, animator::advance),
             )
-            .systems(Schedule::Presentation, animator::publish_assets)
+            .systems(
+                Schedule::Presentation,
+                (
+                    animator::sync,
+                    animator::advance_real,
+                    animator::publish_assets,
+                ),
+            )
             .generated(GENERATED)
             .draws::<part::SkinningGpu, MainView>(Layer::Opaque, part::SkinningGpu::draw_lit)
             .draws::<part::SkinningGpu, ShadowCasters>((), part::SkinningGpu::draw_casters);

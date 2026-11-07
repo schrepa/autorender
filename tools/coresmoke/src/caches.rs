@@ -2,8 +2,8 @@ use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::glam::{Quat, Vec3};
 use engine_core::{
-    Engine, GlobalTransforms, InterpolateTransform, Listing, Material, MaterialHandle, Mesh,
-    Mesh3d, MeshHandle, Parent, Schedule, Transform, reset_interpolation, set_parent, set_parents,
+    Engine, GlobalTransforms, Listing, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, Mover,
+    MoverId, Pace, Parent, Schedule, Transform, make_fresh, set_parent, set_parents,
 };
 use engine_meshes::MeshesBrick;
 use engine_places::meshes::{Cube, Tint};
@@ -22,6 +22,10 @@ const EDITS_AFTER_TICK: usize = 6;
 const ASPECT: f32 = 16.0 / 9.0;
 const SHOWN: usize = 8;
 const RETAINED: &str = "meshes_listing";
+const MOVER: Mover = Mover {
+    by: MoverId::Game,
+    pace: Pace::Tick,
+};
 
 struct Assets {
     meshes: Vec<MeshHandle>,
@@ -60,7 +64,7 @@ struct Authored {
     mesh: Option<(usize, usize)>,
     cube: Option<[f32; 4]>,
     tint: Option<[f32; 4]>,
-    interpolate: bool,
+    moved: bool,
     drift: Option<Drift>,
     parent: Option<Entity>,
 }
@@ -87,7 +91,7 @@ enum Edit {
     Mesh(Entity, Option<(usize, usize)>),
     Cube(Entity, Option<[f32; 4]>),
     Tint(Entity, Option<[f32; 4]>),
-    Interpolate(Entity, bool),
+    Moved(Entity, bool),
     Drift(Entity, Option<Drift>),
     Teleport(Entity),
 }
@@ -156,7 +160,7 @@ fn authored(random: &mut Random, parent: Option<Entity>) -> Authored {
             .then(|| (random.below(3), random.below(3))),
         cube: random.chance(20).then(|| color(random)),
         tint: random.chance(20).then(|| color(random)),
-        interpolate: random.chance(50),
+        moved: random.chance(50),
         drift: random.chance(40).then(|| drifting(random)),
         parent,
     }
@@ -183,7 +187,7 @@ fn read(world: &World, assets: &Assets, entity: Entity) -> Authored {
         mesh,
         cube: world.get::<Cube>(entity).map(|cube| cube.color),
         tint: world.get::<Tint>(entity).map(|tint| tint.0),
-        interpolate: world.get::<InterpolateTransform>(entity).is_some(),
+        moved: world.get::<Mover>(entity).is_some(),
         drift: world.get::<Drift>(entity).copied(),
         parent: world.get::<Parent>(entity).map(Parent::parent),
     }
@@ -210,8 +214,8 @@ fn spawn(world: &mut World, assets: &Assets, authored: &Authored) -> Entity {
     if let Some(tint) = authored.tint {
         entity.insert(Tint(tint));
     }
-    if authored.interpolate {
-        entity.insert(InterpolateTransform::default());
+    if authored.moved {
+        entity.insert(MOVER);
     }
     if let Some(drift) = authored.drift {
         entity.insert(drift);
@@ -305,14 +309,14 @@ fn apply(
                 }
             }
         }
-        Edit::Interpolate(entity, on) => {
+        Edit::Moved(entity, on) => {
             let Ok(mut held) = world.get_entity_mut(map(entity)) else {
                 return None;
             };
             if on {
-                held.insert(InterpolateTransform::default());
+                held.insert(MOVER);
             } else {
-                held.remove::<InterpolateTransform>();
+                held.remove::<Mover>();
             }
         }
         Edit::Drift(entity, drift) => {
@@ -329,7 +333,7 @@ fn apply(
             }
         }
         Edit::Teleport(entity) => {
-            reset_interpolation(world, map(entity));
+            make_fresh(world, &[map(entity)]);
         }
     }
     None
@@ -363,7 +367,7 @@ fn edits(random: &mut Random, entities: &[Entity], count: usize) -> Vec<Edit> {
                 let tint = random.chance(60).then(|| color(random));
                 Edit::Tint(any(random), tint)
             }
-            80..=87 => Edit::Interpolate(any(random), random.chance(50)),
+            80..=87 => Edit::Moved(any(random), random.chance(50)),
             88..=93 => {
                 let drift = random.chance(70).then(|| drifting(random));
                 Edit::Drift(any(random), drift)
@@ -412,7 +416,7 @@ fn bits(matrix: engine_core::glam::Mat4) -> [u32; 16] {
 
 fn frame(engine: &mut Engine) -> Result<Frame, String> {
     let world = engine
-        .extract_frame(ASPECT, engine_core::Presented::Tick)
+        .extract_frame(ASPECT)
         .map_err(|error| format!("extract_frame: {error}"))?
         .world();
     let globals = world
@@ -578,7 +582,7 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
         );
         let Some((mut engine, _, map)) = fresh else {
             living
-                .extract_frame(ASPECT, engine_core::Presented::Tick)
+                .extract_frame(ASPECT)
                 .map_err(|error| format!("extract_frame: {error}"))?;
             continue;
         };

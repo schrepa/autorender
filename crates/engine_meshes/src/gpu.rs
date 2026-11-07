@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, AssetResidency, Detail, DeviceLimits, Error, FrameTime, GlobalTransforms,
-    ImpostorRecords, MAX_HIERARCHY_DEPTH, PresentedTransforms, View,
+    AssetLibrary, AssetResidency, Detail, DeviceLimits, DrawnPoses, Error, FrameTime,
+    GlobalTransforms, ImpostorRecords, MAX_HIERARCHY_DEPTH, View,
 };
 use engine_places_rendering::probes::{ProbeCaptures, ProbeViews};
 use engine_places_rendering::shadows::{ShadowCasters, ShadowMaps};
@@ -90,7 +90,6 @@ pub(crate) struct Instances {
     pub poses: Buffer<MeshesGpu>,
     pub previous_poses: Buffer<MeshesGpu>,
     pub colors: Buffer<MeshesGpu>,
-    pub still_frames: Buffer<MeshesGpu>,
 }
 
 pub(crate) struct Presented {
@@ -100,11 +99,10 @@ pub(crate) struct Presented {
     pub locals: Buffer<MeshesGpu>,
     pub info: Buffer<MeshesGpu>,
     pub authority: Buffer<MeshesGpu>,
+    pub node_words: Buffer<MeshesGpu>,
     pub composed: Buffer<MeshesGpu>,
     pub parents: Buffer<MeshesGpu>,
     pub levels: Vec<Buffer<MeshesGpu>>,
-    pub node_staging: Buffer<MeshesGpu>,
-    pub node_ranges: Buffer<MeshesGpu>,
     pub candidates: Buffer<MeshesGpu>,
     pub slot_candidates: Buffer<MeshesGpu>,
     pub scan: Buffer<MeshesGpu>,
@@ -125,7 +123,7 @@ pub(crate) struct Presented {
 
 pub(crate) struct CasterBuffers {
     pub select: Buffer<MeshesGpu>,
-    pub stillness: Buffer<MeshesGpu>,
+    pub cache: Buffer<MeshesGpu>,
     pub ids: Buffer<MeshesGpu>,
     pub args: Buffer<MeshesGpu>,
     pub template: Buffer<MeshesGpu>,
@@ -133,11 +131,8 @@ pub(crate) struct CasterBuffers {
 }
 
 pub(crate) struct Computes {
-    pub shift: ComputePipeline<MeshesGpu>,
-    pub apply: ComputePipeline<MeshesGpu>,
     pub compose: Vec<ComputePipeline<MeshesGpu>>,
     pub cull: ComputePipeline<MeshesGpu>,
-    pub count_still: ComputePipeline<MeshesGpu>,
     pub fades: ComputePipeline<MeshesGpu>,
     pub one: Compaction,
     pub two: Compaction,
@@ -213,7 +208,7 @@ pub(crate) type FrameReads = (
     Res<'static, AssetLibrary>,
     Res<'static, MeshPlan>,
     Res<'static, CasterPlan>,
-    Res<'static, PresentedTransforms>,
+    Res<'static, DrawnPoses>,
     Res<'static, GlobalTransforms>,
     Res<'static, View>,
     Res<'static, Detail>,
@@ -289,7 +284,6 @@ fn install_instances(cx: &mut Install<'_, MeshesGpu>) -> Result<Instances, Error
         poses: cx.buffer("poses", Lifetime::Kept),
         previous_poses: cx.buffer("previous_poses", Lifetime::Previous),
         colors: cx.buffer("colors", Lifetime::Kept),
-        still_frames: cx.buffer("still_frames", Lifetime::Kept),
     };
     cx.frame(slots::INSTANCE_POSES, Bind::Buffer(instances.poses))?;
     cx.frame(
@@ -297,7 +291,6 @@ fn install_instances(cx: &mut Install<'_, MeshesGpu>) -> Result<Instances, Error
         Bind::Buffer(instances.previous_poses),
     )?;
     cx.frame(slots::INSTANCE_COLORS, Bind::Buffer(instances.colors))?;
-    cx.frame(slots::INSTANCE_STILL, Bind::Buffer(instances.still_frames))?;
     cx.frame(cards::IMPOSTOR_RECORDS, Bind::Buffer(instances.impostors))?;
     Ok(instances)
 }
@@ -309,10 +302,9 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
     let locals = buffer("presentation_locals");
     let info = buffer("presentation_info");
     let authority = buffer("presentation_authority");
+    let node_words = buffer("presentation_node_words");
     let composed = buffer("presentation_composed");
     let parents = buffer("presentation_parents");
-    let node_staging = buffer("presentation_node_staging");
-    let node_ranges = buffer("presentation_node_ranges");
     let candidates = buffer("presentation_candidates");
     let slot_candidates = buffer("presentation_slot_candidates");
     let scan = buffer("presentation_scan");
@@ -357,11 +349,10 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
         locals,
         info,
         authority,
+        node_words,
         composed,
         parents,
         levels,
-        node_staging,
-        node_ranges,
         candidates,
         slot_candidates,
         scan,
@@ -385,7 +376,7 @@ fn install_casters(cx: &mut Install<'_, MeshesGpu>) -> CasterBuffers {
     let mut buffer = |label: &'static str| cx.buffer(label, Lifetime::Kept);
     CasterBuffers {
         select: buffer("shadow_select"),
-        stillness: buffer("shadow_stillness"),
+        cache: buffer("shadow_cache"),
         ids: buffer("shadow_ids"),
         args: buffer("shadow_args"),
         template: buffer("shadow_args_template"),
@@ -508,23 +499,6 @@ fn install_computes(
 ) -> Result<Computes, Error> {
     use presentation as p;
     let at = passes.presentation;
-    let shift = cx.compute_pipeline(
-        at,
-        p::SHIFT_PREVIOUS,
-        &[
-            (p::INFO, Bind::Buffer(presented.info)),
-            (p::LOCALS_SHIFT, Bind::Buffer(presented.locals)),
-        ],
-    )?;
-    let apply = cx.compute_pipeline(
-        at,
-        p::APPLY_LOCALS,
-        &[
-            (p::NODE_RANGES, Bind::Buffer(presented.node_ranges)),
-            (p::NODE_STAGING, Bind::Buffer(presented.node_staging)),
-            (p::LOCALS_SHIFT, Bind::Buffer(presented.locals)),
-        ],
-    )?;
     let mut compose = Vec::with_capacity(NODE_LEVELS);
     for &level in &presented.levels {
         compose.push(cx.compute_pipeline(
@@ -554,16 +528,6 @@ fn install_computes(
             (p::POSES, Bind::Buffer(instances.poses)),
             (p::SCAN, Bind::Buffer(presented.scan)),
             (p::SLOT_CANDIDATES, Bind::Buffer(presented.slot_candidates)),
-        ],
-    )?;
-    let count_still = cx.compute_pipeline(
-        at,
-        p::COUNT_STILL,
-        &[
-            (p::FRAME, Bind::Buffer(presented.frame)),
-            (p::SCAN, Bind::Buffer(presented.scan)),
-            (p::SLOT_CANDIDATES, Bind::Buffer(presented.slot_candidates)),
-            (p::STILL_FRAMES, Bind::Buffer(instances.still_frames)),
         ],
     )?;
     let fades = cx.compute_pipeline(
@@ -685,6 +649,7 @@ fn install_computes(
                 (p::SLOT_CANDIDATES, Bind::Buffer(presented.slot_candidates)),
                 (p::SCAN, Bind::Buffer(presented.scan)),
                 (p::BATCHES, Bind::Buffer(presented.batches)),
+                (p::NODE_WORDS, Bind::Buffer(presented.node_words)),
             ],
         )?);
         faces.push(compaction(
@@ -708,9 +673,10 @@ fn install_computes(
             (casters::BATCHES, Bind::Buffer(presented.batches)),
             (casters::POSES, Bind::Buffer(instances.poses)),
             (casters::FLAGS, Bind::Buffer(presented.scan)),
-            (casters::STILLNESS, Bind::Buffer(casters.stillness)),
+            (casters::CACHE, Bind::Buffer(casters.cache)),
             (casters::IDS, Bind::Buffer(casters.ids)),
             (casters::ARGS, Bind::Buffer(casters.args)),
+            (casters::NODE_WORDS, Bind::Buffer(presented.node_words)),
         ],
     )?;
     let count_casters = cx.compute_pipeline(
@@ -723,11 +689,8 @@ fn install_computes(
         ],
     )?;
     Ok(Computes {
-        shift,
-        apply,
         compose,
         cull,
-        count_still,
         fades,
         one,
         two,

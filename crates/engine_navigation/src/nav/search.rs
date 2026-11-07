@@ -38,9 +38,17 @@ pub(super) enum Stage {
 }
 
 pub(super) enum Flow {
-    Stay(Stage),
+    Spent(Stage),
+    Blocked(Stage),
     Next(Stage),
     Found(Option<NavPath>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Stepped {
+    Found(Option<NavPath>),
+    Blocked,
+    Spent,
 }
 
 impl WalkSearch {
@@ -91,11 +99,11 @@ impl WalkSearch {
         &self.ahead
     }
 
-    pub fn step(&mut self, budget: &mut u64, data: &dyn WalkData) -> Option<Option<NavPath>> {
+    pub fn step(&mut self, budget: &mut u64, data: &dyn WalkData) -> Stepped {
         self.wants.clear();
         loop {
             if *budget == 0 {
-                return None;
+                return Stepped::Spent;
             }
             let stage = std::mem::replace(&mut self.stage, Stage::Done);
             let flow = match stage {
@@ -107,12 +115,16 @@ impl WalkSearch {
                 Stage::Done => Flow::Found(None),
             };
             match flow {
-                Flow::Stay(stage) => {
+                Flow::Spent(stage) => {
                     self.stage = stage;
-                    return None;
+                    return Stepped::Spent;
+                }
+                Flow::Blocked(stage) => {
+                    self.stage = stage;
+                    return Stepped::Blocked;
                 }
                 Flow::Next(stage) => self.stage = stage,
-                Flow::Found(found) => return Some(found),
+                Flow::Found(found) => return Stepped::Found(found),
             }
         }
     }
@@ -182,7 +194,7 @@ impl WalkSearch {
         let grounds = [self.ground(start, data), self.ground(goal, data)];
         let held = [self.portals(start, data), self.portals(goal, data)];
         let ([Some(from), Some(to)], [Some(_), Some(_)]) = (grounds, held) else {
-            return Flow::Stay(Stage::Ends);
+            return Flow::Blocked(Stage::Ends);
         };
         let samples = [self.snap(&from, self.ends[0]), self.snap(&to, self.ends[1])];
         let [Some(from), Some(to)] = samples else {
@@ -234,7 +246,7 @@ impl WalkSearch {
             let key = tiles[reach.turn];
             let (Some(ground), Some(portals)) = (self.ground(key, data), self.portals(key, data))
             else {
-                return Flow::Stay(Stage::Reach(reach));
+                return Flow::Blocked(Stage::Reach(reach));
             };
             let stands = self.standing(&ground);
             let start = self.local(key, reach.samples[reach.turn]);
@@ -255,7 +267,7 @@ impl WalkSearch {
                 &self.stepper,
                 (budget, &mut self.searched),
             ) {
-                return Flow::Stay(Stage::Reach(reach));
+                return Flow::Spent(Stage::Reach(reach));
             }
             reach.costs[reach.turn] = portals
                 .portals()

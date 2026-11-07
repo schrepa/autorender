@@ -331,7 +331,7 @@ impl Renderer {
                 detail: view.detail_eye(),
                 seconds: world
                     .get_resource::<FrameTime>()
-                    .map_or(0.0, |time| time.game_elapsed_seconds as f32),
+                    .map_or(0.0, |time| time.elapsed as f32),
                 scene: view.scene(),
             },
             None => Viewed {

@@ -32,24 +32,34 @@ enum Catalogued {
     Shared,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MoverRule {
+    pub transform: TypeId,
+    pub mover: TypeId,
+    pub key: TypeId,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct AccessRule {
     packages: Vec<(&'static str, Option<&'static str>)>,
     games: Vec<bool>,
     places: HashMap<TypeId, Catalogued>,
     left_out: HashMap<TypeId, &'static str>,
+    movers: Option<MoverRule>,
 }
 
 impl AccessRule {
     pub(crate) fn new(
         packages: Vec<(&'static str, Option<&'static str>)>,
         games: Vec<bool>,
+        movers: Option<MoverRule>,
     ) -> Self {
         Self {
             packages,
             games,
             places: HashMap::default(),
             left_out: HashMap::default(),
+            movers,
         }
     }
 
@@ -60,7 +70,7 @@ impl AccessRule {
     pub(crate) fn place(&mut self, type_id: TypeId, kind: PlaceKind, filler: Option<BrickId>) {
         let catalogued = match kind {
             PlaceKind::Slot => Catalogued::Slot(filler),
-            PlaceKind::List | PlaceKind::Component => Catalogued::Shared,
+            PlaceKind::List | PlaceKind::Component | PlaceKind::Ledger => Catalogued::Shared,
         };
         self.places.insert(type_id, catalogued);
     }
@@ -100,6 +110,7 @@ impl AccessRule {
         let Some(&(package, owner)) = self.packages.get(brick.index()) else {
             return;
         };
+        self.check_moves(package, system, access, world, problems);
         let Ok(accesses) = access.combined_access().try_iter_access() else {
             problems.push(foreign(package, system, "*"));
             return;
@@ -142,6 +153,42 @@ impl AccessRule {
             }
             problems.push(foreign(package, system, &name));
         }
+    }
+
+    fn check_moves(
+        &self,
+        package: &str,
+        system: &str,
+        access: &FilteredAccessSet,
+        world: &World,
+        problems: &mut Vec<Error>,
+    ) {
+        let Some(rule) = self.movers else {
+            return;
+        };
+        let components = world.components();
+        let Some(transform) = components.get_id(rule.transform) else {
+            return;
+        };
+        if !access.combined_access().has_write(transform) {
+            return;
+        }
+        let keyed = components
+            .get_id(rule.key)
+            .is_some_and(|key| access.combined_access().has_read(key));
+        let mover = components.get_id(rule.mover);
+        let through_movers = access
+            .filtered_accesses()
+            .iter()
+            .filter(|each| each.access().has_write(transform))
+            .all(|each| mover.is_some_and(|mover| each.required().contains(mover)));
+        if keyed && through_movers {
+            return;
+        }
+        let name = components
+            .get_info(transform)
+            .map_or_else(|| "Transform".to_owned(), |info| info.name().to_string());
+        problems.push(foreign(package, system, &name));
     }
 
     pub fn check_type(

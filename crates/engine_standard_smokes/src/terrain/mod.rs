@@ -21,7 +21,6 @@ pub(crate) use shapes::run as shapes;
 pub(crate) use surface::run as surface;
 pub(crate) use water_sky::run as water_sky;
 
-pub(crate) const FAST: u32 = 50_000_000;
 pub(crate) const WAIT_FRAMES: u32 = 600;
 pub(crate) const SETTLE_FRAMES: u32 = 2400;
 
@@ -98,10 +97,6 @@ pub(crate) fn subdivided(session: &mut dyn SmokeSession) -> Checked<Value> {
     Ok(rendering)
 }
 
-pub(crate) fn fast() -> Value {
-    json!({ "samples_per_frame": FAST })
-}
-
 pub(crate) fn view(position: [f64; 3], target: [f64; 3]) -> Value {
     json!({
         "position": position,
@@ -123,7 +118,7 @@ pub(crate) fn open(session: &mut dyn SmokeSession, hiker: bool) -> Checked<Value
 
 pub(crate) fn opened(session: &mut dyn SmokeSession) -> Checked<Value> {
     control(session, "pause", json!({}))?;
-    let changed = environment(session, json!({ "terrain": fast() }))?;
+    let changed = environment(session, json!({ "terrain": {} }))?;
     smoke_eq!(
         &changed["environment_changed"],
         &json!(["terrain"]),

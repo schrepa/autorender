@@ -2,7 +2,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::{Component, Entity, Resource};
-use engine_place::{Error, ErrorCode, Feed, InterpolateTransform, Slot};
+use engine_place::{ApplyAt, Ask, Error, ErrorCode, Feed, Slot};
 use glam::{Mat3, Mat4, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -210,7 +210,7 @@ pub enum BodyMotion {
 #[derive(
     Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
 )]
-#[require(InterpolateTransform, BodyPush)]
+#[require(BodyPush)]
 #[schemars(rename = "SceneRigidBody")]
 #[serde(default, deny_unknown_fields)]
 pub struct RigidBody {
@@ -247,8 +247,41 @@ impl Default for RigidBody {
 pub struct BodyPush {
     pub force: [f32; 3],
     pub torque: [f32; 3],
-    pub impulse: [f32; 3],
-    pub angular_impulse: [f32; 3],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum BodyChange {
+    Velocity([f32; 3]),
+    Spin([f32; 3]),
+    Impulse([f32; 3]),
+    AngularImpulse([f32; 3]),
+}
+
+impl BodyChange {
+    pub fn value(self) -> [f32; 3] {
+        match self {
+            Self::Velocity(value)
+            | Self::Spin(value)
+            | Self::Impulse(value)
+            | Self::AngularImpulse(value) => value,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BodyAsk {
+    pub body: Entity,
+    pub change: BodyChange,
+}
+
+impl Ask for BodyAsk {
+    const NAME: &'static str = "body_ask";
+    const AT: ApplyAt = ApplyAt::StepStart;
+
+    fn node(&self) -> Option<Entity> {
+        Some(self.body)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -334,12 +367,6 @@ pub struct Slid {
     pub hits: [Option<ShapeHit>; SLIDE_STEPS],
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct SlideHit {
-    pub mover: Option<Entity>,
-    pub hit: ShapeHit,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SensorPair {
     pub first: Entity,
@@ -420,8 +447,6 @@ pub trait Collide: Any + Send + Sync + 'static {
         filter: QueryFilter,
     ) -> Result<Slid, Error>;
 
-    fn slide_hits(&self) -> &Feed<SlideHit>;
-
     fn events(&self) -> &Feed<SensorEvent>;
 
     fn pairs(&self) -> &[SensorPair];
@@ -434,7 +459,6 @@ pub trait Collide: Any + Send + Sync + 'static {
 }
 
 struct NoCollision {
-    hits: Feed<SlideHit>,
     events: Feed<SensorEvent>,
 }
 
@@ -488,10 +512,6 @@ impl Collide for NoCollision {
         })
     }
 
-    fn slide_hits(&self) -> &Feed<SlideHit> {
-        &self.hits
-    }
-
     fn events(&self) -> &Feed<SensorEvent> {
         &self.events
     }
@@ -517,7 +537,6 @@ pub struct Collision(pub Box<dyn Collide>);
 impl Default for Collision {
     fn default() -> Self {
         Self(Box::new(NoCollision {
-            hits: Feed::new(1),
             events: Feed::new(1),
         }))
     }

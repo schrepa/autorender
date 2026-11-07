@@ -10,7 +10,6 @@ const FLOAT_WITHIN: f64 = 0.3;
 const DEPTH_WITHIN: f64 = 1.0e-4;
 const FLOAT_TICKS: u32 = 480;
 const TICKS_AT_ONCE: u32 = 120;
-const SETTLE_FRAMES: u32 = 20_000;
 
 pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     session.source(&scene(true).to_string());
@@ -66,21 +65,18 @@ fn scene(pond: bool) -> Value {
 }
 
 fn settle(session: &mut dyn SmokeSession) -> Checked<Value> {
-    let mut terrain = Value::Null;
-    let mut resident = 0;
-    for _ in 0..SETTLE_FRAMES {
-        render(session)?;
-        terrain = inspect(session, "terrain_stats")?;
-        let ready = number(&terrain["resident_tiles"]) > 0.0
-            && terrain["loading_tiles"] == 0
-            && terrain["fallback_tiles"] == 0
-            && terrain["baking"] == 0;
-        resident = if ready { resident + 1 } else { 0 };
-        if resident > 1 {
-            break;
-        }
-    }
-    smoke_eq!(resident > 1, true, "terrain_settles");
+    engine::smokes::settled(session)?;
+    let terrain = inspect(session, "terrain_stats")?;
+    smoke_eq!(
+        json!({
+            "resident": number(&terrain["resident_tiles"]) > 0.0,
+            "loading": terrain["loading_tiles"],
+            "fallback": terrain["fallback_tiles"],
+            "baking": terrain["baking"],
+        }),
+        json!({"resident": true, "loading": 0, "fallback": 0, "baking": 0}),
+        "terrain_settles"
+    );
     Ok(terrain)
 }
 

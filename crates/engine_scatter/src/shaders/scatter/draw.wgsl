@@ -1,7 +1,8 @@
-import package::engine::mesh::declarations::AffineVertexInput;
+import package::engine::mesh::declarations::{AffineVertexInput, faded_entry_fade,
+    faded_slot_slot};
 import package::face::debug::DebugTargets;
 import package::face::instances::{
-    AffinePose, FADE_SLOT, FADE_WORD_ON, SlotColor, SlotExtras, SlotVertex, SlotVertexExtended,
+    AffinePose, SlotColor, SlotExtras, SlotVertex, SlotVertexExtended,
     slot_debug, slot_fragment, slot_fragment_extended, slot_masked_depth, slot_pixel,
     slot_pixel_extended, slot_shade, slot_vertex, slot_vertex_extended
 };
@@ -84,8 +85,8 @@ fn vs_object(input: AffineVertexInput, @location(14) draw: vec4<u32>) -> PlacedV
 
 @vertex
 fn vs_object_fading(input: AffineVertexInput, @location(14) draw: vec4<u32>) -> PlacedVertex {
-    let slot = input.slot & FADE_SLOT;
-    return placed_vertex(input, slot, (input.slot >> 24u) | FADE_WORD_ON, draw);
+    let slot = faded_slot_slot(input.slot);
+    return placed_vertex(input, slot, faded_entry_fade(input.slot), draw);
 }
 
 @vertex
@@ -97,9 +98,9 @@ fn vs_object_extended(input: AffineVertexInput, @location(9) color: vec4<f32>,
 @vertex
 fn vs_object_extended_fading(input: AffineVertexInput, @location(9) color: vec4<f32>,
         @location(10) uv1: vec2<f32>, @location(14) draw: vec4<u32>) -> PlacedExtendedVertex {
-    let slot = input.slot & FADE_SLOT;
+    let slot = faded_slot_slot(input.slot);
     return placed_extended_vertex(input, SlotExtras(color, uv1), slot,
-        (input.slot >> 24u) | FADE_WORD_ON, draw);
+        faded_entry_fade(input.slot), draw);
 }
 
 @fragment

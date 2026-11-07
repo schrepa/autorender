@@ -47,12 +47,16 @@ impl ActionInput {
         self.state.ingest(held, pressed, released);
     }
 
+    pub fn pending_tick(&self) -> Option<u64> {
+        self.state.pending_tick()
+    }
+
     pub(crate) fn drop_tick_edges(&mut self) {
         self.state.drop_tick_edges();
     }
 
-    pub(crate) fn begin_tick(&mut self) {
-        self.state.begin_tick();
+    pub(crate) fn begin_tick(&mut self, tick: u64) {
+        self.state.begin_tick(tick);
     }
 
     pub(crate) fn begin_frame(&mut self) {

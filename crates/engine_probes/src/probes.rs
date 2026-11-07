@@ -1,7 +1,10 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Cut, DeviceLimits, FrameTime, Readable, Readback, StoreId, View};
+use engine_core::{
+    Cursor, Cut, DeviceLimits, FrameTime, GlobalTransforms, Mobility, Readable, Readback, Since,
+    StoreId, View,
+};
 use engine_math as math;
-use engine_places::meshes::{Instances, STILL_FRAMES};
+use engine_places::meshes::Instances;
 use engine_places_rendering::probes::{ProbeCaptures, ProbeFace, ProbeView};
 use engine_places_rendering::sky::SkyLight;
 use engine_render::CameraUniform;
@@ -26,7 +29,6 @@ enum Capture {
 struct Slot {
     probe: RenderReflectionProbe,
     capture: Capture,
-    age: u32,
 }
 
 impl Slot {
@@ -61,7 +63,7 @@ impl ProbeSlots {
         probes: &[RenderReflectionProbe],
         capacity: usize,
         lost: bool,
-        sky_changed: bool,
+        stale: bool,
     ) {
         if lost {
             self.slots.clear();
@@ -98,7 +100,7 @@ impl ProbeSlots {
                 }
             }
             if let Some(slot) = slot {
-                if sky_changed && slot.capture == Capture::Ready {
+                if stale && slot.capture == Capture::Ready {
                     slot.capture = Capture::Stale;
                 }
                 if let Some(probe) = wanted.iter().find(|probe| probe.key == slot.probe.key)
@@ -123,25 +125,12 @@ impl ProbeSlots {
                 *free = Some(Slot {
                     probe: *probe,
                     capture: Capture::Waiting,
-                    age: 0,
                 });
                 self.changed |= probe.interior.is_some();
             }
         }
-        if sky_changed && self.capturing.is_some() {
+        if stale && self.capturing.is_some() {
             self.changed_during = true;
-        }
-    }
-
-    fn tick(&mut self) {
-        for slot in self.slots.iter_mut().flatten() {
-            slot.age = (slot.age + 1).min(STILL_FRAMES);
-        }
-    }
-
-    fn count_again(&mut self) {
-        for slot in self.slots.iter_mut().flatten() {
-            slot.age = 0;
         }
     }
 
@@ -153,9 +142,7 @@ impl ProbeSlots {
             let waiting = probes.iter().find_map(|probe| {
                 self.slots.iter().position(|slot| {
                     slot.as_ref().is_some_and(|slot| {
-                        slot.probe.key == probe.key
-                            && slot.capture != Capture::Ready
-                            && slot.age >= STILL_FRAMES
+                        slot.probe.key == probe.key && slot.capture != Capture::Ready
                     })
                 })
             })?;
@@ -163,9 +150,6 @@ impl ProbeSlots {
         }
         let (slot, face) = self.capturing?;
         let held = self.slots[slot].as_ref()?;
-        if held.age < STILL_FRAMES {
-            return None;
-        }
         Some((slot as u32 + 1, face, held.probe))
     }
 
@@ -211,15 +195,6 @@ impl ProbeSlots {
         Some((slot, self.slots[slot].as_ref()?.probe.key))
     }
 
-    fn waiting(&self) -> bool {
-        self.capturing.is_some()
-            || self
-                .slots
-                .iter()
-                .flatten()
-                .any(|slot| slot.capture != Capture::Ready)
-    }
-
     fn ready(&self) -> u32 {
         self.slots
             .iter()
@@ -257,7 +232,7 @@ impl ProbeSlots {
 #[derive(Resource)]
 pub(crate) struct ProbeState {
     slots: ProbeSlots,
-    counted_capacity: u32,
+    moves_seen: Cursor,
     pub(crate) size: u32,
     pub(crate) cubes: u32,
     layout: StoreId,
@@ -266,7 +241,6 @@ pub(crate) struct ProbeState {
     pub(crate) listed: bool,
     pub(crate) captures: bool,
     views: bool,
-    still: bool,
     pub(crate) timed: bool,
     pub(crate) faces: Vec<ProbeFace>,
     pub(crate) drawn: Vec<(ProbeView, u32)>,
@@ -286,7 +260,7 @@ impl Default for ProbeState {
                 changed: true,
                 ..ProbeSlots::default()
             },
-            counted_capacity: 0,
+            moves_seen: Cursor::default(),
             size: ReflectionProbeSettings::default().resolution,
             cubes: 1,
             layout: StoreId::next(),
@@ -295,7 +269,6 @@ impl Default for ProbeState {
             listed: false,
             captures: false,
             views: false,
-            still: false,
             timed: false,
             faces: Vec::new(),
             drawn: Vec::new(),
@@ -329,6 +302,17 @@ impl ProbeState {
             self.layout = StoreId::next();
         }
         !kept
+    }
+
+    fn static_moved(&mut self, globals: &GlobalTransforms) -> bool {
+        match globals.changes_since(&mut self.moves_seen) {
+            Since::Listed(listed) => listed.iter().any(|&index| {
+                globals.word_at(index as usize).is_some_and(|word| {
+                    word.drawn() && word.mobility == Mobility::Static
+                })
+            }),
+            Since::Same | Since::All => false,
+        }
     }
 
     fn acknowledge(&mut self, acks: &mut ProbeAcks) {
@@ -380,7 +364,6 @@ impl ProbeState {
                 ProbeView {
                     face: face as u32,
                     center: probe.center,
-                    still: self.still,
                 },
                 self.set * FACES as u32 + face as u32,
             ));
@@ -418,7 +401,7 @@ pub(crate) fn plan_captures(
     limits: Res<DeviceLimits>,
     view: Res<View>,
     sky: Res<SkyLight>,
-    instances: Res<Instances>,
+    (instances, globals): (Res<Instances>, Res<GlobalTransforms>),
     time: Res<FrameTime>,
     gathered: Res<ProbeList>,
     mut acks: ResMut<ProbeAcks>,
@@ -430,10 +413,7 @@ pub(crate) fn plan_captures(
     let present = sky.environment != 0;
     state.listed = !probes.is_empty();
     state.views = state.listed && present;
-    let counted = state.still;
-    state.still = state.views && state.slots.waiting();
-    let count_again = state.still && (!counted || instances.capacity > state.counted_capacity);
-    state.counted_capacity = if state.views { instances.capacity } else { 0 };
+    let moved = state.static_moved(&globals);
     let (cubes, most_cubes, lost, sky_changed) = if present {
         let most_cubes = (limits.texture_layers / FACES as u32).max(1);
         let lost = state.place(probes, settings.resolution, most_cubes);
@@ -448,10 +428,7 @@ pub(crate) fn plan_captures(
     }
     state
         .slots
-        .plan(probes, (cubes - 1) as usize, lost, sky_changed);
-    if count_again {
-        state.slots.count_again();
-    }
+        .plan(probes, (cubes - 1) as usize, lost, sky_changed || moved);
     if let Some(ready) = state.slots.changed_ready() {
         grid_words(&ready, &mut state.words);
         state.words_changed = true;
@@ -468,15 +445,12 @@ pub(crate) fn plan_captures(
     let probe_cut = Cut::of(counted(asked), counted(kept));
     let mut drawn = 0;
     state.captures = !view.debug() && state.listed;
-    if state.captures {
-        state.slots.tick();
-        if state.still {
-            drawn = state.capture(
-                probes,
-                (settings.faces_per_frame, instances.candidates != 0),
-                time.game_elapsed_seconds as f32,
-            );
-        }
+    if state.captures && state.views {
+        drawn = state.capture(
+            probes,
+            (settings.faces_per_frame, instances.candidates != 0),
+            time.elapsed as f32,
+        );
     }
     state.stats = ReflectionProbeStats {
         ready: state.slots.ready(),
@@ -507,7 +481,6 @@ pub(crate) fn publish_captures(
         || captures.layout != state.layout
         || captures.finished != finished
         || captures.views != state.views
-        || captures.still != state.still
     {
         let captures = &mut *captures;
         captures.faces.clone_from(&state.faces);
@@ -516,7 +489,6 @@ pub(crate) fn publish_captures(
         captures.layout = state.layout;
         captures.finished = finished;
         captures.views = state.views;
-        captures.still = state.still;
     }
     stats.set_if_neq(state.stats.clone());
 }

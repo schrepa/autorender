@@ -15,7 +15,7 @@ mod scene;
 mod services;
 mod state;
 
-pub use access::AccessRule;
+pub use access::{AccessRule, MoverRule};
 pub use attribution::{
     BrickCost, BrickCosts, BrickRow, BrickTable, CORE_ROW, GPU_IDLE_ROW, UNATTRIBUTED_ROW,
     WARMUP_FRAMES,

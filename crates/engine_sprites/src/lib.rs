@@ -7,8 +7,8 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetUses, Brick, Bricks, ComponentKind, Error, GlobalTransforms, Runs, SceneComponents,
-    Schedule, Shown, Smoke, Source, Spawner, TextureHandle, View, gpu_struct,
+    AssetUses, Brick, Bricks, ComponentKind, DrawnPoses, Error, GlobalTransforms, Runs,
+    SceneComponents, Schedule, Smoke, Source, Spawner, TextureHandle, View, gpu_struct,
 };
 use engine_render::{
     Bind, Buffer, DepthUse, Draw, GpuPart, Install, Layer, Lifetime, MainView, Pipeline, Prepare,
@@ -114,8 +114,8 @@ struct SpritesGpu {
 
 impl GpuPart for SpritesGpu {
     type Reads = (
-        Query<'static, 'static, (Entity, &'static Sprite), Shown>,
-        Res<'static, GlobalTransforms>,
+        Query<'static, 'static, (Entity, &'static Sprite)>,
+        (Res<'static, GlobalTransforms>, Res<'static, DrawnPoses>),
         Res<'static, View>,
     );
 
@@ -154,11 +154,16 @@ impl GpuPart for SpritesGpu {
 
     fn prepare(
         &mut self,
-        (sprites, globals, view): SystemParamItem<'_, '_, Self::Reads>,
+        (sprites, (globals, poses), view): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.flat.prepare(&view, cx);
-        stage(&sprites, &globals, &mut self.staged, &mut self.runs);
+        stage(
+            &sprites,
+            (&globals, &poses),
+            &mut self.staged,
+            &mut self.runs,
+        );
         cx.allocate_buffer(
             self.instances,
             std::mem::size_of_val(self.staged.as_slice()) as u64,
@@ -192,8 +197,8 @@ impl SpritesGpu {
 }
 
 fn stage(
-    sprites: &Query<(Entity, &'static Sprite), Shown>,
-    globals: &GlobalTransforms,
+    sprites: &Query<(Entity, &'static Sprite)>,
+    (globals, poses): (&GlobalTransforms, &DrawnPoses),
     staged: &mut Vec<SpriteInstance>,
     runs: &mut Vec<(TextureHandle, Range<u32>)>,
 ) {
@@ -201,13 +206,14 @@ fn stage(
     runs.clear();
     let mut sorted: Vec<(TextureHandle, SpriteInstance)> = sprites
         .iter()
+        .filter(|&(entity, _)| globals.drawn(entity))
         .filter_map(|(entity, sprite)| {
-            let pose = globals.pose(entity)?;
+            let pose = poses.drawn_pose(globals, entity)?;
             let place = [
-                pose.translation.x,
-                pose.translation.y,
-                pose.translation.z,
-                pose.matrix3.x_axis.length(),
+                pose.w_axis.x,
+                pose.w_axis.y,
+                pose.w_axis.z,
+                pose.x_axis.truncate().length(),
             ];
             Some((
                 sprite.sheet,

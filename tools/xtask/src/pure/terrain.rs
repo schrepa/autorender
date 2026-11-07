@@ -12,7 +12,8 @@ use engine_heightfield::{
     Layers, Pyramid, Stamp, StampOp, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey,
 };
 use engine_navigation::{
-    Gait, NavOptions, NavPath, PORTALS, PortalsJob, TilePortals, WalkData, WalkGround, WalkSearch,
+    Gait, NavOptions, NavPath, PORTALS, PortalsJob, Stepped, TilePortals, WalkData, WalkGround,
+    WalkSearch,
 };
 use engine_places_simulation::ground::{GroundBridge, GroundGrid, GroundObstacle};
 use engine_places_world::terrain::TerrainLayers;
@@ -628,14 +629,15 @@ impl Graph {
             WalkSearch::new(pyramid, route, obstacles.to_vec(), &NavOptions::default());
         loop {
             let mut budget = slice;
-            if let Some(found) = search.step(&mut budget, self) {
-                return Ok(found);
-            }
-            if !search.wants().is_empty() {
-                return Err(format!(
-                    "the walk waits for {:?}, which the corpus holds",
-                    search.wants()
-                ));
+            match search.step(&mut budget, self) {
+                Stepped::Found(found) => return Ok(found),
+                Stepped::Blocked => {
+                    return Err(format!(
+                        "the walk waits for {:?}, which the corpus holds",
+                        search.wants()
+                    ));
+                }
+                Stepped::Spent => {}
             }
         }
     }

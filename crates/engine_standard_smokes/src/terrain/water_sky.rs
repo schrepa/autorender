@@ -6,7 +6,7 @@ use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
 use super::{
-    SETTLE_FRAMES, WAIT_FRAMES, fast, height_at, heights, open, overview, settle, view, viewed,
+    SETTLE_FRAMES, WAIT_FRAMES, height_at, heights, open, overview, settle, view, viewed,
 };
 use crate::requests::seen;
 use crate::stats::terrain;
@@ -537,7 +537,7 @@ fn horizons(session: &mut dyn SmokeSession) -> Checked<Value> {
     let long = capture(session)?;
     environment(
         session,
-        json!({"terrain": fast(), "terrain_shading": {"sun_shadows": false}}),
+        json!({"terrain": {}, "terrain_shading": {"sun_shadows": false}}),
     )?;
     let flat = render(session)?;
     smoke_eq!(
@@ -557,7 +557,7 @@ fn horizons(session: &mut dyn SmokeSession) -> Checked<Value> {
 }
 
 fn bounce(session: &mut dyn SmokeSession) -> Checked<()> {
-    let mut changed = environment(session, json!({ "terrain": fast(), "terrain_shading": {} }))?;
+    let mut changed = environment(session, json!({ "terrain": {}, "terrain_shading": {} }))?;
     let mut bounced = changed["rendering"].take();
     for _ in 0..SETTLE_FRAMES {
         if terrain(&bounced)["bounce"]["relit"] != 0 {
@@ -584,7 +584,7 @@ fn bounce(session: &mut dyn SmokeSession) -> Checked<()> {
     let relit = capture(session)?;
     environment(
         session,
-        json!({"terrain": fast(), "terrain_shading": {"bounce": false}}),
+        json!({"terrain": {}, "terrain_shading": {"bounce": false}}),
     )?;
     let unlit = render(session)?;
     smoke_eq!(
@@ -607,7 +607,7 @@ fn aerial(session: &mut dyn SmokeSession, current: &Value) -> Checked<()> {
     let clear_air = with(&current["sky"], json!({"enabled": true, "aerial": 0.0}));
     environment(
         session,
-        json!({"terrain": fast(), "terrain_shading": {}, "sky": clear_air}),
+        json!({"terrain": {}, "terrain_shading": {}, "sky": clear_air}),
     )?;
     settle(session)?;
     let clear = capture(session)?;

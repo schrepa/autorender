@@ -3,7 +3,7 @@ use serde_json::Value;
 use super::super::{DevHost, InputBatch};
 use crate::app_host::AppHost;
 use crate::host::{FrameInput, KEYS};
-use engine_core::{ActionInput, AxisInput, Error, ErrorCode, MenuInput, MoveInput, PointerInput};
+use engine_core::{AxisInput, Error, ErrorCode, MenuInput, MoveInput, PointerInput};
 use engine_dev::MenuPress;
 use engine_dev::bounds;
 use engine_dev::results::{InputResult, StepResult, result};
@@ -55,14 +55,14 @@ pub(super) fn batch(host: &mut DevHost, input: InputBatch) -> Result<Value, Erro
             .iter()
             .filter(|key| !input.keys.contains(key))
         {
-            gatherer.key(key, false, true);
+            gatherer.agent_key(key, false);
         }
         for key in input
             .keys
             .iter()
             .filter(|key| !host.input.keys.contains(key))
         {
-            gatherer.key(key, true, true);
+            gatherer.agent_key(key, true);
         }
     }
     host.input = input;
@@ -80,20 +80,25 @@ pub(super) fn step(
 ) -> Result<Value, Error> {
     engine_core::check_dev_ticks(ticks)?;
     let input = host.take_input();
-    let _ = app
-        .engine
-        .app
-        .world_mut()
-        .modify_resource(|actions: &mut ActionInput| {
-            actions.ingest(&input.held, &input.pressed, &input.released);
-        });
     app.set_gathered(&input);
-    app.dev_step(ticks, width, height, input.state)
+    app.accept(&input);
+    app.dev_step(ticks, width, height)
         .map_err(|error| Error::new(ErrorCode::RenderFailed, "$").got(error))?;
     Ok(result::step(StepResult {
         ticks,
         temporary: true,
     }))
+}
+
+impl InputBatch {
+    pub(crate) fn drop_edges(&mut self) {
+        self.look_right_pixels = 0.0;
+        self.look_down_pixels = 0.0;
+        self.pointer_delta_pixels = [0.0; 2];
+        self.wheel_up_notches = 0.0;
+        self.wheel_right_notches = 0.0;
+        self.menu.clear();
+    }
 }
 
 impl DevHost {
@@ -141,12 +146,7 @@ impl DevHost {
                 wanted: false,
             },
         };
-        batch.look_right_pixels = 0.0;
-        batch.look_down_pixels = 0.0;
-        batch.pointer_delta_pixels = [0.0; 2];
-        batch.wheel_up_notches = 0.0;
-        batch.wheel_right_notches = 0.0;
-        batch.menu.clear();
+        batch.drop_edges();
         input
     }
 }

@@ -20,11 +20,11 @@ mod portals;
 mod search;
 
 use corridor::{Corridor, Pull};
-use flood::{Buckets, Flood, Stepper, octile};
+use flood::{Buckets, Flood, Stepper, below_unreached, octile};
 use graph::Graph;
 pub use ground::WalkGround;
 pub use portals::{Portal, Side, TilePortals};
-pub use search::{WalkData, WalkSearch, Want};
+pub use search::{Stepped, WalkData, WalkSearch, Want};
 
 fields! {
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

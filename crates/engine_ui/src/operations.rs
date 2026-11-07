@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode, Operation};
+use engine_core::{Cursor, CursorRequests, Error, ErrorCode, Events, Operation};
 use engine_places_rendering::ui::{UiEvents, UiKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -16,27 +16,30 @@ pub(crate) struct UiPress {
     id: String,
 }
 
+fn pressable_ids(state: &UiState, reach: bool) -> Vec<String> {
+    (0..state.nodes.len() as u32)
+        .filter(|&at| reach && state.pressable(at))
+        .filter_map(|at| state.nodes[at as usize].node.id.clone())
+        .collect()
+}
+
 impl Operation for UiPress {
     const NAME: &'static str = "ui_press";
-    type Params = ResMut<'static, UiState>;
+    type Params = (ResMut<'static, UiState>, Res<'static, CursorRequests>);
     type Request = Self;
 
     fn run(
-        mut state: SystemParamItem<'_, '_, Self::Params>,
+        (mut state, cursor): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
-        let known = state.nodes.iter().any(|flat| {
-            flat.node.action.is_some() && flat.node.id.as_deref() == Some(request.id.as_str())
-        });
-        if !known {
-            let ids = state
-                .nodes
-                .iter()
-                .filter(|flat| flat.node.action.is_some())
-                .filter_map(|flat| flat.node.id.clone());
+        let reach = crate::reaches(&cursor);
+        let pressed = state
+            .named(&request.id)
+            .is_some_and(|at| reach && state.pressable(at));
+        if !pressed {
             return Err(Error::new(ErrorCode::InvalidValue, "$.id")
                 .got(&request.id)
-                .variants(ids));
+                .variants(pressable_ids(&state, reach)));
         }
         state.pending.push(request.id.clone());
         Ok(json!({ "id": request.id, "applies_on": "next_step" }))
@@ -91,7 +94,11 @@ impl Operation for UiTree {
             .enumerate()
             .map(|(at, flat)| node_view(&state, at as u32, flat))
             .collect();
-        Ok(json!({ "nodes": nodes, "events": events.names() }))
+        let raised = match events.since(&mut Cursor::default()) {
+            Events::Listed(listed) => listed,
+            Events::Missed(_) => &[],
+        };
+        Ok(json!({ "nodes": nodes, "events": raised }))
     }
 
     fn schema() -> Value {

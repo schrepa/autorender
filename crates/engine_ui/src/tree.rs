@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::math::{clamp, max, min};
-use engine_core::{CursorAsk, Interest, SceneContext, TextureHandle, View};
+use engine_core::{CursorAsk, GlobalTransforms, Interest, SceneContext, TextureHandle, View};
 use engine_places_rendering::text::{FontId, Text, TextRun};
 use engine_places_rendering::ui::{
     UiAction, UiAlign, UiDirection, UiInsets, UiJustify, UiKind, UiLength, UiNode, UiRoot, UiValue,
@@ -28,6 +28,7 @@ pub(crate) struct Facts<'a> {
     text: &'a Text,
     values: &'a UiValues,
     scene: Option<&'a SceneContext>,
+    globals: &'a GlobalTransforms,
 }
 
 impl<'a> Facts<'a> {
@@ -36,7 +37,7 @@ impl<'a> Facts<'a> {
         values: &'a UiValues,
         view: &View,
         settings: &UiSettings,
-        scene: Option<&'a Res<'_, SceneContext>>,
+        (scene, globals): (Option<&'a Res<'_, SceneContext>>, &'a GlobalTransforms),
         top: Option<&'a str>,
     ) -> Self {
         let display = view.display_size().as_vec2();
@@ -52,7 +53,12 @@ impl<'a> Facts<'a> {
             text,
             values,
             scene: scene.map(|scene| &**scene),
+            globals,
         }
+    }
+
+    fn shows(&self, root: Entity) -> bool {
+        self.globals.drawn(root)
     }
 }
 
@@ -354,7 +360,7 @@ impl UiState {
     }
 
     pub(crate) fn sync(&mut self, roots: &Roots<'_, '_>, facts: &Facts<'_>) {
-        if !self.same_roots(roots, facts.enabled)
+        if !self.same_roots(roots, facts)
             || self.stamps != facts.stamps
             || self.top.as_deref() != facts.top
         {
@@ -380,6 +386,12 @@ impl UiState {
             .iter()
             .rposition(|flat| flat.node.kind == kind && flat.under(point))
             .map(|at| at as u32)
+    }
+
+    pub(crate) fn pressable(&self, at: u32) -> bool {
+        self.nodes.get(at as usize).is_some_and(|flat| {
+            flat.node.action.is_some() && self.top_at(flat.center(), UiKind::Button) == Some(at)
+        })
     }
 
     pub(crate) fn over(&self, point: Vec2) -> bool {
@@ -437,12 +449,13 @@ impl UiState {
         }
     }
 
-    fn same_roots(&self, roots: &Roots<'_, '_>, enabled: bool) -> bool {
-        if !enabled {
+    fn same_roots(&self, roots: &Roots<'_, '_>, facts: &Facts<'_>) -> bool {
+        if !facts.enabled {
             return self.seen.is_empty();
         }
-        roots.iter().count() == self.seen.len()
-            && roots.iter().zip(&self.seen).all(|((entity, root), seen)| {
+        let shown = || roots.iter().filter(|(entity, _)| facts.shows(*entity));
+        shown().count() == self.seen.len()
+            && shown().zip(&self.seen).all(|((entity, root), seen)| {
                 entity == seen.0 && root.last_changed().get() == seen.1
             })
     }
@@ -500,11 +513,15 @@ impl UiState {
             self.seen.extend(
                 roots
                     .iter()
+                    .filter(|(entity, _)| facts.shows(*entity))
                     .map(|(entity, root)| (entity, root.last_changed().get())),
             );
             let mut shown: Vec<_> = roots
                 .iter()
-                .filter(|(_, root)| root.screen.is_none() || root.screen.as_deref() == facts.top)
+                .filter(|(entity, root)| {
+                    facts.shows(*entity)
+                        && (root.screen.is_none() || root.screen.as_deref() == facts.top)
+                })
                 .collect();
             shown.sort_by_key(|(entity, root)| (root.order, *entity));
             self.menu = shown.iter().any(|(_, root)| root.menu);

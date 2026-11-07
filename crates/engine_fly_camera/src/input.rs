@@ -1,3 +1,4 @@
+use engine_core::smoke::{number, query};
 use engine_core::{SmokeFailure, SmokeSession};
 use serde_json::{Value, json};
 
@@ -168,6 +169,18 @@ pub(crate) fn input_camera(session: &mut dyn SmokeSession) -> Result<(), SmokeFa
     check!(flies, "fly_camera_added", json!(flies), json!(true));
     let start = camera(session)?;
     steps(session, json!({ "forward": 1 }), 20)?;
+    let moves = query(session, "moves", json!({}))?;
+    let handoff = moves["asks"]
+        .as_array()
+        .and_then(|asks| asks.iter().find(|ask| ask["name"] == "camera_handoff"))
+        .map_or(Value::Null, |ask| ask["applied"][0].clone());
+    let late = number(&handoff["applied"]["frame"]) - number(&handoff["asked"]["frame"]);
+    check!(
+        late == 1.0,
+        "handoff_applies_next_frame",
+        handoff,
+        json!({ "frames_late": 1 })
+    );
     let forward = camera(session)?;
     let along = dot(moved(&start, &forward), direction(&start));
     check!(

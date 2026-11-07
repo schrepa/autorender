@@ -120,7 +120,11 @@ export class BrowserInput {
     }
   }
 
-  clear() { this.held.clear(); this.pointers.clear(); this.dragging = undefined; this.unlock(); }
+  clear() {
+    for (const code of this.held) this.game?.key(code, false);
+    for (const { key } of this.pointers.values()) this.game?.key(key, false);
+    this.held.clear(); this.pointers.clear(); this.dragging = undefined; this.unlock();
+  }
   dispose() { this.abort.abort(); this.clear(); this.game = undefined; }
 
   private unlock() {

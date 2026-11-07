@@ -20,10 +20,15 @@ impl DevTools {
             read: Box::new(global_transform_view),
         })
         .expect("descriptor_bounded");
-        self.register_component::<InterpolateTransform>(
-            InspectorDescriptor::generated(schemas, "InterpolateTransform"),
-            |_| json!(InterpolateTransformView { enabled: true }),
-        )
+        self.insert(Inspector {
+            brick: None,
+            descriptor: InspectorDescriptor::generated(schemas, "NodeWord"),
+            kind: InspectorKind::Component,
+            has: Box::new(|world, entity| {
+                entity.is_some_and(|entity| world.get::<Transform>(entity).is_some())
+            }),
+            read: Box::new(node_word_view),
+        })
         .expect("descriptor_bounded");
         let states: [(&str, StateRegister); 6] = [
             ("PresentationState", Self::register_state::<PresentationState>),
@@ -67,6 +72,11 @@ fn global_transform_view(
             .translation()
             .map(|translation| translation.to_array()),
     }))
+}
+
+fn node_word_view(world: &World, entity: Option<Entity>, _context: &Context<'_>) -> Option<Value> {
+    let word = world.get_resource::<GlobalTransforms>()?.word(entity?)?;
+    Some(json!(word))
 }
 
 fn hierarchy_view(world: &World, entity: Option<Entity>, context: &Context<'_>) -> Option<Value> {

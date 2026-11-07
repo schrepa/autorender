@@ -55,7 +55,6 @@ pub fn build(engine: &mut Engine) -> engine::Result<Template> {
             mesh,
             material: block,
         },
-        InterpolateTransform::default(),
         Turning,
     ));
     Ok(Template)

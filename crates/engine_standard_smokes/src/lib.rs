@@ -1,6 +1,7 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod agent_lifecycle;
+mod authored_nodes;
 mod debug_view_smoke;
 mod frame_loop;
 mod hierarchy;
@@ -72,6 +73,11 @@ impl Brick for StandardSmokesBrick {
             name: "scene_views",
             runs: Runs::Headless,
             run: scene_views::run,
+        },
+        Smoke {
+            name: "authored_nodes",
+            runs: Runs::Headless,
+            run: authored_nodes::run,
         },
         Smoke {
             name: "debug_view_terrain",

@@ -99,7 +99,6 @@ impl DrawPoint for ProbeViews {
 pub struct ProbeView {
     pub face: u32,
     pub center: Vec3,
-    pub still: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -118,7 +117,6 @@ pub struct ProbeCaptures {
     pub layout: StoreId,
     pub finished: Option<u32>,
     pub views: bool,
-    pub still: bool,
 }
 
 impl Slot for ProbeCaptures {

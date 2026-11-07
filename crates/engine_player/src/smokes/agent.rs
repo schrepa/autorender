@@ -367,17 +367,8 @@ fn looked(session: &mut dyn SmokeSession, after: &Value, day: &Value) -> Asked {
         wanted,
         "mesh_material_inspected"
     );
-    let interpolation = component(
-        session,
-        PLAYER,
-        "InterpolateTransform",
-        "inspects_interpolation",
-    )?;
-    smoke_eq!(
-        interpolation["enabled"].clone(),
-        json!(true),
-        "player_interpolates"
-    );
+    let mover = component(session, PLAYER, "mover", "inspects_mover")?;
+    smoke_eq!(mover["pace"].clone(), json!("tick"), "player_moves_per_tick");
     let jobs = inspected(session, "Jobs", "inspects_jobs")?;
     let tables = inspected(session, "static_tables", "inspects_tables")?;
     let wanted = json!({ "cache_hits": "number", "failed_jobs": "number" });

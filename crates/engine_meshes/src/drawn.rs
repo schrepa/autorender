@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Error, ErrorCode, Expected, FrameTime, GlobalTransforms, GpuBits, Operation, SceneIds,
+    DrawnPoses, Error, ErrorCode, Expected, FrameTime, GlobalTransforms, GpuBits, Operation,
+    SceneIds, pose_rows,
 };
 use engine_places::meshes::Instances;
 use serde_json::{Value, json};
@@ -31,11 +32,16 @@ impl Operation for MeshDrawn {
         Res<'static, PresentationTotals>,
         Res<'static, FrameTime>,
         ResMut<'static, WatchedSlot>,
+        (Res<'static, DrawnPoses>, Res<'static, GlobalTransforms>),
     );
     type Request = DrawnRequest;
 
     fn run(
-        (ids, instances, totals, time, mut watched): SystemParamItem<'_, '_, Self::Params>,
+        (ids, instances, totals, time, mut watched, (poses, globals)): SystemParamItem<
+            '_,
+            '_,
+            Self::Params,
+        >,
         request: DrawnRequest,
     ) -> Result<Value, Error> {
         let id = request.entity;
@@ -44,8 +50,14 @@ impl Operation for MeshDrawn {
                 .expected(Expected::Entity)
                 .got(&id)
         })?;
+        let drawn_pose = poses.drawn_pose(&globals, entity).map(pose_rows);
         let Some(slot) = instances.drawn(entity) else {
-            return Ok(json!({ "slot": null, "drawn_level": null, "read_back": null }));
+            return Ok(json!({
+                "slot": null,
+                "drawn_level": null,
+                "drawn_pose": drawn_pose,
+                "read_back": null,
+            }));
         };
         watched.slot = Some(slot);
         let watched = totals
@@ -54,12 +66,15 @@ impl Operation for MeshDrawn {
             .filter(|&(seen, _)| seen == slot)
             .map(|(_, word)| word);
         let age = totals.age(time.frame);
+        let pose = watched.and_then(|_| totals.pose());
         Ok(json!({
             "slot": slot,
             "drawn_level": watched.and_then(LodFade::drawn_level),
+            "drawn_pose": drawn_pose,
             "read_back": watched.zip(age).map(|(word, age)| json!({
                 "level": LodFade::drawn_level(word),
                 "word": <LodFade as GpuBits>::decoded(word),
+                "pose": pose,
                 "age": age,
             })),
         }))

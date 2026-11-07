@@ -29,6 +29,8 @@ macro_rules! __game_surface {
                 fn fail_job(id: f64, error: String);
                 fn report_job_cache(hits: f64, misses: f64, bytes: f64, mismatches: f64);
                 fn suspend();
+                fn pause(reason: u32);
+                fn resume(reason: u32);
                 fn reset_camera();
                 fn reload_scene(source: &str, files: SceneFileSet) -> Result<(), $crate::__private::JsValue>;
                 fn take_level_request() -> Option<String>;

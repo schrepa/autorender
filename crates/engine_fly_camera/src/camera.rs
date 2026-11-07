@@ -1,35 +1,57 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Camera, FrameTime, MoveInput};
+use engine_core::{
+    Asks, CameraHandoff, CameraNode, Clock, FrameTime, GlobalTransforms, MoveInput, Mover, Moves,
+    Pace, mover_of,
+};
 use engine_math::{atan2, clamp};
 use glam::{Quat, Vec3};
 
-use crate::FlyCamera;
+use crate::{FlyCamera, FlyCameraBrick};
 
 const SENSITIVITY: f32 = 0.003;
+const PITCH_LIMIT: f32 = 1.48;
 
-pub(crate) struct Flight {
+#[derive(Resource, Default)]
+pub(crate) enum Rig {
+    #[default]
+    Taking,
+    Holding,
+}
+
+struct Flight {
     yaw: f32,
     pitch: f32,
 }
 
 impl Flight {
-    fn new(yaw: f32, pitch: f32) -> Self {
-        let yaw = if yaw.is_finite() {
-            yaw % std::f32::consts::TAU
-        } else {
-            0.0
-        };
-        let pitch = if pitch.is_finite() {
-            clamp(pitch, -1.48, 1.48)
-        } else {
-            0.0
-        };
-        Self { yaw, pitch }
+    fn of(rotation: Quat) -> Self {
+        let forward = rotation * Vec3::NEG_Z;
+        let yaw = atan2(-forward.x, -forward.z);
+        let pitch = clamp(forward.y, -1.0, 1.0).asin();
+        Self {
+            yaw: if yaw.is_finite() { yaw } else { 0.0 },
+            pitch: if pitch.is_finite() {
+                clamp(pitch, -PITCH_LIMIT, PITCH_LIMIT)
+            } else {
+                0.0
+            },
+        }
     }
 
-    fn from_camera(camera: &Camera) -> Self {
-        let direction = (camera.target - camera.position).normalize_or_zero();
-        Self::new(atan2(-direction.x, -direction.z), direction.y.asin())
+    #[must_use]
+    fn turned(self, input: &MoveInput) -> Self {
+        Self {
+            yaw: (self.yaw - input.look_right_pixels * SENSITIVITY) % std::f32::consts::TAU,
+            pitch: clamp(
+                self.pitch - input.look_down_pixels * SENSITIVITY,
+                -PITCH_LIMIT,
+                PITCH_LIMIT,
+            ),
+        }
+    }
+
+    fn rotation(&self) -> Quat {
+        Quat::from_rotation_y(self.yaw) * Quat::from_rotation_x(self.pitch)
     }
 }
 
@@ -46,31 +68,47 @@ fn steered(input: &MoveInput) -> bool {
 }
 
 pub(crate) fn fly(
-    time: Res<FrameTime>,
-    input: Res<MoveInput>,
-    settings: Res<FlyCamera>,
-    mut flight: Local<Option<Flight>>,
-    mut camera: ResMut<Camera>,
+    (time, input, settings, globals): (
+        Res<FrameTime>,
+        Res<MoveInput>,
+        Res<FlyCamera>,
+        Res<GlobalTransforms>,
+    ),
+    cameras: Query<Entity, With<CameraNode>>,
+    mut rig: ResMut<Rig>,
+    mut handoff: Asks<CameraHandoff>,
+    mut moves: Moves<FlyCameraBrick>,
 ) {
-    let flight = if camera.is_changed() {
-        flight.insert(Flight::from_camera(&camera))
-    } else {
-        flight.get_or_insert_with(|| Flight::from_camera(&camera))
+    let Ok(camera) = cameras.single() else {
+        return;
     };
-    if settings.steered_only && !steered(&input) {
+    match *rig {
+        Rig::Taking => {
+            handoff.send(CameraHandoff {
+                camera,
+                to: Mover {
+                    by: mover_of::<FlyCameraBrick>(),
+                    pace: Pace::Frame,
+                },
+            });
+            *rig = Rig::Holding;
+            return;
+        }
+        Rig::Holding => {}
+    }
+    if !steered(&input) {
         return;
     }
-    flight.yaw = (flight.yaw - input.look_right_pixels * SENSITIVITY) % std::f32::consts::TAU;
-    flight.pitch = clamp(
-        flight.pitch - input.look_down_pixels * SENSITIVITY,
-        -1.48,
-        1.48,
-    );
-    let rotation = Quat::from_rotation_y(flight.yaw) * Quat::from_rotation_x(flight.pitch);
-    let forward = rotation * -Vec3::Z;
-    let right = rotation * Vec3::X;
-    let movement =
-        forward * input.move_forward + right * input.move_right + Vec3::Y * input.move_up;
-    camera.position += movement.normalize_or_zero() * time.delta_seconds * settings.speed;
-    camera.target = camera.position + forward;
+    let clock = globals.word(camera).map_or(Clock::Real, |word| word.clock);
+    let seconds = time.seconds_on(clock) as f32;
+    let Some(mut transform) = moves.get_mut(camera) else {
+        return;
+    };
+    let flight = Flight::of(transform.rotation).turned(&input);
+    let rotation = flight.rotation();
+    let movement = rotation * Vec3::NEG_Z * input.move_forward
+        + rotation * Vec3::X * input.move_right
+        + Vec3::Y * input.move_up;
+    transform.translation += movement.normalize_or_zero() * seconds * settings.speed;
+    transform.rotation = rotation;
 }

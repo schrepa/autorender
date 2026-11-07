@@ -1,6 +1,8 @@
 use super::*;
 use search::{Flow, Stage};
 
+const NO_STEP: u8 = u8::MAX;
+
 struct Block {
     key: TileKey,
     first: Sample,
@@ -99,7 +101,7 @@ impl WalkSearch {
                 stands: self.standing(&ground),
                 ground,
                 cost: vec![UNREACHED; SIDE * SIDE],
-                from: vec![u8::MAX; SIDE * SIDE],
+                from: vec![NO_STEP; SIDE * SIDE],
             });
         }
         let tiles = self.pyramid.tiles(self.gait.level);
@@ -121,7 +123,7 @@ impl WalkSearch {
         data: &dyn WalkData,
     ) -> Flow {
         if corridor.blocks.is_empty() && !self.build(&mut corridor, data) {
-            return Flow::Stay(Stage::Corridor(corridor));
+            return Flow::Blocked(Stage::Corridor(corridor));
         }
         let tiles = self.pyramid.tiles(self.gait.level);
         let goal = corridor.samples[1];
@@ -166,7 +168,7 @@ impl WalkSearch {
                 else {
                     continue;
                 };
-                let reached = cost.saturating_add(step);
+                let reached = below_unreached(cost, step);
                 if reached < target.cost[at] {
                     target.cost[at] = reached;
                     target.from[at] = direction as u8;
@@ -177,7 +179,7 @@ impl WalkSearch {
                 }
             }
         }
-        Flow::Stay(Stage::Corridor(corridor))
+        Flow::Spent(Stage::Corridor(corridor))
     }
 
     fn widen(&self, corridor: &mut Corridor) {
@@ -210,13 +212,12 @@ impl Pull {
         let mut cells = vec![goal];
         let mut at = goal;
         while at != start {
-            let Some((block, index)) = corridor.locate(at, tiles) else {
-                break;
-            };
-            let Some(&(dx, dz)) = NEIGHBORS.get(usize::from(corridor.blocks[block].from[index]))
-            else {
-                break;
-            };
+            let (block, index) = corridor
+                .locate(at, tiles)
+                .expect("corridor_path_cells_are_held");
+            let from = corridor.blocks[block].from[index];
+            assert!(from != NO_STEP, "corridor_path_cells_have_a_step");
+            let (dx, dz) = NEIGHBORS[usize::from(from)];
             at = [at[0] - dx, at[1] - dz];
             cells.push(at);
         }
@@ -319,7 +320,7 @@ impl WalkSearch {
     pub(super) fn pull(&mut self, mut pull: Box<Pull>, budget: &mut u64) -> Flow {
         while pull.index + 1 < pull.cells.len() {
             if *budget == 0 {
-                return Flow::Stay(Stage::Pull(pull));
+                return Flow::Spent(Stage::Pull(pull));
             }
             let reach = self.reach_from(&pull, budget);
             pull.anchors.push(pull.cells[reach]);

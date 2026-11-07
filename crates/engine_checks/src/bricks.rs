@@ -150,6 +150,7 @@ fn kind(decl: &PlaceDecl) -> &'static str {
         PlaceKind::Slot => "slot",
         PlaceKind::List => "list",
         PlaceKind::Component => "component",
+        PlaceKind::Ledger => "ledger",
     }
 }
 

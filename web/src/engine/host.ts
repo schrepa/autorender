@@ -1,4 +1,4 @@
-import { type Distribution, FRAME_PHASES } from "../generated/host";
+import { type Distribution, FRAME_PHASES, HOST_PAUSES } from "../generated/host";
 import { engineError, engineFailure } from "../generated/errors";
 import { parseJson, type Runtime } from "../generated/runtime";
 import type { FrameStats } from "../generated/stats";
@@ -60,8 +60,7 @@ function metric(id: string, value: string, unit = "") {
 
 class FrameHud {
   private frames = 0;
-  private previous: number | undefined;
-  private lastSample = 0;
+  private span: { start: number; frames: number } | undefined;
   private intervals = 0;
   private elapsed = 0;
   private simulation = 0;
@@ -71,19 +70,20 @@ class FrameHud {
 
   constructor(private readonly canvas: HTMLCanvasElement) {}
 
-  skipInterval() { this.previous = undefined; }
-
   reset() {
-    this.previous = undefined;
+    this.span = undefined;
     this.intervals = 0; this.elapsed = 0;
     this.simulation = 0; this.extraction = 0; this.submission = 0; this.samples = 0;
   }
 
   frame(runtime: Runtime, timestamp: number): boolean {
     this.frames++;
-    if (this.previous !== undefined) { this.elapsed += timestamp - this.previous; this.intervals++; }
-    this.previous = timestamp;
-    if (timestamp - this.lastSample < 250) return false;
+    const span = this.span;
+    if (!span) { this.span = { start: timestamp, frames: 0 }; return false; }
+    span.frames++;
+    if (timestamp - span.start < 250) return false;
+    this.elapsed += timestamp - span.start; this.intervals += span.frames;
+    this.span = { start: timestamp, frames: 0 };
     const stats = readStats(runtime);
     this.simulation += stats.simulation_ms;
     this.extraction += stats.extraction_ms;
@@ -105,7 +105,6 @@ class FrameHud {
     dataset.residentMeshBytes = String(stats.resident_mesh_bytes);
     dataset.residentTextures = String(stats.resident_textures);
     dataset.textureUploadBytes = String(stats.texture_upload_bytes);
-    this.lastSample = timestamp;
     if (this.samples >= 4) {
       this.simulation = 0; this.extraction = 0; this.submission = 0; this.samples = 0; this.elapsed = 0; this.intervals = 0;
     }
@@ -193,6 +192,15 @@ function suspendGame() {
   live()?.game.suspend();
 }
 
+function pauseGame(reason: keyof typeof HOST_PAUSES) {
+  clearInput();
+  live()?.game.pause(HOST_PAUSES[reason]);
+}
+
+function resumeGame(reason: keyof typeof HOST_PAUSES) {
+  live()?.game.resume(HOST_PAUSES[reason]);
+}
+
 function resize() {
   const current = live();
   if (!current) return;
@@ -219,7 +227,6 @@ function halt() {
   clearTimeout(between);
   between = 0;
   hud.reset();
-  clearInput();
 }
 
 function stopClock() {
@@ -274,7 +281,7 @@ function workWhileCompiling() {
 
 function started(current: Live<T>) {
   current.kind = "playing";
-  hud.skipInterval();
+  hud.reset();
   canvas.style.visibility = "";
   message.hidden = true;
   setStatus("WebGPU active", "running");
@@ -318,7 +325,7 @@ function frame(timestamp: number) {
       options.afterHostFrame?.(game, timestamp);
       if (!between) between = window.setTimeout(workBetweenFrames, 0);
     } else if (phase === FRAME_PHASES.idle) {
-      hud.skipInterval();
+      hud.reset();
       return;
     }
     if (live()) request = requestAnimationFrame(frame);
@@ -340,15 +347,21 @@ function resume() {
   request = requestAnimationFrame(frame);
 }
 
-window.addEventListener("blur", () => { interrupt("focus_lost"); clearInput(); suspendGame(); hud.skipInterval(); }, listenerOptions);
-canvas.addEventListener("blur", () => { interrupt("focus_lost"); suspendGame(); hud.skipInterval(); }, listenerOptions);
+window.addEventListener("blur", () => { interrupt("focus_lost"); pauseGame("focus"); }, listenerOptions);
+window.addEventListener("focus", () => resumeGame("focus"), listenerOptions);
+canvas.addEventListener("blur", () => interrupt("focus_lost"), listenerOptions);
 window.addEventListener("error", event => { if (fatal(event.error)) fail(event.error); }, listenerOptions);
 window.addEventListener("unhandledrejection", event => { if (fatal(event.reason)) fail(event.reason); }, listenerOptions);
 document.addEventListener("visibilitychange", () => {
-  stopClock();
-  if (state.kind === "failed") return;
-  if (document.hidden) setStatus("Suspended", "suspended");
-  else resume();
+  if (document.hidden) {
+    interrupt("suspension");
+    halt();
+    pauseGame("hidden");
+    if (state.kind !== "failed") setStatus("Suspended", "suspended");
+    return;
+  }
+  resumeGame("hidden");
+  if (state.kind !== "failed") resume();
 }, listenerOptions);
 function setPaused(value: boolean) {
   const current = live();
@@ -378,7 +391,7 @@ reload?.addEventListener("click", async () => {
     try {
       await reloadScene(current.game, lifecycle.signal);
       if (live() !== current) return;
-      current.game.suspend(); clearInput(); hud.skipInterval();
+      current.game.suspend(); hud.reset();
       notice.textContent = "Scene reloaded from its source file.";
     } catch (error) {
       if (fatal(error)) fail(error);
@@ -487,8 +500,8 @@ async function start() {
   resume();
 }
 
-window.addEventListener("pagehide", () => { stopClock(); }, listenerOptions);
-window.addEventListener("pageshow", () => resume(), listenerOptions);
+window.addEventListener("pagehide", () => { interrupt("suspension"); halt(); pauseGame("suspended"); }, listenerOptions);
+window.addEventListener("pageshow", () => { resumeGame("suspended"); resume(); }, listenerOptions);
 if (import.meta.hot) import.meta.hot.dispose(() => {
   const current = live();
   jobs?.detach();

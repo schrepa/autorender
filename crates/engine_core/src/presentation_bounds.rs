@@ -7,3 +7,5 @@ pub const MIN_LINEAR_SCALE: f32 = 1.0 / 1024.0;
 pub const COMMON_DETERMINANT_MARGIN: f32 = 1.0 / 512.0;
 
 pub const LINEAR_ROTATION_DOT_THRESHOLD: f32 = 0.9995;
+
+pub const POSE_FLOAT_LIMIT: f32 = f32::MAX;

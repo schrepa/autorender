@@ -209,7 +209,6 @@ export interface NavAgent {
   level?: number;
   max_slope?: number;
   max_water?: number;
-  offset?: number;
   radius?: number;
   speed?: number;
   turn?: number;
@@ -225,8 +224,10 @@ export interface NavAgentRow {
 
 export interface NavAgentView {
   agent: NavAgent;
+  blocked_by?: string | null;
   left: number;
   length: number;
+  moved_by?: string | null;
   next: number;
   points: number;
   refused?: string | null;

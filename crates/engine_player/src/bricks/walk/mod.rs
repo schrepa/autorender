@@ -2,8 +2,8 @@ include!(concat!(env!("OUT_DIR"), "/bricks/walk.rs"));
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, Filled, FixedTime, InterpolateTransform, MoveInput,
-    SceneComponents, Schedule, Source, Transform, stats,
+    Brick, Bricks, ComponentKind, Filled, FixedTime, MoveInput, Moves, Pace, SceneComponents,
+    Schedule, Source, stats,
 };
 use engine_places_simulation::navigation::NavAgent;
 use engine_places_simulation::physics::{
@@ -20,7 +20,6 @@ stats! {
 }
 
 #[derive(Component, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
-#[require(InterpolateTransform)]
 #[serde(deny_unknown_fields)]
 struct Walker {
     #[serde(skip)]
@@ -36,6 +35,7 @@ impl Brick for PlayerWalkBrick {
         bricks
             .stats::<PlayerWalkStats>()
             .join::<SceneComponents>(ComponentKind::of::<Walker>("walker"), None)
+            .moves::<Walker>(Pace::Tick)
             .systems(Schedule::FixedMove, walk);
     }
 }
@@ -48,13 +48,17 @@ fn walk(
     collision: Res<Collision>,
     collides: Filled<Collision>,
     mut stats: ResMut<PlayerWalkStats>,
-    mut walkers: Query<(Entity, &Collider, &mut Transform, &mut Walker), Without<NavAgent>>,
+    mut moves: Moves<PlayerWalkBrick>,
+    mut walkers: Query<(Entity, &Collider, &mut Walker), Without<NavAgent>>,
 ) {
     if !collides.on() {
         return;
     }
     let dt = time.delta_seconds;
-    for (entity, collider, mut transform, mut walker) in &mut walkers {
+    for (entity, collider, mut walker) in &mut walkers {
+        let Some(mut transform) = moves.get_mut(entity) else {
+            continue;
+        };
         walker.vertical_speed -= 20.0 * dt;
         let horizontal =
             Vec3::new(input.move_right, 0.0, -input.move_forward).normalize_or_zero() * dt * 6.5;

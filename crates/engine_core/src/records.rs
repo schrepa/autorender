@@ -81,6 +81,7 @@ enum Stage {
 
 struct Asking {
     interest: Interest<RecordKey>,
+    handle: Option<TextureHandle>,
     make: Make,
     deliver: Option<DeliverRecord>,
     stage: Stage,
@@ -119,7 +120,7 @@ pub struct RecordExchange {
     batches: Vec<Batch>,
     next_batch: u64,
     records: Requests<RecordKey, ()>,
-    failed: Vec<Interest<RecordKey>>,
+    failed: Vec<(Interest<RecordKey>, Option<TextureHandle>)>,
 }
 
 impl RecordExchange {
@@ -140,6 +141,7 @@ impl RecordExchange {
         let interest = self.records.ask(key);
         self.asking.push(Asking {
             interest,
+            handle: None,
             make: Make::Here(Some(Box::new(make))),
             deliver: Some(Box::new(deliver)),
             stage: Stage::Asking,
@@ -175,16 +177,29 @@ impl RecordExchange {
     }
 
     pub fn failures(&self) -> impl Iterator<Item = (&RecordKey, &Error)> + '_ {
-        self.failed.iter().filter_map(|held| match self.records.of(held)? {
-            crate::Request::Failed(error) => Some((held.key(), error)),
+        self.failed
+            .iter()
+            .filter_map(|(held, _)| Some((held.key(), self.failure(held)?)))
+    }
+
+    pub fn failed(&self, handle: TextureHandle) -> Option<&Error> {
+        self.failed
+            .iter()
+            .filter(|(_, filled)| *filled == Some(handle))
+            .find_map(|(held, _)| self.failure(held))
+    }
+
+    fn failure(&self, held: &Interest<RecordKey>) -> Option<&Error> {
+        match self.records.of(held)? {
+            crate::Request::Failed(error) => Some(error),
             crate::Request::Asked(_) | crate::Request::Ready(()) | crate::Request::Missing => None,
-        })
+        }
     }
 
     fn end(
         &mut self,
         key: RecordKey,
-        held: Option<Interest<RecordKey>>,
+        held: Option<(Interest<RecordKey>, Option<TextureHandle>)>,
         outcome: Result<(), String>,
     ) {
         let Some(ticket) = self.records.ticket(&key) else {
@@ -230,6 +245,7 @@ impl RecordExchange {
                     let key = asked.set.key(index, family);
                     self.asking.push(Asking {
                         interest: self.records.ask(key),
+                        handle: (family == shown).then_some(handle),
                         make: Make::Texture {
                             batch,
                             index,
@@ -428,7 +444,7 @@ pub(crate) fn exchange(world: &mut World) {
         .is_some_and(|mode| mode.cooking);
     let now = world
         .get_resource::<crate::FrameTime>()
-        .map_or(0.0, |time| time.elapsed_seconds);
+        .map_or(0.0, |time| time.real_elapsed);
     let asking = {
         let mut records = world.resource_mut::<RecordExchange>();
         records.ask_textures(cooking);
@@ -465,12 +481,13 @@ pub(crate) fn exchange(world: &mut World) {
                         waiting.push(request);
                         None
                     } else {
-                        Some(request.interest)
+                        Some((request.interest, request.handle))
                     };
                     arrived.push((key, held, deliver, bytes));
                 }
                 Step::Failed(request, error) => {
-                    ends.push((request.key(), Some(request.interest), Err(error)));
+                    let key = request.key();
+                    ends.push((key, Some((request.interest, request.handle)), Err(error)));
                 }
             }
         }

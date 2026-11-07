@@ -21,8 +21,16 @@ engine_core::gpu_struct! {
         pub(crate) cos_outer: f32,
         pub(crate) radius: f32,
         pub(crate) length: f32,
-        pub(crate) region: u32,
+        pub(crate) place: u32,
     }
+}
+
+#[engine_core::gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LightPlace {
+    #[bits(2)]
+    pub(crate) region: u32,
+    pub(crate) moving: bool,
 }
 
 engine_core::gpu_consts! {

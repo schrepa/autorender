@@ -4,13 +4,16 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use bevy_ecs::prelude::*;
 use engine_core::math::clamp;
-use engine_core::{Camera, GlobalTransforms, SceneIds, TimeControl};
+use engine_core::{
+    Camera, Error, ErrorCode, GlobalTransforms, Pause, SceneIds, fault_of,
+};
 use engine_places_rendering::audio::{
     Bus, OneShot, SoundHandle, SoundOrder, SoundSource, Sounds, VoiceHandle,
 };
 use glam::Vec3;
 use serde::Serialize;
 
+use crate::AudioBrick;
 use crate::backend::Backend;
 use crate::scene::{MAX_PITCH, MAX_RADIUS, MIN_PITCH, MIN_RADIUS};
 use crate::settings::{Audio, AudioStats};
@@ -610,12 +613,12 @@ impl Mixer {
 
 pub(crate) fn mix(
     settings: Res<Audio>,
-    (camera, globals, time): (Res<Camera>, Res<GlobalTransforms>, Option<Res<TimeControl>>),
+    (camera, globals, pause): (Res<Camera>, Res<GlobalTransforms>, Option<Res<Pause>>),
     sounds: Res<Sounds>,
     sources: Query<(Entity, Ref<SoundSource>)>,
-    mut stats: ResMut<AudioStats>,
-    mut mixer: ResMut<Mixer>,
+    (mut stats, mut mixer, mut commands): (ResMut<AudioStats>, ResMut<Mixer>, Commands),
 ) {
+    let was = mixer.device;
     let closed = !mixer.backend.opened();
     let limit = settings.max_voices;
     mixer.set_enabled(settings.enabled);
@@ -645,13 +648,17 @@ pub(crate) fn mix(
     }
     mixer.trim(limit);
     mixer.collect_decoded();
-    let time_moved = time.as_ref().is_some_and(|time| time.is_changed());
-    if settings.is_changed() || time_moved || (closed && mixer.backend.opened()) {
-        mixer.apply_buses(&settings, time.is_some_and(|time| time.paused));
+    let pause_moved = pause.as_ref().is_some_and(|pause| pause.is_changed());
+    if settings.is_changed() || pause_moved || (closed && mixer.backend.opened()) {
+        mixer.apply_buses(&settings, pause.is_some_and(|pause| pause.paused()));
     }
     mixer.advance();
     mixer.hear(&camera, &globals);
     mixer.publish(&mut stats);
+    if was != Device::Failed && mixer.device == Device::Failed {
+        let error = Error::new(ErrorCode::AudioFailed, "$.audio.device").got(mixer.latest.clone());
+        commands.queue(move |world: &mut World| fault_of::<AudioBrick>(world, error));
+    }
 }
 
 pub(crate) fn release(In(entity): In<Entity>, mut mixer: ResMut<Mixer>) {

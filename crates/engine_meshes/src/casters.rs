@@ -13,7 +13,7 @@ use crate::retained::RetainedRender;
 
 pub(crate) const MAPS: usize = SKY_MAP as usize + 1;
 pub(crate) const ID_CAPACITIES: usize = MAPS - 1 + MOVING_PAIRS as usize;
-pub(crate) const STILLNESS_BYTES: u64 = 16;
+pub(crate) const CACHE_BYTES: u64 = 16;
 const NO_GROUP: u32 = u32::MAX;
 
 pub(crate) fn map_start(map: usize, capacity: usize) -> usize {
@@ -65,7 +65,7 @@ pub(crate) struct CasterPlan {
     pub starts: Vec<u32>,
     pub id_capacity: usize,
     pub arg_capacity: usize,
-    pub stillness_capacity: usize,
+    pub cache_capacity: usize,
     pub regions_in_args: bool,
     pub maps: Vec<Option<usize>>,
     grouped: Option<u64>,
@@ -134,8 +134,8 @@ impl CasterPlan {
 
     fn outputs(&mut self, slots: usize, first_instance: bool) -> bool {
         let mut grown = false;
-        if slots > self.stillness_capacity {
-            self.stillness_capacity = slots.max(1_024).next_power_of_two();
+        if slots > self.cache_capacity {
+            self.cache_capacity = slots.max(1_024).next_power_of_two();
             grown = true;
         }
         let ids = (self.total as usize).max(1);

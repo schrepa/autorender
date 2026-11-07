@@ -145,6 +145,20 @@ impl SceneEnvironment {
     }
 }
 
+pub(crate) fn held(world: &World) -> Vec<(SettingsEntry, Value)> {
+    registered(world)
+        .map(|section| (*section, section.current(world)))
+        .collect()
+}
+
+pub(crate) fn restore(world: &mut World, held: &[(SettingsEntry, Value)]) {
+    for (section, value) in held {
+        if section.current(world) != *value {
+            let _ = section.set_at(world, value, "$");
+        }
+    }
+}
+
 fn registered(world: &World) -> impl Iterator<Item = &SettingsEntry> {
     world
         .get_resource::<Registry>()

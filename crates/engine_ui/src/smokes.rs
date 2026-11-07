@@ -115,8 +115,12 @@ pub fn layout_press(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> 
         "events_counted"
     );
     control(session, "ui_press", json!({ "id": "options" }))?;
-    session.step(1);
-    smoke_eq!(tree(session)?["events"], json!([]), "events_clear");
+    session.step(2);
+    smoke_eq!(
+        tree(session)?["events"],
+        json!(["start"]),
+        "events_last_until_read"
+    );
     smoke_eq!(
         query(session, "screens", json!({}))?["top"],
         json!("options"),

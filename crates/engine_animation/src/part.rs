@@ -3,13 +3,10 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_core::collections::HashMap;
 use engine_core::math::max;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, Error, GlobalTransforms, GpuPresentation,
-    MaterialHandle, MeshHandle, MeshVertex, NO_PARENT, NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE,
-    NODE_VALID, NodePose, PoseRows, PresentationState, PresentedTransforms, Transform, View,
-    gpu_struct,
+    AlphaMode, AssetLibrary, AssetResidency, DrawnPoses, Error, GlobalTransforms, MaterialHandle,
+    MeshHandle, MeshVertex, PresentationState, Span, View, gpu_struct,
 };
 use engine_places_rendering::animation::{Animator, Rig, RigPart, VertexSkin};
 use engine_places_rendering::shadows::{CasterMap, CasterView, ShadowCasters};
@@ -18,9 +15,8 @@ use engine_render::{
     Lifetime, MainView, Pass, Pipeline, Prepare, RenderPipeline, Shape, VertexLayout, pack_color,
     pack_surface, planes, wgpu,
 };
-use glam::{Mat4, Quat, Vec3, Vec4};
+use glam::{Mat4, Vec3, Vec4};
 
-use crate::animator::{Ticked, presented_pose};
 use crate::shaders;
 
 engine_core::gpu_consts! {
@@ -141,11 +137,6 @@ const CASTER_STREAMS: &[VertexLayout] = &[
     }),
 ];
 
-#[derive(Resource, Default)]
-pub(crate) struct Books {
-    pub(crate) ticked: HashMap<Entity, Ticked>,
-}
-
 struct Slot {
     entity: Entity,
     mesh: MeshHandle,
@@ -163,8 +154,11 @@ struct Held {
     slots: Vec<Slot>,
     reaches: Vec<Vec<f32>>,
     vertices: u32,
+    frame: Option<u64>,
     last: Vec<(Entity, Range<u32>)>,
     last_rows: Vec<JointRows>,
+    earlier: Vec<(Entity, Range<u32>)>,
+    earlier_rows: Vec<JointRows>,
     lit: Vec<u32>,
     cast: Vec<u32>,
 }
@@ -203,6 +197,7 @@ pub(crate) struct SkinningGpu {
 
 struct Posed {
     rows: Vec<JointRows>,
+    fresh: Vec<bool>,
     spheres: Vec<Vec4>,
     ranges: Vec<(Entity, Range<u32>, bool)>,
 }
@@ -214,47 +209,6 @@ fn rows_of(matrix: Mat4) -> JointRows {
         r1: rows.y_axis.to_array(),
         r2: rows.z_axis.to_array(),
     }
-}
-
-fn rows_matrix(rows: &PoseRows) -> Mat4 {
-    Mat4::from_cols_array_2d(&[rows[0], rows[1], rows[2], [0.0, 0.0, 0.0, 1.0]]).transpose()
-}
-
-fn node_local(pose: &NodePose) -> Transform {
-    let [tx, ty, tz, sx, rx, ry, rz, rw, sy, sz] = *pose;
-    Transform {
-        translation: Vec3::new(tx, ty, tz),
-        rotation: Quat::from_xyzw(rx, ry, rz, rw),
-        scale: Vec3::new(sx, sy, sz),
-    }
-}
-
-fn presented_node(nodes: &GpuPresentation<'_>, node: usize) -> Option<Mat4> {
-    let [parent, flags] = *nodes.info.get(node)?;
-    if flags & NODE_VALID == 0 {
-        return None;
-    }
-    if flags & NODE_ACTIVE == 0 {
-        return nodes.authority.get(node).map(rows_matrix);
-    }
-    let above = if flags & NODE_PARENT_ACTIVE != 0 {
-        presented_node(nodes, parent as usize)?
-    } else if parent != NO_PARENT {
-        rows_matrix(nodes.authority.get(parent as usize)?)
-    } else {
-        Mat4::IDENTITY
-    };
-    let current = node_local(nodes.current.get(node)?);
-    if flags & NODE_BLEND == 0 || nodes.alpha >= 1.0 {
-        return Some(above * current.matrix());
-    }
-    let previous = node_local(nodes.previous.get(node)?);
-    let local = Transform {
-        translation: previous.translation.lerp(current.translation, nodes.alpha),
-        rotation: previous.rotation.lerp(current.rotation, nodes.alpha),
-        scale: previous.scale.lerp(current.scale, nodes.alpha),
-    };
-    Some(above * local.matrix())
 }
 
 fn rest_vertex((skin, vertex): (&VertexSkin, &MeshVertex)) -> RestVertex {
@@ -318,18 +272,16 @@ fn outside(planes: &[[f32; 4]; 6], center: Vec3, half: Vec3) -> bool {
 
 fn pose_all(
     listed: &[(Entity, &Animator)],
-    ticked: &HashMap<Entity, Ticked>,
     slots: &[Slot],
-    alpha: f32,
-    place: impl Fn(Entity) -> Option<Mat4>,
-    blends: impl Fn(Entity) -> bool,
+    globals: &GlobalTransforms,
+    poses: &DrawnPoses,
 ) -> Posed {
     let mut posed = Posed {
         rows: Vec::new(),
+        fresh: Vec::new(),
         spheres: Vec::new(),
         ranges: Vec::new(),
     };
-    let mut model = Vec::new();
     for &(entity, animator) in listed {
         if slots
             .binary_search_by_key(&entity, |slot| slot.entity)
@@ -338,15 +290,18 @@ fn pose_all(
             continue;
         }
         let start = posed.rows.len() as u32;
-        let world = place(entity);
-        let drawn = if blends(entity) { alpha } else { 1.0 };
-        presented_pose(animator, ticked.get(&entity), drawn, &mut model);
-        let placed = world.unwrap_or(Mat4::IDENTITY);
+        let nodes = animator.joint_nodes();
+        let mut shown = globals.drawn(entity) && !nodes.is_empty();
         for bound in &animator.rig().palette {
-            let held = model.get(bound.joint as usize).copied();
-            let joint = placed * held.unwrap_or(Mat4::IDENTITY);
+            let node = nodes.get(bound.joint as usize).copied();
+            let drawn = node.and_then(|node| poses.drawn_pose(globals, node));
+            shown &= drawn.is_some();
+            let joint = drawn.unwrap_or(Mat4::IDENTITY);
             let inverse = Mat4::from_cols_array_2d(&bound.inverse_bind);
             posed.rows.push(rows_of(joint * inverse));
+            posed.fresh.push(
+                node.is_none_or(|node| poses.span(globals, node) == Some(Span::Fresh)),
+            );
             let scale = Vec3::new(
                 joint.x_axis.truncate().length_squared(),
                 joint.y_axis.truncate().length_squared(),
@@ -357,7 +312,7 @@ fn pose_all(
             posed.spheres.push(joint.w_axis.truncate().extend(scale));
         }
         let range = start..posed.rows.len() as u32;
-        posed.ranges.push((entity, range, world.is_some()));
+        posed.ranges.push((entity, range, shown));
     }
     posed
 }
@@ -379,35 +334,47 @@ fn part_box(reach: &[f32], spheres: &[Vec4]) -> (Vec3, Vec3) {
     ((low + high) * 0.5, (high - low) * 0.5)
 }
 
-fn previous_rows(held: &mut Held, posed: &mut Posed) {
+fn previous_rows(held: &mut Held, posed: &mut Posed, frame: Option<u64>) {
+    let advanced = frame.is_none() || held.frame != frame;
+    if advanced {
+        std::mem::swap(&mut held.earlier, &mut held.last);
+        std::mem::swap(&mut held.earlier_rows, &mut held.last_rows);
+    }
     let current = posed.rows.len();
     for (entity, range, _) in &posed.ranges {
         let earlier = held
-            .last
+            .earlier
             .binary_search_by_key(entity, |(known, _)| *known)
             .ok()
-            .map(|at| held.last[at].1.clone())
+            .map(|at| held.earlier[at].1.clone())
             .filter(|earlier| earlier.len() == range.len());
+        let now = range.start as usize..range.end as usize;
         match earlier {
             Some(earlier) => {
-                let span = earlier.start as usize..earlier.end as usize;
-                posed.rows.extend_from_slice(&held.last_rows[span]);
+                for (was, row) in (earlier.start as usize..earlier.end as usize).zip(now) {
+                    let previous = if posed.fresh[row] {
+                        posed.rows[row]
+                    } else {
+                        held.earlier_rows[was]
+                    };
+                    posed.rows.push(previous);
+                }
             }
-            None => {
-                let span = range.start as usize..range.end as usize;
-                posed.rows.extend_from_within(span);
-            }
+            None => posed.rows.extend_from_within(now),
         }
     }
-    held.last.clear();
-    held.last.extend(
-        posed
-            .ranges
-            .iter()
-            .map(|(entity, range, _)| (*entity, range.clone())),
-    );
-    held.last_rows.clear();
-    held.last_rows.extend_from_slice(&posed.rows[..current]);
+    if advanced {
+        held.frame = frame;
+        held.last.clear();
+        held.last.extend(
+            posed
+                .ranges
+                .iter()
+                .map(|(entity, range, _)| (*entity, range.clone())),
+        );
+        held.last_rows.clear();
+        held.last_rows.extend_from_slice(&posed.rows[..current]);
+    }
 }
 
 impl SkinningGpu {
@@ -421,8 +388,11 @@ impl SkinningGpu {
         let held = &mut self.held;
         held.slots.clear();
         held.reaches.clear();
+        held.frame = None;
         held.last.clear();
         held.last_rows.clear();
+        held.earlier.clear();
+        held.earlier_rows.clear();
         let reaches = &mut held.reaches;
         let mut shared: BTreeMap<(usize, usize), (u32, usize)> = BTreeMap::new();
         let mut rest: Vec<RestVertex> = Vec::new();
@@ -682,12 +652,11 @@ impl GpuPart for SkinningGpu {
     type Reads = (
         Query<'static, 'static, (Entity, &'static Animator)>,
         Res<'static, GlobalTransforms>,
-        Res<'static, PresentedTransforms>,
+        Res<'static, DrawnPoses>,
         Res<'static, PresentationState>,
         Res<'static, AssetResidency>,
         Res<'static, AssetLibrary>,
         Res<'static, View>,
-        Res<'static, Books>,
     );
     const NAME: &'static str = "animation";
     const LAZY: bool = true;
@@ -761,7 +730,7 @@ impl GpuPart for SkinningGpu {
 
     fn prepare(
         &mut self,
-        (animators, globals, presented, presentation, residency, assets, view, books): SystemParamItem<
+        (animators, globals, poses, presentation, residency, assets, view): SystemParamItem<
             '_,
             '_,
             Self::Reads,
@@ -780,23 +749,8 @@ impl GpuPart for SkinningGpu {
         if self.held.slots.is_empty() {
             return;
         }
-        let nodes = presented.gpu_presentation(&globals);
-        let place = |entity| presented_node(&nodes, globals.node_index(entity)?);
-        let blends = |entity| {
-            globals
-                .node_index(entity)
-                .and_then(|node| nodes.info.get(node))
-                .is_some_and(|&[_, flags]| flags & NODE_BLEND != 0)
-        };
-        let mut posed = pose_all(
-            &listed,
-            &books.ticked,
-            &self.held.slots,
-            presentation.alpha(),
-            place,
-            blends,
-        );
-        previous_rows(&mut self.held, &mut posed);
+        let mut posed = pose_all(&listed, &self.held.slots, &globals, &poses);
+        previous_rows(&mut self.held, &mut posed, presentation.frame());
         self.stage(&posed, (&*residency, &*assets, &*view), cx);
         cx.run(self.skin);
     }

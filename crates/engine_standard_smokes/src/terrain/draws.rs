@@ -6,8 +6,8 @@ use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
 use super::{
-    FAST, SETTLE_FRAMES, WAIT_FRAMES, fast, fixture, heights, layer_sweep, open, opened, overview,
-    settle, subdivided, view, viewed,
+    SETTLE_FRAMES, WAIT_FRAMES, fixture, heights, layer_sweep, open, opened, overview, settle,
+    subdivided, view, viewed,
 };
 use crate::requests::seen;
 use crate::stats::terrain;
@@ -115,12 +115,6 @@ fn listed(session: &mut dyn SmokeSession) -> Checked<()> {
             "describe_lists_terrain_types"
         );
     }
-    let look = inspect(session, "Environment")?;
-    smoke_eq!(
-        &look["terrain"]["samples_per_frame"],
-        &json!(FAST),
-        "environment_reads_back"
-    );
     let stepless = refuse(
         session,
         "control",
@@ -173,7 +167,7 @@ fn surroundings(session: &mut dyn SmokeSession) -> Checked<()> {
     let surrounded = capture(session)?;
     let edged = environment(
         session,
-        json!({"terrain": with(&fast(), json!({"surroundings": false}))}),
+        json!({"terrain": {"surroundings": false}}),
     )?;
     smoke_eq!(
         &edged["environment_changed"],
@@ -199,7 +193,7 @@ fn surroundings(session: &mut dyn SmokeSession) -> Checked<()> {
         wanted,
         "the_surroundings_fill_the_view"
     );
-    environment(session, json!({ "terrain": fast() }))?;
+    environment(session, json!({ "terrain": {} }))?;
     camera(session, overview())?;
     settle(session)?;
     Ok(())
@@ -242,7 +236,7 @@ fn edges(session: &mut dyn SmokeSession) -> Checked<()> {
 fn budget(session: &mut dyn SmokeSession) -> Checked<()> {
     let limited = environment(
         session,
-        json!({"terrain": with(&fast(), json!({"max_tiles": 3}))}),
+        json!({"terrain": {"max_tiles": 3}}),
     )?;
     let tiles = terrain(&limited["rendering"])["tiles"].clone();
     let wanted = at_most(3);
@@ -263,7 +257,7 @@ fn budget(session: &mut dyn SmokeSession) -> Checked<()> {
         wanted,
         "the_budget_drops_tiles"
     );
-    environment(session, json!({ "terrain": fast() }))?;
+    environment(session, json!({ "terrain": {} }))?;
     settle(session)?;
     Ok(())
 }
@@ -274,7 +268,7 @@ fn detail(session: &mut dyn SmokeSession) -> Checked<()> {
     let fine = environment(
         session,
         json!({
-            "terrain": with(&fast(), json!({"pixel_error": 2})),
+            "terrain": {"pixel_error": 2},
             "terrain_shading": {"subdivision_error": 0.5},
         }),
     )?;
@@ -336,19 +330,16 @@ fn detail(session: &mut dyn SmokeSession) -> Checked<()> {
         wanted,
         "terrain_covers_the_view"
     );
-    environment(session, json!({ "terrain": fast(), "terrain_shading": {} }))?;
+    environment(session, json!({ "terrain": {}, "terrain_shading": {} }))?;
     settle(session)?;
     Ok(())
 }
 
 fn motion(session: &mut dyn SmokeSession) -> Checked<()> {
-    let moving = with(
-        &fast(),
-        json!({
-            "collision_radius": 0,
-            "motion_detail": {"speed": 1, "fastest": 2, "levels": 8, "settle": 0.25},
-        }),
-    );
+    let moving = json!({
+        "collision_radius": 0,
+        "motion_detail": {"speed": 1, "fastest": 2, "levels": 8, "settle": 0.25},
+    });
     environment(session, json!({ "terrain": moving }))?;
     let mut waited = 0.0_f64;
     for step in 0..12_i32 {
@@ -392,17 +383,17 @@ fn motion(session: &mut dyn SmokeSession) -> Checked<()> {
         &json!("$.args.terrain.motion_detail.levels"),
         "nine_motion_levels_refused_at"
     );
-    environment(session, json!({ "terrain": fast() }))?;
+    environment(session, json!({ "terrain": {} }))?;
     camera(session, overview())?;
     settle(session)?;
     Ok(())
 }
 
 fn memory(session: &mut dyn SmokeSession) -> Checked<()> {
-    let starved = json!({"terrain": with(&fast(), json!({"cache_bytes": 1}))});
+    let starved = json!({"terrain": {"cache_bytes": 1}});
     environment(session, starved.clone())?;
     render(session)?;
-    environment(session, json!({ "terrain": fast() }))?;
+    environment(session, json!({ "terrain": {} }))?;
     let home = inspect(session, "terrain_stats")?;
     camera(
         session,
@@ -447,7 +438,7 @@ fn memory(session: &mut dyn SmokeSession) -> Checked<()> {
     render(session)?;
     let emptied = inspect(session, "terrain_stats")?;
     smoke_eq!(&emptied["cached_tiles"], &json!(0), "a_byte_keeps_no_tile");
-    environment(session, json!({ "terrain": fast() }))?;
+    environment(session, json!({ "terrain": {} }))?;
     settle(session)?;
     Ok(())
 }

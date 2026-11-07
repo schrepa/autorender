@@ -205,15 +205,21 @@ impl Colors {
         gone: &mut Vec<TextureHandle>,
     ) -> Option<Error> {
         let coloring = std::mem::take(&mut self.coloring);
+        let mut failed = None;
         let coloring = match coloring {
             Coloring::Loading { job, handle, shown } if assets.texture(handle).is_some() => {
                 gone.extend(shown);
                 Coloring::Shown { job, handle }
             }
-            Coloring::Unasked
-            | Coloring::Loading { .. }
-            | Coloring::Shown { .. }
-            | Coloring::Failed { .. } => coloring,
+            Coloring::Loading { job, handle, shown } => match records.failed(handle) {
+                Some(error) => {
+                    failed = Some(error.clone());
+                    assets.remove_texture(handle);
+                    Coloring::Failed { job, shown }
+                }
+                None => Coloring::Loading { job, handle, shown },
+            },
+            Coloring::Unasked | Coloring::Shown { .. } | Coloring::Failed { .. } => coloring,
         };
         let Some(wanted) = self
             .wanted
@@ -221,7 +227,7 @@ impl Colors {
             .filter(|wanted| coloring.job() != Some(wanted))
         else {
             self.coloring = coloring;
-            return None;
+            return failed;
         };
         let shown = match coloring {
             Coloring::Unasked => None,
@@ -247,7 +253,7 @@ impl Colors {
             Err(error) => (Coloring::Failed { job: wanted, shown }, Some(error)),
         };
         self.coloring = coloring;
-        error
+        error.or(failed)
     }
 }
 
@@ -613,7 +619,7 @@ pub(crate) fn place_tiles(
     mut ground: ResMut<GroundTiles>,
 ) {
     let atlas = &mut *atlas;
-    atlas.now = time.elapsed_seconds as f32;
+    atlas.now = time.real_elapsed as f32;
     atlas.changes.resize(feeds.tiles as usize);
     atlas.ground_changes.clear();
     let attached = |entry: &TerrainEntry| {

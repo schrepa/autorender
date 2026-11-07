@@ -34,6 +34,8 @@ export interface Runtime {
   fail_job(id: number, error: string): void;
   report_job_cache(hits: number, misses: number, bytes: number, mismatches: number): void;
   suspend(): void;
+  pause(reason: number): void;
+  resume(reason: number): void;
   reset_camera(): void;
   reload_scene(source: string, files: unknown): void;
   take_level_request(): string | undefined;

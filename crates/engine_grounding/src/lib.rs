@@ -7,10 +7,11 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, Parent, Placement, Rule, SceneComponents,
-    Schedule, Setting, Source, Transform,
+    Brick, Bricks, ComponentKind, Error, ErrorCode, Moves, Pace, Parent, Placement, Rule,
+    SceneComponents, Schedule, Setting, Source, Transform,
 };
 use engine_places_simulation::ground::{Ground, Grounded, GroundedAt};
+use engine_places_simulation::navigation::NavWalk;
 use glam::Vec2;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -33,6 +34,8 @@ impl Brick for GroundingBrick {
                     .view::<GroundedAt, GroundedView>(grounded_view),
                 None,
             )
+            .moves::<Grounded>(Pace::Tick)
+            .systems(Schedule::FixedSimulation, steer)
             .systems(Schedule::WorldSync, settle);
     }
 }
@@ -46,7 +49,7 @@ pub struct GroundedView {
 fn grounded_view(grounded: &Grounded, at: Option<&GroundedAt>) -> GroundedView {
     GroundedView {
         offset: grounded.offset,
-        level: at.and_then(|at| at.level),
+        level: at.and_then(|at| at.level()),
     }
 }
 
@@ -70,32 +73,57 @@ fn grounded_example() -> Value {
 type GroundedQuery<'w, 's> = Query<
     'w,
     's,
-    (&'static Grounded, &'static mut Transform, &'static mut GroundedAt),
+    (
+        Entity,
+        &'static Grounded,
+        &'static mut GroundedAt,
+        Option<&'static NavWalk>,
+    ),
     Without<Parent>,
 >;
 
-fn settle(ground: Res<Ground>, mut query: GroundedQuery) {
-    let revision = ground.revision();
-    for (grounded, mut transform, mut at) in &mut query {
-        let position = Vec2::new(transform.translation.x, transform.translation.z);
-        let stale = *at == GroundedAt::default()
-            || at.position != position
-            || at.offset != grounded.offset
-            || (at.revision != revision && at.level != Some(0));
-        if !stale {
+fn stand(
+    ground: &Ground,
+    transform: &mut Mut<'_, Transform>,
+    (grounded, at): (&Grounded, &mut Mut<'_, GroundedAt>),
+    walked: Option<f32>,
+) {
+    let position = Vec2::new(transform.translation.x, transform.translation.z);
+    let Some((next, height)) = at.settle(ground, (position, grounded.offset), walked) else {
+        return;
+    };
+    if let Some(height) = height
+        && transform.translation.y != height
+    {
+        transform.translation.y = height;
+    }
+    **at = next;
+}
+
+fn steer(ground: Res<Ground>, mut moves: Moves<GroundingBrick>, mut query: GroundedQuery) {
+    for (entity, grounded, mut at, walk) in &mut query {
+        let Some(step) = walk.and_then(|walk| walk.step) else {
             continue;
-        }
-        let sample = ground.point(position).solid();
-        if let Some(height) = sample.map(|sample| sample.height + grounded.offset)
-            && transform.translation.y != height
-        {
-            transform.translation.y = height;
-        }
-        *at = GroundedAt {
-            position,
-            offset: grounded.offset,
-            revision,
-            level: sample.map(|sample| sample.level),
         };
+        let Some(mut transform) = moves.get_mut(entity) else {
+            continue;
+        };
+        transform.translation.x = step.to.x;
+        transform.translation.z = step.to.z;
+        if transform.rotation != step.facing {
+            transform.rotation = step.facing;
+        }
+        stand(&ground, &mut transform, (grounded, &mut at), Some(step.to.y));
+    }
+}
+
+fn settle(ground: Res<Ground>, mut moves: Moves<GroundingBrick>, mut query: GroundedQuery) {
+    for (entity, grounded, mut at, walk) in &mut query {
+        let Some(mut transform) = moves.get_mut(entity) else {
+            continue;
+        };
+        let position = Vec2::new(transform.translation.x, transform.translation.z);
+        let walked = walk.and_then(|walk| walk.walked(position));
+        stand(&ground, &mut transform, (grounded, &mut at), walked);
     }
 }

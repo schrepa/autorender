@@ -4,7 +4,7 @@ use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
     AssetLibrary, Feed, FeedSettings, GlobalTransforms, Material, MaterialBinding, MaterialHandle,
-    Mesh3d, MeshHandle, Revision, Shown, Surface, Switches, Transform,
+    Mesh3d, MeshHandle, Revision, Surface, Transform,
 };
 use engine_places::meshes::{Cube, FirstPersonLayer, Instances, Tint};
 use glam::Mat4;
@@ -20,7 +20,7 @@ type RenderQuery<'w, 's> = Query<
         Option<&'static Tint>,
         Option<&'static FirstPersonLayer>,
     ),
-    (Or<(With<Cube>, With<Mesh3d>)>, Shown),
+    Or<(With<Cube>, With<Mesh3d>)>,
 >;
 
 type SourceChanges<'w, 's> = Query<
@@ -181,11 +181,12 @@ pub(crate) struct RetainedRender {
     homeless: BTreeSet<Entity>,
     unresolved: BTreeSet<Entity>,
     unbuilt: BTreeSet<Entity>,
+    hidden: BTreeSet<Entity>,
     materials: Materials,
     asset_revision: Option<(u64, u64)>,
     material_revision: Option<u64>,
     topology: Option<Revision>,
-    switches: Switches,
+    words: Option<u64>,
     colors: Feed<u32>,
     changed: bool,
     render_candidates: usize,
@@ -202,11 +203,12 @@ impl Default for RetainedRender {
             homeless: BTreeSet::new(),
             unresolved: BTreeSet::new(),
             unbuilt: BTreeSet::new(),
+            hidden: BTreeSet::new(),
             materials: Materials::default(),
             asset_revision: None,
             material_revision: None,
             topology: None,
-            switches: Switches::default(),
+            words: None,
             colors: Feed::new(FeedSettings::default().instance_colors as usize),
             changed: false,
             render_candidates: 0,
@@ -247,8 +249,11 @@ pub(crate) fn retain_instances(
         retained.refresh(entity, &inputs, &mut instances);
     }
     let topology_moved = retained.settle_topology(&inputs, &mut instances);
-    retained.settle_switches(&inputs, &mut instances);
-    retained.render_candidates = query.iter().len().saturating_sub(retained.unbuilt.len());
+    retained.settle_words(&inputs, &mut instances);
+    retained.render_candidates = query
+        .iter()
+        .len()
+        .saturating_sub(retained.unbuilt.len() + retained.hidden.len());
     if retained.changed || assets_moved || topology_moved {
         retained.recount(&globals);
     }
@@ -390,33 +395,29 @@ impl RetainedRender {
         true
     }
 
-    fn settle_switches(
+    fn settle_words(
         &mut self,
         inputs: &Inputs<'_, '_, '_>,
         instances: &mut ResMut<'_, Instances>,
     ) {
-        let switches = inputs.globals.switches();
-        if self.switches == switches {
+        let words = Some(inputs.globals.words_revision());
+        if self.words == words {
             return;
         }
-        self.switches = switches;
-        for slot in 0..self.owners.len() {
-            if let Some(entity) = self.owners[slot]
-                && !inputs.query.contains(entity)
-            {
-                self.forget(entity, instances);
-            }
-        }
-        self.homeless
-            .retain(|&entity| inputs.query.contains(entity));
-        self.unresolved
-            .retain(|&entity| inputs.query.contains(entity));
-        self.unbuilt
-            .retain(|&entity| inputs.query.contains(entity));
-        for (entity, ..) in inputs.query.iter() {
-            if !instances.slots.contains_key(&entity) {
-                self.refresh(entity, inputs, instances);
-            }
+        self.words = words;
+        let undrawn: Vec<Entity> = self
+            .owners
+            .iter()
+            .flatten()
+            .chain(&self.homeless)
+            .chain(&self.unresolved)
+            .chain(&self.unbuilt)
+            .copied()
+            .filter(|&entity| !inputs.globals.drawn(entity))
+            .collect();
+        let hidden = std::mem::take(&mut self.hidden);
+        for entity in undrawn.into_iter().chain(hidden) {
+            self.refresh(entity, inputs, instances);
         }
     }
 
@@ -430,6 +431,12 @@ impl RetainedRender {
             self.forget(entity, instances);
             return;
         };
+        if !inputs.globals.drawn(entity) {
+            self.forget(entity, instances);
+            self.hidden.insert(entity);
+            return;
+        }
+        self.hidden.remove(&entity);
         if unbuilt(cube.is_some(), mesh3d) {
             self.forget(entity, instances);
             self.unbuilt.insert(entity);
@@ -543,5 +550,6 @@ impl RetainedRender {
         self.homeless.remove(&entity);
         self.unresolved.remove(&entity);
         self.unbuilt.remove(&entity);
+        self.hidden.remove(&entity);
     }
 }

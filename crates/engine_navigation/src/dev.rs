@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Error, ErrorCode, Expected, Filled, InvalidSetting, Jobs, Operation, Records, Rule, SceneIds,
-    Setting, Slot, Transform,
+    Error, ErrorCode, Expected, Filled, InvalidSetting, Jobs, Mover, Operation, Records, Rule,
+    SceneIds, Setting, Slot, Transform,
 };
 use engine_places_simulation::ground::{Ground, GroundRead};
 use engine_places_simulation::navigation::{NavAgent, NavStatus, NavWalk};
@@ -30,6 +30,8 @@ pub struct NavAgentView {
     pub next: usize,
     pub left: f32,
     pub searched: usize,
+    pub moved_by: Option<String>,
+    pub blocked_by: Option<String>,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -69,11 +71,15 @@ fn remaining(walk: &NavWalk, position: Vec3) -> f32 {
     left
 }
 
-fn agent_view(agent: &NavAgent, walk: Option<&NavWalk>, at: Option<&Transform>) -> NavAgentView {
+fn agent_view(
+    ids: &SceneIds,
+    (agent, walk, at, mover): (&NavAgent, Option<&NavWalk>, Option<&Transform>, Option<&Mover>),
+) -> NavAgentView {
     let agent = *agent;
     let still = NavWalk::default();
     let walk = walk.unwrap_or(&still);
     let position = at.map(|transform| transform.translation);
+    let blocked = walk.step.and_then(|step| step.blocked);
     NavAgentView {
         agent,
         status: walk.status,
@@ -84,6 +90,11 @@ fn agent_view(agent: &NavAgent, walk: Option<&NavWalk>, at: Option<&Transform>) 
         next: walk.next,
         left: position.map_or(0.0, |position| remaining(walk, position)),
         searched: walk.searched,
+        moved_by: mover.map(|mover| mover.by.name().to_owned()),
+        blocked_by: blocked.map(|entity| {
+            ids.id(entity)
+                .map_or_else(|| entity.to_bits().to_string(), str::to_owned)
+        }),
     }
 }
 
@@ -104,6 +115,7 @@ impl Operation for NavAgentQuery {
                 &'static NavAgent,
                 Option<&'static NavWalk>,
                 Option<&'static Transform>,
+                Option<&'static Mover>,
             ),
         >,
     );
@@ -113,11 +125,11 @@ impl Operation for NavAgentQuery {
         (ids, agents): SystemParamItem<'_, '_, Self::Params>,
         Self { entity: id }: Self,
     ) -> Result<Value, Error> {
-        let (agent, walk, at) = ids
+        let found = ids
             .entity(&id)
             .and_then(|entity| agents.get(entity).ok())
             .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&id))?;
-        Ok(json!(agent_view(agent, walk, at)))
+        Ok(json!(agent_view(&ids, found)))
     }
 
     fn schema() -> Value {

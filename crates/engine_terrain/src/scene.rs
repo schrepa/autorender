@@ -17,8 +17,8 @@ use serde_json::{Number, Value, json};
 use crate::layer::{self, TerrainLayer};
 use crate::runtime::{MATERIAL_RULES, TerrainPrefetch, TerrainScene, check_material};
 use crate::{
-    Layers, PlacedCollider, PlacedShape, PlacementAsset, Pyramid, Surroundings, Terrain,
-    TerrainSurface,
+    GivenRiver, Layers, PlacedCollider, PlacedShape, PlacementAsset, Pyramid, Stamp, Surroundings,
+    Terrain, TerrainEdit, TerrainRiver, TerrainSurface,
 };
 
 pub const GROUND_HEIGHT: &str = "ground_height";
@@ -41,6 +41,43 @@ pub struct SceneTerrain {
     pub collision: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surroundings: Option<SceneSurroundings>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edits: Vec<SceneTerrainEdit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = crate::MAX_GIVEN_RIVERS))]
+    pub rivers: Vec<SceneTerrainRiver>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SceneTerrainEdit {
+    pub id: String,
+    pub stamp: Stamp,
+}
+
+impl SceneTerrainEdit {
+    pub(crate) fn of(edit: &TerrainEdit) -> Self {
+        Self {
+            id: edit.id.to_string(),
+            stamp: edit.stamp,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SceneTerrainRiver {
+    pub id: String,
+    pub river: GivenRiver,
+}
+
+impl SceneTerrainRiver {
+    pub(crate) fn of(river: &TerrainRiver) -> Self {
+        Self {
+            id: river.id.to_string(),
+            river: river.river.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -348,6 +385,17 @@ fn identifier(id: &str, path: &str) -> Result<(), Error> {
         .got(id))
 }
 
+fn unique_id<'a>(id: &'a str, ids: &mut Vec<&'a str>, path: &str) -> Result<(), Error> {
+    identifier(id, path)?;
+    if ids.contains(&id) {
+        return Err(Error::new(ErrorCode::DuplicateId, path)
+            .expected(Expected::Unique)
+            .got(id));
+    }
+    ids.push(id);
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GroundHeight {
@@ -587,10 +635,55 @@ impl SceneTerrain {
             layers: Arc::new(source),
             surface,
             collision: self.collision,
-            edits: Arc::from(Vec::new()),
-            rivers: Arc::from(Vec::new()),
+            edits: self.built_edits(path)?,
+            rivers: self.built_rivers(path)?,
             surroundings,
         })
+    }
+
+    fn built_edits(&self, path: &str) -> Result<Arc<[TerrainEdit]>, Error> {
+        let mut ids: Vec<&str> = Vec::with_capacity(self.edits.len());
+        let mut edits = Vec::with_capacity(self.edits.len());
+        for (index, edit) in self.edits.iter().enumerate() {
+            let at = format!("{path}.edits[{index}]");
+            unique_id(&edit.id, &mut ids, &format!("{at}.id"))?;
+            edit.stamp.validate().map_err(|error| {
+                error
+                    .coded(ErrorCode::InvalidTerrain)
+                    .within(&format!("{at}.stamp"))
+            })?;
+            edits.push(TerrainEdit {
+                id: Arc::from(edit.id.as_str()),
+                stamp: edit.stamp,
+            });
+        }
+        Ok(Arc::from(edits))
+    }
+
+    fn built_rivers(&self, path: &str) -> Result<Arc<[TerrainRiver]>, Error> {
+        if self.rivers.len() > crate::MAX_GIVEN_RIVERS {
+            return Err(
+                Error::new(ErrorCode::InvalidTerrain, format!("{path}.rivers"))
+                    .at_most(crate::MAX_GIVEN_RIVERS as u64)
+                    .got(self.rivers.len()),
+            );
+        }
+        let mut ids: Vec<&str> = Vec::with_capacity(self.rivers.len());
+        let mut rivers = Vec::with_capacity(self.rivers.len());
+        for (index, drawn) in self.rivers.iter().enumerate() {
+            let at = format!("{path}.rivers[{index}]");
+            unique_id(&drawn.id, &mut ids, &format!("{at}.id"))?;
+            drawn.river.validate().map_err(|error| {
+                error
+                    .coded(ErrorCode::InvalidTerrain)
+                    .within(&format!("{at}.river"))
+            })?;
+            rivers.push(TerrainRiver {
+                id: Arc::from(drawn.id.as_str()),
+                river: drawn.river.clone(),
+            });
+        }
+        Ok(Arc::from(rivers))
     }
 
     fn layers(

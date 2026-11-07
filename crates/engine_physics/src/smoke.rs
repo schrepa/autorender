@@ -6,16 +6,19 @@ use serde_json::{Value, json};
 
 const SCENE: &str = "physics-fixture";
 const ENTITIES: [&str; 4] = ["floor", "crate", "seabed", "stone"];
-const DESCRIBED: [&str; 5] = [
+const DESCRIBED: [&str; 6] = [
     "rigid_body",
     "physics_body",
     "physics_stats",
     "physics",
     "body_push",
+    "body_ask",
 ];
 const IMPULSE: f64 = 1800.0;
 const FORCE: f64 = 12000.0;
 const FLOOR_TOP: f64 = 10.0;
+const PLACED: f64 = 14.0;
+const ASIDE: f64 = 5.0;
 const HALF: f64 = 0.5;
 const RESTS_WITHIN: f64 = 0.05;
 const SECOND: u32 = 60;
@@ -51,6 +54,7 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     );
     rests(session)?;
     pushed(session)?;
+    placed(session)?;
     toggles(session)?;
     parented(session)?;
     session.source(&empty().to_string());
@@ -128,11 +132,12 @@ fn crate_speed(session: &mut dyn SmokeSession) -> Checked<f64> {
 }
 
 fn pushed(session: &mut dyn SmokeSession) -> Checked<()> {
-    control(
+    let sent = control(
         session,
-        "body_push",
-        json!({"entity": "crate", "push": {"impulse": [IMPULSE, 0.0, 0.0]}}),
+        "body_ask",
+        json!({"entity": "crate", "ask": {"kind": "impulse", "value": [IMPULSE, 0.0, 0.0]}}),
     )?;
+    smoke_eq!(sent["at"].clone(), json!("step_start"), "impulse_waits_for_the_step");
     session.step(1);
     let hit = crate_speed(session)?;
     let expected = json!({"above": 1.0});
@@ -140,6 +145,17 @@ fn pushed(session: &mut dyn SmokeSession) -> Checked<()> {
         shown(hit > 1.0, &json!(hit), &expected),
         expected,
         "impulse_gains_speed"
+    );
+    let moves = query(session, "moves", json!({}))?;
+    let applied = moves["asks"].as_array().and_then(|asks| {
+        asks.iter()
+            .find(|ask| ask["name"] == "body_ask")
+            .map(|ask| json!({"at": ask["at"], "applied": ask["applied"].as_array().map_or(0, Vec::len)}))
+    });
+    smoke_eq!(
+        json!(applied),
+        json!({"at": "step_start", "applied": 1}),
+        "impulse_apply_point_observed"
     );
     session.step(1);
     let after = crate_speed(session)?;
@@ -163,6 +179,35 @@ fn pushed(session: &mut dyn SmokeSession) -> Checked<()> {
         "force_keeps_pushing"
     );
     control(session, "body_push", json!({"entity": "crate", "push": {}}))?;
+    Ok(())
+}
+
+fn placed(session: &mut dyn SmokeSession) -> Checked<()> {
+    control(
+        session,
+        "edit_transform",
+        json!({"entity": "crate", "translation": [0.0, PLACED, ASIDE]}),
+    )?;
+    seconds(session, 1);
+    let crate_at = component(session, "crate", "Transform")?;
+    let height = number(&crate_at["translation"][1]);
+    let aside = number(&crate_at["translation"][2]);
+    let expected = json!({"below": PLACED, "z": ASIDE});
+    smoke_eq!(
+        shown(
+            height < PLACED - 0.1 && (aside - ASIDE).abs() < 0.5,
+            &crate_at,
+            &expected
+        ),
+        expected,
+        "placed_body_falls_from_its_new_place"
+    );
+    let body = query(session, "physics_body", json!({"entity": "crate"}))?;
+    smoke_eq!(
+        body["moved_by"].clone(),
+        json!("engine_physics"),
+        "physics_moves_its_bodies"
+    );
     Ok(())
 }
 

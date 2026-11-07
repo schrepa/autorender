@@ -66,6 +66,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         "initial_transforms_valid"
     );
     motion(session)?;
+    drawn_poses(session)?;
     refusals(session, &source, &initial)?;
     let transformed = matrices(session, &source, &initial)?;
     instances(session, &transformed, &initial, (&rendering, entities))?;
@@ -233,6 +234,44 @@ fn children(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         ),
         wanted,
         "placement_root_draws_nothing"
+    );
+    Ok(())
+}
+
+fn flat_rows(rows: &Value) -> Vec<f64> {
+    rows.as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(numbers)
+        .collect()
+}
+
+fn drawn_poses(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
+    let mut cpu = serde_json::Map::new();
+    let mut gpu = serde_json::Map::new();
+    let mut agree = true;
+    for id in ["player", "player-accessory"] {
+        let mut drawn = Value::Null;
+        for _ in 0..SETTLE_RENDERS {
+            render(session)?;
+            drawn = query(session, "mesh_drawn", json!({"entity": id}))?;
+            if drawn["read_back"]["pose"].is_array() {
+                break;
+            }
+        }
+        let (computed, read) = (
+            flat_rows(&drawn["drawn_pose"]),
+            flat_rows(&drawn["read_back"]["pose"]),
+        );
+        agree &= computed.len() == 12 && near_all(&json!(read), &computed, EPSILON);
+        cpu.insert(id.to_owned(), json!(computed));
+        gpu.insert(id.to_owned(), json!(read));
+    }
+    let wanted = Value::Object(cpu);
+    smoke_eq!(
+        seen(agree, Value::Object(gpu), &wanted),
+        wanted,
+        "cpu_and_gpu_drawn_poses_agree"
     );
     Ok(())
 }

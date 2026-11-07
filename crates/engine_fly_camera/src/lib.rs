@@ -14,7 +14,6 @@ settings! {
     pub struct FlyCamera {
         pub enabled: bool = true => any,
         pub speed: f32 = 22.0 => range(0.0, 1000.0),
-        pub steered_only: bool = false => any,
     }
 }
 
@@ -32,6 +31,7 @@ impl Brick for FlyCameraBrick {
         bricks
             .when(|fly: Res<FlyCamera>| fly.enabled)
             .settings::<FlyCamera>()
+            .resource::<camera::Rig>()
             .systems(Schedule::Presentation, camera::fly);
     }
 }

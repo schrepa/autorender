@@ -49,6 +49,7 @@ impl Brick for ReflectionsBrick {
             .within(reflecting, |bricks| {
                 bricks
                     .join::<PostScene>((), Some(apply::MODULE))
+                    .join::<engine_places_rendering::reflections::TraceReaders>((), None)
                     .part::<part::TraceGpu>();
             });
     }

@@ -3,8 +3,9 @@ import package::engine::view::camera;
 import package::face::caster_routes::{caster_box, caster_in_region, caster_in_sky, caster_levels,
     caster_regions, caster_span, mark_caster, outside_route, route};
 import package::face::wind::{slot_sway, wind_sway};
-import package::generated::meshes::{BatchData as Batch, CULL_GROUP, CandidateData as Candidate,
-    CasterFrame, MOVING_MAP, MOVING_PAIRS, SKY_MAP, candidate_state_valid};
+import package::generated::meshes::{BatchData as Batch, CASTER_CACHE_KEPT, CASTER_CACHE_OUT,
+    CULL_GROUP, CandidateData as Candidate, CasterFrame, MOBILITY_MOVING, MOVING_MAP, MOVING_PAIRS,
+    SKY_MAP, candidate_state_valid, node_word_mobility};
 import package::meshes::presentation::{Rows, pose_key};
 import package::meshes::slots::{instance_colors, instance_poses};
 
@@ -21,17 +22,12 @@ struct DrawArgs {
 @group(1) @binding(2) var<storage, read> batches: array<Batch>;
 @group(1) @binding(3) var<storage, read> poses: array<Rows>;
 @group(1) @binding(4) var<storage, read> flags: array<u32>;
-@group(1) @binding(5) var<storage, read_write> stillness: array<vec4<u32>>;
+@group(1) @binding(5) var<storage, read_write> cache: array<vec4<u32>>;
 @group(1) @binding(6) var<storage, read_write> ids: array<u32>;
 @group(1) @binding(7) var<storage, read_write> args: array<DrawArgs>;
 @group(1) @binding(8) var<storage, read_write> totals: array<atomic<u32>, 4>;
+@group(1) @binding(9) var<storage, read> node_words: array<u32>;
 
-const KEEP_AFTER: u32 = 8u;
-const MOVING_UNTIL: u32 = 64u;
-const KEEP_AFTER_RESTLESS: u32 = 180u;
-const MOVING_UNTIL_RESTLESS: u32 = 236u;
-const LEVELED: u32 = 0x2000000u;
-const RESTLESS: u32 = 0x80000000u;
 const FOOTPRINT_UNIT: f32 = 4.0;
 
 fn group_start(group: u32) -> u32 {
@@ -90,6 +86,12 @@ fn footprint_corner(word: u32) -> vec2<f32> {
     return vec2<f32>(f32(i32(word << 16u) >> 16u), f32(i32(word) >> 16u)) * FOOTPRINT_UNIT;
 }
 
+fn uncache(held: vec4<u32>) {
+    if held.y == CASTER_CACHE_KEPT {
+        mark_tiles(footprint_corner(held.z), footprint_corner(held.w), false, 0u, 0u);
+    }
+}
+
 @compute @workgroup_size(CULL_GROUP)
 fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= selection.candidates {
@@ -113,54 +115,32 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     let bounds = caster_box(world_center, world_half);
     let low = bounds[0];
     let high = bounds[1];
-    let key = pose_key(pose);
-    let state = stillness[candidate.slot];
-    var count = state.y & 0xffu;
-    var leveled = state.y & LEVELED;
-    var footprint = state.zw;
-    var restless = state.y & RESTLESS;
-    var keep_after = select(KEEP_AFTER, KEEP_AFTER_RESTLESS, restless != 0u);
-    if state.x == key {
-        count = min(count + 1u, 255u);
-    } else {
-        if count >= keep_after && leveled != 0u {
-            mark_tiles(footprint_corner(footprint.x), footprint_corner(footprint.y), false,
-                0u, 0u);
-            restless = RESTLESS;
-            keep_after = KEEP_AFTER_RESTLESS;
+    let held = cache[candidate.slot];
+    if node_word_mobility(node_words[candidate.node]) == MOBILITY_MOVING {
+        if held.y != CASTER_CACHE_OUT {
+            uncache(held);
+            cache[candidate.slot] = vec4<u32>(0u, CASTER_CACHE_OUT, 0u, 0u);
         }
-        count = 0u;
-        leveled = 0u;
+        mark_tiles(low.xy, high.xy, true, batch.group, candidate.slot);
+        return;
     }
-    if count == keep_after {
+    let key = pose_key(pose);
+    if held.y != CASTER_CACHE_KEPT || held.x != key {
+        uncache(held);
         mark_tiles(low.xy, high.xy, false, 0u, 0u);
     }
-    let moving = count < select(MOVING_UNTIL, MOVING_UNTIL_RESTLESS, restless != 0u);
-    let kept = count >= keep_after;
-    if kept && !moving {
-        restless = 0u;
+    let kept = vec4<u32>(key, CASTER_CACHE_KEPT,
+        footprint_word(vec2<i32>(floor(low.xy / FOOTPRINT_UNIT))),
+        footprint_word(vec2<i32>(ceil(high.xy / FOOTPRINT_UNIT))));
+    if any(held != kept) {
+        cache[candidate.slot] = kept;
     }
-    if kept {
-        leveled = LEVELED;
-        footprint = vec2<u32>(
-            footprint_word(vec2<i32>(floor(low.xy / FOOTPRINT_UNIT))),
-            footprint_word(vec2<i32>(ceil(high.xy / FOOTPRINT_UNIT))));
-    }
-    let packed = count | leveled | restless;
-    if state.x != key || state.y != packed || any(state.zw != footprint) {
-        stillness[candidate.slot] = vec4<u32>(key, packed, footprint);
-    }
-    if kept {
-        for (var region = 0u; region < caster_regions(); region++) {
-            if caster_in_region(region, low, high) {
-                append(region, batch.group, candidate.slot);
-            }
+    for (var region = 0u; region < caster_regions(); region++) {
+        if caster_in_region(region, low, high) {
+            append(region, batch.group, candidate.slot);
         }
     }
-    if moving {
-        mark_tiles(low.xy, high.xy, true, batch.group, candidate.slot);
-    }
-    if kept && caster_in_sky(world_center, world_half) {
+    if caster_in_sky(world_center, world_half) {
         append(SKY_MAP, batch.group, candidate.slot);
     }
 }

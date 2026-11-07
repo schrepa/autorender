@@ -24,8 +24,6 @@ export const PANIC_PREFIX = "engine-panic ";
 
 export const PANIC_GLOBAL = "__enginePanic";
 
-export const QUIET_FRAMES = 3;
-
 export const PREPARE_LIMIT_MS = 60000;
 
 export const FRAME_INTERVAL_MS = 16.666666666666668;
@@ -67,6 +65,8 @@ export const DYNAMIC_RAISE_FRAMES = 30;
 export const DYNAMIC_PROBE_FRAMES = 120;
 
 export const FRAME_PHASES = {"compiling":0,"idle":4,"playing":3,"preparing":1,"started":2};
+
+export const HOST_PAUSES = {"focus":0,"hidden":1,"suspended":2};
 
 export const CURSOR_MODES = {"captured":2,"drag":0,"free":1};
 

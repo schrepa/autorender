@@ -23,7 +23,7 @@ pub(crate) fn color_data(instance: &Instance) -> ColorData {
 
 const WRITE_CALL_BYTES: usize = 16 * 1024;
 
-pub(crate) fn whole_stream(changed: usize, len: usize) -> bool {
+fn whole_stream(changed: usize, len: usize) -> bool {
     changed * 4 >= len * 3
 }
 
@@ -34,42 +34,6 @@ pub(crate) struct UploadRange {
 }
 
 const MAX_RANGES: usize = 64;
-
-pub(crate) fn changed_ranges(
-    stamps: &[u64],
-    since: u64,
-    stride: usize,
-    ranges: &mut Vec<UploadRange>,
-) -> bool {
-    ranges.clear();
-    let gap = WRITE_CALL_BYTES.div_ceil(stride);
-    let mut covered = 0;
-    for (index, &stamp) in stamps.iter().enumerate() {
-        if stamp <= since {
-            continue;
-        }
-        match ranges.last_mut() {
-            Some(range) if index - range.end <= gap => {
-                covered += index + 1 - range.end;
-                range.end = index + 1;
-            }
-            _ => {
-                if ranges.len() == MAX_RANGES {
-                    return full(stamps.len(), ranges);
-                }
-                ranges.push(UploadRange {
-                    start: index,
-                    end: index + 1,
-                });
-                covered += 1;
-            }
-        }
-    }
-    if whole_stream(covered, stamps.len()) && !ranges.is_empty() {
-        return full(stamps.len(), ranges);
-    }
-    true
-}
 
 pub(crate) fn listed_ranges(
     nodes: &[u32],

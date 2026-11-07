@@ -26,5 +26,6 @@ stats! {
         pub contacts: u32,
         pub water_samples: u32,
         pub problems: u32,
+        pub dropped_asks: u32,
     }
 }

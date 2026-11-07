@@ -210,7 +210,7 @@ fn faces(
             })
         };
         let answered = match decl.kind() {
-            PlaceKind::Slot | PlaceKind::Component => {
+            PlaceKind::Slot | PlaceKind::Component | PlaceKind::Ledger => {
                 let filler = registry.iter().find_map(|(brick, record)| {
                     let filled = record
                         .fills()

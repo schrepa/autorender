@@ -60,12 +60,6 @@ pub struct GlobalTransformView {
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct InterpolateTransformView {
-    pub enabled: bool,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct HierarchyView {
     pub parent: Option<String>,
     pub parent_scene: Option<String>,

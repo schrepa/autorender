@@ -42,11 +42,6 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let source = fixture();
     load(session, &source)?;
     ask(session, "control", json!({"name": "pause"}))?;
-    control(
-        session,
-        "environment",
-        json!({"terrain": {"samples_per_frame": 50_000_000}}),
-    )?;
     let mut rendering = look(session, 0.0, 0.0)?;
     for _ in 0..400 {
         let drawn = terrain(&rendering);

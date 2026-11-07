@@ -198,6 +198,26 @@ pub const MOVE_KEYS: &[(&str, MoveDirection)] = &[
     ("KeyQ", MoveDirection::Down),
 ];
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InputSource {
+    #[default]
+    Player,
+    Agent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Holder {
+    Player,
+    Pad,
+    Agent,
+}
+
+impl Holder {
+    const fn bit(self) -> u8 {
+        1 << self as u8
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct FrameInput {
     pub state: MoveInput,
@@ -211,7 +231,7 @@ pub struct FrameInput {
 
 #[derive(Clone, Debug)]
 pub struct InputGatherer {
-    holds: [u8; KEYS.len()],
+    holders: [u8; KEYS.len()],
     actions: Vec<Vec<u32>>,
     menu: [u8; KEYS.len()],
     primary: usize,
@@ -219,7 +239,6 @@ pub struct InputGatherer {
     axes: Vec<(Source, usize, f32)>,
     yaw: f32,
     pitch: f32,
-    held: BTreeSet<u32>,
     pressed: BTreeSet<u32>,
     released: BTreeSet<u32>,
     menu_pressed: u8,
@@ -227,7 +246,6 @@ pub struct InputGatherer {
     pad_buttons: u32,
     pad_held: u32,
     analog: [f32; 6],
-    timestamp: Option<f64>,
 }
 
 impl InputGatherer {
@@ -247,7 +265,7 @@ impl InputGatherer {
             bound[index].push(action);
         }
         Ok(Self {
-            holds: [0; KEYS.len()],
+            holders: [0; KEYS.len()],
             actions: bound,
             menu: menu_table(menu_keys)?,
             primary: index("MouseLeft").expect("mouse_left_known"),
@@ -255,7 +273,6 @@ impl InputGatherer {
             axes: axis_sources(axes)?,
             yaw: 0.0,
             pitch: 0.0,
-            held: BTreeSet::new(),
             pressed: BTreeSet::new(),
             released: BTreeSet::new(),
             menu_pressed: 0,
@@ -263,51 +280,87 @@ impl InputGatherer {
             pad_buttons: 0,
             pad_held: 0,
             analog: [0.0; 6],
-            timestamp: None,
         })
     }
 
     pub fn key(&mut self, code: &str, down: bool, menu_wanted: bool) -> bool {
+        self.hold(Holder::Player, code, down, menu_wanted)
+    }
+
+    pub fn agent_key(&mut self, code: &str, down: bool) -> bool {
+        self.hold(Holder::Agent, code, down, true)
+    }
+
+    fn hold(&mut self, holder: Holder, code: &str, down: bool, menu_wanted: bool) -> bool {
         let Some(index) = index(code) else {
             return false;
         };
         let menu = self.menu[index];
         let source = Source::Key(index);
-        let primary = index == self.primary;
-        let used = primary
+        let before = self.holders[index];
+        let used = index == self.primary
             || !self.actions[index].is_empty()
-            || self.holds[index] > 0
+            || before != 0
             || self.movement.iter().any(|&(key, _)| key == index)
             || self.axes.iter().any(|&(key, _, _)| key == source)
             || (menu_wanted && menu != 0);
-        if down && self.holds[index] == 0 {
+        if down && before == 0 {
             self.menu_pressed |= menu;
         }
         if !used {
             return false;
         }
-        let actions = &self.actions[index];
-        let holds = &mut self.holds[index];
-        if down {
-            if *holds == 0 {
-                self.held.extend(actions);
-                self.pressed.extend(actions);
-                self.pointer.held |= primary;
-                self.pointer.pressed |= primary;
-            }
-            *holds = holds.saturating_add(1);
-        } else if *holds > 0 {
-            *holds -= 1;
-            if *holds == 0 {
-                for action in actions {
-                    self.held.remove(action);
-                }
-                self.released.extend(actions);
-                self.pointer.held &= !primary;
-                self.pointer.released |= primary;
+        let after = if down {
+            before | holder.bit()
+        } else {
+            before & !holder.bit()
+        };
+        self.change(index, after);
+        true
+    }
+
+    fn change(&mut self, index: usize, after: u8) {
+        let before = self.holders[index];
+        if (before != 0) == (after != 0) {
+            self.holders[index] = after;
+            return;
+        }
+        let held = self.held_actions();
+        self.holders[index] = after;
+        let now = self.held_actions();
+        self.pressed.extend(now.difference(&held));
+        self.released.extend(held.difference(&now));
+        if index == self.primary {
+            self.pointer.pressed |= after != 0;
+            self.pointer.released |= after == 0;
+        }
+    }
+
+    fn held_actions(&self) -> BTreeSet<u32> {
+        self.holders
+            .iter()
+            .zip(&self.actions)
+            .filter(|&(holders, _)| *holders != 0)
+            .flat_map(|(_, actions)| actions.iter().copied())
+            .collect()
+    }
+
+    fn held(&self, index: usize) -> bool {
+        self.holders[index] != 0
+    }
+
+    pub fn release(&mut self, holder: Holder) {
+        for index in 0..KEYS.len() {
+            let held = self.holders[index];
+            if held & holder.bit() != 0 {
+                self.change(index, held & !holder.bit());
             }
         }
-        true
+        if holder == Holder::Pad {
+            self.pad_buttons = 0;
+            self.pad_held = 0;
+            self.analog = [0.0; 6];
+        }
     }
 
     pub fn look(&mut self, dx: f32, dy: f32) {
@@ -356,25 +409,23 @@ impl InputGatherer {
     }
 
     pub fn clear(&mut self) {
-        self.holds = [0; KEYS.len()];
-        self.yaw = 0.0;
-        self.pitch = 0.0;
-        self.held.clear();
-        self.pressed.clear();
-        self.released.clear();
-        self.menu_pressed = 0;
+        self.release(Holder::Player);
+        self.release(Holder::Pad);
+        self.drop_edges();
         self.pointer = PointerInput::default();
-        self.pad_buttons = 0;
-        self.analog = [0.0; 6];
-        self.timestamp = None;
     }
 
-    pub fn take(&mut self, timestamp: f64) -> FrameInput {
+    pub fn drop_edges(&mut self) {
+        self.taken();
+        self.pressed.clear();
+        self.released.clear();
+        self.pad_buttons = self.pad_held;
+        self.analog = [0.0; 6];
+    }
+
+    pub fn take(&mut self, seconds: f32) -> FrameInput {
         self.take_pad_buttons();
-        let seconds = self
-            .timestamp
-            .map_or(0.0, |last| ((timestamp - last).max(0.0) * 0.001) as f32);
-        self.timestamp = Some(timestamp);
+        let seconds = finite(seconds).max(0.0);
         let analog = std::mem::take(&mut self.analog);
         let [
             left_x,
@@ -390,7 +441,7 @@ impl InputGatherer {
             let held = |wanted: MoveDirection| {
                 self.movement
                     .iter()
-                    .any(|&(index, direction)| direction == wanted && self.holds[index] > 0)
+                    .any(|&(index, direction)| direction == wanted && self.held(index))
             };
             f32::from(u8::from(held(positive))) - f32::from(u8::from(held(negative)))
         };
@@ -404,13 +455,21 @@ impl InputGatherer {
                 look_right_pixels: self.yaw + right_x * turn,
                 look_down_pixels: self.pitch - right_y * turn,
             },
-            held: self.held.clone(),
+            held: self.held_actions(),
             pressed: std::mem::take(&mut self.pressed),
             released: std::mem::take(&mut self.released),
-            pointer: self.pointer,
+            pointer: PointerInput {
+                held: self.held(self.primary),
+                ..self.pointer
+            },
             axes: AxisInput::of(self.axis_values(&analog)),
             menu: menu_input(self.menu_pressed),
         };
+        self.taken();
+        input
+    }
+
+    fn taken(&mut self) {
         self.yaw = 0.0;
         self.pitch = 0.0;
         self.menu_pressed = 0;
@@ -419,7 +478,6 @@ impl InputGatherer {
         self.pointer.wheel_up_notches = 0.0;
         self.pointer.pressed = false;
         self.pointer.released = false;
-        input
     }
 
     fn take_pad_buttons(&mut self) {
@@ -427,7 +485,7 @@ impl InputGatherer {
         for (code, bit) in PAD_BUTTONS {
             let mask = 1_u32 << bit;
             if changed & mask != 0 {
-                self.key(code, self.pad_buttons & mask != 0, true);
+                self.hold(Holder::Pad, code, self.pad_buttons & mask != 0, true);
             }
         }
         self.pad_held = self.pad_buttons;
@@ -438,7 +496,7 @@ impl InputGatherer {
         let mut values = [0.0; AxisId::COUNT as usize];
         for &(source, axis, scale) in &self.axes {
             let value = match source {
-                Source::Key(index) => f32::from(u8::from(self.holds[index] > 0)),
+                Source::Key(index) => f32::from(u8::from(self.held(index))),
                 Source::Analog(index) => analog[index],
             };
             values[axis] += value * scale;

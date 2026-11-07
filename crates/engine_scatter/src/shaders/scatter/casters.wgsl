@@ -1,8 +1,8 @@
 import package::engine::impostors::{impostor_albedo, impostor_sampler};
 import package::engine::materials::{base_color_sampler, base_color_texture, material_maps};
 import package::engine::mesh::impostor_frames::{
-    IMPOSTOR_HEMISPHERE, impostor_basis, impostor_frame_direction, impostor_frames, impostor_grid,
-    impostor_index
+    impostor_basis, impostor_flags_hemisphere, impostor_frame_direction, impostor_frames,
+    impostor_grid, impostor_index
 };
 import package::engine::view::camera;
 import package::face::instances::{AffinePose, SlotColor};
@@ -96,7 +96,7 @@ fn vs_impostor_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
     let orientation = sign(dot(x, yz));
     let sun = normalize(vec3<f32>(dot(yz, toward), dot(cross(z, x), toward),
         dot(cross(x, y), toward)) * orientation);
-    let hemisphere = (record.flags & IMPOSTOR_HEMISPHERE) != 0u;
+    let hemisphere = impostor_flags_hemisphere(record.flags);
     let frames = impostor_frames(record.flags);
     let grid = (impostor_grid(sun, hemisphere) * 0.5 + 0.5) * f32(frames - 1u);
     let cell = vec2<u32>(min(round(grid), vec2<f32>(f32(frames - 1u))));

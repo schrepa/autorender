@@ -43,6 +43,13 @@ impl LodFade {
     }
 }
 
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CasterCache {
+    Out = 0,
+    Kept = 1,
+}
+
 gpu_consts! {
     pub const LOD_LEVELS: u32 = 3;
     pub const LOD_FADED: u32 = <LodFade as GpuBits>::FIELDS[2].mask();
@@ -70,7 +77,7 @@ gpu_struct! {
         pub groups: u32,
         pub batches: u32,
         pub node_capacity: u32,
-        pub blend: u32,
+        pub pad_nodes: u32,
         pub planes: [[f32; 4]; 6],
         pub absolute_view_projection: [[f32; 4]; 4],
         pub motion: u32,

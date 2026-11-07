@@ -374,7 +374,7 @@ pub(crate) fn stream_terrains(
     let streaming = &mut *streaming;
     let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
     let eye = view.detail_eye();
-    let seconds = time.delta_seconds;
+    let seconds = time.real_seconds as f32;
     streaming.points.clear();
     streaming.points.push(eye);
     streaming.places.clear();

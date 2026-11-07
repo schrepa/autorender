@@ -21,8 +21,8 @@ pub use dev::{
 };
 pub use jobs::{GroundJob, PORTALS, PortalsJob, WALK_GROUND, portals_output};
 pub use nav::{
-    Gait, NavOptions, NavPath, PORTAL_RUN, Portal, Side, TilePortals, WalkData, WalkGround,
-    WalkSearch, Want,
+    Gait, NavOptions, NavPath, PORTAL_RUN, Portal, Side, Stepped, TilePortals, WalkData,
+    WalkGround, WalkSearch, Want,
 };
 
 pub struct NavigationBrick;

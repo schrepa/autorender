@@ -37,6 +37,7 @@ fn input_keys(_: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     pad(&mut keys)?;
     menu(&mut keys)?;
     move_keys()?;
+    one_action_two_keys()?;
     edges()
 }
 
@@ -78,14 +79,19 @@ fn edges() -> Result<(), SmokeFailure> {
     let first = BTreeSet::from([0]);
     let none = BTreeSet::new();
     state.ingest(&first, &first, &none);
-    state.begin_tick();
+    smoke_eq!(
+        json!(state.pending_tick()),
+        json!(1),
+        "a_press_is_stamped_with_its_tick"
+    );
+    state.begin_tick(1);
     smoke_eq!(
         shown(&state),
         json!([true, false]),
         "first_tick_sees_a_press"
     );
     state.hide_edges();
-    state.begin_tick();
+    state.begin_tick(2);
     smoke_eq!(shown(&state), json!([false, false]), "second_tick_does_not");
     state.hide_edges();
     state.begin_frame();
@@ -110,11 +116,20 @@ fn edges() -> Result<(), SmokeFailure> {
         "a_frame_without_ticks_sees_a_release"
     );
     state.hide_edges();
-    state.begin_tick();
+    state.begin_tick(3);
     smoke_eq!(
         shown(&state),
         json!([false, true]),
         "the_tick_after_still_sees_it"
+    );
+    state.hide_edges();
+    state.ingest(&first, &first, &none);
+    state.drop_tick_edges();
+    state.begin_tick(4);
+    smoke_eq!(
+        shown(&state),
+        json!([false, false]),
+        "a_press_dropped_by_a_pause_never_fires"
     );
     Ok(())
 }
@@ -155,6 +170,31 @@ fn keyboard(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
         json!([[0], [0]]),
         "actions_press"
     );
+    keys.key("Space", false, false);
+    keys.take(0.0);
+    keys.key("Space", true, false);
+    keys.drop_edges();
+    let kept = keys.take(0.0);
+    smoke_eq!(
+        json!([kept.held, kept.pressed]),
+        json!([[0], []]),
+        "a_suspend_keeps_keys_and_drops_edges"
+    );
+    keys.agent_key("Space", true);
+    keys.key("Space", false, false);
+    let shared = keys.take(0.0);
+    smoke_eq!(
+        json!([shared.held, shared.released]),
+        json!([[0], []]),
+        "the_agent_holds_beside_the_player"
+    );
+    keys.clear();
+    smoke_eq!(
+        json!(keys.take(0.0).held),
+        json!([0]),
+        "blur_leaves_agent_keys"
+    );
+    keys.agent_key("Space", false);
     keys.key("KeyW", true, false);
     keys.clear();
     let blurred = keys.take(0.0);
@@ -162,6 +202,31 @@ fn keyboard(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
         json!([blurred.state.move_forward, blurred.held]),
         json!([0.0, []]),
         "blur_releases"
+    );
+    Ok(())
+}
+
+fn one_action_two_keys() -> Result<(), SmokeFailure> {
+    let built = InputGatherer::new(&[("Space", 0), ("Enter", 0)], &[], MOVE_KEYS, MENU_KEYS);
+    smoke_eq!(built.is_ok(), true, "shared_action_builds");
+    let Ok(mut keys) = built else {
+        return Ok(());
+    };
+    keys.key("Space", true, false);
+    keys.key("Enter", true, false);
+    keys.key("Space", false, false);
+    let first = keys.take(0.0);
+    smoke_eq!(
+        json!([first.held, first.pressed, first.released]),
+        json!([[0], [0], []]),
+        "one_key_still_holds_the_action"
+    );
+    keys.key("Enter", false, false);
+    let last = keys.take(0.0);
+    smoke_eq!(
+        json!([last.held, last.released]),
+        json!([[], [0]]),
+        "the_last_key_releases_the_action"
     );
     Ok(())
 }
@@ -303,13 +368,13 @@ fn pad(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
     keys.take(0.0);
     keys.pad(0, [0.0, 1.0, 1.0, 0.0, 0.0, 1.0]);
     keys.pad(0, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
-    let moved = keys.take(1000.0).state;
+    let moved = keys.take(1.0).state;
     smoke_eq!(
         json!([moved.move_forward, moved.move_up, moved.look_right_pixels]),
         json!([1.0, 1.0, 600.0]),
         "pads_merge_and_move"
     );
-    let unplugged = keys.take(2000.0).state;
+    let unplugged = keys.take(1.0).state;
     smoke_eq!(
         json!([unplugged.move_forward, unplugged.look_right_pixels]),
         json!([0.0, 0.0]),

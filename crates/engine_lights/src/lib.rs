@@ -11,7 +11,9 @@ mod part;
 mod scene;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, ComponentKind, GpuStruct, SceneComponents, Schedule, Source};
+use engine_core::{
+    Brick, Bricks, ComponentKind, GpuBits, GpuStruct, SceneComponents, Schedule, Source,
+};
 use engine_places_rendering::lights::{Lights, LocalLight};
 use engine_render::RenderBricks;
 
@@ -21,6 +23,7 @@ const GENERATED: &[&str] = &[
     gpu::WGSL,
     <gpu::Clusters as GpuStruct>::WGSL,
     <gpu::LightInput as GpuStruct>::WGSL,
+    <gpu::LightPlace as GpuBits>::WGSL,
 ];
 
 pub struct LightsBrick;

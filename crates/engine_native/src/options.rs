@@ -687,28 +687,26 @@ impl HostOptions {
         self.settings.apply(game.host_mut())?;
         game.host_mut().cook();
         let read = game.jobs_mut().packed();
-        let (mut frame, mut settled, mut said) = (0_u32, 0, Instant::now());
-        let (mut last, mut moved) = ((u64::MAX, u32::MAX), Instant::now());
+        let (mut frame, mut said) = (0_u32, Instant::now());
+        let (mut last, mut moved) = (None, Instant::now());
         loop {
             game.frame(f64::from(frame) * 1000.0 / 60.0)?;
             frame += 1;
-            let left = game.host().cook_left();
-            let held = game.host().jobs_held();
-            if (left, held) != last {
-                (last, moved) = ((left, held), Instant::now());
+            let readiness = game.host().frame_times().readiness.clone();
+            if !readiness.failed.is_empty() {
+                return Err(Error::new(ErrorCode::RenderFailed, "--cook").got(json!({
+                    "failed": readiness.failed,
+                })));
             }
-            settled = if left == 0 && held == 0 {
-                settled + 1
-            } else {
-                0
-            };
-            if settled >= COOK_SETTLE {
+            if readiness.settled() {
                 break;
+            }
+            if last.as_ref() != Some(&readiness) {
+                (last, moved) = (Some(readiness.clone()), Instant::now());
             }
             if moved.elapsed() > COOK_STALL {
                 return Err(Error::new(ErrorCode::RenderFailed, "--cook").got(json!({
-                    "records_left": left,
-                    "jobs_held": held,
+                    "readiness": readiness,
                     "unchanged_s": COOK_STALL.as_secs(),
                 })));
             }
@@ -722,8 +720,8 @@ impl HostOptions {
                     .collect();
                 let record = json!({
                     "event": "cooking",
-                    "records_left": left,
-                    "jobs_held": held,
+                    "readiness": readiness,
+                    "jobs_held": game.host().jobs_held(),
                     "features_records_left": features,
                 });
                 eprintln!("{record}");
@@ -860,8 +858,6 @@ impl HostOptions {
         Ok(())
     }
 }
-
-const COOK_SETTLE: u32 = 8;
 
 const COOK_STALL: Duration = Duration::from_secs(600);
 

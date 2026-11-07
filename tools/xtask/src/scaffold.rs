@@ -574,7 +574,7 @@ fn claim(
             contract: decl.wgsl(),
         },
         (PlaceKind::List, _) => Shape::List,
-        (PlaceKind::Component, _) => return Ok(None),
+        (PlaceKind::Component | PlaceKind::Ledger, _) => return Ok(None),
     };
     let filler = match shape {
         Shape::Slot { .. } => registry.filler_named(part),

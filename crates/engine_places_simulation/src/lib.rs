@@ -27,5 +27,6 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::component::<physics::Collider>("collider"),
     PlaceDecl::component::<physics::RigidBody>("rigid_body"),
     PlaceDecl::component::<physics::BodyPush>("body_push"),
+    PlaceDecl::ask::<physics::BodyAsk>(),
     PlaceDecl::component::<solids::SolidSource>("solid_source"),
 ];

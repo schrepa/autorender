@@ -5,7 +5,7 @@ use engine_core::smoke::{
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-use super::{SETTLE_FRAMES, WAIT_FRAMES, fast, open, overview, settle, view};
+use super::{SETTLE_FRAMES, WAIT_FRAMES, open, overview, settle, view};
 use crate::requests::seen;
 use crate::stats::terrain;
 
@@ -19,12 +19,9 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
 }
 
 fn materials(session: &mut dyn SmokeSession) -> Checked<()> {
-    environment(
-        session,
-        json!({"terrain": with(&fast(), json!({"gpu_materials": false}))}),
-    )?;
+    environment(session, json!({"terrain": {"gpu_materials": false}}))?;
     settle(session)?;
-    environment(session, json!({ "terrain": fast() }))?;
+    environment(session, json!({ "terrain": {} }))?;
     settle(session)?;
     camera(session, view([380.0, 90.0, -420.0], [300.0, 30.0, -300.0]))?;
     let mut controls = 0.0;

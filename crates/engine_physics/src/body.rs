@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use engine_core::{Error, ErrorCode, InvalidSetting, Rule, Setting};
-use engine_places_simulation::physics::{BodyPush, RigidBody};
+use engine_places_simulation::physics::{BodyChange, BodyPush, RigidBody};
 use engine_places_simulation::water::WaterKind;
 use glam::Vec3;
 use serde::Serialize;
@@ -23,12 +23,7 @@ const RULES: [(&str, Rule); 8] = [
     ("fast", Rule::any()),
 ];
 const PUSH: Rule = Rule::range(-1.0e9, 1.0e9);
-const PUSH_RULES: [(&str, Rule); 4] = [
-    ("force", PUSH),
-    ("torque", PUSH),
-    ("impulse", PUSH),
-    ("angular_impulse", PUSH),
-];
+const PUSH_RULES: [(&str, Rule); 2] = [("force", PUSH), ("torque", PUSH)];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -92,9 +87,23 @@ pub(crate) fn refused(body: &RigidBody, push: Option<&BodyPush>) -> Option<BodyP
 
 fn push_ruled(push: &BodyPush) -> Result<(), InvalidSetting> {
     push.force.check("force", PUSH)?;
-    push.torque.check("torque", PUSH)?;
-    push.impulse.check("impulse", PUSH)?;
-    push.angular_impulse.check("angular_impulse", PUSH)
+    push.torque.check("torque", PUSH)
+}
+
+fn change_ruled(change: BodyChange) -> Result<(), InvalidSetting> {
+    let rule = match change {
+        BodyChange::Velocity(_) | BodyChange::Spin(_) => MOTION,
+        BodyChange::Impulse(_) | BodyChange::AngularImpulse(_) => PUSH,
+    };
+    change.value().check("value", rule)
+}
+
+pub(crate) fn admits(change: BodyChange) -> bool {
+    change_ruled(change).is_ok()
+}
+
+pub(crate) fn check_change(change: BodyChange, path: &str) -> Result<(), Error> {
+    change_ruled(change).map_err(|invalid| invalid.error(ErrorCode::InvalidValue, path))
 }
 
 pub(crate) fn check_push(push: &BodyPush, path: &str) -> Result<(), Error> {

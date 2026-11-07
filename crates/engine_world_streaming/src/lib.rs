@@ -29,8 +29,8 @@ use serde::Serialize;
 
 use engine_core::math::{max, min};
 use engine_core::{
-    Brick, Bricks, Camera, EvenDisabled, FrameTime, GlobalTransforms, Interest, Request, Requests,
-    Runs, SceneContext, Schedule, Smoke, Source, Spawner, settings, stats,
+    Brick, Bricks, Camera, FrameTime, GlobalTransforms, Interest, Request, Requests, Runs,
+    SceneContext, Schedule, Smoke, Source, Spawner, settings, stats,
 };
 use engine_places_world::streaming::StreamingFocus;
 
@@ -489,7 +489,7 @@ type FocusQuery<'w, 's> = Query<'w, 's, Entity, With<StreamingFocus>>;
 pub(crate) fn stream_cells(
     (settings, camera, frame, globals): StreamReads<'_>,
     (scene, context): SceneReads<'_>,
-    (focus, live): (FocusQuery<'_, '_>, Query<Entity, EvenDisabled>),
+    (focus, live): (FocusQuery<'_, '_>, Query<Entity>),
     mut cells: ResMut<WorldCells>,
     mut tracked: ResMut<WorldChanges>,
     mut published: ResMut<CellStats>,
@@ -521,7 +521,7 @@ pub(crate) fn stream_cells(
         let changes = tracked.bypass_change_detection();
         let (despawned, removed) = cells.reconcile(changes, revised, &mut act);
         cells.stats.despawned += despawned;
-        cells.load_and_unload(settings, frame.elapsed_seconds, &mut act);
+        cells.load_and_unload(settings, frame.real_elapsed, &mut act);
         cells.spawn(changes, settings, &mut act);
         if removed {
             tracked.set_changed();
@@ -551,7 +551,7 @@ fn sources(
     cells: &mut WorldCells,
     settings: WorldStreaming,
 ) {
-    let (number, elapsed) = (frame.frame, frame.elapsed_seconds);
+    let (number, elapsed) = (frame.frame, frame.real_elapsed);
     let motion = &mut cells.motion;
     match motion.last {
         Some((last_frame, last_elapsed, last)) if number != last_frame => {

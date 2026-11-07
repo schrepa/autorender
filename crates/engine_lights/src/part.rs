@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Cut, DeviceLimits, Error, Readable, Readback, View};
+use engine_core::{Cut, DeviceLimits, Error, GpuBits, Readable, Readback, View};
 use engine_places_rendering::lighting::Lighting;
 use engine_places_rendering::lights::{LIGHT_EXTERIOR, LIGHT_INTERIOR, LightRegion};
 use engine_places_rendering::probes::ProbeCaptures;
@@ -10,7 +10,8 @@ use engine_render::{
 use glam::Mat4;
 
 use crate::gpu::{
-    Clusters, GROUP_LIGHTS, KEPT_REGIONS, LIT_VIEWS, LightInput, NO_SLOT, SHAPED_LIGHTS,
+    Clusters, GROUP_LIGHTS, KEPT_REGIONS, LIT_VIEWS, LightInput, LightPlace, NO_SLOT,
+    SHAPED_LIGHTS,
 };
 use crate::lights::{LightList, LocalLightSettings, RenderLight};
 use crate::shaders;
@@ -97,11 +98,15 @@ impl From<&RenderLight> for LightInput {
             cos_outer: light.cone[1],
             radius: light.shape[0],
             length: light.shape[1],
-            region: match light.region {
-                LightRegion::Both => 0,
-                LightRegion::Interior => LIGHT_INTERIOR,
-                LightRegion::Exterior => LIGHT_EXTERIOR,
-            },
+            place: LightPlace {
+                region: match light.region {
+                    LightRegion::Both => 0,
+                    LightRegion::Interior => LIGHT_INTERIOR,
+                    LightRegion::Exterior => LIGHT_EXTERIOR,
+                },
+                moving: light.moving,
+            }
+            .pack(),
         }
     }
 }
@@ -359,7 +364,10 @@ impl GpuPart for LightsGpu {
         }
         self.staged.clear();
         self.staged.extend(list.lights.iter().map(LightInput::from));
-        self.regions = self.staged.iter().any(|light| light.region != 0);
+        self.regions = list
+            .lights
+            .iter()
+            .any(|light| light.region != LightRegion::Both);
         let needed = totals.needed().max(count as u64 * 32);
         self.grow_indices(needed * 4);
         cx.allocate_buffer(self.inputs, self.capacity as u64 * LIGHT_BYTES);

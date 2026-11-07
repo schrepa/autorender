@@ -755,7 +755,7 @@ pub(crate) fn plan_sim(
     mut state: ResMut<WaterState>,
 ) {
     let state = &mut *state;
-    let seconds = time.presented_seconds;
+    let seconds = time.elapsed;
     let mut moved = false;
     let mut changed = Vec::new();
     for terrain in &mut state.terrains {

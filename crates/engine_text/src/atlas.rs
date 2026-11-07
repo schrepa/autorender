@@ -49,6 +49,28 @@ impl Atlas {
         std::mem::take(&mut self.uploads)
     }
 
+    pub(crate) fn refill(&mut self, fonts: &mut Fonts) {
+        self.uploads.clear();
+        for (&key, &slot) in &self.slots {
+            let Some(slot) = slot.filter(|slot| slot.width > 0 && slot.height > 0) else {
+                continue;
+            };
+            let Some(raster) = fonts
+                .raster(key)
+                .filter(|raster| raster.width == slot.width && raster.height == slot.height)
+            else {
+                continue;
+            };
+            self.uploads.push(Upload {
+                x: slot.x,
+                y: slot.y,
+                width: slot.width,
+                height: slot.height,
+                coverage: raster.coverage,
+            });
+        }
+    }
+
     pub(crate) fn settle(&mut self) -> bool {
         let full = std::mem::take(&mut self.full);
         if full {

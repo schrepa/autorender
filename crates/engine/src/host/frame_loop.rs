@@ -1,7 +1,7 @@
+use engine_core::PauseReason;
+
 use super::now_ms;
-use super::policy::{
-    BETWEEN_MARGIN_MS, FRAME_INTERVAL_MS, PACE_INTERVAL_LIMIT_MS, PACE_SMOOTHING, PREPARE_LIMIT_MS,
-};
+use super::policy::{BETWEEN_MARGIN_MS, PREPARE_LIMIT_MS};
 use crate::{Game, GameHost};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,57 +24,87 @@ impl FramePhase {
     ];
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Preparing {
-    since: Option<f64>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum HostPause {
+    Focus = 0,
+    Hidden = 1,
+    Suspended = 2,
+}
+
+impl HostPause {
+    pub const ALL: [(Self, &'static str); 3] = [
+        (Self::Focus, "focus"),
+        (Self::Hidden, "hidden"),
+        (Self::Suspended, "suspended"),
+    ];
+
+    pub const fn reason(self) -> PauseReason {
+        match self {
+            Self::Focus => PauseReason::Focus,
+            Self::Hidden => PauseReason::Hidden,
+            Self::Suspended => PauseReason::Suspended,
+        }
+    }
+
+    pub fn of(code: u32) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .find(|&&(pause, _)| pause as u32 == code)
+            .map(|&(pause, _)| pause)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Pace {
-    last: Option<f64>,
-    interval: f64,
-    spent: f64,
+enum Stage {
+    Unprepared,
+    Preparing { since: f64 },
+    Playing,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum View {
+    Sized,
+    Empty,
 }
 
 #[derive(Clone, Debug)]
 pub struct FrameLoop {
-    preparing: Option<Preparing>,
-    pace: Pace,
+    stage: Stage,
+    view: View,
+    started: f64,
     between: bool,
-    idle: bool,
 }
 
 impl Default for FrameLoop {
     fn default() -> Self {
         Self {
-            preparing: Some(Preparing { since: None }),
-            pace: Pace {
-                last: None,
-                interval: FRAME_INTERVAL_MS,
-                spent: 0.0,
-            },
+            stage: Stage::Unprepared,
+            view: View::Sized,
+            started: 0.0,
             between: true,
-            idle: false,
         }
     }
 }
 
 impl FrameLoop {
     pub fn set_preparation(&mut self, enabled: bool) {
-        self.preparing = enabled.then_some(Preparing { since: None });
+        self.stage = if enabled {
+            Stage::Unprepared
+        } else {
+            Stage::Playing
+        };
     }
 
     pub fn preparing(&self) -> bool {
-        self.preparing.is_some()
+        match self.stage {
+            Stage::Unprepared | Stage::Preparing { .. } => true,
+            Stage::Playing => false,
+        }
     }
 
     pub fn set_between_frames(&mut self, enabled: bool) {
         self.between = enabled;
-    }
-
-    pub fn skip(&mut self) {
-        self.pace.last = None;
-        self.pace.spent = 0.0;
     }
 
     pub fn frame<G: Game>(
@@ -84,67 +114,64 @@ impl FrameLoop {
         (width, height): (u32, u32),
     ) -> crate::Result<FramePhase> {
         if width == 0 || height == 0 {
-            if !self.idle {
-                host.suspend();
-                self.idle = true;
-            }
+            host.pause(HostPause::Hidden);
+            self.view = View::Empty;
             return Ok(FramePhase::Idle);
         }
-        self.idle = false;
-        let Some(preparing) = &mut self.preparing else {
-            host.frame(timestamp, width, height)?;
-            self.paced(timestamp);
-            return Ok(FramePhase::Playing);
+        if let View::Empty = self.view {
+            host.resume(HostPause::Hidden);
+        }
+        self.view = View::Sized;
+        self.started = timestamp;
+        let (stage, phase) = self.advance(host, timestamp, (width, height))?;
+        self.stage = stage;
+        Ok(phase)
+    }
+
+    fn advance<G: Game>(
+        &self,
+        host: &mut GameHost<G>,
+        timestamp: f64,
+        (width, height): (u32, u32),
+    ) -> crate::Result<(Stage, FramePhase)> {
+        let since = match self.stage {
+            Stage::Playing => {
+                host.frame(timestamp, width, height)?;
+                host.paced();
+                return Ok((Stage::Playing, FramePhase::Playing));
+            }
+            Stage::Unprepared => now_ms(),
+            Stage::Preparing { since } => since,
         };
-        let since = *preparing.since.get_or_insert_with(now_ms);
+        let preparing = Stage::Preparing { since };
         let late = now_ms() - since > PREPARE_LIMIT_MS as f64;
         if host.prepare_pipelines() && !late {
             host.work(width, height);
-            return Ok(FramePhase::Preparing);
+            return Ok((preparing, FramePhase::Preparing));
         }
         if host.frame_stats().readiness.compiling > 0 && !late {
             host.work(width, height);
-            return Ok(FramePhase::Compiling);
+            return Ok((preparing, FramePhase::Compiling));
         }
         host.suspend();
         host.frame(timestamp, width, height)?;
         let after = host.frame_stats();
         if (after.render.pipelines_created > 0 || !after.readiness.settled()) && !late {
-            return Ok(FramePhase::Preparing);
+            return Ok((preparing, FramePhase::Preparing));
         }
-        self.preparing = None;
         host.suspend();
-        self.skip();
-        Ok(FramePhase::Started)
-    }
-
-    fn paced(&mut self, timestamp: f64) {
-        let pace = &mut self.pace;
-        if let Some(last) = pace.last {
-            let interval = timestamp - last - pace.spent;
-            if interval > 0.0 && interval < PACE_INTERVAL_LIMIT_MS {
-                pace.interval += (interval - pace.interval) * PACE_SMOOTHING;
-            }
-        }
-        pace.last = Some(timestamp);
-        pace.spent = 0.0;
+        Ok((Stage::Playing, FramePhase::Started))
     }
 
     pub fn between<G: Game>(&mut self, host: &mut GameHost<G>) -> bool {
-        let Some(last) = self
-            .pace
-            .last
-            .filter(|_| self.between && self.preparing.is_none())
-        else {
-            return false;
-        };
-        let start = now_ms();
-        let spare = last + self.pace.interval - start - BETWEEN_MARGIN_MS;
+        match self.stage {
+            Stage::Playing if self.between => {}
+            Stage::Playing | Stage::Unprepared | Stage::Preparing { .. } => return false,
+        }
+        let spare = self.started + host.refresh_interval() - now_ms() - BETWEEN_MARGIN_MS;
         if spare <= 1.0 {
             return false;
         }
-        let remaining = host.work_between_frames(spare);
-        self.pace.spent = now_ms() - start;
-        remaining
+        host.work_between_frames(spare)
     }
 }

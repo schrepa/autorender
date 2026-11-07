@@ -332,17 +332,6 @@
       "direction": null
     },
     {
-      "name": "collision_stats.slide_hits",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "cut_seconds",
       "kind": "work",
       "rule": "not-above",
@@ -1331,6 +1320,17 @@
       ],
       "unit": "count",
       "direction": null
+    },
+    {
+      "name": "physics_stats.dropped_asks",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
     },
     {
       "name": "physics_stats.problems",

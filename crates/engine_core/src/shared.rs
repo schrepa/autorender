@@ -14,6 +14,7 @@ settings! {
         pub tiles: u32 = 4096 => at_least(1),
         pub instance_colors: u32 = 16384 => at_least(1),
         pub mesh_residency: u32 = 4096 => at_least(1),
+        pub ui_events: u32 = 256 => at_least(1),
     }
 }
 
@@ -53,7 +54,10 @@ pub(crate) fn start_frame(world: &mut World) {
     if let Some(mut globals) = world.get_resource_mut::<GlobalTransforms>() {
         globals.resize_changes(transforms as usize);
     }
-    let now = world.resource::<crate::FrameTime>().elapsed_seconds;
+    if let Some(mut poses) = world.get_resource_mut::<crate::DrawnPoses>() {
+        poses.resize_changes(transforms as usize);
+    }
+    let now = world.resource::<crate::FrameTime>().real_elapsed;
     if let Some(mut level) = world.get_resource_mut::<Level>() {
         level.settle(now);
     }

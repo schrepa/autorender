@@ -1,8 +1,8 @@
 import package::engine::color::decode_srgb;
 import package::engine::mesh::declarations::MASK_MIP_SCALE;
 import package::engine::mesh::impostor_frames::{
-    IMPOSTOR_CUTOFF, IMPOSTOR_HEMISPHERE, impostor_basis, impostor_facing,
-    impostor_frame_direction, impostor_frames, impostor_grid, impostor_met,
+    IMPOSTOR_CUTOFF, impostor_basis, impostor_facing, impostor_flags_hemisphere,
+    impostor_flags_texels, impostor_frame_direction, impostor_frames, impostor_grid, impostor_met,
 };
 import package::engine::post::frame::post;
 import package::engine::view::{camera, stable_normalize};
@@ -319,7 +319,7 @@ fn test_placed(slot: u32, p: vec3<f32>, direction: vec3<f32>, nearest: f32, spre
         return;
     }
     let impostor = placed_impostor(record.group);
-    let texels = impostor.flags & (IMPOSTOR_HEMISPHERE - 1u);
+    let texels = impostor_flags_texels(impostor.flags);
     let radius = impostor.sphere.w;
     if texels == 0u || radius <= 0.0 {
         return;
@@ -333,7 +333,7 @@ fn test_placed(slot: u32, p: vec3<f32>, direction: vec3<f32>, nearest: f32, spre
         return;
     }
     let toward = -way / rate;
-    let hemisphere = (impostor.flags & IMPOSTOR_HEMISPHERE) != 0u;
+    let hemisphere = impostor_flags_hemisphere(impostor.flags);
     let frames = impostor_frames(impostor.flags);
     let grid = (impostor_grid(toward, hemisphere) * 0.5 + 0.5) * f32(frames - 1u);
     let cell = min(vec2<u32>(round(grid)), vec2<u32>(frames - 1u));

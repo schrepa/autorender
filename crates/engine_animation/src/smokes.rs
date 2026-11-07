@@ -165,15 +165,19 @@ fn at(
 }
 
 fn moves(session: &mut dyn SmokeSession) -> Checked<()> {
+    session.step(1);
     let start = joint(session, "tip")?;
     session.step(30);
-    let moved = joint(session, "tip")?;
+    let held = state(session)?;
+    let moved = vector(&held["joints"]["tip"]);
     smoke_check!(
         !close(moved, start),
         "clip_moves_joint",
         &moved,
         &not(start)
     );
+    let drawn = vector(&held["drawn"]["tip"]);
+    smoke_check!(close(drawn, moved), "tick_draws_joint", &drawn, &moved);
     Ok(())
 }
 
@@ -220,9 +224,9 @@ fn aims(session: &mut dyn SmokeSession) -> Checked<()> {
     session.step(1);
     at(session, "tip", [-1.0, 1.0, 0.5], "aim_overrides_clip")?;
     let tip = joint(session, "tip")?;
-    let gun = component(session, "gun", "Transform")?;
+    let gun = component(session, "gun", "GlobalTransform")?;
     let held = vector(&gun["translation"]);
-    smoke_check!(close(held, tip), "attachment_follows", &held, &tip);
+    smoke_check!(close(held, tip), "held_by_joint", &held, &tip);
     order(session, "animation_aim", json!({ "joint": "mid" }))?;
     session.step(1);
     at(session, "tip", [0.0, 2.0, 0.5], "aim_clears")

@@ -73,13 +73,10 @@ fn float(source: &mut String, name: &str, value: f32) {
 
 pub fn presentation_source() -> String {
     use engine_core::presentation_bounds as bounds;
-    let mut source = String::new();
+    let mut source = String::from(<engine_core::PoseWord as engine_core::GpuBits>::WGSL);
+    source.push_str(engine_core::PRESENTATION_WGSL);
     for (name, value) in [
         ("NO_PARENT", engine_core::NO_PARENT),
-        ("NODE_VALID", engine_core::NODE_VALID),
-        ("NODE_BLEND", engine_core::NODE_BLEND),
-        ("NODE_ACTIVE", engine_core::NODE_ACTIVE),
-        ("NODE_PARENT_ACTIVE", engine_core::NODE_PARENT_ACTIVE),
         ("IMPOSTOR_VERTICES", crate::IMPOSTOR_VERTICES),
         (
             "POSE_FLOATS",
@@ -99,6 +96,7 @@ pub fn presentation_source() -> String {
             bounds::COMMON_DETERMINANT_MARGIN,
         ),
         ("LINEAR_ROTATION_DOT", bounds::LINEAR_ROTATION_DOT_THRESHOLD),
+        ("POSE_FLOAT_LIMIT", bounds::POSE_FLOAT_LIMIT),
     ] {
         float(&mut source, name, value);
     }

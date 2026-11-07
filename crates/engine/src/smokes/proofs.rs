@@ -1,10 +1,7 @@
-use engine_core::smoke::{Checked, compiled, control, inspect, number, render};
+use engine_core::smoke::{Checked, control, inspect, number};
 use engine_core::{BrickList, Runs, Smoke, SmokeSession, smoke_eq};
 use engine_registry::Registry;
 use serde_json::{Value, json};
-
-const FRAMES: u32 = 8;
-const SETTLE_FRAMES: u32 = 600;
 
 pub(super) const LIT_ROOM: Smoke = Smoke {
     name: "lit_room",
@@ -81,23 +78,7 @@ pub(super) fn outdoor_listed(registry: &Registry) -> bool {
 fn opened(session: &mut dyn SmokeSession, document: &Value) -> Checked<Value> {
     session.source(&document.to_string());
     control(session, "pause", json!({}))?;
-    let mut rendering = compiled(session)?;
-    for _ in 0..FRAMES {
-        rendering = render(session)?;
-    }
-    Ok(rendering)
-}
-
-fn settled(session: &mut dyn SmokeSession, key: &str, field: &str) -> Checked<Value> {
-    let mut stats = inspect(session, key)?;
-    for _ in 0..SETTLE_FRAMES {
-        if number(&stats[field]) > 0.0 {
-            break;
-        }
-        render(session)?;
-        stats = inspect(session, key)?;
-    }
-    Ok(stats)
+    super::settled(session)
 }
 
 fn lit_room(session: &mut dyn SmokeSession) -> Checked<()> {
@@ -122,13 +103,13 @@ fn lit_room(session: &mut dyn SmokeSession) -> Checked<()> {
         true,
         "room_sky_from_contract"
     );
-    let shadows = settled(session, "shadow_stats", "draws")?;
+    let shadows = inspect(session, "shadow_stats")?;
     smoke_eq!(
         json!({"active": shadows["active"], "drawn": number(&shadows["draws"]) > 0.0}),
         json!({"active": true, "drawn": true}),
         "room_shadows_draw"
     );
-    let lights = settled(session, "local_light_stats", "shaded")?;
+    let lights = inspect(session, "local_light_stats")?;
     smoke_eq!(number(&lights["shaded"]) > 0.0, true, "room_lamp_shades");
     Ok(())
 }

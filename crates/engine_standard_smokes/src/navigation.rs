@@ -1,5 +1,5 @@
 use engine_core::smoke::{
-    Checked, above, component, control, inspect, near, number, query, refuse, render,
+    Checked, above, component, control, near, number, query, refuse, render,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
@@ -12,6 +12,7 @@ const GOAL: [f64; 2] = [-25.0, 12.0];
 const HIKER: &str = "hiker";
 const BODY: &str = "body";
 const GHOST: &str = "ghost";
+const WALL: &str = "wall";
 
 const BODY_GOAL: [f64; 2] = [25.0, -25.0];
 const GHOST_GOAL: [f64; 2] = [25.0, -22.0];
@@ -232,8 +233,18 @@ fn meets_a_wall(session: &mut dyn SmokeSession) -> Checked<()> {
         wanted,
         "it_walks_through_the_wall"
     );
-    let held = character(session, BODY)?["status"].take();
-    smoke_eq!(&held, &json!("walking"), "blocked_it_keeps_walking");
+    let mut held = character(session, BODY)?;
+    smoke_eq!(&held["status"], &json!("walking"), "blocked_it_keeps_walking");
+    smoke_eq!(
+        held["blocked_by"].take(),
+        json!(WALL),
+        "the_wall_blocks_its_step"
+    );
+    smoke_eq!(
+        held["moved_by"].take(),
+        json!("engine_grounding"),
+        "grounding_moves_it"
+    );
     let at = component(session, BODY, "Transform")?["translation"].take();
     let wanted = near(BEFORE_THE_WALL, 0.2);
     smoke_eq!(
@@ -245,22 +256,18 @@ fn meets_a_wall(session: &mut dyn SmokeSession) -> Checked<()> {
         wanted,
         "a_collider_stops_at_the_wall"
     );
-    let hits = inspect(session, "collision_stats")?["slide_hits"].take();
-    let wanted = above(0);
-    smoke_eq!(
-        seen(number(&hits) > 0.0, hits, &wanted),
-        wanted,
-        "the_wall_is_in_the_hit_list"
-    );
     control(
         session,
         "nav_go",
         json!({"entity": BODY, "destination": null}),
     )?;
     session.step(2);
-    let stopped = character(session, BODY)?["status"].take();
-    smoke_eq!(&stopped, &json!("idle"), "no_destination_stops_it");
-    let hits = inspect(session, "collision_stats")?["slide_hits"].take();
-    smoke_eq!(&hits, &json!(0), "stopped_it_hits_nothing");
+    let mut stopped = character(session, BODY)?;
+    smoke_eq!(&stopped["status"], &json!("idle"), "no_destination_stops_it");
+    smoke_eq!(
+        stopped["blocked_by"].take(),
+        Value::Null,
+        "stopped_it_hits_nothing"
+    );
     Ok(())
 }

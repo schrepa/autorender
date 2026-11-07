@@ -257,7 +257,7 @@ fn function_problems(item: &Function, kind: PlaceKind) -> Vec<String> {
                 ));
             }
         }
-        PlaceKind::Slot | PlaceKind::Component => {
+        PlaceKind::Slot | PlaceKind::Component | PlaceKind::Ledger => {
             let mut locals: Vec<String> = Vec::new();
             for (index, statement) in statements.iter().enumerate() {
                 let last = index + 1 == statements.len();

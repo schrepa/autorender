@@ -3,8 +3,6 @@ use engine_math::{clamp, sin_cos};
 use engine_place::Slot;
 use serde::{Deserialize, Serialize};
 
-pub const STILL_FRAMES: u32 = 16;
-
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct Instances {
     pub slots: engine_math::collections::HashMap<Entity, u32>,
@@ -21,7 +19,7 @@ impl Instances {
 
 impl Slot for Instances {
     const NAME: &'static str = "instances";
-    const WGSL: Option<&'static str> = Some(contract!("places/instances.wgsl", STILL_FRAMES));
+    const WGSL: Option<&'static str> = Some(include_str!("places/instances.wgsl"));
 }
 
 #[derive(Component, Debug, Clone, Copy)]

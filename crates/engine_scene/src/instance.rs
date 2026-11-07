@@ -3,13 +3,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use bevy_ecs::entity::Entity;
+use bevy_ecs::resource::Resource;
 use bevy_ecs::world::{World, WorldId};
 use engine_assets::SceneAssets;
 use engine_core::{
-    AssetLibrary, Error, EvenDisabled, MaterialHandle, Mesh3d, MeshHandle, ProvidedAssets,
-    SceneContext, TextureHandle, Transform, propagate_transforms, set_parents,
+    AssetLibrary, Camera, Error, MaterialHandle, Mesh3d, MeshHandle, ProvidedAssets, SceneContext,
+    TextureHandle, Transform, propagate_transforms, set_parents,
 };
-use engine_registry::{OperationScene, SceneEntity};
+use engine_registry::{OperationScene, SceneEntity, SettingsEntry};
+use serde_json::Value;
 
 use crate::{
     SceneDocument, SceneFiles, SceneKinds, hierarchy::ExpandedObject, validation::PreparedScene,
@@ -273,7 +275,7 @@ impl SceneInstance {
             kept.extend(current.entities.values().copied());
         }
         let streamed: Vec<Entity> = world
-            .query_filtered::<(Entity, &SceneEntity), EvenDisabled>()
+            .query::<(Entity, &SceneEntity)>()
             .iter(world)
             .filter(|(entity, authored)| authored.scene_id == self.id && !kept.contains(entity))
             .map(|(entity, _)| entity)
@@ -304,6 +306,7 @@ impl SceneDocument {
             return Err(first.clone());
         }
         let bounds = crate::loading::bounds(self, &prepared.meshes);
+        let replaced = Replaced::of(world);
         let (assets, owned) = self.insert_assets(world, &mut prepared)?;
         let table = Arc::new(self.table(&assets));
         let spawned = self.spawn(world, &prepared, &table);
@@ -322,46 +325,14 @@ impl SceneDocument {
             &kinds,
             Some(files.buffers()),
         );
-        if let Err(error) = read(world, &prepared, &spawned, &context, &kinds) {
+        if let Err(error) = self.land(world, (&prepared, &kinds), &context, &spawned) {
             for &entity in &spawned {
-                world.despawn(entity);
+                let _ = world.try_despawn(entity);
             }
             owned.remove(&mut world.resource_mut::<AssetLibrary>());
+            replaced.restore(world);
             return Err(error);
         }
-        let parents: Vec<_> = prepared
-            .entities
-            .iter()
-            .filter_map(|expanded| {
-                let source = &expanded.source;
-                source.parent.as_ref().map(|parent| {
-                    (
-                        entities[source.id.as_str()],
-                        Some(entities[parent.as_str()]),
-                    )
-                })
-            })
-            .collect();
-        if let Err(error) = set_parents(world, &parents) {
-            for &entity in entities.values() {
-                world.despawn(entity);
-            }
-            owned.remove(&mut world.resource_mut::<AssetLibrary>());
-            return Err(error
-                .coded(ErrorCode::HierarchyInstallFailed)
-                .within("$.entities"));
-        }
-        propagate_transforms(world);
-        world.insert_resource(self.camera.camera());
-        world.insert_resource(SceneContext {
-            files: None,
-            ..context.clone()
-        });
-        if let Some(environment) = &prepared.environment {
-            context.scope(|| environment.apply_all(world, "$.environment"))?;
-        }
-        world.insert_resource(crate::SceneViews::of(self));
-        context.scope(|| crate::environment::apply_streamed(world, self.streamed_section()))?;
         let instance = SceneInstance {
             id: self.id.clone(),
             revision: self.revision,
@@ -392,6 +363,46 @@ impl SceneDocument {
         };
         world.insert_resource(instance.operation_scene());
         Ok(instance)
+    }
+
+    fn land(
+        &self,
+        world: &mut World,
+        (prepared, kinds): (&PreparedScene, &SceneKinds),
+        context: &SceneContext,
+        spawned: &[Entity],
+    ) -> Result<(), Error> {
+        read(world, prepared, spawned, context, kinds)?;
+        let entities = &context.entities;
+        let parents: Vec<_> = prepared
+            .entities
+            .iter()
+            .filter_map(|expanded| {
+                let source = &expanded.source;
+                source.parent.as_ref().map(|parent| {
+                    (
+                        entities[source.id.as_str()],
+                        Some(entities[parent.as_str()]),
+                    )
+                })
+            })
+            .collect();
+        set_parents(world, &parents).map_err(|error| {
+            error
+                .coded(ErrorCode::HierarchyInstallFailed)
+                .within("$.entities")
+        })?;
+        propagate_transforms(world);
+        world.insert_resource(self.camera.camera());
+        world.insert_resource(SceneContext {
+            files: None,
+            ..context.clone()
+        });
+        if let Some(environment) = &prepared.environment {
+            context.scope(|| environment.apply_all(world, "$.environment"))?;
+        }
+        world.insert_resource(crate::SceneViews::of(self));
+        context.scope(|| crate::environment::apply_streamed(world, self.streamed_section()))
     }
 
     fn insert_assets(
@@ -502,6 +513,48 @@ impl SceneDocument {
                 .zip(&handles.textures)
                 .map(|(source, handle)| (source.id.clone(), *handle))
                 .collect(),
+        }
+    }
+}
+
+struct Replaced {
+    camera: Option<Camera>,
+    context: Option<SceneContext>,
+    views: Option<crate::SceneViews>,
+    scene: Option<OperationScene>,
+    sections: Vec<(SettingsEntry, Value)>,
+}
+
+impl Replaced {
+    fn of(world: &World) -> Self {
+        let context = world.get_resource::<SceneContext>().cloned();
+        let sections =
+            crate::loading::within(context.as_ref(), || crate::environment::held(world));
+        Self {
+            camera: world.get_resource::<Camera>().copied(),
+            context,
+            views: world.get_resource::<crate::SceneViews>().cloned(),
+            scene: world.get_resource::<OperationScene>().cloned(),
+            sections,
+        }
+    }
+
+    fn restore(self, world: &mut World) {
+        put(world, self.camera);
+        put(world, self.views);
+        put(world, self.scene);
+        put(world, self.context.clone());
+        crate::loading::within(self.context.as_ref(), || {
+            crate::environment::restore(world, &self.sections);
+        });
+    }
+}
+
+fn put<R: Resource>(world: &mut World, held: Option<R>) {
+    match held {
+        Some(held) => world.insert_resource(held),
+        None => {
+            world.remove_resource::<R>();
         }
     }
 }

@@ -453,7 +453,7 @@ pub(crate) fn place_pool(
         group.count = state.pool.counts[group.objects as usize];
     }
     set_groups(state);
-    let seconds = time.elapsed_seconds as f32;
+    let seconds = time.real_elapsed as f32;
     let since = seconds - std::mem::replace(&mut state.presented, seconds);
     state.fade = if detail.fade_seconds > 0.0 && since < 1.0 {
         engine_math::clamp(since / detail.fade_seconds, 0.0, 1.0)

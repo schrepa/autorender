@@ -14,9 +14,7 @@ use glam::{Mat4, Vec3};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
-use crate::{
-    Aabb, Camera, Error, ErrorCode, EvenDisabled, Expected, List, Mesh, Operation, Slot, settings,
-};
+use crate::{Aabb, Camera, Error, ErrorCode, Expected, List, Mesh, Operation, Slot, settings};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
@@ -151,6 +149,7 @@ pub struct ComponentKind {
     value: fn(&World, Entity) -> Option<Value>,
     prepared: fn(&Value, &str) -> Result<Prepared, Error>,
     insert: fn(&mut World, Entity, Prepared) -> Result<(), Error>,
+    remove: fn(&mut World, Entity),
     placement: Placement,
     check: Option<CheckHook>,
     placed: Option<PlacedHook>,
@@ -183,6 +182,7 @@ impl ComponentKind {
                 value: component_value::<C>,
                 prepared: prepared_component::<C>,
                 insert: insert_component::<C>,
+                remove: remove_component::<C>,
                 placement: Placement::Anywhere,
                 check: None,
                 placed: None,
@@ -274,6 +274,11 @@ impl ComponentKind {
         prepared: Prepared,
     ) -> Result<(), Error> {
         (self.insert)(world, entity, prepared)
+    }
+
+    #[doc(hidden)]
+    pub fn remove(&self, world: &mut World, entity: Entity) {
+        (self.remove)(world, entity);
     }
 
     #[doc(hidden)]
@@ -515,6 +520,12 @@ fn insert_component<C: Component>(
     Ok(())
 }
 
+fn remove_component<C: Component>(world: &mut World, entity: Entity) {
+    if let Ok(mut target) = world.get_entity_mut(entity) {
+        target.remove::<C>();
+    }
+}
+
 pub struct SceneComponents;
 
 impl List for SceneComponents {
@@ -524,10 +535,12 @@ impl List for SceneComponents {
 
 #[doc(hidden)]
 pub fn scene_components(world: &World) -> impl Iterator<Item = &ComponentKind> + '_ {
-    world
-        .get_resource::<engine_registry::MembersOf<SceneComponents>>()
-        .into_iter()
-        .flat_map(|members| members.all().iter())
+    crate::authoring::core_components().iter().chain(
+        world
+            .get_resource::<engine_registry::MembersOf<SceneComponents>>()
+            .into_iter()
+            .flat_map(|members| members.all().iter()),
+    )
 }
 
 #[doc(hidden)]
@@ -540,7 +553,7 @@ pub fn scene_component(world: &World, key: &str) -> Option<ComponentKind> {
 #[derive(SystemParam)]
 pub struct SceneIds<'w, 's> {
     scene: Option<Res<'w, OperationScene>>,
-    entities: Query<'w, 's, (Entity, &'static SceneEntity), EvenDisabled>,
+    entities: Query<'w, 's, (Entity, &'static SceneEntity)>,
 }
 
 impl SceneIds<'_, '_> {

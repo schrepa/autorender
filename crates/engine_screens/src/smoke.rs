@@ -20,6 +20,7 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     undeclared(session)?;
     session.source(&scene("screens-fixture", &entities()).to_string());
     declared(session)?;
+    both(session)?;
     timed(session)?;
     let progress = query(session, "level_progress", json!({}))?;
     smoke_eq!(progress["state"], json!("idle"), "level_starts_idle");
@@ -60,6 +61,12 @@ fn declared(session: &mut dyn SmokeSession) -> Checked<()> {
     control(session, "screen", json!({"action": "push", "name": "menu"}))?;
     session.step(1);
     smoke_eq!(paused(session)?, json!(true), "pausing_screen_pauses");
+    let state = query(session, "time_state", json!({}))?;
+    smoke_eq!(
+        state["pause_reasons"],
+        json!(["screen"]),
+        "screen_pause_is_its_own_reason"
+    );
     let held = tick(session);
     session.step(4);
     smoke_eq!(tick(session), held, "paused_holds_ticks");
@@ -81,10 +88,45 @@ fn declared(session: &mut dyn SmokeSession) -> Checked<()> {
     Ok(())
 }
 
+fn both(session: &mut dyn SmokeSession) -> Checked<()> {
+    control(session, "time", json!({"paused": true}))?;
+    control(session, "screen", json!({"action": "push", "name": "menu"}))?;
+    session.step(1);
+    let state = query(session, "time_state", json!({}))?;
+    smoke_eq!(
+        state["pause_reasons"],
+        json!(["agent", "screen"]),
+        "agent_and_screen_pause_together"
+    );
+    control(session, "screen", json!({"action": "pop"}))?;
+    session.step(1);
+    let state = query(session, "time_state", json!({}))?;
+    smoke_eq!(
+        state["pause_reasons"],
+        json!(["agent"]),
+        "agent_pause_survives_menu_closing"
+    );
+    control(session, "time", json!({"paused": false}))?;
+    session.step(1);
+    smoke_eq!(paused(session)?, json!(false), "agent_resume_ends_pause");
+    Ok(())
+}
+
 fn timed(session: &mut dyn SmokeSession) -> Checked<()> {
+    let refused = refuse(session, "control", "time", json!({"scale": -1.0}))?;
+    smoke_eq!(
+        refused["code"],
+        json!("invalid_value"),
+        "negative_scale_refused"
+    );
     let fast = control(session, "time", json!({"scale": 100.0}))?;
-    smoke_eq!(fast["time_scale"], json!(8.0), "scale_is_kept_in_range");
-    control(session, "time", json!({"scale": 1.0, "paused": true}))?;
+    smoke_eq!(fast["time_scale"], json!(100.0), "scale_is_the_game_choice");
+    let held = control(session, "time", json!({"scale": 1.0, "paused": true}))?;
+    smoke_eq!(
+        held["pause_reasons"],
+        json!(["agent"]),
+        "agent_pause_is_its_own_reason"
+    );
     let held = tick(session);
     session.step(3);
     smoke_eq!(tick(session), held, "time_pause_holds_ticks");

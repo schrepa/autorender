@@ -1,31 +1,41 @@
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_core::math::clamp;
+use engine_core::collections::HashMap;
 use engine_core::{
-    AssetLibrary, AssetUses, FixedTime, GlobalTransforms, Parent, Spawner, Transform,
+    Applies, AssetLibrary, AssetUses, Clock, FixedTime, FrameTime, GlobalTransforms, Mover, Moves,
+    Pace, Parent, Pause, Spawner, Transform, mover_of,
 };
-use engine_places_rendering::animation::{Animator, Attachment, Clip, ClipLayer, Joint, Keys, Rig};
-use glam::{Mat4, Quat, Vec3};
+use engine_places_rendering::animation::{
+    Animate, Animator, Attachment, Clip, Joint, Keys, Rig, Track,
+};
+use glam::{Quat, Vec3};
 
 use crate::AnimationBrick;
-use crate::part::Books;
 
-pub(crate) struct Ticked {
-    rig: Arc<Rig>,
-    locals: Vec<Transform>,
-    previous: Vec<Transform>,
+#[derive(Component, Clone, Copy)]
+#[component(immutable)]
+pub(crate) struct JointNode {
+    animator: Entity,
 }
 
-impl Ticked {
-    fn new(rig: &Arc<Rig>) -> Self {
-        let held: Vec<Transform> = rig.joints.iter().map(rest).collect();
-        Self {
-            rig: Arc::clone(rig),
-            locals: held.clone(),
-            previous: held,
-        }
-    }
+struct Skeleton {
+    rig: Arc<Rig>,
+    joints: Vec<Entity>,
+    pace: Pace,
+}
+
+#[derive(Default)]
+struct Scratch {
+    locals: Vec<Transform>,
+    below: Vec<Transform>,
+    target: Vec<Transform>,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct Books {
+    skeletons: HashMap<Entity, Skeleton>,
+    scratch: Scratch,
 }
 
 fn rest(joint: &Joint) -> Transform {
@@ -79,114 +89,90 @@ fn mix(from: &Transform, to: &Transform, by: f32) -> Transform {
     }
 }
 
-fn compose(joints: &[Joint], locals: impl Iterator<Item = Transform>, model: &mut Vec<Mat4>) {
-    model.clear();
-    for (joint, local) in joints.iter().zip(locals) {
-        let parent = joint
-            .parent
-            .and_then(|parent| model.get(parent as usize))
-            .copied()
-            .unwrap_or(Mat4::IDENTITY);
-        model.push(parent * local.matrix());
-    }
-}
-
-fn wrapped(time: f32, duration: f32, looped: bool) -> f32 {
-    if duration <= 0.0 {
-        0.0
-    } else if looped {
-        time.rem_euclid(duration)
-    } else {
-        clamp(time, 0.0, duration)
-    }
-}
-
-fn settle(layer: &mut ClipLayer) {
-    let Some(full) = layer
-        .playing
-        .iter()
-        .rposition(|playing| playing.weight() >= 1.0)
-    else {
-        return;
-    };
-    layer.playing.drain(..full);
-    if layer
-        .playing
-        .first()
-        .is_some_and(|playing| playing.clip.is_none())
-    {
-        layer.playing.remove(0);
-    }
-}
-
-fn evaluate(animator: &mut Animator, ticked: &mut Ticked) {
-    std::mem::swap(&mut ticked.previous, &mut ticked.locals);
-    let rig = &*ticked.rig;
-    ticked.locals.clear();
-    ticked.locals.extend(rig.joints.iter().map(rest));
-    let mut target = Vec::new();
-    for layer in &animator.layers {
-        let below = ticked.locals.clone();
+fn evaluate(animator: &Animator, scratch: &mut Scratch) {
+    let rig = &**animator.rig();
+    let Scratch {
+        locals,
+        below,
+        target,
+    } = scratch;
+    locals.clear();
+    locals.extend(rig.joints.iter().map(rest));
+    for layer in animator.layers() {
+        below.clone_from(locals);
         for playing in &layer.playing {
-            target.clone_from(&below);
-            if let Some(clip) = playing.clip.and_then(|clip| rig.clips.get(clip as usize)) {
-                sample(clip, playing.time, &mut target);
+            target.clone_from(below);
+            if let Track::Clip { clip, time, .. } = playing.track
+                && let Some(clip) = rig.clips.get(clip as usize)
+            {
+                sample(clip, time, target);
             }
-            let weight = playing.weight();
-            for (joint, (local, wanted)) in ticked.locals.iter_mut().zip(&target).enumerate() {
+            let weight = playing.fade.weight();
+            for (joint, (local, wanted)) in locals.iter_mut().zip(target.iter()).enumerate() {
                 if layer.covers(joint) {
                     *local = mix(local, wanted, weight);
                 }
             }
         }
     }
-    for &(joint, rotation) in &animator.overrides {
-        if let Some(local) = ticked.locals.get_mut(joint as usize) {
+    for &(joint, rotation) in animator.overrides() {
+        if let Some(local) = locals.get_mut(joint as usize) {
             local.rotation = rotation;
         }
     }
-    compose(
-        &rig.joints,
-        ticked.locals.iter().copied(),
-        &mut animator.model,
-    );
 }
 
-fn step(animator: &mut Animator, ticked: &mut Ticked, seconds: f32, root: Mat4) {
-    animator.root = root;
-    let rig = &*ticked.rig;
-    for layer in &mut animator.layers {
-        for playing in &mut layer.playing {
-            playing.fade += seconds;
-            let duration = playing
-                .clip
-                .and_then(|clip| rig.clips.get(clip as usize))
-                .map_or(0.0, |clip| clip.duration);
-            let time = playing.time + playing.speed * seconds;
-            playing.time = wrapped(time, duration, playing.looped);
-        }
-        settle(layer);
+fn clock_of(globals: &GlobalTransforms, node: Entity) -> Clock {
+    globals.word(node).map_or(Clock::Game, |word| word.clock)
+}
+
+fn pace_of(clock: Clock) -> Pace {
+    match clock {
+        Clock::Game => Pace::Tick,
+        Clock::Real => Pace::Frame,
     }
-    evaluate(animator, ticked);
 }
 
-pub(crate) fn presented_pose(
+const fn mover(pace: Pace) -> Mover {
+    Mover {
+        by: mover_of::<AnimationBrick>(),
+        pace,
+    }
+}
+
+fn pose(
     animator: &Animator,
-    ticked: Option<&Ticked>,
-    alpha: f32,
-    model: &mut Vec<Mat4>,
+    skeleton: Option<&Skeleton>,
+    scratch: &mut Scratch,
+    moves: &mut Moves<'_, '_, AnimationBrick>,
 ) {
-    let current = ticked.filter(|ticked| Arc::ptr_eq(&ticked.rig, animator.rig()));
-    let Some(ticked) = current else {
-        model.clone_from(&animator.model);
+    let Some(skeleton) = skeleton.filter(|skeleton| Arc::ptr_eq(&skeleton.rig, animator.rig()))
+    else {
         return;
     };
-    let locals = ticked
-        .previous
-        .iter()
-        .zip(&ticked.locals)
-        .map(|(from, to)| mix(from, to, alpha));
-    compose(&ticked.rig.joints, locals, model);
+    evaluate(animator, scratch);
+    for (&joint, local) in skeleton.joints.iter().zip(&scratch.locals) {
+        if let Some(mut transform) = moves.get_mut(joint)
+            && *transform != *local
+        {
+            *transform = *local;
+        }
+    }
+}
+
+fn obey(asked: Vec<Animate>, animators: &mut Query<(Entity, &mut Animator)>) {
+    for Animate { animator, command } in asked {
+        if let Ok((_, mut held)) = animators.get_mut(animator) {
+            held.apply(&command);
+        }
+    }
+}
+
+pub(crate) fn command(
+    mut applies: Applies<Animate>,
+    mut animators: Query<(Entity, &mut Animator)>,
+) {
+    obey(applies.take(), &mut animators);
 }
 
 pub(crate) fn advance(
@@ -194,47 +180,173 @@ pub(crate) fn advance(
     globals: Res<GlobalTransforms>,
     mut books: ResMut<Books>,
     mut animators: Query<(Entity, &mut Animator)>,
+    mut moves: Moves<AnimationBrick>,
 ) {
-    books.ticked.retain(|entity, _| animators.contains(*entity));
+    let Books { skeletons, scratch } = &mut *books;
     for (entity, mut animator) in &mut animators {
-        let root = globals.pose(entity).map_or(Mat4::IDENTITY, Mat4::from);
-        let mut fresh = false;
-        let ticked = books.ticked.entry(entity).or_insert_with(|| {
-            fresh = true;
-            Ticked::new(animator.rig())
-        });
-        if !Arc::ptr_eq(&ticked.rig, animator.rig()) {
-            *ticked = Ticked::new(animator.rig());
-            fresh = true;
+        if !globals.active(entity) || clock_of(&globals, entity) != Clock::Game {
+            continue;
         }
-        step(&mut animator, ticked, time.delta_seconds, root);
-        if fresh {
-            ticked.previous.clone_from(&ticked.locals);
-        }
+        animator.step(time.delta_seconds);
+        pose(&animator, skeletons.get(&entity), scratch, &mut moves);
     }
 }
 
-pub(crate) fn follow_joints(
-    animators: Query<&Animator>,
-    mut attached: Query<(&Attachment, &Parent, &mut Transform)>,
+pub(crate) fn advance_real(
+    frame: Res<FrameTime>,
+    pause: Res<Pause>,
+    globals: Res<GlobalTransforms>,
+    mut applies: Applies<Animate>,
+    mut books: ResMut<Books>,
+    mut animators: Query<(Entity, &mut Animator)>,
+    mut moves: Moves<AnimationBrick>,
 ) {
-    for (attachment, parent, mut transform) in &mut attached {
-        let Ok(animator) = animators.get(parent.parent()) else {
+    if pause.paused() {
+        obey(applies.take(), &mut animators);
+    }
+    let Books { skeletons, scratch } = &mut *books;
+    for (entity, mut animator) in &mut animators {
+        if !globals.active(entity) || clock_of(&globals, entity) != Clock::Real {
             continue;
-        };
-        let Some(joint) = animator.joint_model(&attachment.joint) else {
-            continue;
-        };
-        let (scale, rotation, translation) =
-            (joint * attachment.offset()).to_scale_rotation_translation();
-        let followed = Transform {
-            translation,
-            rotation,
-            scale,
-        };
-        if *transform != followed {
-            *transform = followed;
         }
+        animator.step(frame.real_seconds as f32);
+        pose(&animator, skeletons.get(&entity), scratch, &mut moves);
+    }
+}
+
+fn spawn(
+    animator_node: Entity,
+    animator: &Animator,
+    pace: Pace,
+    scratch: &mut Scratch,
+    spawner: &mut Spawner<'_, '_, AnimationBrick>,
+) -> Skeleton {
+    evaluate(animator, scratch);
+    let rig = animator.rig();
+    let joints: Vec<Entity> = scratch
+        .locals
+        .iter()
+        .map(|&local| {
+            spawner.spawn((
+                local,
+                JointNode {
+                    animator: animator_node,
+                },
+                mover(pace),
+            ))
+        })
+        .collect();
+    let parents = rig
+        .joints
+        .iter()
+        .zip(&joints)
+        .map(|(joint, &node)| {
+            let parent = joint
+                .parent
+                .and_then(|parent| joints.get(parent as usize).copied())
+                .unwrap_or(animator_node);
+            (node, Some(parent))
+        })
+        .collect();
+    spawner.set_parents(parents);
+    Skeleton {
+        rig: Arc::clone(rig),
+        joints,
+        pace,
+    }
+}
+
+fn hold(
+    skeletons: &HashMap<Entity, Skeleton>,
+    nodes: &Query<&JointNode>,
+    held: &Query<(Entity, &Attachment, &Parent)>,
+    spawner: &mut Spawner<'_, '_, AnimationBrick>,
+) {
+    let mut moved = Vec::new();
+    for (item, attachment, parent) in held {
+        let holder = parent.parent();
+        let animator = nodes.get(holder).map_or(holder, |node| node.animator);
+        let Some(skeleton) = skeletons.get(&animator) else {
+            continue;
+        };
+        let wanted = skeleton
+            .rig
+            .joint(&attachment.joint)
+            .and_then(|joint| skeleton.joints.get(joint).copied())
+            .unwrap_or(animator);
+        if wanted != holder {
+            moved.push((item, Some(wanted)));
+        }
+    }
+    if !moved.is_empty() {
+        spawner.set_parents_of::<Attachment>(moved);
+    }
+}
+
+pub(crate) fn sync(
+    globals: Res<GlobalTransforms>,
+    mut books: ResMut<Books>,
+    mut animators: Query<(Entity, &mut Animator)>,
+    nodes: Query<&JointNode>,
+    held: Query<(Entity, &Attachment, &Parent)>,
+    mut spawner: Spawner<AnimationBrick>,
+) {
+    let Books { skeletons, scratch } = &mut *books;
+    let mut gone = Vec::new();
+    for (entity, mut animator) in &mut animators {
+        let pace = pace_of(clock_of(&globals, entity));
+        let kept = skeletons
+            .get_mut(&entity)
+            .filter(|skeleton| Arc::ptr_eq(&skeleton.rig, animator.rig()));
+        match kept {
+            Some(skeleton) => {
+                if skeleton.pace != pace {
+                    skeleton.pace = pace;
+                    for &joint in &skeleton.joints {
+                        spawner.insert(joint, mover(pace));
+                    }
+                }
+            }
+            None => {
+                let skeleton = spawn(entity, &animator, pace, scratch, &mut spawner);
+                if let Some(old) = skeletons.insert(entity, skeleton) {
+                    gone.extend(old.joints);
+                }
+            }
+        }
+        if let Some(skeleton) = skeletons.get(&entity)
+            && animator.joint_nodes() != skeleton.joints.as_slice()
+        {
+            animator.publish_joints(&skeleton.joints);
+        }
+    }
+    hold(skeletons, &nodes, &held, &mut spawner);
+    for joint in gone {
+        spawner.despawn(joint);
+    }
+}
+
+pub(crate) fn release(
+    In(animator): In<Entity>,
+    mut books: ResMut<Books>,
+    held: Query<(Entity, &Parent), With<Attachment>>,
+    nodes: Query<(), With<Transform>>,
+    mut spawner: Spawner<AnimationBrick>,
+) {
+    let Some(skeleton) = books.skeletons.remove(&animator) else {
+        return;
+    };
+    let back = nodes.contains(animator).then_some(animator);
+    let dropped: Vec<(Entity, Option<Entity>)> = held
+        .iter()
+        .filter(|(_, parent)| skeleton.joints.contains(&parent.parent()))
+        .map(|(item, _)| (item, back))
+        .collect();
+    if !dropped.is_empty() {
+        spawner.set_parents_of::<Attachment>(dropped);
+    }
+    for joint in skeleton.joints {
+        spawner.despawn(joint);
     }
 }
 
@@ -271,13 +383,17 @@ pub(crate) fn publish_assets(
         materials,
         textures,
     };
-    match own.single() {
-        Ok((entity, held)) => {
+    let mut owned = own.iter();
+    match owned.next() {
+        Some((entity, held)) => {
             if *held != used {
                 spawner.insert(entity, used);
             }
+            for (extra, _) in owned {
+                spawner.despawn(extra);
+            }
         }
-        Err(_) => {
+        None => {
             spawner.spawn((SkinAssets, used));
         }
     }

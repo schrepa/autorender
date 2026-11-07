@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::profile::{Aggregate, span};
@@ -11,7 +11,7 @@ use engine_places::sweeps::{Sweep, Sweeps};
 use engine_places_simulation::physics::{
     Collide, Collider, ColliderShape, ColliderSolid, Collision, CollisionRay, QueryFilter, RayHit,
     SLIDE_STEPS, SensorEvent, SensorEventKind, SensorFilter, SensorPair, ShapeCastOptions,
-    ShapeHit, Slid, SlideHit,
+    ShapeHit, Slid,
 };
 use engine_places_simulation::solids::{Bounds, Bvh, SolidField, SolidSource};
 use glam::{Mat4, Vec2, Vec3};
@@ -84,20 +84,6 @@ impl Synced {
     }
 }
 
-struct Slides {
-    staged: Mutex<Vec<SlideHit>>,
-    feed: Feed<SlideHit>,
-}
-
-impl Default for Slides {
-    fn default() -> Self {
-        Self {
-            staged: Mutex::default(),
-            feed: Feed::new(1),
-        }
-    }
-}
-
 #[derive(Default)]
 pub struct CollisionWorld {
     config: CollisionConfig,
@@ -106,12 +92,11 @@ pub struct CollisionWorld {
     bounds: Vec<Bounds>,
     bvh: Arc<Bvh>,
     moved: Cursor,
-    disabled: u64,
+    words: u64,
     next_pairs: Vec<SensorPair>,
     report: CollisionReport,
     synced: Synced,
     sources: Vec<Arc<SolidField>>,
-    slides: Slides,
     pub(crate) sensors: SensorEvents,
 }
 
@@ -179,10 +164,10 @@ impl CollisionWorld {
         self.report.frame = frame;
         self.report.tick = tick;
         let since = globals.changes_since(&mut self.moved);
-        let disabled = std::mem::replace(&mut self.disabled, globals.switches().disabled);
+        let words = std::mem::replace(&mut self.words, globals.words_revision());
         let settled = self.synced != Synced::Never
             && config == self.config
-            && disabled == self.disabled
+            && words == self.words
             && colliders.iter().len() == self.report.colliders
             && edited.is_empty()
             && match since {
@@ -218,7 +203,10 @@ impl CollisionWorld {
         self.bounds.reserve_exact(admitted);
         let configuration_valid = config.check().is_ok();
         let mut same_leaves = true;
-        for data in colliders.iter().take(limit) {
+        let active = colliders
+            .iter()
+            .filter(|&(entity, ..)| globals.active(entity));
+        for data in active.take(limit) {
             let (entity, collider, _) = data;
             let slot = read(globals, data)
                 .filter(|_| configuration_valid)
@@ -340,17 +328,6 @@ impl CollisionWorld {
     }
 
     fn detect(&mut self, tick: u64) {
-        let staged = std::mem::take(
-            self.slides
-                .staged
-                .get_mut()
-                .unwrap_or_else(PoisonError::into_inner),
-        );
-        self.report.slide_hits = staged.len();
-        self.slides.feed.resize(self.config.slide_feed as usize);
-        for hit in staged {
-            self.slides.feed.push(hit);
-        }
         let mut events = std::mem::take(&mut self.sensors);
         events.events.resize(self.config.sensor_feed as usize);
         self.detect_into(&mut events, tick);
@@ -620,20 +597,8 @@ impl Collide for CollisionWorld {
             left *= 1.0 - hit.fraction;
             left -= hit.normal * left.dot(hit.normal);
             *found = Some(hit);
-            self.slides
-                .staged
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(SlideHit {
-                    mover: filter.exclude,
-                    hit,
-                });
         }
         Ok(Slid { position: at, hits })
-    }
-
-    fn slide_hits(&self) -> &Feed<SlideHit> {
-        &self.slides.feed
     }
 
     fn events(&self) -> &Feed<SensorEvent> {

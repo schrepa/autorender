@@ -1,12 +1,11 @@
-use std::collections::BTreeMap;
-
 use engine_core::{
-    BrickList, Engine, ErrorCode, FrameFacts, FrameReport, FrameStats, JobExchange, JobId, JobRef,
-    MenuInput, MoveInput, Presented, RecordExchange, RenderStats, WorkClock,
+    ActionInput, BrickList, Engine, ErrorCode, FrameFacts, FrameStats, JobExchange, JobId, JobRef,
+    MenuInput, MoveInput, RecordExchange, RenderStats, WorkClock,
 };
 use engine_registry::Registry;
 use engine_render::{RenderTarget, Renderer};
 
+use crate::host::policy::{FRAME_INTERVAL_MS, PACE_INTERVAL_LIMIT_MS, PACE_SMOOTHING};
 use crate::host::{FrameInput, JobMessage};
 use crate::resolution::{DynamicResolution, Resolution};
 use crate::{Error, Result};
@@ -73,17 +72,40 @@ fn wire(
     crate::game::limit(engine, &renderer.limits(), renderer.features());
 }
 
+#[derive(Clone, Copy, Debug)]
+enum Refresh {
+    Measured(f64),
+    Declared(f64),
+}
+
+impl Refresh {
+    fn ms(self) -> f64 {
+        match self {
+            Self::Measured(ms) | Self::Declared(ms) => ms,
+        }
+    }
+
+    fn measured(self, interval: f64) -> Self {
+        match self {
+            Self::Measured(ms) if interval > 0.0 && interval < PACE_INTERVAL_LIMIT_MS => {
+                Self::Measured(ms + (interval - ms) * PACE_SMOOTHING)
+            }
+            Self::Measured(_) | Self::Declared(_) => self,
+        }
+    }
+}
+
 pub(crate) struct AppHost {
     pub(crate) engine: Engine,
     pub(crate) renderer: Box<Renderer>,
-    last_timestamp_ms: Option<f64>,
     stats: FrameStats,
     size: (u32, u32),
     terrain_clock: TerrainClock,
-    overlay: BTreeMap<String, serde_json::Value>,
+    overlay: crate::host::SettingsLog,
     pipeline_list: crate::host::PipelineList,
     pixel_ratio: f64,
-    refresh_ms: Option<f64>,
+    refresh: Refresh,
+    between_ms: f64,
     dynamic: crate::host::DynamicScale,
     gpu_ms: Option<f32>,
     #[cfg(feature = "profiling")]
@@ -120,14 +142,14 @@ impl AppHost {
         Self {
             engine,
             renderer,
-            last_timestamp_ms: None,
             stats: FrameStats::default(),
             size: (0, 0),
             terrain_clock: TerrainClock::Wall,
-            overlay: BTreeMap::new(),
+            overlay: crate::host::SettingsLog::default(),
             pipeline_list: crate::host::PipelineList::default(),
             pixel_ratio: 1.0,
-            refresh_ms: None,
+            refresh: Refresh::Measured(FRAME_INTERVAL_MS),
+            between_ms: 0.0,
             dynamic: crate::host::DynamicScale::default(),
             gpu_ms: None,
             #[cfg(feature = "profiling")]
@@ -184,16 +206,16 @@ impl AppHost {
     }
 
     pub fn set_setting(&mut self, key: &str, value: serde_json::Value) -> Result<()> {
-        crate::host::apply_setting(self.engine.app.world_mut(), key, &value)?;
-        self.overlay.insert(key.to_owned(), value);
+        self.set_settings(&[(key.to_owned(), value)])
+    }
+
+    pub fn set_settings(&mut self, entries: &[(String, serde_json::Value)]) -> Result<()> {
+        self.overlay.set(self.engine.app.world_mut(), entries)?;
         Ok(())
     }
 
     pub(crate) fn replay_settings(&mut self) -> Result<()> {
-        let world = self.engine.app.world_mut();
-        for (key, value) in &self.overlay {
-            crate::host::apply_setting(world, key, value)?;
-        }
+        self.overlay.replay(self.engine.app.world_mut())?;
         Ok(())
     }
 
@@ -213,7 +235,20 @@ impl AppHost {
     }
 
     pub fn set_refresh_interval(&mut self, milliseconds: Option<f64>) {
-        self.refresh_ms = milliseconds.filter(|ms| ms.is_finite() && *ms > 0.0);
+        self.refresh = match milliseconds.filter(|ms| ms.is_finite() && *ms > 0.0) {
+            Some(ms) => Refresh::Declared(ms),
+            None => Refresh::Measured(self.refresh.ms()),
+        };
+    }
+
+    pub fn refresh_interval(&self) -> f64 {
+        self.refresh.ms()
+    }
+
+    pub(crate) fn paced(&mut self) {
+        let interval = self.engine.frame_time().real_seconds * 1000.0 - self.between_ms;
+        self.refresh = self.refresh.measured(interval);
+        self.between_ms = 0.0;
     }
 
     fn resolution_settings(&self) -> (Resolution, DynamicResolution) {
@@ -231,13 +266,9 @@ impl AppHost {
     }
 
     fn resolution_budget(&self, settings: &DynamicResolution) -> f64 {
-        settings.budget_ms.map_or_else(
-            || {
-                self.refresh_ms
-                    .unwrap_or(crate::host::policy::FRAME_INTERVAL_MS)
-            },
-            f64::from,
-        )
+        settings
+            .budget_ms
+            .map_or_else(|| self.refresh.ms(), f64::from)
     }
 
     fn size_frame(
@@ -299,7 +330,7 @@ impl AppHost {
                 self.dynamic.frame(settings, ms, budget, true);
             }
         } else if let Some(interval) =
-            interval.filter(|&ms| ms > 0.0 && ms < crate::host::policy::PACE_INTERVAL_LIMIT_MS)
+            interval.filter(|&ms| ms > 0.0 && ms < PACE_INTERVAL_LIMIT_MS)
         {
             self.dynamic.frame(settings, interval, budget, false);
         }
@@ -322,7 +353,10 @@ impl AppHost {
             return false;
         }
         let micros = (milliseconds * 1000.0).min(f64::from(u32::MAX)) as u32;
-        self.engine.between_frames(micros)
+        let start = now_ms();
+        let remaining = self.engine.between_frames(micros);
+        self.between_ms += now_ms() - start;
+        remaining
     }
 
     pub fn set_job_workers(&mut self, workers: u32) {
@@ -444,13 +478,7 @@ impl AppHost {
         self.renderer.deliver(self.engine.app.world_mut());
     }
 
-    pub fn frame(
-        &mut self,
-        timestamp_ms: f64,
-        width: u32,
-        height: u32,
-        input: MoveInput,
-    ) -> Result<()> {
+    pub fn frame(&mut self, timestamp_ms: f64, width: u32, height: u32) -> Result<()> {
         if !timestamp_ms.is_finite() {
             return Err(Error::new(ErrorCode::InvalidInput, "$.timestamp")
                 .expected(crate::Expected::Finite)
@@ -460,27 +488,19 @@ impl AppHost {
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
         let profile = engine_profile::span("cpu", "host.frame");
-        let interval = self
-            .last_timestamp_ms
-            .map(|last| (timestamp_ms - last).max(0.0));
-        let delta = interval.map_or(0.0, |interval| interval * 0.001);
-        self.last_timestamp_ms = Some(timestamp_ms);
-        self.set_input(input);
         {
             let _core = attribution::core_scope();
             self.deliver();
             let start = now_ms();
-            let report = self.engine.advance(delta);
+            self.engine.frame(timestamp_ms * 0.001)?;
             let simulation_ms = now_ms() - start;
+            let time = self.engine.frame_time();
             self.render_frame(
                 width,
                 height,
                 simulation_ms,
-                report,
-                Presented::Paced {
-                    alpha: report.interpolation,
-                },
-                interval,
+                time.ticks,
+                Some(time.real_seconds * 1000.0),
             )?;
         }
         drop(profile);
@@ -489,13 +509,7 @@ impl AppHost {
     }
 
     #[cfg(feature = "dev")]
-    pub fn dev_step(
-        &mut self,
-        ticks: u32,
-        width: u32,
-        height: u32,
-        input: MoveInput,
-    ) -> Result<()> {
+    pub fn dev_step(&mut self, ticks: u32, width: u32, height: u32) -> Result<()> {
         engine_core::check_dev_ticks(ticks)?;
         self.begin_attribution();
         #[cfg(feature = "profiling")]
@@ -503,18 +517,18 @@ impl AppHost {
         let profile = engine_profile::span("cpu", "host.step");
         {
             let _core = attribution::core_scope();
-            self.last_timestamp_ms = None;
-            self.set_input(input);
             self.deliver();
             let start = now_ms();
-            let mut report = self.engine.step_fixed(1)?;
+            self.engine.step_fixed(1)?;
+            let mut fixed_steps = self.engine.frame_time().ticks;
             for _ in 1..ticks {
                 self.engine.start_frame();
                 self.keep_held();
-                report.fixed_steps += self.engine.step_fixed(1)?.fixed_steps;
+                self.engine.step_fixed(1)?;
+                fixed_steps += self.engine.frame_time().ticks;
             }
             let simulation_ms = now_ms() - start;
-            self.render_frame(width, height, simulation_ms, report, Presented::Tick, None)?;
+            self.render_frame(width, height, simulation_ms, fixed_steps, None)?;
         }
         drop(profile);
         self.end_attribution();
@@ -527,7 +541,7 @@ impl AppHost {
         let moving = *world.resource::<MoveInput>();
         let pointer = *world.resource::<engine_core::PointerInput>();
         let axes = *world.resource::<engine_core::AxisInput>();
-        self.set_input(MoveInput {
+        self.set_gated(MoveInput {
             look_right_pixels: 0.0,
             look_down_pixels: 0.0,
             ..moving
@@ -554,14 +568,8 @@ impl AppHost {
         {
             let _core = attribution::core_scope();
             self.deliver();
-            self.render_frame(
-                width,
-                height,
-                0.0,
-                FrameReport::default(),
-                Presented::Tick,
-                None,
-            )?;
+            self.engine.present(engine_core::Presented::Tick)?;
+            self.render_frame(width, height, 0.0, 0, None)?;
         }
         self.end_attribution();
         Ok(())
@@ -575,17 +583,25 @@ impl AppHost {
         {
             let _core = attribution::core_scope();
             self.deliver();
-            self.render_frame(
-                width,
-                height,
-                0.0,
-                FrameReport::default(),
-                Presented::Between { alpha },
-                None,
-            )?;
+            self.engine
+                .present(engine_core::Presented::Between { alpha })?;
+            self.render_frame(width, height, 0.0, 0, None)?;
         }
         self.end_attribution();
         Ok(())
+    }
+
+    pub(crate) fn accept(&mut self, input: &FrameInput) {
+        let world = self.engine.app.world_mut();
+        let _ = world.modify_resource(|actions: &mut ActionInput| {
+            actions.ingest(&input.held, &input.pressed, &input.released);
+        });
+        self.set_gated(input.state);
+    }
+
+    fn set_gated(&mut self, input: MoveInput) {
+        let wanted = self.engine.app.world().resource::<MenuInput>().wanted;
+        self.set_input(if wanted { MoveInput::default() } else { input });
     }
 
     fn set_input(&mut self, input: MoveInput) {
@@ -627,8 +643,7 @@ impl AppHost {
         width: u32,
         height: u32,
         simulation_ms: f64,
-        report: FrameReport,
-        presented: Presented,
+        fixed_steps: u32,
         interval: Option<f64>,
     ) -> Result<()> {
         if self.size != (width, height) {
@@ -644,30 +659,30 @@ impl AppHost {
         }
         let (dynamic_resolution, (render_width, render_height)) =
             self.size_frame(interval, (width, height));
-        let (frame_number, tick) = {
-            let world = self.engine.app.world();
-            (
-                world.resource::<engine_core::FrameTime>().frame,
-                world.resource::<engine_core::FixedTime>().tick,
-            )
-        };
+        let time = self.engine.frame_time();
+        let tick = self
+            .engine
+            .app
+            .world()
+            .resource::<engine_core::FixedTime>()
+            .tick;
         let before_acquire = now_ms();
         let acquired = self.renderer.acquire_frame()?;
         let acquire_ms = now_ms() - before_acquire;
         let (extraction_ms, draw_ms, rendered) = if acquired {
-            self.draw_frame((width, height), (render_width, render_height), presented)?
+            self.draw_frame((width, height), (render_width, render_height))?
         } else {
             (0.0, 0.0, RenderStats::default())
         };
         self.stats = FrameStats {
-            frame: frame_number,
+            frame: time.frame,
             tick,
             simulation_ms,
             extraction_ms,
             render_ms: acquire_ms + draw_ms,
-            fixed_steps: report.fixed_steps,
-            dropped_seconds: self.stats.dropped_seconds + report.dropped_seconds,
-            cut_seconds: self.stats.cut_seconds + report.cut_seconds,
+            fixed_steps,
+            dropped_seconds: time.dropped_seconds,
+            cut_seconds: time.cut_seconds,
             pipelines_listed: 0,
             pipelines_unlisted: 0,
             readiness: self.engine.readiness().clone(),
@@ -693,7 +708,6 @@ impl AppHost {
         &mut self,
         (width, height): (u32, u32),
         (render_width, render_height): (u32, u32),
-        presented: Presented,
     ) -> Result<(f64, f64, RenderStats)> {
         let before_extraction = now_ms();
         let aspect = width.max(1) as f32 / height.max(1) as f32;
@@ -724,7 +738,7 @@ impl AppHost {
         let compiling =
             self.renderer.pipelines_compiling() + u32::from(self.pipeline_list.waiting());
         self.engine.set_compiling(compiling);
-        let frame = self.engine.extract_frame(aspect, presented)?;
+        let frame = self.engine.extract_frame(aspect)?;
         let after_extraction = now_ms();
         let rendered = self.renderer.render_frame(frame)?;
         Ok((
@@ -790,7 +804,6 @@ impl AppHost {
     }
 
     pub fn suspend(&mut self) {
-        self.last_timestamp_ms = None;
         self.dynamic.reset();
         self.engine.reset_clock();
         self.engine

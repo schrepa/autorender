@@ -135,7 +135,6 @@ export interface CollisionWorldView {
   limits: CollisionLimitsView;
   overflow_colliders: number;
   placed_colliders: number;
-  slide_hits: number;
   tick: string;
 }
 
@@ -250,6 +249,7 @@ export interface PhysicsStats {
   awake: number;
   bodies: number;
   contacts: number;
+  dropped_asks: number;
   problems: number;
   solids: number;
   water_samples: number;

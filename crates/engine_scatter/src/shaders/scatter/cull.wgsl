@@ -1,13 +1,13 @@
+import package::engine::mesh::declarations::{FADE_LEVEL_MAX, faded_slot, faded_slot_slot};
+import package::engine::mesh::impostor_frames::{CARD_PHASE_FADING, FADING_CARD_FADE_MAX,
+    FADING_CARD_INDEX_MAX, fading_card};
 import package::engine::view::seen_share;
-import package::face::instances::FADE_SLOT;
 import package::generated::scatter::{
     CullFrame, CullGroup, CullView, DEAD, FADED, NO_LAYER, SCATTER_GROUP, SHOWN_CARD, SHOWN_NONE,
     scatter_fade, scatter_fade_adopt, scatter_fade_previous, scatter_fade_progress,
     scatter_fade_shown, scatter_terrain_hidden, scatter_terrain_layer, scatter_terrain_rank
 };
 import package::place::placed_tiles::Record;
-
-const FADE_OUT: u32 = 0x80000000u;
 
 struct DrawArgs {
     index_count: u32,
@@ -27,9 +27,6 @@ struct CardArgs {
     first_vertex: u32,
     first_instance: u32,
 }
-
-const FADING: u32 = 0x80000000u;
-const FADING_OUT: u32 = 0x40000000u;
 
 @group(1) @binding(0) var<uniform> frame: CullFrame;
 @group(1) @binding(1) var<storage, read_write> records: array<Record>;
@@ -130,24 +127,24 @@ fn show_fading(id: u32, record: Record, group: CullGroup, way: u32, fade: f32, o
         return;
     }
     if way == SHOWN_CARD {
-        if group.record >= 0x8000u {
+        if group.record > FADING_CARD_INDEX_MAX {
             if !out {
                 card(0u, id, group.record);
             }
             return;
         }
-        card(0u, id, group.record | FADING | select(0u, FADING_OUT, out)
-            | (u32(fade * 16383.0) << 16u));
+        card(0u, id, fading_card(group.record, false, u32(fade * f32(FADING_CARD_FADE_MAX)), out,
+            CARD_PHASE_FADING));
         return;
     }
-    if id > FADE_SLOT {
+    if faded_slot_slot(id) != id {
         if !out {
             list(0u, record, group, way, id);
         }
         return;
     }
     list(frame.counts.w, record, group, way,
-        id | (u32(fade * 127.0) << 24u) | select(0u, FADE_OUT, out));
+        faded_slot(id, u32(fade * f32(FADE_LEVEL_MAX)), out));
 }
 
 @compute @workgroup_size(SCATTER_GROUP)

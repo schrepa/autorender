@@ -1,14 +1,9 @@
 use bevy_ecs::entity::Entity;
 
-use super::{GlobalTransforms, Link, Revision, Source};
+use super::{GlobalTransforms, Link, Revision};
 use crate::{NodePose, PoseRows};
 
 impl GlobalTransforms {
-    #[inline]
-    pub(crate) fn sources(&self) -> &[Source] {
-        &self.sources
-    }
-
     #[inline]
     pub(crate) fn locals(&self) -> &[NodePose] {
         &self.locals
@@ -40,11 +35,6 @@ impl GlobalTransforms {
     }
 
     #[inline]
-    pub(crate) fn node_limit(&self) -> usize {
-        self.limit
-    }
-
-    #[inline]
     pub fn topology_revision(&self) -> Revision {
         self.topology_revision
     }
@@ -52,10 +42,5 @@ impl GlobalTransforms {
     #[inline]
     pub(crate) fn revision(&self) -> u64 {
         self.revision
-    }
-
-    #[inline]
-    pub(crate) fn stamp(&self) -> (u64, u64) {
-        (self.topology_revision.get(), self.revision)
     }
 }

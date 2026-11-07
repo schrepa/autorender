@@ -1,5 +1,7 @@
+mod asks;
 mod budget;
 mod feeds;
+mod nodes;
 mod readback;
 mod readiness;
 mod requests;
@@ -14,10 +16,12 @@ use bevy_ecs::{
 };
 use serde_json::Value;
 
+pub use asks::{Applied, ApplyAt, Ask, Asked, Moment};
 pub use budget::{BudgetUse, FrameBudget};
 pub use engine_assets::{MaterialHandle, MeshHandle, TextureHandle};
 pub use engine_settings::{Error, ErrorCode};
 pub use feeds::{Cursor, CursorView, Events, Feed, FeedView, Ring, Since, StoreId};
+pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use readback::{FrameId, Readable, Readback};
 pub use readiness::Readiness;
 pub use requests::{Census, Interest, Progress, Request, Requests, Ticket};
@@ -43,6 +47,7 @@ pub trait DrawPoint: Slot {
 }
 
 type ReadMembers = fn(&World, &mut dyn FnMut(&dyn Any));
+type ViewPlace = fn(&World) -> Option<Value>;
 
 #[derive(Clone, Copy)]
 pub struct PlaceDecl {
@@ -54,6 +59,7 @@ pub struct PlaceDecl {
     read: ReadMembers,
     reset: Option<fn(&mut World)>,
     ty: fn() -> TypeId,
+    view: Option<ViewPlace>,
 }
 
 impl PlaceDecl {
@@ -63,10 +69,32 @@ impl PlaceDecl {
             kind: PlaceKind::Slot,
             wgsl: S::WGSL,
             smokes: S::SMOKES,
-            insert: insert_slot::<S>,
-            read: read_slot::<S>,
+            insert: insert_resource::<S>,
+            read: read_resource::<S>,
             reset: None,
             ty: TypeId::of::<S>,
+            view: None,
+        }
+    }
+
+    pub const fn ask<A: Ask>() -> Self {
+        Self {
+            view: Some(view_asked::<A>),
+            ..Self::slot::<Asked<A>>()
+        }
+    }
+
+    pub const fn ledger<R: Resource + Default>(name: &'static str) -> Self {
+        Self {
+            name,
+            kind: PlaceKind::Ledger,
+            wgsl: None,
+            smokes: &[],
+            insert: insert_resource::<R>,
+            read: read_resource::<R>,
+            reset: None,
+            ty: TypeId::of::<R>,
+            view: None,
         }
     }
 
@@ -80,6 +108,7 @@ impl PlaceDecl {
             read: read_nothing,
             reset: None,
             ty: TypeId::of::<L>,
+            view: None,
         }
     }
 
@@ -93,6 +122,7 @@ impl PlaceDecl {
             read: read_nothing,
             reset: None,
             ty: TypeId::of::<C>,
+            view: None,
         }
     }
 
@@ -106,7 +136,13 @@ impl PlaceDecl {
             read: read_nothing,
             reset: Some(reset_component::<C>),
             ty: TypeId::of::<C>,
+            view: None,
         }
+    }
+
+    #[doc(hidden)]
+    pub fn view(&self, world: &World) -> Option<Value> {
+        self.view.and_then(|view| view(world))
     }
 
     #[doc(hidden)]
@@ -156,10 +192,15 @@ pub enum PlaceKind {
     Slot,
     List,
     Component,
+    Ledger,
 }
 
-fn insert_slot<S: Slot>(world: &mut World) {
-    world.init_resource::<S>();
+fn insert_resource<R: Resource + Default>(world: &mut World) {
+    world.init_resource::<R>();
+}
+
+fn view_asked<A: Ask>(world: &World) -> Option<Value> {
+    world.get_resource::<Asked<A>>().map(Asked::view)
 }
 
 fn insert_component<C: Component>(world: &mut World) {
@@ -175,8 +216,8 @@ fn reset_component<C: Component<Mutability = Mutable> + Default>(world: &mut Wor
 
 fn insert_nothing(_: &mut World) {}
 
-fn read_slot<S: Slot>(world: &World, each: &mut dyn FnMut(&dyn Any)) {
-    if let Some(value) = world.get_resource::<S>() {
+fn read_resource<R: Resource>(world: &World, each: &mut dyn FnMut(&dyn Any)) {
+    if let Some(value) = world.get_resource::<R>() {
         each(value);
     }
 }
@@ -238,11 +279,6 @@ impl engine_codec::Codec for JobRef {
 pub struct Mesh3d {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
-}
-
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct InterpolateTransform {
-    pub resets: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

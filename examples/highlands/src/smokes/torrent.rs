@@ -1,4 +1,4 @@
-use engine_core::smoke::{Checked, control, environment, number, render};
+use engine_core::smoke::{Checked, control, environment, number};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
@@ -20,10 +20,6 @@ const WATER_VIEWS: [&str; 9] = [
 
 const REACHES: [&str; 5] = ["pool", "plane", "steps", "cascade", "falls"];
 
-const NOT_WORK: [&str; 4] = ["frame", "tick", "read_back_age", "bricks_cost.frame"];
-
-const QUIET_FRAMES: u32 = 20_000;
-
 const PROBES_ACROSS: u32 = 7;
 
 pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
@@ -31,10 +27,10 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     for stream in STREAMS {
         aim(session, stream)?;
         environment(session, json!({"debug_view": {"view": "off"}}))?;
-        quiet(session)?;
+        engine::smokes::settled(session)?;
         for view in WATER_VIEWS {
             environment(session, json!({"debug_view": {"view": view}}))?;
-            let shown = quiet(session)?;
+            let shown = engine::smokes::settled(session)?;
             let passes = &shown["render_passes"];
             smoke_eq!(
                 passes
@@ -53,7 +49,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
 fn probed(session: &mut dyn SmokeSession) -> Checked<()> {
     aim(session, "torrent")?;
     environment(session, json!({"debug_view": {"view": "water_depth"}}))?;
-    let rendering = quiet(session)?;
+    let rendering = engine::smokes::settled(session)?;
     let width = number(&rendering["resolution"]["display_width"]);
     let height = number(&rendering["resolution"]["display_height"]);
     let mut pixels: Vec<[f64; 2]> = (1..PROBES_ACROSS)
@@ -111,67 +107,4 @@ fn probed(session: &mut dyn SmokeSession) -> Checked<()> {
         "the_probe_reads_span_and_eddies"
     );
     Ok(())
-}
-
-fn quiet(session: &mut dyn SmokeSession) -> Checked<Value> {
-    let (mut previous, mut calm): (Vec<(String, Value)>, u32) = (Vec::new(), 0);
-    let mut rendering = Value::Null;
-    let mut changing: Vec<String> = Vec::new();
-    for _ in 0..QUIET_FRAMES {
-        rendering = render(session)?;
-        let readiness = &rendering["readiness"];
-        let busy = readiness["loading"]["total"] != 0 || readiness["compiling"] != 0;
-        let mut counters = Vec::new();
-        work(&rendering, "", &mut counters);
-        changing = counters
-            .iter()
-            .filter(|counter| !previous.contains(*counter))
-            .map(|(path, _)| path.clone())
-            .collect();
-        calm = if !busy && counters == previous {
-            calm + 1
-        } else {
-            0
-        };
-        previous = counters;
-        if calm >= 3 {
-            break;
-        }
-    }
-    let unsettled = json!({
-        "readiness": rendering["readiness"],
-        "changing": changing,
-    });
-    smoke_eq!(
-        if calm >= 3 { Value::Null } else { unsettled },
-        Value::Null,
-        "the_view_settles"
-    );
-    for _ in 0..30 {
-        rendering = render(session)?;
-    }
-    Ok(rendering)
-}
-
-fn work(stats: &Value, prefix: &str, out: &mut Vec<(String, Value)>) {
-    let Some(fields) = stats.as_object() else {
-        return;
-    };
-    for (key, value) in fields {
-        let path = if prefix.is_empty() {
-            key.clone()
-        } else {
-            format!("{prefix}.{key}")
-        };
-        match value {
-            Value::Array(items) => out.push((path, json!(items.len()))),
-            Value::Object(_) => work(value, &path, out),
-            Value::Number(_) | Value::Bool(_) => {
-                if !NOT_WORK.contains(&path.as_str()) && !path.ends_with("_ms") {
-                    out.push((path, value.clone()));
-                }
-            }
-            Value::Null | Value::String(_) => {}
-        }
-    }
 }

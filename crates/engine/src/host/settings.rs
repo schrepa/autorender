@@ -80,11 +80,8 @@ macro_rules! settings {
                 $(if let Some(value) = self.$field {
                     host.$apply(value);
                 })*
-                for (key, value) in &self.overlay {
-                    host.set_setting(key, value.clone())
-                        .map_err(|error| error.within(&format!("{OVERLAY}.{key}")))?;
-                }
-                Ok(())
+                host.set_settings(&self.overlay)
+                    .map_err(|error| error.within(OVERLAY))
             }
         }
     };
@@ -140,18 +137,30 @@ fn known_field(entry: &SettingsEntry, key: &str, field: &str) -> Result<(), Erro
         .variants(fields.into_iter().flatten().map(|(name, _)| name.as_str())))
 }
 
-fn set_agreeing(
-    world: &mut World,
-    entry: &SettingsEntry,
-    value: &Value,
-    before: &Value,
-) -> Result<(), Error> {
-    entry.set(world, value)?;
-    let Err(refused) = engine_registry::check_sections(world) else {
-        return Ok(());
-    };
-    entry.set(world, before)?;
-    Err(refused)
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SettingsLog {
+    entries: Vec<(String, Value)>,
+}
+
+impl SettingsLog {
+    pub fn set(&mut self, world: &mut World, entries: &[(String, Value)]) -> Result<(), Error> {
+        apply_settings(world, entries)?;
+        for (key, value) in entries {
+            self.entries.retain(|(held, _)| !replaces(key, held));
+            self.entries.push((key.clone(), value.clone()));
+        }
+        Ok(())
+    }
+
+    pub fn replay(&self, world: &mut World) -> Result<(), Error> {
+        apply_settings(world, &self.entries)
+    }
+}
+
+fn replaces(key: &str, held: &str) -> bool {
+    held
+        .strip_prefix(key)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
 }
 
 pub fn has_setting(world: &World, key: &str) -> bool {
@@ -160,21 +169,54 @@ pub fn has_setting(world: &World, key: &str) -> bool {
 }
 
 pub fn apply_setting(world: &mut World, key: &str, value: &Value) -> Result<(), Error> {
+    apply_settings(world, &[(key.to_owned(), value.clone())])
+}
+
+pub fn apply_settings(world: &mut World, entries: &[(String, Value)]) -> Result<(), Error> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let mut touched: Vec<SettingsEntry> = Vec::with_capacity(entries.len());
+    for (key, _) in entries {
+        let (section, _) = split(key);
+        let entry = engine_registry::settings(world, section)?;
+        if !touched.iter().any(|known| known.key == entry.key) {
+            touched.push(entry);
+        }
+    }
+    scoped(world, |world| {
+        let before: Vec<(SettingsEntry, Value)> = touched
+            .iter()
+            .map(|entry| (*entry, entry.current(world)))
+            .collect();
+        let applied = entries
+            .iter()
+            .try_for_each(|(key, value)| set_one(world, key, value))
+            .and_then(|()| engine_registry::check_sections(world));
+        if applied.is_err() {
+            for (entry, value) in &before {
+                if entry.current(world) != *value {
+                    let _ = entry.set(world, value);
+                }
+            }
+        }
+        applied
+    })
+}
+
+fn set_one(world: &mut World, key: &str, value: &Value) -> Result<(), Error> {
     let (section, field) = split(key);
     let entry = engine_registry::settings(world, section)?;
-    scoped(world, |world| {
-        let before = entry.current(world);
-        let Some(field) = field else {
-            return set_agreeing(world, &entry, value, &before);
-        };
-        known_field(&entry, key, field)?;
-        let mut current = before.clone();
-        let Some(fields) = current.as_object_mut() else {
-            return Err(not_object(section));
-        };
-        fields.insert(field.to_owned(), value.clone());
-        set_agreeing(world, &entry, &current, &before)
-    })
+    let Some(field) = field else {
+        return entry.set(world, value);
+    };
+    known_field(&entry, key, field)?;
+    let mut current = entry.current(world);
+    let Some(fields) = current.as_object_mut() else {
+        return Err(not_object(section));
+    };
+    fields.insert(field.to_owned(), value.clone());
+    entry.set(world, &current)
 }
 
 pub fn reset_setting(world: &mut World, key: &str) -> Result<(), Error> {

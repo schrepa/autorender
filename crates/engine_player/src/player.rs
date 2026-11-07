@@ -17,8 +17,6 @@ const COLLISION_LIMITS: [(&str, u32); 5] = [
 
 pub(crate) const FLIES: &str = "fly_camera.enabled";
 
-const STEERED: &str = "fly_camera.steered_only";
-
 #[derive(Clone, Copy)]
 struct Player {
     entity: Entity,
@@ -84,7 +82,6 @@ impl ScenePlayer {
             }
         }
         engine::host::apply_setting(world, FLIES, &json!(self.player.is_none()))?;
-        engine::host::apply_setting(world, STEERED, &json!(true))?;
         engine.reset_clock();
         Ok(())
     }
@@ -194,13 +191,18 @@ fn walks(world: &mut World, entity: Entity) -> Result<(), Error> {
 }
 
 fn reset_player(world: &mut World, player: Player) {
-    if world.get_entity(player.entity).is_err() {
+    let Some(&held) = world.get::<Transform>(player.entity) else {
         return;
-    }
-    edit_transform(world, player.entity, |transform| {
-        transform.translation = player.spawn
-    })
-    .expect("player_has_transform");
+    };
+    engine_core::send_ask(
+        world,
+        Teleport {
+            node: player.entity,
+            to: Transform {
+                translation: player.spawn,
+                ..held
+            },
+        },
+    );
     walks(world, player.entity).expect("player_walks");
-    reset_interpolation(world, player.entity);
 }

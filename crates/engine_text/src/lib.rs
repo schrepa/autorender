@@ -11,13 +11,13 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, Runs, SceneComponents, SceneCx, Schedule,
-    Shown, Smoke, Source, View, gpu_struct, settings, stats,
+    Brick, Bricks, ComponentKind, Error, ErrorCode, GlobalTransforms, Runs, SceneComponents,
+    SceneCx, Schedule, Smoke, Source, View, gpu_struct, settings, stats,
 };
 use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Text, TextAlign};
 use engine_render::{
-    Bind, Buffer, DepthUse, Draw, GpuPart, Install, Layer, Lifetime, OverlayStack, Pipeline,
-    Prepare, RenderBricks, RenderPipeline, Shape, Texture, wgpu,
+    Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, Layer, Lifetime, OverlayStack,
+    Pipeline, Prepare, RenderBricks, RenderPipeline, Shape, Texture, wgpu,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -202,7 +202,10 @@ struct TextGpu {
 
 impl GpuPart for TextGpu {
     type Reads = (
-        Query<'static, 'static, &'static Label, Shown>,
+        (
+            Query<'static, 'static, (Entity, &'static Label)>,
+            Res<'static, GlobalTransforms>,
+        ),
         Res<'static, Text>,
         Res<'static, TextSettings>,
         Res<'static, View>,
@@ -240,7 +243,7 @@ impl GpuPart for TextGpu {
 
     fn prepare(
         &mut self,
-        (labels, text, settings, view): SystemParamItem<'_, '_, Self::Reads>,
+        ((labels, globals), text, settings, view): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.ranges.clear();
@@ -249,13 +252,16 @@ impl GpuPart for TextGpu {
         };
         let mut state = typesetter.lock();
         state.frame(
-            labels.iter(),
+            labels
+                .iter()
+                .filter(|&(entity, _)| globals.drawn(entity))
+                .map(|(_, label)| label),
             &settings,
             &view,
             &mut self.staged,
             &mut self.ranges,
         );
-        let uploads = state.take_uploads();
+        let mut uploads = state.take_uploads();
         if self.staged.is_empty() && uploads.is_empty() {
             return;
         }
@@ -265,7 +271,9 @@ impl GpuPart for TextGpu {
             depth_or_array_layers: 1,
         };
         let side = state.atlas_side();
-        cx.allocate(self.atlas, extent(side, side), 1);
+        if cx.allocate(self.atlas, extent(side, side), 1) == Allocation::Fresh {
+            uploads = state.refill_atlas();
+        }
         for upload in &uploads {
             cx.write_texture(
                 self.atlas,

@@ -103,12 +103,31 @@ struct Edges {
     released: BTreeSet<u32>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+impl Edges {
+    fn is_empty(&self) -> bool {
+        self.pressed.is_empty() && self.released.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputState {
     held: BTreeSet<u32>,
+    consumer: u64,
     next_tick: Edges,
     next_frame: Edges,
     shown: Edges,
+}
+
+impl Default for InputState {
+    fn default() -> Self {
+        Self {
+            held: BTreeSet::new(),
+            consumer: 1,
+            next_tick: Edges::default(),
+            next_frame: Edges::default(),
+            shown: Edges::default(),
+        }
+    }
 }
 
 impl InputState {
@@ -143,12 +162,22 @@ impl InputState {
         self.shown.released.contains(&action)
     }
 
+    pub fn pending_tick(&self) -> Option<u64> {
+        (!self.next_tick.is_empty()).then_some(self.consumer)
+    }
+
     pub fn drop_tick_edges(&mut self) {
         self.next_tick = Edges::default();
     }
 
-    pub fn begin_tick(&mut self) {
-        self.shown = std::mem::take(&mut self.next_tick);
+    pub fn begin_tick(&mut self, tick: u64) {
+        let pending = std::mem::take(&mut self.next_tick);
+        self.shown = if tick == self.consumer {
+            pending
+        } else {
+            Edges::default()
+        };
+        self.consumer = tick.saturating_add(1);
     }
 
     pub fn begin_frame(&mut self) {

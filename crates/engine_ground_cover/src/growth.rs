@@ -90,7 +90,7 @@ pub(crate) fn plan_cover(
     plan.cells.clear();
     plan.reach = 0.0;
     plan.tiers = 0;
-    let time = time.game_elapsed_seconds as f32;
+    let time = time.elapsed as f32;
     let previous = plan.previous_time.replace(time).unwrap_or(time);
     let grounded = foliage.ground_blend > 0.0;
     let sight = Sight {

@@ -61,6 +61,7 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::component::<particles::ParticleEmitter>("particle_emitter"),
     PlaceDecl::component::<animation::Animator>("animator"),
     PlaceDecl::component::<animation::Attachment>("attachment"),
+    PlaceDecl::ask::<animation::Animate>(),
     PlaceDecl::slot::<text::Text>(),
     PlaceDecl::slot::<ui::UiValues>(),
     PlaceDecl::slot::<ui::UiEvents>(),
@@ -68,4 +69,5 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<audio::Sounds>(),
     PlaceDecl::component::<audio::SoundSource>("sound_source"),
     PlaceDecl::component::<screens::Screen>("screen"),
+    PlaceDecl::ask::<screens::ScreenAsk>(),
 ];

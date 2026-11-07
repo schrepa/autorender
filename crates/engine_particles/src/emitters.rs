@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    Allowed, Cut, Expected, FrameTime, GlobalTransforms, InvalidSetting, Nearest, Rule, View,
-    fields, gpu_struct, settings, stats,
+    Allowed, Clock, Cut, DrawnPoses, Expected, FrameTime, GlobalTransforms, InvalidSetting,
+    Nearest, Rule, View, fields, gpu_struct, settings, stats,
 };
 use engine_places_rendering::particles::{
     MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleBursts, ParticleEmitter,
@@ -57,7 +57,8 @@ gpu_struct! {
         first: u32,
         count: u32,
         formula: u32,
-        pad: [u32; 2],
+        now: f32,
+        pad: u32,
         params: [f32; 8],
     }
 }
@@ -72,6 +73,7 @@ struct RenderEmitter {
     rate: f32,
     start: f32,
     stop: f32,
+    now: f32,
     count: u32,
 }
 
@@ -109,7 +111,8 @@ impl Emitter {
             first,
             count: emitter.count,
             formula: look.formula,
-            pad: [0; 2],
+            now: emitter.now,
+            pad: 0,
             params: look.params,
         }
     }
@@ -152,10 +155,43 @@ pub(crate) fn emitter_extra(
     Ok(())
 }
 
-#[derive(Clone, Copy)]
-struct Stopped {
-    at: f32,
-    resumed: Option<f32>,
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Emission {
+    Stopped { at: f32 },
+    Resumed { stopped: f32, at: f32 },
+}
+
+impl Emission {
+    fn next(held: Option<Self>, emitting: bool, now: f32, seen: bool) -> Option<Self> {
+        let stop = if seen { now } else { f32::MIN };
+        match (held, emitting) {
+            (None, true) => None,
+            (None, false) | (Some(Self::Resumed { .. }), false) => {
+                Some(Self::Stopped { at: stop })
+            }
+            (Some(Self::Stopped { at }), true) => Some(Self::Resumed {
+                stopped: at,
+                at: now,
+            }),
+            (Some(held @ Self::Stopped { .. }), false)
+            | (Some(held @ Self::Resumed { .. }), true) => Some(held),
+        }
+    }
+
+    fn window(held: Option<Self>) -> (f32, f32) {
+        match held {
+            None => (f32::MAX, 0.0),
+            Some(Self::Stopped { at }) => (at, f32::MAX),
+            Some(Self::Resumed { stopped, at }) => (stopped, at),
+        }
+    }
+
+    fn drained(held: Option<Self>, now: f32, lifetime: f32) -> bool {
+        match held {
+            Some(Self::Stopped { at }) => now - at > lifetime,
+            Some(Self::Resumed { .. }) | None => false,
+        }
+    }
 }
 
 struct Candidate {
@@ -176,7 +212,7 @@ fn rotation_of(model: Mat4) -> Quat {
 #[derive(Resource, Default)]
 pub(crate) struct Gather {
     motion: HashMap<Entity, (Vec3, f32, Vec3, u64)>,
-    stops: HashMap<Entity, Stopped>,
+    emissions: HashMap<Entity, Emission>,
     bursts: Vec<(QueuedBurst, f32)>,
     bursts_taken: u32,
     extraction: u64,
@@ -197,25 +233,13 @@ pub(crate) struct Packed {
 }
 
 impl Gather {
-    fn stopped(&mut self, entity: Entity, emitting: bool, time: f32) -> Option<Stopped> {
-        if emitting {
-            let stopped = self.stops.get_mut(&entity)?;
-            stopped.resumed = stopped.resumed.or(Some(time));
-            return Some(*stopped);
+    fn emission(&mut self, entity: Entity, emitting: bool, now: f32) -> Option<Emission> {
+        let held = self.emissions.get(&entity).copied();
+        let next = Emission::next(held, emitting, now, self.motion.contains_key(&entity));
+        if let Some(next) = next {
+            self.emissions.insert(entity, next);
         }
-        let at = if self.motion.contains_key(&entity) {
-            time
-        } else {
-            f32::MIN
-        };
-        let stopped = self
-            .stops
-            .entry(entity)
-            .or_insert(Stopped { at, resumed: None });
-        if stopped.resumed.is_some() {
-            *stopped = Stopped { at, resumed: None };
-        }
-        Some(*stopped)
+        next
     }
 
     fn steady(
@@ -223,17 +247,13 @@ impl Gather {
         (entity, emitter): (Entity, &ParticleEmitter),
         model: Mat4,
         eye: Vec3,
-        time: f32,
+        now: f32,
     ) -> Option<Candidate> {
-        let stopped = self.stopped(entity, emitter.emitting, time);
-        if stopped.is_some_and(|stopped| {
-            stopped.resumed.is_none() && time - stopped.at > emitter.look.lifetime
-        }) {
+        let emission = self.emission(entity, emitter.emitting, now);
+        if Emission::drained(emission, now, emitter.look.lifetime) {
             return None;
         }
-        let (stop, start) = stopped.map_or((f32::MAX, 0.0), |stopped| {
-            (stopped.at, stopped.resumed.unwrap_or(f32::MAX))
-        });
+        let (stop, start) = Emission::window(emission);
         let origin = model.transform_point3(emitter.offset);
         Some(Candidate {
             distance: origin.distance_squared(eye),
@@ -250,6 +270,7 @@ impl Gather {
                 rate: emitter.rate,
                 start,
                 stop,
+                now,
                 count: emitter.capacity(),
             },
         })
@@ -281,6 +302,7 @@ impl Gather {
                     rate: 0.0,
                     start: *start,
                     stop: f32::MAX,
+                    now: time,
                     count,
                 },
             });
@@ -291,27 +313,35 @@ impl Gather {
     fn fill(
         &mut self,
         settings: &ParticleSettings,
-        emitters: &Query<'_, '_, (Entity, &'static ParticleEmitter), engine_core::Shown>,
+        emitters: &Query<'_, '_, (Entity, &'static ParticleEmitter)>,
         bursts: &ParticleBursts,
-        globals: &GlobalTransforms,
+        (globals, poses): (&GlobalTransforms, &DrawnPoses),
         eye: Vec3,
-        time: f32,
+        (game, real): (f32, f32),
     ) {
         self.list.clear();
         self.cut = bursts.take_cut() as usize;
         self.candidates.clear();
-        self.stops.retain(|entity, _| emitters.contains(*entity));
+        self.emissions
+            .retain(|entity, _| emitters.contains(*entity) && globals.drawn(*entity));
         let mut wanted = 0_u64;
         for (entity, emitter) in emitters.iter() {
-            let Some(model) = globals.pose(entity).map(Mat4::from) else {
+            let Some(word) = globals.word(entity).filter(|word| word.drawn()) else {
                 continue;
             };
-            if let Some(candidate) = self.steady((entity, emitter), model, eye, time) {
+            let Some(model) = poses.drawn_pose(globals, entity) else {
+                continue;
+            };
+            let now = match word.clock {
+                Clock::Game => game,
+                Clock::Real => real,
+            };
+            if let Some(candidate) = self.steady((entity, emitter), model, eye, now) {
                 wanted += u64::from(candidate.emitter.count);
                 self.candidates.push(candidate);
             }
         }
-        wanted += self.gather_bursts(bursts, eye, time);
+        wanted += self.gather_bursts(bursts, eye, game);
         let budget = settings.max_particles.map(u64::from);
         let mut total = 0_u64;
         let mut steady = 0_usize;
@@ -342,7 +372,7 @@ impl Gather {
                 let origin = emitter.origin;
                 let velocity = match motion.get(&entity) {
                     Some(&(last, at, velocity, _)) => {
-                        let elapsed = time - at;
+                        let elapsed = emitter.now - at;
                         if elapsed > 1.0e-4 && elapsed < 0.5 {
                             (origin - last) / elapsed
                         } else if elapsed.abs() <= 1.0e-4 {
@@ -353,7 +383,7 @@ impl Gather {
                     }
                     None => Vec3::ZERO,
                 };
-                motion.insert(entity, (origin, time, velocity, extraction));
+                motion.insert(entity, (origin, emitter.now, velocity, extraction));
                 steady += 1;
                 if velocity.is_finite() {
                     emitter.velocity = velocity;
@@ -379,9 +409,10 @@ impl Gather {
 
 pub(crate) fn gather_emitters(
     settings: Res<ParticleSettings>,
-    emitters: Query<(Entity, &'static ParticleEmitter), engine_core::Shown>,
-    (globals, view, time, bursts): (
+    emitters: Query<(Entity, &'static ParticleEmitter)>,
+    (globals, poses, view, time, bursts): (
         Res<GlobalTransforms>,
+        Res<DrawnPoses>,
         Res<View>,
         Res<FrameTime>,
         Res<ParticleBursts>,
@@ -394,9 +425,9 @@ pub(crate) fn gather_emitters(
         &settings,
         &emitters,
         &bursts,
-        &globals,
+        (&globals, &poses),
         view.detail_eye(),
-        time.game_elapsed_seconds as f32,
+        (time.elapsed as f32, time.real_elapsed as f32),
     );
     let packed = &mut *packed;
     (packed.alpha, packed.mist, packed.total, packed.cut) =

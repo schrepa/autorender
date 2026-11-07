@@ -27,6 +27,12 @@ impl Stepper {
     }
 }
 
+pub(super) fn below_unreached(cost: u32, step: u32) -> u32 {
+    cost.checked_add(step)
+        .filter(|&reached| reached != UNREACHED)
+        .expect("walk_costs_stay_below_unreached")
+}
+
 pub(super) fn octile(a: Sample, b: Sample) -> u64 {
     let (x, z) = ((a[0] - b[0]).unsigned_abs(), (a[1] - b[1]).unsigned_abs());
     let (long, short) = if x > z { (x, z) } else { (z, x) };
@@ -61,7 +67,7 @@ impl Buckets {
     }
 
     pub(super) fn push(&mut self, key: u64, item: u32) {
-        debug_assert!(
+        assert!(
             key >= self.at && key - self.at < WINDOW as u64,
             "key_in_window"
         );
@@ -153,7 +159,7 @@ impl Flood {
                 else {
                     continue;
                 };
-                let reached = self.cost[sample].saturating_add(step);
+                let reached = below_unreached(self.cost[sample], step);
                 if reached < self.cost[next] {
                     self.cost[next] = reached;
                     self.queue.push(u64::from(reached), next as u32);

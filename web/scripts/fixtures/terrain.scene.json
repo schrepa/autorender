@@ -1204,7 +1204,9 @@
       "mesh": "box",
       "material": "plain",
       "nav_agent": {
-        "speed": 6,
+        "speed": 6
+      },
+      "grounded": {
         "offset": 0.5
       },
       "transform": {

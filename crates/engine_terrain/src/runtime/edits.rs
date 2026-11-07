@@ -1,5 +1,6 @@
 use super::operations::{coordinate, reply, terrain_entity};
 use super::*;
+use crate::scene::{SceneTerrainEdit, SceneTerrainRiver};
 use crate::{MAX_GIVEN_RIVERS, StampOp};
 use engine_core::{Joined, Operation, SceneIds};
 use engine_heightfield::given::{MAX_DEPTH, MAX_DISCHARGE, MAX_WIDTH};
@@ -403,10 +404,11 @@ fn edit_terrain(
             }
         }
     };
-    if let Ok((_, mut scene)) = scenes.get_mut(entity)
-        && let Some(terrain) = scene.built.as_mut()
-    {
-        terrain.edits = Arc::from(edits);
+    if let Ok((_, mut scene)) = scenes.get_mut(entity) {
+        scene.authored.edits = edits.iter().map(SceneTerrainEdit::of).collect();
+        if let Some(terrain) = scene.built.as_mut() {
+            terrain.edits = Arc::from(edits);
+        }
     }
     Ok(result)
 }
@@ -512,10 +514,11 @@ fn draw_river(
         rivers: rivers.len(),
         dirty,
     };
-    if let Ok((_, mut scene)) = scenes.get_mut(entity)
-        && let Some(terrain) = scene.built.as_mut()
-    {
-        terrain.rivers = Arc::from(rivers);
+    if let Ok((_, mut scene)) = scenes.get_mut(entity) {
+        scene.authored.rivers = rivers.iter().map(SceneTerrainRiver::of).collect();
+        if let Some(terrain) = scene.built.as_mut() {
+            terrain.rivers = Arc::from(rivers);
+        }
     }
     Ok(result)
 }

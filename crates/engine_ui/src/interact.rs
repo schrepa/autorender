@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::math::max;
-use engine_core::{MenuInput, PointerInput, Screens};
+use engine_core::{Asks, MenuInput, PointerInput, Screens};
+use engine_places_rendering::screens::ScreenAsk;
 use engine_places_rendering::ui::{UiAction, UiEvents, UiKind};
 use glam::Vec2;
 
@@ -9,22 +10,24 @@ use crate::tree::UiState;
 const WHEEL_STEP: f32 = 40.0;
 const CROSS_WEIGHT: f32 = 2.0;
 
+type Steer<'a, 'w, 's> = (&'a Screens, &'a mut Asks<'w, 's, ScreenAsk>);
+
 pub(crate) fn run(
     state: &mut UiState,
-    pointer: &PointerInput,
+    (pointer, reach): (&PointerInput, bool),
     menu: &MenuInput,
-    screens: &mut ResMut<'_, Screens>,
+    (screens, asks): Steer<'_, '_, '_>,
     events: &mut ResMut<'_, UiEvents>,
 ) {
     for id in std::mem::take(&mut state.pending) {
-        if let Some(at) = state.named(&id) {
-            activate(state, at, screens, events);
+        if let Some(at) = state.named(&id).filter(|&at| reach && state.pressable(at)) {
+            activate(state, at, asks, events);
         }
     }
     hover(state, pointer);
-    press(state, pointer, screens, events);
+    press(state, pointer, asks, events);
     if state.wanting {
-        navigate(state, menu, screens, events);
+        navigate(state, menu, (screens, asks), events);
     }
     wheel(state, pointer);
 }
@@ -32,18 +35,16 @@ pub(crate) fn run(
 fn activate(
     state: &mut UiState,
     at: u32,
-    screens: &mut ResMut<'_, Screens>,
+    asks: &mut Asks<'_, '_, ScreenAsk>,
     events: &mut ResMut<'_, UiEvents>,
 ) {
     let Some(action) = state.nodes[at as usize].node.action.clone() else {
         return;
     };
     match action {
-        UiAction::Go(name) => screens.go(name),
-        UiAction::Push(name) => screens.push(name),
-        UiAction::Pop => {
-            screens.pop();
-        }
+        UiAction::Go(name) => asks.send(ScreenAsk::Go(name)),
+        UiAction::Push(name) => asks.send(ScreenAsk::Push(name)),
+        UiAction::Pop => asks.send(ScreenAsk::Pop),
         UiAction::Emit(name) => {
             events.emit(&name);
             state.events += 1;
@@ -70,7 +71,7 @@ fn hover(state: &mut UiState, pointer: &PointerInput) {
 fn press(
     state: &mut UiState,
     pointer: &PointerInput,
-    screens: &mut ResMut<'_, Screens>,
+    asks: &mut Asks<'_, '_, ScreenAsk>,
     events: &mut ResMut<'_, UiEvents>,
 ) {
     if pointer.pressed {
@@ -79,7 +80,7 @@ fn press(
     if pointer.released {
         let pressed = state.pressed.take();
         if let Some(at) = pressed.filter(|_| pressed == state.hovered) {
-            activate(state, at, screens, events);
+            activate(state, at, asks, events);
         }
     } else if !pointer.held {
         state.pressed = None;
@@ -89,7 +90,7 @@ fn press(
 fn navigate(
     state: &mut UiState,
     menu: &MenuInput,
-    screens: &mut ResMut<'_, Screens>,
+    (screens, asks): Steer<'_, '_, '_>,
     events: &mut ResMut<'_, UiEvents>,
 ) {
     let ways = [
@@ -106,10 +107,10 @@ fn navigate(
     if menu.accept
         && let Some(at) = state.focused
     {
-        activate(state, at, screens, events);
+        activate(state, at, asks, events);
     }
     if menu.back && screens.stack().len() > 1 {
-        screens.pop();
+        asks.send(ScreenAsk::Pop);
     }
 }
 

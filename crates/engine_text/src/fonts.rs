@@ -13,7 +13,6 @@ const DEFAULT_FONT: &[u8] = include_bytes!("fonts/FiraMono-subset.ttf");
 const LOCALE: &str = "en-US";
 const LINE_SPACING: f32 = 1.2;
 const LARGEST_PIXELS: f32 = 2048.0;
-const KEPT_FRAMES: u64 = 240;
 
 struct Face {
     family: String,
@@ -253,7 +252,6 @@ impl Shapes {
     }
 
     pub(crate) fn sweep(&mut self, frame: u64) {
-        self.held
-            .retain(|_, held| frame.saturating_sub(held.used) < KEPT_FRAMES);
+        self.held.retain(|_, held| held.used == frame);
     }
 }

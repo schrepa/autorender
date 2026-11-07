@@ -280,7 +280,7 @@ pub(crate) fn plan_particles(
     let carried = (!state.watered.is_empty())
         .then(|| particle_terrain(&state.watered, (&*ground, &*tiles), seen.detail))
         .flatten();
-    let seconds = time.presented_seconds;
+    let seconds = time.elapsed;
     let Some(terrain) = carried else {
         state.particles.rest();
         return;

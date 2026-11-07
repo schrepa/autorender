@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Error, ErrorCode, EvenDisabled, Expected, Mesh, Mesh3d, MeshHandle, MeshVertex,
-    Spawner, Transform,
+    AssetLibrary, Error, ErrorCode, Expected, Mesh, Mesh3d, MeshHandle, MeshVertex, Spawner,
+    Transform,
 };
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max};
@@ -41,7 +41,7 @@ pub(crate) struct SplineChunks {
 
 pub(crate) fn release(
     In(entity): In<Entity>,
-    alive: Query<Entity, EvenDisabled>,
+    alive: Query<Entity>,
     mut builds: ResMut<SplineBuilds>,
     mut assets: ResMut<AssetLibrary>,
     mut spawner: Spawner<SplinesBrick>,
@@ -54,7 +54,7 @@ pub(crate) fn release(
 
 fn discard(
     chunks: &SplineChunks,
-    alive: &Query<Entity, EvenDisabled>,
+    alive: &Query<Entity>,
     assets: &mut ResMut<AssetLibrary>,
     spawner: &mut Spawner<SplinesBrick>,
 ) {
@@ -70,7 +70,7 @@ fn discard(
 
 pub(crate) fn build(
     splines: Query<(Entity, &SplineMesh, Has<Transform>)>,
-    alive: Query<Entity, EvenDisabled>,
+    alive: Query<Entity>,
     mut assets: ResMut<AssetLibrary>,
     mut builds: ResMut<SplineBuilds>,
     mut spawner: Spawner<SplinesBrick>,

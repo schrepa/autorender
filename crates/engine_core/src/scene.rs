@@ -1,11 +1,14 @@
-use bevy_ecs::prelude::{Component, Resource};
+use bevy_ecs::prelude::{Component, Entity, Resource, World};
 use engine_assets::{
     AssetLibrary, Material, MaterialHandle, Mesh, MeshHandle, MeshLods, Texture, TextureHandle,
 };
-use glam::{BVec4A, Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
+use glam::{Affine3A, BVec4A, Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
 use serde::Serialize;
 
-use crate::{Error, ErrorCode, NodePose};
+use crate::{
+    Clock, DrawnPoses, Error, ErrorCode, GlobalTransforms, Mobility, Node, NodePose, Parent,
+    edit_transform, make_fresh,
+};
 use std::sync::Arc;
 
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
@@ -225,6 +228,15 @@ impl Camera {
         self.position
     }
 
+    pub fn rotation(&self) -> Quat {
+        let direction = (self.target - self.position)
+            .try_normalize()
+            .unwrap_or(Vec3::NEG_Z);
+        let yaw = crate::math::atan2(-direction.x, -direction.z);
+        let pitch = crate::math::clamp(direction.y, -1.0, 1.0).asin();
+        Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch)
+    }
+
     pub fn view_projection(&self, aspect: f32) -> Mat4 {
         let (projection, position, direction, up) = self.lens(aspect);
         projection * Mat4::look_to_rh(position, direction, up)
@@ -271,6 +283,116 @@ impl Camera {
             }
         };
         (projection, position, direction, up)
+    }
+}
+
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CameraNode;
+
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub(crate) struct CameraHeld {
+    node: Option<Entity>,
+    shown: Camera,
+}
+
+pub(crate) fn spawn_camera(world: &mut World) {
+    let camera = *world.resource::<Camera>();
+    let node = world
+        .spawn((
+            Transform {
+                translation: camera.position,
+                rotation: camera.rotation(),
+                scale: Vec3::ONE,
+            },
+            CameraNode,
+            Node {
+                clock: Some(Clock::Real),
+                mobility: Some(Mobility::Moving),
+                ..Node::default()
+            },
+        ))
+        .id();
+    world.insert_resource(CameraHeld {
+        node: Some(node),
+        shown: camera,
+    });
+}
+
+pub(crate) fn settle_camera(world: &mut World) {
+    let held = *world.resource::<CameraHeld>();
+    let written = *world.resource::<Camera>();
+    let asked = written != held.shown;
+    let placed = match held.node {
+        Some(node) if !asked => posed(world, node, written),
+        Some(_) | None => written,
+    };
+    let kept = match placed.check() {
+        Ok(()) => placed,
+        Err(error) => {
+            let mut refusals = world.resource_mut::<CameraRefusals>();
+            refusals.count += 1;
+            refusals.latest = Some(error.path);
+            held.shown
+        }
+    };
+    if let Some(node) = held.node
+        && (asked || kept != placed)
+    {
+        cut(world, node, kept);
+    }
+    if kept != written {
+        *world.resource_mut::<Camera>() = kept;
+    }
+    if kept != held.shown {
+        world.resource_mut::<CameraHeld>().shown = kept;
+    }
+}
+
+fn cut(world: &mut World, node: Entity, camera: Camera) {
+    let rotation = camera.rotation();
+    let parent = world
+        .get::<Parent>(node)
+        .map(Parent::parent)
+        .and_then(|parent| world.get_resource::<GlobalTransforms>()?.pose(parent));
+    let placed = match parent {
+        Some(pose) => {
+            let local =
+                pose.inverse() * Affine3A::from_rotation_translation(rotation, camera.position);
+            let (scale, rotation, translation) = local.to_scale_rotation_translation();
+            Transform {
+                translation,
+                rotation,
+                scale,
+            }
+        }
+        None => Transform {
+            translation: camera.position,
+            rotation,
+            scale: Vec3::ONE,
+        },
+    };
+    if edit_transform(world, node, |transform| *transform = placed).is_ok() {
+        make_fresh(world, &[node]);
+    }
+}
+
+fn posed(world: &World, node: Entity, written: Camera) -> Camera {
+    let pose = world
+        .get_resource::<GlobalTransforms>()
+        .zip(world.get_resource::<DrawnPoses>())
+        .and_then(|(globals, poses)| poses.drawn_pose(globals, node));
+    let Some(pose) = pose else {
+        return written;
+    };
+    let Some(forward) = pose.transform_vector3(Vec3::NEG_Z).try_normalize() else {
+        return written;
+    };
+    let position = pose.w_axis.truncate();
+    let focus = (written.target - written.position).length();
+    Camera {
+        position,
+        target: position + forward * focus,
+        ..written
     }
 }
 

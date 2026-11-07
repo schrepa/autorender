@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use engine::host::{FramePhase, HostSettings};
+use engine::host::{FramePhase, HostPause, HostSettings};
 use engine::{BrickList, Engine, ErrorCode, Game, GameHost, GpuPreference, RenderTarget};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -43,7 +43,6 @@ pub struct Flight {
     pub turn: f32,
 }
 
-const FLIGHT_SETTLE: u32 = 120;
 const HITCH_MS: f64 = 33.4;
 const TRACK_MS: f64 = 4000.0;
 
@@ -119,7 +118,6 @@ struct Running<G: Game> {
     jobs: JobPool,
     playing: Option<Instant>,
     measured: Vec<(Instant, f64)>,
-    settled: u32,
     flown: Vec<(f64, u64)>,
     track: Vec<serde_json::Value>,
     tracked: usize,
@@ -186,7 +184,6 @@ impl<'a, G: Game> App<'a, G> {
             jobs,
             playing: None,
             measured: Vec::new(),
-            settled: 0,
             flown: Vec::new(),
             track: Vec::new(),
             tracked: 0,
@@ -199,8 +196,18 @@ impl<'a, G: Game> App<'a, G> {
 }
 
 impl<G: Game> ApplicationHandler for App<'_, G> {
+    fn suspended(&mut self, _: &ActiveEventLoop) {
+        if let Some(running) = &mut self.running {
+            running.host.pause(HostPause::Suspended);
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let Some(build) = self.build.take() else {
+            if let Some(running) = &mut self.running {
+                running.host.resume(HostPause::Suspended);
+                running.window.request_redraw();
+            }
             return;
         };
         match self.start(event_loop, build) {
@@ -237,6 +244,9 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
         {
             return;
         }
+        if self.options.measure.is_some() && matches!(event, WindowEvent::Focused(_)) {
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Moved(_) => self.input.regrab(),
@@ -256,8 +266,9 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
             }
             WindowEvent::Focused(false) => {
                 self.input.clear();
-                running.host.suspend();
+                running.host.pause(HostPause::Focus);
             }
+            WindowEvent::Focused(true) => running.host.resume(HostPause::Focus),
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key
                     && !event.repeat
@@ -366,8 +377,7 @@ impl<G: Game> Running<G> {
         if self.host.preparing() {
             return None;
         }
-        if self.settled < FLIGHT_SETTLE {
-            self.settled += 1;
+        if self.flown.is_empty() && !self.host.frame_times().readiness.settled() {
             return None;
         }
         if self.flown.is_empty() {

@@ -2,10 +2,13 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetResidency, Error, ErrorCode, Expected, GlobalTransforms, Operation, SceneIds,
+    AssetResidency, Asked, Asks, DrawnPoses, Error, ErrorCode, Expected, GlobalTransforms,
+    Operation, SceneIds,
 };
-use engine_places_rendering::animation::{Animator, Rig, full_speed, looping};
-use glam::{Mat4, Quat};
+use engine_places_rendering::animation::{
+    Animate, Animator, AnimatorCommand, Rig, Track, full_speed, looping,
+};
+use glam::Quat;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -23,6 +26,33 @@ fn unknown_joint(rig: &Rig, path: &str, joint: &str) -> Error {
     Error::new(ErrorCode::InvalidValue, path)
         .variants(rig.joints.iter().map(|joint| joint.name.clone()))
         .got(joint)
+}
+
+type Ordered = (
+    SceneIds<'static, 'static>,
+    Query<'static, 'static, &'static Animator>,
+    Res<'static, Asked<Animate>>,
+    Asks<'static, 'static, Animate>,
+);
+
+fn animator_of<'a>(
+    ids: &SceneIds<'_, '_>,
+    animators: &'a Query<'_, '_, &'static Animator>,
+    id: &str,
+) -> Result<(Entity, &'a Animator), Error> {
+    ids.entity(id)
+        .and_then(|entity| animators.get(entity).ok().map(|held| (entity, held)))
+        .ok_or_else(|| unknown_entity(id))
+}
+
+fn layers(animator: &Animator, asked: &Asked<Animate>, entity: Entity) -> usize {
+    let pending = asked
+        .pending()
+        .filter(|ask| {
+            ask.animator == entity && matches!(ask.command, AnimatorCommand::Layer { .. })
+        })
+        .count();
+    animator.layers().len() + pending
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -43,45 +73,43 @@ pub struct AnimationPlay {
 
 impl Operation for AnimationPlay {
     const NAME: &'static str = "animation_play";
-    type Params = (
-        SceneIds<'static, 'static>,
-        Query<'static, 'static, &'static mut Animator>,
-    );
+    type Params = Ordered;
     type Request = Self;
 
     fn run(
-        (ids, mut animators): SystemParamItem<'_, '_, Self::Params>,
+        (ids, animators, asked, mut asks): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
-        let mut animator = ids
-            .entity(&request.entity)
-            .and_then(|entity| animators.get_mut(entity).ok())
-            .ok_or_else(|| unknown_entity(&request.entity))?;
-        if request.layer >= animator.layers.len() {
+        let (entity, animator) = animator_of(&ids, &animators, &request.entity)?;
+        let layers = layers(animator, &asked, entity);
+        if request.layer >= layers {
             return Err(Error::new(ErrorCode::OutOfRange, "$.layer")
-                .at_most(animator.layers.len() as u64 - 1)
+                .at_most(layers as u64 - 1)
                 .got(request.layer));
         }
-        match &request.clip {
-            Some(clip) => {
-                let started = animator.crossfade_on(
-                    request.layer,
-                    clip,
-                    request.seconds,
-                    request.looped,
-                    request.speed,
-                );
-                if !started {
-                    let names = animator.rig().clips.iter().map(|clip| clip.name.clone());
-                    return Err(Error::new(ErrorCode::InvalidValue, "$.clip")
-                        .variants(names)
-                        .got(clip));
-                }
+        let command = match &request.clip {
+            Some(clip) if animator.rig().clip(clip).is_none() => {
+                let names = animator.rig().clips.iter().map(|clip| clip.name.clone());
+                return Err(Error::new(ErrorCode::InvalidValue, "$.clip")
+                    .variants(names)
+                    .got(clip));
             }
-            None => {
-                animator.stop_on(request.layer, request.seconds);
-            }
-        }
+            Some(clip) => AnimatorCommand::Blend {
+                layer: request.layer,
+                clip: clip.clone(),
+                seconds: request.seconds,
+                looped: request.looped,
+                speed: request.speed,
+            },
+            None => AnimatorCommand::Stop {
+                layer: request.layer,
+                seconds: request.seconds,
+            },
+        };
+        asks.send(Animate {
+            animator: entity,
+            command,
+        });
         Ok(json!({ "temporary": true, "layer": request.layer }))
     }
 
@@ -99,23 +127,22 @@ pub struct AnimationLayer {
 
 impl Operation for AnimationLayer {
     const NAME: &'static str = "animation_layer";
-    type Params = (
-        SceneIds<'static, 'static>,
-        Query<'static, 'static, &'static mut Animator>,
-    );
+    type Params = Ordered;
     type Request = Self;
 
     fn run(
-        (ids, mut animators): SystemParamItem<'_, '_, Self::Params>,
+        (ids, animators, asked, mut asks): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
-        let mut animator = ids
-            .entity(&request.entity)
-            .and_then(|entity| animators.get_mut(entity).ok())
-            .ok_or_else(|| unknown_entity(&request.entity))?;
-        let Some(layer) = animator.add_layer(&request.root) else {
+        let (entity, animator) = animator_of(&ids, &animators, &request.entity)?;
+        if animator.rig().joint(&request.root).is_none() {
             return Err(unknown_joint(animator.rig(), "$.root", &request.root));
-        };
+        }
+        let layer = layers(animator, &asked, entity);
+        asks.send(Animate {
+            animator: entity,
+            command: AnimatorCommand::Layer { root: request.root },
+        });
         Ok(json!({ "temporary": true, "layer": layer }))
     }
 
@@ -135,35 +162,36 @@ pub struct AnimationAim {
 
 impl Operation for AnimationAim {
     const NAME: &'static str = "animation_aim";
-    type Params = (
-        SceneIds<'static, 'static>,
-        Query<'static, 'static, &'static mut Animator>,
-    );
+    type Params = Ordered;
     type Request = Self;
 
     fn run(
-        (ids, mut animators): SystemParamItem<'_, '_, Self::Params>,
+        (ids, animators, _, mut asks): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
-        let mut animator = ids
-            .entity(&request.entity)
-            .and_then(|entity| animators.get_mut(entity).ok())
-            .ok_or_else(|| unknown_entity(&request.entity))?;
+        let (entity, animator) = animator_of(&ids, &animators, &request.entity)?;
         if animator.rig().joint(&request.joint).is_none() {
             return Err(unknown_joint(animator.rig(), "$.joint", &request.joint));
         }
-        match request.rotation {
-            Some(rotation) => {
-                let rotation = Quat::from_array(rotation);
+        let rotation = match request.rotation {
+            Some(held) => {
+                let rotation = Quat::from_array(held);
                 if !rotation.is_finite() || rotation.length_squared() == 0.0 {
                     return Err(Error::new(ErrorCode::InvalidValue, "$.rotation")
                         .expected(Expected::Nonzero)
                         .got(request.rotation));
                 }
-                animator.set_rotation(&request.joint, rotation.normalize());
+                Some(rotation.normalize())
             }
-            None => animator.clear_rotation(&request.joint),
-        }
+            None => None,
+        };
+        asks.send(Animate {
+            animator: entity,
+            command: AnimatorCommand::Aim {
+                joint: request.joint,
+                rotation,
+            },
+        });
         Ok(json!({ "temporary": true }))
     }
 
@@ -199,18 +227,43 @@ pub struct AnimationStateView {
     pub layers: Vec<LayerView>,
     pub clips: Vec<ClipView>,
     pub joints: BTreeMap<String, [f32; 3]>,
+    pub drawn: BTreeMap<String, [f32; 3]>,
     pub parts: usize,
     pub resident: usize,
 }
 
+fn playing_view(rig: &Rig, track: Track, weight: f32) -> PlayingView {
+    match track {
+        Track::Clip {
+            clip,
+            time,
+            looped,
+            speed,
+        } => PlayingView {
+            clip: rig.clips.get(clip as usize).map(|clip| clip.name.clone()),
+            time,
+            weight,
+            looped,
+            speed,
+        },
+        Track::Rest => PlayingView {
+            clip: None,
+            time: 0.0,
+            weight,
+            looped: false,
+            speed: 0.0,
+        },
+    }
+}
+
 fn state_of(
     animator: &Animator,
-    root: Mat4,
+    (globals, poses): (&GlobalTransforms, &DrawnPoses),
     residency: Option<&AssetResidency>,
 ) -> AnimationStateView {
     let rig = animator.rig();
     let layers = animator
-        .layers
+        .layers()
         .iter()
         .enumerate()
         .map(|(index, layer)| LayerView {
@@ -221,16 +274,7 @@ fn state_of(
             playing: layer
                 .playing
                 .iter()
-                .map(|playing| PlayingView {
-                    clip: playing
-                        .clip
-                        .and_then(|clip| rig.clips.get(clip as usize))
-                        .map(|clip| clip.name.clone()),
-                    time: playing.time,
-                    weight: playing.weight(),
-                    looped: playing.looped,
-                    speed: playing.speed,
-                })
+                .map(|playing| playing_view(rig, playing.track, playing.fade.weight()))
                 .collect(),
             finished: animator.finished(index),
         })
@@ -243,13 +287,17 @@ fn state_of(
             duration: clip.duration,
         })
         .collect();
-    let joints = rig
-        .joints
-        .iter()
-        .zip(&animator.model)
-        .map(|(joint, model)| {
-            let position = (root * *model).w_axis.truncate();
-            (joint.name.clone(), position.to_array())
+    let named = || rig.joints.iter().zip(animator.joint_nodes());
+    let joints = named()
+        .filter_map(|(joint, &node)| {
+            let position = globals.get(node)?.translation()?;
+            Some((joint.name.clone(), position.to_array()))
+        })
+        .collect();
+    let drawn = named()
+        .filter_map(|(joint, &node)| {
+            let position = poses.drawn_pose(globals, node)?.w_axis.truncate();
+            Some((joint.name.clone(), position.to_array()))
         })
         .collect();
     let resident = residency.map_or(0, |residency| {
@@ -264,6 +312,7 @@ fn state_of(
         layers,
         clips,
         joints,
+        drawn,
         parts: rig.parts.len(),
         resident,
     }
@@ -281,20 +330,21 @@ impl Operation for AnimationState {
         SceneIds<'static, 'static>,
         Query<'static, 'static, &'static Animator>,
         Res<'static, GlobalTransforms>,
+        Res<'static, DrawnPoses>,
         Option<Res<'static, AssetResidency>>,
     );
     type Request = Self;
 
     fn run(
-        (ids, animators, globals, residency): SystemParamItem<'_, '_, Self::Params>,
+        (ids, animators, globals, poses, residency): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
-        let (entity, animator) = ids
-            .entity(&request.entity)
-            .and_then(|entity| animators.get(entity).ok().map(|held| (entity, held)))
-            .ok_or_else(|| unknown_entity(&request.entity))?;
-        let root = globals.pose(entity).map_or(Mat4::IDENTITY, Mat4::from);
-        Ok(json!(state_of(animator, root, residency.as_deref())))
+        let (_, animator) = animator_of(&ids, &animators, &request.entity)?;
+        Ok(json!(state_of(
+            animator,
+            (&globals, &poses),
+            residency.as_deref()
+        )))
     }
 
     fn schema() -> Value {

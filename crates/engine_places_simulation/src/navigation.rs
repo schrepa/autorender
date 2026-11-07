@@ -1,19 +1,20 @@
-use bevy_ecs::prelude::Component;
-use engine_place::InterpolateTransform;
-use glam::Vec3;
+use bevy_ecs::prelude::{Component, Entity};
+use engine_math::clamp;
+use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
+
+use crate::ground::Grounded;
 
 #[derive(
     Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
 )]
-#[require(NavWalk, InterpolateTransform)]
+#[require(NavWalk, Grounded)]
 #[serde(default, deny_unknown_fields)]
 pub struct NavAgent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub destination: Option<[f32; 2]>,
     pub speed: f32,
     pub turn: f32,
-    pub offset: f32,
     pub radius: f32,
     pub max_slope: f32,
     pub max_water: f32,
@@ -26,7 +27,6 @@ impl Default for NavAgent {
             destination: None,
             speed: 1.4,
             turn: 360.0,
-            offset: 0.0,
             radius: 0.4,
             max_slope: 0.8,
             max_water: 0.6,
@@ -47,6 +47,13 @@ pub enum NavStatus {
     Refused,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NavStep {
+    pub to: Vec3,
+    pub facing: Quat,
+    pub blocked: Option<Entity>,
+}
+
 #[derive(Component, Clone, Debug, Default)]
 pub struct NavWalk {
     pub status: NavStatus,
@@ -56,4 +63,21 @@ pub struct NavWalk {
     pub next: usize,
     pub length: f32,
     pub searched: usize,
+    pub step: Option<NavStep>,
+}
+
+impl NavWalk {
+    pub fn walked(&self, at: Vec2) -> Option<f32> {
+        let last = self.points.len().checked_sub(1)?;
+        let a = self.points[self.next.saturating_sub(1).min(last)];
+        let b = self.points[self.next.min(last)];
+        let span = Vec2::new(b.x - a.x, b.z - a.z);
+        let along = Vec2::new(at.x - a.x, at.y - a.z);
+        let t = if span.length_squared() > 1.0e-8 {
+            clamp(along.dot(span) / span.length_squared(), 0.0, 1.0)
+        } else {
+            1.0
+        };
+        Some(a.y + (b.y - a.y) * t)
+    }
 }

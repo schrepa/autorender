@@ -4,27 +4,35 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use engine_core::{
     BrickList, ComponentKind, Error, JobExchange, Placed, Placement, SceneBuffers, SceneComponents,
-    SceneContext, SceneCx, ScenePath,
+    SceneContext, SceneCx, ScenePath, core_components, scene_components,
 };
-use engine_registry::{JobList, MembersOf, Registry, SettingsEntry};
+use engine_registry::{JobList, Registry, SettingsEntry};
 use engine_settings::{ErrorCode, Expected};
 use serde_json::Value;
 
 use crate::{SceneObject, environment::STREAMED};
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SceneKinds {
     listed: Vec<ComponentKind>,
     streamed: Option<SettingsEntry>,
     list: Option<Arc<JobList>>,
 }
 
+impl Default for SceneKinds {
+    fn default() -> Self {
+        Self {
+            listed: core_components().to_vec(),
+            streamed: None,
+            list: None,
+        }
+    }
+}
+
 impl SceneKinds {
     pub fn of(world: &World) -> Self {
         Self {
-            listed: world
-                .get_resource::<MembersOf<SceneComponents>>()
-                .map_or_else(Vec::new, |members| members.all().to_vec()),
+            listed: scene_components(world).cloned().collect(),
             streamed: world
                 .get_resource::<Registry>()
                 .and_then(|registry| registry.section(STREAMED))
@@ -38,7 +46,11 @@ impl SceneKinds {
     pub fn listed(bricks: &BrickList) -> Result<Self, Error> {
         let list = bricks.job_list()?;
         Ok(Self {
-            listed: list.members::<SceneComponents>().cloned().collect(),
+            listed: core_components()
+                .iter()
+                .chain(list.members::<SceneComponents>())
+                .cloned()
+                .collect(),
             streamed: bricks.listed().iter().find_map(|listed| {
                 listed
                     .record()

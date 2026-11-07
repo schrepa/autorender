@@ -234,6 +234,10 @@ pub trait GroundQuery: Send + Sync + 'static {
     fn grid(&self) -> Option<JobRef>;
 
     fn revision(&self) -> u64;
+
+    fn edits(&self) -> u64 {
+        self.revision()
+    }
 }
 
 struct NoGround;
@@ -271,6 +275,37 @@ impl Ground {
     pub fn revision(&self) -> u64 {
         self.0.revision()
     }
+
+    pub fn edits(&self) -> u64 {
+        self.0.edits()
+    }
+
+    pub fn stand(&self, at: Vec2, walked: Option<f32>) -> Option<Stand> {
+        let point = self.point(at).solid();
+        match (point, walked) {
+            (Some(point), Some(walked)) if walked > point.height + DECK_ABOVE => Some(Stand {
+                height: walked,
+                level: None,
+            }),
+            (Some(point), _) => Some(Stand {
+                height: point.height,
+                level: Some(point.level),
+            }),
+            (None, Some(walked)) => Some(Stand {
+                height: walked,
+                level: None,
+            }),
+            (None, None) => None,
+        }
+    }
+}
+
+pub const DECK_ABOVE: f32 = 1.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stand {
+    pub height: f32,
+    pub level: Option<u32>,
 }
 
 impl Default for Ground {
@@ -325,9 +360,80 @@ pub struct Grounded {
 }
 
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
-pub struct GroundedAt {
-    pub position: Vec2,
-    pub offset: f32,
-    pub revision: u64,
-    pub level: Option<u32>,
+pub enum GroundedAt {
+    #[default]
+    Unsettled,
+    Stood {
+        position: Vec2,
+        offset: f32,
+        level: Option<u32>,
+        revision: u64,
+        edits: u64,
+    },
+    Unsupported {
+        position: Vec2,
+        offset: f32,
+        revision: u64,
+    },
+}
+
+impl GroundedAt {
+    pub fn level(self) -> Option<u32> {
+        match self {
+            Self::Stood { level, .. } => level,
+            Self::Unsettled | Self::Unsupported { .. } => None,
+        }
+    }
+
+    pub fn settle(
+        self,
+        ground: &Ground,
+        (position, offset): (Vec2, f32),
+        walked: Option<f32>,
+    ) -> Option<(Self, Option<f32>)> {
+        let (revision, edits) = (ground.revision(), ground.edits());
+        let holds = match self {
+            Self::Unsettled => false,
+            Self::Stood {
+                position: at,
+                offset: held,
+                level,
+                revision: seen,
+                edits: edited,
+            } => {
+                at == position
+                    && held == offset
+                    && edited == edits
+                    && (level == Some(0) || seen == revision)
+            }
+            Self::Unsupported {
+                position: at,
+                offset: held,
+                revision: seen,
+            } => at == position && held == offset && seen == revision,
+        };
+        if holds {
+            return None;
+        }
+        Some(match ground.stand(position, walked) {
+            Some(stand) => (
+                Self::Stood {
+                    position,
+                    offset,
+                    level: stand.level,
+                    revision,
+                    edits,
+                },
+                Some(stand.height + offset),
+            ),
+            None => (
+                Self::Unsupported {
+                    position,
+                    offset,
+                    revision,
+                },
+                None,
+            ),
+        })
+    }
 }

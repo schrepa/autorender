@@ -1,14 +1,14 @@
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
-    GlobalTransforms, GpuBits, GpuPresentation, ImpostorRecord, NodeInfo, NodePose, PoseRows,
-    Since,
+    DrawnPoses, GlobalTransforms, GpuBits, ImpostorRecord, NodeInfo, NodePose, NodeStreams,
+    PoseRows, Since,
 };
 use engine_render::{
     AfterRead, Allocation, CopyRegion, GpuPart, Prepare, mip_levels, pyramid_extents, wgpu,
 };
 
 use crate::batches::BatchPlan;
-use crate::casters::{CasterPlan, ID_CAPACITIES, MAPS, STILLNESS_BYTES};
+use crate::casters::{CACHE_BYTES, CasterPlan, ID_CAPACITIES, MAPS};
 use crate::gpu::{FACES, MeshesGpu, NODE_LEVELS, PYRAMID_LEVELS};
 use crate::layouts::{
     BatchData, COMPOSED_BYTES, CandidateData, CandidateState, CasterFrame, DRAW_ARGS_BYTES, GROUP,
@@ -16,7 +16,7 @@ use crate::layouts::{
 };
 use crate::order::MeshPlan;
 use crate::presentation::{
-    CASTER_TOTALS_BYTES, CasterTotals, FADE_MARGIN, Kept, PresentationTotals,
+    CASTER_TOTALS_BYTES, CasterTotals, FADE_MARGIN, Kept, POSE, PresentationTotals,
     TOTALS_BYTES, UploadSources, WATCHED, frustum_uniform, grow, rasterized, storage_bytes,
 };
 use crate::retained::RetainedRender;
@@ -33,7 +33,7 @@ struct View {
     occlusion: Option<u32>,
     lod_error: f32,
     impostors: bool,
-    stillness: Option<bool>,
+    probes: bool,
     fade: f32,
     watched: Option<u32>,
 }
@@ -86,8 +86,7 @@ impl MeshesGpu {
         let size = view.render_size();
         let motion = self.prepare_motion(&plan, (view.display_size(), temporal, fresh), cx);
         let shown = cx.ran(self.passes.presentation);
-        let fade = self.fade_share(time.elapsed_seconds as f32, detail.fade_seconds, shown);
-        let stillness = captures.views.then_some(captures.still);
+        let fade = self.fade_share(time.real_elapsed as f32, detail.fade_seconds, shown);
         if !decided.occlusion_enabled {
             self.release_pyramid(cx);
         }
@@ -106,16 +105,16 @@ impl MeshesGpu {
                 0.0
             },
             impostors: impostors.enabled,
-            stillness,
+            probes: captures.views,
             fade,
             watched: watched.slot,
         };
-        let nodes = presented.gpu_presentation(&hierarchy);
+        let nodes = presented.streams(&hierarchy);
         let prepared = self.prepare_presentation(
             &retained,
             &plan,
             &caster_plan,
-            &nodes,
+            (&*presented, &nodes),
             &culling,
             &decided,
             UploadSources {
@@ -315,35 +314,33 @@ impl MeshesGpu {
         retained: &RetainedRender,
         plan: &BatchPlan,
         casters: &CasterPlan,
-        gpu: &GpuPresentation<'_>,
+        (poses, streams): (&DrawnPoses, &NodeStreams<'_>),
         view: &View,
         decided: &MeshPlan,
         sources: UploadSources<'_>,
         cx: &mut Prepare<'_, Self>,
     ) -> Prepared {
-        self.ensure_nodes(gpu.info.len(), gpu.parents.len(), cx);
+        self.ensure_nodes(streams.info.len(), streams.parents.len(), cx);
         let kept = Kept {
             phase_two: view.occlusion.is_some(),
-            probe_faces: view.stillness.is_some(),
+            probe_faces: view.probes,
             impostors: view.impostors && view.lod_error > 0.0,
         };
         self.ensure_groups((plan.ordered.len(), plan.batches.len()), kept, cx);
-        self.ensure_stillness(view.stillness, cx);
         self.ensure_fades(cx);
         let states = storage_bytes(self.state.fade_slots * 4);
         self.state.watched = view
             .watched
             .filter(|&slot| u64::from(slot) * 4 + 4 <= states);
-        let uploaded = if let Some((since, shift)) = self.state.nodes.gather(gpu) {
-            self.state.nodes.shift = shift;
-            Some((since.is_none(), self.upload_nodes(gpu, since, cx)))
-        } else {
-            self.state.nodes.shift = false;
-            None
-        };
+        let uploaded = self
+            .state
+            .nodes
+            .plan(poses, streams.info.len())
+            .map(|full| (full, self.upload_nodes(streams, cx)));
+        self.upload_words(sources.hierarchy, streams.info.len(), cx);
         let group_bytes = self.write_batches(plan, casters, &sources, cx)
-            + self.write_candidates(retained, plan, gpu, sources.hierarchy, cx);
-        self.write_frame_uniform(gpu.alpha, view, decided, cx);
+            + self.write_candidates(retained, plan, sources.hierarchy, cx);
+        self.write_frame_uniform(streams.alpha, view, decided, cx);
         cx.run(self.passes.presentation);
         if self.state.occlusion {
             cx.run(self.passes.occlusion);
@@ -358,6 +355,15 @@ impl MeshesGpu {
             && let Some(slot) = self.state.watched
         {
             cx.deliver::<PresentationTotals>(WATCHED, slot.to_le_bytes().to_vec());
+            if (slot as usize) < self.state.capacity {
+                let (at, size) = (u64::from(slot), size_of::<PoseData>() as u64);
+                cx.read_back::<PresentationTotals>(
+                    POSE,
+                    self.instances.poses,
+                    at * size..(at + 1) * size,
+                    AfterRead::Keep,
+                );
+            }
         }
         Prepared {
             uploaded,
@@ -374,8 +380,6 @@ impl MeshesGpu {
         counter("render.gpu_group_upload_bytes", prepared.group_bytes as f64);
         counter("render.gpu_full_node_upload", f64::from(u8::from(full)));
         counter("render.gpu_parent_levels", nodes.level_ranges.len() as f64);
-        counter("render.gpu_shift", f64::from(u8::from(nodes.shift)));
-        counter("render.gpu_blend", f64::from(u8::from(nodes.blend)));
         if let Some(visible) = visible {
             counter("render.gpu_visible_readback", f64::from(visible));
         }
@@ -402,6 +406,10 @@ impl MeshesGpu {
                 presented.authority,
                 storage_bytes(capacity * size_of::<PoseRows>() as u64),
             ),
+            (
+                presented.node_words,
+                storage_bytes(capacity * size_of::<u32>() as u64),
+            ),
         ];
         let mut fresh = false;
         for (buffer, bytes) in sizes {
@@ -423,7 +431,8 @@ impl MeshesGpu {
             fresh |= cx.allocate_buffer(level, 16) == Allocation::Fresh;
         }
         if fresh {
-            inputs.uploaded = None;
+            inputs.whole = true;
+            inputs.words_whole = true;
         }
     }
 
@@ -503,20 +512,6 @@ impl MeshesGpu {
         groups.kept = kept;
     }
 
-    fn ensure_stillness(&mut self, stillness: Option<bool>, cx: &mut Prepare<'_, Self>) {
-        let still = &mut self.state.stillness;
-        let slots = if stillness.is_some() {
-            self.state.capacity as u64
-        } else {
-            0
-        };
-        if slots > still.slots || (slots == 0 && still.slots != 0) {
-            still.slots = slots;
-        }
-        cx.allocate_buffer(self.instances.still_frames, storage_bytes(still.slots * 8));
-        still.counting = stillness == Some(true);
-    }
-
     fn ensure_fades(&mut self, cx: &mut Prepare<'_, Self>) {
         let state = &mut self.state;
         let slots = state.capacity as u64;
@@ -541,72 +536,61 @@ impl MeshesGpu {
         );
     }
 
-    fn upload_nodes(
-        &mut self,
-        gpu: &GpuPresentation<'_>,
-        since: Option<u64>,
-        cx: &mut Prepare<'_, Self>,
-    ) -> u64 {
+    fn upload_nodes(&mut self, streams: &NodeStreams<'_>, cx: &mut Prepare<'_, Self>) -> u64 {
         let nodes = &mut self.state.nodes;
         let presented = &self.presented;
-        nodes.plan_ranges(gpu, since);
         let bytes = nodes.planned_bytes();
-        if nodes.shift {
-            nodes.stage_locals(gpu);
-            if !nodes.rows.is_empty() {
-                cx.allocate_buffer(
-                    presented.node_staging,
-                    storage_bytes((nodes.staged.len() * 4) as u64),
-                );
-                cx.allocate_buffer(
-                    presented.node_ranges,
-                    storage_bytes((nodes.rows.len() * 16) as u64),
-                );
-                cx.write(presented.node_staging, 0, &nodes.staged);
-                cx.write(presented.node_ranges, 0, &nodes.rows);
-            }
-        } else {
-            nodes.rows.clear();
-            let pose = size_of::<NodePose>();
-            for range in &nodes.ranges[0] {
-                cx.write(
-                    presented.locals,
-                    (range.start * pose) as u64,
-                    &gpu.current[range.start..range.end],
-                );
-            }
-            let previous = (nodes.capacity * pose) as u64;
-            for range in &nodes.ranges[1] {
-                cx.write(
-                    presented.locals,
-                    previous + (range.start * pose) as u64,
-                    &gpu.previous[range.start..range.end],
-                );
-            }
-        }
-        for range in &nodes.ranges[2] {
+        let pose = size_of::<NodePose>();
+        let previous = (nodes.capacity * pose) as u64;
+        for range in &nodes.ranges {
+            let (start, end) = (range.start, range.end);
+            cx.write(
+                presented.locals,
+                (start * pose) as u64,
+                &streams.current[start..end],
+            );
+            cx.write(
+                presented.locals,
+                previous + (start * pose) as u64,
+                &streams.previous[start..end],
+            );
             cx.write(
                 presented.info,
-                (range.start * size_of::<NodeInfo>()) as u64,
-                &gpu.info[range.start..range.end],
+                (start * size_of::<NodeInfo>()) as u64,
+                &streams.info[start..end],
             );
-        }
-        for range in &nodes.ranges[3] {
             cx.write(
                 presented.authority,
-                (range.start * size_of::<PoseRows>()) as u64,
-                &gpu.authority[range.start..range.end],
+                (start * size_of::<PoseRows>()) as u64,
+                &streams.authority[start..end],
             );
         }
-        if !gpu.parents.is_empty() {
-            cx.write(presented.parents, 0, gpu.parents);
+        if !streams.parents.is_empty() {
+            cx.write(presented.parents, 0, streams.parents);
         }
-        nodes.levels(gpu);
+        nodes.levels(streams);
         for (level, &(start, end)) in nodes.level_ranges.iter().enumerate().take(NODE_LEVELS) {
             cx.write(presented.levels[level], 0, &[start, end, 0, 0]);
         }
-        nodes.uploaded = Some((gpu.identity, gpu.sequence));
         bytes
+    }
+
+    fn upload_words(
+        &mut self,
+        hierarchy: &GlobalTransforms,
+        nodes: usize,
+        cx: &mut Prepare<'_, Self>,
+    ) {
+        let inputs = &mut self.state.nodes;
+        inputs.plan_words(hierarchy, nodes);
+        let words = hierarchy.packed_words();
+        for range in &inputs.word_ranges {
+            cx.write(
+                self.presented.node_words,
+                (range.start * size_of::<u32>()) as u64,
+                &words[range.start..range.end],
+            );
+        }
     }
 
     fn write_batches(
@@ -641,12 +625,11 @@ impl MeshesGpu {
         &mut self,
         retained: &RetainedRender,
         plan: &BatchPlan,
-        gpu: &GpuPresentation<'_>,
         hierarchy: &GlobalTransforms,
         cx: &mut Prepare<'_, Self>,
     ) -> u64 {
         let groups = &mut self.state.groups;
-        let key = (plan.generation(), gpu.identity);
+        let key = (plan.generation(), hierarchy.topology_revision().get());
         if groups.key == Some(key) {
             return 0;
         }
@@ -700,7 +683,7 @@ impl MeshesGpu {
             groups: candidates.div_ceil(GROUP),
             batches: state.groups.batch_count,
             node_capacity: state.nodes.capacity as u32,
-            blend: u32::from(state.nodes.blend),
+            pad_nodes: 0,
             planes,
             absolute_view_projection: absolute,
             motion: u32::from(view.motion),
@@ -811,8 +794,8 @@ impl MeshesGpu {
             return;
         }
         cx.allocate_buffer(
-            buffers.stillness,
-            storage_bytes(plan.stillness_capacity as u64 * STILLNESS_BYTES),
+            buffers.cache,
+            storage_bytes(plan.cache_capacity as u64 * CACHE_BYTES),
         );
         let starts = (ID_CAPACITIES * plan.id_capacity * 4) as u64;
         cx.allocate_buffer(

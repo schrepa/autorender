@@ -15,10 +15,11 @@ use std::collections::BTreeSet;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetUses, Brick, Bricks, ComponentKind, CursorMode, CursorRequests, Error, ErrorCode,
-    MenuInput, PointerInput, Runs, SceneComponents, SceneContext, SceneCx, Schedule, Screens, Smoke,
-    Source, Spawner, View, gpu_struct, settings, stats,
+    Asks, AssetUses, Brick, Bricks, ComponentKind, CursorMode, CursorRequests, Error, ErrorCode,
+    FeedSettings, GlobalTransforms, MenuInput, PointerInput, Runs, SceneComponents, SceneContext,
+    SceneCx, Schedule, Screens, Smoke, Source, Spawner, View, gpu_struct, settings, stats,
 };
+use engine_places_rendering::screens::ScreenAsk;
 use engine_places_rendering::text::Text;
 use engine_places_rendering::ui::{UiEvents, UiLength, UiNode, UiRoot, UiValues};
 use engine_render::{Layer, OverlayStack, OverlaySteps, RenderBricks};
@@ -71,15 +72,19 @@ type Reading<'w, 's> = (
     Res<'w, UiValues>,
     Res<'w, View>,
     Res<'w, UiSettings>,
-    Option<Res<'w, SceneContext>>,
+    (Option<Res<'w, SceneContext>>, Res<'w, GlobalTransforms>),
 );
 
-type Steering<'w> = (
+type Steering<'w, 's> = (
     ResMut<'w, MenuInput>,
     ResMut<'w, CursorRequests>,
-    ResMut<'w, Screens>,
+    (Res<'w, Screens>, Asks<'w, 's, ScreenAsk>),
     ResMut<'w, UiEvents>,
 );
+
+fn reaches(cursor: &CursorRequests) -> bool {
+    cursor.applied() != CursorMode::Captured
+}
 
 fn check_size(value: f32, path: &str) -> Result<(), Error> {
     if value.is_finite() && value >= 0.0 {
@@ -173,29 +178,36 @@ fn root_example() -> Value {
 }
 
 fn follow(
-    (roots, text, values, view, settings, scene): Reading<'_, '_>,
-    pointer: Res<PointerInput>,
-    (mut menu, mut cursor, mut screens, mut events): Steering<'_>,
+    (roots, text, values, view, settings, (scene, globals)): Reading<'_, '_>,
+    (pointer, feeds): (Res<PointerInput>, Res<FeedSettings>),
+    (mut menu, mut cursor, (screens, mut asks), mut events): Steering<'_, '_>,
     mut state: ResMut<UiState>,
     mut stats: ResMut<UiStats>,
 ) {
+    if feeds.is_changed() || events.is_added() {
+        events.resize(feeds.ui_events as usize);
+    }
     if state.is_idle() && (roots.is_empty() || !settings.enabled) {
         return;
     }
-    if !events.names().is_empty() {
-        events.clear();
-    }
+    let reach = reaches(&cursor);
     let pointer = PointerInput {
-        inside: pointer.inside && cursor.applied() != CursorMode::Captured,
+        inside: pointer.inside && reach,
         ..*pointer
     };
-    interact::run(&mut state, &pointer, &menu, &mut screens, &mut events);
+    interact::run(
+        &mut state,
+        (&pointer, reach),
+        &menu,
+        (&screens, &mut asks),
+        &mut events,
+    );
     let facts = Facts::of(
         &text,
         &values,
         &view,
         &settings,
-        scene.as_ref(),
+        (scene.as_ref(), &globals),
         screens.top(),
     );
     state.sync(&roots, &facts);
@@ -213,7 +225,7 @@ fn follow(
 }
 
 fn present(
-    (roots, text, values, view, settings, scene): Reading<'_, '_>,
+    (roots, text, values, view, settings, (scene, globals)): Reading<'_, '_>,
     screens: Res<Screens>,
     mut state: ResMut<UiState>,
     mut stats: ResMut<UiStats>,
@@ -227,7 +239,7 @@ fn present(
         &values,
         &view,
         &settings,
-        scene.as_ref(),
+        (scene.as_ref(), &globals),
         screens.top(),
     );
     state.sync(&roots, &facts);

@@ -35,18 +35,6 @@ impl MeshesGpu {
         }
         let computes = &self.computes;
         let nodes = &self.state.nodes;
-        if nodes.shift {
-            cx.dispatch(
-                &computes.shift,
-                Count::Groups([(nodes.capacity as u32).div_ceil(CULL_GROUP), 1, 1]),
-            );
-            if !nodes.rows.is_empty() {
-                cx.dispatch(
-                    &computes.apply,
-                    Count::Groups([nodes.rows.len() as u32, 1, 1]),
-                );
-            }
-        }
         for (level, &(start, end)) in nodes.level_ranges.iter().enumerate() {
             if end > start
                 && let Some(pipeline) = computes.compose.get(level)
@@ -63,9 +51,6 @@ impl MeshesGpu {
         }
         let workgroups = candidates.div_ceil(CULL_GROUP);
         cx.dispatch(&computes.cull, Count::Groups([workgroups, 1, 1]));
-        if self.state.stillness.kept() && self.state.stillness.counting {
-            cx.dispatch(&computes.count_still, Count::Groups([workgroups, 1, 1]));
-        }
         if self.state.lod {
             cx.dispatch(&computes.fades, Count::Groups([workgroups, 1, 1]));
         }

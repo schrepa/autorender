@@ -15,7 +15,9 @@ use serde_json::{Map, Value, json};
 
 use super::{Call, Handled, Looped};
 use crate::host::policy::{BENCHMARK_LIMIT_MS, READ_BACK_LIMIT_MS};
-use crate::host::{AdapterStatus, Distribution, HostEnvironment, KNOWN_DIFFERENCES, now_ms};
+use crate::host::{
+    AdapterStatus, Distribution, HostEnvironment, InputSource, KNOWN_DIFFERENCES, now_ms,
+};
 use crate::{Game, GameHost};
 
 #[derive(Debug)]
@@ -62,9 +64,24 @@ pub(crate) enum Awaited {
 }
 
 impl Pending {
-    pub(crate) fn takes_agent_input(&self) -> bool {
-        matches!(self, Self::Frames { .. })
-            || matches!(self, Self::Benchmark(run) if matches!(run.mode, BenchmarkMode::Paced))
+    pub(crate) fn input_source(&self) -> InputSource {
+        match self {
+            Self::Frames { .. } => InputSource::Agent,
+            Self::Benchmark(run) => match run.mode {
+                BenchmarkMode::Paced => InputSource::Agent,
+                BenchmarkMode::Step | BenchmarkMode::Present | BenchmarkMode::Render => {
+                    InputSource::Player
+                }
+            },
+            Self::Paused
+            | Self::Shown { .. }
+            | Self::Game { .. }
+            | Self::Reload { .. }
+            | Self::ReadBack { .. }
+            | Self::Profile(_)
+            | Self::ExplainScene
+            | Self::Watch(_) => InputSource::Player,
+        }
     }
 }
 
@@ -603,9 +620,11 @@ impl<G: Game> GameHost<G> {
     fn dev_control(&mut self, control: BrowserControl, context: &HostContext) -> Step {
         match control {
             BrowserControl::Pause {} => {
+                self.suspend_live();
                 self.dev_effect(Pending::Paused, Effect::Pause { paused: true })
             }
             BrowserControl::Resume {} => {
+                self.suspend_live();
                 self.dev_effect(Pending::Paused, Effect::Pause { paused: false })
             }
             BrowserControl::Frames {

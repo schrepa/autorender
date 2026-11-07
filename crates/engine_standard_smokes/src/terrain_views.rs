@@ -61,11 +61,7 @@ fn fixture() -> Value {
 pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     load(session, &fixture())?;
     ask(session, "control", json!({"name": "pause"}))?;
-    let opened = control(
-        session,
-        "environment",
-        json!({"terrain": {"samples_per_frame": 50_000_000}}),
-    )?;
+    let opened = control(session, "environment", json!({"terrain": {}}))?;
     smoke_eq!(
         json!(opened["environment_changed"]),
         json!(["terrain"]),

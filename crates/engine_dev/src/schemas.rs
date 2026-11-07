@@ -1,6 +1,5 @@
 use bevy_ecs::prelude::World;
-use engine_core::SceneComponents;
-use engine_registry::{MembersOf, Registry};
+use engine_registry::Registry;
 use serde_json::{Map, Value, json};
 
 use crate::protocol::{self, Verb};
@@ -102,7 +101,7 @@ pub fn generated(world: &World) -> Result<Generated, String> {
     let mut schemas = json!({
         "Transform": schemars::schema_for!(views::TransformView),
         "GlobalTransform": schemars::schema_for!(views::GlobalTransformView),
-        "InterpolateTransform": schemars::schema_for!(views::InterpolateTransformView),
+        "NodeWord": schemars::schema_for!(engine_core::NodeWord),
         "PresentationState": schemars::schema_for!(engine_core::PresentationState),
         "Readiness": schemars::schema_for!(engine_core::Readiness),
         "FrameBudget": schemars::schema_for!(engine_core::FrameBudget),
@@ -687,10 +686,7 @@ fn authored_parity(world: &World, scene: &Value, schemas: &Value, problems: &mut
         .as_object()
         .cloned()
         .unwrap_or_default();
-    let kinds: Vec<(&str, &str)> = world
-        .get_resource::<MembersOf<SceneComponents>>()
-        .into_iter()
-        .flat_map(MembersOf::all)
+    let kinds: Vec<(&str, &str)> = engine_core::scene_components(world)
         .map(|kind| (kind.key(), "structure"))
         .collect();
     let authored = || AUTHORED.iter().chain(&kinds);

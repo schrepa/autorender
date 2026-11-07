@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use bevy_ecs::prelude::{Component, Resource};
-use engine_place::Slot;
+use engine_place::{Cursor, Events, Feed, Slot};
 use serde::{Deserialize, Serialize};
 
 use crate::text::{DEFAULT_TEXT_SIZE, TextAlign};
@@ -271,10 +271,19 @@ impl UiValues {
     }
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct UiEvents {
-    names: Vec<String>,
+    raised: Feed<String>,
     pointer_over: bool,
+}
+
+impl Default for UiEvents {
+    fn default() -> Self {
+        Self {
+            raised: Feed::new(1),
+            pointer_over: false,
+        }
+    }
 }
 
 impl Slot for UiEvents {
@@ -282,12 +291,8 @@ impl Slot for UiEvents {
 }
 
 impl UiEvents {
-    pub fn pressed(&self, name: &str) -> bool {
-        self.names.iter().any(|held| held == name)
-    }
-
-    pub fn names(&self) -> &[String] {
-        &self.names
+    pub fn since<'a>(&'a self, cursor: &mut Cursor) -> Events<'a, String> {
+        self.raised.events(cursor)
     }
 
     pub fn pointer_over(&self) -> bool {
@@ -296,12 +301,12 @@ impl UiEvents {
 
     #[doc(hidden)]
     pub fn emit(&mut self, name: &str) {
-        self.names.push(name.to_owned());
+        self.raised.push(name.to_owned());
     }
 
     #[doc(hidden)]
-    pub fn clear(&mut self) {
-        self.names.clear();
+    pub fn resize(&mut self, size: usize) {
+        self.raised.resize(size);
     }
 
     #[doc(hidden)]

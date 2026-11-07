@@ -1,11 +1,11 @@
-use bevy_ecs::prelude::{Res, ResMut, Resource};
+use std::collections::BTreeSet;
+
+use bevy_ecs::prelude::{ResMut, Resource};
 use bevy_ecs::system::SystemParamItem;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{AssetBudget, Error, Operation, settings};
-
-pub const MAX_TIME_SCALE: f32 = 8.0;
+use crate::{AssetBudget, Clock, Error, ErrorCode, List, Operation, settings};
 
 #[derive(Debug, Clone, Copy)]
 pub struct EngineConfig {
@@ -35,59 +35,118 @@ settings! {
     }
 }
 
-#[derive(Resource, Clone, Copy, Debug, Default)]
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[component(immutable)]
 pub struct FrameTime {
-    pub delta_seconds: f32,
-    pub elapsed_seconds: f64,
-    pub game_delta_seconds: f32,
-    pub game_elapsed_seconds: f64,
-    pub presented_seconds: f64,
     pub frame: u64,
+    pub ticks: u32,
+    pub alpha: f32,
+    pub seconds: f64,
+    pub real_seconds: f64,
+    pub elapsed: f64,
+    pub real_elapsed: f64,
+    pub dropped_seconds: f64,
+    pub cut_seconds: f64,
     pub between_frames_micros: u32,
 }
 
 impl FrameTime {
-    pub fn real_presented_seconds(&self) -> f64 {
-        self.presented_seconds + (self.elapsed_seconds - self.game_elapsed_seconds)
+    pub fn seconds_on(&self, clock: Clock) -> f64 {
+        match clock {
+            Clock::Game => self.seconds,
+            Clock::Real => self.real_seconds,
+        }
     }
 }
 
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
-pub struct TimeControl {
-    pub paused: bool,
-    pub scale: f32,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum PauseReason {
+    Agent,
+    Screen,
+    Game,
+    Focus,
+    Hidden,
+    Suspended,
 }
 
-impl Default for TimeControl {
+impl PauseReason {
+    pub fn stops_frames(self) -> bool {
+        match self {
+            Self::Hidden | Self::Suspended => true,
+            Self::Agent | Self::Screen | Self::Game | Self::Focus => false,
+        }
+    }
+}
+
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Pause {
+    reasons: BTreeSet<PauseReason>,
+}
+
+impl List for Pause {
+    const NAME: &'static str = "pause";
+    type Member = PauseReason;
+}
+
+impl Pause {
+    pub fn add(&mut self, reason: PauseReason) -> bool {
+        self.reasons.insert(reason)
+    }
+
+    pub fn remove(&mut self, reason: PauseReason) -> bool {
+        self.reasons.remove(&reason)
+    }
+
+    pub fn holds(&self, reason: PauseReason) -> bool {
+        self.reasons.contains(&reason)
+    }
+
+    pub fn paused(&self) -> bool {
+        !self.reasons.is_empty()
+    }
+
+    pub fn reasons(&self) -> impl Iterator<Item = PauseReason> + '_ {
+        self.reasons.iter().copied()
+    }
+}
+
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct TimeScale(pub f32);
+
+impl Default for TimeScale {
     fn default() -> Self {
-        Self {
-            paused: false,
-            scale: 1.0,
+        Self(1.0)
+    }
+}
+
+impl TimeScale {
+    pub fn check(self) -> Result<Self, Error> {
+        if self.0.is_finite() && self.0 >= 0.0 {
+            Ok(self)
+        } else {
+            Err(Error::new(ErrorCode::InvalidValue, "$.scale")
+                .range(0.0, f64::from(f32::MAX))
+                .got(self.0))
         }
     }
 }
 
-impl TimeControl {
-    pub fn kept_scale(self) -> f32 {
-        if self.scale.is_nan() {
-            1.0
-        } else {
-            crate::math::clamp(self.scale, 0.0, MAX_TIME_SCALE)
-        }
+pub(crate) fn game_rate(pause: &Pause, scale: TimeScale) -> f64 {
+    if pause.paused() || !(scale.0.is_finite() && scale.0 >= 0.0) {
+        0.0
+    } else {
+        f64::from(scale.0)
     }
+}
 
-    pub fn rate(self) -> f64 {
-        if self.paused {
-            0.0
-        } else {
-            f64::from(self.kept_scale())
-        }
-    }
-
-    fn view(self) -> Value {
-        json!({"time_paused": self.paused, "time_scale": self.kept_scale()})
-    }
+fn time_view(pause: &Pause, scale: TimeScale) -> Value {
+    let reasons: Vec<PauseReason> = pause.reasons().collect();
+    json!({"time_paused": pause.paused(), "pause_reasons": reasons, "time_scale": scale.0})
 }
 
 #[derive(Deserialize)]
@@ -103,21 +162,27 @@ pub(crate) struct TimeOperation;
 
 impl Operation for TimeOperation {
     const NAME: &'static str = "time";
-    type Params = ResMut<'static, TimeControl>;
+    type Params = (ResMut<'static, Pause>, ResMut<'static, TimeScale>);
     type Request = TimeRequest;
 
     fn run(
-        mut control: SystemParamItem<'_, '_, Self::Params>,
+        (mut pause, mut scale): SystemParamItem<'_, '_, Self::Params>,
         request: TimeRequest,
     ) -> Result<Value, Error> {
-        if let Some(paused) = request.paused {
-            control.paused = paused;
+        let wanted = request.scale.map(TimeScale).map(TimeScale::check).transpose()?;
+        if let Some(wanted) = wanted {
+            *scale = wanted;
         }
-        if let Some(scale) = request.scale {
-            control.scale = scale;
-            control.scale = control.kept_scale();
+        match request.paused {
+            Some(true) if !pause.holds(PauseReason::Agent) => {
+                pause.add(PauseReason::Agent);
+            }
+            Some(false) if pause.holds(PauseReason::Agent) => {
+                pause.remove(PauseReason::Agent);
+            }
+            Some(_) | None => {}
         }
-        Ok(control.view())
+        Ok(time_view(&pause, *scale))
     }
 }
 
@@ -130,14 +195,17 @@ pub(crate) struct TimeState;
 impl Operation for TimeState {
     const NAME: &'static str = "time_state";
     const CONTROL: bool = false;
-    type Params = Res<'static, TimeControl>;
+    type Params = (
+        bevy_ecs::prelude::Res<'static, Pause>,
+        bevy_ecs::prelude::Res<'static, TimeScale>,
+    );
     type Request = TimeStateRequest;
 
     fn run(
-        control: SystemParamItem<'_, '_, Self::Params>,
+        (pause, scale): SystemParamItem<'_, '_, Self::Params>,
         _: TimeStateRequest,
     ) -> Result<Value, Error> {
-        Ok(control.view())
+        Ok(time_view(&pause, *scale))
     }
 }
 
@@ -149,20 +217,35 @@ pub struct FixedTime {
     pub tick: u64,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct FrameReport {
-    pub fixed_steps: u32,
-    pub dropped_seconds: f64,
-    pub cut_seconds: f64,
-    pub interpolation: f32,
-}
-
 pub(crate) fn sanitize_delta(delta_seconds: f64) -> f64 {
     if delta_seconds.is_finite() && delta_seconds > 0.0 {
         delta_seconds
     } else {
         0.0
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Interval {
+    Fresh,
+    Since(f64),
+}
+
+impl Interval {
+    pub(crate) fn next(self, timestamp: Option<f64>) -> (Self, f64) {
+        match (self, timestamp) {
+            (Self::Fresh, Some(now)) => (Self::Since(now), 0.0),
+            (Self::Since(last), Some(now)) => (Self::Since(now), sanitize_delta(now - last)),
+            (Self::Fresh | Self::Since(_), None) => (Self::Fresh, 0.0),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Advanced {
+    pub(crate) ticks: u32,
+    pub(crate) dropped_seconds: f64,
+    pub(crate) alpha: f32,
 }
 
 pub(crate) struct FixedClock {
@@ -191,7 +274,7 @@ impl FixedClock {
         self.accumulator_seconds = 0.0;
     }
 
-    pub(crate) fn advance(&mut self, delta_seconds: f64, max_fixed_steps: u32) -> FrameReport {
+    pub(crate) fn advance(&mut self, delta_seconds: f64, max_fixed_steps: u32) -> Advanced {
         let previous_remainder = self.accumulator_seconds;
         let incoming_steps = delta_seconds / self.step_seconds;
         let fractional_seconds = if incoming_steps.is_finite() {
@@ -202,21 +285,20 @@ impl FixedClock {
         let accumulated_fraction = previous_remainder + fractional_seconds;
         let available_steps =
             incoming_steps.floor() + (accumulated_fraction / self.step_seconds).floor();
-        let fixed_steps = available_steps.min(f64::from(max_fixed_steps)) as u32;
+        let ticks = available_steps.min(f64::from(max_fixed_steps)) as u32;
         self.accumulator_seconds = accumulated_fraction % self.step_seconds;
-        let dropped_seconds = if available_steps > f64::from(fixed_steps) {
-            (delta_seconds - f64::from(fixed_steps) * self.step_seconds + previous_remainder
+        let dropped_seconds = if available_steps > f64::from(ticks) {
+            (delta_seconds - f64::from(ticks) * self.step_seconds + previous_remainder
                 - self.accumulator_seconds)
                 .max(0.0)
         } else {
             0.0
         };
-        let interpolation = (self.accumulator_seconds / self.step_seconds) as f32;
-        FrameReport {
-            fixed_steps,
+        let alpha = (self.accumulator_seconds / self.step_seconds) as f32;
+        Advanced {
+            ticks,
             dropped_seconds,
-            cut_seconds: 0.0,
-            interpolation: crate::math::min(interpolation, f32::from_bits(1.0_f32.to_bits() - 1)),
+            alpha: crate::math::min(alpha, f32::from_bits(1.0_f32.to_bits() - 1)),
         }
     }
 }

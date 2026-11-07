@@ -1,25 +1,23 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, Cursor, GpuPresentation, MaterialHandle, MeshHandle,
-    NodeInfo, NodePose, Readable, Readback, ResidentMesh,
+    AlphaMode, AssetLibrary, AssetResidency, Cursor, DrawnPoses, GlobalTransforms, MaterialHandle,
+    MeshHandle, NodeInfo, NodePose, NodeStreams, Readable, Readback, ResidentMesh, Since,
 };
 use glam::{Mat4, Vec3};
 
 use crate::batches::DrawBatch;
 use crate::layouts::{BatchData, CandidateData, FIRST_PERSON_BATCH, LOD_LEVELS};
 use crate::order::BatchLook;
-use crate::uploads::{ColorData, UploadRange, changed_ranges, listed_ranges, whole_stream};
+use crate::uploads::{ColorData, PoseData, UploadRange, listed_ranges};
 
 pub(crate) const MIN_STORAGE_BYTES: u64 = 256;
 pub(crate) const TOTALS_BYTES: u64 = 56;
 pub(crate) const CASTER_TOTALS_BYTES: u64 = 16;
 pub(crate) const WATCHED: u32 = 2;
-const STREAM_STRIDES: [usize; 4] = [
-    size_of::<NodePose>(),
-    size_of::<NodePose>(),
-    size_of::<NodeInfo>(),
-    size_of::<engine_core::PoseRows>(),
-];
+pub(crate) const POSE: u32 = 3;
+const STREAM_STRIDE: usize = size_of::<engine_core::PoseRows>();
+const NODE_BYTES: usize =
+    2 * size_of::<NodePose>() + size_of::<NodeInfo>() + size_of::<engine_core::PoseRows>();
 pub(crate) const FADE_MARGIN: f32 = 0.1;
 pub(crate) const PHASE_ONE: usize = 0;
 pub(crate) const PHASE_TWO: usize = 1;
@@ -88,11 +86,17 @@ pub(crate) struct FrameTotals {
 pub(crate) struct PresentationTotals {
     last: Option<FrameTotals>,
     watching: Vec<(u64, u32)>,
+    pose: Option<(u64, PoseData)>,
 }
 
 impl PresentationTotals {
     pub(crate) fn last(&self) -> Option<FrameTotals> {
         self.last
+    }
+
+    pub(crate) fn pose(&self) -> Option<PoseData> {
+        let (frame, rows) = self.pose?;
+        (self.last?.frame == frame).then_some(rows)
     }
 
     pub(crate) fn age(&self, now: u64) -> Option<u64> {
@@ -111,6 +115,13 @@ impl Readable for PresentationTotals {
         let (frame, bytes) = (read.written.0, read.value);
         if tag == WATCHED {
             self.watching.push((frame, word(bytes, 0)));
+            return;
+        }
+        if tag == POSE {
+            self.pose = bytes
+                .get(..size_of::<PoseData>())
+                .and_then(|bytes| bytemuck::try_pod_read_unaligned::<PoseData>(bytes).ok())
+                .map(|rows| (frame, rows));
             return;
         }
         let watched = self
@@ -254,113 +265,88 @@ pub(crate) struct NodeInputs {
     pub composed_capacity: usize,
     pub parent_capacity: usize,
     pub level_ranges: Vec<(u32, u32)>,
-    pub blend: bool,
-    pub uploaded: Option<(u64, u64)>,
-    pub ranges: [Vec<UploadRange>; 4],
+    pub seen: Cursor,
+    pub whole: bool,
+    pub ranges: Vec<UploadRange>,
+    pub words_seen: Cursor,
+    pub words_whole: bool,
+    pub word_ranges: Vec<UploadRange>,
     pub upload_bits: Vec<u64>,
-    pub staged: Vec<f32>,
-    pub rows: Vec<[u32; 4]>,
-    pub shift: bool,
 }
 
 impl NodeInputs {
-    pub(crate) fn gather(&mut self, gpu: &GpuPresentation<'_>) -> Option<(Option<u64>, bool)> {
-        let since = match self.uploaded {
-            Some((identity, sequence)) if identity == gpu.identity => Some(sequence),
-            _ => None,
-        };
-        if since == Some(gpu.sequence) {
-            return None;
+    pub(crate) fn plan_words(&mut self, hierarchy: &GlobalTransforms, nodes: usize) {
+        let changes = hierarchy.word_changes_since(&mut self.words_seen);
+        let whole = std::mem::take(&mut self.words_whole);
+        self.word_ranges.clear();
+        if hierarchy.packed_words().len() != nodes {
+            self.words_whole = true;
+            return;
         }
-        let mut shift = false;
-        match since {
-            None => self.blend = true,
-            Some(since) if gpu.shift_sequence > since => {
-                shift = gpu.shift && since + 1 == gpu.sequence;
-                self.blend = shift;
+        match changes {
+            Since::Same if !whole => return,
+            Since::Listed(listed)
+                if !whole && listed.iter().all(|&node| (node as usize) < nodes) =>
+            {
+                listed_ranges(
+                    listed,
+                    nodes,
+                    size_of::<u32>(),
+                    &mut self.upload_bits,
+                    &mut self.word_ranges,
+                );
+                return;
             }
-            Some(_) => {}
+            Since::Same | Since::Listed(_) | Since::All => {}
         }
-        Some((since, shift))
+        if nodes != 0 {
+            self.word_ranges.push(UploadRange {
+                start: 0,
+                end: nodes,
+            });
+        }
+    }
+
+    pub(crate) fn plan(&mut self, poses: &DrawnPoses, nodes: usize) -> Option<bool> {
+        let changes = poses.changes_since(&mut self.seen);
+        let whole = std::mem::take(&mut self.whole);
+        self.ranges.clear();
+        match changes {
+            Since::Same if !whole => return None,
+            Since::Listed(listed)
+                if !whole && listed.iter().all(|&node| (node as usize) < nodes) =>
+            {
+                listed_ranges(
+                    listed,
+                    nodes,
+                    STREAM_STRIDE,
+                    &mut self.upload_bits,
+                    &mut self.ranges,
+                );
+                return Some(false);
+            }
+            Since::Same | Since::Listed(_) | Since::All => {}
+        }
+        if nodes != 0 {
+            self.ranges.push(UploadRange {
+                start: 0,
+                end: nodes,
+            });
+        }
+        Some(true)
     }
 
     pub(crate) fn planned_bytes(&self) -> u64 {
         self.ranges
             .iter()
-            .zip(STREAM_STRIDES)
-            .map(|(ranges, stride)| {
-                ranges
-                    .iter()
-                    .map(|range| (range.end - range.start) * stride)
-                    .sum::<usize>()
-            })
+            .map(|range| (range.end - range.start) * NODE_BYTES)
             .sum::<usize>() as u64
     }
 
-    pub(crate) fn plan_ranges(&mut self, gpu: &GpuPresentation<'_>, since: Option<u64>) {
-        let strides = STREAM_STRIDES;
-        let stamps = [
-            gpu.current_stamps,
-            gpu.previous_stamps,
-            gpu.info_stamps,
-            gpu.authority_stamps,
-        ];
-        let consecutive = since.is_some_and(|since| since + 1 == gpu.sequence);
-        let bits = &mut self.upload_bits;
-        for (stream, ranges) in self.ranges.iter_mut().enumerate() {
-            let (stride, stamps) = (strides[stream], stamps[stream]);
-            let stamped = gpu.stamped[stream];
-            let listed = gpu.stamped_nodes[stream];
-            match since {
-                Some(_) if consecutive && stamped == 0 => ranges.clear(),
-                Some(since) if !consecutive || !whole_stream(stamped, stamps.len()) => {
-                    match listed.filter(|_| consecutive) {
-                        Some(nodes) => {
-                            listed_ranges(nodes, stamps.len(), stride, bits, ranges);
-                        }
-                        None => {
-                            changed_ranges(stamps, since, stride, ranges);
-                        }
-                    }
-                }
-                _ => {
-                    ranges.clear();
-                    if !stamps.is_empty() {
-                        ranges.push(UploadRange {
-                            start: 0,
-                            end: stamps.len(),
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    pub(crate) fn stage_locals(&mut self, gpu: &GpuPresentation<'_>) {
-        self.staged.clear();
-        self.rows.clear();
-        let floats = size_of::<NodePose>() / size_of::<f32>();
-        let streams: [(&[NodePose], usize); 2] = [(gpu.current, 0), (gpu.previous, self.capacity)];
-        for ((poses, base), ranges) in streams.into_iter().zip(&self.ranges[..2]) {
-            for range in ranges {
-                let staging = self.staged.len() as u32;
-                for pose in &poses[range.start..range.end] {
-                    self.staged.extend_from_slice(pose);
-                }
-                self.rows.push([
-                    ((base + range.start) * floats) as u32,
-                    ((range.end - range.start) * floats) as u32,
-                    staging,
-                    0,
-                ]);
-            }
-        }
-    }
-
-    pub(crate) fn levels(&mut self, gpu: &GpuPresentation<'_>) {
+    pub(crate) fn levels(&mut self, streams: &NodeStreams<'_>) {
         self.level_ranges.clear();
         let mut start = 0;
-        for &end in gpu.levels {
+        for &end in streams.levels {
             self.level_ranges.push((start, end));
             start = end;
         }
@@ -512,18 +498,6 @@ fn batch_record(
 }
 
 #[derive(Default)]
-pub(crate) struct Stillness {
-    pub slots: u64,
-    pub counting: bool,
-}
-
-impl Stillness {
-    pub(crate) fn kept(&self) -> bool {
-        self.slots != 0
-    }
-}
-
-#[derive(Default)]
 pub(crate) struct Pyramid {
     pub count: u32,
     pub written: Vec<(u32, u32)>,
@@ -555,7 +529,6 @@ pub(crate) struct FrameState {
     pub draws: Draws,
     pub nodes: NodeInputs,
     pub groups: DrawGroups,
-    pub stillness: Stillness,
     pub fade_slots: u64,
     pub card_capacity: usize,
     pub frame: Option<crate::layouts::PresentationFrame>,

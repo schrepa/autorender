@@ -1175,7 +1175,7 @@ pub(crate) fn exchange_orders(world: &mut World) {
     }
     let now = world
         .get_resource::<crate::FrameTime>()
-        .map_or(0.0, |time| time.elapsed_seconds);
+        .map_or(0.0, |time| time.real_elapsed);
     world.resource_scope(|world, mut exchange: Mut<JobExchange>| {
         crate::modify(world, |records: &mut Records| {
             exchange.settle(orders, &mut records.requests, now);

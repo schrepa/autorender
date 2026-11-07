@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use bevy_ecs::prelude::Component;
+use bevy_ecs::prelude::{Component, Entity};
 use engine_codec::Expected;
 use engine_math::clamp;
-use engine_place::{Error, ErrorCode, InterpolateTransform, MaterialHandle, MeshHandle};
-use glam::{Mat4, Quat, Vec3};
+use engine_place::{ApplyAt, Ask, Error, ErrorCode, MaterialHandle, MeshHandle};
+use glam::Quat;
 use serde::{Deserialize, Serialize};
 
 const UNIT_SLACK: f32 = 1.0e-2;
@@ -75,7 +75,7 @@ impl<T> Keys<T> {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Track {
+pub struct JointKeys {
     pub joint: u32,
     #[serde(default)]
     pub translation: Option<Keys<[f32; 3]>>,
@@ -90,7 +90,7 @@ pub struct Track {
 pub struct Clip {
     pub name: String,
     pub duration: f32,
-    pub tracks: Vec<Track>,
+    pub tracks: Vec<JointKeys>,
 }
 
 impl Clip {
@@ -189,27 +189,6 @@ impl Rig {
         }
         Ok(())
     }
-
-    fn rest_model(&self) -> Vec<Mat4> {
-        let mut model: Vec<Mat4> = Vec::with_capacity(self.joints.len());
-        for joint in &self.joints {
-            let parent = joint
-                .parent
-                .and_then(|parent| model.get(parent as usize))
-                .copied()
-                .unwrap_or(Mat4::IDENTITY);
-            model.push(parent * offset(joint.translation, joint.rotation, joint.scale));
-        }
-        model
-    }
-}
-
-fn offset(translation: [f32; 3], rotation: [f32; 4], scale: [f32; 3]) -> Mat4 {
-    Mat4::from_scale_rotation_translation(
-        Vec3::from_array(scale),
-        Quat::from_array(rotation),
-        Vec3::from_array(translation),
-    )
 }
 
 fn invalid(path: impl Into<String>) -> Error {
@@ -284,12 +263,11 @@ pub struct AnimatorScene {
 
 impl From<AnimatorScene> for Animator {
     fn from(scene: AnimatorScene) -> Self {
-        let mut animator = Self::new(Arc::new(scene.rig));
-        if let Some(start) = &scene.play {
-            animator.play(&start.clip, start.looped, start.speed);
+        let animator = Self::new(Arc::new(scene.rig));
+        match scene.play {
+            Some(start) => animator.starting(start),
+            None => animator,
         }
-        animator.start = scene.play;
-        animator
     }
 }
 
@@ -302,35 +280,110 @@ impl From<Animator> for AnimatorScene {
     }
 }
 
-#[derive(Clone, Debug)]
+fn wrapped(time: f32, duration: f32, looped: bool) -> f32 {
+    if duration <= 0.0 {
+        0.0
+    } else if looped {
+        time.rem_euclid(duration)
+    } else {
+        clamp(time, 0.0, duration)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Track {
+    Clip {
+        clip: u32,
+        time: f32,
+        looped: bool,
+        speed: f32,
+    },
+    Rest,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Fade {
+    In { elapsed: f32, seconds: f32 },
+    Full,
+}
+
+impl Fade {
+    fn over(seconds: f32) -> Self {
+        if seconds > 0.0 {
+            Self::In {
+                elapsed: 0.0,
+                seconds,
+            }
+        } else {
+            Self::Full
+        }
+    }
+
+    pub fn weight(self) -> f32 {
+        match self {
+            Self::In { elapsed, seconds } => clamp(elapsed / seconds, 0.0, 1.0),
+            Self::Full => 1.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Playing {
-    pub clip: Option<u32>,
-    pub time: f32,
-    pub looped: bool,
-    pub speed: f32,
-    pub fade: f32,
-    pub seconds: f32,
+    pub track: Track,
+    pub fade: Fade,
 }
 
 impl Playing {
-    pub fn weight(&self) -> f32 {
-        if self.seconds <= 0.0 {
-            1.0
-        } else {
-            clamp(self.fade / self.seconds, 0.0, 1.0)
+    pub fn clip(&self) -> Option<u32> {
+        match self.track {
+            Track::Clip { clip, .. } => Some(clip),
+            Track::Rest => None,
         }
     }
 
     pub fn done(&self, rig: &Rig) -> bool {
-        let Some(clip) = self.clip.and_then(|clip| rig.clips.get(clip as usize)) else {
-            return true;
-        };
-        !self.looped
-            && if self.speed < 0.0 {
-                self.time <= 0.0
-            } else {
-                self.time >= clip.duration
+        match self.track {
+            Track::Clip {
+                clip,
+                time,
+                looped,
+                speed,
+            } => {
+                let Some(clip) = rig.clips.get(clip as usize) else {
+                    return true;
+                };
+                !looped
+                    && if speed < 0.0 {
+                        time <= 0.0
+                    } else {
+                        time >= clip.duration
+                    }
             }
+            Track::Rest => true,
+        }
+    }
+
+    fn step(&mut self, rig: &Rig, seconds: f32) {
+        self.fade = match self.fade {
+            Fade::In {
+                elapsed,
+                seconds: over,
+            } if elapsed + seconds < over => Fade::In {
+                elapsed: elapsed + seconds,
+                seconds: over,
+            },
+            Fade::In { .. } | Fade::Full => Fade::Full,
+        };
+        if let Track::Clip {
+            clip,
+            time,
+            looped,
+            speed,
+        } = &mut self.track
+        {
+            let duration = rig.clips.get(*clip as usize).map_or(0.0, |clip| clip.duration);
+            *time = wrapped(*time + *speed * seconds, duration, *looped);
+        }
     }
 }
 
@@ -347,32 +400,108 @@ impl ClipLayer {
             .as_ref()
             .is_none_or(|mask| mask.get(joint).copied().unwrap_or(false))
     }
+
+    fn step(&mut self, rig: &Rig, seconds: f32) {
+        for playing in &mut self.playing {
+            playing.step(rig, seconds);
+        }
+        let Some(full) = self
+            .playing
+            .iter()
+            .rposition(|playing| playing.fade == Fade::Full)
+        else {
+            return;
+        };
+        self.playing.drain(..full);
+        if self
+            .playing
+            .first()
+            .is_some_and(|playing| playing.track == Track::Rest)
+        {
+            self.playing.remove(0);
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AnimatorCommand {
+    Play {
+        layer: usize,
+        clip: String,
+        looped: bool,
+        speed: f32,
+    },
+    Blend {
+        layer: usize,
+        clip: String,
+        seconds: f32,
+        looped: bool,
+        speed: f32,
+    },
+    Stop {
+        layer: usize,
+        seconds: f32,
+    },
+    Speed {
+        layer: usize,
+        speed: f32,
+    },
+    Layer {
+        root: String,
+    },
+    Aim {
+        joint: String,
+        rotation: Option<Quat>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Animate {
+    pub animator: Entity,
+    pub command: AnimatorCommand,
+}
+
+impl Ask for Animate {
+    const NAME: &'static str = "animate";
+    const AT: ApplyAt = ApplyAt::TickStart;
+
+    fn node(&self) -> Option<Entity> {
+        Some(self.animator)
+    }
 }
 
 #[derive(Component, Clone, Debug, Serialize, Deserialize)]
 #[serde(from = "AnimatorScene", into = "AnimatorScene")]
-#[require(InterpolateTransform)]
 pub struct Animator {
     rig: Arc<Rig>,
     start: Option<Start>,
-    pub layers: Vec<ClipLayer>,
-    pub overrides: Vec<(u32, Quat)>,
-    pub model: Vec<Mat4>,
-    pub root: Mat4,
+    layers: Vec<ClipLayer>,
+    overrides: Vec<(u32, Quat)>,
+    joints: Vec<Entity>,
 }
 
 impl Animator {
     #[must_use]
     pub fn new(rig: Arc<Rig>) -> Self {
-        let model = rig.rest_model();
         Self {
             rig,
             start: None,
             layers: vec![ClipLayer::default()],
             overrides: Vec::new(),
-            model,
-            root: Mat4::IDENTITY,
+            joints: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn starting(mut self, start: Start) -> Self {
+        self.apply(&AnimatorCommand::Play {
+            layer: 0,
+            clip: start.clip.clone(),
+            looped: start.looped,
+            speed: start.speed,
+        });
+        self.start = Some(start);
+        self
     }
 
     pub fn start(&self) -> Option<&Start> {
@@ -383,16 +512,116 @@ impl Animator {
         &self.rig
     }
 
-    pub fn play(&mut self, clip: &str, looped: bool, speed: f32) -> bool {
-        self.play_on(0, clip, looped, speed)
+    pub fn layers(&self) -> &[ClipLayer] {
+        &self.layers
     }
 
-    pub fn crossfade(&mut self, clip: &str, seconds: f32, looped: bool, speed: f32) -> bool {
-        self.crossfade_on(0, clip, seconds, looped, speed)
+    pub fn overrides(&self) -> &[(u32, Quat)] {
+        &self.overrides
     }
 
-    pub fn add_layer(&mut self, root: &str) -> Option<usize> {
-        let root = self.rig.joint(root)?;
+    pub fn joint_nodes(&self) -> &[Entity] {
+        &self.joints
+    }
+
+    pub fn joint_node(&self, joint: &str) -> Option<Entity> {
+        self.joints.get(self.rig.joint(joint)?).copied()
+    }
+
+    pub fn clip_duration(&self, clip: &str) -> Option<f32> {
+        Some(self.rig.clips.get(self.rig.clip(clip)?)?.duration)
+    }
+
+    pub fn finished(&self, layer: usize) -> bool {
+        self.layers
+            .get(layer)
+            .and_then(|held| held.playing.last())
+            .is_none_or(|newest| newest.done(&self.rig))
+    }
+
+    #[doc(hidden)]
+    pub fn apply(&mut self, command: &AnimatorCommand) -> bool {
+        match command {
+            AnimatorCommand::Play {
+                layer,
+                clip,
+                looped,
+                speed,
+            } => self.start_on(*layer, clip, 0.0, *looped, *speed),
+            AnimatorCommand::Blend {
+                layer,
+                clip,
+                seconds,
+                looped,
+                speed,
+            } => {
+                let Some(index) = self.rig.clip(clip) else {
+                    return false;
+                };
+                let rig = &*self.rig;
+                let newest = self.layers.get(*layer).and_then(|held| held.playing.last());
+                if newest.is_some_and(|newest| {
+                    newest.clip() == Some(index as u32) && !newest.done(rig)
+                }) {
+                    return true;
+                }
+                self.start_on(*layer, clip, *seconds, *looped, *speed)
+            }
+            AnimatorCommand::Stop { layer, seconds } => {
+                let Some(held) = self.layers.get_mut(*layer) else {
+                    return false;
+                };
+                if !held.playing.is_empty() {
+                    held.playing.push(Playing {
+                        track: Track::Rest,
+                        fade: Fade::over(*seconds),
+                    });
+                }
+                true
+            }
+            AnimatorCommand::Speed { layer, speed } => {
+                let newest = self
+                    .layers
+                    .get_mut(*layer)
+                    .and_then(|held| held.playing.last_mut());
+                match newest.map(|newest| &mut newest.track) {
+                    Some(Track::Clip { speed: held, .. }) => {
+                        *held = *speed;
+                        true
+                    }
+                    Some(Track::Rest) | None => false,
+                }
+            }
+            AnimatorCommand::Layer { root } => self.add_layer(root),
+            AnimatorCommand::Aim {
+                joint,
+                rotation: Some(rotation),
+            } => self.set_rotation(joint, *rotation),
+            AnimatorCommand::Aim {
+                joint,
+                rotation: None,
+            } => self.clear_rotation(joint),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn step(&mut self, seconds: f32) {
+        let rig = &*self.rig;
+        for layer in &mut self.layers {
+            layer.step(rig, seconds);
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn publish_joints(&mut self, joints: &[Entity]) {
+        self.joints.clear();
+        self.joints.extend_from_slice(joints);
+    }
+
+    fn add_layer(&mut self, root: &str) -> bool {
+        let Some(root) = self.rig.joint(root) else {
+            return false;
+        };
         let mut mask = vec![false; self.rig.joints.len()];
         mask[root] = true;
         for (index, joint) in self.rig.joints.iter().enumerate() {
@@ -408,30 +637,7 @@ impl Animator {
             mask: Some(mask),
             playing: Vec::new(),
         });
-        Some(self.layers.len() - 1)
-    }
-
-    pub fn play_on(&mut self, layer: usize, clip: &str, looped: bool, speed: f32) -> bool {
-        self.start_on(layer, clip, 0.0, looped, speed)
-    }
-
-    pub fn crossfade_on(
-        &mut self,
-        layer: usize,
-        clip: &str,
-        seconds: f32,
-        looped: bool,
-        speed: f32,
-    ) -> bool {
-        let Some(index) = self.rig.clip(clip) else {
-            return false;
-        };
-        let rig = &*self.rig;
-        let newest = self.layers.get(layer).and_then(|held| held.playing.last());
-        if newest.is_some_and(|newest| newest.clip == Some(index as u32) && !newest.done(rig)) {
-            return true;
-        }
-        self.start_on(layer, clip, seconds, looped, speed)
+        true
     }
 
     fn start_on(
@@ -450,46 +656,18 @@ impl Animator {
             return false;
         };
         layer.playing.push(Playing {
-            clip: Some(index as u32),
-            time: if speed < 0.0 { duration } else { 0.0 },
-            looped,
-            speed,
-            fade: 0.0,
-            seconds,
+            track: Track::Clip {
+                clip: index as u32,
+                time: if speed < 0.0 { duration } else { 0.0 },
+                looped,
+                speed,
+            },
+            fade: Fade::over(seconds),
         });
         true
     }
 
-    pub fn stop_on(&mut self, layer: usize, seconds: f32) -> bool {
-        let Some(layer) = self.layers.get_mut(layer) else {
-            return false;
-        };
-        if !layer.playing.is_empty() {
-            layer.playing.push(Playing {
-                clip: None,
-                time: 0.0,
-                looped: false,
-                speed: 0.0,
-                fade: 0.0,
-                seconds,
-            });
-        }
-        true
-    }
-
-    pub fn set_speed(&mut self, layer: usize, speed: f32) -> bool {
-        let newest = self
-            .layers
-            .get_mut(layer)
-            .and_then(|held| held.playing.last_mut());
-        let Some(newest) = newest else {
-            return false;
-        };
-        newest.speed = speed;
-        true
-    }
-
-    pub fn set_rotation(&mut self, joint: &str, rotation: Quat) -> bool {
+    fn set_rotation(&mut self, joint: &str, rotation: Quat) -> bool {
         let Some(joint) = self.rig.joint(joint) else {
             return false;
         };
@@ -501,43 +679,19 @@ impl Animator {
         true
     }
 
-    pub fn clear_rotation(&mut self, joint: &str) {
-        if let Some(joint) = self.rig.joint(joint) {
-            self.overrides.retain(|(held, _)| *held as usize != joint);
-        }
-    }
-
-    pub fn joint_world(&self, joint: &str) -> Option<Mat4> {
-        Some(self.root * self.joint_model(joint)?)
-    }
-
-    pub fn joint_model(&self, joint: &str) -> Option<Mat4> {
-        self.model.get(self.rig.joint(joint)?).copied()
-    }
-
-    pub fn clip_duration(&self, clip: &str) -> Option<f32> {
-        Some(self.rig.clips.get(self.rig.clip(clip)?)?.duration)
-    }
-
-    pub fn finished(&self, layer: usize) -> bool {
-        self.layers
-            .get(layer)
-            .and_then(|held| held.playing.last())
-            .is_none_or(|newest| newest.done(&self.rig))
+    fn clear_rotation(&mut self, joint: &str) -> bool {
+        let Some(joint) = self.rig.joint(joint) else {
+            return false;
+        };
+        self.overrides.retain(|(held, _)| *held as usize != joint);
+        true
     }
 }
 
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[require(InterpolateTransform)]
 pub struct Attachment {
     pub joint: String,
-    #[serde(default)]
-    pub translation: [f32; 3],
-    #[serde(default = "no_rotation")]
-    pub rotation: [f32; 4],
-    #[serde(default = "unit_scale")]
-    pub scale: [f32; 3],
 }
 
 impl Attachment {
@@ -545,13 +699,6 @@ impl Attachment {
     pub fn new(joint: impl Into<String>) -> Self {
         Self {
             joint: joint.into(),
-            translation: [0.0; 3],
-            rotation: no_rotation(),
-            scale: unit_scale(),
         }
-    }
-
-    pub fn offset(&self) -> Mat4 {
-        offset(self.translation, self.rotation, self.scale)
     }
 }

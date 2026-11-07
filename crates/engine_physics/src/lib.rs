@@ -21,10 +21,10 @@ pub use settings::{Physics, PhysicsStats};
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, ErrorCode, Placement, Runs, SceneComponents, Schedule, Smoke,
-    Source,
+    Asked, Brick, Bricks, ComponentKind, ErrorCode, Pace, Placement, Runs, SceneComponents,
+    Schedule, Smoke, Source,
 };
-use engine_places_simulation::physics::{BodyPush, RigidBody};
+use engine_places_simulation::physics::{BodyAsk, BodyPush, RigidBody};
 use engine_places_simulation::water::WaterObstacles;
 
 pub struct PhysicsBrick;
@@ -44,6 +44,7 @@ impl Brick for PhysicsBrick {
             .stats::<PhysicsStats>()
             .resource::<world::PhysicsWorld>()
             .fill::<WaterObstacles>(None)
+            .fill::<Asked<BodyAsk>>(None)
             .join::<SceneComponents>(
                 ComponentKind::of::<RigidBody>("rigid_body")
                     .check(body::check_body)
@@ -59,12 +60,14 @@ impl Brick for PhysicsBrick {
                     .example(body::push_example),
                 None,
             )
+            .moves::<RigidBody>(Pace::Tick)
             .systems(
                 Schedule::FixedSimulation,
                 (world::step, obstacles::obstruct),
             )
             .observation::<views::PhysicsBody>()
-            .operation::<views::BodyPushOperation>();
+            .operation::<views::BodyPushOperation>()
+            .operation::<views::BodyAskOperation>();
     }
 }
 

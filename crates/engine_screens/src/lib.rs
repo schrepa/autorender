@@ -9,10 +9,10 @@ mod smoke;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, Level, Operation, Runs, SceneComponents,
-    Schedule, Screens, Smoke, Source, TimeControl,
+    Applies, Asked, Brick, Bricks, ComponentKind, Error, ErrorCode, Level, Operation, Pause,
+    PauseReason, Runs, SceneComponents, Schedule, Screens, Smoke, Source,
 };
-use engine_places_rendering::screens::Screen;
+use engine_places_rendering::screens::{Screen, ScreenAsk};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -34,6 +34,8 @@ impl Brick for ScreensBrick {
                     .example(screen_example),
                 None,
             )
+            .join::<Pause>(PauseReason::Screen, None)
+            .fill::<Asked<ScreenAsk>>(None)
             .systems(Schedule::Presentation, follow_top)
             .operation::<ScreenOperation>()
             .observation::<ScreenList>()
@@ -50,14 +52,34 @@ fn screen_example() -> Value {
     json!({"name": "menu", "pauses": true})
 }
 
-fn follow_top(screens: Res<Screens>, declared: Query<&Screen>, mut time: ResMut<TimeControl>) {
-    if !screens.is_changed() || declared.is_empty() {
-        return;
+fn follow_top(
+    mut screens: ResMut<Screens>,
+    mut asked: Applies<ScreenAsk>,
+    declared: Query<&Screen>,
+    mut pause: ResMut<Pause>,
+) {
+    for ask in asked.take() {
+        match ask {
+            ScreenAsk::Go(name) => screens.go(name),
+            ScreenAsk::Push(name) => screens.push(name),
+            ScreenAsk::Pop => {
+                screens.pop();
+            }
+        }
     }
     let top = screens.top();
-    time.paused = declared
+    let pauses = declared
         .iter()
         .any(|screen| screen.pauses && top == Some(screen.name.as_str()));
+    match (pauses, pause.holds(PauseReason::Screen)) {
+        (true, false) => {
+            pause.add(PauseReason::Screen);
+        }
+        (false, true) => {
+            pause.remove(PauseReason::Screen);
+        }
+        (true, true) | (false, false) => {}
+    }
 }
 
 fn known(declared: &Query<'_, '_, &Screen>, name: &str) -> Result<(), Error> {

@@ -1,15 +1,19 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode, Expected, Operation, SceneIds};
-use engine_places_simulation::physics::{BodyPush, RigidBody};
+use engine_core::{
+    Ask, Asked, Error, ErrorCode, Expected, FixedTime, FrameTime, Moment, Mover, Operation,
+    SceneIds,
+};
+use engine_places_simulation::physics::{BodyAsk, BodyChange, BodyPush, RigidBody};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::body::{BodyProblem, BodyWater, check_push};
+use crate::body::{BodyProblem, BodyWater, check_change, check_push};
 use crate::world::PhysicsWorld;
 
 #[derive(Serialize)]
 struct RigidBodyView {
     body: RigidBody,
+    moved_by: Option<&'static str>,
     simulated: bool,
     problem: Option<BodyProblem>,
     mass: f32,
@@ -33,7 +37,7 @@ impl Operation for PhysicsBody {
     type Params = (
         Res<'static, PhysicsWorld>,
         SceneIds<'static, 'static>,
-        Query<'static, 'static, &'static RigidBody>,
+        Query<'static, 'static, (&'static RigidBody, Option<&'static Mover>)>,
     );
     type Request = BodyRequest;
 
@@ -46,7 +50,7 @@ impl Operation for PhysicsBody {
                 .expected(Expected::Entity)
                 .got(&request.entity)
         })?;
-        let Ok(body) = bodies.get(entity) else {
+        let Ok((body, mover)) = bodies.get(entity) else {
             return Ok(Value::Null);
         };
         let status = physics.status(entity);
@@ -56,6 +60,7 @@ impl Operation for PhysicsBody {
         let status = status.unwrap_or_default();
         let view = RigidBodyView {
             body: *body,
+            moved_by: mover.map(|mover| mover.by.name()),
             simulated,
             problem: status.problem,
             mass: status.mass,
@@ -101,5 +106,51 @@ impl Operation for BodyPushOperation {
         })?;
         *push = request.push;
         Ok(json!(request.push))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AskRequest {
+    entity: String,
+    ask: BodyChange,
+}
+
+pub(crate) struct BodyAskOperation;
+
+impl Operation for BodyAskOperation {
+    const NAME: &'static str = BodyAsk::NAME;
+    type Params = (
+        SceneIds<'static, 'static>,
+        Query<'static, 'static, (), With<RigidBody>>,
+        ResMut<'static, Asked<BodyAsk>>,
+        (Res<'static, FixedTime>, Res<'static, FrameTime>),
+    );
+    type Request = AskRequest;
+
+    fn run(
+        (ids, bodies, mut asked, (fixed, frame)): SystemParamItem<'_, '_, Self::Params>,
+        request: AskRequest,
+    ) -> Result<Value, Error> {
+        let entity = ids.entity(&request.entity).ok_or_else(|| {
+            Error::new(ErrorCode::UnknownEntity, "$.entity")
+                .expected(Expected::Entity)
+                .got(&request.entity)
+        })?;
+        check_change(request.ask, "$.ask")?;
+        if !bodies.contains(entity) {
+            return Err(Error::new(ErrorCode::InvalidRigidBody, "$.entity").got(&request.entity));
+        }
+        asked.ask(
+            BodyAsk {
+                body: entity,
+                change: request.ask,
+            },
+            Moment {
+                tick: fixed.tick,
+                frame: frame.frame,
+            },
+        );
+        Ok(json!({ "ask": request.ask, "at": BodyAsk::AT }))
     }
 }

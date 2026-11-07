@@ -290,7 +290,7 @@ pub(crate) fn plan_shadows(
         wind.velocity[0],
         wind.velocity[1],
         wind.gusts,
-        time.game_elapsed_seconds as f32,
+        time.elapsed as f32,
     ];
     if let Some(draw) = plan.sky_draw
         && plan.sky_view.is_none_or(|(clip, _)| clip != draw.clip)

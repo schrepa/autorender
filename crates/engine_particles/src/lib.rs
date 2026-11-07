@@ -37,6 +37,7 @@ impl Brick for ParticlesBrick {
             .resource::<emitters::Packed>()
             .fill::<Transparency>(Some(shaders::particles::faces::transparency::MODULE))
             .fill::<ParticleBursts>(None)
+            .moving::<ParticleEmitter>()
             .join::<SceneComponents>(
                 ComponentKind::of::<ParticleEmitter>("particles")
                     .check(scene::check_emitter)

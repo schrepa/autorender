@@ -21,8 +21,11 @@ pub use engine_core::{
 pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
 pub use engine_registry::JobList;
 pub use environment::{HostEnvironment, KNOWN_DIFFERENCES};
-pub use frame_loop::{FrameLoop, FramePhase};
-pub use input::{FrameInput, InputGatherer, KEYS, MENU_KEYS, MOVE_KEYS, MenuKey, MoveDirection};
+pub use frame_loop::{FrameLoop, FramePhase, HostPause};
+pub use input::{
+    FrameInput, Holder, InputGatherer, InputSource, KEYS, MENU_KEYS, MOVE_KEYS, MenuKey,
+    MoveDirection,
+};
 pub(crate) use jobs::{Finished, JobScheduler};
 pub use jobs::{JobMessage, JobOrder};
 pub(crate) use level::{LevelLoad, LevelStep};
@@ -33,8 +36,8 @@ pub use scene_load::{
     FileRead, IMAGE_FORMATS, Image, ImageFormat, SceneLoad, decode_image, image_format,
 };
 pub use settings::{
-    HostSettings, OVERLAY, SETTINGS, Setting, apply_setting, has_setting, reset_setting,
-    run_operation,
+    HostSettings, OVERLAY, SETTINGS, Setting, SettingsLog, apply_setting, apply_settings,
+    has_setting, reset_setting, run_operation,
 };
 pub use views::{show_look, show_view};
 
@@ -68,6 +71,11 @@ pub fn typescript() -> String {
         .map(|&(phase, name)| (name.to_owned(), (phase as u32).into()))
         .collect();
     output.push_str(&constant("FRAME_PHASES", &phases.into()));
+    let pauses: serde_json::Map<String, serde_json::Value> = HostPause::ALL
+        .iter()
+        .map(|&(pause, name)| (name.to_owned(), (pause as u32).into()))
+        .collect();
+    output.push_str(&constant("HOST_PAUSES", &pauses.into()));
     let cursors: serde_json::Map<String, serde_json::Value> = engine_core::CursorMode::ALL
         .iter()
         .map(|&(mode, name)| (name.to_owned(), (mode as u32).into()))

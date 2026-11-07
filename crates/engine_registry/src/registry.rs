@@ -11,14 +11,14 @@ use bevy_ecs::world::World;
 use engine_place::{Error, ErrorCode, PlaceDecl, PlaceKind, Slot, Smoke};
 use serde_json::Value;
 
-use crate::access::AccessRule;
+use crate::access::{AccessRule, MoverRule};
 use crate::attribution::CORE_ROW;
 use crate::entries::{Kept, OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
 use crate::explain::ExplainEntry;
 use crate::hooks::{Named, add_removal, add_settle};
 use crate::jobs::JobQueue;
 use crate::order::{self, PlaceRules};
-use crate::owners::{Shared, Used, Values, note, ownership};
+use crate::owners::{Shared, Used, ValueKind, Values, note, ownership};
 use crate::record::BrickRecord;
 use crate::state::{BrickStates, GateDriver, GateFn, GateId, Reset, Scope, Turning, state_on};
 
@@ -52,6 +52,7 @@ pub struct Registry {
     eachers: Vec<(TypeId, MemberEach)>,
     owners: Vec<Shared>,
     private: Vec<Vec<(ComponentId, Reset)>>,
+    movers: Option<MoverRule>,
     problems: Vec<Error>,
 }
 
@@ -125,6 +126,10 @@ impl RegistryBuilder {
 
     pub fn core_operation(&mut self, entry: OperationEntry) {
         self.registry.core_operation(entry);
+    }
+
+    pub fn mover_rule(&mut self, rule: MoverRule) {
+        self.registry.movers = Some(rule);
     }
 
     pub fn writers_first<T: 'static>(&mut self) {
@@ -665,11 +670,12 @@ impl Registry {
                 .map(|record| (record.package, record.owner()))
                 .collect(),
             self.bricks.iter().map(BrickRecord::game).collect(),
+            self.movers,
         );
         for decl in &self.catalog {
             let filler = match decl.kind() {
                 PlaceKind::Slot => self.filler_id(decl.type_id()),
-                PlaceKind::List | PlaceKind::Component => None,
+                PlaceKind::List | PlaceKind::Component | PlaceKind::Ledger => None,
             };
             rule.place(decl.type_id(), decl.kind(), filler);
         }
@@ -960,6 +966,16 @@ impl Registry {
             dropped: &dropped,
         };
         let held = ownership(world, &values, uses);
+        for shared in &held.shared {
+            let kind = match shared.kind {
+                ValueKind::Resource => "resources",
+                ValueKind::Component => "components",
+            };
+            self.problems.push(
+                Error::new(ErrorCode::WrittenTwice, format!("$.{kind}.{}", shared.value))
+                    .got(&shared.bricks),
+            );
+        }
         self.owners = held.shared;
         self.private = held.private;
         held.needs

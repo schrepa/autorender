@@ -6,8 +6,6 @@ use super::{aim, open, settle};
 
 const VIEW: &str = "close";
 
-const FRAMES: u32 = 8;
-
 const UNLINKED: [&str; 3] = ["shader_link", "unknown_module", "place_not_filled"];
 
 pub(super) fn standard(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
@@ -54,17 +52,15 @@ fn fills_lighting(fills: &Value) -> bool {
 
 fn looked(session: &mut dyn SmokeSession) -> Checked<Value> {
     aim(session, VIEW)?;
-    let mut rendering = Value::Null;
-    for _ in 0..FRAMES {
-        rendering = rendered(session)?;
-    }
+    rendered(session)?;
+    settle(session)?;
+    let rendering = rendered(session)?;
     let passes = &rendering["render_passes"];
     smoke_eq!(
         passes.as_array().is_some_and(|passes| !passes.is_empty()),
         true,
         "the_lit_scene_runs_passes"
     );
-    settle(session)?;
     capture(session)
 }
 

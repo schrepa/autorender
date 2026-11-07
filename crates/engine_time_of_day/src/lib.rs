@@ -86,10 +86,10 @@ fn restart(settings: &Res<TimeOfDay>, day: &mut ResMut<DayTime>) {
 
 fn advance_time_of_day(time: Res<FrameTime>, settings: Res<TimeOfDay>, mut day: ResMut<DayTime>) {
     restart(&settings, &mut day);
-    if settings.speed <= 0.0 || time.game_delta_seconds <= 0.0 {
+    if settings.speed <= 0.0 || time.seconds <= 0.0 {
         return;
     }
-    let hours = day.hours.unwrap_or(settings.hours) + settings.speed * time.game_delta_seconds;
+    let hours = day.hours.unwrap_or(settings.hours) + settings.speed * time.seconds as f32;
     day.hours = Some(max(hours.rem_euclid(24.0), 0.0));
 }
 

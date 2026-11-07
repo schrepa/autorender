@@ -35,7 +35,7 @@ pub(crate) fn gather_probes(
     let eye = view.detail_eye();
     gathered.candidates.clear();
     for (entity, probe) in &probes {
-        if !crate::component::valid(probe) {
+        if !crate::component::valid(probe) || !globals.active(entity) {
             continue;
         }
         let Some(center) = globals

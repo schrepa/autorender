@@ -6,6 +6,7 @@
 extern crate self as engine_core;
 
 mod assets;
+mod authoring;
 pub mod bounds;
 mod bricks;
 mod clock;
@@ -14,12 +15,13 @@ mod entity_indices;
 mod frame_stats;
 mod hierarchy;
 mod input;
-mod interpolation;
 mod jobs;
 pub mod math;
 mod mesh_lods;
+mod moves;
 pub use engine_math::collections;
 mod nearest;
+mod presentation;
 pub mod presentation_bounds;
 mod provided;
 mod records;
@@ -43,6 +45,7 @@ pub mod profile {
 }
 
 pub use assets::*;
+pub use authoring::core_components;
 pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
@@ -52,13 +55,16 @@ pub use engine_assets::{
     Texture, TextureFormat, TextureRef, TopLayer, UvTransform, Wrap, lod_input, trim_cards,
 };
 pub use engine_place::{
-    BudgetUse, Census, Cursor, CursorView, DrawPoint, Error, ErrorCode, Events, Feed, FeedView,
-    FrameBudget, GpuStruct, Interest, InterpolateTransform, JobRef, Level, LevelView, List,
-    MaterialHandle, Mesh3d, MeshHandle, PlaceDecl, Progress, Readiness, Request, Requests, Ring,
-    Runs, Screens, Since, Slot, Smoke, SmokeFailure, SmokeSession, Stamp, StoreId, TextureHandle,
-    Ticket, gpu_consts, smoke_check, smoke_eq,
+    Applied, ApplyAt, Ask, Asked, BudgetUse, Census, Clock, Cursor, CursorView, DrawPoint, Error,
+    ErrorCode, Events, Feed, FeedView, FrameBudget, GpuStruct, Interest, JobRef, Level, LevelView,
+    List, MaterialHandle, Mesh3d, MeshHandle, Mobility, Moment, Mover, MoverId, Node, NodeWord,
+    Pace, PlaceDecl, Progress, Readiness, Request, Requests, Ring, Runs, Screens, Since, Slot,
+    Smoke, SmokeFailure, SmokeSession, Stamp, StoreId, TextureHandle, Ticket, gpu_consts,
+    smoke_check, smoke_eq,
 };
-pub use engine_registry::{AuthoredId, ExplainAsk, ExplainRecord, FrameFacts, RecordParity};
+pub use engine_registry::{
+    AuthoredId, ExplainAsk, ExplainRecord, FrameFacts, RecordParity, fault_of,
+};
 pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
@@ -67,10 +73,13 @@ pub use frame_stats::*;
 pub use glam;
 pub use hierarchy::*;
 pub use input::*;
-pub use interpolation::*;
 pub use jobs::*;
 pub use mesh_lods::MeshLevels;
+pub use moves::{
+    Applies, Asks, CameraHandoff, HandOver, Moves, Teleport, mover_of, send_ask, take_asks,
+};
 pub use nearest::Nearest;
+pub use presentation::*;
 pub use provided::*;
 pub use records::*;
 pub use scene::*;
@@ -119,12 +128,11 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules, SingleThreadedExecutor};
 use bevy_ecs::system::ResMut;
 use bevy_ecs::world::World;
-use clock::FixedClock;
+use clock::{Advanced, FixedClock, Interval};
 use engine_registry::{
     BrickHooks, GateDriver, JobList, JobListed, MembersOf, OperationEntry, Registry,
     RegistryBuilder,
 };
-use interpolation::{InterpolationState, ResetWatch};
 use schedules::{
     BetweenFrames, FixedMove, FixedPostSimulation, FixedPreSimulation, FixedSimulation, FrameStart,
     Presentation, Stream, TransformPropagation, ViewSync, Waiting, WorldSync,
@@ -135,8 +143,14 @@ pub const MAX_DEV_TICKS: u32 = 120;
 static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::list::<SceneComponents>(),
     PlaceDecl::list::<CursorRequests>(),
+    PlaceDecl::list::<Pause>(),
     PlaceDecl::slot::<ImpostorPolicy>(),
     PlaceDecl::slot::<ViewWind>(),
+    PlaceDecl::ledger::<FrameBudget>("frame_budget"),
+    PlaceDecl::ledger::<Readiness>("readiness"),
+    PlaceDecl::ask::<Teleport>(),
+    PlaceDecl::ask::<HandOver>(),
+    PlaceDecl::ask::<CameraHandoff>(),
 ];
 
 #[cfg(feature = "dev")]
@@ -153,10 +167,9 @@ pub fn check_dev_ticks(ticks: u32) -> Result<(), Error> {
 pub struct Engine {
     pub app: App,
     clock: FixedClock,
-    resets: ResetWatch,
+    interval: Interval,
     gates: Option<GateDriver>,
     facts: Option<FrameFacts>,
-    good_camera: Camera,
     finalized: bool,
 }
 
@@ -216,6 +229,11 @@ fn core_entries(registry: &mut RegistryBuilder) {
         true,
         transform_edits::run_edit_transform,
     ));
+    registry.core_operation(OperationEntry::of::<()>(
+        authoring::COMPONENT,
+        true,
+        authoring::run_component,
+    ));
     registry.core_operation(OperationEntry::of::<
         <clock::TimeOperation as Operation>::Params,
     >(
@@ -230,8 +248,20 @@ fn core_entries(registry: &mut RegistryBuilder) {
             bricks::run_operation::<clock::TimeState>,
         ),
     );
+    registry.core_operation(OperationEntry::of::<
+        <moves::MovesState as Operation>::Params,
+    >(
+        moves::MovesState::NAME,
+        moves::MovesState::CONTROL,
+        bricks::run_operation::<moves::MovesState>,
+    ));
+    registry.mover_rule(moves::rule());
+    registry.fill_core::<Asked<Teleport>>();
+    registry.fill_core::<Asked<HandOver>>();
+    registry.fill_core::<Asked<CameraHandoff>>();
     registry.writers_first::<Camera>();
-    registry.writers_first::<TimeControl>();
+    registry.writers_first::<Pause>();
+    registry.writers_first::<TimeScale>();
     registry.writers_first::<Screens>();
 }
 
@@ -270,8 +300,7 @@ impl Engine {
         app.world_mut()
             .resource_mut::<Schedules>()
             .remove(bevy_app::First);
-        hierarchy::tracking::track_switches(app.world_mut());
-        interpolation::track_markers(app.world_mut());
+        hierarchy::tracking::track_nodes(app.world_mut());
         app.add_observer(refuse_bevy_hierarchy);
         app.add_observer(note_tick_check);
         for schedule in Schedule::ALL {
@@ -289,13 +318,15 @@ impl Engine {
                 tick: 0,
             })
             .init_resource::<FrameTime>()
-            .init_resource::<TimeControl>()
+            .init_resource::<Pause>()
+            .init_resource::<TimeScale>()
             .init_resource::<FrameLimits>()
             .init_resource::<Screens>()
             .init_resource::<Level>()
             .init_resource::<Readiness>()
             .init_resource::<FrameBudget>()
             .init_resource::<Camera>()
+            .init_resource::<scene::CameraHeld>()
             .init_resource::<CameraRefusals>()
             .init_resource::<Detail>()
             .init_resource::<FeedSettings>()
@@ -321,20 +352,23 @@ impl Engine {
             .init_resource::<CursorRequests>()
             .init_resource::<ProvidedAssets>()
             .init_resource::<PresentationState>()
-            .init_resource::<InterpolationState>()
+            .init_resource::<DrawnPoses>()
             .init_resource::<TickCheck>()
+            .init_resource::<moves::Key>()
+            .init_resource::<moves::MovingKinds>()
+            .init_resource::<Asked<Teleport>>()
+            .init_resource::<Asked<HandOver>>()
+            .init_resource::<Asked<CameraHandoff>>()
             .insert_resource(TransformNodeLimit(config.max_transform_nodes))
             .init_resource::<GlobalTransforms>()
             .insert_resource(assets);
         assets::install(app.world_mut());
-        let resets = ResetWatch::new(app.world_mut());
         Self {
             app,
             clock,
-            resets,
+            interval: Interval::Fresh,
             gates: None,
             facts: None,
-            good_camera: Camera::default(),
             finalized: false,
         }
     }
@@ -367,10 +401,13 @@ impl Engine {
         world.resource_mut::<JobExchange>().set_list(jobs);
         let labels: [InternedScheduleLabel; 11] = Schedule::ALL.map(Schedule::label);
         let mut gates = registry.install(world, &labels);
-        let twice = world
+        moves::install_kinds(world);
+        scene::spawn_camera(world);
+        let mut twice = world
             .get_resource::<MembersOf<SceneComponents>>()
             .map(|members| members.names_twice(|kind| kind.key()))
             .unwrap_or_default();
+        twice.extend(authoring::keys_taken(world));
         let registrars: Vec<fn(&mut World) -> ComponentId> = world
             .get_resource::<MembersOf<SceneComponents>>()
             .map(|members| members.all().iter().map(ComponentKind::registrar).collect())
@@ -454,49 +491,99 @@ impl Engine {
         }
     }
 
-    pub fn advance(&mut self, delta_seconds: f64) -> FrameReport {
+    pub fn frame(&mut self, timestamp_seconds: f64) -> Result<(), Error> {
+        if !timestamp_seconds.is_finite() {
+            return Err(Error::new(ErrorCode::InvalidInput, "$.timestamp")
+                .expected(Expected::Finite)
+                .got(timestamp_seconds));
+        }
         self.finalize();
-        let delta_seconds = clock::sanitize_delta(delta_seconds);
+        let (interval, real_seconds) = self.interval.next(Some(timestamp_seconds));
+        self.interval = interval;
         let rate = self.time_rate();
         let limits = *self.app.world().resource::<FrameLimits>();
-        let report = self
+        let advanced = self
             .clock
-            .advance(delta_seconds * rate, limits.max_fixed_steps);
-        let shown = delta_seconds.min(limits.max_frame_seconds);
-        self.run_frame(report.fixed_steps, shown, shown * rate);
-        FrameReport {
-            cut_seconds: delta_seconds - shown,
-            ..report
+            .advance(real_seconds * rate, limits.max_fixed_steps);
+        let shown = real_seconds.min(limits.max_frame_seconds);
+        self.run_frame(
+            Presented::Paced {
+                alpha: advanced.alpha,
+            },
+            advanced,
+            (shown, shown * rate),
+            real_seconds - shown,
+        );
+        Ok(())
+    }
+
+    pub fn present(&mut self, presented: Presented) -> Result<(), Error> {
+        presentation::check_alpha(presented.alpha())?;
+        self.finalize();
+        presentation::present(self.app.world_mut(), presented);
+        Ok(())
+    }
+
+    pub fn pause(&mut self, reason: PauseReason) {
+        let world = self.app.world_mut();
+        if world.resource::<Pause>().holds(reason) {
+            return;
         }
+        world.resource_mut::<Pause>().add(reason);
+        if reason.stops_frames() {
+            self.interval = self.interval.next(None).0;
+        }
+    }
+
+    pub fn resume(&mut self, reason: PauseReason) {
+        let world = self.app.world_mut();
+        if !world.resource::<Pause>().holds(reason) {
+            return;
+        }
+        world.resource_mut::<Pause>().remove(reason);
+        if reason.stops_frames() {
+            self.interval = self.interval.next(None).0;
+        }
+    }
+
+    pub fn frame_time(&self) -> FrameTime {
+        *self.app.world().resource::<FrameTime>()
+    }
+
+    pub fn drawn_pose(&self, node: bevy_ecs::entity::Entity) -> Option<glam::Mat4> {
+        let world = self.app.world();
+        world
+            .resource::<DrawnPoses>()
+            .drawn_pose(world.get_resource::<GlobalTransforms>()?, node)
     }
 
     fn time_rate(&self) -> f64 {
-        self.app.world().resource::<TimeControl>().rate()
+        let world = self.app.world();
+        clock::game_rate(world.resource::<Pause>(), *world.resource::<TimeScale>())
     }
 
     #[cfg(feature = "dev")]
-    pub fn step_fixed(&mut self, ticks: u32) -> Result<FrameReport, Error> {
+    pub fn step_fixed(&mut self, ticks: u32) -> Result<(), Error> {
         check_dev_ticks(ticks)?;
         self.finalize();
         self.clock.reset();
-        let delta_seconds = self.clock.step_seconds();
-        let mut fixed_steps = 0;
+        self.interval = self.interval.next(None).0;
+        let step = self.clock.step_seconds();
         for _ in 0..ticks {
-            let stopped = self.time_rate() == 0.0;
-            let (steps, game_seconds) = if stopped {
-                (0, 0.0)
-            } else {
-                (1, delta_seconds)
+            let ticked = u32::from(self.time_rate() != 0.0);
+            let advanced = Advanced {
+                ticks: ticked,
+                dropped_seconds: 0.0,
+                alpha: 1.0,
             };
-            self.run_frame(steps, delta_seconds, game_seconds);
-            fixed_steps += steps;
+            self.run_frame(
+                Presented::Tick,
+                advanced,
+                (step, step * f64::from(ticked)),
+                0.0,
+            );
         }
-        Ok(FrameReport {
-            fixed_steps,
-            dropped_seconds: 0.0,
-            cut_seconds: 0.0,
-            interpolation: 0.0,
-        })
+        Ok(())
     }
 
     pub fn between_frames(&mut self, micros: u32) -> bool {
@@ -564,68 +651,65 @@ impl Engine {
         }
     }
 
-    fn run_frame(&mut self, fixed_steps: u32, delta_seconds: f64, game_seconds: f64) {
+    fn run_frame(
+        &mut self,
+        presented: Presented,
+        advanced: Advanced,
+        (real_seconds, seconds): (f64, f64),
+        cut_seconds: f64,
+    ) {
         let _profile = engine_profile::span("cpu", "simulation_frame");
         self.run_gates();
         self.refresh_transforms();
-        modify(self.app.world_mut(), |frame: &mut FrameTime| {
-            frame.delta_seconds = delta_seconds as f32;
-            frame.elapsed_seconds += delta_seconds;
-            frame.game_delta_seconds = game_seconds as f32;
-            frame.game_elapsed_seconds += game_seconds;
-            frame.frame = frame.frame.saturating_add(1);
+        let step = self.clock.step_seconds();
+        let world = self.app.world_mut();
+        let ticked =
+            world.resource::<FixedTime>().elapsed_seconds + f64::from(advanced.ticks) * step;
+        let alpha = presented.alpha();
+        modify(world, |time: &mut FrameTime| {
+            time.frame = time.frame.saturating_add(1);
+            time.ticks = advanced.ticks;
+            time.alpha = alpha;
+            time.seconds = seconds;
+            time.real_seconds = real_seconds;
+            time.elapsed = ticked - (1.0 - f64::from(alpha)) * step;
+            time.real_elapsed += real_seconds;
+            time.dropped_seconds += advanced.dropped_seconds;
+            time.cut_seconds += cut_seconds;
         });
-        for _ in 0..fixed_steps {
+        moves::start_frame(world);
+        for _ in 0..advanced.ticks {
             self.run_fixed_tick();
         }
-        if self.time_rate() == 0.0 {
+        if self.app.world().resource::<Pause>().paused() {
             modify(self.app.world_mut(), ActionInput::drop_tick_edges);
         }
         records::exchange(self.app.world_mut());
         jobs::exchange_orders(self.app.world_mut());
         modify(self.app.world_mut(), ActionInput::begin_frame);
+        presentation::present(self.app.world_mut(), presented);
         {
             let _profile = engine_profile::span("ecs", "Presentation");
             self.app.world_mut().run_schedule(Presentation);
         }
-        self.keep_camera();
         self.refresh_transforms();
+        scene::settle_camera(self.app.world_mut());
         self.app.world_mut().clear_trackers();
         self.check_gate_ticks();
     }
 
-    fn keep_camera(&mut self) {
-        let world = self.app.world_mut();
-        let camera = *world.resource::<Camera>();
-        match camera.check() {
-            Ok(()) => self.good_camera = camera,
-            Err(error) => {
-                let good = self.good_camera;
-                modify(world, |held: &mut Camera| *held = good);
-                modify(world, |refusals: &mut CameraRefusals| {
-                    refusals.count += 1;
-                    refusals.latest = Some(error.path);
-                });
-            }
-        }
-    }
-
-    pub fn gpu_current(&self) -> Option<GpuCurrent<'_>> {
-        let world = self.app.world();
-        world
-            .get_resource::<PresentedTransforms>()?
-            .gpu_current(world.get_resource::<GlobalTransforms>()?)
-    }
-
     fn run_fixed_tick(&mut self) {
         let _profile = engine_profile::span("cpu", "fixed_tick");
-        interpolation::begin_tick(self.app.world_mut());
         let step = self.clock.step_seconds();
+        let mut tick = 0;
         modify(self.app.world_mut(), |time: &mut FixedTime| {
             time.elapsed_seconds += step;
             time.tick = time.tick.saturating_add(1);
+            tick = time.tick;
         });
-        modify(self.app.world_mut(), ActionInput::begin_tick);
+        modify(self.app.world_mut(), |input: &mut ActionInput| {
+            input.begin_tick(tick);
+        });
         if has_systems(self.app.world(), FixedPreSimulation) {
             {
                 let _profile = engine_profile::span("ecs", "FixedPreSimulation");
@@ -641,7 +725,6 @@ impl Engine {
             let _profile = engine_profile::span("ecs", "FixedSimulation");
             self.app.world_mut().run_schedule(FixedSimulation);
         }
-        self.resets.snap(self.app.world_mut());
         self.refresh_transforms();
         if has_systems(self.app.world(), FixedPostSimulation) {
             {
@@ -650,18 +733,23 @@ impl Engine {
             }
             self.refresh_transforms();
         }
-        interpolation::end_tick(self.app.world_mut());
+        if moves::end_tick(self.app.world_mut()) {
+            self.refresh_transforms();
+        }
+        presentation::capture(self.app.world_mut());
         modify(self.app.world_mut(), ActionInput::hide_edges);
     }
 
     pub fn reset_clock(&mut self) {
         self.clock.reset();
+        self.interval = self.interval.next(None).0;
         let world = self.app.world_mut();
-        reset_all_interpolation(world);
+        presentation::fresh_all(world);
         modify(world, ActionInput::drop_tick_edges);
-        modify(world, |frame: &mut FrameTime| {
-            frame.delta_seconds = 0.0;
-            frame.game_delta_seconds = 0.0;
+        modify(world, |time: &mut FrameTime| {
+            time.ticks = 0;
+            time.seconds = 0.0;
+            time.real_seconds = 0.0;
         });
     }
 
@@ -673,20 +761,13 @@ impl Engine {
         self.app.world().resource::<PresentationState>()
     }
 
-    pub fn extract_frame(
-        &mut self,
-        aspect: f32,
-        presented: Presented,
-    ) -> Result<RenderFrame<'_>, Error> {
+    pub fn extract_frame(&mut self, aspect: f32) -> Result<RenderFrame<'_>, Error> {
         let _profile = engine_profile::span("cpu", "extraction");
-        let alpha = presented.alpha();
-        interpolation::check_alpha(alpha)?;
         self.finalize();
         self.run_gates();
-        self.mark_presented_time(alpha);
         self.sync_world();
         self.refresh_transforms();
-        interpolation::prepare(self.app.world_mut(), presented);
+        presentation::gather(self.app.world_mut());
         self.sync_view(aspect);
         shared::settle_readiness(self.app.world_mut());
         modify(self.app.world_mut(), ActionInput::hide_edges);
@@ -709,7 +790,7 @@ impl Engine {
 
     fn sync_view(&mut self, aspect: f32) {
         let _profile = engine_profile::span("ecs", "ViewSync");
-        self.keep_camera();
+        scene::settle_camera(self.app.world_mut());
         let facts = self.facts.unwrap_or_else(|| self.viewport_facts());
         let world = self.app.world_mut();
         publish_view(world, aspect, facts);
@@ -725,15 +806,6 @@ impl Engine {
             render_size: size,
             ..FrameFacts::default()
         }
-    }
-
-    fn mark_presented_time(&mut self, alpha: f32) {
-        let behind = (1.0 - f64::from(alpha)) * self.clock.step_seconds();
-        let world = self.app.world_mut();
-        let fixed = world.resource::<FixedTime>().elapsed_seconds;
-        modify(world, |frame: &mut FrameTime| {
-            frame.presented_seconds = fixed - behind;
-        });
     }
 
     fn finalize(&mut self) {

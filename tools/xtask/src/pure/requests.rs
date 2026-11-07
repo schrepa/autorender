@@ -185,6 +185,7 @@ const UNREACHED: &[(&str, &str)] = &[
     ("view_writer_unplaced", APP_BUILD),
     ("watch_locked", WATCH),
     ("wgsl_unused", LINKER),
+    ("written_twice", APP_BUILD),
 ];
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {

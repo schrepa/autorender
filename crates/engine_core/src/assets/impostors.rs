@@ -1191,7 +1191,7 @@ pub(super) fn settle_impostors(world: &mut World) {
         detail: world.resource::<Detail>().enabled,
         cooking,
         now: world.resource::<WorkClock>().now().filter(|_| !cooking),
-        seconds: world.resource::<crate::FrameTime>().elapsed_seconds,
+        seconds: world.resource::<crate::FrameTime>().real_elapsed,
     };
     if !world.contains_resource::<ImpostorInputs>() {
         let state = SystemState::<Inputs>::new(world);

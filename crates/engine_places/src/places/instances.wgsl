@@ -87,10 +87,6 @@ fn instance_pose(slot: u32) -> AffinePose {
     return pose;
 }
 
-fn instance_still_frames(slot: u32) -> u32 {
-    return 0u;
-}
-
 fn slot_vertex(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,
         color: SlotColor, ground: vec4<u32>, fade: u32) -> SlotVertex {
     var vertex: SlotVertex;

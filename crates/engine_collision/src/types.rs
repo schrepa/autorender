@@ -75,7 +75,6 @@ settings! {
         pub max_query_candidates: Option<u32> = None => budget,
         pub max_query_hits: Option<u32> = None => budget,
         pub sensor_feed: u32 = 1024 => at_least(1),
-        pub slide_feed: u32 = 1024 => at_least(1),
     }
 }
 
@@ -116,7 +115,6 @@ pub(crate) struct CollisionReport {
     pub bvh_nodes: usize,
     pub cache_bytes: usize,
     pub placed_colliders: usize,
-    pub slide_hits: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -194,7 +192,6 @@ stats! {
         pub cache_bytes: usize,
         pub complete: bool,
         pub placed_colliders: usize,
-        pub slide_hits: usize,
         pub limits: CollisionLimits,
     }
 }
@@ -212,7 +209,6 @@ impl CollisionStats {
             cache_bytes: report.cache_bytes,
             complete,
             placed_colliders: report.placed_colliders,
-            slide_hits: report.slide_hits,
             limits: CollisionLimits::of(config),
         }
     }

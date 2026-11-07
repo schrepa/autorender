@@ -75,6 +75,13 @@ impl State {
         self.atlas.take_uploads()
     }
 
+    pub(crate) fn refill_atlas(&mut self) -> Vec<Upload> {
+        if let Some(fonts) = self.fonts.as_mut() {
+            self.atlas.refill(fonts);
+        }
+        self.atlas.take_uploads()
+    }
+
     pub(crate) fn frame<'l>(
         &mut self,
         labels: impl Iterator<Item = &'l Label>,

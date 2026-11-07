@@ -125,6 +125,18 @@ impl<G: Game> PageHost<G> {
         }
     }
 
+    pub fn pause(&mut self, reason: u32) {
+        if let Some(pause) = crate::host::HostPause::of(reason) {
+            self.host.pause(pause);
+        }
+    }
+
+    pub fn resume(&mut self, reason: u32) {
+        if let Some(pause) = crate::host::HostPause::of(reason) {
+            self.host.resume(pause);
+        }
+    }
+
     pub fn cursor_mode(&self) -> u32 {
         self.host.cursor_mode() as u32
     }
