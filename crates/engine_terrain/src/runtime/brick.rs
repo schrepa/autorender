@@ -4,7 +4,7 @@ use super::solids::sync_solids;
 use super::*;
 use crate::expr_layer::EXPRESSION;
 use crate::jobs::GROUND_GRID;
-use crate::scene::{INVALID_STREAMED, prefetch_kind, terrain_kind};
+use crate::scene::{INVALID_STREAMED, TERRAIN, prefetch_kind, terrain_kind, terrain_paths};
 use engine_core::{
     Brick, Bricks, Explain, ExplainAsk, ExplainRecord, GlobalTransforms, GpuStruct, JobKind,
     SceneComponents, Schedule, Source,
@@ -12,6 +12,8 @@ use engine_core::{
 use engine_heightfield::{INVALID_TERRAIN, MISSING_LAYER, UNKNOWN_MAP, UNREADABLE_MAP};
 use engine_places_simulation::ground::{Ground, UNKNOWN_TERRAIN};
 use engine_places_world::ground::{GroundSurface, TerrainTiles};
+use engine_places_world::paths::{ScenePathSource, ScenePathSources};
+use engine_places_world::streaming::{StreamedKey, StreamedKeys, Streams};
 use engine_places_world::terrain::TerrainLayers;
 use engine_places_world::water::Hydrology;
 use engine_render::RenderBricks;
@@ -48,17 +50,25 @@ impl Brick for TerrainBrick {
             .fill::<GroundSurface>(Some(crate::shaders::terrain::faces::surface::MODULE))
             .join::<SceneComponents>(terrain_kind(), None)
             .join::<SceneComponents>(prefetch_kind(), None)
+            .join::<StreamedKeys>(
+                StreamedKey {
+                    key: TERRAIN,
+                    streams: Streams::Never(INVALID_STREAMED),
+                },
+                None,
+            )
+            .join::<ScenePathSources>(
+                ScenePathSource {
+                    key: TERRAIN,
+                    paths: terrain_paths,
+                },
+                None,
+            )
             .join::<TerrainLayers>(&EXPRESSION, None)
             .generated(GENERATED)
             .systems(
                 Schedule::ViewSync,
-                (stream_terrains, publish_terrains, sync_solids),
-            )
-            .systems(Schedule::PreWorldSync, bridges::sync)
-            .systems(Schedule::Waiting, (stream_terrains, publish_terrains))
-            .systems(
-                Schedule::BetweenFrames,
-                (work_between_frames, publish_terrains),
+                (stream_terrains, publish_terrains, sync_solids, bridges::sync),
             )
             .operation::<TerrainEditControl>()
             .operation::<TerrainUndoControl>()

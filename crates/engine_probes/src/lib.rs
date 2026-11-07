@@ -88,7 +88,6 @@ impl Brick for ReflectionProbesBrick {
             .join::<SceneComponents>(
                 ComponentKind::of::<ReflectionProbe>("reflection_probe")
                     .check(component::check)
-                    .reach(component::reach)
                     .schema(component::schema)
                     .example(component::example),
                 None,

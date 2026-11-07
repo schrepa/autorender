@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use engine_core::{
-    ComponentKind, ComponentKindOf, Error, ErrorCode, Expected, MaterialHandle, MeshHandle,
-    Placement, Rule, SceneCx, Setting, parse_value_at,
+    ComponentKind, ComponentKindOf, Error, ErrorCode, Expected, MaterialHandle, MeshHandle, Rule,
+    SceneCx, Setting, parse_value_at,
 };
 use engine_heightfield::layer::{LayerFiles, LayerKind};
 use engine_heightfield::{INVALID_TERRAIN, UNKNOWN_MAP, UNREADABLE_MAP};
@@ -747,12 +747,12 @@ impl SceneTerrain {
 
 pub const INVALID_STREAMED: ErrorCode = ErrorCode::brick("invalid_streamed");
 
+pub(crate) const TERRAIN: &str = "terrain";
+
 pub(crate) fn terrain_kind() -> ComponentKindOf<TerrainScene> {
-    ComponentKind::of::<TerrainScene>("terrain")
-        .placement(Placement::Entities(INVALID_STREAMED))
+    ComponentKind::of::<TerrainScene>(TERRAIN)
         .prepare(prepare_terrain)
         .files_in(terrain_files)
-        .shares(terrain_paths)
         .schema_in(terrain_schema)
         .example(terrain_example)
 }
@@ -810,8 +810,13 @@ fn terrain_files(scene: &TerrainScene, cx: &SceneCx<'_>) -> Vec<String> {
         .collect()
 }
 
-fn terrain_paths(scene: &TerrainScene, cx: &SceneCx<'_>, path: &str) -> Result<ScenePaths, Error> {
-    Ok(scene.authored.scene_paths(&listed(cx), path))
+pub(crate) fn terrain_paths(
+    value: &Value,
+    kinds: &[&'static LayerKind],
+    path: &str,
+) -> Result<ScenePaths, Error> {
+    let authored: SceneTerrain = parse_value_at(value.clone(), path)?;
+    Ok(authored.scene_paths(kinds, path))
 }
 
 fn terrain_schema(cx: &SceneCx<'_>) -> Value {

@@ -49,7 +49,6 @@ pub struct FrameTime {
     pub real_elapsed: f64,
     pub dropped_seconds: f64,
     pub cut_seconds: f64,
-    pub between_frames_micros: u32,
 }
 
 impl FrameTime {

@@ -453,7 +453,6 @@ pub struct Terrains {
     pub(super) stacks: Vec<(Arc<Layers>, RecordKey)>,
     pub(super) retired: Retired,
     pub(super) restored: u64,
-    pub(super) between: u64,
     pub(super) changed: bool,
     pub(super) grounds: u64,
     pub(super) edits: u64,

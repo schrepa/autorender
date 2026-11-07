@@ -16,7 +16,6 @@ impl Asking<'_, '_, '_> {
 }
 
 pub(super) struct Work<'a> {
-    until: Option<(fn() -> f64, f64)>,
     budget: std::cell::RefCell<&'a mut FrameBudget>,
     spent: std::cell::Cell<u64>,
 }
@@ -24,25 +23,13 @@ pub(super) struct Work<'a> {
 impl<'a> Work<'a> {
     pub(super) fn frame(budget: &'a mut FrameBudget) -> Self {
         Self {
-            until: None,
-            budget: std::cell::RefCell::new(budget),
-            spent: std::cell::Cell::new(0),
-        }
-    }
-
-    pub(super) fn between(budget: &'a mut FrameBudget, until: (fn() -> f64, f64)) -> Self {
-        Self {
-            until: Some(until),
             budget: std::cell::RefCell::new(budget),
             spent: std::cell::Cell::new(0),
         }
     }
 
     pub(super) fn expired(&self) -> bool {
-        match self.until {
-            Some((clock, end)) => clock() >= end,
-            None => self.budget.borrow().expired(),
-        }
+        self.budget.borrow().expired()
     }
 
     pub(super) fn spend(&self, bytes: u64) -> bool {
@@ -51,10 +38,6 @@ impl<'a> Work<'a> {
             self.spent.set(self.spent.get() + bytes);
         }
         spent
-    }
-
-    pub(super) fn carry(&self, bytes: u64) {
-        self.budget.borrow_mut().spend(BUDGET, bytes);
     }
 
     pub(super) fn spent(&self) -> u64 {

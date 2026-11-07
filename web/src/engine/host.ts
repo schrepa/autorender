@@ -150,8 +150,6 @@ if (prepares) canvas.style.visibility = "hidden";
 let state: HostState<T> = { kind: "starting" };
 let disposeDevelopment: (() => void) | undefined;
 let request = 0;
-let working = 0;
-let between = 0;
 const hud = new FrameHud(canvas);
 let jobs: JobPool | undefined;
 let pixelWidth = 1;
@@ -222,10 +220,6 @@ window.addEventListener("resize", resize, listenerOptions);
 function halt() {
   cancelAnimationFrame(request);
   request = 0;
-  clearTimeout(working);
-  working = 0;
-  clearTimeout(between);
-  between = 0;
   hud.reset();
 }
 
@@ -256,27 +250,6 @@ function fail(error: unknown) {
 
 function guarded(work: () => void) {
   try { work(); } catch (error) { fail(error); }
-}
-
-function workBetweenFrames() {
-  between = 0;
-  const current = live();
-  if (!current || current.kind !== "playing" || current.paused || document.hidden) return;
-  guarded(() => {
-    current.game.load_between_frames();
-    jobs?.exchange();
-  });
-}
-
-function workWhileCompiling() {
-  working = 0;
-  const current = live();
-  if (!current || current.kind !== "preparing" || current.paused || document.hidden) return;
-  guarded(() => {
-    const waiting = current.game.work_while_compiling(pixelWidth, pixelHeight);
-    jobs?.exchange();
-    if (waiting) working = window.setTimeout(workWhileCompiling, 0);
-  });
 }
 
 function started(current: Live<T>) {
@@ -314,16 +287,13 @@ function frame(timestamp: number) {
     const phase = game.animation_frame(timestamp, pixelWidth, pixelHeight);
     input.setCursorMode(game.cursor_mode());
     jobs?.exchange();
-    if (phase === FRAME_PHASES.compiling) {
-      if (!working) working = window.setTimeout(workWhileCompiling, 0);
-    } else if (phase === FRAME_PHASES.started) {
+    if (phase === FRAME_PHASES.started) {
       started(current);
     } else if (phase === FRAME_PHASES.playing) {
       pollLevel(current);
       options.afterFrame?.(game, timestamp);
       if (hud.frame(game, timestamp)) options.poll?.(game);
       options.afterHostFrame?.(game, timestamp);
-      if (!between) between = window.setTimeout(workBetweenFrames, 0);
     } else if (phase === FRAME_PHASES.idle) {
       hud.reset();
       return;

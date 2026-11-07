@@ -4,7 +4,7 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use engine_core::{
     BrickList, ComponentKind, Error, JobExchange, Placed, Placement, SceneBuffers, SceneComponents,
-    SceneContext, SceneCx, SceneShare, core_components, scene_components,
+    SceneContext, SceneCx, core_components, scene_components,
 };
 use engine_registry::{JobList, Registry, SettingsEntry};
 use engine_settings::{ErrorCode, Expected};
@@ -66,6 +66,10 @@ impl SceneKinds {
         &self.listed
     }
 
+    pub(crate) fn job_list(&self) -> Option<Arc<JobList>> {
+        self.list.clone()
+    }
+
     pub(crate) fn section(&self, key: &str) -> Option<SettingsEntry> {
         self.sections.iter().find(|section| section.key == key).copied()
     }
@@ -122,7 +126,7 @@ impl SceneKinds {
         }
         self.each_known(object, path, |kind, _, at| match kind.placement() {
             Placement::Roots(code) => Err(Error::new(code, at).expected(Expected::Absent)),
-            Placement::Anywhere | Placement::Entities(_) => Ok(()),
+            Placement::Anywhere => Ok(()),
         })
     }
 
@@ -133,20 +137,6 @@ impl SceneKinds {
         path: &str,
     ) -> Result<(), Error> {
         self.each_known(object, path, |kind, value, at| kind.validate_placed(value, placed, at))
-    }
-
-    pub(crate) fn shares(
-        &self,
-        object: &SceneObject,
-        path: &str,
-        cx: &SceneCx<'_>,
-    ) -> Result<Vec<SceneShare>, Error> {
-        let mut shares = Vec::new();
-        self.each_known(object, path, |kind, value, at| {
-            shares.extend(kind.shared_in(value, cx, at)?);
-            Ok(())
-        })?;
-        Ok(shares)
     }
 
     pub(crate) fn files<'a>(

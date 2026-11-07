@@ -292,7 +292,7 @@ pub(crate) fn run_component(world: &mut World, request: Value) -> Result<Value, 
     let ComponentControl { entity, key, value } = engine_settings::parse_value(request)?;
     let node = world
         .get_resource::<OperationScene>()
-        .and_then(|scene| scene.entity(world, &entity))
+        .and_then(|scene| scene.entity(&entity))
         .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&entity))?;
     let kind = scene_component(world, &key).ok_or_else(|| {
         Error::new(ErrorCode::UnknownVariant, "$.key")
@@ -323,7 +323,7 @@ fn author(
         Placement::Roots(code) if world.get::<Parent>(node).is_some() => {
             return Err(Error::new(code, "$.entity").expected(Expected::Absent));
         }
-        Placement::Roots(_) | Placement::Anywhere | Placement::Entities(_) => {}
+        Placement::Roots(_) | Placement::Anywhere => {}
     }
     let placed = world
         .get_resource::<GlobalTransforms>()

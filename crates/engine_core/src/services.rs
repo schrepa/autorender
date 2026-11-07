@@ -6,53 +6,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use bevy_ecs::component::{Component, ComponentId};
 use bevy_ecs::entity::Entity;
+use bevy_ecs::lifecycle::{Discard, Insert};
+use bevy_ecs::observer::On;
 use bevy_ecs::resource::Resource;
-use bevy_ecs::system::{Commands, Query, Res, SystemParam, SystemParamItem};
+use bevy_ecs::system::{Commands, Query, Res, ResMut, SystemParam, SystemParamItem};
 use bevy_ecs::world::World;
 use engine_registry::{AuthoredId, JobList, OperationScene, SceneEntity};
-use glam::{Mat4, Vec3};
+use glam::Mat4;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
-use crate::{Aabb, Error, ErrorCode, Expected, List, Mesh, Operation, settings};
+use crate::{Error, ErrorCode, Expected, List, Operation, settings};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
     pub world: Mat4,
-}
-
-pub struct Reach<'a> {
-    pub world: Mat4,
-    pub position: Vec3,
-    pub from: f32,
-    pub mesh_sizes: &'a dyn Fn(&str) -> f32,
-}
-
-impl Reach<'_> {
-    pub fn mesh_size(&self, id: &str) -> f32 {
-        (self.mesh_sizes)(id)
-    }
-
-    pub fn size_of(mesh: &Mesh) -> f32 {
-        let bounds = mesh.bounds();
-        (bounds.max() - bounds.min()).length()
-    }
-
-    pub fn of_box(&self, min: Vec3, max: Vec3) -> f32 {
-        (0..8)
-            .map(|corner| {
-                let pick = |bit: u32, low: f32, high: f32| {
-                    if corner & (1 << bit) == 0 { low } else { high }
-                };
-                let point = Vec3::new(
-                    pick(0, min.x, max.x),
-                    pick(1, min.y, max.y),
-                    pick(2, min.z, max.z),
-                );
-                self.world.transform_point3(point).distance(self.position)
-            })
-            .fold(0.0, crate::math::max)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -60,7 +28,6 @@ pub enum Placement {
     #[default]
     Anywhere,
     Roots(ErrorCode),
-    Entities(ErrorCode),
 }
 
 pub type SceneBuffers = BTreeMap<String, Arc<[u8]>>;
@@ -124,10 +91,6 @@ pub struct Prepared(Box<dyn Any + Send + Sync>);
 type CheckHook = Arc<dyn Fn(&Value, &str) -> Result<(), Error> + Send + Sync>;
 type PlacedHook = Arc<dyn Fn(&Value, Placed, &str) -> Result<(), Error> + Send + Sync>;
 type FilesHook = Arc<dyn Fn(&Value, &SceneCx<'_>) -> Vec<String> + Send + Sync>;
-type ReachHook = Arc<dyn Fn(&Value, &Reach<'_>, &mut dyn FnMut(f32)) + Send + Sync>;
-pub type SceneShare = Arc<dyn Any + Send + Sync>;
-type SharesHook =
-    Arc<dyn Fn(&Value, &SceneCx<'_>, &str) -> Result<SceneShare, Error> + Send + Sync>;
 type SchemaHook = Arc<dyn Fn(&SceneCx<'_>) -> Value + Send + Sync>;
 type PrepareHook = Arc<dyn Fn(&Value, &SceneCx<'_>, &str) -> Result<Prepared, Error> + Send + Sync>;
 type ViewHook = Arc<dyn Fn(&World, Entity) -> Option<Value> + Send + Sync>;
@@ -146,8 +109,6 @@ pub struct ComponentKind {
     check: Option<CheckHook>,
     placed: Option<PlacedHook>,
     files: Option<FilesHook>,
-    reach: Option<ReachHook>,
-    shares: Option<SharesHook>,
     schema: Option<SchemaHook>,
     example: Option<fn() -> Value>,
     prepare: Option<PrepareHook>,
@@ -189,8 +150,6 @@ impl ComponentKind {
                 check: None,
                 placed: None,
                 files: None,
-                reach: None,
-                shares: None,
                 schema: None,
                 example: None,
                 prepare: None,
@@ -218,8 +177,6 @@ impl ComponentKind {
                 check: None,
                 placed: None,
                 files: None,
-                reach: None,
-                shares: None,
                 schema: None,
                 example: None,
                 prepare: None,
@@ -343,26 +300,6 @@ impl ComponentKind {
     }
 
     #[doc(hidden)]
-    pub fn extend_reach(&self, value: &Value, reach: &Reach<'_>, extend: &mut dyn FnMut(f32)) {
-        if let Some(of) = &self.reach {
-            of(value, reach, extend);
-        }
-    }
-
-    #[doc(hidden)]
-    pub fn shared_in(
-        &self,
-        value: &Value,
-        cx: &SceneCx<'_>,
-        path: &str,
-    ) -> Result<Option<SceneShare>, Error> {
-        self.shares
-            .as_ref()
-            .map(|shares| shares(value, cx, path))
-            .transpose()
-    }
-
-    #[doc(hidden)]
     pub fn json_schema_in(&self, cx: &SceneCx<'_>) -> Value {
         self.schema
             .as_ref()
@@ -413,30 +350,6 @@ impl<C: Clone + Serialize + DeserializeOwned + Send + Sync + 'static> ComponentK
         self.kind.files = Some(Arc::new(move |value: &Value, cx: &SceneCx<'_>| {
             parsed::<C>(value, "$").map_or_else(|_| Vec::new(), |component| files(&component, cx))
         }));
-        self
-    }
-
-    pub fn reach(mut self, reach: fn(&C, &Reach<'_>, &mut dyn FnMut(f32))) -> Self {
-        self.kind.reach = Some(Arc::new(
-            move |value: &Value, at: &Reach<'_>, extend: &mut dyn FnMut(f32)| {
-                if let Ok(component) = parsed::<C>(value, "$") {
-                    reach(&component, at, extend);
-                }
-            },
-        ));
-        self
-    }
-
-    pub fn shares<T: Any + Send + Sync>(
-        mut self,
-        shares: fn(&C, &SceneCx<'_>, &str) -> Result<T, Error>,
-    ) -> Self {
-        self.kind.shares = Some(Arc::new(
-            move |value: &Value, cx: &SceneCx<'_>, path: &str| {
-                let shared: SceneShare = Arc::new(shares(&parsed::<C>(value, path)?, cx, path)?);
-                Ok(shared)
-            },
-        ));
         self
     }
 
@@ -627,16 +540,7 @@ impl SceneIds<'_, '_> {
     }
 
     pub fn entity(&self, id: &str) -> Option<Entity> {
-        let scene = self.scene.as_ref()?;
-        scene.entities.get(id).copied().or_else(|| {
-            if !scene.authored_later {
-                return None;
-            }
-            self.entities
-                .iter()
-                .find(|(_, authored)| authored.authored_id == id && authored.scene_id == scene.id)
-                .map(|(entity, _)| entity)
-        })
+        self.scene.as_ref()?.entity(id)
     }
 
     pub fn id(&self, entity: Entity) -> Option<&str> {
@@ -662,6 +566,26 @@ impl SceneIds<'_, '_> {
     }
 }
 
+pub(crate) fn scene_entity_inserted(
+    insert: On<Insert, SceneEntity>,
+    authored: Query<&SceneEntity>,
+    scene: Option<ResMut<OperationScene>>,
+) {
+    if let (Some(mut scene), Ok(authored)) = (scene, authored.get(insert.entity)) {
+        scene.install(authored, insert.entity);
+    }
+}
+
+pub(crate) fn scene_entity_discarded(
+    discard: On<Discard, SceneEntity>,
+    authored: Query<&SceneEntity>,
+    scene: Option<ResMut<OperationScene>>,
+) {
+    if let (Some(mut scene), Ok(authored)) = (scene, authored.get(discard.entity)) {
+        scene.uninstall(authored, discard.entity);
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Authored {
     pub id: String,
@@ -673,16 +597,29 @@ pub struct Authored {
     pub prefab_local_id: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct SubSceneEntity {
+    pub transform: crate::Transform,
+    pub authored: Authored,
+    pub parent: Option<usize>,
+    pub components: Vec<(String, Value)>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SubScene {
+    pub entities: Vec<SubSceneEntity>,
+}
+
 #[derive(Resource, Clone)]
 #[component(immutable)]
 pub struct SceneContext {
     pub id: String,
     pub assets: Arc<engine_assets::SceneAssets>,
     pub prefabs: Arc<BTreeMap<String, (usize, Value)>>,
-    pub shares: Arc<BTreeMap<String, Vec<SceneShare>>>,
+    pub components: Arc<BTreeMap<String, BTreeMap<String, Value>>>,
     pub entities: Arc<BTreeMap<String, Entity>>,
     pub kinds: Arc<[ComponentKind]>,
-    pub bounds: Arc<BTreeMap<String, Aabb>>,
+    pub list: Option<Arc<JobList>>,
     pub files: Option<Arc<SceneBuffers>>,
 }
 
@@ -699,20 +636,12 @@ impl SceneContext {
         self.prefabs.get(id)
     }
 
-    pub fn shared<T: Any>(&self, entity: &str) -> Option<&T> {
-        self.shares
-            .get(entity)?
-            .iter()
-            .find_map(|value| (**value).downcast_ref::<T>())
+    pub fn component(&self, entity: &str, key: &str) -> Option<&Value> {
+        self.components.get(entity)?.get(key)
     }
 
-    pub fn sharing<T: Any>(&self) -> impl Iterator<Item = (&str, &T)> + '_ {
-        self.shares.iter().filter_map(|(entity, values)| {
-            values
-                .iter()
-                .find_map(|value| (**value).downcast_ref::<T>())
-                .map(|value| (entity.as_str(), value))
-        })
+    pub fn members<L: List>(&self) -> impl Iterator<Item = &L::Member> + '_ {
+        self.list.as_deref().into_iter().flat_map(JobList::members::<L>)
     }
 }
 
@@ -919,24 +848,5 @@ impl PartDraws {
             Some((_, held)) => *held = held.saturating_add(draws),
             None => self.draws.push((part, draws)),
         }
-    }
-}
-
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct WorkRemaining {
-    remaining: bool,
-}
-
-impl WorkRemaining {
-    pub fn report(&mut self, remaining: bool) {
-        self.remaining |= remaining;
-    }
-
-    pub fn remaining(&self) -> bool {
-        self.remaining
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.remaining = false;
     }
 }

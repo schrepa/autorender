@@ -45,24 +45,15 @@ impl SceneEntity {
 pub struct OperationScene {
     pub id: String,
     pub entities: Arc<BTreeMap<String, Entity>>,
-    pub authored_later: bool,
+    pub installed: BTreeMap<String, Entity>,
 }
 
 impl OperationScene {
-    pub fn entity(&self, world: &World, id: &str) -> Option<Entity> {
-        self.entities.get(id).copied().or_else(|| {
-            if !self.authored_later {
-                return None;
-            }
-            world
-                .iter_entities()
-                .find(|entity| {
-                    entity
-                        .get::<SceneEntity>()
-                        .is_some_and(|scene| scene.authored_id == id && scene.scene_id == self.id)
-                })
-                .map(|entity| entity.id())
-        })
+    pub fn entity(&self, id: &str) -> Option<Entity> {
+        self.entities
+            .get(id)
+            .or_else(|| self.installed.get(id))
+            .copied()
     }
 
     pub fn authored(&self, world: &World, entity: Entity) -> Option<AuthoredId> {
@@ -70,17 +61,32 @@ impl OperationScene {
     }
 
     pub fn entity_count(&self) -> usize {
-        self.entities.len()
+        self.entities.len() + self.installed.len()
     }
 
     pub fn holds(&self, authored: &AuthoredId, entity: Entity) -> bool {
-        authored.scene == self.id
-            && (self.authored_later || self.entities.get(&authored.id) == Some(&entity))
+        authored.scene == self.id && self.entity(&authored.id) == Some(entity)
+    }
+
+    pub fn install(&mut self, authored: &SceneEntity, entity: Entity) {
+        if authored.scene_id == self.id
+            && self.entities.get(&authored.authored_id) != Some(&entity)
+        {
+            self.installed.insert(authored.authored_id.clone(), entity);
+        }
+    }
+
+    pub fn uninstall(&mut self, authored: &SceneEntity, entity: Entity) {
+        if authored.scene_id == self.id
+            && self.installed.get(&authored.authored_id) == Some(&entity)
+        {
+            self.installed.remove(&authored.authored_id);
+        }
     }
 }
 
 pub fn authored_entity(world: &World, id: &str) -> Option<Entity> {
-    world.get_resource::<OperationScene>()?.entity(world, id)
+    world.get_resource::<OperationScene>()?.entity(id)
 }
 
 pub fn authored_id(world: &World, entity: Entity) -> Option<String> {

@@ -32,5 +32,7 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<water::Hydrology>(),
     PlaceDecl::component::<splines::SplineMesh>("spline_mesh"),
     PlaceDecl::component::<streaming::StreamingFocus>("streaming_focus"),
+    PlaceDecl::list::<streaming::StreamedKeys>(),
+    PlaceDecl::list::<paths::ScenePathSources>(),
     PlaceDecl::list::<terrain::TerrainLayers>(),
 ];

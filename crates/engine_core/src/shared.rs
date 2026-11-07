@@ -19,30 +19,21 @@ settings! {
     #[section("frame_budget")]
     pub struct FrameBudgetSettings {
         pub work_ms: f32 = 4.0 => range(0.1, 1000.0),
-        pub loading_work_ms: f32 = 50.0 => range(0.1, 1000.0),
         pub upload_bytes: u32 = 16 << 20 => at_least(1),
     }
 }
 
-pub(crate) fn start_frame(world: &mut World) {
+pub(crate) fn start_frame(world: &mut World, spare_ms: f64) {
     let budget = world
         .get_resource::<FrameBudgetSettings>()
         .cloned()
         .unwrap_or_default();
-    let loading = world
-        .get_resource::<Readiness>()
-        .is_some_and(|readiness| readiness.loading.total > 0);
-    let millis = if loading {
-        budget.loading_work_ms
-    } else {
-        budget.work_ms
-    };
     let clock = world
         .get_resource::<WorkClock>()
         .and_then(|clock| clock.reading);
     world.insert_resource(FrameBudget::start(
         clock,
-        f64::from(millis),
+        (f64::from(budget.work_ms), spare_ms),
         u64::from(budget.upload_bytes),
     ));
     let transforms = world

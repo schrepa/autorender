@@ -14,8 +14,11 @@ use engine_core::{
     Brick, Bricks, ComponentKind, ErrorCode, Runs, SceneComponents, Schedule, Smoke, Source,
 };
 use engine_places_world::splines::SplineMesh;
+use engine_places_world::streaming::{StreamedKey, StreamedKeys, Streams};
 
 pub const INVALID_SPLINE: ErrorCode = ErrorCode::brick("invalid_spline");
+
+const SPLINE: &str = "spline";
 
 pub struct SplinesBrick;
 
@@ -32,11 +35,17 @@ impl Brick for SplinesBrick {
             .errors(&[INVALID_SPLINE])
             .resource::<spline_mesh::SplineBuilds>()
             .join::<SceneComponents>(
-                ComponentKind::of::<SplineMesh>("spline")
+                ComponentKind::of::<SplineMesh>(SPLINE)
                     .check(scene::check_spline)
-                    .reach(scene::spline_reach)
                     .schema(scene::spline_schema)
                     .example(scene::spline_example),
+                None,
+            )
+            .join::<StreamedKeys>(
+                StreamedKey {
+                    key: SPLINE,
+                    streams: Streams::Reaching(scene::spline_reach),
+                },
                 None,
             )
             .systems(Schedule::WorldSync, spline_mesh::build)

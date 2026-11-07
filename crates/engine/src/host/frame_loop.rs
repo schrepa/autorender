@@ -138,6 +138,7 @@ impl FrameLoop {
             Stage::Playing => {
                 host.frame(timestamp, width, height)?;
                 host.paced();
+                self.spare(host);
                 return Ok((Stage::Playing, FramePhase::Playing));
             }
             Stage::Unprepared => now_ms(),
@@ -155,6 +156,7 @@ impl FrameLoop {
         }
         host.suspend();
         host.frame(timestamp, width, height)?;
+        self.spare(host);
         let after = host.frame_stats();
         if (after.render.pipelines_created > 0 || !after.readiness.settled()) && !late {
             return Ok((preparing, FramePhase::Preparing));
@@ -163,15 +165,12 @@ impl FrameLoop {
         Ok((Stage::Playing, FramePhase::Started))
     }
 
-    pub fn between<G: Game>(&mut self, host: &mut GameHost<G>) -> bool {
-        match self.stage {
-            Stage::Playing if self.between => {}
-            Stage::Playing | Stage::Unprepared | Stage::Preparing { .. } => return false,
-        }
-        let spare = self.started + host.refresh_interval() - now_ms() - BETWEEN_MARGIN_MS;
-        if spare <= 1.0 {
-            return false;
-        }
-        host.work_between_frames(spare)
+    fn spare<G: Game>(&self, host: &mut GameHost<G>) {
+        let spare = if self.between {
+            self.started + host.refresh_interval() - now_ms() - BETWEEN_MARGIN_MS
+        } else {
+            0.0
+        };
+        host.set_spare_time(spare);
     }
 }

@@ -7,6 +7,7 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod dev;
 mod instance;
+mod keys;
 mod scene;
 mod smoke;
 
@@ -29,10 +30,10 @@ use serde::Serialize;
 
 use engine_core::math::{max, min};
 use engine_core::{
-    Brick, Bricks, FrameTime, GlobalTransforms, Interest, PrimaryView, Request, Requests, Runs,
-    SceneContext, Schedule, Smoke, Source, Spawner, settings, stats,
+    AssetLibrary, Brick, Bricks, FrameTime, GlobalTransforms, Interest, PrimaryView, Request,
+    Requests, Runs, SceneContext, Schedule, Smoke, Source, Spawner, settings, stats,
 };
-use engine_places_world::streaming::StreamingFocus;
+use engine_places_world::streaming::{StreamedKeys, StreamingFocus};
 
 use instance::{Content, Tree};
 
@@ -158,8 +159,7 @@ impl Acting<'_, '_, '_> {
     }
 
     fn spawn(&mut self, tree: &Tree, index: usize) -> Vec<Entity> {
-        let mut spawned = Vec::new();
-        tree.spawn(index, self.spawner, &mut spawned);
+        let spawned = self.spawner.install(tree.sub_scene(index));
         if let Some(&root) = spawned.first() {
             self.spawner
                 .insert(root, StreamedId(tree.items[index].id.clone()));
@@ -309,11 +309,7 @@ impl WorldCells {
         self.add();
         let kept = &self.content.kept;
         self.kept = (0..kept.items.len())
-            .map(|item| {
-                let mut spawned = Vec::new();
-                kept.spawn(item, act.spawner, &mut spawned);
-                spawned
-            })
+            .map(|item| act.spawner.install(kept.sub_scene(item)))
             .collect();
     }
 
@@ -482,13 +478,17 @@ type StreamReads<'w> = (
     Res<'w, GlobalTransforms>,
 );
 
-type SceneReads<'w> = (Res<'w, StreamedScene>, Option<Res<'w, SceneContext>>);
+type SceneReads<'w> = (
+    Res<'w, StreamedScene>,
+    Option<Res<'w, SceneContext>>,
+    Res<'w, AssetLibrary>,
+);
 
 type FocusQuery<'w, 's> = Query<'w, 's, Entity, With<StreamingFocus>>;
 
 pub(crate) fn stream_cells(
     (settings, view, frame, globals): StreamReads<'_>,
-    (scene, context): SceneReads<'_>,
+    (scene, context, assets): SceneReads<'_>,
     (focus, live): (FocusQuery<'_, '_>, Query<Entity>),
     mut cells: ResMut<WorldCells>,
     mut tracked: ResMut<WorldChanges>,
@@ -507,7 +507,7 @@ pub(crate) fn stream_cells(
         .map_or(cells.from_scene, |context| context.is_changed());
     if scene.is_changed() || context_changed {
         let content = context.as_deref().map_or_else(Content::default, |context| {
-            context.scope(|| instance::content(&scene, context))
+            context.scope(|| instance::content(&scene, context, &assets))
         });
         cells.from_scene = context.is_some();
         cells.replace(Arc::new(content), &mut act);
@@ -610,10 +610,13 @@ impl Brick for WorldStreamingBrick {
             .stats::<CellStats>()
             .resource::<WorldCells>()
             .resource::<WorldChanges>()
-            .systems(Schedule::PreWorldSync, stream_cells)
+            .systems(Schedule::WorldSync, stream_cells)
             .operation::<WorldChangesControl>()
             .observation::<WorldCellsQuery>()
             .observation::<WorldChangesQuery>()
             .observation::<StreamedIdQuery>();
+        for key in keys::RENDERED {
+            bricks.join::<StreamedKeys>(key, None);
+        }
     }
 }

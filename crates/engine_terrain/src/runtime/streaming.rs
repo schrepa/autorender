@@ -1,7 +1,6 @@
 use super::*;
 use engine_core::{
     CookMode, DeviceLimits, FrameBudget, FrameTime, GlobalTransforms, Joined, PrimaryView,
-    WorkClock, WorkRemaining,
 };
 use engine_places_world::streaming::StreamingFocus;
 use engine_places_world::terrain::TerrainLayers;
@@ -18,55 +17,6 @@ fn device_tiles(limits: &DeviceLimits) -> Option<u32> {
 impl Terrains {
     pub fn streaming(&self) -> bool {
         self.entries.iter().any(|state| !state.missing.is_empty())
-    }
-
-    fn work_between_frames(
-        &mut self,
-        (clock, milliseconds): (Option<fn() -> f64>, f64),
-        asking: &mut Asking<'_, '_, '_>,
-        budget: &mut FrameBudget,
-    ) -> bool {
-        let Some(clock) = clock else {
-            return false;
-        };
-        let work = Work::between(budget, (clock, clock() + milliseconds));
-        let frame = self.frame;
-        let mut remaining = false;
-        for state in &mut self.entries {
-            if state.terrain.validate().is_err() {
-                continue;
-            }
-            let mut missing: Vec<(TileKey, u32)> = std::mem::take(&mut state.missing)
-                .into_iter()
-                .filter(|(key, _)| state.loads(key))
-                .collect();
-            if state.store.kept_tiles() > 0 {
-                self.restored += state.store.restore(&missing, &work);
-                missing.retain(|(key, _)| state.loads(key));
-            }
-            if missing.is_empty() && state.loading() == 0 {
-                continue;
-            }
-            let target = std::mem::take(&mut state.target);
-            let keep = std::mem::take(&mut state.keep);
-            let baking = load_tiles(state, &missing, (&target, &keep, &[]), &work, frame, asking);
-            state.missing = missing
-                .into_iter()
-                .filter(|(key, _)| state.loads(key))
-                .collect();
-            state.target = target;
-            state.keep = keep;
-            remaining |= baking || !state.missing.is_empty() || state.loading() > 0;
-            if work.expired() {
-                break;
-            }
-        }
-        self.between += work.spent();
-        #[cfg(debug_assertions)]
-        for state in &self.entries {
-            state.check();
-        }
-        remaining
     }
 
     fn heading(&mut self, eye: Vec3, seconds: f32) -> Vec3 {
@@ -133,7 +83,6 @@ impl Terrains {
             vertical_fov(&Camera::default())
         };
         let work = Work::frame(budget);
-        work.carry(std::mem::take(&mut self.between));
         let (waiting, unsettled) = match settings.motion_detail {
             Some(detail) => {
                 let speed = self.velocity.length();
@@ -413,28 +362,6 @@ pub(crate) fn stream_terrains(
         pending,
         ..terrains.stats.clone()
     });
-}
-
-pub(crate) fn work_between_frames(
-    (time, clock, records): (Res<FrameTime>, Res<WorkClock>, Res<Records>),
-    kinds: Joined<TerrainLayers>,
-    mut jobs: Jobs,
-    mut terrains: ResMut<Terrains>,
-    mut remaining: ResMut<WorkRemaining>,
-    mut budget: ResMut<FrameBudget>,
-) {
-    let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
-    let mut asking = Asking {
-        jobs: &mut jobs,
-        records: &records,
-        kinds: &kinds,
-    };
-    let milliseconds = f64::from(time.between_frames_micros) / 1000.0;
-    remaining.report(terrains.work_between_frames(
-        (clock.reading, milliseconds),
-        &mut asking,
-        &mut budget,
-    ));
 }
 
 impl Terrains {

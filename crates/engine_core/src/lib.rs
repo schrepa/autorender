@@ -108,8 +108,8 @@ pub use section::{Cut, Explain, Operation, RESERVED_REPLY_KEYS, Section};
 pub use shared::{FeedSettings, FrameBudgetSettings};
 pub use services::{
     Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, Placed,
-    Placement, Prepared, Reach, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm,
-    SceneIds, PrimaryView, SceneShare, WorkClock, WorkRemaining, scene_component, scene_components,
+    Placement, Prepared, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm,
+    SceneIds, PrimaryView, SubScene, SubSceneEntity, WorkClock, scene_component, scene_components,
 };
 pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
@@ -153,8 +153,8 @@ use engine_registry::{
     RegistryBuilder,
 };
 use schedules::{
-    BetweenFrames, FixedMove, FixedPostSimulation, FixedPreSimulation, FixedSimulation, FrameStart,
-    Presentation, PreWorldSync, TransformPropagation, ViewSync, Waiting, WorldSync,
+    FixedMove, FixedPostSimulation, FixedPreSimulation, FixedSimulation, FrameStart, Presentation,
+    TransformPropagation, ViewSync, WorldSync,
 };
 
 pub const MAX_DEV_TICKS: u32 = 120;
@@ -195,6 +195,7 @@ pub struct Engine {
     interval: Interval,
     gates: Option<GateDriver>,
     facts: Option<FrameFacts>,
+    spare_ms: f64,
     finalized: bool,
 }
 
@@ -376,6 +377,8 @@ impl Engine {
         hierarchy::tracking::track_nodes(app.world_mut());
         app.add_observer(refuse_bevy_hierarchy);
         app.add_observer(note_tick_check);
+        app.add_observer(services::scene_entity_inserted);
+        app.add_observer(services::scene_entity_discarded);
         for schedule in Schedule::ALL {
             app.init_schedule(schedule.label())
                 .edit_schedule(schedule.label(), single_threaded);
@@ -412,7 +415,6 @@ impl Engine {
             .insert_resource(DeviceLimits::without_device(cores))
             .init_resource::<WorkClock>()
             .init_resource::<PartDraws>()
-            .init_resource::<WorkRemaining>()
             .init_resource::<MeshLevels>()
             .init_resource::<Viewport>()
             .init_resource::<MoveInput>()
@@ -442,6 +444,7 @@ impl Engine {
             interval: Interval::Fresh,
             gates: None,
             facts: None,
+            spare_ms: 0.0,
             finalized: false,
         }
     }
@@ -472,7 +475,7 @@ impl Engine {
         let world = self.app.world_mut();
         world.insert_resource(JobListed::of(&jobs));
         world.resource_mut::<JobExchange>().set_list(jobs);
-        let labels: [InternedScheduleLabel; 11] = Schedule::ALL.map(Schedule::label);
+        let labels: [InternedScheduleLabel; 8] = Schedule::ALL.map(Schedule::label);
         let mut gates = registry.install(world, &labels);
         moves::install_kinds(world);
         install_passes(world);
@@ -664,23 +667,12 @@ impl Engine {
         Ok(())
     }
 
-    pub fn between_frames(&mut self, micros: u32) -> bool {
-        self.finalize();
-        let world = self.app.world_mut();
-        modify(world, |frame: &mut FrameTime| {
-            frame.between_frames_micros = micros;
-        });
-        if world.resource::<WorkRemaining>().remaining() {
-            world.resource_mut::<WorkRemaining>().clear();
-        }
-        if has_systems(world, BetweenFrames) {
-            {
-                let _profile = engine_profile::span("ecs", "BetweenFrames");
-                world.run_schedule(BetweenFrames);
-            }
-            jobs::exchange_orders(world);
-        }
-        world.resource::<WorkRemaining>().remaining()
+    pub fn set_spare_time(&mut self, milliseconds: f64) {
+        self.spare_ms = if milliseconds.is_finite() {
+            milliseconds.max(0.0)
+        } else {
+            0.0
+        };
     }
 
     pub fn start_frame(&mut self) {
@@ -689,19 +681,6 @@ impl Engine {
         if has_systems(world, FrameStart) {
             world.run_schedule(FrameStart);
         }
-    }
-
-    pub fn stream_now(&mut self) {
-        self.finalize();
-        let world = self.app.world_mut();
-        if !has_systems(world, Waiting) {
-            return;
-        }
-        {
-            let _profile = engine_profile::span("ecs", "Waiting");
-            world.run_schedule(Waiting);
-        }
-        jobs::exchange_orders(world);
     }
 
     fn run_gates(&mut self) {
@@ -857,13 +836,11 @@ impl Engine {
 
     fn sync_world(&mut self) {
         let _profile = engine_profile::span("ecs", "WorldSync");
-        shared::start_frame(self.app.world_mut());
+        let spare_ms = std::mem::take(&mut self.spare_ms);
+        shared::start_frame(self.app.world_mut(), spare_ms);
         records::exchange(self.app.world_mut());
         jobs::exchange_orders(self.app.world_mut());
         mesh_lods::settle(self.app.world_mut());
-        if has_systems(self.app.world(), PreWorldSync) {
-            self.app.world_mut().run_schedule(PreWorldSync);
-        }
         self.app.world_mut().run_schedule(WorldSync);
     }
 
