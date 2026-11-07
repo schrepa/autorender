@@ -20,7 +20,7 @@ use crate::drawn::{DrawnWater, draw_input, is_dry};
 use crate::emitters::Emitters;
 use crate::flow::Running;
 use crate::jobs::{DRAWN, TILE_WATER};
-use crate::settled::Settled;
+use crate::settled::{Settled, Shares};
 use crate::water_blocks::Blocks;
 use crate::water_particles::Particles;
 use crate::water_sim::LiveSim;
@@ -70,6 +70,10 @@ impl HeldWater {
 
     pub(crate) fn on_face(&self) -> bool {
         !matches!(self.base, Base::Left)
+    }
+
+    pub(crate) fn shown(&self) -> Option<RecordKey> {
+        self.drawn.as_ref().map(|drawn| drawn.record)
     }
 
     pub(crate) fn hold(&mut self, made: Option<(TileWater, DrawnWater)>) {
@@ -207,7 +211,7 @@ impl WaterTerrain {
     }
 
     fn take_faces(&mut self, entry: &TerrainEntry) {
-        if !Arc::ptr_eq(&self.kept, &entry.kept) {
+        if self.kept[..] != entry.kept[..] {
             self.kept = Arc::clone(&entry.kept);
             let kept = &self.kept;
             self.held
@@ -337,6 +341,7 @@ pub(crate) struct WaterState {
     pub(crate) dropped: bool,
     pub(crate) failures: JobFailures,
     pub(crate) settling: SettleQueue,
+    pub(crate) shares: Shares,
     pub(crate) blocks: Blocks,
     pub(crate) live: LiveSim,
     pub(crate) particles: Particles,
@@ -512,13 +517,12 @@ pub(crate) fn follow(
             .iter()
             .position(|terrain| terrain.entity == entry.terrain)
             .map(|at| before.swap_remove(at));
-        let fresh = kept.is_none();
         let mut terrain = kept.unwrap_or_else(|| WaterTerrain::new(entry, &baked, feed));
         terrain.touched.resize(feed);
         if terrain.origin != entry.origin {
             terrain.touch_all();
         }
-        if (fresh || !Arc::ptr_eq(&terrain.baked, &baked)) && baked.unbaked().is_none() {
+        if baked.unbaked().is_none() {
             terrain.falls = baked
                 .hydrology()
                 .map_or_else(|| Arc::from(Vec::new()), |water| water.falls.clone());
@@ -592,7 +596,7 @@ pub(crate) fn publish_waterline(
             held.terrain == found.terrain
                 && held.key == found.key
                 && held.stamp == found.stamp
-                && Arc::ptr_eq(&held.errors, &found.errors)
+                && held.errors[..] == found.errors[..]
         });
     if same {
         return;

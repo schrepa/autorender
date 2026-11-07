@@ -27,6 +27,7 @@ const SAMPLES: usize = (TILE_STRIDE * TILE_STRIDE) as usize;
 const EVERY_PATCH: [u64; 4] = [u64::MAX; 4];
 
 pub(crate) struct DrawnWater {
+    pub(crate) record: RecordKey,
     pub(crate) errors: Arc<[u16]>,
     pub(crate) texels: Arc<[u8]>,
     pub(crate) changed: [u64; 4],
@@ -243,7 +244,7 @@ fn drawn_output(water: &TileWater, painted: &Painted) -> Vec<u8> {
     output
 }
 
-fn landed(bytes: &[u8]) -> Result<Option<(TileWater, DrawnWater)>, Error> {
+fn landed(bytes: &[u8], record: RecordKey) -> Result<Option<(TileWater, DrawnWater)>, Error> {
     let (head, mut rest) = headed::<Option<DrawnHead>>(bytes)?;
     let Some(head) = head else {
         return Ok(None);
@@ -258,6 +259,7 @@ fn landed(bytes: &[u8]) -> Result<Option<(TileWater, DrawnWater)>, Error> {
         head.solids,
     );
     let drawn = DrawnWater {
+        record,
         errors: Arc::from(errors),
         texels: Arc::from(rest),
         changed: head.changed,
@@ -420,8 +422,9 @@ pub(crate) fn draw(
                 continue;
             };
             landed_any = true;
+            let record = *asked.key();
             let made = output.map_err(|error| error.to_string()).and_then(|bytes| {
-                landed(&bytes).map_err(|error| {
+                landed(&bytes, record).map_err(|error| {
                     format!("{}: its output does not decode: {error}", DRAWN.name())
                 })
             });
@@ -453,7 +456,7 @@ pub(crate) fn draw(
                         held.watered = to;
                     }
                     (Err(error), Drawing::Given(_)) => {
-                        terrain.settled.water_failed(key);
+                        terrain.settled.water_failed(key, &error);
                         state.failures.record(frame, error);
                     }
                     (Err(error), Drawing::Flood(to)) => {

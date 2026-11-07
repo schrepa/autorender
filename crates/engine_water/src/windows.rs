@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::math::{max, min, sin_cos};
-use engine_core::{DeviceLimits, PrimaryView, Since};
+use engine_core::{DeviceLimits, PrimaryView, RecordKey, Since};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::{TILE_STRIDE, on_triangle, tile_cell};
 use engine_places_simulation::water::WaterObstacle;
@@ -11,9 +11,9 @@ use glam::{Vec2, Vec3};
 
 use crate::gpu::{SETUP_SOLID_ENTRIES, SIM_TOUCHES};
 use crate::shallow_water::{live_split, step_seconds};
-use crate::state::{WaterState, WaterTerrain};
+use crate::state::{HeldWater, WaterState, WaterTerrain};
 use crate::water_kernels::{Capacity, live_largest_bytes};
-use crate::{BLOCK_SIDE, Footprint, SteadyWater, TileWater, Water};
+use crate::{BLOCK_SIDE, Footprint, SteadyWater, Water};
 
 pub const LIVE_PIXELS: f32 = 4.0;
 pub const LONGEST_FRAME: f64 = 1.0 / 30.0;
@@ -46,30 +46,19 @@ pub struct WaterRead {
     pub key: TileKey,
     pub square: [Vec2; 2],
     pub tile: Option<(TileKey, engine_core::Stamp)>,
-    pub water: Option<Arc<TileWater>>,
-    pub settled: Option<Arc<SteadyWater>>,
+    pub water: Option<RecordKey>,
+    pub settled: Option<(RecordKey, Arc<SteadyWater>)>,
     pub ready: bool,
 }
 
 impl WaterRead {
     pub fn same_tile(&self, other: &Self) -> bool {
-        self.key == other.key
-            && self.tile == other.tile
-            && alike(self.water.as_ref(), other.water.as_ref())
+        self.key == other.key && self.tile == other.tile && self.water == other.water
     }
 
     fn same(&self, other: &Self) -> bool {
-        self.same_tile(other)
-            && alike(self.settled.as_ref(), other.settled.as_ref())
-            && self.ready == other.ready
-    }
-}
-
-fn alike<T>(a: Option<&Arc<T>>, b: Option<&Arc<T>>) -> bool {
-    match (a, b) {
-        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-        (None, None) => true,
-        (Some(_), None) | (None, Some(_)) => false,
+        let settled = |read: &Self| read.settled.as_ref().map(|(record, _)| *record);
+        self.same_tile(other) && settled(self) == settled(other) && self.ready == other.ready
     }
 }
 
@@ -433,12 +422,12 @@ fn read_at(state: &WaterTerrain, key: TileKey) -> WaterRead {
         tile: tile.map(|tile| (tile.face.key, tile.face.stamp)),
         water: tile
             .filter(|tile| tile.resident())
-            .and_then(|tile| tile.water.clone()),
+            .and_then(HeldWater::shown),
         settled: state
             .settled
             .held
             .get(&key)
-            .map(|(water, _)| Arc::clone(water)),
+            .map(|(water, made)| (made.record, Arc::clone(water))),
         ready,
     }
 }

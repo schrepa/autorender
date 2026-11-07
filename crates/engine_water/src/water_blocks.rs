@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Cursor, DeviceLimits, FrameBudget, Since};
+use engine_core::{Cursor, DeviceLimits, FrameBudget, RecordKey, Since};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::PATCHES_PER_TILE;
 use engine_places_world::ground::{GroundTiles, HeldTile};
@@ -32,6 +32,10 @@ struct TileBlocks {
 }
 
 impl TileBlocks {
+    fn shown(&self) -> Option<RecordKey> {
+        self.drawn.as_ref().map(|drawn| drawn.record)
+    }
+
     fn writes(&self, into: &mut Vec<(u32, Arc<DrawnWater>, usize)>) {
         let (Some(water), Some(drawn)) = (self.water.as_deref(), self.drawn.as_ref()) else {
             return;
@@ -80,14 +84,6 @@ impl TileState {
             Self::Waiting { since } => Some(*since),
             Self::Held(_) | Self::Behind(_) => None,
         }
-    }
-}
-
-fn alike(a: Option<&Arc<TileWater>>, b: Option<&Arc<TileWater>>) -> bool {
-    match (a, b) {
-        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-        (None, None) => true,
-        (Some(_), None) | (None, Some(_)) => false,
     }
 }
 
@@ -180,10 +176,10 @@ impl Blocks {
         &self,
         slot: Slot,
         stamp: engine_core::Stamp,
-        water: Option<&Arc<TileWater>>,
+        shown: Option<RecordKey>,
     ) -> bool {
         match self.tiles.get(&slot) {
-            Some(TileState::Held(tile)) => tile.stamp == stamp && alike(tile.water.as_ref(), water),
+            Some(TileState::Held(tile)) => tile.stamp == stamp && tile.shown() == shown,
             Some(TileState::Behind(_) | TileState::Waiting { .. }) | None => false,
         }
     }
@@ -200,10 +196,10 @@ impl Blocks {
         &self,
         terrain: Entity,
         key: TileKey,
-        water: Option<&Arc<TileWater>>,
+        shown: Option<RecordKey>,
     ) -> bool {
         self.held((terrain, key))
-            .is_none_or(|tile| alike(tile.water.as_ref(), water))
+            .is_none_or(|tile| tile.shown() == shown)
     }
 
     fn begin(&mut self) {
@@ -268,9 +264,8 @@ impl Blocks {
                     continue;
                 }
             };
-            let same = |held: &TileBlocks| {
-                held.stamp == water.face.stamp && alike(held.water.as_ref(), water.water.as_ref())
-            };
+            let same =
+                |held: &TileBlocks| held.stamp == water.face.stamp && held.shown() == water.shown();
             match self.tiles.get(&slot) {
                 Some(TileState::Held(held)) if same(held) => {}
                 Some(TileState::Behind(held)) if same(held) => caught.push(slot),

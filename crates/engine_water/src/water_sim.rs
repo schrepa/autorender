@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
-use engine_core::{Cut, Error, FrameTime, GpuBits, PrimaryView, Readable, Readback};
+use engine_core::{Cut, Error, FrameTime, GpuBits, PrimaryView, Readable, Readback, RecordKey};
 use engine_heightfield::TileKey;
 use engine_places_simulation::water::{WaterObstacle, WaterObstacles};
 use engine_places_world::ground::{GroundBaking, GroundTiles, TerrainTiles};
@@ -114,7 +114,7 @@ fn chunk_head(live: &LiveWater, at: u32) -> Vec<u32> {
 struct LivePool {
     table_room: u32,
     free: Vec<Range<u32>>,
-    tiles: BTreeMap<TileKey, (Range<u32>, Arc<SteadyWater>)>,
+    tiles: BTreeMap<TileKey, (Range<u32>, RecordKey, Arc<SteadyWater>)>,
     table: Vec<u32>,
 }
 
@@ -164,25 +164,25 @@ impl LivePool {
         let leaving: Vec<TileKey> = self
             .tiles
             .iter()
-            .filter(|(key, (_, water))| {
+            .filter(|(key, (_, record, _))| {
                 !reads.iter().any(|read| {
                     read.key == **key
                         && read
                             .settled
                             .as_ref()
-                            .is_some_and(|settled| Arc::ptr_eq(settled, water))
+                            .is_some_and(|(settled, _)| settled == record)
                 })
             })
             .map(|(&key, _)| key)
             .collect();
         for key in leaving {
-            if let Some((range, _)) = self.tiles.remove(&key) {
+            if let Some((range, ..)) = self.tiles.remove(&key) {
                 self.give(range);
             }
         }
         let mut chunks = Vec::new();
         for read in reads {
-            let Some(water) = read.settled.as_ref() else {
+            let Some((record, water)) = read.settled.as_ref() else {
                 continue;
             };
             if self.tiles.contains_key(&read.key) {
@@ -191,13 +191,13 @@ impl LivePool {
             let words = chunk_words(&water.live);
             let at = self.take(words)?;
             self.tiles
-                .insert(read.key, (at..at + words, Arc::clone(water)));
+                .insert(read.key, (at..at + words, *record, Arc::clone(water)));
             chunks.push((at, Arc::clone(water)));
         }
         self.table.clear();
         self.table.resize((columns * rows) as usize, LIVE_NONE);
         for read in reads {
-            if let Some((range, _)) = self.tiles.get(&read.key) {
+            if let Some((range, ..)) = self.tiles.get(&read.key) {
                 let column = u32::from(read.key.x) - least_x;
                 let row = u32::from(read.key.z) - least_z;
                 self.table[(row * columns + column) as usize] = range.start;
@@ -462,7 +462,7 @@ impl SimWindow {
                 .reads
                 .iter()
                 .filter_map(|read| read.settled.as_ref())
-                .map(|water| chunk_words(&water.live) as usize)
+                .map(|(_, water)| chunk_words(&water.live) as usize)
                 .sum::<usize>()
                 + table_room as usize;
             self.live_room = words.max(self.live_room).max(4).next_power_of_two();
@@ -799,9 +799,9 @@ pub(crate) fn plan_sim(
             return false;
         };
         read.ready
-            && read.tile.is_some_and(|(_, stamp)| {
-                blocks.shows((entity, read.key), stamp, read.water.as_ref())
-            })
+            && read
+                .tile
+                .is_some_and(|(_, stamp)| blocks.shows((entity, read.key), stamp, read.water))
     };
     let live = found.map(|(_, window, beyond, ground)| Live {
         window,
@@ -938,7 +938,7 @@ impl SimGpu {
         }
         let pool = live.window.as_ref().map(|window| &window.live);
         if refill && let Some(pool) = pool {
-            for (range, water) in pool.tiles.values() {
+            for (range, _, water) in pool.tiles.values() {
                 self.write_chunk(rooms.0, (range.start, water), cx);
             }
         }

@@ -17,7 +17,7 @@ const REACH_SAMPLES: f32 = 2.25;
 fn same(a: &Watered, b: &Watered) -> bool {
     match (a, b) {
         (None, None) => true,
-        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        (Some(a), Some(b)) => a.name() == b.name(),
         (Some(_), None) | (None, Some(_)) => false,
     }
 }
@@ -95,8 +95,7 @@ fn rewater_terrain(
             }
             continue;
         }
-        let blocked =
-            !blocks.caught_up(entity, key, held.water.as_ref()) || (sent && budget.expired());
+        let blocked = !blocks.caught_up(entity, key, held.shown()) || (sent && budget.expired());
         if blocked {
             waiting += 1;
             continue;

@@ -48,9 +48,10 @@ impl Emitters {
 
     fn follow(&mut self, terrain: &WaterTerrain, spawner: &mut Spawner<WaterBrick>) {
         let origin = terrain.origin;
-        let current = self.falls.as_ref().is_some_and(|held| {
-            held.origin == origin && Arc::ptr_eq(&held.falls, &terrain.falls)
-        });
+        let current = self
+            .falls
+            .as_ref()
+            .is_some_and(|held| held.origin == origin && held.falls[..] == terrain.falls[..]);
         if !current {
             for entity in self.falls.take().into_iter().flat_map(|held| held.entities) {
                 spawner.despawn(entity);

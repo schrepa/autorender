@@ -39,7 +39,7 @@ pub(crate) fn step(
         if terrain
             .flow
             .as_ref()
-            .is_some_and(|flow| !Arc::ptr_eq(flow.base(), &rivers) && **flow.base() != *rivers)
+            .is_some_and(|flow| **flow.base() != *rivers)
         {
             terrain.flow = None;
         }

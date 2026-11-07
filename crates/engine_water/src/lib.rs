@@ -48,7 +48,7 @@ use engine_render::{DebugModes, DebugShown, RenderBricks, SlotModule, SurfaceKin
 
 pub(crate) use engine_codec as codec;
 pub(crate) use engine_heightfield::tile::Footprint;
-pub(crate) use engine_heightfield::{Layers, NARROWEST, TileKey};
+pub(crate) use engine_heightfield::{NARROWEST, TileKey};
 
 pub use flow::{Block, FlowState, Pool, RiverFlow, WEIR};
 pub use settings::Water;
