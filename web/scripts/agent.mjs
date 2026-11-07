@@ -195,6 +195,7 @@ async function stream(endpoint, options, mutation) {
   return last ?? failure(new AgentError("invalid_browser_response", "$", { expected: "present" }));
 }
 
+/** @param {string[]} words */
 function help([asked, ...rest]) {
   if (rest.length) throw new AgentError("invalid_arguments", rest[0], { expected: "absent", got: rest[0] });
   const reply = { version: VERSION, ok: true };

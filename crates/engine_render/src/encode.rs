@@ -26,11 +26,13 @@ mod draw;
 mod passes;
 mod recording;
 mod resources;
+mod run;
 mod views;
 
 pub(crate) use compile::Compiler;
 pub(crate) use recording::{Ended, Recording, Step};
-pub(crate) use views::{Sets, Tables, ViewSet};
+pub(crate) use run::{Bindings, Run};
+pub(crate) use views::Tables;
 
 pub(crate) type FrameCore = Run;
 pub(crate) type EncodeCore = Run;
@@ -391,82 +393,6 @@ pub(crate) struct Timed {
     pub(crate) open: Option<&'static str>,
 }
 
-pub(crate) struct Run {
-    pub(crate) device: wgpu::Device,
-    pub(crate) queue: crate::gpu_calls::Queue,
-    pub(crate) limits: engine_core::DeviceLimits,
-    pub(crate) machine: Machine,
-    pub(crate) parts: Vec<Option<Box<dyn Installed>>>,
-    pub(crate) turned: Vec<Option<u64>>,
-    pub(crate) faults: Vec<(u32, Error)>,
-    pub(crate) reinstalls: Vec<Reinstall>,
-    pub(crate) draw_entries: Vec<KindMember>,
-    pub(crate) part: u32,
-    pub(crate) pass: u32,
-    pub(crate) point: Option<&'static str>,
-    pub(crate) frame: u64,
-    pub(crate) asked_frame: u64,
-    pub(crate) parity: usize,
-    pub(crate) atlas_generation: Option<u64>,
-    pub(crate) holders: Holders,
-    pub(crate) stale: std::collections::BTreeSet<Holder>,
-    pub(crate) rebuilt: Rebuilt,
-    pub(crate) pass_decls: Vec<Arc<PassDecl>>,
-    pub(crate) layer_sets: Vec<(engine_core::AttachPoint, Arc<[SetFormat]>)>,
-    pub(crate) spare: Spare,
-    pub(crate) tables: views::Tables,
-    pub(crate) dimensions: Vec<wgpu::TextureDimension>,
-    pub(crate) samplers: Vec<wgpu::Sampler>,
-    pub(crate) sets: views::Sets,
-    pub(crate) canvas: Option<wgpu::TextureView>,
-    pub(crate) canvas_texture: Option<wgpu::Texture>,
-    pub(crate) runs: Bits,
-    pub(crate) installed: Vec<FrameId>,
-    pub(crate) readbacks: Readbacks,
-    pub(crate) arrived: Vec<Arrived>,
-    pub(crate) readback_slots: usize,
-    pub(crate) readback_slot_bytes: Option<u64>,
-    pub(crate) cameras: Vec<CameraUniform>,
-    pub(crate) camera: wgpu::Buffer,
-    pub(crate) pieces: wgpu::Buffer,
-    pub(crate) uploads: Uploads,
-    pub(crate) frame_groups: Vec<Groups>,
-    pub(crate) own_groups: Vec<Vec<Groups>>,
-    pub(crate) filled: Vec<Filled>,
-    pub(crate) wanted_textures: Vec<TextureHandle>,
-    pub(crate) switches: Vec<(u32, bool)>,
-    pub(crate) reached: Reached,
-    pub(crate) placeholders: Vec<((Ty, u64), Placeholder)>,
-    pub(crate) recording: Recording,
-    pub(crate) timed: Timed,
-    pub(crate) queued: Queued,
-    pub(crate) labelled: Option<u32>,
-    pub(crate) merge: bool,
-    pub(crate) plan: Option<Arc<Plan>>,
-    pub(crate) planned_at: usize,
-    pub(crate) debug: bool,
-    pub(crate) region: Option<(u32, u32)>,
-    pub(crate) assets: Assets,
-    pub(crate) surface: wgpu::TextureFormat,
-    pub(crate) gates: Vec<Option<engine_registry::GateId>>,
-    pub(crate) piece_layout: Vec<(usize, crate::pieces::PieceAt)>,
-    pub(crate) post: crate::shared::PostUniform,
-    pub(crate) linear: wgpu::Sampler,
-    pub(crate) drawn: u32,
-    pub(crate) part_draws: Vec<u32>,
-    pub(crate) compiled: Vec<Compiled>,
-    pub(crate) listed: Option<Vec<Compiled>>,
-    pub(crate) up_front: u32,
-    pub(crate) unlisted: u32,
-    pub(crate) canvas_format: wgpu::TextureFormat,
-    pub(crate) canvas_rect: Option<[u32; 4]>,
-    pub(crate) canvas_load: bool,
-    pub(crate) carried: bool,
-    pub(crate) camera_slot: u32,
-    pub(crate) owned: Vec<OwnedDraw>,
-    pub(crate) applied: Vec<crate::shared::AppliedModule>,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct OwnedDraw {
     pub(crate) pass: &'static str,
@@ -650,22 +576,6 @@ fn texture_dimension(machine: &Machine, texture: u32) -> wgpu::TextureDimension 
     }
 }
 
-fn sampler_of(device: &wgpu::Device, desc: &crate::SamplerDesc) -> wgpu::Sampler {
-    let [u, v, w] = desc.address;
-    device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("engine/part-sampler"),
-        address_mode_u: u,
-        address_mode_v: v,
-        address_mode_w: w,
-        mag_filter: desc.filter,
-        min_filter: desc.filter,
-        mipmap_filter: desc.mipmap,
-        compare: desc.compare,
-        anisotropy_clamp: desc.anisotropy.max(1),
-        ..Default::default()
-    })
-}
-
 fn target_format(
     target: Target,
     outputs: &[crate::machine::OutputDecl],
@@ -693,187 +603,11 @@ fn uniform_buffer(device: &wgpu::Device, label: &'static str, size: u64) -> wgpu
     )
 }
 
-fn post_sampler(device: &wgpu::Device) -> wgpu::Sampler {
-    device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("engine/post-sampler"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Linear,
-        ..Default::default()
-    })
-}
-
-fn stale_holders(machine: &Machine) -> std::collections::BTreeSet<Holder> {
-    (0..machine.variants.len())
-        .map(|variant| Holder::Frame(variant as u32))
-        .chain(
-            machine
-                .pipelines
-                .iter()
-                .enumerate()
-                .flat_map(|(pipeline, built)| {
-                    (0..built.groups.len())
-                        .map(move |group| Holder::Own(pipeline as u32, group as u32))
-                }),
-        )
-        .collect()
-}
-
-fn layer_sets_of(machine: &Machine) -> Vec<(engine_core::AttachPoint, Arc<[SetFormat]>)> {
-    let mut layer_sets: Vec<(engine_core::AttachPoint, Arc<[SetFormat]>)> = Vec::new();
-    for layer in machine.declared.passes.iter().filter_map(pass_layer) {
-        if !layer_sets.iter().any(|(known, _)| *known == layer) {
-            layer_sets.push((layer, Arc::from(set_formats(&machine.outputs, layer))));
-        }
-    }
-    layer_sets
-}
-
-fn fresh_groups(machine: &Machine) -> (Vec<Groups>, Vec<Vec<Groups>>) {
-    let frame_groups = machine.variants.iter().map(|_| Groups::fresh()).collect();
-    let own_groups = machine
-        .pipelines
-        .iter()
-        .map(|pipeline| pipeline.groups.iter().map(|_| Groups::fresh()).collect())
-        .collect();
-    (frame_groups, own_groups)
-}
-
 impl Run {
-    pub(crate) fn new(
-        (device, queue, limits): (
-            wgpu::Device,
-            crate::gpu_calls::Queue,
-            engine_core::DeviceLimits,
-        ),
-        machine: Machine,
-        parts: Vec<Option<Box<dyn Installed>>>,
-        assets: Assets,
-    ) -> Self {
-        let camera = uniform_buffer(&device, "engine/cameras", CAMERA_STRIDE);
-        let linear = post_sampler(&device);
-        let pieces = uniform_buffer(&device, "engine/pieces", crate::pieces::PIECE_ALIGN);
-        let samplers = machine
-            .declared
-            .samplers
-            .iter()
-            .map(|desc| sampler_of(&device, desc))
-            .collect();
-        let count = parts.len();
-        let dimensions = (0..machine.declared.textures.len())
-            .map(|texture| texture_dimension(&machine, texture as u32))
-            .collect();
-        let tables = views::Tables::of(&machine);
-        let runs = Bits::of(machine.graph.passes());
-        let (frame_groups, own_groups) = fresh_groups(&machine);
-        let holders = Holders::of(&machine);
-        let view_holders = holders.of_view(&machine);
-        let (passes, main) = views::view_passes(&machine);
-        let mut stale = stale_holders(&machine);
-        stale.retain(|holder| !view_holders.contains(holder));
-        let first = views::ViewSet::new(
-            &device,
-            &machine,
-            bevy_ecs::entity::Entity::PLACEHOLDER,
-            &view_holders,
-        );
-        let sets = views::Sets {
-            list: vec![first],
-            at: 0,
-            holders: view_holders,
-            passes,
-            main,
-        };
-        let pass_decls = machine
-            .declared
-            .passes
-            .iter()
-            .map(|pass| Arc::new(pass.clone()))
-            .collect();
-        let layer_sets = layer_sets_of(&machine);
-        Self {
-            device,
-            queue,
-            limits,
-            machine,
-            parts,
-            turned: vec![Some(0); count],
-            faults: Vec::new(),
-            reinstalls: Vec::new(),
-            draw_entries: Vec::new(),
-            part: 0,
-            pass: 0,
-            point: None,
-            frame: 0,
-            asked_frame: 0,
-            parity: 0,
-            atlas_generation: None,
-            holders,
-            stale,
-            rebuilt: Rebuilt::default(),
-            pass_decls,
-            layer_sets,
-            spare: Spare::default(),
-            tables,
-            dimensions,
-            samplers,
-            sets,
-            canvas: None,
-            canvas_texture: None,
-            runs,
-            installed: vec![FrameId::default(); count],
-            readbacks: Readbacks::default(),
-            arrived: Vec::new(),
-            readback_slots: 3,
-            readback_slot_bytes: None,
-            cameras: vec![bytemuck::Zeroable::zeroed()],
-            camera,
-            pieces,
-            uploads: Uploads::default(),
-            frame_groups,
-            own_groups,
-            filled: Vec::new(),
-            wanted_textures: Vec::new(),
-            switches: Vec::new(),
-            reached: Reached::default(),
-            placeholders: Vec::new(),
-            recording: Recording::Idle,
-            timed: Timed::default(),
-            queued: Queued::default(),
-            labelled: None,
-            merge: true,
-            plan: None,
-            planned_at: 0,
-            debug: false,
-            region: None,
-            assets,
-            surface: wgpu::TextureFormat::Bgra8Unorm,
-            gates: Vec::new(),
-            piece_layout: Vec::new(),
-            post: bytemuck::Zeroable::zeroed(),
-            linear,
-            drawn: 0,
-            part_draws: vec![0; count],
-            compiled: Vec::new(),
-            listed: None,
-            up_front: 0,
-            unlisted: 0,
-            canvas_format: wgpu::TextureFormat::Bgra8Unorm,
-            canvas_rect: None,
-            canvas_load: false,
-            carried: false,
-            camera_slot: 0,
-            owned: Vec::new(),
-            applied: Vec::new(),
-        }
-    }
-
     pub(crate) fn listing(&self) -> Vec<u8> {
         let listing = Listing {
-            canvas: self.surface,
-            compiled: self.compiled.clone(),
+            canvas: self.canvas.surface,
+            compiled: self.pipelines.compiled.clone(),
         };
         serde_json::to_vec(&listing).unwrap_or_default()
     }
@@ -885,7 +619,7 @@ impl Run {
         let listing: Listing = serde_json::from_slice(record).map_err(|_| {
             crate::platform::failed("$.pipelines").expected(engine_core::Expected::Json)
         })?;
-        let canvas = self.surface;
+        let canvas = self.canvas.surface;
         let mut keys = listing.compiled;
         for key in &mut keys {
             for format in key.formats.iter_mut().flatten() {
@@ -894,13 +628,13 @@ impl Run {
                 }
             }
         }
-        self.listed = Some(keys);
-        self.unlisted = 0;
-        let before = self.up_front;
+        self.pipelines.listed = Some(keys);
+        self.pipelines.unlisted = 0;
+        let before = self.pipelines.up_front;
         if self.reached.generation.is_some() {
             self.at_reached_switches(Self::compile_listed);
         }
-        Ok(self.up_front - before)
+        Ok(self.pipelines.up_front - before)
     }
 
     pub(crate) fn set(&self) -> &views::ViewSet {
@@ -961,7 +695,7 @@ impl Run {
     }
 
     pub(crate) fn touch(&mut self, held: Held) {
-        for &holder in self.holders.of_held(held) {
+        for &holder in self.bindings.holders.of_held(held) {
             let fresh = if self.sets.holders.contains(&holder) {
                 let at = self.sets.at;
                 let mut fresh = false;
@@ -970,7 +704,7 @@ impl Run {
                 }
                 fresh
             } else {
-                self.stale.insert(holder)
+                self.bindings.stale.insert(holder)
             };
             if !fresh {
                 continue;
@@ -986,13 +720,13 @@ impl Run {
                     Held::Pieces => "pieces",
                     Held::Atlas => "impostors",
                 };
-                self.rebuilt.reasons.push(reason);
+                self.tallies.rebuilt.reasons.push(reason);
             }
         }
     }
 
     pub(crate) fn planned(&self) -> Option<&Planned> {
-        self.plan.as_ref()?.passes.get(self.planned_at)
+        self.planning.plan.as_ref()?.passes.get(self.planning.planned_at)
     }
 
     pub(crate) fn path(&self, what: &str) -> String {
@@ -1007,25 +741,25 @@ impl Run {
 
     pub(crate) fn fault(&mut self, error: Error) {
         let part = self.part;
-        if let Some(turned) = self.turned.get_mut(part as usize)
+        if let Some(turned) = self.installs.turned.get_mut(part as usize)
             && turned.take().is_some()
         {
-            self.faults.push((part, error));
+            self.installs.faults.push((part, error));
         }
     }
 
     pub(crate) fn drawable(&self, part: u32) -> bool {
-        self.turned.get(part as usize).is_some_and(Option::is_some)
+        self.installs.turned.get(part as usize).is_some_and(Option::is_some)
     }
 
     pub(crate) fn take_states(&mut self, states: Option<&engine_registry::BrickStates>) {
         for part in 0..self.parts.len() {
             let present = self.parts[part].is_some();
-            let turned = match self.gates.get(part).copied().flatten() {
+            let turned = match self.installs.gates.get(part).copied().flatten() {
                 Some(gate) => states.and_then(|states| states.installed(gate)),
                 None => Some(0),
             };
-            if let Some(slot) = self.turned.get_mut(part) {
+            if let Some(slot) = self.installs.turned.get_mut(part) {
                 *slot = turned.filter(|_| present);
             }
         }
@@ -1034,15 +768,15 @@ impl Run {
 
     pub(crate) fn settle_parts(&mut self, states: Option<&engine_registry::BrickStates>) {
         for part in 0..self.parts.len() {
-            let turned = self.turned.get(part).copied().flatten();
-            let wanted = match self.gates.get(part).copied().flatten() {
+            let turned = self.installs.turned.get(part).copied().flatten();
+            let wanted = match self.installs.gates.get(part).copied().flatten() {
                 Some(gate) => states.and_then(|states| states.installed(gate)),
                 None => turned,
             };
             if turned == wanted && (turned.is_some() || self.parts[part].is_none()) {
                 continue;
             }
-            if let Some(slot) = self.turned.get_mut(part) {
+            if let Some(slot) = self.installs.turned.get_mut(part) {
                 *slot = None;
             }
             if self.parts[part].take().is_some() {
@@ -1078,7 +812,7 @@ impl Run {
             reads: scene.pass.reads,
             writes: scene.pass.writes,
             view: view.map(|view| view.local),
-            index: Some(view.map_or(self.camera_slot, |view| view.drawn)),
+            index: Some(view.map_or(self.uniforms.camera_slot, |view| view.drawn)),
         })
     }
 
@@ -1092,7 +826,7 @@ impl Run {
         else {
             return Vec::new();
         };
-        self.owned
+        self.uniforms.owned
             .iter()
             .filter(|view| {
                 view.pass == scene.name
@@ -1111,7 +845,7 @@ impl Run {
         let Some(scene) = pass.scene else {
             return Vec::new();
         };
-        self.draw_entries
+        self.installs.draw_entries
             .iter()
             .filter(|member| pass.members.contains(&member.part) && (scene.pass.takes)(member.kind))
             .cloned()
@@ -1126,7 +860,7 @@ impl Run {
             .get(pass as usize)
             .is_some_and(|declared| declared.part == self.part);
         if owned {
-            self.runs.insert(pass as usize);
+            self.planning.runs.insert(pass as usize);
         }
     }
 
@@ -1172,7 +906,7 @@ impl Run {
             return Allocation::Kept;
         }
         let dimension = self
-            .dimensions
+            .bindings.dimensions
             .get(at)
             .copied()
             .unwrap_or(wgpu::TextureDimension::D2);
@@ -1202,7 +936,7 @@ impl Run {
         }
         tables.textures[at] = fresh;
         tables.sizes[at] = Some((size, mips));
-        self.rebuilt.textures += 1;
+        self.tallies.rebuilt.textures += 1;
         self.touch(Held::Texture(texture));
         Allocation::Fresh
     }
@@ -1340,14 +1074,14 @@ impl Run {
 
     pub(crate) fn installed_anew(&mut self, part: u32) {
         let next = self.written().next();
-        if let Some(installed) = self.installed.get_mut(part as usize) {
+        if let Some(installed) = self.installs.installed.get_mut(part as usize) {
             *installed = next;
         }
         self.forget_ran(part);
     }
 
     pub(crate) fn written(&self) -> FrameId {
-        FrameId(self.asked_frame)
+        FrameId(self.frames.asked)
     }
 
     pub(crate) fn arrived(
@@ -1356,7 +1090,7 @@ impl Run {
         read: Readback<Vec<u8>>,
         deliver: Deliver,
     ) {
-        self.arrived.push(Arrived {
+        self.reading.arrived.push(Arrived {
             part,
             tag,
             read,
@@ -1365,9 +1099,9 @@ impl Run {
     }
 
     pub(crate) fn deliver(&mut self, world: &mut World) {
-        for arrived in std::mem::take(&mut self.arrived) {
+        for arrived in std::mem::take(&mut self.reading.arrived) {
             let installed = self
-                .installed
+                .installs.installed
                 .get(arrived.part as usize)
                 .copied()
                 .unwrap_or_default();
@@ -1450,7 +1184,7 @@ impl Run {
             },
         );
         self.buffer_tables_mut(buffer).buffers[at] = Some((made, bytes));
-        self.rebuilt.buffers += 1;
+        self.tallies.rebuilt.buffers += 1;
         self.touch(Held::Buffer(buffer));
         Allocation::Fresh
     }
@@ -1471,7 +1205,7 @@ impl Run {
 
     fn written_texture(&self, texture: u32) -> Option<&Allocated> {
         let made = self.texture_tables(texture).textures.get(texture as usize)?;
-        made[self.parity].as_ref().or(made[0].as_ref())
+        made[self.frames.parity].as_ref().or(made[0].as_ref())
     }
 
     pub(crate) fn write_texture(

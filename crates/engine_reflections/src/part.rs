@@ -208,7 +208,6 @@ impl GpuPart for TraceGpu {
             let mut draw = cx.render(Attach::ColorMip(self.levels, 0, 0));
             draw.within(self.render);
             draw.draw(&self.first, TRIANGLE);
-            drop(draw);
             for ((level, down), drawn) in (0..self.count).zip(&self.downs).zip(self.drawn) {
                 let mut draw = cx.render(Attach::ColorMip(self.levels, level + 1, 0));
                 draw.within(drawn);

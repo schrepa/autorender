@@ -96,9 +96,9 @@ impl Renderer {
         let Some(run) = self.run.as_mut() else {
             return 0;
         };
-        let before = run.compiled.len();
+        let before = run.pipelines.compiled.len();
         run.warm_reached(world);
-        (run.compiled.len() - before) as u32
+        (run.pipelines.compiled.len() - before) as u32
     }
 
     pub fn pipeline_list(&self) -> Vec<u8> {
@@ -114,7 +114,7 @@ impl Renderer {
     pub fn pipelines_listed(&self) -> (u32, u32) {
         self.run
             .as_ref()
-            .map_or((0, 0), |run| (run.up_front, run.unlisted))
+            .map_or((0, 0), |run| (run.pipelines.up_front, run.pipelines.unlisted))
     }
 
     pub fn disabled_features(&self, world: &World) -> engine_core::Names {
@@ -125,9 +125,9 @@ impl Renderer {
                 .is_some_and(|state| matches!(state, engine_registry::BrickState::Faulted(_)))
         };
         let bits = self.run.as_ref().map_or(0, |run| {
-            run.gates
+            run.installs.gates
                 .iter()
-                .zip(&run.turned)
+                .zip(&run.installs.turned)
                 .enumerate()
                 .filter(|(_, (gate, turned))| match gate {
                     Some(gate) => faulted(*gate),

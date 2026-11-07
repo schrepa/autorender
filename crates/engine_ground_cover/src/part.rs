@@ -20,6 +20,12 @@ const FRAME_BYTES: u64 = size_of::<CoverFrame>() as u64;
 const TERRAIN_BYTES: u64 = size_of::<CoverTerrain>() as u64;
 const MATERIAL_BYTES: u64 = PALETTE_ENTRIES as u64 * size_of::<CoverMaterial>() as u64;
 
+type ScenePipeline = (
+    &'static str,
+    Pipeline<CoverGpu, Scene>,
+    DrawInput<CoverGpu, Scene>,
+);
+
 pub(crate) struct CoverGpu {
     grow: Pass<Self>,
     rows: Buffer<Self>,
@@ -31,7 +37,7 @@ pub(crate) struct CoverGpu {
     growing: ComputePipeline<Self>,
     stepping: ComputePipeline<Self>,
     finishing: ComputePipeline<Self>,
-    scenes: Vec<(&'static str, Pipeline<Self, Scene>, DrawInput<Self, Scene>)>,
+    scenes: Vec<ScenePipeline>,
     cells: Vec<u32>,
     blade_bytes: u64,
     row_bytes: u64,

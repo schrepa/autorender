@@ -873,14 +873,14 @@ impl Renderer {
         if let Some(kept) = kept {
             adopt(&mut run, kept, world);
         }
-        run.gates = installed.gates;
-        run.reinstalls = installed.reinstalls;
-        run.draw_entries = installed.draws;
+        run.installs.gates = installed.gates;
+        run.installs.reinstalls = installed.reinstalls;
+        run.installs.draw_entries = installed.draws;
         run.take_states(world.get_resource::<BrickStates>());
-        run.piece_layout = installed.pieces;
-        run.surface = self.core.display.format();
-        run.canvas_format = run.surface;
-        run.applied = installed.applied;
+        run.uniforms.piece_layout = installed.pieces;
+        run.canvas.surface = self.core.display.format();
+        run.canvas.format = run.canvas.surface;
+        run.installs.applied = installed.applied;
         let mut stages: Vec<(&'static str, &'static str)> = Vec::new();
         self.spans = run
             .machine
@@ -936,8 +936,8 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
         installed.run_parts,
         assets,
     );
-    run.gates = installed.gates;
-    run.switches = switches_of(&run.machine, world);
+    run.installs.gates = installed.gates;
+    run.pipelines.switches = switches_of(&run.machine, world);
     run.warm(true);
     run.make_all_shaders();
     match crate::platform::ready(scope.pop()) {
@@ -965,10 +965,9 @@ fn kept_of(run: Run) -> (Assets, Kept) {
         tables,
         sets,
         filled,
-        frame,
-        asked_frame,
-        installed,
-        readbacks,
+        frames,
+        installs,
+        reading,
         ..
     } = run;
     let at = sets.at;
@@ -984,9 +983,9 @@ fn kept_of(run: Run) -> (Assets, Kept) {
         tables,
         view,
         filled,
-        frames: (frame, asked_frame),
-        installed,
-        readbacks,
+        frames: (frames.current, frames.asked),
+        installed: installs.installed,
+        readbacks: reading.list,
     };
     (assets, kept)
 }
@@ -1051,14 +1050,14 @@ fn same_shape(old: &crate::install::Declared, new: &crate::install::Declared) ->
 }
 
 fn adopt(run: &mut Run, kept: Kept, world: &mut World) {
-    (run.frame, run.asked_frame) = kept.frames;
-    run.readbacks = kept.readbacks;
+    (run.frames.current, run.frames.asked) = kept.frames;
+    run.reading.list = kept.readbacks;
     let next = run.written().next();
-    run.installed.fill(next);
+    run.installs.installed.fill(next);
     if !same_shape(&kept.declared, &run.machine.declared) {
         return;
     }
-    run.installed = kept.installed;
+    run.installs.installed = kept.installed;
     for (slot, held) in run.parts.iter_mut().zip(kept.parts) {
         if let Some(mut held) = held {
             held.rebind(world);
@@ -1097,7 +1096,7 @@ pub(crate) fn reinstall(
         .parts
         .get(part as usize)
         .map_or("", |info| info.name);
-    let Some(again) = run.reinstalls.get(part as usize).cloned() else {
+    let Some(again) = run.installs.reinstalls.get(part as usize).cloned() else {
         return Err(failed(&format!("$.parts.{name}")));
     };
     let linker = std::mem::replace(
@@ -1110,7 +1109,7 @@ pub(crate) fn reinstall(
     core.package = again.package;
     core.fills = again.fills;
     core.declared = run.machine.declared.before(again.from);
-    core.draws.clone_from(&run.draw_entries);
+    core.draws.clone_from(&run.installs.draw_entries);
     let made = {
         let _owner = core.declared.parts.get(part as usize).map(PartInfo::owned);
         (again.install)(world, &mut core)

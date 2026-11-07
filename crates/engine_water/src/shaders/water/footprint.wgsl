@@ -1,4 +1,4 @@
-import package::place::lighting::{SPECULAR_LIMIT, SPECULAR_VARIANCE};
+import package::face::lighting::{SPECULAR_LIMIT, SPECULAR_VARIANCE};
 import package::engine::view::material_detail;
 
 const WATER_SMOOTHEST: f32 = 0.03;

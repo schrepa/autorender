@@ -35,7 +35,7 @@ impl PassName for ExposurePass {
         writes: Writes::NOTHING,
         reads: SlotSet::NONE,
         views: PassViews::Main,
-        at: AttachPoint::Post,
+        at: AttachPoint::Display,
         takes: never,
     };
 }

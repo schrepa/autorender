@@ -937,7 +937,7 @@ impl<P: GpuPart> Prepare<'_, P> {
     }
 
     pub fn view_index(&self) -> u32 {
-        self.core.camera_slot
+        self.core.uniforms.camera_slot
     }
 
     pub fn read_target(&self, name: TargetName) -> bool {
@@ -1005,11 +1005,11 @@ impl<P: GpuPart> Prepare<'_, P> {
     }
 
     pub fn count_upload(&mut self, bytes: u64) {
-        self.core.uploads.counted += bytes;
+        self.core.tallies.uploads.counted += bytes;
     }
 
     pub fn memory(&mut self, category: &'static str, bytes: u64) {
-        let memory = &mut self.core.uploads.memory;
+        let memory = &mut self.core.tallies.uploads.memory;
         match memory.iter_mut().find(|(known, _)| *known == category) {
             Some((_, held)) => *held += bytes,
             None => memory.push((category, bytes)),
@@ -1143,7 +1143,7 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn canvas(&self) -> Option<wgpu::TextureFormat> {
         self.core
-            .canvas_texture
+            .canvas.texture
             .as_ref()
             .filter(|texture| texture.usage().contains(wgpu::TextureUsages::COPY_SRC))
             .map(wgpu::Texture::format)
@@ -1158,7 +1158,7 @@ pub struct Encode<'f, P> {
 
 impl<P: GpuPart> Encode<'_, P> {
     pub fn view_index(&self) -> u32 {
-        self.core.camera_slot
+        self.core.uniforms.camera_slot
     }
 
     pub fn span(&mut self, name: &'static str) {

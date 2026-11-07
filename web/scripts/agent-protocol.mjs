@@ -156,6 +156,7 @@ export function createBridge({ session, url, build, execute, activity, onClose, 
 
   function carry(command, onRecord) {
     const reply = Promise.resolve().then(() => execute(command, onRecord));
+    /** @type {{ command: any, started: number, finished: Promise<void> | undefined }} */
     const entry = { command, started: Date.now(), finished: undefined };
     const finish = () => { if (carrying === entry) carrying = undefined; };
     entry.finished = reply.then(finish, finish);
@@ -237,6 +238,7 @@ export function createBridge({ session, url, build, execute, activity, onClose, 
     requestIds.add(request.id);
     const limit = request.timeout_ms ?? deadlineMs;
     return new Promise(resolve => {
+      /** @type {{ request: any, onRecord: any, limit: number, deadline: number, resolve: (value: any) => void, expiry: NodeJS.Timeout | undefined }} */
       const item = { request, onRecord, limit, deadline: Date.now() + limit, resolve, expiry: undefined };
       item.expiry = setTimeout(() => {
         queue.splice(queue.indexOf(item), 1);

@@ -286,13 +286,13 @@ impl Run {
                 device: &self.device,
                 machine: &mut self.machine,
                 parts: &self.parts,
-                switches: &self.switches,
-                compiled: &mut self.compiled,
-                listed: self.listed.as_deref(),
-                unlisted: &mut self.unlisted,
+                switches: &self.pipelines.switches,
+                compiled: &mut self.pipelines.compiled,
+                listed: self.pipelines.listed.as_deref(),
+                unlisted: &mut self.pipelines.unlisted,
             },
             &mut self.assets,
-            &mut self.readbacks,
+            &mut self.reading.list,
         )
     }
 
@@ -342,7 +342,7 @@ impl Run {
             (layout.debug, layout.main),
             variant,
         )?;
-        self.rebuilt.compiles += 1;
+        self.tallies.rebuilt.compiles += 1;
         let built = self.machine.pipelines.get_mut(pipeline as usize)?;
         built.ready.push(Ready {
             layout,
@@ -354,10 +354,10 @@ impl Run {
     }
 
     pub(crate) fn set_switches(&mut self, switches: Vec<(u32, bool)>) {
-        if self.switches == switches {
+        if self.pipelines.switches == switches {
             return;
         }
-        self.switches = switches;
+        self.pipelines.switches = switches;
         for built in &mut self.machine.pipelines {
             built.ready.clear();
             built.compute_ready = None;
@@ -376,7 +376,7 @@ impl Run {
             return None;
         };
         let switches: Vec<(u32, bool)> = self
-            .switches
+            .pipelines.switches
             .iter()
             .filter(|(id, _)| stage.composed.switches.contains(id))
             .copied()
@@ -486,7 +486,7 @@ impl Compiler<'_> {
         if built.skipped || (debug && desc.debug.is_none()) {
             return None;
         }
-        let switches = stage_switches(&self.switches, &built.stages);
+        let switches = stage_switches(self.switches, &built.stages);
         let used = variant.map_or([false; 5], |variant| {
             variant.constants().map(|offered| {
                 built
@@ -498,13 +498,8 @@ impl Compiler<'_> {
         let specialized = used.contains(&true);
         let styled = !debug && !desc.writes.is_empty();
         let bits = variant.and_then(|variant| variant.keyed(used, styled));
-        let mut material: Vec<(&str, f64)> = bits
-            .filter(|_| specialized)
-            .map_or_else(Vec::new, |keyed| keyed.constants().to_vec());
         let raster = raster_of(self.machine, pipeline);
-        if raster.clamp_near {
-            material.push((CLAMP_NEAR, 1.0));
-        }
+        let material = material_constants(bits.filter(|_| specialized), raster.clamp_near);
         let mut hasher = DefaultHasher::new();
         (formats, depth, debug, main, &switches, bits).hash(&mut hasher);
         (raster.bias, raster.slope.to_bits(), raster.clamp_near, raster.cull).hash(&mut hasher);
@@ -533,15 +528,7 @@ impl Compiler<'_> {
         let fragment_entry = if debug { desc.debug } else { desc.fragment };
         let layouts = vertex_layouts(&desc.vertices);
         let styling = bits.filter(|_| styled);
-        let depth_stencil = depth.map(|(format, view)| {
-            let mut state = depth_stencil_state(format, view, desc.depth);
-            if let Some(styling) = styling {
-                styling.restyle(&mut state);
-            }
-            state.bias.constant += raster.bias;
-            state.bias.slope_scale += raster.slope;
-            state
-        });
+        let depth_stencil = depth_state(depth, desc.depth, styling, raster);
         let fragment_stage = fragment_entry.and_then(|_| built.stages.get(fragment_at));
         let written = fragment_stage
             .zip(fragment_entry)
@@ -636,7 +623,7 @@ impl Run {
             depth = Some((DEPTH_FORMAT, true));
         }
         if crate::shared::draws_canvas(pass) {
-            formats.insert(0, Some(self.surface));
+            formats.insert(0, Some(self.canvas.surface));
         }
         for &view in &pass.targets {
             formats.push(target_format(final_target(view), &self.machine.outputs));
@@ -674,7 +661,7 @@ impl Run {
     pub(crate) fn warm_reached(&mut self, world: &World) {
         let states = world.get_resource::<engine_registry::BrickStates>();
         let in_play: Vec<engine_registry::GateId> = self
-            .gates
+            .installs.gates
             .iter()
             .zip(&self.machine.declared.parts)
             .filter(|(_, part)| part.turns_on_in_play)
@@ -684,7 +671,7 @@ impl Run {
             self.machine
                 .switches
                 .iter()
-                .zip(&self.switches)
+                .zip(&self.pipelines.switches)
                 .map(|(&(id, gate), &(_, on))| {
                     (id, if in_play.contains(&gate) { forced } else { on })
                 })
@@ -693,7 +680,7 @@ impl Run {
         self.reached = Reached {
             generation: Some(states.map_or(0, engine_registry::BrickStates::generation)),
             parts: self
-                .gates
+                .installs.gates
                 .iter()
                 .map(|gate| {
                     gate.is_none_or(|gate| {
@@ -712,20 +699,20 @@ impl Run {
     pub(super) fn at_reached_switches(&mut self, work: impl Fn(&mut Self)) {
         let [on, off] = self.reached.sides.clone();
         let differ = on != off;
-        let real = std::mem::replace(&mut self.switches, on);
+        let real = std::mem::replace(&mut self.pipelines.switches, on);
         work(self);
         if differ {
-            self.switches = off;
+            self.pipelines.switches = off;
             work(self);
         }
-        self.switches = real;
+        self.pipelines.switches = real;
     }
 
     pub(super) fn compile_listed(&mut self) {
-        let Some(keys) = self.listed.take() else {
+        let Some(keys) = self.pipelines.listed.take() else {
             return;
         };
-        let before = self.compiled.len();
+        let before = self.pipelines.compiled.len();
         for key in &keys {
             let found = self
                 .machine
@@ -742,8 +729,8 @@ impl Run {
                 );
             }
         }
-        self.up_front += (self.compiled.len() - before) as u32;
-        self.listed = Some(keys);
+        self.pipelines.up_front += (self.pipelines.compiled.len() - before) as u32;
+        self.pipelines.listed = Some(keys);
     }
 
     pub(crate) fn make_all_shaders(&mut self) {
@@ -947,6 +934,34 @@ fn locations(text: &str) -> Vec<u32> {
 }
 
 const CLAMP_NEAR: &str = "PASS_CLAMP_NEAR";
+
+fn material_constants(
+    keyed: Option<crate::surface::MaterialVariant>,
+    clamp_near: bool,
+) -> Vec<(&'static str, f64)> {
+    let mut material = keyed.map_or_else(Vec::new, |keyed| keyed.constants().to_vec());
+    if clamp_near {
+        material.push((CLAMP_NEAR, 1.0));
+    }
+    material
+}
+
+fn depth_state(
+    depth: Option<(wgpu::TextureFormat, bool)>,
+    used: DepthUse,
+    styling: Option<crate::surface::MaterialVariant>,
+    raster: engine_core::PassRaster,
+) -> Option<wgpu::DepthStencilState> {
+    depth.map(|(format, view)| {
+        let mut state = depth_stencil_state(format, view, used);
+        if let Some(styling) = styling {
+            styling.restyle(&mut state);
+        }
+        state.bias.constant += raster.bias;
+        state.bias.slope_scale += raster.slope;
+        state
+    })
+}
 
 fn raster_of(machine: &Machine, pipeline: u32) -> engine_core::PassRaster {
     let scene = machine

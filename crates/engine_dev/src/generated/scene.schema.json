@@ -1870,6 +1870,37 @@
             "Orthographic"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Fitted": {
+              "properties": {
+                "clip": {
+                  "items": {
+                    "items": {
+                      "format": "float",
+                      "type": "number"
+                    },
+                    "maxItems": 4,
+                    "minItems": 4,
+                    "type": "array"
+                  },
+                  "maxItems": 4,
+                  "minItems": 4,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "clip"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Fitted"
+          ],
+          "type": "object"
         }
       ]
     },

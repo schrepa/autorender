@@ -8,11 +8,11 @@ impl Run {
             .passes
             .get(pass as usize)
             .is_some_and(shared);
-        if self.merge && shares && self.recording.open().is_some_and(|open| open.shared) {
+        if self.planning.merge && shares && self.recording.open().is_some_and(|open| open.shared) {
             return false;
         }
         if self
-            .labelled
+            .planning.labelled
             .is_some_and(|known| self.same_group(known, pass))
         {
             self.end_render();
@@ -105,25 +105,25 @@ impl Run {
     pub(crate) fn group(&mut self, pass: u32) {
         if !GROUPED
             || self
-                .labelled
+                .planning.labelled
                 .is_some_and(|known| self.same_group(known, pass))
         {
             return;
         }
         let name = self.group_of(pass);
         if let Some(encoder) = self.recording.encoder() {
-            if self.labelled.is_some() {
+            if self.planning.labelled.is_some() {
                 encoder.pop_debug_group();
             }
             encoder.push_debug_group(name);
-            self.labelled = Some(pass);
+            self.planning.labelled = Some(pass);
         }
     }
 
     pub(crate) fn leave(&mut self) {
         self.end_render();
         if GROUPED
-            && self.labelled.take().is_some()
+            && self.planning.labelled.take().is_some()
             && let Some(encoder) = self.recording.encoder()
         {
             encoder.pop_debug_group();
@@ -131,7 +131,7 @@ impl Run {
     }
 
     fn layer_set(&self, layer: engine_core::AttachPoint) -> Arc<[SetFormat]> {
-        self.layer_sets
+        self.planning.layer_sets
             .iter()
             .find(|(known, _)| *known == layer)
             .map_or_else(
@@ -146,13 +146,13 @@ impl Run {
     )]
     pub(crate) fn begin_render(&mut self, attach: AttachRaw, view: Option<&OwnedDraw>) -> bool {
         let offset = self.view_offset(view);
-        let Some(pass) = self.pass_decls.get(self.pass as usize).cloned() else {
+        let Some(pass) = self.planning.pass_decls.get(self.pass as usize).cloned() else {
             return false;
         };
-        let Some(plan) = self.plan.clone() else {
+        let Some(plan) = self.planning.plan.clone() else {
             return false;
         };
-        let Some(planned) = plan.passes.get(self.planned_at) else {
+        let Some(planned) = plan.passes.get(self.planning.planned_at) else {
             return false;
         };
         let layer = self.pass_layer();
@@ -191,7 +191,7 @@ impl Run {
                 },
             };
         let key = target_key;
-        let kept = self.carried;
+        let kept = self.canvas.carried;
         let carried = move |target: Target, ops: Ops| {
             if kept && matches!(target, Target::Scene | Target::Depth) {
                 Ops {
@@ -203,7 +203,7 @@ impl Run {
             }
         };
         let composites = crate::shared::composites(&pass);
-        let lone = crate::shared::draws_canvas(&pass) && !composites && self.canvas_rect.is_some();
+        let lone = crate::shared::draws_canvas(&pass) && !composites && self.canvas.rect.is_some();
         match attach {
             AttachRaw::Declared => {
                 if let Some(layer) = layer.filter(|_| !lone) {
@@ -266,11 +266,11 @@ impl Run {
                     let canvas = if composites {
                         self.view_canvas()
                     } else {
-                        self.canvas.clone()
+                        self.canvas.view.clone()
                     };
                     if let (Some(ops), Some(canvas)) = (ops_of(id), canvas) {
                         let format = self.canvas_format();
-                        let ops = if self.canvas_load {
+                        let ops = if self.canvas.load {
                             Ops {
                                 load: Load::Load,
                                 ..ops
@@ -428,7 +428,7 @@ impl Run {
                 .chain(depth.as_ref().map(|(key, ..)| *key)),
         );
         if let Some(open) = self.recording.open_mut()
-            && self.merge
+            && self.planning.merge
             && open.shared
             && is_shared
             && open.attachments == attachments
@@ -437,7 +437,7 @@ impl Run {
                 open.offset = offset;
                 open.set.frame = None;
             }
-            if GROUPED && open.label != Some(self.pass) && self.labelled != Some(self.pass) {
+            if GROUPED && open.label != Some(self.pass) && self.planning.labelled != Some(self.pass) {
                 if open.label.is_some() {
                     open.pass.pop_debug_group();
                 }
@@ -572,11 +572,11 @@ impl Run {
     }
 
     pub(crate) fn canvas_format(&self) -> wgpu::TextureFormat {
-        self.canvas_format
+        self.canvas.format
     }
 
     pub(crate) fn clear_canvas(&mut self) {
-        let Some(canvas) = self.canvas.clone() else {
+        let Some(canvas) = self.canvas.view.clone() else {
             return;
         };
         self.leave();
@@ -607,7 +607,7 @@ impl Run {
         mip: u32,
         layer: u32,
     ) -> Option<wgpu::TextureView> {
-        let parity = self.parity;
+        let parity = self.frames.parity;
         let made = self
             .texture_tables_mut(texture)
             .textures

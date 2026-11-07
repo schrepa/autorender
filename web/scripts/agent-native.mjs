@@ -23,6 +23,7 @@ export function nativeProgram(name, { profiling = false } = {}) {
   const [chosen, features] = profiling ? ["profiling", "dev,profiling"] : ["quick", "dev"];
   const profile = process.env.ENGINE_NATIVE_PROFILE || chosen;
   const target = resolve(workspace, "target", "agent");
+  /** @type {NodeJS.ProcessEnv} */
   const env = { ...process.env, CARGO_TARGET_DIR: target };
   if (profiling && process.platform === "linux") env.RUSTFLAGS = `${process.env.RUSTFLAGS ?? ""} -Cforce-frame-pointers=yes`.trim();
   execFileSync("cargo", ["build", "-q", "-p", client.package, "--bin", client.native, "--profile", profile, "--features", features],

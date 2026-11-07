@@ -109,11 +109,12 @@ impl JobLog {
             engine_worker::job_list(engine_standard::everything::<BrickList>)
                 .map_err(|error| error.to_string())?,
         );
+        let named: String = list.hash().iter().map(|byte| format!("{byte:02x}")).collect();
         Ok(Self {
             worker: engine_worker::Worker::new(Arc::clone(&list), engine_worker::now_ms),
             list,
             next: 0,
-            log: Vec::new(),
+            log: vec![json!({ "list": named })],
         })
     }
 

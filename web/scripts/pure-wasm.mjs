@@ -10,26 +10,34 @@ if (!path) {
   process.exit(1);
 }
 initSync({ module: readFileSync(new URL("../pkg-dev/engine_player_bg.wasm", import.meta.url)) });
-const worker = new JobWorker();
 const hash = bytes => createHash("sha256").update(bytes).digest("hex").slice(0, 16);
 const entries = JSON.parse(readFileSync(path, "utf8"));
 const mismatches = [];
+/** @type {JobWorker | undefined} */
+let worker;
 let [shares, jobs, id] = [0, 0, 0];
 for (const entry of entries) {
+  if ("list" in entry) {
+    worker?.free();
+    worker = new JobWorker(Buffer.from(entry.list, "hex"));
+    continue;
+  }
+  if (!worker) {
+    console.error(`${path} names no job list before its first entry`);
+    process.exit(1);
+  }
   if ("share" in entry) {
     worker.share(entry.share, Buffer.from(entry.bytes, "base64"));
     shares++;
     continue;
   }
   id++;
-  worker.start(id, entry.job, Buffer.from(entry.input, "base64"));
-  const budget = entry.slice ?? Number.MAX_SAFE_INTEGER;
-  let output;
-  do {
-    output = worker.step(id, budget);
-  } while (output === undefined || output === null);
+  worker.hold(id, entry.job, entry.source, Buffer.from(entry.input, "base64"), 0);
+  /** @type {{ type: "done", id: number, output: Uint8Array } | { type: "failed", id: number, error: string } | undefined} */
+  let report;
+  while (!report && worker.busy()) report = worker.slice();
   jobs++;
-  const found = hash(output);
+  const found = report?.type === "done" ? hash(report.output) : report?.error ?? "unreported";
   if (found !== entry.output) {
     mismatches.push({ job: entry.job, index: jobs - 1, native: entry.output, wasm: found });
   }

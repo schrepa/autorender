@@ -2,13 +2,13 @@ use super::*;
 
 impl Run {
     pub(crate) fn view_offset(&self, view: Option<&OwnedDraw>) -> u32 {
-        view.map_or(self.camera_slot, |view| view.slot) * CAMERA_STRIDE as u32
+        view.map_or(self.uniforms.camera_slot, |view| view.slot) * CAMERA_STRIDE as u32
     }
 
     pub(crate) fn write_cameras(&mut self) -> u64 {
-        let bytes = self.cameras.len() as u64 * CAMERA_STRIDE;
-        if self.camera.size() < bytes {
-            self.camera = crate::memory::buffer(
+        let bytes = self.uniforms.cameras.len() as u64 * CAMERA_STRIDE;
+        if self.uniforms.camera.size() < bytes {
+            self.uniforms.camera = crate::memory::buffer(
                 &self.device,
                 &wgpu::BufferDescriptor {
                     label: Some("engine/cameras"),
@@ -17,33 +17,33 @@ impl Run {
                     mapped_at_creation: false,
                 },
             );
-            self.rebuilt.buffers += 1;
+            self.tallies.rebuilt.buffers += 1;
             self.touch(Held::Cameras);
         }
         let mut staged = std::mem::take(&mut self.spare.cameras);
         staged.clear();
         staged.resize(bytes as usize, 0);
-        for (index, camera) in self.cameras.iter().enumerate() {
+        for (index, camera) in self.uniforms.cameras.iter().enumerate() {
             let at = index * CAMERA_STRIDE as usize;
             let raw = bytemuck::bytes_of(camera);
             staged[at..at + raw.len()].copy_from_slice(raw);
         }
-        self.queue.write_buffer(&self.camera, 0, &staged);
+        self.queue.write_buffer(&self.uniforms.camera, 0, &staged);
         self.spare.cameras = staged;
         size_of::<CameraUniform>() as u64
     }
 
     pub(crate) fn write_post(&mut self) {
         self.queue
-            .write_buffer(&self.set().post_buffer, 0, bytemuck::bytes_of(&self.post));
+            .write_buffer(&self.set().post_buffer, 0, bytemuck::bytes_of(&self.uniforms.post));
     }
 
     pub(crate) fn write_pieces(&mut self, staged: &mut Vec<u8>) -> u64 {
         let size = (staged.len() as u64)
             .max(crate::pieces::PIECE_ALIGN)
             .next_multiple_of(crate::pieces::PIECE_ALIGN);
-        if self.pieces.size() != size {
-            self.pieces = crate::memory::buffer(
+        if self.uniforms.pieces.size() != size {
+            self.uniforms.pieces = crate::memory::buffer(
                 &self.device,
                 &wgpu::BufferDescriptor {
                     label: Some("engine/pieces"),
@@ -52,11 +52,11 @@ impl Run {
                     mapped_at_creation: false,
                 },
             );
-            self.rebuilt.buffers += 1;
+            self.tallies.rebuilt.buffers += 1;
             self.touch(Held::Pieces);
         }
         staged.resize(size as usize, 0);
-        self.queue.write_buffer(&self.pieces, 0, staged);
+        self.queue.write_buffer(&self.uniforms.pieces, 0, staged);
         size
     }
 
@@ -65,7 +65,7 @@ impl Run {
             part: asked.part,
             tag: asked.tag,
         };
-        let free = asked.once || self.readbacks.room(reader, self.readback_slots);
+        let free = asked.once || self.reading.list.room(reader, self.reading.slots);
         if free {
             self.queued.asked.push(asked);
         }
@@ -74,8 +74,8 @@ impl Run {
 
     pub(crate) fn fill(&mut self, pipeline: u32, textures: &[TextureHandle]) -> u32 {
         for texture in textures {
-            if !self.wanted_textures.contains(texture) {
-                self.wanted_textures.push(*texture);
+            if !self.bindings.wanted_textures.contains(texture) {
+                self.bindings.wanted_textures.push(*texture);
             }
         }
         let generation = self.assets.materials.generation();
@@ -85,21 +85,21 @@ impl Run {
                 && filled.textures == textures
                 && filled.generation == generation
         }) {
-            self.filled[at].used = self.frame;
+            self.filled[at].used = self.frames.current;
             return base + at as u32;
         }
         self.filled.push(Filled {
             base: pipeline,
             textures: textures.to_vec(),
             generation,
-            used: self.frame,
+            used: self.frames.current,
             groups: Vec::new(),
         });
         base + (self.filled.len() - 1) as u32
     }
 
     pub(crate) fn drop_unfilled(&mut self) {
-        let frame = self.frame;
+        let frame = self.frames.current;
         self.filled.retain(|filled| filled.used + 1 >= frame);
     }
 
@@ -119,7 +119,7 @@ impl Run {
 
     pub(super) fn view_of(&self, target: Target) -> Option<&wgpu::TextureView> {
         match target {
-            Target::Canvas => self.canvas.as_ref(),
+            Target::Canvas => self.canvas.view.as_ref(),
             Target::Debug(index) => self
                 .set()
                 .debug_targets
@@ -137,7 +137,7 @@ impl Run {
         ty: Ty,
         reading: bool,
     ) -> Option<wgpu::TextureView> {
-        let parity = self.parity;
+        let parity = self.frames.parity;
         let dimension = match ty {
             Ty::Texture { view, .. } | Ty::StorageTexture { view, .. } => Some(view),
             Ty::Uniform | Ty::Storage { .. } | Ty::Sampler | Ty::Comparison => None,
@@ -181,9 +181,9 @@ impl Run {
     }
 
     pub(super) fn placeholder(&mut self, key: (Ty, u64)) {
-        if !self.placeholders.iter().any(|(known, _)| *known == key) {
+        if !self.bindings.placeholders.iter().any(|(known, _)| *known == key) {
             let made = placeholder(&self.device, key);
-            self.placeholders.push((key, made));
+            self.bindings.placeholders.push((key, made));
         }
     }
 
@@ -210,7 +210,7 @@ impl Run {
                     Some(_) | None => Resolved::Placeholder(ty),
                 }
             }
-            Bound::Sampler(sampler) => match self.samplers.get(*sampler as usize) {
+            Bound::Sampler(sampler) => match self.bindings.samplers.get(*sampler as usize) {
                 Some(made) => Resolved::Sampler(made.clone()),
                 None => Resolved::Placeholder(ty),
             },
@@ -268,7 +268,7 @@ impl Run {
                     Resolved::View(view) => wgpu::BindingResource::TextureView(view),
                     Resolved::Sampler(sampler) => wgpu::BindingResource::Sampler(sampler),
                     Resolved::Placeholder(_) => match key
-                        .and_then(|key| self.placeholders.iter().find(|(known, _)| *known == key))
+                        .and_then(|key| self.bindings.placeholders.iter().find(|(known, _)| *known == key))
                     {
                         Some((_, Placeholder::Buffer(buffer))) => buffer.as_entire_binding(),
                         Some((_, Placeholder::Texture(view))) => {
@@ -277,7 +277,7 @@ impl Run {
                         Some((_, Placeholder::Sampler(sampler))) => {
                             wgpu::BindingResource::Sampler(sampler)
                         }
-                        None => self.camera.as_entire_binding(),
+                        None => self.uniforms.camera.as_entire_binding(),
                     },
                 },
             })
@@ -291,32 +291,32 @@ impl Run {
 
     pub(crate) fn refresh_groups(&mut self) {
         let atlas = self.assets.impostors.generation();
-        if self.atlas_generation != Some(atlas) {
-            self.atlas_generation = Some(atlas);
+        if self.frames.atlas_generation != Some(atlas) {
+            self.frames.atlas_generation = Some(atlas);
             self.touch(Held::Atlas);
         }
-        if self.stale.is_empty() && self.set().stale.is_empty() {
+        if self.bindings.stale.is_empty() && self.set().stale.is_empty() {
             return;
         }
         let saved_pass = self.pass;
-        let saved_parity = self.parity;
-        let mut stale = std::mem::take(&mut self.stale);
+        let saved_parity = self.frames.parity;
+        let mut stale = std::mem::take(&mut self.bindings.stale);
         stale.append(&mut self.set_mut().stale);
-        self.rebuilt.groups += stale.len() as u32;
+        self.tallies.rebuilt.groups += stale.len() as u32;
         for holder in stale {
             match holder {
                 Holder::Frame(variant) => self.rebuild_frame(variant as usize),
                 Holder::Own(pipeline, group) => self.rebuild_own(pipeline as usize, group as usize),
             }
         }
-        self.parity = saved_parity;
+        self.frames.parity = saved_parity;
         self.pass = saved_pass;
     }
 
     fn rebuild_frame(&mut self, variant: usize) {
         self.pass = u32::MAX;
         for parity in 0..2 {
-            self.parity = parity;
+            self.frames.parity = parity;
             let entries: Vec<(u32, crate::bindings::Stages)> =
                 self.machine.variants[variant].entries.clone();
             let mut resolved = Vec::with_capacity(entries.len());
@@ -327,8 +327,8 @@ impl Run {
                     .get(&binding)
                     .map_or(Ty::Uniform, |slot| slot.ty);
                 let found = match binding {
-                    0 => Resolved::Dynamic(self.camera.clone(), size_of::<CameraUniform>() as u64),
-                    1 => Resolved::Buffer(self.pieces.clone()),
+                    0 => Resolved::Dynamic(self.uniforms.camera.clone(), size_of::<CameraUniform>() as u64),
+                    1 => Resolved::Buffer(self.uniforms.pieces.clone()),
                     _ => match self.machine.frame_bound.get(&binding).cloned() {
                         Some(bound) => self.resource(&bound, ty, true),
                         None => self.core_frame(binding, ty),
@@ -347,9 +347,9 @@ impl Run {
             self.set_mut().groups.entry(holder).or_default()
         } else {
             match holder {
-                Holder::Frame(variant) => &mut self.frame_groups[variant as usize].made,
+                Holder::Frame(variant) => &mut self.bindings.frame_groups[variant as usize].made,
                 Holder::Own(pipeline, at) => {
-                    &mut self.own_groups[pipeline as usize][at as usize].made
+                    &mut self.bindings.own_groups[pipeline as usize][at as usize].made
                 }
             }
         };
@@ -359,7 +359,7 @@ impl Run {
     fn rebuild_own(&mut self, pipeline: usize, group: usize) {
         self.pass = self.machine.pipelines[pipeline].home;
         for parity in 0..2 {
-            self.parity = parity;
+            self.frames.parity = parity;
             let entries = self.machine.pipelines[pipeline].groups[group]
                 .entries
                 .clone();
@@ -411,7 +411,7 @@ impl Run {
                 None => Resolved::Placeholder(ty),
             },
             Some(CoreFrame::Post) => Resolved::Buffer(self.set().post_buffer.clone()),
-            Some(CoreFrame::Linear) => Resolved::Sampler(self.linear.clone()),
+            Some(CoreFrame::Linear) => Resolved::Sampler(self.uniforms.linear.clone()),
             Some(CoreFrame::Target(target)) => match self.view_of(*target) {
                 Some(view) => Resolved::View(view.clone()),
                 None => Resolved::Placeholder(ty),
@@ -421,18 +421,18 @@ impl Run {
     }
 
     pub(crate) fn size_targets(&mut self, size: (u32, u32), canvas: Option<wgpu::TextureView>) {
-        self.canvas = canvas;
+        self.canvas.view = canvas;
         let extent = wgpu::Extent3d {
             width: size.0.max(1),
             height: size.1.max(1),
             depth_or_array_layers: 1,
         };
-        let split = self.canvas_rect.is_some();
+        let split = self.canvas.rect.is_some();
         let set = self.set();
         let held = set
             .targets
             .iter()
-            .any(|(target, made)| *target == Target::Canvas && made.texture.format() == self.canvas_format);
+            .any(|(target, made)| *target == Target::Canvas && made.texture.format() == self.canvas.format);
         if self.debug != set.debug_targets.is_empty()
             && split == held
             && set
@@ -477,7 +477,7 @@ impl Run {
             }
         }
         if split {
-            targets.push((Target::Canvas, made("engine/view-canvas", self.canvas_format)));
+            targets.push((Target::Canvas, made("engine/view-canvas", self.canvas.format)));
         }
         let debug_targets = DEBUG_FORMATS
             .iter()
@@ -487,7 +487,7 @@ impl Run {
         let set = self.set_mut();
         set.targets = targets;
         set.debug_targets = debug_targets;
-        self.rebuilt.textures += 1;
+        self.tallies.rebuilt.textures += 1;
         self.touch(Held::Targets);
     }
 
@@ -572,7 +572,7 @@ impl Run {
     }
 
     pub(crate) fn copy_canvas(&mut self, inward: bool) {
-        let (Some(rect), Some(canvas)) = (self.canvas_rect, self.canvas_texture.as_ref()) else {
+        let (Some(rect), Some(canvas)) = (self.canvas.rect, self.canvas.texture.as_ref()) else {
             return;
         };
         let Some((_, held)) = self.sets.list[self.sets.at]
@@ -607,7 +607,7 @@ impl Run {
         self.set()
             .target(Target::Canvas)
             .cloned()
-            .or_else(|| self.canvas.clone())
+            .or_else(|| self.canvas.view.clone())
     }
 }
 

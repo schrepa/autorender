@@ -128,16 +128,19 @@ impl Run {
         let Self {
             machine,
             recording,
-            frame_groups,
-            own_groups,
+            bindings: Bindings {
+                frame_groups,
+                own_groups,
+                ..
+            },
             filled: fills,
             tables,
             sets,
             assets,
-            parity,
+            frames,
             ..
         } = self;
-        let parity = *parity;
+        let parity = frames.parity;
         let set = &sets.list[sets.at];
         let Some(open) = recording.open_mut() else {
             return;
@@ -425,18 +428,21 @@ impl Run {
             self.recording
                 .transition(Step::Compute(current, Box::new(begun)));
         }
-        let offset = self.camera_slot * CAMERA_STRIDE as u32;
+        let offset = self.uniforms.camera_slot * CAMERA_STRIDE as u32;
         let Self {
             machine,
             recording,
-            frame_groups,
-            own_groups,
+            bindings: Bindings {
+                frame_groups,
+                own_groups,
+                ..
+            },
             tables,
             sets,
-            parity,
+            frames,
             ..
         } = self;
-        let parity = *parity;
+        let parity = frames.parity;
         let set = &sets.list[sets.at];
         let Some(pass) = recording.computing(current) else {
             return 0;

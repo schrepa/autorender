@@ -24,7 +24,7 @@ impl Run {
                         .map(|(_, made)| made.texture.clone()),
                 }
             }
-            Copied::Canvas => self.canvas_texture.clone(),
+            Copied::Canvas => self.canvas.texture.clone(),
             Copied::Buffer(_) => None,
         }
     }
@@ -35,7 +35,7 @@ impl Run {
             return false;
         };
         let (_, regions) = self.queued.copies.swap_remove(at);
-        let Some(decl) = self.pass_decls.get(pass as usize).cloned() else {
+        let Some(decl) = self.planning.pass_decls.get(pass as usize).cloned() else {
             return false;
         };
         if decl.part != self.part {
@@ -138,7 +138,7 @@ impl Run {
     pub(crate) fn record_readbacks(&mut self) {
         self.leave();
         let asked = std::mem::take(&mut self.queued.asked);
-        let (slots, most) = (self.readback_slots, self.readback_slot_bytes);
+        let (slots, most) = (self.reading.slots, self.reading.slot_bytes);
         let written = self.written();
         let device = self.device.clone();
         for request in asked {
@@ -148,7 +148,7 @@ impl Run {
             let bytes = request.range.end.saturating_sub(request.range.start).next_multiple_of(4);
             let over = most.is_some_and(|most| bytes > most);
             if over {
-                self.readbacks.overflowed();
+                self.reading.list.overflowed();
             }
             let keep = if request.once || over { Keep::Once } else { Keep::Ring(slots) };
             let reader = Reader::Part { part: request.part, tag: request.tag };
@@ -156,7 +156,7 @@ impl Run {
                 continue;
             };
             let asked = (reader, written, Some(request.deliver));
-            if !self.readbacks.record((&device, encoder), (&buffer, request.range.clone()), asked, keep) {
+            if !self.reading.list.record((&device, encoder), (&buffer, request.range.clone()), asked, keep) {
                 continue;
             }
             if request.then == AfterRead::Clear {

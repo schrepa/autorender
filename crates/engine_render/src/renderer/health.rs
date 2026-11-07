@@ -277,7 +277,7 @@ impl Renderer {
         let mut bricks: Vec<engine_registry::BrickId> = self
             .run
             .iter()
-            .flat_map(|run| run.gates.iter().flatten())
+            .flat_map(|run| run.installs.gates.iter().flatten())
             .filter_map(|gate| states.and_then(|states| states.brick(*gate)))
             .collect();
         bricks.sort_unstable();
