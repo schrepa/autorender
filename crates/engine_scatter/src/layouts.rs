@@ -108,6 +108,7 @@ gpu_consts! {
     pub(crate) const QUAD: u32 = 6;
     pub(crate) const SCATTER_GROUP: u32 = 64;
     pub(crate) const OCCUPANCY_GROUP: u32 = 64;
+    pub(crate) const WIND_REACH: f32 = 4.0;
 }
 
 #[gpu_bits]
@@ -194,15 +195,13 @@ impl DrawKind {
 pub(crate) struct DrawRecord {
     pub(crate) kind: DrawKind,
     pub(crate) level: u32,
-    pub(crate) casts: bool,
 }
 
 impl DrawRecord {
-    pub(crate) fn of(kind: DrawKind, level: usize, casts: bool) -> Self {
+    pub(crate) fn of(kind: DrawKind, level: usize) -> Self {
         Self {
             kind,
             level: level.min(RECORD_LEVELS as usize - 1) as u32,
-            casts,
         }
     }
 
@@ -211,8 +210,7 @@ impl DrawRecord {
             .iter()
             .position(|kind| *kind == self.kind)
             .unwrap_or_default() as u64;
-        ((kind * u64::from(RECORD_LEVELS) + u64::from(self.level.min(RECORD_LEVELS - 1))) * 2
-            + u64::from(self.casts))
+        (kind * u64::from(RECORD_LEVELS) + u64::from(self.level.min(RECORD_LEVELS - 1)))
             * RECORD_BYTES
     }
 
@@ -221,7 +219,6 @@ impl DrawRecord {
             kind: self.kind.kind(),
             level: self.level.min(RECORD_LEVELS - 1),
             fading: false,
-            casts: self.casts,
             source: 0,
         }
         .pack()
@@ -232,10 +229,8 @@ pub(crate) fn record_words() -> Vec<[u32; 4]> {
     let mut words = Vec::new();
     for kind in DrawKind::ALL {
         for level in 0..RECORD_LEVELS {
-            for casts in [false, true] {
-                let record = DrawRecord { kind, level, casts };
-                words.push([record.word(), 0, 0, 0]);
-            }
+            let record = DrawRecord { kind, level };
+            words.push([record.word(), 0, 0, 0]);
         }
     }
     words

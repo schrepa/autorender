@@ -3,7 +3,7 @@ import package::engine::post::pixel::{PostPixel, SceneLight};
 import package::face::tonemap::exposure;
 import package::face::transparency::revealed;
 import package::generated::pieces::taa::piece;
-import package::generated::targets::{output_history, output_motion};
+import package::generated::targets::{blended_cover, output_history, output_motion};
 import package::taa::lit::turn;
 
 @group(0) @binding(0) var lit: texture_2d<f32>;
@@ -149,8 +149,8 @@ fn resolve(at: PostPixel, light: SceneLight) -> SceneLight {
         past = weighed(max(past, vec3<f32>(0.0)));
         var weight = piece().current_weight * near;
         if piece().options.w > 0.0 {
-            let particles = 1.0 - revealed(pixel).y;
-            weight = max(weight, min(piece().options.w * particles, 1.0));
+            let covered = 1.0 - revealed(pixel).y * (1.0 - blended_cover(pixel));
+            weight = max(weight, min(piece().options.w * covered, 1.0));
         }
         color = mix(rgb(clamp(ycocg(past), low, high)), current, weight);
     }

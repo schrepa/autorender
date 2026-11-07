@@ -24,6 +24,7 @@ pub use wgpu;
 
 mod bindings;
 mod draws;
+mod drawn;
 mod encode;
 mod fixed_linker;
 mod frame_group;
@@ -64,7 +65,9 @@ pub use gpu_data::{
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;
 pub use materials::MATERIAL_ANISOTROPY;
-pub use surface::{DrawState, LightingModule, SlotModule, SurfaceKind, TraceDepth, material_state};
+pub use surface::{
+    DrawState, LightingModule, MaterialVariant, SlotModule, SurfaceKind, TraceDepth, material_state,
+};
 #[doc(hidden)]
 pub use memory::GpuMemory;
 #[doc(hidden)]
@@ -89,8 +92,8 @@ pub const IMPOSTOR_VERTICES: u32 = 6;
 
 pub const DEV: bool = cfg!(feature = "dev");
 
-pub fn level_region(view: &engine_core::PrimaryView, level: u32) -> (u32, u32) {
-    let (display, render) = (view.display_size(), view.render_size());
+pub fn level_region(view: &engine_core::ViewFacts, level: u32) -> (u32, u32) {
+    let (display, render) = (view.size(), view.render);
     targets::FrameRegion::new(
         targets::FrameSize {
             width: display.x,
@@ -130,7 +133,6 @@ pub mod debug {
         #[bits(4)]
         pub level: u32,
         pub fading: bool,
-        pub casts: bool,
         #[bits(8, at = 16)]
         pub source: u32,
     }
@@ -154,6 +156,7 @@ pub trait GpuPart: Sized + Send + Sync + 'static {
     const LABELS: &'static [&'static str] = &[];
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error>;
     fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>);
+    fn view(&mut self, _view: &engine_core::ViewFacts, _cx: &mut Prepare<'_, Self>) {}
     fn encode(&mut self, _pass: Pass<Self>, _cx: &mut Encode<'_, Self>) -> u32 {
         0
     }
@@ -162,6 +165,7 @@ pub trait GpuPart: Sized + Send + Sync + 'static {
 pub trait RenderBricks {
     fn part<P: GpuPart>(&mut self) -> &mut Self;
     fn pass<N: PassName>(&mut self) -> &mut Self;
+    fn applies<N: PassName>(&mut self, module: engine_core::Module) -> &mut Self;
     fn draws<P: GpuPart>(
         &mut self,
         kind: DrawKind,
@@ -193,7 +197,25 @@ impl RenderBricks for Bricks<'_> {
     }
 
     fn pass<N: PassName>(&mut self) -> &mut Self {
-        self.record().render.push(Box::new(PassEntry::of::<N>()));
+        let record = self.record();
+        if !record
+            .render_entries::<PassEntry>()
+            .any(|entry| entry.name == N::NAME)
+        {
+            record.render.push(Box::new(PassEntry::of::<N>()));
+        }
+        self
+    }
+
+    fn applies<N: PassName>(&mut self, module: engine_core::Module) -> &mut Self {
+        self.pass::<N>();
+        let record = self.record();
+        let scope = record.scope();
+        record.render.push(Box::new(registration::Applied {
+            pass: PassEntry::of::<N>(),
+            module,
+            scope,
+        }));
         self
     }
 
@@ -233,6 +255,14 @@ impl RenderBricks for Bricks<'_> {
     }
 
     fn material_slot(&mut self, module: SlotModule) -> &mut Self {
+        if module.slot == engine_core::SurfaceSlot::Position {
+            self.record()
+                .render
+                .push(Box::new(engine_core::PositionReach {
+                    module: module.name,
+                    reach: module.reach,
+                }));
+        }
         self.record().render.push(Box::new(module));
         self
     }
@@ -311,6 +341,7 @@ pub struct SceneDraw {
     pub reads: SlotSet,
     pub writes: Writes,
     pub view: Option<u32>,
+    pub index: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -612,11 +643,24 @@ impl<P: GpuPart> Install<'_, P> {
         format: wgpu::TextureFormat,
         lifetime: Lifetime,
     ) -> Texture<P> {
-        Texture(self.core.texture(label, format, lifetime), PhantomData)
+        Texture(self.core.texture(label, format, (lifetime, false)), PhantomData)
     }
 
     pub fn buffer(&mut self, label: &'static str, lifetime: Lifetime) -> Buffer<P> {
-        Buffer(self.core.buffer(label, lifetime), PhantomData)
+        Buffer(self.core.buffer(label, (lifetime, false)), PhantomData)
+    }
+
+    pub fn view_texture(
+        &mut self,
+        label: &'static str,
+        format: wgpu::TextureFormat,
+        lifetime: Lifetime,
+    ) -> Texture<P> {
+        Texture(self.core.texture(label, format, (lifetime, true)), PhantomData)
+    }
+
+    pub fn view_buffer(&mut self, label: &'static str, lifetime: Lifetime) -> Buffer<P> {
+        Buffer(self.core.buffer(label, (lifetime, true)), PhantomData)
     }
 
     pub fn sampler(&mut self, desc: SamplerDesc) -> Sampler<P> {
@@ -753,6 +797,25 @@ impl<P: GpuPart> Install<'_, P> {
         }
     }
 
+    pub fn screen<N: PassName>(&mut self) -> PassBuilder<'_, P> {
+        if N::PASS.scene() {
+            let path = format!("$.passes.{}", N::NAME);
+            self.core
+                .problems
+                .push(Error::new(engine_core::ErrorCode::PassMismatch, path));
+        }
+        let pass = self.core.pass(N::NAME, install::Work::Render);
+        if let Some(declared) = self.core.pass_mut(pass) {
+            declared.layer = Some(N::PASS.at);
+            declared.views = N::PASS.views;
+        }
+        PassBuilder {
+            core: &mut *self.core,
+            pass,
+            part: PhantomData,
+        }
+    }
+
     pub fn passes(&self) -> &engine_core::ScenePasses {
         &self.core.passes
     }
@@ -769,6 +832,14 @@ impl<P: GpuPart> PassBuilder<'_, P> {
     pub fn at(self, point: AttachPoint) -> Self {
         if let Some(pass) = self.core.pass_mut(self.pass) {
             pass.layer = Some(point);
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn views(self, views: engine_core::PassViews) -> Self {
+        if let Some(pass) = self.core.pass_mut(self.pass) {
+            pass.views = views;
         }
         self
     }
@@ -880,6 +951,10 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn ran(&self, pass: Pass<P>) -> bool {
         self.core.ran.contains(pass.0 as usize)
+    }
+
+    pub fn view_index(&self) -> u32 {
+        self.core.camera_slot
     }
 
     pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) -> Allocation {
@@ -1086,6 +1161,10 @@ pub struct Encode<'f, P> {
 }
 
 impl<P: GpuPart> Encode<'_, P> {
+    pub fn view_index(&self) -> u32 {
+        self.core.camera_slot
+    }
+
     pub fn span(&mut self, name: &'static str) {
         self.core.close_encode_span(self.timer);
         self.core.timed.asked = Some(name);
@@ -1288,15 +1367,23 @@ impl<P: GpuPart> Draw<'_, P, Own> {
 }
 
 impl<P: GpuPart> Draw<'_, P, Own> {
-    pub fn scene(&mut self, view: Option<u32>) -> u32 {
+    pub fn scene(&mut self, own: &P, view: Option<u32>) -> u32 {
         let run = self.raw.run();
         run.reset_scissor();
         let Some(scene) = run.scene_draw(view) else {
             return 0;
         };
         let members = run.scene_members();
+        let encoding = self.raw.part();
         let mut drawn = 0;
         for member in members.iter() {
+            if member.part == encoding {
+                let run = self.raw.run();
+                run.point = Some(scene.pass.0);
+                drawn += (member.call)(own, &scene, &mut self.raw.member(member.part));
+                self.raw.run().point = None;
+                continue;
+            }
             let run = self.raw.run();
             let Some(held) = run.take_member(member.part) else {
                 continue;
@@ -1343,46 +1430,6 @@ pub struct Lit;
 impl Slot for Lit {
     const NAME: &'static str = "lit";
     const WGSL: Option<&'static str> = Some(include_str!("places/lit.wgsl"));
-}
-
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct InstanceMotion;
-
-impl Slot for InstanceMotion {
-    const NAME: &'static str = "instance_motion";
-    const WGSL: Option<&'static str> = Some(include_str!("places/instance_motion.wgsl"));
-}
-
-pub struct PostScene;
-
-impl List for PostScene {
-    const NAME: &'static str = "post_scene";
-    type Member = ();
-    const WGSL: Option<&'static str> = Some(include_str!("places/post_scene.wgsl"));
-}
-
-pub struct PostLight;
-
-impl List for PostLight {
-    const NAME: &'static str = "post_light";
-    type Member = ();
-    const WGSL: Option<&'static str> = Some(include_str!("places/post_light.wgsl"));
-}
-
-#[derive(Resource, Default)]
-pub struct PostTone;
-
-impl Slot for PostTone {
-    const NAME: &'static str = "post_tone";
-    const WGSL: Option<&'static str> = Some(include_str!("places/post_tone.wgsl"));
-}
-
-pub struct PostDisplay;
-
-impl List for PostDisplay {
-    const NAME: &'static str = "post_display";
-    type Member = ();
-    const WGSL: Option<&'static str> = Some(include_str!("places/post_display.wgsl"));
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]

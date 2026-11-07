@@ -24,6 +24,7 @@ pub use emitters::{ParticleSettings, ParticleStats};
 pub const PARTICLES: DrawKind = DrawKind("particles");
 
 const GENERATED: &[&str] = &[
+    emitters::WGSL,
     <emitters::Emitter as GpuStruct>::WGSL,
     <part::Particles as GpuStruct>::WGSL,
 ];
@@ -53,17 +54,20 @@ impl Brick for ParticlesBrick {
             )
             .systems(
                 Schedule::ViewSync,
-                (emitters::gather_emitters, emitters::particle_stats),
+                (
+                    emitters::keep_rows,
+                    emitters::gather_emitters,
+                    emitters::particle_stats,
+                ),
             )
             .generated(GENERATED)
             .draw_kind(KindDecl {
                 kind: PARTICLES,
-                vertex: "vs_particle",
+                vertex: shaders::particles::draw::VS_PARTICLE.name(),
                 needs: Attributes::NONE,
             })
             .pass::<part::WeightedPass>()
             .pass::<part::CompositePass>()
-            .part::<part::WeightedGpu>()
             .draws::<part::ParticlesGpu>(PARTICLES, part::ParticlesGpu::draw);
     }
 }

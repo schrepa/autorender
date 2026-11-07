@@ -1,8 +1,8 @@
 import package::engine::mesh::declarations::slot_index;
-import package::engine::shading::SurfaceInput;
+import package::engine::shading::{PositionInput, SurfaceInput};
+import package::engine::slots::slot_position;
 import package::engine::surface::opacity_cut;
-import package::engine::view::camera;
-import package::face::instance_motion::{instance_moves, instance_offset};
+import package::engine::view::{camera, detail_across};
 import package::meshes::slots::{instance_colors, instance_poses};
 
 fn flattened(clip: vec4<f32>) -> vec4<f32> {
@@ -17,13 +17,16 @@ fn slot_world(slot: u32, position: vec3<f32>) -> vec3<f32> {
     let pose = instance_poses[slot];
     let point = vec4<f32>(position, 1.0);
     let world = vec3<f32>(dot(pose.row_0, point), dot(pose.row_1, point), dot(pose.row_2, point));
-    let flags = instance_colors[slot].flags;
-    if !instance_moves(flags) {
-        return world;
-    }
-    let root = vec3<f32>(pose.row_0.w, pose.row_1.w, pose.row_2.w);
-    let pixels = camera.position.w / max(length(root - camera.position.xyz), 1.0e-6);
-    return world + instance_offset(camera.wind, pixels, root, world.y - root.y, position, flags);
+    let color = instance_colors[slot];
+    let origin = vec3<f32>(pose.row_0.w, pose.row_1.w, pose.row_2.w);
+    var input: PositionInput;
+    input.local = position;
+    input.world = world;
+    input.origin = origin;
+    input.time = camera.position.w;
+    input.pixels = 1.0 / max(detail_across(origin), 1.0e-6);
+    input.object = vec4<u32>(color.color, color.surface, color.flags);
+    return slot_position(input);
 }
 
 @vertex
@@ -53,6 +56,7 @@ fn fs_caster_masked(input: MaskedOutput) {
     surface.color = vec4<f32>(1.0, 1.0, 1.0, input.uv_alpha.z);
     surface.uv = input.uv_alpha.xy;
     surface.uv1 = input.uv_alpha.xy;
+    surface.pixel = input.clip.xy;
     surface.front = true;
     if opacity_cut(surface) {
         discard;

@@ -43,15 +43,124 @@ pub enum Lighting {
 }
 
 #[gpu_bits]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DrawState {
     pub alpha_test: bool,
     pub fading: bool,
+    pub fixed: bool,
+    #[bits(2)]
+    pub alpha: Alpha,
+    pub no_depth_test: bool,
+    pub no_depth_write: bool,
 }
 
 impl DrawState {
+    pub const PLAIN: Self = Self {
+        alpha_test: false,
+        fading: false,
+        fixed: false,
+        alpha: Alpha::Opaque,
+        no_depth_test: false,
+        no_depth_write: false,
+    };
+
     pub(crate) fn constants(self) -> [(&'static str, f64); 1] {
         [("DRAW_STATE", f64::from(self.pack()))]
+    }
+}
+
+const SLOT_BITS: u32 = 4;
+const SLOTS_PER_WORD: usize = (u32::BITS / SLOT_BITS) as usize;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct MaterialVariant {
+    pub state: u32,
+    pub bias: [i32; 2],
+    pub maps: u32,
+    pub model: u32,
+    pub slots: [u32; 2],
+}
+
+impl MaterialVariant {
+    pub const PLAIN: Self = Self {
+        state: 0,
+        bias: [0, 0],
+        maps: 0,
+        model: 0,
+        slots: [0, 0],
+    };
+
+    pub fn draw(self) -> DrawState {
+        <DrawState as GpuBits>::unpack(self.state).unwrap_or(DrawState::PLAIN)
+    }
+
+    #[must_use]
+    pub fn with_draw(self, draw: DrawState) -> Self {
+        Self {
+            state: draw.pack(),
+            ..self
+        }
+    }
+
+    pub fn blended(self) -> bool {
+        matches!(self.draw().alpha, Alpha::Blend | Alpha::Additive)
+    }
+
+    pub(crate) fn constants(self) -> [(&'static str, f64); 5] {
+        [
+            ("DRAW_STATE", f64::from(self.state)),
+            ("MATERIAL_MAPS", f64::from(self.maps)),
+            ("MATERIAL_MODEL", f64::from(self.model)),
+            ("MATERIAL_SLOTS_LOW", f64::from(self.slots[0])),
+            ("MATERIAL_SLOTS_HIGH", f64::from(self.slots[1])),
+        ]
+    }
+
+    pub(crate) fn keyed(self, used: [bool; 5], styled: bool) -> Option<Self> {
+        let [stated, mapped, modeled, low, high] = used;
+        if !used.contains(&true) && !styled {
+            return None;
+        }
+        let draw = self.draw();
+        let state = DrawState {
+            alpha_test: stated && draw.alpha_test,
+            fading: stated && draw.fading,
+            fixed: stated && draw.fixed,
+            alpha: if stated || styled {
+                draw.alpha
+            } else {
+                Alpha::Opaque
+            },
+            no_depth_test: styled && draw.no_depth_test,
+            no_depth_write: styled && draw.no_depth_write,
+        };
+        Some(Self {
+            state: state.pack(),
+            bias: if styled { self.bias } else { [0, 0] },
+            maps: if mapped { self.maps } else { 0 },
+            model: if modeled { self.model } else { 0 },
+            slots: [
+                if low { self.slots[0] } else { 0 },
+                if high { self.slots[1] } else { 0 },
+            ],
+        })
+    }
+
+    pub(crate) fn restyle(self, state: &mut wgpu::DepthStencilState) {
+        let draw = self.draw();
+        if draw.no_depth_write {
+            state.depth_write_enabled = Some(false);
+        }
+        if draw.no_depth_test {
+            state.depth_compare = Some(wgpu::CompareFunction::Always);
+        }
+        if self.bias != [0, 0] {
+            state.bias = wgpu::DepthBiasState {
+                constant: self.bias[0],
+                slope_scale: f32::from_bits(self.bias[1] as u32),
+                clamp: 0.0,
+            };
+        }
     }
 }
 
@@ -79,6 +188,7 @@ pub struct SlotModule {
     pub module: Module,
     pub maps: &'static [&'static str],
     pub values: &'static [&'static str],
+    pub reach: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -236,7 +346,17 @@ impl MaterialLayout {
             2 * self.maps.len(),
             self.value_vec4s()
         );
-        source.push_str("override DRAW_STATE: u32 = 0u;\n");
+        for name in [
+            "DRAW_STATE",
+            "MATERIAL_MAPS",
+            "MATERIAL_MODEL",
+            "MATERIAL_SLOTS_LOW",
+            "MATERIAL_SLOTS_HIGH",
+        ] {
+            let _ = writeln!(source, "override {name}: u32 = 0u;");
+        }
+        let _ = writeln!(source, "const SLOT_BITS: u32 = {SLOT_BITS}u;");
+        let _ = writeln!(source, "const SLOTS_PER_WORD: u32 = {SLOTS_PER_WORD}u;");
         source.push_str(<DrawState as GpuBits>::WGSL);
         source.push_str(<Alpha as BitValue>::WGSL);
         source.push_str(<Lighting as BitValue>::WGSL);
@@ -271,7 +391,14 @@ fn fade_list() -> bool {{
     return draw_state_fading(DRAW_STATE);
 }}
 
+fn fixed_material() -> bool {{
+    return draw_state_fixed(DRAW_STATE);
+}}
+
 fn map_present(index: u32) -> bool {{
+    if fixed_material() {{
+        return ((MATERIAL_MAPS >> index) & 1u) != 0u;
+    }}
     return {RECORD}.maps[index * 2u].w != 0.0;
 }}
 
@@ -294,14 +421,24 @@ fn material_value(index: u32) -> f32 {{
 }}
 
 fn material_module(slot: u32) -> u32 {{
+    if fixed_material() {{
+        let word = select(MATERIAL_SLOTS_LOW, MATERIAL_SLOTS_HIGH, slot >= SLOTS_PER_WORD);
+        return (word >> ((slot % SLOTS_PER_WORD) * SLOT_BITS)) & ((1u << SLOT_BITS) - 1u);
+    }}
     return {RECORD}.modules[slot / 4u][slot % 4u];
 }}
 
 fn material_model() -> u32 {{
+    if fixed_material() {{
+        return MATERIAL_MODEL;
+    }}
     return {RECORD}.choice.x;
 }}
 
 fn material_alpha() -> u32 {{
+    if fixed_material() {{
+        return draw_state_alpha(DRAW_STATE);
+    }}
     return {RECORD}.choice.y;
 }}
 
@@ -331,22 +468,25 @@ fn transmission_factor() -> f32 {{
 
     pub(crate) fn slots_source(&self, full: bool) -> String {
         let mut imports = String::from(
-            "import package::engine::shading::{Shaded, SurfaceInput, SurfacePoint, unlit};\n",
+            "import package::engine::shading::{LightInputs, PositionInput, Shaded, SurfaceInput, SurfacePoint, unlit};\n",
         );
         let mut body = String::new();
+        let surface = "input: SurfaceInput, point: SurfacePoint";
         for slot in SurfaceSlot::ALL {
             let name = slot.name();
             let (returns, params, args) = match slot {
+                SurfaceSlot::Position => ("vec3<f32>", "input: PositionInput", "input"),
                 SurfaceSlot::BaseColor | SurfaceSlot::Normal | SurfaceSlot::Emissive => {
-                    ("vec3<f32>", "input: SurfaceInput, point: SurfacePoint", "input, point")
+                    ("vec3<f32>", surface, "input, point")
                 }
                 SurfaceSlot::Opacity
+                | SurfaceSlot::Cutoff
                 | SurfaceSlot::Roughness
                 | SurfaceSlot::Metalness
                 | SurfaceSlot::Occlusion
-                | SurfaceSlot::Transmission => {
-                    ("f32", "input: SurfaceInput, point: SurfacePoint", "input, point")
-                }
+                | SurfaceSlot::Transmission => ("f32", surface, "input, point"),
+                SurfaceSlot::Kind => ("u32", surface, "input, point"),
+                SurfaceSlot::LightInputs => ("LightInputs", surface, "input, point"),
                 SurfaceSlot::Output => (
                     "Shaded",
                     "input: SurfaceInput, point: SurfacePoint, shaded: Shaded",
@@ -389,7 +529,10 @@ fn transmission_factor() -> f32 {{
         if full {
             imports.push_str("import package::face::lit::{finish, local_light};\n");
             body.push_str(
-                "\nfn shade_model(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    let model = material_model();\n    if model == LIGHTING_UNLIT {\n        return unlit(point);\n    }\n",
+                "\nfn shade_model(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    var shaded = modeled(point, pixel);\n    shaded.opacity = point.opacity;\n    return shaded;\n}\n",
+            );
+            body.push_str(
+                "\nfn modeled(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    let model = material_model();\n    if model == LIGHTING_UNLIT {\n        return unlit(point);\n    }\n",
             );
             for (index, (_, path)) in self.models.iter().enumerate() {
                 let id = index + 2;
@@ -401,21 +544,19 @@ fn transmission_factor() -> f32 {{
             }
             body.push_str("    return finish(point, local_light(point, pixel));\n}\n");
         }
-        let mut used = vec!["material_module", "material_model", "LIGHTING_UNLIT"];
-        used.extend(SurfaceSlot::ALL.map(|slot| match slot {
-            SurfaceSlot::BaseColor => "SLOT_BASE_COLOR",
-            SurfaceSlot::Opacity => "SLOT_OPACITY",
-            SurfaceSlot::Normal => "SLOT_NORMAL",
-            SurfaceSlot::Roughness => "SLOT_ROUGHNESS",
-            SurfaceSlot::Metalness => "SLOT_METALNESS",
-            SurfaceSlot::Emissive => "SLOT_EMISSIVE",
-            SurfaceSlot::Occlusion => "SLOT_OCCLUSION",
-            SurfaceSlot::Transmission => "SLOT_TRANSMISSION",
-            SurfaceSlot::Output => "SLOT_OUTPUT",
-        }));
-        let named: Vec<&str> = used
+        let mut used = vec![
+            "material_module".to_owned(),
+            "material_model".to_owned(),
+            "LIGHTING_UNLIT".to_owned(),
+        ];
+        used.extend(
+            SurfaceSlot::ALL
+                .iter()
+                .map(|slot| format!("SLOT_{}", upper(slot.name()))),
+        );
+        let named: Vec<String> = used
             .into_iter()
-            .filter(|name| body.contains(name))
+            .filter(|name| body.contains(name.as_str()))
             .collect();
         if !named.is_empty() {
             let _ = writeln!(
@@ -476,7 +617,7 @@ fn transmission_factor() -> f32 {{
         for name in &self.maps[..STANDARD_MAPS.len()] {
             add_map(&mut bindings, name);
         }
-        bindings.push(uniform_of(RECORD, size, Stages::FRAGMENT));
+        bindings.push(uniform_of(RECORD, size, Stages::VERTEX_FRAGMENT));
         for name in &self.maps[STANDARD_MAPS.len()..] {
             add_map(&mut bindings, name);
         }
@@ -504,13 +645,7 @@ fn transmission_factor() -> f32 {{
         let mut words = vec![0_u32; self.record_bytes() / 4];
         let [r, g, b] = material.emissive();
         words[..4].copy_from_slice(&[r, g, b, material.transmission()].map(f32::to_bits));
-        let state = material.render_state();
-        let (alpha, cutoff) = match state.alpha {
-            AlphaMode::Opaque => (Alpha::Opaque, 0.5),
-            AlphaMode::Mask { cutoff } => (Alpha::Mask, cutoff),
-            AlphaMode::Blend => (Alpha::Blend, 0.5),
-            AlphaMode::Additive => (Alpha::Additive, 0.5),
-        };
+        let (alpha, cutoff) = alpha_of(material.alpha_mode());
         words[4..8].copy_from_slice(
             &[
                 material.normal_scale(),
@@ -570,6 +705,59 @@ fn transmission_factor() -> f32 {{
         words[4..8].copy_from_slice(&[1.0_f32, 1.0, 0.5, 0.0].map(f32::to_bits));
         words
     }
+
+    pub(crate) fn variant(&self, material: Option<&Material>, words: &[u32]) -> MaterialVariant {
+        let modules: Vec<u32> = SurfaceSlot::ALL
+            .iter()
+            .map(|slot| words[12 + slot.index()])
+            .collect();
+        let fixed = self.maps.len() <= u32::BITS as usize
+            && modules.iter().all(|&id| id < 1 << SLOT_BITS);
+        let mut maps = 0_u32;
+        for index in 0..self.maps.len().min(u32::BITS as usize) {
+            if f32::from_bits(words[MAPS_AT + index * 8 + 3]) != 0.0 {
+                maps |= 1 << index;
+            }
+        }
+        let mut slots = [0_u32; 2];
+        if fixed {
+            for (at, id) in modules.iter().enumerate() {
+                slots[at / SLOTS_PER_WORD] |= id << ((at % SLOTS_PER_WORD) as u32 * SLOT_BITS);
+            }
+        }
+        let state = material.map_or_else(engine_core::RenderState::default, Material::render_state);
+        let draw = DrawState {
+            fixed,
+            ..draw_of(state)
+        };
+        MaterialVariant {
+            state: draw.pack(),
+            bias: [state.bias.constant, state.bias.slope.to_bits() as i32],
+            maps: if fixed { maps } else { 0 },
+            model: if fixed { words[8] } else { 0 },
+            slots,
+        }
+    }
+}
+
+fn alpha_of(mode: AlphaMode) -> (Alpha, f32) {
+    match mode {
+        AlphaMode::Opaque => (Alpha::Opaque, 0.5),
+        AlphaMode::Mask { cutoff } => (Alpha::Mask, cutoff),
+        AlphaMode::Blend => (Alpha::Blend, 0.5),
+        AlphaMode::Additive => (Alpha::Additive, 0.5),
+    }
+}
+
+fn draw_of(state: engine_core::RenderState) -> DrawState {
+    DrawState {
+        alpha_test: state.alpha.masked(),
+        fading: false,
+        fixed: false,
+        alpha: alpha_of(state.alpha).0,
+        no_depth_test: !state.depth_test,
+        no_depth_write: !state.depth_write,
+    }
 }
 
 fn snake(model: &Lighting) -> &'static str {
@@ -587,9 +775,7 @@ fn transform_rows(transform: &UvTransform) -> [[f32; 3]; 2] {
 }
 
 pub fn material_state(material: Option<&Material>) -> u32 {
-    DrawState {
-        alpha_test: material.is_some_and(|material| material.alpha_mode().masked()),
-        fading: false,
-    }
-    .pack()
+    material
+        .map_or(DrawState::PLAIN, |material| draw_of(material.render_state()))
+        .pack()
 }

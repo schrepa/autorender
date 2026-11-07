@@ -1,14 +1,13 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, Cull, Cursor, DrawnPoses, FrameId, GlobalTransforms,
+    AlphaMode, AssetLibrary, AssetResidency, Cull, Cursor, DrawnPoses, FrameId,
     MaterialHandle, MeshHandle, MeshResidence, NodeInfo, NodePose, NodeStreams, Readable, Readback,
     ResidentMesh, Since,
 };
 use glam::{Mat4, Vec3};
 
-use crate::batches::DrawBatch;
-use crate::layouts::{BatchData, CandidateData, FIRST_PERSON_BATCH, LOD_LEVELS};
-use crate::order::BatchLook;
+use crate::layouts::{BatchData, CandidateData, LOD_LEVELS};
+use crate::order::{BatchLook, DrawBatch, MeshBatches};
 use crate::uploads::{ColorData, PoseData, UploadRange, listed_ranges};
 
 pub(crate) const MIN_STORAGE_BYTES: u64 = 256;
@@ -207,6 +206,7 @@ pub(crate) struct DrawItem {
     pub batch: u32,
     pub look: BatchLook,
     pub levels: u8,
+    pub blended: bool,
     flat: bool,
     variant: u32,
     buffers: u8,
@@ -216,6 +216,72 @@ pub(crate) struct DrawItem {
 pub(crate) struct Draws {
     pub items: Vec<DrawItem>,
     pub masked: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct BlendedBatch {
+    pub batch: u32,
+    pub mesh: MeshHandle,
+    pub material: Option<MaterialHandle>,
+    pub look: BatchLook,
+    pub args: u64,
+    pub ids: u64,
+}
+
+#[derive(Default)]
+pub(crate) struct Blended {
+    pub batches: Vec<BlendedBatch>,
+    pub rows: Vec<[u32; 4]>,
+    pub generation: Option<u64>,
+    pub uploaded: bool,
+}
+
+impl Blended {
+    pub(crate) fn plan(&mut self, items: &[DrawItem], batches: &MeshBatches) -> bool {
+        let mut listed: Vec<BlendedBatch> = items
+            .iter()
+            .filter(|item| item.blended)
+            .map(|item| BlendedBatch {
+                batch: item.batch,
+                mesh: item.mesh,
+                material: item.material,
+                look: item.look,
+                args: 0,
+                ids: 0,
+            })
+            .collect();
+        listed.sort_unstable_by_key(|batch| batch.batch);
+        let mut base = 0_u32;
+        for (entry, listed) in listed.iter_mut().enumerate() {
+            listed.args = entry as u64 * crate::layouts::DRAW_ARGS_BYTES;
+            listed.ids = u64::from(base) * 4;
+            base += batches
+                .batches
+                .get(listed.batch as usize)
+                .map_or(0, |batch| batch.instances.end - batch.instances.start);
+        }
+        let generation = Some(batches.generation());
+        if self.generation == generation && self.batches == listed {
+            return false;
+        }
+        self.generation = generation;
+        self.batches = listed;
+        self.rows.clear();
+        for (entry, listed) in self.batches.iter().enumerate() {
+            let Some(batch) = batches.batches.get(listed.batch as usize) else {
+                continue;
+            };
+            let base = (listed.ids / 4) as u32;
+            let range = batch.instances.start as usize..batch.instances.end as usize;
+            self.rows.extend(
+                batches.ordered[range]
+                    .iter()
+                    .map(|&slot| [slot, listed.batch, base, entry as u32]),
+            );
+        }
+        self.uploaded = false;
+        true
+    }
 }
 
 fn drawn_levels(mesh: Option<&ResidentMesh>) -> u8 {
@@ -259,6 +325,7 @@ impl Draws {
                         extended,
                     },
                     levels: drawn_levels(resident),
+                    blended: material.is_some_and(|material| material.alpha_mode().blended()),
                     flat,
                     variant: engine_render::material_state(material),
                     buffers: resident.map_or(u8::MAX, |resident| match resident.placement() {
@@ -289,45 +356,10 @@ pub(crate) struct NodeInputs {
     pub seen: Cursor,
     pub whole: bool,
     pub ranges: Vec<UploadRange>,
-    pub words_seen: Cursor,
-    pub words_whole: bool,
-    pub word_ranges: Vec<UploadRange>,
     pub upload_bits: Vec<u64>,
 }
 
 impl NodeInputs {
-    pub(crate) fn plan_words(&mut self, hierarchy: &GlobalTransforms, nodes: usize) {
-        let changes = hierarchy.word_changes_since(&mut self.words_seen);
-        let whole = std::mem::take(&mut self.words_whole);
-        self.word_ranges.clear();
-        if hierarchy.packed_words().len() != nodes {
-            self.words_whole = true;
-            return;
-        }
-        match changes {
-            Since::Same if !whole => return,
-            Since::Listed(listed)
-                if !whole && listed.iter().all(|&node| (node as usize) < nodes) =>
-            {
-                listed_ranges(
-                    listed,
-                    nodes,
-                    size_of::<u32>(),
-                    &mut self.upload_bits,
-                    &mut self.word_ranges,
-                );
-                return;
-            }
-            Since::Same | Since::Listed(_) | Since::All => {}
-        }
-        if nodes != 0 {
-            self.word_ranges.push(UploadRange {
-                start: 0,
-                end: nodes,
-            });
-        }
-    }
-
     pub(crate) fn plan(&mut self, poses: &DrawnPoses, nodes: usize) -> Option<bool> {
         let changes = poses.changes_since(&mut self.seen);
         let whole = std::mem::take(&mut self.whole);
@@ -393,19 +425,20 @@ impl DrawGroups {
     pub(crate) fn stage_batches(
         &mut self,
         batches: &[DrawBatch],
-        assets: &AssetLibrary,
-        residency: &AssetResidency,
+        (assets, residency): (&AssetLibrary, &AssetResidency),
         impostor: impl Fn(usize) -> f32,
+        reach: impl Fn(Option<MaterialHandle>) -> f32,
     ) {
         let planes = (self.first_instance, self.capacity);
         self.batch_staging.clear();
         self.batch_staging
             .extend(batches.iter().enumerate().map(|(index, batch)| {
+                let grown = Vec3::splat(reach(batch.material));
                 let bounds = assets
                     .mesh(batch.mesh)
                     .map_or((Vec3::ZERO, Vec3::ZERO), |mesh| {
                         let bounds = mesh.bounds();
-                        (bounds.min(), bounds.max())
+                        (bounds.min() - grown, bounds.max() + grown)
                     });
                 batch_record(
                     batch,
@@ -503,11 +536,6 @@ fn batch_record(
                 (first_index + offset, count, error)
             })
     };
-    let kind = if batch.first_person {
-        FIRST_PERSON_BATCH
-    } else {
-        0.0
-    };
     BatchData {
         start: batch.instances.start,
         count: batch.instances.end - batch.instances.start,
@@ -524,7 +552,7 @@ fn batch_record(
         lod_errors: [lod(0).2, lod(1).2, (1 + lods) as f32, impostor],
         pad: 0,
         bounds_min: bounds.0.extend(0.0).to_array(),
-        bounds_max: bounds.1.extend(kind).to_array(),
+        bounds_max: bounds.1.extend(0.0).to_array(),
     }
 }
 
@@ -537,17 +565,20 @@ pub(crate) struct Pyramid {
 #[derive(Default)]
 pub(crate) struct FrameState {
     pub capacity: usize,
+    pub poses_capacity: usize,
+    pub batches: MeshBatches,
     pub color_staging: Vec<ColorData>,
     pub color_ranges: Vec<UploadRange>,
     pub color_bits: Vec<u64>,
     pub colors_seen: Cursor,
+    pub colors_library: Option<(u64, u64)>,
     pub temporal: bool,
     pub motion_generation: Option<u64>,
     pub prepared_at: Option<f32>,
     pub faded_at: Option<f32>,
     pub cards: bool,
-    pub casts: bool,
     pub draws: Draws,
+    pub blended: Blended,
     pub nodes: NodeInputs,
     pub groups: DrawGroups,
     pub fade_slots: u64,

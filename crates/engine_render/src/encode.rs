@@ -33,8 +33,6 @@ pub(crate) use recording::{Ended, Recording, Step};
 pub(crate) type FrameCore = Run;
 pub(crate) type EncodeCore = Run;
 
-type Specialized = (u32, [(&'static str, f64); 1]);
-
 const MOST_STREAMS: usize = 16;
 const MOST_OFFSETS: usize = 16;
 const MOST_GROUPS: usize = 8;
@@ -76,6 +74,7 @@ pub(crate) enum Held {
     Cameras,
     Pieces,
     Atlas,
+    Post,
 }
 
 #[derive(Default)]
@@ -86,6 +85,7 @@ pub(crate) struct Holders {
     cameras: Vec<Holder>,
     pieces: Vec<Holder>,
     atlas: Vec<Holder>,
+    post: Vec<Holder>,
 }
 
 impl Holders {
@@ -109,7 +109,8 @@ impl Holders {
                     {
                         Some(CoreFrame::Impostor(_)) => holders.atlas.push(holder),
                         Some(CoreFrame::Target(_)) => holders.targets.push(holder),
-                        Some(CoreFrame::Post | CoreFrame::Linear) | None => {}
+                        Some(CoreFrame::Post) => holders.post.push(holder),
+                        Some(CoreFrame::Linear) | None => {}
                     },
                 }
             }
@@ -145,7 +146,32 @@ impl Holders {
             Held::Cameras => &self.cameras,
             Held::Pieces => &self.pieces,
             Held::Atlas => &self.atlas,
+            Held::Post => &self.post,
         }
+    }
+
+    fn of_view(&self, machine: &Machine) -> std::collections::BTreeSet<Holder> {
+        let textures = machine
+            .declared
+            .textures
+            .iter()
+            .enumerate()
+            .filter(|(_, texture)| texture.per_view)
+            .flat_map(|(index, _)| self.textures[index].iter());
+        let buffers = machine
+            .declared
+            .buffers
+            .iter()
+            .enumerate()
+            .filter(|(_, buffer)| buffer.per_view)
+            .flat_map(|(index, _)| self.buffers[index].iter());
+        self.targets
+            .iter()
+            .chain(&self.post)
+            .chain(textures)
+            .chain(buffers)
+            .copied()
+            .collect()
     }
 }
 
@@ -181,8 +207,7 @@ pub(crate) struct Compiled {
     depth: Option<(wgpu::TextureFormat, bool)>,
     debug: bool,
     main: bool,
-    variant: Option<u32>,
-    constants: Vec<(String, f64)>,
+    variant: Option<crate::surface::MaterialVariant>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -191,19 +216,8 @@ struct Listing {
     compiled: Vec<Compiled>,
 }
 
-fn specialized(compiled: &Compiled) -> Option<Specialized> {
-    let bits = compiled.variant?;
-    let mut constants = <crate::surface::DrawState as engine_core::GpuBits>::unpack(bits)?.constants();
-    for (name, value) in &mut constants {
-        if let Some((_, listed)) = compiled
-            .constants
-            .iter()
-            .find(|(known, _)| known.as_str() == *name)
-        {
-            *value = *listed;
-        }
-    }
-    Some((bits, constants))
+fn specialized(compiled: &Compiled) -> Option<crate::surface::MaterialVariant> {
+    compiled.variant
 }
 
 const GROUPED: bool = cfg!(any(not(target_arch = "wasm32"), feature = "profiling"));
@@ -453,6 +467,18 @@ pub(crate) struct Run {
     pub(crate) listed: Option<Vec<Compiled>>,
     pub(crate) up_front: u32,
     pub(crate) unlisted: u32,
+    pub(crate) view_passes: Bits,
+    pub(crate) main_passes: Bits,
+    pub(crate) view_holders: std::collections::BTreeSet<Holder>,
+    pub(crate) parked: Vec<views::ViewState>,
+    pub(crate) resident: Option<bevy_ecs::entity::Entity>,
+    pub(crate) canvas_format: wgpu::TextureFormat,
+    pub(crate) canvas_rect: Option<[u32; 4]>,
+    pub(crate) canvas_load: bool,
+    pub(crate) carried: bool,
+    pub(crate) camera_slot: u32,
+    pub(crate) owned_views: Vec<(&'static str, u32)>,
+    pub(crate) applied: Vec<crate::shared::AppliedModule>,
 }
 
 #[derive(Default)]
@@ -754,6 +780,8 @@ impl Run {
             .map(|pipeline| pipeline.groups.iter().map(|_| Groups::fresh()).collect())
             .collect();
         let holders = Holders::of(&machine);
+        let view_holders = holders.of_view(&machine);
+        let (view_passes, main_passes) = views::view_passes(&machine);
         let stale = stale_holders(&machine);
         let pass_decls = machine
             .declared
@@ -838,6 +866,18 @@ impl Run {
             listed: None,
             up_front: 0,
             unlisted: 0,
+            view_passes,
+            main_passes,
+            view_holders,
+            parked: Vec::new(),
+            resident: None,
+            canvas_format: wgpu::TextureFormat::Bgra8Unorm,
+            canvas_rect: None,
+            canvas_load: false,
+            carried: false,
+            camera_slot: 0,
+            owned_views: Vec::new(),
+            applied: Vec::new(),
         }
     }
 
@@ -876,6 +916,11 @@ impl Run {
 
     pub(crate) fn touch(&mut self, held: Held) {
         for &holder in self.holders.of_held(held) {
+            if self.view_holders.contains(&holder) {
+                for state in &mut self.parked {
+                    state.stale.insert(holder);
+                }
+            }
             if !self.stale.insert(holder) {
                 continue;
             }
@@ -889,6 +934,7 @@ impl Run {
                     Held::Cameras => "cameras",
                     Held::Pieces => "pieces",
                     Held::Atlas => "impostors",
+                    Held::Post => "post",
                 };
                 self.rebuilt.reasons.push(reason);
             }
@@ -975,6 +1021,14 @@ impl Run {
             .passes
             .get(self.pass as usize)?
             .scene?;
+        let index = match view {
+            None => Some(self.camera_slot),
+            Some(local) => self
+                .owned_views
+                .iter()
+                .find(|(name, _)| *name == scene.name)
+                .map(|&(_, base)| base + local),
+        };
         Some(SceneDraw {
             pass: crate::Scene::named(scene.name),
             bit: scene.bit,
@@ -982,6 +1036,7 @@ impl Run {
             reads: scene.pass.reads,
             writes: scene.pass.writes,
             view,
+            index,
         })
     }
 
@@ -1207,6 +1262,10 @@ impl Run {
         for buffer in buffers {
             self.release_buffer(buffer);
         }
+        let machine = &self.machine;
+        for state in &mut self.parked {
+            state.release_part(machine, part);
+        }
         self.installed_anew(part);
     }
 
@@ -1258,6 +1317,35 @@ impl Run {
         for (pass, declared) in self.machine.declared.passes.iter().enumerate() {
             if declared.part == part {
                 self.ran.remove(pass);
+                for state in &mut self.parked {
+                    state.ran.remove(pass);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn forget_global(&mut self, part: u32) {
+        for (pass, declared) in self.machine.declared.passes.iter().enumerate() {
+            if declared.part == part && !self.view_passes.contains(pass) {
+                self.ran.remove(pass);
+                for state in &mut self.parked {
+                    state.ran.remove(pass);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn forget_viewed(&mut self) {
+        for pass in self.view_passes.iter() {
+            self.ran.remove(pass);
+        }
+    }
+
+    pub(crate) fn ran_now(&mut self, pass: usize) {
+        self.ran.insert(pass);
+        if !self.view_passes.contains(pass) {
+            for state in &mut self.parked {
+                state.ran.insert(pass);
             }
         }
     }

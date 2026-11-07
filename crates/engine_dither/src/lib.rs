@@ -6,8 +6,11 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use bevy_ecs::prelude::Res;
-use engine_core::{Brick, Bricks, Source, settings};
-use engine_render::PostDisplay;
+use engine_core::{
+    AttachPoint, Brick, Bricks, Pass, PassName, PassViews, SlotSet, Source, Writes, never,
+    settings,
+};
+use engine_render::RenderBricks;
 
 settings! {
     #[section("dither")]
@@ -19,6 +22,19 @@ settings! {
     }
 }
 
+pub(crate) struct DitherPass;
+
+impl PassName for DitherPass {
+    const NAME: &'static str = "dither";
+    const PASS: Pass = Pass {
+        writes: Writes::NOTHING,
+        reads: SlotSet::NONE,
+        views: PassViews::Every,
+        at: AttachPoint::Display,
+        takes: never,
+    };
+}
+
 pub struct DitherBrick;
 
 impl Brick for DitherBrick {
@@ -28,6 +44,6 @@ impl Brick for DitherBrick {
         bricks
             .when(|dither: Res<Dither>| dither.enabled)
             .settings::<Dither>()
-            .join::<PostDisplay>((), Some(shaders::dither::apply::MODULE));
+            .applies::<DitherPass>(shaders::dither::apply::MODULE);
     }
 }

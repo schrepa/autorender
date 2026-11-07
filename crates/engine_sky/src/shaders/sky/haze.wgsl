@@ -1,4 +1,6 @@
 import package::engine::post::pixel::PostPixel;
+import package::face::transparency::revealed;
+import package::generated::targets::blended_cover;
 import package::sky::piece::sky_piece;
 
 @group(0) @binding(0) var haze: texture_2d<f32>;
@@ -18,5 +20,6 @@ fn with_haze(color: vec3<f32>, light: vec3<f32>) -> vec3<f32> {
 }
 
 fn apply(color: vec3<f32>, at: PostPixel) -> vec3<f32> {
-    return with_haze(color, haze_at(haze, at.pixel));
+    let seen = revealed(at.pixel).x * (1.0 - blended_cover(at.pixel));
+    return with_haze(color, haze_at(haze, at.pixel) * seen);
 }

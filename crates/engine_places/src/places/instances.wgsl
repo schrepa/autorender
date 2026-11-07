@@ -88,6 +88,11 @@ fn instance_pose(slot: u32) -> AffinePose {
     return pose;
 }
 
+fn instance_color(slot: u32) -> SlotColor {
+    var color: SlotColor;
+    return color;
+}
+
 fn slot_vertex(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,
         color: SlotColor, ground: vec4<u32>, fade: u32) -> SlotVertex {
     var vertex: SlotVertex;

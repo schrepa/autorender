@@ -74,11 +74,7 @@ pub(crate) fn import(
                 Some(SceneAlphaMode::Mask),
                 Some(material.alpha_cutoff().unwrap_or(0.5)),
             ),
-            gltf::material::AlphaMode::Blend => {
-                return Err(unsupported(format!("{path}.alphaMode"))
-                    .got("BLEND")
-                    .variants(["OPAQUE", "MASK"]));
-            }
+            gltf::material::AlphaMode::Blend => (opacity, Some(SceneAlphaMode::Blend), None),
         };
         let map = |field: &str, info: &Value, texture: Option<gltf::Texture<'_>>| {
             texture

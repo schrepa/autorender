@@ -1,3 +1,4 @@
+import package::engine::drawn::{DRAWN_OWN_PROJECTION, drawn_in_view, drawn_records};
 import package::engine::math::maximum_abs;
 import package::engine::mesh::declarations::drawn_slot;
 import package::engine::mesh::impostor_frames::{CARD_PHASE_FADING, CARD_PHASE_STEADY,
@@ -6,7 +7,7 @@ import package::engine::presentation::{IMPOSTOR_VERTICES, MAX_COEFFICIENT, MAX_P
     NO_PARENT, POSE_FLOATS, Pose, ROUNDING_MARGIN, drawn_local, pose_admitted, pose_trs,
     pose_word_blend, pose_word_composed, pose_word_parent_composed, pose_word_valid};
 import package::generated::meshes::{ARGS_GROUP, BatchData as Batch, CULL_GROUP,
-    CandidateData as Candidate, FIRST_PERSON_BATCH, GROUP, LOD_FADED, LOD_HISTORY_HELD,
+    CandidateData as Candidate, GROUP, LOD_FADED, LOD_HISTORY_HELD,
     LOD_LEVELS, NO_NODE, PARENT_GROUP, PresentationFrame as Frame, UNWATCHED,
     candidate_state_level, candidate_state_moving, candidate_state_occluded,
     candidate_state_phase_one, candidate_state_phase_two, candidate_state_subpixel,
@@ -15,8 +16,7 @@ import package::generated::meshes::{ARGS_GROUP, BatchData as Batch, CULL_GROUP,
     candidate_state_with_occluded, candidate_state_with_phase_one,
     candidate_state_with_phase_two, candidate_state_with_subpixel, candidate_state_with_valid,
     candidate_state_with_view, candidate_state_with_view_level, candidate_state_with_visible,
-    lod_fade, lod_fade_history, lod_fade_previous, lod_fade_progress, lod_fade_shown,
-    node_word_mobility};
+    lod_fade, lod_fade_history, lod_fade_previous, lod_fade_progress, lod_fade_shown};
 import package::meshes::screen_cull::{F32_MAX, covers_no_pixel, hidden};
 import package::meshes::slots::instance_poses;
 
@@ -63,7 +63,6 @@ struct Level {
 @group(1) @binding(14) var<storage, read> slot_candidates: array<Candidate>;
 @group(1) @binding(18) var depth_pyramid: texture_2d<f32>;
 @group(1) @binding(19) var<storage, read_write> occlusion_counts: array<atomic<u32>>;
-@group(1) @binding(23) var<storage, read> node_words: array<u32>;
 @group(1) @binding(24) var<storage, read_write> impostor_ids: array<vec2<u32>>;
 @group(1) @binding(25) var<storage, read_write> lod_states: array<u32>;
 @group(1) @binding(26) var<storage, read_write> fade_cards: array<atomic<u32>>;
@@ -74,6 +73,10 @@ const IMPOSTOR: u32 = LOD_LEVELS;
 
 var<workgroup> shared_values: array<u32, GROUP>;
 var<workgroup> shared_counts: array<vec4<u32>, GROUP>;
+
+fn own_projection(slot: u32) -> bool {
+    return (drawn_records[slot].flags & DRAWN_OWN_PROJECTION) != 0u;
+}
 
 fn rows_matrix(rows: Rows) -> mat4x4<f32> {
     return transpose(mat4x4<f32>(rows.r0, rows.r1, rows.r2, vec4<f32>(0.0, 0.0, 0.0, 1.0)));
@@ -199,7 +202,8 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
     let candidate = slot_candidates[id.x];
     let previous = frame.occlusion != 0u && candidate_state_occluded(scan[candidate.position]);
     var state = candidate_state_with_occluded(0u, previous);
-    if candidate.node != NO_NODE && pose_word_valid(info[candidate.node].y) {
+    if candidate.node != NO_NODE && pose_word_valid(info[candidate.node].y)
+            && drawn_in_view(0u, candidate.slot) {
         let word = info[candidate.node].y;
         state = candidate_state_with_valid(state, true);
         var model: mat4x4<f32>;
@@ -210,16 +214,16 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         poses[candidate.slot] = matrix_rows(model);
         let batch = batches[candidate.batch];
-        let first_person = batch.bounds_max.w == FIRST_PERSON_BATCH;
-        var visible = first_person || !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz);
-        if visible && frame.subpixel != 0u && !first_person
+        let own = own_projection(candidate.slot);
+        var visible = own || !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz);
+        if visible && frame.subpixel != 0u && !own
                 && covers_no_pixel(frame.view_projection * model, batch.bounds_min.xyz,
                     batch.bounds_max.xyz, frame.viewport.xy) {
             visible = false;
             state = candidate_state_with_subpixel(state, true);
         }
         if visible {
-            let occludable = frame.occlusion != 0u && batch.bounds_max.w == 0.0;
+            let occludable = frame.occlusion != 0u && !own;
             state = candidate_state_with_visible(state, true);
             state = candidate_state_with_moving(state,
                 frame.motion != 0u && pose_word_composed(word));
@@ -346,10 +350,10 @@ fn occlusion_test(@builtin(global_invocation_id) id: vec3<u32>) {
     if !candidate_state_visible(flags) {
         return;
     }
-    let batch = batches[candidate.batch];
-    if batch.bounds_max.w != 0.0 {
+    if own_projection(candidate.slot) {
         return;
     }
+    let batch = batches[candidate.batch];
     let is_hidden = hidden(frame.view_projection * rows_matrix(slot_rows(candidate.slot)),
         batch.bounds_min.xyz, batch.bounds_max.xyz, depth_pyramid, frame.viewport);
     flags = candidate_state_with_occluded(flags, is_hidden);
@@ -363,10 +367,6 @@ fn occlusion_test(@builtin(global_invocation_id) id: vec3<u32>) {
     scan[candidate.position] = flags;
 }
 
-fn view_takes(node: u32) -> bool {
-    return frame.bases.z == 0u || node_word_mobility(node_words[node]) + 1u == frame.bases.z;
-}
-
 @compute @workgroup_size(CULL_GROUP)
 fn view_cull(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= frame.candidates {
@@ -375,8 +375,8 @@ fn view_cull(@builtin(global_invocation_id) id: vec3<u32>) {
     let candidate = slot_candidates[id.x];
     var flags = candidate_state_with_view(scan[candidate.position], false);
     let batch = batches[candidate.batch];
-    if candidate_state_valid(flags) && batch.bounds_max.w != FIRST_PERSON_BATCH
-            && view_takes(candidate.node) {
+    if candidate_state_valid(flags) && !own_projection(candidate.slot)
+            && drawn_in_view(frame.bases.z, candidate.slot) {
         let model = rows_matrix(slot_rows(candidate.slot));
         if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz)
                 && !(frame.subpixel != 0u && covers_no_pixel(frame.view_projection * model,

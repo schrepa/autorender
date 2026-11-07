@@ -1,13 +1,10 @@
 use std::fmt::Write as _;
 
-use engine_core::{AttachPoint, Error, PassViews, PlaceDecl, ShaderText, Source};
+use engine_core::{AttachPoint, Error, ErrorCode, PassViews, PlaceDecl, ShaderText, Source};
 
 use crate::install::{PassDecl, Work};
 use crate::machine::OutputDecl;
-use crate::{
-    DebugModes, DebugShown, GpuPart, Install, InstanceMotion, Lit, Pass, PostDisplay, PostLight,
-    PostScene, PostTone, Prepare, Resolve,
-};
+use crate::{DebugModes, DebugShown, GpuPart, Install, Lit, Pass, Prepare, Resolve};
 
 pub(crate) const COMPOSITE: &str = "composite";
 pub(crate) const DEBUG_VIEW: &str = "debug_view";
@@ -18,18 +15,95 @@ pub(crate) const SCENE: &str = "scene";
 pub(crate) const DEPTH: &str = "depth_texture";
 pub(crate) const TARGETS_MODULE: &str = "generated::targets";
 pub(crate) const COMPOSITE_MODULE: &str = "generated::composite";
+pub(crate) const APPLIED_MODULE: &str = "generated::applied";
 pub(crate) const PASSES_MODULE: &str = "generated::passes";
+pub(crate) const TRANSPARENCY_MODULE: &str = "engine::transparency";
+pub(crate) const COVER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+pub(crate) const MOST_APPLIED: usize = 128;
 pub(crate) static PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<Resolve>(),
     PlaceDecl::slot::<Lit>(),
-    PlaceDecl::slot::<InstanceMotion>(),
-    PlaceDecl::list::<PostScene>(),
-    PlaceDecl::list::<PostLight>(),
-    PlaceDecl::slot::<PostTone>(),
-    PlaceDecl::list::<PostDisplay>(),
     PlaceDecl::slot::<DebugShown>(),
     PlaceDecl::list::<DebugModes>(),
 ];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stage {
+    Light,
+    Color,
+    Display,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct AppliedModule {
+    pub(crate) pass: &'static str,
+    pub(crate) views: PassViews,
+    pub(crate) gate: Option<engine_registry::GateId>,
+    pub(crate) module: String,
+    pub(crate) stage: Stage,
+}
+
+pub(crate) fn stage_of(
+    at: AttachPoint,
+    module: &str,
+    text: &str,
+) -> Result<Stage, Error> {
+    let path = format!("$.applied.{module}");
+    let contract = crate::places::contract(text)
+        .map_err(|error| Error::new(ErrorCode::ShaderLink, path.clone()).got(error))?;
+    let first = contract
+        .answers
+        .iter()
+        .find(|answer| answer.name == "apply" && !answer.constant)
+        .and_then(|answer| answer.parameters.first())
+        .map(|(_, ty)| ty.replace(' ', ""));
+    match (at, first.as_deref()) {
+        (AttachPoint::Post, Some("SceneLight")) => Ok(Stage::Light),
+        (AttachPoint::Post, Some("vec3<f32>")) => Ok(Stage::Color),
+        (AttachPoint::Display, Some("vec3<f32>")) => Ok(Stage::Display),
+        (
+            AttachPoint::Depth
+            | AttachPoint::Opaque
+            | AttachPoint::Sky
+            | AttachPoint::Transparent
+            | AttachPoint::Post
+            | AttachPoint::Display
+            | AttachPoint::Overlay,
+            _,
+        ) => Err(Error::new(ErrorCode::ShaderLink, path)
+            .expected(engine_core::Expected::Supported)
+            .got(format!("{}: {}", at.name(), first.unwrap_or_default()))),
+    }
+}
+
+pub(crate) fn applied_source(applied: &[AppliedModule]) -> String {
+    let mut imports = String::from(
+        "import package::engine::post::frame::post;\nimport package::engine::post::pixel::{PostPixel, SceneLight};\n",
+    );
+    let mut bodies = [String::new(), String::new(), String::new()];
+    for (bit, member) in applied.iter().enumerate() {
+        let _ = writeln!(
+            imports,
+            "import package::{}::apply as apply_{bit};",
+            member.module
+        );
+        let word = ["x", "y", "z", "w"][bit / 32 % 4];
+        let mask = 1_u32 << (bit % 32);
+        let body = match member.stage {
+            Stage::Light => &mut bodies[0],
+            Stage::Color => &mut bodies[1],
+            Stage::Display => &mut bodies[2],
+        };
+        let _ = writeln!(
+            body,
+            "    if (post.applied.{word} & {mask}u) != 0u {{\n        folded = apply_{bit}(folded, at);\n    }}"
+        );
+    }
+    let [light, color, display] = bodies;
+    format!(
+        "{imports}\nfn applied_light(light: SceneLight, at: PostPixel) -> SceneLight {{\n    var folded = light;\n{light}    return folded;\n}}\n\nfn applied_color(color: vec3<f32>, at: PostPixel) -> vec3<f32> {{\n    var folded = color;\n{color}    return folded;\n}}\n\nfn applied_display(color: vec3<f32>, at: PostPixel) -> vec3<f32> {{\n    var folded = color;\n{display}    return folded;\n}}\n"
+    )
+}
 
 pub(crate) fn composites(pass: &PassDecl) -> bool {
     pass.name == COMPOSITE || pass.name == DEBUG_VIEW
@@ -78,7 +152,7 @@ impl GpuPart for ScenePart {
     }
 
     fn encode(&mut self, _pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
-        cx.render(crate::Attach::Declared, None).scene(None)
+        cx.render(crate::Attach::Declared, None).scene(self, None)
     }
 }
 
@@ -130,8 +204,10 @@ impl GpuPart for Composite {
         })
     }
 
-    fn prepare(&mut self, (): (), cx: &mut Prepare<'_, Self>) {
-        if cx.core.debug {
+    fn prepare(&mut self, (): (), _cx: &mut Prepare<'_, Self>) {}
+
+    fn view(&mut self, view: &engine_core::ViewFacts, cx: &mut Prepare<'_, Self>) {
+        if view.debug {
             cx.run(self.debug_pass);
         } else {
             cx.run(self.pass);
@@ -167,6 +243,8 @@ pub(crate) struct PostUniform {
     pub(crate) size: [f32; 4],
     pub(crate) extent: [f32; 4],
     pub(crate) detail: [f32; 4],
+    pub(crate) kept: [f32; 4],
+    pub(crate) applied: [u32; 4],
 }
 
 pub(crate) fn post_uniform(
@@ -187,6 +265,8 @@ pub(crate) fn post_uniform(
         size: [width, height, 1.0 / width, 1.0 / height],
         extent: [wide, tall, 1.0 / wide, 1.0 / tall],
         detail: detail.extend(0.0).to_array(),
+        kept: [0.0; 4],
+        applied: [0; 4],
     }
 }
 
@@ -279,7 +359,20 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
     }
     let _ = writeln!(
         body,
-        "    return targets;\n}}\n\nfn depth_view_targets(shaded: Shaded, at: ViewPixel, depth: f32) -> DepthViewTargets {{"
+        "    return targets;\n}}\n\nfn blended_targets(shaded: Shaded, at: ViewPixel) -> ViewTargets {{\n    var targets = view_targets(shaded, at);\n    targets.color = vec4<f32>(shaded.linear * shaded.opacity, shaded.opacity);\n    return targets;\n}}"
+    );
+    if outputs
+        .iter()
+        .any(|output| output.name == engine_core::TargetName::TRANSPARENCY.name())
+    {
+        let _ = writeln!(
+            body,
+            "\nfn blended_cover(pixel: vec2<i32>) -> f32 {{\n    let covered = min(pixel, vec2<i32>(textureDimensions({OUTPUT_PREFIX}transparency)) - 1);\n    return textureLoad({OUTPUT_PREFIX}transparency, covered, 0).r;\n}}"
+        );
+    }
+    let _ = writeln!(
+        body,
+        "\nfn depth_view_targets(shaded: Shaded, at: ViewPixel, depth: f32) -> DepthViewTargets {{"
     );
     let _ = writeln!(
         body,
@@ -314,14 +407,11 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
 }
 
 pub(crate) fn composite_source() -> String {
-    "import package::engine::post::pixel::{PostPixel, SceneLight};
+    "import package::engine::post::frame::{depth_texture, post};
 import package::engine::post::resolve_plain::scene_light;
 import package::engine::color::encode_srgb;
-import package::face::post_scene::apply as post_scene;
+import package::generated::applied::{applied_color, applied_display, applied_light};
 import package::face::resolve::{resolve, resolved_at};
-import package::face::post_light::apply as post_light;
-import package::face::post_tone::apply as post_tone;
-import package::face::post_display::apply as post_display;
 import package::generated::targets::{CompositeOut, composite_out};
 import package::face::debug::{DebugShade, DebugTargets, shown};
 import package::face::debug_modes::shade_kind;
@@ -329,6 +419,10 @@ import package::face::debug_modes::shade_kind;
 @group(0) @binding(0) var debug_ids: texture_2d<u32>;
 @group(0) @binding(0) var debug_count: texture_2d<f32>;
 @group(0) @binding(0) var debug_terrain: texture_2d<u32>;
+
+fn uncovered(pixel: vec2<i32>) -> bool {
+    return post.kept.x > 0.5 && textureLoad(depth_texture, pixel, 0) <= 0.0;
+}
 
 @fragment
 fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
@@ -344,22 +438,24 @@ fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
 @fragment
 fn fs_composite(@builtin(position) position: vec4<f32>) -> CompositeOut {
     let started = scene_light(position);
+    if uncovered(started.at.pixel) {
+        discard;
+    }
     let light = resolve(started.at, started.light);
     let at = resolved_at(started.at);
-    let color = post_tone(post_light(light.color, at), at);
-    var encoded = encode_srgb(color);
-    encoded = post_display(encoded, at);
-    return composite_out(vec4<f32>(encoded, 1.0), light, at);
+    let color = applied_display(applied_color(light.color, at), at);
+    return composite_out(vec4<f32>(encode_srgb(color), 1.0), light, at);
 }
 
 @fragment
 fn fs_composite_plain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let started = scene_light(position);
-    let light = post_scene(started.light, started.at);
-    let color = post_tone(post_light(light.color, started.at), started.at);
-    var encoded = encode_srgb(color);
-    encoded = post_display(encoded, started.at);
-    return vec4<f32>(encoded, 1.0);
+    if uncovered(started.at.pixel) {
+        discard;
+    }
+    let light = applied_light(started.light, started.at);
+    let color = applied_display(applied_color(light.color, started.at), started.at);
+    return vec4<f32>(encode_srgb(color), 1.0);
 }
 "
     .to_owned()

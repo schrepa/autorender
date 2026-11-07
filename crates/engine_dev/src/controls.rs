@@ -5,7 +5,7 @@ use crate::protocol::{
 use crate::results::{DebugMissingAssetResult, EnvironmentResult, ParentResult, result};
 use crate::{BrowserControl, EnvironmentControl, bounded};
 use bevy_ecs::prelude::World;
-use engine_core::{AssetLibrary, Camera, Engine, Mesh3d, Projection, Transform, glam::Vec3};
+use engine_core::{AssetLibrary, Camera, Drawn, Engine, Projection, Transform, glam::Vec3};
 use engine_registry::{OperationScene, Registry};
 use engine_scene::{SceneEnvironment, SceneInstance};
 use engine_settings::{Error, ErrorCode, Expected};
@@ -408,17 +408,17 @@ fn missing_asset(
     })?;
     let world = engine.app.world_mut();
     let mesh = crate::inspect::authored_entity(world, scene, entity)
-        .and_then(|entity| world.get::<Mesh3d>(entity))
-        .map(|mesh3d| mesh3d.mesh)
+        .and_then(|entity| world.get::<Drawn>(entity))
+        .and_then(|drawn| drawn.geometry)
         .ok_or_else(|| {
             Error::new(ErrorCode::UnknownEntity, "$.entity")
                 .expected(Expected::Entity)
                 .got(entity)
         })?;
-    let entities = world.try_query::<&Mesh3d>().map_or(0, |mut meshes| {
-        meshes
+    let entities = world.try_query::<&Drawn>().map_or(0, |mut drawn| {
+        drawn
             .iter(world)
-            .filter(|mesh3d| mesh3d.mesh == mesh)
+            .filter(|drawn| drawn.geometry == Some(mesh))
             .count()
     });
     let mut assets = world.get_resource_mut::<AssetLibrary>().ok_or_else(|| {

@@ -2,7 +2,7 @@ use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
 use serde::{Deserialize, Serialize};
 
-use crate::{ApplyAt, Ask, Error, ErrorCode, FrameId, Layers, NodeId, TextureHandle};
+use crate::{ApplyAt, Ask, Error, ErrorCode, FrameId, Layers, Mobility, NodeId, TextureHandle};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Target {
@@ -146,4 +146,20 @@ pub struct ViewCut {
 impl Ask for ViewCut {
     const NAME: &'static str = "view_cut";
     const AT: ApplyAt = ApplyAt::FrameStart;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OwnedView {
+    pub view_projection: [[f32; 4]; 4],
+    pub planes: Option<[[f32; 4]; 6]>,
+    pub eye: [f32; 3],
+    pub size: [u32; 2],
+    pub detail: f32,
+    pub takes: Option<Mobility>,
+}
+
+#[derive(Component, Clone, Debug, Default, PartialEq)]
+pub struct OwnedViews {
+    pub pass: &'static str,
+    pub views: Vec<OwnedView>,
 }

@@ -181,121 +181,6 @@ fn grown(capacity: u64, bytes: u64, room: u64) -> Option<u64> {
     }
 }
 
-pub(crate) struct WeightedGpu {
-    accumulate: Pass<Self>,
-    composite: Pass<Self>,
-    accumulated: Texture<Self>,
-    revealed: Texture<Self>,
-    shown: Buffer<Self>,
-    compositing: Pipeline<Self, Own>,
-    targets: bool,
-}
-
-impl WeightedGpu {
-    fn show(&self, drawn: bool, cx: &mut Prepare<'_, Self>) {
-        cx.allocate_buffer(self.shown, SHOWN_BYTES);
-        cx.write(self.shown, 0, &[u32::from(drawn), 0, 0, 0]);
-    }
-
-    fn release_targets(&mut self, cx: &mut Prepare<'_, Self>) {
-        if std::mem::take(&mut self.targets) {
-            cx.release(self.accumulated);
-            cx.release(self.revealed);
-        }
-    }
-}
-
-impl GpuPart for WeightedGpu {
-    type Reads = (Res<'static, Packed>, Res<'static, PrimaryView>);
-
-    fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let accumulated = cx.texture("accumulated", ACCUMULATED_FORMAT, Lifetime::Frame);
-        let revealed = cx.texture("revealed", REVEALED_FORMAT, Lifetime::Kept);
-        let shown = cx.buffer("transparent_drawn", Lifetime::Kept);
-        cx.frame(face::TRANSPARENT_REVEALED, Bind::Texture(revealed))?;
-        cx.frame(face::TRANSPARENT_DRAWN, Bind::Buffer(shown))?;
-        let accumulate = cx
-            .scene::<WeightedPass>()
-            .at(WeightedPass::PASS.at)
-            .span(WeightedPass::NAME)
-            .color(accumulated, Access::Clear)
-            .color_cleared(revealed, wgpu::Color::WHITE)
-            .id();
-        let composite_pass = cx
-            .scene::<CompositePass>()
-            .at(CompositePass::PASS.at)
-            .span(CompositePass::NAME)
-            .id();
-        let compositing = cx.render_pipeline_targets(
-            composite_pass,
-            &RenderPipeline {
-                vertex: FULLSCREEN,
-                fragment: Some(composite::FS_COMPOSITE),
-                debug: None,
-                vertices: &[],
-                primitive: wgpu::PrimitiveState::default(),
-                depth: DepthUse::None,
-                blend: None,
-                writes: wgpu::ColorWrites::ALL,
-            },
-            &OVER,
-            &[
-                (composite::ACCUMULATED, Bind::Texture(accumulated)),
-                (composite::REVEALED, Bind::Texture(revealed)),
-            ],
-        )?;
-        Ok(Self {
-            accumulate,
-            composite: composite_pass,
-            accumulated,
-            revealed,
-            shown,
-            compositing,
-            targets: false,
-        })
-    }
-
-    fn prepare(
-        &mut self,
-        (packed, view): SystemParamItem<'_, '_, Self::Reads>,
-        cx: &mut Prepare<'_, Self>,
-    ) {
-        self.show(packed.emits && !view.debug(), cx);
-        if view.debug() {
-            return;
-        }
-        if !packed.emits {
-            self.release_targets(cx);
-            return;
-        }
-        let size = view.display_size();
-        let extent = wgpu::Extent3d {
-            width: size.x,
-            height: size.y,
-            depth_or_array_layers: 1,
-        };
-        cx.allocate(self.accumulated, extent, 1);
-        cx.allocate(self.revealed, extent, 1);
-        self.targets = true;
-        cx.run(self.accumulate);
-        cx.run(self.composite);
-    }
-
-    fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        let mut draw = cx.render(Attach::Declared, None);
-        if pass == self.composite {
-            draw.draw(
-                &self.compositing,
-                Shape::Pulled {
-                    vertices: 0..3,
-                    instances: 0..1,
-                },
-            );
-        }
-        draw.scene(None)
-    }
-}
-
 #[derive(Clone, Copy)]
 struct Counts {
     alpha: u32,
@@ -304,17 +189,33 @@ struct Counts {
 }
 
 pub(crate) struct ParticlesGpu {
+    accumulate: Pass<Self>,
+    composite: Pass<Self>,
+    accumulated: Texture<Self>,
+    revealed: Texture<Self>,
+    shown: Buffer<Self>,
     uniform: Buffer<Self>,
     emitters: Buffer<Self>,
+    compositing: Pipeline<Self, Own>,
     alpha: Pipeline<Self, Scene>,
     mist: Pipeline<Self, Scene>,
     additive: Pipeline<Self, Scene>,
+    targets: bool,
     emitter_bytes: Option<u64>,
     drawing: Option<Counts>,
 }
 
 impl ParticlesGpu {
-    fn drop_held(&mut self, cx: &mut Prepare<'_, Self>) {
+    fn show(&self, drawn: bool, cx: &mut Prepare<'_, Self>) {
+        cx.allocate_buffer(self.shown, SHOWN_BYTES);
+        cx.write(self.shown, 0, &[u32::from(drawn), 0, 0, 0]);
+    }
+
+    fn release_held(&mut self, cx: &mut Prepare<'_, Self>) {
+        if std::mem::take(&mut self.targets) {
+            cx.release(self.accumulated);
+            cx.release(self.revealed);
+        }
         if self.emitter_bytes.take().is_some() {
             cx.release_buffer(self.uniform);
             cx.release_buffer(self.emitters);
@@ -398,8 +299,43 @@ impl GpuPart for ParticlesGpu {
     );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
+        let accumulated = cx.texture("accumulated", ACCUMULATED_FORMAT, Lifetime::Frame);
+        let revealed = cx.texture("revealed", REVEALED_FORMAT, Lifetime::Kept);
+        let shown = cx.buffer("transparent_drawn", Lifetime::Kept);
         let uniform = cx.buffer("particles", Lifetime::Kept);
         let emitters = cx.buffer("emitters", Lifetime::Kept);
+        cx.frame(face::TRANSPARENT_REVEALED, Bind::Texture(revealed))?;
+        cx.frame(face::TRANSPARENT_DRAWN, Bind::Buffer(shown))?;
+        let accumulate = cx
+            .scene::<WeightedPass>()
+            .at(WeightedPass::PASS.at)
+            .span(WeightedPass::NAME)
+            .color(accumulated, Access::Clear)
+            .color_cleared(revealed, wgpu::Color::WHITE)
+            .id();
+        let composite_pass = cx
+            .scene::<CompositePass>()
+            .at(CompositePass::PASS.at)
+            .span(CompositePass::NAME)
+            .id();
+        let compositing = cx.render_pipeline_targets(
+            composite_pass,
+            &RenderPipeline {
+                vertex: FULLSCREEN,
+                fragment: Some(composite::FS_COMPOSITE),
+                debug: None,
+                vertices: &[],
+                primitive: wgpu::PrimitiveState::default(),
+                depth: DepthUse::None,
+                blend: None,
+                writes: wgpu::ColorWrites::ALL,
+            },
+            &OVER,
+            &[
+                (composite::ACCUMULATED, Bind::Texture(accumulated)),
+                (composite::REVEALED, Bind::Texture(revealed)),
+            ],
+        )?;
         let bound = || {
             [
                 (draw::PARTICLES, Bind::Buffer(uniform)),
@@ -427,11 +363,18 @@ impl GpuPart for ParticlesGpu {
             &bound(),
         )?;
         Ok(Self {
+            accumulate,
+            composite: composite_pass,
+            accumulated,
+            revealed,
+            shown,
             uniform,
             emitters,
+            compositing,
             alpha,
             mist,
             additive,
+            targets: false,
             emitter_bytes: None,
             drawing: None,
         })
@@ -443,8 +386,9 @@ impl GpuPart for ParticlesGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         self.drawing = None;
+        self.show(packed.emits && !view.debug(), cx);
         if !packed.emits {
-            self.drop_held(cx);
+            self.release_held(cx);
             return;
         }
         if view.debug() {
@@ -452,5 +396,30 @@ impl GpuPart for ParticlesGpu {
         }
         let room = limits.storage_room / 16 * 16;
         self.drawing = self.prepare_frame((&*packed, &*view), room, cx);
+        let size = view.display_size();
+        let extent = wgpu::Extent3d {
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: 1,
+        };
+        cx.allocate(self.accumulated, extent, 1);
+        cx.allocate(self.revealed, extent, 1);
+        self.targets = true;
+        cx.run(self.accumulate);
+        cx.run(self.composite);
+    }
+
+    fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+        let mut draw = cx.render(Attach::Declared, None);
+        if pass == self.composite {
+            draw.draw(
+                &self.compositing,
+                Shape::Pulled {
+                    vertices: 0..3,
+                    instances: 0..1,
+                },
+            );
+        }
+        draw.scene(self, None)
     }
 }

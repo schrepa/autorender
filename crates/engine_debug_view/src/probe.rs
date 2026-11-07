@@ -1,8 +1,10 @@
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::{clamp, half, max, pow};
-use engine_core::{Error, ErrorCode, GpuBits, Joined, Operation, Readable, Readback, PrimaryView};
-use engine_places::meshes::Instances;
+use engine_core::{
+    DrawnTable, Error, ErrorCode, GpuBits, Joined, Operation, PassMask, PrimaryView, Readable,
+    Readback, ScenePasses,
+};
 use engine_render::debug::{DebugKind, DebugRecord};
 use engine_render::{
     AfterRead, Buffer, Copied, CopyRegion, DEBUG_TARGETS, DebugModes, DebugShown, GpuPart, Install,
@@ -92,7 +94,7 @@ impl Probe {
         &self,
         bytes: &[u8],
         modes: &Joined<'_, DebugModes>,
-        instances: Option<&Instances>,
+        (table, passes): (Option<&DrawnTable>, Option<&ScenePasses>),
     ) -> Value {
         let record = word(bytes, IDS);
         let decoded = DebugRecord::unpack(record);
@@ -123,20 +125,18 @@ impl Probe {
             Some(DrawnKind::Mesh | DrawnKind::Placed | DrawnKind::Card | DrawnKind::PlacedCard)
         );
         let with_detail = matches!(kind, Some(DrawnKind::Card | DrawnKind::PlacedCard));
-        let entity = instances
-            .filter(|_| matches!(kind, Some(DrawnKind::Mesh | DrawnKind::Card)))
-            .and_then(|instances| {
-                instances
-                    .slots
-                    .iter()
-                    .find_map(|(&entity, &slot)| (slot == object).then_some(entity))
-            });
+        let table = table.filter(|_| matches!(kind, Some(DrawnKind::Mesh | DrawnKind::Card)));
+        let entity = table.and_then(|table| table.owner(object));
+        let membership = table
+            .and_then(|table| table.records().get(object as usize))
+            .zip(passes)
+            .map(|(record, passes)| passes.decode(PassMask(record.passes)));
         let probe = PixelProbe {
             pixel: [self.pixel.0, self.pixel.1],
             kind,
             level: decoded.map_or(0, |decoded| decoded.level),
             fading: decoded.is_some_and(|decoded| decoded.fading),
-            casts_shadows: decoded.is_some_and(|decoded| decoded.casts),
+            passes: membership,
             object: with_object.then_some(object),
             detail: with_detail.then_some(detail),
             normal: (kind.is_some() && kind != Some(DrawnKind::Sky))
@@ -202,7 +202,7 @@ struct PixelProbe {
     kind: Option<DrawnKind>,
     level: u32,
     fading: bool,
-    casts_shadows: bool,
+    passes: Option<Value>,
     object: Option<u32>,
     detail: Option<u32>,
     normal: Option<[f32; 3]>,
@@ -337,17 +337,17 @@ impl Operation for ProbedPixel {
     type Params = (
         Res<'static, Probe>,
         Joined<'static, DebugModes>,
-        Option<Res<'static, Instances>>,
+        (Option<Res<'static, DrawnTable>>, Option<Res<'static, ScenePasses>>),
     );
     type Request = ProbedRequest;
 
     fn run(
-        (probe, modes, instances): SystemParamItem<'_, '_, Self::Params>,
+        (probe, modes, (table, passes)): SystemParamItem<'_, '_, Self::Params>,
         _: ProbedRequest,
     ) -> Result<Value, Error> {
         let result = probe
             .read()
-            .map(|bytes| probe.result(bytes, &modes, instances.as_deref()));
+            .map(|bytes| probe.result(bytes, &modes, (table.as_deref(), passes.as_deref())));
         Ok(json!({ "probing": probe.probing(), "probe": result }))
     }
 }

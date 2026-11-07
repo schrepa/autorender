@@ -16,7 +16,7 @@ use crate::bindings::Table;
 use crate::gpu_data::{level_copy, mip_chain_bytes, mip_levels};
 use crate::mipmaps::MipGenerator;
 use crate::pipeline_layouts::PipelineLayout;
-use crate::surface::{MaterialLayout, RECORD};
+use crate::surface::{MaterialLayout, MaterialVariant, RECORD};
 
 pub const MATERIAL_ANISOTROPY: u16 = 16;
 
@@ -48,6 +48,7 @@ pub(crate) struct GpuMaterial {
     group: wgpu::BindGroup,
     _uniform: wgpu::Buffer,
     look: MaterialLook,
+    variant: MaterialVariant,
     revision: u64,
     textures: Vec<(TextureHandle, u64)>,
 }
@@ -58,6 +59,7 @@ struct Defaults {
     flat_normal: wgpu::TextureView,
     _uniform: wgpu::Buffer,
     group: wgpu::BindGroup,
+    variant: MaterialVariant,
 }
 
 pub struct MaterialStore {
@@ -101,6 +103,7 @@ impl MaterialStore {
             (&white, &flat_normal),
             &samplers[&Sampler::CLAMP],
         );
+        let variant = layout.variant(None, &layout.plain_record());
         Self {
             layout,
             table,
@@ -117,6 +120,7 @@ impl MaterialStore {
                 flat_normal,
                 _uniform: uniform,
                 group,
+                variant,
             },
             mips: MipGenerator::new(device),
             refused: Vec::new(),
@@ -137,6 +141,7 @@ impl MaterialStore {
         );
         self.defaults.group = group;
         self.defaults._uniform = uniform;
+        self.defaults.variant = layout.variant(None, &layout.plain_record());
         self.layout = layout;
         self.table = table;
         self.bake = bake;
@@ -275,6 +280,7 @@ impl MaterialStore {
     ) -> GpuMaterial {
         let (words, problems) = self.layout.record(handle, material);
         self.refused.extend(problems);
+        let variant = self.layout.variant(Some(material), &words);
         for (_, map) in material.maps() {
             sampler(device, &mut self.samplers, map.sampler);
         }
@@ -306,6 +312,7 @@ impl MaterialStore {
             ),
             _uniform: uniform,
             look: MaterialLook::of(material),
+            variant,
             revision,
             textures: used,
         }
@@ -332,6 +339,13 @@ impl MaterialStore {
                 (&material.group, material.look)
             }
             None => (&self.defaults.group, MaterialLook::default()),
+        }
+    }
+
+    pub(crate) fn variant(&self, material: Option<MaterialHandle>) -> Option<MaterialVariant> {
+        match material {
+            Some(handle) => self.materials.get(&handle).map(|material| material.variant),
+            None => Some(self.defaults.variant),
         }
     }
 
@@ -522,14 +536,25 @@ pub fn write_level(
 
 fn create_target(device: &wgpu::Device, source: &Texture, revision: u64) -> GpuTexture {
     let (format, _) = gpu_format(source.format(), source.color_space());
-    let texture = crate::targets::texture_2d(
+    let texture = crate::memory::texture(
         device,
-        "engine/target-texture",
-        (source.width(), source.height()),
-        1,
-        1,
-        format,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        &wgpu::TextureDescriptor {
+            label: Some("engine/target-texture"),
+            size: wgpu::Extent3d {
+                width: source.width(),
+                height: source.height(),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[format.remove_srgb_suffix()],
+        },
     );
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     GpuTexture {

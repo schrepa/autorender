@@ -31,6 +31,7 @@ pub(crate) struct Built {
     pub(crate) placed: Placed,
     pub(crate) resolve: Option<(crate::PassNames, &'static str)>,
     pub(crate) material: crate::surface::MaterialLayout,
+    pub(crate) applied: Vec<crate::shared::AppliedModule>,
 }
 
 #[derive(Default)]
@@ -302,8 +303,57 @@ fn material_layout(
     layout
 }
 
+fn applied_modules(
+    registry: &Registry,
+    linker: &mut Linker,
+    roots: &mut Vec<(String, String)>,
+    problems: &mut Vec<Error>,
+) -> Vec<crate::shared::AppliedModule> {
+    let mut applied = Vec::new();
+    for (brick, record) in registry.iter() {
+        for entry in record.render_entries::<crate::registration::Applied>() {
+            linker.add_source(entry.module.source());
+            let Some(module) = module_path(&entry.module) else {
+                continue;
+            };
+            let Some(text) = linker.text(&module) else {
+                continue;
+            };
+            match crate::shared::stage_of(entry.pass.pass.at, &module, text) {
+                Ok(stage) => {
+                    roots.push((module.clone(), "apply".to_owned()));
+                    applied.push(crate::shared::AppliedModule {
+                        pass: entry.pass.name,
+                        views: entry.pass.pass.views,
+                        gate: registry.gate(brick, entry.scope),
+                        module,
+                        stage,
+                    });
+                }
+                Err(error) => problems.push(error),
+            }
+        }
+    }
+    if applied.len() > crate::shared::MOST_APPLIED {
+        problems.push(
+            Error::new(ErrorCode::OutOfRange, "$.applied")
+                .range(0.0, crate::shared::MOST_APPLIED as f64)
+                .got(applied.len()),
+        );
+        applied.truncate(crate::shared::MOST_APPLIED);
+    }
+    applied
+}
+
 fn outputs(registry: &Registry, roots: &mut Vec<(String, String)>) -> Vec<OutputDecl> {
-    let mut found = Vec::new();
+    let cover = engine_core::TargetName::TRANSPARENCY.name();
+    roots.push((crate::shared::TRANSPARENCY_MODULE.to_owned(), cover.to_owned()));
+    let mut found = vec![OutputDecl {
+        name: cover,
+        format: crate::shared::COVER_FORMAT,
+        layers: vec![engine_core::AttachPoint::Transparent],
+        module: Some(crate::shared::TRANSPARENCY_MODULE.to_owned()),
+    }];
     for (_, record) in registry.iter() {
         for target in record.render_entries::<crate::TargetDecl>() {
             let module = target.module.as_ref().and_then(module_path);
@@ -452,7 +502,10 @@ fn names_twice(registry: &Registry, world: &World, problems: &mut Vec<Error>) {
     for (_, record) in registry.iter() {
         for target in record.render_entries::<crate::TargetDecl>() {
             let name = target.name.name();
-            if crate::install::ViewTarget::of(target.name).is_some() || seen.contains(&name) {
+            if crate::install::ViewTarget::of(target.name).is_some()
+                || target.name == engine_core::TargetName::TRANSPARENCY
+                || seen.contains(&name)
+            {
                 problems.push(
                     Error::new(ErrorCode::NameTwice, format!("$.targets.{name}"))
                         .got(record.package),
@@ -538,6 +591,12 @@ fn install_with(
         CORE_PACKAGE,
         crate::shared::targets_source(&outputs),
     );
+    let applied = applied_modules(registry, &mut linker, &mut roots, &mut problems);
+    linker.add_generated(
+        crate::shared::APPLIED_MODULE.to_owned(),
+        CORE_PACKAGE,
+        crate::shared::applied_source(&applied),
+    );
     linker.add_generated(
         crate::shared::COMPOSITE_MODULE.to_owned(),
         CORE_PACKAGE,
@@ -570,6 +629,12 @@ fn install_with(
         },
         Listed {
             record: core_part::<crate::shared::Composite>(),
+            package: CORE_PACKAGE,
+            brick: None,
+            fills: Vec::new(),
+        },
+        Listed {
+            record: core_part::<crate::drawn::DrawnGpu>(),
             package: CORE_PACKAGE,
             brick: None,
             fills: Vec::new(),
@@ -721,6 +786,7 @@ fn install_with(
             placed,
             resolve,
             material,
+            applied,
         })
     } else {
         Err(problems)
@@ -798,6 +864,8 @@ impl Renderer {
         run.take_states(world.get_resource::<BrickStates>());
         run.piece_layout = installed.pieces;
         run.surface = self.core.display.format();
+        run.canvas_format = run.surface;
+        run.applied = installed.applied;
         run.resolve = installed.resolve.map(|(names, _)| {
             let stage: &'static str = Box::leak(format!("stage_{}", names.pass).into_boxed_str());
             (names, stage)

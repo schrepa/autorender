@@ -1,11 +1,10 @@
 use bevy_ecs::prelude::*;
-use engine_core::{AssetResidency, Cut, Detail, ImpostorRecords, settings, stats};
+use engine_core::{AssetResidency, Cut, Detail, DrawnTable, ImpostorRecords, settings, stats};
 
 use crate::assets::MeshAssets;
-use crate::batches::BatchPlan;
+use crate::MESH;
 use crate::order::MeshPlan;
 use crate::presentation::PresentationTotals;
-use crate::retained::RetainedRender;
 
 settings! {
     #[section("culling")]
@@ -120,7 +119,7 @@ fn counted(value: usize) -> u32 {
 }
 
 pub(crate) fn mesh_stats(
-    (retained, batches, plan): (Res<RetainedRender>, Res<BatchPlan>, Res<MeshPlan>),
+    (table, plan): (Res<DrawnTable>, Res<MeshPlan>),
     (culling, occlusion, subpixel, detail): (
         Res<Culling>,
         Res<OcclusionCulling>,
@@ -135,12 +134,13 @@ pub(crate) fn mesh_stats(
 ) {
     let last = totals.last();
     let budget = culling.budget();
-    let instance_count = batches.ordered.len();
+    let census = table.census(MESH);
+    let instance_count = census.drawn as usize;
     let gpu_visible = last.map(|totals| totals.visible);
     let instances = gpu_visible.map_or(instance_count.min(budget) as u32, |visible| {
         visible.min(counted(budget))
     });
-    let listed = counted(retained.listed_instances());
+    let listed = census.drawn;
     let visible = gpu_visible.unwrap_or(listed);
     let levels = last.filter(|_| detail.enabled).map(|totals| totals.levels);
     let records = impostors.single().ok();
@@ -148,12 +148,12 @@ pub(crate) fn mesh_stats(
         Cut::of(records.asked, records.asked.saturating_sub(records.refused))
     });
     let next = MeshStats {
-        invalid_transforms: counted(retained.invalid_transforms()),
-        render_candidates: counted(retained.render_candidates()),
+        invalid_transforms: census.unplaced,
+        render_candidates: census.drawn + census.unplaced + census.waiting,
         visible_instances: visible,
         culled_instances: listed.saturating_sub(visible),
         dropped_instances: visible.saturating_sub(instances),
-        missing_assets: counted(retained.missing_assets()),
+        missing_assets: census.waiting + census.refused,
         culling_enabled: culling.frustum,
         instances,
         gpu_visible,

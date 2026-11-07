@@ -110,7 +110,7 @@ pub fn generated(world: &World) -> Result<Generated, String> {
         "MeshLevels": schemars::schema_for!(engine_core::MeshLevels),
         "Hierarchy": schemars::schema_for!(views::HierarchyView),
         "Camera": schemars::schema_for!(views::CameraView),
-        "Mesh3d": schemars::schema_for!(views::Mesh3dView),
+        "DrawnMesh": schemars::schema_for!(views::DrawnMeshView),
         "Input": schemars::schema_for!(views::InputView),
         "Jobs": schemars::schema_for!(views::JobsView),
         "FrameStats": frame_stats(registry, &mut problems),
@@ -651,8 +651,8 @@ const AUTHORED: &[(&str, &str)] = &[
     ("id", "header"),
     ("name", "header"),
     ("tags", "header"),
-    ("mesh", "Mesh3d.mesh"),
-    ("material", "Mesh3d.material"),
+    ("mesh", "DrawnMesh.mesh"),
+    ("material", "DrawnMesh.material"),
     ("parent", "Hierarchy.authored_parent"),
     ("prefab", "Hierarchy.prefab_id"),
     ("transform", "Transform"),
@@ -669,9 +669,9 @@ const DOCUMENT: &[(&str, &str)] = &[
     ("looks", "structure"),
     ("environment", "Environment"),
     ("camera", "Camera"),
-    ("meshes", "Mesh3d.mesh"),
-    ("materials", "Mesh3d.material"),
-    ("textures", "Mesh3d.textures"),
+    ("meshes", "DrawnMesh.mesh"),
+    ("materials", "DrawnMesh.material"),
+    ("textures", "DrawnMesh.textures"),
 ];
 
 const RENAMED: &[(&str, &str)] = &[

@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     Cursor, Cut, DeviceLimits, Events, FrameBudget, FrameTime, GlobalTransforms, Mobility,
-    PassName, PrimaryView, Readable, Readback, SceneView, SceneViews, Spawner, StoreId,
+    PassName, PrimaryView, Readable, Readback, OwnedView, OwnedViews, Spawner, StoreId,
 };
 use engine_math as math;
 use engine_places_rendering::probes::{ProbeCaptures, ProbeFace};
@@ -487,13 +487,13 @@ pub(crate) fn plan_captures(
 #[derive(Component)]
 pub(crate) struct CaptureViews;
 
-fn capture_views(state: &ProbeState) -> SceneViews {
-    SceneViews {
+fn capture_views(state: &ProbeState) -> OwnedViews {
+    OwnedViews {
         pass: ProbePass::NAME,
         views: state
             .faces
             .iter()
-            .map(|face| SceneView {
+            .map(|face| OwnedView {
                 view_projection: face.view.to_cols_array_2d(),
                 planes: None,
                 eye: face.center.to_array(),
@@ -510,7 +510,7 @@ pub(crate) fn publish_captures(
     mut words: ResMut<ProbeWords>,
     mut captures: ResMut<ProbeCaptures>,
     mut stats: ResMut<ReflectionProbeStats>,
-    mut published: Query<&mut SceneViews, With<CaptureViews>>,
+    mut published: Query<&mut OwnedViews, With<CaptureViews>>,
     mut spawner: Spawner<ReflectionProbesBrick>,
 ) {
     let state = &mut *state;

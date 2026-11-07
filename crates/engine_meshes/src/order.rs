@@ -1,20 +1,82 @@
+use std::ops::Range;
+
 use bevy_ecs::prelude::*;
-use engine_core::{Detail, DeviceLimits, PrimaryView};
-use engine_places::meshes::Instances;
+use engine_core::{
+    Detail, DeviceLimits, DrawnTable, MaterialHandle, MeshHandle, PlanState, PrimaryView,
+};
 use engine_render::Resolve;
 use engine_render::slots::DRAWN_SLOTS;
 
-use crate::batches::BatchPlan;
+use crate::MESH;
 use crate::presentation::{frustum_uniform, rasterized};
-use crate::retained::RetainedRender;
 use crate::settings::{Culling, OcclusionCulling, SubpixelCulling};
 use crate::uploads::PoseData;
+
+const INITIAL_CAPACITY: usize = 1_024;
+
+pub(crate) fn capacity_for(needed: usize, limit: usize) -> usize {
+    needed.max(INITIAL_CAPACITY).next_power_of_two().min(limit)
+}
+
+pub(crate) fn instance_limit(limits: &DeviceLimits) -> usize {
+    let record = size_of::<PoseData>().max(6 * size_of::<u32>()) as u64;
+    if limits.storage_room == 0 {
+        return DRAWN_SLOTS;
+    }
+    (limits.storage_room / record).min(DRAWN_SLOTS as u64) as usize
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct BatchLook {
     pub masked: bool,
     pub double_sided: bool,
     pub extended: bool,
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct DrawBatch {
+    pub mesh: MeshHandle,
+    pub material: Option<MaterialHandle>,
+    pub instances: Range<u32>,
+}
+
+#[derive(Default)]
+pub(crate) struct MeshBatches {
+    pub ordered: Vec<u32>,
+    pub batches: Vec<DrawBatch>,
+    generation: Option<u64>,
+}
+
+impl MeshBatches {
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.unwrap_or(0)
+    }
+
+    pub(crate) fn settle(&mut self, table: &DrawnTable) -> bool {
+        let PlanState::Built { generation } = table.plan() else {
+            return false;
+        };
+        if self.generation == Some(generation) {
+            return false;
+        }
+        self.generation = Some(generation);
+        self.ordered.clear();
+        self.batches.clear();
+        for batch in table.batches().iter().filter(|batch| batch.kind == MESH) {
+            let Some(mesh) = batch.geometry else {
+                continue;
+            };
+            let start = self.ordered.len() as u32;
+            let range = batch.instances.start as usize..batch.instances.end as usize;
+            self.ordered.extend_from_slice(&table.ordered()[range]);
+            self.batches.push(DrawBatch {
+                mesh,
+                material: batch.material,
+                instances: start..self.ordered.len() as u32,
+            });
+        }
+        true
+    }
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
@@ -28,49 +90,18 @@ pub(crate) struct MeshPlan {
     pub lod_levels: bool,
 }
 
-fn instance_limit(limits: &DeviceLimits) -> Option<usize> {
-    let record = size_of::<PoseData>().max(6 * size_of::<u32>()) as u64;
-    (limits.storage_room != 0)
-        .then(|| (limits.storage_room / record).min(DRAWN_SLOTS as u64) as usize)
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the plan joins the retained instances and the culling settings"
-)]
 pub(crate) fn plan_draws(
-    retained: Res<RetainedRender>,
-    (view, detail, limits, resolve): (Res<PrimaryView>, Res<Detail>, Res<DeviceLimits>, Res<Resolve>),
-    culling: Res<Culling>,
-    occlusion: Res<OcclusionCulling>,
-    subpixel: Res<SubpixelCulling>,
-    mut plan: ResMut<BatchPlan>,
+    table: Res<DrawnTable>,
+    (view, detail, resolve): (Res<PrimaryView>, Res<Detail>, Res<Resolve>),
+    (culling, occlusion, subpixel): (Res<Culling>, Res<OcclusionCulling>, Res<SubpixelCulling>),
     mut decided: ResMut<MeshPlan>,
-    mut instances: ResMut<Instances>,
 ) {
-    let plan = &mut *plan;
-    plan.instance_limit = instance_limit(&limits);
-    {
-        let _profile = engine_core::profile::span("render", "batch_plan");
-        plan.refused = plan.prepare_frame(&retained, view.view_projection()).err();
-    }
-    if plan.refused.is_none() {
-        plan.grow_capacity(retained.instances().len());
-    }
-    let (candidates, generation) = (
-        plan.ordered.len().min(u32::MAX as usize) as u32,
-        plan.generation(),
-    );
-    if (instances.candidates, instances.generation) != (candidates, generation) {
-        instances.candidates = candidates;
-        instances.generation = generation;
-    }
     let (planes, absolute) = frustum_uniform(rasterized(&view, resolve.offset, view.temporal()));
     let bounded = absolute.iter().flatten().all(|value| {
         value.is_finite() && *value <= engine_core::presentation_bounds::MAX_COEFFICIENT
     }) && planes.iter().flatten().all(|value| value.is_finite());
     let frustum = culling.frustum && bounded;
-    let candidates = plan.ordered.len();
+    let candidates = table.census(MESH).drawn as usize;
     let unbudgeted = frustum && culling.budget() >= candidates;
     decided.set_if_neq(MeshPlan {
         culling: culling.frustum,

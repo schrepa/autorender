@@ -1,6 +1,6 @@
 use engine_core::{
-    AssetResidency, AxisInput, CursorMode, CursorRequests, IMPOSTOR_MIN_TRIANGLES, ImpostorBooks,
-    MenuInput, PointerInput, ResidentMesh,
+    AssetResidency, AxisInput, CursorMode, CursorRequests, Drawn, IMPOSTOR_MIN_TRIANGLES,
+    ImpostorBooks, MaterialHandle, MenuInput, MeshHandle, PointerInput, ResidentMesh,
 };
 
 use super::*;
@@ -27,15 +27,20 @@ impl DevTools {
         .expect("descriptor_bounded");
         self.insert(Inspector {
             brick: None,
-            descriptor: InspectorDescriptor::generated(schemas, "Mesh3d"),
+            descriptor: InspectorDescriptor::generated(schemas, "DrawnMesh"),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| {
-                entity.is_some_and(|entity| world.get::<Mesh3d>(entity).is_some())
+                entity.is_some_and(|entity| {
+                    world
+                        .get::<Drawn>(entity)
+                        .is_some_and(|drawn| drawn.geometry.is_some())
+                })
             }),
             read: Box::new(|world, entity, context| {
-                let mesh3d = world.get::<Mesh3d>(entity?)?;
+                let drawn = world.get::<Drawn>(entity?)?;
+                let shown = (drawn.geometry?, drawn.material);
                 let assets = world.get_resource::<AssetLibrary>()?;
-                Some(json!(mesh_view(world, assets, mesh3d, context)))
+                Some(json!(mesh_view(world, assets, shown, context)))
             }),
         })
         .expect("descriptor_bounded");
@@ -123,24 +128,29 @@ fn current<R: Resource + Copy + Default>(world: &World) -> R {
     world.get_resource::<R>().copied().unwrap_or_default()
 }
 
-fn impostor_resident(world: &World, resident: &ResidentMesh, mesh3d: &Mesh3d) -> Option<bool> {
+fn impostor_resident(
+    world: &World,
+    resident: &ResidentMesh,
+    (mesh, material): (MeshHandle, Option<MaterialHandle>),
+) -> Option<bool> {
     if (resident.index_count() as usize) / 3 < IMPOSTOR_MIN_TRIANGLES {
         return None;
     }
     let books = world.get_resource::<ImpostorBooks>()?;
-    Some(books.contains(mesh3d.mesh, Some(mesh3d.material)))
+    Some(books.contains(mesh, material))
 }
 
 pub(super) fn mesh_view(
     world: &World,
     assets: &AssetLibrary,
-    mesh3d: &Mesh3d,
+    shown: (MeshHandle, Option<MaterialHandle>),
     context: &Context<'_>,
-) -> Mesh3dView {
+) -> DrawnMeshView {
     let Context { scene, renderer } = *context;
     let residency = world.get_resource::<AssetResidency>();
-    let mesh = assets.mesh(mesh3d.mesh).map(|mesh| {
-        let origin = scene.and_then(|scene| scene.mesh_origin(mesh3d.mesh));
+    let (handle, held) = shown;
+    let mesh = assets.mesh(handle).map(|mesh| {
+        let origin = scene.and_then(|scene| scene.mesh_origin(handle));
         let bounds = mesh.bounds();
         MeshView {
             id: origin.map(|(id, _)| id.to_owned()),
@@ -154,20 +164,20 @@ pub(super) fn mesh_view(
             colors: mesh.colors().is_some(),
             uv1: mesh.uv1().is_some(),
             rendered: renderer.and_then(|_| {
-                let resident = residency?.mesh(mesh3d.mesh)?;
+                let resident = residency?.mesh(handle)?;
                 Some(MeshRenderView {
                     levels: resident
                         .lods()
                         .iter()
                         .map(|&(_, indices, error)| LodLevelView { indices, error })
                         .collect(),
-                    impostor: impostor_resident(world, resident, mesh3d)
+                    impostor: impostor_resident(world, resident, shown)
                         .filter(|_| mesh.takes_impostor()),
                 })
             }),
         }
     });
-    let material = assets.material(mesh3d.material);
+    let material = held.and_then(|material| assets.material(material));
     let textures = material
         .map(|material| {
             material
@@ -203,7 +213,7 @@ pub(super) fn mesh_view(
             .and_then(|scene| {
                 scene
                     .materials()
-                    .find(|&(_, handle)| handle == mesh3d.material)
+                    .find(|&(_, material)| Some(material) == held)
             })
             .map(|(id, _)| id.to_owned());
         let texture = |handle| {
@@ -214,7 +224,7 @@ pub(super) fn mesh_view(
         };
         SceneMaterial::from_runtime(id.unwrap_or_default(), material, texture)
     });
-    Mesh3dView {
+    DrawnMeshView {
         mesh,
         material,
         textures,

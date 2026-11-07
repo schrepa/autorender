@@ -3,13 +3,14 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod flat;
 mod smokes;
 
+use std::collections::BTreeSet;
 use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
     Asset, AssetResidency, AssetUses, Attributes, Brick, Bricks, ColorPass, ComponentKind,
-    DrawKind, DrawnPoses, Error, GlobalTransforms, KindDecl, PrimaryView, Runs, SceneComponents,
-    Schedule, Smoke, Source, Spawner, TextureHandle, gpu_struct,
+    DrawKind, Drawn, DrawnPoses, DrawnTable, Error, GlobalTransforms, KindDecl, PrimaryView, Runs,
+    SceneComponents, Schedule, Smoke, Source, Spawner, TextureHandle, gpu_struct,
 };
 use engine_render::{
     Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare, RenderBricks,
@@ -40,6 +41,7 @@ gpu_struct! {
         pub place: [f32; 4],
         pub rect: [f32; 4],
         pub tint: [f32; 4],
+        pub drawn: [u32; 4],
     }
 }
 
@@ -69,11 +71,11 @@ impl Brick for SpritesBrick {
                     .example(sprite_example),
                 None,
             )
-            .systems(Schedule::ViewSync, publish_sheets)
+            .systems(Schedule::ViewSync, (keep_rows, publish_sheets))
             .generated(GENERATED)
             .draw_kind(KindDecl {
                 kind: SPRITES,
-                vertex: "vs_sprite",
+                vertex: shaders::sprites::draw::VS_SPRITE.name(),
                 needs: Attributes::NONE,
             })
             .draws::<SpritesGpu>(SPRITES, SpritesGpu::draw);
@@ -82,6 +84,27 @@ impl Brick for SpritesBrick {
 
 #[derive(Component)]
 struct Sheets;
+
+#[derive(Component)]
+struct SpriteRow;
+
+fn keep_rows(
+    sprites: Query<Entity, With<Sprite>>,
+    rows: Query<(Entity, &Drawn), With<SpriteRow>>,
+    mut spawner: Spawner<SpritesBrick>,
+) {
+    let mut held = BTreeSet::new();
+    for (row, drawn) in &rows {
+        if !sprites.contains(drawn.node) || !held.insert(drawn.node) {
+            spawner.despawn(row);
+        }
+    }
+    for sprite in &sprites {
+        if !held.contains(&sprite) {
+            spawner.spawn((SpriteRow, Drawn::procedural(SPRITES, sprite)));
+        }
+    }
+}
 
 fn publish_sheets(
     sprites: Query<(Entity, &Sprite)>,
@@ -120,7 +143,7 @@ struct SpritesGpu {
 
 impl GpuPart for SpritesGpu {
     type Reads = (
-        Query<'static, 'static, (Entity, &'static Sprite)>,
+        (Query<'static, 'static, &'static Sprite>, Res<'static, DrawnTable>),
         (Res<'static, GlobalTransforms>, Res<'static, DrawnPoses>),
         Res<'static, PrimaryView>,
     );
@@ -160,12 +183,12 @@ impl GpuPart for SpritesGpu {
 
     fn prepare(
         &mut self,
-        (sprites, (globals, poses), view): SystemParamItem<'_, '_, Self::Reads>,
+        ((sprites, table), (globals, poses), view): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.flat.prepare(&view, cx);
         stage(
-            &sprites,
+            (&sprites, &table),
             (&globals, &poses),
             &mut self.staged,
             &mut self.runs,
@@ -202,18 +225,18 @@ impl SpritesGpu {
 }
 
 fn stage(
-    sprites: &Query<(Entity, &'static Sprite)>,
+    (sprites, table): (&Query<&'static Sprite>, &DrawnTable),
     (globals, poses): (&GlobalTransforms, &DrawnPoses),
     staged: &mut Vec<SpriteInstance>,
     runs: &mut Vec<(TextureHandle, Range<u32>)>,
 ) {
     staged.clear();
     runs.clear();
-    let mut sorted: Vec<(TextureHandle, SpriteInstance)> = sprites
-        .iter()
-        .filter(|&(entity, _)| globals.drawn(entity))
-        .filter_map(|(entity, sprite)| {
-            let pose = poses.drawn_pose(globals, entity)?;
+    let mut sorted: Vec<(TextureHandle, SpriteInstance)> = table
+        .rows(SPRITES)
+        .filter_map(|(slot, _, drawn)| {
+            let sprite = sprites.get(drawn.node).ok()?;
+            let pose = poses.drawn_pose(globals, drawn.node)?;
             let place = [
                 pose.w_axis.x,
                 pose.w_axis.y,
@@ -226,6 +249,7 @@ fn stage(
                     place,
                     rect: sprite.rect,
                     tint: sprite.tint,
+                    drawn: [slot, 0, 0, 0],
                 },
             ))
         })

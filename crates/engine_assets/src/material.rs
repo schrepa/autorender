@@ -231,40 +231,52 @@ impl Default for RenderState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SurfaceSlot {
+    Position,
     BaseColor,
     Opacity,
+    Cutoff,
     Normal,
     Roughness,
     Metalness,
     Emissive,
     Occlusion,
     Transmission,
+    Kind,
+    LightInputs,
     Output,
 }
 
 impl SurfaceSlot {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 13] = [
+        Self::Position,
         Self::BaseColor,
         Self::Opacity,
+        Self::Cutoff,
         Self::Normal,
         Self::Roughness,
         Self::Metalness,
         Self::Emissive,
         Self::Occlusion,
         Self::Transmission,
+        Self::Kind,
+        Self::LightInputs,
         Self::Output,
     ];
 
     pub const fn name(self) -> &'static str {
         match self {
+            Self::Position => "position",
             Self::BaseColor => "base_color",
             Self::Opacity => "opacity",
+            Self::Cutoff => "cutoff",
             Self::Normal => "normal",
             Self::Roughness => "roughness",
             Self::Metalness => "metalness",
             Self::Emissive => "emissive",
             Self::Occlusion => "occlusion",
             Self::Transmission => "transmission",
+            Self::Kind => "kind",
+            Self::LightInputs => "light_inputs",
             Self::Output => "output",
         }
     }

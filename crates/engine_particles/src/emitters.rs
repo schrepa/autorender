@@ -1,14 +1,22 @@
+use std::collections::BTreeSet;
+
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    Allowed, Clock, Cut, DrawnPoses, Expected, FrameTime, GlobalTransforms, InvalidSetting,
-    Nearest, Rule, PrimaryView, fields, gpu_struct, settings, stats,
+    Allowed, Clock, Cut, Drawn, DrawnPoses, DrawnTable, Expected, FrameTime, GlobalTransforms,
+    InvalidSetting, Nearest, Rule, PrimaryView, Spawner, fields, gpu_struct, settings, stats,
 };
 use engine_places_rendering::particles::{
     MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleBursts, ParticleEmitter,
     ParticleLook, ParticleShape, QueuedBurst,
 };
 use glam::{Mat4, Quat, Vec3};
+
+use crate::{PARTICLES, ParticlesBrick};
+
+engine_core::gpu_consts! {
+    pub(crate) const NO_SLOT: u32 = u32::MAX;
+}
 
 settings! {
     #[section("particles")]
@@ -58,7 +66,7 @@ gpu_struct! {
         count: u32,
         formula: u32,
         now: f32,
-        pad: u32,
+        slot: u32,
         params: [f32; 8],
     }
 }
@@ -75,6 +83,7 @@ struct RenderEmitter {
     stop: f32,
     now: f32,
     count: u32,
+    slot: u32,
 }
 
 impl Emitter {
@@ -112,7 +121,7 @@ impl Emitter {
             count: emitter.count,
             formula: look.formula,
             now: emitter.now,
-            pad: 0,
+            slot: emitter.slot,
             params: look.params,
         }
     }
@@ -244,7 +253,7 @@ impl Gather {
 
     fn steady(
         &mut self,
-        (entity, emitter): (Entity, &ParticleEmitter),
+        (entity, slot, emitter): (Entity, u32, &ParticleEmitter),
         model: Mat4,
         eye: Vec3,
         now: f32,
@@ -272,6 +281,7 @@ impl Gather {
                 stop,
                 now,
                 count: emitter.capacity(),
+                slot,
             },
         })
     }
@@ -304,6 +314,7 @@ impl Gather {
                     stop: f32::MAX,
                     now: time,
                     count,
+                    slot: NO_SLOT,
                 },
             });
         }
@@ -313,7 +324,7 @@ impl Gather {
     fn fill(
         &mut self,
         settings: &ParticleSettings,
-        emitters: &Query<'_, '_, (Entity, &'static ParticleEmitter)>,
+        (emitters, table): (&Query<'_, '_, &'static ParticleEmitter>, &DrawnTable),
         bursts: &ParticleBursts,
         (globals, poses): (&GlobalTransforms, &DrawnPoses),
         eye: Vec3,
@@ -325,7 +336,11 @@ impl Gather {
         self.emissions
             .retain(|entity, _| emitters.contains(*entity) && globals.drawn(*entity));
         let mut wanted = 0_u64;
-        for (entity, emitter) in emitters.iter() {
+        for (slot, _, drawn) in table.rows(PARTICLES) {
+            let entity = drawn.node;
+            let Ok(emitter) = emitters.get(entity) else {
+                continue;
+            };
             let Some(word) = globals.word(entity).filter(|word| word.drawn()) else {
                 continue;
             };
@@ -336,7 +351,7 @@ impl Gather {
                 Clock::Game => game,
                 Clock::Real => real,
             };
-            if let Some(candidate) = self.steady((entity, emitter), model, eye, now) {
+            if let Some(candidate) = self.steady((entity, slot, emitter), model, eye, now) {
                 wanted += u64::from(candidate.emitter.count);
                 self.candidates.push(candidate);
             }
@@ -407,9 +422,30 @@ impl Gather {
     }
 }
 
+#[derive(Component)]
+pub(crate) struct EmitterRow;
+
+pub(crate) fn keep_rows(
+    emitters: Query<Entity, With<ParticleEmitter>>,
+    rows: Query<(Entity, &Drawn), With<EmitterRow>>,
+    mut spawner: Spawner<ParticlesBrick>,
+) {
+    let mut held = BTreeSet::new();
+    for (row, drawn) in &rows {
+        if !emitters.contains(drawn.node) || !held.insert(drawn.node) {
+            spawner.despawn(row);
+        }
+    }
+    for emitter in &emitters {
+        if !held.contains(&emitter) {
+            spawner.spawn((EmitterRow, Drawn::procedural(PARTICLES, emitter)));
+        }
+    }
+}
+
 pub(crate) fn gather_emitters(
     settings: Res<ParticleSettings>,
-    emitters: Query<(Entity, &'static ParticleEmitter)>,
+    (emitters, table): (Query<&'static ParticleEmitter>, Res<DrawnTable>),
     (globals, poses, view, time, bursts): (
         Res<GlobalTransforms>,
         Res<DrawnPoses>,
@@ -423,7 +459,7 @@ pub(crate) fn gather_emitters(
     let gather = &mut *gather;
     gather.fill(
         &settings,
-        &emitters,
+        (&emitters, &table),
         &bursts,
         (&globals, &poses),
         view.detail_eye(),

@@ -329,56 +329,47 @@ impl Renderer {
         run.set_switches(super::install::switches_of(&run.machine, world));
         warm_on_flip(run, &mut self.installing, &device, world);
         run.drop_unfilled();
-        let viewed = match view {
-            Some(view) => Viewed {
-                view_projection: view.view_projection(),
-                eye: view.state().eye(),
-                detail: view.detail_eye(),
-                seconds: world
-                    .get_resource::<FrameTime>()
-                    .map_or(0.0, |time| time.elapsed as f32),
-            },
-            None => Viewed {
-                view_projection: Mat4::IDENTITY,
-                eye: glam::Vec3::ZERO,
-                detail: glam::Vec3::ZERO,
-                seconds: 0.0,
-            },
-        };
-        let previous_seconds = self
-            .seconds
-            .replace(viewed.seconds)
-            .unwrap_or(viewed.seconds);
+        let seconds = world
+            .get_resource::<FrameTime>()
+            .map_or(0.0, |time| time.elapsed as f32);
+        let previous_seconds = self.seconds.replace(seconds).unwrap_or(seconds);
         let resolve = world
             .get_resource::<crate::Resolve>()
             .copied()
             .unwrap_or_default();
-        let temporal = temporal_frame.then(|| {
-            let previous = view
-                .and_then(PrimaryView::facts)
-                .map_or(viewed.view_projection, |facts| facts.previous_view_projection);
-            (resolve, previous)
-        });
         let wind = world
             .get_resource::<engine_core::ViewWind>()
             .copied()
             .unwrap_or_default();
-        run.cameras[0] = camera_of(&viewed, temporal, region, (previous_seconds, wind));
-        run.post = crate::shared::post_uniform(
-            viewed.view_projection,
-            viewed.eye,
-            viewed.detail,
-            region.render.pixels(),
-            region.display.pixels(),
-        );
+        let listed = listed_views(world, view, region, run.written());
+        let entities: Vec<bevy_ecs::entity::Entity> = listed.iter().map(|facts| facts.view).collect();
+        run.settle_views(entities[0], &entities);
+        let cameras: Vec<CameraUniform> = listed
+            .iter()
+            .enumerate()
+            .map(|(index, facts)| {
+                let viewed = Viewed {
+                    view_projection: facts.view_projection,
+                    eye: facts.eye,
+                    detail: detail_of(view, index, facts),
+                    seconds,
+                };
+                let temporal =
+                    jittered(facts).then_some((resolve, facts.previous_view_projection));
+                camera_of(&viewed, temporal, view_region(facts), (previous_seconds, wind))
+            })
+            .collect();
         let canvas = surface
             .texture()
             .create_view(&wgpu::TextureViewDescriptor::default());
-        run.size_targets(region.display.pixels(), Some(canvas));
+        run.canvas = Some(canvas.clone());
         run.canvas_texture = Some(surface.texture().clone());
+        run.canvas_format = run.surface;
+        run.camera_slot = 0;
+        run.owned_views = owned_views(world, &run.machine);
         let profile_writes = engine_profile::span("render", "queue_writes");
         let row_writes = engine_profile::timed(engine_profile::row("render.writes"));
-        run.drop_cameras();
+        run.drop_cameras(&cameras);
         run.runs = Bits::of(run.machine.graph.passes());
         for at in run.machine.declared.passes.len()..run.machine.graph.passes() {
             run.runs.insert(at);
@@ -400,7 +391,7 @@ impl Renderer {
             if let Err(error) = held.prepare(world, run) {
                 run.fault(error);
             }
-            run.forget_ran(index as u32);
+            run.forget_global(index as u32);
             run.parts[index] = Some(held);
         }
         if let Some(library) = world.get_resource::<engine_core::AssetLibrary>() {
@@ -429,7 +420,6 @@ impl Renderer {
             return Err(error);
         }
         let mut camera_bytes = run.write_cameras();
-        run.write_post();
         let mut pieces = std::mem::take(&mut run.spare.pieces);
         piece_bytes(world, &run.piece_layout, &mut pieces);
         camera_bytes += run.write_pieces(&mut pieces);
@@ -443,19 +433,19 @@ impl Renderer {
             return Ok(RenderStats::default());
         };
         run.merge = !capturing;
-        let mut outputs = Bits::of(run.machine.graph.resources());
+        let mut asked = Bits::of(run.machine.graph.resources());
         if let Some(canvas) = run.machine.ids.target(Target::Canvas) {
-            outputs.insert(canvas.index());
+            asked.insert(canvas.index());
         }
-        for asked in &run.queued.asked {
-            if let Some(id) = run.machine.ids.buffers.get(asked.buffer as usize) {
-                outputs.insert(id.index());
+        for wanted in &run.queued.asked {
+            if let Some(id) = run.machine.ids.buffers.get(wanted.buffer as usize) {
+                asked.insert(id.index());
             }
         }
-        let plan = self
-            .plans
-            .plan(&run.machine.graph, &run.runs, &outputs, crate::graph::PLANS)?;
-        run.plan = Some(std::sync::Arc::clone(&plan));
+        let base = run.runs.clone();
+        let states = world.get_resource::<engine_registry::BrickStates>();
+        let order = drawn_order(&listed);
+        let last_surface = order.iter().rposition(|&index| listed[index].target.surface());
         let profile_encoding = engine_profile::span("render", "command_encoding");
         let row_encoding = engine_profile::timed(engine_profile::row("render.encoding"));
         let mut encoder = self.frame_encoder(&device, 0);
@@ -468,130 +458,239 @@ impl Renderer {
         let mut timed: Option<&'static str> = None;
         let mut parted: Option<(&'static str, u32)> = None;
         let mut ran: Vec<&'static str> = Vec::new();
-        let mut ran_last: Option<u32> = None;
         let declared = run.machine.declared.passes.len();
-        let opaque = opaque_span(&run.machine.declared.passes, &plan);
-        let mut opaque_open = false;
-        for (at, planned) in plan.passes.iter().enumerate() {
-            if opaque_open && opaque.is_some_and(|(_, last)| at > last) {
-                let Some(run) = self.run.as_mut() else { break };
-                run.leave();
-                mark_span(
-                    &self.core.profiler,
-                    run.recording.encoder(),
-                    OPAQUE_MESHES,
-                    true,
-                );
-                opaque_open = false;
-            }
-            if planned.batch != batch {
-                let Some(run) = self.run.as_mut() else { break };
-                run.leave();
-                let mut ended = run.take_encoder();
-                self.mark(ended.as_mut(), timed.take(), None);
-                if let Some(mut encoder) = ended {
-                    self.close_batch(&mut encoder, batch);
-                    self.core.queue.hand(Handover::from(encoder));
-                }
-                let encoder = self.frame_encoder(&device, planned.batch);
-                let Some(run) = self.run.as_mut() else { break };
-                run.recording = Recording::Encoding(encoder);
-                batch = planned.batch;
-            }
-            let index = planned.pass.index();
+        let mut ready = Bits::of(run.machine.graph.resources());
+        let mut drawn_on: Vec<(engine_core::Target, Option<usize>)> = Vec::new();
+        let mut first = true;
+        for (step, &index) in order.iter().enumerate() {
+            let facts = listed[index];
             let Some(run) = self.run.as_mut() else { break };
-            if index >= declared {
-                if let Some(&(layer, view)) = run.machine.view_copies.get(index - declared) {
-                    run.copy_view(layer, view);
-                }
+            let Some((drawing, texture, format)) =
+                canvas_of(run, &facts, (&canvas, surface.texture()))
+            else {
                 continue;
-            }
-            let pass = &run.machine.declared.passes[index];
-            let (part, work) = (pass.part, pass.work);
-            let elsewhere = pass.scene.is_some_and(|scene| !scene.core);
-            if !run.drawable(part) {
-                continue;
-            }
-            run.part = part;
-            run.pass = index as u32;
-            run.planned_at = at;
-            if let Work::Clear(buffer) = work {
-                run.queued.cleared.push(buffer);
-                run.ran.insert(index);
-                continue;
-            }
-            let continues = ran_last
-                .is_some_and(|last| last != index as u32 && run.same_group(last, index as u32));
-            if !continues {
-                ran.push(run.group_of(index as u32));
-            }
-            ran_last = Some(index as u32);
-            let wanted = run.span_of(index as u32);
-            let keeps = match (parted, wanted) {
-                (Some((open, owner)), Some(name)) => open == name && owner == part,
-                (Some((_, owner)), None) => owner == part && matches!(work, Work::Copy { .. }),
-                (None, _) => false,
             };
-            if run.enter(index as u32) {
-                let span = run
-                    .stage_of(index as u32)
-                    .or_else(|| self.spans.get(index).copied());
-                let mut encoder = run.take_encoder();
-                if !keeps && let Some((open, _)) = parted.take() {
-                    mark_span(&self.core.profiler, encoder.as_mut(), open, true);
+            run.leave();
+            let slot = run.park(facts.view);
+            if let Some(at) = slot {
+                run.swap_view(at);
+            }
+            let earlier = drawn_on
+                .iter()
+                .rev()
+                .find(|(target, _)| *target == facts.target)
+                .map(|&(_, from)| from);
+            let size = facts.size();
+            run.camera_slot = index as u32;
+            run.debug = facts.debug;
+            run.temporal = jittered(&facts);
+            run.region = (facts.render != size).then_some((facts.render.x, facts.render.y));
+            run.canvas_format = format;
+            run.canvas_rect = (!facts.whole(glam::UVec2::new(texture.width(), texture.height())))
+                .then_some(facts.pixels);
+            run.canvas_texture = Some(texture);
+            run.canvas_load = earlier.is_some()
+                || (!facts.target.surface() && facts.clear != engine_core::Clear::All);
+            run.size_targets((size.x, size.y), Some(drawing));
+            run.runs = base.clone();
+            for part in 0..run.parts.len() {
+                if !run.drawable(part as u32) {
+                    continue;
                 }
-                if !(continues && span == timed) {
-                    self.mark(encoder.as_mut(), timed, span);
+                let Some(mut held) = run.parts[part].take() else {
+                    continue;
+                };
+                run.part = part as u32;
+                held.view(&facts, run);
+                run.parts[part] = Some(held);
+            }
+            run.forget_viewed();
+            keep_eligible(run, &facts, (first, index == 0), Some(step) == last_surface);
+            let mut outputs = asked.clone();
+            if order.len() > 1 {
+                for pass in run.runs.iter().filter(|&pass| !run.view_passes.contains(pass)) {
+                    outputs = union(&outputs, &run.machine.graph.writes(pass));
                 }
-                timed = span;
-                if !opaque_open && opaque.is_some_and(|(first, _)| first == at) {
-                    mark_span(&self.core.profiler, encoder.as_mut(), OPAQUE_MESHES, false);
-                    opaque_open = true;
+            }
+            run.refresh_groups();
+            let plan = self.plans.plan(
+                &run.machine.graph,
+                (&run.runs, &outputs, &ready),
+                crate::graph::PLANS,
+            )?;
+            for planned in &plan.passes {
+                let pass = planned.pass.index();
+                if !run.view_passes.contains(pass) {
+                    ready = union(&ready, &run.machine.graph.writes(pass));
                 }
-                if !keeps && let Some(began) = wanted {
-                    mark_span(&self.core.profiler, encoder.as_mut(), began, false);
-                    parted = Some((began, part));
+            }
+            run.plan = Some(std::sync::Arc::clone(&plan));
+            let carried = match earlier {
+                Some(from) if facts.clear == engine_core::Clear::Nothing => run.carry(from, slot),
+                Some(_) | None => false,
+            };
+            run.carried = carried;
+            let mut post = crate::shared::post_uniform(
+                facts.view_projection,
+                facts.eye,
+                detail_of(view, index, &facts),
+                (facts.render.x, facts.render.y),
+                (size.x, size.y),
+            );
+            post.kept[0] = f32::from(u8::from(
+                run.canvas_load && !run.carried && facts.clear != engine_core::Clear::All,
+            ));
+            post.applied = applied_mask(run, &plan, &facts, states);
+            run.post = post;
+            run.write_post();
+            if earlier.is_none()
+                && run.canvas_rect.is_some()
+                && (facts.target.surface() || facts.clear == engine_core::Clear::All)
+            {
+                run.clear_canvas();
+            }
+            if run.canvas_load {
+                run.canvas_in();
+            }
+            let opaque = opaque_span(&run.machine.declared.passes, &plan);
+            let mut opaque_open = false;
+            let mut ran_last: Option<u32> = None;
+            for (at, planned) in plan.passes.iter().enumerate() {
+                if opaque_open && opaque.is_some_and(|(_, last)| at > last) {
+                    let Some(run) = self.run.as_mut() else { break };
+                    run.leave();
+                    mark_span(
+                        &self.core.profiler,
+                        run.recording.encoder(),
+                        OPAQUE_MESHES,
+                        true,
+                    );
+                    opaque_open = false;
+                }
+                if planned.batch > batch {
+                    let Some(run) = self.run.as_mut() else { break };
+                    run.leave();
+                    let mut ended = run.take_encoder();
+                    self.mark(ended.as_mut(), timed.take(), None);
+                    if let Some(mut encoder) = ended {
+                        self.close_batch(&mut encoder, batch);
+                        self.core.queue.hand(Handover::from(encoder));
+                    }
+                    let encoder = self.frame_encoder(&device, planned.batch);
+                    let Some(run) = self.run.as_mut() else { break };
+                    run.recording = Recording::Encoding(encoder);
+                    batch = planned.batch;
+                }
+                let index = planned.pass.index();
+                let Some(run) = self.run.as_mut() else { break };
+                if index >= declared {
+                    if let Some(&(layer, view)) = run.machine.view_copies.get(index - declared) {
+                        run.copy_view(layer, view);
+                    }
+                    continue;
+                }
+                let pass = &run.machine.declared.passes[index];
+                let (part, work) = (pass.part, pass.work);
+                let elsewhere = pass.scene.is_some_and(|scene| !scene.core);
+                if !run.drawable(part) {
+                    continue;
+                }
+                run.part = part;
+                run.pass = index as u32;
+                run.planned_at = at;
+                if let Work::Clear(buffer) = work {
+                    run.queued.cleared.push(buffer);
+                    run.ran_now(index);
+                    continue;
+                }
+                let continues = ran_last
+                    .is_some_and(|last| last != index as u32 && run.same_group(last, index as u32));
+                if !continues {
+                    ran.push(run.group_of(index as u32));
+                }
+                ran_last = Some(index as u32);
+                let wanted = run.span_of(index as u32);
+                let keeps = match (parted, wanted) {
+                    (Some((open, owner)), Some(name)) => open == name && owner == part,
+                    (Some((_, owner)), None) => owner == part && matches!(work, Work::Copy { .. }),
+                    (None, _) => false,
+                };
+                if run.enter(index as u32) {
+                    let span = run
+                        .stage_of(index as u32)
+                        .or_else(|| self.spans.get(index).copied());
+                    let mut encoder = run.take_encoder();
+                    if !keeps && let Some((open, _)) = parted.take() {
+                        mark_span(&self.core.profiler, encoder.as_mut(), open, true);
+                    }
+                    if !(continues && span == timed) {
+                        self.mark(encoder.as_mut(), timed, span);
+                    }
+                    timed = span;
+                    if !opaque_open && opaque.is_some_and(|(first, _)| first == at) {
+                        mark_span(&self.core.profiler, encoder.as_mut(), OPAQUE_MESHES, false);
+                        opaque_open = true;
+                    }
+                    if !keeps && let Some(began) = wanted {
+                        mark_span(&self.core.profiler, encoder.as_mut(), began, false);
+                        parted = Some((began, part));
+                    }
+                    let Some(run) = self.run.as_mut() else { break };
+                    run.recording = Recording::of(encoder);
+                    run.group(index as u32);
                 }
                 let Some(run) = self.run.as_mut() else { break };
-                run.recording = Recording::of(encoder);
-                run.group(index as u32);
+                run.flush_clears();
+                let _owner = run
+                    .machine
+                    .declared
+                    .parts
+                    .get(part as usize)
+                    .map(crate::install::PartInfo::owned);
+                match work {
+                    Work::Copy { .. } => {
+                        if run.copy(index as u32) {
+                            run.ran_now(index);
+                        }
+                    }
+                    Work::Clear(_) => {}
+                    Work::Render => {
+                        let Some(mut held) = run.parts[part as usize].take() else {
+                            continue;
+                        };
+                        let drawn = held.encode(index as u32, run, &self.core.profiler);
+                        run.ran_now(index);
+                        let next = plan.passes.get(at + 1).map(|next| next.pass.index() as u32);
+                        if !next.is_some_and(|next| {
+                            next != index as u32 && run.same_group(index as u32, next)
+                        }) {
+                            run.close_encode_span(&self.core.profiler);
+                        }
+                        if let Some(sum) = run.part_draws.get_mut(part as usize) {
+                            *sum += drawn;
+                        }
+                        if !elsewhere {
+                            run.drawn += drawn;
+                        }
+                        run.parts[part as usize] = Some(held);
+                    }
+                }
             }
             let Some(run) = self.run.as_mut() else { break };
+            run.close_encode_span(&self.core.profiler);
             run.flush_clears();
-            let _owner = run
-                .machine
-                .declared
-                .parts
-                .get(part as usize)
-                .map(crate::install::PartInfo::owned);
-            match work {
-                Work::Copy { .. } => {
-                    if run.copy(index as u32) {
-                        run.ran.insert(index);
-                    }
-                }
-                Work::Clear(_) => {}
-                Work::Render => {
-                    let Some(mut held) = run.parts[part as usize].take() else {
-                        continue;
-                    };
-                    let drawn = held.encode(index as u32, run, &self.core.profiler);
-                    run.ran.insert(index);
-                    let next = plan.passes.get(at + 1).map(|next| next.pass.index() as u32);
-                    if !next.is_some_and(|next| {
-                        next != index as u32 && run.same_group(index as u32, next)
-                    }) {
-                        run.close_encode_span(&self.core.profiler);
-                    }
-                    if let Some(sum) = run.part_draws.get_mut(part as usize) {
-                        *sum += drawn;
-                    }
-                    if !elsewhere {
-                        run.drawn += drawn;
-                    }
-                    run.parts[part as usize] = Some(held);
-                }
+            run.leave();
+            if opaque_open {
+                mark_span(&self.core.profiler, run.recording.encoder(), OPAQUE_MESHES, true);
             }
+            if run.canvas_rect.is_some() {
+                run.canvas_out();
+            }
+            drawn_on.push((facts.target, slot));
+            if let Some(at) = slot {
+                run.swap_view(at);
+            }
+            first = false;
         }
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
@@ -599,14 +698,16 @@ impl Renderer {
         run.close_encode_span(&self.core.profiler);
         run.flush_clears();
         run.leave();
+        run.camera_slot = 0;
+        run.canvas = Some(canvas);
+        run.canvas_texture = Some(surface.texture().clone());
+        run.canvas_format = run.surface;
+        run.canvas_rect = None;
         let mut encoder = run.take_encoder().unwrap_or_else(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("engine/frame-encoder"),
             })
         });
-        if opaque_open {
-            mark_span(&self.core.profiler, Some(&mut encoder), OPAQUE_MESHES, true);
-        }
         if let Some((open, _)) = parted.take() {
             mark_span(&self.core.profiler, Some(&mut encoder), open, true);
         }
@@ -804,6 +905,186 @@ fn warm_on_flip(
     let scope = crate::gpu_calls::validation_scope(device);
     run.warm_reached(world);
     *installing = Some(Box::pin(scope.pop()));
+}
+
+fn listed_views(
+    world: &World,
+    view: Option<&PrimaryView>,
+    region: crate::targets::FrameRegion,
+    frame: engine_core::FrameId,
+) -> Vec<engine_core::ViewFacts> {
+    let listed: Vec<engine_core::ViewFacts> = world
+        .get_resource::<engine_core::Views>()
+        .map(|views| views.listed().to_vec())
+        .unwrap_or_default();
+    if !listed.is_empty() {
+        return listed;
+    }
+    let (width, height) = region.display.pixels();
+    let (drawn_width, drawn_height) = region.render.pixels();
+    let view_projection = view.map_or(Mat4::IDENTITY, PrimaryView::view_projection);
+    vec![engine_core::ViewFacts {
+        view: bevy_ecs::entity::Entity::PLACEHOLDER,
+        camera: bevy_ecs::entity::Entity::PLACEHOLDER,
+        target: engine_core::Target::Surface,
+        pixels: [0, 0, width, height],
+        render: glam::UVec2::new(drawn_width, drawn_height),
+        layers: engine_core::Layers::ALL,
+        clear: engine_core::Clear::All,
+        order: 0,
+        lens: view.map(PrimaryView::lens).unwrap_or_default(),
+        eye: view.map_or(glam::Vec3::ZERO, PrimaryView::eye),
+        forward: view.map_or(glam::Vec3::NEG_Z, PrimaryView::forward),
+        view_projection,
+        previous_view_projection: view_projection,
+        history: view.map_or(engine_core::ViewHistory::Fresh, PrimaryView::history),
+        debug: view.is_some_and(PrimaryView::debug),
+        temporal: view.is_some_and(PrimaryView::temporal),
+        capture: view.is_some_and(PrimaryView::capture),
+        frame,
+    }]
+}
+
+fn drawn_order(listed: &[engine_core::ViewFacts]) -> Vec<usize> {
+    let (surfaces, textures): (Vec<usize>, Vec<usize>) =
+        (0..listed.len()).partition(|&index| listed[index].target.surface());
+    textures.into_iter().chain(surfaces).collect()
+}
+
+fn jittered(facts: &engine_core::ViewFacts) -> bool {
+    facts.temporal && !facts.debug && facts.target.surface()
+}
+
+fn detail_of(view: Option<&PrimaryView>, index: usize, facts: &engine_core::ViewFacts) -> glam::Vec3 {
+    match view {
+        Some(view) if index == 0 => view.detail_eye(),
+        Some(_) | None => facts.eye,
+    }
+}
+
+fn view_region(facts: &engine_core::ViewFacts) -> crate::targets::FrameRegion {
+    let size = facts.size();
+    crate::targets::FrameRegion::new(
+        crate::targets::FrameSize {
+            width: size.x,
+            height: size.y,
+        },
+        crate::targets::FrameSize {
+            width: facts.render.x,
+            height: facts.render.y,
+        },
+    )
+}
+
+fn canvas_of(
+    run: &Run,
+    facts: &engine_core::ViewFacts,
+    (canvas, surface): (&wgpu::TextureView, &wgpu::Texture),
+) -> Option<(wgpu::TextureView, wgpu::Texture, wgpu::TextureFormat)> {
+    match facts.target {
+        engine_core::Target::Surface => Some((canvas.clone(), surface.clone(), run.surface)),
+        engine_core::Target::Texture(handle) => {
+            let (texture, _) = run.assets.materials.target(handle)?;
+            let format = texture.format().remove_srgb_suffix();
+            let drawing = texture.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(format),
+                ..Default::default()
+            });
+            Some((drawing, texture.clone(), format))
+        }
+    }
+}
+
+fn owned_views(world: &World, machine: &crate::machine::Machine) -> Vec<(&'static str, u32)> {
+    let Some(views) = world.get_resource::<engine_core::Views>() else {
+        return Vec::new();
+    };
+    let mut owned: Vec<(&'static str, u32)> = Vec::new();
+    for pass in &machine.declared.passes {
+        if let Some(scene) = pass.scene
+            && !owned.iter().any(|(name, _)| *name == scene.name)
+            && let Some(range) = views.owned(scene.name)
+        {
+            owned.push((scene.name, range.start));
+        }
+    }
+    owned
+}
+
+fn keep_eligible(
+    run: &mut Run,
+    facts: &engine_core::ViewFacts,
+    (first, main): (bool, bool),
+    overlay: bool,
+) {
+    let declared = run.machine.declared.passes.len();
+    let listed: Vec<usize> = run.runs.iter().collect();
+    for index in listed {
+        let viewed = run.view_passes.contains(index);
+        let mained = run.main_passes.contains(index);
+        if (mained && !main) || (!mained && !viewed && !first) {
+            run.runs.remove(index);
+            continue;
+        }
+        let shown = index >= declared || {
+            let pass = &run.machine.declared.passes[index];
+            let views = match pass.views {
+                engine_core::PassViews::Every | engine_core::PassViews::Owned => true,
+                engine_core::PassViews::Main => facts.target.surface(),
+            };
+            (!viewed || views)
+                && (pass.layer != Some(engine_core::AttachPoint::Overlay) || overlay)
+        };
+        if !shown {
+            run.runs.remove(index);
+        }
+    }
+}
+
+fn union(first: &Bits, second: &Bits) -> Bits {
+    let mut joined = first.clone();
+    for index in second.iter() {
+        joined.insert(index);
+    }
+    joined
+}
+
+fn applied_mask(
+    run: &Run,
+    plan: &crate::graph::Plan,
+    facts: &engine_core::ViewFacts,
+    states: Option<&engine_registry::BrickStates>,
+) -> [u32; 4] {
+    let mut mask = [0_u32; 4];
+    for (bit, member) in run.applied.iter().enumerate() {
+        let passes: Vec<usize> = run
+            .machine
+            .declared
+            .passes
+            .iter()
+            .enumerate()
+            .filter(|(_, pass)| pass.name == member.pass)
+            .map(|(index, _)| index)
+            .collect();
+        let on = if passes.is_empty() {
+            member
+                .gate
+                .is_none_or(|gate| states.is_none_or(|states| states.on(gate)))
+                && match member.views {
+                    engine_core::PassViews::Every => true,
+                    engine_core::PassViews::Main => facts.target.surface(),
+                    engine_core::PassViews::Owned => false,
+                }
+        } else {
+            plan.passes
+                .iter()
+                .any(|planned| passes.contains(&planned.pass.index()))
+        };
+        if on {
+            mask[bit / 32 % 4] |= 1 << (bit % 32);
+        }
+    }
+    mask
 }
 
 fn piece_bytes(world: &World, layout: &[(usize, crate::pieces::PieceAt)], bytes: &mut Vec<u8>) {

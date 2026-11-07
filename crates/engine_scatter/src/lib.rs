@@ -35,19 +35,32 @@ const GROUNDED: [SurfaceSlot; 4] = [
     SurfaceSlot::Metalness,
 ];
 
-const LOOKS: [(&str, Module, &[SurfaceSlot], &[&str]); 3] = [
-    ("grounded", shaders::scatter::grounded::MODULE, &GROUNDED, &[]),
+pub(crate) const WIND: &str = "wind";
+
+const LOOKS: [(&str, Module, &[SurfaceSlot], &[&str], f32); 4] = [
+    ("grounded", shaders::scatter::grounded::MODULE, &GROUNDED, &[], 0.0),
     (
         "foliage",
         shaders::scatter::leaves::MODULE,
         &[
             SurfaceSlot::BaseColor,
+            SurfaceSlot::Cutoff,
             SurfaceSlot::Normal,
             SurfaceSlot::Roughness,
             SurfaceSlot::Metalness,
             SurfaceSlot::Transmission,
+            SurfaceSlot::Kind,
+            SurfaceSlot::LightInputs,
         ],
         &[],
+        0.0,
+    ),
+    (
+        WIND,
+        shaders::scatter::wind::MODULE,
+        &[SurfaceSlot::Position],
+        &[],
+        layouts::WIND_REACH,
     ),
     (
         "world_mapped",
@@ -67,6 +80,7 @@ const LOOKS: [(&str, Module, &[SurfaceSlot], &[&str]); 3] = [
             "top_coverage",
             "top_roughness",
         ],
+        0.0,
     ),
 ];
 
@@ -125,7 +139,7 @@ impl Brick for ScatterBrick {
                 needs: Attributes::BASE,
             })
             .draws::<gpu::ScatterGpu>(gpu::PLACED, gpu::ScatterGpu::draw);
-        for (name, module, slots, values) in LOOKS {
+        for (name, module, slots, values, reach) in LOOKS {
             for &slot in slots {
                 bricks.material_slot(SlotModule {
                     slot,
@@ -133,6 +147,7 @@ impl Brick for ScatterBrick {
                     module,
                     maps: &[],
                     values,
+                    reach,
                 });
             }
         }

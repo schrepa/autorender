@@ -13,7 +13,6 @@ import package::engine::standard::rippled;
 import package::engine::surfaces::{SURFACE_SOLID, SURFACE_THIN};
 import package::engine::view::{camera, fade_noise, material_detail, stable_normalize};
 import package::face::debug::debug_record_with_fading;
-import package::face::instance_motion::instance_moves;
 import package::face::lit::{finish, lit_toward, local_light, widened};
 import package::generated::meshes::{card_frames_first, card_frames_second, card_frames_third,
     card_frames_with_first, card_frames_with_origin, card_frames_with_second,
@@ -22,7 +21,7 @@ import package::generated::targets::{DepthViewTargets, depth_view_targets};
 import package::meshes::debug::point_targets;
 import package::meshes::forward::drawn_pixel;
 import package::meshes::slots::{instance_colors, instance_poses, instance_previous_poses};
-import package::meshes::vertex::{posed, slot_wind};
+import package::meshes::vertex::posed;
 import package::place::instances::{AffinePose, CardDebugTargets, CardShaded, CardVertex,
     SlotColor};
 
@@ -130,15 +129,11 @@ fn posed_card(vertex: u32, batch: u32, pose: AffinePose, color: SlotColor,
     let packed_frames = card_frames_with_origin(card_frames_with_third(card_frames_with_second(
         card_frames_with_first(0u, shown.x), shown.y), shown.z),
         origin_key(model[3].xyz) >> 24u);
-    var swayed = world.xyz;
-    if instance_moves(color.flags) {
-        swayed += slot_wind(model, world.xyz, color.flags, camera.position.w);
-    }
     var output: CardVertex;
-    output.clip_position = camera.view_projection * vec4<f32>(swayed, 1.0);
+    output.clip_position = camera.view_projection * vec4<f32>(world.xyz, 1.0);
     output.frames_ab = vec4<f32>(uvs[0], uvs[1]);
     output.frame_c = uvs[2];
-    output.world = swayed;
+    output.world = world.xyz;
     output.normal_x = vec4<f32>(yz * orientation, weights.x);
     output.normal_y = vec4<f32>(zx * orientation, weights.y);
     output.normal_z = xy * orientation;
@@ -154,13 +149,8 @@ fn posed_card(vertex: u32, batch: u32, pose: AffinePose, color: SlotColor,
 
 fn card_previous(local: vec3<f32>, pose: AffinePose, color: SlotColor) -> vec3<f32> {
     let point = vec4<f32>(local, 1.0);
-    var world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
+    let world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
         dot(pose.row_2, point), 1.0);
-    if instance_moves(color.flags) {
-        let model = posed(pose);
-        world = vec4<f32>(world.xyz + slot_wind(model, world.xyz, color.flags, camera.wind.w),
-            1.0);
-    }
     return (camera.previous_view_projection * world).xyw;
 }
 

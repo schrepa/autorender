@@ -429,7 +429,7 @@ fn bake_pipeline(
 ) -> wgpu::RenderPipeline {
     let constants = crate::surface::DrawState {
         alpha_test: key.look.masked,
-        fading: false,
+        ..crate::surface::DrawState::PLAIN
     }
     .constants();
     let extended = key.extended;

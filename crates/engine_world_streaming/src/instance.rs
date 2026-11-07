@@ -4,7 +4,9 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::math::max;
-use engine_core::{Authored, Mesh3d, Reach, SceneContext, Spawner, Transform};
+use engine_core::{
+    Authored, DrawKind, Drawn, MaterialHandle, MeshHandle, Reach, SceneContext, Spawner, Transform,
+};
 use glam::{Mat4, Vec3};
 use serde_json::Value;
 
@@ -13,7 +15,7 @@ use crate::scene::{ExpandedList, ExpandedObject, StreamedScene, kind};
 
 struct Prepared {
     transform: Transform,
-    mesh: Option<Mesh3d>,
+    mesh: Option<(MeshHandle, MaterialHandle)>,
     authored: Authored,
     components: Vec<(String, Value)>,
 }
@@ -165,7 +167,7 @@ fn prepared(entity: ExpandedObject, transform: Transform, context: &SceneContext
             .meshes
             .get(mesh)
             .zip(context.assets.materials.get(material))
-            .map(|(&mesh, &material)| Mesh3d { mesh, material }),
+            .map(|(&mesh, &material)| (mesh, material)),
         (Some(_), None) | (None, Some(_)) | (None, None) => None,
     };
     let components = source
@@ -219,8 +221,8 @@ impl Tree {
                 let prepared = &self.entities[index];
                 let entity = spawner.spawn(prepared.transform);
                 spawner.author(entity, prepared.authored.clone());
-                if let Some(mesh) = prepared.mesh {
-                    spawner.insert(entity, mesh);
+                if let Some((mesh, material)) = prepared.mesh {
+                    spawner.insert(entity, Drawn::new(DrawKind::MESH, mesh, material, entity));
                 }
                 for (key, value) in &prepared.components {
                     spawner.insert_scene(entity, key, value.clone());

@@ -12,7 +12,6 @@ settings! {
         pub transforms: u32 = 16384 => at_least(1),
         pub impostor_work: u32 = 64 => at_least(1),
         pub tiles: u32 = 4096 => at_least(1),
-        pub instance_colors: u32 = 16384 => at_least(1),
         pub mesh_residency: u32 = 4096 => at_least(1),
         pub ui_events: u32 = 256 => at_least(1),
     }

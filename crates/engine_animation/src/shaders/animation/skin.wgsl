@@ -1,4 +1,6 @@
-import package::generated::animation::{JointRows, RestVertex, SKIN_GROUP, SkinFrame, SkinPart};
+import package::engine::drawn::drawn_in_view;
+import package::generated::animation::{ARGS_WORDS, JointRows, RestVertex, SKIN_GROUP, SkinBound,
+    SkinFrame, SkinPart, SkinView};
 
 struct SkinnedVertex {
     x: f32,
@@ -19,6 +21,9 @@ struct SkinnedVertex {
 @group(1) @binding(3) var<storage, read> rest: array<RestVertex>;
 @group(1) @binding(4) var<storage, read> rows: array<JointRows>;
 @group(1) @binding(5) var<storage, read_write> skinned: array<SkinnedVertex>;
+@group(1) @binding(6) var<storage, read> bounds: array<SkinBound>;
+@group(1) @binding(7) var<storage, read> views: array<SkinView>;
+@group(1) @binding(8) var<storage, read_write> args: array<u32>;
 
 fn blended(start: u32, joints: vec4<u32>, weights: vec4<f32>) -> JointRows {
     var mixed = JointRows(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0));
@@ -50,8 +55,7 @@ fn skin_vertices(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= frame.vertices {
         return;
     }
-    let slot = owners[id.x];
-    let part = parts[slot];
+    let part = parts[owners[id.x]];
     let source = rest[part.rest_at + id.x - part.skinned_at];
     let point = vec4<f32>(source.position_u.xyz, 1.0);
     let now = blended(part.rows_at, source.joints, source.weights);
@@ -61,5 +65,31 @@ fn skin_vertices(@builtin(global_invocation_id) id: vec3<u32>) {
         octahedral(turned(now, source.normal_v.xyz)),
         source.position_u.w, source.normal_v.w,
         dot(was.r0, point), dot(was.r1, point), dot(was.r2, point),
-        slot);
+        part.drawn);
+}
+
+fn inside(view: u32, bound: SkinBound) -> bool {
+    for (var at = 0u; at < 6u; at++) {
+        let plane = views[view].planes[at];
+        if dot(plane.xyz, bound.center.xyz) + dot(abs(plane.xyz), bound.half.xyz) + plane.w < 0.0 {
+            return false;
+        }
+    }
+    return true;
+}
+
+@compute @workgroup_size(SKIN_GROUP)
+fn skin_args(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x >= frame.parts || id.y >= frame.views {
+        return;
+    }
+    let part = parts[id.x];
+    let bound = bounds[id.x];
+    let shown = bound.center.w != 0.0 && drawn_in_view(id.y, part.drawn) && inside(id.y, bound);
+    let at = (id.y * frame.parts + id.x) * ARGS_WORDS;
+    args[at] = part.indices;
+    args[at + 1u] = select(0u, 1u, shown);
+    args[at + 2u] = part.first;
+    args[at + 3u] = 0u;
+    args[at + 4u] = 0u;
 }

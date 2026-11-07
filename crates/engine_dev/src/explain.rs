@@ -3,7 +3,7 @@ pub use engine_registry::ExplainRecord;
 use std::panic::Location;
 
 use bevy_ecs::prelude::{Entity, World};
-use engine_core::{AssetLibrary, Mesh3d};
+use engine_core::{AssetLibrary, Drawn};
 use engine_registry::{BrickCost, BrickCosts, Registry};
 use engine_scene::{SceneDocument, SceneFiles, SceneInstance, SceneKinds};
 use engine_settings::{Error, ErrorCode, Expected};
@@ -113,11 +113,13 @@ fn finished(about: &'static str, mut records: Vec<ExplainRecord>) -> ExplainResu
 }
 
 fn core_entity(world: &World, id: &str, entity: Entity, facts: EntityFacts) -> ExplainRecord {
-    let mesh3d = world.get::<Mesh3d>(entity);
-    let missing = mesh3d.and_then(|mesh3d| {
+    let shown = world
+        .get::<Drawn>(entity)
+        .and_then(|drawn| Some((drawn.geometry?, drawn.material)));
+    let missing = shown.and_then(|shown| {
         world
             .get_resource::<AssetLibrary>()
-            .and_then(|assets| crate::inspect::missing_of(assets, mesh3d))
+            .and_then(|assets| crate::inspect::missing_of(assets, shown))
     });
     let decided = match (facts.slot, facts.drawn) {
         (None, _) => "not_extracted",
@@ -129,7 +131,7 @@ fn core_entity(world: &World, id: &str, entity: Entity, facts: EntityFacts) -> E
         .of("core")
         .with("entity", id)
         .with("render_slot", facts.slot)
-        .with("mesh", mesh3d.is_some())
+        .with("mesh", shown.is_some())
         .with("missing", missing)
         .with("frustum_culling", facts.frustum_culling)
 }

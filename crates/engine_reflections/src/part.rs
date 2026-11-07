@@ -1,5 +1,4 @@
-use bevy_ecs::prelude::*;
-use engine_core::{Entry, Error, PassName, PrimaryView};
+use engine_core::{Entry, Error, PassName, ViewFacts};
 use engine_render::{
     Access, Attach, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse, Encode,
     FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
@@ -36,25 +35,26 @@ pub(crate) struct TraceGpu {
 }
 
 impl GpuPart for TraceGpu {
-    type Reads = Res<'static, PrimaryView>;
+    type Reads = ();
     const NAME: &'static str = "reflections";
     const LAZY: bool = true;
     const LABELS: &'static [&'static str] = &["engine/reflections-"];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let reflected = cx.texture("reflections", REFLECTION_FORMAT, Lifetime::Frame);
-        let levels_texture = cx.texture("scene_levels", SCENE_FORMAT, Lifetime::Frame);
-        let pyramid = cx.texture("nearest_depth", NEAREST_FORMAT, Lifetime::Frame);
+        let reflected = cx.view_texture("reflections", REFLECTION_FORMAT, Lifetime::Frame);
+        let levels_texture = cx.view_texture("scene_levels", SCENE_FORMAT, Lifetime::Frame);
+        let pyramid = cx.view_texture("nearest_depth", NEAREST_FORMAT, Lifetime::Frame);
         let extents: Vec<Buffer<Self>> = (0..PYRAMID_LEVELS)
-            .map(|_| cx.buffer("nearest_extent", Lifetime::Kept))
+            .map(|_| cx.view_buffer("nearest_extent", Lifetime::Kept))
             .collect();
         let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
         cx.frame(apply::REFLECTIONS, Bind::Texture(reflected))?;
         cx.frame(apply::REFLECTIONS_SAMPLER, Bind::Sampler(sampler))?;
-        let at = ReflectionsPass::PASS.at;
+        let (at, views) = (ReflectionsPass::PASS.at, ReflectionsPass::PASS.views);
         let reduce = cx
             .pass("nearest_depth")
             .at(at)
+            .views(views)
             .label("engine/depth-pyramid")
             .span(SPAN)
             .id();
@@ -66,14 +66,14 @@ impl GpuPart for TraceGpu {
         let chain = cx
             .pass("scene_levels")
             .at(at)
+            .views(views)
             .label("engine/post-scene-levels")
             .span(SPAN)
             .after(copy)
             .color(levels_texture, Access::Load)
             .id();
         let reflect = cx
-            .pass(ReflectionsPass::NAME)
-            .at(at)
+            .screen::<ReflectionsPass>()
             .label("engine/post-reflections")
             .span(SPAN)
             .color(reflected, Access::Clear)
@@ -143,16 +143,18 @@ impl GpuPart for TraceGpu {
         })
     }
 
-    fn prepare(&mut self, view: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
-        if view.debug() {
+    fn prepare(&mut self, (): (), _cx: &mut Prepare<'_, Self>) {}
+
+    fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
+        if view.debug {
             return;
         }
-        let display = view.display_size();
-        let render = view.render_size();
+        let display = view.size();
+        let render = view.render;
         self.render = (render.x, render.y);
         self.count = SCENE_LEVELS.min(mip_levels(display.x, display.y) - 1);
         for (level, drawn) in (0..).zip(&mut self.drawn) {
-            *drawn = level_region(&view, level);
+            *drawn = level_region(view, level);
         }
         let whole = extent(display.x, display.y);
         cx.allocate(self.reflected, whole, 1);

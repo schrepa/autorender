@@ -156,12 +156,12 @@ fn textured_entity(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let page = ask(
         session,
         "inspect",
-        json!({"component": "Mesh3d", "limit": 100}),
+        json!({"component": "DrawnMesh", "limit": 100}),
     )?;
     let textured = page["entities"].as_array().and_then(|rows| {
         rows.iter()
             .find(|row| {
-                row["components"]["Mesh3d"]["textures"]
+                row["components"]["DrawnMesh"]["textures"]
                     .as_array()
                     .is_some_and(|textures| textures.iter().any(|texture| texture["alive"] == true))
             })
@@ -174,7 +174,7 @@ fn textured_entity(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         "textured_material_used"
     );
     let id = textured.unwrap_or_default();
-    let view = component(session, &id, "Mesh3d")?;
+    let view = component(session, &id, "DrawnMesh")?;
     let texture = &view["textures"][0];
     let authored = TEXTURES
         .iter()

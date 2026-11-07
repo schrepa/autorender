@@ -8,9 +8,7 @@ publish.workspace = true
 [dependencies]
 engine_place.workspace = true
 engine_ecs.workspace = true
-engine_math.workspace = true
 glam.workspace = true
-serde.workspace = true
 
 [build-dependencies]
 engine_sources.workspace = true

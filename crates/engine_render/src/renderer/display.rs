@@ -63,7 +63,9 @@ impl Display {
                 .get_default_config(adapter, width, height)
                 .ok_or_else(|| failed("$.surface").expected(Expected::Supported))?,
             None => wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST,
                 format: wgpu::TextureFormat::Bgra8Unorm,
                 width,
                 height,
@@ -74,6 +76,10 @@ impl Display {
                 color_space: wgpu::SurfaceColorSpace::Auto,
             },
         };
+        if let Some(surface) = &surface {
+            configuration.usage |= surface.get_capabilities(adapter).usages
+                & (wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST);
+        }
         configuration.present_mode = target.present_mode();
         configuration.format = configuration.format.remove_srgb_suffix();
         configuration.desired_maximum_frame_latency = 2;

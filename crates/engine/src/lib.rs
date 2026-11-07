@@ -42,7 +42,7 @@ mod games {
         Asks, CameraHandoff, Clock, Cull, DepthBias, HandOver, LightingModel, Listing,
         MakeSources, MakeTextures, RenderState, SurfaceSlot,
         Material, Mobility, Mover, MoverId, Moves, Node, NodeWord, Pace, Teleport,
-        MaterialHandle, MenuInput, Mesh, Mesh3d, MeshHandle, MeshVertex, MoveInput, Parent,
+        MaterialHandle, MenuInput, Mesh, MeshHandle, MeshVertex, MoveInput, Parent,
         Pause, PauseReason, PointerInput, Poses, Projection, ProvidedAssets, ResolutionStats, Sampler,
         Surface, Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage,
         Transform, UvTransform, Wrap, edit_transform, make_fresh, math,

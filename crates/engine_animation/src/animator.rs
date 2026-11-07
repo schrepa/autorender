@@ -3,8 +3,8 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    Applies, Asset, AssetResidency, AssetUses, Clock, FixedTime, FrameTime, GlobalTransforms,
-    Mover, Moves, Pace, Parent, Pause, Spawner, Transform, mover_of,
+    Applies, Clock, Drawn, FixedTime, FrameTime, GlobalTransforms, Mover, Moves, Pace, Parent,
+    Pause, Spawner, Transform, mover_of,
 };
 use engine_places_rendering::animation::{
     Animate, Animator, Attachment, Clip, Joint, Keys, Rig, Track,
@@ -12,6 +12,7 @@ use engine_places_rendering::animation::{
 use glam::{Quat, Vec3};
 
 use crate::AnimationBrick;
+use crate::part::SKIN;
 
 #[derive(Component, Clone, Copy)]
 #[component(immutable)]
@@ -22,6 +23,7 @@ pub(crate) struct JointNode {
 struct Skeleton {
     rig: Arc<Rig>,
     joints: Vec<Entity>,
+    parts: Vec<Entity>,
     pace: Pace,
 }
 
@@ -249,9 +251,22 @@ fn spawn(
         })
         .collect();
     spawner.set_parents(parents);
+    let parts = rig
+        .parts
+        .iter()
+        .map(|part| {
+            spawner.spawn(Drawn::new(
+                SKIN,
+                part.mesh,
+                part.material,
+                animator_node,
+            ))
+        })
+        .collect();
     Skeleton {
         rig: Arc::clone(rig),
         joints,
+        parts,
         pace,
     }
 }
@@ -311,13 +326,17 @@ pub(crate) fn sync(
                 let skeleton = spawn(entity, &animator, pace, scratch, &mut spawner);
                 if let Some(old) = skeletons.insert(entity, skeleton) {
                     gone.extend(old.joints);
+                    gone.extend(old.parts);
                 }
             }
         }
-        if let Some(skeleton) = skeletons.get(&entity)
-            && animator.joint_nodes() != skeleton.joints.as_slice()
-        {
-            animator.publish_joints(&skeleton.joints);
+        if let Some(skeleton) = skeletons.get(&entity) {
+            if animator.joint_nodes() != skeleton.joints.as_slice() {
+                animator.publish_joints(&skeleton.joints);
+            }
+            if animator.part_nodes() != skeleton.parts.as_slice() {
+                animator.publish_parts(&skeleton.parts);
+            }
         }
     }
     hold(skeletons, &nodes, &held, &mut spawner);
@@ -345,41 +364,7 @@ pub(crate) fn release(
     if !dropped.is_empty() {
         spawner.set_parents_of::<Attachment>(dropped);
     }
-    for joint in skeleton.joints {
-        spawner.despawn(joint);
-    }
-}
-
-#[derive(Component)]
-pub(crate) struct SkinAssets;
-
-pub(crate) fn publish_assets(
-    animators: Query<&Animator>,
-    residency: Res<AssetResidency>,
-    own: Query<(Entity, &AssetUses), With<SkinAssets>>,
-    mut spawner: Spawner<AnimationBrick>,
-) {
-    let mut wanted = Vec::new();
-    for animator in &animators {
-        for part in &animator.rig().parts {
-            wanted.push(Asset::Mesh(part.mesh));
-            wanted.push(Asset::Material(part.material));
-        }
-    }
-    wanted.sort_unstable();
-    wanted.dedup();
-    let mut owned = own.iter();
-    match owned.next() {
-        Some((entity, held)) => {
-            if held.assets() != wanted.as_slice() {
-                spawner.insert(entity, AssetUses::new(&residency, wanted));
-            }
-            for (extra, _) in owned {
-                spawner.despawn(extra);
-            }
-        }
-        None => {
-            spawner.spawn((SkinAssets, AssetUses::new(&residency, wanted)));
-        }
+    for node in skeleton.joints.into_iter().chain(skeleton.parts) {
+        spawner.despawn(node);
     }
 }

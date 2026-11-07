@@ -1,7 +1,7 @@
 use engine_render::{Attach, Count, Encode, PYRAMID_GROUP, Pass};
 
 use crate::gpu::{Compaction, MeshesGpu};
-use crate::layouts::{ARGS_GROUP, CULL_GROUP, GROUP, PARENT_GROUP};
+use crate::layouts::{ARGS_GROUP, BLEND_GROUP, CULL_GROUP, GROUP, PARENT_GROUP};
 use crate::presentation::PHASE_TWO;
 
 impl MeshesGpu {
@@ -14,8 +14,20 @@ impl MeshesGpu {
             self.encode_views(cx);
         } else if pass == self.passes.occluded {
             return self.encode_occluded(cx);
+        } else if pass == self.passes.blended {
+            self.encode_blended(cx);
         }
         0
+    }
+
+    fn encode_blended(&self, cx: &mut Encode<'_, Self>) {
+        let rows = self.state.blended.rows.len() as u32;
+        if rows == 0 {
+            return;
+        }
+        let groups = [rows.div_ceil(BLEND_GROUP), 1, 1];
+        cx.dispatch(&self.sorted.keyed, Count::Groups(groups));
+        cx.dispatch(&self.sorted.ranked, Count::Groups(groups));
     }
 
     fn compact(&self, compaction: &Compaction, offsets: &[u32], cx: &mut Encode<'_, Self>) {

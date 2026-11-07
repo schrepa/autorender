@@ -4,15 +4,15 @@ use std::ops::Range;
 use bevy_ecs::prelude::*;
 use engine_core::math::max;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, ColorPass, Cull, DrawKind, DrawnPoses, Error,
-    GlobalTransforms, MaterialHandle, MeshHandle, MeshVertex, Mobility, PassName, PassViews,
-    PrimaryView, ScenePass, SceneView, SceneViews, gpu_struct,
+    AlphaMode, AssetLibrary, AssetResidency, ColorPass, Cull, DrawKind, DrawnPoses, DrawnTable,
+    Error, GlobalTransforms, MaterialHandle, MeshHandle, MeshVertex, PassName, PassViews,
+    PrimaryView, ScenePass, Views, gpu_struct,
 };
 use engine_places_rendering::animation::{Animator, Rig, RigPart, VertexSkin};
 use engine_render::{
     Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput, Encode, GpuPart, Install,
     Lifetime, Pass, Pipeline, Prepare, RenderPipeline, Scene, SceneDraw, Shape, VertexLayout,
-    pack_color, pack_surface, planes, wgpu,
+    planes, wgpu,
 };
 use glam::{Mat4, Vec3, Vec4};
 
@@ -22,14 +22,15 @@ pub(crate) const SKIN: DrawKind = DrawKind("skin");
 
 engine_core::gpu_consts! {
     pub(crate) const SKIN_GROUP: u32 = 64;
+    pub(crate) const ARGS_WORDS: u32 = 5;
 }
 
 gpu_struct! {
     pub(crate) struct SkinFrame {
         pub(crate) vertices: u32,
         pub(crate) parts: u32,
-        pub(crate) pad0: u32,
-        pub(crate) pad1: u32,
+        pub(crate) views: u32,
+        pub(crate) pad: u32,
     }
 }
 
@@ -39,6 +40,10 @@ gpu_struct! {
         pub(crate) previous_at: u32,
         pub(crate) rest_at: u32,
         pub(crate) skinned_at: u32,
+        pub(crate) drawn: u32,
+        pub(crate) indices: u32,
+        pub(crate) first: u32,
+        pub(crate) pad: u32,
     }
 }
 
@@ -59,10 +64,22 @@ gpu_struct! {
     }
 }
 
+gpu_struct! {
+    pub(crate) struct SkinBound {
+        pub(crate) center: [f32; 4],
+        pub(crate) half: [f32; 4],
+    }
+}
+
+gpu_struct! {
+    pub(crate) struct SkinView {
+        pub(crate) planes: [[f32; 4]; 6],
+    }
+}
+
 const SKINNED_BYTES: u64 = 40;
-const ARGS_BYTES: u64 = 20;
+const ARGS_BYTES: u64 = ARGS_WORDS as u64 * 4;
 const OWNER_BYTES: u64 = 4;
-const COLOR_BYTES: u64 = 16;
 
 const CASTER_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
     constant: 1,
@@ -125,18 +142,18 @@ const CASTER_STREAMS: &[VertexLayout] = &[VertexLayout::Buffer(wgpu::VertexBuffe
 })];
 
 struct Slot {
-    entity: Entity,
+    drawn: u32,
+    animator: Entity,
     mesh: MeshHandle,
-    material: MaterialHandle,
+    material: Option<MaterialHandle>,
     rest_at: u32,
     skinned_at: u32,
     reach: usize,
     masked: bool,
     double_sided: bool,
-    bounds: (Vec3, Vec3),
 }
 
-type LayoutKey = Vec<(Entity, usize, u64, Option<u64>)>;
+type LayoutKey = Vec<(Entity, u32, usize, MeshHandle, u64, Option<u64>)>;
 
 #[derive(Default)]
 struct Held {
@@ -144,9 +161,7 @@ struct Held {
     slots: Vec<Slot>,
     reaches: Vec<Vec<f32>>,
     vertices: u32,
-    lit: Vec<u32>,
-    cast: Vec<u32>,
-    views: Vec<(&'static str, SceneView)>,
+    views: u32,
 }
 
 struct Buffers {
@@ -156,7 +171,8 @@ struct Buffers {
     rest: Buffer<SkinningGpu>,
     rows: Buffer<SkinningGpu>,
     skinned: Buffer<SkinningGpu>,
-    colors: Buffer<SkinningGpu>,
+    bounds: Buffer<SkinningGpu>,
+    views: Buffer<SkinningGpu>,
     args: Buffer<SkinningGpu>,
 }
 
@@ -179,6 +195,7 @@ struct ScenePipelines {
 pub(crate) struct SkinningGpu {
     skin: Pass<Self>,
     skinning: ComputePipeline<Self>,
+    arguments: ComputePipeline<Self>,
     scenes: Vec<ScenePipelines>,
     buffers: Buffers,
     held: Held,
@@ -189,6 +206,8 @@ struct Posed {
     spheres: Vec<Vec4>,
     ranges: Vec<(Entity, Range<u32>, bool)>,
 }
+
+type Animators<'w, 's> = Query<'w, 's, (Entity, &'static Animator)>;
 
 fn rows_of(matrix: Mat4) -> JointRows {
     let rows = matrix.transpose();
@@ -230,41 +249,55 @@ fn reach_of(rig: &Rig, part: &RigPart, vertices: &[MeshVertex]) -> Vec<f32> {
     reach
 }
 
-fn layout_key(
-    listed: &[(Entity, &Animator)],
-    residency: &AssetResidency,
-    assets: &AssetLibrary,
-) -> LayoutKey {
+fn layout_key(table: &DrawnTable, animators: &Animators<'_, '_>, assets: &AssetLibrary) -> LayoutKey {
     let mut key = Vec::new();
-    for (entity, animator) in listed {
-        let rig = animator.rig();
-        for (index, part) in rig.parts.iter().enumerate() {
-            let shaped = assets
-                .mesh(part.mesh)
-                .is_some_and(|mesh| mesh.vertices().len() == part.skin.len());
-            if shaped && residency.resident(part.mesh) && residency.material_resident(part.material)
-            {
-                key.push((
-                    *entity,
-                    index,
-                    animator.rig_revision(),
-                    assets.revision_of(part.mesh),
-                ));
-            }
+    for (slot, entity, drawn) in table.rows(SKIN) {
+        let Ok((_, animator)) = animators.get(drawn.node) else {
+            continue;
+        };
+        let Some(index) = animator.part_nodes().iter().position(|part| *part == entity) else {
+            continue;
+        };
+        let (Some(part), Some(geometry)) = (animator.rig().parts.get(index), drawn.geometry) else {
+            continue;
+        };
+        let shaped = assets
+            .mesh(geometry)
+            .is_some_and(|mesh| mesh.vertices().len() == part.skin.len());
+        if shaped {
+            key.push((
+                drawn.node,
+                slot,
+                index,
+                geometry,
+                animator.rig_revision(),
+                assets.revision_of(geometry),
+            ));
         }
     }
+    key.sort_unstable_by_key(|&(animator, slot, ..)| (animator, slot));
     key
 }
 
-fn outside(planes: &[[f32; 4]; 6], center: Vec3, half: Vec3) -> bool {
-    planes.iter().any(|&[x, y, z, d]| {
-        let normal = Vec3::new(x, y, z);
-        normal.dot(center) + normal.abs().dot(half) + d < 0.0
-    })
+fn view_planes(views: &Views, view: &PrimaryView) -> Vec<SkinView> {
+    let drawn = views.drawn();
+    if drawn.is_empty() {
+        return vec![SkinView {
+            planes: planes(view.view_projection()),
+        }];
+    }
+    drawn
+        .iter()
+        .map(|view| SkinView {
+            planes: view
+                .planes
+                .unwrap_or_else(|| planes(view.view_projection)),
+        })
+        .collect()
 }
 
 fn pose_all(
-    listed: &[(Entity, &Animator)],
+    animators: &Animators<'_, '_>,
     slots: &[Slot],
     globals: &GlobalTransforms,
     poses: &DrawnPoses,
@@ -278,13 +311,15 @@ fn pose_all(
     let mut nodes = Vec::new();
     let mut drawn = Vec::new();
     let mut before = Vec::new();
-    for &(entity, animator) in listed {
-        if slots
-            .binary_search_by_key(&entity, |slot| slot.entity)
-            .is_err()
-        {
+    let mut last = None;
+    for slot in slots {
+        if last == Some(slot.animator) {
             continue;
         }
+        last = Some(slot.animator);
+        let Ok((entity, animator)) = animators.get(slot.animator) else {
+            continue;
+        };
         let start = posed.rows.len() as u32;
         let joints = animator.joint_nodes();
         let palette = &animator.rig().palette;
@@ -341,8 +376,8 @@ fn part_box(reach: &[f32], spheres: &[Vec4]) -> (Vec3, Vec3) {
 impl SkinningGpu {
     fn lay_out(
         &mut self,
-        listed: &[(Entity, &Animator)],
         key: &LayoutKey,
+        animators: &Animators<'_, '_>,
         assets: &AssetLibrary,
         cx: &mut Prepare<'_, Self>,
     ) {
@@ -355,20 +390,20 @@ impl SkinningGpu {
         let mut rest: Vec<RestVertex> = Vec::new();
         let mut owners: Vec<u32> = Vec::new();
         let mut palette = 0_u64;
-        for &(entity, index, _, revision) in key {
-            let Ok(at) = listed.binary_search_by_key(&entity, |(known, _)| *known) else {
+        for &(node, drawn, index, geometry, _, revision) in key {
+            let Ok((_, animator)) = animators.get(node) else {
                 continue;
             };
-            let rig: &Rig = listed[at].1.rig();
+            let rig: &Rig = animator.rig();
             let Some((part, mesh)) = rig
                 .parts
                 .get(index)
-                .and_then(|part| Some((part, assets.mesh(part.mesh)?)))
+                .and_then(|part| Some((part, assets.mesh(geometry)?)))
             else {
                 continue;
             };
             let vertices = mesh.vertices();
-            let same = shared.entry((part.mesh, revision)).or_default();
+            let same = shared.entry((geometry, revision)).or_default();
             let found = same.iter().find(|(other, kept, _, _)| {
                 kept.skin == part.skin && other.palette == rig.palette
             });
@@ -385,19 +420,19 @@ impl SkinningGpu {
             let skinned_at = owners.len() as u32;
             let slot = held.slots.len() as u32;
             owners.resize(owners.len() + vertices.len(), slot);
-            if held.slots.last().is_none_or(|last| last.entity != entity) {
+            if held.slots.last().is_none_or(|last| last.animator != node) {
                 palette += rig.palette.len() as u64;
             }
             held.slots.push(Slot {
-                entity,
-                mesh: part.mesh,
-                material: part.material,
+                drawn,
+                animator: node,
+                mesh: geometry,
+                material: None,
                 rest_at,
                 skinned_at,
                 reach,
                 masked: false,
                 double_sided: false,
-                bounds: (Vec3::ZERO, Vec3::ZERO),
             });
         }
         held.vertices = owners.len() as u32;
@@ -415,8 +450,7 @@ impl SkinningGpu {
             (palette * 2).max(1) * size_of::<JointRows>() as u64,
         );
         cx.allocate_buffer(buffers.parts, parts * size_of::<SkinPart>() as u64);
-        cx.allocate_buffer(buffers.colors, parts * COLOR_BYTES);
-        cx.allocate_buffer(buffers.args, parts * ARGS_BYTES);
+        cx.allocate_buffer(buffers.bounds, parts * size_of::<SkinBound>() as u64);
         if !owners.is_empty() {
             cx.write(buffers.owners, 0, &owners);
             cx.write(buffers.rest, 0, &rest);
@@ -426,7 +460,8 @@ impl SkinningGpu {
     fn stage(
         &mut self,
         posed: &Posed,
-        (residency, assets, view): (&AssetResidency, &AssetLibrary, &PrimaryView),
+        (table, residency, assets): (&DrawnTable, &AssetResidency, &AssetLibrary),
+        views: &[SkinView],
         cx: &mut Prepare<'_, Self>,
     ) {
         let held = &mut self.held;
@@ -437,14 +472,12 @@ impl SkinningGpu {
         } = posed;
         let total = spheres.len() as u32;
         debug_assert_eq!(rows.len(), spheres.len() * 2, "skin_rows_hold_previous");
-        let frustum = planes(view.view_projection());
         let count = held.slots.len();
         let mut parts = Vec::with_capacity(count);
-        let mut colors = Vec::with_capacity(count);
-        let mut args = Vec::with_capacity(count);
-        for (index, slot) in held.slots.iter_mut().enumerate() {
+        let mut bounds = Vec::with_capacity(count);
+        for slot in &mut held.slots {
             let found = ranges
-                .binary_search_by_key(&slot.entity, |(entity, _, _)| *entity)
+                .binary_search_by_key(&slot.animator, |(entity, _, _)| *entity)
                 .ok()
                 .map(|at| &ranges[at]);
             let (start, shown) =
@@ -452,47 +485,50 @@ impl SkinningGpu {
             let reach = held.reaches.get(slot.reach).map_or(&[][..], Vec::as_slice);
             let from_spheres = spheres.get(start as usize..).unwrap_or_default();
             let (center, half) = part_box(reach, from_spheres);
-            slot.bounds = (center, half);
+            slot.material = table.drawn(slot.drawn).and_then(|drawn| drawn.material);
+            let material = slot.material.and_then(|material| assets.material(material));
+            slot.masked =
+                material.is_some_and(|material| matches!(material.alpha_mode(), AlphaMode::Mask { .. }));
+            slot.double_sided = material.is_some_and(|material| material.cull() == Cull::None);
+            let (indices, first) = residency
+                .mesh(slot.mesh)
+                .map_or((0, 0), |mesh| (mesh.index_count(), mesh.first_index()));
             parts.push(SkinPart {
                 rows_at: start,
                 previous_at: start + total,
                 rest_at: slot.rest_at,
                 skinned_at: slot.skinned_at,
+                drawn: slot.drawn,
+                indices,
+                first,
+                pad: 0,
             });
-            let (color, surface) = match assets.material(slot.material) {
-                Some(material) => {
-                    slot.masked = matches!(material.alpha_mode(), AlphaMode::Mask { .. });
-                    slot.double_sided = material.cull() == Cull::None;
-                    let surface = pack_surface(material.surface());
-                    (pack_color(material.color()), surface)
-                }
-                None => ([0, 0], 0),
-            };
-            colors.push([color[0], color[1], surface, 0]);
-            let (indices, first) = residency
-                .mesh(slot.mesh)
-                .map_or((0, 0), |mesh| (mesh.index_count(), mesh.first_index()));
-            args.push([indices, 1, first, 0, 0]);
-            if shown {
-                held.cast.push(index as u32);
-                if !outside(&frustum, center, half) {
-                    held.lit.push(index as u32);
-                }
-            }
+            bounds.push(SkinBound {
+                center: center.extend(f32::from(u8::from(shown))).to_array(),
+                half: half.extend(0.0).to_array(),
+            });
         }
         let buffers = &self.buffers;
+        cx.allocate_buffer(
+            buffers.views,
+            views.len().max(1) as u64 * size_of::<SkinView>() as u64,
+        );
+        cx.allocate_buffer(
+            buffers.args,
+            (count * views.len()).max(1) as u64 * ARGS_BYTES,
+        );
         cx.write(buffers.rows, 0, rows);
         cx.write(buffers.parts, 0, &parts);
-        cx.write(buffers.colors, 0, &colors);
-        cx.write(buffers.args, 0, &args);
+        cx.write(buffers.bounds, 0, &bounds);
+        cx.write(buffers.views, 0, views);
         cx.write(
             buffers.frame,
             0,
             &[SkinFrame {
                 vertices: held.vertices,
                 parts: count as u32,
-                pad0: 0,
-                pad1: 0,
+                views: views.len() as u32,
+                pad: 0,
             }],
         );
     }
@@ -505,70 +541,40 @@ impl SkinningGpu {
         else {
             return 0;
         };
-        match &joined.drawing {
-            Drawing::Lit(lit) => self.draw_parts(draw, &joined.streams, &self.held.lit, |slot| {
-                (&lit[usize::from(slot.double_sided)], Some(slot.material))
-            }),
-            Drawing::Casters(casting) => {
-                let Some(view) = self.cast_view(scene) else {
-                    return 0;
-                };
-                let frustum = view.planes.unwrap_or_else(|| {
-                    planes(Mat4::from_cols_array_2d(&view.view_projection))
-                });
-                let cast: Vec<u32> = self
-                    .held
-                    .cast
-                    .iter()
-                    .copied()
-                    .filter(|&index| {
-                        let (center, half) = self.held.slots[index as usize].bounds;
-                        !outside(&frustum, center, half)
-                    })
-                    .collect();
-                self.draw_parts(draw, &joined.streams, &cast, |slot| {
-                    (
-                        &casting[usize::from(slot.masked)],
-                        slot.masked.then_some(slot.material),
-                    )
-                })
-            }
-        }
-    }
-
-    fn cast_view(&self, scene: &SceneDraw) -> Option<&SceneView> {
-        let index = scene.view? as usize;
-        self.held
-            .views
-            .iter()
-            .filter(|(pass, _)| *pass == scene.pass.name())
-            .nth(index)
-            .map(|(_, view)| view)
-            .filter(|view| view.takes.is_none_or(|takes| takes == Mobility::Moving))
-    }
-
-    fn draw_parts<'p>(
-        &'p self,
-        draw: &mut Draw<'_, Self, Scene>,
-        streams: &Streams,
-        listed: &[u32],
-        chosen: impl Fn(&Slot) -> (&'p Pipeline<Self, Scene>, Option<MaterialHandle>),
-    ) -> u32 {
-        for &index in listed {
-            let slot = &self.held.slots[index as usize];
-            let (pipeline, material) = chosen(slot);
+        let Some(view) = scene.index.filter(|&index| index < self.held.views) else {
+            return 0;
+        };
+        let base = u64::from(view) * self.held.slots.len() as u64;
+        let mut drawn = 0;
+        for (index, slot) in self.held.slots.iter().enumerate() {
+            let (pipeline, material) = match &joined.drawing {
+                Drawing::Lit(lit) => {
+                    if slot.material.is_none() {
+                        continue;
+                    }
+                    (&lit[usize::from(slot.double_sided)], slot.material)
+                }
+                Drawing::Casters(casting) => (
+                    &casting[usize::from(slot.masked)],
+                    slot.material.filter(|_| slot.masked),
+                ),
+            };
             draw.draw(
                 pipeline,
                 Shape::MeshIndirect {
                     mesh: slot.mesh,
                     material,
-                    args: streams.args,
-                    offset: u64::from(index) * ARGS_BYTES,
-                    streams: &[(streams.skinned, u64::from(slot.skinned_at) * SKINNED_BYTES)],
+                    args: joined.streams.args,
+                    offset: (base + index as u64) * ARGS_BYTES,
+                    streams: &[(
+                        joined.streams.skinned,
+                        u64::from(slot.skinned_at) * SKINNED_BYTES,
+                    )],
                 },
             );
+            drawn += 1;
         }
-        listed.len() as u32
+        drawn
     }
 }
 
@@ -576,7 +582,6 @@ fn lit_pipeline(
     cx: &mut Install<'_, SkinningGpu>,
     scene: Scene,
     double_sided: bool,
-    colors: Buffer<SkinningGpu>,
 ) -> Result<Pipeline<SkinningGpu, Scene>, Error> {
     use shaders::animation::draw;
     cx.render_pipeline(
@@ -598,14 +603,13 @@ fn lit_pipeline(
             blend: None,
             writes: wgpu::ColorWrites::ALL,
         },
-        &[(draw::COLORS, Bind::Buffer(colors))],
+        &[],
     )
 }
 
 fn caster_pipelines(
     cx: &mut Install<'_, SkinningGpu>,
     scene: Scene,
-    colors: Buffer<SkinningGpu>,
 ) -> Result<[Pipeline<SkinningGpu, Scene>; 2], Error> {
     use shaders::animation::casters;
     let desc = |vertex, fragment| RenderPipeline {
@@ -623,7 +627,7 @@ fn caster_pipelines(
         cx.render_pipeline(
             scene,
             &desc(casters::VS_CASTER_MASKED, Some(casters::FS_CASTER_MASKED)),
-            &[(casters::COLORS, Bind::Buffer(colors))],
+            &[],
         )?,
     ])
 }
@@ -644,11 +648,11 @@ fn scene_pipelines(
         let scene = Scene::named(listed.name);
         let drawing = if listed.name == ColorPass::NAME {
             Drawing::Lit([
-                lit_pipeline(cx, scene, false, buffers.colors)?,
-                lit_pipeline(cx, scene, true, buffers.colors)?,
+                lit_pipeline(cx, scene, false)?,
+                lit_pipeline(cx, scene, true)?,
             ])
         } else if listed.pass.views == PassViews::Owned && !listed.pass.reads.base_color {
-            Drawing::Casters(caster_pipelines(cx, scene, buffers.colors)?)
+            Drawing::Casters(caster_pipelines(cx, scene)?)
         } else {
             continue;
         };
@@ -668,12 +672,13 @@ fn scene_pipelines(
 impl GpuPart for SkinningGpu {
     type Reads = (
         Query<'static, 'static, (Entity, &'static Animator)>,
+        Res<'static, DrawnTable>,
         Res<'static, GlobalTransforms>,
         Res<'static, DrawnPoses>,
         Res<'static, AssetResidency>,
         Res<'static, AssetLibrary>,
         Res<'static, PrimaryView>,
-        Query<'static, 'static, &'static SceneViews>,
+        Res<'static, Views>,
     );
     const NAME: &'static str = "animation";
     const LAZY: bool = true;
@@ -689,7 +694,8 @@ impl GpuPart for SkinningGpu {
             rest: cx.buffer("skin_rest", Lifetime::Kept),
             rows: cx.buffer("skin_rows", Lifetime::Kept),
             skinned: cx.buffer("skin_vertices", Lifetime::Kept),
-            colors: cx.buffer("skin_colors", Lifetime::Kept),
+            bounds: cx.buffer("skin_bounds", Lifetime::Kept),
+            views: cx.buffer("skin_views", Lifetime::Kept),
             args: cx.buffer("skin_args", Lifetime::Kept),
         };
         let pass = cx
@@ -709,10 +715,22 @@ impl GpuPart for SkinningGpu {
                 (skin::SKINNED, Bind::Buffer(buffers.skinned)),
             ],
         )?;
+        let arguments = cx.compute_pipeline(
+            pass,
+            skin::SKIN_ARGS,
+            &[
+                (skin::FRAME, Bind::Buffer(buffers.frame)),
+                (skin::PARTS, Bind::Buffer(buffers.parts)),
+                (skin::BOUNDS, Bind::Buffer(buffers.bounds)),
+                (skin::VIEWS, Bind::Buffer(buffers.views)),
+                (skin::ARGS, Bind::Buffer(buffers.args)),
+            ],
+        )?;
         let scenes = scene_pipelines(cx, &buffers)?;
         Ok(Self {
             skin: pass,
             skinning,
+            arguments,
             scenes,
             buffers,
             held: Held::default(),
@@ -721,33 +739,25 @@ impl GpuPart for SkinningGpu {
 
     fn prepare(
         &mut self,
-        (animators, globals, poses, residency, assets, view, published): SystemParamItem<
+        (animators, table, globals, poses, residency, assets, view, views): SystemParamItem<
             '_,
             '_,
             Self::Reads,
         >,
         cx: &mut Prepare<'_, Self>,
     ) {
-        let mut listed: Vec<(Entity, &Animator)> = animators.iter().collect();
-        listed.sort_unstable_by_key(|(entity, _)| *entity);
-        let key = layout_key(&listed, &residency, &assets);
+        let key = layout_key(&table, &animators, &assets);
         if self.held.key.as_ref() != Some(&key) {
-            self.lay_out(&listed, &key, &assets, cx);
+            self.lay_out(&key, &animators, &assets, cx);
             self.held.key = Some(key);
         }
-        self.held.lit.clear();
-        self.held.cast.clear();
-        self.held.views.clear();
-        self.held.views.extend(
-            published
-                .iter()
-                .flat_map(|views| views.views.iter().map(|view| (views.pass, *view))),
-        );
+        let planes = view_planes(&views, &view);
+        self.held.views = planes.len() as u32;
         if self.held.slots.is_empty() {
             return;
         }
-        let posed = pose_all(&listed, &self.held.slots, &globals, &poses);
-        self.stage(&posed, (&*residency, &*assets, &*view), cx);
+        let posed = pose_all(&animators, &self.held.slots, &globals, &poses);
+        self.stage(&posed, (&*table, &*residency, &*assets), &planes, cx);
         cx.run(self.skin);
     }
 
@@ -757,6 +767,8 @@ impl GpuPart for SkinningGpu {
         }
         let vertices = self.held.vertices.div_ceil(SKIN_GROUP);
         cx.dispatch(&self.skinning, Count::Groups([vertices, 1, 1]));
+        let parts = (self.held.slots.len() as u32).div_ceil(SKIN_GROUP);
+        cx.dispatch(&self.arguments, Count::Groups([parts, self.held.views, 1]));
         0
     }
 }

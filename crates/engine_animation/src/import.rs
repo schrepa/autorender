@@ -4,7 +4,7 @@ use std::sync::Arc;
 use engine_core::math::max;
 use engine_core::{
     AlphaMode, AssetLibrary, Cull, Error, ErrorCode, Expected, Filter, Material, MaterialHandle, Mesh,
-    Mesh3d, MeshVertex, Sampler, Surface, Texture, TextureHandle, TextureRef, UvTransform, Wrap,
+    MeshHandle, MeshVertex, Sampler, Surface, Texture, TextureHandle, TextureRef, UvTransform, Wrap,
     decode_image,
 };
 use engine_places_rendering::animation::{
@@ -18,7 +18,7 @@ use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 const WHOLE: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
 
 pub struct Model {
-    pub statics: Vec<Mesh3d>,
+    pub statics: Vec<(MeshHandle, MaterialHandle)>,
     pub rig: Option<Arc<Rig>>,
 }
 
@@ -157,10 +157,7 @@ pub fn import_glb(
                     material,
                     skin: soup.skin,
                 }),
-                Binding::Still => statics.push(Mesh3d {
-                    mesh: handle,
-                    material,
-                }),
+                Binding::Still => statics.push((handle, material)),
             }
         }
     }

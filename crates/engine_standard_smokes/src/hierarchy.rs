@@ -223,12 +223,12 @@ fn children(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     );
     let placement = ask(session, "inspect", json!({"entity": "west-lantern"}))?;
     let components = &placement["entity"]["components"];
-    let wanted = json!("no Mesh3d");
+    let wanted = json!("no DrawnMesh");
     smoke_eq!(
         seen(
             components
                 .as_array()
-                .is_some_and(|names| !names.iter().any(|name| name == "Mesh3d")),
+                .is_some_and(|names| !names.iter().any(|name| name == "DrawnMesh")),
             json!(components),
             &wanted,
         ),

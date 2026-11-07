@@ -2,7 +2,7 @@ use engine_core::{MaterialHandle, MeshHandle};
 use engine_render::{Draw, MeshPass, Pipeline, Scene, SceneDraw, Shape};
 
 use crate::debug::{DrawKind, DrawRecord};
-use crate::gpu::{Drawing, Looked, MeshesGpu, Streams, ViewStreams};
+use crate::gpu::{BlendedStreams, Drawing, Looked, MeshesGpu, Streams, ViewStreams};
 use crate::layouts::{DRAW_ARGS_BYTES, LOD_LEVELS};
 use crate::presentation::{PHASE_ONE, ViewSlot};
 
@@ -47,11 +47,36 @@ impl MeshesGpu {
                 };
                 self.draw_view(draw, streams, &looks[usize::from(slot.mirrored)], slot)
             }
+            Drawing::Blended { looks, streams } => self.draw_blended(draw, streams, looks),
         }
     }
 
+    fn draw_blended(
+        &self,
+        draw: &mut Draw<'_, Self, Scene>,
+        streams: &BlendedStreams,
+        looks: &Looked<Pipeline<Self, Scene>>,
+    ) -> u32 {
+        let records = (streams.records, self.record(DrawKind::Mesh, 0));
+        let mut drawn = 0;
+        for batch in &self.state.blended.batches {
+            draw.draw(
+                looks.of(batch.look),
+                Shape::MeshIndirect {
+                    mesh: batch.mesh,
+                    material: batch.material,
+                    args: streams.args,
+                    offset: batch.args,
+                    streams: &[(streams.ids, batch.ids), records],
+                },
+            );
+            drawn += 1;
+        }
+        drawn
+    }
+
     pub(crate) fn record(&self, kind: DrawKind, level: usize) -> u64 {
-        DrawRecord::of(kind, level, self.state.casts).offset()
+        DrawRecord::of(kind, level).offset()
     }
 
     pub(crate) fn draw_meshes<S: 'static>(
@@ -63,7 +88,7 @@ impl MeshesGpu {
     ) -> u32 {
         let mut drawn = 0;
         for item in &self.state.draws.items {
-            if prepass && !item.look.masked {
+            if item.blended || (prepass && !item.look.masked) {
                 continue;
             }
             let pipeline = looks.of(item.look);
@@ -181,7 +206,7 @@ impl MeshesGpu {
                     &casting[usize::from(masked)],
                     Shape::MeshIndirect {
                         mesh: item.mesh,
-                        material: item.material.filter(|_| masked),
+                        material: item.material,
                         args: streams.args,
                         offset: args,
                         streams: &[(streams.ids, ids)],

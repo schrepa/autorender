@@ -52,8 +52,8 @@ pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
 pub use drawn::{
-    DRAWN_OWN_PROJECTION, DRAWN_RECEIVES_SHADOWS, DrawnBatch, DrawnRecord, DrawnSettings,
-    DrawnState, DrawnTable, PlanState, drawn_wgsl,
+    DRAWN_OWN_PROJECTION, DRAWN_RECEIVES_SHADOWS, DRAWN_UNBOUNDED, DrawnBatch, DrawnCensus,
+    DrawnRecord, DrawnSettings, DrawnState, DrawnTable, PlanState, drawn_wgsl,
 };
 pub use engine_assets::{
     Aabb, AlphaImage, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, Attributes,
@@ -65,18 +65,19 @@ pub use engine_assets::{
 };
 pub use engine_textures::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 pub use engine_place::{
-    Applied, ApplyAt, Ask, Asked, AttachPoint, BudgetUse, CORE_PASSES, Census, Clock, ColorPass,
+    Applied, ApplyAt, Ask, Asked, AttachPoint, BlendedPass, BudgetUse, CORE_PASSES, Census,
+    Clock, ColorPass, PositionReach,
     Cursor, CursorView, DepthPass, DrawKind, Drawn, DrawnProjection, Error, ErrorCode, Events,
     Feed, FeedView, FrameBudget, GeometryHandle, GpuStruct, InstanceValues, Interest, JobRef,
-    KindDecl, Layers, Level, LevelView, List, MaterialHandle, Mesh3d, MeshHandle, Mobility, Moment,
+    KindDecl, Layers, Level, LevelView, List, MaterialHandle, MeshHandle, Mobility, Moment,
     Mover, MoverId, Node, NodeId, NodeWord, PASS_BITS, Pace, Pass, PassBit, PassEntry,
     PassMask, PassName, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring, Runs,
-    ScenePass, ScenePasses, SceneView, SceneViews, Screens, Since, Slot, SlotSet, Smoke,
+    ScenePass, ScenePasses, Screens, Since, Slot, SlotSet, Smoke,
     SmokeFailure, SmokeSession,
     Stamp, StoreId, TargetName, TextureHandle, Ticket, Writes, every, gpu_consts, never,
     smoke_check, smoke_eq,
 };
-pub use engine_place::{Clear, Rect, Target, View, ViewCut, ViewHistory};
+pub use engine_place::{Clear, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory};
 pub use engine_registry::{
     AuthoredId, ExplainAsk, ExplainRecord, FrameFacts, RecordParity, fault_of,
 };
@@ -112,7 +113,7 @@ pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
 pub use ticks::ScanClock;
 pub use transform_edits::*;
-pub use views::{Hit, Picking, Ray, ViewFacts, Views, main_camera};
+pub use views::{DrawnView, Hit, Picking, Ray, ViewFacts, Views, main_camera};
 
 pub mod codec {
     pub use engine_codec::{decode, encode};
@@ -166,7 +167,7 @@ static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::ledger::<Readiness>("readiness"),
     PlaceDecl::ledger::<AssetLibrary>("asset_library"),
     PlaceDecl::component::<Drawn>("drawn"),
-    PlaceDecl::component::<SceneViews>("scene_views"),
+    PlaceDecl::component::<OwnedViews>("owned_views"),
     PlaceDecl::ask::<Teleport>(),
     PlaceDecl::ask::<HandOver>(),
     PlaceDecl::ask::<CameraHandoff>(),
@@ -870,6 +871,7 @@ impl Engine {
         let world = self.app.world_mut();
         publish_view(world, facts);
         world.run_schedule(ViewSync);
+        views::settle_owned(world);
         assets::settle_assets(world);
     }
 

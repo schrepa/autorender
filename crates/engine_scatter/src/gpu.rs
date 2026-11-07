@@ -103,12 +103,12 @@ struct LitLevel {
     level: u32,
     look: usize,
     masked: bool,
-    casts: bool,
 }
 
 struct CastLevel {
     mesh: MeshHandle,
     material: Option<MaterialHandle>,
+    cuts: bool,
     group: u32,
     level: u32,
 }
@@ -131,7 +131,6 @@ struct Held {
     slots_written: bool,
     snapping: bool,
     prepared: bool,
-    casts: bool,
     cards: bool,
     atlas: bool,
     occupancy: [(bool, bool); MAX_OCCUPANCY_LEVELS],
@@ -594,21 +593,22 @@ impl ScatterGpu {
                         level: level as u32,
                         look: shape,
                         masked,
-                        casts: drawn.casts.is_some(),
                     });
                 }
             }
             let Some(cuts) = drawn.casts else {
                 continue;
             };
-            if cuts && !residency.material_resident(drawn.material) {
+            let resident = residency.material_resident(drawn.material);
+            if cuts && !resident {
                 continue;
             }
             for (level, &mesh) in drawn.casters.iter().enumerate() {
                 if residency.resident(mesh) {
                     held.cast.push(CastLevel {
                         mesh,
-                        material: cuts.then_some(drawn.material),
+                        material: resident.then_some(drawn.material),
+                        cuts,
                         group: group as u32,
                         level: level as u32,
                     });
@@ -746,7 +746,6 @@ impl ScatterGpu {
         let plan = &state.plan;
         held.maps.clear();
         held.prepared = false;
-        held.casts = plan.casts;
         held.cards = plan.cards;
         held.atlas = plan.atlas;
         let sizes = state.sizes;
@@ -944,7 +943,7 @@ impl ScatterGpu {
                 let Some((ids, offset)) = self.draw_source(view, item.group as usize, level) else {
                     continue;
                 };
-                let record = DrawRecord::of(DrawKind::Placed, level, held.casts && item.casts);
+                let record = DrawRecord::of(DrawKind::Placed, level);
                 draw.draw_with(
                     pipeline,
                     Shape::MeshIndirect {
@@ -963,7 +962,7 @@ impl ScatterGpu {
             return draws;
         };
         if let Some((cards, offset)) = self.card_source(0) {
-            let record = DrawRecord::of(DrawKind::PlacedCard, 0, held.casts);
+            let record = DrawRecord::of(DrawKind::PlacedCard, 0);
             draw.draw(
                 card,
                 Shape::IndirectAt {
@@ -999,7 +998,7 @@ impl ScatterGpu {
                 continue;
             };
             draw.draw(
-                &casting[usize::from(item.material.is_some())],
+                &casting[usize::from(item.cuts)],
                 Shape::MeshIndirect {
                     mesh: item.mesh,
                     material: item.material,

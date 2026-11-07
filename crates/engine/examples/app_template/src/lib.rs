@@ -39,28 +39,32 @@ pub fn build(engine: &mut Engine) -> engine::Result<Template> {
             assets.insert_material(Material::new([0.9, 0.5, 0.2, 1.0])?)?,
         )
     };
-    world.spawn((
+    let spawned = world.spawn((
         Transform {
             translation: Vec3::new(0.0, -0.5, 0.0),
             scale: Vec3::new(20.0, 1.0, 20.0),
             ..Transform::default()
         },
-        Mesh3d {
-            mesh,
-            material: ground,
-        },
+    )).id();
+    world.entity_mut(spawned).insert(Drawn::new(
+        DrawKind::MESH,
+        mesh,
+        ground,
+        spawned,
     ));
-    world.spawn((
+    let spawned = world.spawn((
         Transform {
             translation: Vec3::new(0.0, 1.0, 0.0),
             scale: Vec3::splat(2.0),
             ..Transform::default()
         },
-        Mesh3d {
-            mesh,
-            material: block,
-        },
         Turning,
+    )).id();
+    world.entity_mut(spawned).insert(Drawn::new(
+        DrawKind::MESH,
+        mesh,
+        block,
+        spawned,
     ));
     Ok(Template)
 }

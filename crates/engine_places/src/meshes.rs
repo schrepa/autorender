@@ -1,71 +1,10 @@
-use bevy_ecs::prelude::{Component, Entity, Resource};
-use engine_math::{clamp, sin_cos};
+use bevy_ecs::prelude::Resource;
 use engine_place::Slot;
-use serde::{Deserialize, Serialize};
 
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub struct Instances {
-    pub slots: engine_math::collections::HashMap<Entity, u32>,
-    pub candidates: u32,
-    pub generation: u64,
-}
-
-impl Instances {
-    pub fn drawn(&self, entity: Entity) -> Option<u32> {
-        self.slots.get(&entity).copied()
-    }
-}
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Instances;
 
 impl Slot for Instances {
     const NAME: &'static str = "instances";
     const WGSL: Option<&'static str> = Some(include_str!("places/instances.wgsl"));
-}
-
-#[derive(Component, Debug, Clone, Copy)]
-pub struct Cube {
-    pub color: [f32; 4],
-}
-
-#[derive(Component, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct Tint(pub [f32; 4]);
-
-impl Tint {
-    pub const WHITE: Self = Self([1.0; 4]);
-
-    pub fn apply(&self, color: [f32; 4]) -> [f32; 4] {
-        let mut tinted = color;
-        for (channel, factor) in tinted.iter_mut().zip(self.0) {
-            let factor = if factor.is_finite() {
-                clamp(factor, 0.0, 1.0)
-            } else {
-                1.0
-            };
-            *channel *= factor;
-        }
-        tinted
-    }
-}
-
-impl Default for Tint {
-    fn default() -> Self {
-        Self::WHITE
-    }
-}
-
-#[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
-pub struct FirstPersonLayer {
-    pub fov_degrees: Option<f32>,
-}
-
-impl FirstPersonLayer {
-    pub fn slot_flags(&self) -> u32 {
-        let focal = self
-            .fov_degrees
-            .filter(|fov| (1.0..=179.0).contains(fov))
-            .map_or(0.0, |fov| {
-                let (sine, cosine) = sin_cos(fov.to_radians() * 0.5);
-                cosine / sine
-            });
-        (-1.0 - focal).to_bits()
-    }
 }

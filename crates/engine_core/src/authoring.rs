@@ -8,10 +8,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    Camera, Clear, ComponentKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode, Expected,
-    GlobalTransforms, InstanceValues, Layers, List, MaterialHandle, Mesh3d, MeshHandle, Mover,
-    Node, Parent, PassMask, Placed, Placement, Rect, SceneComponents, SceneContext, SceneCx,
-    SceneForm, ScenePasses, Target, TextureHandle, View, scene_component, scene_components,
+    Camera, Clear, ComponentKind, DrawKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode,
+    Expected, GlobalTransforms, InstanceValues, Layers, List, MaterialHandle, MeshHandle, Mover,
+    Node, Parent, PassMask, Placed, Placement, Rect, Rule, SceneComponents, SceneContext, SceneCx,
+    SceneForm, ScenePasses, Setting, Target, TextureHandle, View, scene_component,
+    scene_components,
 };
 
 pub(crate) const COMPONENT: &str = "component";
@@ -23,7 +24,7 @@ static CORE: LazyLock<[ComponentKind; 5]> = LazyLock::new(|| {
     let view = ComponentKind::form::<ViewForm>("view")
         .check(view_checked)
         .prepare(view_camera);
-    let drawn = ComponentKind::form::<DrawnForm>("drawn");
+    let drawn = ComponentKind::form::<DrawnForm>("drawn").check(drawn_checked);
     #[cfg(feature = "schema")]
     let (node, mover, camera, view, drawn) = (
         node.schema(schema_of::<Node>),
@@ -45,7 +46,8 @@ static CORE: LazyLock<[ComponentKind; 5]> = LazyLock::new(|| {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct DrawnForm {
-    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh: Option<MeshHandle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -68,29 +70,48 @@ fn receives_shadows() -> bool {
     true
 }
 
+const TINT_RULE: Rule = Rule::range(0.0, 1.0);
+
+fn drawn_checked(form: &DrawnForm, path: &str) -> Result<(), Error> {
+    Setting::check(&form.values.tint, "tint", TINT_RULE).map_err(|invalid| Error {
+        code: ErrorCode::InvalidValue,
+        path: format!(
+            "{path}.values.tint{}",
+            invalid.field.strip_prefix("tint").unwrap_or_default()
+        ),
+        detail: Box::new(invalid.detail),
+    })
+}
+
 impl SceneForm for DrawnForm {
     type Component = Drawn;
 
     fn insert(self, world: &mut World, entity: Entity) -> Result<(), Error> {
-        let table = world.get_resource::<DrawnTable>();
-        let kind = table
-            .and_then(|table| {
+        let held = world.get::<Drawn>(entity).cloned();
+        let kind = match &self.kind {
+            None => held.as_ref().map_or(DrawKind::MESH, |drawn| drawn.kind),
+            Some(name) => {
+                let table = world.get_resource::<DrawnTable>();
                 table
-                    .kinds()
-                    .iter()
-                    .find(|declared| declared.kind.name() == self.kind)
-            })
-            .map(|declared| declared.kind)
-            .ok_or_else(|| {
-                Error::new(ErrorCode::UnknownVariant, "$.kind")
-                    .got(&self.kind)
-                    .variants(
+                    .and_then(|table| {
                         table
-                            .into_iter()
-                            .flat_map(DrawnTable::kinds)
-                            .map(|declared| declared.kind.name()),
-                    )
-            })?;
+                            .kinds()
+                            .iter()
+                            .find(|declared| declared.kind.name() == name)
+                    })
+                    .map(|declared| declared.kind)
+                    .ok_or_else(|| {
+                        Error::new(ErrorCode::UnknownVariant, "$.kind")
+                            .got(name)
+                            .variants(
+                                table
+                                    .into_iter()
+                                    .flat_map(DrawnTable::kinds)
+                                    .map(|declared| declared.kind.name()),
+                            )
+                    })?
+            }
+        };
         let passes = if self.passes.is_empty() {
             None
         } else {
@@ -99,11 +120,14 @@ impl SceneForm for DrawnForm {
             let named = serde_json::to_value(&self.passes).unwrap_or(Value::Null);
             Some(listed.encode(&named, listed.defaults(kind), "$.passes")?)
         };
-        let shown = world.get::<Mesh3d>(entity).copied().unwrap_or_default();
         world.entity_mut(entity).insert(Drawn {
             kind,
-            geometry: self.mesh.unwrap_or(shown.mesh),
-            material: self.material.unwrap_or(shown.material),
+            geometry: self
+                .mesh
+                .or_else(|| held.as_ref().and_then(|drawn| drawn.geometry)),
+            material: self
+                .material
+                .or_else(|| held.as_ref().and_then(|drawn| drawn.material)),
             node: entity,
             passes,
             layers: self.layers,
@@ -117,16 +141,15 @@ impl SceneForm for DrawnForm {
 
     fn read(world: &World, entity: Entity) -> Option<Self> {
         let drawn = world.get::<Drawn>(entity)?;
-        let shown = world.get::<Mesh3d>(entity).copied().unwrap_or_default();
         let passes = drawn
             .passes
             .zip(world.get_resource::<ScenePasses>())
             .map(|(mask, listed)| switched(listed, mask, listed.defaults(drawn.kind)))
             .unwrap_or_default();
         Some(Self {
-            kind: drawn.kind.name().to_owned(),
-            mesh: (drawn.geometry != shown.mesh).then_some(drawn.geometry),
-            material: (drawn.material != shown.material).then_some(drawn.material),
+            kind: Some(drawn.kind.name().to_owned()),
+            mesh: drawn.geometry,
+            material: drawn.material,
             passes,
             layers: drawn.layers,
             order: drawn.order,

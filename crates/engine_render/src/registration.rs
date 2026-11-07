@@ -47,6 +47,12 @@ pub(crate) struct Generated(pub(crate) &'static [&'static str]);
 
 pub(crate) struct ResolvePass(pub(crate) crate::PassNames);
 
+pub(crate) struct Applied {
+    pub(crate) pass: engine_core::PassEntry,
+    pub(crate) module: engine_core::Module,
+    pub(crate) scope: Scope,
+}
+
 pub(crate) type KindCall =
     Arc<dyn Fn(&dyn Any, &SceneDraw, &mut RawDraw<'_>) -> u32 + Send + Sync>;
 
@@ -95,6 +101,8 @@ pub(crate) trait Installed: Send + Sync {
 
     fn prepare(&mut self, world: &World, core: &mut FrameCore) -> Result<(), Error>;
 
+    fn view(&mut self, view: &engine_core::ViewFacts, core: &mut FrameCore);
+
     fn encode(&mut self, pass: u32, core: &mut EncodeCore, timer: &GpuProfiler) -> u32;
 
     fn rebind(&mut self, world: &mut World);
@@ -137,6 +145,16 @@ impl<P: GpuPart> Installed for Held<P> {
             },
         );
         Ok(())
+    }
+
+    fn view(&mut self, view: &engine_core::ViewFacts, core: &mut FrameCore) {
+        self.part.view(
+            view,
+            &mut Prepare {
+                core,
+                part: PhantomData,
+            },
+        );
     }
 
     fn encode(&mut self, pass: u32, core: &mut EncodeCore, timer: &GpuProfiler) -> u32 {

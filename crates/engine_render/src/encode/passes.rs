@@ -217,9 +217,22 @@ impl Run {
                 },
             };
         let key = target_key;
+        let kept = self.carried;
+        let carried = move |target: Target, ops: Ops| {
+            if kept && matches!(target, Target::Scene | Target::Depth) {
+                Ops {
+                    load: Load::Load,
+                    ..ops
+                }
+            } else {
+                ops
+            }
+        };
+        let composites = crate::shared::composites(&pass);
+        let lone = crate::shared::draws_canvas(&pass) && !composites && self.canvas_rect.is_some();
         match attach {
             AttachRaw::Declared => {
-                if let Some(layer) = layer {
+                if let Some(layer) = layer.filter(|_| !lone) {
                     if !own_colors_only(&pass) {
                         main = !self.debug;
                         if self.debug {
@@ -246,7 +259,7 @@ impl Run {
                                         key(target),
                                         self.view_of(target, true).cloned(),
                                         format,
-                                        ops,
+                                        carried(target, ops),
                                     )),
                                     None => colors.push((
                                         key(target),
@@ -265,17 +278,32 @@ impl Run {
                         self.machine.ids.target(Target::Depth),
                         self.view_of(Target::Depth, true),
                     ) {
-                        let ops = depth_of(Some(id)).unwrap_or(Some(Ops {
-                            load: Load::Load,
-                            store: true,
-                        }));
+                        let ops = depth_of(Some(id))
+                            .unwrap_or(Some(Ops {
+                                load: Load::Load,
+                                store: true,
+                            }))
+                            .map(|ops| carried(Target::Depth, ops));
                         depth = Some((key(Target::Depth), made.clone(), DEPTH_FORMAT, ops, true));
                     }
                 }
                 if crate::shared::draws_canvas(&pass) {
                     let id = self.machine.ids.target(Target::Canvas);
-                    if let (Some(ops), Some(canvas)) = (ops_of(id), self.canvas.clone()) {
+                    let canvas = if composites {
+                        self.view_canvas()
+                    } else {
+                        self.canvas.clone()
+                    };
+                    if let (Some(ops), Some(canvas)) = (ops_of(id), canvas) {
                         let format = self.canvas_format();
+                        let ops = if self.canvas_load {
+                            Ops {
+                                load: Load::Load,
+                                ..ops
+                            }
+                        } else {
+                            ops
+                        };
                         colors.insert(0, (key(Target::Canvas), Some(canvas), format, ops));
                     }
                 }
@@ -491,6 +519,7 @@ impl Run {
             })
             .forget_lifetime();
         if layer.is_some()
+            && !lone
             && let Some(region) = self.region
         {
             crate::targets::draw_within(&mut render, region);
@@ -569,7 +598,33 @@ impl Run {
     }
 
     pub(crate) fn canvas_format(&self) -> wgpu::TextureFormat {
-        self.surface
+        self.canvas_format
+    }
+
+    pub(crate) fn clear_canvas(&mut self) {
+        let Some(canvas) = self.canvas.clone() else {
+            return;
+        };
+        self.leave();
+        let Some(encoder) = self.recording.encoder() else {
+            return;
+        };
+        drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("engine/canvas-clear"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &canvas,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        }));
     }
 
     pub(super) fn attachment_view(

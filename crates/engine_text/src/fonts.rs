@@ -206,6 +206,10 @@ impl Layout {
             align,
         }
     }
+
+    pub(crate) fn pixels(self) -> f32 {
+        f32::from_bits(self.size)
+    }
 }
 
 #[derive(Clone, Copy)]

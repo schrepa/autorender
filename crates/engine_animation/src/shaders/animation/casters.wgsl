@@ -1,9 +1,7 @@
 import package::engine::shading::SurfaceInput;
 import package::engine::surface::opacity_cut;
 import package::engine::view::camera;
-import package::face::instances::SlotColor;
-
-@group(2) @binding(0) var<storage, read> colors: array<SlotColor>;
+import package::face::instances::instance_color;
 
 fn project(position: vec3<f32>) -> vec4<f32> {
     let clip = camera.view_projection * vec4<f32>(position, 1.0);
@@ -25,7 +23,7 @@ fn vs_caster_masked(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>
         @location(3) slot: u32) -> MaskedOutput {
     var output: MaskedOutput;
     output.clip = project(position);
-    output.uv_alpha = vec3<f32>(uv, unpack2x16unorm(colors[slot].color.y).y);
+    output.uv_alpha = vec3<f32>(uv, unpack2x16unorm(instance_color(slot).color.y).y);
     return output;
 }
 

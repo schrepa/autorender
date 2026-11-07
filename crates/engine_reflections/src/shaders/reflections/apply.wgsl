@@ -3,6 +3,7 @@ import package::engine::post::frame::{drawn_uv, post};
 import package::engine::post::pixel::{PostPixel, SceneLight};
 import package::face::transparency::revealed;
 import package::generated::pieces::reflections::piece;
+import package::generated::targets::blended_cover;
 
 @group(0) @binding(0) var reflections: texture_2d<f32>;
 @group(0) @binding(0) var reflections_sampler: sampler;
@@ -15,7 +16,7 @@ fn apply(light: SceneLight, at: PostPixel) -> SceneLight {
         drawn_uv(at.uv * post.size.xy, post), 0.0);
     let strength = piece().applied.y;
     let replaced = saturate(reflection.a * strength);
-    let seen = revealed(at.pixel).x;
+    let seen = revealed(at.pixel).x * (1.0 - blended_cover(at.pixel));
     let color = light.color * (1.0 - light.ambient * replaced) + reflection.rgb * strength * seen;
     let ambient = light.ambient * (1.0 - replaced) * luminance(light.color)
         / max(luminance(color), 1.0e-6);

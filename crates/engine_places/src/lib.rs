@@ -169,8 +169,5 @@ pub mod contract {
 
 pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<meshes::Instances>(),
-    PlaceDecl::component::<meshes::Cube>("cube"),
-    PlaceDecl::component::<meshes::Tint>("tint"),
-    PlaceDecl::component::<meshes::FirstPersonLayer>("first_person_layer"),
     PlaceDecl::slot::<sweeps::Sweeps>(),
 ];

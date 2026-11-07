@@ -13,6 +13,8 @@ pub type GeometryHandle = MeshHandle;
 pub struct DrawKind(pub &'static str);
 
 impl DrawKind {
+    pub const MESH: Self = Self("mesh");
+
     pub const fn name(self) -> &'static str {
         self.0
     }
@@ -23,6 +25,12 @@ pub struct KindDecl {
     pub kind: DrawKind,
     pub vertex: &'static str,
     pub needs: Attributes,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PositionReach {
+    pub module: &'static str,
+    pub reach: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -54,6 +62,7 @@ pub struct DrawnProjection {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
 pub struct InstanceValues {
     pub tint: [f32; 4],
     pub emission: [f32; 3],
@@ -73,8 +82,8 @@ impl Default for InstanceValues {
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Drawn {
     pub kind: DrawKind,
-    pub geometry: GeometryHandle,
-    pub material: MaterialHandle,
+    pub geometry: Option<GeometryHandle>,
+    pub material: Option<MaterialHandle>,
     pub node: NodeId,
     pub passes: Option<PassMask>,
     pub layers: Layers,
@@ -92,9 +101,17 @@ impl Drawn {
         node: NodeId,
     ) -> Self {
         Self {
+            geometry: Some(geometry),
+            material: Some(material),
+            ..Self::procedural(kind, node)
+        }
+    }
+
+    pub fn procedural(kind: DrawKind, node: NodeId) -> Self {
+        Self {
             kind,
-            geometry,
-            material,
+            geometry: None,
+            material: None,
             node,
             passes: None,
             layers: Layers::FIRST,

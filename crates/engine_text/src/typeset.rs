@@ -10,6 +10,12 @@ use crate::atlas::{Atlas, Slot, Upload};
 use crate::fonts::{Fonts, Layout, Shapes};
 use crate::{Label, TextSettings, TextStats};
 
+#[derive(Clone, Copy)]
+pub(crate) enum Placed {
+    Screen,
+    World(u32),
+}
+
 struct Placing<'a> {
     text: &'a str,
     layout: Layout,
@@ -87,27 +93,42 @@ impl State {
 
     pub(crate) fn frame<'l>(
         &mut self,
-        labels: impl Iterator<Item = &'l Label>,
+        labels: impl Iterator<Item = (&'l Label, Placed)>,
         settings: &TextSettings,
         view: &PrimaryView,
-        staged: &mut Vec<Glyph>,
+        (staged, world): (&mut Vec<Glyph>, &mut Vec<(u32, Glyph)>),
     ) -> u32 {
         self.sync(settings, view);
         let mut cut = std::mem::take(&mut self.cut);
         let mut runs = std::mem::take(&mut self.placed_runs);
         let placed = std::mem::take(&mut self.placed_glyphs);
         staged.clear();
+        world.clear();
         if self.enabled {
             let display = view.display_size().max(UVec2::ONE);
             let limit = self.limit as usize;
-            for label in labels.filter(|label| label.visible && !label.text.is_empty()) {
+            for (label, at) in labels.filter(|(label, _)| label.visible && !label.text.is_empty()) {
                 let placing = self.label_placing(label);
-                self.place(&placing, display, limit, staged, &mut cut);
+                match at {
+                    Placed::Screen => self.place(
+                        &placing,
+                        display,
+                        limit.saturating_sub(world.len()),
+                        staged,
+                        &mut cut,
+                    ),
+                    Placed::World(index) => self.place_world(
+                        &placing,
+                        (index, limit.saturating_sub(staged.len())),
+                        world,
+                        &mut cut,
+                    ),
+                }
                 runs += 1;
             }
         }
         let resets = u32::from(self.atlas.settle());
-        let shown = staged.len() as u32 + placed;
+        let shown = (staged.len() + world.len()) as u32 + placed;
         self.stats = TextStats {
             runs,
             glyphs_drawn: shown,
@@ -209,6 +230,51 @@ impl State {
                 origin[1] + glyph.y - slot.top,
             ];
             staged.extend(glyph(slot, at, bounds, run.color, screen));
+        }
+    }
+
+    fn place_world(
+        &mut self,
+        run: &Placing<'_>,
+        (label, limit): (u32, usize),
+        staged: &mut Vec<(u32, Glyph)>,
+        cut: &mut u32,
+    ) {
+        let ratio = self.ratio;
+        let frame = self.frame;
+        let Self {
+            fonts,
+            shapes,
+            atlas,
+            ..
+        } = self;
+        let fonts = fonts.get_or_insert_with(Fonts::new);
+        let shaped = shapes.get(fonts, run.text, run.layout, frame);
+        let em = 1.0 / run.layout.pixels();
+        let origin = [
+            run.offset[0] * ratio - run.pivot[0] * shaped.width,
+            run.offset[1] * ratio - run.pivot[1] * shaped.height,
+        ];
+        for glyph in &shaped.glyphs {
+            if staged.len() >= limit {
+                *cut += 1;
+                continue;
+            }
+            let Some(slot) = atlas.slot(glyph.key, fonts) else {
+                *cut += 1;
+                continue;
+            };
+            let left = origin[0] + (glyph.x + slot.left) as f32;
+            let top = origin[1] + (glyph.y - slot.top) as f32;
+            let (width, height) = (slot.width as f32, slot.height as f32);
+            staged.push((
+                label,
+                Glyph {
+                    place: [left * em, top * em, (left + width) * em, (top + height) * em],
+                    texel: [slot.x as f32, slot.y as f32, width, height],
+                    color: run.color,
+                },
+            ));
         }
     }
 }

@@ -4,7 +4,7 @@ use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::{
     Cursor, Cut, DeviceLimits, FrameBudget, FrameTime, GpuBits, Mobility, PartDraws, PassName,
-    PrimaryView, Readable, Readback, SceneView, SceneViews, Since, Spawner, ViewWind, gpu_bits,
+    PrimaryView, Readable, Readback, OwnedView, OwnedViews, Since, Spawner, ViewWind, gpu_bits,
 };
 use engine_places_rendering::shadows::{
     CasterMap, GROUND_TEXELS, Refresh, Region as MapView, ShadowChange, ShadowChanges,
@@ -139,6 +139,7 @@ pub(crate) struct ShadowPlan {
     pub(crate) views: Vec<MapView>,
     pub(crate) cameras: Vec<CameraUniform>,
     pub(crate) routes: Vec<Route>,
+    pub(crate) scissors: Vec<[u32; 4]>,
     pub(crate) levels: Vec<[u32; LEVEL_WORDS as usize]>,
     pub(crate) cull: CasterCull,
     pub(crate) composes: Vec<ComposeData>,
@@ -279,10 +280,12 @@ impl ShadowPlan {
     }
 }
 
+const DETAIL_PIXELS: f32 = 0.5;
+
 #[derive(Component)]
 pub(crate) struct ShadowViews;
 
-fn scene_views(maps: &ShadowMaps, key: Option<MapsKey>, eye: Vec3) -> SceneViews {
+fn scene_views(maps: &ShadowMaps, key: Option<MapsKey>, eye: Vec3) -> OwnedViews {
     let views = key.map_or_else(Vec::new, |key| {
         maps.regions
             .iter()
@@ -291,31 +294,34 @@ fn scene_views(maps: &ShadowMaps, key: Option<MapsKey>, eye: Vec3) -> SceneViews
                     Refresh::Kept(kept) => (Some(kept.planes), kept.texel),
                     Refresh::Redraw => (None, 0.0),
                 };
-                let (side, takes) = match region.map {
-                    CasterMap::Region => (key.region_side(), Mobility::Static),
-                    CasterMap::Moving => (key.atlas.slot, Mobility::Moving),
-                    CasterMap::Sky => (RESOLUTION, Mobility::Static),
+                let (size, takes) = match region.map {
+                    CasterMap::Region => ([key.region_side(); 2], Mobility::Static),
+                    CasterMap::Moving => {
+                        let (width, height) = key.atlas.size();
+                        ([width, height], Mobility::Moving)
+                    }
+                    CasterMap::Sky => ([RESOLUTION; 2], Mobility::Static),
                 };
-                SceneView {
+                OwnedView {
                     view_projection: region.view.to_cols_array_2d(),
                     planes,
                     eye: eye.to_array(),
-                    size: [side, side],
-                    detail: 0.5 * texel,
+                    size,
+                    detail: if texel > 0.0 { DETAIL_PIXELS } else { 0.0 },
                     takes: Some(takes),
                 }
             })
             .collect()
     });
-    SceneViews {
+    OwnedViews {
         pass: ShadowPass::NAME,
         views,
     }
 }
 
 fn publish_views(
-    views: SceneViews,
-    published: &mut Query<'_, '_, &mut SceneViews, With<ShadowViews>>,
+    views: OwnedViews,
+    published: &mut Query<'_, '_, &mut OwnedViews, With<ShadowViews>>,
     spawner: &mut Spawner<'_, '_, ShadowsBrick>,
 ) {
     match published.single_mut() {
@@ -340,7 +346,7 @@ pub(crate) fn plan_shadows(
     (mut plan, mut piece): (ResMut<ShadowPlan>, ResMut<ShadowPiece>),
     (mut maps, mut published, mut spawner): (
         ResMut<ShadowMaps>,
-        Query<&mut SceneViews, With<ShadowViews>>,
+        Query<&mut OwnedViews, With<ShadowViews>>,
         Spawner<ShadowsBrick>,
     ),
 ) {
@@ -415,6 +421,7 @@ pub(crate) fn plan_shadows(
         &mut plan.cameras,
     );
     regions.routes(&mut plan.routes);
+    regions.scissors(&mut plan.scissors);
     regions.levels(&mut plan.levels);
     regions.composes(settings.tile_texels, &mut plan.composes);
     plan.cull = regions.cull(plan.sky_draw.as_ref());

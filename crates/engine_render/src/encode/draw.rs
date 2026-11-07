@@ -52,15 +52,13 @@ impl Run {
         mesh: MeshHandle,
         material: Option<MaterialHandle>,
         pass: crate::MeshPass,
-    ) -> Option<crate::surface::DrawState> {
+    ) -> Option<crate::surface::MaterialVariant> {
         self.assets.meshes.get(mesh)?;
-        if material.is_some_and(|handle| self.assets.materials.group(handle).is_none()) {
-            return None;
-        }
-        Some(crate::surface::DrawState {
-            alpha_test: self.assets.materials.binding(material).1.masked,
+        let variant = self.assets.materials.variant(material)?;
+        Some(variant.with_draw(crate::surface::DrawState {
             fading: pass.fading,
-        })
+            ..variant.draw()
+        }))
     }
 
     #[expect(
@@ -392,6 +390,7 @@ impl Run {
                 .forget_lifetime();
             self.recording.transition(Step::Compute(current, begun));
         }
+        let offset = self.camera_slot * CAMERA_STRIDE as u32;
         let Self {
             machine,
             recording,
@@ -420,7 +419,7 @@ impl Run {
                     .get(built.variant as usize)
                     .is_some_and(|found| found.camera),
             );
-            pass.set_bind_group(0, group, &[0][..camera]);
+            pass.set_bind_group(0, group, &[offset][..camera]);
         }
         let mut given = offsets;
         let mut held = [0_u32; MOST_OFFSETS];

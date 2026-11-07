@@ -9,6 +9,16 @@ struct Shaded {
     roughness: f32,
     across: f32,
     kind: u32,
+    opacity: f32,
+}
+
+struct PositionInput {
+    local: vec3<f32>,
+    world: vec3<f32>,
+    origin: vec3<f32>,
+    time: f32,
+    pixels: f32,
+    object: vec4<u32>,
 }
 
 struct LightInputs {
@@ -83,6 +93,7 @@ fn flat(color: vec4<f32>) -> Shaded {
     shaded.roughness = 1.0;
     shaded.across = 0.0;
     shaded.kind = SURFACE_SOLID;
+    shaded.opacity = color.a;
     return shaded;
 }
 

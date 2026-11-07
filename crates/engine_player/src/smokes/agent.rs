@@ -356,7 +356,7 @@ fn looked(session: &mut dyn SmokeSession, after: &Value, day: &Value) -> Asked {
         )),
         "environment_sections_described"
     );
-    let mesh = component(session, PLAYER, "Mesh3d", "inspects_mesh")?;
+    let mesh = component(session, PLAYER, "DrawnMesh", "inspects_mesh")?;
     let wanted = json!({ "surface": { "roughness": "number" } });
     smoke_eq!(
         seen(
@@ -698,7 +698,7 @@ fn saved(session: &mut dyn SmokeSession, look: &Value, night: &Value) -> Result<
         json!(20.0),
         "lamp_particles"
     );
-    let glass = component(session, "agent-glass-box", "Mesh3d", "inspects_glass")?;
+    let glass = component(session, "agent-glass-box", "DrawnMesh", "inspects_glass")?;
     let opacity = number(&glass["material"]["opacity"]);
     let wanted = json!(0.4);
     smoke_eq!(

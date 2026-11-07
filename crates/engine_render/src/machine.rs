@@ -101,7 +101,7 @@ pub(crate) struct OwnGroup {
 
 pub(crate) struct Ready {
     pub(crate) layout: crate::encode::PassLayout,
-    pub(crate) bits: Option<u32>,
+    pub(crate) bits: Option<crate::surface::MaterialVariant>,
     pub(crate) key: u64,
     pub(crate) made: wgpu::RenderPipeline,
 }
@@ -384,7 +384,7 @@ fn own_writes(decl: &PipelineDecl, reached: &Reached, linker: &Linker) -> Vec<Ha
     reached
         .iter()
         .filter(|(module, found, _)| {
-            found.group > 0 && found.ty.writes() && !linker.is_core(module)
+            found.group > 0 && found.ty.writes() && !(found.group == 1 && linker.is_core(module))
         })
         .filter_map(|(module, found, _)| {
             decl.bound.iter().find_map(|(var, bound)| {
@@ -741,9 +741,6 @@ impl Machine {
                     }
                     continue;
                 }
-                if linker.is_core(module) {
-                    continue;
-                }
                 let Some(bound) = decl.bound.iter().find_map(|(var, bound)| {
                     let (known, name) = crate::linker::path_of((var.module(), var.name()));
                     (known == module && name == found.name).then(|| bound.clone())
@@ -1035,6 +1032,14 @@ fn graph_access(access: Access, clear: Clear) -> GraphAccess {
         Access::Load => GraphAccess::Load,
         Access::Clear => GraphAccess::Clear(clear),
     }
+}
+
+pub(crate) fn cover_location(outputs: &[OutputDecl]) -> Option<usize> {
+    outputs
+        .iter()
+        .filter(|output| !output.layers.is_empty())
+        .position(|output| output.name == engine_core::TargetName::TRANSPARENCY.name())
+        .map(|at| at + 1)
 }
 
 pub(crate) fn set_formats(outputs: &[OutputDecl], layer: Option<AttachPoint>) -> Vec<SetFormat> {

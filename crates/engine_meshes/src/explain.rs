@@ -1,13 +1,12 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
-use engine_core::{Detail, Explain, ExplainAsk, ExplainRecord, FrameTime};
-use engine_places::meshes::Instances;
+use engine_core::{Detail, DrawnTable, Explain, ExplainAsk, ExplainRecord, FrameTime};
 
 use crate::layouts::{LOD_LEVELS, LodFade};
 use crate::presentation::PresentationTotals;
 use crate::settings::{Impostors, OcclusionCulling, SubpixelCulling};
 
-type Drawn<'w> = (Res<'w, Instances>, Res<'w, PresentationTotals>, Res<'w, FrameTime>);
+type Drawn<'w> = (Res<'w, DrawnTable>, Res<'w, PresentationTotals>, Res<'w, FrameTime>);
 
 struct Watched {
     id: String,
@@ -16,11 +15,11 @@ struct Watched {
     age: Option<u64>,
 }
 
-fn drawn((instances, totals, time): &Drawn<'_>, ask: &ExplainAsk<'_>) -> Option<Watched> {
+fn drawn((table, totals, time): &Drawn<'_>, ask: &ExplainAsk<'_>) -> Option<Watched> {
     let ExplainAsk::Entity { id, entity } = ask else {
         return None;
     };
-    let slot = instances.drawn(*entity)?;
+    let slot = table.slot(*entity)?;
     let (seen, word) = totals.last()?.watched?;
     (seen == slot).then(|| Watched {
         id: (*id).to_owned(),

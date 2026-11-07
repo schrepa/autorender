@@ -1,6 +1,6 @@
 import package::engine::post::frame::post;
 import package::engine::post::pixel::{PostPixel, SceneLight};
-import package::face::post_scene::apply as scene_light;
+import package::generated::applied::applied_light as scene_light;
 import package::generated::pieces::taa::piece;
 
 @group(1) @binding(0) var scene_color: texture_2d<f32>;

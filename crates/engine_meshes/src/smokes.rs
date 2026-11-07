@@ -182,7 +182,7 @@ pub(crate) fn meshes(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure>
     session.source(&fixture().to_string());
     control(session, "pause", json!({}))?;
     render(session)?;
-    let drawn = component(session, "limb", "Mesh3d")?;
+    let drawn = component(session, "limb", "DrawnMesh")?;
     smoke_eq!(
         json!({
             "vertices": drawn["mesh"]["vertices"], "indices": drawn["mesh"]["indices"],

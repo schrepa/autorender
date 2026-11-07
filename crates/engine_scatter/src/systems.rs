@@ -74,7 +74,6 @@ pub(crate) struct CullPlan {
     pub(crate) card_args: Vec<[u32; 4]>,
     pub(crate) args: Vec<DrawArgs>,
     pub(crate) lists_left: bool,
-    pub(crate) casts: bool,
     pub(crate) cards: bool,
     pub(crate) atlas: bool,
 }
@@ -459,7 +458,6 @@ pub(crate) fn plan_cull(
     plan.prepared = false;
     plan.atlas = state.impostors.iter().any(|record| record.sphere[3] > 0.0);
     plan.cards = plan.atlas;
-    plan.casts = maps.on;
     if state.resident == 0 {
         return;
     }

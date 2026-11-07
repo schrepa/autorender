@@ -1,43 +1,28 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asset, AssetLibrary, AssetResidency, AssetUses, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk,
-    ImpostorAsks, ImpostorPolicy, Spawner,
+    AssetLibrary, DrawnTable, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk, ImpostorAsks, ImpostorPolicy,
+    Spawner,
 };
 
 use crate::MeshesBrick;
-use crate::batches::BatchPlan;
+use crate::order::MeshBatches;
 use crate::settings::Impostors;
 
 #[derive(Component)]
 pub(crate) struct MeshAssets;
 
-fn uses(plan: &BatchPlan) -> Vec<Asset> {
-    let mut wanted: Vec<Asset> = plan
-        .batches
-        .iter()
-        .flat_map(|batch| {
-            std::iter::once(Asset::Mesh(batch.mesh)).chain(batch.material.map(Asset::Material))
-        })
-        .collect();
-    wanted.sort_unstable();
-    wanted.dedup();
-    wanted
-}
-
-fn asks(assets: &AssetLibrary, plan: &BatchPlan) -> ImpostorAsks {
+fn asks(assets: &AssetLibrary, batches: &MeshBatches) -> ImpostorAsks {
     ImpostorAsks {
-        generation: plan.generation(),
+        generation: batches.generation(),
         hemisphere: false,
-        asks: plan
+        asks: batches
             .batches
             .iter()
             .map(|batch| {
                 assets
                     .mesh(batch.mesh)
                     .is_some_and(|mesh| {
-                        !batch.first_person
-                            && mesh.takes_impostor()
-                            && mesh.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES
+                        mesh.takes_impostor() && mesh.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES
                     })
                     .then(|| ImpostorAsk {
                         mesh: batch.mesh,
@@ -50,29 +35,24 @@ fn asks(assets: &AssetLibrary, plan: &BatchPlan) -> ImpostorAsks {
 }
 
 pub(crate) fn publish_assets(
-    assets: Res<AssetLibrary>,
-    residency: Res<AssetResidency>,
-    plan: Res<BatchPlan>,
-    own: Query<(Entity, &AssetUses, &ImpostorAsks), With<MeshAssets>>,
+    (assets, table): (Res<AssetLibrary>, Res<DrawnTable>),
+    mut batches: Local<MeshBatches>,
+    own: Query<(Entity, &ImpostorAsks), With<MeshAssets>>,
     mut spawner: Spawner<MeshesBrick>,
 ) {
     let held = own.single();
-    if plan.refused.is_some() || (held.is_ok() && !plan.changed()) {
+    if !batches.settle(&table) && held.is_ok() {
         return;
     }
-    let wanted = uses(&plan);
-    let asked = asks(&assets, &plan);
+    let asked = asks(&assets, &batches);
     match held {
-        Ok((entity, held, held_asks)) => {
-            if held.assets() != wanted.as_slice() {
-                spawner.insert(entity, AssetUses::new(&residency, wanted));
-            }
+        Ok((entity, held_asks)) => {
             if *held_asks != asked {
                 spawner.insert(entity, asked);
             }
         }
         Err(_) => {
-            spawner.spawn((MeshAssets, AssetUses::new(&residency, wanted), asked));
+            spawner.spawn((MeshAssets, asked));
         }
     }
 }

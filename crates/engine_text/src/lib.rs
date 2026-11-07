@@ -10,21 +10,30 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, Brick, Bricks, ComponentKind, Error, ErrorCode, GlobalTransforms, PassName,
-    PassViews, PrimaryView, Runs, SceneComponents, SceneCx, Schedule, SlotSet, Smoke, Source,
-    Writes, gpu_struct, never, settings, stats,
+    AttachPoint, Attributes, Brick, Bricks, ColorPass, ComponentKind, DrawKind, Drawn, DrawnPoses,
+    DrawnTable, Error, ErrorCode, GlobalTransforms, KindDecl, PassName, PassViews, PrimaryView,
+    Runs, SceneComponents, SceneCx, Schedule, SlotSet, Smoke, Source, Writes, gpu_struct, never,
+    settings, stats,
 };
 use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Glyph, Text, TextAlign};
 use engine_render::{
-    Allocation, Attach, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass,
-    Pipeline, Prepare, RenderBricks, RenderPipeline, Shape, Texture, wgpu,
+    Allocation, Attach, Bind, Buffer, DepthUse, Draw, Encode, GpuPart, Install, Lifetime, Own,
+    Pass, Pipeline, Prepare, RenderBricks, RenderPipeline, Scene, SceneDraw, Shape, Texture, wgpu,
 };
+use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use typeset::{Typesetter, ensure};
+use typeset::{Placed, Typesetter, ensure};
 
-const GENERATED: &[&str] = &[<GlyphInstance as engine_core::GpuStruct>::WGSL];
+pub const TEXT: DrawKind = DrawKind("text");
+
+const PLACED_IN: Scene = Scene::of::<ColorPass>();
+
+const GENERATED: &[&str] = &[
+    <GlyphInstance as engine_core::GpuStruct>::WGSL,
+    <LabelGlyph as engine_core::GpuStruct>::WGSL,
+];
 
 settings! {
     #[section("text")]
@@ -54,6 +63,25 @@ gpu_struct! {
         pub rect: [f32; 4],
         pub color: [f32; 4],
     }
+}
+
+gpu_struct! {
+    pub struct LabelGlyph {
+        pub origin: [f32; 4],
+        pub previous: [f32; 4],
+        pub place: [f32; 4],
+        pub rect: [f32; 4],
+        pub color: [f32; 4],
+        pub drawn: [u32; 4],
+    }
+}
+
+struct WorldLabel {
+    entity: Entity,
+    slot: u32,
+    origin: Vec3,
+    previous: Vec3,
+    scale: f32,
 }
 
 pub(crate) struct TextPass;
@@ -201,24 +229,91 @@ impl Brick for TextBrick {
             .observation::<operations::TextRuns>()
             .generated(GENERATED)
             .pass::<TextPass>()
-            .part::<TextGpu>();
+            .draw_kind(KindDecl {
+                kind: TEXT,
+                vertex: shaders::text::draw::VS_LABEL.name(),
+                needs: Attributes::NONE,
+            })
+            .draws::<TextGpu>(TEXT, TextGpu::draw);
     }
 }
 
 struct TextGpu {
     pass: Pass<Self>,
     pipeline: Pipeline<Self, Own>,
+    placing: Pipeline<Self, Scene>,
     instances: Buffer<Self>,
+    labels: Buffer<Self>,
     atlas: Texture<Self>,
     placed: Vec<Glyph>,
     staged: Vec<GlyphInstance>,
+    worlds: Vec<WorldLabel>,
+    placed_world: Vec<(u32, Glyph)>,
+    labeled: Vec<LabelGlyph>,
+}
+
+impl TextGpu {
+    fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
+        if scene.pass != PLACED_IN || self.labeled.is_empty() {
+            return 0;
+        }
+        draw.draw(
+            &self.placing,
+            Shape::Pulled {
+                vertices: 0..6,
+                instances: 0..self.labeled.len() as u32,
+            },
+        );
+        1
+    }
+
+    fn place_worlds(
+        &mut self,
+        labels: &Query<'_, '_, (Entity, &'static Label, Option<&'static Drawn>)>,
+        (table, globals, poses): (&DrawnTable, &GlobalTransforms, &DrawnPoses),
+    ) {
+        self.worlds.clear();
+        for (slot, entity, drawn) in table.rows(TEXT) {
+            let (Ok(_), Some(pose)) = (labels.get(entity), poses.drawn_pose(globals, drawn.node))
+            else {
+                continue;
+            };
+            let previous = poses.previous_drawn_pose(globals, drawn.node).unwrap_or(pose);
+            self.worlds.push(WorldLabel {
+                entity,
+                slot,
+                origin: pose.w_axis.truncate(),
+                previous: previous.w_axis.truncate(),
+                scale: pose.x_axis.truncate().length(),
+            });
+        }
+    }
+
+    fn stage_worlds(&mut self) {
+        self.labeled.clear();
+        let worlds = &self.worlds;
+        self.labeled
+            .extend(self.placed_world.iter().filter_map(|(index, glyph)| {
+                let world = worlds.get(*index as usize)?;
+                Some(LabelGlyph {
+                    origin: world.origin.extend(world.scale).to_array(),
+                    previous: world.previous.extend(world.scale).to_array(),
+                    place: glyph.place,
+                    rect: glyph.texel,
+                    color: glyph.color,
+                    drawn: [world.slot, 0, 0, 0],
+                })
+            }));
+    }
 }
 
 impl GpuPart for TextGpu {
     type Reads = (
         (
-            Query<'static, 'static, (Entity, &'static Label)>,
+            Query<'static, 'static, (Entity, &'static Label, Option<&'static Drawn>)>,
+            Res<'static, DrawnTable>,
             Res<'static, GlobalTransforms>,
+            Res<'static, DrawnPoses>,
         ),
         Res<'static, Text>,
         Res<'static, TextSettings>,
@@ -228,6 +323,7 @@ impl GpuPart for TextGpu {
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use shaders::text::{draw, faces::text as face};
         let instances = cx.buffer("instances", Lifetime::Kept);
+        let labels = cx.buffer("labels", Lifetime::Kept);
         let atlas = cx.texture("atlas", wgpu::TextureFormat::R8Unorm, Lifetime::Kept);
         cx.frame(face::TEXT_ATLAS, Bind::Texture(atlas))?;
         let pass = cx
@@ -249,40 +345,79 @@ impl GpuPart for TextGpu {
             },
             &[(draw::INSTANCES, Bind::Buffer(instances))],
         )?;
+        let placing = cx.render_pipeline(
+            PLACED_IN,
+            &RenderPipeline {
+                vertex: draw::VS_LABEL,
+                fragment: Some(draw::FS_LABEL),
+                debug: None,
+                vertices: &[],
+                primitive: wgpu::PrimitiveState::default(),
+                depth: DepthUse::Write {
+                    bias: wgpu::DepthBiasState::default(),
+                },
+                blend: None,
+                writes: wgpu::ColorWrites::ALL,
+            },
+            &[(draw::LABELS, Bind::Buffer(labels))],
+        )?;
         Ok(Self {
             pass,
             pipeline,
+            placing,
             instances,
+            labels,
             atlas,
             placed: Vec::new(),
             staged: Vec::new(),
+            worlds: Vec::new(),
+            placed_world: Vec::new(),
+            labeled: Vec::new(),
         })
     }
 
     fn prepare(
         &mut self,
-        ((labels, globals), text, settings, view): SystemParamItem<'_, '_, Self::Reads>,
+        ((labels, table, globals, poses), text, settings, view): SystemParamItem<
+            '_,
+            '_,
+            Self::Reads,
+        >,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.staged.clear();
+        self.labeled.clear();
         let Some(typesetter) = Typesetter::of(&text) else {
             return;
         };
+        self.place_worlds(&labels, (&table, &globals, &poses));
         let mut state = typesetter.lock();
+        let screen = labels
+            .iter()
+            .filter(|&(entity, _, drawn)| {
+                drawn.is_none_or(|drawn| drawn.kind != TEXT) && globals.drawn(entity)
+            })
+            .map(|(_, label, _)| (label, Placed::Screen));
+        let worlds = self
+            .worlds
+            .iter()
+            .enumerate()
+            .filter_map(|(index, world)| {
+                let (_, label, _) = labels.get(world.entity).ok()?;
+                Some((label, Placed::World(index as u32)))
+            });
         let shown = state.frame(
-            labels
-                .iter()
-                .filter(|&(entity, _)| globals.drawn(entity))
-                .map(|(_, label)| label),
+            screen.chain(worlds),
             &settings,
             &view,
-            &mut self.placed,
+            (&mut self.placed, &mut self.placed_world),
         );
         self.staged.extend(self.placed.iter().map(|glyph| GlyphInstance {
             place: glyph.place,
             rect: glyph.texel,
             color: glyph.color,
         }));
+        self.stage_worlds();
         let mut uploads = state.take_uploads();
         if shown == 0 && uploads.is_empty() {
             return;
@@ -313,6 +448,13 @@ impl GpuPart for TextGpu {
                 extent(upload.width, upload.height),
             );
         }
+        if !self.labeled.is_empty() {
+            cx.grow_buffer(
+                self.labels,
+                std::mem::size_of_val(self.labeled.as_slice()) as u64,
+            );
+            cx.write(self.labels, 0, &self.labeled);
+        }
         if self.staged.is_empty() {
             return;
         }
@@ -324,7 +466,10 @@ impl GpuPart for TextGpu {
         cx.run(self.pass);
     }
 
-    fn encode(&mut self, _: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+    fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+        if pass != self.pass {
+            return 0;
+        }
         let mut draw = cx.render(Attach::Declared, None);
         draw.draw(
             &self.pipeline,

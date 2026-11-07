@@ -7,7 +7,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::world::{World, WorldId};
 use engine_assets::SceneAssets;
 use engine_core::{
-    AssetLibrary, Error, MaterialHandle, Mesh3d, MeshHandle, ProvidedAssets, SceneContext,
+    AssetLibrary, DrawKind, Drawn, Error, MaterialHandle, MeshHandle, ProvidedAssets, SceneContext,
     TextureHandle, Transform, propagate_transforms, set_parents,
 };
 use engine_registry::{OperationScene, SceneEntity, SettingsEntry};
@@ -618,11 +618,14 @@ fn spawn_entity(
             prefab_local_id: expanded.prefab_local_id.clone(),
         },
     ));
+    let id = entity.id();
     if let (Some(mesh), Some(material)) = (&source.mesh, &source.material) {
-        entity.insert(Mesh3d {
-            mesh: table.meshes[mesh.as_str()],
-            material: table.materials[material.as_str()],
-        });
+        entity.insert(Drawn::new(
+            DrawKind::MESH,
+            table.meshes[mesh.as_str()],
+            table.materials[material.as_str()],
+            id,
+        ));
     }
-    entity.id()
+    id
 }

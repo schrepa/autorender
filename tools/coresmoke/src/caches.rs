@@ -2,11 +2,10 @@ use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::glam::{Quat, Vec3};
 use engine_core::{
-    Engine, GlobalTransforms, Listing, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, Mover,
-    MoverId, Pace, Parent, Schedule, Transform, make_fresh, set_parent, set_parents,
+    DrawKind, Drawn, Engine, GlobalTransforms, Listing, Material, MaterialHandle, Mesh, MeshHandle,
+    Mover, MoverId, Pace, Parent, Schedule, Transform, make_fresh, set_parent, set_parents,
 };
 use engine_meshes::MeshesBrick;
-use engine_places::meshes::{Cube, Tint};
 
 use serde_json::{Value, json};
 
@@ -61,8 +60,7 @@ impl Assets {
 struct Authored {
     transform: Transform,
     mesh: Option<(usize, usize)>,
-    cube: Option<[f32; 4]>,
-    tint: Option<[f32; 4]>,
+    tint: [f32; 4],
     moved: bool,
     drift: Option<Drift>,
     parent: Option<Entity>,
@@ -88,7 +86,6 @@ enum Edit {
     Move(Entity, Transform),
     Parent(Entity, Option<Entity>),
     Mesh(Entity, Option<(usize, usize)>),
-    Cube(Entity, Option<[f32; 4]>),
     Tint(Entity, Option<[f32; 4]>),
     Moved(Entity, bool),
     Drift(Entity, Option<Drift>),
@@ -157,8 +154,11 @@ fn authored(random: &mut Random, parent: Option<Entity>) -> Authored {
         mesh: random
             .chance(70)
             .then(|| (random.below(3), random.below(3))),
-        cube: random.chance(20).then(|| color(random)),
-        tint: random.chance(20).then(|| color(random)),
+        tint: if random.chance(20) {
+            color(random)
+        } else {
+            [1.0; 4]
+        },
         moved: random.chance(50),
         drift: random.chance(40).then(|| drifting(random)),
         parent,
@@ -173,19 +173,21 @@ fn entities(world: &mut World) -> Vec<Entity> {
 }
 
 fn read(world: &World, assets: &Assets, entity: Entity) -> Authored {
-    let mesh = world.get::<Mesh3d>(entity).map(|mesh| {
-        (
-            index(&assets.meshes, mesh.mesh),
-            index(&assets.materials, mesh.material),
-        )
-    });
+    let drawn = world.get::<Drawn>(entity);
+    let mesh = drawn
+        .and_then(|drawn| drawn.geometry.zip(drawn.material))
+        .map(|(mesh, material)| {
+            (
+                index(&assets.meshes, mesh),
+                index(&assets.materials, material),
+            )
+        });
     Authored {
         transform: *world
             .get::<Transform>(entity)
             .expect("entity_has_transform"),
         mesh,
-        cube: world.get::<Cube>(entity).map(|cube| cube.color),
-        tint: world.get::<Tint>(entity).map(|tint| tint.0),
+        tint: drawn.map_or([1.0; 4], |drawn| drawn.values.tint),
         moved: world.get::<Mover>(entity).is_some(),
         drift: world.get::<Drift>(entity).copied(),
         parent: world.get::<Parent>(entity).map(Parent::parent),
@@ -201,17 +203,16 @@ fn index<T: PartialEq>(handles: &[T], handle: T) -> usize {
 
 fn spawn(world: &mut World, assets: &Assets, authored: &Authored) -> Entity {
     let mut entity = world.spawn(authored.transform);
+    let id = entity.id();
     if let Some((mesh, material)) = authored.mesh {
-        entity.insert(Mesh3d {
-            mesh: assets.meshes[mesh],
-            material: assets.materials[material],
-        });
-    }
-    if let Some(color) = authored.cube {
-        entity.insert(Cube { color });
-    }
-    if let Some(tint) = authored.tint {
-        entity.insert(Tint(tint));
+        let mut drawn = Drawn::new(
+            DrawKind::MESH,
+            assets.meshes[mesh],
+            assets.materials[material],
+            id,
+        );
+        drawn.values.tint = authored.tint;
+        entity.insert(drawn);
     }
     if authored.moved {
         entity.insert(MOVER);
@@ -267,45 +268,32 @@ fn apply(
             let _ = set_parent(world, map(entity), parent.map(map));
         }
         Edit::Mesh(entity, mesh) => {
-            let Ok(mut held) = world.get_entity_mut(map(entity)) else {
+            let entity = map(entity);
+            let tint = world
+                .get::<Drawn>(entity)
+                .map_or([1.0; 4], |drawn| drawn.values.tint);
+            let Ok(mut held) = world.get_entity_mut(entity) else {
                 return None;
             };
             match mesh {
                 Some((mesh, material)) => {
-                    held.insert(Mesh3d {
-                        mesh: assets.meshes[mesh],
-                        material: assets.materials[material],
-                    });
+                    let mut drawn = Drawn::new(
+                        DrawKind::MESH,
+                        assets.meshes[mesh],
+                        assets.materials[material],
+                        entity,
+                    );
+                    drawn.values.tint = tint;
+                    held.insert(drawn);
                 }
                 None => {
-                    held.remove::<Mesh3d>();
-                }
-            }
-        }
-        Edit::Cube(entity, cube) => {
-            let Ok(mut held) = world.get_entity_mut(map(entity)) else {
-                return None;
-            };
-            match cube {
-                Some(color) => {
-                    held.insert(Cube { color });
-                }
-                None => {
-                    held.remove::<Cube>();
+                    held.remove::<Drawn>();
                 }
             }
         }
         Edit::Tint(entity, tint) => {
-            let Ok(mut held) = world.get_entity_mut(map(entity)) else {
-                return None;
-            };
-            match tint {
-                Some(tint) => {
-                    held.insert(Tint(tint));
-                }
-                None => {
-                    held.remove::<Tint>();
-                }
+            if let Some(mut drawn) = world.get_mut::<Drawn>(map(entity)) {
+                drawn.values.tint = tint.unwrap_or([1.0; 4]);
             }
         }
         Edit::Moved(entity, on) => {
@@ -358,11 +346,7 @@ fn edits(random: &mut Random, entities: &[Entity], count: usize) -> Vec<Edit> {
                     .then(|| (random.below(3), random.below(3)));
                 Edit::Mesh(any(random), mesh)
             }
-            66..=71 => {
-                let cube = random.chance(60).then(|| color(random));
-                Edit::Cube(any(random), cube)
-            }
-            72..=79 => {
+            66..=79 => {
                 let tint = random.chance(60).then(|| color(random));
                 Edit::Tint(any(random), tint)
             }

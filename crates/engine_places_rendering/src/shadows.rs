@@ -5,6 +5,7 @@ use glam::{Mat4, Vec3};
 pub const GROUND_TEXELS: f32 = 2.0;
 pub const SHADOW_REGIONS: u32 = 7;
 pub const SHADOW_CHANGES: usize = 1024;
+pub const SHADOW_PASS: &str = "shadow";
 pub const DEBUG_SUN_NONE: u32 = 0;
 pub const DEBUG_SUN_HORIZON: u32 = 1;
 pub const DEBUG_SUN_BEYOND: u32 = 2;

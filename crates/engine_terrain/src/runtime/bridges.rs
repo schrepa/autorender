@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, Spawner, Surface,
-    Transform,
+    AssetLibrary, DrawKind, Drawn, Material, MaterialHandle, Mesh, MeshHandle, MeshVertex, Spawner,
+    Surface, Transform,
 };
 use engine_places_world::splines::SplineMesh;
 use glam::Vec3;
@@ -336,17 +336,13 @@ pub(crate) fn sync(
                     continue;
                 }
                 meshes.push(pier);
-                entities.push(spawner.spawn((
-                    Transform {
-                        translation: origin + Vec3::new(top.x, 0.5 * (high + low), top.z),
-                        scale: Vec3::new(PIER_SIDE, high - low, PIER_SIDE),
-                        ..Transform::IDENTITY
-                    },
-                    Mesh3d {
-                        mesh: pier,
-                        material,
-                    },
-                )));
+                let placed = spawner.spawn(Transform {
+                    translation: origin + Vec3::new(top.x, 0.5 * (high + low), top.z),
+                    scale: Vec3::new(PIER_SIDE, high - low, PIER_SIDE),
+                    ..Transform::IDENTITY
+                });
+                spawner.insert(placed, Drawn::new(DrawKind::MESH, pier, material, placed));
+                entities.push(placed);
             }
         }
         bridges.spawned.insert(

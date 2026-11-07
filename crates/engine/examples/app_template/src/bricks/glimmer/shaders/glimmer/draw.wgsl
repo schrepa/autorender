@@ -1,3 +1,4 @@
+import package::engine::drawn::drawn_shown;
 import package::engine::shading::flat;
 import package::engine::view::{camera, view_pixel};
 import package::generated::glimmer::GlimmerInstance;
@@ -12,6 +13,11 @@ const GLIMMER_RING_INNER: f32 = 0.8;
 struct Corner { @builtin(position) clip: vec4<f32>, @location(0) unit: vec2<f32>, @location(1) color: vec4<f32>, @location(2) previous: vec4<f32> }
 
 fn placed(corner: u32, glimmer: GlimmerInstance, grow: f32, color: vec4<f32>) -> Corner {
+    if !drawn_shown(glimmer.drawn.x) {
+        var hidden: Corner;
+        hidden.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        return hidden;
+    }
     let unit = vec2<f32>(f32((50u >> corner) & 1u), f32((44u >> corner) & 1u)) * 2.0 - 1.0;
     let toward = normalize(camera.position.xyz - glimmer.place.xyz);
     let across = cross(GLIMMER_UP, toward);

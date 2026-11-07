@@ -12,7 +12,10 @@ macro_rules! shader_modules {
 
         const TEXTS: &[ShaderText] = &[
             $(ShaderText::generated($path, include_str!($file)),)*
+            crate::shared::generated(crate::drawn::DRAWN_MODULE),
+            crate::shared::generated(crate::drawn::DRAWN_CULL_MODULE),
             crate::shared::generated(crate::shared::TARGETS_MODULE),
+            crate::shared::generated(crate::shared::APPLIED_MODULE),
             crate::shared::generated(crate::shared::COMPOSITE_MODULE),
         ];
     };
@@ -29,6 +32,7 @@ shader_modules! {
     "engine::shading" = "shading.wgsl";
     "engine::standard" = "standard.wgsl";
     "engine::surface" = "surface.wgsl";
+    "engine::transparency" = "transparency.wgsl";
     "engine::particles" = "particles.wgsl";
     "engine::mesh::vertex" = "meshes/vertex.wgsl";
     "engine::impostor_bake" = "impostors/bake.wgsl";
@@ -54,6 +58,14 @@ pub const FS_DEBUG_VIEW: engine_core::Entry = engine_core::Entry::generated(
     Module::generated(&CORE, (TEXTS.len() - 1) as u32),
     "fs_debug_view",
 );
+
+pub(crate) fn core_module(path: &str) -> Module {
+    let index = TEXTS
+        .iter()
+        .position(|text| text.path() == path)
+        .expect("core_module_listed");
+    Module::generated(&CORE, index as u32)
+}
 
 pub const PRESENTATION_MODULE: &str = "engine::presentation";
 pub const DEBUG_MODULE: &str = "engine::debug";
@@ -159,7 +171,7 @@ pub fn view_source() -> String {
     source
 }
 
-pub fn generated_core() -> [(&'static str, String); 11] {
+pub fn generated_core() -> [(&'static str, String); 13] {
     let standard = crate::surface::MaterialLayout::standard();
     [
         (PRESENTATION_MODULE, presentation_source()),
@@ -173,6 +185,8 @@ pub fn generated_core() -> [(&'static str, String); 11] {
         (MATH_MODULE, math_source()),
         (VIEW_MODULE, view_source()),
         (PYRAMID_MODULE, crate::pyramid::source()),
+        (crate::drawn::DRAWN_MODULE, crate::drawn::source()),
+        (crate::drawn::DRAWN_CULL_MODULE, crate::drawn::cull_source()),
     ]
 }
 

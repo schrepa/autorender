@@ -1,9 +1,10 @@
 import package::engine::mesh::declarations::{AffinePose as PoseRows, AffineVertexInput,
     TemporalOutput, slot_fade, slot_index, slot_moved};
-import package::engine::mesh::vertex::{first_person, first_person_clip, first_person_previous,
-    origin_key, output_color, pose_matrix, transform_vertex};
+import package::engine::drawn::{DRAWN_OWN_PROJECTION, drawn_clip, drawn_records};
+import package::engine::mesh::vertex::{origin_key, output_color, pose_matrix, transform_vertex};
+import package::engine::shading::PositionInput;
+import package::engine::slots::slot_position;
 import package::engine::view::{camera, detail_across};
-import package::face::instance_motion::{instance_moves, instance_offset};
 import package::meshes::slots::{instance_colors, instance_poses, instance_previous_poses};
 import package::place::instances::{AffinePose, SlotColor};
 
@@ -15,15 +16,17 @@ fn pose_origin(pose: AffinePose) -> vec3<f32> {
     return vec3<f32>(pose.row_0.w, pose.row_1.w, pose.row_2.w);
 }
 
-fn vertex_wind(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>, flags: u32,
-        time: f32) -> vec3<f32> {
-    let root = model[3].xyz;
-    return instance_offset(vec4<f32>(camera.wind.xyz, time),
-        1.0 / max(detail_across(root), 1.0e-6), root, world.y - root.y, position, flags);
-}
-
-fn slot_wind(model: mat4x4<f32>, world: vec3<f32>, flags: u32, time: f32) -> vec3<f32> {
-    return vertex_wind(model, vec3<f32>(0.0), world, flags, time);
+fn placed_position(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>,
+        material: SlotColor, time: f32) -> vec3<f32> {
+    let origin = model[3].xyz;
+    var input: PositionInput;
+    input.local = position;
+    input.world = world;
+    input.origin = origin;
+    input.time = time;
+    input.pixels = 1.0 / max(detail_across(origin), 1.0e-6);
+    input.object = vec4<u32>(material.color, material.surface, material.flags);
+    return slot_position(input);
 }
 
 fn affine_temporal(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,
@@ -38,14 +41,12 @@ fn affine_temporal(input: AffineVertexInput, pose: AffinePose, previous: AffineP
         world = vec4<f32>(dot(previous.row_0, point), dot(previous.row_1, point),
             dot(previous.row_2, point), 1.0);
     }
-    if instance_moves(material.flags) {
-        let current = vertex.world_v.xyz + vertex_wind(model, input.position, vertex.world_v.xyz,
-            material.flags, camera.position.w);
-        vertex.world_v = vec4<f32>(current, vertex.world_v.w);
-        vertex.clip_position = camera.view_projection * vec4<f32>(current, 1.0);
-        world = vec4<f32>(world.xyz
-            + vertex_wind(model, input.position, world.xyz, material.flags, camera.wind.w), 1.0);
-    }
+    let current = placed_position(model, input.position, vertex.world_v.xyz, material,
+        camera.position.w);
+    vertex.world_v = vec4<f32>(current, vertex.world_v.w);
+    vertex.clip_position = camera.view_projection * vec4<f32>(current, 1.0);
+    world = vec4<f32>(placed_position(model, input.position, world.xyz, material,
+        camera.wind.w), 1.0);
     let shown = camera.previous_view_projection * world;
     var output: TemporalOutput;
     output.clip_position = vertex.clip_position;
@@ -53,11 +54,25 @@ fn affine_temporal(input: AffineVertexInput, pose: AffinePose, previous: AffineP
     output.world_v = vertex.world_v;
     output.material = vertex.material;
     output.previous = shown.xyw;
-    if first_person(material.flags) {
-        output.clip_position = first_person_clip(vertex.clip_position, material.flags);
-        output.previous = first_person_previous(shown, material.flags);
-    }
     return output;
+}
+
+fn own_projection(output: TemporalOutput, slot: u32) -> TemporalOutput {
+    let record = drawn_records[slot];
+    if (record.flags & DRAWN_OWN_PROJECTION) == 0u {
+        return output;
+    }
+    let lens = camera.view_projection;
+    let rise = vec3<f32>(lens[0].y, lens[1].y, lens[2].y)
+        - camera.jitter.y * vec3<f32>(lens[0].w, lens[1].w, lens[2].w);
+    let before = camera.previous_view_projection;
+    let risen = vec3<f32>(before[0].y, before[1].y, before[2].y);
+    let shown = vec4<f32>(output.previous.xy, 0.0, output.previous.z);
+    var projected = output;
+    projected.clip_position = drawn_clip(record, output.clip_position, length(rise),
+        camera.jitter.xy * output.clip_position.w);
+    projected.previous = drawn_clip(record, shown, length(risen), vec2<f32>(0.0)).xyw;
+    return projected;
 }
 
 fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
@@ -67,8 +82,8 @@ fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
     if moved {
         previous = instance_previous_poses[slot];
     }
-    return affine_temporal(input, instance_poses[slot], previous, moved, instance_colors[slot],
-        slot_fade(input.slot));
+    return own_projection(affine_temporal(input, instance_poses[slot], previous, moved,
+        instance_colors[slot], slot_fade(input.slot)), slot);
 }
 
 fn slot_temporal(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,

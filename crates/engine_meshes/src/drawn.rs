@@ -1,14 +1,13 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    DrawnPoses, Error, ErrorCode, Expected, FrameTime, GlobalTransforms, GpuBits, Operation,
-    SceneIds, pose_rows,
+    AssetLibrary, DrawnPoses, DrawnTable, Error, ErrorCode, Expected, FrameTime, GlobalTransforms,
+    GpuBits, Material, Operation, SceneIds, Surface, pose_rows,
 };
-use engine_places::meshes::Instances;
 use serde_json::{Value, json};
 
+use crate::MESH;
 use crate::layouts::LodFade;
 use crate::presentation::PresentationTotals;
-use crate::retained::RetainedRender;
 
 #[derive(Resource, Default)]
 pub(crate) struct WatchedSlot {
@@ -28,7 +27,7 @@ impl Operation for MeshDrawn {
     const CONTROL: bool = false;
     type Params = (
         SceneIds<'static, 'static>,
-        Res<'static, Instances>,
+        Res<'static, DrawnTable>,
         Res<'static, PresentationTotals>,
         Res<'static, FrameTime>,
         ResMut<'static, WatchedSlot>,
@@ -37,7 +36,7 @@ impl Operation for MeshDrawn {
     type Request = DrawnRequest;
 
     fn run(
-        (ids, instances, totals, time, mut watched, (poses, globals)): SystemParamItem<
+        (ids, table, totals, time, mut watched, (poses, globals)): SystemParamItem<
             '_,
             '_,
             Self::Params,
@@ -51,7 +50,7 @@ impl Operation for MeshDrawn {
                 .got(&id)
         })?;
         let drawn_pose = poses.drawn_pose(&globals, entity).map(pose_rows);
-        let Some(slot) = instances.drawn(entity) else {
+        let Some(slot) = table.slot(entity) else {
             return Ok(json!({
                 "slot": null,
                 "drawn_level": null,
@@ -89,22 +88,33 @@ pub(crate) struct MeshesListing;
 
 impl Operation for MeshesListing {
     const NAME: &'static str = "meshes_listing";
-    type Params = (Res<'static, RetainedRender>, Res<'static, GlobalTransforms>);
+    type Params = (
+        Res<'static, DrawnTable>,
+        Res<'static, GlobalTransforms>,
+        Res<'static, AssetLibrary>,
+    );
     type Request = ListingRequest;
 
     fn run(
-        (retained, globals): SystemParamItem<'_, '_, Self::Params>,
+        (table, globals, assets): SystemParamItem<'_, '_, Self::Params>,
         _: ListingRequest,
     ) -> Result<Value, Error> {
-        let instances: Vec<Value> = retained
-            .drawn()
-            .map(|(slot, instance)| {
-                let surface = instance.surface;
+        let instances: Vec<Value> = (0..table.records().len() as u32)
+            .filter_map(|slot| table.drawn(slot))
+            .filter(|drawn| drawn.kind == MESH)
+            .map(|drawn| {
+                let material = drawn.material.and_then(|handle| assets.material(handle));
+                let surface = material.map_or(Surface::MATTE, Material::surface);
+                let model = globals
+                    .get(drawn.node)
+                    .and_then(|global| global.matrix())
+                    .unwrap_or(glam::Mat4::IDENTITY);
                 json!({
-                    "mesh": instance.mesh.slot() as u32,
-                    "material": instance.material.map(|material| material.slot() as u32),
-                    "model": retained.model(slot, &globals).to_cols_array(),
-                    "color": instance.color,
+                    "mesh": drawn.geometry.map(|mesh| mesh.slot() as u32),
+                    "material": drawn.material.map(|material| material.slot() as u32),
+                    "model": model.to_cols_array(),
+                    "color": material.map_or([1.0; 4], Material::color),
+                    "tint": drawn.values.tint,
                     "surface": {
                         "roughness": surface.roughness,
                         "metalness": surface.metalness,
@@ -116,7 +126,7 @@ impl Operation for MeshesListing {
             .collect();
         Ok(json!({
             "instances": instances,
-            "missing": retained.missing_assets(),
+            "missing": table.census(MESH).waiting,
         }))
     }
 }

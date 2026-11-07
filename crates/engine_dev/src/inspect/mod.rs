@@ -6,9 +6,9 @@ use std::{collections::BTreeMap, io::Write};
 
 use bevy_ecs::prelude::{Component, Entity, Resource, World};
 use engine_core::{
-    ActionInput, AssetLibrary, Camera, Engine, FixedTime, FrameTime, GlobalTransforms, JobExchange,
-    Mesh3d, MoveInput, Parent, PresentationState, PrimaryView, Projection, TextureHandle,
-    Transform,
+    ActionInput, AssetLibrary, Camera, Drawn, Engine, FixedTime, FrameTime, GlobalTransforms,
+    JobExchange, MaterialHandle, MeshHandle, MoveInput, Parent, PresentationState, PrimaryView,
+    Projection, TextureHandle, Transform,
 };
 use engine_registry::{BrickRecord, OperationScene, Registry};
 use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
@@ -29,7 +29,7 @@ use crate::{
     BrowserControl, MAX_INSPECTOR_BYTES, MAX_INSPECTORS, MAX_PAGE_SIZE, MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
     views::{
-        CameraView, GlobalTransformView, HierarchyView, InputView, LodLevelView, Mesh3dView,
+        CameraView, DrawnMeshView, GlobalTransformView, HierarchyView, InputView, LodLevelView,
         MeshBoundsView, MeshRenderView, MeshView, TextureView, TransformView,
     },
 };
@@ -900,7 +900,7 @@ fn drawn_levels(world: &mut World, inspected: &mut InspectResult) {
         let EntityComponents::Values(components) = &mut row.components else {
             continue;
         };
-        if let Some(view) = components.get_mut("Mesh3d") {
+        if let Some(view) = components.get_mut("DrawnMesh") {
             let drawn = crate::bricks::mesh_drawn(world, &row.id);
             view["drawn_level"] = drawn.get("drawn_level").cloned().unwrap_or(Value::Null);
         }
@@ -1003,11 +1003,16 @@ fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, Error> {
     })
 }
 
-pub(crate) fn missing_of(assets: &AssetLibrary, mesh3d: &Mesh3d) -> Option<&'static str> {
-    match assets.material(mesh3d.material) {
-        None => Some("material"),
-        Some(_) if assets.mesh(mesh3d.mesh).is_none() => Some("mesh"),
-        Some(material) => material
+pub(crate) fn missing_of(
+    assets: &AssetLibrary,
+    (mesh, material): (MeshHandle, Option<MaterialHandle>),
+) -> Option<&'static str> {
+    let held = material.map(|material| assets.material(material));
+    match held {
+        Some(None) => Some("material"),
+        None | Some(Some(_)) if assets.mesh(mesh).is_none() => Some("mesh"),
+        None => None,
+        Some(Some(material)) => material
             .textures()
             .any(|texture| assets.texture(texture).is_none())
             .then_some("texture"),
@@ -1023,9 +1028,12 @@ fn missing_assets(world: &World, assets: &AssetLibrary) -> (Vec<MissingAsset>, u
             .map(|matrix| matrix.w_axis.truncate().to_array())
     };
     let mut found: Vec<(Entity, &'static str, &'static str)> = Vec::new();
-    if let Some(mut meshes) = world.try_query::<(Entity, &Mesh3d)>() {
-        for (entity, mesh3d) in meshes.iter(world) {
-            if let Some(missing) = missing_of(assets, mesh3d) {
+    if let Some(mut drawn) = world.try_query::<(Entity, &Drawn)>() {
+        for (entity, drawn) in drawn.iter(world) {
+            let Some(mesh) = drawn.geometry else {
+                continue;
+            };
+            if let Some(missing) = missing_of(assets, (mesh, drawn.material)) {
                 found.push((entity, "mesh", missing));
             }
         }

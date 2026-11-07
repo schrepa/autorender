@@ -49,6 +49,7 @@ gpu_struct! {
         pub previous: [f32; 4],
         pub color: [f32; 4],
         pub ring: [f32; 4],
+        pub drawn: [u32; 4],
     }
 }
 
@@ -114,6 +115,7 @@ impl Brick for GlimmerBrick {
                 module: shaders::glimmer::glow::MODULE,
                 maps: &[],
                 values: &["glimmer"],
+                reach: 0.0,
             })
             .lighting_model(LightingModule {
                 name: "glimmer",
@@ -224,7 +226,6 @@ fn quad(
 
 impl GpuPart for GlimmerGpu {
     type Reads = (
-        Query<'static, 'static, (Entity, &'static Drawn)>,
         Res<'static, DrawnTable>,
         (Res<'static, GlobalTransforms>, Res<'static, DrawnPoses>),
         Res<'static, Glimmer>,
@@ -256,17 +257,11 @@ impl GpuPart for GlimmerGpu {
 
     fn prepare(
         &mut self,
-        (drawn, table, (globals, poses), settings): SystemParamItem<'_, '_, Self::Reads>,
+        (table, (globals, poses), settings): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.staged.clear();
-        for (entity, thing) in &drawn {
-            if thing.kind != GLIMMER
-                || table.slot(entity).is_none()
-                || !globals.drawn(thing.node)
-            {
-                continue;
-            }
+        for (slot, _, thing) in table.rows(GLIMMER) {
             let Some(pose) = poses.drawn_pose(&globals, thing.node) else {
                 continue;
             };
@@ -281,6 +276,7 @@ impl GpuPart for GlimmerGpu {
                 previous: previous.w_axis.truncate().extend(size).to_array(),
                 color: [red + glow_red, green + glow_green, blue + glow_blue, alpha],
                 ring: settings.ring,
+                drawn: [slot, 0, 0, 0],
             });
         }
         let bytes = self.staged.len().max(1) * std::mem::size_of::<GlimmerInstance>();

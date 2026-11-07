@@ -14,7 +14,7 @@ use engine_core::{
     Writes, gpu_struct, never,
 };
 use engine_places_rendering::occlusion::OcclusionSource;
-use engine_render::{PostScene, RenderBricks};
+use engine_render::RenderBricks;
 
 pub use settings::{AmbientOcclusion, AmbientOcclusionStats};
 
@@ -50,8 +50,7 @@ impl Brick for AmbientOcclusionBrick {
             .settings::<AmbientOcclusion>()
             .stats::<AmbientOcclusionStats>()
             .piece::<AmbientPiece>()
-            .pass::<OcclusionPass>()
-            .join::<PostScene>((), Some(shaders::ambient_occlusion::apply::MODULE))
+            .applies::<OcclusionPass>(shaders::ambient_occlusion::apply::MODULE)
             .systems(Schedule::ViewSync, (publish_piece, publish_stats))
             .part::<part::AmbientGpu>();
     }

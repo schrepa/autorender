@@ -4122,8 +4122,12 @@
       "id": "needles",
       "slots": {
         "base_color": "foliage",
+        "cutoff": "foliage",
+        "kind": "foliage",
+        "light_inputs": "foliage",
         "metalness": "foliage",
         "normal": "foliage",
+        "position": "wind",
         "roughness": "foliage",
         "transmission": "foliage"
       },

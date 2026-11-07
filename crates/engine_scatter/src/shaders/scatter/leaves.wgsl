@@ -1,8 +1,11 @@
-import package::engine::shading::{SurfaceInput, SurfacePoint};
+import package::engine::shading::{LightInputs, SurfaceInput, SurfacePoint};
 import package::engine::standard::base_color as standard_base_color;
+import package::engine::standard::cutoff as standard_cutoff;
 import package::engine::standard::metalness as standard_metalness;
 import package::engine::standard::normal as standard_normal;
 import package::engine::standard::roughness as standard_roughness;
+import package::engine::surfaces::SURFACE_THIN;
+import package::engine::view::fade_noise;
 import package::face::foliage::foliage;
 import package::scatter::grounding::{grounded_color, grounded_metalness, grounded_normal,
     grounded_roughness};
@@ -40,4 +43,21 @@ fn metalness(input: SurfaceInput, point: SurfacePoint) -> f32 {
 
 fn transmission(input: SurfaceInput, point: SurfacePoint) -> f32 {
     return foliage().x * leafiness(standard_base_color(input, point));
+}
+
+fn cutoff(input: SurfaceInput, point: SurfacePoint) -> f32 {
+    if foliage().z == 0.0 {
+        return standard_cutoff(input, point);
+    }
+    return max(fade_noise(input.pixel), 1.0 / 255.0);
+}
+
+fn kind(input: SurfaceInput, point: SurfacePoint) -> u32 {
+    return SURFACE_THIN;
+}
+
+fn light_inputs(input: SurfaceInput, point: SurfacePoint) -> LightInputs {
+    var inputs = point.inputs;
+    inputs.shadow_softness = leafiness(standard_base_color(input, point));
+    return inputs;
 }

@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Error, ErrorCode, Expected, Mesh, Mesh3d, MeshHandle, MeshVertex, Spawner,
-    Transform,
+    AssetLibrary, DrawKind, Drawn, Error, ErrorCode, Expected, Mesh, MeshHandle, MeshVertex,
+    Spawner, Transform,
 };
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max};
@@ -124,20 +124,12 @@ pub(crate) fn build(
                 }
             };
             chunks.meshes.push(handle);
-            spawner.spawn_then(
-                (
-                    Transform::default(),
-                    Mesh3d {
-                        mesh: handle,
-                        material: spline.material,
-                    },
-                ),
-                move |builds: &mut SplineBuilds, child| {
-                    if let Some(chunks) = builds.built.get_mut(&entity) {
-                        chunks.entities.push(child);
-                    }
-                },
+            let child = spawner.spawn(Transform::default());
+            spawner.insert(
+                child,
+                Drawn::new(DrawKind::MESH, handle, spline.material, child),
             );
+            chunks.entities.push(child);
         }
         if parented {
             spawner.set_parents_from(

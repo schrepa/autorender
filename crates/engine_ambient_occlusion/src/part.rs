@@ -1,5 +1,4 @@
-use bevy_ecs::prelude::*;
-use engine_core::{Entry, Error, PassName, PrimaryView};
+use engine_core::{Entry, Error, PassName, ViewFacts};
 use engine_render::{
     Access, Attach, Bind, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
     Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, wgpu,
@@ -35,26 +34,25 @@ fn fullscreen(fragment: Entry) -> RenderPipeline<'static> {
 }
 
 impl GpuPart for AmbientGpu {
-    type Reads = Res<'static, PrimaryView>;
+    type Reads = ();
     const NAME: &'static str = "ambient_occlusion";
     const LAZY: bool = true;
     const LABELS: &'static [&'static str] = &["engine/ambient-occlusion"];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let raw = cx.texture("raw_occlusion", RAW_OCCLUSION_FORMAT, Lifetime::Kept);
-        let occlusion = cx.texture("occlusion", OCCLUSION_FORMAT, Lifetime::Frame);
+        let raw = cx.view_texture("raw_occlusion", RAW_OCCLUSION_FORMAT, Lifetime::Kept);
+        let occlusion = cx.view_texture("occlusion", OCCLUSION_FORMAT, Lifetime::Frame);
         cx.frame(apply::OCCLUSION, Bind::Texture(occlusion))?;
-        let at = OcclusionPass::PASS.at;
         let occluding = cx
-            .pass(OcclusionPass::NAME)
-            .at(at)
+            .screen::<OcclusionPass>()
             .label("engine/ambient-occlusion")
             .span("ambient_occlusion")
             .color(raw, Access::Load)
             .id();
         let filtering = cx
             .pass("effects_filter")
-            .at(at)
+            .at(OcclusionPass::PASS.at)
+            .views(OcclusionPass::PASS.views)
             .label("engine/ambient-occlusion-filter")
             .span("effects_filter")
             .color_cleared(occlusion, wgpu::Color::WHITE)
@@ -77,16 +75,14 @@ impl GpuPart for AmbientGpu {
         })
     }
 
-    fn prepare(
-        &mut self,
-        view: SystemParamItem<'_, '_, Self::Reads>,
-        cx: &mut Prepare<'_, Self>,
-    ) {
-        if view.debug() {
+    fn prepare(&mut self, (): (), _cx: &mut Prepare<'_, Self>) {}
+
+    fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
+        if view.debug {
             return;
         }
-        let display = view.display_size();
-        let render = view.render_size();
+        let display = view.size();
+        let render = view.render;
         let extent = wgpu::Extent3d {
             width: display.x.max(1),
             height: display.y.max(1),

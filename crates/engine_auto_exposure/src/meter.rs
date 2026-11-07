@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, FrameTime, PassName, PrimaryView};
+use engine_core::{Error, FrameTime, PrimaryView, ViewFacts};
 use engine_places_rendering::sky::SkyLight;
 use engine_places_rendering::tonemap::Display;
 use engine_render::{
@@ -27,6 +27,7 @@ pub(crate) struct MeterGpu {
     uniform: Buffer<Self>,
     bins: Buffer<Self>,
     state: Buffer<Self>,
+    frame: Option<(ExposureUniform, f32)>,
 }
 
 impl ExposureUniform {
@@ -81,13 +82,12 @@ impl GpuPart for MeterGpu {
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use shaders::auto_exposure::{faces::exposure as face, meter};
-        let state = cx.buffer("exposure_state", Lifetime::Previous);
+        let state = cx.view_buffer("exposure_state", Lifetime::Previous);
         cx.frame(face::EXPOSURE_STATE, Bind::Buffer(state))?;
-        let uniform = cx.buffer("exposure_uniform", Lifetime::Kept);
+        let uniform = cx.view_buffer("exposure_uniform", Lifetime::Kept);
         let bins = cx.buffer("exposure_bins", Lifetime::Kept);
         let pass = cx
-            .pass(ExposurePass::NAME)
-            .at(ExposurePass::PASS.at)
+            .screen::<ExposurePass>()
             .label("engine/exposure")
             .span("auto_exposure")
             .id();
@@ -117,14 +117,30 @@ impl GpuPart for MeterGpu {
             uniform,
             bins,
             state,
+            frame: None,
         })
     }
 
     fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
         let (settings, sky, display, time, view) = reads;
-        cx.allocate_buffer(self.uniform, UNIFORM_BYTES);
         cx.allocate_buffer(self.bins, BIN_BYTES);
         let authored = display.exposure[0];
+        let seconds = if time.real_seconds > 0.0 {
+            time.real_seconds as f32
+        } else {
+            -1.0
+        };
+        self.frame = Some((ExposureUniform::of(&settings, &sky, authored, seconds, [0, 0]), authored));
+        if !view.debug() {
+            cx.read_back::<ExposureFeedback>(STATE_READ, self.state, 0..STATE_BYTES, AfterRead::Keep);
+        }
+    }
+
+    fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
+        let Some((mut values, authored)) = self.frame else {
+            return;
+        };
+        cx.allocate_buffer(self.uniform, UNIFORM_BYTES);
         if cx.allocate_buffer(self.state, STATE_BYTES) == Allocation::Fresh {
             let state = ExposureState {
                 exposure: authored,
@@ -132,21 +148,15 @@ impl GpuPart for MeterGpu {
             };
             cx.write(self.state, 0, &[state]);
         }
-        if view.debug() {
+        if view.debug {
             return;
         }
-        let elapsed = if view.capture() || !view.history().valid() {
-            0.0
-        } else if time.real_seconds > 0.0 {
-            time.real_seconds as f32
-        } else {
-            -1.0
-        };
-        let drawn = view.render_size().to_array();
-        let values = ExposureUniform::of(&settings, &sky, authored, elapsed, drawn);
+        if view.capture || !view.history.valid() {
+            values.frame[1] = 0.0;
+        }
+        values.drawn = [view.render.x as f32, view.render.y as f32, 0.0, 0.0];
         cx.write(self.uniform, 0, &[values]);
         cx.run(self.meter);
-        cx.read_back::<ExposureFeedback>(STATE_READ, self.state, 0..STATE_BYTES, AfterRead::Keep);
     }
 
     fn encode(&mut self, _: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

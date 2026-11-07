@@ -1,8 +1,9 @@
-import package::engine::materials::{ALPHA_MASK, MAP_BASE_COLOR, MASK_MIP_SCALE, alpha_cutoff,
-    base_color_map, map_uv, material_alpha};
+import package::engine::materials::{ALPHA_MASK, MAP_BASE_COLOR, MASK_MIP_SCALE, base_color_map,
+    map_uv, material_alpha};
 import package::engine::shading::{SurfaceInput, SurfacePoint, derived};
-import package::engine::slots::{slot_base_color, slot_emissive, slot_metalness, slot_normal,
-    slot_occlusion, slot_opacity, slot_roughness, slot_transmission};
+import package::engine::slots::{slot_base_color, slot_cutoff, slot_emissive, slot_kind,
+    slot_light_inputs, slot_metalness, slot_normal, slot_occlusion, slot_opacity, slot_roughness,
+    slot_transmission};
 import package::engine::surfaces::{SURFACE_SOLID, SURFACE_THIN};
 import package::engine::view::stable_normalize;
 
@@ -41,6 +42,8 @@ fn surface_point(input: SurfaceInput) -> SurfacePoint {
     point.emissive = slot_emissive(input, point);
     point.occlusion = slot_occlusion(input, point);
     point.transmission = slot_transmission(input, point);
+    point.kind = slot_kind(input, point);
+    point.inputs = slot_light_inputs(input, point);
     return point;
 }
 
@@ -52,10 +55,12 @@ fn mask_coverage(input: SurfaceInput) -> f32 {
     return 1.0 + MASK_MIP_SCALE * max(0.5 * log2(max(dot(x, x), dot(y, y))), 0.0);
 }
 
-fn masked_out(input: SurfaceInput, opacity: f32) -> bool {
-    return opacity * mask_coverage(input) < alpha_cutoff();
+fn masked_out(input: SurfaceInput, point: SurfacePoint) -> bool {
+    return point.opacity * mask_coverage(input) < slot_cutoff(input, point);
 }
 
 fn opacity_cut(input: SurfaceInput) -> bool {
-    return masked_out(input, slot_opacity(input, placed(input)));
+    var point = placed(input);
+    point.opacity = slot_opacity(input, point);
+    return masked_out(input, point);
 }

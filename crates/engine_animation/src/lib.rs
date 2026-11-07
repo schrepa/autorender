@@ -32,6 +32,8 @@ const GENERATED: &[&str] = &[
     <part::SkinPart as GpuStruct>::WGSL,
     <part::RestVertex as GpuStruct>::WGSL,
     <part::JointRows as GpuStruct>::WGSL,
+    <part::SkinBound as GpuStruct>::WGSL,
+    <part::SkinView as GpuStruct>::WGSL,
 ];
 
 settings! {
@@ -84,11 +86,7 @@ impl Brick for AnimationBrick {
             )
             .systems(
                 Schedule::Presentation,
-                (
-                    animator::sync,
-                    animator::advance_real,
-                    animator::publish_assets,
-                ),
+                (animator::sync, animator::advance_real),
             )
             .generated(GENERATED)
             .draw_kind(KindDecl {

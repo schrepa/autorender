@@ -1,7 +1,7 @@
 use std::any::TypeId;
 use std::ops::Range;
 
-use engine_core::{AttachPoint, Entry, Error, ErrorCode, PassBit, TargetName, Var};
+use engine_core::{AttachPoint, Entry, Error, ErrorCode, PassBit, PassViews, TargetName, Var};
 
 use crate::graph::Clear;
 use crate::linker::Linker;
@@ -83,6 +83,7 @@ pub(crate) struct TextureDecl {
     pub(crate) format: wgpu::TextureFormat,
     pub(crate) lifetime: Lifetime,
     pub(crate) part: u32,
+    pub(crate) per_view: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -92,6 +93,7 @@ pub(crate) struct BufferDecl {
     pub(crate) part: u32,
     pub(crate) usage: wgpu::BufferUsages,
     pub(crate) window: Option<u64>,
+    pub(crate) per_view: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -103,6 +105,7 @@ pub(crate) struct PassDecl {
     pub(crate) part: u32,
     pub(crate) work: Work,
     pub(crate) layer: Option<AttachPoint>,
+    pub(crate) views: PassViews,
     pub(crate) after: Vec<u32>,
     pub(crate) colors: Vec<(u32, Access)>,
     pub(crate) depths: Vec<(u32, Access)>,
@@ -144,6 +147,11 @@ impl PassDecl {
             .iter()
             .find(|(known, _)| *known == texture)
             .map(|(_, clear)| *clear)
+    }
+
+    pub(crate) fn per_view(&self) -> bool {
+        self.views != PassViews::Owned
+            && (self.layer.is_some() || crate::shared::composites(self))
     }
 }
 
@@ -313,24 +321,26 @@ impl InstallCore {
         &mut self,
         label: &'static str,
         format: wgpu::TextureFormat,
-        lifetime: Lifetime,
+        (lifetime, per_view): (Lifetime, bool),
     ) -> u32 {
         self.declared.textures.push(TextureDecl {
             label,
             format,
             lifetime,
             part: self.part,
+            per_view,
         });
         (self.declared.textures.len() - 1) as u32
     }
 
-    pub(crate) fn buffer(&mut self, label: &'static str, lifetime: Lifetime) -> u32 {
+    pub(crate) fn buffer(&mut self, label: &'static str, (lifetime, per_view): (Lifetime, bool)) -> u32 {
         self.declared.buffers.push(BufferDecl {
             label,
             lifetime,
             part: self.part,
             usage: wgpu::BufferUsages::empty(),
             window: None,
+            per_view,
         });
         (self.declared.buffers.len() - 1) as u32
     }
@@ -405,6 +415,7 @@ impl InstallCore {
             part: self.part,
             work,
             layer: None,
+            views: PassViews::Every,
             after: Vec::new(),
             colors: Vec::new(),
             depths: Vec::new(),
@@ -547,6 +558,7 @@ impl InstallCore {
             if core {
                 declared.layer = Some(listed.at);
             }
+            declared.views = listed.views;
             declared.scene = Some(SceneOf {
                 name,
                 pass: listed,

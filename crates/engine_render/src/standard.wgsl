@@ -1,9 +1,9 @@
 import package::engine::materials::{MAP_BASE_COLOR, MAP_EMISSIVE, MAP_METALLIC_ROUGHNESS,
-    MAP_NORMAL, MAP_OCCLUSION, SURFACE_EMISSION, base_color_map, base_color_sampler,
-    emissive_factor, emissive_map, emissive_sampler, map_present, map_uv, metallic_roughness_map,
-    metallic_roughness_sampler, normal_map, normal_sampler, normal_scale, occlusion_map,
-    occlusion_sampler, occlusion_strength, transmission_factor};
-import package::engine::shading::{Shaded, SurfaceInput, SurfacePoint};
+    MAP_NORMAL, MAP_OCCLUSION, SURFACE_EMISSION, alpha_cutoff, base_color_map,
+    base_color_sampler, emissive_factor, emissive_map, emissive_sampler, map_present, map_uv,
+    metallic_roughness_map, metallic_roughness_sampler, normal_map, normal_sampler, normal_scale,
+    occlusion_map, occlusion_sampler, occlusion_strength, transmission_factor};
+import package::engine::shading::{LightInputs, PositionInput, Shaded, SurfaceInput, SurfacePoint};
 import package::engine::view::stable_normalize;
 
 fn base_texel(input: SurfaceInput) -> vec4<f32> {
@@ -41,12 +41,28 @@ fn rippled(normal: vec3<f32>, world: vec3<f32>, strength: f32, time: f32) -> vec
     return normalize(normal - vec3<f32>(slope.x, 0.0, slope.y) * strength);
 }
 
+fn position(input: PositionInput) -> vec3<f32> {
+    return input.world;
+}
+
 fn base_color(input: SurfaceInput, point: SurfacePoint) -> vec3<f32> {
     return base_texel(input).rgb * input.color.rgb;
 }
 
 fn opacity(input: SurfaceInput, point: SurfacePoint) -> f32 {
     return base_texel(input).a * input.color.a;
+}
+
+fn cutoff(input: SurfaceInput, point: SurfacePoint) -> f32 {
+    return alpha_cutoff();
+}
+
+fn kind(input: SurfaceInput, point: SurfacePoint) -> u32 {
+    return point.kind;
+}
+
+fn light_inputs(input: SurfaceInput, point: SurfacePoint) -> LightInputs {
+    return point.inputs;
 }
 
 fn normal(input: SurfaceInput, point: SurfacePoint) -> vec3<f32> {

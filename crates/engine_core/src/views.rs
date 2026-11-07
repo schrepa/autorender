@@ -6,9 +6,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
-    AssetLibrary, Camera, Clear, Drawn, DrawnPoses, DrawnTable, Error, ErrorCode, FrameFacts,
-    FrameId, FrameTime, GlobalTransforms, Layers, Operation, Target, View, ViewCut, ViewHistory,
-    take_asks,
+    AssetLibrary, Camera, Clear, ColorSpace, DRAWN_UNBOUNDED, Detail, Drawn, DrawnPoses, DrawnTable, Error,
+    ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Layers, Mobility, Operation,
+    OwnedViews, PrimaryView, Target, View, ViewCut, ViewHistory, take_asks,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -126,6 +126,18 @@ impl ViewFacts {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrawnView {
+    pub owner: Option<&'static str>,
+    pub view_projection: Mat4,
+    pub planes: Option<[[f32; 4]; 6]>,
+    pub eye: Vec3,
+    pub size: UVec2,
+    pub detail: f32,
+    pub takes: Option<Mobility>,
+    pub layers: Layers,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 struct Key {
     target: Target,
@@ -151,11 +163,24 @@ pub struct Views {
     listed: Vec<ViewFacts>,
     refused: Vec<(Entity, Error)>,
     held: Vec<Held>,
+    drawn: Vec<DrawnView>,
+    owned: Vec<(&'static str, u32, u32)>,
 }
 
 impl Views {
     pub fn listed(&self) -> &[ViewFacts] {
         &self.listed
+    }
+
+    pub fn drawn(&self) -> &[DrawnView] {
+        &self.drawn
+    }
+
+    pub fn owned(&self, pass: &str) -> Option<std::ops::Range<u32>> {
+        self.owned
+            .iter()
+            .find(|(known, _, _)| *known == pass)
+            .map(|&(_, base, count)| base..base + count)
     }
 
     pub fn main(&self) -> Option<&ViewFacts> {
@@ -205,7 +230,7 @@ fn target_size(assets: Option<&AssetLibrary>, target: Target, surface: UVec2) ->
         Target::Surface => Some(surface.max(UVec2::ONE)),
         Target::Texture(texture) => assets?
             .texture(texture)
-            .filter(|texture| texture.is_target())
+            .filter(|texture| texture.is_target() && texture.color_space() == ColorSpace::Srgb)
             .map(|texture| UVec2::new(texture.width(), texture.height()).max(UVec2::ONE)),
     }
 }
@@ -343,7 +368,59 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
         listed,
         refused,
         held: kept,
+        drawn: Vec::new(),
+        owned: Vec::new(),
     });
+}
+
+pub(crate) fn settle_owned(world: &mut World) {
+    let detail = world
+        .get_resource::<Detail>()
+        .filter(|detail| detail.enabled)
+        .map_or(0.0, |detail| detail.pixel_error);
+    let detail_eye = world.get_resource::<PrimaryView>().map(PrimaryView::detail_eye);
+    let mut published: Vec<OwnedViews> = world
+        .try_query::<&OwnedViews>()
+        .map(|mut query| query.iter(world).cloned().collect())
+        .unwrap_or_default();
+    published.sort_by_key(|views| views.pass);
+    let Some(mut views) = world.get_resource_mut::<Views>() else {
+        return;
+    };
+    let mut drawn: Vec<DrawnView> = views
+        .listed
+        .iter()
+        .enumerate()
+        .map(|(index, facts)| DrawnView {
+            owner: None,
+            view_projection: facts.view_projection,
+            planes: None,
+            eye: detail_eye.filter(|_| index == 0).unwrap_or(facts.eye),
+            size: facts.render,
+            detail,
+            takes: None,
+            layers: facts.layers,
+        })
+        .collect();
+    let mut owned = Vec::with_capacity(published.len());
+    for listed in &published {
+        let base = drawn.len() as u32;
+        drawn.extend(listed.views.iter().map(|view| DrawnView {
+            owner: Some(listed.pass),
+            view_projection: Mat4::from_cols_array_2d(&view.view_projection),
+            planes: view.planes,
+            eye: Vec3::from_array(view.eye),
+            size: UVec2::from_array(view.size),
+            detail: view.detail,
+            takes: view.takes,
+            layers: Layers::ALL,
+        }));
+        owned.push((listed.pass, base, listed.views.len() as u32));
+    }
+    if views.drawn != drawn || views.owned != owned {
+        views.drawn = drawn;
+        views.owned = owned;
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -377,6 +454,9 @@ impl Picking<'_, '_> {
             let Some(owner) = self.table.owner(slot as u32) else {
                 continue;
             };
+            if record.flags & DRAWN_UNBOUNDED != 0 {
+                continue;
+            }
             let Ok(drawn) = self.drawn.get(owner) else {
                 continue;
             };

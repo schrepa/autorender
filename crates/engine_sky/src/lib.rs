@@ -15,12 +15,28 @@ pub mod tables;
 mod views;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, JobKind, Schedule, Slot, Source};
+use engine_core::{
+    AttachPoint, Brick, Bricks, JobKind, Pass, PassName, PassViews, Schedule, Slot, SlotSet,
+    Source, Writes, never,
+};
 use engine_places_rendering::lighting::{Ambient, SunBlockers};
 use engine_places_rendering::sky::SkyLight;
-use engine_render::{PostLight, RenderBricks};
+use engine_render::RenderBricks;
 
 pub use settings::{Clouds, Haze, NightSky, Sky};
+
+pub(crate) struct HazePass;
+
+impl PassName for HazePass {
+    const NAME: &'static str = "haze";
+    const PASS: Pass = Pass {
+        writes: Writes::NOTHING,
+        reads: SlotSet::NONE,
+        views: PassViews::Main,
+        at: AttachPoint::Post,
+        takes: never,
+    };
+}
 
 #[derive(Resource, Default)]
 struct CloudShadows;
@@ -61,7 +77,7 @@ impl Brick for SkyBrick {
             .within(
                 |haze: Res<Haze>| haze.enabled,
                 |bricks| {
-                    bricks.join::<PostLight>((), Some(shaders::sky::haze::MODULE));
+                    bricks.applies::<HazePass>(shaders::sky::haze::MODULE);
                 },
             )
             .systems(

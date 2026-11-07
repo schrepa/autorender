@@ -13,7 +13,7 @@ use engine_core::{
     AttachPoint, Brick, Bricks, Pass, PassName, PassViews, PrimaryView, Schedule, SlotSet, Source,
     Writes, gpu_struct, never,
 };
-use engine_render::{PostLight, RenderBricks};
+use engine_render::RenderBricks;
 
 pub use settings::{Bloom, BloomStats};
 
@@ -49,8 +49,7 @@ impl Brick for BloomBrick {
             .settings::<Bloom>()
             .stats::<BloomStats>()
             .piece::<BloomPiece>()
-            .pass::<BloomPass>()
-            .join::<PostLight>((), Some(shaders::bloom::apply::MODULE))
+            .applies::<BloomPass>(shaders::bloom::apply::MODULE)
             .systems(Schedule::ViewSync, publish_bloom)
             .part::<part::BloomGpu>();
     }

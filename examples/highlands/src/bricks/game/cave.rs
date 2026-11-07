@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Interest, Jobs, MaterialHandle, Mesh, Mesh3d, MeshHandle, RecordKey, Records,
+    AssetLibrary, DrawKind, Drawn, Interest, Jobs, MaterialHandle, Mesh, MeshHandle, RecordKey, Records,
     Spawner, Transform, math,
 };
 use engine_places_rendering::lights::{LightRegion, LocalLight};
@@ -208,16 +208,16 @@ fn spawn_cave(
     (points, inward, low, high): (&[Vec3; CAVE_POINTS], Vec3, Vec3, Vec3),
     (rock, framing): (&CaveRock, Vec<(Transform, MeshHandle)>),
 ) {
-    spawner.spawn((
+    let spawned = spawner.spawn((
         Transform {
             translation: points[0],
             ..Transform::default()
         },
-        Mesh3d {
-            mesh,
-            material: rock.wall,
-        },
     ));
+    spawner.insert(
+        spawned,
+        Drawn::new(DrawKind::MESH, mesh, rock.wall, spawned),
+    );
     let chamber = points[4] - inward * 6.0 + Vec3::Y * 2.0;
     spawner.spawn((
         Transform {
@@ -236,13 +236,13 @@ fn spawn_cave(
             .with_interior(Interior { sky: 1.0, sun: 1.0 }),
     ));
     for (transform, mesh) in framing {
-        spawner.spawn((
+        let spawned = spawner.spawn((
             transform,
-            Mesh3d {
-                mesh,
-                material: rock.material,
-            },
         ));
+        spawner.insert(
+            spawned,
+            Drawn::new(DrawKind::MESH, mesh, rock.material, spawned),
+        );
     }
 }
 

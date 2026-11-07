@@ -1,5 +1,4 @@
-use bevy_ecs::prelude::*;
-use engine_core::{Entry, Error, PassName, PrimaryView};
+use engine_core::{Entry, Error, ViewFacts};
 use engine_render::{
     Access, Attach, Bind, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass,
     Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, level_region, mip_levels, wgpu,
@@ -30,7 +29,7 @@ pub(crate) struct BloomGpu {
 }
 
 impl GpuPart for BloomGpu {
-    type Reads = Res<'static, PrimaryView>;
+    type Reads = ();
     const NAME: &'static str = "bloom";
     const LAZY: bool = true;
     const LABELS: &'static [&'static str] = &["engine/bloom"];
@@ -41,13 +40,12 @@ impl GpuPart for BloomGpu {
         } else {
             wgpu::TextureFormat::Rgba16Float
         };
-        let levels = cx.texture("engine/bloom", format, Lifetime::Kept);
+        let levels = cx.view_texture("engine/bloom", format, Lifetime::Kept);
         let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
         cx.frame(apply::BLOOM, mip(levels, 0))?;
         cx.frame(apply::BLOOM_SAMPLER, Bind::Sampler(sampler))?;
         let pass = cx
-            .pass(BloomPass::NAME)
-            .at(BloomPass::PASS.at)
+            .screen::<BloomPass>()
             .label("engine/bloom")
             .span("bloom")
             .color(levels, Access::Load)
@@ -78,11 +76,13 @@ impl GpuPart for BloomGpu {
         })
     }
 
-    fn prepare(&mut self, view: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
-        if view.debug() {
+    fn prepare(&mut self, (): (), _cx: &mut Prepare<'_, Self>) {}
+
+    fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
+        if view.debug {
             return;
         }
-        let display = view.display_size();
+        let display = view.size();
         let half = ((display.x / 2).max(1), (display.y / 2).max(1));
         self.count = BLOOM_LEVELS.min(mip_levels(half.0, half.1));
         cx.allocate(
@@ -95,7 +95,7 @@ impl GpuPart for BloomGpu {
             self.count,
         );
         for (level, drawn) in (0..).zip(&mut self.drawn) {
-            *drawn = level_region(&view, level);
+            *drawn = level_region(view, level);
         }
         cx.run(self.pass);
     }

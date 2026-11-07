@@ -3,7 +3,8 @@ use std::sync::Arc;
 use bevy_ecs::prelude::Entity;
 use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, GpuBits, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk,
-    ImpostorRecord, Material, MaterialHandle, Mesh, MeshHandle, ResidentMesh, TextureHandle,
+    ImpostorRecord, Material, MaterialHandle, Mesh, MeshHandle, ResidentMesh, SurfaceSlot,
+    TextureHandle,
 };
 use engine_math::collections::HashMap;
 use engine_places_world::ground::{Placed, PlacedAsset};
@@ -12,7 +13,7 @@ use glam::Vec3;
 
 use crate::layouts::{
     Cover, LEVELS, NO_LAYER, PlacedRecord, RANK_MAX, ScatterFade, ScatterTerrain, SlotColor,
-    TERRAIN_INDEX, pose_rows,
+    TERRAIN_INDEX, WIND_REACH, pose_rows,
 };
 use crate::pool::TileObjects;
 use crate::settings::{PlacedLook, ScatterSettings};
@@ -258,7 +259,12 @@ impl Groups {
                     surface: pack_surface(material.surface()),
                     flags: asset.sway.to_bits(),
                 };
-                let sphere = ((low + high) * 0.5, (high - low).length() * 0.5);
+                let reach = if material.slot(SurfaceSlot::Position) == Some(crate::WIND) {
+                    WIND_REACH
+                } else {
+                    0.0
+                };
+                let sphere = ((low + high) * 0.5, (high - low).length() * 0.5 + reach);
                 let cover = Cover::of(bounds.min(), bounds.max());
                 groups.push(DrawGroup {
                     meshes,

@@ -33,7 +33,7 @@
       ]}],
       "entities": [
         {"id": "ground", "name": "The ground", "mesh": "floor", "material": "tiled", "transform": {"scale": [20, 1, 20]}, "collider": {"shape": {"kind": "cuboid", "half_extents": [0.5, 0.05, 0.5]}}, "tags": ["static", "walkable"]},
-        {"id": "spinner", "mesh": "gem", "material": "tinted", "transform": {"translation": [2, 1, 0], "rotation_degrees": [0, 45, 0]}, "tint": [1, 0.8, 0.8, 1]},
+        {"id": "spinner", "mesh": "gem", "material": "tinted", "transform": {"translation": [2, 1, 0], "rotation_degrees": [0, 45, 0]}, "drawn": {"values": {"tint": [1, 0.8, 0.8, 1]}}},
         {"id": "fountain", "transform": {"translation": [-2, 0.5, 0]}, "particles": {"rate": 30, "lifetime": 1.5, "speed": 2}},
         {"id": "spot", "transform": {"translation": [0, 5, 0]}, "light": {"intensity": 40, "range": 12, "spot": {"inner_angle_degrees": 15, "outer_angle_degrees": 30}}},
         {"id": "probe", "transform": {"translation": [0, 2, 0]}, "reflection_probe": {"extent": [6, 3, 6]}},
@@ -54,7 +54,7 @@
     {"rule": "missing_field", "path": "$.revision", "document": {"id": "a", "materials": [], "meshes": [], "entities": []}},
     {"rule": "invalid_type", "path": "$.revision", "document": {"id": "a", "revision": "one", "materials": [], "meshes": [], "entities": []}},
     {"rule": "unknown_variant", "path": "$.meshes[0].source.kind", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [{"id": "m", "source": {"kind": "teapot"}}], "entities": []}},
-    {"rule": "invalid_value", "path": "$.entities[0].tint[0]", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "tint": [2, 0, 0, 1]}]}},
+    {"rule": "invalid_value", "path": "$.entities[0].drawn.values.tint[0]", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "drawn": {"values": {"tint": [2, 0, 0, 1]}}}]}},
     {"rule": "source_too_large", "path": "$", "source": "OVERSIZED"},
     {"rule": "invalid_id", "path": "$.id", "document": {"id": "has space", "revision": 1, "materials": [], "meshes": [], "entities": []}},
     {"rule": "duplicate_id", "path": "$.materials[1].id", "document": {"id": "a", "revision": 1, "materials": [{"id": "m", "color": [1, 1, 1, 1]}, {"id": "m", "color": [0, 0, 0, 1]}], "meshes": [], "entities": []}},

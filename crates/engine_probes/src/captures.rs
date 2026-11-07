@@ -243,7 +243,7 @@ impl GpuPart for ProbesGpu {
                     instances: 0..1,
                 },
             );
-            drawn += draw.scene(Some(view));
+            drawn += draw.scene(self, Some(view));
         }
         drawn
     }

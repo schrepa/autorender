@@ -13,7 +13,7 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     Brick, Bricks, Pass, PassName, PassViews, PrimaryView, Schedule, SlotSet, Source, Writes, never,
 };
-use engine_render::{AttachPoint, PostScene, RenderBricks, TargetDecl, TargetName, Written, wgpu};
+use engine_render::{AttachPoint, RenderBricks, TargetDecl, TargetName, Written, wgpu};
 
 pub use settings::{Reflections, ReflectionsStats};
 
@@ -66,7 +66,7 @@ impl Brick for ReflectionsBrick {
             .systems(Schedule::ViewSync, publish_piece)
             .within(reflecting, |bricks| {
                 bricks
-                    .join::<PostScene>((), Some(apply::MODULE))
+                    .applies::<ReflectionsPass>(apply::MODULE)
                     .join::<engine_places_rendering::reflections::TraceReaders>((), None)
                     .part::<part::TraceGpu>();
             });

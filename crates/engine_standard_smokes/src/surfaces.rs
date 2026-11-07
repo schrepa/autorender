@@ -16,7 +16,7 @@ fn fixture() -> Value {
         "entities": [
             {"id": "floor", "mesh": "box", "material": "ground", "transform": {"translation": [0, -0.5, 0], "scale": [30, 1, 30]}},
             {"id": "behind", "mesh": "box", "material": "plain", "transform": {"translation": [0, 1, -2], "scale": [2, 2, 2]}},
-            {"id": "tinted", "mesh": "box", "material": "plain", "tint": [0.2, 0.9, 0.3, 1], "transform": {"translation": [5, 1, 0]}},
+            {"id": "tinted", "mesh": "box", "material": "plain", "drawn": {"values": {"tint": [0.2, 0.9, 0.3, 1]}}, "transform": {"translation": [5, 1, 0]}},
             {"id": "probe", "reflection_probe": {"extent": [12, 6, 12]}, "transform": {"translation": [0, 3, 0]}},
         ],
     })
@@ -36,7 +36,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         wanted,
         "stats_name_frame_and_tick"
     );
-    let tint = component(session, "tinted", "tint")?;
+    let tint = component(session, "tinted", "drawn")?["values"]["tint"].clone();
     let wanted = json!([0.2, 0.9, 0.3, 1]);
     smoke_eq!(
         seen(

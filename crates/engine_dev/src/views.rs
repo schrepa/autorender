@@ -84,7 +84,7 @@ pub struct CameraView {
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct Mesh3dView {
+pub struct DrawnMeshView {
     pub mesh: Option<MeshView>,
     pub material: Option<engine_scene::SceneMaterial>,
     pub textures: Vec<TextureView>,

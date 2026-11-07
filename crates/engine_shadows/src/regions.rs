@@ -8,16 +8,16 @@ use engine_render::CameraUniform;
 use crate::atlas::AtlasLayout;
 use crate::constants::{LEVEL_BAND, LEVEL_BEFORE, LEVEL_WINDOW, LEVEL_WORDS, SKY_REFRESH};
 use crate::gpu_layouts::{CasterCull, ComposeData, Route, ShadowPiece};
-use crate::shadow_fit::{ClipPlan, Clipmap, LightBasis, MapRegion, Region, region_tiles};
+use crate::shadow_fit::{ClipPlan, Clipmap, LightBasis, MapRegion, MovingTile, Region, region_tiles};
 use crate::sky::SkyDraw;
 
 const NORMAL_OFFSET_TEXELS: f32 = 0.5;
 const SLOPE_LIMIT_TEXELS: f32 = 16.0;
 const REGIONS: usize = SHADOW_REGIONS as usize;
-const PASS_ALL: [[f32; 4]; 6] = [[0.0, 0.0, 0.0, 1.0]; 6];
 
 pub(crate) const MOVING_VIEW: u32 = SHADOW_REGIONS;
 pub(crate) const SKY_VIEW: u32 = SHADOW_REGIONS + 1;
+pub(crate) const MOVING_TILES: u32 = SHADOW_REGIONS + 2;
 
 pub(crate) struct FrameRegions<'a> {
     pub(crate) basis: LightBasis,
@@ -58,13 +58,39 @@ impl FrameRegions<'_> {
         .clip(&self.basis)
     }
 
-    fn finest_moving(&self) -> f32 {
-        self.plan
-            .moving
-            .iter()
-            .map(|tile| self.clipmap.texel(tile.level))
-            .reduce(engine_core::math::min)
-            .unwrap_or(0.0)
+    fn moving_clip(&self, tile: &MovingTile) -> (Mat4, [f32; 4]) {
+        let (width, height) = self.layout.size();
+        let (width, height) = (width as f32, height as f32);
+        let side = self.layout.slot as f32;
+        let slot = self
+            .layout
+            .texels(self.layout.still + u32::from(tile.index));
+        let clip = MapRegion {
+            rect: self.clipmap.tile_rect(tile.level, tile.tile),
+            depth: self.clipmap.band(tile.level),
+        }
+        .clip(&self.basis);
+        let onto = Mat4::from_cols(
+            Vec4::new(side / width, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, side / height, 0.0, 0.0),
+            Vec4::Z,
+            Vec4::new(
+                (2.0 * slot[0] + side) / width - 1.0,
+                1.0 - (2.0 * slot[1] + side) / height,
+                0.0,
+                1.0,
+            ),
+        );
+        (onto * clip, slot)
+    }
+
+    pub(crate) fn scissors(&self, out: &mut Vec<[u32; 4]>) {
+        out.clear();
+        let side = self.layout.slot;
+        out.extend(self.plan.moving.iter().map(|tile| {
+            let [x, y, _, _] = self.moving_clip(tile).1;
+            [x as u32, y as u32, side, side]
+        }));
     }
 
     pub(crate) fn views(&self, sky: Option<&SkyDraw>, out: &mut Vec<MapView>) {
@@ -82,13 +108,16 @@ impl FrameRegions<'_> {
                 }),
             });
         }
-        if !self.plan.moving.is_empty() {
+        for tile in &self.plan.moving {
+            let [x0, y0, x1, y1] = self.clipmap.tile_rect(tile.level, tile.tile);
+            let rect = [x0 - shift.x, y0 - shift.y, x1 - shift.x, y1 - shift.y];
+            let depth = self.clipmap.band(tile.level);
             out.push(MapView {
-                view: Mat4::IDENTITY,
+                view: self.moving_clip(tile).0,
                 map: CasterMap::Moving,
                 refresh: Refresh::Kept(KeptRefresh {
-                    planes: PASS_ALL,
-                    texel: self.finest_moving(),
+                    planes: planes(self.basis.rows, rect, depth[1] - shift.z),
+                    texel: self.clipmap.texel(tile.level),
                 }),
             });
         }
@@ -124,38 +153,22 @@ impl FrameRegions<'_> {
         if let Some((clip, written)) = sky {
             out[SKY_VIEW as usize] = view(clip, written, [0.0; 4]);
         }
+        out.extend(
+            self.plan
+                .moving
+                .iter()
+                .map(|tile| view(self.moving_clip(tile).0, gusting, viewer.to_array())),
+        );
     }
 
     pub(crate) fn routes(&self, routes: &mut Vec<Route>) {
         routes.clear();
         routes.resize(self.layout.moving.max(1) as usize, Route::zeroed());
-        let (width, height) = self.layout.size();
-        let (width, height) = (width as f32, height as f32);
-        let side = self.layout.slot as f32;
         for tile in &self.plan.moving {
-            let index = usize::from(tile.index);
-            let slot = self
-                .layout
-                .texels(self.layout.still + u32::from(tile.index));
-            let clip = MapRegion {
-                rect: self.clipmap.tile_rect(tile.level, tile.tile),
-                depth: self.clipmap.band(tile.level),
-            }
-            .clip(&self.basis);
-            let onto = Mat4::from_cols(
-                Vec4::new(side / width, 0.0, 0.0, 0.0),
-                Vec4::new(0.0, side / height, 0.0, 0.0),
-                Vec4::Z,
-                Vec4::new(
-                    (2.0 * slot[0] + side) / width - 1.0,
-                    1.0 - (2.0 * slot[1] + side) / height,
-                    0.0,
-                    1.0,
-                ),
-            );
-            if let Some(route) = routes.get_mut(index) {
+            let (clip, slot) = self.moving_clip(tile);
+            if let Some(route) = routes.get_mut(usize::from(tile.index)) {
                 *route = Route {
-                    clip: (onto * clip).to_cols_array_2d(),
+                    clip: clip.to_cols_array_2d(),
                     slot,
                 };
             }

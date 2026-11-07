@@ -33,7 +33,7 @@ fn surface_input(input: SlotFragment, front: bool) -> SurfaceInput {
 fn lit_point(surface: SurfaceInput, tested: bool) -> SurfacePoint {
     let point = surface_point(surface);
     let result = widened(point, dpdx(point.normal), dpdy(point.normal));
-    if alpha_test() && !tested && masked_out(surface, result.opacity) {
+    if alpha_test() && !tested && masked_out(surface, result) {
         discard;
     }
     return result;

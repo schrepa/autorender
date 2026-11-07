@@ -2,7 +2,8 @@ use std::cmp::Reverse;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Error, Material, Mesh, Mesh3d, MeshHandle, PrimaryView, Spawner, Transform, math,
+    AssetLibrary, DrawKind, Drawn, Error, Material, Mesh, MeshHandle, PrimaryView, Spawner,
+    Transform, math,
 };
 use engine_heightfield::RIVER_STEP;
 use engine_places_simulation::ground::Ground;
@@ -191,18 +192,18 @@ fn build(
         let height = bed + DAM_LOG * (log as f32 + 0.5);
         let top = water + CREST;
         let height = math::min(height, top - DAM_LOG * 0.5);
-        spawner.spawn((
+        let spawned = spawner.spawn((
             Transform {
                 translation: world_point(site.points[at], height),
                 rotation: yaw,
                 scale: Vec3::new(span, DAM_LOG, DAM_LOG),
             },
-            Mesh3d {
-                mesh: cube,
-                material: if log % 2 == 0 { bark } else { pale },
-            },
             Collider::cuboid(Vec3::splat(0.5))?,
         ));
+        spawner.insert(
+            spawned,
+            Drawn::new(DrawKind::MESH, cube, if log % 2 == 0 { bark } else { pale }, spawned),
+        );
     }
     spawner.spawn((
         Transform::from_translation(world_point(site.points[at], water)),
@@ -214,15 +215,11 @@ fn build(
         let across = rng.range(-0.6, 0.6) * site.half[point];
         let flat = Vec2::from(site.points[point]) + side * across;
         let length = rng.range(2.8, 4.4);
-        spawner.spawn((
+        let spawned = spawner.spawn((
             Transform {
                 translation: world_point(flat.to_array(), water_at(point) + 0.8),
                 rotation: Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU)),
                 scale: Vec3::new(length, 0.42, 0.42),
-            },
-            Mesh3d {
-                mesh: cube,
-                material: if log % 2 == 0 { pale } else { bark },
             },
             Collider::cuboid(Vec3::splat(0.5))?,
             RigidBody {
@@ -230,21 +227,21 @@ fn build(
                 ..RigidBody::default()
             },
         ));
+        spawner.insert(
+            spawned,
+            Drawn::new(DrawKind::MESH, cube, if log % 2 == 0 { pale } else { bark }, spawned),
+        );
     }
     for stone_index in 0..BOULDERS {
         let point = at - 6 - stone_index as usize * 5;
         let bank = side * (site.half[point] + 2.5) * if stone_index % 2 == 0 { 1.0 } else { -1.0 };
         let flat = Vec2::from(site.points[point]) + bank;
         let size = rng.range(0.9, 1.4);
-        spawner.spawn((
+        let spawned = spawner.spawn((
             Transform {
                 translation: world_point(flat.to_array(), water_at(point) + 3.0),
                 rotation: Quat::from_rotation_y(rng.range(0.0, std::f32::consts::TAU)),
                 scale: Vec3::splat(size),
-            },
-            Mesh3d {
-                mesh: boulder,
-                material: stone,
             },
             Collider::sphere(0.45)?,
             RigidBody {
@@ -253,6 +250,10 @@ fn build(
                 ..RigidBody::default()
             },
         ));
+        spawner.insert(
+            spawned,
+            Drawn::new(DrawKind::MESH, boulder, stone, spawned),
+        );
     }
     Ok(())
 }

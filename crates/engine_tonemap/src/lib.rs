@@ -9,11 +9,27 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod tonemap;
 
-use engine_core::{Brick, Bricks, Schedule, Source};
+use engine_core::{
+    AttachPoint, Brick, Bricks, Pass, PassName, PassViews, Schedule, SlotSet, Source, Writes,
+    never,
+};
 use engine_places_rendering::tonemap::Display;
-use engine_render::PostTone;
+use engine_render::RenderBricks;
 
 pub use tonemap::Grading;
+
+pub(crate) struct TonemapPass;
+
+impl PassName for TonemapPass {
+    const NAME: &'static str = "tonemap";
+    const PASS: Pass = Pass {
+        writes: Writes::NOTHING,
+        reads: SlotSet::NONE,
+        views: PassViews::Every,
+        at: AttachPoint::Display,
+        takes: never,
+    };
+}
 
 pub struct TonemapBrick;
 
@@ -25,7 +41,7 @@ impl Brick for TonemapBrick {
             .settings::<Grading>()
             .piece::<Display>()
             .fill::<Display>(Some(shaders::tonemap::faces::tonemap::MODULE))
-            .fill::<PostTone>(Some(shaders::tonemap::tone::MODULE))
+            .applies::<TonemapPass>(shaders::tonemap::tone::MODULE)
             .systems(Schedule::ViewSync, tonemap::publish_display);
     }
 }

@@ -144,7 +144,7 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
     let surface = bake_input(input, color, uv1, front);
     let point = surface_point(surface);
     let base = base_texel(surface);
-    if alpha_test() && masked_out(surface, point.opacity) {
+    if alpha_test() && masked_out(surface, point) {
         discard;
     }
     var targets: BakeTargets;

@@ -34,15 +34,13 @@ const RECORD_BYTES: u64 = 16;
 pub(crate) struct DrawRecord {
     pub kind: DrawKind,
     pub level: u32,
-    pub casts: bool,
 }
 
 impl DrawRecord {
-    pub(crate) fn of(kind: DrawKind, level: usize, casts: bool) -> Self {
+    pub(crate) fn of(kind: DrawKind, level: usize) -> Self {
         Self {
             kind,
             level: level.min(LEVELS as usize - 1) as u32,
-            casts,
         }
     }
 
@@ -51,8 +49,7 @@ impl DrawRecord {
             .iter()
             .position(|kind| *kind == self.kind)
             .unwrap_or_default() as u64;
-        (kind * u64::from(LEVELS) + u64::from(self.level.min(LEVELS - 1))) * 2
-            + u64::from(self.casts)
+        kind * u64::from(LEVELS) + u64::from(self.level.min(LEVELS - 1))
     }
 
     fn word(self) -> u32 {
@@ -60,7 +57,6 @@ impl DrawRecord {
             kind: self.kind.kind(),
             level: self.level.min(LEVELS - 1),
             fading: false,
-            casts: self.casts,
             source: 0,
         }
         .pack()
@@ -75,15 +71,13 @@ pub(crate) fn record_words() -> Vec<u32> {
     let mut words = Vec::new();
     for kind in DrawKind::ALL {
         for level in 0..LEVELS {
-            for casts in [false, true] {
-                let record = DrawRecord { kind, level, casts };
-                words.extend([record.word(), 0, 0, 0]);
-            }
+            let record = DrawRecord { kind, level };
+            words.extend([record.word(), 0, 0, 0]);
         }
     }
     words
 }
 
 pub(crate) fn records_bytes() -> u64 {
-    DrawKind::ALL.len() as u64 * u64::from(LEVELS) * 2 * RECORD_BYTES
+    DrawKind::ALL.len() as u64 * u64::from(LEVELS) * RECORD_BYTES
 }

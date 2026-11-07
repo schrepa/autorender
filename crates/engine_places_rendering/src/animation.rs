@@ -480,6 +480,7 @@ pub struct Animator {
     layers: Vec<ClipLayer>,
     overrides: Vec<(u32, Quat)>,
     joints: Vec<Entity>,
+    parts: Vec<Entity>,
 }
 
 impl Animator {
@@ -493,6 +494,7 @@ impl Animator {
             layers: vec![ClipLayer::default()],
             overrides: Vec::new(),
             joints: Vec::new(),
+            parts: Vec::new(),
         }
     }
 
@@ -534,6 +536,10 @@ impl Animator {
 
     pub fn joint_node(&self, joint: &str) -> Option<Entity> {
         self.joints.get(self.rig.joint(joint)?).copied()
+    }
+
+    pub fn part_nodes(&self) -> &[Entity] {
+        &self.parts
     }
 
     pub fn clip_duration(&self, clip: &str) -> Option<f32> {
@@ -624,6 +630,12 @@ impl Animator {
     pub fn publish_joints(&mut self, joints: &[Entity]) {
         self.joints.clear();
         self.joints.extend_from_slice(joints);
+    }
+
+    #[doc(hidden)]
+    pub fn publish_parts(&mut self, parts: &[Entity]) {
+        self.parts.clear();
+        self.parts.extend_from_slice(parts);
     }
 
     fn add_layer(&mut self, root: &str) -> bool {

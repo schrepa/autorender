@@ -1,3 +1,4 @@
+import package::engine::drawn::{drawn_records, drawn_shown};
 import package::engine::view::{camera, view_pixel};
 import package::engine::shading::flat;
 import package::generated::sprites::SpriteInstance;
@@ -8,13 +9,17 @@ import package::generated::targets::{ViewTargets, view_targets};
 struct Corner { @builtin(position) clip: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) tint: vec4<f32>, @location(2) previous: vec4<f32> }
 @vertex fn vs_sprite(@builtin(vertex_index) corner: u32, @builtin(instance_index) index: u32) -> Corner {
     let sprite = instances[index];
+    var out: Corner;
+    if !drawn_shown(sprite.drawn.x) {
+        out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        return out;
+    }
     let unit = vec2<f32>(f32((50u >> corner) & 1u), f32((44u >> corner) & 1u));
     let world = vec4<f32>(sprite.place.xy + (unit - 0.5) * sprite.place.w, sprite.place.z, 1.0);
-    var out: Corner;
     out.clip = camera.view_projection * world;
     out.previous = camera.previous_view_projection * world;
     out.uv = sprite.rect.xy + vec2<f32>(unit.x, 1.0 - unit.y) * sprite.rect.zw;
-    out.tint = sprite.tint;
+    out.tint = sprite.tint * drawn_records[sprite.drawn.x].tint;
     return out;
 }
 @fragment fn fs_sprite(corner: Corner) -> ViewTargets {

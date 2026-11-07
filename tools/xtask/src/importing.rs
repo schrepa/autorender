@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 
 const COLLIDER: &str = "collider";
 
-const TINT: &str = "tint";
+const DRAWN: &str = "drawn";
 
 pub fn asset(arguments: &[String]) -> Result<(), String> {
     let result = command(arguments);
@@ -283,7 +283,7 @@ fn merge(
                 }
                 entity.name.clone_from(&old.name);
                 entity.tags.clone_from(&old.tags);
-                for kept in [COLLIDER, TINT] {
+                for kept in [COLLIDER, DRAWN] {
                     if let Some(value) = old.component(kept) {
                         entity.components.insert(kept.to_owned(), value.clone());
                     } else {

@@ -1,5 +1,4 @@
-use bevy_ecs::prelude::*;
-use engine_core::{Error, PassName, PrimaryView};
+use engine_core::{Error, ViewFacts};
 use engine_render::{
     Access, Attach, Bind, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass,
     Pipeline, Prepare, RenderPipeline, SCENE_FORMAT, Shape, TargetName, Texture, wgpu,
@@ -16,14 +15,13 @@ pub(crate) struct LitGpu {
 }
 
 impl GpuPart for LitGpu {
-    type Reads = Res<'static, PrimaryView>;
+    type Reads = ();
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let lit = cx.texture("lit", SCENE_FORMAT, Lifetime::Frame);
+        let lit = cx.view_texture("lit", SCENE_FORMAT, Lifetime::Frame);
         cx.frame(resolve::LIT, Bind::Texture(lit))?;
         let pass = cx
-            .pass(TemporalPass::NAME)
-            .at(TemporalPass::PASS.at)
+            .screen::<TemporalPass>()
             .label("engine/taa-lit")
             .span("taa_lit")
             .color(lit, Access::Clear)
@@ -50,12 +48,14 @@ impl GpuPart for LitGpu {
         })
     }
 
-    fn prepare(&mut self, view: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
-        if !view.temporal() {
+    fn prepare(&mut self, (): (), _cx: &mut Prepare<'_, Self>) {}
+
+    fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
+        if !view.temporal || view.debug || !view.target.surface() {
             return;
         }
-        let display = view.display_size();
-        let render = view.render_size();
+        let display = view.size();
+        let render = view.render;
         cx.allocate(
             self.lit,
             wgpu::Extent3d {

@@ -1,7 +1,7 @@
 import package::engine::mesh::declarations::TemporalOutput;
 import package::engine::shading::{Shaded, ViewPixel};
 import package::engine::view::view_pixel;
-import package::generated::targets::{ViewTargets, view_targets};
+import package::generated::targets::{ViewTargets, blended_targets, view_targets};
 import package::meshes::shade::{extended_fragment, extended_temporal_output, fragment,
     masked_depth, shade, temporal_output};
 import package::meshes::vertex::ExtendedTemporalOutput;
@@ -48,6 +48,19 @@ fn fs_mesh_extended_pretested(input: ExtendedTemporalOutput,
         @builtin(front_facing) front: bool) -> ViewTargets {
     let shaded = shade(extended_fragment(extended_temporal_output(input)), front, true);
     return mesh_targets(shaded, input.clip_position, input.previous);
+}
+
+@fragment
+fn fs_mesh_blended(input: TemporalOutput, @builtin(front_facing) front: bool) -> ViewTargets {
+    let shaded = shade(fragment(temporal_output(input)), front, false);
+    return blended_targets(shaded, drawn_pixel(input.clip_position, input.previous));
+}
+
+@fragment
+fn fs_mesh_extended_blended(input: ExtendedTemporalOutput,
+        @builtin(front_facing) front: bool) -> ViewTargets {
+    let shaded = shade(extended_fragment(extended_temporal_output(input)), front, false);
+    return blended_targets(shaded, drawn_pixel(input.clip_position, input.previous));
 }
 
 @fragment

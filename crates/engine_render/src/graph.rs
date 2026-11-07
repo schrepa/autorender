@@ -368,6 +368,16 @@ fn passes_before(
                     before[late].insert(early);
                 }
             }
+            if writer.entry.shared
+                && !reader.entry.shared
+                && reader.entry.layer.is_some()
+                && reader.entry.layer == writer.entry.layer
+                && writer
+                    .attachments()
+                    .any(|(resource, _)| views.contains(resource.index()) && inputs.contains(resource.index()))
+            {
+                before[late].insert(early);
+            }
         }
         for pass in &after[late] {
             before[late].insert(pass.index());
@@ -548,7 +558,49 @@ impl StaticGraph {
         self.resources.len()
     }
 
-    pub fn plan(&self, runs: &Bits, outputs: &Bits) -> Result<Plan, Error> {
+    pub fn view_resources(&self) -> Bits {
+        view_bits(&self.resources)
+    }
+
+    pub fn writes(&self, pass: usize) -> Bits {
+        self.nodes
+            .get(pass)
+            .map_or_else(|| Bits::of(self.resources.len()), Node::outputs)
+    }
+
+    pub fn spread(&self, mut passes: Bits, mut varying: Bits, held: &Bits) -> Bits {
+        let mut frame = Bits::of(self.resources.len());
+        for (index, resource) in self.resources.iter().enumerate() {
+            if resource.life == Life::Frame {
+                frame.insert(index);
+            }
+        }
+        loop {
+            let mut grew = false;
+            for (index, node) in self.nodes.iter().enumerate() {
+                if held.contains(index) {
+                    continue;
+                }
+                let touches = !node
+                    .inputs()
+                    .union(&node.outputs())
+                    .intersect(&varying)
+                    .is_empty();
+                if !passes.contains(index) && !touches {
+                    continue;
+                }
+                let widened = varying.union(&node.outputs().intersect(&frame));
+                grew |= !passes.contains(index) || widened != varying;
+                passes.insert(index);
+                varying = widened;
+            }
+            if !grew {
+                return passes;
+            }
+        }
+    }
+
+    pub fn plan(&self, runs: &Bits, outputs: &Bits, ready: &Bits) -> Result<Plan, Error> {
         let mut needed = outputs.clone();
         for (index, resource) in self.resources.iter().enumerate() {
             if resource.life != Life::Frame {
@@ -594,7 +646,7 @@ impl StaticGraph {
             }
             needed = needed.union(&node.inputs());
         }
-        let mut written = Bits::of(self.resources.len());
+        let mut written = ready.clone();
         for (index, resource) in self.resources.iter().enumerate() {
             if matches!(resource.life, Life::Kept | Life::Previous) {
                 written.insert(index);
@@ -603,7 +655,7 @@ impl StaticGraph {
         let planned_writes = kept
             .iter()
             .flatten()
-            .fold(Bits::of(self.resources.len()), |all, planned| {
+            .fold(ready.clone(), |all, planned| {
                 all.union(&self.nodes[planned.pass.index()].outputs())
             });
         let mut passes = Vec::new();
@@ -651,34 +703,36 @@ pub const PLANS: usize = 16;
 
 #[derive(Debug, Default)]
 pub struct PlanCache {
-    plans: Vec<(Bits, Bits, std::sync::Arc<Plan>)>,
+    plans: Vec<(Bits, Bits, Bits, std::sync::Arc<Plan>)>,
 }
 
 impl PlanCache {
     pub fn plan(
         &mut self,
         graph: &StaticGraph,
-        runs: &Bits,
-        outputs: &Bits,
+        (runs, outputs, ready): (&Bits, &Bits, &Bits),
         most: usize,
     ) -> Result<std::sync::Arc<Plan>, Error> {
-        let found = self
-            .plans
-            .iter()
-            .position(|(known, read, _)| known == runs && read == outputs);
+        let found = self.plans.iter().position(|(known, read, held, _)| {
+            known == runs && read == outputs && held == ready
+        });
         let index = match found {
             Some(index) => index,
             None => {
-                let plan = graph.plan(runs, outputs)?;
+                let plan = graph.plan(runs, outputs, ready)?;
                 if self.plans.len() >= most.max(1) {
                     self.plans.remove(0);
                 }
-                self.plans
-                    .push((runs.clone(), outputs.clone(), std::sync::Arc::new(plan)));
+                self.plans.push((
+                    runs.clone(),
+                    outputs.clone(),
+                    ready.clone(),
+                    std::sync::Arc::new(plan),
+                ));
                 self.plans.len() - 1
             }
         };
-        Ok(std::sync::Arc::clone(&self.plans[index].2))
+        Ok(std::sync::Arc::clone(&self.plans[index].3))
     }
 
     pub fn clear(&mut self) {

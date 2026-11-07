@@ -1,3 +1,4 @@
+import package::engine::drawn::{drawn_records, drawn_shown};
 import package::engine::math::{pcg, unit};
 import package::engine::particles::{Particle, ParticleIn, standard};
 import package::engine::surfaces::SURFACE_SOLID;
@@ -7,7 +8,7 @@ import package::face::particle_formula::custom_particle;
 import package::face::sky::{ambient, atmospheric, atmospheric_cover, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
-import package::generated::particles::{Emitter, Particles};
+import package::generated::particles::{Emitter, NO_SLOT, Particles};
 import package::particles::weighted::{TransparentTargets, weighted_particle};
 
 @group(1) @binding(0) var<uniform> particles: Particles;
@@ -49,6 +50,13 @@ fn owner_of(instance: u32) -> u32 {
 fn vs_particle(@builtin(vertex_index) vertex: u32,
         @builtin(instance_index) instance: u32) -> ParticleOutput {
     let emitter = emitters[owner_of(instance)];
+    var tint = vec4<f32>(1.0);
+    if emitter.slot != NO_SLOT {
+        if !drawn_shown(emitter.slot) {
+            return hidden();
+        }
+        tint = drawn_records[emitter.slot].tint;
+    }
     let lane = instance - emitter.first;
     let time = emitter.now;
     var k = lane;
@@ -108,7 +116,7 @@ fn vs_particle(@builtin(vertex_index) vertex: u32,
     let world = position + along_x * corner.x + along_y * corner.y;
     var output: ParticleOutput;
     output.clip_position = camera.view_projection * vec4<f32>(world, 1.0);
-    output.color = particle.color;
+    output.color = particle.color * tint;
     output.corner = corner;
     output.world = world;
     output.softness = max(size, 0.05);

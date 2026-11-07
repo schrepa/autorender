@@ -1,4 +1,3 @@
-import package::engine::math::FIRST_PERSON_DEPTH;
 import package::engine::post::frame::{depth_texture, post};
 
 fn world_from(pixel: vec2<i32>, depth: f32) -> vec4<f32> {
@@ -10,12 +9,6 @@ fn world_from(pixel: vec2<i32>, depth: f32) -> vec4<f32> {
 
 fn world_at(pixel: vec2<i32>) -> vec4<f32> {
     return world_from(pixel, textureLoad(depth_texture, pixel, 0));
-}
-
-fn occluder_at(pixel: vec2<i32>) -> vec4<f32> {
-    let depth = textureLoad(depth_texture, pixel, 0);
-    let point = world_from(pixel, depth);
-    return vec4<f32>(point.xyz, select(0.0, point.w, depth < 1.0 - FIRST_PERSON_DEPTH));
 }
 
 fn depth_normal(pixel: vec2<i32>, p: vec3<f32>) -> vec3<f32> {

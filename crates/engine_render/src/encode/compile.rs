@@ -172,6 +172,63 @@ fn color_targets(
         .collect()
 }
 
+const OVER: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
+const ADDED: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
+const COVERED: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::OneMinusSrc,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::OneMinusSrc,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
+fn blend_targets(
+    targets: &mut [Option<wgpu::ColorTargetState>],
+    alpha: crate::surface::Alpha,
+    cover: Option<usize>,
+) {
+    let additive = alpha == crate::surface::Alpha::Additive;
+    for (location, target) in targets.iter_mut().enumerate() {
+        let Some(target) = target else { continue };
+        if location == 0 {
+            target.blend = blendable(target.format).then_some(if additive { ADDED } else { OVER });
+        } else if cover == Some(location) && !additive {
+            target.blend = blendable(target.format).then_some(COVERED);
+        } else {
+            target.write_mask = wgpu::ColorWrites::empty();
+        }
+    }
+}
+
 impl Run {
     fn part_label(&self, part: u32, entry: &str) -> String {
         match self
@@ -215,10 +272,10 @@ impl Run {
     pub(super) fn render_pipeline(
         &mut self,
         pipeline: u32,
-        variant: Option<crate::surface::DrawState>,
+        variant: Option<crate::surface::MaterialVariant>,
     ) -> Option<usize> {
         let layout = self.recording.open()?.layout;
-        let bits = variant.map(engine_core::GpuBits::pack);
+        let bits = variant;
         let built = self.machine.pipelines.get(pipeline as usize)?;
         if built.skipped {
             return None;
@@ -230,12 +287,11 @@ impl Run {
         {
             return Some(at);
         }
-        let specialized = variant.map(|state| (engine_core::GpuBits::pack(state), state.constants()));
         let (key, made) = self.compile(
             pipeline,
             (layout.formats(), layout.depth),
             (layout.debug, layout.main),
-            specialized,
+            variant,
         )?;
         self.rebuilt.compiles += 1;
         let built = self.machine.pipelines.get_mut(pipeline as usize)?;
@@ -282,7 +338,7 @@ impl Run {
             Option<(wgpu::TextureFormat, bool)>,
         ),
         (debug, main): (bool, bool),
-        variant: Option<Specialized>,
+        variant: Option<crate::surface::MaterialVariant>,
     ) -> Option<(u64, wgpu::RenderPipeline)> {
         let built = self.machine.pipelines.get(pipeline as usize)?;
         let Program::Render(desc) = &built.decl.program else {
@@ -292,13 +348,20 @@ impl Run {
             return None;
         }
         let switches = stage_switches(&self.switches, &built.stages);
-        let material: Vec<(&str, f64)> =
-            variant.map_or_else(Vec::new, |(_, constants)| constants.to_vec());
-        let specialized = built
-            .stages
-            .iter()
-            .any(|stage| !stage.composed.constants(&material).is_empty());
-        let bits = variant.filter(|_| specialized).map(|(bits, _)| bits);
+        let used = variant.map_or([false; 5], |variant| {
+            variant.constants().map(|offered| {
+                built
+                    .stages
+                    .iter()
+                    .any(|stage| !stage.composed.constants(&[offered]).is_empty())
+            })
+        });
+        let specialized = used.contains(&true);
+        let styled = !debug && !desc.writes.is_empty();
+        let bits = variant.and_then(|variant| variant.keyed(used, styled));
+        let material: Vec<(&str, f64)> = bits
+            .filter(|_| specialized)
+            .map_or_else(Vec::new, |keyed| keyed.constants().to_vec());
         let mut hasher = DefaultHasher::new();
         formats.hash(&mut hasher);
         depth.hash(&mut hasher);
@@ -338,13 +401,31 @@ impl Run {
         };
         let fragment_entry = if debug { desc.debug } else { desc.fragment };
         let layouts = vertex_layouts(&desc.vertices);
-        let depth_stencil =
-            depth.map(|(format, view)| depth_stencil_state(format, view, desc.depth));
+        let styling = bits.filter(|_| styled);
+        let depth_stencil = depth.map(|(format, view)| {
+            let mut state = depth_stencil_state(format, view, desc.depth);
+            if let Some(styling) = styling {
+                styling.restyle(&mut state);
+            }
+            state
+        });
         let fragment_stage = fragment_entry.and_then(|_| built.stages.get(fragment_at));
         let written = fragment_stage
             .zip(fragment_entry)
             .and_then(|(stage, entry)| fragment_locations(&stage.composed.text, entry.name()));
-        let targets = color_targets(desc, formats, written.as_deref(), (debug, main));
+        let blended = styling
+            .map(|styling| styling.draw().alpha)
+            .filter(|alpha| {
+                matches!(
+                    alpha,
+                    crate::surface::Alpha::Blend | crate::surface::Alpha::Additive
+                )
+            })
+            .map(|alpha| (alpha, crate::machine::cover_location(&self.machine.outputs)));
+        let mut targets = color_targets(desc, formats, written.as_deref(), (debug, main));
+        if let Some((alpha, cover)) = blended {
+            blend_targets(&mut targets, alpha, cover.filter(|_| main));
+        }
         let vertex_module = built
             .stages
             .first()?
@@ -389,14 +470,6 @@ impl Run {
             debug,
             main,
             variant: bits,
-            constants: if bits.is_some() {
-                material
-                    .iter()
-                    .map(|&(name, value)| (name.to_owned(), value))
-                    .collect()
-            } else {
-                Vec::new()
-            },
         });
         Some((key, made))
     }

@@ -1,11 +1,10 @@
 use std::fmt::Write as _;
 
-use bevy_ecs::component::Component;
 use bevy_ecs::resource::Resource;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{DrawKind, Error, ErrorCode, Mobility, gpu_bits};
+use crate::{DrawKind, Error, ErrorCode, gpu_bits};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -216,6 +215,19 @@ impl PassName for ColorPass {
     };
 }
 
+pub struct BlendedPass;
+
+impl PassName for BlendedPass {
+    const NAME: &'static str = "blended";
+    const PASS: Pass = Pass {
+        writes: Writes(&[TargetName::COLOR, TargetName::TRANSPARENCY]),
+        reads: SlotSet::ALL,
+        views: PassViews::Every,
+        at: AttachPoint::Transparent,
+        takes: every,
+    };
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct PassEntry {
     pub name: &'static str,
@@ -284,8 +296,11 @@ pub struct ScenePasses {
     listed: Vec<ScenePass>,
 }
 
-pub const CORE_PASSES: [PassEntry; 2] =
-    [PassEntry::of::<DepthPass>(), PassEntry::of::<ColorPass>()];
+pub const CORE_PASSES: [PassEntry; 3] = [
+    PassEntry::of::<DepthPass>(),
+    PassEntry::of::<ColorPass>(),
+    PassEntry::of::<BlendedPass>(),
+];
 
 pub const CORE_BRICK: &str = "engine_render";
 
@@ -411,20 +426,4 @@ impl ScenePasses {
         }
         text
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SceneView {
-    pub view_projection: [[f32; 4]; 4],
-    pub planes: Option<[[f32; 4]; 6]>,
-    pub eye: [f32; 3],
-    pub size: [u32; 2],
-    pub detail: f32,
-    pub takes: Option<Mobility>,
-}
-
-#[derive(Component, Clone, Debug, Default, PartialEq)]
-pub struct SceneViews {
-    pub pass: &'static str,
-    pub views: Vec<SceneView>,
 }

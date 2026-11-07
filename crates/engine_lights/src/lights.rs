@@ -1,9 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Cut, DrawnPoses, Expected, GlobalTransforms, InvalidSetting, Mobility, Nearest, Rule, PrimaryView,
-    fields, settings, stats,
+    Cut, DrawKind, DrawnPoses, DrawnTable, Expected, GlobalTransforms, InvalidSetting, Mobility,
+    Nearest, Rule, PrimaryView, fields, settings, stats,
 };
-use engine_places::meshes::Instances;
 use engine_places_rendering::lights::{
     LightRegion, LocalLight, MAX_LIGHT_RANGE, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES,
 };
@@ -153,9 +152,11 @@ pub(crate) struct LightGather {
 fn render_light(
     (entity, light): (Entity, &LocalLight),
     settings: &LocalLightSettings,
-    (instances, globals, poses): (&Instances, &GlobalTransforms, &DrawnPoses),
+    (table, globals, poses): (&DrawnTable, &GlobalTransforms, &DrawnPoses),
 ) -> Option<RenderLight> {
-    let slot = instances.drawn(entity);
+    let slot = table
+        .slot(entity)
+        .filter(|&slot| table.drawn(slot).is_some_and(|drawn| drawn.kind == DrawKind::MESH));
     let model = match slot {
         Some(_) => None,
         None => Some(poses.drawn_pose(globals, entity)?),
@@ -171,7 +172,7 @@ fn render_light(
 pub(crate) fn gather_lights(
     settings: Res<LocalLightSettings>,
     lights: Query<(Entity, &'static LocalLight)>,
-    (instances, globals, poses): (Res<Instances>, Res<GlobalTransforms>, Res<DrawnPoses>),
+    (table, globals, poses): (Res<DrawnTable>, Res<GlobalTransforms>, Res<DrawnPoses>),
     view: Res<PrimaryView>,
     mut gather: ResMut<LightGather>,
     mut list: ResMut<LightList>,
@@ -183,7 +184,7 @@ pub(crate) fn gather_lights(
     } = &mut *gather;
     *cut = 0;
     list.lights.clear();
-    let held = (&*instances, &*globals, &*poses);
+    let held = (&*table, &*globals, &*poses);
     let budget = settings
         .max_lights
         .map_or(usize::MAX, |budget| budget as usize);
