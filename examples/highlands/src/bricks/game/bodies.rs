@@ -5,10 +5,12 @@ use engine_core::{
     AssetLibrary, Camera, Error, Material, Mesh, Mesh3d, MeshHandle, Spawner, Transform, math,
 };
 use engine_heightfield::RIVER_STEP;
-use engine_places::ground::{Ground, TerrainTiles};
-use engine_places::physics::{BodyMotion, Collider, Collision, RigidBody};
-use engine_places::streaming::StreamingFocus;
-use engine_places::water::{Hydrology, WaterBody, WaterSample};
+use engine_places_simulation::ground::Ground;
+use engine_places_simulation::physics::{BodyMotion, Collider, Collision, RigidBody};
+use engine_places_simulation::water::{WaterBody, WaterSample};
+use engine_places_world::ground::TerrainTiles;
+use engine_places_world::streaming::StreamingFocus;
+use engine_places_world::water::Hydrology;
 use glam::{Quat, Vec2, Vec3};
 
 use crate::bricks::game::HighlandsBrick;

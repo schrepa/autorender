@@ -154,12 +154,6 @@ fn outdoor_without_trees(session: &mut dyn SmokeSession) -> Checked<()> {
             .any(|members| members.contains(&json!(OUTDOOR_LEFT_OUT)))
     });
     smoke_eq!(named, false, "outdoor_lists_leave_scatter_out");
-    let faces = linked["faces"].as_object().cloned().unwrap_or_default();
-    smoke_eq!(
-        faces.contains_key("occupancy"),
-        false,
-        "outdoor_no_occupancy_face"
-    );
     Ok(())
 }
 

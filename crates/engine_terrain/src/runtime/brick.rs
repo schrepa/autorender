@@ -9,9 +9,10 @@ use engine_core::{
     Brick, Bricks, Explain, ExplainAsk, ExplainRecord, GlobalTransforms, GpuStruct, JobKind,
     SceneComponents, Schedule, Source,
 };
-use engine_places::ground::{Ground, GroundSurface, GroundWork, TerrainTiles};
-use engine_places::terrain::TerrainLayers;
-use engine_places::water::Hydrology;
+use engine_places_simulation::ground::Ground;
+use engine_places_world::ground::{GroundSurface, GroundWork, TerrainTiles};
+use engine_places_world::terrain::TerrainLayers;
+use engine_places_world::water::Hydrology;
 use engine_render::RenderBricks;
 
 pub struct TerrainBrick;

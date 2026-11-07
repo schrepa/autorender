@@ -4,8 +4,8 @@ use engine_core::{Error, ErrorCode, Expected, Job, JobCx, JobKind, RecordKey};
 use engine_heightfield::layer::LayerKind;
 use engine_heightfield::reaches;
 use engine_heightfield::tile::{Recipe, TerrainRecipe, TileJob, shaded_elsewhere, stamped};
-use engine_places::ground::{GroundBridge, GroundGrid};
-use engine_places::terrain::TerrainLayers;
+use engine_places_simulation::ground::{GroundBridge, GroundGrid};
+use engine_places_world::terrain::TerrainLayers;
 use glam::Vec2;
 
 use crate::codec::{self, Reader, Writer, record};

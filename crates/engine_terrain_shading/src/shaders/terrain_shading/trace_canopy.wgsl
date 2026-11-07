@@ -1,6 +1,6 @@
 import package::face::cover::material_canopy;
 import package::face::ground_tiles::PALETTE_ENTRIES;
-import package::generated::reflections::{CANOPY_GROUP, TraceTerrain};
+import package::generated::terrain_shading::{CANOPY_GROUP, TraceTerrain};
 
 @group(1) @binding(0) var<storage, read> world_terrains: array<TraceTerrain>;
 @group(1) @binding(1) var<storage, read_write> world_placed: array<u32>;

@@ -16,8 +16,8 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     Brick, Bricks, ComponentKind, GpuStruct, Runs, SceneComponents, Schedule, Smoke, Source,
 };
-use engine_places::animation::{Animator, Attachment};
-use engine_places::shadows::ShadowCasters;
+use engine_places_rendering::animation::{Animator, Attachment};
+use engine_places_rendering::shadows::ShadowCasters;
 use engine_render::{Layer, MainView, RenderBricks};
 
 pub use import::{ImportShared, Model, import_glb};

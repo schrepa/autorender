@@ -22,7 +22,8 @@ pub use types::{CollisionConfig, CollisionLimits, CollisionStats, Count};
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source};
-use engine_places::physics::{Collider, Collision};
+use engine_places::sweeps::Sweeps;
+use engine_places_simulation::physics::{Collider, Collision};
 
 pub struct CollisionBrick;
 
@@ -40,6 +41,7 @@ impl Brick for CollisionBrick {
             .settings::<CollisionConfig>()
             .settled_stats::<CollisionStats, _>(world::refresh)
             .fill::<Collision>(None)
+            .fill::<Sweeps>(None)
             .join::<SceneComponents>(
                 ComponentKind::of::<Collider>("collider")
                     .check(scene::checked)

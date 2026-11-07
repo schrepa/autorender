@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Error, ErrorCode, GlobalTransforms, Operation, SceneIds};
-use engine_places::physics::{Collider, ColliderShape, Collision};
+use engine_places_simulation::physics::{Collider, ColliderShape, Collision};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

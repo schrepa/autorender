@@ -1,6 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Error, View};
-use engine_places::shadows::{CasterMap, CasterView, SHADOW_REGIONS, ShadowCasters, ShadowMaps};
+use engine_places_rendering::shadows::{
+    CasterMap, CasterView, SHADOW_REGIONS, ShadowCasters, ShadowMaps,
+};
 use engine_render::{
     Access, AfterRead, Attach, Bind, Buffer, ComputePipeline, Count, DebugShown, DepthUse,
     DrawInput, Draws, Encode, FULLSCREEN, GpuPart, Install, Layer, Lifetime, Own, Pass, Pipeline,

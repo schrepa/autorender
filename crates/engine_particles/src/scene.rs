@@ -1,5 +1,7 @@
 use engine_core::{Error, ErrorCode, ExtraRules, InvalidSetting, Reach, Setting, fields};
-use engine_places::particles::{MAX_SPREAD_DEGREES, ParticleBlend, ParticleEmitter, ParticleShape};
+use engine_places_rendering::particles::{
+    MAX_SPREAD_DEGREES, ParticleBlend, ParticleEmitter, ParticleShape,
+};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

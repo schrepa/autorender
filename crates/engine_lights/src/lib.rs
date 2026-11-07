@@ -12,7 +12,7 @@ mod scene;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, ComponentKind, GpuStruct, SceneComponents, Schedule, Source};
-use engine_places::lights::{Lights, LocalLight};
+use engine_places_rendering::lights::{Lights, LocalLight};
 use engine_render::RenderBricks;
 
 pub use lights::{LightStats, LocalLightSettings};

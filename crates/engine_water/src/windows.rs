@@ -5,8 +5,8 @@ use engine_core::math::{max, min, sin_cos};
 use engine_core::{Camera, DeviceLimits, Projection, View};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::{TILE_STRIDE, on_triangle, tile_cell};
-use engine_places::ground::TerrainTiles;
-use engine_places::water::WaterObstacle;
+use engine_places_simulation::water::WaterObstacle;
+use engine_places_world::ground::TerrainTiles;
 use glam::{Vec2, Vec3};
 
 use crate::gpu::{SETUP_SOLID_ENTRIES, SIM_TOUCHES};

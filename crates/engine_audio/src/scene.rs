@@ -1,5 +1,5 @@
 use engine_core::{Error, ErrorCode, InvalidSetting, Rule, SceneCx, Setting, valid_uri};
-use engine_places::audio::SoundSource;
+use engine_places_rendering::audio::SoundSource;
 use serde_json::{Value, json};
 
 pub(crate) const MIN_PITCH: f32 = 0.0625;

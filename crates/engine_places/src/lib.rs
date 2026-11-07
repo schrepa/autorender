@@ -5,48 +5,27 @@
 
 extern crate engine_ecs as bevy_ecs;
 
+#[macro_export]
 macro_rules! contract {
     ($file:literal $(, $name:ident)* $(,)? $(; $($float:ident),+ $(,)?)?) => {{
-        const CONSTANTS: &[(&str, crate::contract::Value)] = &[
-            $((::core::stringify!($name), crate::contract::Value::U32($name)),)*
-            $($((::core::stringify!($float), crate::contract::Value::F32($float)),)+)?
+        const CONSTANTS: &[(&str, $crate::contract::Value)] = &[
+            $((::core::stringify!($name), $crate::contract::Value::U32($name)),)*
+            $($((::core::stringify!($float), $crate::contract::Value::F32($float)),)+)?
         ];
         const TEXT: &str = ::core::include_str!($file);
-        const BYTES: [u8; crate::contract::length(CONSTANTS, TEXT)] =
-            crate::contract::written(CONSTANTS, TEXT);
-        crate::contract::text(&BYTES)
+        const BYTES: [u8; $crate::contract::length(CONSTANTS, TEXT)] =
+            $crate::contract::written(CONSTANTS, TEXT);
+        $crate::contract::text(&BYTES)
     }};
 }
 
-pub mod animation;
-pub mod audio;
-pub mod exposure;
-pub mod ground;
-pub mod lighting;
-pub mod lights;
 pub mod meshes;
-pub mod navigation;
-pub mod particles;
-pub mod physics;
-pub mod probes;
-pub mod screens;
-pub mod shadows;
-pub mod sky;
-mod smokes;
-pub mod solids;
-pub mod splines;
-pub mod streaming;
-pub mod sun;
-pub mod terrain;
-pub mod text;
-pub mod tonemap;
-pub mod ui;
-pub mod water;
-pub mod wind;
+pub mod sweeps;
 
 use engine_place::PlaceDecl;
 
-mod contract {
+#[doc(hidden)]
+pub mod contract {
     use engine_place::__private::wgsl::{Piece, Written, write};
 
     const LEAD: &[u8] = b"const ";
@@ -58,7 +37,7 @@ mod contract {
     const FLOAT_ROOM: usize = 64;
 
     #[derive(Clone, Copy)]
-    pub(crate) enum Value {
+    pub enum Value {
         U32(u32),
         F32(f32),
     }
@@ -86,7 +65,7 @@ mod contract {
         count
     }
 
-    pub(crate) const fn length(constants: &[(&str, Value)], text: &str) -> usize {
+    pub const fn length(constants: &[(&str, Value)], text: &str) -> usize {
         let mut total = text.len();
         let mut at = 0;
         while at < constants.len() {
@@ -141,7 +120,7 @@ mod contract {
         end
     }
 
-    pub(crate) const fn written<const N: usize>(
+    pub const fn written<const N: usize>(
         constants: &[(&str, Value)],
         text: &str,
     ) -> [u8; N] {
@@ -180,7 +159,7 @@ mod contract {
         out
     }
 
-    pub(crate) const fn text(bytes: &'static [u8]) -> &'static str {
+    pub const fn text(bytes: &'static [u8]) -> &'static str {
         match core::str::from_utf8(bytes) {
             Ok(text) => text,
             Err(_) => panic!("contract_text_is_utf8"),
@@ -188,80 +167,10 @@ mod contract {
     }
 }
 
-fn is_zero(value: &f32) -> bool {
-    *value == 0.0
-}
-
 pub const PLACES: &[PlaceDecl] = &[
-    PlaceDecl::slot::<sun::SunPath>(),
-    PlaceDecl::list::<sun::SunClocks>(),
-    PlaceDecl::slot::<sun::Sun>(),
-    PlaceDecl::slot::<sky::SkyLight>(),
-    PlaceDecl::slot::<sky::EnvironmentLayers>(),
-    PlaceDecl::slot::<exposure::Exposure>(),
-    PlaceDecl::slot::<tonemap::Display>(),
-    PlaceDecl::slot::<lighting::Lighting>(),
-    PlaceDecl::list::<lighting::SunBlockers>(),
-    PlaceDecl::list::<lighting::Ambient>(),
-    PlaceDecl::list::<lighting::Interiors>(),
-    PlaceDecl::slot::<lights::Lights>(),
-    PlaceDecl::component::<lights::LocalLight>("local_light"),
-    PlaceDecl::slot::<shadows::ShadowMaps>(),
-    PlaceDecl::slot::<shadows::CasterRoutes>(),
-    PlaceDecl::slot::<shadows::ShadowCasters>(),
-    PlaceDecl::component::<shadows::ShadowChanges>("shadow_changes"),
-    PlaceDecl::slot::<probes::ProbeViews>(),
-    PlaceDecl::slot::<probes::ProbeCaptures>(),
-    PlaceDecl::component::<probes::ReflectionProbe>("reflection_probe"),
     PlaceDecl::slot::<meshes::Instances>(),
     PlaceDecl::component::<meshes::Cube>("cube"),
     PlaceDecl::component::<meshes::Tint>("tint"),
     PlaceDecl::component::<meshes::FirstPersonLayer>("first_person_layer"),
-    PlaceDecl::slot::<particles::Transparency>(),
-    PlaceDecl::slot::<particles::ParticleFormula>(),
-    PlaceDecl::slot::<particles::ParticleBursts>(),
-    PlaceDecl::component::<particles::ParticleEmitter>("particle_emitter"),
-    PlaceDecl::slot::<ground::Ground>(),
-    PlaceDecl::slot::<ground::TerrainTiles>(),
-    PlaceDecl::slot::<ground::GroundSurface>(),
-    PlaceDecl::slot::<ground::Heightfield>(),
-    PlaceDecl::slot::<ground::GroundWork>(),
-    PlaceDecl::slot::<ground::GroundBaking>(),
-    PlaceDecl::slot::<ground::GroundTiles>(),
-    PlaceDecl::slot::<ground::Horizons>(),
-    PlaceDecl::slot::<ground::Bounce>(),
-    PlaceDecl::slot::<ground::PlacedTiles>(),
-    PlaceDecl::slot::<ground::Cover>(),
-    PlaceDecl::list::<ground::FarCover>(),
-    PlaceDecl::slot::<ground::Occupancy>(),
-    PlaceDecl::slot::<ground::Foliage>(),
-    PlaceDecl::component::<ground::HeightHeld>("height_held"),
-    PlaceDecl::component::<ground::Grounded>("grounded"),
-    PlaceDecl::component::<ground::GroundedAt>("grounded_at"),
-    PlaceDecl::component::<navigation::NavAgent>("nav_agent"),
-    PlaceDecl::component::<navigation::NavWalk>("nav_walk"),
-    PlaceDecl::component::<animation::Animator>("animator"),
-    PlaceDecl::component::<animation::Attachment>("attachment"),
-    PlaceDecl::slot::<water::Waterline>(),
-    PlaceDecl::slot::<water::WaterObstacles>(),
-    PlaceDecl::slot::<water::WaterFlow>(),
-    PlaceDecl::slot::<water::WaterWork>(),
-    PlaceDecl::slot::<water::Hydrology>(),
-    PlaceDecl::component::<water::WaterBody>("water_body"),
-    PlaceDecl::slot::<wind::Wind>(),
-    PlaceDecl::slot::<physics::Collision>(),
-    PlaceDecl::slot::<text::Text>(),
-    PlaceDecl::slot::<ui::UiValues>(),
-    PlaceDecl::slot::<ui::UiEvents>(),
-    PlaceDecl::component::<ui::UiRoot>("ui"),
-    PlaceDecl::slot::<audio::Sounds>(),
-    PlaceDecl::component::<audio::SoundSource>("sound_source"),
-    PlaceDecl::component::<physics::Collider>("collider"),
-    PlaceDecl::component::<physics::RigidBody>("rigid_body"),
-    PlaceDecl::component::<physics::BodyPush>("body_push"),
-    PlaceDecl::component::<screens::Screen>("screen"),
-    PlaceDecl::component::<solids::SolidSource>("solid_source"),
-    PlaceDecl::component::<splines::SplineMesh>("spline_mesh"),
-    PlaceDecl::component::<streaming::StreamingFocus>("streaming_focus"),
-    PlaceDecl::list::<terrain::TerrainLayers>(),
+    PlaceDecl::slot::<sweeps::Sweeps>(),
 ];

@@ -9,7 +9,7 @@ pub mod constants;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, FrameTime, Schedule, Source, ViewWind, settings};
-use engine_places::wind::{GustWaves, Wind};
+use engine_places_simulation::wind::{GustWaves, Wind};
 use engine_render::RenderBricks;
 
 use constants::{

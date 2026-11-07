@@ -5,8 +5,10 @@ use engine_core::{
     Brick, Bricks, ComponentKind, Filled, FixedTime, InterpolateTransform, MoveInput,
     SceneComponents, Schedule, Source, Transform, stats,
 };
-use engine_places::navigation::NavAgent;
-use engine_places::physics::{Collider, Collision, CollisionLayers, QueryFilter, SensorFilter};
+use engine_places_simulation::navigation::NavAgent;
+use engine_places_simulation::physics::{
+    Collider, Collision, CollisionLayers, QueryFilter, SensorFilter,
+};
 use glam::Vec3;
 
 stats! {

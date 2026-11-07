@@ -3,8 +3,8 @@ use engine_core::{
     Error, ErrorCode, Expected, Filled, InvalidSetting, Jobs, Operation, Records, Rule, SceneIds,
     Setting, Slot, Transform,
 };
-use engine_places::ground::{Ground, GroundRead};
-use engine_places::navigation::{NavAgent, NavStatus, NavWalk};
+use engine_places_simulation::ground::{Ground, GroundRead};
+use engine_places_simulation::navigation::{NavAgent, NavStatus, NavWalk};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::Resource;
 use bytemuck::{Pod, Zeroable};
 use engine_core::{GpuStruct, gpu_struct};
-use engine_places::shadows::SHADOW_REGIONS;
+use engine_places_rendering::shadows::SHADOW_REGIONS;
 
 use crate::constants::SKY_LAYERS;
 

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
-use engine_places::ground::{Cover, PALETTE_ENTRIES, TerrainEntry, TerrainTiles};
+use engine_places_world::ground::{Cover, PALETTE_ENTRIES, TerrainEntry, TerrainTiles};
 
 use crate::layouts::{CoverMaterial, CoverTerrain};
 use crate::settings::{CoverLook, GroundCover};

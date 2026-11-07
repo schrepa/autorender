@@ -10,7 +10,7 @@ mod settings;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Schedule, Source, gpu_struct};
-use engine_places::ground::Occupancy;
+use engine_places_rendering::occlusion::OcclusionSource;
 use engine_render::{DebugShown, PostScene, RenderBricks};
 
 pub use settings::{AmbientOcclusion, AmbientOcclusionStats};
@@ -43,7 +43,7 @@ impl Brick for AmbientOcclusionBrick {
 
 fn publish_piece(
     ambient: Res<AmbientOcclusion>,
-    occupancy: Res<Occupancy>,
+    source: Res<OcclusionSource>,
     mut piece: ResMut<AmbientPiece>,
 ) {
     piece.set_if_neq(AmbientPiece {
@@ -53,7 +53,7 @@ fn publish_piece(
             0.0,
             if ambient.occludes() { 1.0 } else { 0.0 },
         ],
-        canopy: [occupancy.texel_share, 0.0, 0.0, 0.0],
+        canopy: [source.texel_share, 0.0, 0.0, 0.0],
     });
 }
 

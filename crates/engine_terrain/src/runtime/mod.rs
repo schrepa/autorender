@@ -74,4 +74,4 @@ use engine_heightfield::tile::{
     StackView, SurfaceData, TerrainRecipe, Tile, TileJob, TileSample,
 };
 use engine_heightfield::{covers, reaches};
-use engine_places::ground::{SurfaceMaterial, SurfaceProjection};
+use engine_places_world::ground::{SurfaceMaterial, SurfaceProjection};

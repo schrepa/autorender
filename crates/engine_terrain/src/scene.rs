@@ -8,8 +8,8 @@ use engine_heightfield::layer::{LayerFiles, LayerKind};
 use engine_heightfield::tile::{
     AuthoredPlacement, Biome, Biomes, MacroCauses, PlacementLayer, SteepLayer,
 };
-use engine_places::ground::{SurfaceMaterial, SurfaceProjection};
-use engine_places::terrain::TerrainLayers;
+use engine_places_world::ground::{SurfaceMaterial, SurfaceProjection};
+use engine_places_world::terrain::TerrainLayers;
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value, json};

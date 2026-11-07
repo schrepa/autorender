@@ -2,14 +2,15 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 
 use bevy_ecs::prelude::*;
-use engine_places::ground::{
+use engine_core::Cut;
+use engine_places_simulation::ground::TileKey;
+use engine_places_world::ground::{
     Cover, GroundTiles, PALETTE_ENTRIES, PlacedTiles, PooledTile, TerrainEntry, TerrainTiles,
-    TileKey,
 };
 use engine_render::{Buffer, Prepare};
 
 use crate::gpu::{NO_PLACED, TraceTerrain};
-use crate::part::TraceGpu;
+use crate::trace::TraceGpu;
 
 const CANOPY_WORDS: u32 = 4 * PALETTE_ENTRIES;
 
@@ -93,7 +94,7 @@ impl WorldTrace {
         cx: &mut Prepare<'_, TraceGpu>,
         (terrains, placed): (Buffer<TraceGpu>, Buffer<TraceGpu>),
         frame: &TraceFrame<'_>,
-    ) {
+    ) -> Cut {
         let groups = &frame.placed.groups;
         let rebuilt = *groups != self.boxes;
         if !self.pooled || frame.ground.layers != self.layers || rebuilt {
@@ -108,8 +109,9 @@ impl WorldTrace {
         self.pooled = true;
         self.write_layer_words(frame.ground);
         let canopies = traced(frame.tiles, frame.ground).count() as u32 * CANOPY_WORDS;
-        self.upload(cx, placed, (frame.room, canopies));
+        let pool = self.upload(cx, placed, (frame.room, canopies));
         self.write_terrains(cx, terrains, frame);
+        pool
     }
 
     pub(crate) fn terrains(&self) -> u32 {
@@ -260,7 +262,7 @@ impl WorldTrace {
         cx: &mut Prepare<'_, TraceGpu>,
         buffer: Buffer<TraceGpu>,
         (room, canopies): (u64, u32),
-    ) {
+    ) -> Cut {
         let bytes = (self.words.len() as u64 + u64::from(canopies)) * 4;
         let mut dirty = std::mem::take(&mut self.dirty);
         if let Some(size) = grown(self.placed, bytes, room) {
@@ -275,6 +277,7 @@ impl WorldTrace {
                 cx.write(buffer, (run.start * 4) as u64, &self.words[run]);
             }
         }
+        Cut::of(self.words.len() as u32 + canopies, (self.placed / 4) as u32)
     }
 
     fn write_terrains(

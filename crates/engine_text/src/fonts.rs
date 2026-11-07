@@ -7,7 +7,7 @@ use cosmic_text::{
 };
 use engine_core::collections::{FixedState, HashMap};
 use engine_core::math::{max, min};
-use engine_places::text::{FontId, TextAlign};
+use engine_places_rendering::text::{FontId, TextAlign};
 
 const DEFAULT_FONT: &[u8] = include_bytes!("fonts/FiraMono-subset.ttf");
 const LOCALE: &str = "en-US";

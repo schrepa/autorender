@@ -12,14 +12,13 @@ mod haze;
 mod settings;
 mod sky;
 pub mod tables;
-mod under_eye;
 mod views;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, JobKind, Schedule, Slot, Source};
-use engine_places::lighting::{Ambient, SunBlockers};
-use engine_places::probes::ProbeViews;
-use engine_places::sky::{EnvironmentLayers, SkyLight};
+use engine_places_rendering::lighting::{Ambient, SunBlockers};
+use engine_places_rendering::probes::ProbeViews;
+use engine_places_rendering::sky::{EnvironmentLayers, SkyLight};
 use engine_render::{Layer, MainView, PostLight, RenderBricks};
 
 pub use settings::{Clouds, Haze, NightSky, Sky};
@@ -50,7 +49,6 @@ impl Brick for SkyBrick {
             .stats::<views::HazeStats>()
             .resource::<views::SkyExposure>()
             .resource::<tables::StaticTables>()
-            .resource::<under_eye::SurfaceUnderEye>()
             .resource::<sky::SkyPlan>()
             .fill::<SkyLight>(Some(shaders::sky::faces::sky::MODULE))
             .join::<SunBlockers>((), Some(shaders::sky::blockers::MODULE))
@@ -69,7 +67,6 @@ impl Brick for SkyBrick {
                 Schedule::ViewSync,
                 (
                     tables::ask_tables,
-                    under_eye::find_surface_under_eye,
                     sky::plan_sky,
                     publish_sky_light,
                     tables::table_stats,

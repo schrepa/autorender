@@ -4,8 +4,8 @@ use engine_core::{
     AssetLibrary, Camera, Error, ErrorCode, Expected, Jobs, Operation, ProvidedAssets,
     RecordExchange, Transform,
 };
-use engine_places::ground::Ground;
-use engine_places::physics::RigidBody;
+use engine_places_simulation::ground::Ground;
+use engine_places_simulation::physics::RigidBody;
 use glam::Vec2;
 use serde::Deserialize;
 use serde_json::Value;

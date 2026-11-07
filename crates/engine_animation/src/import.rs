@@ -6,7 +6,7 @@ use engine_core::{
     AlphaMode, AssetLibrary, Error, ErrorCode, Expected, Filter, Material, MaterialHandle, Mesh,
     Mesh3d, MeshVertex, Sampler, Surface, Texture, TextureHandle, TextureRef, UvTransform, Wrap,
 };
-use engine_places::animation::{Bound, Clip, Joint, Keys, Rig, RigPart, Track, VertexSkin};
+use engine_places_rendering::animation::{Bound, Clip, Joint, Keys, Rig, RigPart, Track, VertexSkin};
 use glam::{Mat3, Mat4, Quat, Vec3};
 use gltf::animation::util::ReadOutputs;
 use gltf::animation::{Interpolation, Property};

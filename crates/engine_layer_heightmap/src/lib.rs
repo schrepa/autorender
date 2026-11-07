@@ -20,7 +20,7 @@ use engine_heightfield::layers::MAX_HEIGHT;
 use engine_heightfield::noise::smooth;
 use engine_heightfield::{Blend, HeightImage, Layers};
 use engine_math::{max, min};
-use engine_places::terrain::TerrainLayers;
+use engine_places_world::terrain::TerrainLayers;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

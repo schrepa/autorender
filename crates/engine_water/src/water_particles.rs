@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::math::{clamp, max};
 use engine_core::{Cut, DeviceLimits, Error, FrameTime, Readback, View};
-use engine_places::ground::{GroundTiles, TerrainTiles};
-use engine_places::wind::Wind;
+use engine_places_simulation::wind::Wind;
+use engine_places_world::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
     AfterRead, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, Draw, DrawInput, Encode,
     Install, Lifetime, Own, Pass, Pipeline, Prepare, Sampler, SamplerDesc, Shape, Texture, wgpu,

@@ -3,10 +3,8 @@ use engine_core::{
     Camera, Error, ErrorCode, FrameTime, GlobalTransforms, MoveInput, Operation, Rule, Setting,
 };
 use engine_math::{atan2, clamp, exp, max, min, sin, sin_cos};
-use engine_places::physics::{
-    ColliderShape, Collision, QueryFilter, SensorFilter, ShapeCastOptions,
-};
-use glam::{Mat4, Quat, Vec3};
+use engine_places::sweeps::Sweeps;
+use glam::{Quat, Vec3};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -67,37 +65,9 @@ fn eased(seconds: f32, smoothing: f32) -> f32 {
     }
 }
 
-fn clear_reach(
-    collision: &Collision,
-    settings: &FollowCamera,
-    (focus, back): (Vec3, Vec3),
-    entity: Entity,
-) -> f32 {
-    let hit = collision.0.cast_shape(
-        ColliderShape::Sphere {
-            radius: settings.collision_radius,
-        },
-        Mat4::from_translation(focus),
-        back,
-        QueryFilter {
-            exclude: Some(entity),
-            sensors: SensorFilter::Exclude,
-            ..QueryFilter::default()
-        },
-        ShapeCastOptions {
-            stop_at_penetration: false,
-            target_distance: 0.0,
-        },
-    );
-    match hit {
-        Ok(Some(hit)) => clamp(hit.fraction, 0.0, 1.0),
-        Ok(None) | Err(_) => 1.0,
-    }
-}
-
 pub(crate) fn follow(
     (time, input, settings): (Res<FrameTime>, Res<MoveInput>, Res<FollowCamera>),
-    (globals, collision): (Res<GlobalTransforms>, Res<Collision>),
+    (globals, sweeps): (Res<GlobalTransforms>, Res<Sweeps>),
     targets: Query<Entity, With<CameraTarget>>,
     mut orbit: ResMut<Orbit>,
     mut shake: ResMut<Shake>,
@@ -127,7 +97,10 @@ pub(crate) fn follow(
     orbit.focus = orbit.focus.lerp(goal, blend);
     let rotation = Quat::from_rotation_y(orbit.yaw) * Quat::from_rotation_x(orbit.pitch);
     let back = rotation * Vec3::Z * settings.distance;
-    let clear = clear_reach(&collision, &settings, (orbit.focus, back), entity);
+    let clear = sweeps
+        .0
+        .sphere(settings.collision_radius, orbit.focus, back, entity)
+        .map_or(1.0, |fraction| clamp(fraction, 0.0, 1.0));
     orbit.reach = if clear < orbit.reach {
         clear
     } else {

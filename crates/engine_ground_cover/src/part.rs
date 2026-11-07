@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::Error;
-use engine_places::ground::PALETTE_ENTRIES;
+use engine_places_world::ground::PALETTE_ENTRIES;
 use engine_render::{
     AfterRead, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput, Encode, GpuPart,
     Install, Lifetime, MainView, Pass, Pipeline, Prepare, RenderPipeline, Shape, wgpu,

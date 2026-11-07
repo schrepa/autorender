@@ -1,11 +1,11 @@
 use bevy_ecs::prelude::*;
 use engine_core::{AssetLibrary, Camera, DeviceLimits, Error, View};
-use engine_places::ground::{Cover, TerrainTiles};
-use engine_places::probes::{MIRRORED, ProbeCaptures, ProbeView, ProbeViews};
-use engine_places::shadows::{
+use engine_places_rendering::probes::{MIRRORED, ProbeCaptures, ProbeView, ProbeViews};
+use engine_places_rendering::shadows::{
     CasterMap, CasterView, KeptRefresh, Refresh, ShadowCasters, ShadowMaps,
 };
-use engine_places::water::Waterline;
+use engine_places_world::ground::{Cover, TerrainTiles};
+use engine_places_world::water::Waterline;
 use engine_render::{
     Attach, Bind, Buffer, ComputePipeline, Count, DebugShown, DepthUse, Draw, DrawInput, Encode,
     GpuPart, Install, Layer, Lifetime, MainView, Own, Pass, Pipeline, Prepare, RenderPipeline,

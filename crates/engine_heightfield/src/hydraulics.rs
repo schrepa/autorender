@@ -1,11 +1,9 @@
-use engine_math::{clamp, max, min};
+use engine_math::{GRAVITY, clamp, max, min};
 use glam::{Vec2, Vec3};
 
 use crate::bed::{self, Bankfull, Crest, Forms, Knob, Reach, Shares};
 use crate::hydrology::Fall;
 use crate::rivers::{Given, River, RiverLine};
-
-pub const GRAVITY: f32 = 9.81;
 
 pub const SHALLOWEST: f32 = 0.03;
 pub const TRICKLE: f32 = 1.0e-3;

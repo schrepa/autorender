@@ -11,7 +11,7 @@ default = []
 [dependencies]
 engine_ecs.workspace = true
 engine_core.workspace = true
-engine_places.workspace = true
+engine_places_rendering.workspace = true
 glam.workspace = true
 
 [build-dependencies]

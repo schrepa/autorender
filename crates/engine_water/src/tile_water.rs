@@ -10,7 +10,7 @@ use engine_heightfield::tile::{
     extend_water, hole_at, on_triangle, tile_cell, water_rows,
 };
 use engine_heightfield::{Layers, Pyramid, Reach, TILE_QUADS, TILE_SAMPLES, TileKey};
-use engine_places::ground::TileFace;
+use engine_places_world::ground::TileFace;
 use glam::Vec2;
 
 use crate::gpu::WATER_SPAN_STEPS as SPAN_STEPS;

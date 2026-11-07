@@ -1,9 +1,10 @@
 use super::ground_face::TerrainGround;
 use super::*;
-use engine_places::ground::{
-    Ground, PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles,
+use engine_places_simulation::ground::Ground;
+use engine_places_world::ground::{
+    PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles,
 };
-use engine_places::water::Hydrology;
+use engine_places_world::water::Hydrology;
 
 fn sample_offset(state: &TerrainState) -> Vec2 {
     state

@@ -23,7 +23,7 @@ use native as backend;
 pub use settings::{Audio, AudioStats};
 
 use engine_core::{Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source};
-use engine_places::audio::{SoundSource, Sounds};
+use engine_places_rendering::audio::{SoundSource, Sounds};
 
 pub struct AudioBrick;
 

@@ -1,7 +1,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use bevy_ecs::prelude::{Component, Entity, Resource};
+use bevy_ecs::prelude::{Entity, Resource};
 use engine_heightfield::tile::{
     BIOME_WORDS, H_BIOMES, H_EROSION, H_FADE, H_HYDROLOGY, H_MATERIALS, H_PATHS, H_PROGRAM,
     H_READS, H_STACK, H_WET_BIOMES, MAX_MATERIALS, MAX_STACK, OP_ADD, OP_CONSTANT, OP_CURVATURE,
@@ -9,189 +9,14 @@ use engine_heightfield::tile::{
     OP_LAKE, OP_MAX, OP_MIN, OP_MULTIPLY, OP_NOISE, OP_PATH, OP_POWER, OP_REMAP, OP_RIVER,
     OP_VALUE, OP_WETNESS, OP_WORN,
 };
-use engine_place::{JobRef, List, MaterialHandle, MeshHandle, Slot, Stamp, TextureHandle};
+use engine_place::{List, MaterialHandle, MeshHandle, Slot, Stamp, TextureHandle};
+use engine_places_simulation::ground::{Pyramid, TILE_QUADS, TileKey};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-pub use engine_heightfield::grid::{MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
 pub use engine_heightfield::tile::{Placed, Steep};
 
 pub const PALETTE_ENTRIES: u32 = 113;
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GroundPoint {
-    pub height: f32,
-    pub normal: Vec3,
-    pub level: u32,
-    pub hole: bool,
-    pub material: Option<u8>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum GroundObstacle {
-    Circle {
-        center: Vec2,
-        radius: f32,
-    },
-    Box {
-        center: Vec2,
-        half_extents: Vec2,
-        unit_axis: Vec2,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum GroundRead<T> {
-    Ready(T),
-    NotLoaded,
-    Off,
-}
-
-impl<T> GroundRead<T> {
-    pub fn ready(self) -> Option<T> {
-        match self {
-            Self::Ready(value) => Some(value),
-            Self::NotLoaded | Self::Off => None,
-        }
-    }
-}
-
-impl GroundRead<GroundPoint> {
-    pub fn solid(self) -> Option<GroundPoint> {
-        self.ready().filter(|point| !point.hole)
-    }
-}
-
-#[derive(Clone, PartialEq)]
-pub struct GroundSource {
-    pub ground: Entity,
-    pub origin: Vec3,
-    pub pyramid: Pyramid,
-    pub identity: Arc<[u8]>,
-}
-
-impl std::fmt::Debug for GroundSource {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("GroundSource")
-            .field("ground", &self.ground)
-            .field("origin", &self.origin)
-            .field("pyramid", &self.pyramid)
-            .field("identity", &self.identity.len())
-            .finish()
-    }
-}
-
-pub trait GroundQuery: Send + Sync + 'static {
-    fn point(&self, at: Vec2) -> GroundRead<GroundPoint>;
-
-    fn obstacles(&self, ground: Entity) -> Vec<GroundObstacle>;
-
-    fn source(&self, from: Vec2, to: Vec2) -> GroundRead<GroundSource>;
-
-    fn grid(&self) -> Option<JobRef>;
-
-    fn revision(&self) -> u64;
-}
-
-struct NoGround;
-
-impl GroundQuery for NoGround {
-    fn point(&self, _: Vec2) -> GroundRead<GroundPoint> {
-        GroundRead::Off
-    }
-
-    fn obstacles(&self, _: Entity) -> Vec<GroundObstacle> {
-        Vec::new()
-    }
-
-    fn source(&self, _: Vec2, _: Vec2) -> GroundRead<GroundSource> {
-        GroundRead::Off
-    }
-
-    fn grid(&self) -> Option<JobRef> {
-        None
-    }
-
-    fn revision(&self) -> u64 {
-        0
-    }
-}
-
-#[derive(Resource, Clone)]
-pub struct Ground(pub Arc<dyn GroundQuery>);
-
-impl Ground {
-    pub fn point(&self, at: Vec2) -> GroundRead<GroundPoint> {
-        self.0.point(at)
-    }
-
-    pub fn revision(&self) -> u64 {
-        self.0.revision()
-    }
-}
-
-impl Default for Ground {
-    fn default() -> Self {
-        Self(Arc::new(NoGround))
-    }
-}
-
-impl Slot for Ground {
-    const NAME: &'static str = "ground";
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct GroundGrid {
-    pub key: TileKey,
-    pub spacing: f32,
-    pub heights: Box<[f32]>,
-    pub holes: Option<Box<[u64]>>,
-    pub bridges: Arc<[GroundBridge]>,
-    pub water: Option<Box<[f32]>>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct GroundBridge {
-    pub deck: Vec<Vec3>,
-    pub width: f32,
-    pub tunnel: bool,
-}
-
-engine_codec::record!(GroundGrid {
-    key,
-    spacing,
-    heights,
-    holes,
-    bridges,
-    water,
-});
-
-engine_codec::record!(GroundBridge {
-    deck,
-    width,
-    tunnel,
-});
-
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct HeightHeld(pub bool);
-
-#[derive(
-    Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[require(GroundedAt)]
-#[serde(default, deny_unknown_fields)]
-pub struct Grounded {
-    pub offset: f32,
-}
-
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
-pub struct GroundedAt {
-    pub position: Vec2,
-    pub offset: f32,
-    pub revision: u64,
-    pub level: Option<u32>,
-}
 
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
@@ -383,7 +208,7 @@ pub struct GroundSurface;
 
 impl Slot for GroundSurface {
     const NAME: &'static str = "ground_surface";
-    const WGSL: Option<&'static str> = Some(contract!(
+    const WGSL: Option<&'static str> = Some(engine_places::contract!(
         "places/ground_surface.wgsl",
         OP_CONSTANT,
         OP_HEIGHT,
@@ -477,7 +302,7 @@ pub struct GroundTiles {
 
 impl Slot for GroundTiles {
     const NAME: &'static str = "ground_tiles";
-    const WGSL: Option<&'static str> = Some(contract!(
+    const WGSL: Option<&'static str> = Some(engine_places::contract!(
         "places/ground_tiles.wgsl",
         TILE_QUADS,
         PALETTE_ENTRIES,
@@ -547,22 +372,13 @@ pub struct FarCover;
 impl List for FarCover {
     const NAME: &'static str = "far_cover";
     type Member = ();
-    const WGSL: Option<&'static str> = Some(contract!("places/far_cover.wgsl", PALETTE_ENTRIES));
-}
-
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct Occupancy {
-    pub texel_share: f32,
-}
-
-impl Slot for Occupancy {
-    const NAME: &'static str = "occupancy";
+    const WGSL: Option<&'static str> =
+        Some(engine_places::contract!("places/far_cover.wgsl", PALETTE_ENTRIES));
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Foliage {
     pub ground_blend: f32,
-    pub crown_depth: f32,
 }
 
 impl Slot for Foliage {

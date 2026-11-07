@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use bevy_ecs::prelude::*;
 use engine_core::math::clamp;
 use engine_core::{Camera, GlobalTransforms, SceneIds, TimeControl};
-use engine_places::audio::{
+use engine_places_rendering::audio::{
     Bus, OneShot, SoundHandle, SoundOrder, SoundSource, Sounds, VoiceHandle,
 };
 use glam::Vec3;

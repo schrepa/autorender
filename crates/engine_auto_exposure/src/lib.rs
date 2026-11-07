@@ -18,7 +18,7 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     Brick, Bricks, FrameTime, GpuStruct, PartFaults, Readback, Schedule, Source, View,
 };
-use engine_places::exposure::Exposure;
+use engine_places_rendering::exposure::Exposure;
 use engine_render::RenderBricks;
 
 use crate::gpu_layouts::{ExposureState, ExposureUniform};

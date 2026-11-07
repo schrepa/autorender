@@ -5,7 +5,7 @@ use engine_core::math::clamp;
 use engine_core::{
     AssetLibrary, AssetUses, FixedTime, GlobalTransforms, Parent, Spawner, Transform,
 };
-use engine_places::animation::{Animator, Attachment, Clip, ClipLayer, Joint, Keys, Rig};
+use engine_places_rendering::animation::{Animator, Attachment, Clip, ClipLayer, Joint, Keys, Rig};
 use glam::{Mat4, Quat, Vec3};
 
 use crate::AnimationBrick;

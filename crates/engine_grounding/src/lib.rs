@@ -10,7 +10,7 @@ use engine_core::{
     Brick, Bricks, ComponentKind, Error, ErrorCode, Parent, Placement, Rule, SceneComponents,
     Schedule, Setting, Source, Transform,
 };
-use engine_places::ground::{Ground, Grounded, GroundedAt, HeightHeld};
+use engine_places_simulation::ground::{Ground, Grounded, GroundedAt};
 use glam::Vec2;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -70,21 +70,13 @@ fn grounded_example() -> Value {
 type GroundedQuery<'w, 's> = Query<
     'w,
     's,
-    (
-        &'static Grounded,
-        &'static mut Transform,
-        &'static mut GroundedAt,
-        Option<&'static HeightHeld>,
-    ),
+    (&'static Grounded, &'static mut Transform, &'static mut GroundedAt),
     Without<Parent>,
 >;
 
 fn settle(ground: Res<Ground>, mut query: GroundedQuery) {
     let revision = ground.revision();
-    for (grounded, mut transform, mut at, held) in &mut query {
-        if held.is_some_and(|held| held.0) {
-            continue;
-        }
+    for (grounded, mut transform, mut at) in &mut query {
         let position = Vec2::new(transform.translation.x, transform.translation.z);
         let stale = *at == GroundedAt::default()
             || at.position != position

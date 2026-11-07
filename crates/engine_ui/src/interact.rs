@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::math::max;
 use engine_core::{MenuInput, PointerInput, Screens};
-use engine_places::ui::{UiAction, UiEvents, UiKind};
+use engine_places_rendering::ui::{UiAction, UiEvents, UiKind};
 use glam::Vec2;
 
 use crate::tree::UiState;

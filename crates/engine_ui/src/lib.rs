@@ -19,8 +19,8 @@ use engine_core::{
     Runs, SceneComponents, SceneContext, SceneCx, Schedule, Screens, Smoke, Source, Spawner, View,
     gpu_struct, settings, stats,
 };
-use engine_places::text::Text;
-use engine_places::ui::{UiEvents, UiLength, UiNode, UiRoot, UiValues};
+use engine_places_rendering::text::Text;
+use engine_places_rendering::ui::{UiEvents, UiLength, UiNode, UiRoot, UiValues};
 use engine_render::{Layer, OverlayStack, OverlaySteps, RenderBricks};
 use serde_json::{Value, json};
 

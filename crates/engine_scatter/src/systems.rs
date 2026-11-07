@@ -7,10 +7,10 @@ use engine_core::{
     TextureHandle, View,
 };
 use engine_math::collections::HashMap;
-use engine_places::ground::{
-    Foliage, Occupancy, PlacedTiles, PooledTile, TerrainTiles, TileFace, TileKey,
-};
-use engine_places::shadows::{CasterMap, Refresh, ShadowChanges, ShadowMaps};
+use engine_places_rendering::occlusion::OcclusionSource;
+use engine_places_rendering::shadows::{CasterMap, ExtraCasters, Refresh, ShadowChanges, ShadowMaps};
+use engine_places_simulation::ground::TileKey;
+use engine_places_world::ground::{Foliage, PlacedTiles, PooledTile, TerrainTiles, TileFace};
 use glam::Vec3;
 
 use crate::ScatterBrick;
@@ -174,9 +174,15 @@ fn grow(held: &mut u64, bytes: u64, room: u64) -> bool {
     true
 }
 
-pub(crate) fn publish_foliage(settings: Res<FoliageSettings>, mut foliage: ResMut<Foliage>) {
+pub(crate) fn publish_foliage(
+    settings: Res<FoliageSettings>,
+    mut foliage: ResMut<Foliage>,
+    mut casters: ResMut<ExtraCasters>,
+) {
     foliage.set_if_neq(Foliage {
         ground_blend: settings.ground_blend,
+    });
+    casters.set_if_neq(ExtraCasters {
         crown_depth: settings.crown_depth,
     });
 }
@@ -209,7 +215,7 @@ pub(crate) fn place_windows(
     state: Res<ScatterState>,
     mut windows: ResMut<OccupancyWindows>,
     mut piece: ResMut<CanopyPiece>,
-    mut occupancy: ResMut<Occupancy>,
+    mut source: ResMut<OcclusionSource>,
 ) {
     if state.covers_changed {
         windows.redraw_all();
@@ -220,7 +226,7 @@ pub(crate) fn place_windows(
         (state.groups.covers.as_slice(), state.objects),
     );
     piece.set_if_neq(canopy(lit, &foliage, view.temporal()));
-    occupancy.set_if_neq(Occupancy {
+    source.set_if_neq(OcclusionSource {
         texel_share: texel_share(&settings),
     });
 }

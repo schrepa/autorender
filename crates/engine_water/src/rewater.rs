@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::{JobExchange, JobId, JobRef, VIEW_JOBS, WorkClock, job_priority};
 use engine_heightfield::{TILE_SAMPLES, TileKey};
-use engine_places::ground::GroundWork;
+use engine_places_world::ground::GroundWork;
 use glam::Vec2;
 
 use crate::RiverFlow;

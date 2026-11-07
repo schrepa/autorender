@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Error, ErrorCode, Operation};
-use engine_places::ui::{UiEvents, UiKind};
+use engine_places_rendering::ui::{UiEvents, UiKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

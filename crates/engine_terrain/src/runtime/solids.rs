@@ -1,8 +1,8 @@
-use engine_places::ground::{TileChange, TilesSince};
-use engine_places::physics::ColliderShape;
-use engine_places::solids::{
+use engine_places_simulation::physics::ColliderShape;
+use engine_places_simulation::solids::{
     FieldSamples, FieldTile, SolidField, SolidSource, SolidTree, WorldSolid,
 };
+use engine_places_world::ground::{TileChange, TilesSince};
 use glam::Quat;
 
 use super::*;

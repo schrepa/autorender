@@ -18,7 +18,7 @@ use engine_heightfield::layer::{
     same_as,
 };
 use engine_heightfield::{Layers, Pyramid, TileHeights};
-use engine_places::terrain::TerrainLayers;
+use engine_places_world::terrain::TerrainLayers;
 use serde_json::Value;
 
 pub use crate::erosion::{Erosion, ErosionLayer, ErosionStats};

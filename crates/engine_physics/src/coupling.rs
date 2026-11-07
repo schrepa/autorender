@@ -1,7 +1,7 @@
 use engine_core::math::clamp;
-use engine_places::physics::ColliderShape;
-use engine_places::water::{WaterBody, WaterSample};
-use engine_places::wind::Wind;
+use engine_places_simulation::physics::ColliderShape;
+use engine_places_simulation::water::{WaterBody, WaterSample};
+use engine_places_simulation::wind::Wind;
 use glam::{Quat, Vec3};
 
 use crate::body::BodyWater;

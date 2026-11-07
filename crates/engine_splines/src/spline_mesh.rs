@@ -5,7 +5,7 @@ use engine_core::{
 };
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max};
-use engine_places::splines::SplineMesh;
+use engine_places_world::splines::SplineMesh;
 use glam::Vec3;
 
 use crate::SplinesBrick;

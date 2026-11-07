@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::{Cut, DeviceLimits, FrameTime, Readback, View};
-use engine_places::ground::{Foliage, GroundTiles, TerrainEntry, TerrainTiles};
-use engine_places::wind::Wind;
+use engine_places_simulation::wind::Wind;
+use engine_places_world::ground::{Foliage, GroundTiles, TerrainEntry, TerrainTiles};
 use engine_render::{pixels_per_meter, planes};
 
 use crate::covers::{CoverTable, CoverTerms};

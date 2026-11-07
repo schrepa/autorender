@@ -24,8 +24,8 @@ use engine_core::{
     Brick, Bricks, ComponentKind, ErrorCode, Placement, Runs, SceneComponents, Schedule, Smoke,
     Source,
 };
-use engine_places::physics::{BodyPush, RigidBody};
-use engine_places::water::WaterObstacles;
+use engine_places_simulation::physics::{BodyPush, RigidBody};
+use engine_places_simulation::water::WaterObstacles;
 
 pub struct PhysicsBrick;
 

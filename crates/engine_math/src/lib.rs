@@ -11,6 +11,7 @@ extern crate std;
 pub mod collections;
 
 pub const REDUCTION_LIMIT: f32 = 12_866.0;
+pub const GRAVITY: f32 = 9.81;
 
 const SIGN: u32 = 0x8000_0000;
 const ONE: u32 = 0x3f80_0000;

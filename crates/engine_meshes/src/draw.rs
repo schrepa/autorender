@@ -1,6 +1,6 @@
 use engine_core::{MaterialHandle, MeshHandle};
-use engine_places::probes::{ProbeView, ProbeViews};
-use engine_places::shadows::{CasterView, ShadowCasters};
+use engine_places_rendering::probes::{ProbeView, ProbeViews};
+use engine_places_rendering::shadows::{CasterView, ShadowCasters};
 use engine_render::{Draw, MainView, MeshPass, Shape};
 
 use crate::casters::{map_factor, map_start};

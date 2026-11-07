@@ -6,7 +6,7 @@ use engine_core::{
     Material, MaterialHandle, Mesh, MeshHandle, ResidentMesh, TextureHandle,
 };
 use engine_math::collections::HashMap;
-use engine_places::ground::{Placed, PlacedAsset};
+use engine_places_world::ground::{Placed, PlacedAsset};
 use engine_render::{ground_data, pack_color, pack_surface};
 use glam::Vec3;
 

@@ -6,8 +6,8 @@ use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
 use engine_core::{Camera, Cut, Error, FrameTime};
 use engine_heightfield::TileKey;
-use engine_places::ground::{GroundBaking, GroundTiles, TerrainTiles};
-use engine_places::water::{WaterObstacle, WaterObstacles};
+use engine_places_simulation::water::{WaterObstacle, WaterObstacles};
+use engine_places_world::ground::{GroundBaking, GroundTiles, TerrainTiles};
 use engine_render::{ComputePipeline, Count, Encode, Install, Pass, Prepare};
 use glam::{Mat3, Vec2, Vec3};
 

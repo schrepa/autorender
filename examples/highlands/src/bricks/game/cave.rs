@@ -3,9 +3,9 @@ use engine_core::{
     AssetLibrary, Jobs, MaterialHandle, Mesh, Mesh3d, MeshHandle, Records, Spawner, Ticket,
     Transform, math,
 };
-use engine_places::ground::TerrainTiles;
-use engine_places::lights::{LightRegion, LocalLight};
-use engine_places::probes::{Interior, ReflectionProbe};
+use engine_places_rendering::lights::{LightRegion, LocalLight};
+use engine_places_rendering::probes::{Interior, ReflectionProbe};
+use engine_places_world::ground::TerrainTiles;
 use glam::{Quat, Vec2, Vec3};
 
 use crate::bricks::game::HighlandsBrick;

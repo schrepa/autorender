@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use bevy_ecs::prelude::Entity;
-use engine_places::ground::{TerrainEntry, TerrainTiles};
+use engine_places_world::ground::{TerrainEntry, TerrainTiles};
 use engine_render::Prepare;
 use glam::{Mat4, Vec3};
 

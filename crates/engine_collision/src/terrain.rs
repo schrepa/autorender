@@ -2,10 +2,10 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
-use engine_places::physics::{
+use engine_places_simulation::physics::{
     CollisionLayers, CollisionRay, QueryFilter, RayHit, SensorFilter, ShapeCastOptions, ShapeHit,
 };
-use engine_places::solids::{Bounds, FieldTile, SolidField};
+use engine_places_simulation::solids::{Bounds, FieldTile, SolidField};
 use glam::Vec3;
 use parry3d::{
     bounding_volume::Aabb,

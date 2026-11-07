@@ -1,5 +1,5 @@
 use engine_core::{Error, ErrorCode, Reach, fields};
-use engine_places::probes::ReflectionProbe;
+use engine_places_rendering::probes::ReflectionProbe;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

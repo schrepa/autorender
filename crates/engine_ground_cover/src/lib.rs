@@ -7,7 +7,7 @@ mod part;
 mod settings;
 
 use engine_core::{Brick, Bricks, Schedule, Source};
-use engine_places::ground::{Cover, FarCover};
+use engine_places_world::ground::{Cover, FarCover};
 use engine_render::{Layer, MainView, RenderBricks};
 
 pub use settings::{CoverLook, GroundCover, GroundCoverStats};

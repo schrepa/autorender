@@ -3,12 +3,10 @@ use engine_place::InterpolateTransform;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-use crate::ground::HeightHeld;
-
 #[derive(
     Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
 )]
-#[require(NavWalk, HeightHeld, InterpolateTransform)]
+#[require(NavWalk, InterpolateTransform)]
 #[serde(default, deny_unknown_fields)]
 pub struct NavAgent {
     #[serde(skip_serializing_if = "Option::is_none")]

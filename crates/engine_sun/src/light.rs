@@ -1,6 +1,6 @@
 use bevy_ecs::world::World;
 use engine_core::{Error, ErrorCode, Expected, InvalidSetting, members_in, settings};
-use engine_places::sun::SunClocks;
+use engine_places_rendering::sun::SunClocks;
 use glam::Vec3;
 
 const UNAUTHORED: Vec3 = Vec3::new(0.55, 0.75, 0.35);

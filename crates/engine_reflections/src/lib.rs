@@ -8,11 +8,9 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod gpu;
 mod part;
 mod settings;
-mod world_trace;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Filled, Schedule, Source, View};
-use engine_places::ground::{GroundTiles, Heightfield, TerrainTiles};
+use engine_core::{Brick, Bricks, Schedule, Source, View};
 use engine_render::{Layer, Output, PostScene, RenderBricks, ViewOutputs, wgpu};
 
 pub use settings::{Reflections, ReflectionsStats};
@@ -49,11 +47,9 @@ impl Brick for ReflectionsBrick {
             .join::<ViewOutputs>(REFLECTIVITY, Some(surface::MODULE))
             .systems(Schedule::ViewSync, publish_piece)
             .within(reflecting, |bricks| {
-                bricks.within(tracing, |bricks| {
-                    bricks
-                        .join::<PostScene>((), Some(apply::MODULE))
-                        .part::<part::TraceGpu>();
-                });
+                bricks
+                    .join::<PostScene>((), Some(apply::MODULE))
+                    .part::<part::TraceGpu>();
             });
     }
 }
@@ -62,24 +58,16 @@ fn reflecting(reflections: Res<Reflections>) -> bool {
     reflections.reflects()
 }
 
-fn tracing(heightfield: Filled<Heightfield>) -> bool {
-    heightfield.on()
-}
-
 fn publish_piece(
     reflections: Res<Reflections>,
-    heightfield: Filled<Heightfield>,
     view: Res<View>,
-    tiles: Res<TerrainTiles>,
-    ground: Res<GroundTiles>,
     mut piece: ResMut<ReflectionsPiece>,
     mut stats: ResMut<ReflectionsStats>,
 ) {
-    let active = reflections.reflects() && heightfield.on() && !view.debug();
-    let walked = world_trace::traced(&tiles, &ground).count() as f32;
+    let active = reflections.reflects() && !view.debug();
     piece.set_if_neq(ReflectionsPiece {
         surface: [reflections.max_roughness, 0.0, 0.0, 0.0],
-        trace: [reflections.distance, 0.0, 0.0, walked],
+        trace: [reflections.distance, 0.0, 0.0, 0.0],
         applied: [
             reflections.distance,
             reflections.intensity,

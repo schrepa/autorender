@@ -2,8 +2,8 @@ use std::cell::Cell;
 
 use bevy_ecs::prelude::*;
 use engine_core::WorkClock;
-use engine_places::ground::GroundWork;
-use engine_places::water::WaterWork;
+use engine_places_world::ground::GroundWork;
+use engine_places_world::water::WaterWork;
 
 use crate::state::WaterState;
 

@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{GlobalTransforms, Nearest, View};
-use engine_places::probes::{Interior, ReflectionProbe};
+use engine_places_rendering::probes::{Interior, ReflectionProbe};
 use glam::Vec3;
 
 use crate::ReflectionProbeSettings;

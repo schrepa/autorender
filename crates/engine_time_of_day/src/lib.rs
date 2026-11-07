@@ -11,7 +11,7 @@ use glam::Vec3;
 
 use engine_core::{Brick, Bricks, FrameTime, Schedule, Source, settings};
 use engine_math::{max, sin_cos};
-use engine_places::sun::{SunClocks, SunPath, north_axis, star_turn, stepped_hours};
+use engine_places_rendering::sun::{SunClocks, SunPath, north_axis, star_turn, stepped_hours};
 
 settings! {
     #[section("time_of_day")]

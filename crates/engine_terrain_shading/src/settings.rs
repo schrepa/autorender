@@ -62,6 +62,7 @@ stats! {
         pub colored: u32,
         pub coloring: u32,
         pub surface_slots: Cut,
+        pub trace_pool: Cut,
         pub failed_jobs: u64,
         pub latest_job_failure: Option<String>,
     }

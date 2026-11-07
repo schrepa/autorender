@@ -1,5 +1,7 @@
 use engine_core::{Error, ErrorCode, ExtraRules, InvalidSetting, Reach, Setting, fields};
-use engine_places::lights::{LightRegion, LocalLight, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES, Spot};
+use engine_places_rendering::lights::{
+    LightRegion, LocalLight, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES, Spot,
+};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

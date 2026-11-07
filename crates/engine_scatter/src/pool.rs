@@ -4,7 +4,8 @@ use std::sync::Arc;
 use bevy_ecs::prelude::Entity;
 use engine_core::Stamp;
 use engine_math::collections::HashMap;
-use engine_places::ground::{Placed, TileKey};
+use engine_places_simulation::ground::TileKey;
+use engine_places_world::ground::Placed;
 use glam::Vec3;
 
 use crate::groups::Groups;

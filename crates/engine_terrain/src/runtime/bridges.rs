@@ -6,7 +6,7 @@ use engine_core::{
     AssetLibrary, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, Spawner, Surface,
     Transform,
 };
-use engine_places::splines::SplineMesh;
+use engine_places_world::splines::SplineMesh;
 use glam::Vec3;
 
 use super::{TerrainBrick, Terrains};

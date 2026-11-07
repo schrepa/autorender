@@ -18,7 +18,7 @@ impl Game for Template {
 }
 
 pub fn bricks<L: Listing>(list: L) -> L {
-    engine_standard::basics(list)
+    engine_standard_rendering::rendering(list)
         .with::<FlyCameraBrick>()
         .with::<TurningBrick>()
 }

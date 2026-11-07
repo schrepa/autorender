@@ -20,7 +20,7 @@ pub struct SunBlockers;
 impl List for SunBlockers {
     const NAME: &'static str = "sun_blockers";
     type Member = ();
-    const WGSL: Option<&'static str> = Some(contract!(
+    const WGSL: Option<&'static str> = Some(engine_places::contract!(
         "places/sun_blockers.wgsl",
         DEBUG_SUN_NONE,
         DEBUG_SUN_LEVEL,

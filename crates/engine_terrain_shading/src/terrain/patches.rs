@@ -1,7 +1,8 @@
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_places::ground::{TerrainEntry, TerrainTiles, TileFace, TileKey};
-use engine_places::probes::ProbeCaptures;
-use engine_places::shadows::ground_level;
+use engine_places_rendering::probes::ProbeCaptures;
+use engine_places_rendering::shadows::ground_level;
+use engine_places_simulation::ground::TileKey;
+use engine_places_world::ground::{TerrainEntry, TerrainTiles, TileFace};
 use engine_render::{Prepare, wgpu};
 use glam::{DVec3, Mat4, Vec2, Vec3, Vec4};
 
@@ -110,7 +111,11 @@ impl PatchDraws {
                     macro_maps,
                     index: drawn.terrain as u32,
                 };
-                let level = ground_level(&terrain.pyramid, region.texel);
+                let level = ground_level(
+                    terrain.pyramid.levels(),
+                    |level| terrain.pyramid.spacing(level),
+                    region.texel,
+                );
                 let first = self.records.len() as u32;
                 kept_patches(
                     (&mut self.records, &mut self.kept_stack),

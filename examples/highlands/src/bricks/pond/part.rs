@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Error, View, gpu_consts, gpu_struct};
-use engine_places::ground::{GroundTiles, TerrainEntry, TerrainTiles};
+use engine_places_world::ground::{GroundTiles, TerrainEntry, TerrainTiles};
 use engine_render::{
     Attach, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Layer, Lifetime, Own, Pass, Pipeline,
     Prepare, RenderPipeline, Shape, wgpu,

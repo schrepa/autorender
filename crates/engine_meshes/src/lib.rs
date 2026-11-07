@@ -23,9 +23,8 @@ use engine_core::{
     SceneComponents, Schedule, Setting, Smoke, Source,
 };
 use engine_places::meshes::{Cube, FirstPersonLayer, Instances, Tint};
-use engine_places::probes::ProbeViews;
-use engine_places::shadows::ShadowCasters;
-use engine_places::splines::SplineMesh;
+use engine_places_rendering::probes::ProbeViews;
+use engine_places_rendering::shadows::ShadowCasters;
 use engine_render::{Layer, MainView, RenderBricks};
 use serde_json::{Value, json};
 
@@ -112,7 +111,6 @@ impl Brick for MeshesBrick {
             .on_remove::<Cube, _>(retained::source_removed)
             .on_remove::<Tint, _>(retained::source_removed)
             .on_remove::<FirstPersonLayer, _>(retained::source_removed)
-            .on_remove::<SplineMesh, _>(retained::source_removed)
             .systems(
                 Schedule::ViewSync,
                 (

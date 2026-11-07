@@ -1,7 +1,7 @@
 include!(concat!(env!("OUT_DIR"), "/bricks/toon_lighting.rs"));
 
 use engine_core::{Brick, Bricks, Source};
-use engine_places::lighting::Lighting;
+use engine_places_rendering::lighting::Lighting;
 
 pub struct ToonLightingBrick;
 

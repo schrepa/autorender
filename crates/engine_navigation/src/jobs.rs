@@ -1,6 +1,6 @@
 use engine_codec::{self as codec, record};
 use engine_core::{Error, ErrorCode, Job, JobCx, JobKind, JobRef};
-use engine_places::ground::{GroundGrid, Pyramid, TileKey};
+use engine_places_simulation::ground::{GroundGrid, Pyramid, TileKey};
 
 use crate::{Gait, SOURCE, TilePortals, WalkGround};
 

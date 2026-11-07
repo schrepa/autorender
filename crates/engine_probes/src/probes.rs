@@ -2,8 +2,8 @@ use bevy_ecs::prelude::*;
 use engine_core::{Cut, DeviceLimits, FrameTime, View};
 use engine_math as math;
 use engine_places::meshes::{Instances, STILL_FRAMES};
-use engine_places::probes::{ProbeCaptures, ProbeFace, ProbeView};
-use engine_places::sky::SkyLight;
+use engine_places_rendering::probes::{ProbeCaptures, ProbeFace, ProbeView};
+use engine_places_rendering::sky::SkyLight;
 use engine_render::CameraUniform;
 use glam::{Mat4, Vec3, Vec4};
 

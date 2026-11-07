@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use engine_places::audio::Bus;
+use engine_places_rendering::audio::Bus;
 use glam::Vec3;
 use js_sys::Uint8Array;
 use wasm_bindgen::{JsCast, JsValue};

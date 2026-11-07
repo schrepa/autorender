@@ -19,6 +19,23 @@ impl Slot for SkyLight {
     const WGSL: Option<&'static str> = Some(include_str!("places/sky.wgsl"));
 }
 
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct EyeMedium {
+    pub surface: Option<f32>,
+}
+
+impl Slot for EyeMedium {
+    const NAME: &'static str = "eye_medium";
+}
+
+#[derive(Resource, Default)]
+pub struct OpenSky;
+
+impl Slot for OpenSky {
+    const NAME: &'static str = "open_sky";
+    const WGSL: Option<&'static str> = Some(include_str!("places/open_sky.wgsl"));
+}
+
 #[derive(Resource, Default)]
 pub struct EnvironmentLayers;
 

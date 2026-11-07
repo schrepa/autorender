@@ -1,8 +1,10 @@
 use bevy_ecs::prelude::*;
 use engine_core::GlobalTransforms;
 use engine_math::max;
-use engine_places::ground::GroundObstacle;
-use engine_places::physics::{Collider, ColliderShape, CollisionLayers, QueryFilter, SensorFilter};
+use engine_places_simulation::ground::GroundObstacle;
+use engine_places_simulation::physics::{
+    Collider, ColliderShape, CollisionLayers, QueryFilter, SensorFilter,
+};
 use glam::{Mat3, Mat4, Vec2, Vec3};
 
 use super::Navigation;

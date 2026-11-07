@@ -1,7 +1,7 @@
 use std::cell::Cell;
 
-use engine_places::physics::{ColliderShape, CollisionRay, ShapeCastOptions};
-use engine_places::solids::Bounds;
+use engine_places_simulation::physics::{ColliderShape, CollisionRay, ShapeCastOptions};
+use engine_places_simulation::solids::Bounds;
 use glam::{DMat3, DVec3, Mat3, Mat4, Vec3};
 use parry3d::{
     math::Pose,

@@ -1,5 +1,5 @@
 use engine_core::gpu_consts;
-use engine_places::shadows::GROUND_TEXELS;
+use engine_places_rendering::shadows::GROUND_TEXELS;
 
 gpu_consts! {
     pub const LEVEL_WINDOW: u32 = 0;

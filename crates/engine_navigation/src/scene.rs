@@ -1,5 +1,5 @@
 use engine_core::{ComponentKind, ComponentKindOf, Error, ErrorCode, Placement};
-use engine_places::navigation::NavAgent;
+use engine_places_simulation::navigation::NavAgent;
 use serde_json::{Value, json};
 
 use crate::agents::SceneNavAgent;

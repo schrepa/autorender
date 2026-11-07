@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
-use engine_places::physics::{
+use engine_places_simulation::physics::{
     CollisionLayers, CollisionRay, PlacedPart, QueryFilter, RayHit, SensorFilter, ShapeCastOptions,
     ShapeHit,
 };
-use engine_places::solids::{Bounds, SolidField, WorldSolid};
+use engine_places_simulation::solids::{Bounds, SolidField, WorldSolid};
 use glam::Vec3;
 
 use crate::geometry::{AffineShape, Narrow, intersects};

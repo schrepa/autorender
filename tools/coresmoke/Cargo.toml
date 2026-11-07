@@ -13,6 +13,9 @@ engine_core = { workspace = true, features = ["dev"] }
 engine_meshes.workspace = true
 engine_native.workspace = true
 engine_places.workspace = true
+engine_places_rendering.workspace = true
+engine_places_simulation.workspace = true
+engine_places_world.workspace = true
 engine_registry.workspace = true
 engine_scene.workspace = true
 engine_standard.workspace = true

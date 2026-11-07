@@ -2345,6 +2345,39 @@
       "direction": null
     },
     {
+      "name": "terrain_shading_stats.trace_pool.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.trace_pool.cut",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain_shading_stats.trace_pool.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "terrain_shading_stats.triangles",
       "kind": "work",
       "rule": "shown",

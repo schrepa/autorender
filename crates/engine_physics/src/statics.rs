@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
 use engine_core::collections::HashMap;
-use engine_places::physics::CollisionLayers;
-use engine_places::solids::FieldTile;
+use engine_places_simulation::physics::CollisionLayers;
+use engine_places_simulation::solids::FieldTile;
 use glam::Vec3;
 use parry3d::shape::Shape;
 use rapier3d::prelude as rp;

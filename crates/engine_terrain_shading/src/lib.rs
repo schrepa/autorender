@@ -16,13 +16,17 @@ mod terrain_horizons;
 mod terrain_macro;
 mod terrain_maps;
 mod terrain_sky;
+mod trace;
+mod world_trace;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, JobKind, Schedule, Source};
-use engine_places::ground::{Bounce, GroundBaking, GroundTiles, Heightfield, Horizons};
-use engine_places::lighting::{Ambient, SunBlockers};
-use engine_places::probes::ProbeViews;
-use engine_places::shadows::{ShadowCasters, ShadowMaps};
+use engine_places_rendering::lighting::{Ambient, SunBlockers};
+use engine_places_rendering::probes::ProbeViews;
+use engine_places_rendering::reflections::TraceSource;
+use engine_places_rendering::shadows::{ShadowCasters, ShadowMaps};
+use engine_places_rendering::sky::OpenSky;
+use engine_places_world::ground::{Bounce, GroundBaking, GroundTiles, Heightfield, Horizons};
 use engine_render::{DebugModes, Layer, MainView, RenderBricks};
 
 pub use gpu::HorizonsPiece;
@@ -56,9 +60,11 @@ impl Brick for TerrainShadingBrick {
             .fill::<Heightfield>(Some(faces::heightfield::MODULE))
             .fill::<GroundTiles>(Some(faces::ground_tiles::MODULE))
             .fill::<GroundBaking>(None)
+            .fill::<TraceSource>(Some(faces::trace_source::MODULE))
             .within(horizons_on, |bricks| {
                 bricks
                     .fill::<Horizons>(Some(faces::horizons::MODULE))
+                    .fill::<OpenSky>(Some(faces::open_sky::MODULE))
                     .join::<SunBlockers>((), Some(blockers::MODULE))
                     .within(bounce_on, |bricks| {
                         bricks
@@ -87,6 +93,7 @@ impl Brick for TerrainShadingBrick {
             )
             .off(state::forget)
             .part::<TerrainGpu>()
+            .part::<trace::TraceGpu>()
             .draws::<TerrainGpu, MainView>(Layer::Opaque, TerrainGpu::draw_main)
             .draws::<TerrainGpu, ShadowCasters>((), TerrainGpu::draw_casters)
             .draws::<TerrainGpu, ProbeViews>((), TerrainGpu::draw_probe);

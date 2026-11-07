@@ -12,11 +12,13 @@ use engine_core::{
     stats,
 };
 use engine_math::{atan2, clamp, max};
-use engine_places::ground::{
-    Ground, GroundGrid, GroundObstacle, GroundRead, GroundSource, HeightHeld, Pyramid, TileKey,
+use engine_places_simulation::ground::{
+    Ground, GroundGrid, GroundObstacle, GroundRead, GroundSource, Pyramid, TileKey,
 };
-use engine_places::navigation::{NavAgent, NavStatus, NavWalk};
-use engine_places::physics::{Collider, ColliderShape, Collision, QueryFilter, SensorFilter, Slid};
+use engine_places_simulation::navigation::{NavAgent, NavStatus, NavWalk};
+use engine_places_simulation::physics::{
+    Collider, ColliderShape, Collision, QueryFilter, SensorFilter, Slid,
+};
 use glam::{Mat4, Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -688,13 +690,4 @@ fn walk_height(walk: &NavWalk, position: Vec3) -> f32 {
         1.0
     };
     a.y + (b.y - a.y) * t
-}
-
-pub(crate) fn hold_heights(mut agents: Query<(&NavWalk, &mut HeightHeld), Changed<NavWalk>>) {
-    for (walk, mut held) in &mut agents {
-        let walking = walk.status == NavStatus::Walking;
-        if held.0 != walking {
-            held.0 = walking;
-        }
-    }
 }

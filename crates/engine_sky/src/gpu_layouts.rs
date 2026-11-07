@@ -98,9 +98,9 @@ gpu_consts! {
 }
 
 const _: () = assert!(
-    NOON_LIGHT == engine_places::sky::NOON_LIGHT
-        && ADAPTATION_POWER == engine_places::sky::ADAPTATION_POWER
-        && ADAPTATION_MOST == engine_places::sky::ADAPTATION_MOST,
+    NOON_LIGHT == engine_places_rendering::sky::NOON_LIGHT
+        && ADAPTATION_POWER == engine_places_rendering::sky::ADAPTATION_POWER
+        && ADAPTATION_MOST == engine_places_rendering::sky::ADAPTATION_MOST,
     "the sky's adaptation constants are the sky place's"
 );
 

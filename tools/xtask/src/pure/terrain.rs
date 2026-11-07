@@ -14,8 +14,8 @@ use engine_heightfield::{
 use engine_navigation::{
     Gait, NavOptions, NavPath, PORTALS, PortalsJob, TilePortals, WalkData, WalkGround, WalkSearch,
 };
-use engine_places::ground::{GroundBridge, GroundGrid, GroundObstacle};
-use engine_places::terrain::TerrainLayers;
+use engine_places_simulation::ground::{GroundBridge, GroundGrid, GroundObstacle};
+use engine_places_world::terrain::TerrainLayers;
 use engine_scene::{SceneDocument, SceneKinds};
 use engine_terrain::jobs::{self, BAKE, BakeJob, GROUND_GRID, GroundIdentity, TILE_BUILD};
 use engine_terrain::{Terrain, TerrainScene};

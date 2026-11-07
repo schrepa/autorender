@@ -3,9 +3,10 @@ use crate::codec;
 use crate::jobs::{GROUND_GRID, GroundIdentity};
 use engine_core::JobRef;
 use engine_heightfield::tile::{control_in, sample_heights};
-use engine_places::ground::{
-    GroundObstacle, GroundPoint, GroundQuery, GroundRead, GroundSource, TileFace,
+use engine_places_simulation::ground::{
+    GroundObstacle, GroundPoint, GroundQuery, GroundRead, GroundSource,
 };
+use engine_places_world::ground::TileFace;
 
 struct GroundTerrain {
     entity: Entity,

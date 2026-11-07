@@ -1,22 +1,18 @@
 use bevy_ecs::prelude::*;
 use engine_core::Camera;
-use engine_places::ground::Ground;
-use engine_places::water::{WaterBody, WaterSample};
+use engine_places_rendering::sky::EyeMedium;
+use engine_places_simulation::ground::Ground;
+use engine_places_simulation::water::{WaterBody, WaterSample};
 use glam::{Vec2, Vec3};
 
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct SurfaceUnderEye {
-    pub(crate) height: Option<f32>,
-}
-
-pub(crate) fn find_surface_under_eye(
+pub(crate) fn publish_medium(
     camera: Res<Camera>,
     ground: Res<Ground>,
     bodies: Query<&WaterBody>,
-    mut under: ResMut<SurfaceUnderEye>,
+    mut medium: ResMut<EyeMedium>,
 ) {
-    under.set_if_neq(SurfaceUnderEye {
-        height: surface_under(&ground, &bodies, camera.eye()),
+    medium.set_if_neq(EyeMedium {
+        surface: surface_under(&ground, &bodies, camera.eye()),
     });
 }
 

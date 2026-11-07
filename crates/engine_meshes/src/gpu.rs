@@ -3,8 +3,8 @@ use engine_core::{
     AssetLibrary, AssetResidency, Detail, DeviceLimits, Error, FrameTime, GlobalTransforms,
     ImpostorRecords, MAX_HIERARCHY_DEPTH, PresentedTransforms, View,
 };
-use engine_places::probes::{ProbeCaptures, ProbeViews};
-use engine_places::shadows::{ShadowCasters, ShadowMaps};
+use engine_places_rendering::probes::{ProbeCaptures, ProbeViews};
+use engine_places_rendering::shadows::{ShadowCasters, ShadowMaps};
 use engine_render::{
     Bind, Buffer, ComputePipeline, Copied, DepthUse, DrawInput, Encode, GpuPart, Install, Lifetime,
     MainView, Pass, Pipeline, Prepare, RenderPipeline, Resolve, Texture, VertexLayout, ViewTarget,
@@ -845,7 +845,7 @@ fn install_pipelines(cx: &mut Install<'_, MeshesGpu>) -> Result<Pipelines, Error
             ProbeViews,
             &mesh_pipeline(
                 (view_vertex, view, None),
-                (view_streams, double_sided, engine_places::probes::MIRRORED),
+                (view_streams, double_sided, engine_places_rendering::probes::MIRRORED),
                 write,
                 wgpu::ColorWrites::ALL,
             ),

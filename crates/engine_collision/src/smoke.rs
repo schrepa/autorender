@@ -1,6 +1,6 @@
 use engine_core::smoke::{Checked, ask, component, control, inspect, query, refuse};
 use engine_core::{ErrorCode, Section, SmokeFailure, SmokeSession, smoke_eq};
-use engine_places::physics::{Collider, ColliderShape, MAX_COLLISION_COORDINATE};
+use engine_places_simulation::physics::{Collider, ColliderShape, MAX_COLLISION_COORDINATE};
 use glam::Vec3;
 use serde_json::{Value, json};
 

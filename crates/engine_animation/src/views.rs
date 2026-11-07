@@ -4,7 +4,7 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     AssetResidency, Error, ErrorCode, Expected, GlobalTransforms, Operation, SceneIds,
 };
-use engine_places::animation::{Animator, Rig, full_speed, looping};
+use engine_places_rendering::animation::{Animator, Rig, full_speed, looping};
 use glam::{Mat4, Quat};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

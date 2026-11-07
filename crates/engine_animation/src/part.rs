@@ -11,8 +11,8 @@ use engine_core::{
     NODE_VALID, NodePose, PoseRows, PresentationState, PresentedTransforms, Transform, View,
     gpu_struct,
 };
-use engine_places::animation::{Animator, Rig, RigPart, VertexSkin};
-use engine_places::shadows::{CasterMap, CasterView, ShadowCasters};
+use engine_places_rendering::animation::{Animator, Rig, RigPart, VertexSkin};
+use engine_places_rendering::shadows::{CasterMap, CasterView, ShadowCasters};
 use engine_render::{
     Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput, Encode, GpuPart, Install,
     Lifetime, MainView, Pass, Pipeline, Prepare, RenderPipeline, Shape, VertexLayout, pack_color,

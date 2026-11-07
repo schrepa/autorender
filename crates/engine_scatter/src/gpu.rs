@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{AssetResidency, Error, MaterialHandle, MeshHandle, Var};
-use engine_places::ground::{GroundTiles, TerrainTiles};
-use engine_places::shadows::{CasterMap, CasterView, ShadowCasters};
+use engine_places_rendering::shadows::{CasterMap, CasterView, ShadowCasters};
+use engine_places_world::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
     Access, AfterRead, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput,
     Encode, GpuPart, Install, Lifetime, MainView, MeshPass, Own, Pass, Pipeline, Prepare,
@@ -584,7 +584,7 @@ impl ScatterGpu {
         (tiles, ground, baking): (
             &Res<'_, TerrainTiles>,
             &Res<'_, GroundTiles>,
-            &Res<'_, engine_places::ground::GroundBaking>,
+            &Res<'_, engine_places_world::ground::GroundBaking>,
         ),
     ) {
         let held = &mut self.held;
@@ -904,7 +904,7 @@ impl GpuPart for ScatterGpu {
         Res<'static, FarCoverTable>,
         Res<'static, TerrainTiles>,
         Res<'static, GroundTiles>,
-        Res<'static, engine_places::ground::GroundBaking>,
+        Res<'static, engine_places_world::ground::GroundBaking>,
         Res<'static, AssetResidency>,
     );
 

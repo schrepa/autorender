@@ -55,16 +55,18 @@ gpu_consts! {
     pub const TABLE_NOW: u32 = 3;
     pub const TERRAIN_WORDS: u32 = 44;
     pub const VIEW_WORDS: u32 = 36;
+    pub const NO_PLACED: u32 = u32::MAX;
+    pub const CANOPY_GROUP: u32 = 64;
 }
 
 pub const HEIGHT_FORMAT: engine_render::wgpu::TextureFormat =
     engine_render::wgpu::TextureFormat::R32Float;
 
 pub const PALETTE_BYTES: usize =
-    engine_places::ground::PALETTE_ENTRIES as usize * size_of::<PaletteEntry>();
+    engine_places_world::ground::PALETTE_ENTRIES as usize * size_of::<PaletteEntry>();
 
 const _: () = assert!(
-    engine_places::ground::PALETTE_ENTRIES as usize * size_of::<PaletteEntry>() <= 16_384,
+    engine_places_world::ground::PALETTE_ENTRIES as usize * size_of::<PaletteEntry>() <= 16_384,
     "palette_fits_a_uniform_binding"
 );
 
@@ -134,6 +136,15 @@ gpu_struct! {
     pub struct HorizonsPiece {
         pub records: [[f32; 4]; 385],
         pub debug: [u32; 4],
+        pub trace: [u32; 4],
+    }
+}
+
+gpu_struct! {
+    pub struct TraceTerrain {
+        pub cutout: [f32; 4],
+        pub maps: [u32; 4],
+        pub reach: [f32; 4],
     }
 }
 

@@ -8,7 +8,7 @@ use engine_core::{
 };
 use engine_heightfield::tile::{Solid, TILE_STRIDE};
 use engine_heightfield::{Pyramid, TILE_QUADS, reaches};
-use engine_places::ground::GroundWork;
+use engine_places_world::ground::GroundWork;
 use glam::Vec2;
 
 use crate::drawn::{DrawAsk, is_dry};

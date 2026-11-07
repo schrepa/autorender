@@ -1,5 +1,5 @@
 use engine_core::{settings, stats};
-use engine_places::audio::Bus;
+use engine_places_rendering::audio::Bus;
 
 pub(crate) const MOST_VOICES: u32 = 512;
 

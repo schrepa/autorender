@@ -722,7 +722,7 @@ impl MeshesGpu {
 
     fn prepare_faces(
         &mut self,
-        captures: &engine_places::probes::ProbeCaptures,
+        captures: &engine_places_rendering::probes::ProbeCaptures,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.state.faces.clear();
@@ -763,7 +763,7 @@ impl MeshesGpu {
     fn prepare_casters(
         &mut self,
         plan: &CasterPlan,
-        maps: &engine_places::shadows::ShadowMaps,
+        maps: &engine_places_rendering::shadows::ShadowMaps,
         cx: &mut Prepare<'_, Self>,
     ) {
         let buffers = &self.casters;

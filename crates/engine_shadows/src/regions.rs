@@ -1,6 +1,8 @@
 use bytemuck::Zeroable;
 use engine_core::glam::{Mat4, Vec3, Vec4};
-use engine_places::shadows::{CasterMap, KeptRefresh, Refresh, Region as MapView, SHADOW_REGIONS};
+use engine_places_rendering::shadows::{
+    CasterMap, KeptRefresh, Refresh, Region as MapView, SHADOW_REGIONS,
+};
 use engine_render::CameraUniform;
 
 use crate::atlas::AtlasLayout;

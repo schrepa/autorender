@@ -1,5 +1,7 @@
 use engine_core::{Error, ErrorCode, Placed};
-use engine_places::physics::{Collider, ColliderShape, MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT};
+use engine_places_simulation::physics::{
+    Collider, ColliderShape, MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT,
+};
 use glam::Mat4;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

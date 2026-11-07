@@ -17,9 +17,9 @@ use engine_core::{
     Brick, Bricks, ComponentKind, Cut, SceneComponents, Schedule, Source, gpu_consts, settings,
     stats,
 };
-use engine_places::lighting::{Ambient, Interiors};
-use engine_places::probes::{ProbeCaptures, ProbeViews, ReflectionProbe};
-use engine_places::sky::EnvironmentLayers;
+use engine_places_rendering::lighting::{Ambient, Interiors};
+use engine_places_rendering::probes::{ProbeCaptures, ProbeViews, ReflectionProbe};
+use engine_places_rendering::sky::EnvironmentLayers;
 use engine_render::RenderBricks;
 
 pub use component::{SceneInterior, SceneReflectionProbe};

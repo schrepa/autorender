@@ -8,7 +8,7 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod relief;
 
 use engine_core::{Brick, Bricks, Source};
-use engine_places::terrain::TerrainLayers;
+use engine_places_world::terrain::TerrainLayers;
 
 pub use relief::{HUMMOCKS, HummocksLayer, STEPS, StepsLayer};
 

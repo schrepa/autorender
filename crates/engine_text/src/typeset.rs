@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use bevy_ecs::prelude::ResMut;
 use engine_core::{Error, ErrorCode, View};
-use engine_places::text::{FontId, Text, TextRun, TextSize, Typeset};
+use engine_places_rendering::text::{FontId, Text, TextRun, TextSize, Typeset};
 use glam::UVec2;
 
 use crate::atlas::{Atlas, Slot, Upload};

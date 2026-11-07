@@ -9,11 +9,12 @@ use engine_core::{
     Ticket, View, codec, content_hash,
 };
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_places::ground::{
-    GroundBaking, GroundTiles, Heightfield, HeldTile, Pyramid, TerrainEntry, TerrainTiles,
-    TileFace, TileKey, TilesSince,
+use engine_places_rendering::shadows::ShadowChanges;
+use engine_places_simulation::ground::{Pyramid, TileKey};
+use engine_places_world::ground::{
+    GroundBaking, GroundTiles, Heightfield, HeldTile, TerrainEntry, TerrainTiles, TileFace,
+    TilesSince,
 };
-use engine_places::shadows::ShadowChanges;
 use engine_render::DebugShown;
 use glam::{Vec2, Vec3};
 
@@ -24,6 +25,7 @@ use crate::lighting::TerrainLighting;
 use crate::settings::{TerrainShading, TerrainShadingStats};
 use crate::shading::TileShading;
 use crate::shadings::Shadings;
+use crate::world_trace::traced;
 use crate::{TerrainShadingBrick, terrain_bounce, terrain_horizons};
 
 pub(crate) const RETRY_AFTER: u64 = 120;
@@ -808,6 +810,7 @@ pub(crate) fn color(
 pub(crate) fn publish_piece(
     settings: Res<TerrainShading>,
     tiles: Res<TerrainTiles>,
+    ground: Res<GroundTiles>,
     bakes: Res<Bakes>,
     view: Res<View>,
     limits: Res<DeviceLimits>,
@@ -828,6 +831,7 @@ pub(crate) fn publish_piece(
     );
     let mut next = *piece;
     next.debug = [crate::debug::shown(&shown), 0, 0, 0];
+    next.trace = [traced(&tiles, &ground).count() as u32, 0, 0, 0];
     next.records = [[0.0; 4]; HORIZON_RECORDS as usize + 1];
     next.records[..records.len()].copy_from_slice(&records);
     let count = records.len() as u32 / crate::gpu::HORIZON_RECORD_VECTORS;
@@ -885,6 +889,7 @@ impl Readback for SurfaceTotals {
 }
 
 pub(crate) const PART_STATS: u32 = 1;
+pub(crate) const TRACE_STATS: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
@@ -908,11 +913,16 @@ pub(crate) struct DrawnStats {
 #[derive(Resource, Default)]
 pub(crate) struct PartStats {
     drawn: DrawnStats,
+    pool: engine_core::Cut,
 }
 
 impl Readback for PartStats {
-    fn arrived(&mut self, _: u64, _: u32, bytes: &[u8]) {
-        if let Ok(drawn) = bytemuck::try_pod_read_unaligned::<DrawnStats>(bytes) {
+    fn arrived(&mut self, _: u64, tag: u32, bytes: &[u8]) {
+        if tag == TRACE_STATS {
+            if let Ok([asked, kept]) = bytemuck::try_pod_read_unaligned::<[u32; 2]>(bytes) {
+                self.pool = engine_core::Cut::of(asked, kept);
+            }
+        } else if let Ok(drawn) = bytemuck::try_pod_read_unaligned::<DrawnStats>(bytes) {
             self.drawn = drawn;
         }
     }
@@ -1053,6 +1063,7 @@ pub(crate) fn count(
         shaded_tiles,
         shading_records,
         surface_slots: engine_core::Cut::of(drawn.surface_wanted, drawn.surface_kept),
+        trace_pool: part.pool,
         lit,
         lighting,
         bounced,

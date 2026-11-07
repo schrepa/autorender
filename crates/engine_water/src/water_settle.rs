@@ -5,7 +5,7 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
 use engine_core::{CookMode, DeviceLimits, Error, FrameTime, Jobs, Readback};
-use engine_places::ground::GroundTiles;
+use engine_places_world::ground::GroundTiles;
 use engine_render::{AfterRead, ComputePipeline, Count, Encode, Install, Pass, Prepare};
 
 use crate::gpu::{

@@ -13,7 +13,7 @@ mod scene;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, ComponentKind, GpuStruct, SceneComponents, Schedule, Source};
-use engine_places::particles::{ParticleBursts, ParticleEmitter, Transparency};
+use engine_places_rendering::particles::{ParticleBursts, ParticleEmitter, Transparency};
 use engine_render::RenderBricks;
 
 pub use emitters::{ParticleSettings, ParticleStats};

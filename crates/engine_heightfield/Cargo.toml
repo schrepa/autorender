@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 engine_codec.workspace = true
 engine_math.workspace = true
+engine_places_simulation.workspace = true
 glam.workspace = true
 libm.workspace = true
 schemars.workspace = true
@@ -18,4 +19,4 @@ serde_json.workspace = true
 workspace = true
 
 [package.metadata.engine]
-kind = "support"
+kind = "place"

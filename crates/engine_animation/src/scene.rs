@@ -1,5 +1,5 @@
 use engine_core::{Error, ErrorCode};
-use engine_places::animation::{Animator, AnimatorScene, Attachment};
+use engine_places_rendering::animation::{Animator, AnimatorScene, Attachment};
 use serde_json::{Value, json};
 
 pub(crate) fn check_animator(animator: &Animator, path: &str) -> Result<(), Error> {

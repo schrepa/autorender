@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
-use engine_places::ground::{TileChange, TileChangeKind, TileChanges, TileFace};
+use engine_places_world::ground::{TileChange, TileChangeKind, TileChanges, TileFace};
 
 const RECENT_CHANGES: usize = 4096;
 

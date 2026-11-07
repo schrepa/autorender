@@ -5,7 +5,7 @@ use bevy_ecs::prelude::*;
 use engine_core::{DeviceLimits, WorkClock};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::PATCHES_PER_TILE;
-use engine_places::ground::{GroundTiles, GroundWork, HeldTile};
+use engine_places_world::ground::{GroundTiles, GroundWork, HeldTile};
 use engine_render::{Buffer, Prepare, Texture, wgpu};
 
 use crate::TileWater;

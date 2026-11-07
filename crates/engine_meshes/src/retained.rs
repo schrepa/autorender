@@ -7,7 +7,6 @@ use engine_core::{
     Revision, Shown, Surface, Switches, Transform,
 };
 use engine_places::meshes::{Cube, FirstPersonLayer, Instances, Tint};
-use engine_places::splines::SplineMesh;
 use glam::Mat4;
 
 type RenderQuery<'w, 's> = Query<
@@ -19,34 +18,20 @@ type RenderQuery<'w, 's> = Query<
         Option<&'static Cube>,
         Option<&'static Mesh3d>,
         Option<&'static Tint>,
-        Has<SplineMesh>,
         Option<&'static FirstPersonLayer>,
     ),
     (Or<(With<Cube>, With<Mesh3d>)>, Shown),
 >;
 
-type UnbuiltSplines<'w, 's> =
-    Query<'w, 's, &'static Mesh3d, (With<SplineMesh>, Without<Cube>, Shown)>;
-
 type SourceChanges<'w, 's> = Query<
     'w,
     's,
     Entity,
-    Or<(
-        Changed<Mesh3d>,
-        Changed<Cube>,
-        Changed<Tint>,
-        Changed<SplineMesh>,
-        Changed<FirstPersonLayer>,
-    )>,
+    Or<(Changed<Mesh3d>, Changed<Cube>, Changed<Tint>, Changed<FirstPersonLayer>)>,
 >;
 
-fn unbuilt(mesh3d: &Mesh3d) -> bool {
-    mesh3d.mesh == MeshHandle::default()
-}
-
-fn skipped(cube: bool, mesh3d: Option<&Mesh3d>, spline: bool) -> bool {
-    spline && !cube && mesh3d.is_some_and(unbuilt)
+fn unbuilt(cube: bool, mesh3d: Option<&Mesh3d>) -> bool {
+    !cube && mesh3d.is_some_and(|mesh3d| mesh3d.mesh == MeshHandle::default())
 }
 
 fn textures_live(assets: &AssetLibrary, material: &Material) -> bool {
@@ -195,6 +180,7 @@ pub(crate) struct RetainedRender {
     removed: Vec<Entity>,
     homeless: BTreeSet<Entity>,
     unresolved: BTreeSet<Entity>,
+    unbuilt: BTreeSet<Entity>,
     materials: Materials,
     asset_revision: Option<(u64, u64)>,
     material_revision: Option<u64>,
@@ -214,7 +200,7 @@ struct Inputs<'a, 'w, 's> {
 }
 
 pub(crate) fn retain_instances(
-    (query, splines): (RenderQuery, UnbuiltSplines),
+    query: RenderQuery,
     changes: SourceChanges,
     globals: Res<GlobalTransforms>,
     assets: Res<AssetLibrary>,
@@ -240,8 +226,7 @@ pub(crate) fn retain_instances(
     }
     let topology_moved = retained.settle_topology(&inputs, &mut instances);
     retained.settle_switches(&inputs, &mut instances);
-    retained.render_candidates =
-        query.iter().len() - splines.iter().filter(|mesh3d| unbuilt(mesh3d)).count();
+    retained.render_candidates = query.iter().len().saturating_sub(retained.unbuilt.len());
     if retained.changed || assets_moved || topology_moved {
         retained.recount(&globals);
     }
@@ -255,6 +240,7 @@ pub(crate) fn source_removed(
     if instances.slots.contains_key(&entity)
         || retained.homeless.contains(&entity)
         || retained.unresolved.contains(&entity)
+        || retained.unbuilt.contains(&entity)
     {
         retained.removed.push(entity);
     }
@@ -407,6 +393,8 @@ impl RetainedRender {
             .retain(|&entity| inputs.query.contains(entity));
         self.unresolved
             .retain(|&entity| inputs.query.contains(entity));
+        self.unbuilt
+            .retain(|&entity| inputs.query.contains(entity));
         for (entity, ..) in inputs.query.iter() {
             if !instances.slots.contains_key(&entity) {
                 self.refresh(entity, inputs, instances);
@@ -420,15 +408,16 @@ impl RetainedRender {
         inputs: &Inputs<'_, '_, '_>,
         instances: &mut ResMut<'_, Instances>,
     ) {
-        let Ok((_, has_transform, cube, mesh3d, tint, spline, layer)) = inputs.query.get(entity)
-        else {
+        let Ok((_, has_transform, cube, mesh3d, tint, layer)) = inputs.query.get(entity) else {
             self.forget(entity, instances);
             return;
         };
-        if skipped(cube.is_some(), mesh3d, spline) {
+        if unbuilt(cube.is_some(), mesh3d) {
             self.forget(entity, instances);
+            self.unbuilt.insert(entity);
             return;
         }
+        self.unbuilt.remove(&entity);
         if !has_transform || inputs.globals.get(entity).is_none() {
             self.release(entity, instances);
             self.unresolved.remove(&entity);
@@ -535,5 +524,6 @@ impl RetainedRender {
         self.release(entity, instances);
         self.homeless.remove(&entity);
         self.unresolved.remove(&entity);
+        self.unbuilt.remove(&entity);
     }
 }

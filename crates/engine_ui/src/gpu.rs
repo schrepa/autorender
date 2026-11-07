@@ -3,7 +3,7 @@ use std::ops::Range;
 use bevy_ecs::prelude::*;
 use engine_core::math::max;
 use engine_core::{Entry, Error, TextureHandle};
-use engine_places::ui::UiKind;
+use engine_places_rendering::ui::UiKind;
 use engine_render::{
     Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, OverlayStack, Pipeline, Prepare,
     RenderPipeline, SamplerDesc, Shape, wgpu,

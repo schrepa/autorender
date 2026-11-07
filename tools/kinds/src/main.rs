@@ -24,7 +24,6 @@ const CLOSED: &[(&str, &[&str])] = &[
         &[
             "engine_math",
             "engine_codec",
-            "engine_heightfield",
             "engine_lodbuild",
             "engine_sources",
         ],
@@ -56,6 +55,92 @@ const CLOSED: &[(&str, &[&str])] = &[
     ),
 ];
 
+const RINGS: &[(&str, &[&str])] = &[
+    (
+        "core",
+        &[
+            "engine_ecs",
+            "engine_place",
+            "engine_core",
+            "engine_registry",
+            "engine_render",
+            "engine_meshes",
+            "engine_assets",
+            "engine_textures",
+            "engine_settings",
+            "engine_scene",
+            "engine_profile",
+            "engine_panic",
+            "engine_places",
+        ],
+    ),
+    (
+        "rendering",
+        &[
+            "engine_places_rendering",
+            "engine_lighting",
+            "engine_lights",
+            "engine_sun",
+            "engine_sky",
+            "engine_time_of_day",
+            "engine_shadows",
+            "engine_probes",
+            "engine_reflections",
+            "engine_ambient_occlusion",
+            "engine_taa",
+            "engine_auto_exposure",
+            "engine_bloom",
+            "engine_tonemap",
+            "engine_dither",
+            "engine_debug_view",
+            "engine_particles",
+            "engine_sprites",
+            "engine_text",
+            "engine_ui",
+            "engine_screens",
+            "engine_animation",
+            "engine_audio",
+            "engine_fly_camera",
+            "engine_follow_camera",
+        ],
+    ),
+    (
+        "simulation",
+        &[
+            "engine_places_simulation",
+            "engine_collision",
+            "engine_physics",
+            "engine_navigation",
+            "engine_grounding",
+        ],
+    ),
+    (
+        "world",
+        &[
+            "engine_places_world",
+            "engine_heightfield",
+            "engine_layer_noise",
+            "engine_layer_stamps",
+            "engine_layer_heightmap",
+            "engine_layer_paths",
+            "engine_layer_erosion",
+            "engine_layer_hydrology",
+            "engine_layer_relief",
+            "engine_terrain",
+            "engine_terrain_shading",
+            "engine_water",
+            "engine_scatter",
+            "engine_ground_cover",
+            "engine_splines",
+            "engine_world_streaming",
+            "engine_wind",
+            "engine_standard_smokes",
+        ],
+    ),
+];
+
+const RINGED: &[&str] = &["core", "core-internal", "place", "brick"];
+
 const ENGINE_GAMES: &[&str] = &["engine_player", "highlands"];
 
 const PLACE_EXTERNALS: &[&str] = &[
@@ -65,6 +150,7 @@ const PLACE_EXTERNALS: &[&str] = &[
     "serde_json",
     "schemars",
     "parry3d",
+    "libm",
 ];
 
 struct Member {
@@ -136,6 +222,7 @@ fn check(root: &Path, problems: &mut Vec<String>) -> Result<usize, String> {
         .map(|member| (member.dir.as_path(), member))
         .collect();
     closed(&members, problems);
+    placed(&members, problems);
     for member in &members {
         check_member(&root, &workspace, member, &folders, problems)?;
     }
@@ -248,6 +335,49 @@ fn closed(members: &[Member], problems: &mut Vec<String>) {
     }
 }
 
+fn ring(name: &str) -> Option<&'static str> {
+    RINGS
+        .iter()
+        .find(|(_, names)| names.contains(&name))
+        .map(|&(ring, _)| ring)
+}
+
+fn names(ring: &str, target: &str) -> bool {
+    match ring {
+        "core" => target == "core",
+        "rendering" => matches!(target, "core" | "rendering"),
+        "simulation" => matches!(target, "core" | "simulation"),
+        "world" => true,
+        _ => false,
+    }
+}
+
+fn placed(members: &[Member], problems: &mut Vec<String>) {
+    for &(ring, names) in RINGS {
+        for name in names {
+            if !members.iter().any(|member| member.name == *name) {
+                problems.push(format!(
+                    "Cargo.toml: the {ring} ring names {name}, which is no workspace crate"
+                ));
+            }
+        }
+    }
+    for member in members {
+        let kind = member.kind.as_deref().unwrap_or("no kind");
+        let rings = RINGS
+            .iter()
+            .filter(|(_, names)| names.contains(&member.name.as_str()))
+            .count();
+        let problem = match (RINGED.contains(&kind), rings) {
+            (true, 1) | (false, 0) => continue,
+            (true, 0) => "sits in no ring",
+            (true, _) => "sits in more than one ring",
+            (false, _) => "sits in a ring",
+        };
+        problems.push(format!("{}: a {kind} crate {problem}", member.label()));
+    }
+}
+
 fn check_member(
     root: &Path,
     workspace: &Item,
@@ -311,6 +441,14 @@ fn check_member(
                     target.name
                 ));
             }
+            if let (Some(own), Some(theirs)) = (ring(&member.name), ring(&target.name))
+                && !names(own, theirs)
+            {
+                problems.push(format!(
+                    "{edge}: the {own} ring may not name {} of the {theirs} ring",
+                    target.name
+                ));
+            }
             continue;
         }
         if matches!(kind, "brick" | "place" | "list") {
@@ -339,7 +477,9 @@ fn allowed(member: &Member, kind: &str, target: &Member) -> bool {
             matches!(target_kind, "support" | "core" | "core-internal")
         }
         "host" => matches!(target_kind, "support" | "core" | "core-internal" | "host"),
-        "place" => target_kind == "support" || matches!(name, "engine_place" | "engine_ecs"),
+        "place" => {
+            matches!(target_kind, "support" | "place") || matches!(name, "engine_place" | "engine_ecs")
+        }
         "brick" => {
             matches!(target_kind, "support" | "place")
                 || matches!(name, "engine_ecs" | "engine_core" | "engine_render")

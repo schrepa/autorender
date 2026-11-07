@@ -1,33 +1,11 @@
 use std::sync::Arc;
 
-use bevy_ecs::prelude::{Component, Entity, Resource};
-use engine_heightfield::{HydrologyBake, TileKey};
-use engine_place::{Slot, Stamp};
+use bevy_ecs::prelude::{Component, Resource};
+use engine_place::Slot;
 use glam::{Mat3, Vec3};
 use serde::Serialize;
 
 use crate::ground::GroundRead;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct WaterTileErrors {
-    pub terrain: Entity,
-    pub key: TileKey,
-    pub stamp: Stamp,
-    pub errors: Arc<[u16]>,
-}
-
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub struct Waterline {
-    pub subdivision_error: f32,
-    pub subdivision_leaves: u32,
-    pub watered: Vec<Entity>,
-    pub errors: Vec<WaterTileErrors>,
-}
-
-impl Slot for Waterline {
-    const NAME: &'static str = "water";
-    const WGSL: Option<&'static str> = Some(include_str!("places/water.wgsl"));
-}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WaterObstacle {
@@ -77,15 +55,6 @@ pub struct WaterSample {
     pub foam: f32,
 }
 
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub struct WaterFlow {
-    pub samples: Vec<WaterSample>,
-}
-
-impl Slot for WaterFlow {
-    const NAME: &'static str = "water_flow";
-}
-
 pub trait WaterQuery: Send + Sync + 'static {
     fn water(&self, point: Vec3) -> GroundRead<Option<WaterSample>>;
 
@@ -98,22 +67,4 @@ pub trait WaterQuery: Send + Sync + 'static {
 pub struct WaterBody {
     pub precedence: i32,
     pub shape: Arc<dyn WaterQuery>,
-}
-
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct WaterWork {
-    pub uploaded: u64,
-}
-
-impl Slot for WaterWork {
-    const NAME: &'static str = "water_work";
-}
-
-#[derive(Resource, Clone, Default)]
-pub struct Hydrology {
-    pub bakes: Vec<(Entity, Arc<HydrologyBake>)>,
-}
-
-impl Slot for Hydrology {
-    const NAME: &'static str = "hydrology";
 }

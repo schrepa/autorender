@@ -3,10 +3,10 @@ use engine_core::{
     CookMode, DeviceLimits, FrameTime, GlobalTransforms, Joined, Projection, View, WorkClock,
     WorkRemaining,
 };
-use engine_places::ground::{GroundBaking, GroundWork};
-use engine_places::streaming::StreamingFocus;
-use engine_places::terrain::TerrainLayers;
-use engine_places::water::WaterWork;
+use engine_places_world::ground::{GroundBaking, GroundWork};
+use engine_places_world::streaming::StreamingFocus;
+use engine_places_world::terrain::TerrainLayers;
+use engine_places_world::water::WaterWork;
 use glam::UVec2;
 
 pub(super) fn vertical_fov(camera: &Camera) -> f32 {

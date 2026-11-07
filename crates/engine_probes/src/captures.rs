@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{DeviceLimits, Error};
-use engine_places::probes::{ProbeView, ProbeViews};
-use engine_places::sky::{EnvironmentFaces, EnvironmentLayers};
+use engine_places_rendering::probes::{ProbeView, ProbeViews};
+use engine_places_rendering::sky::{EnvironmentFaces, EnvironmentLayers};
 use engine_render::{
     Access, Attach, Bind, Buffer, DEPTH_FORMAT, DepthUse, Draw, Draws, Encode, GpuPart, Install,
     Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, wgpu,

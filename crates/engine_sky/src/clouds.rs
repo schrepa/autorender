@@ -1,6 +1,6 @@
 use engine_core::Error;
 use engine_core::math::min;
-use engine_places::sun::Sun;
+use engine_places_rendering::sun::Sun;
 use engine_render::{
     Attach, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse, Draw, DrawInput,
     Encode, Install, Layer, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Sampler,

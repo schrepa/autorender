@@ -1,5 +1,5 @@
 use engine_core::{settings, stats};
-use engine_heightfield::hydraulics::GRAVITY;
+use engine_math::GRAVITY;
 
 settings! {
     #[section("physics")]

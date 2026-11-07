@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::{Entity, Resource};
 use engine_core::AssetLibrary;
-use engine_places::ground::{PALETTE_ENTRIES, PlacedLayer, TerrainEntry};
+use engine_places_world::ground::{PALETTE_ENTRIES, PlacedLayer, TerrainEntry};
 
 use crate::groups::Resolved;
 use crate::layouts::PlacedFar;

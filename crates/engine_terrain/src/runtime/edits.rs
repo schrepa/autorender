@@ -3,7 +3,7 @@ use super::*;
 use crate::{MAX_GIVEN_RIVERS, StampOp};
 use engine_core::{Joined, Operation, SceneIds};
 use engine_heightfield::given::{MAX_DEPTH, MAX_DISCHARGE, MAX_WIDTH};
-use engine_places::terrain::TerrainLayers;
+use engine_places_world::terrain::TerrainLayers;
 use serde_json::Value;
 
 const CHANGE_SAMPLES: usize = 9;

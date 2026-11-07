@@ -3,8 +3,8 @@ use std::ops::Range;
 use bevy_ecs::prelude::*;
 use engine_core::math::{clamp, max, min};
 use engine_core::{CursorMode, SceneContext, TextureHandle, View};
-use engine_places::text::{FontId, Text, TextRun};
-use engine_places::ui::{
+use engine_places_rendering::text::{FontId, Text, TextRun};
+use engine_places_rendering::ui::{
     UiAction, UiAlign, UiDirection, UiInsets, UiJustify, UiKind, UiLength, UiNode, UiRoot, UiValue,
     UiValues,
 };

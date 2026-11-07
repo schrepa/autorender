@@ -1,10 +1,10 @@
 use std::f32::consts::{PI, TAU};
 
-use engine_math::{clamp, cos, max, min};
+use engine_math::{GRAVITY, clamp, cos, max, min};
 use glam::Vec2;
 use serde::Serialize;
 
-use crate::hydraulics::{GRAVITY, along_line};
+use crate::hydraulics::along_line;
 use crate::rivers::RIVER_STEP;
 
 pub const HEAD_FLOOD: f32 = 0.16;

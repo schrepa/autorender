@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::Spawner;
-use engine_places::ground::{Ground, GroundRead};
-use engine_places::water::{WaterBody, WaterKind, WaterQuery, WaterSample};
+use engine_places_simulation::ground::{Ground, GroundRead};
+use engine_places_simulation::water::{WaterBody, WaterKind, WaterQuery, WaterSample};
 use glam::{Vec2, Vec3};
 
 use crate::bricks::pond::{Pond, PondBrick};

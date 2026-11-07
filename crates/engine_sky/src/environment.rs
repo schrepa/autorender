@@ -1,6 +1,6 @@
 use engine_core::Error;
-use engine_places::probes::ProbeCaptures;
-use engine_places::sky::{EnvironmentFaces, EnvironmentLayers};
+use engine_places_rendering::probes::ProbeCaptures;
+use engine_places_rendering::sky::{EnvironmentFaces, EnvironmentLayers};
 use engine_render::{
     Attach, Bind, DepthUse, Draws, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare,
     RenderPipeline, SamplerDesc, Shape, Texture, mip_levels, wgpu,

@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Error, ErrorCode, Filled, Operation, Slot, bounds, stated};
-use engine_places::ground::Ground;
-use engine_places::physics::{Collide, Collision, CollisionRay, QueryFilter};
+use engine_places_simulation::ground::Ground;
+use engine_places_simulation::physics::{Collide, Collision, CollisionRay, QueryFilter};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

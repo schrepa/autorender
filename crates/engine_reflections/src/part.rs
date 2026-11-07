@@ -1,6 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{DeviceLimits, Entry, Error, View};
-use engine_places::ground::{Cover, GroundTiles, PALETTE_ENTRIES, PlacedTiles, TerrainTiles};
+use engine_core::{Entry, Error, View};
 use engine_render::{
     Access, Attach, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse, Encode,
     FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
@@ -8,9 +7,8 @@ use engine_render::{
     pyramid_extents, wgpu,
 };
 
-use crate::gpu::{CANOPY_GROUP, PYRAMID_GROUP, PyramidExtent};
-use crate::shaders::reflections::{apply, canopy, levels, nearest, trace};
-use crate::world_trace::{TraceFrame, WorldTrace};
+use crate::gpu::{PYRAMID_GROUP, PyramidExtent};
+use crate::shaders::reflections::{apply, levels, nearest, trace};
 
 const SCENE_LEVELS: u32 = 6;
 const PYRAMID_LEVELS: u32 = 15;
@@ -26,15 +24,10 @@ pub(crate) struct TraceGpu {
     reflected: Texture<Self>,
     levels: Texture<Self>,
     pyramid: Texture<Self>,
-    terrains: Buffer<Self>,
-    placed: Buffer<Self>,
     extents: Vec<Buffer<Self>>,
     reductions: Vec<ComputePipeline<Self>>,
-    canopies: ComputePipeline<Self>,
     downs: Vec<Pipeline<Self, Own>>,
     tracing: Pipeline<Self, Own>,
-    world: WorldTrace,
-    placed_changed: bool,
     count: u32,
     render: (u32, u32),
     drawn: [(u32, u32); SCENE_LEVELS as usize],
@@ -42,14 +35,7 @@ pub(crate) struct TraceGpu {
 }
 
 impl GpuPart for TraceGpu {
-    type Reads = (
-        Res<'static, View>,
-        Res<'static, DeviceLimits>,
-        Res<'static, TerrainTiles>,
-        Res<'static, GroundTiles>,
-        Res<'static, PlacedTiles>,
-        Res<'static, Cover>,
-    );
+    type Reads = Res<'static, View>;
     const NAME: &'static str = "reflections";
     const LAZY: bool = true;
     const LABELS: &'static [&'static str] = &["engine/reflections-"];
@@ -58,8 +44,6 @@ impl GpuPart for TraceGpu {
         let reflected = cx.texture("reflections", REFLECTION_FORMAT, Lifetime::Frame);
         let levels_texture = cx.texture("scene_levels", SCENE_FORMAT, Lifetime::Frame);
         let pyramid = cx.texture("nearest_depth", NEAREST_FORMAT, Lifetime::Frame);
-        let terrains = cx.buffer("world_terrains", Lifetime::Kept);
-        let placed = cx.buffer("world_placed", Lifetime::Kept);
         let extents: Vec<Buffer<Self>> = (0..PYRAMID_LEVELS)
             .map(|_| cx.buffer("nearest_extent", Lifetime::Kept))
             .collect();
@@ -114,14 +98,6 @@ impl GpuPart for TraceGpu {
             };
             reductions.push(reduction);
         }
-        let canopies = cx.compute_pipeline(
-            reduce,
-            canopy::CS_CANOPY,
-            &[
-                (canopy::WORLD_TERRAINS, Bind::Buffer(terrains)),
-                (canopy::WORLD_PLACED, Bind::Buffer(placed)),
-            ],
-        )?;
         let mut downs = Vec::new();
         for level in 1..=SCENE_LEVELS {
             let fragment = if level == 1 {
@@ -141,8 +117,6 @@ impl GpuPart for TraceGpu {
             &[
                 (trace::NEAREST_DEPTH, Bind::Texture(pyramid)),
                 (trace::SCENE_LEVELS, Bind::Texture(levels_texture)),
-                (trace::WORLD_TERRAINS, Bind::Buffer(terrains)),
-                (trace::WORLD_PLACED, Bind::Buffer(placed)),
             ],
         )?;
         Ok(Self {
@@ -153,15 +127,10 @@ impl GpuPart for TraceGpu {
             reflected,
             levels: levels_texture,
             pyramid,
-            terrains,
-            placed,
             extents,
             reductions,
-            canopies,
             downs,
             tracing,
-            world: WorldTrace::default(),
-            placed_changed: false,
             count: 0,
             render: (0, 0),
             drawn: [(0, 0); SCENE_LEVELS as usize],
@@ -169,31 +138,10 @@ impl GpuPart for TraceGpu {
         })
     }
 
-    fn prepare(
-        &mut self,
-        (view, limits, tiles, ground, placed, cover): SystemParamItem<'_, '_, Self::Reads>,
-        cx: &mut Prepare<'_, Self>,
-    ) {
-        if cx.fresh() {
-            self.world.forget();
-        }
-        self.placed_changed |= placed.is_changed();
+    fn prepare(&mut self, view: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
         if view.debug() {
             return;
         }
-        let placed_changed = std::mem::take(&mut self.placed_changed);
-        self.world.prepare(
-            cx,
-            (self.terrains, self.placed),
-            &TraceFrame {
-                tiles: &tiles,
-                ground: &ground,
-                placed: &placed,
-                cover: &cover,
-                room: limits.storage_room / 16 * 16,
-                placed_changed,
-            },
-        );
         let display = view.display_size();
         let render = view.render_size();
         self.render = (render.x, render.y);
@@ -242,11 +190,6 @@ impl GpuPart for TraceGpu {
                     1,
                 ];
                 cx.dispatch(reduction, Count::Groups(groups));
-            }
-            let terrains = self.world.terrains();
-            if terrains > 0 {
-                let groups = [PALETTE_ENTRIES.div_ceil(CANOPY_GROUP), terrains, 1];
-                cx.dispatch(&self.canopies, Count::Groups(groups));
             }
             return 0;
         }

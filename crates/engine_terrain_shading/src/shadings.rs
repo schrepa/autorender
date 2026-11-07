@@ -9,7 +9,8 @@ use engine_core::{
 };
 use engine_heightfield::Stamp;
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_places::ground::{GroundWork, TerrainEntry, TerrainTiles, TileFace, TileKey};
+use engine_places_simulation::ground::TileKey;
+use engine_places_world::ground::{GroundWork, TerrainEntry, TerrainTiles, TileFace};
 use glam::Vec2;
 
 use crate::jobs::{SHADING, ShadingJob, shading_output};

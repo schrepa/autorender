@@ -9,7 +9,7 @@ publish.workspace = true
 engine_ecs.workspace = true
 engine_core.workspace = true
 engine_math.workspace = true
-engine_places.workspace = true
+engine_places_rendering.workspace = true
 engine_render.workspace = true
 glam.workspace = true
 

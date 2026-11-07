@@ -2,8 +2,8 @@ use std::cmp::Reverse;
 
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashSet;
-use engine_places::physics::ColliderShape;
-use engine_places::water::{WaterBody, WaterObstacle, WaterObstacles};
+use engine_places_simulation::physics::ColliderShape;
+use engine_places_simulation::water::{WaterBody, WaterObstacle, WaterObstacles};
 use glam::Vec3;
 
 use crate::solids::Solids;

@@ -1,6 +1,8 @@
 use std::any::TypeId;
 
-use engine_places::shadows::{DEBUG_SHADOWED, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL};
+use engine_places_rendering::shadows::{
+    DEBUG_SHADOWED, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL,
+};
 use engine_render::debug::DEBUG_SOURCE_SHIFT;
 use engine_render::{DebugMode, DebugShown};
 use serde::Serialize;

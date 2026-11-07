@@ -5,7 +5,7 @@ use engine_core::{Error, ErrorCode, Job, JobCx, JobKind, RecordKey, codec};
 use engine_heightfield::layer::LayerKind;
 use engine_heightfield::tile::{Recipe, Solid, TileJob};
 use engine_heightfield::{Layers, Pyramid, Stamp, TileKey};
-use engine_places::terrain::TerrainLayers;
+use engine_places_world::terrain::TerrainLayers;
 
 use crate::SOURCE;
 use crate::drawn::{start_drawn, start_rewater};

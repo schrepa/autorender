@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Error, ErrorCode, Expected, Operation, SceneContext, SceneIds};
-use engine_places::splines::SplineMesh;
+use engine_places_world::splines::SplineMesh;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

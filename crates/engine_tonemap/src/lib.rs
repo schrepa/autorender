@@ -10,7 +10,7 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod tonemap;
 
 use engine_core::{Brick, Bricks, Schedule, Source};
-use engine_places::tonemap::Display;
+use engine_places_rendering::tonemap::Display;
 use engine_render::PostTone;
 
 pub use tonemap::Grading;

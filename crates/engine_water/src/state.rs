@@ -10,10 +10,10 @@ use engine_heightfield::tile::{Solid, TileJob};
 use engine_heightfield::{
     ErrorPyramid, Fall, HydrologyBake, Layers, Pyramid, Rivers, Stamp, TileKey, reaches,
 };
-use engine_places::ground::{
-    GroundRead, GroundWork, TerrainEntry, TerrainTiles, TileFace, TilesSince,
-};
-use engine_places::water::{WaterBody, WaterQuery, WaterSample, WaterTileErrors, Waterline};
+use engine_places_simulation::ground::GroundRead;
+use engine_places_simulation::water::{WaterBody, WaterQuery, WaterSample};
+use engine_places_world::ground::{GroundWork, TerrainEntry, TerrainTiles, TileFace, TilesSince};
+use engine_places_world::water::{WaterTileErrors, Waterline};
 use glam::{Vec2, Vec3};
 
 use crate::drawn::{DrawAsk, DrawnWater, is_dry};

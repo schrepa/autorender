@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Error, FrameTime, View};
 use engine_math::max;
-use engine_places::sky::{ADAPTATION_MOST, ADAPTATION_POWER, NOON_LIGHT, SkyLight};
-use engine_places::tonemap::Display;
+use engine_places_rendering::sky::{ADAPTATION_MOST, ADAPTATION_POWER, NOON_LIGHT, SkyLight};
+use engine_places_rendering::tonemap::Display;
 use engine_render::{
     AfterRead, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime, Pass,
     Prepare, ViewTarget,

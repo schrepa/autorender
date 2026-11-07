@@ -2,11 +2,11 @@ use std::any::TypeId;
 
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{Cut, DeviceLimits, FrameTime, PartDraws, Readback, View};
-use engine_places::ground::Foliage;
-use engine_places::shadows::{GROUND_TEXELS, Region as MapView, ShadowChanges, ShadowMaps};
-use engine_places::sun::Sun;
-use engine_places::wind::Wind;
+use engine_core::{Cut, DeviceLimits, FrameTime, PartDraws, Readback, View, ViewWind};
+use engine_places_rendering::shadows::{
+    ExtraCasters, GROUND_TEXELS, Region as MapView, ShadowChanges, ShadowMaps,
+};
+use engine_places_rendering::sun::Sun;
 use engine_render::{CameraUniform, DebugShown, pixel_angle};
 
 use crate::atlas::MapsKey;
@@ -183,7 +183,7 @@ impl ShadowPlan {
 pub(crate) fn plan_shadows(
     (settings, sky): (Res<ShadowSettings>, Res<SkyOcclusion>),
     (sun, view, limits, time): (Res<Sun>, Res<View>, Res<DeviceLimits>, Res<FrameTime>),
-    (foliage, wind, shown): (Res<Foliage>, Res<Wind>, Res<DebugShown>),
+    (casters, wind, shown): (Res<ExtraCasters>, Res<ViewWind>, Res<DebugShown>),
     mut feedback: ResMut<ShadowFeedback>,
     changes: Query<&ShadowChanges, Changed<ShadowChanges>>,
     (mut plan, mut piece): (ResMut<ShadowPlan>, ResMut<ShadowPiece>),
@@ -255,7 +255,7 @@ pub(crate) fn plan_shadows(
         if sky.darkens() { 1.0 } else { 0.0 },
     ];
     piece.set_if_neq(regions.lookup_piece(
-        (settings.tile_texels, foliage.crown_depth),
+        (settings.tile_texels, casters.crown_depth),
         (crate::debug::shown(*shown), open),
     ));
     plan.moving = plan.plan.moving.len() as u32;

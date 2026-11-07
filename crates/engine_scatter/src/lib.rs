@@ -16,9 +16,10 @@ mod smokes;
 mod systems;
 
 use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source};
-use engine_places::ground::{FarCover, Foliage, Occupancy, PlacedTiles};
-use engine_places::lighting::Ambient;
-use engine_places::shadows::ShadowCasters;
+use engine_places_rendering::lighting::Ambient;
+use engine_places_rendering::occlusion::OcclusionSource;
+use engine_places_rendering::shadows::{ExtraCasters, ShadowCasters};
+use engine_places_world::ground::{FarCover, Foliage, PlacedTiles};
 use engine_render::{Layer, MainView, RenderBricks};
 
 pub use settings::{
@@ -57,7 +58,8 @@ impl Brick for ScatterBrick {
             .generated(layouts::GENERATED)
             .fill::<Foliage>(Some(shaders::scatter::faces::foliage::MODULE))
             .fill::<PlacedTiles>(Some(shaders::scatter::faces::placed_tiles::MODULE))
-            .fill::<Occupancy>(None)
+            .fill::<OcclusionSource>(None)
+            .fill::<ExtraCasters>(None)
             .join::<Ambient>((), Some(shaders::scatter::ambient::MODULE))
             .join::<FarCover>((), Some(shaders::scatter::faces::far_cover::MODULE))
             .systems(

@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Cut, DeviceLimits, Error, Readback, View};
-use engine_places::lighting::Lighting;
-use engine_places::lights::{LIGHT_EXTERIOR, LIGHT_INTERIOR, LightRegion};
-use engine_places::probes::ProbeCaptures;
+use engine_places_rendering::lighting::Lighting;
+use engine_places_rendering::lights::{LIGHT_EXTERIOR, LIGHT_INTERIOR, LightRegion};
+use engine_places_rendering::probes::ProbeCaptures;
 use engine_render::{
     AfterRead, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime, Pass,
     Prepare,

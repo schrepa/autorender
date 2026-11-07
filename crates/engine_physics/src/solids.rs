@@ -3,11 +3,11 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{GlobalTransforms, Transform, TransformsSince, valid_global_matrix};
-use engine_places::physics::{
+use engine_places_simulation::physics::{
     Collider, ColliderShape, Collision, CollisionLayers, MAX_COLLIDER_EXTENT,
     MAX_COLLISION_COORDINATE, MIN_COLLIDER_EXTENT, PlacedPart,
 };
-use engine_places::solids::{Bounds, Bvh, FieldTile, SolidField, SolidSource};
+use engine_places_simulation::solids::{Bounds, Bvh, FieldTile, SolidField, SolidSource};
 use glam::{Mat3, Mat4, Vec3};
 
 #[derive(Clone, Copy, Debug, PartialEq)]

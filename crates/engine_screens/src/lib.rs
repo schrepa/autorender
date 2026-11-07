@@ -12,7 +12,7 @@ use engine_core::{
     Brick, Bricks, ComponentKind, Error, ErrorCode, LevelProgress, LevelRequest, Operation, Runs,
     SceneComponents, Schedule, Screens, Smoke, Source, TimeControl,
 };
-use engine_places::screens::Screen;
+use engine_places_rendering::screens::Screen;
 use serde::Deserialize;
 use serde_json::{Value, json};
 

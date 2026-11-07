@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Error, ErrorCode, Expected, Operation, SceneIds};
-use engine_places::physics::{BodyPush, RigidBody};
+use engine_places_simulation::physics::{BodyPush, RigidBody};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

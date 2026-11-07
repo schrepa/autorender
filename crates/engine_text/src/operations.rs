@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Error, Operation};
-use engine_places::text::{DEFAULT_TEXT_SIZE, Text, TextAlign, TextRun};
+use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, Text, TextAlign, TextRun};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

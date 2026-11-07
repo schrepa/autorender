@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
 use engine_core::{Error, ErrorCode, InvalidSetting, Rule, Setting};
-use engine_places::physics::{BodyPush, RigidBody};
-use engine_places::water::WaterKind;
+use engine_places_simulation::physics::{BodyPush, RigidBody};
+use engine_places_simulation::water::WaterKind;
 use glam::Vec3;
 use serde::Serialize;
 use serde_json::{Value, json};

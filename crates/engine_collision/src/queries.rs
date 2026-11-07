@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use engine_core::bounds::{self, MAX_SCAN_ENTITIES, default_limit};
 use engine_core::rule::range;
 use engine_core::{Error, ErrorCode, Expected, Filled, Operation, Rule, SceneIds, Setting, stated};
-use engine_places::physics::{
+use engine_places_simulation::physics::{
     Collide, ColliderShape, Collision, CollisionLayers, CollisionRay, MAX_COLLIDER_EXTENT,
     MIN_COLLIDER_EXTENT, PlacedPart, QueryFilter, SensorEvent, SensorEventKind, SensorFilter,
     ShapeCastOptions,

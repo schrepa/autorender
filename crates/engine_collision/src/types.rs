@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use engine_core::rule::Bound;
 use engine_core::{Error, ErrorCode, Expected, settings, stats};
-use engine_places::physics::{
+use engine_places_simulation::physics::{
     ColliderShape, CollisionRay, MAX_COLLIDER_EXTENT, MAX_COLLISION_COORDINATE,
     MIN_COLLIDER_EXTENT, ShapeCastOptions,
 };

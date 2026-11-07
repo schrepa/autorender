@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::settings;
-use engine_places::tonemap::Display;
+use engine_places_rendering::tonemap::Display;
 use glam::Vec3;
 
 settings! {

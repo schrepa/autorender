@@ -9,7 +9,7 @@ mod light;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Schedule, Source};
-use engine_places::sun::{Sun, SunPath};
+use engine_places_rendering::sun::{Sun, SunPath};
 
 pub use light::Sunlight;
 

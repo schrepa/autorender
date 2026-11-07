@@ -15,8 +15,8 @@ mod smokes;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source};
-use engine_places::lighting::SunBlockers;
-use engine_places::shadows::{CasterRoutes, ShadowCasters, ShadowMaps};
+use engine_places_rendering::lighting::SunBlockers;
+use engine_places_rendering::shadows::{CasterRoutes, ShadowCasters, ShadowMaps};
 use engine_render::{DebugModes, PostScene, RenderBricks};
 
 pub use settings::{ShadowSettings, ShadowStats, SkyOcclusion};

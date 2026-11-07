@@ -18,7 +18,7 @@ use engine_heightfield::layer::{
 };
 use engine_heightfield::path::{Bridge, PathSample};
 use engine_heightfield::{Layers, Pyramid, TileHeights};
-use engine_places::terrain::TerrainLayers;
+use engine_places_world::terrain::TerrainLayers;
 use glam::Vec2;
 use serde_json::Value;
 

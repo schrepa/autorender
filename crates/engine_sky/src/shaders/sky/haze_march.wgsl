@@ -1,6 +1,6 @@
 import package::engine::math::{pcg, unit};
 import package::engine::view::{PI, camera, eye_world, pixel_noise};
-import package::face::horizons::open_sky;
+import package::face::open_sky::open_sky;
 import package::face::shadows::air_shadow;
 import package::face::sun::{sun_color, sun_direction};
 import package::sky::air::air_light;

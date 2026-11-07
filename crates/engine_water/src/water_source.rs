@@ -1,7 +1,7 @@
 use engine_core::math::{GRAVITY, max, min};
 use engine_heightfield::{Fall, Pyramid};
-use engine_places::ground::GroundRead;
-use engine_places::water::{WaterKind, WaterSample};
+use engine_places_simulation::ground::GroundRead;
+use engine_places_simulation::water::{WaterKind, WaterSample};
 use glam::{Vec2, Vec3};
 
 use crate::WaterPoint;

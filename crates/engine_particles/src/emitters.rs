@@ -4,7 +4,7 @@ use engine_core::{
     Allowed, Cut, Expected, FrameTime, GlobalTransforms, InvalidSetting, Nearest, Rule, View,
     fields, gpu_struct, settings, stats,
 };
-use engine_places::particles::{
+use engine_places_rendering::particles::{
     MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleBursts, ParticleEmitter,
     ParticleLook, ParticleShape, QueuedBurst,
 };

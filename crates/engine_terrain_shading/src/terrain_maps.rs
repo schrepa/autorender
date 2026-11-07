@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use engine_core::{AssetLibrary, Error, Texture, TextureFormat, TextureHandle};
-use engine_places::ground::{SurfaceMaps, TerrainTiles};
+use engine_places_world::ground::{SurfaceMaps, TerrainTiles};
 use engine_render::{Install, Lifetime, Prepare, Sampler, SamplerDesc, wgpu};
 
 use crate::terrain::TerrainGpu;

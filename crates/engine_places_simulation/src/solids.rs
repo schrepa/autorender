@@ -196,7 +196,7 @@ struct Node {
 const NONE: usize = usize::MAX;
 const REFIT_LIMIT: f32 = 1.5;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Bvh {
     nodes: Vec<Node>,
     indices: Vec<usize>,

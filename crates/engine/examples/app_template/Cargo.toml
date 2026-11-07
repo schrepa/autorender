@@ -28,7 +28,7 @@ engine.workspace = true
 engine_core.workspace = true
 engine_ecs.workspace = true
 engine_fly_camera.workspace = true
-engine_standard.workspace = true
+engine_standard_rendering.workspace = true
 glam.workspace = true
 serde_json.workspace = true
 

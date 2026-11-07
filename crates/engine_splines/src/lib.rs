@@ -6,7 +6,7 @@ mod spline_mesh;
 mod views;
 
 use engine_core::{Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source};
-use engine_places::splines::SplineMesh;
+use engine_places_world::splines::SplineMesh;
 
 pub struct SplinesBrick;
 

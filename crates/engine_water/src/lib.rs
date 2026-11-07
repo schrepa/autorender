@@ -9,6 +9,7 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod debug;
 mod drawn;
+mod eye;
 pub mod flow;
 mod flow_step;
 mod gpu;
@@ -37,8 +38,9 @@ mod work;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Cut, JobKind, Jobs, Schedule, Source, Spawner, stats};
-use engine_places::ground::Heightfield;
-use engine_places::water::{WaterWork, Waterline};
+use engine_places_rendering::sky::EyeMedium;
+use engine_places_world::ground::Heightfield;
+use engine_places_world::water::{WaterWork, Waterline};
 use engine_render::{DebugModes, DebugShown, RenderBricks};
 
 pub(crate) use engine_codec as codec;
@@ -117,6 +119,7 @@ impl Brick for WaterBrick {
             .piece::<gpu::WaterPiece>()
             .fill::<Waterline>(Some(shaders::water::faces::water::MODULE))
             .fill::<WaterWork>(None)
+            .fill::<EyeMedium>(None)
             .observation::<views::WaterFlowQuery>();
         for (index, mode) in debug::modes().enumerate() {
             let wgsl = (index == 0).then_some(shaders::water::modes::MODULE);
@@ -138,6 +141,7 @@ impl Brick for WaterBrick {
                     water_particles::plan_particles,
                     state::publish_waterline,
                     state::publish_bodies,
+                    eye::publish_medium,
                     publish_piece,
                     water_stats,
                 ),
@@ -241,6 +245,7 @@ fn despawn_water(
     (mut state, mut feedback): (ResMut<WaterState>, ResMut<SettleFeedback>),
     mut stats: ResMut<WaterStats>,
     mut line: ResMut<Waterline>,
+    mut medium: ResMut<EyeMedium>,
     mut jobs: Jobs,
     mut spawner: Spawner<WaterBrick>,
 ) {
@@ -255,4 +260,5 @@ fn despawn_water(
     *stats = WaterStats::default();
     line.watered.clear();
     line.errors.clear();
+    *medium = EyeMedium::default();
 }

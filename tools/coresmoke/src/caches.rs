@@ -93,9 +93,14 @@ enum Edit {
 }
 
 fn engine() -> Result<(Engine, Assets), String> {
-    let mut engine =
-        engine::engine(|list| list.with::<MeshesBrick>().places(engine_places::PLACES))
-            .map_err(|error| error.to_string())?;
+    let mut engine = engine::engine(|list| {
+        list.with::<MeshesBrick>()
+            .places(engine_places::PLACES)
+            .places(engine_places_rendering::PLACES)
+            .places(engine_places_simulation::PLACES)
+            .places(engine_places_world::PLACES)
+    })
+    .map_err(|error| error.to_string())?;
     engine.app.add_systems(
         Schedule::FixedSimulation.label(),
         drift.ambiguous_with_all(),

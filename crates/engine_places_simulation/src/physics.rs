@@ -34,8 +34,8 @@ impl ColliderShape {
         } else {
             Err(
                 Error::new(ErrorCode::CollisionInvalidShape, "$.collision").range(
-                    engine_heightfield::bound(MIN_COLLIDER_EXTENT),
-                    engine_heightfield::bound(MAX_COLLIDER_EXTENT),
+                    f64::from(MIN_COLLIDER_EXTENT),
+                    f64::from(MAX_COLLIDER_EXTENT),
                 ),
             )
         }

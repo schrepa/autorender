@@ -1,6 +1,6 @@
 use super::*;
 use engine_heightfield::tile::{MacroCauses, Ramp, Remap, SteepLayer, setting_error, terrain_error};
-use engine_places::solids::SolidSource;
+use engine_places_simulation::solids::SolidSource;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainSurface {

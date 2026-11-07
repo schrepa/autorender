@@ -10,8 +10,8 @@ mod light;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Schedule, Source, gpu_struct};
-use engine_places::lighting::Lighting;
-use engine_places::sky::SkyLight;
+use engine_places_rendering::lighting::Lighting;
+use engine_places_rendering::sky::SkyLight;
 
 pub use highlights::Highlights;
 pub use light::SurfaceLight;

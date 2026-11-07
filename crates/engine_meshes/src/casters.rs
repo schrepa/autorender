@@ -3,7 +3,7 @@ use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, DeviceLimits, MaterialHandle, MeshHandle,
     ResidentMesh, Spawner,
 };
-use engine_places::shadows::{CasterMap, Refresh, Region, ShadowChanges, ShadowMaps};
+use engine_places_rendering::shadows::{CasterMap, Refresh, Region, ShadowChanges, ShadowMaps};
 
 use crate::MeshesBrick;
 use crate::batches::BatchPlan;

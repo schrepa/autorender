@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::FixedTime;
-use engine_places::water::WaterObstacles;
+use engine_places_simulation::water::WaterObstacles;
 use glam::Vec2;
 
 use crate::state::WaterState;

@@ -14,7 +14,7 @@ use engine_core::{
     Brick, Bricks, ComponentKind, Error, ErrorCode, Runs, SceneComponents, SceneCx, Schedule,
     Shown, Smoke, Source, View, gpu_struct, settings, stats,
 };
-use engine_places::text::{DEFAULT_TEXT_SIZE, FontId, Text, TextAlign};
+use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Text, TextAlign};
 use engine_render::{
     Bind, Buffer, DepthUse, Draw, GpuPart, Install, Layer, Lifetime, OverlayStack, Pipeline,
     Prepare, RenderBricks, RenderPipeline, Shape, Texture, wgpu,

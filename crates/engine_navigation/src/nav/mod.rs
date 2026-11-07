@@ -6,7 +6,7 @@ use engine_codec::{self as codec, Reader, Writer, record, tagged};
 use engine_core::{Error, ErrorCode, fields};
 use engine_math::collections::HashMap;
 use engine_math::{max, min};
-use engine_places::ground::{
+use engine_places_simulation::ground::{
     GroundBridge, GroundGrid, GroundObstacle, MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey,
 };
 use glam::{Vec2, Vec3};

@@ -154,7 +154,7 @@ pub struct Lights;
 
 impl Slot for Lights {
     const NAME: &'static str = "lights";
-    const WGSL: Option<&'static str> = Some(contract!(
+    const WGSL: Option<&'static str> = Some(engine_places::contract!(
         "places/lights.wgsl",
         LIGHT_INTERIOR,
         LIGHT_EXTERIOR,

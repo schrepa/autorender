@@ -32,7 +32,7 @@ use engine_core::{
     Brick, Bricks, Camera, EvenDisabled, FrameTime, GlobalTransforms, Runs, SceneContext, Schedule,
     Smoke, Source, Spawner, settings, stats,
 };
-use engine_places::streaming::StreamingFocus;
+use engine_places_world::streaming::StreamingFocus;
 
 use instance::{Content, Tree};
 

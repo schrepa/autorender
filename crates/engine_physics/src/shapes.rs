@@ -1,4 +1,4 @@
-use engine_places::physics::ColliderShape;
+use engine_places_simulation::physics::ColliderShape;
 use glam::{Mat3, Quat, Vec3};
 use rapier3d::prelude::{Pose, SharedShape};
 

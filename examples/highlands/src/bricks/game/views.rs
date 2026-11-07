@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Camera, MoveInput, Projection, Transform, math};
-use engine_places::ground::Ground;
-use engine_places::physics::RigidBody;
+use engine_places_simulation::ground::Ground;
+use engine_places_simulation::physics::RigidBody;
 use glam::{Vec2, Vec3};
 
 const EYE_HEIGHT: f32 = 1.7;

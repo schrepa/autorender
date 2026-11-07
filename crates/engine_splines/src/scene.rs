@@ -1,5 +1,5 @@
 use engine_core::{Error, ErrorCode, Expected, MaterialHandle, MeshHandle, Reach};
-use engine_places::splines::SplineMesh;
+use engine_places_world::splines::SplineMesh;
 use serde::Serialize;
 use serde_json::{Value, json};
 

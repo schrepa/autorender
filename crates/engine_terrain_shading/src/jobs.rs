@@ -5,7 +5,7 @@ use engine_core::{ErrorCode, Job, JobCx, JobKind, RecordKey};
 use engine_heightfield::layer::LayerKind;
 use engine_heightfield::tile::{Generator, Recipe, Tile};
 use engine_heightfield::{Pyramid, Stamp, TILE_QUADS, TileKey, reaches, reaches_span};
-use engine_places::terrain::TerrainLayers;
+use engine_places_world::terrain::TerrainLayers;
 
 use crate::bounce::{MAX_PROBES, TerrainBounce, bounce};
 use crate::lighting::{Ground, TerrainLighting, light};

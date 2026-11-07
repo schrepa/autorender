@@ -7,11 +7,13 @@ use engine_core::{
     Error, FixedTime, FrameTime, GlobalTransforms, Section, Transform, TransformsSince,
 };
 use engine_math::collections::HashMap;
-use engine_places::physics::{
+use engine_places::sweeps::{Sweep, Sweeps};
+use engine_places_simulation::physics::{
     Collide, Collider, ColliderShape, Collision, CollisionRay, QueryFilter, RayHit, SLIDE_STEPS,
-    SensorEvent, SensorEventKind, SensorPair, ShapeCastOptions, ShapeHit, Slid, SlideHit,
+    SensorEvent, SensorEventKind, SensorFilter, SensorPair, ShapeCastOptions, ShapeHit, Slid,
+    SlideHit,
 };
-use engine_places::solids::{Bounds, Bvh, SolidField, SolidSource};
+use engine_places_simulation::solids::{Bounds, Bvh, SolidField, SolidSource};
 use glam::{Mat4, Vec2, Vec3};
 
 use crate::{
@@ -46,13 +48,21 @@ struct Entry {
     affine: AffineShape,
 }
 
+struct Solids {
+    entries: Arc<Vec<Entry>>,
+    bvh: Arc<Bvh>,
+    sources: Vec<Arc<SolidField>>,
+    limit: usize,
+    ready: Result<(), Fault>,
+}
+
 #[derive(Default)]
 pub struct CollisionWorld {
     config: CollisionConfig,
     held: HashMap<Entity, Option<u32>>,
-    entries: Vec<Entry>,
+    entries: Arc<Vec<Entry>>,
     bounds: Vec<Bounds>,
-    bvh: Bvh,
+    bvh: Arc<Bvh>,
     moved: u64,
     disabled: u64,
     next_pairs: Vec<SensorPair>,
@@ -89,6 +99,16 @@ impl CollisionWorld {
 
     pub(crate) fn ground_owners(&self) -> impl Iterator<Item = Entity> + '_ {
         terrain::owners(&self.sources)
+    }
+
+    fn solids(&self) -> Solids {
+        Solids {
+            entries: Arc::clone(&self.entries),
+            bvh: Arc::clone(&self.bvh),
+            sources: self.sources.clone(),
+            limit: self.config.query_candidates(),
+            ready: self.ready(),
+        }
     }
 
     fn ready(&self) -> Result<(), Fault> {
@@ -153,9 +173,10 @@ impl CollisionWorld {
         self.report.overflow_colliders = count.saturating_sub(limit);
         let held = std::mem::take(&mut self.held);
         self.held.reserve(admitted);
-        self.entries.clear();
+        let entries = Arc::make_mut(&mut self.entries);
+        entries.clear();
         self.bounds.clear();
-        self.entries.reserve_exact(admitted);
+        entries.reserve_exact(admitted);
         self.bounds.reserve_exact(admitted);
         let configuration_valid = config.check().is_ok();
         let mut same_leaves = true;
@@ -165,12 +186,12 @@ impl CollisionWorld {
                 .filter(|_| configuration_valid)
                 .map(|affine| {
                     self.bounds.push(affine.bounds);
-                    self.entries.push(Entry {
+                    entries.push(Entry {
                         entity,
                         collider: *collider,
                         affine,
                     });
-                    (self.entries.len() - 1) as u32
+                    (entries.len() - 1) as u32
                 });
             if slot.is_none() {
                 self.report.invalid_colliders += 1;
@@ -181,7 +202,8 @@ impl CollisionWorld {
         same_leaves &= held.len() == self.held.len();
         {
             let _profile = span("collision", "bvh_update");
-            self.bvh.update(&self.bounds, same_leaves);
+            Arc::make_mut(&mut self.bvh)
+                .update(&self.bounds, same_leaves);
         }
         self.report.active_colliders = self.entries.len();
         self.report.bvh_nodes = self.bvh.node_count();
@@ -217,9 +239,9 @@ impl CollisionWorld {
             match (slot, read(globals, data)) {
                 (Some(slot), Some(affine)) => {
                     let slot = slot as usize;
-                    self.entries[slot].affine = affine;
+                    Arc::make_mut(&mut self.entries)[slot].affine = affine;
                     self.bounds[slot] = affine.bounds;
-                    self.bvh.move_leaf(slot, affine.bounds);
+                    Arc::make_mut(&mut self.bvh).move_leaf(slot, affine.bounds);
                 }
                 (None, None) => {}
                 (Some(_), None) | (None, Some(_)) => return false,
@@ -227,7 +249,7 @@ impl CollisionWorld {
         }
         if self.bvh.degraded() {
             let _profile = span("collision", "bvh_rebuild");
-            self.bvh.rebuild(&self.bounds);
+            Arc::make_mut(&mut self.bvh).rebuild(&self.bounds);
         }
         true
     }
@@ -271,59 +293,6 @@ impl CollisionWorld {
         .flatten()
         {
             if nearest.is_none_or(|old| (hit.distance, hit.entity) < (old.distance, old.entity)) {
-                nearest = Some(hit);
-            }
-        }
-        Ok(nearest)
-    }
-
-    fn nearest_cast(
-        &self,
-        shape: ColliderShape,
-        matrix: Mat4,
-        displacement: Vec3,
-        filter: QueryFilter,
-        options: ShapeCastOptions,
-    ) -> Result<Option<ShapeHit>, Fault> {
-        let _profile = span("collision.query", "shape_cast");
-        let mut precise = Aggregate::new("collision.narrow", "shape_cast_tests");
-        let mut broad = Aggregate::new("collision.broad", "bvh_traversal");
-        check_shape_cast(shape, matrix, displacement, options)?;
-        self.ready()?;
-        let shape = AffineShape::new(shape, matrix)?;
-        let swept = shape
-            .bounds
-            .swept(displacement)
-            .expanded(options.target_distance);
-        let mut nearest: Option<ShapeHit> = None;
-        for entry in candidates(
-            (&self.bvh, &self.entries),
-            self.config.query_candidates(),
-            |bounds| bounds.overlaps(swept),
-            filter,
-            &mut broad,
-        ) {
-            let entry = entry?;
-            if let Some((fraction, point, normal, started_overlapping)) =
-                precise.measure(|| Narrow::cast(&shape, &entry.affine, displacement, options))?
-            {
-                let hit = ShapeHit {
-                    entity: entry.entity,
-                    fraction,
-                    point,
-                    normal,
-                    started_overlapping,
-                    placed: None,
-                };
-                if nearest.is_none_or(|old| (fraction, entry.entity) < (old.fraction, old.entity)) {
-                    nearest = Some(hit);
-                }
-            }
-        }
-        let solid = placed::cast(&self.sources, &shape, displacement, filter, options)?;
-        let ground = terrain::cast(&self.sources, &shape, displacement, filter, options)?;
-        for hit in [solid, ground].into_iter().flatten() {
-            if nearest.is_none_or(|old| (hit.fraction, hit.entity) < (old.fraction, old.entity)) {
                 nearest = Some(hit);
             }
         }
@@ -556,8 +525,14 @@ impl Collide for CollisionWorld {
         filter: QueryFilter,
         options: ShapeCastOptions,
     ) -> Result<Option<ShapeHit>, Error> {
-        self.nearest_cast(shape, matrix, displacement, filter, options)
-            .map_err(Fault::error)
+        cast(
+            (&self.bvh, &self.entries, &self.sources),
+            (self.config.query_candidates(), self.ready()),
+            (shape, matrix, displacement),
+            filter,
+            options,
+        )
+        .map_err(Fault::error)
     }
 
     fn slide(
@@ -617,6 +592,82 @@ impl Collide for CollisionWorld {
     fn holds(&self, at: Vec2) -> bool {
         self.sources.iter().any(|source| source.holds(at))
     }
+}
+
+impl Sweep for Solids {
+    fn sphere(&self, radius: f32, from: Vec3, along: Vec3, ignore: Entity) -> Option<f32> {
+        let filter = QueryFilter {
+            exclude: Some(ignore),
+            sensors: SensorFilter::Exclude,
+            ..QueryFilter::default()
+        };
+        let options = ShapeCastOptions {
+            stop_at_penetration: false,
+            target_distance: 0.0,
+        };
+        cast(
+            (&self.bvh, &self.entries, &self.sources),
+            (self.limit, self.ready),
+            (ColliderShape::Sphere { radius }, Mat4::from_translation(from), along),
+            filter,
+            options,
+        )
+        .ok()
+        .flatten()
+        .map(|hit| hit.fraction)
+    }
+}
+
+fn cast(
+    (bvh, entries, sources): (&Bvh, &[Entry], &[Arc<SolidField>]),
+    (limit, ready): (usize, Result<(), Fault>),
+    (shape, matrix, displacement): (ColliderShape, Mat4, Vec3),
+    filter: QueryFilter,
+    options: ShapeCastOptions,
+) -> Result<Option<ShapeHit>, Fault> {
+    let _profile = span("collision.query", "shape_cast");
+    let mut precise = Aggregate::new("collision.narrow", "shape_cast_tests");
+    let mut broad = Aggregate::new("collision.broad", "bvh_traversal");
+    check_shape_cast(shape, matrix, displacement, options)?;
+    ready?;
+    let shape = AffineShape::new(shape, matrix)?;
+    let swept = shape
+        .bounds
+        .swept(displacement)
+        .expanded(options.target_distance);
+    let mut nearest: Option<ShapeHit> = None;
+    for entry in candidates(
+        (bvh, entries),
+        limit,
+        |bounds| bounds.overlaps(swept),
+        filter,
+        &mut broad,
+    ) {
+        let entry = entry?;
+        if let Some((fraction, point, normal, started_overlapping)) =
+            precise.measure(|| Narrow::cast(&shape, &entry.affine, displacement, options))?
+        {
+            let hit = ShapeHit {
+                entity: entry.entity,
+                fraction,
+                point,
+                normal,
+                started_overlapping,
+                placed: None,
+            };
+            if nearest.is_none_or(|old| (fraction, entry.entity) < (old.fraction, old.entity)) {
+                nearest = Some(hit);
+            }
+        }
+    }
+    let solid = placed::cast(sources, &shape, displacement, filter, options)?;
+    let ground = terrain::cast(sources, &shape, displacement, filter, options)?;
+    for hit in [solid, ground].into_iter().flatten() {
+        if nearest.is_none_or(|old| (hit.fraction, hit.entity) < (old.fraction, old.entity)) {
+            nearest = Some(hit);
+        }
+    }
+    Ok(nearest)
 }
 
 fn candidates<'a>(
@@ -703,7 +754,7 @@ pub(crate) fn sync(
     config: Res<CollisionConfig>,
     (frame, tick): (Res<FrameTime>, Res<FixedTime>),
     mut collision: ResMut<Collision>,
-    mut stats: ResMut<CollisionStats>,
+    (mut stats, mut sweeps): (ResMut<CollisionStats>, ResMut<Sweeps>),
 ) {
     let world = installed(&mut collision);
     world.refresh(
@@ -713,6 +764,7 @@ pub(crate) fn sync(
         &globals,
     );
     stats.set_if_neq(world.stats());
+    sweeps.0 = Box::new(world.solids());
 }
 
 pub(crate) fn refresh(
@@ -721,7 +773,7 @@ pub(crate) fn refresh(
     config: Res<CollisionConfig>,
     (frame, tick): (Res<FrameTime>, Res<FixedTime>),
     mut collision: ResMut<Collision>,
-    mut stats: ResMut<CollisionStats>,
+    (mut stats, mut sweeps): (ResMut<CollisionStats>, ResMut<Sweeps>),
 ) {
     let world = installed(&mut collision);
     world.sync_ground(&sources);
@@ -732,6 +784,7 @@ pub(crate) fn refresh(
         &globals,
     );
     stats.set_if_neq(world.stats());
+    sweeps.0 = Box::new(world.solids());
 }
 
 pub(crate) fn detect(mut collision: ResMut<Collision>, time: Res<FixedTime>) {

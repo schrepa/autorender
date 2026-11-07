@@ -8,14 +8,9 @@ publish.workspace = true
 [dependencies]
 engine_place.workspace = true
 engine_ecs.workspace = true
-engine_codec.workspace = true
-engine_heightfield.workspace = true
 engine_math.workspace = true
 glam.workspace = true
-parry3d.workspace = true
-schemars.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 
 [build-dependencies]
 engine_sources.workspace = true

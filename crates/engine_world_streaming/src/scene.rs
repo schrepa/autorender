@@ -8,7 +8,7 @@ use engine_core::{
     MAX_ID_BYTES, Placed, Placement, Rule, SceneContext, ScenePath, Section, Setting, Transform,
     fields, is_id, math, parse_value_at, state, valid_global_matrix,
 };
-use engine_places::ground::Grounded;
+use engine_places_simulation::ground::Grounded;
 use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

@@ -1,12 +1,12 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::math::{max, min};
-use engine_core::{Camera, Error, Filled, FrameTime, View};
-use engine_places::exposure::Exposure;
-use engine_places::probes::{ProbeCaptures, ProbeView, ProbeViews};
-use engine_places::sun::{Sun, SunPath};
-use engine_places::tonemap::Display;
-use engine_places::wind::Wind;
+use engine_core::{Camera, Error, Filled, FrameTime, View, ViewWind};
+use engine_places_rendering::exposure::Exposure;
+use engine_places_rendering::probes::{ProbeCaptures, ProbeView, ProbeViews};
+use engine_places_rendering::sky::EyeMedium;
+use engine_places_rendering::sun::{Sun, SunPath};
+use engine_places_rendering::tonemap::Display;
 use engine_render::{
     AfterRead, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse, Draw, Encode,
     GpuPart, Install, Lifetime, MainView, Pass, Pipeline, Prepare, RenderPipeline, Sampler,
@@ -21,7 +21,6 @@ use crate::haze::{Haze, HazeFrame, HazePlan};
 use crate::settings::{Clouds, Haze as HazeSettings, NightSky, Sky, haze_runs};
 use crate::tables::sky::{MULTIPLE_SIZE, SkyTables, TRANSMITTANCE_SIZE};
 use crate::tables::{StaticTable, StaticTables};
-use crate::under_eye::SurfaceUnderEye;
 use crate::views::SkyExposure;
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -307,13 +306,13 @@ type SkyLights<'w> = (
     Res<'w, Sun>,
     Res<'w, SunPath>,
     Res<'w, Display>,
-    Res<'w, Wind>,
+    Res<'w, ViewWind>,
     Filled<'w, Exposure>,
 );
 
 type SkyFrame<'w> = (
     Res<'w, StaticTables>,
-    Res<'w, SurfaceUnderEye>,
+    Res<'w, EyeMedium>,
     Res<'w, View>,
     Res<'w, Camera>,
     Res<'w, FrameTime>,
@@ -322,7 +321,7 @@ type SkyFrame<'w> = (
 pub(crate) fn plan_sky(
     (sky, clouds, haze, night): SkySections<'_>,
     (sun, path, display, wind, metered): SkyLights<'_>,
-    (tables, under, view, camera, time): SkyFrame<'_>,
+    (tables, medium, view, camera, time): SkyFrame<'_>,
     mut plan: ResMut<SkyPlan>,
 ) {
     let plan = &mut *plan;
@@ -345,7 +344,7 @@ pub(crate) fn plan_sky(
     (plan.piece.cloud_shadow, plan.piece.cloud_layer) = shadow_lighting(&clouds, eye);
     plan.piece.wind = [wind.velocity[0], wind.velocity[1], 0.0, 0.0];
     plan.clouds.prepare(
-        (&clouds, tables.cloud_noise(), (eye, under.height), seconds),
+        (&clouds, tables.cloud_noise(), (eye, medium.surface), seconds),
         (&*sun, &plan.piece),
     );
     plan.clouds.prepare_view(

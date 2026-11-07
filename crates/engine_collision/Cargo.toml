@@ -12,6 +12,7 @@ attribution = ["engine_core/attribution"]
 engine_ecs.workspace = true
 engine_core.workspace = true
 engine_places.workspace = true
+engine_places_simulation.workspace = true
 engine_math.workspace = true
 glam.workspace = true
 parry3d.workspace = true

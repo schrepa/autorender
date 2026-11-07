@@ -3,10 +3,10 @@ use engine_core::{
     Cut, Expected, GlobalTransforms, InvalidSetting, Nearest, Rule, Shown, View, fields, settings,
     stats,
 };
-use engine_places::lights::{
+use engine_places::meshes::Instances;
+use engine_places_rendering::lights::{
     LightRegion, LocalLight, MAX_LIGHT_RANGE, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES,
 };
-use engine_places::meshes::Instances;
 use glam::{Mat4, Vec3};
 
 use crate::part::LightTotals;

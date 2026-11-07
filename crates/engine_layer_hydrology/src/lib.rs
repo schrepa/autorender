@@ -19,7 +19,7 @@ use engine_heightfield::layer::{
     LayerFiles, LayerKind, Made, Place, TerrainLayer, maps, no_files, no_points, same_as,
 };
 use engine_heightfield::{GivenRiver, HydrologyBake, Layers, Pyramid, TileHeights};
-use engine_places::terrain::TerrainLayers;
+use engine_places_world::terrain::TerrainLayers;
 use glam::Vec2;
 use serde::Serialize;
 use serde_json::Value;

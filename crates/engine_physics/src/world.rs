@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Filled, FixedTime, InterpolateTransform, Parent, Transform};
-use engine_places::physics::{BodyMotion, BodyPush, Collider, RigidBody};
-use engine_places::water::{WaterBody, WaterObstacle};
-use engine_places::wind::Wind;
+use engine_places_simulation::physics::{BodyMotion, BodyPush, Collider, RigidBody};
+use engine_places_simulation::water::{WaterBody, WaterObstacle};
+use engine_places_simulation::wind::Wind;
 use glam::{Quat, Vec3};
 use rapier3d::prelude as rp;
 

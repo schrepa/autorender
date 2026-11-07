@@ -3,7 +3,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use engine_core::math::clamp;
-use engine_places::audio::Bus;
+use engine_places_rendering::audio::Bus;
 use glam::{Mat3, Quat, Vec3};
 use kira::listener::ListenerHandle;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};

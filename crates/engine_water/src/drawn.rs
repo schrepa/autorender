@@ -11,7 +11,7 @@ use engine_heightfield::tile::{
     Footprint, PATCH_QUADS, PATCHES_PER_TILE, TILE_STRIDE, TileJob, bed_at,
 };
 use engine_heightfield::{ErrorPyramid, TileKey};
-use engine_places::ground::GroundWork;
+use engine_places_world::ground::GroundWork;
 use glam::Vec2;
 
 use crate::flow::{Levels, rivers_over};

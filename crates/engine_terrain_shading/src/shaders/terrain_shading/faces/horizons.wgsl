@@ -1,7 +1,5 @@
 import package::face::sun::sun_direction;
 import package::generated::pieces::terrain_shading::piece;
-import package::place::horizons::OpenSky;
-import package::terrain_shading::bounce::{bounce_at, bounce_seen};
 import package::terrain_shading::horizons::{horizon_crest, horizon_records, horizon_turn};
 import package::generated::terrain_shading::{HORIZON_RECORDS, HORIZON_RECORD_VECTORS};
 
@@ -30,16 +28,4 @@ fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
         }
     }
     return visible;
-}
-
-fn open_sky(world: vec3<f32>) -> OpenSky {
-    var open: OpenSky;
-    let at = bounce_at(world, false);
-    if at.texel.x < 0.0 {
-        return open;
-    }
-    open.held = true;
-    open.seen = bounce_seen(at);
-    open.beyond = saturate(at.layer - 1.0);
-    return open;
 }

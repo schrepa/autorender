@@ -2,7 +2,9 @@ use bevy_ecs::prelude::*;
 use engine_core::math::{GRAVITY, clamp, max};
 use engine_core::{RecordKey, Spawner, Transform};
 use engine_heightfield::{Fall, TileKey};
-use engine_places::particles::{ParticleBlend, ParticleEmitter, ParticleLook, ParticleShape};
+use engine_places_rendering::particles::{
+    ParticleBlend, ParticleEmitter, ParticleLook, ParticleShape,
+};
 use glam::{Vec2, Vec3};
 
 use crate::state::{WaterState, WaterTerrain};
