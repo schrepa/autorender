@@ -1,11 +1,13 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
-use engine_core::{Detail, DrawnTable, Explain, ExplainAsk, ExplainRecord, FrameTime};
+use engine_core::{
+    Detail, DrawnTable, Explain, ExplainAsk, ExplainRecord, FrameTime, OcclusionCulling,
+    SubpixelCulling,
+};
 use engine_places::impostors::Impostors;
 
 use crate::layouts::{LOD_LEVELS, LodFade};
 use crate::presentation::PresentationTotals;
-use crate::settings::{OcclusionCulling, SubpixelCulling};
 
 type Drawn<'w> = (Res<'w, DrawnTable>, Res<'w, PresentationTotals>, Res<'w, FrameTime>);
 

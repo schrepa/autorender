@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Cut, DeviceLimits, Error, GpuBits, Readable, Readback, ViewFacts, Views};
+use engine_core::{Cut, DeviceLimits, Error, GpuBits, Readable, Readback, Views};
 use engine_places_rendering::lighting::Lighting;
 use engine_places_rendering::lights::{LIGHT_EXTERIOR, LIGHT_INTERIOR, LightRegion};
 use engine_places_rendering::probes::ProbeCaptures;
@@ -30,7 +30,7 @@ const CLUSTER_BYTES: u64 = size_of::<Clusters>() as u64;
 
 impl Clusters {
     fn new(
-        view_projection: Mat4,
+        (view_projection, view): (Mat4, u32),
         width: u32,
         height: u32,
         distance: f32,
@@ -59,8 +59,7 @@ impl Clusters {
         let slice_scale = SLICES as f32 / engine_math::max((far / start).log2(), 1.0e-3);
         let tile = |size: u32, tiles: u32| size.max(1).div_ceil(tiles) as f32;
         Self {
-            view_projection: view_projection.to_cols_array_2d(),
-            depth: depth.to_array(),
+            view: [view, 0, 0, 0],
             projection: [scale_x, scale_y, start, far],
             grid: [
                 tile(width, TILES_X),
@@ -222,15 +221,18 @@ impl LightsGpu {
     fn place_headers(
         &mut self,
         settings: &LocalLightSettings,
-        main: &ViewFacts,
+        views: &Views,
         captures: &ProbeCaptures,
         shaped: bool,
     ) {
-        let size = main.render;
+        let Some(main) = views.drawn().first().filter(|main| main.owner.is_none()) else {
+            return;
+        };
+        let size = main.size;
         let flags = shading_flags(shaped, self.regions);
         let capacity = self.index_capacity();
         let mut header = Clusters::new(
-            main.view_projection,
+            (main.view_projection, 0),
             size.x,
             size.y,
             settings.distance,
@@ -246,8 +248,16 @@ impl LightsGpu {
             if lit >= self.views {
                 continue;
             }
+            let Some((drawn, view)) = views
+                .drawn()
+                .iter()
+                .enumerate()
+                .find(|(_, view)| view.capture && view.local == face.face)
+            else {
+                continue;
+            };
             let mut header = Clusters::new(
-                face.view,
+                (view.view_projection, drawn as u32),
                 captures.size,
                 captures.size,
                 settings.distance,
@@ -380,9 +390,7 @@ impl GpuPart for LightsGpu {
             cx.write(self.inputs, 0, &self.staged);
         }
         self.count = count as u32;
-        if let Some(main) = views.main() {
-            self.place_headers(&settings, main, &captures, lighting.highlights);
-        }
+        self.place_headers(&settings, &views, &captures, lighting.highlights);
         cx.write(self.clusters, 0, &self.headers);
         if count == 0 {
             return;

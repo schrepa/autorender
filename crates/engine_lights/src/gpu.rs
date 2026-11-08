@@ -1,7 +1,6 @@
 engine_core::gpu_struct! {
     pub(crate) struct Clusters {
-        pub(crate) view_projection: [[f32; 4]; 4],
-        pub(crate) depth: [f32; 4],
+        pub(crate) view: [u32; 4],
         pub(crate) projection: [f32; 4],
         pub(crate) grid: [f32; 4],
         pub(crate) counts: [u32; 4],

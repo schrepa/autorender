@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use engine_core::{DeviceLimits, Error, StoreId};
 use engine_render::{
     Access, Allocation, Attach, Bind, Buffer, DEPTH_FORMAT, DepthUse, Encode, GpuPart, Install,
-    Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, wgpu,
+    Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, wgpu,
 };
 
 use crate::ProbePass;
@@ -79,7 +79,7 @@ impl GpuPart for ProbesGpu {
         let maps = cx.texture("probe_maps", PROBE_FORMAT, Lifetime::Kept);
         let depth = cx.texture("depth", DEPTH_FORMAT, Lifetime::Kept);
         let words = cx.buffer("words", Lifetime::Kept);
-        let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
+        let sampler = cx.sampler(engine_core::Sampler::LINEAR_CLAMP);
         cx.frame(sample::PROBE_WORDS, Bind::Buffer(words))?;
         cx.frame(sample::PROBE_MAPS, Bind::Texture(maps))?;
         cx.frame(sample::PROBE_SAMPLER, Bind::Sampler(sampler))?;

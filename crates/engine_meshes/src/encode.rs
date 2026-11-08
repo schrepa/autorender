@@ -1,7 +1,7 @@
-use engine_render::{Attach, Count, Encode, PYRAMID_GROUP, Pass};
+use engine_render::{Attach, Count, Encode, Pass};
 
 use crate::gpu::{Compaction, MeshesGpu};
-use crate::layouts::{ARGS_GROUP, BLEND_GROUP, CULL_GROUP, GROUP, PARENT_GROUP};
+use crate::layouts::{ARGS_GROUP, BLEND_GROUP, CULL_GROUP, GROUP};
 use crate::presentation::PHASE_TWO;
 
 impl MeshesGpu {
@@ -48,17 +48,6 @@ impl MeshesGpu {
             cx.clear(self.presented.counts);
         }
         let computes = &self.computes;
-        let nodes = &self.state.nodes;
-        for (level, &(start, end)) in nodes.level_ranges.iter().enumerate() {
-            if end > start
-                && let Some(pipeline) = computes.compose.get(level)
-            {
-                cx.dispatch(
-                    pipeline,
-                    Count::Groups([(end - start).div_ceil(PARENT_GROUP), 1, 1]),
-                );
-            }
-        }
         let candidates = self.state.candidates;
         if candidates == 0 {
             return;
@@ -77,23 +66,6 @@ impl MeshesGpu {
             return;
         }
         let computes = &self.computes;
-        for (index, &(width, height)) in self.state.pyramid.written.iter().enumerate() {
-            let pipeline = match index.checked_sub(1) {
-                None => &computes.pyramid_first,
-                Some(down) => match computes.pyramid_down.get(down) {
-                    Some(pipeline) => pipeline,
-                    None => break,
-                },
-            };
-            cx.dispatch(
-                pipeline,
-                Count::Groups([
-                    width.div_ceil(PYRAMID_GROUP),
-                    height.div_ceil(PYRAMID_GROUP),
-                    1,
-                ]),
-            );
-        }
         let candidates = self.state.candidates;
         cx.dispatch(
             &computes.occlusion,

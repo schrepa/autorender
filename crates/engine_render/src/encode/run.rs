@@ -132,22 +132,6 @@ pub(crate) struct Reading {
     pub(crate) slot_bytes: Option<u64>,
 }
 
-fn sampler_of(device: &wgpu::Device, desc: &crate::SamplerDesc) -> wgpu::Sampler {
-    let [u, v, w] = desc.address;
-    device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("engine/part-sampler"),
-        address_mode_u: u,
-        address_mode_v: v,
-        address_mode_w: w,
-        mag_filter: desc.filter,
-        min_filter: desc.filter,
-        mipmap_filter: desc.mipmap,
-        compare: desc.compare,
-        anisotropy_clamp: desc.anisotropy.max(1),
-        ..Default::default()
-    })
-}
-
 fn post_sampler(device: &wgpu::Device) -> wgpu::Sampler {
     device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("engine/post-sampler"),
@@ -213,7 +197,7 @@ impl Run {
             .declared
             .samplers
             .iter()
-            .map(|desc| sampler_of(&device, desc))
+            .map(|desc| crate::materials::gpu_sampler(&device, "engine/part-sampler", *desc))
             .collect();
         let count = parts.len();
         let dimensions = (0..machine.declared.textures.len())

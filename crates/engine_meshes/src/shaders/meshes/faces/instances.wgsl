@@ -6,13 +6,13 @@ import package::meshes::cards::{card_debug, card_depth, placed_card, placed_card
     placed_card_point};
 import package::meshes::forward::drawn_pixel;
 import package::meshes::shade::{masked_depth, placed_fragment, shade};
-import package::meshes::slots::{instance_colors, instance_poses};
+import package::meshes::slots::{instance_colors, slot_pose};
 import package::meshes::vertex::slot_motion;
 import package::place::instances::{AffinePose, CardDebugTargets, CardShaded, CardVertex,
     SlotColor, SlotFragment, SlotShaded, SlotVertex};
 
 fn instance_pose(slot: u32) -> AffinePose {
-    return instance_poses[slot];
+    return slot_pose(slot);
 }
 
 fn instance_color(slot: u32) -> SlotColor {

@@ -5,7 +5,7 @@ import package::engine::mesh::vertex::{pose_matrix, transform_vertex};
 import package::engine::shading::PositionInput;
 import package::engine::slots::slot_position;
 import package::engine::view::{camera, detail_across, view_clip};
-import package::meshes::slots::{instance_colors, instance_poses, instance_previous_poses};
+import package::meshes::slots::{instance_colors, slot_pose, slot_previous_pose};
 import package::place::instances::{AffinePose, SlotColor};
 
 fn posed(pose: AffinePose) -> mat4x4<f32> {
@@ -74,9 +74,9 @@ fn vertex_affine_motion(input: AffineVertexInput) -> MotionOutput {
     let moved = drawn_slot_moved(input.slot);
     var previous: AffinePose;
     if moved {
-        previous = instance_previous_poses[slot];
+        previous = slot_previous_pose(slot);
     }
-    return own_projection(affine_motion(input, instance_poses[slot], previous, moved,
+    return own_projection(affine_motion(input, slot_pose(slot), previous, moved,
         instance_colors[slot], 0u), slot);
 }
 

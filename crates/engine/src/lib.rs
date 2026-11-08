@@ -40,7 +40,7 @@ mod games {
         InstanceValues, KindDecl, Layers,
         Engine, EngineConfig,
         Filter, FixedTime, FrameLimits, FrameTime, GlobalTransform, GlobalTransforms,
-        Asks, CameraHandoff, Clock, Cull, DepthBias, HandOver, LightingModel, Listing,
+        Asks, CameraHandoff, Clock, Compare, Cull, DepthBias, HandOver, LightingModel, Listing,
         MakeTextures, RenderState, SurfaceSlot,
         Material, Mobility, Mover, MoverId, Moves, Node, NodeWord, Pace, Teleport,
         MaterialHandle, MenuInput, Mesh, MeshHandle, MeshVertex, MoveInput, Parent,

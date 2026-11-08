@@ -7,7 +7,7 @@ use engine_places_rendering::text::{Glyph, Text};
 use engine_places_rendering::ui::UiKind;
 use engine_render::{
     Attach, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass, Pipeline,
-    Prepare, RenderPipeline, SamplerDesc, Shape, wgpu,
+    Prepare, RenderPipeline, Shape, wgpu,
 };
 
 use crate::tree::{Flat, UiState};
@@ -259,7 +259,7 @@ impl GpuPart for UiGpu {
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::ui::draw;
         let instances = cx.buffer("instances", Lifetime::Kept);
-        let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
+        let sampler = cx.sampler(engine_core::Sampler::LINEAR_CLAMP);
         let pass = cx
             .pass(UiPass::NAME)
             .at(UiPass::PASS.at)

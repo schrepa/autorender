@@ -1,14 +1,14 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::math::{max, min};
-use engine_core::{Error, FrameBudget, FrameTime, StoreId, Views};
+use engine_core::{Error, Filter, FrameBudget, FrameTime, StoreId, Views};
 use engine_places_rendering::sky::EyeMedium;
 use engine_places_rendering::sun::{Sun, SunPath};
 use engine_places_rendering::wind::ViewWind;
 use engine_render::{
     AfterRead, Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Copied, CopyRegion,
     Count, DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare,
-    RenderPipeline, Sampler, SamplerDesc, Shape, Texture, wgpu,
+    RenderPipeline, Sampler, Shape, Texture, wgpu,
 };
 use glam::{Mat4, UVec2, Vec3};
 
@@ -426,12 +426,9 @@ impl AirTables {
         let multiple = cx.texture("sky_multiple", FORMAT, Lifetime::Kept);
         let view = cx.texture("sky_view", FORMAT, Lifetime::Kept);
         let derived = cx.buffer("sky_derived", Lifetime::Kept);
-        let sampler = cx.sampler(SamplerDesc {
-            filter: wgpu::FilterMode::Linear,
-            mipmap: wgpu::MipmapFilterMode::Nearest,
-            address: [wgpu::AddressMode::ClampToEdge; 3],
-            compare: None,
-            anisotropy: 1,
+        let sampler = cx.sampler(engine_core::Sampler {
+            mipmap_filter: Some(Filter::Nearest),
+            ..engine_core::Sampler::LINEAR_CLAMP
         });
         cx.frame(light::SKY_VIEW_TABLE, Bind::Texture(view))?;
         cx.frame(light::SKY_TABLE_SAMPLER, Bind::Sampler(sampler))?;

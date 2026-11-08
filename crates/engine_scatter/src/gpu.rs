@@ -9,7 +9,7 @@ use engine_render::{
     Access, AfterRead, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND,
     DEBUG_TARGETS, DepthUse, Draw, DrawInput, Encode, GpuPart, Install, Lifetime, Own, Pass,
     Pipeline, Prepare,
-    RenderPipeline, SamplerDesc, Scene, SceneDraw, Shape, Texture, VertexLayout, wgpu,
+    RenderPipeline, Scene, SceneDraw, Shape, Texture, VertexLayout, wgpu,
 };
 use glam::Vec3;
 
@@ -244,9 +244,6 @@ fn listed_view(
             mirrored: projection.determinant() < 0.0,
         },
         CullView {
-            planes: view
-                .planes
-                .unwrap_or_else(|| engine_render::planes(projection)),
             eye: view.eye.extend(pixels).to_array(),
             shape: [
                 u32::from(perspective),
@@ -1216,7 +1213,7 @@ impl GpuPart for ScatterGpu {
         let placed_far = cx.buffer("placed_far", Lifetime::Kept);
         let occupancy_map = cx.texture("occupancy", OCCUPANCY_FORMAT, Lifetime::Kept);
         let unfiner = cx.texture("occupancy_unfiner", OCCUPANCY_FORMAT, Lifetime::Kept);
-        let linear = cx.sampler(SamplerDesc::LINEAR_CLAMP);
+        let linear = cx.sampler(engine_core::Sampler::LINEAR_CLAMP);
         cx.frame(faces::placed_tiles::PLACED_RECORDS, Bind::Buffer(records))?;
         cx.frame(faces::placed_tiles::PLACED_POSES, Bind::Buffer(poses))?;
         cx.frame(

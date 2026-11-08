@@ -135,7 +135,7 @@ pub fn view_source() -> String {
     float(
         &mut source,
         "DETAIL_ANISOTROPY",
-        f32::from(crate::MATERIAL_ANISOTROPY),
+        f32::from(engine_core::Sampler::ANISOTROPY),
     );
     source
 }

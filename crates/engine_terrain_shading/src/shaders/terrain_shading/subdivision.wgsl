@@ -1,3 +1,4 @@
+import package::engine::drawn::frustum_reach;
 import package::engine::view::detail_across;
 import package::place::heightfield::{SurfaceTriangle, TerrainSubdivision};
 import package::terrain_shading::draw::terrain_displacement;
@@ -117,9 +118,7 @@ fn subdivision_point(local: vec2<f32>, displaced: bool, pieces: f32) -> Subdivis
 
 fn subdivision_seen(low: vec3<f32>, high: vec3<f32>) -> bool {
     for (var index = 0u; index < 6u; index++) {
-        let plane = subdivision.planes[index];
-        let corner = select(low, high, plane.xyz >= vec3<f32>(0.0));
-        if dot(plane.xyz, corner) + plane.w < 0.0 {
+        if frustum_reach(subdivision.planes[index], low, high) < 0.0 {
             return false;
         }
     }

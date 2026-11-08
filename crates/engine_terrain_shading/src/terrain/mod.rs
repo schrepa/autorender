@@ -8,7 +8,6 @@ mod surface;
 mod tables;
 
 pub(crate) use part::TerrainGpu;
-pub(crate) use patches::planes;
 pub(crate) use surface::meshlet_indices;
 
 pub(crate) const TERRAIN: engine_core::DrawKind = engine_core::DrawKind("terrain");

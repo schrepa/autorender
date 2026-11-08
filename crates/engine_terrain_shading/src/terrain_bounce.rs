@@ -4,7 +4,7 @@ use engine_core::Error;
 use engine_places_world::ground::{TerrainEntry, TerrainTiles};
 use engine_render::{
     Allocation, Bind, Buffer, ComputePipeline, Count, Encode, Install, Lifetime, Pass, Prepare,
-    SamplerDesc, Texture, wgpu,
+    Texture, wgpu,
 };
 use glam::{Vec2, Vec3};
 
@@ -116,7 +116,7 @@ impl Bounce {
         let light = cx.texture("bounce_light", LIGHT_FORMAT, Lifetime::Kept);
         let light_stand_in = cx.texture("bounce_light_stand_in", LIGHT_FORMAT, Lifetime::Kept);
         let out_stand_in = cx.texture("bounce_out_stand_in", LIGHT_FORMAT, Lifetime::Kept);
-        let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
+        let sampler = cx.sampler(engine_core::Sampler::LINEAR_CLAMP);
         let level = |mip: u32| Bind::Slice {
             texture: light,
             mips: mip..mip + 1,

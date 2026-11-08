@@ -10,7 +10,7 @@ use engine_render::{
     Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND, DEBUG_TARGETS,
     DepthUse, Draw, DrawInput, Encode,
     GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Sampler,
-    SamplerDesc, Scene, SceneDraw, Shape, Texture, VertexLayout, pixels_per_meter, wgpu,
+    Scene, SceneDraw, Shape, Texture, VertexLayout, pixels_per_meter, wgpu,
 };
 use glam::{Mat4, Vec3};
 
@@ -208,8 +208,8 @@ impl GpuPart for TerrainGpu {
                     cx.buffer("subdivision_tree", Lifetime::Kept),
                 )
             }),
-            control_sampler: cx.sampler(SamplerDesc::NEAREST),
-            linear: cx.sampler(SamplerDesc::LINEAR_CLAMP),
+            control_sampler: cx.sampler(engine_core::Sampler::NEAREST),
+            linear: cx.sampler(engine_core::Sampler::LINEAR_CLAMP),
         };
         let h = &handles;
         let maps = TerrainMaps::install(cx)?;

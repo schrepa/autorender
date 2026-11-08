@@ -1,14 +1,14 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, AssetResidency, Detail, DeviceLimits, DrawnPoses, DrawnTable, Error, FrameTime,
-    GlobalTransforms, MAX_HIERARCHY_DEPTH, PassViews, ScenePass, Views,
+    AssetLibrary, AssetResidency, CullPlan, Detail, DeviceLimits, DrawnTable, Error, FrameTime,
+    GlobalTransforms, PassViews, ScenePass, Views,
 };
 use engine_places::impostors::{ImpostorRecords, Impostors};
 use engine_render::{
-    AttachPoint, Bind, Buffer, ComputePipeline, Copied, DEBUG_BLEND, DEBUG_TARGETS, DepthUse,
+    AttachPoint, Bind, Buffer, ComputePipeline, DEBUG_BLEND, DEBUG_TARGETS, DepthUse,
     DrawInput, Encode, GpuPart,
     Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Scene, Scope,
-    TargetName, Texture, VertexLayout, wgpu,
+    TargetName, VertexLayout, wgpu,
 };
 
 use crate::MESH;
@@ -16,15 +16,12 @@ use crate::assets::MeshAssets;
 use crate::debug::RECORD_STREAM;
 use crate::drawn::WatchedSlot;
 use crate::layouts::PresentationFrame;
-use crate::order::{BatchLook, MeshPlan};
+use crate::order::BatchLook;
 use crate::presentation::{FrameState, PresentationTotals};
 use crate::shaders::meshes::{
-    blended, cards, debug, forward, presentation, pyramid, vertex,
+    blended, cards, debug, forward, presentation, vertex,
 };
 
-pub(crate) const PYRAMID_LEVELS: usize = 16;
-pub(crate) const NODE_LEVELS: usize = MAX_HIERARCHY_DEPTH + 1;
-pub(crate) const PYRAMID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 pub(crate) const VIEW_FRAME_BYTES: u64 = 512;
 
 const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
@@ -70,7 +67,6 @@ pub(crate) struct Compaction {
 
 pub(crate) struct Passes {
     pub presentation: Pass<MeshesGpu>,
-    pub keep_poses: Pass<MeshesGpu>,
     pub occlusion: Pass<MeshesGpu>,
     pub occluded: Pass<MeshesGpu>,
     pub views: Pass<MeshesGpu>,
@@ -90,8 +86,6 @@ pub(crate) struct Sorted {
 pub(crate) struct Instances {
     pub records: Buffer<MeshesGpu>,
     pub impostors: Buffer<MeshesGpu>,
-    pub poses: Buffer<MeshesGpu>,
-    pub previous_poses: Buffer<MeshesGpu>,
     pub colors: Buffer<MeshesGpu>,
 }
 
@@ -99,12 +93,6 @@ pub(crate) struct Presented {
     pub frame: Buffer<MeshesGpu>,
     pub frame_two: Buffer<MeshesGpu>,
     pub view_frames: Buffer<MeshesGpu>,
-    pub locals: Buffer<MeshesGpu>,
-    pub info: Buffer<MeshesGpu>,
-    pub authority: Buffer<MeshesGpu>,
-    pub composed: Buffer<MeshesGpu>,
-    pub parents: Buffer<MeshesGpu>,
-    pub levels: Vec<Buffer<MeshesGpu>>,
     pub candidates: Buffer<MeshesGpu>,
     pub slot_candidates: Buffer<MeshesGpu>,
     pub scan: Buffer<MeshesGpu>,
@@ -119,12 +107,9 @@ pub(crate) struct Presented {
     pub fade_cards: Buffer<MeshesGpu>,
     pub counts: Buffer<MeshesGpu>,
     pub totals: Buffer<MeshesGpu>,
-    pub pyramid: Texture<MeshesGpu>,
-    pub extents: Vec<Buffer<MeshesGpu>>,
 }
 
 pub(crate) struct Computes {
-    pub compose: Vec<ComputePipeline<MeshesGpu>>,
     pub cull: ComputePipeline<MeshesGpu>,
     pub fades: ComputePipeline<MeshesGpu>,
     pub one: Compaction,
@@ -134,8 +119,6 @@ pub(crate) struct Computes {
     pub gather_two: ComputePipeline<MeshesGpu>,
     pub occlusion: ComputePipeline<MeshesGpu>,
     pub view_cull: ComputePipeline<MeshesGpu>,
-    pub pyramid_first: ComputePipeline<MeshesGpu>,
-    pub pyramid_down: Vec<ComputePipeline<MeshesGpu>>,
 }
 
 pub(crate) struct Looked<P> {
@@ -222,8 +205,7 @@ pub(crate) type MeshReads = (
 pub(crate) type FrameReads = (
     Res<'static, DrawnTable>,
     Res<'static, AssetLibrary>,
-    Res<'static, MeshPlan>,
-    Res<'static, DrawnPoses>,
+    Res<'static, CullPlan>,
     Res<'static, GlobalTransforms>,
     Res<'static, Detail>,
     Res<'static, Impostors>,
@@ -237,8 +219,8 @@ impl GpuPart for MeshesGpu {
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let instances = install_instances(cx)?;
         let presented = install_presented(cx);
-        let passes = install_passes(cx, &instances);
-        let computes = install_computes(cx, &passes, &instances, &presented)?;
+        let passes = install_passes(cx);
+        let computes = install_computes(cx, &passes, &presented)?;
         let sorted = install_sorted(cx, passes.blended, &presented)?;
         let scenes = install_scenes(cx, &instances, &presented, &sorted)?;
         let occluded = install_occluded(cx, passes.occluded, &instances, &presented)?;
@@ -276,15 +258,8 @@ fn install_instances(cx: &mut Install<'_, MeshesGpu>) -> Result<Instances, Error
     let instances = Instances {
         records: cx.buffer("debug_view_records", Lifetime::Kept),
         impostors: cx.buffer("impostor_records", Lifetime::Kept),
-        poses: cx.buffer("poses", Lifetime::Kept),
-        previous_poses: cx.buffer("previous_poses", Lifetime::Previous),
         colors: cx.buffer("colors", Lifetime::Kept),
     };
-    cx.frame(slots::INSTANCE_POSES, Bind::Buffer(instances.poses))?;
-    cx.frame(
-        slots::INSTANCE_PREVIOUS_POSES,
-        Bind::Buffer(instances.previous_poses),
-    )?;
     cx.frame(slots::INSTANCE_COLORS, Bind::Buffer(instances.colors))?;
     cx.frame(cards::IMPOSTOR_RECORDS, Bind::Buffer(instances.impostors))?;
     Ok(instances)
@@ -295,11 +270,6 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
     let frame = buffer("presentation_frame");
     let frame_two = buffer("presentation_frame_two");
     let view_frames = buffer("presentation_view_frames");
-    let locals = buffer("presentation_locals");
-    let info = buffer("presentation_info");
-    let authority = buffer("presentation_authority");
-    let composed = buffer("presentation_composed");
-    let parents = buffer("presentation_parents");
     let candidates = buffer("presentation_candidates");
     let slot_candidates = buffer("presentation_slot_candidates");
     let scan = buffer("presentation_scan");
@@ -323,24 +293,11 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
     let fade_cards = buffer("presentation_fading_cards");
     let counts = buffer("presentation_occlusion_counts");
     let totals = buffer("presentation_totals");
-    let levels = (0..NODE_LEVELS)
-        .map(|_| cx.buffer("presentation_level", Lifetime::Kept))
-        .collect();
-    let extents = (0..PYRAMID_LEVELS)
-        .map(|_| cx.buffer("depth_pyramid_extent", Lifetime::Kept))
-        .collect();
-    let pyramid = cx.texture("depth_pyramid", PYRAMID_FORMAT, Lifetime::Kept);
     cx.window(view_frames, size_of::<PresentationFrame>() as u64);
     Presented {
         frame,
         frame_two,
         view_frames,
-        locals,
-        info,
-        authority,
-        composed,
-        parents,
-        levels,
         candidates,
         slot_candidates,
         scan,
@@ -355,28 +312,21 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
         fade_cards,
         counts,
         totals,
-        pyramid,
-        extents,
     }
 }
 
-fn install_passes(cx: &mut Install<'_, MeshesGpu>, instances: &Instances) -> Passes {
+fn install_passes(cx: &mut Install<'_, MeshesGpu>) -> Passes {
     let presentation = cx.pass("presentation").id();
-    let keep_poses = cx.copy(
-        "presentation_keep_poses",
-        Copied::Buffer(instances.poses),
-        Copied::Buffer(instances.previous_poses),
-    );
     let views = cx.pass("view_cull").after(presentation).id();
     let occlusion = cx
-        .pass("occlusion_test")
-        .at(AttachPoint::Opaque)
+        .pass("occlusion_lists")
+        .at(AttachPoint::Sky)
         .after(presentation)
         .after(views)
         .id();
     let occluded = cx
         .pass("occluded")
-        .at(AttachPoint::Opaque)
+        .at(AttachPoint::Sky)
         .after(occlusion)
         .id();
     let blended = cx
@@ -386,7 +336,6 @@ fn install_passes(cx: &mut Install<'_, MeshesGpu>, instances: &Instances) -> Pas
         .id();
     Passes {
         presentation,
-        keep_poses,
         occlusion,
         occluded,
         views,
@@ -495,45 +444,19 @@ fn compaction(
     })
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "every compute pipeline of the presentation, the pyramid and the view cull is made here"
-)]
 fn install_computes(
     cx: &mut Install<'_, MeshesGpu>,
     passes: &Passes,
-    instances: &Instances,
     presented: &Presented,
 ) -> Result<Computes, Error> {
     use presentation as p;
     let at = passes.presentation;
-    let mut compose = Vec::with_capacity(NODE_LEVELS);
-    for &level in &presented.levels {
-        compose.push(cx.compute_pipeline(
-            at,
-            p::COMPOSE_PARENTS,
-            &[
-                (p::FRAME, Bind::Buffer(presented.frame)),
-                (p::LOCALS, Bind::Buffer(presented.locals)),
-                (p::INFO, Bind::Buffer(presented.info)),
-                (p::AUTHORITY, Bind::Buffer(presented.authority)),
-                (p::COMPOSED, Bind::Buffer(presented.composed)),
-                (p::PARENTS, Bind::Buffer(presented.parents)),
-                (p::LEVEL, Bind::Buffer(level)),
-            ],
-        )?);
-    }
     let cull = cx.compute_pipeline(
         at,
         p::CULL,
         &[
             (p::FRAME, Bind::Buffer(presented.frame)),
-            (p::LOCALS, Bind::Buffer(presented.locals)),
-            (p::INFO, Bind::Buffer(presented.info)),
-            (p::AUTHORITY, Bind::Buffer(presented.authority)),
-            (p::COMPOSED, Bind::Buffer(presented.composed)),
             (p::BATCHES, Bind::Buffer(presented.batches)),
-            (p::POSES, Bind::Buffer(instances.poses)),
             (p::SCAN, Bind::Buffer(presented.scan)),
             (p::SLOT_CANDIDATES, Bind::Buffer(presented.slot_candidates)),
         ],
@@ -590,61 +513,14 @@ fn install_computes(
     let gather_two = gather(cx, late, p::GATHER_PHASE_TWO, presented.frame_two)?;
     let occlusion = cx.compute_pipeline(
         late,
-        p::OCCLUSION_TEST,
+        p::OCCLUDED_LISTS,
         &[
             (p::FRAME, Bind::Buffer(presented.frame)),
             (p::SLOT_CANDIDATES, Bind::Buffer(presented.slot_candidates)),
             (p::SCAN, Bind::Buffer(presented.scan)),
-            (p::BATCHES, Bind::Buffer(presented.batches)),
-            (p::DEPTH_PYRAMID, Bind::Texture(presented.pyramid)),
             (p::OCCLUSION_COUNTS, Bind::Buffer(presented.counts)),
         ],
     )?;
-    let pyramid_first = cx.compute_pipeline(
-        late,
-        pyramid::PYRAMID_FIRST,
-        &[
-            (pyramid::SOURCE_DEPTH, Bind::Target(TargetName::DEPTH)),
-            (
-                pyramid::TARGET_LEVEL,
-                Bind::Slice {
-                    texture: presented.pyramid,
-                    mips: 0..1,
-                    layers: 0..1,
-                },
-            ),
-            (pyramid::EXTENT, Bind::Buffer(presented.extents[0])),
-        ],
-    )?;
-    let mut pyramid_down = Vec::with_capacity(PYRAMID_LEVELS - 1);
-    for level in 1..PYRAMID_LEVELS as u32 {
-        pyramid_down.push(cx.compute_pipeline(
-            late,
-            pyramid::PYRAMID_DOWN,
-            &[
-                (
-                    pyramid::SOURCE_LEVEL,
-                    Bind::Slice {
-                        texture: presented.pyramid,
-                        mips: level - 1..level,
-                        layers: 0..1,
-                    },
-                ),
-                (
-                    pyramid::TARGET_LEVEL,
-                    Bind::Slice {
-                        texture: presented.pyramid,
-                        mips: level..level + 1,
-                        layers: 0..1,
-                    },
-                ),
-                (
-                    pyramid::EXTENT,
-                    Bind::Buffer(presented.extents[level as usize]),
-                ),
-            ],
-        )?);
-    }
     let view_cull = cx.compute_pipeline(
         passes.views,
         p::VIEW_CULL,
@@ -667,7 +543,6 @@ fn install_computes(
         ),
     )?;
     Ok(Computes {
-        compose,
         cull,
         fades,
         one,
@@ -677,8 +552,6 @@ fn install_computes(
         gather_two,
         occlusion,
         view_cull,
-        pyramid_first,
-        pyramid_down,
     })
 }
 

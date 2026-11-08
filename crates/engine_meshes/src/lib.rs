@@ -24,9 +24,7 @@ use engine_core::{Attributes, Brick, Bricks, DrawKind, KindDecl, Runs, Schedule,
 use engine_places::meshes::Instances;
 use engine_render::RenderBricks;
 
-pub use settings::{
-    Culling, CullingStats, DetailStats, MeshStats, OcclusionCulling, SubpixelCulling,
-};
+pub use settings::{CullingStats, DetailStats, MeshStats};
 
 pub const MESH: DrawKind = DrawKind::MESH;
 
@@ -61,11 +59,7 @@ impl Brick for MeshesBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .settings::<Culling>()
-            .settings::<OcclusionCulling>()
-            .settings::<SubpixelCulling>()
             .stats::<MeshStats>()
-            .resource::<order::MeshPlan>()
             .resource::<presentation::PresentationTotals>()
             .resource::<drawn::WatchedSlot>()
             .operation::<drawn::MeshDrawn>()
@@ -75,11 +69,7 @@ impl Brick for MeshesBrick {
             .fill::<Instances>(Some(shaders::meshes::faces::instances::MODULE))
             .systems(
                 Schedule::ViewSync,
-                (
-                    order::plan_draws,
-                    assets::publish_assets,
-                    settings::mesh_stats,
-                ),
+                (assets::publish_assets, settings::mesh_stats),
             )
             .generated(GENERATED)
             .draw_kind(KindDecl {

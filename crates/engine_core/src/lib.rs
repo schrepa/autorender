@@ -11,6 +11,7 @@ pub mod bounds;
 mod bricks;
 mod clock;
 mod cook;
+mod cull;
 mod drawn;
 mod entity_indices;
 mod hierarchy;
@@ -51,13 +52,17 @@ pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
 pub use cook::{Cook, CookAsks, CookList, cook};
+pub use cull::{
+    CullPlan, Culling, OcclusionCulling, SubpixelCulling, frustum_bounded, frustum_planes,
+    frustum_sees,
+};
 pub use drawn::{
     DRAWN_OWN_PROJECTION, DRAWN_UNBOUNDED, DrawnBatch, DrawnCensus,
     DrawnRecord, DrawnSettings, DrawnState, DrawnTable, PlanState, drawn_wgsl,
 };
 pub use engine_assets::{
     Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, Attributes,
-    ColorSpace, Cull, DepthBias, Filter, LightingModel, LodInput,
+    ColorSpace, Compare, Cull, DepthBias, Filter, LightingModel, LodInput,
     LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding, Mesh,
     MeshLods, MeshVertex, NORMAL_MAP, RenderState, STANDARD_MAPS, Sampler,
     Surface, SurfaceSlot, Texture, TextureFormat, TextureRef, UvTransform, Wrap, attributes_wgsl,
@@ -245,6 +250,9 @@ fn core_entries(registry: &mut RegistryBuilder) {
     registry.core_settings(bricks::settings_entry::<FeedSettings>());
     registry.core_settings(bricks::settings_entry::<FrameBudgetSettings>());
     registry.core_settings(bricks::settings_entry::<DrawnSettings>());
+    registry.core_settings(bricks::settings_entry::<Culling>());
+    registry.core_settings(bricks::settings_entry::<OcclusionCulling>());
+    registry.core_settings(bricks::settings_entry::<SubpixelCulling>());
     registry.core_settings(bricks::settings_entry::<FrameLimits>());
     registry.core_operation(OperationEntry::of::<
         <views::ViewControl as Operation>::Params,
@@ -377,6 +385,10 @@ impl Engine {
             .init_resource::<FeedSettings>()
             .init_resource::<FrameBudgetSettings>()
             .init_resource::<DrawnSettings>()
+            .init_resource::<Culling>()
+            .init_resource::<OcclusionCulling>()
+            .init_resource::<SubpixelCulling>()
+            .init_resource::<CullPlan>()
             .insert_resource(exchange)
             .insert_resource(listed)
             .init_resource::<engine_registry::JobQueue>()
@@ -820,6 +832,7 @@ impl Engine {
         views::settle(world, facts);
         world.run_schedule(ViewSync);
         views::settle_owned(world);
+        cull::settle(world);
         assets::settle_assets(world);
     }
 

@@ -8,8 +8,7 @@ use engine_core::{
 };
 use engine_render::{
     AfterRead, Attach, Bind, Buffer, Copied, CopyRegion, DepthUse, Encode, GpuPart, Install,
-    Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture,
-    VertexLayout, wgpu,
+    Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, VertexLayout, wgpu,
 };
 
 use crate::books::{
@@ -361,7 +360,7 @@ impl GpuPart for ImpostorGpu {
         let uniform = cx.buffer("impostor_bake", Lifetime::Kept);
         let kinds = cx.buffer("impostor_bake_kinds", Lifetime::Kept);
         let read = cx.buffer("impostor_bake_read", Lifetime::Kept);
-        let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
+        let sampler = cx.sampler(engine_core::Sampler::LINEAR_CLAMP);
         let views = [
             face::ATLAS_ALBEDO,
             face::ATLAS_EMISSIVE,

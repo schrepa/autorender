@@ -1,4 +1,4 @@
-import package::engine::drawn::drawn_in_view;
+import package::engine::drawn::{drawn_in_view, drawn_view_sees};
 import package::engine::mesh::declarations::{FADE_LEVEL_MAX, faded_slot, faded_slot_slot};
 import package::engine::view::seen_share;
 import package::generated::scatter::{
@@ -35,16 +35,6 @@ struct CardArgs {
 @group(1) @binding(5) var<storage, read> views: array<CullView>;
 @group(1) @binding(6) var<storage, read_write> cards: array<vec2<u32>>;
 @group(1) @binding(7) var<storage, read_write> card_args: array<CardArgs>;
-
-fn inside(view: u32, center: vec3<f32>, radius: f32) -> bool {
-    for (var plane = 0u; plane < 6u; plane++) {
-        let bound = views[view].planes[plane];
-        if dot(bound.xyz, center) + bound.w < -radius {
-            return false;
-        }
-    }
-    return true;
-}
 
 fn shown_at(record: Record, group: CullGroup, retires: bool, rank: f32, away: f32) -> u32 {
     if retires && !placed_seen(record.radius, rank, away) {
@@ -232,10 +222,11 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let fade = f32(progress) / f32(FADED);
     let kept = select(shown, previous, shown == SHOWN_NONE && progress < FADED);
+    let reach = vec3<f32>(record.radius);
     for (var view = 0u; view < frame.counts.w; view++) {
         let wanted = views[view];
         if !drawn_in_view(wanted.shape.w, frame.drawn.x)
-                || !inside(view, record.center, record.radius) {
+                || !drawn_view_sees(wanted.shape.w, record.center - reach, record.center + reach) {
             continue;
         }
         if view == 0u {

@@ -1,23 +1,20 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, Cull, Cursor, DrawnPoses, FrameId,
-    MaterialHandle, MeshHandle, MeshResidence, NodeInfo, NodePose, NodeStreams, Readable, Readback,
-    ResidentMesh, Since,
+    AlphaMode, AssetLibrary, AssetResidency, Cull, Cursor, FrameId, MaterialHandle, MeshHandle,
+    MeshResidence, Readable, Readback, ResidentMesh,
 };
-use glam::{Mat4, Vec3};
+use engine_render::UploadRange;
+use glam::Vec3;
 
 use crate::layouts::{BatchData, CandidateData, LOD_LEVELS};
 use crate::order::{BatchLook, DrawBatch, MeshBatches};
-use crate::uploads::{ColorData, PoseData, UploadRange, listed_ranges};
+use crate::uploads::{ColorData, PoseData};
 
 pub(crate) const MIN_STORAGE_BYTES: u64 = 256;
-pub(crate) const TOTALS_BYTES: u64 = 56;
+pub(crate) const TOTALS_BYTES: u64 = 104;
 pub(crate) const WATCHED: u32 = 2;
-pub(crate) const POSE: u32 = 3;
 pub(crate) const VIEWS: u32 = 4;
-const STREAM_STRIDE: usize = size_of::<engine_core::PoseRows>();
-const NODE_BYTES: usize =
-    2 * size_of::<NodePose>() + size_of::<NodeInfo>() + size_of::<engine_core::PoseRows>();
+const POSE_WORD: usize = 14;
 pub(crate) const FADE_MARGIN: f32 = 0.1;
 pub(crate) const PHASE_ONE: usize = 0;
 pub(crate) const PHASE_TWO: usize = 1;
@@ -28,46 +25,6 @@ pub(crate) fn storage_bytes(bytes: u64) -> u64 {
 
 pub(crate) fn grow(needed: usize) -> usize {
     needed.max(1_024).next_power_of_two()
-}
-
-pub(crate) fn frustum_uniform(view_projection: Mat4) -> ([[f32; 4]; 6], [[f32; 4]; 4]) {
-    let rows = view_projection.transpose();
-    let planes = [
-        rows.w_axis + rows.x_axis,
-        rows.w_axis - rows.x_axis,
-        rows.w_axis + rows.y_axis,
-        rows.w_axis - rows.y_axis,
-        rows.z_axis,
-        rows.w_axis - rows.z_axis,
-    ]
-    .map(|plane| plane.to_array());
-    let absolute = Mat4::from_cols(
-        view_projection.x_axis.abs(),
-        view_projection.y_axis.abs(),
-        view_projection.z_axis.abs(),
-        view_projection.w_axis.abs(),
-    );
-    (planes, absolute.to_cols_array_2d())
-}
-
-fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
-    Mat4::from_cols(
-        glam::Vec4::X,
-        glam::Vec4::Y,
-        glam::Vec4::Z,
-        glam::Vec4::new(jitter[0], jitter[1], 0.0, 1.0),
-    ) * view_projection
-}
-
-pub(crate) fn rasterized(view: &engine_core::ViewFacts) -> Mat4 {
-    let Some(offset) = view.jitter else {
-        return view.view_projection;
-    };
-    let size = view.render;
-    jittered(
-        view.view_projection,
-        engine_render::jitter_clip(offset.to_array(), size.x, size.y),
-    )
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -126,13 +83,6 @@ impl Readable for PresentationTotals {
             self.watching.push((written, word(bytes, 0)));
             return;
         }
-        if tag == POSE {
-            self.pose = bytes
-                .get(..size_of::<PoseData>())
-                .and_then(|bytes| bytemuck::try_pod_read_unaligned::<PoseData>(bytes).ok())
-                .map(|value| Readback { value, written });
-            return;
-        }
         if tag == VIEWS {
             let value = ViewTotals {
                 drawn: word(bytes, 0),
@@ -147,6 +97,10 @@ impl Readable for PresentationTotals {
             .find(|&&(asked, _)| asked == written)
             .map(|&(_, slot)| (slot, word(bytes, 13)));
         self.watching.retain(|&(asked, _)| asked > written);
+        self.pose = watched
+            .and_then(|_| bytes.get(POSE_WORD * 4..POSE_WORD * 4 + size_of::<PoseData>()))
+            .and_then(|bytes| bytemuck::try_pod_read_unaligned::<PoseData>(bytes).ok())
+            .map(|value| Readback { value, written });
         let (hidden, tiny) = (word(bytes, 2), word(bytes, 3));
         let value = FrameTotals {
             visible: word(bytes, 0)
@@ -345,65 +299,6 @@ impl Draws {
 }
 
 #[derive(Default)]
-pub(crate) struct NodeInputs {
-    pub capacity: usize,
-    pub composed_capacity: usize,
-    pub parent_capacity: usize,
-    pub level_ranges: Vec<(u32, u32)>,
-    pub seen: Cursor,
-    pub whole: bool,
-    pub ranges: Vec<UploadRange>,
-    pub upload_bits: Vec<u64>,
-}
-
-impl NodeInputs {
-    pub(crate) fn plan(&mut self, poses: &DrawnPoses, nodes: usize) -> Option<bool> {
-        let changes = poses.changes_since(&mut self.seen);
-        let whole = std::mem::take(&mut self.whole);
-        self.ranges.clear();
-        match changes {
-            Since::Same if !whole => return None,
-            Since::Listed(listed)
-                if !whole && listed.iter().all(|&node| (node as usize) < nodes) =>
-            {
-                listed_ranges(
-                    listed,
-                    nodes,
-                    STREAM_STRIDE,
-                    &mut self.upload_bits,
-                    &mut self.ranges,
-                );
-                return Some(false);
-            }
-            Since::Same | Since::Listed(_) | Since::All => {}
-        }
-        if nodes != 0 {
-            self.ranges.push(UploadRange {
-                start: 0,
-                end: nodes,
-            });
-        }
-        Some(true)
-    }
-
-    pub(crate) fn planned_bytes(&self) -> u64 {
-        self.ranges
-            .iter()
-            .map(|range| (range.end - range.start) * NODE_BYTES)
-            .sum::<usize>() as u64
-    }
-
-    pub(crate) fn levels(&mut self, streams: &NodeStreams<'_>) {
-        self.level_ranges.clear();
-        let mut start = 0;
-        for &end in streams.levels {
-            self.level_ranges.push((start, end));
-            start = end;
-        }
-    }
-}
-
-#[derive(Default)]
 pub(crate) struct DrawGroups {
     pub capacity: usize,
     pub batch_capacity: usize,
@@ -447,12 +342,7 @@ impl DrawGroups {
         self.batch_count = batches.len() as u32;
     }
 
-    pub(crate) fn stage_candidates(
-        &mut self,
-        batches: &[DrawBatch],
-        ordered: &[u32],
-        node: impl Fn(usize) -> u32,
-    ) {
+    pub(crate) fn stage_candidates(&mut self, batches: &[DrawBatch], ordered: &[u32]) {
         let candidates = ordered.len();
         self.candidate_staging.clear();
         self.candidate_staging.reserve_exact(candidates);
@@ -466,9 +356,9 @@ impl DrawGroups {
                         .zip(base..)
                         .map(|(&slot, position)| CandidateData {
                             slot,
-                            node: node(slot as usize),
                             batch: index as u32,
                             position,
+                            pad: 0,
                         }),
                 );
         }
@@ -554,28 +444,20 @@ fn batch_record(
 }
 
 #[derive(Default)]
-pub(crate) struct Pyramid {
-    pub count: u32,
-    pub written: Vec<(u32, u32)>,
-}
-
-#[derive(Default)]
 pub(crate) struct FrameState {
     pub capacity: usize,
-    pub poses_capacity: usize,
+    pub colors_capacity: usize,
     pub batches: MeshBatches,
     pub color_staging: Vec<ColorData>,
     pub color_ranges: Vec<UploadRange>,
     pub color_bits: Vec<u64>,
     pub colors_seen: Cursor,
     pub colors_library: Option<(u64, u64)>,
-    pub motion_generation: Option<u64>,
     pub prepared_at: Option<f32>,
     pub faded_at: Option<f32>,
     pub cards: bool,
     pub draws: Draws,
     pub blended: Blended,
-    pub nodes: NodeInputs,
     pub groups: DrawGroups,
     pub fade_slots: u64,
     pub card_capacity: usize,
@@ -583,7 +465,6 @@ pub(crate) struct FrameState {
     pub candidates: u32,
     pub occlusion: bool,
     pub lod: bool,
-    pub pyramid: Pyramid,
     pub views: Vec<ViewSlot>,
     pub instance_count: usize,
     pub watched: Option<u32>,
