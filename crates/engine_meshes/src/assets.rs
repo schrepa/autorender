@@ -20,6 +20,7 @@ fn asks(assets: &AssetLibrary, batches: &MeshBatches) -> ImpostorAsks {
             .map(|batch| {
                 assets
                     .mesh(batch.mesh)
+                    .filter(|_| !batch.skinned)
                     .is_some_and(|mesh| {
                         mesh.takes_impostor() && mesh.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES
                     })

@@ -7,16 +7,17 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod animator;
 mod import;
-mod part;
 mod scene;
+mod skins;
 mod smokes;
 mod views;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asked, Attributes, Brick, Bricks, ComponentKind, GpuStruct, KindDecl, Runs, SceneComponents,
-    Schedule, Smoke, Source, settings,
+    Asked, Brick, Bricks, ComponentKind, GpuStruct, Runs, SceneComponents, Schedule, Smoke, Source,
+    settings,
 };
+use engine_places::skin::Skin;
 use engine_places_rendering::animation::{Animate, Animator, Attachment};
 use engine_render::RenderBricks;
 
@@ -27,13 +28,8 @@ pub use views::{
 };
 
 const GENERATED: &[&str] = &[
-    part::WGSL,
-    <part::SkinFrame as GpuStruct>::WGSL,
-    <part::SkinPart as GpuStruct>::WGSL,
-    <part::RestVertex as GpuStruct>::WGSL,
-    <part::JointRows as GpuStruct>::WGSL,
-    <part::SkinBound as GpuStruct>::WGSL,
-    <part::SkinView as GpuStruct>::WGSL,
+    <skins::JointRows as GpuStruct>::WGSL,
+    <skins::SkinSlot as GpuStruct>::WGSL,
 ];
 
 settings! {
@@ -60,7 +56,9 @@ impl Brick for AnimationBrick {
             .when(|animation: Res<AnimationSettings>| animation.enabled)
             .settings::<AnimationSettings>()
             .resource::<animator::Books>()
+            .resource::<skins::Skins>()
             .fill::<Asked<Animate>>(None)
+            .fill::<Skin>(Some(shaders::animation::faces::skin::MODULE))
             .join::<SceneComponents>(
                 ComponentKind::of::<Animator>("animator")
                     .check(scene::check_animator)
@@ -86,12 +84,8 @@ impl Brick for AnimationBrick {
                 Schedule::Presentation,
                 (animator::sync, animator::advance_real),
             )
+            .systems(Schedule::ViewSync, skins::pose_skins)
             .generated(GENERATED)
-            .draw_kind(KindDecl {
-                kind: part::SKIN,
-                vertex: shaders::animation::draw::VS_SKINNED.name(),
-                needs: Attributes::BASE,
-            })
-            .draws::<part::SkinningGpu>(part::SKIN, part::SkinningGpu::draw);
+            .part::<skins::SkinGpu>();
     }
 }

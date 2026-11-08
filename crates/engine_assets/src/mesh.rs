@@ -2,6 +2,7 @@ use std::sync::{Arc, OnceLock};
 
 use engine_codec::{Error, ErrorCode, Expected};
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 
 use crate::{Attribute, Attributes, MeshLods, MeshVertex};
 
@@ -25,6 +26,13 @@ impl Aabb {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VertexSkin {
+    pub joints: [u32; 4],
+    pub weights: [f32; 4],
+}
+
 #[derive(Debug)]
 pub struct Mesh {
     vertices: Box<[MeshVertex]>,
@@ -32,6 +40,7 @@ pub struct Mesh {
     bounds: Aabb,
     colors: Option<Box<[[f32; 4]]>>,
     uv1: Option<Box<[[f32; 2]]>>,
+    skin: Option<Box<[VertexSkin]>>,
     lods: Option<Arc<MeshLods>>,
     impostor: bool,
     identity: OnceLock<u128>,
@@ -85,6 +94,7 @@ impl Mesh {
             bounds: Aabb { min, max },
             colors: None,
             uv1: None,
+            skin: None,
             lods: None,
             impostor: true,
             identity: OnceLock::new(),
@@ -116,6 +126,15 @@ impl Mesh {
             bytes.push(u8::from(self.uv1.is_some()));
             for value in self.uv1.iter().flatten().flatten() {
                 bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
+            bytes.push(u8::from(self.skin.is_some()));
+            for skin in self.skin.iter().flatten() {
+                for joint in skin.joints {
+                    bytes.extend_from_slice(&joint.to_le_bytes());
+                }
+                for weight in skin.weights {
+                    bytes.extend_from_slice(&weight.to_bits().to_le_bytes());
+                }
             }
             hash(&bytes)
         })
@@ -172,6 +191,24 @@ impl Mesh {
         Ok(self)
     }
 
+    pub fn with_skin(mut self, skin: Vec<VertexSkin>) -> Result<Self, Error> {
+        self.check_count("skin", skin.len())?;
+        if let Some(vertex) = skin.iter().position(|skin| {
+            let fine = skin
+                .weights
+                .iter()
+                .all(|weight| weight.is_finite() && *weight >= 0.0);
+            !fine || skin.weights.iter().sum::<f32>() <= 0.0
+        }) {
+            return Err(invalid(format!("$.skin[{vertex}].weights"))
+                .expected(Expected::Nonzero)
+                .got(skin[vertex].weights));
+        }
+        self.skin = Some(skin.into_boxed_slice());
+        self.identity = OnceLock::new();
+        Ok(self)
+    }
+
     fn check_count(&self, attribute: &'static str, actual: usize) -> Result<(), Error> {
         let vertices = self.vertices.len();
         if actual == vertices {
@@ -196,6 +233,10 @@ impl Mesh {
         self.uv1.as_deref()
     }
 
+    pub fn skin(&self) -> Option<&[VertexSkin]> {
+        self.skin.as_deref()
+    }
+
     pub fn attributes(&self) -> Attributes {
         let mut held = Attributes::BASE;
         if self.uv1.is_some() {
@@ -203,6 +244,9 @@ impl Mesh {
         }
         if self.colors.is_some() {
             held = held.with(Attribute::Color);
+        }
+        if self.skin.is_some() {
+            held = held.with(Attribute::Joints).with(Attribute::Weights);
         }
         held
     }
@@ -220,6 +264,7 @@ impl Mesh {
             + std::mem::size_of_val(self.indices())
             + self.colors().map_or(0, std::mem::size_of_val)
             + self.uv1().map_or(0, std::mem::size_of_val)
+            + self.skin().map_or(0, std::mem::size_of_val)
             + self.lods().map_or(0, |lods| lods.byte_len())
     }
 

@@ -111,7 +111,7 @@ pub(crate) struct BuiltPipeline {
     pub(crate) computed: Vec<(u64, wgpu::ComputePipeline)>,
     pub(crate) ready: Vec<Ready>,
     pub(crate) compute_ready: Option<wgpu::ComputePipeline>,
-    pub(crate) mesh_slots: u32,
+    pub(crate) geometry: Vec<engine_core::GeometryStream>,
     pub(crate) holes: bool,
     pub(crate) home: u32,
     pub(crate) layout_key: String,
@@ -839,13 +839,16 @@ impl Machine {
             }
             layout_key.hash(&mut hasher);
             let program_key = hasher.finish();
-            let mesh_slots = match &decl.program {
+            let geometry = match &decl.program {
                 Program::Render(desc) => desc
                     .vertices
                     .iter()
-                    .filter(|layout| matches!(layout, VertexLayout::Mesh))
-                    .count() as u32,
-                Program::Compute(_) => 0,
+                    .filter_map(|layout| match layout {
+                        VertexLayout::Geometry(stream) => Some(*stream),
+                        VertexLayout::Buffer(_) => None,
+                    })
+                    .collect(),
+                Program::Compute(_) => Vec::new(),
             };
             let holes = decl.holes() > 0;
             let home = declared
@@ -867,7 +870,7 @@ impl Machine {
                 computed: Vec::new(),
                 ready: Vec::new(),
                 compute_ready: None,
-                mesh_slots,
+                geometry,
                 holes,
                 home,
                 layout_key,

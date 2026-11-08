@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{
-    AssetLibrary, AssetResidency, Cull, Cursor, Error, Events, MaterialHandle, MeshHandle,
-    Readable, Readback, gpu_struct,
+    AssetLibrary, AssetResidency, Cull, Cursor, Error, Events, GeometryStream, MaterialHandle,
+    MeshHandle, Readable, Readback, gpu_struct,
 };
 use engine_render::{
     AfterRead, Attach, Bind, Buffer, Copied, CopyRegion, DepthUse, Encode, GpuPart, Install,
@@ -43,8 +43,11 @@ const BAKE_LABELS: [&str; 4] = [
 const BAKE_DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADE_SCALE: u32 = 4;
 const SHADE_MOST: u32 = 2048;
-const MESH: &[VertexLayout] = &[VertexLayout::Mesh];
-const EXTENDED: &[VertexLayout] = &[VertexLayout::Mesh, VertexLayout::Mesh];
+const MESH: &[VertexLayout] = &[VertexLayout::Geometry(GeometryStream::Vertex)];
+const EXTENDED: &[VertexLayout] = &[
+    VertexLayout::Geometry(GeometryStream::Vertex),
+    VertexLayout::Geometry(GeometryStream::Extra),
+];
 
 gpu_struct! {
     pub struct ImpostorBake {

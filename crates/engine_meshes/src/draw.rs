@@ -10,6 +10,19 @@ const FADE_CARDS_START: u64 = 16;
 
 impl MeshesGpu {
     pub(crate) fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
+        self.draw_kind(scene, draw, false)
+    }
+
+    pub(crate) fn draw_skins(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
+        self.draw_kind(scene, draw, true)
+    }
+
+    fn draw_kind(
+        &self,
+        scene: &SceneDraw,
+        draw: &mut Draw<'_, Self, Scene>,
+        skinned: bool,
+    ) -> u32 {
         if self.state.instance_count == 0 {
             return 0;
         }
@@ -26,28 +39,38 @@ impl MeshesGpu {
                 card,
                 streams,
             } => {
-                self.draw_meshes(draw, streams, looks, PHASE_ONE)
-                    + self.draw_cards(draw, streams, card, PHASE_ONE)
+                let meshes = self.draw_meshes(draw, streams, looks, (PHASE_ONE, skinned));
+                if skinned {
+                    meshes
+                } else {
+                    meshes + self.draw_cards(draw, streams, card, PHASE_ONE)
+                }
             }
             Drawing::Views { looks, streams } => {
                 let Some(slot) = self.state.view_slot(scene.pass.name(), scene.view) else {
                     return 0;
                 };
-                self.draw_view(draw, streams, &looks[usize::from(slot.mirrored)], slot)
+                let looks = &looks[usize::from(slot.mirrored)];
+                self.draw_view(draw, (streams, looks), slot, skinned)
             }
-            Drawing::Blended { looks, streams } => self.draw_blended(draw, streams, looks),
+            Drawing::Blended { looks, streams } => {
+                self.draw_blended(draw, (streams, looks), skinned)
+            }
         }
     }
 
     fn draw_blended(
         &self,
         draw: &mut Draw<'_, Self, Scene>,
-        streams: &BlendedStreams,
-        looks: &Looked<Pipeline<Self, Scene>>,
+        (streams, looks): (&BlendedStreams, &Looked<Pipeline<Self, Scene>>),
+        skinned: bool,
     ) -> u32 {
         let records = (streams.records, self.record(DrawKind::Mesh, 0));
         let mut drawn = 0;
         for batch in &self.state.blended.batches {
+            if batch.look.skinned != skinned {
+                continue;
+            }
             draw.draw(
                 looks.of(batch.look),
                 Shape::MeshIndirect {
@@ -72,11 +95,11 @@ impl MeshesGpu {
         draw: &mut Draw<'_, Self, S>,
         streams: &Streams<S>,
         looks: &Looked<Pipeline<Self, S>>,
-        phase: usize,
+        (phase, skinned): (usize, bool),
     ) -> u32 {
         let mut drawn = 0;
         for item in &self.state.draws.items {
-            if item.blended {
+            if item.blended || item.look.skinned != skinned {
                 continue;
             }
             let pipeline = looks.of(item.look);
@@ -151,12 +174,15 @@ impl MeshesGpu {
     fn draw_view(
         &self,
         draw: &mut Draw<'_, Self, Scene>,
-        streams: &ViewStreams,
-        looks: &Looked<Pipeline<Self, Scene>>,
+        (streams, looks): (&ViewStreams, &Looked<Pipeline<Self, Scene>>),
         slot: &ViewSlot,
+        skinned: bool,
     ) -> u32 {
         let mut drawn = 0;
         for item in &self.state.draws.items {
+            if item.look.skinned != skinned {
+                continue;
+            }
             for level in slot.levels(item.levels) {
                 let (ids, args) = self.state.groups.view_source(slot, item, level);
                 draw.draw(

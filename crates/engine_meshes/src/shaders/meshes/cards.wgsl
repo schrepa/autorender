@@ -1,4 +1,4 @@
-import package::engine::drawn::drawn_fade;
+import package::engine::drawn::{INPUT_BATCH, INPUT_DRAW, INPUT_SLOT, drawn_fade};
 import package::engine::materials::{MASK_MIP_SCALE, SURFACE_EMISSION};
 import package::engine::math::maximum_abs;
 import package::engine::mesh::declarations::{FADE_LEVEL_MAX, drawn_slot_moved, drawn_slot_slot,
@@ -29,9 +29,9 @@ import package::place::instances::{AffinePose, CardDebugTargets, CardShaded, Car
 
 struct CardInput {
     @builtin(vertex_index) vertex: u32,
-    @location(2) slot: u32,
-    @location(3) batch: u32,
-    @location(14) draw: vec4<u32>,
+    @location(INPUT_SLOT) slot: u32,
+    @location(INPUT_BATCH) batch: u32,
+    @location(INPUT_DRAW) draw: vec4<u32>,
 }
 
 struct CardOutput {

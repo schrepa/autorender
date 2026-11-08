@@ -7,15 +7,19 @@
 use engine_codec::{Error, ErrorCode, Expected};
 use serde::Serialize;
 
-use crate::{Mesh, MeshLods, MeshVertex};
+use crate::{Mesh, MeshLods, MeshVertex, VertexSkin};
 
 pub const MESH_BUFFER_MAGIC: [u8; 4] = *b"EMB1";
 pub const MESH_BUFFER_EXTRAS_MAGIC: [u8; 4] = *b"EMB2";
+
+const FLAGS: u32 = 15;
+const SKIN_WORDS: usize = 8;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MeshStreams<'a> {
     pub colors: Option<&'a [[f32; 4]]>,
     pub uv1: Option<&'a [[f32; 2]]>,
+    pub skin: Option<&'a [VertexSkin]>,
     pub lods: Option<&'a MeshLods>,
 }
 
@@ -30,10 +34,16 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     indices: &[u32],
     streams: MeshStreams<'_>,
 ) -> Vec<u8> {
-    let MeshStreams { colors, uv1, lods } = streams;
-    let extras = colors.is_some() || uv1.is_some() || lods.is_some();
+    let MeshStreams {
+        colors,
+        uv1,
+        skin,
+        lods,
+    } = streams;
+    let extras = colors.is_some() || uv1.is_some() || skin.is_some() || lods.is_some();
     let mut bytes = Vec::with_capacity(
-        16 + vertices.len() * (32 + if extras { 24 } else { 0 }) + indices.len() * 4,
+        16 + vertices.len() * (32 + if extras { 24 + SKIN_WORDS * 4 } else { 0 })
+            + indices.len() * 4,
     );
     bytes.extend_from_slice(if extras {
         &MESH_BUFFER_EXTRAS_MAGIC
@@ -45,6 +55,7 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     if extras {
         let flags = u32::from(colors.is_some())
             | u32::from(uv1.is_some()) << 1
+            | u32::from(skin.is_some()) << 2
             | u32::from(lods.is_some()) << 3;
         bytes.extend_from_slice(&flags.to_le_bytes());
     }
@@ -67,6 +78,14 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
+    for skin in skin.into_iter().flatten() {
+        for joint in skin.joints {
+            bytes.extend_from_slice(&joint.to_le_bytes());
+        }
+        for weight in skin.weights {
+            bytes.extend_from_slice(&weight.to_le_bytes());
+        }
+    }
     for index in indices {
         bytes.extend_from_slice(&index.to_le_bytes());
     }
@@ -84,6 +103,7 @@ impl Mesh {
             MeshStreams {
                 colors: self.colors(),
                 uv1: self.uv1(),
+                skin: self.skin(),
                 lods: self.lods().map(AsRef::as_ref),
             },
         )
@@ -105,6 +125,7 @@ pub struct MeshBuffer {
     pub indices: Vec<u32>,
     pub colors: Option<Vec<[f32; 4]>>,
     pub uv1: Option<Vec<[f32; 2]>>,
+    pub skin: Option<Vec<VertexSkin>>,
     pub lods: Option<MeshLods>,
 }
 
@@ -117,6 +138,9 @@ impl MeshBuffer {
         }
         if let Some(uv1) = self.uv1 {
             mesh = mesh.with_uv1(uv1).map_err(invalid)?;
+        }
+        if let Some(skin) = self.skin {
+            mesh = mesh.with_skin(skin).map_err(invalid)?;
         }
         match self.lods {
             Some(lods) => mesh
@@ -147,15 +171,18 @@ impl MeshBuffer {
         };
         let flags = if extras {
             match word(12) {
-                Some(flags) if flags != 0 && flags & !11 == 0 => flags,
-                flags @ (Some(_) | None) => return Err(invalid().at_most(11).got(flags)),
+                Some(flags) if flags != 0 && flags & !FLAGS == 0 => flags,
+                flags @ (Some(_) | None) => return Err(invalid().at_most(u64::from(FLAGS)).got(flags)),
             }
         } else {
             0
         };
         let header = if extras { 16 } else { 12 };
         let (vertex_count, index_count) = (vertex_count as usize, index_count as usize);
-        let floats = 8 + if flags & 1 != 0 { 4 } else { 0 } + if flags & 2 != 0 { 2 } else { 0 };
+        let floats = 8
+            + if flags & 1 != 0 { 4 } else { 0 }
+            + if flags & 2 != 0 { 2 } else { 0 }
+            + if flags & 4 != 0 { SKIN_WORDS } else { 0 };
         let expected = vertex_count
             .checked_mul(floats * 4)
             .and_then(|vertices| vertices.checked_add(index_count.checked_mul(4)?))
@@ -211,6 +238,26 @@ impl MeshBuffer {
             offset += vertex_count * 8;
             uv1
         });
+        let skin = (flags & 4 != 0).then(|| {
+            let word = |at: usize| -> [u8; 4] {
+                bytes[offset + at * 4..offset + at * 4 + 4]
+                    .try_into()
+                    .expect("four_bytes")
+            };
+            let skin: Vec<VertexSkin> = (0..vertex_count)
+                .map(|vertex| {
+                    let base = vertex * SKIN_WORDS;
+                    VertexSkin {
+                        joints: std::array::from_fn(|lane| u32::from_le_bytes(word(base + lane))),
+                        weights: std::array::from_fn(|lane| {
+                            f32::from_le_bytes(word(base + 4 + lane))
+                        }),
+                    }
+                })
+                .collect();
+            offset += vertex_count * SKIN_WORDS * 4;
+            skin
+        });
         let indices = (0..index_count)
             .map(|index| {
                 u32::from_le_bytes(
@@ -231,6 +278,7 @@ impl MeshBuffer {
             indices,
             colors,
             uv1,
+            skin,
             lods,
         })
     }

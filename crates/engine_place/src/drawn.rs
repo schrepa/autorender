@@ -7,13 +7,12 @@ use crate::{MaterialHandle, MeshHandle, PassMask};
 
 pub type NodeId = Entity;
 
-pub type GeometryHandle = MeshHandle;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct DrawKind(pub &'static str);
 
 impl DrawKind {
     pub const MESH: Self = Self("mesh");
+    pub const SKIN: Self = Self("skin");
 
     pub const fn name(self) -> &'static str {
         self.0
@@ -79,10 +78,16 @@ impl Default for InstanceValues {
     }
 }
 
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct DrawnBounds {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+}
+
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Drawn {
     pub kind: DrawKind,
-    pub geometry: Option<GeometryHandle>,
+    pub geometry: Option<MeshHandle>,
     pub material: Option<MaterialHandle>,
     pub node: NodeId,
     pub passes: Option<PassMask>,
@@ -95,7 +100,7 @@ pub struct Drawn {
 impl Drawn {
     pub fn new(
         kind: DrawKind,
-        geometry: GeometryHandle,
+        geometry: MeshHandle,
         material: MaterialHandle,
         node: NodeId,
     ) -> Self {

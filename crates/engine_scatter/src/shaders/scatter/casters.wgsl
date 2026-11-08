@@ -1,3 +1,4 @@
+import package::engine::drawn::{INPUT_BATCH, INPUT_SLOT};
 import package::engine::mesh::declarations::{AffinePose, faded_slot_slot};
 import package::engine::view::{camera, view_clip};
 import package::face::impostors::{impostor_albedo, impostor_basis, impostor_flags_hemisphere,
@@ -18,8 +19,8 @@ const CARD = array<vec2<f32>, 6>(
 );
 
 @vertex
-fn vs_impostor_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
-        @location(3) index: u32) -> CardOutput {
+fn vs_impostor_card(@builtin(vertex_index) vertex: u32, @location(INPUT_SLOT) slot: u32,
+        @location(INPUT_BATCH) index: u32) -> CardOutput {
     let pose = poses[slot];
     let record = placed_impostor(faded_slot_slot(index));
     let clip = camera.view_projection;

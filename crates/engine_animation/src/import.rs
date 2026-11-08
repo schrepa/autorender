@@ -4,12 +4,10 @@ use std::sync::Arc;
 use engine_core::math::max;
 use engine_core::{
     AlphaMode, AssetLibrary, Cull, Error, ErrorCode, Expected, Filter, Material, MaterialHandle, Mesh,
-    MeshHandle, MeshVertex, Sampler, Surface, Texture, TextureHandle, TextureRef, UvTransform, Wrap,
-    decode_image,
+    MeshHandle, MeshVertex, Sampler, Surface, Texture, TextureHandle, TextureRef, UvTransform,
+    VertexSkin, Wrap, decode_image,
 };
-use engine_places_rendering::animation::{
-    Bound, Clip, Joint, JointKeys, Keys, Rig, RigPart, VertexSkin,
-};
+use engine_places_rendering::animation::{Bound, Clip, Joint, JointKeys, Keys, Rig, RigPart};
 use glam::{Mat3, Mat4, Quat, Vec3};
 use gltf::animation::util::ReadOutputs;
 use gltf::animation::{Interpolation, Property};
@@ -148,14 +146,17 @@ pub fn import_glb(
             let material = library
                 .material(&primitive.material())
                 .map_err(|error| error.within(&path))?;
-            let handle = Mesh::new(soup.vertices, soup.indices)
+            let built = Mesh::new(soup.vertices, soup.indices).and_then(|built| match binding {
+                Binding::Skinned(_) | Binding::Rigid(_) => built.with_skin(soup.skin),
+                Binding::Still => Ok(built),
+            });
+            let handle = built
                 .and_then(|built| library.assets.insert_mesh(built))
                 .map_err(|error| error.within(&path))?;
             match binding {
                 Binding::Skinned(_) | Binding::Rigid(_) => parts.push(RigPart {
                     mesh: handle,
                     material,
-                    skin: soup.skin,
                 }),
                 Binding::Still => statics.push((handle, material)),
             }

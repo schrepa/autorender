@@ -194,7 +194,8 @@ impl Run {
             }
         }
         let input = |input: u32| input_of(machine, (&*tables, set), part, input);
-        let mesh_slots = built.mesh_slots;
+        let geometry = &built.geometry;
+        let geometry_slots = geometry.len() as u32;
         match shape {
             RawShape::Pulled {
                 vertices,
@@ -279,20 +280,22 @@ impl Run {
                     return;
                 };
                 let Some(args) = input(args) else { return };
+                if !draw.holds(geometry) {
+                    return;
+                }
                 if open.set.material != Some(material) {
                     render.set_bind_group(1, group, &[]);
                     open.set.material = Some(material);
                     open.set.own[1] = None;
                 }
-                render.set_vertex_buffer(0, draw.vertices.slice(..));
-                if mesh_slots > 1
-                    && let Some(extras) = draw.extras
-                {
-                    render.set_vertex_buffer(1, extras.slice(..));
+                let bound = geometry.iter().filter_map(|&stream| draw.stream(stream));
+                for (slot, buffer) in bound.enumerate() {
+                    render.set_vertex_buffer(slot as u32, buffer.slice(..));
                 }
                 for (at, (stream, start)) in streams.listed().iter().enumerate() {
                     if let Some(buffer) = input(*stream) {
-                        render.set_vertex_buffer(mesh_slots + at as u32, buffer.slice(*start..));
+                        let slot = geometry_slots + at as u32;
+                        render.set_vertex_buffer(slot, buffer.slice(*start..));
                     }
                 }
                 render.set_index_buffer(draw.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -311,16 +314,17 @@ impl Run {
                 let Some(group) = assets.materials.group(material) else {
                     return;
                 };
+                if !draw.holds(geometry) {
+                    return;
+                }
                 if open.set.material != Some(material) {
                     render.set_bind_group(1, group, &[]);
                     open.set.material = Some(material);
                     open.set.own[1] = None;
                 }
-                render.set_vertex_buffer(0, draw.vertices.slice(..));
-                if mesh_slots > 1
-                    && let Some(extras) = draw.extras
-                {
-                    render.set_vertex_buffer(1, extras.slice(..));
+                let bound = geometry.iter().filter_map(|&stream| draw.stream(stream));
+                for (slot, buffer) in bound.enumerate() {
+                    render.set_vertex_buffer(slot as u32, buffer.slice(..));
                 }
                 render.set_index_buffer(draw.indices.slice(..), wgpu::IndexFormat::Uint32);
                 let indices = draw.first_index..draw.first_index + draw.index_count;
