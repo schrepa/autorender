@@ -80,6 +80,7 @@ const RINGS: &[(&str, &[&str])] = &[
         "rendering",
         &[
             "engine_places_rendering",
+            "engine_impostors",
             "engine_lighting",
             "engine_lights",
             "engine_sun",

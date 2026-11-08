@@ -114,7 +114,7 @@ const UNREACHED: &[(&str, &str)] = &[
     ("iteration_stopped", WATCH),
     (
         "job_unsupported",
-        "a job of a kind the list lacks answers it, and so does core's impostor kind, which only the GPU makes (crates/engine_core/src/jobs.rs, crates/engine_core/src/assets.rs)",
+        "a job of a kind the list lacks answers it, and so does the impostors brick's bake kind, which only the GPU makes (crates/engine_core/src/jobs.rs, crates/engine_impostors/src/books.rs)",
     ),
     ("lint_allowed", CHECKS),
     ("lint_missing", CHECKS),

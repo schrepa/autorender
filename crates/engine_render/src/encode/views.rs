@@ -285,11 +285,6 @@ impl Run {
     }
 
     pub(crate) fn refresh_groups(&mut self) {
-        let atlas = self.assets.impostors.generation();
-        if self.frames.atlas_generation != Some(atlas) {
-            self.frames.atlas_generation = Some(atlas);
-            self.touch(Held::Atlas);
-        }
         if self.bindings.stale.is_empty() && self.set().stale.is_empty() {
             return;
         }
@@ -398,13 +393,6 @@ impl Run {
             .get(&binding)
             .and_then(|slot| slot.core.as_ref());
         match core {
-            Some(CoreFrame::Impostor(name)) => match self.assets.impostors.frame_resource(name) {
-                Some(crate::impostors::FrameResource::View(view)) => Resolved::View(view.clone()),
-                Some(crate::impostors::FrameResource::Sampler(sampler)) => {
-                    Resolved::Sampler(sampler.clone())
-                }
-                None => Resolved::Placeholder(ty),
-            },
             Some(CoreFrame::Post) => Resolved::Buffer(self.set().post_buffer.clone()),
             Some(CoreFrame::Linear) => Resolved::Sampler(self.uniforms.linear.clone()),
             Some(CoreFrame::Target(target)) => match self.view_of(*target) {

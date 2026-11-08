@@ -267,7 +267,7 @@ pub(crate) struct Compiler<'r> {
 }
 
 impl Run {
-    pub(crate) fn split(&mut self) -> (Compiler<'_>, &mut Assets, &mut Readbacks) {
+    pub(crate) fn split(&mut self) -> (Compiler<'_>, &mut Assets) {
         (
             Compiler {
                 device: &self.device,
@@ -279,7 +279,6 @@ impl Run {
                 unlisted: &mut self.pipelines.unlisted,
             },
             &mut self.assets,
-            &mut self.reading.list,
         )
     }
 

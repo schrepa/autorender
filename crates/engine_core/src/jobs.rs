@@ -154,12 +154,7 @@ impl JobCx<'_> {
 
 #[doc(hidden)]
 pub fn job_list(kinds: &[&'static JobKind]) -> Result<JobList, Error> {
-    let core: [&'static JobKind; 4] = [
-        &TEXTURE_COOK,
-        &MESH_LODS,
-        &crate::assets::IMPOSTOR,
-        &crate::assets::IMPOSTOR_ASSEMBLY,
-    ];
+    let core: [&'static JobKind; 2] = [&TEXTURE_COOK, &MESH_LODS];
     JobList::new(
         core.into_iter()
             .chain(kinds.iter().copied())

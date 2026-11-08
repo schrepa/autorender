@@ -195,7 +195,7 @@ pub(crate) struct UploadSources<'a> {
     pub assets: &'a AssetLibrary,
     pub residency: &'a AssetResidency,
     pub hierarchy: &'a engine_core::GlobalTransforms,
-    pub impostors: &'a [engine_core::ImpostorRecord],
+    pub impostors: &'a [engine_places::impostors::ImpostorRecord],
 }
 
 #[derive(Clone, Copy, Debug)]

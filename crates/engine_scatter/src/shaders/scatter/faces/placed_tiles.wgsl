@@ -1,12 +1,10 @@
-import package::engine::impostors::{IMPOSTOR_KINDS, impostor_atlas};
-import package::engine::mesh::impostor_frames::ImpostorRecord;
+import package::face::impostors::ImpostorRecord;
 import package::generated::scatter::{DEAD, PlacedGroup, scatter_terrain_hidden};
 import package::place::placed_tiles::{Pose, Record};
 
 @group(0) @binding(0) var<storage, read> placed_records: array<Record>;
 @group(0) @binding(0) var<storage, read> placed_poses: array<Pose>;
 @group(0) @binding(0) var<storage, read> placed_groups: array<PlacedGroup>;
-@group(0) @binding(0) var placed_frames_sampler: sampler;
 
 fn placed_shown(record: Record) -> bool {
     return record.group != DEAD && !scatter_terrain_hidden(record.terrain);
@@ -31,12 +29,4 @@ fn placed_impostor(group: u32) -> ImpostorRecord {
 
 fn placed_color(group: u32) -> vec2<u32> {
     return placed_groups[group].color;
-}
-
-fn placed_frame(at: vec2<f32>, layer: u32, level: f32) -> vec4<f32> {
-    return textureSampleLevel(impostor_atlas, placed_frames_sampler, at, layer, level);
-}
-
-fn placed_frame_layers() -> u32 {
-    return textureNumLayers(impostor_atlas) / IMPOSTOR_KINDS;
 }

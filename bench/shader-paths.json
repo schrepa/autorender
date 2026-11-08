@@ -17,6 +17,8 @@
   "crates/engine_dither/src/**/*.wgsl",
   "crates/engine_ground_cover/build.rs",
   "crates/engine_ground_cover/src/**/*.wgsl",
+  "crates/engine_impostors/build.rs",
+  "crates/engine_impostors/src/**/*.wgsl",
   "crates/engine_lighting/build.rs",
   "crates/engine_lighting/src/**/*.wgsl",
   "crates/engine_lights/build.rs",

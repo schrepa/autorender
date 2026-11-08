@@ -6,8 +6,8 @@ use engine_core::{
 use engine_places_world::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
     Access, AfterRead, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND,
-    DEBUG_TARGETS, DepthUse, Draw, DrawInput, Encode, GpuPart, Install, Lifetime, MeshPass, Own,
-    Pass, Pipeline, Prepare,
+    DEBUG_TARGETS, DepthUse, Draw, DrawInput, Encode, GpuPart, Install, Lifetime, Own, Pass,
+    Pipeline, Prepare,
     RenderPipeline, SamplerDesc, Scene, SceneDraw, Shape, Texture, VertexLayout, wgpu,
 };
 use glam::Vec3;
@@ -1056,7 +1056,7 @@ impl ScatterGpu {
                     continue;
                 };
                 let record = DrawRecord::of(DrawKind::Placed, level);
-                draw.draw_with(
+                draw.draw(
                     pipeline,
                     Shape::MeshIndirect {
                         mesh: item.mesh,
@@ -1065,7 +1065,6 @@ impl ScatterGpu {
                         offset,
                         streams: &[(inputs.ids, ids), (inputs.records, record.offset())],
                     },
-                    MeshPass { fading: fades },
                 );
                 draws += 1;
             }
@@ -1222,10 +1221,6 @@ impl GpuPart for ScatterGpu {
         cx.frame(
             faces::placed_tiles::PLACED_GROUPS,
             Bind::Buffer(placed_groups),
-        )?;
-        cx.frame(
-            faces::placed_tiles::PLACED_FRAMES_SAMPLER,
-            Bind::Sampler(linear),
         )?;
         cx.frame(ambient::OCCUPANCY, Bind::Texture(occupancy_map))?;
         cx.frame(ambient::OCCUPANCY_SAMPLER, Bind::Sampler(linear))?;

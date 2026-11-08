@@ -165,7 +165,6 @@ static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::list::<CursorRequests>(),
     PlaceDecl::list::<WholeFrames>(),
     PlaceDecl::list::<Pause>(),
-    PlaceDecl::slot::<ImpostorPolicy>(),
     PlaceDecl::ledger::<FrameBudget>("frame_budget"),
     PlaceDecl::ledger::<Readiness>("readiness"),
     PlaceDecl::ledger::<AssetLibrary>("asset_library"),

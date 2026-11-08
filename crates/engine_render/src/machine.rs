@@ -130,7 +130,6 @@ pub(crate) struct FrameVariant {
 }
 
 pub(crate) enum CoreFrame {
-    Impostor(String),
     Post,
     Linear,
     Target(Target),
@@ -890,8 +889,6 @@ impl Machine {
                 let number = linker.binding_of(path, name)?;
                 let core = if !linker.is_core(path) {
                     None
-                } else if path == crate::shaders::IMPOSTORS_MODULE {
-                    Some(CoreFrame::Impostor(name.clone()))
                 } else if name == crate::shared::POST {
                     Some(CoreFrame::Post)
                 } else if name == crate::shared::LINEAR {

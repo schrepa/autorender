@@ -1,8 +1,9 @@
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
     AssetLibrary, DrawnPoses, DrawnTable, Error, ErrorCode, Expected, GlobalTransforms, GpuBits,
-    ImpostorRecord, NodeInfo, NodePose, NodeStreams, PoseRows, Since, Views,
+    NodeInfo, NodePose, NodeStreams, PoseRows, Since, Views,
 };
+use engine_places::impostors::{IMPOSTOR_VERTICES, ImpostorRecord};
 use engine_render::{
     AfterRead, Allocation, CopyRegion, GpuPart, Prepare, TargetName, mip_levels, pyramid_extents,
     wgpu,
@@ -558,7 +559,7 @@ impl MeshesGpu {
         cx.write(
             self.presented.fade_cards,
             0,
-            &[engine_render::IMPOSTOR_VERTICES, 0, 0, 0],
+            &[IMPOSTOR_VERTICES, 0, 0, 0],
         );
     }
 

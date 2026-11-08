@@ -6,10 +6,6 @@ pub use engine_textures::solid_block;
 
 use crate::{Census, Feed, Interest, Request, Requests};
 
-mod impostors;
-
-pub use impostors::*;
-
 #[derive(Component, Clone, Debug, Default)]
 pub struct AssetUses {
     assets: Vec<Asset>,
@@ -591,11 +587,10 @@ fn settle_residency(world: &mut World) {
 
 pub(crate) fn install(world: &mut World) {
     world.insert_resource(AssetResidency::empty());
-    world.init_resource::<ImpostorBooks>();
 }
 
 #[doc(hidden)]
-pub fn configure_assets(world: &mut World, arena: ArenaShape, atlas: AtlasDevice) {
+pub fn configure_assets(world: &mut World, arena: ArenaShape) {
     let _ = world.modify_resource(|residency: &mut AssetResidency| {
         residency.unplace();
         residency.arena = Some(Arena::new(arena));
@@ -603,7 +598,6 @@ pub fn configure_assets(world: &mut World, arena: ArenaShape, atlas: AtlasDevice
         residency.seen = None;
         residency.revision = residency.revision.wrapping_add(1);
     });
-    impostors::configure(world, atlas);
 }
 
 #[doc(hidden)]
@@ -613,5 +607,4 @@ pub fn settle_assets(world: &mut World) {
         settle_residency(world);
     }
     crate::drawn::resolve(world);
-    impostors::settle_impostors(world);
 }

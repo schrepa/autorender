@@ -1,9 +1,8 @@
 import package::engine::drawn::{DRAWN_OWN_PROJECTION, drawn_in_view, drawn_records};
 import package::engine::math::maximum_abs;
-import package::engine::mesh::declarations::drawn_slot;
-import package::engine::mesh::impostor_frames::{CARD_PHASE_FADING, CARD_PHASE_STEADY,
-    FADING_CARD_FADE_MAX, FADING_CARD_INDEX_MAX, fading_card, steady_card};
-import package::engine::presentation::{IMPOSTOR_VERTICES, MAX_COEFFICIENT, MAX_PRODUCT_BOUND,
+import package::engine::drawn_fades::set_drawn_fade;
+import package::engine::mesh::declarations::{FADE_LEVEL_MAX, drawn_slot, fade_word};
+import package::engine::presentation::{MAX_COEFFICIENT, MAX_PRODUCT_BOUND,
     NO_PARENT, POSE_FLOATS, Pose, ROUNDING_MARGIN, drawn_local, pose_admitted, pose_trs,
     pose_word_blend, pose_word_composed, pose_word_parent_composed, pose_word_valid};
 import package::generated::meshes::{ARGS_GROUP, BatchData as Batch, CULL_GROUP,
@@ -17,6 +16,7 @@ import package::generated::meshes::{ARGS_GROUP, BatchData as Batch, CULL_GROUP,
     candidate_state_with_phase_two, candidate_state_with_subpixel, candidate_state_with_valid,
     candidate_state_with_view, candidate_state_with_view_level, candidate_state_with_visible,
     lod_fade, lod_fade_history, lod_fade_previous, lod_fade_progress, lod_fade_shown};
+import package::face::impostors::IMPOSTOR_VERTICES;
 import package::meshes::screen_cull::{F32_MAX, covers_no_pixel, hidden};
 import package::meshes::slots::instance_poses;
 
@@ -321,8 +321,7 @@ fn fade_levels(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         let cards = frame.eye.w != 0.0 && batch.lod_errors.w > 0.0;
         let card_switch = (shown == IMPOSTOR) != (previous == IMPOSTOR);
-        if !card_switch || !cards || candidate_state_moving(flags)
-                || candidate.batch > FADING_CARD_INDEX_MAX {
+        if !card_switch || !cards || candidate_state_moving(flags) {
             progress = LOD_FADED;
         }
         progress = min(progress + u32(frame.fade.x * f32(LOD_FADED)), LOD_FADED);
@@ -331,11 +330,11 @@ fn fade_levels(@builtin(global_invocation_id) id: vec3<u32>) {
     var steady = shown;
     if progress < LOD_FADED {
         steady = select(shown, previous, shown == IMPOSTOR);
-        let fade = u32(f32(progress) / f32(LOD_FADED) * f32(FADING_CARD_FADE_MAX));
-        let word = fading_card(candidate.batch, true, fade, shown != IMPOSTOR, CARD_PHASE_FADING);
+        let faded = u32(f32(progress) / f32(LOD_FADED) * f32(FADE_LEVEL_MAX));
+        set_drawn_fade(candidate.slot, fade_word(faded, shown != IMPOSTOR, true));
         let index = atomicAdd(&fade_cards[1], 1u);
         atomicStore(&fade_cards[4u + 2u * index], drawn_slot(candidate.slot, false));
-        atomicStore(&fade_cards[5u + 2u * index], word);
+        atomicStore(&fade_cards[5u + 2u * index], candidate.batch);
     }
     scan[candidate.position] = candidate_state_with_level(flags, steady);
 }
@@ -595,7 +594,7 @@ fn scatter(
             let candidate = candidates[id.x];
             impostor_ids[global] = vec2<u32>(
                 drawn_slot(candidate.slot, candidate_state_moving(stored)),
-                steady_card(candidate.batch, CARD_PHASE_STEADY));
+                candidate.batch);
         } else if level != 0u || global < frame.budget {
             let candidate = candidates[id.x];
             let batch = candidate.batch;

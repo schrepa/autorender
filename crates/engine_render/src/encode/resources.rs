@@ -25,7 +25,7 @@ impl Run {
                 label: Some("engine/part-mips"),
             })
         });
-        let (mut compiler, assets, _) = self.split();
+        let (mut compiler, assets) = self.split();
         for layer in layers {
             assets.materials.mips().record(
                 (&device, &mut encoder),

@@ -3,10 +3,12 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::{
     Asset, AssetLibrary, AssetResidency, AssetUses, Cut, Detail, DeviceLimits, Drawn, FrameTime,
-    ImpostorAsks, ImpostorPolicy, ImpostorRecord, ImpostorRecords, PrimaryView, Readable,
-    Readback, Spawner, Transform,
+    PrimaryView, Readable, Readback, Spawner, Transform,
 };
 use engine_math::collections::HashMap;
+use engine_places::impostors::{
+    IMPOSTOR_VERTICES, ImpostorAsks, ImpostorRecord, ImpostorRecords, Impostors,
+};
 use engine_places_rendering::occlusion::OcclusionSource;
 use engine_places_rendering::shadows::{ShadowChange, ShadowChanges};
 use engine_places_simulation::ground::TileKey;
@@ -423,7 +425,7 @@ pub(crate) fn place_pool(
 }
 
 pub(crate) fn plan_cull(
-    (view, detail, policy): (Res<PrimaryView>, Res<Detail>, Res<ImpostorPolicy>),
+    (view, detail, policy): (Res<PrimaryView>, Res<Detail>, Res<Impostors>),
     mut state: ResMut<ScatterState>,
 ) {
     let state = &mut *state;
@@ -484,7 +486,13 @@ pub(crate) fn publish_assets(
             }
         }
         Err(_) => {
-            let entity = spawner.spawn((Placements, Transform::default(), state.uses.clone(), asks));
+            let entity = spawner.spawn((
+                Placements,
+                Transform::default(),
+                state.uses.clone(),
+                asks,
+                ImpostorRecords::default(),
+            ));
             spawner.insert(entity, Drawn::procedural(PLACED, entity));
         }
     }

@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::Resource;
 use bytemuck::{Pod, Zeroable};
-use engine_core::{GpuBits, ImpostorRecord, gpu_bits, gpu_consts, gpu_struct};
+use engine_core::{GpuBits, gpu_bits, gpu_consts, gpu_struct};
+use engine_places::impostors::ImpostorRecord;
 use engine_render::debug::DebugRecord;
 use glam::Mat4;
 

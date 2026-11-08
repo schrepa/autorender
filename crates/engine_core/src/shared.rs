@@ -2,15 +2,14 @@ use bevy_ecs::world::World;
 use engine_registry::Registry;
 
 use crate::{
-    Census, Error, ErrorCode, FrameBudget, GlobalTransforms, ImpostorBooks, Level, MeshLevels,
-    Readiness, RecordExchange, Records, WorkClock, settings,
+    Census, Error, ErrorCode, FrameBudget, GlobalTransforms, Level, MeshLevels, Readiness,
+    RecordExchange, Records, WorkClock, settings,
 };
 
 settings! {
     #[section("feeds")]
     pub struct FeedSettings {
         pub transforms: u32 = 16384 => at_least(1),
-        pub impostor_work: u32 = 64 => at_least(1),
         pub mesh_residency: u32 = 4096 => at_least(1),
     }
 }
@@ -91,18 +90,6 @@ pub(crate) fn settle_readiness(world: &mut World) {
             if let crate::Request::Failed(error) = request {
                 readiness.fail(&format!("mesh_lods.{}", key.hex()), error.clone());
             }
-        }
-    }
-    if let Some(books) = world.get_resource::<ImpostorBooks>() {
-        let census = books.census();
-        readiness.load(&census);
-        readiness.settle(u32::try_from(books.left()).unwrap_or(u32::MAX));
-        if census.failed > 0 {
-            readiness.fail(
-                "impostors",
-                Error::new(ErrorCode::InvalidRecord, "$.impostors")
-                    .got(serde_json::json!({ "failed": census.failed })),
-            );
         }
     }
     if let Some(level) = world.get_resource::<Level>() {

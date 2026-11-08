@@ -47,20 +47,11 @@ pub(crate) fn arena_shape(device: &wgpu::Device) -> ArenaShape {
 pub(crate) fn configure(
     device: &wgpu::Device,
     world: &mut World,
-    (meshes, materials, impostors): (
-        &mut GpuMeshes,
-        &mut crate::materials::MaterialStore,
-        &mut crate::impostors::Impostors,
-    ),
+    (meshes, materials): (&mut GpuMeshes, &mut crate::materials::MaterialStore),
 ) {
     meshes.placed = engine_core::Cursor::default();
     materials.forget_sync();
-    impostors.forget();
-    engine_core::configure_assets(
-        world,
-        arena_shape(device),
-        crate::impostors::atlas_device(device),
-    );
+    engine_core::configure_assets(world, arena_shape(device));
 }
 
 #[derive(Clone, Copy)]

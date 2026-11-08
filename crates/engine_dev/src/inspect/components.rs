@@ -1,7 +1,8 @@
 use engine_core::{
-    AssetResidency, AxisInput, CursorMode, CursorRequests, Drawn, IMPOSTOR_MIN_TRIANGLES,
-    ImpostorBooks, MaterialHandle, MenuInput, MeshHandle, PointerInput, ResidentMesh,
+    AssetResidency, AxisInput, CursorMode, CursorRequests, Drawn, MaterialHandle, MenuInput,
+    MeshHandle, PointerInput, ResidentMesh,
 };
+use engine_places::impostors::{IMPOSTOR_MIN_TRIANGLES, ImpostorAsks, ImpostorRecords};
 
 use super::*;
 use crate::MenuPress;
@@ -136,8 +137,16 @@ fn impostor_resident(
     if (resident.index_count() as usize) / 3 < IMPOSTOR_MIN_TRIANGLES {
         return None;
     }
-    let books = world.get_resource::<ImpostorBooks>()?;
-    Some(books.contains(mesh, material))
+    let mut held = world.try_query::<(&ImpostorAsks, &ImpostorRecords)>()?;
+    Some(held.iter(world).any(|(asks, records)| {
+        asks.generation == records.generation
+            && asks.asks.iter().zip(&records.records).any(|(ask, record)| {
+                record.framed()
+                    && ask
+                        .as_ref()
+                        .is_some_and(|ask| ask.mesh == mesh && ask.material == material)
+            })
+    }))
 }
 
 pub(super) fn mesh_view(

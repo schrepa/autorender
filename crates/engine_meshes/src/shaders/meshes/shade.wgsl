@@ -1,4 +1,4 @@
-import package::engine::materials::{alpha_test, fade_list};
+import package::engine::materials::alpha_test;
 import package::engine::mesh::declarations::{MotionOutput, VertexOutput, fade_hidden};
 import package::engine::mesh::vertex::output_color;
 import package::engine::shading::{SurfaceInput, SurfacePoint};
@@ -52,16 +52,10 @@ fn fragment_values(clip_position: vec4<f32>, normal_u: vec4<f32>, world_v: vec4<
 }
 
 fn fragment(input: VertexOutput) -> SlotFragment {
-    if fade_list() && fade_hidden(input.material.w, input.clip_position.xy) {
-        discard;
-    }
     return fragment_values(input.clip_position, input.normal_u, input.world_v, input.material);
 }
 
 fn extended_fragment(input: ExtendedOutput) -> SlotFragment {
-    if fade_list() && fade_hidden(input.material.w, input.clip_position.xy) {
-        discard;
-    }
     var values = fragment_values(input.clip_position, input.normal_u, input.world_v,
         input.material);
     values.color *= input.color;

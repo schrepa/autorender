@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, GpuBits, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk,
-    ImpostorRecord, Material, MaterialHandle, Mesh, MeshHandle, ResidentMesh, SurfaceSlot,
-    TextureHandle,
+    AlphaMode, AssetLibrary, AssetResidency, GpuBits, Material, MaterialHandle, Mesh, MeshHandle,
+    ResidentMesh, SurfaceSlot, TextureHandle,
 };
 use engine_math::collections::HashMap;
+use engine_places::impostors::{IMPOSTOR_MIN_TRIANGLES, ImpostorAsk, ImpostorRecord};
 use engine_places_world::ground::{Placed, PlacedAsset};
 use engine_render::{pack_color, pack_surface};
 use glam::Vec3;

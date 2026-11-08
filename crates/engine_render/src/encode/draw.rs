@@ -70,14 +70,9 @@ impl Run {
         &self,
         mesh: MeshHandle,
         material: Option<MaterialHandle>,
-        pass: crate::MeshPass,
     ) -> Option<crate::surface::MaterialVariant> {
         self.assets.meshes.get(mesh)?;
-        let variant = self.assets.materials.variant(material)?;
-        Some(variant.with_draw(crate::surface::DrawState {
-            fading: pass.fading,
-            ..variant.draw()
-        }))
+        self.assets.materials.variant(material)
     }
 
     #[expect(
@@ -89,7 +84,7 @@ impl Run {
         part: u32,
         point: Option<&'static str>,
         handle: u32,
-        (shape, offsets, pass): (RawShape, &[u32], crate::MeshPass),
+        (shape, offsets): (RawShape, &[u32]),
         timed: TimedDraw<'_>,
     ) {
         let _row = engine_profile::timed(engine_profile::row("render.draw"));
@@ -111,8 +106,8 @@ impl Run {
             self.fill_groups(pipeline, filled);
         }
         let variant = match &shape {
-            RawShape::MeshIndirect { mesh, material, .. } => {
-                let Some(variant) = self.mesh_variant(*mesh, *material, pass) else {
+            RawShape::MeshIndirect { mesh, material, .. } | RawShape::Mesh { mesh, material, .. } => {
+                let Some(variant) = self.mesh_variant(*mesh, *material) else {
                     return;
                 };
                 Some(variant)
@@ -281,11 +276,9 @@ impl Run {
                 let Some(draw) = assets.meshes.draw(mesh) else {
                     return;
                 };
-                let group = match material {
-                    Some(handle) => assets.materials.group(handle),
-                    None => Some(assets.materials.binding(None).0),
+                let Some(group) = assets.materials.group(material) else {
+                    return;
                 };
-                let Some(group) = group else { return };
                 let Some(args) = input(args) else { return };
                 if open.set.material != Some(material) {
                     render.set_bind_group(1, group, &[]);
@@ -306,6 +299,34 @@ impl Run {
                 render.set_index_buffer(draw.indices.slice(..), wgpu::IndexFormat::Uint32);
                 timed_draw(render, timed, |render| {
                     render.draw_indexed_indirect(args, offset)
+                });
+            }
+            RawShape::Mesh {
+                mesh,
+                material,
+                instances,
+            } => {
+                let Some(draw) = assets.meshes.draw(mesh) else {
+                    return;
+                };
+                let Some(group) = assets.materials.group(material) else {
+                    return;
+                };
+                if open.set.material != Some(material) {
+                    render.set_bind_group(1, group, &[]);
+                    open.set.material = Some(material);
+                    open.set.own[1] = None;
+                }
+                render.set_vertex_buffer(0, draw.vertices.slice(..));
+                if mesh_slots > 1
+                    && let Some(extras) = draw.extras
+                {
+                    render.set_vertex_buffer(1, extras.slice(..));
+                }
+                render.set_index_buffer(draw.indices.slice(..), wgpu::IndexFormat::Uint32);
+                let indices = draw.first_index..draw.first_index + draw.index_count;
+                timed_draw(render, timed, |render| {
+                    render.draw_indexed(indices, draw.base_vertex, instances)
                 });
             }
         }

@@ -1,19 +1,14 @@
-import package::engine::materials::{ALPHA_MASK, MAP_BASE_COLOR, MASK_MIP_SCALE, base_color_map,
-    map_uv, material_alpha};
+import package::engine::materials::{MAP_BASE_COLOR, MASK_MIP_SCALE, base_color_map, map_uv};
 import package::engine::shading::{SurfaceInput, SurfacePoint, derived};
 import package::engine::slots::{slot_base_color, slot_cutoff, slot_emissive, slot_kind,
     slot_light_inputs, slot_metalness, slot_normal, slot_occlusion, slot_opacity, slot_roughness,
     slot_transmission};
-import package::engine::surfaces::{SURFACE_SOLID, SURFACE_THIN};
+import package::engine::surfaces::SURFACE_SOLID;
 import package::engine::view::stable_normalize;
 
 fn geometric_normal(surface_normal: vec3<f32>, front: bool) -> vec3<f32> {
     let geometric = stable_normalize(surface_normal);
     return select(-geometric, geometric, front);
-}
-
-fn surface_kind() -> u32 {
-    return select(SURFACE_SOLID, SURFACE_THIN, material_alpha() == ALPHA_MASK);
 }
 
 fn placed(input: SurfaceInput) -> SurfacePoint {
@@ -26,7 +21,7 @@ fn placed(input: SurfaceInput) -> SurfacePoint {
     let to_eye = input.eye - input.world;
     point.distance = length(to_eye);
     point.view = stable_normalize(to_eye);
-    point.kind = surface_kind();
+    point.kind = SURFACE_SOLID;
     point.occlusion = 1.0;
     return point;
 }
