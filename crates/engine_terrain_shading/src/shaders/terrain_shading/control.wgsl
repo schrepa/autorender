@@ -1,7 +1,7 @@
 import package::face::ground_surface::{SurfaceGround, surface_control, surface_inputs, surface_level,
     surface_river};
-import package::generated::terrain_shading::{CONTROL_GROUP, ControlJob, RIVER_BEDS, RIVER_EDGES,
-    RIVER_PLANE_FAR, TILE_STRIDE};
+import package::generated::terrain_shading::{CONTROL_GROUP, ControlJob, RIVER_PLANE_FAR,
+    TILE_STRIDE, river_maps_beds, river_maps_edges};
 import package::terrain_shading::tile::{tile_height, tile_shape};
 
 @group(1) @binding(0) var<storage, read> control_jobs: array<ControlJob>;
@@ -14,10 +14,10 @@ fn river_plane(texel: vec2<u32>, layer: u32, plane: u32) -> u32 {
 
 fn river_planes(texel: vec2<u32>, job: ControlJob) -> vec4<u32> {
     var held = vec4<u32>(RIVER_PLANE_FAR, 0u, 0u, RIVER_PLANE_FAR);
-    if (job.rivers & RIVER_EDGES) != 0u {
+    if river_maps_edges(job.rivers) {
         held.x = river_plane(texel, job.layer, 0u);
     }
-    if (job.rivers & RIVER_BEDS) != 0u {
+    if river_maps_beds(job.rivers) {
         held.y = river_plane(texel, job.layer, 1u);
         held.z = river_plane(texel, job.layer, 2u);
         held.w = river_plane(texel, job.layer, 3u);

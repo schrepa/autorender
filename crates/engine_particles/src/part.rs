@@ -6,8 +6,8 @@ use engine_core::{
     Views, Writes, gpu_struct,
 };
 use engine_render::{
-    Access, Attach, Bind, Buffer, DepthUse, Draw, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
-    Own, Pass, Pipeline, Prepare, RenderPipeline, Scene, SceneDraw, Shape, Texture, wgpu,
+    Access, Allocation, Attach, Bind, Buffer, DepthUse, Draw, Encode, FULLSCREEN, GpuPart, Install,
+    Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Scene, SceneDraw, Shape, Texture, wgpu,
 };
 
 use crate::PARTICLES;
@@ -189,8 +189,11 @@ pub(crate) struct ParticlesGpu {
 
 impl ParticlesGpu {
     fn show(&self, drawn: bool, cx: &mut Prepare<'_, Self>) {
-        cx.allocate_buffer(self.shown, SHOWN_BYTES);
-        cx.write(self.shown, 0, &[u32::from(drawn), 0, 0, 0]);
+        match cx.allocate_buffer(self.shown, SHOWN_BYTES) {
+            Allocation::Fresh | Allocation::Kept => {
+                cx.write(self.shown, 0, &[u32::from(drawn), 0, 0, 0]);
+            }
+        }
     }
 
     fn release_held(&mut self, cx: &mut Prepare<'_, Self>) {
@@ -216,14 +219,18 @@ impl ParticlesGpu {
         if let Some(size) = grown(*held, size_of_val(packed.records.as_slice()) as u64, room) {
             *held = size;
         }
-        cx.allocate_buffer(self.uniform, size_of::<Particles>() as u64);
-        cx.allocate_buffer(self.emitters, *held);
+        let uniform = cx.allocate_buffer(self.uniform, size_of::<Particles>() as u64);
+        let emitters = cx.allocate_buffer(self.emitters, *held);
         if packed.total == 0 {
             return None;
         }
-        cx.write(self.emitters, 0, &packed.records);
-        let uniform = Particles::new(packed.records.len() as u32);
-        cx.write(self.uniform, 0, &[uniform]);
+        match emitters {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.emitters, 0, &packed.records),
+        }
+        let values = Particles::new(packed.records.len() as u32);
+        match uniform {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.uniform, 0, &[values]),
+        }
         Some(Counts {
             alpha: packed.alpha,
             mist: packed.mist,
@@ -374,10 +381,13 @@ impl GpuPart for ParticlesGpu {
             height: size.y,
             depth_or_array_layers: 1,
         };
-        cx.allocate(self.accumulated, extent, 1);
-        cx.allocate(self.revealed, extent, 1);
+        match cx.allocate(self.accumulated, extent, 1) {
+            Allocation::Fresh | Allocation::Kept => cx.run(self.accumulate),
+        }
+        match cx.allocate(self.revealed, extent, 1) {
+            Allocation::Fresh | Allocation::Kept => cx.run(self.accumulate),
+        }
         self.targets = true;
-        cx.run(self.accumulate);
         cx.run(self.composite);
     }
 

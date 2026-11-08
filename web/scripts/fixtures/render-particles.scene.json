@@ -30,13 +30,22 @@
         0.75,
         1
       ],
-      "texture": {
-        "id": "grate",
-        "mag_filter": "nearest",
-        "scale": [
-          24,
-          24
-        ]
+      "slots": {
+        "base_color": {
+          "module": "mapped",
+          "maps": {
+            "base_color": {
+              "id": "grate",
+              "mag_filter": "nearest",
+              "scale": [
+                24,
+                24
+              ]
+            }
+          }
+        },
+        "cutoff": "mapped",
+        "opacity": "mapped"
       },
       "alpha_mode": "mask",
       "alpha_cutoff": 0.5,

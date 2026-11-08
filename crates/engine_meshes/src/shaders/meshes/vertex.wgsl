@@ -1,6 +1,6 @@
 import package::engine::mesh::declarations::{AffinePose as PoseRows, AffineVertexInput,
     MotionOutput, drawn_slot_moved, drawn_slot_slot};
-import package::engine::drawn::{DRAWN_OWN_PROJECTION, drawn_clip, drawn_records};
+import package::engine::drawn::{drawn_clip, drawn_flags_own_projection, drawn_records};
 import package::engine::mesh::vertex::{pose_matrix, transform_vertex};
 import package::engine::shading::PositionInput;
 import package::engine::slots::slot_position;
@@ -53,7 +53,7 @@ fn affine_motion(input: AffineVertexInput, pose: AffinePose, previous: AffinePos
 
 fn own_projection(output: MotionOutput, slot: u32) -> MotionOutput {
     let record = drawn_records[slot];
-    if (record.flags & DRAWN_OWN_PROJECTION) == 0u {
+    if !drawn_flags_own_projection(record.flags) {
         return output;
     }
     let lens = camera.view_projection;

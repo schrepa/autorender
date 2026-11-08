@@ -356,6 +356,7 @@ pub enum Lifetime {
     Previous,
 }
 
+#[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Allocation {
     Kept,

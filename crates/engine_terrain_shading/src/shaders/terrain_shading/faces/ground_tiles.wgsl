@@ -1,7 +1,7 @@
 import package::place::ground_tiles::{GroundHeight, GroundMaterial, GroundTerrain, GroundTile,
     LevelTile, MaterialLook, NOT_RESIDENT, PALETTE_ENTRIES, PEAK_CELLS, PEAK_MIPS, TILE_QUADS,
     TerrainInfo};
-import package::generated::terrain_shading::PaletteEntry;
+import package::generated::terrain_shading::{PaletteEntry, control_a, control_b, control_blend};
 import package::terrain_shading::tables::{table_terrain, terrain_tables};
 
 @group(0) @binding(0) var heights: texture_2d_array<f32>;
@@ -76,7 +76,7 @@ fn tile_gradient(tile: LevelTile, sample: vec2<u32>) -> vec2<f32> {
 fn tile_material(tile: LevelTile, sample: vec2<u32>) -> GroundMaterial {
     let texel = min(sample - tile.first, vec2<u32>(256u)) + vec2<u32>(1u);
     let value = textureLoad(control, texel, tile.layer, 0).x;
-    return GroundMaterial(value & 0xffu, (value >> 8u) & 0xffu, (value >> 16u) & 0xffu);
+    return GroundMaterial(control_a(value), control_b(value), control_blend(value));
 }
 
 fn triangle_height(a: f32, b: f32, c: f32, d: f32, f: vec2<f32>) -> f32 {

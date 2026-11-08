@@ -754,9 +754,12 @@ impl ScatterGpu {
             .map(|(&impostor, &color)| placed_group(impostor, color))
             .collect();
         let bytes = (groups.len().max(1) * size_of::<PlacedGroup>()) as u64;
-        cx.allocate_buffer(self.placed_groups, bytes);
-        if !groups.is_empty() {
-            cx.write(self.placed_groups, 0, &groups);
+        match cx.allocate_buffer(self.placed_groups, bytes) {
+            Allocation::Fresh | Allocation::Kept => {
+                if !groups.is_empty() {
+                    cx.write(self.placed_groups, 0, &groups);
+                }
+            }
         }
     }
 
@@ -773,7 +776,9 @@ impl ScatterGpu {
         let held = &mut self.held;
         held.snapping = false;
         let terrains = tiles.terrains.len() as u32;
-        cx.allocate_buffer(self.snap_uniform, size_of::<Snap>() as u64);
+        if cx.allocate_buffer(self.snap_uniform, size_of::<Snap>() as u64) == Allocation::Fresh {
+            held.snapped = None;
+        }
         if ground.layers == 0 || terrains == 0 || state.resident == 0 {
             return;
         }
@@ -916,8 +921,9 @@ impl ScatterGpu {
         } else {
             (1, 1)
         };
-        let fresh = cx.allocate(self.occupancy_map, layer(texels, layers), 1) == Allocation::Fresh;
-        cx.allocate(self.unfiner, layer(1, 1), 1);
+        let mut fresh =
+            cx.allocate(self.occupancy_map, layer(texels, layers), 1) == Allocation::Fresh;
+        fresh |= cx.allocate(self.unfiner, layer(1, 1), 1) == Allocation::Fresh;
         let cover = size_of::<Cover>() as u64;
         let word = size_of::<u32>() as u64;
         if !windows.runs {
@@ -931,16 +937,20 @@ impl ScatterGpu {
         if windows.runs && windows.slots > 0 && !covers.is_empty() {
             grow(&mut held.listed, 2 * u64::from(windows.slots) * word, room);
         }
-        cx.allocate_buffer(self.covers, held.covers);
-        cx.allocate_buffer(self.listed, held.listed);
-        if !covers.is_empty() {
-            cx.write(self.covers, 0, covers);
+        match cx.allocate_buffer(self.covers, held.covers) {
+            Allocation::Fresh | Allocation::Kept => {
+                if !covers.is_empty() {
+                    cx.write(self.covers, 0, covers);
+                }
+            }
         }
+        fresh |= cx.allocate_buffer(self.listed, held.listed) == Allocation::Fresh;
         held.workgroups = windows.workgroups;
         held.occupancy = [(false, false); MAX_OCCUPANCY_LEVELS];
         for (&splat, &listed) in self.splats.iter().zip(&self.listed_draws) {
-            cx.allocate_buffer(splat, size_of::<Splat>() as u64);
-            cx.allocate_buffer(listed, size_of::<ListedDraw>() as u64);
+            fresh |= cx.allocate_buffer(splat, size_of::<Splat>() as u64) == Allocation::Fresh;
+            fresh |=
+                cx.allocate_buffer(listed, size_of::<ListedDraw>() as u64) == Allocation::Fresh;
         }
         let missed = std::mem::take(&mut held.occupancy_asked) && !cx.ran(self.occupancy);
         let mut wanted = [(CellWords::default(), CellWords::default()); MAX_OCCUPANCY_LEVELS];
@@ -1325,10 +1335,13 @@ impl GpuPart for ScatterGpu {
             self.held = Held::default();
         }
         let words = record_words();
-        cx.allocate_buffer(
+        let records = cx.allocate_buffer(
             self.debug_records,
             std::mem::size_of_val(words.as_slice()) as u64,
         );
+        if records == Allocation::Fresh {
+            self.records_written = false;
+        }
         if !self.records_written {
             cx.write(self.debug_records, 0, &words);
             self.records_written = true;
@@ -1338,11 +1351,13 @@ impl GpuPart for ScatterGpu {
         self.write_placed_groups(cx, &state);
         if far.is_changed() {
             let words = far.words();
-            cx.allocate_buffer(
+            let placed = cx.allocate_buffer(
                 self.placed_far,
                 std::mem::size_of_val(words.as_slice()) as u64,
             );
-            cx.write(self.placed_far, 0, &words);
+            match placed {
+                Allocation::Fresh | Allocation::Kept => cx.write(self.placed_far, 0, &words),
+            }
         }
         self.prepare_snap(cx, &state, (&tiles, &ground, &baking));
         self.prepare_cull(cx, &state, (&*views, &*table));

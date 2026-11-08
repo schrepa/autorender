@@ -5,7 +5,8 @@ import package::face::heightfield::{TERRAIN_GRID, TerrainGroundRise, TerrainGrou
 import package::generated::water::{BLOCK_GROUND, COVER_POINTS, DRY, GROUND_D84, LIVE_CELL,
     LIVE_HEAD, LIVE_HELD, LIVE_NONE, NO_WATER_SURFACE, SETUP_RISEN, SETUP_SOLID_ENTRIES,
     SETUP_STANDS, SETUP_WHOLE, SimSetup, THIN, TURBULENT_SPEED, UNHELD, WATER_SETUP_RING_GROUP};
-import package::generated::water::{NO_WATER_BLOCK, WATER_LIVE_BLOCK, WATER_TILE_PATCHES};
+import package::generated::water::{NO_WATER_BLOCK, WATER_LIVE_BLOCK, WATER_TILE_PATCHES,
+    water_info_word, water_info_word_kind, water_state_word, water_state_word_reach};
 import package::place::water::{WATER_HELD, WaterCell};
 import package::water::faces::water::{water_cell, water_info_at, water_read, water_texel};
 
@@ -337,8 +338,9 @@ fn setup_blocks(
     let water = SetupWater(live.surface, live.flow, lake, rush);
     setup_cells[held] = setup_standing(water, risen.x, at, true);
     setup_looks[2u * held] = setup_standing(water, risen.x, at, false);
-    setup_looks[2u * held + 1u] = vec4<f32>(0.0, 0.0, bitcast<f32>(nearest.x & 0xff000000u),
-        bitcast<f32>(nearest.y & 0xff000000u));
+    setup_looks[2u * held + 1u] = vec4<f32>(0.0, 0.0,
+        bitcast<f32>(water_info_word(0u, 0u, 0u, water_info_word_kind(nearest.x))),
+        bitcast<f32>(water_state_word(0u, 0u, 0u, water_state_word_reach(nearest.y))));
 }
 
 fn setup_sample(window: u32, at: vec2<i32>) -> vec4<u32> {

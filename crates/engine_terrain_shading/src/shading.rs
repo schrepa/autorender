@@ -2,6 +2,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use engine_codec::{self as codec, Error, Reader, Writer};
+use engine_core::GpuBits;
 use engine_heightfield::layer::LayerKind;
 use engine_heightfield::tile::{
     BiomeRules, Control, Generator, SurfaceInputs, Tile, control_row, gradient_word,
@@ -75,7 +76,7 @@ impl TileShading {
     pub fn control_at(&self, x: i32, z: i32) -> Control {
         let last = SIDE as i32 - 1;
         let (x, z) = (x.clamp(0, last) as usize, z.clamp(0, last) as usize);
-        Control::unpack(self.control[z * SIDE + x])
+        Control::unpack(self.control[z * SIDE + x]).unwrap_or_default()
     }
 
     pub fn control_texels(&self) -> Box<[u32]> {
@@ -228,7 +229,7 @@ impl Sums {
         };
         let weight = total as f32;
         let gradient = [self.gradient[0] / weight, self.gradient[1] / weight];
-        (control.packed(), gradient_word(gradient))
+        (control.pack(), gradient_word(gradient))
     }
 }
 
@@ -257,7 +258,11 @@ fn averaged(
             for &(z, weight_z) in &row[..*row_count] {
                 for &(x, weight_x) in &column[..*column_count] {
                     let (value, gradient) = sample(x, z);
-                    sums.add(Control::unpack(value), gradient, weight_x * weight_z);
+                    sums.add(
+                        Control::unpack(value).unwrap_or_default(),
+                        gradient,
+                        weight_x * weight_z,
+                    );
                 }
             }
             let (value, gradient) = sums.mean();

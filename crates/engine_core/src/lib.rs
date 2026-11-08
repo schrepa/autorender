@@ -52,14 +52,15 @@ pub use bricks::*;
 pub use clock::*;
 pub use cook::{Cook, CookAsks, CookList, cook};
 pub use drawn::{
-    DRAWN_OWN_PROJECTION, DRAWN_UNBOUNDED, DrawnBatch, DrawnCensus,
+    DrawnBatch, DrawnCensus, DrawnFlags,
     DrawnRecord, DrawnSettings, DrawnState, DrawnTable, PlanState, drawn_wgsl,
 };
 pub use engine_assets::{
     Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, Attributes,
     ColorSpace, Cull, DepthBias, Filter, LightingModel, LodInput,
     LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding, Mesh,
-    MeshLods, MeshVertex, NORMAL_MAP, RenderState, STANDARD_MAPS, Sampler,
+    MeshLods, MeshVertex, BASE_COLOR_MAP, EMISSIVE_MAP, MAPPED, MAPPED_MAPS, MAPPED_SLOTS,
+    METALLIC_ROUGHNESS_MAP, NORMAL_MAP, OCCLUSION_MAP, RenderState, Sampler,
     Surface, SurfaceSlot, Texture, TextureFormat, TextureRef, UvTransform, Wrap, attributes_wgsl,
     lod_input,
 };

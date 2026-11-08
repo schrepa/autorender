@@ -7,8 +7,8 @@ use engine_core::{
     Readable, Readback, gpu_struct,
 };
 use engine_render::{
-    AfterRead, Attach, Bind, Buffer, Copied, CopyRegion, DepthUse, Encode, GpuPart, Install,
-    Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture,
+    AfterRead, Allocation, Attach, Bind, Buffer, Copied, CopyRegion, DepthUse, Encode, GpuPart,
+    Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture,
     VertexLayout, wgpu,
 };
 
@@ -138,6 +138,7 @@ pub(crate) struct ImpostorGpu {
     asked: VecDeque<Asked>,
     drawing: Option<Drawn>,
     announced: bool,
+    held: bool,
 }
 
 impl ImpostorGpu {
@@ -158,9 +159,10 @@ impl ImpostorGpu {
         self.asked.clear();
         self.drawing = None;
         self.shape = None;
+        self.held = false;
     }
 
-    fn apply(&mut self, work: &AtlasWork, cx: &mut Prepare<'_, Self>) {
+    fn apply(&mut self, work: &AtlasWork, cx: &mut Prepare<'_, Self>) -> Allocation {
         match work {
             AtlasWork::Reset { shape } => {
                 self.forget(cx);
@@ -173,16 +175,21 @@ impl ImpostorGpu {
             }
             AtlasWork::Grow { layers } => {
                 let Some(shape) = self.shape else {
-                    return;
+                    return Allocation::Kept;
                 };
                 let extent = wgpu::Extent3d {
                     width: shape.size(),
                     height: shape.size(),
                     depth_or_array_layers: *layers,
                 };
+                let mut grown = Allocation::Kept;
                 for texture in self.atlas {
-                    cx.grow(texture, extent, shape.levels());
+                    if cx.grow(texture, extent, shape.levels()) == Allocation::Fresh && self.held {
+                        grown = Allocation::Fresh;
+                    }
                 }
+                self.held = true;
+                return grown;
             }
             AtlasWork::Load { layer, bytes } => match (self.shape, bytes.upgrade()) {
                 (Some(shape), Some(bytes)) => self.load(shape, *layer, &bytes, cx),
@@ -199,7 +206,7 @@ impl ImpostorGpu {
             } => {
                 if self.shape.is_none() {
                     cx.deliver::<BakeReads>(*serial, Vec::new());
-                    return;
+                    return Allocation::Kept;
                 }
                 self.asked.push_back(Asked {
                     serial: *serial,
@@ -211,6 +218,7 @@ impl ImpostorGpu {
                 });
             }
         }
+        Allocation::Kept
     }
 
     fn load(&self, shape: AtlasShape, layer: u32, bytes: &[u8], cx: &mut Prepare<'_, Self>) {
@@ -273,38 +281,46 @@ impl ImpostorGpu {
                 })
                 .collect();
         let size = shape.size();
-        for texture in self.colors {
-            cx.allocate(texture, flat(size), shape.levels());
-        }
-        cx.allocate(self.depth, flat(size), 1);
-        cx.allocate(self.shade, flat((size * SHADE_SCALE).min(SHADE_MOST)), 1);
         let baking = record_of(asked.bounds, 0, ([0.0; 3], false), shape);
-        cx.allocate_buffer(self.uniform, size_of::<ImpostorBake>() as u64);
-        cx.write(
-            self.uniform,
-            0,
-            &[ImpostorBake {
-                sphere: baking.sphere,
-                flags: [baking.flags, 0, 0, 0],
-                tile: [0, 0, shape.frames, shape.frames],
-            }],
-        );
-        cx.allocate_buffer(self.kinds, 4);
-        cx.clear_buffer_range(self.kinds, 0..4);
+        let uniform = ImpostorBake {
+            sphere: baking.sphere,
+            flags: [baking.flags, 0, 0, 0],
+            tile: [0, 0, shape.frames, shape.frames],
+        };
+        match cx.allocate_buffer(self.uniform, size_of::<ImpostorBake>() as u64) {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.uniform, 0, &[uniform]),
+        }
+        match cx.allocate_buffer(self.kinds, 4) {
+            Allocation::Fresh | Allocation::Kept => cx.clear_buffer_range(self.kinds, 0..4),
+        }
         self.drawing = Some(Drawn {
             serial: asked.serial,
             shape,
             draws,
         });
-        cx.run(self.shading);
-        cx.run(self.baking);
+        match cx.allocate(self.shade, flat((size * SHADE_SCALE).min(SHADE_MOST)), 1) {
+            Allocation::Fresh | Allocation::Kept => cx.run(self.shading),
+        }
+        for texture in self.colors {
+            match cx.allocate(texture, flat(size), shape.levels()) {
+                Allocation::Fresh | Allocation::Kept => cx.run(self.baking),
+            }
+        }
+        match cx.allocate(self.depth, flat(size), 1) {
+            Allocation::Fresh | Allocation::Kept => cx.run(self.baking),
+        }
     }
 
     fn read_back(&self, drawn: &Drawn, cx: &mut Prepare<'_, Self>) {
+        let regions = readback_bytes(drawn.shape, ROW_ALIGNMENT);
+        match cx.allocate_buffer(self.read, regions + 4) {
+            Allocation::Fresh | Allocation::Kept => self.copy_out(drawn, regions, cx),
+        }
+    }
+
+    fn copy_out(&self, drawn: &Drawn, regions: u64, cx: &mut Prepare<'_, Self>) {
         let shape = drawn.shape;
-        let regions = readback_bytes(shape, ROW_ALIGNMENT);
         let total = regions + 4;
-        cx.allocate_buffer(self.read, total);
         let mut offset = 0_u64;
         for texture in self.colors {
             cx.mipmaps(texture, 0..1);
@@ -436,6 +452,7 @@ impl GpuPart for ImpostorGpu {
             asked: VecDeque::new(),
             drawing: None,
             announced: false,
+            held: false,
         })
     }
 
@@ -455,7 +472,11 @@ impl GpuPart for ImpostorGpu {
         match books.log().events(&mut self.cursor) {
             Events::Listed(works) => {
                 for work in works {
-                    self.apply(work, cx);
+                    if self.apply(work, cx) == Allocation::Fresh {
+                        self.forget(cx);
+                        cx.deliver::<BakeReads>(MISSED, Vec::new());
+                        return;
+                    }
                 }
             }
             Events::Missed(_) => {

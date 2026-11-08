@@ -179,7 +179,7 @@ impl Layout {
     }
 }
 
-pub(crate) fn squares(written: &[SimSlot]) -> SimSlots {
+fn squares(written: &[SimSlot]) -> SimSlots {
     let mut all = SimSlots {
         slot: [SimSlot::zeroed(); SIM_SLOTS as usize],
     };
@@ -268,13 +268,15 @@ impl SlotHandles {
                 made = Allocation::Fresh;
             }
         }
-        cx.allocate_buffer(self.squares, size_of::<SimSlots>() as u64);
-        for frame in self.frames {
-            cx.allocate_buffer(frame, size_of::<SimFrame>() as u64);
-        }
-        cx.allocate_buffer(self.touches, size_of::<SimTouches>() as u64);
+        self.hold_touches(cx);
         self.layout = Some(layout);
         made
+    }
+
+    fn hold_touches(&self, cx: &mut Prepare<'_, WaterGpu>) {
+        if cx.allocate_buffer(self.touches, size_of::<SimTouches>() as u64) == Allocation::Fresh {
+            cx.write(self.touches, 0, &[SimTouches::zeroed()]);
+        }
     }
 
     pub(crate) fn release(&mut self, cx: &mut Prepare<'_, WaterGpu>) {
@@ -288,19 +290,35 @@ impl SlotHandles {
             self.steps,
             self.averages,
         ] {
-            cx.allocate_buffer(buffer, 16);
+            if cx.allocate_buffer(buffer, 16) == Allocation::Fresh {
+                cx.write(buffer, 0, &[0_u32; 4]);
+            }
         }
-        cx.allocate_buffer(self.squares, size_of::<SimSlots>() as u64);
+        if cx.allocate_buffer(self.squares, size_of::<SimSlots>() as u64) == Allocation::Fresh {
+            cx.write(self.squares, 0, &[SimSlots::zeroed()]);
+        }
         for frame in self.frames {
-            cx.allocate_buffer(frame, size_of::<SimFrame>() as u64);
+            if cx.allocate_buffer(frame, size_of::<SimFrame>() as u64) == Allocation::Fresh {
+                cx.write(frame, 0, &[SimFrame::zeroed()]);
+            }
         }
-        cx.allocate_buffer(self.touches, size_of::<SimTouches>() as u64);
+        self.hold_touches(cx);
         self.layout = None;
     }
 
-    pub(crate) fn write_frames(&self, layout: &Layout, cx: &mut Prepare<'_, WaterGpu>) {
+    pub(crate) fn write_frames(
+        &self,
+        layout: &Layout,
+        written: &[SimSlot],
+        cx: &mut Prepare<'_, WaterGpu>,
+    ) {
+        match cx.allocate_buffer(self.squares, size_of::<SimSlots>() as u64) {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.squares, 0, &[squares(written)]),
+        }
         for (buffer, frame) in self.frames.iter().zip(layout.frames()) {
-            cx.write(*buffer, 0, &[frame]);
+            match cx.allocate_buffer(*buffer, size_of::<SimFrame>() as u64) {
+                Allocation::Fresh | Allocation::Kept => cx.write(*buffer, 0, &[frame]),
+            }
         }
         for at in layout.step_tails() {
             cx.write(self.steps, at, &[0.0_f32; 2]);
@@ -462,13 +480,22 @@ impl SetupHandles {
         if fresh {
             cx.release_buffer(self.list);
         }
-        cx.allocate_buffer(self.frame, size_of::<crate::gpu::SimSetup>() as u64);
-        cx.allocate_buffer(self.list, Self::live_at(room) + live_room as u64 * 4)
+        let frame = cx.allocate_buffer(self.frame, size_of::<crate::gpu::SimSetup>() as u64);
+        let list = cx.allocate_buffer(self.list, Self::live_at(room) + live_room as u64 * 4);
+        match frame {
+            Allocation::Fresh => Allocation::Fresh,
+            Allocation::Kept => list,
+        }
     }
 
     pub(crate) fn release(&self, cx: &mut Prepare<'_, WaterGpu>) {
-        cx.allocate_buffer(self.frame, size_of::<crate::gpu::SimSetup>() as u64);
-        cx.allocate_buffer(self.list, 16);
+        let frame = size_of::<crate::gpu::SimSetup>() as u64;
+        if cx.allocate_buffer(self.frame, frame) == Allocation::Fresh {
+            cx.write(self.frame, 0, &[crate::gpu::SimSetup::zeroed()]);
+        }
+        if cx.allocate_buffer(self.list, 16) == Allocation::Fresh {
+            cx.write(self.list, 0, &[0_u32; 4]);
+        }
     }
 
     pub(crate) fn bound(&self, slots: &SlotHandles) -> Vec<(engine_core::Var, Bind<WaterGpu>)> {

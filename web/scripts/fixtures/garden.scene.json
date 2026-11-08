@@ -86,10 +86,18 @@
         1,
         1
       ],
-      "texture": {
-        "id": "garden.image0",
-        "wrap_u": "clamp_to_edge",
-        "wrap_v": "clamp_to_edge"
+      "slots": {
+        "base_color": {
+          "module": "mapped",
+          "maps": {
+            "base_color": {
+              "id": "garden.image0",
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge"
+            }
+          }
+        },
+        "opacity": "mapped"
       }
     },
     {
@@ -100,10 +108,18 @@
         1,
         1
       ],
-      "texture": {
-        "id": "garden.image0",
-        "wrap_u": "clamp_to_edge",
-        "wrap_v": "clamp_to_edge"
+      "slots": {
+        "base_color": {
+          "module": "mapped",
+          "maps": {
+            "base_color": {
+              "id": "garden.image0",
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge"
+            }
+          }
+        },
+        "opacity": "mapped"
       }
     }
   ],

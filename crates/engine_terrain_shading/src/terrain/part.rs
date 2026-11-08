@@ -7,8 +7,8 @@ use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, ShadowMa
 use engine_places_world::ground::{Cover, GroundTiles, TerrainTiles};
 use engine_places_world::water::Waterline;
 use engine_render::{
-    Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND, DEBUG_TARGETS,
-    DepthUse, Draw, DrawInput, Encode,
+    Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND,
+    DEBUG_TARGETS, DepthUse, Draw, DrawInput, Encode,
     GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Sampler,
     SamplerDesc, Scene, SceneDraw, Shape, Texture, VertexLayout, pixels_per_meter, wgpu,
 };
@@ -746,7 +746,7 @@ impl GpuPart for TerrainGpu {
                     .any(|(terrain, _)| *terrain == entry.terrain)
             })
             .collect();
-        self.surface.prepare(
+        let rebuilt = self.surface.prepare(
             cx,
             h,
             (&tiles, &views, limits.storage_room, &drawn),
@@ -778,7 +778,11 @@ impl GpuPart for TerrainGpu {
                     size: bytes,
                 }],
             );
-            cx.run(self.passes.subdivide);
+            for allocation in rebuilt {
+                match allocation {
+                    Allocation::Fresh | Allocation::Kept => cx.run(self.passes.subdivide),
+                }
+            }
             cx.read_back::<SurfaceTotals>(
                 SURFACE_TOTALS,
                 h.counters,
@@ -794,8 +798,9 @@ impl GpuPart for TerrainGpu {
                 height: display.y,
                 depth_or_array_layers: 1,
             };
-            cx.allocate(h.ids, size, 1);
-            cx.run(self.passes.ids);
+            match cx.allocate(h.ids, size, 1) {
+                Allocation::Fresh | Allocation::Kept => cx.run(self.passes.ids),
+            }
             cx.run(self.passes.resolve);
         } else {
             cx.release(h.ids);

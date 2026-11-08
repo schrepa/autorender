@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::{Res, Resource, SystemParamItem};
 use engine_core::{AttachPoint, Error, PassViews, ViewFacts, gpu_consts, gpu_struct};
 use engine_render::{
-    Attach, Bind, Buffer, DebugShown, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
-    Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, wgpu,
+    Allocation, Attach, Bind, Buffer, DebugShown, DepthUse, Encode, FULLSCREEN, GpuPart, Install,
+    Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, wgpu,
 };
 
 use crate::probe::Probe;
@@ -92,8 +92,9 @@ impl GpuPart for OverlayGpu {
             return;
         }
         self.pixels = view.pixels;
-        cx.allocate_buffer(self.placed, size_of::<[u32; 4]>() as u64);
-        cx.write(self.placed, 0, &[view.pixels]);
+        match cx.allocate_buffer(self.placed, size_of::<[u32; 4]>() as u64) {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.placed, 0, &[view.pixels]),
+        }
     }
 
     fn encode(&mut self, _: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

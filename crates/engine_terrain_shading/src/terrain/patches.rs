@@ -1,9 +1,10 @@
+use engine_core::GpuBits;
 use engine_heightfield::tile::shaded_elsewhere;
 use engine_places_rendering::probes::ProbeCaptures;
 use engine_places_rendering::shadows::ground_level;
 use engine_places_simulation::ground::TileKey;
 use engine_places_world::ground::{TerrainEntry, TerrainTiles, TileFace};
-use engine_render::{Prepare, wgpu};
+use engine_render::{Allocation, Prepare, wgpu};
 use glam::{DVec3, Mat4, Vec2, Vec3, Vec4};
 
 use super::part::{Handles, TerrainGpu, TerrainViews};
@@ -11,8 +12,8 @@ use super::surface::SurfaceTrees;
 use super::tables::TerrainTables;
 use super::{FrameTerrain, NO_HOLES, TerrainFrame};
 use crate::gpu::{
-    PATCH_GRID as GRID, PATCH_GRID_VERTICES as GRID_VERTICES, PatchRecord, TerrainUniform,
-    ViewUniform,
+    PATCH_GRID as GRID, PATCH_GRID_VERTICES as GRID_VERTICES, PatchRecord, PatchTexel,
+    TerrainUniform, ViewUniform,
 };
 use crate::state::Atlas;
 use crate::terrain_macro::MacroMaps;
@@ -66,11 +67,10 @@ impl PatchDraws {
         if !self.indexed {
             let indices = grid_indices();
             self.index_count = indices.len() as u32;
-            cx.allocate_buffer(
-                handles.grid,
-                std::mem::size_of_val(indices.as_slice()) as u64,
-            );
-            cx.write(handles.grid, 0, &indices);
+            let bytes = std::mem::size_of_val(indices.as_slice()) as u64;
+            match cx.allocate_buffer(handles.grid, bytes) {
+                Allocation::Fresh | Allocation::Kept => cx.write(handles.grid, 0, &indices),
+            }
             self.indexed = true;
         }
         let eye = views.eye.as_dvec3();
@@ -134,12 +134,13 @@ impl PatchDraws {
             self.record_room =
                 (self.records.len() as u64).next_power_of_two() * size_of::<PatchRecord>() as u64;
         }
-        cx.allocate_buffer(
-            handles.patches,
-            self.record_room.max(size_of::<PatchRecord>() as u64),
-        );
-        if !self.records.is_empty() {
-            cx.write(handles.patches, 0, &self.records);
+        let room = self.record_room.max(size_of::<PatchRecord>() as u64);
+        match cx.allocate_buffer(handles.patches, room) {
+            Allocation::Fresh | Allocation::Kept => {
+                if !self.records.is_empty() {
+                    cx.write(handles.patches, 0, &self.records);
+                }
+            }
         }
         frame
     }
@@ -215,7 +216,11 @@ impl TileRecord {
             i64::from(key.x) * 256 + i64::from(x) * 16 - anchor[0],
             i64::from(key.z) * 256 + i64::from(z) * 16 - anchor[1],
         ];
-        let texel = (u32::from(x) * 16) | ((u32::from(z) * 16) << 16);
+        let texel = PatchTexel {
+            x: u32::from(x) * 16,
+            z: u32::from(z) * 16,
+        }
+        .pack();
         PatchRecord {
             first: [first[0] as i32, first[1] as i32],
             shape: [self.spacing, SKIRT_SPACINGS * self.spacing],

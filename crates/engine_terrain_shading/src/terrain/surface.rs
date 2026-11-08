@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::Entity;
 use engine_places_world::ground::{TerrainEntry, TerrainTiles};
-use engine_render::Prepare;
+use engine_render::{Allocation, Prepare};
 use glam::{Mat4, Vec3};
 
 use super::part::{Handles, TerrainGpu, TerrainViews};
@@ -123,14 +123,13 @@ impl SurfaceTrees {
         handles: &Handles,
         (tiles, views, room, drawn): (&TerrainTiles, &TerrainViews<'_>, u64, &[bool]),
         subdivided: bool,
-    ) {
+    ) -> [Allocation; 4] {
         if !self.indexed {
             let indices = meshlet_indices();
-            cx.allocate_buffer(
-                handles.meshlet,
-                std::mem::size_of_val(indices.as_slice()) as u64,
-            );
-            cx.write(handles.meshlet, 0, &indices);
+            let bytes = std::mem::size_of_val(indices.as_slice()) as u64;
+            match cx.allocate_buffer(handles.meshlet, bytes) {
+                Allocation::Fresh | Allocation::Kept => cx.write(handles.meshlet, 0, &indices),
+            }
             self.indexed = true;
         }
         self.parity ^= u32::from(subdivided);
@@ -155,10 +154,12 @@ impl SurfaceTrees {
         let leaves =
             count as u64 * u64::from(rooms[0]) + watered.len() as u64 * u64::from(rooms[1]);
         self.leaves_bytes = self.leaves_bytes.max(leaves * LEAF_BYTES);
-        cx.allocate_buffer(handles.leaves, self.leaves_bytes.max(LEAF_BYTES));
-        cx.allocate_buffer(handles.nodes, (leaves * NODE_BYTES).max(NODE_BYTES));
-        cx.allocate_buffer(handles.counters, SURFACE_SLOTS as u64 * ARGS_BYTES);
-        cx.allocate_buffer(handles.args, SURFACE_SLOTS as u64 * ARGS_BYTES);
+        let rebuilt = [
+            cx.allocate_buffer(handles.leaves, self.leaves_bytes.max(LEAF_BYTES)),
+            cx.allocate_buffer(handles.nodes, (leaves * NODE_BYTES).max(NODE_BYTES)),
+            cx.allocate_buffer(handles.counters, SURFACE_SLOTS as u64 * ARGS_BYTES),
+            cx.allocate_buffer(handles.args, SURFACE_SLOTS as u64 * ARGS_BYTES),
+        ];
         self.targets = [settings.subdivision_error, water.subdivision_error];
         let planes = world_planes(views.culling, views.eye);
         let depth = settings.subdivision_depth;
@@ -189,6 +190,7 @@ impl SurfaceTrees {
                 *tree = None;
             }
         }
+        rebuilt
     }
 
     fn slot_of(&mut self, owner: (Entity, Measure)) -> Option<usize> {
@@ -244,8 +246,9 @@ impl SurfaceTrees {
             planes,
         };
         let (buffer, _) = handles.slots[slot];
-        cx.allocate_buffer(buffer, SLOT);
-        cx.write(buffer, 0, &[uniform]);
+        match cx.allocate_buffer(buffer, SLOT) {
+            Allocation::Fresh | Allocation::Kept => cx.write(buffer, 0, &[uniform]),
+        }
         self.frame.push(Some(Subdivided {
             slot,
             terrain: index,
@@ -283,9 +286,12 @@ impl SurfaceTrees {
             }
             held => {
                 let (_, buffer) = handles.slots[slot];
-                cx.allocate_buffer(buffer, tree_bytes(depth));
-                cx.write(buffer, 0, &vec![0_u32; (tree_bytes(depth) / 4) as usize]);
-                seed(cx, buffer, depth);
+                match cx.allocate_buffer(buffer, tree_bytes(depth)) {
+                    Allocation::Fresh | Allocation::Kept => {
+                        cx.write(buffer, 0, &vec![0_u32; (tree_bytes(depth) / 4) as usize]);
+                        seed(cx, buffer, depth);
+                    }
+                }
                 *held = Some(Tree {
                     owner,
                     depth,

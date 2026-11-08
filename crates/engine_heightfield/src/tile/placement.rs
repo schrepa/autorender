@@ -1,5 +1,6 @@
 use engine_codec::{Error, Expected, ExtraRules, InvalidSetting, fields};
 use engine_math::{clamp, max, min, sin_cos};
+use engine_place::GpuBits;
 use serde::{Deserialize, Serialize};
 
 use super::expr::{Expr, producer, read_map};
@@ -689,9 +690,9 @@ pub(crate) fn place_row(
                 let held = &mut controls[row * stride + column];
                 if *held == u32::MAX {
                     *held =
-                        super::gpu::sample_control(tile, (stack, rules), (column, row)).packed();
+                        super::gpu::sample_control(tile, (stack, rules), (column, row)).pack();
                 }
-                Control::unpack(*held)
+                Control::unpack(*held).unwrap_or_default()
             }
         };
         let share_of_materials = material_share(control, &layer.materials);

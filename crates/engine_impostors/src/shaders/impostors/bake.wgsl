@@ -1,7 +1,7 @@
 import package::engine::materials::alpha_test;
 import package::engine::mesh::vertex::octahedral_normal;
 import package::engine::shading::SurfaceInput;
-import package::engine::standard::{base_texel, emissive_texel};
+import package::engine::mapped::{base_texel, emissive_texel};
 import package::engine::surface::{masked_out, opacity_cut, surface_point};
 import package::engine::surfaces::SURFACE_THIN;
 import package::engine::view::stable_normalize;

@@ -33,7 +33,7 @@ pub use instance::{MeshOrigin, SceneInstance, TextureOrigin};
 pub use looks::{SCENE_LOOK, SceneLook, SceneLookControl, SceneLooks, show_look};
 pub use material::{
     SceneAlphaMode, SceneCull, SceneDepthBias, SceneFilter, SceneMap, SceneMaterial,
-    SceneMaterialControl, SceneMipmapFilter, SceneTextureMap, SceneWrap,
+    SceneMaterialControl, SceneMipmapFilter, SceneSlot, SceneSlotFill, SceneTextureMap, SceneWrap,
 };
 pub use texture::SceneTexture;
 pub use validation::{identifier, unknown};

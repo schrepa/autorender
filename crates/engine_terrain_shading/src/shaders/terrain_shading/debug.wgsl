@@ -4,7 +4,7 @@ import package::engine::surfaces::SURFACE_GROUND;
 import package::engine::view::eye_world;
 import package::face::debug::{DEBUG_NO_MATERIAL, DebugTargets, debug_record, debug_targets};
 import package::generated::kinds::KIND_TERRAIN;
-import package::generated::terrain_shading::terrain_debug;
+import package::generated::terrain_shading::{shown_materials, shown_tile, terrain_debug};
 import package::terrain_shading::draw::{TerrainOutput, terrain_forward_look, terrain_holes_test, terrain_seen, terrain_shared_ground, terrain_shares};
 import package::terrain_shading::faces::heightfield::{terrain, use_terrain};
 import package::terrain_shading::sky::terrain_sky_map;
@@ -47,8 +47,8 @@ fn debug_terrain(input: TerrainOutput, holes: bool) -> DebugTargets {
         sun_debug(SunAt(world, normal, world_dx, world_dy, 0.0, SURFACE_GROUND, 0u,
             vec4<f32>(0.0))));
     let ids = min(shares.ids, vec4<u32>(DEBUG_NO_MATERIAL));
-    let tiles = bitcast<vec2<u32>>(tile) & vec2<u32>(0xffffu);
-    targets.words = vec2<u32>(tiles.x | (tiles.y << 16u),
-        ids.x | (ids.y << 8u) | (ids.z << 16u) | (ids.w << 24u));
+    let tiles = bitcast<vec2<u32>>(tile);
+    targets.words = vec2<u32>(shown_tile(tiles.x, tiles.y),
+        shown_materials(ids.x, ids.y, ids.z, ids.w));
     return targets;
 }

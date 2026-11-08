@@ -12,14 +12,14 @@ use engine_render::{Allocation, ComputePipeline, Count, Encode, Install, Pass, P
 use glam::{Mat3, Vec2, Vec3};
 
 use crate::gpu::{
-    LIVE_CELL, LIVE_HEAD, LIVE_NONE, SETUP_RISEN, SETUP_SOLID_ENTRIES, SETUP_STANDS, SETUP_WHOLE,
-    SIM_STANDING, SIM_TOUCHES, SimFlags, SimSetup, SimSlot, SimTouch, SimTouches,
+    BlockPlace, LIVE_CELL, LIVE_HEAD, LIVE_NONE, SETUP_RISEN, SETUP_SOLID_ENTRIES, SETUP_STANDS,
+    SETUP_WHOLE, SIM_STANDING, SIM_TOUCHES, SimFlags, SimSetup, SimSlot, SimTouch, SimTouches,
     WATER_SETUP_RING_GROUP,
 };
 use crate::shallow_water::step_seconds;
 use crate::state::WaterState;
 use crate::water::WaterGpu;
-use crate::water_kernels::{Capacity, Kernels, Layout, SetupHandles, SlotHandles, grid, squares};
+use crate::water_kernels::{Capacity, Kernels, Layout, SetupHandles, SlotHandles, grid};
 use crate::windows::WaterRead;
 use crate::{
     BLOCK_CELLS, BLOCK_SIDE, Footprint, LiveWater, NO_BLOCK, SteadyWater, StoredBlocks,
@@ -659,7 +659,7 @@ fn wrapped(window: &WaterWindow, pool: u32) -> (StoredBlocks, [u32; 2]) {
         for x in 0..side {
             let slot = (z + wrap[1]) % pool * pool + (x + wrap[0]) % pool;
             table[(z * side + x) as usize] = slot;
-            places[slot as usize] = x | (z << 16);
+            places[slot as usize] = BlockPlace { x, z }.pack();
         }
     }
     let stored = StoredBlocks {
@@ -977,10 +977,9 @@ impl SimGpu {
             cx.write(self.setup.frame, 0, &[frame]);
             self.listed = Some((self.pending.len() as u32, listed.ghosts));
         }
-        self.slots.write_frames(&layout, cx);
         let mut slot = work.slot;
         slot.place[2] = self.stepped.map_or(clock.tick, |last| last + 1) as u32;
-        cx.write(self.slots.squares, 0, &[squares(&[slot])]);
+        self.slots.write_frames(&layout, &[slot], cx);
         let none = SimTouches::zeroed();
         cx.write(
             self.slots.touches,

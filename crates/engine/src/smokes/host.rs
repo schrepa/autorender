@@ -533,7 +533,10 @@ fn scene_files(_: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let source = json!({
         "id": "host-parity-texture", "revision": 1,
         "textures": [{ "id": "alpha", "uri": ALPHA_URI }],
-        "materials": [{ "id": "alpha", "color": [1, 1, 1, 1], "texture": "alpha" }],
+        "materials": [{ "id": "alpha", "color": [1, 1, 1, 1], "slots": {
+            "base_color": { "module": "mapped", "maps": { "base_color": "alpha" } },
+            "opacity": "mapped",
+        } }],
         "meshes": [{ "id": "panel", "source": { "kind": "cube" } }],
         "entities": [{ "id": "panel", "mesh": "panel", "material": "alpha", "transform": { "translation": [2, 0, 0] } },
             { "id": "camera", "transform": { "translation": [0, 2, 4], "rotation_degrees": [-26.5651, 0, 0] }, "node": { "clock": "real", "mobility": "moving" }, "camera": { "near": 0.1, "far": 100, "projection": { "Perspective": { "vertical_fov_radians": 1.0471976 } } }, "view": {} }],

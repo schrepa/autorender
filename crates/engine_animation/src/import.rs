@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use engine_core::math::max;
 use engine_core::{
-    AlphaMode, AssetLibrary, Cull, Error, ErrorCode, Expected, Filter, Material, MaterialHandle, Mesh,
-    MeshHandle, MeshVertex, Sampler, Surface, Texture, TextureHandle, TextureRef, UvTransform, Wrap,
-    decode_image,
+    AlphaMode, AssetLibrary, BASE_COLOR_MAP, Cull, EMISSIVE_MAP, Error, ErrorCode, Expected, Filter,
+    Material, MaterialHandle, Mesh, MeshHandle, MeshVertex, Sampler, Surface, Texture,
+    TextureHandle, TextureRef, UvTransform, Wrap, decode_image,
 };
 use engine_places_rendering::animation::{
     Bound, Clip, Joint, JointKeys, Keys, Rig, RigPart, VertexSkin,
@@ -579,7 +579,7 @@ impl Library<'_> {
             }
         }
         if let Some(info) = pbr.base_color_texture() {
-            built = built.with_base_color_texture(self.texture_ref(&info)?)?;
+            built = built.with_mapped(BASE_COLOR_MAP, self.texture_ref(&info)?)?;
         }
         let strength = material.emissive_strength().unwrap_or(1.0);
         let emissive = material.emissive_factor().map(|value| value * strength);
@@ -587,7 +587,7 @@ impl Library<'_> {
             built = built.with_emissive(emissive)?;
         }
         if let Some(info) = material.emissive_texture() {
-            built = built.with_emissive_texture(self.texture_ref(&info)?)?;
+            built = built.with_mapped(EMISSIVE_MAP, self.texture_ref(&info)?)?;
         }
         Ok(built.with_cull(if material.double_sided() {
             Cull::None

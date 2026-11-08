@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use glam::{IVec2, Vec2};
 
+use engine_core::GpuBits;
 use engine_core::math::GRAVITY;
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max, min};
@@ -19,7 +20,7 @@ use engine_heightfield::tile::{
 use engine_heightfield::{Bed, Layers, Pyramid, Reach, Stamp, TILE_QUADS, TILE_SAMPLES, TileKey};
 
 pub use crate::gpu::{BLOCK_SIDE, COVER_POINTS, NO_BLOCK};
-use crate::gpu::{LIVE_HELD, NO_WATER_SURFACE};
+use crate::gpu::{BlockPlace, LIVE_HELD, NO_WATER_SURFACE};
 
 const LIVE_DRY: [f32; 3] = [NO_WATER_SURFACE, 0.0, 0.0];
 pub const MARGIN: f32 = 64.0;
@@ -1026,7 +1027,8 @@ impl StoredBlocks {
         for (block, &stored) in (0_u32..).zip(kept) {
             if stored {
                 table.push(places.len() as u32);
-                places.push((block % blocks[0]) | ((block / blocks[0]) << 16));
+                let (x, z) = (block % blocks[0], block / blocks[0]);
+                places.push(BlockPlace { x, z }.pack());
             } else {
                 table.push(NO_BLOCK);
             }
@@ -1061,11 +1063,11 @@ impl StoredBlocks {
     }
 
     pub fn cell(&self, at: usize) -> [u32; 2] {
-        let place = self.places[at / BLOCK_CELLS];
+        let place = BlockPlace::unpack(self.places[at / BLOCK_CELLS]).unwrap_or_default();
         let local = (at % BLOCK_CELLS) as u32;
         [
-            ((place & 0xffff) * BLOCK_SIDE + local % BLOCK_SIDE).min(self.cells[0] - 1),
-            ((place >> 16) * BLOCK_SIDE + local / BLOCK_SIDE).min(self.cells[1] - 1),
+            (place.x * BLOCK_SIDE + local % BLOCK_SIDE).min(self.cells[0] - 1),
+            (place.z * BLOCK_SIDE + local / BLOCK_SIDE).min(self.cells[1] - 1),
         ]
     }
 
@@ -1087,7 +1089,8 @@ impl StoredBlocks {
         let side = BLOCK_SIDE;
         let mut ground = Vec::with_capacity(self.stored() * BLOCK_GROUND);
         for (slot, &place) in self.places.iter().enumerate() {
-            let (x, z) = ((place & 0xffff) * side, (place >> 16) * side);
+            let place = BlockPlace::unpack(place).unwrap_or_default();
+            let (x, z) = (place.x * side, place.z * side);
             for k in 0..=side {
                 for l in 0..=side {
                     ground.push(corner(
@@ -1241,7 +1244,8 @@ impl SettleStart {
         let mut windows = Vec::with_capacity(stored.stored());
         let mut samples = Vec::with_capacity(stored.stored() * (window * window) as usize);
         for &place in &stored.places {
-            let block = [place & 0xffff, place >> 16];
+            let place = BlockPlace::unpack(place).unwrap_or_default();
+            let block = [place.x, place.z];
             let start = [0, 1].map(|axis| {
                 let lattice = first[axis] + i64::from(block[axis] * BLOCK_SIDE);
                 let at = max(lattice as f32 * cell / spacing, 0.0);

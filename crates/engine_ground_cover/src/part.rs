@@ -2,9 +2,9 @@ use bevy_ecs::prelude::*;
 use engine_core::{AttachPoint, DrawKind, Error, PassViews, ScenePass, TargetName};
 use engine_places_world::ground::PALETTE_ENTRIES;
 use engine_render::{
-    AfterRead, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND, DEBUG_TARGETS, DepthUse, Draw,
-    DrawInput, Encode, GpuPart, Install, Lifetime, Pass, Pipeline, Prepare, RenderPipeline, Scene,
-    SceneDraw, Shape, wgpu,
+    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND, DEBUG_TARGETS,
+    DepthUse, Draw, DrawInput, Encode, GpuPart, Install, Lifetime, Pass, Pipeline, Prepare,
+    RenderPipeline, Scene, SceneDraw, Shape, wgpu,
 };
 
 pub(crate) const COVER: DrawKind = DrawKind("cover");
@@ -158,12 +158,15 @@ impl GpuPart for CoverGpu {
     ) {
         if table.is_changed() {
             let terrains = size_of_val(table.terrains.as_slice()) as u64;
-            cx.allocate_buffer(self.table, MATERIAL_BYTES + terrains.max(TERRAIN_BYTES));
-            if !table.terrains.is_empty() {
-                cx.write(self.table, MATERIAL_BYTES, &table.terrains);
-            }
-            if !table.materials.is_empty() {
-                cx.write(self.table, 0, &table.materials);
+            match cx.allocate_buffer(self.table, MATERIAL_BYTES + terrains.max(TERRAIN_BYTES)) {
+                Allocation::Fresh | Allocation::Kept => {
+                    if !table.terrains.is_empty() {
+                        cx.write(self.table, MATERIAL_BYTES, &table.terrains);
+                    }
+                    if !table.materials.is_empty() {
+                        cx.write(self.table, 0, &table.materials);
+                    }
+                }
             }
         }
         if !plan.shown {

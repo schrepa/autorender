@@ -277,30 +277,17 @@ pub fn smooth_gradient(around: [[f32; 3]; 3], spacing: f32) -> [f32; 2] {
     ]
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[engine_place::gpu_bits(crate = engine_place)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Control {
+    #[bits(8)]
     pub a: u8,
+    #[bits(8)]
     pub b: u8,
+    #[bits(8)]
     pub blend: u8,
+    #[bits(8)]
     pub wet: u8,
-}
-
-impl Control {
-    pub fn packed(self) -> u32 {
-        u32::from(self.a)
-            | u32::from(self.b) << 8
-            | u32::from(self.blend) << 16
-            | u32::from(self.wet) << 24
-    }
-
-    pub fn unpack(value: u32) -> Self {
-        Self {
-            a: value as u8,
-            b: (value >> 8) as u8,
-            blend: (value >> 16) as u8,
-            wet: (value >> 24) as u8,
-        }
-    }
 }
 
 fn half_bits(value: f32) -> u16 {
@@ -665,7 +652,8 @@ pub fn control_in(control: &[u32], x: i32, z: i32) -> Control {
     let stride = TILE_STRIDE as i32;
     let x = x.clamp(-1, stride - 2);
     let z = z.clamp(-1, stride - 2);
-    Control::unpack(control[((z + 1) * stride + x + 1) as usize])
+    <Control as engine_place::GpuBits>::unpack(control[((z + 1) * stride + x + 1) as usize])
+        .unwrap_or_default()
 }
 
 pub const LAKE_REACH: u8 = 4;

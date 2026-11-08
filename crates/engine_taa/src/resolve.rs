@@ -68,20 +68,19 @@ impl GpuPart for ResolveGpu {
             height: display.y.max(1),
             depth_or_array_layers: 1,
         };
-        cx.allocate(self.resolved, whole, 1);
         let kept = cx.allocate(self.history, whole, 1) == Allocation::Kept;
-        cx.allocate_buffer(self.view, size_of::<TaaView>().next_multiple_of(16) as u64);
-        cx.write(
-            self.view,
-            0,
-            &[TaaView {
-                offset: offset.to_array(),
-                history: u32::from(kept && view.history.valid()),
-                pad: 0,
-            }],
-        );
+        let values = TaaView {
+            offset: offset.to_array(),
+            history: u32::from(kept && view.history.valid()),
+            pad: 0,
+        };
+        match cx.allocate_buffer(self.view, size_of::<TaaView>().next_multiple_of(16) as u64) {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.view, 0, &[values]),
+        }
         self.whole = (whole.width, whole.height);
-        cx.run(self.resolve);
+        match cx.allocate(self.resolved, whole, 1) {
+            Allocation::Fresh | Allocation::Kept => cx.run(self.resolve),
+        }
     }
 
     fn encode(&mut self, _pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

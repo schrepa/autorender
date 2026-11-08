@@ -141,6 +141,41 @@ pub(crate) struct WaterProbeDetail {
 
 #[gpu_bits]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WaterInfoWord {
+    #[bits(8)]
+    pub flow_x: u8,
+    #[bits(8)]
+    pub flow_z: u8,
+    #[bits(8)]
+    pub sheet: u8,
+    #[bits(8)]
+    pub kind: u8,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WaterStateWord {
+    #[bits(8)]
+    pub turbulence: u8,
+    #[bits(8)]
+    pub breaking: u8,
+    #[bits(8)]
+    pub shear: u8,
+    #[bits(8)]
+    pub reach: u8,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct BlockPlace {
+    #[bits(16)]
+    pub x: u32,
+    #[bits(16)]
+    pub z: u32,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct WaterProbeState {
     #[bits(8)]
     pub turbulence: u8,
@@ -250,6 +285,9 @@ pub(crate) const GENERATED: &[&str] = &[
     <Shown as engine_core::BitValue>::WGSL,
     <WaterProbeDetail as engine_core::GpuBits>::WGSL,
     <WaterProbeState as engine_core::GpuBits>::WGSL,
+    <WaterInfoWord as engine_core::GpuBits>::WGSL,
+    <WaterStateWord as engine_core::GpuBits>::WGSL,
+    <BlockPlace as engine_core::GpuBits>::WGSL,
     <WaterUniform as engine_core::GpuStruct>::WGSL,
     <SimFrame as engine_core::GpuStruct>::WGSL,
     <SimSlot as engine_core::GpuStruct>::WGSL,

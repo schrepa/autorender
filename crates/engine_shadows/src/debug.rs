@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
 use engine_places_rendering::shadows::{
-    DEBUG_SHADOWED, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL,
+    DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL, SunShown,
 };
 use engine_core::{DrawKind, GpuBits};
 use engine_render::debug::DebugRecord;
@@ -54,12 +54,14 @@ fn sun_lookup(source: u32) -> (SunLookup, u32) {
 }
 
 fn sun(_: Option<DrawKind>, [record, ..]: [u32; 4], _: [f32; 4]) -> Value {
-    let sun = DebugRecord::unpack(record).map_or(0, |record| record.source);
-    let (lookup, sun_index) = sun_lookup(sun & (DEBUG_SHADOWED - 1));
+    let sun = DebugRecord::unpack(record)
+        .and_then(|record| SunShown::unpack(record.source))
+        .unwrap_or_default();
+    let (lookup, sun_index) = sun_lookup(sun.source);
     serde_json::to_value(SunProbe {
         sun: lookup,
         sun_index,
-        shadowed: sun & DEBUG_SHADOWED != 0,
+        shadowed: sun.shadowed,
     })
     .unwrap_or(Value::Null)
 }

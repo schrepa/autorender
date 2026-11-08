@@ -2,6 +2,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use engine_codec::Error;
+use engine_core::GpuBits;
 use engine_core::math::GRAVITY;
 use engine_heightfield::noise::smooth;
 use engine_heightfield::rivers::{RiverRaster, Rivers};
@@ -14,6 +15,7 @@ use engine_places_world::ground::TileFace;
 use glam::Vec2;
 
 use crate::gpu::WATER_SPAN_STEPS as SPAN_STEPS;
+use crate::gpu::{WaterInfoWord, WaterStateWord};
 pub use crate::gpu::{
     BREAK_FULL, BREAK_ONSET, BREAK_THINNEST, TURBULENT_SPEED, TURBULENT_SWIRL, WATER_FLOW_RANGE,
     WATER_SHEAR_RANGE, WATER_SPAN_LEAST, WATER_SPAN_MOST,
@@ -263,7 +265,7 @@ fn mixed(near: &[usize], info: &[[u32; 2]]) -> [u32; 2] {
             turbulence: state.turbulence * share,
             breaking: state.breaking * share,
             shear: state.shear * share,
-            reach: reach_of(most as u32),
+            reach: reach_of(most as u8),
         }),
     ]
 }
@@ -330,25 +332,28 @@ fn drawn_surfaces(surfaces: &[f32], heights: &[f32]) -> Vec<f32> {
 }
 
 pub fn pack(flow: Vec2, sheeted: bool, lake: bool, span: f32) -> u32 {
-    let byte =
-        |value: f32| u32::from((engine_math::clamp(value, -1.0, 1.0) * 127.0).round() as i8 as u8);
+    let byte = |value: f32| (engine_math::clamp(value, -1.0, 1.0) * 127.0).round() as i8 as u8;
     let sheet = if sheeted { -1.0 / 127.0 } else { 0.0 };
     let kind = if lake {
         -span_code(span).max(1)
     } else {
         span_code(span)
     };
-    byte(flow.x / WATER_FLOW_RANGE)
-        | byte(flow.y / WATER_FLOW_RANGE) << 8
-        | byte(sheet) << 16
-        | u32::from(kind as u8) << 24
+    WaterInfoWord {
+        flow_x: byte(flow.x / WATER_FLOW_RANGE),
+        flow_z: byte(flow.y / WATER_FLOW_RANGE),
+        sheet: byte(sheet),
+        kind: kind as u8,
+    }
+    .pack()
 }
 
 pub fn unpack(info: u32) -> (Vec2, bool, f32) {
-    let share = |shift: u32| engine_math::max(f32::from((info >> shift) as u8 as i8) / 127.0, -1.0);
-    let kind = (info >> 24) as u8 as i8;
+    let word = WaterInfoWord::unpack(info).unwrap_or_default();
+    let share = |byte: u8| engine_math::max(f32::from(byte as i8) / 127.0, -1.0);
+    let kind = word.kind as i8;
     (
-        Vec2::new(share(0), share(8)) * WATER_FLOW_RANGE,
+        Vec2::new(share(word.flow_x), share(word.flow_z)) * WATER_FLOW_RANGE,
         kind < 0,
         span_of(kind),
     )
@@ -376,27 +381,31 @@ fn span_of(code: i8) -> f32 {
 }
 
 pub(crate) fn pack_state(state: PointState) -> u32 {
-    unit(state.turbulence)
-        | unit(state.breaking) << 8
-        | unit(state.shear / WATER_SHEAR_RANGE) << 16
-        | reach_code(state.reach) << 24
+    WaterStateWord {
+        turbulence: unit(state.turbulence),
+        breaking: unit(state.breaking),
+        shear: unit(state.shear / WATER_SHEAR_RANGE),
+        reach: reach_code(state.reach),
+    }
+    .pack()
 }
 
 pub(crate) fn unpack_state(word: u32) -> PointState {
-    let share = |shift: u32| f32::from((word >> shift) as u8) / 255.0;
+    let word = WaterStateWord::unpack(word).unwrap_or_default();
+    let share = |byte: u8| f32::from(byte) / 255.0;
     PointState {
-        turbulence: share(0),
-        breaking: share(8),
-        shear: share(16) * WATER_SHEAR_RANGE,
-        reach: reach_of(word >> 24),
+        turbulence: share(word.turbulence),
+        breaking: share(word.breaking),
+        shear: share(word.shear) * WATER_SHEAR_RANGE,
+        reach: reach_of(word.reach),
     }
 }
 
-fn reach_code(reach: Option<Reach>) -> u32 {
-    reach.map_or(0, |reach| u32::from(reach as u8) + 1)
+fn reach_code(reach: Option<Reach>) -> u8 {
+    reach.map_or(0, |reach| reach as u8 + 1)
 }
 
-fn reach_of(code: u32) -> Option<Reach> {
+fn reach_of(code: u8) -> Option<Reach> {
     match code {
         1 => Some(Reach::Pool),
         2 => Some(Reach::Plane),
@@ -407,8 +416,8 @@ fn reach_of(code: u32) -> Option<Reach> {
     }
 }
 
-fn unit(value: f32) -> u32 {
-    (engine_math::clamp(value, 0.0, 1.0) * 255.0).round() as u32
+fn unit(value: f32) -> u8 {
+    (engine_math::clamp(value, 0.0, 1.0) * 255.0).round() as u8
 }
 
 pub(crate) fn turbulence(rush: f32, speed: f32, swirl: f32) -> f32 {

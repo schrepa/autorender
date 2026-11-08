@@ -15,7 +15,7 @@ use engine_registry::Registry;
 use crate::math::sin_cos;
 use crate::{
     AssetResidency, Cursor, DeviceLimits, DrawKind, Drawn, Error, ErrorCode, Expected, Feed,
-    GeometryHandle, GlobalTransforms, GpuStruct, Interest, KindDecl, MaterialHandle, PassMask,
+    GeometryHandle, GlobalTransforms, GpuBits, GpuStruct, Interest, KindDecl, MaterialHandle, PassMask,
     PositionReach, Request, Revision, ScenePasses, Since, gpu_struct, settings,
 };
 
@@ -27,16 +27,24 @@ settings! {
     }
 }
 
-crate::gpu_consts! {
-    pub const DRAWN_OWN_PROJECTION: u32 = 2;
-    pub const DRAWN_UNBOUNDED: u32 = 4;
+#[crate::gpu_bits(crate = crate)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DrawnFlags {
+    pub own_projection: bool,
+    pub unbounded: bool,
+}
+
+impl DrawnFlags {
+    pub fn of(record: &DrawnRecord) -> Self {
+        Self::unpack(record.flags).unwrap_or_default()
+    }
 }
 
 const CLIP: &str = "fn drawn_value_vec4(record: DrawnRecord, index: u32) -> u32 {
     return record.values + index / 4u;
 }
 fn drawn_clip(record: DrawnRecord, clip: vec4<f32>, view_focal: f32, center: vec2<f32>) -> vec4<f32> {
-    if (record.flags & DRAWN_OWN_PROJECTION) == 0u {
+    if !drawn_flags_own_projection(record.flags) {
         return clip;
     }
     let across = (clip.xy - center) * (record.projection.x / view_focal) + center;
@@ -68,7 +76,7 @@ gpu_struct! {
 
 pub fn drawn_wgsl() -> String {
     let mut text = String::from(DrawnRecord::WGSL);
-    text.push_str(WGSL);
+    text.push_str(<DrawnFlags as GpuBits>::WGSL);
     text.push_str(&attributes_wgsl());
     text.push_str(CLIP);
     text
@@ -591,13 +599,10 @@ impl DrawnTable {
             let (sine, cosine) = sin_cos(own.vertical_fov * 0.5);
             [cosine / sine, own.depth_scale, 0.0, 0.0]
         });
-        let mut flags = 0;
-        if drawn.projection.is_some() {
-            flags |= DRAWN_OWN_PROJECTION;
-        }
-        if bounds.is_none() {
-            flags |= DRAWN_UNBOUNDED;
-        }
+        let flags = DrawnFlags {
+            own_projection: drawn.projection.is_some(),
+            unbounded: bounds.is_none(),
+        };
         let [red, green, blue] = drawn.values.emission;
         let record = DrawnRecord {
             tint: drawn.values.tint,
@@ -617,7 +622,7 @@ impl DrawnTable {
                 .map_or(u32::MAX, |material| material.slot() as u32),
             passes: passes.word(),
             layers: drawn.layers.0,
-            flags,
+            flags: flags.pack(),
             generation: self.generations[at],
             order: i32::from(drawn.order),
             values: (at * self.stride) as u32,

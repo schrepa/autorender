@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{gpu_consts, gpu_struct};
+use engine_core::{GpuBits, gpu_bits, gpu_consts, gpu_struct};
 
 gpu_consts! {
     pub const NOT_RESIDENT: u32 = 0xffffffff;
@@ -38,8 +38,6 @@ gpu_consts! {
     pub const PEAKS_GROUP: u32 = 16;
     pub const PEAKS_SIDE: u32 = 128;
     pub const ANCESTORS_GROUP: u32 = 16;
-    pub const RIVER_EDGES: u32 = 1;
-    pub const RIVER_BEDS: u32 = 2;
     pub const RIVER_PLANE_FAR: u32 = 0xffff;
     pub const ARRIVAL_SECONDS: f32 = 0.4;
     pub const DEBUG_SHOWN_TILES: u32 = 1;
@@ -126,6 +124,72 @@ gpu_struct! {
         pub terrain: u32,
     }
 }
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PatchTexel {
+    #[bits(16)]
+    pub x: u32,
+    #[bits(16)]
+    pub z: u32,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BounceBlockWord {
+    pub detailed: bool,
+    #[bits(31)]
+    pub first: u32,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BounceBin {
+    #[bits(8)]
+    pub filled: u8,
+    #[bits(8)]
+    pub distance: u8,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShownTile {
+    #[bits(16)]
+    pub x: u16,
+    #[bits(16)]
+    pub z: u16,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShownMaterials {
+    #[bits(8)]
+    pub first: u8,
+    #[bits(8)]
+    pub second: u8,
+    #[bits(8)]
+    pub third: u8,
+    #[bits(8)]
+    pub fourth: u8,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RiverMaps {
+    pub edges: bool,
+    pub beds: bool,
+}
+
+pub(crate) const BITS: &[&str] = &[
+    <PatchTexel as GpuBits>::WGSL,
+    <BounceBlockWord as GpuBits>::WGSL,
+    <BounceBin as GpuBits>::WGSL,
+    <ShownTile as GpuBits>::WGSL,
+    <ShownMaterials as GpuBits>::WGSL,
+    <RiverMaps as GpuBits>::WGSL,
+    <engine_heightfield::tile::Control as GpuBits>::WGSL,
+    <engine_places_rendering::shadows::SunShown as GpuBits>::WGSL,
+];
 
 gpu_struct! {
     #[derive(Resource)]

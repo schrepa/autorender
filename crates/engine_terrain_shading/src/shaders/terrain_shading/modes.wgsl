@@ -3,7 +3,9 @@ import package::face::debug::{DEBUG_EMPTY, DEBUG_NO_MATERIAL, DEBUG_OTHER, Debug
 import package::generated::kinds::KIND_TERRAIN;
 import package::generated::pieces::terrain_shading::piece;
 import package::generated::terrain_shading::{DEBUG_SHOWN_DETAIL, DEBUG_SHOWN_MATERIALS,
-    DEBUG_SHOWN_SKY, DEBUG_SHOWN_TILES, terrain_debug_patch_edge, terrain_debug_tile_edge};
+    DEBUG_SHOWN_SKY, DEBUG_SHOWN_TILES, shown_materials_first, shown_materials_fourth,
+    shown_materials_second, shown_materials_third, terrain_debug_patch_edge,
+    terrain_debug_tile_edge};
 
 fn debug_material_color(material: u32) -> vec3<f32> {
     let hue = fract(f32(material) * 0.618034 + 0.13);
@@ -12,9 +14,11 @@ fn debug_material_color(material: u32) -> vec3<f32> {
 }
 
 fn debug_materials_color(materials: u32, shares: vec4<f32>) -> vec3<f32> {
+    var ids = array<u32, 4>(shown_materials_first(materials), shown_materials_second(materials),
+        shown_materials_third(materials), shown_materials_fourth(materials));
     var color = vec3<f32>(0.0);
     for (var slot = 0u; slot < 4u; slot++) {
-        let material = (materials >> (slot * 8u)) & 0xffu;
+        let material = ids[slot];
         if material != DEBUG_NO_MATERIAL {
             color += shares[slot] * debug_material_color(material);
         }

@@ -1,4 +1,4 @@
-import package::engine::drawn::{DRAWN_OWN_PROJECTION, drawn_in_view, drawn_records};
+import package::engine::drawn::{drawn_flags_own_projection, drawn_in_view, drawn_records};
 import package::engine::mesh::declarations::drawn_slot;
 import package::engine::view::camera;
 import package::generated::meshes::{BLEND_GROUP, BatchData as Batch, BlendedView};
@@ -51,7 +51,7 @@ fn row_depth(row: vec4<u32>) -> f32 {
         max(length(vec3<f32>(pose.row_0.y, pose.row_1.y, pose.row_2.y)),
             length(vec3<f32>(pose.row_0.z, pose.row_1.z, pose.row_2.z))));
     let radius = length(batch.bounds_max.xyz - batch.bounds_min.xyz) * 0.5 * scale;
-    let own = (drawn_records[slot].flags & DRAWN_OWN_PROJECTION) != 0u;
+    let own = drawn_flags_own_projection(drawn_records[slot].flags);
     if !own && outside(center, radius) {
         return UNSEEN;
     }

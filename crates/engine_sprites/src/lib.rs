@@ -14,8 +14,8 @@ use engine_core::{
     ViewFacts, gpu_struct,
 };
 use engine_render::{
-    Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare, RenderBricks,
-    RenderPipeline, SamplerDesc, Scene, SceneDraw, Shape, wgpu,
+    Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare,
+    RenderBricks, RenderPipeline, SamplerDesc, Scene, SceneDraw, Shape, wgpu,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -207,11 +207,10 @@ impl GpuPart for SpritesGpu {
             &mut self.staged,
             &mut self.runs,
         );
-        cx.allocate_buffer(
-            self.instances,
-            std::mem::size_of_val(self.staged.as_slice()) as u64,
-        );
-        cx.write(self.instances, 0, &self.staged);
+        let bytes = std::mem::size_of_val(self.staged.as_slice()) as u64;
+        match cx.allocate_buffer(self.instances, bytes) {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.instances, 0, &self.staged),
+        }
         self.drawn.clear();
         for (name, pipeline) in &self.pipelines {
             for (sheet, range) in &self.runs {

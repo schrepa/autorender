@@ -2,8 +2,8 @@ use bevy_ecs::prelude::*;
 use engine_core::{Error, gpu_consts, gpu_struct};
 use engine_places_world::ground::{GroundTiles, TerrainEntry, TerrainTiles};
 use engine_render::{
-    Attach, AttachPoint, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass,
-    Pipeline, Prepare, RenderPipeline, Shape, wgpu,
+    Allocation, Attach, AttachPoint, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Lifetime,
+    Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, wgpu,
 };
 use glam::Vec2;
 
@@ -90,8 +90,9 @@ impl GpuPart for PondGpu {
             return;
         }
         let (shapes, count) = shapes(ponds.iter(), &tiles.terrains, &ground);
-        cx.allocate_buffer(self.ponds, std::mem::size_of_val(&shapes) as u64);
-        cx.write(self.ponds, 0, &shapes);
+        match cx.allocate_buffer(self.ponds, std::mem::size_of_val(&shapes) as u64) {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.ponds, 0, &shapes),
+        }
         self.drawn = count;
         cx.run(self.pass);
     }

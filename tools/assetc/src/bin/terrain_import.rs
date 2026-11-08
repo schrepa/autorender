@@ -1182,10 +1182,14 @@ fn scene(
                     "id": name,
                     "color": [look.tint[0], look.tint[1], look.tint[2], 1.0],
                     "surface": {"roughness": 1.0},
-                    "texture": format!("{}_albedo", look.maps),
-                    "normal_texture": format!("{}_normal", look.maps),
-                    "metallic_roughness_texture": format!("{}_orm", look.maps),
-                    "occlusion_texture": format!("{}_orm", look.maps),
+                    "slots": {
+                        "base_color": {"module": "mapped", "maps": {"base_color": format!("{}_albedo", look.maps)}},
+                        "opacity": "mapped",
+                        "normal": {"module": "mapped", "maps": {"normal": format!("{}_normal", look.maps)}},
+                        "roughness": {"module": "mapped", "maps": {"metallic_roughness": format!("{}_orm", look.maps)}},
+                        "metalness": "mapped",
+                        "occlusion": {"module": "mapped", "maps": {"occlusion": format!("{}_orm", look.maps)}},
+                    },
                 }));
                 material["material"] = json!(name);
             }

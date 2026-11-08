@@ -181,6 +181,13 @@ pub fn serve(session: &mut dyn SmokeSession, document: &Value) -> Result<(), Smo
     Ok(())
 }
 
+fn checkered() -> Value {
+    json!({
+        "base_color": { "module": "mapped", "maps": { "base_color": "checker" } },
+        "opacity": "mapped",
+    })
+}
+
 pub fn grid(side: usize, moving: bool) -> Value {
     let paints = [
         [0.85, 0.35, 0.2, 1.0],
@@ -228,9 +235,9 @@ pub fn grid(side: usize, moving: bool) -> Value {
         }
     }
     let mut materials =
-        vec![json!({ "id": "ground", "color": [0.55, 0.58, 0.52, 1.0], "texture": "checker" })];
+        vec![json!({ "id": "ground", "color": [0.55, 0.58, 0.52, 1.0], "slots": checkered() })];
     materials.extend(paints.iter().enumerate().map(|(index, color)| {
-        json!({ "id": format!("paint-{index}"), "color": color, "texture": "checker" })
+        json!({ "id": format!("paint-{index}"), "color": color, "slots": checkered() })
     }));
     entities.push(json!({
         "id": "camera",

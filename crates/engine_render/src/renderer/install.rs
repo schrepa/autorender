@@ -285,7 +285,10 @@ fn material_layout(
     problems: &mut Vec<Error>,
 ) -> crate::surface::MaterialLayout {
     use crate::surface::{LightingModule, MaterialLayout, SlotModule, SurfaceKind};
-    let mut slots = Vec::new();
+    let mut slots = crate::surface::core_slots();
+    for (declared, path) in &slots {
+        roots.push((path.clone(), declared.slot.name().to_owned()));
+    }
     for (_, declared) in registry.render_entries::<SlotModule>() {
         linker.add_source(declared.module.source());
         let (path, name) = crate::linker::path_of((declared.module, declared.slot.name()));

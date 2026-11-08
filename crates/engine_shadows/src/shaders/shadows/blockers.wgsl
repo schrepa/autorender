@@ -1,5 +1,6 @@
-import package::place::sun_blockers::{DEBUG_SHADOWED, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON,
-    DEBUG_SUN_LEVEL, SunAt, SunOpen};
+import package::place::sun_blockers::{DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL,
+    SunAt, SunOpen};
+import package::generated::shadows::{sun_shown, sun_shown_source};
 import package::shadows::sample::{map_lookup, map_visibility, sun_shadowed};
 
 const SHADOWED_BELOW: f32 = 0.5;
@@ -14,14 +15,14 @@ fn sun_open(open: SunOpen, at: SunAt) -> SunOpen {
 }
 
 fn sun_flags(flags: u32, at: SunAt) -> u32 {
-    if !sun_shadowed() || (flags & (DEBUG_SHADOWED - 1u)) == DEBUG_SUN_HORIZON {
+    if !sun_shadowed() || sun_shown_source(flags) == DEBUG_SUN_HORIZON {
         return flags;
     }
     var plain = at;
     plain.softness = 0.0;
     let found = map_lookup(plain);
     if found.y < 0.0 {
-        return DEBUG_SUN_BEYOND;
+        return sun_shown(DEBUG_SUN_BEYOND, false);
     }
-    return (DEBUG_SUN_LEVEL + u32(found.y)) | select(0u, DEBUG_SHADOWED, found.x < SHADOWED_BELOW);
+    return sun_shown(DEBUG_SUN_LEVEL + u32(found.y), found.x < SHADOWED_BELOW);
 }

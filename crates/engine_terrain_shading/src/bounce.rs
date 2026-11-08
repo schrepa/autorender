@@ -3,9 +3,11 @@ use std::f32::consts::TAU;
 use engine_math::{clamp, max, min, sin_cos};
 
 use engine_codec::{self as codec, Codec, Error, Reader, Writer};
+use engine_core::GpuBits;
 use engine_heightfield::Layers;
 use engine_heightfield::tile::{BiomeRules, SampleShape, control_at};
 
+use crate::gpu::{BounceBin, BounceBlockWord};
 use crate::lighting::{Ground, normalized, unorm};
 
 pub const LOW_PROBE: f32 = crate::gpu::BOUNCE_LOW;
@@ -98,7 +100,11 @@ impl TerrainBounce {
         self.detailed
             .iter()
             .map(|&flag| {
-                let word = (first << 1) | u32::from(flag);
+                let word = BounceBlockWord {
+                    detailed: flag != 0,
+                    first,
+                }
+                .pack();
                 first += if flag == 0 { 1 } else { 4 };
                 word
             })
@@ -202,7 +208,6 @@ impl View {
             for sector in 0..sectors {
                 let at = bin(band, sector);
                 let share = self.filled[at] / (height * walks as f32);
-                out.push(unorm(share));
                 let code = if self.filled[at] > 0.0 {
                     let mean = max(self.distance[at] / self.filled[at], NEAREST);
                     let steps = libm::log2f(mean / NEAREST) * DISTANCE_STEPS;
@@ -210,7 +215,12 @@ impl View {
                 } else {
                     0
                 };
-                out.push(code);
+                let word = BounceBin {
+                    filled: unorm(share),
+                    distance: code,
+                }
+                .pack();
+                out.extend_from_slice(&word.to_le_bytes()[..2]);
             }
         }
     }
@@ -366,8 +376,9 @@ fn means(bounce: &TerrainBounce) -> Vec<u8> {
     let words = bounce.block_words();
     let mut level = Vec::with_capacity(words.len() * PROBE_BYTES);
     for word in words {
-        let first = (word >> 1) as usize;
-        if word & 1 == 0 {
+        let block = BounceBlockWord::unpack(word).unwrap_or_default();
+        let first = block.first as usize;
+        if !block.detailed {
             level.extend_from_slice(record(first));
         } else {
             level.extend(mean_of([
@@ -407,14 +418,24 @@ fn means(bounce: &TerrainBounce) -> Vec<u8> {
 fn mean_of(four: [&[u8]; 4]) -> [u8; PROBE_BYTES] {
     let mut mean = [0_u8; PROBE_BYTES];
     for bin in 0..PROBE_BYTES / 2 {
-        let share = |record: &[u8]| u32::from(record[2 * bin]);
-        let filled: u32 = four.iter().map(|&record| share(record)).sum();
+        let read = |record: &[u8]| {
+            let word = u16::from_le_bytes([record[2 * bin], record[2 * bin + 1]]);
+            BounceBin::unpack(u32::from(word)).unwrap_or_default()
+        };
+        let filled: u32 = four.iter().map(|&record| u32::from(read(record).filled)).sum();
         let coded: u32 = four
             .iter()
-            .map(|&record| share(record) * u32::from(record[2 * bin + 1]))
+            .map(|&record| {
+                let held = read(record);
+                u32::from(held.filled) * u32::from(held.distance)
+            })
             .sum();
-        mean[2 * bin] = ((filled + 2) / 4) as u8;
-        mean[2 * bin + 1] = (coded + filled / 2).checked_div(filled).unwrap_or(0) as u8;
+        let word = BounceBin {
+            filled: ((filled + 2) / 4) as u8,
+            distance: (coded + filled / 2).checked_div(filled).unwrap_or(0) as u8,
+        }
+        .pack();
+        mean[2 * bin..2 * bin + 2].copy_from_slice(&word.to_le_bytes()[..2]);
     }
     mean
 }

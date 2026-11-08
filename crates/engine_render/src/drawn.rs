@@ -180,8 +180,9 @@ impl DrawnGpu {
         ) | (stride != self.stride);
         self.stride = stride;
         let fades = slots * 4;
-        cx.allocate_buffer(self.fades, fades);
-        cx.clear_buffer_range(self.fades, 0..fades);
+        match cx.allocate_buffer(self.fades, fades) {
+            Allocation::Fresh | Allocation::Kept => cx.clear_buffer_range(self.fades, 0..fades),
+        }
         let changes = table.changes_since(&mut self.seen);
         if records.is_empty() {
             return;
@@ -287,8 +288,9 @@ impl GpuPart for DrawnGpu {
 
     fn view(&mut self, _: &ViewFacts, cx: &mut Prepare<'_, Self>) {
         let index = cx.view_index();
-        cx.allocate_buffer(self.view, VIEW_BYTES);
-        cx.write(self.view, 0, &[index, 0, 0, 0]);
+        match cx.allocate_buffer(self.view, VIEW_BYTES) {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.view, 0, &[index, 0, 0, 0]),
+        }
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
