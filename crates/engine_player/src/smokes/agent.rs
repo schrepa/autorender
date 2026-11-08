@@ -1,5 +1,6 @@
 use engine::scene::SceneDocument;
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
+use engine_smoke::{render, settled_when};
 use engine_standard_smokes::requests::{
     Asked, accepted, component, control, environment, inspected, named, names, number, object,
     query, refused, refused_with, seen, serve, sorted_keys, status, tick,
@@ -13,7 +14,6 @@ pub(crate) const PLAYER: &str = "player";
 pub(crate) const MESHES: &str = "engine_meshes";
 const COLLISION: &str = "engine_collision";
 const UNATTRIBUTED: &str = "unattributed";
-const SETTLE_RENDERS: usize = 240;
 const LIGHT: [(&str, &str); 4] = [
     ("sun", "inspects_sun"),
     ("time_of_day", "inspects_time_of_day"),
@@ -616,25 +616,11 @@ fn reloaded(
         wanted,
         "lights_particles_drawn"
     );
-    let drawn = settled(session, rendering.clone())?;
+    let drawn = settled_when(session, render, |rendering| {
+        rendering["meshes_stats"]["missing_assets"] == 0
+    })?;
     smoke_eq!(effects(&drawn), json!([true, false, true]), "saved_effects");
     Ok(())
-}
-
-fn settled(session: &mut dyn SmokeSession, mut rendering: Value) -> Asked {
-    for _ in 0..SETTLE_RENDERS {
-        if rendering["meshes_stats"]["missing_assets"] == 0 {
-            break;
-        }
-        let rendered = control(session, "render", json!({}), "renders_reloaded_scene")?;
-        rendering = rendered["result"]["rendering"].clone();
-    }
-    smoke_eq!(
-        rendering["meshes_stats"]["missing_assets"].clone(),
-        json!(0),
-        "reloaded_scene_settles"
-    );
-    Ok(rendering)
 }
 
 fn saved(session: &mut dyn SmokeSession, look: &Value, night: &Value) -> Result<(), SmokeFailure> {

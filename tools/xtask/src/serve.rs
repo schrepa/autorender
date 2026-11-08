@@ -87,7 +87,7 @@ impl Server {
         }
     }
 
-    pub fn page(root: &Path, log: &Path) -> Result<Self, String> {
+    pub fn page(root: &Path, log: &Path, limit: Duration) -> Result<Self, String> {
         crate::pipeline::prepare_dev(root)?;
         let port = free_port()?;
         let mut command = Command::new("node");
@@ -101,13 +101,7 @@ impl Server {
                 "--strictPort",
             ])
             .current_dir(root.join("web"));
-        let server = Self::start(
-            command,
-            port,
-            log,
-            "this checkout",
-            Duration::from_secs(120),
-        )?;
+        let server = Self::start(command, port, log, "this checkout", limit)?;
         eprintln!(
             "{}",
             serde_json::json!({"event": "serving", "url": server.url})

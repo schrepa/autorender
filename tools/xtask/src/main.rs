@@ -289,6 +289,7 @@ fn authoring_commands() -> Vec<Command> {
             "smoke",
             [
                 CommandOption::taking("NAME", "NAME...|all"),
+                CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
                 CommandOption::taking("--project", "DIR"),
                 CommandOption::flag("--browser"),
             ],
@@ -322,6 +323,7 @@ fn checking_commands() -> Vec<Command> {
             [
                 CommandOption::taking("--project", "DIR"),
                 CommandOption::taking("SCENE", "PATH.scene.json..."),
+                CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
                 CommandOption::flag("--check"),
             ],
         ),
@@ -385,6 +387,7 @@ fn checking_commands() -> Vec<Command> {
             [
                 CommandOption::taking("--level", "quick|pr|merge").defaults_to("pr"),
                 CommandOption::taking("--base", "REV").defaults_to("origin/main"),
+                CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
                 CommandOption::flag("--plan"),
                 CommandOption::flag("--json"),
             ],

@@ -69,7 +69,6 @@ export interface AmbientOcclusionStats {
 
 export interface AudioStats {
   decode_failures: number;
-  decoding: number;
   device: boolean;
   latest_failure: string | null;
   sounds_loaded: number;
@@ -112,7 +111,6 @@ export interface CellStats {
   entities: number;
   items: number;
   loaded: number;
-  pending: number;
   spawned: number;
 }
 
@@ -186,7 +184,6 @@ export type Expected = "number" | "integer" | "string" | "boolean" | "object" | 
 export interface ExposureStats {
   active: boolean;
   metered: number;
-  settling: number;
   stops: number;
   view: number;
   wanted: number;
@@ -204,7 +201,6 @@ export interface HazeStats {
 
 export interface ImpostorStats {
   failed: number;
-  pending: number;
 }
 
 export interface JobStats {
@@ -296,7 +292,6 @@ export interface ReflectionProbeStats {
   faces: number;
   probe_cut: Cut;
   ready: number;
-  waiting: number;
 }
 
 export interface ReflectionsStats {
@@ -337,7 +332,6 @@ export interface ShadowStats {
   tiles_marked: number;
   tiles_reclaimed: number;
   tiles_resident: number;
-  tiles_waiting: number;
 }
 
 export interface SkyStats {
@@ -355,13 +349,11 @@ export interface StaticTableRow {
 export interface StaticTablesView {
   failed_jobs: number;
   latest_job_failure: string | null;
-  loading: number;
   tables: StaticTableRow[];
 }
 
 export interface TemporalAntialiasingStats {
   active: boolean;
-  settling: number;
 }
 
 export interface TerrainShadingStats {
@@ -383,7 +375,6 @@ export interface TerrainShadingStats {
   lighting_uploads: number;
   lit: number;
   macro_maps: number;
-  pending: number;
   shaded_tiles: number;
   shading_records: number;
   shadow_patches: number;
@@ -407,7 +398,6 @@ export interface TerrainStats {
   latest_job_failure: string | null;
   loading_tiles: number;
   missing_tiles: number;
-  pending: number;
   prefetching_tiles: number;
   resident_tiles: number;
   restored_tiles: number;
@@ -459,9 +449,7 @@ export interface WaterStats {
   particles_born: number;
   rewatered_tiles: number;
   settled_records: number;
-  settles_left: number;
   settling_records: number;
-  squares_left: number;
   stale_water_tiles: number;
   touches: number;
   wave_particles: number;

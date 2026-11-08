@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Error, ErrorCode, Job, JobCx, JobKind, Jobs, Mesh, MeshHandle, ProvidedAssets,
-    Interest, RecordExchange, RecordKey, Records, URGENT_JOBS, job_priority,
+    AssetLibrary, Error, ErrorCode, Interest, Job, JobCx, JobKind, Jobs, Mesh, MeshHandle,
+    ProvidedAssets, RecordExchange, RecordKey, Records, Requests, URGENT_JOBS, job_priority,
 };
 use glam::Vec3;
 
@@ -30,6 +30,8 @@ pub(crate) static CAVE: JobKind = JobKind::new("highlands::cave", &SOURCE, start
 #[derive(Resource, Default)]
 pub(crate) struct Content {
     asked: Vec<(Interest<RecordKey>, MeshHandle, &'static JobKind)>,
+    fills: Requests<MeshHandle, ()>,
+    filling: Vec<Interest<MeshHandle>>,
     pub(crate) boulders: Vec<MeshHandle>,
     failures: u64,
     latest: Option<String>,
@@ -45,7 +47,25 @@ impl Content {
         let handle = assets.reserve_mesh()?;
         let ticket = jobs.fetch(kind, input, self.priority());
         self.asked.push((ticket, handle, kind));
+        self.hold(handle);
         Ok(handle)
+    }
+
+    pub(crate) fn hold(&mut self, mesh: MeshHandle) {
+        self.filling.push(self.fills.ask(mesh));
+    }
+
+    pub(crate) fn filled(&mut self, kind: &JobKind, mesh: MeshHandle, filled: Result<(), Error>) {
+        if let Err(error) = &filled {
+            self.failed(kind, error);
+        }
+        let Some(ticket) = self.fills.ticket(&mesh) else {
+            return;
+        };
+        match filled {
+            Ok(()) => self.fills.ready(&mesh, ticket, ()),
+            Err(error) => self.fills.fail(&mesh, ticket, error),
+        };
     }
 
     pub(crate) fn priority(&self) -> u32 {
@@ -121,9 +141,7 @@ pub(crate) fn arrive(
         let filled = record
             .and_then(|bytes| Mesh::from_record(&bytes))
             .and_then(|mesh| assets.fill_mesh(handle, mesh));
-        if let Err(error) = filled {
-            content.failed(kind, &error);
-        }
+        content.filled(kind, handle, filled);
     }
 }
 

@@ -1,10 +1,9 @@
-use engine_smoke::{Checked, ask, control, number, query};
+use engine_smoke::{Checked, ask, control, number, query, rendered_when};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
 const DESCRIBED: [&str; 3] = ["follow_camera", "camera_target", "camera_shake"];
-const SETTLE_STEPS: u32 = 16;
-const SETTLE_TICKS: u32 = 15;
+const SHAKE_TICKS: u32 = 15;
 const OPEN_BEHIND: f64 = 4.0;
 const WALL_AT: f64 = 3.0;
 
@@ -14,32 +13,48 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     for name in DESCRIBED {
         ask(session, "describe", json!({"name": name}))?;
     }
-    settle(session);
+    let mut followed = None;
+    let open = settle(session, |seen| {
+        let now = (seen["handed"] == true).then(|| seen["behind"].clone());
+        let held = now.is_some() && now == followed;
+        followed = now;
+        held
+    })?;
     handed(session)?;
-    let open = behind(session)?;
     smoke_eq!(open > OPEN_BEHIND, true, "follows_at_its_distance");
     shakes(session, open)?;
     session.source(&scene(true).to_string());
-    settle(session);
-    let walled = behind(session)?;
+    let walled = settle(session, |seen| number(&seen["behind"]) < WALL_AT)?;
     smoke_eq!(walled < WALL_AT, true, "wall_pulls_the_camera_in");
     Ok(())
 }
 
-fn settle(session: &mut dyn SmokeSession) {
-    for _ in 0..SETTLE_STEPS {
-        session.step(SETTLE_TICKS);
-    }
+fn settle(session: &mut dyn SmokeSession, done: impl FnMut(&Value) -> bool) -> Checked<f64> {
+    let seen = rendered_when(
+        session,
+        |session| {
+            session.step(1);
+            Ok(json!({
+                "behind": behind(session)?,
+                "handed": handover(session)?.is_object(),
+            }))
+        },
+        done,
+    )?;
+    Ok(number(&seen["behind"]))
+}
+
+fn handover(session: &mut dyn SmokeSession) -> Checked<Value> {
+    let moves = query(session, "moves", json!({}))?;
+    Ok(moves["asks"]
+        .as_array()
+        .and_then(|asks| asks.iter().find(|ask| ask["name"] == "hand_over"))
+        .map(|handover| handover["applied"][0].clone())
+        .unwrap_or_default())
 }
 
 fn handed(session: &mut dyn SmokeSession) -> Checked<()> {
-    let moves = query(session, "moves", json!({}))?;
-    let handover = moves["asks"]
-        .as_array()
-        .and_then(|asks| asks.iter().find(|ask| ask["name"] == "hand_over"))
-        .cloned()
-        .unwrap_or_default();
-    let applied = &handover["applied"][0];
+    let applied = handover(session)?;
     smoke_eq!(
         number(&applied["applied"]["frame"]) - number(&applied["asked"]["frame"]),
         1.0,
@@ -59,15 +74,16 @@ fn shakes(session: &mut dyn SmokeSession, steady: f64) -> Checked<()> {
         "camera_shake",
         json!({"strength": 1.0, "seconds": 1.0}),
     )?;
-    session.step(SETTLE_TICKS);
+    session.step(SHAKE_TICKS);
     let shaken = behind(session)?;
     smoke_eq!(
         (shaken - steady).abs() > 1e-4,
         true,
         "shake_moves_the_camera"
     );
-    settle(session);
-    let calm = behind(session)?;
+    let calm = settle(session, |seen| {
+        (number(&seen["behind"]) - steady).abs() < 1e-2
+    })?;
     smoke_eq!((calm - steady).abs() < 1e-2, true, "shake_decays");
     Ok(())
 }

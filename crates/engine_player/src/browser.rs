@@ -33,6 +33,7 @@ engine::__if_dev! {
         pub async fn smokes(
             canvas: web_sys::HtmlCanvasElement,
             names: String,
+            limit_ms: f64,
             report: JsValue,
         ) -> Result<bool, JsValue> {
             let list = crate::bricks(engine::BrickList::default());
@@ -40,6 +41,7 @@ engine::__if_dev! {
             engine::smokes::page::run::<engine::smokes::Played<ScenePlayer>>(
                 canvas,
                 &names,
+                limit_ms,
                 &entries,
                 &list,
                 &|source, engine| {

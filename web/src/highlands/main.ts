@@ -20,14 +20,14 @@ async function rocks(found: HighlandsRocks, signal: AbortSignal): Promise<Highla
   return found;
 }
 
-type HighlandsSmokes = (canvas: HTMLCanvasElement, names: string, report: (line: string) => void, query: string) => Promise<boolean>;
+type HighlandsSmokes = (canvas: HTMLCanvasElement, names: string, limitMs: number, report: (line: string) => void, query: string) => Promise<boolean>;
 
 const smoke = smokeSelection();
 if (smoke !== null) {
   void runSmokes(smoke, async (): Promise<SmokeRun | undefined> => {
     const { HighlandsGame } = await loadGame("highlands", () => import("../../pkg/highlands"), JobWorker);
     const smokes = (HighlandsGame as unknown as { smokes?: HighlandsSmokes }).smokes;
-    return smokes && ((canvas, names, report) => smokes.call(HighlandsGame, canvas, names, report, location.search));
+    return smokes && ((canvas, names, limitMs, report) => smokes.call(HighlandsGame, canvas, names, limitMs, report, location.search));
   });
 } else startGame<HighlandsGame>({
   parameters,

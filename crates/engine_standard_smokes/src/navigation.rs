@@ -1,5 +1,5 @@
 use engine_smoke::{
-    Checked, above, component, control, near, number, query, refuse, settled,
+    Checked, above, component, control, near, number, query, refuse, rendered_when, settled,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
@@ -17,6 +17,7 @@ const WALL: &str = "wall";
 const BODY_GOAL: [f64; 2] = [25.0, -25.0];
 const GHOST_GOAL: [f64; 2] = [25.0, -22.0];
 const BEFORE_THE_WALL: f64 = -1.4;
+const WALK_TICKS: u32 = 60;
 
 pub(crate) fn walks(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     open(session, true)?;
@@ -99,14 +100,7 @@ fn hikes(session: &mut dyn SmokeSession) -> Checked<()> {
         "the_hiker_takes_its_destination"
     );
     searched(session, HIKER)?;
-    let mut walked = walk(session)?;
-    for _ in 0..30 {
-        session.step(60);
-        walked = walk(session)?;
-        if walked["status"] == "arrived" {
-            break;
-        }
-    }
+    let walked = walked(session, HIKER)?;
     smoke_eq!(&walked["status"], &json!("arrived"), "the_hiker_arrives");
     let wanted = json!({"searched": above(0), "length": above(40)});
     smoke_eq!(
@@ -187,6 +181,17 @@ fn character(session: &mut dyn SmokeSession, id: &str) -> Checked<Value> {
     query(session, "nav_agent", json!({ "entity": id }))
 }
 
+fn walked(session: &mut dyn SmokeSession, id: &str) -> Checked<Value> {
+    rendered_when(
+        session,
+        |session| {
+            session.step(WALK_TICKS);
+            character(session, id)
+        },
+        |agent| !matches!(agent["status"].as_str(), Some("walking" | "searching")),
+    )
+}
+
 fn searched(session: &mut dyn SmokeSession, id: &str) -> Checked<()> {
     session.step(1);
     while character(session, id)?["status"] == "searching" {
@@ -205,14 +210,7 @@ fn meets_a_wall(session: &mut dyn SmokeSession) -> Checked<()> {
         )?;
     }
     searched(session, GHOST)?;
-    let mut ghost = character(session, GHOST)?;
-    for _ in 0..30 {
-        session.step(60);
-        ghost = character(session, GHOST)?;
-        if ghost["status"] == "arrived" {
-            break;
-        }
-    }
+    let ghost = walked(session, GHOST)?;
     smoke_eq!(
         &ghost["status"],
         &json!("arrived"),

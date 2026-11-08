@@ -16,7 +16,8 @@ const PLAYER: &str = "crates/engine_player";
 
 const CHECK_FRAMES: &str = "600";
 
-const USAGE: &str = "usage: cargo xtask cook [--project DIR] [PATH.scene.json...] [--check]";
+const USAGE: &str =
+    "usage: cargo xtask cook [--project DIR] [PATH.scene.json...] --limit-ms MS | --check";
 
 struct Pack {
     name: String,
@@ -42,15 +43,28 @@ impl Pack {
 pub fn cook(root: &Path, options: &[String]) -> Result<(), Failure> {
     let (project, rest) = project_option(options)?;
     let mut check = false;
+    let mut limit = None;
     let mut scenes = Vec::new();
-    for option in rest {
+    let mut given = rest.into_iter();
+    while let Some(option) = given.next() {
         match option.as_str() {
             "--check" => check = true,
+            "--limit-ms" => {
+                limit = Some(
+                    given
+                        .next()
+                        .filter(|limit| limit.parse::<u64>().is_ok_and(|limit| limit > 0))
+                        .ok_or(USAGE)?,
+                );
+            }
             flag if flag.starts_with("--") => {
                 return Err(format!("unknown option {flag}\n{USAGE}").into());
             }
             _ => scenes.push(option.replace('\\', "/")),
         }
+    }
+    if check == limit.is_some() {
+        return Err(USAGE.into());
     }
     let mut packs = Vec::new();
     if let Some(folder) = &project {
@@ -95,13 +109,15 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), Failure> {
     let folder = root.join(COOKED);
     fs::create_dir_all(&folder)
         .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
-    if check {
-        check_packs(root, &packs)?;
-    } else {
-        for pack in &packs {
-            let file = pack.file();
-            let arguments = pack.arguments(&["--packs", COOKED, "--cook", &file]);
-            run(root, &pack.program, &arguments)?;
+    match limit {
+        None => check_packs(root, &packs)?,
+        Some(limit) => {
+            for pack in &packs {
+                let file = pack.file();
+                let arguments =
+                    pack.arguments(&["--packs", COOKED, "--cook", &file, "--limit-ms", &limit]);
+                run(root, &pack.program, &arguments)?;
+            }
         }
     }
     Ok(write_index(&folder)?)

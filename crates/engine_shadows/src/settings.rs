@@ -36,6 +36,7 @@ settings! {
         pub near_distance: f32 = 48.0 => range(8.0, 256.0),
         pub far_distance: f32 = 400.0 => range(64.0, 4000.0),
         pub directions: u32 = 13 => range(5.0, 13.0),
+        pub fade_seconds: f32 = 0.2 => at_least(0.0),
     }
 }
 

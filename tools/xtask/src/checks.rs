@@ -127,6 +127,7 @@ pub fn run(
         if !check["scripts_sha"].is_null() {
             commit_id(check["scripts_sha"].as_str(), "a check's scripts_sha")?;
         }
+        limit_ms(check)?;
         by_commit.entry(sha).or_default().push(check);
     }
     let (mut entries, mut incomplete) = (Vec::new(), false);
@@ -139,6 +140,7 @@ pub fn run(
             let name = check["name"].as_str().ok_or("a check has a name")?;
             let expect = check["expect"].as_str().unwrap_or("pass");
             let scripts_sha = check["scripts_sha"].as_str();
+            let limit = limit_ms(check)?;
             let mut attempts = Vec::new();
             let build = match &server {
                 Ok(server) => server.build.clone(),
@@ -160,9 +162,13 @@ pub fn run(
                 let attempt_log =
                     folder.join(format!("{name}-{}-{}.log", &sha[..12], attempts.len() + 1));
                 let (exit_code, measurements) = match (&server, &web) {
-                    (Ok(served), Some(web)) => {
-                        attempt(web, &source, name, &served.server.url, &attempt_log)?
-                    }
+                    (Ok(served), Some(web)) => attempt(
+                        web,
+                        &source,
+                        (name, limit),
+                        &served.server.url,
+                        &attempt_log,
+                    )?,
                     (Err(error), _) => {
                         fs::write(&attempt_log, format!("{error}\n"))
                             .map_err(|error| error.to_string())?;
@@ -204,10 +210,17 @@ pub fn run(
     Ok((entries, incomplete))
 }
 
+fn limit_ms(check: &Value) -> Result<u64, String> {
+    check["limit_ms"]
+        .as_u64()
+        .filter(|limit| *limit > 0)
+        .ok_or_else(|| format!("the check {} has no wall-clock limit_ms", check["name"]))
+}
+
 fn attempt(
     web: &Path,
     workspace: &Path,
-    name: &str,
+    (name, limit): (&str, u64),
     url: &str,
     log: &Path,
 ) -> Result<(i32, Vec<Value>), String> {
@@ -219,7 +232,8 @@ fn attempt(
     let mut child = Command::new("node")
         .args([
             "scripts/smoke-browser.mjs",
-            &format!("{url}/{page}?smoke={name}"),
+            &format!("{url}/{page}?smoke={name}&limit_ms={limit}"),
+            &limit.to_string(),
         ])
         .current_dir(web)
         .stdout(Stdio::piped())

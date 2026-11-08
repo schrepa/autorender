@@ -621,6 +621,7 @@ pub mod page {
     pub async fn run<G: Game>(
         canvas: HtmlCanvasElement,
         names: &str,
+        limit_ms: f64,
         entries: &[SmokeEntry],
         bricks: &BrickList,
         build: Build<'_, G>,
@@ -632,6 +633,7 @@ pub mod page {
         let passed = super::run(
             &mut Canvas { canvas, size },
             names,
+            limit_ms,
             entries,
             bricks,
             build,

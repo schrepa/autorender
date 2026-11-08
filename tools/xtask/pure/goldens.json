@@ -4,8 +4,8 @@
     "caches entities": 2138,
     "caches mismatches": 0,
     "terrain frames": 400,
-    "terrain last frame": "399: {\"baking\":0,\"bounced\":1,\"bouncing\":0,\"bridges\":3,\"cached_bytes\":1141728,\"cached_tiles\":4,\"colored\":0,\"coloring\":2,\"fallback_tiles\":0,\"falls\":0,\"lighting\":0,\"lit\":2,\"loading\":{\"done\":0,\"total\":0},\"loading_tiles\":0,\"missing_tiles\":0,\"prefetching_tiles\":0,\"resident_tiles\":48,\"restored_tiles\":12,\"rewatered_tiles\":0,\"settled_records\":0,\"settling_records\":5,\"shaded_tiles\":5,\"shading_records\":0,\"stale_water_tiles\":0,\"surroundings_tiles\":31,\"terrains\":1,\"tile_cut\":{\"asked\":46,\"cut\":0,\"kept\":46},\"tunnels\":1,\"waiting_tiles\":0,\"white_water\":0} | terrain tiles 854854a0fbb2ae0d drawn true | surroundings tiles a2eadb7ccd455bc5 drawn true",
-    "terrain trace": "49c570e9d857c51a"
+    "terrain last frame": "399: {\"baking\":0,\"bounced\":1,\"bouncing\":0,\"bridges\":3,\"cached_bytes\":1141728,\"cached_tiles\":4,\"colored\":0,\"coloring\":2,\"fallback_tiles\":0,\"falls\":0,\"lighting\":0,\"lit\":2,\"loading\":{\"done\":0,\"total\":17},\"loading_tiles\":0,\"missing_tiles\":0,\"prefetching_tiles\":0,\"resident_tiles\":48,\"restored_tiles\":12,\"rewatered_tiles\":0,\"settled_records\":0,\"settling_records\":5,\"shaded_tiles\":5,\"shading_records\":0,\"stale_water_tiles\":0,\"surroundings_tiles\":31,\"terrains\":1,\"tile_cut\":{\"asked\":46,\"cut\":0,\"kept\":46},\"tunnels\":1,\"waiting_tiles\":0,\"white_water\":0} | terrain tiles 854854a0fbb2ae0d drawn true | surroundings tiles a2eadb7ccd455bc5 drawn true",
+    "terrain trace": "15175f0db749c456"
   },
   "gltf": {
     "gltf prefab": {

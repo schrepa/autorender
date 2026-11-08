@@ -9,7 +9,6 @@ pub(crate) const RESOLUTION: u32 = 512;
 const SPAN: f32 = 4.0 / 3.0;
 const STRAY: f32 = 0.1;
 const ANEW: f32 = 0.5;
-const FADE_SECONDS: f64 = 0.2;
 const DIRECTIONS: usize = SKY_DIRECTIONS as usize;
 const LAYERS: usize = SKY_LAYERS as usize;
 
@@ -30,8 +29,12 @@ struct Layer {
 }
 
 impl Layer {
-    fn faded(&self, now: f64) -> f32 {
-        (((now - self.since) / FADE_SECONDS).clamp(0.0, 1.0)) as f32
+    fn faded(&self, now: f64, seconds: f32) -> f32 {
+        if seconds > 0.0 {
+            (((now - self.since) / f64::from(seconds)).clamp(0.0, 1.0)) as f32
+        } else {
+            1.0
+        }
     }
 }
 
@@ -153,7 +156,9 @@ impl SkyMaps {
         self.left = in_use(count as usize)
             .filter(|&layer| {
                 let layer = &self.layers[layer];
-                layer.drawn.is_none() || layer.stale || layer.faded(now) < 1.0
+                layer.drawn.is_none()
+                    || layer.stale
+                    || layer.faded(now, settings.fade_seconds) < 1.0
             })
             .count() as u32;
         self.write(count, reaches, settings, now);
@@ -169,7 +174,7 @@ impl SkyMaps {
             }
             let weight = layer.drawn.map_or(0.0, |(_, clip)| {
                 uniform.clips[index] = clip.to_cols_array_2d();
-                layer.faded(now)
+                layer.faded(now, settings.fade_seconds)
             });
             uniform.directions[index] = direction(count, within).extend(weight).to_array();
         }

@@ -98,12 +98,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "decoding": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "device": {
           "default": false,
           "type": "boolean"
@@ -285,12 +279,6 @@
           "type": "integer"
         },
         "loaded": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "pending": {
           "default": 0,
           "format": "uint32",
           "minimum": 0,
@@ -647,12 +635,6 @@
           "format": "int32",
           "type": "integer"
         },
-        "settling": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "stops": {
           "default": 0,
           "format": "int32",
@@ -708,12 +690,6 @@
     "ImpostorStats": {
       "properties": {
         "failed": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "pending": {
           "default": 0,
           "format": "uint32",
           "minimum": 0,
@@ -1198,12 +1174,6 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
-        },
-        "waiting": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
         }
       },
       "type": "object"
@@ -1405,12 +1375,6 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
-        },
-        "tiles_waiting": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
         }
       },
       "type": "object"
@@ -1473,12 +1437,6 @@
             "null"
           ]
         },
-        "loading": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "tables": {
           "default": [],
           "items": {
@@ -1494,12 +1452,6 @@
         "active": {
           "default": false,
           "type": "boolean"
-        },
-        "settling": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
         }
       },
       "type": "object"
@@ -1612,12 +1564,6 @@
           "type": "integer"
         },
         "macro_maps": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "pending": {
           "default": 0,
           "format": "uint32",
           "minimum": 0,
@@ -1750,12 +1696,6 @@
           "type": "integer"
         },
         "missing_tiles": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "pending": {
           "default": 0,
           "format": "uint32",
           "minimum": 0,
@@ -2036,19 +1976,7 @@
           "minimum": 0,
           "type": "integer"
         },
-        "settles_left": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "settling_records": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "squares_left": {
           "default": 0,
           "format": "uint32",
           "minimum": 0,

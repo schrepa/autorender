@@ -2,7 +2,11 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { launchContext } from "./browser-launch.mjs";
 
-const [url, limit = "600000"] = process.argv.slice(2);
+const [url, limit] = process.argv.slice(2);
+if (!url || !(Number(limit) > 0)) {
+  console.error(JSON.stringify({ error: { code: "invalid_arguments", path: "$" }, usage: "smoke-browser.mjs URL LIMIT_MS" }));
+  process.exit(2);
+}
 const { page, close } = await launchContext({ viewport: { width: 1000, height: 700 }, deviceScaleFactor: 1 });
 const errors = [];
 page.on("pageerror", error => { if (errors.length < 20) errors.push(String(error).slice(0, 2000)); });

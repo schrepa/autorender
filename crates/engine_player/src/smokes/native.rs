@@ -387,14 +387,8 @@ fn resumed(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let resumed_at = tick(&status(session, "status_before_resume")?);
     control(session, "resume", json!({}), "resumes")?;
     let mut ticked = resumed_at;
-    for _ in 0..3000 {
-        if !session.frame() {
-            break;
-        }
+    while ticked <= resumed_at && session.frame() {
         ticked = tick(&status(session, "status_while_resumed")?);
-        if ticked > resumed_at {
-            break;
-        }
     }
     let wanted = json!({ "above": resumed_at });
     smoke_eq!(

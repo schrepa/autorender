@@ -12,6 +12,7 @@ const TIME_RATIO: f64 = 1.25;
 const FRAME_TIME: &str = "wall:frame_ms_mean";
 const BUSY_CPU_PCT: f64 = 50.0;
 const CHECK: &str = "agent_lifecycle";
+const CHECK_LIMIT_MS: u64 = 120_000;
 pub(crate) const KINDS: [&str; 2] = ["measure", "checks"];
 
 pub fn selfcheck(root: &Path, arguments: &[String]) -> Result<(), Failure> {
@@ -322,9 +323,9 @@ fn measure_aa(root: &Path, sha: &str, folder: &Path) -> Result<Vec<String>, Stri
 
 fn checks_aa(root: &Path, sha: &str, folder: &Path) -> Result<Vec<String>, String> {
     let checks = [
-        json!({"name": CHECK, "sha": sha, "expect": "pass"}),
-        json!({"name": CHECK, "sha": sha, "scripts_sha": sha, "expect": "pass"}),
-        json!({"name": CHECK, "sha": sha, "expect": "fail"}),
+        json!({"name": CHECK, "sha": sha, "expect": "pass", "limit_ms": CHECK_LIMIT_MS}),
+        json!({"name": CHECK, "sha": sha, "scripts_sha": sha, "expect": "pass", "limit_ms": CHECK_LIMIT_MS}),
+        json!({"name": CHECK, "sha": sha, "expect": "fail", "limit_ms": CHECK_LIMIT_MS}),
     ];
     let (entries, _) = crate::checks::run(root, &checks, folder, None)?;
     write(&folder.join("report.json"), &json!({"checks": entries}))?;

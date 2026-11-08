@@ -73,6 +73,7 @@ engine::__if_dev! {
         pub async fn smokes(
             canvas: web_sys::HtmlCanvasElement,
             names: String,
+            limit_ms: f64,
             report: JsValue,
             query: String,
         ) -> Result<bool, JsValue> {
@@ -85,6 +86,7 @@ engine::__if_dev! {
             engine::smokes::page::run::<Highlands>(
                 canvas,
                 &names,
+                limit_ms,
                 &smokes,
                 &bricks,
                 &build,

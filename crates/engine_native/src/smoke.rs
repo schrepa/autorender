@@ -27,9 +27,17 @@ pub fn run<G: Game>(
         }
         return ExitCode::SUCCESS;
     }
+    let Some(limit_ms) = options.limit_ms else {
+        return crate::exit(Err(engine::Error::new(
+            engine::ErrorCode::InvalidArguments,
+            "--limit-ms",
+        )
+        .expected(engine::Expected::Present)));
+    };
     let ran = pollster::block_on(engine::smokes::run(
         &mut Native { options, attach },
         names,
+        limit_ms as f64,
         entries,
         bricks,
         build,

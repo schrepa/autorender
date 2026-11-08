@@ -150,6 +150,7 @@ pub(crate) fn open(
         }
     };
     let ticket = jobs.fetch(&CAVE, &cave_input(&points), content.priority());
+    content.hold(mesh);
     cave.asked = Some(Asked {
         ticket,
         mesh,
@@ -180,7 +181,7 @@ fn arrive(
     let built = match record.and_then(|bytes| Mesh::from_record(&bytes)) {
         Ok(built) => built,
         Err(error) => {
-            content.failed(&CAVE, &error);
+            content.filled(&CAVE, asked.mesh, Err(error));
             return;
         }
     };
@@ -191,9 +192,8 @@ fn arrive(
         (&asked.points, asked.inward, low, high),
         (&asked.rock, asked.framing),
     );
-    if let Err(error) = assets.fill_mesh(asked.mesh, built) {
-        content.failed(&CAVE, &error);
-    }
+    let filled = assets.fill_mesh(asked.mesh, built);
+    content.filled(&CAVE, asked.mesh, filled);
 }
 
 fn spawn_cave(

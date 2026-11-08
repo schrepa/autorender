@@ -33,6 +33,7 @@ engine_core.workspace = true
 engine_ecs.workspace = true
 engine_fly_camera.workspace = true
 engine_places_simulation.workspace = true
+engine_smoke.workspace = true
 engine_standard.workspace = true
 engine_standard_smokes.workspace = true
 engine_worker.workspace = true

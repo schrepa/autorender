@@ -2,7 +2,7 @@ use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 
 use bevy_ecs::world::World;
-use engine_core::{BrickList, SmokeFailure, SmokeSession};
+use engine_core::{BrickList, ErrorCode, SmokeFailure, SmokeSession};
 use serde_json::{Value, json};
 
 use super::{
@@ -38,6 +38,7 @@ pub trait SmokeHost<G: Game> {
 pub async fn run<G: Game, H: SmokeHost<G>>(
     host: &mut H,
     names: &str,
+    limit_ms: f64,
     entries: &[SmokeEntry],
     bricks: &BrickList,
     build: Build<'_, G>,
@@ -49,6 +50,8 @@ pub async fn run<G: Game, H: SmokeHost<G>>(
         bricks,
         build,
         gpu: None,
+        limit_ms,
+        deadline: crate::host::now_ms() + limit_ms,
     };
     let mut passed = true;
     for entry in selected {
@@ -64,6 +67,8 @@ struct Runner<'a, G: Game, H: SmokeHost<G>> {
     bricks: &'a BrickList,
     build: Build<'a, G>,
     gpu: Option<bool>,
+    limit_ms: f64,
+    deadline: f64,
 }
 
 enum Backend<S, G: Game> {
@@ -73,9 +78,21 @@ enum Backend<S, G: Game> {
 }
 
 impl<'a, G: Game, H: SmokeHost<G>> Runner<'a, G, H> {
+    fn late(&self) -> Option<Value> {
+        (crate::host::now_ms() >= self.deadline).then(|| {
+            super::json(
+                &crate::Error::new(ErrorCode::CommandTimeout, "$.limit_ms")
+                    .at_most(self.limit_ms as u64),
+            )
+        })
+    }
+
     async fn record(&mut self, entry: &SmokeEntry) -> SmokeRecord {
         if entry.gpu() && self.gpu == Some(false) {
             return SmokeRecord::skipped(entry);
+        }
+        if let Some(late) = self.late() {
+            return SmokeRecord::failed(entry, 0.0, fault("limit_ms", &late));
         }
         let started = crate::host::now_ms();
         let elapsed = || crate::host::now_ms() - started;
@@ -171,7 +188,14 @@ impl<G: Game, H: SmokeHost<G>> Harness<'_, '_, G, H> {
         }
     }
 
+    fn close_when_late(&mut self) {
+        if let Some(late) = self.runner.late() {
+            self.backend = Backend::Closed(late);
+        }
+    }
+
     fn send(&mut self, line: &str) -> Value {
+        self.close_when_late();
         match &mut self.backend {
             Backend::Gpu(gpu) => gpu.send(line),
             Backend::Headless(headless) => headless.request(line),
@@ -207,6 +231,7 @@ impl<G: Game, H: SmokeHost<G>> SmokeSession for Harness<'_, '_, G, H> {
     }
 
     fn frame(&mut self) -> bool {
+        self.close_when_late();
         let Backend::Gpu(gpu) = &mut self.backend else {
             return false;
         };

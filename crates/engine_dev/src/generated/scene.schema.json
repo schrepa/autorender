@@ -4951,6 +4951,12 @@
           "default": true,
           "type": "boolean"
         },
+        "fade_seconds": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
         "far_distance": {
           "default": 400.0,
           "format": "float",

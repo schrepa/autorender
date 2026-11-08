@@ -1735,6 +1735,7 @@ dependencies = [
  "engine_fly_camera",
  "engine_native",
  "engine_places_simulation",
+ "engine_smoke",
  "engine_sources",
  "engine_standard",
  "engine_standard_smokes",

@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
@@ -13,6 +14,7 @@ use crate::process::Project;
 use crate::serve::Server;
 
 const PUBLIC: &str = "web/public";
+const SERVER_START: Duration = Duration::from_secs(120);
 
 pub(super) struct Page {
     pub(super) server: Server,
@@ -45,7 +47,11 @@ pub(super) fn serve(root: &Path, side: &Side, name: &str, folder: &Path) -> Resu
         "{}",
         json!({"event": "serving_browser_leg", "side": side.label})
     );
-    let server = Server::page(&tree, &folder.join(format!("server-{name}.log")))?;
+    let server = Server::page(
+        &tree,
+        &folder.join(format!("server-{name}.log")),
+        SERVER_START,
+    )?;
     Ok(Page { server, withheld })
 }
 

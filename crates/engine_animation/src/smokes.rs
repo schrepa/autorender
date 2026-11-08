@@ -1,7 +1,8 @@
 use std::f32::consts::FRAC_1_SQRT_2;
 
 use engine_smoke::{
-    Checked, above, ask, component, control, not, number, query, render, settled, with,
+    Checked, above, ask, component, control, not, number, query, render, settled, settled_when,
+    with,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_check, smoke_eq};
 use serde_json::{Value, json};
@@ -11,7 +12,6 @@ const TURNED: [f32; 4] = [0.0, 0.0, FRAC_1_SQRT_2, FRAC_1_SQRT_2];
 const CORNERS: [[f32; 2]; 4] = [[-0.1, -0.1], [0.1, -0.1], [0.1, 0.1], [-0.1, 0.1]];
 const RINGS: [(f32, u32); 5] = [(0.0, 0), (0.5, 0), (1.0, 1), (1.5, 1), (2.0, 2)];
 const CLOSE: f64 = 0.02;
-const WAIT_FRAMES: u32 = 600;
 const CHANNEL_TOLERANCE: u8 = 24;
 const POSE_PIXELS: usize = 200;
 
@@ -262,15 +262,16 @@ fn finishes(session: &mut dyn SmokeSession) -> Checked<()> {
 }
 
 fn resident(session: &mut dyn SmokeSession) -> Checked<()> {
-    for _ in 0..WAIT_FRAMES {
-        let held = state(session)?;
-        if held["resident"] == held["parts"] {
-            return Ok(());
-        }
-        render(session)?;
-    }
-    let held = state(session)?;
-    smoke_eq!(held["resident"], held["parts"], "parts_resident");
+    settled_when(
+        session,
+        |session| {
+            let mut rendering = render(session)?;
+            let held = state(session)?;
+            rendering["parts_resident"] = json!(held["resident"] == held["parts"]);
+            Ok(rendering)
+        },
+        |rendering| rendering["parts_resident"] == true,
+    )?;
     Ok(())
 }
 

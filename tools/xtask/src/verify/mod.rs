@@ -10,8 +10,7 @@ use crate::measure::git;
 use crate::process::{Client, clients};
 use crate::smoke::PLAYER;
 
-const USAGE: &str =
-    "usage: cargo xtask verify [--level quick|pr|merge] [--base REV] [--plan] [--json]";
+const USAGE: &str = "usage: cargo xtask verify [--level quick|pr|merge] [--base REV] [--limit-ms MS] [--plan] [--json]";
 
 const TOOLS: &str = "xtask";
 
@@ -141,6 +140,7 @@ impl<'a> Step<'a> {
 pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     let mut level = Level::Pr;
     let mut base = None;
+    let mut limit = None;
     let mut plan_only = false;
     let mut json = false;
     let mut given = arguments.iter();
@@ -155,6 +155,7 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
                 };
             }
             "--base" => base = Some(given.next().ok_or(USAGE)?.clone()),
+            "--limit-ms" => limit = Some(given.next().ok_or(USAGE)?.clone()),
             "--plan" => plan_only = true,
             "--json" => json = true,
             _ => return Err(format!("unknown option {argument}\n{USAGE}").into()),
@@ -196,7 +197,7 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
         });
         println!("{record}");
     }
-    let steps = steps(root, level, &base, &selection)?;
+    let steps = steps(root, level, (&base, limit.as_deref()), &selection)?;
     let names: Vec<&str> = steps.iter().map(|step| step.name.as_str()).collect();
     println!(
         "{}",
@@ -266,7 +267,12 @@ fn quick<'a>(root: &'a Path, selection: &Selection) -> Result<Vec<Step<'a>>, Str
     Ok(steps)
 }
 
-fn smokes<'a>(root: &'a Path, merge: bool, selection: &Selection) -> Vec<Step<'a>> {
+fn smokes<'a>(
+    root: &'a Path,
+    merge: bool,
+    limit: Option<&str>,
+    selection: &Selection,
+) -> Result<Vec<Step<'a>>, String> {
     let wanted: Vec<&Client> = clients()
         .iter()
         .filter(|client| client.native.is_some())
@@ -287,18 +293,24 @@ fn smokes<'a>(root: &'a Path, merge: bool, selection: &Selection) -> Vec<Step<'a
     for client in wanted.iter().filter(|client| client.folder != PLAYER) {
         runs.push(vec!["--project".to_owned(), client.folder.clone()]);
     }
-    runs.into_iter()
-        .map(|options| {
+    if runs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let limit = limit.ok_or_else(|| format!("smoke runs need a wall-clock limit\n{USAGE}"))?;
+    Ok(runs
+        .into_iter()
+        .map(|mut options| {
             let name = format!("smoke {}", options.join(" ")).trim_end().to_owned();
+            options.extend(["--limit-ms".to_owned(), limit.to_owned()]);
             Step::new(name, move || crate::smoke::smoke(root, &options))
         })
-        .collect()
+        .collect())
 }
 
 fn steps<'a>(
     root: &'a Path,
     level: Level,
-    base: &'a str,
+    (base, limit): (&'a str, Option<&str>),
     selection: &Selection,
 ) -> Result<Vec<Step<'a>>, String> {
     if level == Level::Quick {
@@ -309,7 +321,7 @@ fn steps<'a>(
     let mut steps = vec![Step::new("lint", move || {
         Ok(engine_checks::stages::run(root, crate::lint::LINT)?)
     })];
-    steps.extend(smokes(root, merge, selection));
+    steps.extend(smokes(root, merge, limit, selection)?);
     if merge || tools {
         steps.push(Step::new("pure --wasm terrain tables", move || {
             crate::pure::pure(

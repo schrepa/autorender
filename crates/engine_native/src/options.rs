@@ -52,6 +52,7 @@ pub fn options() -> Vec<CommandOption> {
         CommandOption::taking("--settle-ms", "MS")
             .defaults_to(defaults.settle_ms)
             .in_unit("ms"),
+        CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
         CommandOption::taking("--offscreen", "N"),
         CommandOption::taking("--capture", "PATH"),
         CommandOption::taking("--gpu-capture", "PATH"),
@@ -255,6 +256,7 @@ pub struct HostOptions {
     pub look: Option<String>,
     pub frames: Option<u32>,
     pub settle_ms: u64,
+    pub limit_ms: Option<u64>,
     pub offscreen: Option<u32>,
     pub capture: Option<PathBuf>,
     pub gpu_capture: Option<PathBuf>,
@@ -284,6 +286,7 @@ impl Default for HostOptions {
             look: None,
             frames: None,
             settle_ms: 20_000,
+            limit_ms: None,
             offscreen: None,
             capture: None,
             gpu_capture: None,
@@ -391,6 +394,16 @@ impl HostOptions {
                 self.settle_ms = settle
                     .parse()
                     .map_err(|_| argument.invalid(&settle).expected(Expected::Integer))?;
+            }
+            "--limit-ms" => {
+                let limit = arguments.value(argument)?;
+                self.limit_ms = Some(
+                    limit
+                        .parse()
+                        .ok()
+                        .filter(|&limit: &u64| limit > 0)
+                        .ok_or_else(|| argument.invalid(&limit).expected(Expected::Integer))?,
+                );
             }
             "--offscreen" => self.offscreen = Some(arguments.count(argument)?),
             "--capture" => self.capture = Some(arguments.value(argument)?.into()),
@@ -670,6 +683,9 @@ impl HostOptions {
         bricks: impl FnOnce(BrickList) -> BrickList,
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> engine::Result<()> {
+        let limit = self.limit_ms.ok_or_else(|| {
+            Error::new(ErrorCode::InvalidArguments, "--limit-ms").expected(Expected::Present)
+        })?;
         let size = self.size.unwrap_or((320, 180));
         let started = Instant::now();
         let mut jobs = self.jobs.clone();
@@ -694,6 +710,14 @@ impl HostOptions {
             }
             if readiness.settled() {
                 break;
+            }
+            if started.elapsed() >= Duration::from_millis(limit) {
+                return Err(Error::new(ErrorCode::CommandTimeout, "--limit-ms")
+                    .at_most(limit)
+                    .got(json!({
+                        "readiness": readiness,
+                        "jobs_held": game.host().jobs_held(),
+                    })));
             }
             if said.elapsed() > Duration::from_secs(5) {
                 said = Instant::now();

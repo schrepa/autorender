@@ -1,4 +1,5 @@
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
+use engine_smoke::rendered_when;
 use engine_standard_smokes::requests::{accepted, control, grid, number, seen, status, tick};
 use serde_json::{Value, json};
 
@@ -36,19 +37,19 @@ fn partition(rendering: &Value) -> Result<(), SmokeFailure> {
 }
 
 fn read_back(session: &mut dyn SmokeSession, alpha: f64) -> Result<Value, SmokeFailure> {
-    let mut reply = Value::Null;
-    for _ in 0..50 {
-        control(session, "present", json!({ "alpha": alpha }), "presents")?;
-        reply = accepted(
-            session,
-            "capture",
-            json!({ "alpha": alpha }),
-            "read_back_capture",
-        )?;
-        if number(&meshes(&reply["result"]["rendering"])["read_back_age"]) <= 1.0 {
-            break;
-        }
-    }
+    let reply = rendered_when(
+        session,
+        |session| {
+            control(session, "present", json!({ "alpha": alpha }), "presents")?;
+            accepted(
+                session,
+                "capture",
+                json!({ "alpha": alpha }),
+                "read_back_capture",
+            )
+        },
+        |reply| number(&meshes(&reply["result"]["rendering"])["read_back_age"]) <= 1.0,
+    )?;
     let rendering = reply["result"]["rendering"].clone();
     let age = meshes(&rendering)["read_back_age"].clone();
     let wanted = json!({ "at_most": 1 });

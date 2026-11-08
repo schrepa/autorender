@@ -24,7 +24,7 @@ export interface SmokeState {
   error?: { code: ErrorCode | string; path: string };
 }
 
-export type SmokeRun = (canvas: HTMLCanvasElement, names: string, report: (line: string) => void) => Promise<boolean>;
+export type SmokeRun = (canvas: HTMLCanvasElement, names: string, limitMs: number, report: (line: string) => void) => Promise<boolean>;
 
 declare global {
   interface Window {
@@ -53,10 +53,13 @@ export async function runSmokes(names: string, load: () => Promise<SmokeRun | un
   const log = document.createElement("pre");
   log.id = "smokes";
   document.body.append(canvas, log);
+  const limitMs = Number(new URLSearchParams(location.search).get("limit_ms"));
   try {
     const run = await load();
-    if (run) {
-      state.passed = await run(canvas, names, line => {
+    if (!(limitMs > 0)) {
+      state.error = { code: "missing_field", path: "?limit_ms" };
+    } else if (run) {
+      state.passed = await run(canvas, names, limitMs, line => {
         state.records.push(JSON.parse(line) as SmokeRecord);
         log.append(`${line}\n`);
       });
