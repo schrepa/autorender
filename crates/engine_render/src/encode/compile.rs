@@ -1,6 +1,6 @@
 use super::*;
 use crate::install::RenderDecl;
-use crate::machine::{BuiltPipeline, Stage};
+use crate::machine::{BuiltPipeline, Stage, cover_location};
 
 fn stage_switches(switches: &[(u32, bool)], stages: &[Stage]) -> Vec<(u32, bool)> {
     switches
@@ -523,7 +523,10 @@ impl Compiler<'_> {
                     crate::surface::Alpha::Blend | crate::surface::Alpha::Additive
                 )
             })
-            .map(|alpha| (alpha, crate::machine::cover_location(&self.machine.outputs)));
+            .map(|alpha| {
+                let home = self.machine.declared.passes.get(built.home as usize);
+                (alpha, home.and_then(|pass| cover_location(&self.machine.outputs, pass)))
+            });
         let mut targets = color_targets(desc, formats, written.as_deref(), main);
         if let Some((alpha, cover)) = blended {
             blend_targets(&mut targets, alpha, cover.filter(|_| main));
@@ -598,8 +601,8 @@ impl Run {
             let set = pass_set(&self.machine.outputs, pass);
             let main = lit_set(&set);
             shown = (!set.is_empty() && !main, main);
-            for (_, format, _, written) in set {
-                formats.push(written.then_some(format));
+            for (_, format, _) in set {
+                formats.push(Some(format));
             }
             depth = Some((DEPTH_FORMAT, true));
         }

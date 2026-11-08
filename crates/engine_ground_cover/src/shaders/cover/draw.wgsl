@@ -8,7 +8,7 @@ import package::face::lit::finish;
 import package::face::foliage::foliage;
 import package::face::sun::sun_direction;
 import package::generated::cover::{CoverBlade, CoverFrame};
-import package::generated::targets::{ViewTargets, view_targets};
+import package::generated::writes::{Outputs, outputs};
 
 fn blade_facing(blade: CoverBlade) -> f32 {
     return f32(blade.facing & 0xffffu) / 65535.0 * (2.0 * PI);
@@ -208,8 +208,8 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
 }
 
 @fragment
-fn fs_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> ViewTargets {
+fn fs_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> Outputs {
     let point = cover_surface(input, front);
     let shaded = finish(point, input.clip_position.xy, vec3<f32>(0.0));
-    return view_targets(point, shaded, view_pixel(input.clip_position, input.previous));
+    return outputs(point, shaded, view_pixel(input.clip_position, input.previous));
 }

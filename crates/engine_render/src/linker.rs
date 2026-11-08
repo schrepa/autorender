@@ -136,7 +136,7 @@ pub(crate) struct Linker {
     sources: Vec<&'static Source>,
     handed: Vec<(String, &'static str, Vec<Part>)>,
     numbers: BTreeMap<(String, String), u32>,
-    composed: BTreeMap<(String, String), Arc<Composed>>,
+    composed: BTreeMap<(String, String, String), Arc<Composed>>,
     numbered: bool,
 }
 
@@ -348,7 +348,7 @@ impl Linker {
             "place" => module.package == CORE_PACKAGE || fills(module.package, second),
             "generated" => match second {
                 "pieces" => segments.next() == Some(own),
-                "targets" | "composite" | "passes" | "kinds" | "applied" => true,
+                "writes" | "composite" | "passes" | "kinds" | "applied" => true,
                 _ => second == own,
             },
             _ => first == own,
@@ -406,8 +406,16 @@ impl Linker {
     }
 
     pub(crate) fn compose(&mut self, entry: Entry) -> Result<Arc<Composed>, Error> {
+        self.compose_in(entry, None)
+    }
+
+    pub(crate) fn compose_in(
+        &mut self,
+        entry: Entry,
+        pass: Option<&(String, String)>,
+    ) -> Result<Arc<Composed>, Error> {
         let (path, name) = path_of((entry.module(), entry.name()));
-        self.compose_named(path, &name)
+        self.link(path, Some(&name), pass)
     }
 
     pub(crate) fn compose_named(
@@ -415,16 +423,22 @@ impl Linker {
         module: &str,
         entry: &str,
     ) -> Result<Arc<Composed>, Error> {
-        self.link(module, Some(entry))
+        self.link(module, Some(entry), None)
     }
 
     pub(crate) fn compose_module(&mut self, module: &str) -> Result<Arc<Composed>, Error> {
-        self.link(module, None)
+        self.link(module, None, None)
     }
 
-    fn link(&mut self, module: &str, kept: Option<&str>) -> Result<Arc<Composed>, Error> {
+    fn link(
+        &mut self,
+        module: &str,
+        kept: Option<&str>,
+        pass: Option<&(String, String)>,
+    ) -> Result<Arc<Composed>, Error> {
         let entry = kept.unwrap_or_default();
-        let key = (module.to_owned(), entry.to_owned());
+        let written = pass.map_or("", |(key, _)| key.as_str());
+        let key = (module.to_owned(), entry.to_owned(), written.to_owned());
         if let Some(composed) = self.composed.get(&key) {
             return Ok(Arc::clone(composed));
         }
@@ -440,7 +454,10 @@ impl Linker {
         };
         let mut resolver = wesl::resolver::VirtualResolver::new();
         for source in &self.modules {
-            let text = self.numbered_text(source);
+            let text = match pass {
+                Some((_, text)) if source.path == crate::shared::WRITES_MODULE => text.clone(),
+                Some(_) | None => self.numbered_text(source),
+            };
             resolver.add_module(
                 module_path(&source.path).map_err(|error| failed(&error))?,
                 Cow::Owned(text),

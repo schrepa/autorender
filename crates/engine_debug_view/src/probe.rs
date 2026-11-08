@@ -7,8 +7,8 @@ use engine_core::{
 };
 use engine_render::debug::DebugRecord;
 use engine_render::{
-    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DebugModes,
-    Encode, GpuPart, Install, Lifetime, Pass, Prepare, TargetName, wgpu,
+    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DEBUG_TARGETS,
+    DebugModes, Encode, GpuPart, Install, Lifetime, Pass, Prepare, TargetName, wgpu,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -428,7 +428,12 @@ impl GpuPart for ProbeGpu {
         let reading = cx.compute_pipeline(
             pass,
             probe::CS_DEBUG_PROBE,
-            &[(probe::PROBED, Bind::Buffer(probed))],
+            &[
+                (probe::PROBED, Bind::Buffer(probed)),
+                (probe::DEBUG_IDS, Bind::Target(DEBUG_TARGETS[0])),
+                (probe::DEBUG_COUNT, Bind::Target(DEBUG_TARGETS[1])),
+                (probe::DEBUG_WORDS, Bind::Target(DEBUG_TARGETS[2])),
+            ],
         )?;
         Ok(Self {
             probed,

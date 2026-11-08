@@ -2,7 +2,7 @@ import package::engine::drawn::drawn_shown;
 import package::engine::shading::{flat, flat_point};
 import package::engine::view::{camera, view_pixel};
 import package::generated::glimmer::GlimmerInstance;
-import package::generated::targets::{ViewTargets, view_targets};
+import package::generated::writes::{Outputs, outputs};
 @group(1) @binding(0) var<storage, read> glimmers: array<GlimmerInstance>;
 
 const GLIMMER_UP: vec3<f32> = vec3<f32>(0.0, 1.0, 0.0);
@@ -42,9 +42,9 @@ fn placed(corner: u32, glimmer: GlimmerInstance, grow: f32, color: vec4<f32>) ->
     return placed(corner, glimmer, GLIMMER_RING, glimmer.ring);
 }
 
-@fragment fn fs_glimmer(corner: Corner) -> ViewTargets {
+@fragment fn fs_glimmer(corner: Corner) -> Outputs {
     if dot(corner.unit, corner.unit) > 1.0 { discard; }
-    return view_targets(flat_point(corner.color), flat(corner.color),
+    return outputs(flat_point(corner.color), flat(corner.color),
         view_pixel(corner.clip, corner.previous));
 }
 
@@ -52,9 +52,9 @@ fn placed(corner: u32, glimmer: GlimmerInstance, grow: f32, color: vec4<f32>) ->
     if dot(corner.unit, corner.unit) > 1.0 { discard; }
 }
 
-@fragment fn fs_ring(corner: Corner) -> ViewTargets {
+@fragment fn fs_ring(corner: Corner) -> Outputs {
     let reach = length(corner.unit);
     if reach > 1.0 || reach < GLIMMER_RING_INNER { discard; }
-    return view_targets(flat_point(corner.color), flat(corner.color),
+    return outputs(flat_point(corner.color), flat(corner.color),
         view_pixel(corner.clip, corner.previous));
 }

@@ -1,5 +1,5 @@
 import package::engine::shading::{ViewPixel, flat, flat_point};
-import package::generated::targets::{ViewTargets, view_targets};
+import package::generated::writes::{Outputs, outputs};
 
 @group(1) @binding(0) var checker: texture_2d<f32>;
 @group(1) @binding(1) var checker_sampler: sampler;
@@ -21,8 +21,8 @@ fn vs_sprite(@builtin(vertex_index) vertex: u32) -> SpriteOutput {
 }
 
 @fragment
-fn fs_sprite(input: SpriteOutput) -> ViewTargets {
+fn fs_sprite(input: SpriteOutput) -> Outputs {
     let color = vec4<f32>(textureSample(checker, checker_sampler, input.uv).rgb, 0.0);
     let at = vec4<f32>(input.ndc, 0.0, 1.0);
-    return view_targets(flat_point(color), flat(color), ViewPixel(at, at));
+    return outputs(flat_point(color), flat(color), ViewPixel(at, at));
 }

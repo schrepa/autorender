@@ -617,11 +617,6 @@ fn install_with(
     let (switches, links) = faces(registry, &mut linker, &mut roots, &mut problems);
     let material = material_layout(registry, &mut linker, &mut roots, &mut problems);
     let outputs = outputs(registry, &mut roots);
-    linker.add_generated(
-        crate::shared::TARGETS_MODULE.to_owned(),
-        CORE_PACKAGE,
-        crate::shared::targets_source(&outputs),
-    );
     let applied = applied_modules(registry, &mut linker, &mut roots, &mut problems);
     linker.add_generated(
         crate::shared::APPLIED_MODULE.to_owned(),
@@ -704,6 +699,7 @@ fn install_with(
     }
     let mut core = InstallCore::new(linker, device.features(), held_limits(limits, world));
     core.passes = scene_passes(world);
+    core.outputs = outputs.clone();
     for entry in &listed {
         core.declared.parts.push(PartInfo {
             ty: entry.record.part,
@@ -1122,6 +1118,7 @@ pub(crate) fn reinstall(
     );
     let mut core = InstallCore::new(linker, run.device.features(), held_limits(run.limits, world));
     core.passes = scene_passes(world);
+    core.outputs = run.machine.outputs.clone();
     core.part = part;
     core.package = again.package;
     core.fills = again.fills;

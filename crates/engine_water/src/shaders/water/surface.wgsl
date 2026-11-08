@@ -12,7 +12,7 @@ import package::face::lit::finish;
 import package::face::sky::{ambient, atmospheric_cover, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
-import package::generated::targets::{ViewTargets, view_targets};
+import package::generated::writes::{Outputs, outputs};
 import package::generated::water::{BREAK_THINNEST, NO_WATER_BLOCK, NO_WATER_SURFACE, SIM_LIVE_LOOKS,
     SIM_RIM, WATER_LEAF_FIRST, WATER_LIVE_BLOCK, WaterUniform};
 import package::place::water::{WATER_HELD, WaterAt};
@@ -659,11 +659,11 @@ fn shade_mesh(mesh: vec3<f32>, pixel: vec2<f32>) -> WaterShade {
 }
 
 @fragment
-fn fs_water(input: WaterOutput) -> ViewTargets {
+fn fs_water(input: WaterOutput) -> Outputs {
     use_terrain(input.terrain);
     let shade = shade_mesh(input.relative, input.clip_position.xy);
     let previous = water_previous(input.relative, shade.flow, saturate(shade.coverage));
-    var targets = view_targets(shade.point, shade.shaded,
+    var targets = outputs(shade.point, shade.shaded,
         view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
     targets.color = water_covering(shade);
     return targets;

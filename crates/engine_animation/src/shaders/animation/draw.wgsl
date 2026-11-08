@@ -2,7 +2,7 @@ import package::engine::mesh::declarations::AffineVertexInput;
 import package::engine::view::camera;
 import package::face::instances::{AffinePose, SlotVertex, instance_color, slot_fragment,
     slot_masked_depth, slot_pixel, slot_shade, slot_vertex};
-import package::generated::targets::{ViewTargets, view_targets};
+import package::generated::writes::{Outputs, outputs};
 
 fn unposed() -> AffinePose {
     return AffinePose(vec4<f32>(1.0, 0.0, 0.0, 0.0), vec4<f32>(0.0, 1.0, 0.0, 0.0),
@@ -18,9 +18,9 @@ fn vs_skinned(input: AffineVertexInput, @location(3) previous: vec3<f32>) -> Slo
 }
 
 @fragment
-fn fs_skinned(input: SlotVertex, @builtin(front_facing) front: bool) -> ViewTargets {
+fn fs_skinned(input: SlotVertex, @builtin(front_facing) front: bool) -> Outputs {
     let shaded = slot_shade(slot_fragment(input), front);
-    return view_targets(shaded.point, shaded.shaded, slot_pixel(input));
+    return outputs(shaded.point, shaded.shaded, slot_pixel(input));
 }
 
 @fragment

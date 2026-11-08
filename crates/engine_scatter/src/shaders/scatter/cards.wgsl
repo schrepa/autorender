@@ -5,7 +5,7 @@ import package::face::instances::{
 import package::engine::mesh::declarations::faded_slot_slot;
 import package::face::debug::debug_record_with_kind;
 import package::generated::kinds::KIND_PLACED;
-import package::generated::targets::{DepthViewTargets, depth_view_targets};
+import package::generated::writes::{DepthOutputs, depth_outputs};
 import package::scatter::faces::placed_tiles::placed_impostor;
 
 @group(2) @binding(0) var<storage, read> poses: array<AffinePose>;
@@ -47,10 +47,10 @@ fn vs_placed_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
 }
 
 @fragment
-fn fs_placed_card(input: PlacedCardVertex) -> DepthViewTargets {
+fn fs_placed_card(input: PlacedCardVertex) -> DepthOutputs {
     let card = card_of(input);
     let shaded = placed_card_shade(card, placed_impostor(faded_slot_slot(card.batch)));
-    return depth_view_targets(shaded.point, shaded.shaded, placed_card_pixel(card),
+    return depth_outputs(shaded.point, shaded.shaded, placed_card_pixel(card),
         shaded.depth);
 }
 

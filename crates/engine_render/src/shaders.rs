@@ -9,7 +9,7 @@ macro_rules! shader_modules {
             crate::shared::generated(crate::drawn::DRAWN_MODULE),
             crate::shared::generated(crate::drawn::DRAWN_CULL_MODULE),
             crate::shared::generated(crate::drawn::DRAWN_FADES_MODULE),
-            crate::shared::generated(crate::shared::TARGETS_MODULE),
+            crate::shared::generated(crate::shared::WRITES_MODULE),
             crate::shared::generated(crate::shared::APPLIED_MODULE),
             crate::shared::generated(crate::shared::COMPOSITE_MODULE),
         ];
@@ -141,7 +141,7 @@ pub fn view_source() -> String {
     source
 }
 
-pub fn generated_core() -> [(&'static str, String); 12] {
+pub fn generated_core() -> [(&'static str, String); 13] {
     let standard = crate::surface::MaterialLayout::standard();
     [
         (PRESENTATION_MODULE, presentation_source()),
@@ -156,6 +156,7 @@ pub fn generated_core() -> [(&'static str, String); 12] {
         (crate::drawn::DRAWN_MODULE, crate::drawn::source()),
         (crate::drawn::DRAWN_CULL_MODULE, crate::drawn::cull_source()),
         (crate::drawn::DRAWN_FADES_MODULE, crate::drawn::fades_source()),
+        (crate::shared::WRITES_MODULE, crate::shared::pass_module(&[]).1),
     ]
 }
 

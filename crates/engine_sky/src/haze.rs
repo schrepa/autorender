@@ -86,6 +86,7 @@ impl Haze {
         let hazed = cx.texture("haze", HAZE_FORMAT, Lifetime::Kept);
         let history_texture = cx.texture("haze_history", HAZE_FORMAT, Lifetime::Previous);
         cx.frame(haze::HAZE, Bind::Texture(hazed))?;
+        cx.frame(haze::HAZE_COVER, Bind::Target(TargetName::TRANSPARENCY))?;
         let march_pass = cx
             .pass("haze")
             .label("engine/post-haze")

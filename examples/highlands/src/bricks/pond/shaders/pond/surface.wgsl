@@ -4,7 +4,7 @@ import package::engine::view::{camera, stable_normalize, view_pixel};
 import package::face::ground_tiles::{GroundTerrain, ground_height, terrain_info};
 import package::face::lit::finish;
 import package::generated::pond::{POND_MOST, PondShape};
-import package::generated::targets::{ViewTargets, view_targets};
+import package::generated::writes::{Outputs, outputs};
 
 @group(1) @binding(0) var<uniform> ponds: array<PondShape, POND_MOST>;
 
@@ -93,10 +93,10 @@ fn shade_pond(input: PondOutput) -> PondShade {
 }
 
 @fragment
-fn fs_pond(input: PondOutput) -> ViewTargets {
+fn fs_pond(input: PondOutput) -> Outputs {
     let shade = shade_pond(input);
     let previous = (camera.previous_view_projection * vec4<f32>(input.world, 1.0)).xyw;
-    var targets = view_targets(shade.point, shade.shaded,
+    var targets = outputs(shade.point, shade.shaded,
         view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
     targets.color = vec4<f32>(shade.shaded.linear * shade.cover, shade.cover);
     return targets;

@@ -2,7 +2,7 @@ import package::engine::drawn::{drawn_records, drawn_shown};
 import package::engine::shading::{flat, flat_point};
 import package::engine::view::{camera, view_pixel};
 import package::face::text::glyph_coverage;
-import package::generated::targets::{ViewTargets, view_targets};
+import package::generated::writes::{Outputs, outputs};
 import package::generated::text::{GlyphInstance, LabelGlyph};
 @group(1) @binding(0) var<storage, read> instances: array<GlyphInstance>;
 @group(1) @binding(1) var<storage, read> labels: array<LabelGlyph>;
@@ -42,11 +42,11 @@ fn facing(lens: mat4x4<f32>, origin: vec4<f32>, at: vec2<f32>) -> vec4<f32> {
     out.color = glyph.color * drawn_records[glyph.drawn.x].tint;
     return out;
 }
-@fragment fn fs_label(placed: Placed) -> ViewTargets {
+@fragment fn fs_label(placed: Placed) -> Outputs {
     let coverage = glyph_coverage(vec2<i32>(placed.texel));
     if placed.color.a * coverage < 0.5 { discard; }
     let color = vec4<f32>(placed.color.rgb, 1.0);
-    return view_targets(flat_point(color), flat(color), view_pixel(placed.clip, placed.previous));
+    return outputs(flat_point(color), flat(color), view_pixel(placed.clip, placed.previous));
 }
 @fragment fn fs_label_depth(placed: Placed) {
     let coverage = glyph_coverage(vec2<i32>(placed.texel));

@@ -3,7 +3,7 @@ import package::engine::shading::{ViewPixel, flat, flat_point};
 import package::engine::view::{camera, stable_normalize};
 import package::face::sun::sun_direction;
 import package::face::tonemap::exposure;
-import package::generated::targets::{ViewTargets, view_targets};
+import package::generated::writes::{Outputs, outputs};
 import package::sky::common::{air_disc, air_radius, air_transmittance, sunlight_over};
 import package::sky::light::{clouded, sky_air_light, sky_table_sampler};
 import package::sky::piece::{sky_air, sky_piece};
@@ -367,11 +367,11 @@ fn fs_view_clouds_post(input: SkyOutput) -> @location(0) vec4<f32> {
 }
 
 @fragment
-fn fs_sky(input: SkyOutput) -> ViewTargets {
+fn fs_sky(input: SkyOutput) -> Outputs {
     let ray = sky_ray(input.ndc);
     let light = clouded_sky(ray);
     let color = vec4<f32>(light, 0.0);
     let previous = camera.previous_view_projection * vec4<f32>(ray, 0.0);
-    return view_targets(flat_point(color), flat(color),
+    return outputs(flat_point(color), flat(color),
         ViewPixel(vec4<f32>(input.ndc, 0.0, 1.0), previous));
 }
