@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::math::{clamp, max, min};
-use engine_core::{CursorAsk, GlobalTransforms, Interest, PrimaryView, SceneContext, TextureHandle};
+use engine_core::{CursorAsk, FrameFacts, GlobalTransforms, Interest, SceneContext, TextureHandle};
 use engine_places_rendering::text::{FontId, Text, TextRun};
 use engine_places_rendering::ui::{
     UiAction, UiAlign, UiDirection, UiInsets, UiJustify, UiKind, UiLength, UiNode, UiRoot, UiValue,
@@ -36,15 +36,15 @@ impl<'a> Facts<'a> {
     pub(crate) fn of(
         text: &'a Res<'_, Text>,
         values: &'a UiValues,
-        view: &PrimaryView,
+        frame: FrameFacts,
         settings: &UiSettings,
         (scene, globals): (Option<&'a Res<'_, SceneContext>>, &'a GlobalTransforms),
         top: Option<&'a str>,
     ) -> Self {
-        let display = view.display_size().as_vec2();
+        let display = frame.display_size.as_vec2();
         Self {
             enabled: settings.enabled,
-            metrics: [display.x, display.y, view.pixel_ratio(), settings.scale],
+            metrics: [display.x, display.y, frame.pixel_ratio, settings.scale],
             max_nodes: settings.max_nodes as usize,
             stamps: [
                 text.last_changed().get(),

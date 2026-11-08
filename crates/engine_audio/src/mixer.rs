@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use bevy_ecs::prelude::*;
 use engine_core::math::clamp;
 use engine_core::{
-    Error, ErrorCode, FrameTime, GlobalTransforms, Interest, Pause, Poses, PrimaryView, Request,
-    Requests, SceneIds, Spawner, Ticket,
+    Error, ErrorCode, FrameTime, GlobalTransforms, Interest, Pause, Poses, Request, Requests,
+    SceneIds, Spawner, Ticket, Views,
 };
 use engine_places_rendering::audio::{
     Bus, OneShot, SoundHandle, SoundOrder, SoundSource, Sounds, VoiceHandle,
@@ -612,8 +612,8 @@ impl Mixer {
 
 pub(crate) fn mix(
     (settings, time): (Res<Audio>, Res<FrameTime>),
-    (view, poses, globals, pause): (
-        Res<PrimaryView>,
+    (views, poses, globals, pause): (
+        Res<Views>,
         Poses,
         Res<GlobalTransforms>,
         Option<Res<Pause>>,
@@ -666,7 +666,7 @@ pub(crate) fn mix(
         mixer.apply_buses(&settings, pause.is_some_and(|pause| pause.paused()));
     }
     mixer.advance();
-    mixer.hear(view.camera().and_then(|camera| poses.drawn_pose(camera)), &globals);
+    mixer.hear(views.main().and_then(|main| poses.drawn_pose(main.camera)), &globals);
     mixer.sounds.settle(time.real_elapsed);
     mixer.publish(&mut stats);
     if was != Device::Failed && mixer.device == Device::Failed {

@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{GlobalTransforms, Nearest, PrimaryView};
+use engine_core::{GlobalTransforms, Nearest, Views};
 use engine_places_rendering::probes::{Interior, ReflectionProbe};
 use glam::Vec3;
 
@@ -24,7 +24,7 @@ pub(crate) struct ProbeList {
 
 pub(crate) fn gather_probes(
     settings: Res<ReflectionProbeSettings>,
-    view: Res<PrimaryView>,
+    views: Res<Views>,
     globals: Res<GlobalTransforms>,
     probes: Query<(Entity, &ReflectionProbe)>,
     mut gathered: ResMut<ProbeList>,
@@ -32,7 +32,6 @@ pub(crate) fn gather_probes(
     let gathered = &mut *gathered;
     gathered.list.clear();
     gathered.cut = 0;
-    let eye = view.detail_eye();
     gathered.candidates.clear();
     for (entity, probe) in &probes {
         if !crate::component::valid(probe) || !globals.active(entity) {
@@ -46,9 +45,17 @@ pub(crate) fn gather_probes(
         else {
             continue;
         };
-        let outside = ((eye - center).abs() - probe.extent).max(Vec3::ZERO);
+        let outside = views
+            .listed()
+            .iter()
+            .map(|facts| {
+                ((facts.detail_eye - center).abs() - probe.extent)
+                    .max(Vec3::ZERO)
+                    .length_squared()
+            })
+            .fold(f32::INFINITY, f32::min);
         gathered.candidates.push((
-            outside.length_squared(),
+            outside,
             RenderReflectionProbe {
                 key: entity.to_bits(),
                 center,

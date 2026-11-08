@@ -1,21 +1,6 @@
 {
   "id": "render-particles",
   "revision": 1,
-  "camera": {
-    "position": [
-      0,
-      8,
-      -30
-    ],
-    "target": [
-      0,
-      3,
-      0
-    ],
-    "fov_degrees": 55,
-    "near": 0.1,
-    "far": 300
-  },
   "textures": [
     {
       "id": "grate",
@@ -848,6 +833,35 @@
         "blend": "alpha",
         "seed": 16
       }
+    },
+    {
+      "id": "camera",
+      "transform": {
+        "translation": [
+          0.0,
+          8.0,
+          -30.0
+        ],
+        "rotation_degrees": [
+          -170.5377,
+          0.0,
+          180.0
+        ]
+      },
+      "node": {
+        "clock": "real",
+        "mobility": "moving"
+      },
+      "camera": {
+        "near": 0.1,
+        "far": 300.0,
+        "projection": {
+          "Perspective": {
+            "vertical_fov_radians": 0.9599311
+          }
+        }
+      },
+      "view": {}
     }
   ]
 }

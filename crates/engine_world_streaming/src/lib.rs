@@ -30,8 +30,8 @@ use serde::Serialize;
 
 use engine_core::math::{max, min};
 use engine_core::{
-    AssetLibrary, Brick, Bricks, FrameTime, GlobalTransforms, Interest, PrimaryView, Request,
-    Requests, Runs, SceneContext, Schedule, Smoke, Source, Spawner, settings, stats,
+    AssetLibrary, Brick, Bricks, FrameTime, GlobalTransforms, Interest, Request, Requests, Runs,
+    SceneContext, Schedule, Smoke, Source, Spawner, Views, settings, stats,
 };
 use engine_places_world::streaming::{StreamedKeys, StreamingFocus};
 
@@ -473,7 +473,7 @@ impl WorldCells {
 
 type StreamReads<'w> = (
     Res<'w, WorldStreaming>,
-    Res<'w, PrimaryView>,
+    Res<'w, Views>,
     Res<'w, FrameTime>,
     Res<'w, GlobalTransforms>,
 );
@@ -487,7 +487,7 @@ type SceneReads<'w> = (
 type FocusQuery<'w, 's> = Query<'w, 's, Entity, With<StreamingFocus>>;
 
 pub(crate) fn stream_cells(
-    (settings, view, frame, globals): StreamReads<'_>,
+    (settings, views, frame, globals): StreamReads<'_>,
     (scene, context, assets): SceneReads<'_>,
     (focus, live): (FocusQuery<'_, '_>, Query<Entity>),
     mut cells: ResMut<WorldCells>,
@@ -516,7 +516,7 @@ pub(crate) fn stream_cells(
     cells.stats.spawned = 0;
     cells.stats.despawned = 0;
     if !cells.cells.is_empty() {
-        sources(view.eye(), &frame, (&*globals, &focus), cells, settings);
+        sources(&views, &frame, (&*globals, &focus), cells, settings);
         let revised = tracked.is_changed();
         let changes = tracked.bypass_change_detection();
         let (despawned, removed) = cells.reconcile(changes, revised, &mut act);
@@ -545,12 +545,13 @@ pub(crate) fn stream_cells(
 }
 
 fn sources(
-    eye: Vec3,
+    views: &Views,
     frame: &FrameTime,
     (globals, focus): (&GlobalTransforms, &FocusQuery<'_, '_>),
     cells: &mut WorldCells,
     settings: WorldStreaming,
 ) {
+    let eye = views.main().map_or(Vec3::ZERO, |main| main.eye);
     let (number, elapsed) = (frame.frame, frame.real_elapsed);
     let motion = &mut cells.motion;
     match motion.last {
@@ -576,7 +577,9 @@ fn sources(
     }
     let flat = |point: Vec3| Vec2::new(point.x, point.z);
     cells.sources.clear();
-    cells.sources.push(flat(eye));
+    cells
+        .sources
+        .extend(views.listed().iter().map(|facts| flat(facts.eye)));
     let ahead = eye + motion.velocity * settings.prefetch;
     if ahead.distance_squared(eye) > 1.0 {
         cells.sources.push(flat(ahead));

@@ -47,16 +47,20 @@ fn scene(pond: bool) -> Value {
     if pond {
         entities.push(json!({ "id": "pond", "pond": authored() }));
     }
+    entities.push(json!({
+        "id": "camera",
+        "transform": { "translation": [0, 14, 24], "rotation_degrees": [-28.4429, 0, 0] },
+        "node": { "clock": "real", "mobility": "moving" },
+        "camera": {
+            "near": 0.1,
+            "far": 1000,
+            "projection": { "Perspective": { "vertical_fov_radians": 0.959_931_1 } },
+        },
+        "view": {},
+    }));
     json!({
         "id": "pond-fixture",
         "revision": 1,
-        "camera": {
-            "position": [0, 14, 24],
-            "target": [0, 1, 0],
-            "fov_degrees": 55,
-            "near": 0.1,
-            "far": 1000,
-        },
         "textures": [],
         "materials": [],
         "meshes": [],

@@ -1,7 +1,6 @@
 {
   "project": "examples/highlands",
   "options": {
-    "view": "overview",
     "rocks": "off"
   }
 }

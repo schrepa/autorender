@@ -264,7 +264,7 @@ fn views(entry: &Value, problems: &mut Vec<String>) -> Vec<View> {
     let mut views = Vec::new();
     for view in entry["views"].as_array().into_iter().flatten() {
         match view {
-            Value::String(name) if !name.is_empty() => {
+            Value::String(name) if name == "scene" => {
                 views.push(View {
                     name: name.clone(),
                     camera: None,
@@ -279,7 +279,7 @@ fn views(entry: &Value, problems: &mut Vec<String>) -> Vec<View> {
                     camera: Some(fields["camera"].clone()),
                 });
             }
-            _ => problems.push("a view is scene, a scene view's name, or {name, camera}".into()),
+            _ => problems.push("a view is scene or {name, camera}".into()),
         }
     }
     let names: BTreeSet<&str> = views.iter().map(|view| view.name.as_str()).collect();

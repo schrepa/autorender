@@ -1,6 +1,6 @@
 
 use bevy_ecs::world::World;
-use engine_core::{AssetResidency, FrameTime, PrimaryView, Readback, RenderFrame, RenderStats};
+use engine_core::{AssetResidency, FrameTime, Readback, RenderFrame, RenderStats};
 
 use super::*;
 use crate::CameraUniform;
@@ -91,6 +91,7 @@ fn camera_of(
         (width, height),
     );
     camera.noise_phase = facts.noise - facts.noise.floor();
+    camera.previous = facts.previous_eye.extend(previous_seconds).to_array();
     camera.set_region(viewed.view_projection, region);
     camera.set_detail(viewed.detail);
     camera
@@ -246,8 +247,16 @@ impl Renderer {
             return Ok(RenderStats::default());
         };
         let world = frame.world();
-        let view = world.get_resource::<PrimaryView>();
-        let region = self.core.display.plan_region(view.map(PrimaryView::render_size));
+        let views = world.get_resource::<engine_core::Views>();
+        let listed: Vec<engine_core::ViewFacts> =
+            views.map(|views| views.listed().to_vec()).unwrap_or_default();
+        if listed.is_empty() {
+            return Ok(RenderStats::default());
+        }
+        let region = self
+            .core
+            .display
+            .plan_region(views.map(|views| views.frame().render_size));
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
         };
@@ -294,17 +303,15 @@ impl Renderer {
             .get_resource::<FrameTime>()
             .map_or(0.0, |time| time.elapsed as f32);
         let previous_seconds = self.seconds.replace(seconds).unwrap_or(seconds);
-        let listed = listed_views(world, view, region, run.written());
         let entities: Vec<bevy_ecs::entity::Entity> = listed.iter().map(|facts| facts.view).collect();
         run.settle_sets(&entities);
         let mut cameras: Vec<CameraUniform> = listed
             .iter()
-            .enumerate()
-            .map(|(index, facts)| {
+            .map(|facts| {
                 let viewed = Viewed {
                     view_projection: facts.view_projection,
                     eye: facts.eye,
-                    detail: detail_of(view, index, facts),
+                    detail: facts.detail_eye,
                     seconds,
                 };
                 camera_of(&viewed, facts, previous_seconds)
@@ -503,7 +510,7 @@ impl Renderer {
             let mut post = crate::shared::post_uniform(
                 facts.view_projection,
                 facts.eye,
-                detail_of(view, index, &facts),
+                facts.detail_eye,
                 (facts.render.x, facts.render.y),
                 (size.x, size.y),
             );
@@ -872,55 +879,10 @@ fn warm_on_flip(
     *installing = Some(Box::pin(scope.pop()));
 }
 
-fn listed_views(
-    world: &World,
-    view: Option<&PrimaryView>,
-    region: crate::targets::FrameRegion,
-    frame: engine_core::FrameId,
-) -> Vec<engine_core::ViewFacts> {
-    let listed: Vec<engine_core::ViewFacts> = world
-        .get_resource::<engine_core::Views>()
-        .map(|views| views.listed().to_vec())
-        .unwrap_or_default();
-    if !listed.is_empty() {
-        return listed;
-    }
-    let (width, height) = region.display.pixels();
-    let (drawn_width, drawn_height) = region.render.pixels();
-    let view_projection = view.map_or(Mat4::IDENTITY, PrimaryView::view_projection);
-    vec![engine_core::ViewFacts {
-        view: bevy_ecs::entity::Entity::PLACEHOLDER,
-        camera: bevy_ecs::entity::Entity::PLACEHOLDER,
-        target: engine_core::Target::Surface,
-        pixels: [0, 0, width, height],
-        render: glam::UVec2::new(drawn_width, drawn_height),
-        layers: engine_core::Layers::ALL,
-        clear: engine_core::Clear::All,
-        clear_color: engine_core::View::BLACK,
-        order: 0,
-        lens: view.map(PrimaryView::lens).unwrap_or_default(),
-        eye: view.map_or(glam::Vec3::ZERO, PrimaryView::eye),
-        forward: view.map_or(glam::Vec3::NEG_Z, PrimaryView::forward),
-        view_projection,
-        previous_view_projection: view_projection,
-        history: view.map_or(engine_core::ViewHistory::Fresh, PrimaryView::history),
-        jitter: view.and_then(PrimaryView::jitter),
-        noise: view.and_then(PrimaryView::facts).map_or(0.0, |facts| facts.noise),
-        frame,
-    }]
-}
-
 fn drawn_order(listed: &[engine_core::ViewFacts]) -> Vec<usize> {
     let (surfaces, textures): (Vec<usize>, Vec<usize>) =
         (0..listed.len()).partition(|&index| listed[index].target.surface());
     textures.into_iter().chain(surfaces).collect()
-}
-
-fn detail_of(view: Option<&PrimaryView>, index: usize, facts: &engine_core::ViewFacts) -> glam::Vec3 {
-    match view {
-        Some(view) if index == 0 => view.detail_eye(),
-        Some(_) | None => facts.eye,
-    }
 }
 
 fn view_region(facts: &engine_core::ViewFacts) -> crate::targets::FrameRegion {

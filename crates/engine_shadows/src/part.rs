@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, PassViews, PrimaryView, ViewFacts};
+use engine_core::{Error, PassViews, ViewFacts, Views};
 use engine_places_rendering::shadows::{CasterMap, CasterView, SHADOW_REGIONS, ShadowMaps};
 use engine_render::{
     Access, AfterRead, Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count,
@@ -186,7 +186,7 @@ impl GpuPart for ShadowsGpu {
     type Reads = (
         Res<'static, ShadowMaps>,
         Res<'static, ShadowPlan>,
-        Res<'static, PrimaryView>,
+        Res<'static, Views>,
         Res<'static, DebugShown>,
     );
     const NAME: &'static str = "shadows";
@@ -310,7 +310,7 @@ impl GpuPart for ShadowsGpu {
 
     fn prepare(
         &mut self,
-        (maps, plan, view, shown): SystemParamItem<'_, '_, Self::Reads>,
+        (maps, plan, views, shown): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         if let Some((layout, tiles)) = self.drawing.take()
@@ -337,7 +337,7 @@ impl GpuPart for ShadowsGpu {
         if self.composed > 0 {
             self.drawing = Some((layout, plan.drawn_bytes(SKIPPED)));
         }
-        let size = view.render_size();
+        let size = views.main().map_or(engine_core::glam::UVec2::ZERO, |main| main.render);
         self.marked = (plan.mask_words != 0 && size.x != 0 && size.y != 0).then_some([
             size.x.div_ceil(MARK_GROUP),
             size.y.div_ceil(MARK_GROUP),

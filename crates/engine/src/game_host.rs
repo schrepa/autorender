@@ -317,10 +317,6 @@ impl<G: Game> GameHost<G> {
         self.input.clear();
     }
 
-    pub fn work(&mut self, width: u32, height: u32) {
-        self.app.work(width, height);
-    }
-
     pub fn set_spare_time(&mut self, milliseconds: f64) {
         self.app.set_spare_time(milliseconds);
     }
@@ -498,8 +494,8 @@ impl<G: Game> GameHost<G> {
 
     pub fn eye(&self) -> Option<[f32; 3]> {
         let world = self.app.engine().app.world();
-        let view = world.get_resource::<engine_core::PrimaryView>()?;
-        Some(view.detail_eye().to_array())
+        let main = world.get_resource::<engine_core::Views>()?.main()?;
+        Some(main.detail_eye.to_array())
     }
 
     pub fn stats(&self) -> String {

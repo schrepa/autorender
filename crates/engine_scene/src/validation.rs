@@ -84,8 +84,7 @@ impl SceneDocument {
         kinds: &SceneKinds,
     ) -> Result<PreparedScene, Error> {
         identifier(&self.id, "$.id")?;
-        self.validate_camera()?;
-        self.validate_views()?;
+        self.validate_looks()?;
         let mesh_ids = unique_ids(self.meshes.iter().map(|mesh| mesh.id.as_str()), "$.meshes")?;
         let material_ids = unique_ids(
             self.materials.iter().map(|material| material.id.as_str()),
@@ -205,12 +204,6 @@ impl SceneDocument {
             meshes,
             materials,
         })
-    }
-
-    fn validate_camera(&self) -> Result<(), Error> {
-        self.camera
-            .validate()
-            .map_err(|invalid| invalid.error(ErrorCode::InvalidCamera, "$.camera"))
     }
 }
 

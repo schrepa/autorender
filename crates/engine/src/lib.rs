@@ -34,7 +34,7 @@ mod games {
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaMode, AssetBudget, AssetLibrary, Attribute,
         Attributes, AxisId, AxisInput, BrickList, Camera, Clear, ColorSpace, CursorAsk, Hit,
-        Picking, PrimaryView, Ray, Rect, Target, View, ViewCut, ViewFacts, ViewHistory, Views,
+        Picking, Ray, Rect, Target, View, ViewCut, ViewFacts, ViewHistory, Views,
         main_camera, place_camera,
         CursorMode, CursorRequests, DrawKind, Drawn, DrawnProjection, DrawnState, DrawnTable,
         InstanceValues, KindDecl, Layers,
@@ -55,7 +55,7 @@ pub use games::*;
 pub use engine_core::{
     ErrorCode, HierarchyReport, LodLevel, MAX_HIERARCHY_DEPTH, MAX_TEXTURE_DIMENSION,
     MAX_TRANSFORM_NODES, MeshLods, TextureFamily, TextureFormat, TextureSampling,
-    TransformNodeLimit, Viewport,
+    TransformNodeLimit,
 };
 
 pub mod bricks {

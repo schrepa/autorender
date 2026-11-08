@@ -18,7 +18,6 @@ const FARTHER: [[f64; 3]; 4] = [
 fn fixture(points: &[[f64; 3]]) -> Value {
     json!({
         "id": "spline-fixture", "revision": 1,
-        "camera": {"position": [0, 14, 22], "target": [0, 0, 0], "fov_degrees": 55, "near": 0.1, "far": 500},
         "materials": [
             {"id": "plain", "color": [0.8, 0.3, 0.2, 1]},
             {"id": "ground", "color": [0.3, 0.32, 0.28, 1]},
@@ -29,6 +28,7 @@ fn fixture(points: &[[f64; 3]]) -> Value {
             {"id": "player", "mesh": "box", "material": "plain", "transform": {"translation": [0, 0.5, 8]}},
             {"id": "floor", "mesh": "box", "material": "ground", "transform": {"translation": [0, -0.5, 0], "scale": [40, 1, 30]}},
             {"id": "rail", "spline": {"points": points, "mesh": "box", "material": "rail"}, "transform": {"scale": [1, 1, 1]}},
+            {"id": "camera", "transform": {"translation": [0, 14, 22], "rotation_degrees": [-32.4712, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 500, "projection": {"Perspective": {"vertical_fov_radians": 0.9599311}}}, "view": {}},
         ],
     })
 }

@@ -147,11 +147,9 @@ impl FrameLoop {
         let preparing = Stage::Preparing { since };
         let late = now_ms() - since > PREPARE_LIMIT_MS as f64;
         if host.prepare_pipelines() && !late {
-            host.work(width, height);
             return Ok((preparing, FramePhase::Preparing));
         }
         if host.frame_stats().readiness.compiling > 0 && !late {
-            host.work(width, height);
             return Ok((preparing, FramePhase::Compiling));
         }
         host.suspend();

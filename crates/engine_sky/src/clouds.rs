@@ -10,7 +10,7 @@ use engine_render::{
 
 use crate::gpu_layouts::{
     CLOUD_GROUP, CLOUD_LIGHT_BYTES, CLOUD_SHADOW_BYTES, CLOUD_SHADOW_CELLS, CloudUniform,
-    CloudView, DOME_LAYERS, LIGHT_TEXELS, SkyPiece,
+    DOME_LAYERS, LIGHT_TEXELS, SkyPiece,
 };
 use crate::settings::Clouds;
 use crate::sky::SkyGpu;
@@ -226,7 +226,6 @@ pub(crate) struct CloudPlan {
     pub(crate) view_pixels: u32,
     uniform: CloudUniform,
     view_clouds: CloudUniform,
-    view: CloudView,
 }
 
 impl Default for CloudPlan {
@@ -261,7 +260,6 @@ impl Default for CloudPlan {
             view_pixels: 0,
             uniform: CloudUniform::default(),
             view_clouds: CloudUniform::default(),
-            view: CloudView::default(),
         }
     }
 }
@@ -452,7 +450,7 @@ impl CloudPlan {
     pub(crate) fn prepare_view(
         &mut self,
         (settings, eye, seconds): (&Clouds, glam::Vec3, f64),
-        (view_projection, display, render): (glam::Mat4, glam::UVec2, glam::UVec2),
+        (display, render): (glam::UVec2, glam::UVec2),
         light: CloudLight<'_>,
     ) {
         self.view_job = None;
@@ -469,11 +467,8 @@ impl CloudPlan {
         self.view_size = [display.x, display.y];
         let mut uniform = march_uniform(settings, (eye, seconds), light);
         uniform.light = self.light_uniform();
+        uniform.eye[3] = f32::from(u8::from(view_sky));
         self.view_clouds = uniform;
-        self.view = CloudView {
-            inverse_view_projection: view_projection.inverse().to_cols_array_2d(),
-            pixels: [render.x, render.y, u32::from(view_sky), 0],
-        };
         self.view_job = Some([render.x, render.y]);
         self.view_pixels = render.x * render.y;
     }
@@ -533,7 +528,6 @@ pub(crate) struct CloudPass {
     light_cells: Buffer<SkyGpu>,
     uniform: Buffer<SkyGpu>,
     view_clouds: Buffer<SkyGpu>,
-    view_uniform: Buffer<SkyGpu>,
     composite_args: Buffer<SkyGpu>,
     light_pass: Pass<SkyGpu>,
     march_pass: Pass<SkyGpu>,
@@ -687,7 +681,6 @@ impl CloudPass {
         let light_cells = cx.buffer("cloud_light", Lifetime::Kept);
         let uniform = cx.buffer("cloud_uniform", Lifetime::Kept);
         let view_clouds = cx.buffer("cloud_view_march", Lifetime::Kept);
-        let view_uniform = cx.buffer("cloud_view_uniform", Lifetime::Kept);
         let composite_args = cx.buffer("cloud_composite_draw", Lifetime::Kept);
         let [dome_sampler, noise_sampler] = samplers(cx);
         cx.frame(light::SKY_DOMES, Bind::Texture(domes))?;
@@ -739,7 +732,6 @@ impl CloudPass {
             (clouds::NOISE_SHAPE, Bind::Texture(noise_shape)),
             (clouds::NOISE_SAMPLER, Bind::Sampler(noise_sampler)),
             (clouds::NOISE_DETAIL, Bind::Texture(noise_detail)),
-            (clouds::CLOUD_VIEW, Bind::Buffer(view_uniform)),
             (clouds::VIEW_DEPTH, Bind::Target(TargetName::DEPTH)),
             (clouds::VIEW_OUT, Bind::Texture(view_texture)),
             (clouds::COMPOSITE_DRAW, Bind::Buffer(composite_args)),
@@ -758,7 +750,6 @@ impl CloudPass {
             light_cells,
             uniform,
             view_clouds,
-            view_uniform,
             composite_args,
             light_pass,
             march_pass,
@@ -785,7 +776,6 @@ impl CloudPass {
     fn allocate(&mut self, cx: &mut Prepare<'_, SkyGpu>) {
         cx.allocate_buffer(self.uniform, size_of::<CloudUniform>() as u64);
         cx.allocate_buffer(self.view_clouds, size_of::<CloudUniform>() as u64);
-        cx.allocate_buffer(self.view_uniform, size_of::<CloudView>() as u64);
         cx.allocate_buffer(self.composite_args, size_of_val(&COMPOSITE_ARGS) as u64);
         cx.allocate_buffer(self.shadow_cells, CLOUD_SHADOW_BYTES as u64);
         if cx.allocate_buffer(self.shadows, CLOUD_SHADOW_BYTES as u64) == Allocation::Kept {
@@ -839,7 +829,6 @@ impl CloudPass {
                 1,
             );
             cx.write(self.view_clouds, 0, &[plan.view_clouds]);
-            cx.write(self.view_uniform, 0, &[plan.view]);
             cx.write(self.composite_args, 0, &COMPOSITE_ARGS);
             self.run.view = pixels;
         }

@@ -5,7 +5,7 @@ import package::face::shadows::air_shadow;
 import package::face::sun::{sun_color, sun_direction};
 import package::sky::air::air_light;
 import package::sky::faces::sky::cloud_passing;
-import package::sky::haze_view::{depth_texture, inverse_distance_at, post};
+import package::sky::haze_view::{depth_texture, inverse_distance_at};
 import package::sky::piece::sky_piece;
 
 const HAZE_STEPS: u32 = 24u;
@@ -72,12 +72,12 @@ fn haze_seen(world: vec3<f32>) -> f32 {
 @fragment
 fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(position.xy);
-    let inverse = inverse_distance_at(depth_texture, pixel, post);
+    let inverse = inverse_distance_at(depth_texture, pixel);
     let depth = textureLoad(depth_texture, pixel, 0);
-    let uv = (vec2<f32>(pixel) + 0.5) * post.size.zw;
-    let far_point = post.inverse_view_projection
+    let uv = (vec2<f32>(pixel) + 0.5) / camera.region.xy;
+    let far_point = camera.inverse_view_projection
         * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
-    let ray = far_point.xyz / far_point.w - post.eye.xyz;
+    let ray = far_point.xyz / far_point.w - camera.position.xyz;
     let ray_length = length(ray);
     let reach = min(ray_length, sky_piece.haze_march.x);
     if !(reach > 0.0) {

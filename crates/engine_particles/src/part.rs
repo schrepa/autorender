@@ -2,14 +2,13 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, DeviceLimits, DrawKind, Entry, Error, PassName, PassViews, PrimaryView, SlotSet,
-    TargetName, Writes, gpu_struct,
+    AttachPoint, DeviceLimits, DrawKind, Entry, Error, PassName, PassViews, SlotSet, TargetName,
+    Views, Writes, gpu_struct,
 };
 use engine_render::{
     Access, Attach, Bind, Buffer, DepthUse, Draw, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
     Own, Pass, Pipeline, Prepare, RenderPipeline, Scene, SceneDraw, Shape, Texture, wgpu,
 };
-use glam::{Mat4, Vec3};
 
 use crate::PARTICLES;
 use crate::emitters::{Emitter, Packed};
@@ -120,29 +119,13 @@ impl PassName for CompositePass {
 
 gpu_struct! {
     pub(crate) struct Particles {
-        right: [f32; 4],
-        up: [f32; 4],
-        size: [f32; 4],
         listed: [u32; 4],
     }
 }
 
 impl Particles {
-    fn new(view_projection: Mat4, width: u32, height: u32, listed: u32) -> Self {
-        let axis = |row: usize| {
-            view_projection
-                .row(row)
-                .truncate()
-                .try_normalize()
-                .unwrap_or(Vec3::X)
-                .extend(0.0)
-                .to_array()
-        };
-        let (width, height) = (width.max(1) as f32, height.max(1) as f32);
+    fn new(listed: u32) -> Self {
         Self {
-            right: axis(0),
-            up: axis(1),
-            size: [width, height, 1.0 / width, 1.0 / height],
             listed: [listed, 0, 0, 0],
         }
     }
@@ -223,7 +206,7 @@ impl ParticlesGpu {
 
     fn prepare_frame(
         &mut self,
-        (packed, view): (&Packed, &PrimaryView),
+        packed: &Packed,
         room: u64,
         cx: &mut Prepare<'_, Self>,
     ) -> Option<Counts> {
@@ -239,13 +222,7 @@ impl ParticlesGpu {
             return None;
         }
         cx.write(self.emitters, 0, &packed.records);
-        let render = view.render_size();
-        let uniform = Particles::new(
-            view.view_projection(),
-            render.x,
-            render.y,
-            packed.records.len() as u32,
-        );
+        let uniform = Particles::new(packed.records.len() as u32);
         cx.write(self.uniform, 0, &[uniform]);
         Some(Counts {
             alpha: packed.alpha,
@@ -293,7 +270,7 @@ impl ParticlesGpu {
 impl GpuPart for ParticlesGpu {
     type Reads = (
         Res<'static, Packed>,
-        Res<'static, PrimaryView>,
+        Res<'static, Views>,
         Res<'static, DeviceLimits>,
     );
 
@@ -380,7 +357,7 @@ impl GpuPart for ParticlesGpu {
 
     fn prepare(
         &mut self,
-        (packed, view, limits): SystemParamItem<'_, '_, Self::Reads>,
+        (packed, views, limits): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.drawing = None;
@@ -390,8 +367,8 @@ impl GpuPart for ParticlesGpu {
             return;
         }
         let room = limits.storage_room / 16 * 16;
-        self.drawing = self.prepare_frame((&*packed, &*view), room, cx);
-        let size = view.display_size();
+        self.drawing = self.prepare_frame(&packed, room, cx);
+        let size = views.frame().display_size;
         let extent = wgpu::Extent3d {
             width: size.x,
             height: size.y,

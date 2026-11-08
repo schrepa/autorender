@@ -6,21 +6,6 @@
       "enabled": true
     }
   },
-  "camera": {
-    "position": [
-      17,
-      21,
-      26
-    ],
-    "target": [
-      0,
-      0,
-      0
-    ],
-    "fov_degrees": 48,
-    "near": 0.1,
-    "far": 150
-  },
   "textures": [
     {
       "id": "garden.image0",
@@ -3960,6 +3945,35 @@
         "filter": 2,
         "sensor": false
       }
+    },
+    {
+      "id": "camera",
+      "transform": {
+        "translation": [
+          17.0,
+          21.0,
+          26.0
+        ],
+        "rotation_degrees": [
+          -38.9275,
+          26.9603,
+          20.112
+        ]
+      },
+      "node": {
+        "clock": "real",
+        "mobility": "moving"
+      },
+      "camera": {
+        "near": 0.1,
+        "far": 150.0,
+        "projection": {
+          "Perspective": {
+            "vertical_fov_radians": 0.837758
+          }
+        }
+      },
+      "view": {}
     }
   ],
   "prefabs": [

@@ -1,9 +1,7 @@
 use bevy_ecs::resource::Resource;
 use engine_core::{BrickList, DeviceLimits, Engine, Error, ErrorCode};
 use engine_render::{Renderer, wgpu};
-use engine_scene::{
-    SceneFiles, SceneInstance, SceneLookControl, SceneMaterialControl, SceneViewControl,
-};
+use engine_scene::{SceneFiles, SceneInstance, SceneLookControl, SceneMaterialControl};
 
 use crate::host::{MENU_KEYS, MOVE_KEYS, MenuKey, MoveDirection};
 
@@ -15,7 +13,6 @@ pub(crate) fn listed(list: BrickList) -> crate::Result<Engine> {
     let mut engine = Engine::listed(list.with_core(Renderer::register_places))?;
     crate::resolution::register(&mut engine);
     engine
-        .operation::<SceneViewControl>()
         .operation::<SceneLookControl>()
         .operation::<SceneMaterialControl>();
     let unwired = wgpu::Limits {

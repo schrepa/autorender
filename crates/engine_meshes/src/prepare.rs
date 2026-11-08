@@ -1,6 +1,6 @@
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
-    AssetLibrary, DrawnPoses, DrawnTable, Error, ErrorCode, Expected, GlobalTransforms, GpuBits,
+    AssetLibrary, DrawnPoses, DrawnTable, Error, ErrorCode, GlobalTransforms, GpuBits,
     NodeInfo, NodePose, NodeStreams, PoseRows, Since, Views,
 };
 use engine_places::impostors::{IMPOSTOR_VERTICES, ImpostorRecord};
@@ -50,7 +50,6 @@ impl MeshesGpu {
                 decided,
                 presented,
                 hierarchy,
-                view,
                 detail,
                 impostors,
                 time,
@@ -60,6 +59,9 @@ impl MeshesGpu {
         ): SystemParamItem<'_, '_, <Self as GpuPart>::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        let Some(main) = views.main() else {
+            return;
+        };
         let slots = table.records().len();
         let limit = instance_limit(&limits);
         if slots > limit {
@@ -67,13 +69,6 @@ impl MeshesGpu {
                 Error::new(ErrorCode::RenderFailed, "$.snapshot.instances")
                     .at_most(limit as u64)
                     .got(slots),
-            );
-            return;
-        }
-        if !view.view_projection().is_finite() {
-            cx.refuse(
-                Error::new(ErrorCode::RenderFailed, "$.snapshot.view_projection")
-                    .expected(Expected::Finite),
             );
             return;
         }
@@ -95,24 +90,24 @@ impl MeshesGpu {
         }
         let kept = cx.read_target(TargetName::MOTION);
         let fresh = self.prepare_instances(&table, &assets, kept, cx);
-        let size = view.render_size();
-        let motion = self.prepare_motion(generation, (kept, view.history().valid(), fresh), cx);
+        let size = main.render;
+        let motion = self.prepare_motion(generation, (kept, main.history.valid(), fresh), cx);
         let shown = cx.ran(self.passes.presentation);
         let fade = self.fade_share(time.real_elapsed as f32, detail.fade_seconds, shown);
         if !decided.occlusion_enabled {
             self.release_pyramid(cx);
         }
         let culling = View {
-            view_projection: rasterized(&view),
-            eye: view.detail_eye(),
+            view_projection: rasterized(main),
+            eye: main.detail_eye,
             viewport: (size.x, size.y),
             motion,
             occlusion: decided.occlusion_enabled.then(|| {
-                let display = view.display_size();
+                let display = main.size();
                 self.prepare_pyramid(((display.x, display.y), (size.x, size.y)), cx)
             }),
             lod_error: if detail.enabled {
-                detail.pixel_error * view.render_share()
+                detail.pixel_error * main.render.y as f32 / main.size().y.max(1) as f32
             } else {
                 0.0
             },

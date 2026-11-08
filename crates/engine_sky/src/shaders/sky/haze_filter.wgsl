@@ -1,4 +1,5 @@
-import package::sky::haze_view::{post, world_at};
+import package::engine::view::camera;
+import package::sky::haze_view::world_at;
 import package::sky::piece::sky_piece;
 
 @group(1) @binding(9) var marched: texture_2d<f32>;
@@ -19,7 +20,7 @@ fn reprojected_haze(pixel: vec2<i32>, own: f32) -> vec4<f32> {
         return vec4<f32>(0.0);
     }
     let point = world_at(pixel);
-    let clip = post.previous_view_projection * vec4<f32>(point.xyz, 1.0);
+    let clip = camera.previous_view_projection * vec4<f32>(point.xyz, 1.0);
     if !(clip.w > 0.0) {
         return vec4<f32>(0.0);
     }
@@ -30,7 +31,7 @@ fn reprojected_haze(pixel: vec2<i32>, own: f32) -> vec4<f32> {
     }
     var expected = 0.0;
     if own > 0.0 {
-        expected = 1.0 / max(length(point.xyz - post.previous_eye.xyz), 1.0e-4);
+        expected = 1.0 / max(length(point.xyz - camera.previous.xyz), 1.0e-4);
     }
     let tolerance = max(HAZE_PLANE * expected, 1.0e-7);
     let at = uv * drawn - 0.5;
@@ -56,7 +57,7 @@ fn reprojected_haze(pixel: vec2<i32>, own: f32) -> vec4<f32> {
 
 fn filtered_haze(position: vec4<f32>) -> vec4<f32> {
     let pixel = vec2<i32>(position.xy);
-    let last = vec2<i32>(post.size.xy) - 1;
+    let last = vec2<i32>(camera.region.xy) - 1;
     let center = textureLoad(marched, pixel, 0);
     let own = center.w;
     let tolerance = max(HAZE_PLANE * own, 1.0e-7);

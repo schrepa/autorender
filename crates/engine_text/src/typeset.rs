@@ -2,7 +2,7 @@ use std::any::Any;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use bevy_ecs::prelude::ResMut;
-use engine_core::{Error, ErrorCode, PrimaryView};
+use engine_core::{Error, ErrorCode, FrameFacts};
 use engine_places_rendering::text::{FontId, Glyph, Text, TextRun, TextSize, Typeset};
 use glam::UVec2;
 
@@ -62,8 +62,8 @@ impl Default for State {
 }
 
 impl State {
-    pub(crate) fn sync(&mut self, settings: &TextSettings, view: &PrimaryView) {
-        self.ratio = view.pixel_ratio();
+    pub(crate) fn sync(&mut self, settings: &TextSettings, frame: FrameFacts) {
+        self.ratio = frame.pixel_ratio;
         self.limit = settings.max_glyphs;
         self.enabled = settings.enabled;
         self.atlas.resize(settings.atlas_size);
@@ -97,17 +97,17 @@ impl State {
         &mut self,
         labels: impl Iterator<Item = (&'l Label, Placed)>,
         settings: &TextSettings,
-        view: &PrimaryView,
+        frame: FrameFacts,
         (staged, world): (&mut Vec<Glyph>, &mut Vec<(u32, Glyph)>),
     ) -> u32 {
-        self.sync(settings, view);
+        self.sync(settings, frame);
         let mut cut = std::mem::take(&mut self.cut);
         let mut runs = std::mem::take(&mut self.placed_runs);
         let placed = std::mem::take(&mut self.placed_glyphs);
         staged.clear();
         world.clear();
         if self.enabled {
-            let display = view.display_size().max(UVec2::ONE);
+            let display = frame.display_size.max(UVec2::ONE);
             let limit = self.limit as usize;
             for (label, at) in labels.filter(|(label, _)| label.visible && !label.text.is_empty()) {
                 let placing = self.label_placing(label);

@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{Cut, DeviceLimits, FrameTime, Readable, Readback, PrimaryView};
+use engine_core::{Cut, DeviceLimits, FrameTime, Readable, Readback, Views};
 use engine_places_rendering::wind::ViewWind;
 use engine_places_world::ground::{Foliage, GroundTiles, TerrainEntry, TerrainTiles};
 use engine_render::{pixels_per_meter, planes};
@@ -73,7 +73,7 @@ pub(crate) fn plan_cover(
         Res<TerrainTiles>,
         Res<GroundTiles>,
     ),
-    (view, time, limits): (Res<PrimaryView>, Res<FrameTime>, Res<DeviceLimits>),
+    (views, time, limits): (Res<Views>, Res<FrameTime>, Res<DeviceLimits>),
     (wind, foliage): (Res<ViewWind>, Res<Foliage>),
     mut plan: ResMut<CoverPlan>,
     mut counts: ResMut<BladeCounts>,
@@ -92,10 +92,13 @@ pub(crate) fn plan_cover(
     let previous = (time.elapsed - time.seconds) as f32;
     let time = time.elapsed as f32;
     let grounded = foliage.ground_blend > 0.0;
+    let Some(main) = views.main() else {
+        return;
+    };
     let sight = Sight {
-        culling: view.view_projection(),
-        eye: view.detail_eye(),
-        height: view.display_size().y as f32,
+        culling: main.view_projection,
+        eye: main.detail_eye,
+        height: main.size().y as f32,
     };
     if !plan.grow(&cover, &table, (&tiles, &ground), sight, grounded) {
         counts.latest = Some(Cut::default());

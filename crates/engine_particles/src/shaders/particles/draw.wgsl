@@ -101,8 +101,12 @@ fn vs_particle(@builtin(vertex_index) vertex: u32,
         vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, 1.0),
     );
     let corner = corners[vertex % 4u];
-    var along_x = particles.right.xyz * (size * 0.5);
-    var along_y = particles.up.xyz * (size * 0.5);
+    let middle = camera.inverse_view_projection * vec4<f32>(0.0, 0.0, 0.5, 1.0);
+    let right = camera.inverse_view_projection * vec4<f32>(1.0, 0.0, 0.5, 1.0);
+    let up = camera.inverse_view_projection * vec4<f32>(0.0, 1.0, 0.5, 1.0);
+    let center = middle.xyz / middle.w;
+    var along_x = normalize(right.xyz / right.w - center) * (size * 0.5);
+    var along_y = normalize(up.xyz / up.w - center) * (size * 0.5);
     if emitter.stretch > 0.0 {
         let view = normalize(position - camera.position.xyz);
         let seen = velocity - view * dot(velocity, view);
@@ -166,7 +170,7 @@ fn coverage(input: ParticleOutput) -> f32 {
     let disc = (1.0 - d2) * (1.0 - d2) * select(0.0, 1.0, d2 < 1.0);
     let pixel = vec2<i32>(input.clip_position.xy);
     let depth = textureLoad(depth_texture, pixel, 0);
-    let uv = input.clip_position.xy * particles.size.zw;
+    let uv = input.clip_position.xy / camera.region.xy;
     let clip = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
     let behind = camera.inverse_view_projection * clip;
     let eye = camera.position.xyz;
@@ -206,7 +210,7 @@ fn fs_particle_mist(input: ParticleOutput) -> TransparentTargets {
     let missed = max(dot(to_middle, to_middle) - along * along, 0.0);
     let pixel = vec2<i32>(input.clip_position.xy);
     let depth = textureLoad(depth_texture, pixel, 0);
-    let uv = input.clip_position.xy * particles.size.zw;
+    let uv = input.clip_position.xy / camera.region.xy;
     let clip = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
     let behind = camera.inverse_view_projection * clip;
     let reach = length(behind.xyz / behind.w - eye);

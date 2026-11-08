@@ -80,12 +80,22 @@ fn grid() -> Value {
             .enumerate()
             .map(|(index, color)| json!({ "id": format!("paint-{index}"), "color": color })),
     );
+    let eye = SIDE as f64 * 2.6;
+    entities.push(json!({
+        "id": "camera",
+        "transform": {
+            "translation": [0.0, 30.0, eye],
+            "rotation_degrees": [-(30.0_f64.atan2(eye).to_degrees()), 0.0, 0.0],
+        },
+        "node": { "clock": "real", "mobility": "moving" },
+        "camera": {
+            "near": 0.1, "far": 1000,
+            "projection": { "Perspective": { "vertical_fov_radians": 60.0_f64.to_radians() } },
+        },
+        "view": {},
+    }));
     json!({
         "id": "foliage_grid", "revision": 1,
-        "camera": {
-            "position": [0.0, 30.0, SIDE as f64 * 2.6], "target": [0.0, 0.0, 0.0],
-            "fov_degrees": 60, "near": 0.1, "far": 1000,
-        },
         "materials": materials,
         "meshes": [{ "id": "box", "source": { "kind": "cube" } }],
         "entities": entities,

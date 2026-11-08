@@ -6,7 +6,7 @@ use engine_core::collections::HashMap;
 use engine_core::{
     AssetLibrary, Cursor, DeviceLimits, Error, Feed, FrameId, FrameTime, Interest,
     JobFailures, JobKind, Jobs, Readable, Readback, RecordExchange, RecordKey, Records,
-    Since, Stamp, TextureHandle, TextureSet, TextureSource, TextureUsage, PrimaryView, codec,
+    Since, Stamp, TextureHandle, TextureSet, TextureSource, TextureUsage, Views, codec,
     content_hash,
 };
 use engine_heightfield::tile::shaded_elsewhere;
@@ -992,7 +992,7 @@ pub(crate) fn publish_piece(
     tiles: Res<TerrainTiles>,
     ground: Res<GroundTiles>,
     bakes: Res<Bakes>,
-    (view, limits): (Res<PrimaryView>, Res<DeviceLimits>),
+    (views, limits): (Res<Views>, Res<DeviceLimits>),
     shown: Res<DebugShown>,
     mut piece: ResMut<HorizonsPiece>,
 ) {
@@ -1005,7 +1005,10 @@ pub(crate) fn publish_piece(
             &tiles.terrains,
             &bakes,
             &slots,
-            (view.detail_eye(), &settings),
+            (
+                views.main().map_or(glam::Vec3::ZERO, |main| main.detail_eye),
+                &settings,
+            ),
             limits.storage_room,
         ),
         limits.texture_layers,

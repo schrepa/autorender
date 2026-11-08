@@ -5,7 +5,6 @@
     "minimal": {"id": "minimal", "revision": 1, "materials": [], "meshes": [], "entities": []},
     "components": {
       "id": "components", "revision": 7,
-      "camera": {"position": [0, 4, 12], "target": [0, 1, 0], "fov_degrees": 50, "near": 0.1, "far": 400},
       "environment": {
         "sky": {"ambient": 0.65, "aerial": 1.5},
         "surface_light": {"rim": 0.6, "emission": 1.0},
@@ -44,7 +43,8 @@
         {"id": "rail", "spline": {"points": [[0, 0, 0], [4, 0, 2], [8, 1, 0]], "mesh": "box", "material": "plain"}},
         {"id": "walker", "nav_agent": {}, "grounded": {"offset": 0.5}},
         {"id": "lookout", "transform": {"translation": [30, 0, 30]}, "prefetch": {}},
-        {"id": "lamp-1", "prefab": "lamp", "transform": {"translation": [4, 0, 4]}}
+        {"id": "lamp-1", "prefab": "lamp", "transform": {"translation": [4, 0, 4]}},
+        {"id": "camera", "transform": {"translation": [0, 4, 12], "rotation_degrees": [-14.0362, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 400, "projection": {"Perspective": {"vertical_fov_radians": 0.8726646}}}, "view": {}}
       ]
     }
   },
@@ -67,7 +67,7 @@
     {"rule": "hierarchy_cycle", "path": "$.entities[0].parent", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "a1", "parent": "a2"}, {"id": "a2", "parent": "a1"}]}},
     {"rule": "hierarchy_depth", "path": "$.entities[65].parent", "chain": 66},
     {"rule": "nested_prefab", "path": "$.prefabs[1].entities[0].prefab", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "prefabs": [{"id": "inner", "entities": [{"id": "x"}]}, {"id": "outer", "entities": [{"id": "y", "prefab": "inner"}]}], "entities": []}},
-    {"rule": "invalid_camera", "path": "$.camera.near", "document": {"id": "a", "revision": 1, "camera": {"near": 0}, "materials": [], "meshes": [], "entities": []}},
+    {"rule": "invalid_camera", "path": "$.entities[0].camera.near", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "camera": {"near": 0, "far": 100, "projection": {"Perspective": {"vertical_fov_radians": 1}}}}]}},
     {"rule": "invalid_environment", "path": "$.environment.bloom.intensity", "stage": "instantiate", "world": "standard", "document": {"id": "a", "revision": 1, "environment": {"bloom": {"intensity": -1}}, "materials": [], "meshes": [], "entities": []}},
     {"rule": "invalid_material", "path": "$.materials[0].opacity", "document": {"id": "a", "revision": 1, "materials": [{"id": "m", "color": [1, 1, 1, 1], "opacity": 0}], "meshes": [], "entities": []}},
     {"rule": "invalid_texture", "path": "$.textures[0].rgba8", "document": {"id": "a", "revision": 1, "textures": [{"id": "t", "width": 1, "height": 1, "rgba8": "!!!!!!!!"}], "materials": [], "meshes": [], "entities": []}},

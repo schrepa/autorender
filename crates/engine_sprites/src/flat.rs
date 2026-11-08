@@ -1,4 +1,4 @@
-use engine_core::{Error, PrimaryView, ScenePass, TargetName};
+use engine_core::{Error, ScenePass, TargetName, ViewFacts};
 use engine_render::{
     Allocation, Bind, DepthUse, Draw, Install, Lifetime, Pipeline, Prepare, RenderPipeline,
     SamplerDesc, Scene, Shape, Texture, wgpu,
@@ -66,8 +66,11 @@ impl Flat {
         })
     }
 
-    pub(crate) fn prepare(&mut self, view: &PrimaryView, cx: &mut Prepare<'_, SpritesGpu>) {
-        self.drawn = view.jitter().is_none();
+    pub(crate) fn view(&mut self, view: &ViewFacts) {
+        self.drawn = view.jitter.is_none();
+    }
+
+    pub(crate) fn prepare(&mut self, cx: &mut Prepare<'_, SpritesGpu>) {
         if cx.allocate(self.checker, CHECKER_SIZE, 1) == Allocation::Kept {
             return;
         }

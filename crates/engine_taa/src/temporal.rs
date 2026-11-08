@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    FrameTime, GpuStruct, Jitter, PrimaryView, View, ViewHistory, ViewJitter, gpu_struct, profile,
+    FrameTime, GpuStruct, Jitter, View, ViewFacts, ViewHistory, ViewJitter, Views, gpu_struct,
+    profile,
 };
 
 use crate::antialiasing::{TemporalAntialiasing, TemporalAntialiasingStats};
@@ -25,11 +26,11 @@ gpu_struct! {
     }
 }
 
-fn cycled(view: &PrimaryView) -> bool {
-    view.facts().is_none_or(|facts| match facts.history {
+fn cycled(facts: &ViewFacts) -> bool {
+    match facts.history {
         ViewHistory::Fresh => false,
         ViewHistory::Valid { since } => facts.frame.0.saturating_sub(since.0) + 1 >= JITTER_SAMPLES,
-    })
+    }
 }
 
 pub(crate) fn jitter(time: Res<FrameTime>, views: Query<(Entity, &View)>, mut jitter: ResMut<Jitter>) {
@@ -48,20 +49,22 @@ pub(crate) fn jitter(time: Res<FrameTime>, views: Query<(Entity, &View)>, mut ji
 }
 
 pub(crate) fn publish(
-    view: Res<PrimaryView>,
+    views: Res<Views>,
     settings: Res<TemporalAntialiasing>,
     mut piece: ResMut<TaaPiece>,
     mut stats: ResMut<TemporalAntialiasingStats>,
 ) {
-    let active = view.jitter().is_some();
+    let jittered = || views.listed().iter().filter(|facts| facts.jitter.is_some());
+    let active = jittered().next().is_some();
     stats.set_if_neq(TemporalAntialiasingStats {
         active,
-        settling: u32::from(active && !cycled(&view)),
+        settling: u32::from(jittered().any(|facts| !cycled(facts))),
     });
     if !active {
         return;
     }
-    profile::counter("render.taa_history", f64::from(u8::from(view.history().valid())));
+    let kept = jittered().all(|facts| facts.history.valid());
+    profile::counter("render.taa_history", f64::from(u8::from(kept)));
     piece.set_if_neq(TaaPiece {
         options: [
             f32::from(u8::from(settings.nearest_motion)),

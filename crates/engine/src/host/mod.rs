@@ -4,12 +4,12 @@ mod frame_loop;
 mod input;
 mod jobs;
 mod level;
+mod looks;
 mod pipeline_list;
 pub mod policy;
 mod resolution;
 mod scene_load;
 mod settings;
-mod views;
 
 pub use crate::app_host::{TerrainClock, now_ms};
 pub use adapter::{AdapterStatus, vendor};
@@ -39,7 +39,7 @@ pub use settings::{
     HostSettings, OVERLAY, SETTINGS, Setting, SettingsLog, apply_setting, apply_settings,
     has_setting, reset_setting, run_operation,
 };
-pub use views::{show_look, show_view};
+pub use looks::show_look;
 
 #[cfg(all(feature = "schema", not(target_arch = "wasm32")))]
 pub fn typescript() -> String {

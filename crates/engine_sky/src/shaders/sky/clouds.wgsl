@@ -1,7 +1,7 @@
 import package::engine::math::TAU;
+import package::engine::view::camera;
 import package::generated::sky::{
-    CLOUD_GROUP, CLOUD_HORIZON, CLOUD_REACH, CloudUniform, CloudView, LIGHT_HEIGHTS, LIGHT_TEXELS,
-    MIRROR_LAYER
+    CLOUD_GROUP, CLOUD_HORIZON, CLOUD_REACH, CloudUniform, LIGHT_HEIGHTS, LIGHT_TEXELS, MIRROR_LAYER
 };
 import package::sky::common::sunlight_over;
 import package::sky::piece::sky_air;
@@ -12,7 +12,6 @@ import package::sky::piece::sky_air;
 @group(1) @binding(4) var noise_detail: texture_3d<f32>;
 @group(1) @binding(3) var dome: texture_storage_2d_array<rgba16float, write>;
 @group(1) @binding(5) var<storage, read_write> shadow_cells: array<u32>;
-@group(1) @binding(6) var<uniform> cloud_view: CloudView;
 @group(1) @binding(7) var view_depth: texture_depth_2d;
 @group(1) @binding(8) var view_out: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(10) var<storage, read_write> composite_draw: array<atomic<u32>, 4>;
@@ -273,7 +272,7 @@ fn march_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 fn view_direction(ndc: vec2<f32>) -> vec3<f32> {
-    let far = cloud_view.inverse_view_projection * vec4<f32>(ndc, 0.0, 1.0);
+    let far = camera.inverse_view_projection * vec4<f32>(ndc, 0.0, 1.0);
     return normalize(far.xyz / far.w - clouds.eye.xyz);
 }
 
@@ -286,12 +285,12 @@ fn march_view(@builtin(global_invocation_id) id: vec3<u32>,
         atomicStore(&view_clouded, 0u);
     }
     workgroupBarrier();
-    let pixels = max(cloud_view.pixels.xy, vec2<u32>(1u));
+    let pixels = max(vec2<u32>(camera.region.xy), vec2<u32>(1u));
     if all(id.xy < pixels) {
         let depth = textureLoad(view_depth, id.xy, 0);
         var cloud = vec4<f32>(0.0, 0.0, 0.0, 1.0);
         let sky = depth <= 0.0;
-        if !sky || cloud_view.pixels.z != 0u {
+        if !sky || clouds.eye.w != 0.0 {
             let center = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(pixels);
             let ndc = vec2<f32>(center.x * 2.0 - 1.0, 1.0 - center.y * 2.0);
             let direction = view_direction(ndc);
@@ -300,7 +299,7 @@ fn march_view(@builtin(global_invocation_id) id: vec3<u32>,
                 length(view_direction(ndc - vec2<f32>(0.0, apart.y)) - direction));
             var limit = CLOUD_REACH;
             if !sky {
-                let point = cloud_view.inverse_view_projection * vec4<f32>(ndc, depth, 1.0);
+                let point = camera.inverse_view_projection * vec4<f32>(ndc, depth, 1.0);
                 limit = length(point.xyz / point.w - clouds.eye.xyz);
             }
             cloud = march(clouds.eye.xyz, direction, id.xy, limit, cone);

@@ -59,14 +59,13 @@ fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
     ) * view_projection
 }
 
-pub(crate) fn rasterized(view: &engine_core::PrimaryView) -> Mat4 {
-    let view_projection = view.view_projection();
-    let Some(offset) = view.jitter() else {
-        return view_projection;
+pub(crate) fn rasterized(view: &engine_core::ViewFacts) -> Mat4 {
+    let Some(offset) = view.jitter else {
+        return view.view_projection;
     };
-    let size = view.render_size();
+    let size = view.render;
     jittered(
-        view_projection,
+        view.view_projection,
         engine_render::jitter_clip(offset.to_array(), size.x, size.y),
     )
 }

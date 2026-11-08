@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use engine_assets::MeshBuffer;
-use engine_core::{Camera, Error, Mesh, MeshVertex, Projection, Surface, Transform, glam};
-use engine_settings::{ErrorCode, Expected, InvalidSetting, Rule, Setting, fields, valid_uri};
+use engine_core::{Error, Mesh, MeshVertex, Surface, Transform, glam};
+use engine_settings::{ErrorCode, Expected, InvalidSetting, Rule, Setting, valid_uri};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -20,8 +20,6 @@ pub struct SceneDocument {
     )]
     pub id: String,
     pub revision: u64,
-    #[serde(default)]
-    pub camera: SceneCamera,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<SceneEnvironment>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -31,8 +29,6 @@ pub struct SceneDocument {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prefabs: Vec<ScenePrefab>,
     pub entities: Vec<SceneObject>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub views: Vec<crate::SceneView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub looks: Vec<crate::SceneLook>,
 }
@@ -123,79 +119,6 @@ impl std::io::Write for BoundedSource {
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
-    }
-}
-
-fn default_camera() -> SceneCamera {
-    let camera = Camera::default();
-    let Projection::Perspective {
-        vertical_fov_radians,
-    } = camera.projection
-    else {
-        unreachable!("default_camera_perspective");
-    };
-    SceneCamera {
-        position: Camera::EYE.to_array(),
-        target: [0.0; 3],
-        fov_degrees: vertical_fov_radians.to_degrees(),
-        near: camera.near,
-        far: camera.far,
-    }
-}
-
-engine_settings::fields! {
-    extra_rules;
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-    #[serde(default, deny_unknown_fields)]
-    pub struct SceneCamera {
-        pub position: [f32; 3] = default_camera().position => range(-Camera::REACH, Camera::REACH),
-        pub target: [f32; 3] = default_camera().target => range(-Camera::REACH, Camera::REACH),
-        pub fov_degrees: f32 = default_camera().fov_degrees
-            => range(Camera::MIN_FOV_DEGREES, Camera::MAX_FOV_DEGREES),
-        pub near: f32 = default_camera().near => range(Camera::MIN_DEPTH, Camera::REACH),
-        pub far: f32 = default_camera().far => range(Camera::MIN_DEPTH, Camera::REACH),
-    }
-}
-
-impl engine_settings::ExtraRules for SceneCamera {
-    fn check_extra(&self) -> Result<(), InvalidSetting> {
-        let reach = glam::Vec3::from(self.target) - glam::Vec3::from(self.position);
-        if reach.length_squared() < Camera::MIN_DEPTH * Camera::MIN_DEPTH {
-            return Err(
-                InvalidSetting::broken("target", fields::at_least(Camera::MIN_DEPTH))
-                    .got(reach.length()),
-            );
-        }
-        if self.far - self.near < Camera::MIN_DEPTH {
-            return Err(InvalidSetting::broken(
-                "far",
-                fields::range(self.near + Camera::MIN_DEPTH, Camera::REACH),
-            )
-            .got(self.far));
-        }
-        Ok(())
-    }
-}
-
-impl SceneCamera {
-    pub fn placed(self) -> (Transform, Camera) {
-        (
-            Transform::looking_at(self.position.into(), self.target.into()),
-            Camera {
-                near: self.near,
-                far: self.far,
-                projection: Projection::Perspective {
-                    vertical_fov_radians: self.fov_degrees.to_radians(),
-                },
-            },
-        )
-    }
-
-    pub(crate) fn show(self, world: &mut bevy_ecs::world::World) {
-        if let Some(camera) = engine_core::main_camera(world) {
-            let (at, lens) = self.placed();
-            engine_core::place_camera(world, camera, at, lens);
-        }
     }
 }
 

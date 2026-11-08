@@ -243,14 +243,8 @@ fn drive(session: &mut Session, cell: &Cell, log: &Path, run: &mut Run) -> Resul
         session.ok(&named("control", "step", json!({"ticks": cell.ticks})), log)?;
     }
     for view in &cell.views {
-        match (&view.camera, view.name.as_str()) {
-            (Some(camera), _) => {
-                session.ok(&named("control", "camera", camera.clone()), log)?;
-            }
-            (None, "scene") => {}
-            (None, name) => {
-                session.ok(&named("control", "scene_view", json!({"name": name})), log)?;
-            }
+        if let Some(camera) = &view.camera {
+            session.ok(&named("control", "camera", camera.clone()), log)?;
         }
         for capture in &cell.captures {
             let key = format!("{} {}", view.name, capture.label());

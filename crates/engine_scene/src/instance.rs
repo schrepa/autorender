@@ -407,8 +407,7 @@ impl SceneDocument {
         let empty = crate::SceneEnvironment::default();
         let environment = prepared.environment.as_ref().unwrap_or(&empty);
         context.scope(|| environment.apply_all(world, "$.environment"))?;
-        world.insert_resource(crate::SceneViews::of(self));
-        self.camera.show(world);
+        world.insert_resource(crate::SceneLooks::of(self));
         Ok(())
     }
 
@@ -526,7 +525,7 @@ impl SceneDocument {
 
 struct Replaced {
     context: Option<SceneContext>,
-    views: Option<crate::SceneViews>,
+    looks: Option<crate::SceneLooks>,
     scene: Option<OperationScene>,
     sections: Vec<(SettingsEntry, Value)>,
 }
@@ -538,14 +537,14 @@ impl Replaced {
             crate::loading::within(context.as_ref(), || crate::environment::held(world));
         Self {
             context,
-            views: world.get_resource::<crate::SceneViews>().cloned(),
+            looks: world.get_resource::<crate::SceneLooks>().cloned(),
             scene: world.get_resource::<OperationScene>().cloned(),
             sections,
         }
     }
 
     fn restore(self, world: &mut World) {
-        put(world, self.views);
+        put(world, self.looks);
         put(world, self.scene);
         put(world, self.context.clone());
         crate::loading::within(self.context.as_ref(), || {

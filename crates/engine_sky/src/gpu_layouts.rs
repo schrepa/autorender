@@ -22,13 +22,6 @@ gpu_struct! {
 }
 
 gpu_struct! {
-    pub(crate) struct CloudView {
-        pub inverse_view_projection: [[f32; 4]; 4],
-        pub pixels: [u32; 4],
-    }
-}
-
-gpu_struct! {
     pub(crate) struct SkyPiece {
         pub zenith: [f32; 4],
         pub horizon: [f32; 4],
@@ -67,16 +60,6 @@ gpu_struct! {
     }
 }
 
-gpu_struct! {
-    pub(crate) struct HazeView {
-        pub inverse_view_projection: [[f32; 4]; 4],
-        pub previous_view_projection: [[f32; 4]; 4],
-        pub eye: [f32; 4],
-        pub previous_eye: [f32; 4],
-        pub size: [f32; 4],
-    }
-}
-
 gpu_consts! {
     pub(crate) const CLOUD_SHADOW_CELLS: u32 = 128;
     pub(crate) const LIGHT_TEXELS: u32 = 384;
@@ -96,8 +79,6 @@ gpu_consts! {
 pub(crate) const GENERATED: &[&str] = &[
     WGSL,
     <CloudUniform as GpuStruct>::WGSL,
-    <CloudView as GpuStruct>::WGSL,
     <SkyPiece as GpuStruct>::WGSL,
     <SkyAir as GpuStruct>::WGSL,
-    <HazeView as GpuStruct>::WGSL,
 ];

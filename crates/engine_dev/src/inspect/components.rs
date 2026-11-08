@@ -8,19 +8,22 @@ use crate::MenuPress;
 
 impl DevTools {
     pub(super) fn register_components(&mut self, schemas: &Value) {
-        let ahead = (engine_core::glam::Vec3::ZERO - Camera::EYE).normalize();
         self.insert(Inspector {
             brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "Camera")
-                .with_default(camera_value(&Camera::default(), Camera::EYE, ahead)),
+                .with_default(camera_value(
+                    &Camera::default(),
+                    engine_core::glam::Vec3::ZERO,
+                    engine_core::glam::Vec3::NEG_Z,
+                )),
             kind: InspectorKind::Resource,
             has: Box::new(|world, _| {
                 world
-                    .get_resource::<PrimaryView>()
-                    .is_some_and(|view| view.facts().is_some())
+                    .get_resource::<Views>()
+                    .is_some_and(|views| views.main().is_some())
             }),
             read: Box::new(|world, _, _| {
-                let facts = world.get_resource::<PrimaryView>()?.facts().copied()?;
+                let facts = world.get_resource::<Views>()?.main().copied()?;
                 Some(camera_value(&facts.lens, facts.eye, facts.forward))
             }),
         })

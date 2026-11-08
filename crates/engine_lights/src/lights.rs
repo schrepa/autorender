@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     Cut, DrawKind, DrawnPoses, DrawnTable, Expected, GlobalTransforms, InvalidSetting, Mobility,
-    Nearest, Rule, PrimaryView, fields, settings, stats,
+    Nearest, Rule, Views, fields, settings, stats,
 };
 use engine_places_rendering::lights::{
     LightRegion, LocalLight, MAX_LIGHT_RANGE, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES,
@@ -173,7 +173,7 @@ pub(crate) fn gather_lights(
     settings: Res<LocalLightSettings>,
     lights: Query<(Entity, &'static LocalLight)>,
     (table, globals, poses): (Res<DrawnTable>, Res<GlobalTransforms>, Res<DrawnPoses>),
-    view: Res<PrimaryView>,
+    views: Res<Views>,
     mut gather: ResMut<LightGather>,
     mut list: ResMut<LightList>,
 ) {
@@ -197,14 +197,18 @@ pub(crate) fn gather_lights(
         list.lights.extend(shown);
         return;
     }
-    let eye = view.detail_eye();
     ranked.clear();
     for (entity, light) in lights.iter().filter(drawn) {
         let Some(model) = globals.pose(entity) else {
             continue;
         };
-        let distance =
-            model.transform_point3(light.offset).distance_squared(eye) - light.range * light.range;
+        let at = model.transform_point3(light.offset);
+        let distance = views
+            .listed()
+            .iter()
+            .map(|facts| at.distance_squared(facts.detail_eye))
+            .fold(f32::INFINITY, f32::min)
+            - light.range * light.range;
         ranked.push((distance, entity));
     }
     let kept = nearest.kept_in_order(ranked.iter().map(|&(distance, _)| distance), budget);

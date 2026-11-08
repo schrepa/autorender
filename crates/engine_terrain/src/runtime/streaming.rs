@@ -1,6 +1,6 @@
 use super::*;
 use engine_core::{
-    DeviceLimits, FrameBudget, FrameTime, GlobalTransforms, Joined, PrimaryView,
+    DeviceLimits, FrameBudget, FrameTime, GlobalTransforms, Joined, Views,
 };
 use engine_places_world::streaming::StreamingFocus;
 use engine_places_world::terrain::TerrainLayers;
@@ -285,7 +285,7 @@ pub(crate) struct TerrainStreaming {
 }
 
 pub(crate) type StreamReads<'w> = (
-    Res<'w, PrimaryView>,
+    Res<'w, Views>,
     Res<'w, FrameTime>,
     Res<'w, DeviceLimits>,
     Res<'w, GlobalTransforms>,
@@ -298,7 +298,7 @@ pub(crate) type StreamReads<'w> = (
 )]
 pub(crate) fn stream_terrains(
     settings: Res<TerrainSettings>,
-    (view, time, limits, globals, records): StreamReads<'_>,
+    (views, time, limits, globals, records): StreamReads<'_>,
     kinds: Joined<TerrainLayers>,
     focus: Query<Entity, With<StreamingFocus>>,
     prefetch: Query<(Entity, &TerrainPrefetch)>,
@@ -312,10 +312,13 @@ pub(crate) fn stream_terrains(
     let _profile = engine_core::profile::span("cpu", "terrain_stream");
     let streaming = &mut *streaming;
     let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
-    let eye = view.detail_eye();
+    let main = views.main();
+    let eye = main.map_or(Vec3::ZERO, |main| main.detail_eye);
     let seconds = time.real_seconds as f32;
     streaming.points.clear();
-    streaming.points.push(eye);
+    streaming
+        .points
+        .extend(views.listed().iter().map(|facts| facts.detail_eye));
     streaming.places.clear();
     for entity in &focus {
         if let Some(point) = globals.get(entity).and_then(|global| global.translation()) {
@@ -345,9 +348,15 @@ pub(crate) fn stream_terrains(
     };
     terrains.stream(
         &settings,
-        (&view.lens(), view.forward()),
+        (
+            &main.map(|main| main.lens).unwrap_or_default(),
+            main.map_or(Vec3::NEG_Z, |main| main.forward),
+        ),
         (eye, ahead),
-        (view.display_size(), device_tiles(&limits)),
+        (
+            main.map_or(views.frame().display_size, |main| main.size()),
+            device_tiles(&limits),
+        ),
         (&streaming.points, &streaming.places),
         (&mut asking, &mut *budget),
     );

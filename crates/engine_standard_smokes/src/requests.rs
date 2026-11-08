@@ -232,9 +232,15 @@ pub fn grid(side: usize, moving: bool) -> Value {
     materials.extend(paints.iter().enumerate().map(|(index, color)| {
         json!({ "id": format!("paint-{index}"), "color": color, "texture": "checker" })
     }));
+    entities.push(json!({
+        "id": "camera",
+        "transform": { "translation": [0.0, 30.0, side as f64 * 2.6], "rotation_degrees": [-(30.0_f64.atan2(side as f64 * 2.6).to_degrees()), 0.0, 0.0] },
+        "node": { "clock": "real", "mobility": "moving" },
+        "camera": { "near": 0.1, "far": 1000, "projection": { "Perspective": { "vertical_fov_radians": 60.0_f64.to_radians() } } },
+        "view": {},
+    }));
     json!({
         "id": "grid", "revision": 1,
-        "camera": { "position": [0.0, 30.0, side as f64 * 2.6], "target": [0.0, 0.0, 0.0], "fov_degrees": 60, "near": 0.1, "far": 1000 },
         "textures": [{ "id": "checker", "width": 32, "height": 32, "rgba8": base64(&checker()) }],
         "materials": materials,
         "meshes": [{ "id": "box", "source": { "kind": "cube" } }, { "id": "gem", "source": { "kind": "octahedron" } }],

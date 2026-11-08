@@ -16,7 +16,6 @@ const SETTLE_RENDERS: usize = 240;
 fn fixture() -> Value {
     json!({
         "id": SCENE, "revision": 1,
-        "camera": {"position": [0, 9, 16], "target": [0, 0, -2], "fov_degrees": 55, "near": 0.1, "far": 500},
         "materials": [
             {"id": "ground", "color": [0.45, 0.5, 0.42, 1]},
             {"id": "cloth", "color": [0.2, 0.35, 0.7, 1]},
@@ -41,6 +40,7 @@ fn fixture() -> Value {
              "transform": {"translation": [0, 0.8, 0], "scale": [0.3, 0.3, 0.3]}},
             {"id": "west-lantern", "prefab": PREFAB, "transform": {"translation": [-4, 0, -2]}},
             {"id": "east-lantern", "prefab": PREFAB, "transform": {"translation": [4, 0, -2], "rotation_degrees": [0, -20, 0]}},
+            {"id": "camera", "transform": {"translation": [0, 9, 16], "rotation_degrees": [-26.5651, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 500, "projection": {"Perspective": {"vertical_fov_radians": 0.9599311}}}, "view": {}},
         ],
     })
 }

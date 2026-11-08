@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::math::{clamp, max};
-use engine_core::{Cut, DeviceLimits, Error, FrameTime, Readable, Readback, PrimaryView};
+use engine_core::{Cut, DeviceLimits, Error, FrameTime, Readable, Readback, ViewFacts, Views};
 use engine_places_simulation::wind::Wind;
 use engine_places_world::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
@@ -57,11 +57,11 @@ pub(crate) struct ParticleView {
 }
 
 impl ParticleView {
-    pub(crate) fn of(view: &PrimaryView) -> Self {
-        let display = view.display_size();
+    pub(crate) fn of(view: &ViewFacts) -> Self {
+        let display = view.size();
         Self {
-            detail: view.detail_eye(),
-            pixel_angle: engine_render::pixel_angle(view.view_projection(), display.y),
+            detail: view.detail_eye,
+            pixel_angle: engine_render::pixel_angle(view.view_projection, display.y),
             display,
         }
     }
@@ -271,12 +271,15 @@ pub(crate) fn particle_terrain(
 
 pub(crate) fn plan_particles(
     water: Res<Water>,
-    (view, limits, time, wind): (Res<PrimaryView>, Res<DeviceLimits>, Res<FrameTime>, Res<Wind>),
+    (views, limits, time, wind): (Res<Views>, Res<DeviceLimits>, Res<FrameTime>, Res<Wind>),
     (ground, tiles): (Res<GroundTiles>, Res<TerrainTiles>),
     mut state: ResMut<WaterState>,
 ) {
     let state = &mut *state;
-    let seen = ParticleView::of(&view);
+    let Some(seen) = views.main().map(ParticleView::of) else {
+        state.particles.rest();
+        return;
+    };
     let carried = (!state.watered.is_empty())
         .then(|| particle_terrain(&state.watered, (&*ground, &*tiles), seen.detail))
         .flatten();

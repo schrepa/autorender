@@ -1,13 +1,12 @@
 use bevy_ecs::prelude::Resource;
 use engine_core::{Error, Readable, Readback};
 use engine_render::{
-    Access, Attach, Bind, Buffer, DepthUse, Encode, FULLSCREEN, Install, Lifetime, Own, Pass,
+    Access, Attach, Bind, DepthUse, Encode, FULLSCREEN, Install, Lifetime, Own, Pass,
     Pipeline, Prepare, RenderPipeline, Shape, TargetName, Texture, wgpu,
 };
-use glam::{Mat4, UVec2, Vec3};
+use glam::UVec2;
 
-use crate::gpu_layouts::HazeView;
-use crate::sky::{SkyGpu, inverse_or_identity};
+use crate::sky::SkyGpu;
 
 const HAZE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
@@ -28,16 +27,7 @@ impl Readable for HazeSteps {
     }
 }
 
-#[derive(Clone, Copy)]
-struct History {
-    view_projection: Mat4,
-    eye: Vec3,
-    drawn: (u32, u32),
-}
-
 pub(crate) struct HazeFrame {
-    pub(crate) view_projection: Mat4,
-    pub(crate) eye: Vec3,
     pub(crate) display: UVec2,
     pub(crate) render: UVec2,
     pub(crate) history: bool,
@@ -49,9 +39,7 @@ pub(crate) struct HazePlan {
     runs: bool,
     size: UVec2,
     drawn: (u32, u32),
-    history: Option<History>,
-    kept: Option<History>,
-    uniform: HazeView,
+    kept: bool,
 }
 
 impl HazePlan {
@@ -60,41 +48,22 @@ impl HazePlan {
     }
 
     pub(crate) fn prepare(&mut self, (runs, missed): (bool, bool), frame: &HazeFrame) -> [f32; 4] {
-        self.history = self.kept.take().filter(|_| !missed && frame.history);
+        let history = std::mem::take(&mut self.kept) && !missed && frame.history;
         self.runs = false;
         if !runs {
-            self.history = None;
             return [0.0; 4];
         }
         self.size = frame.display;
         self.drawn = (frame.render.x, frame.render.y);
-        self.kept = Some(History {
-            view_projection: frame.view_projection,
-            eye: frame.eye,
-            drawn: self.drawn,
-        });
-        let history = self.history;
+        self.kept = true;
         let turn = (frame.frame % 1024) as f32 * 0.618_034;
         let turn = turn - turn.floor();
-        let (width, height) = (frame.render.x as f32, frame.render.y as f32);
-        let view_projection = frame.view_projection;
-        let focal = view_projection.row(1).truncate().length();
-        self.uniform = HazeView {
-            inverse_view_projection: inverse_or_identity(view_projection).to_cols_array_2d(),
-            eye: frame.eye.extend(focal * height * 0.5).to_array(),
-            size: [width, height, 1.0 / width, 1.0 / height],
-            previous_view_projection: history
-                .map_or(view_projection, |last| last.view_projection)
-                .to_cols_array_2d(),
-            previous_eye: history
-                .map_or(frame.eye, |last| last.eye)
-                .extend(0.0)
-                .to_array(),
-        };
         self.runs = true;
-        history.map_or([turn, 0.0, 0.0, 1.0], |last| {
-            [turn, last.drawn.0 as f32, last.drawn.1 as f32, 1.0]
-        })
+        if history {
+            [turn, frame.render.x as f32, frame.render.y as f32, 1.0]
+        } else {
+            [turn, 0.0, 0.0, 1.0]
+        }
     }
 }
 
@@ -102,7 +71,6 @@ pub(crate) struct Haze {
     marched: Texture<SkyGpu>,
     hazed: Texture<SkyGpu>,
     history_texture: Texture<SkyGpu>,
-    uniform: Buffer<SkyGpu>,
     march_pass: Pass<SkyGpu>,
     filter_pass: Pass<SkyGpu>,
     marching: Pipeline<SkyGpu, Own>,
@@ -117,7 +85,6 @@ impl Haze {
         let marched = cx.texture("haze_march", HAZE_FORMAT, Lifetime::Frame);
         let hazed = cx.texture("haze", HAZE_FORMAT, Lifetime::Kept);
         let history_texture = cx.texture("haze_history", HAZE_FORMAT, Lifetime::Previous);
-        let uniform = cx.buffer("haze_view", Lifetime::Kept);
         cx.frame(haze::HAZE, Bind::Texture(hazed))?;
         let march_pass = cx
             .pass("haze")
@@ -142,12 +109,7 @@ impl Haze {
             blend: None,
             writes: wgpu::ColorWrites::ALL,
         };
-        let viewed = || {
-            [
-                (haze_view::POST, Bind::Buffer(uniform)),
-                (haze_view::DEPTH_TEXTURE, Bind::Target(TargetName::DEPTH)),
-            ]
-        };
+        let viewed = || [(haze_view::DEPTH_TEXTURE, Bind::Target(TargetName::DEPTH))];
         let marching =
             cx.render_pipeline(march_pass, &fullscreen(haze_march::FS_HAZE), &viewed())?;
         let mut filtered = Vec::from(viewed());
@@ -164,7 +126,6 @@ impl Haze {
             marched,
             hazed,
             history_texture,
-            uniform,
             march_pass,
             filter_pass,
             marching,
@@ -190,9 +151,7 @@ impl Haze {
         for texture in [self.marched, self.hazed, self.history_texture] {
             cx.allocate(texture, extent, 1);
         }
-        cx.allocate_buffer(self.uniform, size_of::<HazeView>() as u64);
         self.drawn = plan.drawn;
-        cx.write(self.uniform, 0, &[plan.uniform]);
         cx.run(self.march_pass);
         cx.run(self.filter_pass);
         self.stepped = true;

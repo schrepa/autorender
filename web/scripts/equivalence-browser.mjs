@@ -107,7 +107,6 @@ async function run(entry, folder) {
     if (entry.ticks > 0) await ok({ verb: "control", name: "step", args: { ticks: entry.ticks } });
     for (const view of entry.views) {
       if (view.camera) await ok({ verb: "control", name: "camera", args: { ...view.camera } });
-      else if (view.name !== "scene") await ok({ verb: "control", name: "scene_view", args: { name: view.name } });
       for (const capture of entry.captures) {
         const key = `${view.name} ${capture}`;
         const frame = settling(capture);

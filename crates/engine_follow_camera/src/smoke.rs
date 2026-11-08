@@ -86,16 +86,20 @@ fn scene(walled: bool) -> Value {
             "transform": {"translation": [0.0, 0.0, WALL_AT]},
         }));
     }
+    entities.push(json!({
+        "id": "camera",
+        "transform": {"translation": [0.0, 2.0, 10.0], "rotation_degrees": [-2.8624, 0.0, 0.0]},
+        "node": {"clock": "real", "mobility": "moving"},
+        "camera": {
+            "near": 0.1,
+            "far": 1000,
+            "projection": {"Perspective": {"vertical_fov_radians": 1.047_197_6}},
+        },
+        "view": {},
+    }));
     json!({
         "id": if walled { "follow-walled" } else { "follow-open" },
         "revision": 1,
-        "camera": {
-            "position": [0.0, 2.0, 10.0],
-            "target": [0.0, 1.5, 0.0],
-            "fov_degrees": 60,
-            "near": 0.1,
-            "far": 1000,
-        },
         "materials": [],
         "meshes": [],
         "entities": entities,

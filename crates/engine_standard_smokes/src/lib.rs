@@ -14,7 +14,7 @@ mod host_parity;
 mod navigation;
 pub mod requests;
 mod scene_kit;
-mod scene_views;
+mod scene_looks;
 mod stats;
 mod streamed_scene;
 mod surfaces;
@@ -75,9 +75,9 @@ impl Brick for StandardSmokesBrick {
             run: streamed_scene::run,
         },
         Smoke {
-            name: "scene_views",
+            name: "scene_looks",
             runs: Runs::Headless,
-            run: scene_views::run,
+            run: scene_looks::run,
         },
         Smoke {
             name: "authored_nodes",

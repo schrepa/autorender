@@ -4,7 +4,7 @@ use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{
     Camera, Cursor, Cut, DeviceLimits, FrameBudget, GpuBits, Mobility, Mover, Moves, Node,
-    OwnedView, OwnedViews, Pace, PartDraws, PassName, PrimaryView, Readable, Readback, Since,
+    OwnedView, OwnedViews, Pace, PartDraws, PassName, Readable, Readback, Since, Views,
     Spawner, Transform, gpu_bits, mover_of,
 };
 use engine_places_rendering::shadows::{
@@ -377,7 +377,7 @@ fn publish_views(
 
 pub(crate) fn plan_shadows(
     (settings, sky): (Res<ShadowSettings>, Res<SkyOcclusion>),
-    (sun, view, limits): (Res<Sun>, Res<PrimaryView>, Res<DeviceLimits>),
+    (sun, views, limits): (Res<Sun>, Res<Views>, Res<DeviceLimits>),
     (changes, shown): (Res<ShadowChanges>, Res<DebugShown>),
     (mut feedback, mut drawn, mut budget): (
         ResMut<ShadowFeedback>,
@@ -393,7 +393,7 @@ pub(crate) fn plan_shadows(
     (mut pool, mut moves, mut lenses): (Local<Vec<Entity>>, Moves<ShadowsBrick>, Lenses),
 ) {
     let plan = &mut *plan;
-    let eye = view.detail_eye();
+    let eye = views.main().map_or(Vec3::ZERO, |main| main.detail_eye);
     let sun = Vec3::from_slice(&sun.direction[..3]);
     if sun == Vec3::ZERO {
         plan.idle();

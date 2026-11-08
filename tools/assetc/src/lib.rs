@@ -3,7 +3,7 @@ mod materials;
 mod validation;
 
 use engine_core::{Error, ErrorCode, Expected};
-use engine_scene::{SceneCamera, SceneDocument, ScenePrefab};
+use engine_scene::{SceneDocument, ScenePrefab};
 use sha2::{Digest, Sha256};
 
 pub const MAX_INPUT_BYTES: usize = u32::MAX as usize;
@@ -61,14 +61,12 @@ pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, Error> {
     let mut scene = SceneDocument {
         id: id.to_owned(),
         revision: 1,
-        camera: SceneCamera::default(),
         environment: None,
         textures: Vec::new(),
         materials: Vec::new(),
         meshes: Vec::new(),
         prefabs: Vec::new(),
         entities: Vec::new(),
-        views: Vec::new(),
         looks: Vec::new(),
     };
     let mut files = Vec::new();

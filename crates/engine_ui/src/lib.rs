@@ -17,7 +17,7 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     Asks, Asset, AssetResidency, AssetUses, AttachPoint, Brick, Bricks, ComponentKind, CursorMode,
     CursorRequests, Error, ErrorCode, GlobalTransforms, MenuInput, PassName,
-    PassViews, PointerInput, PrimaryView, Runs, SceneComponents, SceneContext, SceneCx, Schedule,
+    PassViews, PointerInput, Runs, SceneComponents, SceneContext, SceneCx, Schedule, Views,
     SlotSet, Smoke, Source, Spawner, Writes, gpu_struct, never, settings, stats,
 };
 use engine_places_rendering::screens::{ScreenAsk, Screens};
@@ -85,7 +85,7 @@ type Reading<'w, 's> = (
     Roots<'w, 's>,
     Res<'w, Text>,
     Res<'w, UiValues>,
-    Res<'w, PrimaryView>,
+    Res<'w, Views>,
     Res<'w, UiSettings>,
     (Option<Res<'w, SceneContext>>, Res<'w, GlobalTransforms>),
 );
@@ -164,7 +164,7 @@ fn root_schema() -> Value {
 }
 
 fn follow(
-    (roots, text, values, view, settings, (scene, globals)): Reading<'_, '_>,
+    (roots, text, values, views, settings, (scene, globals)): Reading<'_, '_>,
     pointer: Res<PointerInput>,
     (mut menu, mut cursor, (screens, mut asks), mut events): Steering<'_, '_>,
     mut state: ResMut<UiState>,
@@ -191,7 +191,7 @@ fn follow(
     let facts = Facts::of(
         &text,
         &values,
-        &view,
+        views.frame(),
         &settings,
         (scene.as_ref(), &globals),
         screens.top(),
@@ -211,7 +211,7 @@ fn follow(
 }
 
 fn present(
-    (roots, text, values, view, settings, (scene, globals)): Reading<'_, '_>,
+    (roots, text, values, views, settings, (scene, globals)): Reading<'_, '_>,
     screens: Res<Screens>,
     mut state: ResMut<UiState>,
     mut stats: ResMut<UiStats>,
@@ -222,7 +222,7 @@ fn present(
     let facts = Facts::of(
         &text,
         &values,
-        &view,
+        views.frame(),
         &settings,
         (scene.as_ref(), &globals),
         screens.top(),

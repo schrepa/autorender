@@ -1,10 +1,8 @@
-use bevy_ecs::prelude::{Component, Entity, Resource, World};
+use bevy_ecs::prelude::{Component, Entity, World};
 use glam::{Affine3A, BVec4A, Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
 use serde::Serialize;
 
-use crate::{
-    Clock, Error, ErrorCode, GlobalTransforms, Mobility, Node, NodePose, Parent, View,
-};
+use crate::{Error, ErrorCode, GlobalTransforms, NodePose, Parent};
 
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 #[component(
@@ -160,7 +158,6 @@ impl Camera {
     pub const MIN_DEPTH: f32 = 0.001;
     pub const MIN_FOV_DEGREES: f32 = 1.0;
     pub const MAX_FOV_DEGREES: f32 = 179.0;
-    pub const EYE: Vec3 = Vec3::new(24.0, 19.0, 28.0);
 
     pub fn check(&self) -> Result<(), Error> {
         let invalid = |field: &str| Err(Error::new(ErrorCode::InvalidCamera, format!("$.{field}")));
@@ -262,21 +259,6 @@ impl Transform {
     }
 }
 
-pub(crate) fn spawn_main_view(world: &mut World) {
-    let camera = world
-        .spawn((
-            Transform::looking_at(Camera::EYE, Vec3::ZERO),
-            Camera::default(),
-            Node {
-                clock: Some(Clock::Real),
-                mobility: Some(Mobility::Moving),
-                ..Node::default()
-            },
-        ))
-        .id();
-    world.spawn(View::new(camera));
-}
-
 pub fn place_camera(world: &mut World, camera: Entity, at: Transform, lens: Camera) {
     let parent = world
         .get::<Parent>(camera)
@@ -299,19 +281,4 @@ pub fn place_camera(world: &mut World, camera: Entity, at: Transform, lens: Came
         held.insert(lens);
     }
     crate::send_ask(world, crate::Teleport { node: camera, to });
-}
-
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Viewport {
-    pub width: u32,
-    pub height: u32,
-}
-
-impl Default for Viewport {
-    fn default() -> Self {
-        Self {
-            width: 1920,
-            height: 1080,
-        }
-    }
 }

@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Cut, DeviceLimits, Error, GpuBits, Readable, Readback, PrimaryView};
+use engine_core::{Cut, DeviceLimits, Error, GpuBits, Readable, Readback, ViewFacts, Views};
 use engine_places_rendering::lighting::Lighting;
 use engine_places_rendering::lights::{LIGHT_EXTERIOR, LIGHT_INTERIOR, LightRegion};
 use engine_places_rendering::probes::ProbeCaptures;
@@ -222,15 +222,15 @@ impl LightsGpu {
     fn place_headers(
         &mut self,
         settings: &LocalLightSettings,
-        view: &PrimaryView,
+        main: &ViewFacts,
         captures: &ProbeCaptures,
         shaped: bool,
     ) {
-        let size = view.render_size();
+        let size = main.render;
         let flags = shading_flags(shaped, self.regions);
         let capacity = self.index_capacity();
-        let mut main = Clusters::new(
-            view.view_projection(),
+        let mut header = Clusters::new(
+            main.view_projection,
             size.x,
             size.y,
             settings.distance,
@@ -238,9 +238,9 @@ impl LightsGpu {
             settings.lights_per_cluster,
             capacity,
         );
-        main.lights[1] = flags;
-        main.offsets = self.offsets(0);
-        self.headers[0] = main;
+        header.lights[1] = flags;
+        header.offsets = self.offsets(0);
+        self.headers[0] = header;
         for face in &captures.faces {
             let lit = 1 + face.face;
             if lit >= self.views {
@@ -269,7 +269,7 @@ impl GpuPart for LightsGpu {
         Res<'static, LightList>,
         Res<'static, LightTotals>,
         Res<'static, Lighting>,
-        Res<'static, PrimaryView>,
+        Res<'static, Views>,
         Res<'static, ProbeCaptures>,
         Res<'static, DeviceLimits>,
     );
@@ -335,7 +335,7 @@ impl GpuPart for LightsGpu {
 
     fn prepare(
         &mut self,
-        (settings, list, totals, lighting, view, captures, limits): SystemParamItem<
+        (settings, list, totals, lighting, views, captures, limits): SystemParamItem<
             '_,
             '_,
             Self::Reads,
@@ -380,7 +380,9 @@ impl GpuPart for LightsGpu {
             cx.write(self.inputs, 0, &self.staged);
         }
         self.count = count as u32;
-        self.place_headers(&settings, &view, &captures, lighting.highlights);
+        if let Some(main) = views.main() {
+            self.place_headers(&settings, main, &captures, lighting.highlights);
+        }
         cx.write(self.clusters, 0, &self.headers);
         if count == 0 {
             return;

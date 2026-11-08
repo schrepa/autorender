@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use glam::{Mat4, UVec2, Vec3};
+use glam::UVec2;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrameFacts {
@@ -16,78 +16,6 @@ impl Default for FrameFacts {
             render_size: UVec2::new(1920, 1080),
             pixel_ratio: 1.0,
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ViewState {
-    facts: FrameFacts,
-    view_projection: Mat4,
-    eye: Vec3,
-    frozen: Option<Vec3>,
-    scene: u64,
-}
-
-impl Default for ViewState {
-    fn default() -> Self {
-        Self {
-            facts: FrameFacts::default(),
-            view_projection: Mat4::IDENTITY,
-            eye: Vec3::ZERO,
-            frozen: None,
-            scene: 0,
-        }
-    }
-}
-
-impl ViewState {
-    pub fn identified(scene: u64) -> Self {
-        Self {
-            scene,
-            ..Self::default()
-        }
-    }
-
-    pub fn facts(&self) -> FrameFacts {
-        self.facts
-    }
-
-    pub fn render_size(&self) -> UVec2 {
-        self.facts.render_size
-    }
-
-    pub fn display_size(&self) -> UVec2 {
-        self.facts.display_size
-    }
-
-    pub fn scene(&self) -> u64 {
-        self.scene
-    }
-
-    pub fn view_projection(&self) -> Mat4 {
-        self.view_projection
-    }
-
-    pub fn eye(&self) -> Vec3 {
-        self.eye
-    }
-
-    pub fn detail_eye(&self) -> Vec3 {
-        self.frozen.unwrap_or(self.eye)
-    }
-
-    pub fn frozen(&self) -> Option<Vec3> {
-        self.frozen
-    }
-
-    pub fn set(&mut self, facts: FrameFacts, view_projection: Mat4, eye: Vec3) {
-        self.facts = facts;
-        self.view_projection = view_projection;
-        self.eye = eye;
-    }
-
-    pub fn freeze(&mut self, at: Option<Vec3>) {
-        self.frozen = at;
     }
 }
 

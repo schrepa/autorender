@@ -4,7 +4,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use bevy_ecs::prelude::*;
 use engine_core::{
     Cursor, Feed, FrameBudget, FrameTime, Interest, JobFailures, Jobs, RecordKey,
-    Records, Requests, Since, Spawner, VIEW_JOBS, PrimaryView, job_priority,
+    Records, Requests, Since, Spawner, VIEW_JOBS, Views, job_priority,
 };
 use engine_heightfield::tile::{Solid, TileJob};
 use engine_heightfield::{
@@ -490,13 +490,13 @@ impl WaterQuery for WaterSurface {
 pub(crate) fn follow(
     tiles: Res<TerrainTiles>,
     records: Res<Records>,
-    view: Res<PrimaryView>,
+    views: Res<Views>,
     time: Res<FrameTime>,
     (budget, settings): (Res<FrameBudget>, Res<Water>),
     mut jobs: Jobs,
     mut state: ResMut<WaterState>,
 ) {
-    let eye = view.detail_eye();
+    let eye = views.main().map_or(Vec3::ZERO, |main| main.detail_eye);
     let frame = time.frame;
     let feed = settings.tile_feed as usize;
     let state = &mut *state;
