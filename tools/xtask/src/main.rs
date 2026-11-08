@@ -27,7 +27,7 @@ mod verify;
 
 use std::{env, process::ExitCode};
 
-use engine_core::command_line::{self, Command, CommandOption};
+use engine_command_line::{self as command_line, Command, CommandOption};
 
 pub struct Failure {
     pub message: String,

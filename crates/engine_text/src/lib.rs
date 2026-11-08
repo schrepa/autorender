@@ -28,7 +28,7 @@ use engine_render::{
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use typeset::{Placed, Typesetter, ensure};
 
@@ -164,16 +164,6 @@ fn label_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(Label)).unwrap_or(Value::Null)
 }
 
-fn label_example() -> Value {
-    json!({
-        "text": "Hello",
-        "size": 18.0,
-        "anchor": [0.5, 0.0],
-        "pivot": [0.5, 0.0],
-        "offset": [0.0, 12.0],
-    })
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct WorldText(pub Label);
@@ -218,14 +208,6 @@ impl SceneForm for WorldText {
             world.entity_mut(entity).remove::<(Label, Drawn)>();
         }
     }
-}
-
-fn world_text_example() -> Value {
-    json!({
-        "text": "Hello",
-        "size": 18.0,
-        "pivot": [0.5, 0.5],
-    })
 }
 
 fn install(mut text: ResMut<Text>) {
@@ -278,8 +260,7 @@ impl Brick for TextBrick {
                     .check(check_label)
                     .prepare(prepare_label)
                     .files(label_files)
-                    .schema(label_schema)
-                    .example(label_example),
+                    .schema(label_schema),
                 None,
             )
             .join::<SceneComponents>(
@@ -287,8 +268,7 @@ impl Brick for TextBrick {
                     .check(|text, path| check_label(&text.0, path))
                     .prepare(|text, cx, path| prepare_label(text.0, cx, path).map(WorldText))
                     .files(|text| label_files(&text.0))
-                    .schema(label_schema)
-                    .example(world_text_example),
+                    .schema(label_schema),
                 None,
             )
             .systems(Schedule::FixedPreSimulation, install)

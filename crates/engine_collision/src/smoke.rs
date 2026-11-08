@@ -1,4 +1,4 @@
-use engine_core::smoke::{Checked, ask, component, control, inspect, query, refuse};
+use engine_smoke::{Checked, ask, component, control, inspect, query, refuse};
 use engine_core::{Section, SmokeFailure, SmokeSession, smoke_eq};
 use engine_places_simulation::physics::{
     COLLISION_INVALID_SHAPE, Collider, ColliderShape, MAX_COLLISION_COORDINATE,

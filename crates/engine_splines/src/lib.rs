@@ -37,8 +37,7 @@ impl Brick for SplinesBrick {
             .join::<SceneComponents>(
                 ComponentKind::of::<SplineMesh>(SPLINE)
                     .check(scene::check_spline)
-                    .schema(scene::spline_schema)
-                    .example(scene::spline_example),
+                    .schema(scene::spline_schema),
                 None,
             )
             .join::<StreamedKeys>(

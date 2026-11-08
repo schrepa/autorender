@@ -4,7 +4,7 @@ use engine_places_rendering::lights::{
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::lights::{light_rule, spot_order, spot_rule};
 
@@ -112,8 +112,4 @@ pub(crate) fn check_light(light: &LocalLight, path: &str) -> Result<(), Error> {
 
 pub(crate) fn light_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(SceneLight)).unwrap_or(Value::Null)
-}
-
-pub(crate) fn light_example() -> Value {
-    json!({})
 }

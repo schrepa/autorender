@@ -95,7 +95,7 @@ pub fn verbs(world: &World) -> Result<Vec<(&'static str, Value)>, String> {
         .collect())
 }
 
-pub fn generated(world: &World) -> Result<Generated, String> {
+pub fn generated(world: &World, frame_stats_schema: Value) -> Result<Generated, String> {
     let registry = registry(world)?;
     let mut problems = Vec::new();
     let mut schemas = json!({
@@ -113,7 +113,7 @@ pub fn generated(world: &World) -> Result<Generated, String> {
         "DrawnMesh": schemars::schema_for!(views::DrawnMeshView),
         "Input": schemars::schema_for!(views::InputView),
         "Jobs": schemars::schema_for!(views::JobsView),
-        "FrameStats": frame_stats(registry, &mut problems),
+        "FrameStats": frame_stats(frame_stats_schema, registry, &mut problems),
     });
     if let Some(all) = schemas.as_object_mut() {
         for verb in Verb::ALL {
@@ -557,8 +557,7 @@ fn references(value: &Value, names: &mut Vec<String>) {
     }
 }
 
-fn frame_stats(registry: &Registry, problems: &mut Vec<String>) -> Value {
-    let mut schema = serialized(schemars::schema_for!(engine_core::FrameStats));
+fn frame_stats(mut schema: Value, registry: &Registry, problems: &mut Vec<String>) -> Value {
     let mut definitions = schema["$defs"].as_object().cloned().unwrap_or_default();
     let mut properties = schema["properties"]
         .as_object()

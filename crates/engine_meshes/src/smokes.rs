@@ -1,6 +1,6 @@
 use engine_core::SmokeFailure;
 use engine_core::math::{cos, sin};
-use engine_core::smoke::{Checked, ask, component, control, environment, inspect, render};
+use engine_smoke::{Checked, ask, component, control, environment, inspect, render};
 use engine_core::{SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 

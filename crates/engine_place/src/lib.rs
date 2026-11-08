@@ -32,10 +32,11 @@ pub use drawn::{
 };
 pub use engine_assets::{MaterialHandle, MeshHandle, TextureHandle};
 pub use engine_settings::{Error, ErrorCode};
+pub use engine_smoke::{SmokeFailure, SmokeSession, ask, smoke_check, smoke_eq};
 pub use feeds::{Cursor, CursorView, Events, Feed, FeedView, Ring, Since, StoreId};
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{
-    AttachPoint, BlendedPass, CORE_BRICK, CORE_PASSES, ColorPass, PASS_BITS, Pass,
+    AttachPoint, BlendedPass, CORE_BRICK, ColorPass, Pass,
     PassBit, PassCull, PassEntry, PassMask, PassName, PassRaster, PassViews, ScenePass, ScenePasses,
     SlotSet,
     TargetName, Writes,
@@ -305,96 +306,6 @@ pub struct Smoke {
     pub name: &'static str,
     pub runs: Runs,
     pub run: fn(&mut dyn SmokeSession) -> Result<(), SmokeFailure>,
-}
-
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct SmokeFailure {
-    pub smoke: &'static str,
-    pub check: &'static str,
-    pub got: Value,
-    pub expected: Value,
-    pub at: &'static str,
-}
-
-impl SmokeFailure {
-    #[doc(hidden)]
-    pub fn new(
-        check: &'static str,
-        got: &impl serde::Serialize,
-        expected: &impl serde::Serialize,
-        at: &'static str,
-    ) -> Self {
-        Self {
-            smoke: "",
-            check,
-            got: serde_json::to_value(got).unwrap_or(Value::Null),
-            expected: serde_json::to_value(expected).unwrap_or(Value::Null),
-            at,
-        }
-    }
-}
-
-pub trait SmokeSession {
-    fn request(&mut self, verb: &str, body: Value) -> Result<Value, Value>;
-    fn step(&mut self, ticks: u32);
-    fn frame(&mut self) -> bool;
-    fn source(&mut self, document: &str);
-    fn file(&mut self, name: &str, bytes: &[u8]);
-    fn idle(&mut self, milliseconds: f64);
-    fn joined(&mut self, list: TypeId, each: &mut dyn FnMut(&dyn Any));
-    fn members(&mut self, _place: &str) -> Vec<&'static str> {
-        Vec::new()
-    }
-    fn slot(&mut self, _slot: TypeId, _each: &mut dyn FnMut(&dyn Any)) {}
-    fn without(&mut self, _bricks: &[&'static str]) {}
-    fn artifact(&mut self, _path: &str) -> Option<Vec<u8>> {
-        None
-    }
-    fn decode_image(&mut self, _path: &str, _bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), Value> {
-        Err(Value::Null)
-    }
-}
-
-#[macro_export]
-macro_rules! smoke_check {
-    ($condition:expr, $check:expr, $got:expr, $expected:expr $(,)?) => {
-        if !$condition {
-            return ::core::result::Result::Err($crate::SmokeFailure::new(
-                $check,
-                &$got,
-                &$expected,
-                ::core::concat!(::core::file!(), ":", ::core::line!()),
-            ));
-        }
-    };
-}
-
-pub fn ask(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Result<Value, SmokeFailure> {
-    let reply = session.request(verb, body);
-    smoke_check!(
-        reply.is_ok(),
-        "request_answered",
-        &reply.as_ref().err().map(|refused| &refused["error"]),
-        &verb
-    );
-    Ok(reply
-        .map(|mut answered| answered["result"].take())
-        .unwrap_or_default())
-}
-
-#[macro_export]
-macro_rules! smoke_eq {
-    ($got:expr, $expected:expr, $check:expr $(,)?) => {{
-        let (got, expected) = (&$got, &$expected);
-        if *got != *expected {
-            return ::core::result::Result::Err($crate::SmokeFailure::new(
-                $check,
-                got,
-                expected,
-                ::core::concat!(::core::file!(), ":", ::core::line!()),
-            ));
-        }
-    }};
 }
 
 pub trait GpuStruct: bytemuck::Pod + Send + Sync + 'static {

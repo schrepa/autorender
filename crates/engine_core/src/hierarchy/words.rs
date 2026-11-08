@@ -4,7 +4,7 @@ use bevy_ecs::world::World;
 
 use super::{GlobalTransforms, tracking};
 use crate::moves::MovingKinds;
-use crate::{Cursor, Events, GpuBits, Mobility, Mover, Node, NodeWord, Since};
+use crate::{Cursor, Events, Mobility, Mover, Node, NodeWord};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct Declared {
@@ -81,7 +81,6 @@ impl GlobalTransforms {
                 continue;
             }
             self.words[index] = next;
-            self.packed[index] = next.pack();
             if before.mobility != next.mobility {
                 self.static_moves.moved.remove(&self.entities[index]);
             }
@@ -89,14 +88,12 @@ impl GlobalTransforms {
                 continue;
             }
             changed = true;
-            self.word_changes.push(index as u32);
             if !before.active && next.active {
                 self.dirty.mark(index, threshold);
                 self.woken.push(self.entities[index]);
             }
         }
         if rebuilt {
-            self.word_changes.replace();
             for entity in self.asleep.drain(..) {
                 if let Some(&index) = self.indices.get(&entity)
                     && self.words[index].active
@@ -128,16 +125,8 @@ impl GlobalTransforms {
         self.words.get(index).copied()
     }
 
-    pub fn packed_words(&self) -> &[u32] {
-        &self.packed
-    }
-
     pub fn words_revision(&self) -> u64 {
         self.words_revision
-    }
-
-    pub fn word_changes_since(&self, cursor: &mut Cursor) -> Since<'_, u32> {
-        self.word_changes.since(cursor)
     }
 
     pub fn active(&self, entity: Entity) -> bool {

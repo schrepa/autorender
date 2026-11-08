@@ -88,8 +88,7 @@ impl Brick for ReflectionProbesBrick {
             .join::<SceneComponents>(
                 ComponentKind::of::<ReflectionProbe>("reflection_probe")
                     .check(component::check)
-                    .schema(component::schema)
-                    .example(component::example),
+                    .schema(component::schema),
                 None,
             )
             .join::<Ambient>((), Some(shaders::probes::ambient::MODULE))

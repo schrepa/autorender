@@ -10,6 +10,12 @@ pub fn print_generated(files: &[(&str, String)]) {
     println!("{}", Value::Object(files));
 }
 
+#[cfg(feature = "schema")]
+pub fn frame_stats_schema() -> Value {
+    serde_json::to_value(schemars::schema_for!(crate::stats::FrameStats))
+        .expect("schema_serializes")
+}
+
 pub fn declarations(schema: &Value, root: &str) -> String {
     let mut output = String::new();
     interface(&mut output, root, schema, false);

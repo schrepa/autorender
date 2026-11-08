@@ -226,7 +226,7 @@ fn settle(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
 fn shown(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
     let mut compiling = true;
     for _ in 0..600 {
-        compiling = engine_core::smoke::compiling(&render(session)?);
+        compiling = engine_smoke::compiling(&render(session)?);
         if !compiling {
             break;
         }

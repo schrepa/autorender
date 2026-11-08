@@ -14,7 +14,6 @@ impl GlobalTransforms {
             ("order", self.order.len()),
             ("declared", self.declared.len()),
             ("words", self.words.len()),
-            ("packed", self.packed.len()),
         ] {
             assert!(len == nodes, "hierarchy_lengths_match {nodes} {len} {name}");
         }

@@ -4,7 +4,7 @@ use engine_core::{
     Moves, Operation, Pace, Poses, PrimaryView, Rule, Setting, mover_of,
 };
 use engine_math::{atan2, clamp, exp, max, min, sin, sin_cos};
-use engine_places::queries::SceneQueries;
+use engine_places::queries::{CastFilter, CastShape, SceneQueries};
 use glam::{Quat, Vec3};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -157,8 +157,18 @@ pub(crate) fn follow(
     let back = rotation * Vec3::Z * settings.distance;
     let clear = queries
         .0
-        .sweep(settings.collision_radius, follow.focus, back, target)
-        .map_or(1.0, |fraction| clamp(fraction, 0.0, 1.0));
+        .cast(
+            CastShape::Sphere {
+                radius: settings.collision_radius,
+            },
+            follow.focus,
+            back,
+            CastFilter {
+                ignore: Some(target),
+                ..CastFilter::default()
+            },
+        )
+        .map_or(1.0, |hit| clamp(hit.distance / settings.distance, 0.0, 1.0));
     follow.reach = if clear < follow.reach {
         clear
     } else {

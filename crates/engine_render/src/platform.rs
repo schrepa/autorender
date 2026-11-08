@@ -1,6 +1,6 @@
 use std::fmt;
 
-use engine_core::{Error, ErrorCode, Expected};
+use engine_core::{Error, ErrorCode};
 
 pub fn failed(path: &str) -> Error {
     Error::new(ErrorCode::RenderFailed, path)
@@ -308,82 +308,5 @@ pub fn poll(device: &wgpu::Device) {
     #[cfg(target_arch = "wasm32")]
     {
         let _ = device;
-    }
-}
-
-pub fn read_range(
-    url: &str,
-    range: std::ops::Range<u64>,
-    arrive: impl FnOnce(Result<Vec<u8>, Error>) + 'static,
-) {
-    let unread = |path: &str| Error::new(ErrorCode::SourceIo, path).expected(Expected::Readable);
-    #[cfg(target_arch = "wasm32")]
-    {
-        use wasm_bindgen::JsCast;
-        let request = (|| {
-            let init = web_sys::RequestInit::new();
-            init.set_method("GET");
-            let headers = web_sys::Headers::new().ok()?;
-            headers
-                .set("Range", &format!("bytes={}-{}", range.start, range.end - 1))
-                .ok()?;
-            init.set_headers(&headers);
-            web_sys::Request::new_with_str_and_init(url, &init).ok()
-        })();
-        let promise = request
-            .zip(web_sys::window())
-            .map(|(request, window)| window.fetch_with_request(&request));
-        let url = url.to_owned();
-        wasm_bindgen_futures::spawn_local(async move {
-            let failed = |error: wasm_bindgen::JsValue| {
-                unread("$.url").got(error.as_string().unwrap_or_else(|| url.clone()))
-            };
-            let bytes = async {
-                let promise = promise.ok_or_else(|| unread("$.url").got(&url))?;
-                let response: web_sys::Response = wasm_bindgen_futures::JsFuture::from(promise)
-                    .await
-                    .map_err(failed)?
-                    .dyn_into()
-                    .map_err(|_| unread("$.url").got(&url))?;
-                if !response.ok() {
-                    return Err(Error::new(ErrorCode::SourceIo, "$.status")
-                        .range(200.0, 299.0)
-                        .got(response.status()));
-                }
-                let whole = response.status() == 200;
-                let buffer = response.array_buffer().map_err(failed)?;
-                let buffer = wasm_bindgen_futures::JsFuture::from(buffer)
-                    .await
-                    .map_err(failed)?;
-                let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-                if whole {
-                    let length = bytes.len();
-                    bytes
-                        .get(range.start as usize..range.end as usize)
-                        .map(<[u8]>::to_vec)
-                        .ok_or_else(|| {
-                            Error::new(ErrorCode::SourceIo, "$.range")
-                                .at_most(length as u64)
-                                .got([range.start, range.end])
-                        })
-                } else {
-                    Ok(bytes)
-                }
-            }
-            .await;
-            arrive(bytes);
-        });
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        use std::io::{Read, Seek, SeekFrom};
-        let bytes = (|| {
-            let mut file = std::fs::File::open(url)?;
-            file.seek(SeekFrom::Start(range.start))?;
-            let mut bytes = vec![0; (range.end - range.start) as usize];
-            file.read_exact(&mut bytes)?;
-            Ok::<_, std::io::Error>(bytes)
-        })();
-        arrive(bytes.map_err(|_| unread("$.url").got(url)));
     }
 }

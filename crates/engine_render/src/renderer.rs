@@ -80,10 +80,6 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn installed_passes(&self) -> &[&'static str] {
-        self.passes
-    }
-
     pub fn pass_owner(&self, pass: &str) -> Option<&'static str> {
         let machine = &self.run.as_ref()?.machine;
         let declared = machine

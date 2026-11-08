@@ -492,11 +492,11 @@ impl<G: Game> GameHost<G> {
         self.app.renderer.read_offscreen()
     }
 
-    pub fn frame_stats(&self) -> engine_core::FrameStats {
+    pub fn frame_stats(&self) -> crate::frame_stats::FrameStats {
         self.app.stats()
     }
 
-    pub fn frame_times(&self) -> &engine_core::FrameStats {
+    pub fn frame_times(&self) -> &crate::frame_stats::FrameStats {
         self.app.frame_times()
     }
 

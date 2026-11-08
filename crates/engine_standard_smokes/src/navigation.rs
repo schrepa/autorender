@@ -1,4 +1,4 @@
-use engine_core::smoke::{
+use engine_smoke::{
     Checked, above, component, control, near, number, query, refuse, settled,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};

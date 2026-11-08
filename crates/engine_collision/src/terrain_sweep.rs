@@ -1,14 +1,14 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Error, ErrorCode, Filled, Operation, Rule, Slot, bounds, stated};
 use engine_places_simulation::ground::Ground;
-use engine_places_simulation::physics::{Collide, Collision, CollisionRay, QueryFilter};
+use engine_places_simulation::physics::{Collide, CollisionRay, QueryFilter};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::queries::{bounded, reply, schema_of};
 use crate::types::missing_brick;
-use crate::world::{CollisionWorld, world_of};
+use crate::world::{CollisionWorld, Fresh};
 
 const PLACED_RAY_HITS: usize = 16;
 const SWEEP_EXTENT: Rule = Rule::Range(0.0, 4096.0);
@@ -28,15 +28,16 @@ pub(crate) struct TerrainSweepQuery {
 
 impl Operation for TerrainSweepQuery {
     const NAME: &'static str = "terrain_sweep";
+    const CONTROL: bool = false;
     type Params = (
-        Res<'static, Collision>,
+        Fresh<'static, 'static>,
         Res<'static, Ground>,
         Filled<'static, Ground>,
     );
     type Request = Self;
 
     fn run(
-        (collision, ground, grounded): SystemParamItem<'_, '_, Self::Params>,
+        (mut fresh, ground, grounded): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
         let Self {
@@ -59,7 +60,7 @@ impl Operation for TerrainSweepQuery {
             "$.samples",
         )?;
         sweep(
-            world_of(&collision),
+            Some(fresh.world()),
             grounded.on().then_some(&*ground),
             Vec2::new(cx, cz),
             half_extent as f32,

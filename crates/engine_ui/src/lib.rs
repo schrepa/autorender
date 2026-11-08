@@ -24,7 +24,7 @@ use engine_places_rendering::screens::{ScreenAsk, Screens};
 use engine_places_rendering::text::Text;
 use engine_places_rendering::ui::{UiEvents, UiLength, UiNode, UiRoot, UiValues};
 use engine_render::RenderBricks;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use gpu::UiGpu;
 use tree::{Facts, Roots, UiState};
@@ -163,35 +163,6 @@ fn root_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(UiRoot)).unwrap_or(Value::Null)
 }
 
-fn root_example() -> Value {
-    json!({
-        "screen": "menu",
-        "menu": true,
-        "root": {
-            "kind": "panel",
-            "absolute": { "left": 16.0, "top": 16.0 },
-            "padding": [12.0, 12.0, 12.0, 12.0],
-            "gap": 8.0,
-            "color": [0.05, 0.05, 0.08, 0.85],
-            "radius": 8.0,
-            "children": [
-                { "kind": "label", "text": "Menu", "text_size": 24.0 },
-                {
-                    "id": "start",
-                    "kind": "button",
-                    "text": "Start",
-                    "padding": [12.0, 8.0, 12.0, 8.0],
-                    "color": [0.2, 0.2, 0.3, 1.0],
-                    "hover_color": [0.3, 0.3, 0.45, 1.0],
-                    "press_color": [0.15, 0.15, 0.25, 1.0],
-                    "focus_color": [0.3, 0.3, 0.45, 1.0],
-                    "action": { "emit": "start" },
-                },
-            ],
-        },
-    })
-}
-
 fn follow(
     (roots, text, values, view, settings, (scene, globals)): Reading<'_, '_>,
     pointer: Res<PointerInput>,
@@ -316,8 +287,7 @@ impl Brick for UiBrick {
                     .check(check_root)
                     .prepare(prepare_root)
                     .files(root_files)
-                    .schema(root_schema)
-                    .example(root_example),
+                    .schema(root_schema),
                 None,
             )
             .systems(Schedule::Presentation, follow)

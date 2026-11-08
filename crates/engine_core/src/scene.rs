@@ -1,14 +1,10 @@
 use bevy_ecs::prelude::{Component, Entity, Resource, World};
-use engine_assets::{
-    AssetLibrary, Material, MaterialHandle, Mesh, MeshHandle, MeshLods, Texture, TextureHandle,
-};
 use glam::{Affine3A, BVec4A, Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
 use serde::Serialize;
 
 use crate::{
     Clock, Error, ErrorCode, GlobalTransforms, Mobility, Node, NodePose, Parent, View,
 };
-use std::sync::Arc;
 
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 #[component(
@@ -318,36 +314,4 @@ impl Default for Viewport {
             height: 1080,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct RenderMesh {
-    pub handle: MeshHandle,
-    pub mesh: Arc<Mesh>,
-    pub lods: Option<Arc<MeshLods>>,
-}
-
-impl RenderMesh {
-    pub fn of(assets: &AssetLibrary, handle: MeshHandle) -> Option<Self> {
-        let mesh = assets.mesh(handle)?;
-        let lods = assets.mesh_lods(handle)?;
-        Some(Self {
-            handle,
-            mesh: Arc::clone(mesh),
-            lods: lods.cloned(),
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct RenderTexture {
-    pub handle: TextureHandle,
-    pub texture: Arc<Texture>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RenderMaterial {
-    pub handle: MaterialHandle,
-    pub material: Material,
-    pub version: u64,
 }

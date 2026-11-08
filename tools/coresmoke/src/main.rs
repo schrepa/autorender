@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use engine_core::command_line::{self, CommandOption};
+use engine_command_line::{self as command_line, CommandOption};
 use serde_json::{Value, json};
 
 #[derive(Default)]

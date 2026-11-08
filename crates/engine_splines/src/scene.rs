@@ -2,7 +2,7 @@ use engine_core::{Error, Expected, MaterialHandle, MeshHandle, parse_value};
 use engine_places_world::splines::SplineMesh;
 use engine_places_world::streaming::StreamedAt;
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::INVALID_SPLINE;
 use crate::spline_mesh::MAX_SPLINE_POINTS;
@@ -70,12 +70,4 @@ pub(crate) fn spline_reach(value: &Value, at: &StreamedAt<'_>) -> f32 {
 
 pub(crate) fn spline_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(SceneSpline)).unwrap_or(Value::Null)
-}
-
-pub(crate) fn spline_example() -> Value {
-    json!({
-        "points": [[0.0, 0.0, 0.0], [0.0, 0.0, 4.0]],
-        "mesh": "example",
-        "material": "example",
-    })
 }

@@ -4,7 +4,7 @@ use engine_places_rendering::particles::{
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::emitters::{emitter_extra, emitter_rule};
 
@@ -135,8 +135,4 @@ pub(crate) fn check_emitter(emitter: &ParticleEmitter, path: &str) -> Result<(),
 
 pub(crate) fn emitter_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(SceneEmitter)).unwrap_or(Value::Null)
-}
-
-pub(crate) fn emitter_example() -> Value {
-    json!({})
 }

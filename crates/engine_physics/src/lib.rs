@@ -52,15 +52,13 @@ impl Brick for PhysicsBrick {
                 ComponentKind::of::<RigidBody>("rigid_body")
                     .check(body::check_body)
                     .placement(Placement::Roots(INVALID_RIGID_BODY))
-                    .schema(body::body_schema)
-                    .example(body::body_example),
+                    .schema(body::body_schema),
                 None,
             )
             .join::<SceneComponents>(
                 ComponentKind::of::<BodyPush>("body_push")
                     .check(body::check_push)
-                    .schema(body::push_schema)
-                    .example(body::push_example),
+                    .schema(body::push_schema),
                 None,
             )
             .moves::<RigidBody>(Pace::Tick)

@@ -69,7 +69,7 @@ pub use surface::{
 #[doc(hidden)]
 pub use memory::GpuMemory;
 #[doc(hidden)]
-pub use platform::{AdapterInfo, RenderTarget, read_range};
+pub use platform::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub use platform::{GpuPreference, NativeWindow, start_native_instances_with};
@@ -1255,28 +1255,8 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         self.issue(pipeline, (shape, &[], MeshPass::default()), None);
     }
 
-    pub fn draw_at(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>, offsets: &[u32]) {
-        self.issue(pipeline, (shape, offsets, MeshPass::default()), None);
-    }
-
     pub fn draw_with(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>, mesh: MeshPass) {
         self.issue(pipeline, (shape, &[], mesh), None);
-    }
-
-    pub fn draw_timed<'l>(
-        &mut self,
-        pipeline: &Pipeline<P, S>,
-        shape: Shape<'_, P, S>,
-        label: impl FnOnce() -> String + 'l,
-    ) {
-        let timer = self.raw.timer();
-        let mut label = Some(label);
-        let mut named = || label.take().map_or_else(String::new, |label| label());
-        self.issue(
-            pipeline,
-            (shape, &[], MeshPass::default()),
-            Some((timer, &mut named)),
-        );
     }
 
     pub fn draw_timed_with<'l>(

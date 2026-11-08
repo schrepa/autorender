@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use engine::Engine;
-use engine_core::command_line::{self, Command, CommandOption};
+use engine_command_line::{self as command_line, Command, CommandOption};
 
 use crate::install::List;
 use crate::stages::{self, Stage};

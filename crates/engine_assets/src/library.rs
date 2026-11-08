@@ -466,7 +466,6 @@ impl HeldMesh {
 #[derive(Resource)]
 pub struct AssetLibrary {
     id: u64,
-    cube: Option<MeshHandle>,
     revision: u64,
     budget: AssetBudget,
     meshes: Storage<HeldMesh>,
@@ -500,7 +499,6 @@ impl AssetLibrary {
             .expect("library_ids_left");
         Self {
             id,
-            cube: None,
             revision: 0,
             budget,
             meshes: Storage::default(),
@@ -528,13 +526,7 @@ impl AssetLibrary {
     }
 
     pub fn insert_cube(&mut self) -> Result<MeshHandle, Error> {
-        let cube = self.insert_mesh(Mesh::cube())?;
-        self.cube = Some(cube);
-        Ok(cube)
-    }
-
-    pub fn cube_mesh(&self) -> MeshHandle {
-        self.cube.unwrap_or_default()
+        self.insert_mesh(Mesh::cube())
     }
 
     pub fn reserve_mesh(&mut self) -> Result<MeshHandle, Error> {

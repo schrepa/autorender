@@ -1,4 +1,4 @@
-use engine_core::smoke::{Checked, compiled, component, control, inspect, number, query, render};
+use engine_smoke::{Checked, compiled, component, control, inspect, number, query, render};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
@@ -65,7 +65,7 @@ fn scene(pond: bool) -> Value {
 }
 
 fn settle(session: &mut dyn SmokeSession) -> Checked<Value> {
-    engine_core::smoke::settled(session)?;
+    engine_smoke::settled(session)?;
     let terrain = inspect(session, "terrain_stats")?;
     smoke_eq!(
         json!({
