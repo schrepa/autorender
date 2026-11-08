@@ -192,6 +192,7 @@ pub enum BindingSource {
         down: Cow<'static, str>,
     },
     MouseMotion,
+    TouchMotion,
     Wheel,
     Stick(Stick),
     Trigger(Trigger),
@@ -219,7 +220,11 @@ impl BindingSource {
     const fn flat(&self) -> bool {
         match self {
             Self::Key(_) | Self::Mouse(_) | Self::Pad(_) | Self::Trigger(_) => true,
-            Self::Keys { .. } | Self::MouseMotion | Self::Wheel | Self::Stick(_) => false,
+            Self::Keys { .. }
+            | Self::MouseMotion
+            | Self::TouchMotion
+            | Self::Wheel
+            | Self::Stick(_) => false,
         }
     }
 
@@ -238,6 +243,7 @@ impl BindingSource {
             | Self::Mouse(_)
             | Self::Pad(_)
             | Self::MouseMotion
+            | Self::TouchMotion
             | Self::Wheel
             | Self::Stick(_)
             | Self::Trigger(_) => vec![self.clone()],
@@ -256,6 +262,7 @@ impl BindingSource {
             Self::Mouse(_)
             | Self::Pad(_)
             | Self::MouseMotion
+            | Self::TouchMotion
             | Self::Wheel
             | Self::Stick(_)
             | Self::Trigger(_) => Vec::new(),
@@ -304,27 +311,30 @@ pub struct Binding {
 
 impl Binding {
     pub const fn new(verb: &'static str, source: BindingSource) -> Self {
-        Self {
-            verb: Cow::Borrowed(verb),
-            source,
-            scale: 1.0,
-            invert: false,
-            dead_zone: 0.0,
-            modifier: None,
-            context: None,
-            player: None,
-        }
+        Self::of(verb, source, None, None)
     }
 
     pub const fn held(verb: &'static str, source: BindingSource, modifier: Button) -> Self {
+        Self::of(verb, source, Some(modifier), None)
+    }
+
+    pub const fn of(
+        verb: &'static str,
+        source: BindingSource,
+        modifier: Option<Button>,
+        context: Option<&'static str>,
+    ) -> Self {
         Self {
             verb: Cow::Borrowed(verb),
             source,
             scale: 1.0,
             invert: false,
             dead_zone: 0.0,
-            modifier: Some(modifier),
-            context: None,
+            modifier,
+            context: match context {
+                Some(context) => Some(Cow::Borrowed(context)),
+                None => None,
+            },
             player: None,
         }
     }
@@ -523,6 +533,8 @@ pub struct Touch {
     pub id: u32,
     #[cfg_attr(feature = "schema", schemars(with = "[f32; 2]"))]
     pub position_pixels: Vec2,
+    #[cfg_attr(feature = "schema", schemars(with = "[f32; 2]"))]
+    pub motion_pixels: Vec2,
     pub phase: TouchPhase,
 }
 
@@ -566,6 +578,7 @@ impl Devices {
             .retain(|touch| matches!(touch.phase, TouchPhase::Began | TouchPhase::Moved));
         for touch in &mut held.touches {
             touch.phase = TouchPhase::Moved;
+            touch.motion_pixels = Vec2::ZERO;
         }
         held
     }
@@ -649,7 +662,7 @@ impl Contexts {
     }
 }
 
-fn stamp<K: Clone + Eq + Hash>(requests: &mut Requests<K, Ticket>) {
+pub(crate) fn stamp<K: Clone + Eq + Hash>(requests: &mut Requests<K, Ticket>) {
     let asked: Vec<(K, Ticket)> = requests
         .asked()
         .map(|(key, ticket)| (key.clone(), ticket))
@@ -659,7 +672,7 @@ fn stamp<K: Clone + Eq + Hash>(requests: &mut Requests<K, Ticket>) {
     }
 }
 
-fn stacked<K: Clone + Eq + Hash>(requests: &Requests<K, Ticket>) -> Vec<K> {
+pub(crate) fn stacked<K: Clone + Eq + Hash>(requests: &Requests<K, Ticket>) -> Vec<K> {
     let mut held: Vec<(Ticket, K)> = requests
         .iter()
         .filter_map(|(key, request)| Some((*request.ready()?, key.clone())))
@@ -1040,8 +1053,18 @@ fn read(
         BindingSource::MouseMotion if owned.keyboard_mouse => {
             zoned(devices.mouse.motion_pixels, dead_zone)
         }
+        BindingSource::TouchMotion if owned.keyboard_mouse => zoned(
+            devices
+                .touches
+                .iter()
+                .map(|touch| touch.motion_pixels)
+                .sum(),
+            dead_zone,
+        ),
         BindingSource::Wheel if owned.keyboard_mouse => zoned(devices.mouse.wheel_notches, dead_zone),
-        BindingSource::MouseMotion | BindingSource::Wheel => Vec2::ZERO,
+        BindingSource::MouseMotion | BindingSource::TouchMotion | BindingSource::Wheel => {
+            Vec2::ZERO
+        }
         BindingSource::Stick(stick) => pads()
             .map(|pad| zoned(pad.sticks[*stick as usize], dead_zone))
             .sum(),
@@ -1418,72 +1441,5 @@ impl Operation for Rebind {
 
     fn schema() -> Value {
         serde_json::to_value(schemars::schema_for!(Self)).unwrap_or(Value::Null)
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-#[repr(u32)]
-pub enum CursorMode {
-    Drag = 0,
-    #[default]
-    Free = 1,
-    Captured = 2,
-}
-
-impl CursorMode {
-    pub const ALL: [(Self, &'static str); 3] = [
-        (Self::Drag, "drag"),
-        (Self::Free, "free"),
-        (Self::Captured, "captured"),
-    ];
-
-    pub const fn name(self) -> &'static str {
-        Self::ALL[self as usize].1
-    }
-}
-
-pub type CursorAsk = (&'static str, CursorMode);
-
-#[derive(Resource, Debug, Default, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct CursorRequests {
-    #[serde(skip)]
-    requests: Requests<CursorAsk, Ticket>,
-    applied: CursorMode,
-}
-
-impl List for CursorRequests {
-    const NAME: &'static str = "cursor";
-    type Member = CursorAsk;
-}
-
-impl CursorRequests {
-    pub fn ask(&mut self, by: &'static str, mode: CursorMode) -> Interest<CursorAsk> {
-        let interest = self.requests.ask((by, mode));
-        stamp(&mut self.requests);
-        interest
-    }
-
-    pub fn wanted(&self) -> CursorMode {
-        stacked(&self.requests)
-            .last()
-            .map_or_else(CursorMode::default, |&(_, mode)| mode)
-    }
-
-    pub fn asked(&self) -> Vec<CursorAsk> {
-        stacked(&self.requests)
-    }
-
-    pub fn applied(&self) -> CursorMode {
-        self.applied
-    }
-
-    #[doc(hidden)]
-    pub fn apply(&mut self) {
-        self.requests.settle(0.0);
-        stamp(&mut self.requests);
-        self.applied = self.wanted();
     }
 }

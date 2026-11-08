@@ -42,8 +42,6 @@ export const JOB_CACHE_MIB = 1024;
 
 export const MAX_JOB_CACHE_MIB = 9999999;
 
-export const LOOK_LIMIT = 1000.0;
-
 export const WHEEL_PIXELS = 100.0;
 
 export const BENCHMARK_LIMIT_MS = 10000;
@@ -69,6 +67,8 @@ export const FRAME_PHASES = {"compiling":0,"idle":4,"playing":3,"preparing":1,"s
 export const HOST_PAUSES = {"focus":0,"hidden":1,"suspended":2};
 
 export const CURSOR_MODES = {"captured":2,"drag":0,"free":1};
+
+export const TOUCH_PHASES = {"began":0,"cancelled":3,"ended":2,"moved":1};
 
 export const IMAGE_FORMATS = ["png","jpeg","ktx2-rgba8"];
 

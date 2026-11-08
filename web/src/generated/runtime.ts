@@ -12,12 +12,14 @@ export function parseJson<T>(json: Json<T>): T {
 export interface Runtime {
   frame(timestamp: number, width: number, height: number): void;
   key(code: string, down: boolean): boolean;
-  look(dx: number, dy: number): void;
+  mouse_button(button: number, down: boolean): boolean;
   motion(dx: number, dy: number): void;
   pointer(x: number, y: number): void;
   pointer_left(): void;
   wheel(right_notches: number, up_notches: number): void;
-  pad(buttons: number, axes: Float32Array): void;
+  pad(index: number, buttons: number, axes: Float32Array): void;
+  touch(id: number, x: number, y: number, phase: number): void;
+  touch_motion(id: number, dx: number, dy: number): void;
   clear_input(): void;
   animation_frame(timestamp: number, width: number, height: number): number;
   set_preparation(enabled: boolean): void;

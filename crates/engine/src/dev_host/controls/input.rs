@@ -50,6 +50,8 @@ pub(super) fn batch(host: &mut DevHost, app: &AppHost, asked: Asked) -> Result<V
     for touch in &asked.touches {
         let [x, y] = touch.position_pixels;
         agent.touch(touch.id, x, y, touch.phase);
+        let [dx, dy] = touch.motion_pixels;
+        agent.touch_motion(touch.id, dx, dy);
     }
     let mut batch = InputBatch::default();
     for (shape, drive) in driven {
@@ -154,6 +156,7 @@ fn checked(asked: &Asked) -> Result<(), Error> {
         touch
             .position_pixels
             .check("position_pixels", bounds::COORDINATE)
+            .and_then(|()| touch.motion_pixels.check("motion_pixels", bounds::TURN))
             .map_err(|invalid| refused(invalid.within("touches").indexed("touches", at)))?;
     }
     Ok(())

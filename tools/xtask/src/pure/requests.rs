@@ -47,6 +47,10 @@ const UNREACHED: &[(&str, &str)] = &[
     ("benchmark_failed", PAGE),
     ("benchmark_interrupted", PAGE),
     ("benchmark_timeout", PAGE),
+    (
+        "binding_conflict",
+        "readiness reports it when two verbs claim one source in one active input context (crates/engine_core/src/input.rs); no request refuses with it",
+    ),
     ("binding_foreign", LINKER),
     ("binding_limit", LINKER),
     ("bridge_error", BRIDGE),

@@ -14,6 +14,7 @@ macro_rules! __game_surface {
                 fn wheel(right_notches: f32, up_notches: f32);
                 fn pad(index: u32, buttons: u32, axes: Vec<f32>);
                 fn touch(id: u32, x: f32, y: f32, phase: u32);
+                fn touch_motion(id: u32, dx: f32, dy: f32);
                 fn clear_input();
                 fn animation_frame(timestamp: f64, width: u32, height: u32) -> Result<u32, $crate::__private::JsValue>;
                 fn set_preparation(enabled: bool);

@@ -11,6 +11,8 @@ use crate::{FlyCamera, FlyCameraBrick};
 
 const PITCH_LIMIT: f32 = 1.48;
 const CONTEXT: &str = "fly_camera";
+const DRAG: &str = "fly_camera.drag";
+const CAPTURED: &str = "fly_camera.captured";
 
 pub(crate) const MOVE: Verb = Verb {
     name: "fly_camera.move",
@@ -42,11 +44,26 @@ pub(crate) const RISE: Verb = Verb {
 pub(crate) const LOOK: Verb = Verb {
     name: "fly_camera.look",
     shape: VerbShape::Delta2,
-    bindings: &[Binding::held(
-        "fly_camera.look",
-        BindingSource::MouseMotion,
-        Button::Mouse(MouseButton::Left),
-    )],
+    bindings: &[
+        Binding::of(
+            "fly_camera.look",
+            BindingSource::MouseMotion,
+            Some(Button::Mouse(MouseButton::Left)),
+            Some(DRAG),
+        ),
+        Binding::of(
+            "fly_camera.look",
+            BindingSource::TouchMotion,
+            None,
+            Some(DRAG),
+        ),
+        Binding::of(
+            "fly_camera.look",
+            BindingSource::MouseMotion,
+            None,
+            Some(CAPTURED),
+        ),
+    ],
 };
 
 pub(crate) const TURN: Verb = Verb {
@@ -57,8 +74,28 @@ pub(crate) const TURN: Verb = Verb {
 
 pub(crate) struct Controls {
     verbs: [VerbId; 4],
+    looking: (CursorMode, Option<Interest<ContextAsk>>),
     _context: Interest<ContextAsk>,
     _cursor: Interest<CursorAsk>,
+}
+
+impl Controls {
+    fn look_in(&mut self, mode: CursorMode, contexts: &mut Contexts) {
+        if self.looking.0 != mode {
+            self.looking = (
+                mode,
+                context_of(mode).map(|context| contexts.ask(CONTEXT, context, false)),
+            );
+        }
+    }
+}
+
+fn context_of(mode: CursorMode) -> Option<&'static str> {
+    match mode {
+        CursorMode::Drag => Some(DRAG),
+        CursorMode::Captured => Some(CAPTURED),
+        CursorMode::Free => None,
+    }
 }
 
 #[derive(Resource, Default)]
@@ -151,8 +188,11 @@ pub(crate) fn fly(
     let Some(camera) = views.main().map(|main| main.camera) else {
         return;
     };
-    let verbs = match &*rig {
-        Rig::Holding(controls) => controls.verbs,
+    let verbs = match &mut *rig {
+        Rig::Holding(controls) => {
+            controls.look_in(cursor.applied(), &mut contexts);
+            controls.verbs
+        }
         Rig::Taking => {
             let [Some(moving), Some(rising), Some(looking), Some(turning)] =
                 [MOVE, RISE, LOOK, TURN].map(|verb| input.find(verb.name))
@@ -168,6 +208,7 @@ pub(crate) fn fly(
             });
             *rig = Rig::Holding(Controls {
                 verbs: [moving, rising, looking, turning],
+                looking: (CursorMode::Free, None),
                 _context: contexts.ask(CONTEXT, CONTEXT, false),
                 _cursor: cursor.ask(CONTEXT, CursorMode::Drag),
             });

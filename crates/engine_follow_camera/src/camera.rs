@@ -14,15 +14,32 @@ use serde_json::{Value, json};
 use crate::{CameraTarget, FollowCamera, FollowCameraBrick};
 
 const CONTEXT: &str = "follow_camera";
+const DRAG: &str = "follow_camera.drag";
+const CAPTURED: &str = "follow_camera.captured";
 
 pub(crate) const LOOK: Verb = Verb {
     name: "follow_camera.look",
     shape: VerbShape::Delta2,
-    bindings: &[Binding::held(
-        "follow_camera.look",
-        BindingSource::MouseMotion,
-        Button::Mouse(MouseButton::Left),
-    )],
+    bindings: &[
+        Binding::of(
+            "follow_camera.look",
+            BindingSource::MouseMotion,
+            Some(Button::Mouse(MouseButton::Left)),
+            Some(DRAG),
+        ),
+        Binding::of(
+            "follow_camera.look",
+            BindingSource::TouchMotion,
+            None,
+            Some(DRAG),
+        ),
+        Binding::of(
+            "follow_camera.look",
+            BindingSource::MouseMotion,
+            None,
+            Some(CAPTURED),
+        ),
+    ],
 };
 
 pub(crate) const TURN: Verb = Verb {
@@ -66,11 +83,29 @@ impl Follow {
 pub(crate) struct Controls {
     look: VerbId,
     turn: VerbId,
+    looking: (CursorMode, Option<Interest<ContextAsk>>),
     _context: Interest<ContextAsk>,
     _cursor: Interest<CursorAsk>,
 }
 
+fn context_of(mode: CursorMode) -> Option<&'static str> {
+    match mode {
+        CursorMode::Drag => Some(DRAG),
+        CursorMode::Captured => Some(CAPTURED),
+        CursorMode::Free => None,
+    }
+}
+
 impl Controls {
+    fn look_in(&mut self, mode: CursorMode, contexts: &mut Contexts) {
+        if self.looking.0 != mode {
+            self.looking = (
+                mode,
+                context_of(mode).map(|context| contexts.ask(CONTEXT, context, false)),
+            );
+        }
+    }
+
     fn turn(&self, input: &Input, settings: &FollowCamera, real_seconds: f32) -> Vec2 {
         let turned = input.value2(self.turn, Player::ONE);
         let unit = Vec2::new(clamp(turned.x, -1.0, 1.0), clamp(turned.y, -1.0, 1.0));
@@ -152,6 +187,7 @@ fn taken(
     Some(Controls {
         look: input.find(LOOK.name)?,
         turn: input.find(TURN.name)?,
+        looking: (CursorMode::Free, None),
         _context: contexts.ask(CONTEXT, CONTEXT, false),
         _cursor: cursor.ask(CONTEXT, CursorMode::Drag),
     })
@@ -172,7 +208,7 @@ pub(crate) fn follow(
     let Some(camera) = views.main().map(|main| main.camera) else {
         return;
     };
-    let (held, controls) = match std::mem::take(&mut *orbit) {
+    let (held, mut controls) = match std::mem::take(&mut *orbit) {
         Orbit::Taking => {
             let Some(controls) = taken(&input, (&mut *contexts, &mut *cursor)) else {
                 return;
@@ -190,6 +226,7 @@ pub(crate) fn follow(
         Orbit::Waiting(controls) => (None, controls),
         Orbit::Following(follow, controls) => (Some(follow), controls),
     };
+    controls.look_in(cursor.applied(), &mut contexts);
     let Some(target) = targets.iter().min() else {
         *orbit = Orbit::Waiting(controls);
         return;

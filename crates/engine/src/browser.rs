@@ -136,6 +136,10 @@ impl<G: Game> PageHost<G> {
         }
     }
 
+    pub fn touch_motion(&mut self, id: u32, dx: f32, dy: f32) {
+        self.host.touch_motion(id, dx, dy);
+    }
+
     pub fn pause(&mut self, reason: u32) {
         if let Some(pause) = crate::host::HostPause::of(reason) {
             self.host.pause(pause);

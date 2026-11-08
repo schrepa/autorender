@@ -291,7 +291,10 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                 );
             }
             WindowEvent::CursorLeft { .. } => self.input.left(&mut running.host),
-            WindowEvent::Touch(touch) => Input::touch(&mut running.host, touch),
+            WindowEvent::Touch(touch) => {
+                self.input
+                    .touch(&mut running.host, touch, running.window.scale_factor());
+            }
             WindowEvent::RedrawRequested => {
                 let start = Instant::now();
                 self.input.poll_pads(&mut running.host, &running.window);

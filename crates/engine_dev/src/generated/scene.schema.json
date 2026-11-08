@@ -48,6 +48,163 @@
       ],
       "type": "object"
     },
+    "Binding": {
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dead_zone": {
+          "format": "float",
+          "type": "number"
+        },
+        "invert": {
+          "type": "boolean"
+        },
+        "modifier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Button"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "player": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "scale": {
+          "format": "float",
+          "type": "number"
+        },
+        "source": {
+          "$ref": "#/$defs/BindingSource"
+        },
+        "verb": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "verb",
+        "source"
+      ],
+      "type": "object"
+    },
+    "BindingSource": {
+      "oneOf": [
+        {
+          "enum": [
+            "mouse_motion",
+            "touch_motion",
+            "wheel"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "key"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "mouse": {
+              "$ref": "#/$defs/MouseButton"
+            }
+          },
+          "required": [
+            "mouse"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "pad": {
+              "$ref": "#/$defs/PadButton"
+            }
+          },
+          "required": [
+            "pad"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "keys": {
+              "additionalProperties": false,
+              "properties": {
+                "down": {
+                  "type": "string"
+                },
+                "left": {
+                  "type": "string"
+                },
+                "right": {
+                  "type": "string"
+                },
+                "up": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "right",
+                "left",
+                "up",
+                "down"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "keys"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "stick": {
+              "$ref": "#/$defs/Stick"
+            }
+          },
+          "required": [
+            "stick"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "trigger": {
+              "$ref": "#/$defs/Trigger"
+            }
+          },
+          "required": [
+            "trigger"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Biome": {
       "additionalProperties": false,
       "properties": {
@@ -126,6 +283,46 @@
         "voice"
       ],
       "type": "string"
+    },
+    "Button": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "key"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "mouse": {
+              "$ref": "#/$defs/MouseButton"
+            }
+          },
+          "required": [
+            "mouse"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "pad": {
+              "$ref": "#/$defs/PadButton"
+            }
+          },
+          "required": [
+            "pad"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "Camera": {
       "additionalProperties": false,
@@ -1324,6 +1521,16 @@
       ],
       "type": "string"
     },
+    "MouseButton": {
+      "enum": [
+        "left",
+        "middle",
+        "right",
+        "back",
+        "forward"
+      ],
+      "type": "string"
+    },
     "Mover": {
       "additionalProperties": false,
       "properties": {
@@ -1549,6 +1756,25 @@
       "enum": [
         "tick",
         "frame"
+      ],
+      "type": "string"
+    },
+    "PadButton": {
+      "enum": [
+        "south",
+        "east",
+        "west",
+        "north",
+        "left_shoulder",
+        "right_shoulder",
+        "select",
+        "start",
+        "left_stick",
+        "right_stick",
+        "up",
+        "down",
+        "left",
+        "right"
       ],
       "type": "string"
     },
@@ -1812,6 +2038,23 @@
         "density",
         "footprint"
       ],
+      "type": "object"
+    },
+    "PlayerDevices": {
+      "additionalProperties": false,
+      "properties": {
+        "keyboard_mouse": {
+          "type": "boolean"
+        },
+        "pads": {
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
       "type": "object"
     },
     "Projection": {
@@ -3101,6 +3344,16 @@
             }
           ]
         },
+        "input": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "local_lights": {
           "anyOf": [
             {
@@ -3637,6 +3890,26 @@
           "format": "uint32",
           "minimum": 1,
           "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "SceneInput": {
+      "additionalProperties": false,
+      "properties": {
+        "bindings": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Binding"
+          },
+          "type": "array"
+        },
+        "players": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PlayerDevices"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -6584,6 +6857,13 @@
       },
       "type": "object"
     },
+    "Stick": {
+      "enum": [
+        "left",
+        "right"
+      ],
+      "type": "string"
+    },
     "SurfaceProjection": {
       "enum": [
         "top",
@@ -6740,6 +7020,13 @@
         }
       },
       "type": "object"
+    },
+    "Trigger": {
+      "enum": [
+        "left",
+        "right"
+      ],
+      "type": "string"
     },
     "UiAction": {
       "oneOf": [

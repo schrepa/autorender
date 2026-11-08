@@ -6,11 +6,11 @@ const MOUSE_RIGHT = 2;
 const WHEEL_LINES = 3;
 
 export class BrowserInput {
-  game: Pick<Runtime, "key" | "mouse_button" | "motion" | "pointer" | "pointer_left" | "wheel" | "pad" | "touch"> | undefined;
+  game: Pick<Runtime, "key" | "mouse_button" | "motion" | "pointer" | "pointer_left" | "wheel" | "pad" | "touch" | "touch_motion"> | undefined;
   private held = new Set<string>();
   private used = new Set<string>();
   private buttons = new Set<number>();
-  private touches = new Set<number>();
+  private touches = new Map<number, { x: number; y: number }>();
   private pointers = new Map<number, { key: string; target: HTMLElement }>();
   private abort = new AbortController();
   private last: { x: number; y: number } | undefined;
@@ -37,7 +37,7 @@ export class BrowserInput {
       canvas.focus();
       if (event.pointerType === "touch") {
         if (this.touches.size >= MAX_TOUCH_POINTERS) return;
-        this.touches.add(event.pointerId);
+        this.touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
         canvas.setPointerCapture(event.pointerId);
         event.preventDefault();
         this.game?.touch(event.pointerId, event.offsetX * ratio(), event.offsetY * ratio(), TOUCH_PHASES.began);
@@ -47,11 +47,15 @@ export class BrowserInput {
     }, options);
     canvas.addEventListener("pointermove", event => {
       if (event.pointerType === "touch") {
-        if (this.touches.has(event.pointerId)) this.game?.touch(event.pointerId, event.offsetX * ratio(), event.offsetY * ratio(), TOUCH_PHASES.moved);
+        const last = this.touches.get(event.pointerId);
+        if (!last) return;
+        this.game?.touch(event.pointerId, event.offsetX * ratio(), event.offsetY * ratio(), TOUCH_PHASES.moved);
+        this.game?.touch_motion(event.pointerId, event.clientX - last.x, event.clientY - last.y);
+        last.x = event.clientX; last.y = event.clientY;
         return;
       }
       if (this.locked) { this.game?.motion(event.movementX, event.movementY); return; }
-      if (this.last) this.game?.motion(event.clientX - this.last.x, event.clientY - this.last.y);
+      if (this.last && this.mode !== CURSOR_MODES.captured) this.game?.motion(event.clientX - this.last.x, event.clientY - this.last.y);
       this.last = { x: event.clientX, y: event.clientY };
       if (event.isPrimary) this.game?.pointer(event.offsetX * ratio(), event.offsetY * ratio());
     }, options);
@@ -134,7 +138,7 @@ export class BrowserInput {
   clear() {
     for (const code of this.held) this.game?.key(code, false);
     for (const button of this.buttons) this.game?.mouse_button(button, false);
-    for (const id of this.touches) this.game?.touch(id, 0, 0, TOUCH_PHASES.cancelled);
+    for (const id of this.touches.keys()) this.game?.touch(id, 0, 0, TOUCH_PHASES.cancelled);
     for (const { key } of this.pointers.values()) this.game?.key(key, false);
     this.held.clear(); this.used.clear(); this.buttons.clear(); this.touches.clear(); this.pointers.clear();
     this.last = undefined; this.unlock();

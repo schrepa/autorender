@@ -299,6 +299,10 @@ impl<G: Game> GameHost<G> {
         self.input.touch(id, x, y, phase);
     }
 
+    pub fn touch_motion(&mut self, id: u32, dx: f32, dy: f32) {
+        self.input.touch_motion(id, dx, dy);
+    }
+
     pub fn cursor_mode(&self) -> CursorMode {
         self.app
             .engine()

@@ -31,6 +31,7 @@ export type ErrorCode =
   | "invalid_benchmark"
   | "invalid_presentation_alpha"
   | "invalid_shape"
+  | "binding_conflict"
   | "game_rule"
   | "no_scene"
   | "unknown_entity"

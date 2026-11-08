@@ -476,6 +476,9 @@ pub struct TouchControl {
         schemars(transform = stated(bounds::COORDINATE))
     )]
     pub position_pixels: [f32; 2],
+    #[serde(default)]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
+    pub motion_pixels: [f32; 2],
     pub phase: engine_core::TouchPhase,
 }
 

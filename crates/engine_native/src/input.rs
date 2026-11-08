@@ -26,6 +26,7 @@ const PAD_BUTTONS: [(Button, u32); 14] = [
 #[derive(Default)]
 pub(crate) struct Input {
     cursor: Option<(f64, f64)>,
+    touches: Vec<(u32, (f64, f64))>,
     grabbed: bool,
     pads: Option<Gilrs>,
 }
@@ -93,19 +94,34 @@ impl Input {
         }
     }
 
-    pub(crate) fn touch<G: Game>(host: &mut GameHost<G>, touch: Touch) {
+    pub(crate) fn touch<G: Game>(&mut self, host: &mut GameHost<G>, touch: Touch, scale: f64) {
         let phase = match touch.phase {
             winit::event::TouchPhase::Started => TouchPhase::Began,
             winit::event::TouchPhase::Moved => TouchPhase::Moved,
             winit::event::TouchPhase::Ended => TouchPhase::Ended,
             winit::event::TouchPhase::Cancelled => TouchPhase::Cancelled,
         };
-        host.touch(
-            touch.id as u32,
-            touch.location.x as f32,
-            touch.location.y as f32,
-            phase,
-        );
+        let id = touch.id as u32;
+        let (x, y) = (touch.location.x, touch.location.y);
+        host.touch(id, x as f32, y as f32, phase);
+        let known = self.touches.iter().position(|&(held, _)| held == id);
+        match (phase, known) {
+            (TouchPhase::Began, None) => self.touches.push((id, (x, y))),
+            (TouchPhase::Began, Some(at)) => self.touches[at].1 = (x, y),
+            (TouchPhase::Moved, Some(at)) => {
+                let (before_x, before_y) = self.touches[at].1;
+                host.touch_motion(
+                    id,
+                    ((x - before_x) / scale) as f32,
+                    ((y - before_y) / scale) as f32,
+                );
+                self.touches[at].1 = (x, y);
+            }
+            (TouchPhase::Ended | TouchPhase::Cancelled, Some(at)) => {
+                self.touches.swap_remove(at);
+            }
+            (TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled, None) => {}
+        }
     }
 
     pub(crate) fn connect_pads(&mut self) {
@@ -154,6 +170,7 @@ impl Input {
 
     pub(crate) fn clear(&mut self) {
         self.cursor = None;
+        self.touches.clear();
     }
 }
 

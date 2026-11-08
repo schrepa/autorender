@@ -12,6 +12,7 @@ mod bricks;
 mod clock;
 mod cook;
 mod cull;
+mod cursor;
 mod drawn;
 mod entity_indices;
 mod hierarchy;
@@ -56,6 +57,7 @@ pub use cull::{
     CullPlan, Culling, OcclusionCulling, SubpixelCulling, frustum_bounded, frustum_planes,
     frustum_sees,
 };
+pub use cursor::*;
 pub use drawn::{
     DrawnBatch, DrawnCensus, DrawnFlags,
     DrawnRecord, DrawnSettings, DrawnState, DrawnTable, PlanState, drawn_wgsl,

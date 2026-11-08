@@ -82,6 +82,7 @@ impl DeviceGatherer {
                 self.devices.touches.push(Touch {
                     id,
                     position_pixels,
+                    motion_pixels: Vec2::ZERO,
                     phase,
                 });
             }
@@ -92,12 +93,19 @@ impl DeviceGatherer {
             (TouchPhase::Began, true) => self.ending.push(Touch {
                 id,
                 position_pixels,
+                motion_pixels: Vec2::ZERO,
                 phase,
             }),
             (TouchPhase::Began, false) => {}
             (TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled, _) => {
                 touch.phase = phase;
             }
+        }
+    }
+
+    pub fn touch_motion(&mut self, id: u32, dx: f32, dy: f32) {
+        if let Some(touch) = self.devices.touches.iter_mut().find(|touch| touch.id == id) {
+            touch.motion_pixels += Vec2::new(finite(dx), finite(dy));
         }
     }
 
