@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use engine_core::command_line::{self, CommandOption};
+use engine_command_line::{self as command_line, CommandOption};
 use engine_heightfield::GivenRiver;
 use engine_heightfield::given::{MAX_CREDIT, MAX_GIVEN_RIVERS, MAX_PRECISION};
 use engine_layer_hydrology::RiversLayer;

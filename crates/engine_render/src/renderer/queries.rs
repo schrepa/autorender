@@ -92,15 +92,6 @@ impl Renderer {
         self.core.ledger.per_pass().to_vec()
     }
 
-    pub fn compile_ahead(&mut self, world: &World) -> u32 {
-        let Some(run) = self.run.as_mut() else {
-            return 0;
-        };
-        let before = run.pipelines.compiled.len();
-        run.warm_reached(world);
-        (run.pipelines.compiled.len() - before) as u32
-    }
-
     pub fn pipeline_list(&self) -> Vec<u8> {
         self.run.as_ref().map(Run::listing).unwrap_or_default()
     }

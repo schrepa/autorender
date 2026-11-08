@@ -14,7 +14,7 @@ use engine_places_simulation::ground::{Ground, Grounded, GroundedAt};
 use engine_places_simulation::navigation::NavWalk;
 use glam::Vec2;
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 const OFFSET: Rule = Rule::range(-10_000.0, 10_000.0);
 
@@ -33,7 +33,6 @@ impl Brick for GroundingBrick {
                     .check(check_grounded)
                     .placement(Placement::Roots(INVALID_GROUNDED))
                     .schema(grounded_schema)
-                    .example(grounded_example)
                     .view::<GroundedAt, GroundedView>(grounded_view),
                 None,
             )
@@ -67,10 +66,6 @@ fn grounded_schema() -> Value {
     let mut schema = schemars::schema_for!(Grounded);
     engine_core::state(&mut schema, "offset", OFFSET);
     serde_json::to_value(schema).unwrap_or(Value::Null)
-}
-
-fn grounded_example() -> Value {
-    json!({})
 }
 
 type GroundedQuery<'w, 's> = Query<

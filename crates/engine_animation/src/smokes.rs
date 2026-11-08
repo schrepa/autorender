@@ -1,6 +1,6 @@
 use std::f32::consts::FRAC_1_SQRT_2;
 
-use engine_core::smoke::{
+use engine_smoke::{
     Checked, above, ask, component, control, not, number, query, render, settled, with,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_check, smoke_eq};

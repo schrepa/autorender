@@ -64,14 +64,12 @@ impl Brick for AnimationBrick {
             .join::<SceneComponents>(
                 ComponentKind::of::<Animator>("animator")
                     .check(scene::check_animator)
-                    .schema(scene::animator_schema)
-                    .example(scene::animator_example),
+                    .schema(scene::animator_schema),
                 None,
             )
             .join::<SceneComponents>(
                 ComponentKind::of::<Attachment>("attachment")
-                    .schema(scene::attachment_schema)
-                    .example(scene::attachment_example),
+                    .schema(scene::attachment_schema),
                 None,
             )
             .moving::<Animator>()

@@ -13,7 +13,7 @@ use engine_core::{
     Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source, settings,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 settings! {
     #[section("follow_camera")]
@@ -56,8 +56,7 @@ impl Brick for FollowCameraBrick {
             .resource::<camera::Shake>()
             .join::<SceneComponents>(
                 ComponentKind::of::<CameraTarget>("camera_target")
-                    .schema(target_schema)
-                    .example(target_example),
+                    .schema(target_schema),
                 None,
             )
             .systems(Schedule::Presentation, camera::follow)
@@ -67,8 +66,4 @@ impl Brick for FollowCameraBrick {
 
 fn target_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(CameraTarget)).unwrap_or(Value::Null)
-}
-
-fn target_example() -> Value {
-    json!({})
 }

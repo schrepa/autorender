@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 engine_ecs.workspace = true
 engine_core.workspace = true
+engine_smoke.workspace = true
 engine_places.workspace = true
 serde.workspace = true
 serde_json.workspace = true

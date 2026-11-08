@@ -18,12 +18,18 @@ use crate::results::{
 use crate::types::{
     Fault, validate_collider_transform, validate_ray, validate_shape, validate_shape_cast,
 };
-use crate::world::{CollisionWorld, SensorEvents, world_of};
+use crate::world::{Fresh, SensorEvents, world_of};
 
 const EVENT_OFFSET: Rule = Rule::Range(0.0, 131_072.0);
 
 type Seen = (
     Res<'static, Collision>,
+    SceneIds<'static, 'static>,
+    Query<'static, 'static, Entity>,
+);
+
+type Refreshed = (
+    Fresh<'static, 'static>,
     SceneIds<'static, 'static>,
     Query<'static, 'static, Entity>,
 );
@@ -41,11 +47,12 @@ pub(crate) struct RaycastQuery {
 
 impl Operation for RaycastQuery {
     const NAME: &'static str = "raycast";
-    type Params = Seen;
+    const CONTROL: bool = false;
+    type Params = Refreshed;
     type Request = Self;
 
     fn run(
-        (collision, ids, entities): SystemParamItem<'_, '_, Seen>,
+        (mut fresh, ids, entities): SystemParamItem<'_, '_, Refreshed>,
         request: Self,
     ) -> Result<Value, Error> {
         scan(&ids)?;
@@ -57,7 +64,7 @@ impl Operation for RaycastQuery {
         } = request;
         let ray = ray(origin, direction, max_distance)?;
         let filter = query_filter(&ids, &entities, &filter)?;
-        let world = filled(&collision)?;
+        let world = fresh.world();
         let hit = world.raycast(ray, filter)?;
         Ok(reply(RaycastResult {
             snapshot: world.stats(),
@@ -94,11 +101,12 @@ pub(crate) struct OverlapQuery {
 
 impl Operation for OverlapQuery {
     const NAME: &'static str = "overlap";
-    type Params = Seen;
+    const CONTROL: bool = false;
+    type Params = Refreshed;
     type Request = Self;
 
     fn run(
-        (collision, ids, entities): SystemParamItem<'_, '_, Seen>,
+        (mut fresh, ids, entities): SystemParamItem<'_, '_, Refreshed>,
         request: Self,
     ) -> Result<Value, Error> {
         scan(&ids)?;
@@ -114,7 +122,7 @@ impl Operation for OverlapQuery {
         let matrix = pose(position, rotation)?;
         validate_collider_transform(shape, matrix)?;
         let filter = query_filter(&ids, &entities, &filter)?;
-        let world = filled(&collision)?;
+        let world = fresh.world();
         let mut found = Vec::new();
         world.overlap(shape, matrix, filter, &mut found, limit)?;
         let mut hits: Vec<_> = found
@@ -153,11 +161,12 @@ pub(crate) struct ShapeCastQuery {
 
 impl Operation for ShapeCastQuery {
     const NAME: &'static str = "shape_cast";
-    type Params = Seen;
+    const CONTROL: bool = false;
+    type Params = Refreshed;
     type Request = Self;
 
     fn run(
-        (collision, ids, entities): SystemParamItem<'_, '_, Seen>,
+        (mut fresh, ids, entities): SystemParamItem<'_, '_, Refreshed>,
         request: Self,
     ) -> Result<Value, Error> {
         scan(&ids)?;
@@ -176,7 +185,7 @@ impl Operation for ShapeCastQuery {
         let options = ShapeCastOptions::default();
         validate_shape_cast(shape, matrix, displacement, options)?;
         let filter = query_filter(&ids, &entities, &filter)?;
-        let world = filled(&collision)?;
+        let world = fresh.world();
         let hit = world.cast_shape(shape, matrix, displacement, filter, options)?;
         Ok(reply(ShapeCastResult {
             snapshot: world.stats(),
@@ -351,10 +360,6 @@ pub(crate) fn bounded<T: Setting>(
             ..Error::from(invalid)
         }),
     }
-}
-
-pub(crate) fn filled(collision: &Collision) -> Result<&CollisionWorld, Error> {
-    world_of(collision).ok_or_else(|| Fault::MissingPlugin.error())
 }
 
 fn scan(ids: &SceneIds) -> Result<(), Error> {

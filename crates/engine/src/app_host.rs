@@ -1,10 +1,11 @@
 use engine_core::{
-    ActionInput, BrickList, Engine, ErrorCode, FrameFacts, FrameStats, JobExchange, JobId, JobRef,
-    MenuInput, MoveInput, PauseReason, RecordExchange, RenderStats, WorkClock,
+    ActionInput, BrickList, Engine, ErrorCode, FrameFacts, JobExchange, JobId, JobRef, MenuInput,
+    MoveInput, PauseReason, RecordExchange, RenderStats, WorkClock,
 };
 use engine_registry::Registry;
 use engine_render::{RenderTarget, Renderer};
 
+use crate::frame_stats::{DynamicResolutionStats, FrameStats, ResolutionStats};
 use crate::host::policy::{FRAME_INTERVAL_MS, PACE_INTERVAL_LIMIT_MS, PACE_SMOOTHING};
 use crate::host::{FrameInput, InputSource, JobMessage};
 use crate::resolution::{DynamicResolution, Resolution};
@@ -300,7 +301,7 @@ impl AppHost {
         &mut self,
         interval: Option<f64>,
         (width, height): (u32, u32),
-    ) -> (engine_core::DynamicResolutionStats, (u32, u32)) {
+    ) -> (DynamicResolutionStats, (u32, u32)) {
         let timing = self.renderer.take_frame_time();
         if let Some((ms, _)) = timing {
             self.gpu_ms = Some(ms as f32);
@@ -311,7 +312,7 @@ impl AppHost {
         let (render_width, render_height) =
             crate::host::render_size((width, height), self.pixel_ratio, &resolution, scale)
                 .unwrap_or((width, height));
-        let stats = engine_core::DynamicResolutionStats {
+        let stats = DynamicResolutionStats {
             active: dynamic.enabled,
             scale: scale as f32,
             budget_ms: if dynamic.enabled {
@@ -323,10 +324,10 @@ impl AppHost {
         (stats, (render_width, render_height))
     }
 
-    fn resolution_stats(&self, (width, height): (u32, u32)) -> engine_core::ResolutionStats {
+    fn resolution_stats(&self, (width, height): (u32, u32)) -> ResolutionStats {
         let (display_width, display_height) = self.renderer.view_size().unwrap_or((0, 0));
         let (render_width, render_height) = self.renderer.render_size().unwrap_or((0, 0));
-        engine_core::ResolutionStats {
+        ResolutionStats {
             display_width,
             display_height,
             render_width,

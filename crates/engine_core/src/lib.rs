@@ -10,11 +10,9 @@ mod authoring;
 pub mod bounds;
 mod bricks;
 mod clock;
-pub mod command_line;
 mod cook;
 mod drawn;
 mod entity_indices;
-mod frame_stats;
 mod hierarchy;
 mod input;
 mod jobs;
@@ -27,12 +25,12 @@ mod presentation;
 pub mod presentation_bounds;
 mod provided;
 mod records;
+mod render_stats;
 mod scene;
 mod schedules;
 mod section;
 mod services;
 mod shared;
-pub mod smoke;
 mod source;
 mod statistics;
 mod ticks;
@@ -59,20 +57,20 @@ pub use drawn::{
 };
 pub use engine_assets::{
     Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, Attributes,
-    BASE_COLOR_MAP, ColorSpace, Cull, DepthBias, EMISSIVE_MAP, Filter, LightingModel, LodInput,
-    LodLevel, MAX_TEXTURE_DIMENSION, METALLIC_ROUGHNESS_MAP, Material, MaterialBinding, Mesh,
-    MeshLods, MeshVertex, NORMAL_MAP, OCCLUSION_MAP, RenderState, STANDARD_MAPS, Sampler,
+    ColorSpace, Cull, DepthBias, Filter, LightingModel, LodInput,
+    LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding, Mesh,
+    MeshLods, MeshVertex, NORMAL_MAP, RenderState, STANDARD_MAPS, Sampler,
     Surface, SurfaceSlot, Texture, TextureFormat, TextureRef, UvTransform, Wrap, attributes_wgsl,
     lod_input,
 };
 pub use engine_textures::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 pub use engine_place::{
-    Applied, ApplyAt, Ask, Asked, AttachPoint, BlendedPass, BudgetUse, CORE_PASSES, Census,
+    Applied, ApplyAt, Ask, Asked, AttachPoint, BlendedPass, BudgetUse, Census,
     Clock, ColorPass, PositionReach,
-    Cursor, CursorView, DrawKind, Drawn, DrawnProjection, Error, ErrorCode, Events,
+    Cursor, DrawKind, Drawn, DrawnProjection, Error, ErrorCode, Events,
     Feed, FeedView, FrameBudget, GeometryHandle, GpuStruct, InstanceValues, Interest, JobRef,
     KindDecl, Layers, Level, LevelView, List, MaterialHandle, MeshHandle, Mobility, Moment,
-    Mover, MoverId, Node, NodeId, NodeWord, PASS_BITS, Pace, Pass, PassBit, PassCull, PassEntry,
+    Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit, PassCull, PassEntry,
     PassMask, PassName, PassRaster, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring, Runs,
     ScenePass, ScenePasses, Since, Slot, SlotSet, Smoke,
     SmokeFailure, SmokeSession,
@@ -90,7 +88,6 @@ pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
 };
-pub use frame_stats::*;
 pub use glam;
 pub use hierarchy::*;
 pub use input::*;
@@ -103,6 +100,7 @@ pub use nearest::Nearest;
 pub use presentation::*;
 pub use provided::*;
 pub use records::*;
+pub use render_stats::{LinkedStats, Names, RenderStats};
 pub use scene::*;
 pub use engine_place::{
     BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,

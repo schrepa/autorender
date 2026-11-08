@@ -17,7 +17,7 @@ use engine_places_rendering::reflections::TraceDepths;
 use engine_render::{RenderBricks, SurfaceKind};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 const GENERATED: &[&str] = &[part::WGSL, <part::PondShape as GpuStruct>::WGSL];
 
@@ -36,8 +36,7 @@ impl Brick for PondBrick {
             .join::<SceneComponents>(
                 ComponentKind::of::<Pond>("pond")
                     .check(check)
-                    .schema(schema)
-                    .example(example),
+                    .schema(schema),
                 None,
             )
             .systems(Schedule::ViewSync, water::publish_ponds)
@@ -74,10 +73,6 @@ fn check(pond: &Pond, path: &str) -> Result<(), Error> {
 
 fn schema() -> Value {
     serde_json::to_value(schemars::schema_for!(Pond)).unwrap_or(Value::Null)
-}
-
-fn example() -> Value {
-    json!({"center": [0.0, 0.0], "size": [16.0, 16.0], "surface": 0.0})
 }
 
 impl Pond {

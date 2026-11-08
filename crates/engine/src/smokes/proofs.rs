@@ -1,4 +1,4 @@
-use engine_core::smoke::{Checked, control, inspect, number, settled};
+use engine_smoke::{Checked, control, inspect, number, settled};
 use engine_core::{BrickList, Runs, Smoke, SmokeSession, smoke_eq};
 use engine_registry::Registry;
 use serde_json::{Value, json};

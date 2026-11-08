@@ -1,6 +1,6 @@
-use engine_core::smoke::{
-    COMPILE_FRAMES, Checked, above, camera, capture, control, environment, inspect, not, number,
-    query, refuse, render, renders_until, settled_by, with,
+use engine_smoke::{
+    Checked, above, camera, capture, control, environment, inspect, not, number, query, refuse,
+    render, rendered_when, settled_by, with,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
@@ -31,10 +31,7 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
 fn captures(session: &mut dyn SmokeSession) -> Checked<()> {
     control(session, "resume", json!({}))?;
     let mut rendering = Value::Null;
-    for _ in 0..COMPILE_FRAMES {
-        if !session.frame() {
-            break;
-        }
+    while session.frame() {
         let mut status = query(session, "status", json!({}))?;
         rendering = status["rendering"].take();
         if number(&rendering["reflection_probes_stats"]["ready"]) > 0.0 {
@@ -215,15 +212,9 @@ fn clouds(session: &mut dyn SmokeSession) -> Checked<()> {
     )?;
     let clear = capture(session)?;
     environment(session, json!({ "clouds": layer() }))?;
-    let (marched, clouded) = renders_until(session, COMPILE_FRAMES, |rendering| {
+    let clouded = rendered_when(session, render, |rendering| {
         rendering["cloud_stats"]["rows"] != 0
     })?;
-    let wanted = json!({"rows": above(0)});
-    smoke_eq!(
-        seen(marched, clouded["cloud_stats"].clone(), &wanted),
-        wanted,
-        "the_cloud_noise_arrives"
-    );
     smoke_eq!(
         &clouded["cloud_stats"]["rows"],
         &json!(256),
@@ -331,22 +322,15 @@ fn sky(session: &mut dyn SmokeSession) -> Checked<Value> {
     )?;
     environment(session, json!({"sky": {"enabled": false}}))?;
     let bare = capture(session)?;
-    let mut lit = environment(
+    let lit = environment(
         session,
         json!({"sky": {"enabled": true}, "time_of_day": {"enabled": true, "hours": 12.0}}),
     )?;
-    let mut first = lit["rendering"].take();
-    for _ in 0..COMPILE_FRAMES {
-        if first["sky_stats"]["tables"] == 3 {
-            break;
-        }
-        first = render(session)?;
+    if lit["rendering"]["sky_stats"]["tables"] != 3 {
+        rendered_when(session, render, |rendering| {
+            rendering["sky_stats"]["tables"] == 3
+        })?;
     }
-    smoke_eq!(
-        &first["sky_stats"]["tables"],
-        &json!(3),
-        "the_air_tables_and_the_sky_view_build"
-    );
     let noon = capture(session)?;
     let wanted = not(&bare);
     smoke_eq!(

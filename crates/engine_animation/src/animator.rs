@@ -294,7 +294,7 @@ fn hold(
         }
     }
     if !moved.is_empty() {
-        spawner.set_parents_of::<Attachment>(moved);
+        spawner.set_parents(moved);
     }
 }
 
@@ -362,7 +362,7 @@ pub(crate) fn release(
         .map(|(item, _)| (item, back))
         .collect();
     if !dropped.is_empty() {
-        spawner.set_parents_of::<Attachment>(dropped);
+        spawner.set_parents(dropped);
     }
     for node in skeleton.joints.into_iter().chain(skeleton.parts) {
         spawner.despawn(node);

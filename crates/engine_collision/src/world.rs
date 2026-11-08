@@ -7,14 +7,14 @@ use engine_core::{
     Cursor, Error, Events, Feed, FixedTime, FrameTime, GlobalTransforms, Section, Since, Transform,
 };
 use engine_math::collections::HashMap;
-use engine_places::queries::{SceneQueries, SceneQuery};
+use engine_places::queries::{CastFilter, CastHit, CastShape, SceneQueries, SceneQuery};
 use engine_places_simulation::physics::{
-    Collide, Collider, ColliderShape, ColliderSolid, Collision, CollisionRay, QueryFilter, RayHit,
-    SLIDE_STEPS, SensorEvent, SensorEventKind, SensorFilter, SensorPair, ShapeCastOptions,
-    ShapeHit, Slid,
+    Collide, Collider, ColliderShape, ColliderSolid, Collision, CollisionLayers, CollisionRay,
+    QueryFilter, RayHit, SLIDE_STEPS, SensorEvent, SensorEventKind, SensorFilter, SensorPair,
+    ShapeCastOptions, ShapeHit, Slid,
 };
 use engine_places_simulation::solids::{Bounds, Bvh, SolidField, SolidSource};
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Mat4, Quat, Vec2, Vec3};
 
 use crate::{
     bvh::profiled,
@@ -615,11 +615,27 @@ impl Collide for CollisionWorld {
 }
 
 impl SceneQuery for Solids {
-    fn sweep(&self, radius: f32, from: Vec3, along: Vec3, ignore: Entity) -> Option<f32> {
+    fn cast(
+        &self,
+        shape: CastShape,
+        from: Vec3,
+        along: Vec3,
+        filter: CastFilter,
+    ) -> Option<CastHit> {
+        let (shape, rotation) = match shape {
+            CastShape::Sphere { radius } => (ColliderShape::Sphere { radius }, Quat::IDENTITY),
+            CastShape::Box {
+                half_extents,
+                rotation,
+            } => (ColliderShape::Cuboid { half_extents }, rotation),
+        };
         let filter = QueryFilter {
-            exclude: Some(ignore),
+            layers: CollisionLayers {
+                filter: filter.layers,
+                ..CollisionLayers::default()
+            },
             sensors: SensorFilter::Exclude,
-            ..QueryFilter::default()
+            exclude: filter.ignore,
         };
         let options = ShapeCastOptions {
             stop_at_penetration: false,
@@ -628,13 +644,18 @@ impl SceneQuery for Solids {
         cast(
             (&self.bvh, &self.entries, &self.sources),
             (self.limit, self.ready),
-            (ColliderShape::Sphere { radius }, Mat4::from_translation(from), along),
+            (shape, Mat4::from_rotation_translation(rotation, from), along),
             filter,
             options,
         )
         .ok()
         .flatten()
-        .map(|hit| hit.fraction)
+        .map(|hit| CastHit {
+            entity: hit.entity,
+            distance: hit.fraction * along.length(),
+            point: hit.point,
+            normal: hit.normal,
+        })
     }
 }
 
@@ -806,24 +827,34 @@ pub(crate) fn sync(
     queries.0 = Arc::new(world.sweep());
 }
 
-pub(crate) fn refresh(
-    (sources, colliders, edited): (Query<Sources>, Query<ColliderData>, Edited),
-    globals: Res<GlobalTransforms>,
-    config: Res<CollisionConfig>,
-    (frame, tick): (Res<FrameTime>, Res<FixedTime>),
-    mut collision: ResMut<Collision>,
-    (mut stats, mut queries): (ResMut<CollisionStats>, ResMut<SceneQueries>),
-) {
-    let world = installed(&mut collision);
-    world.sync_ground(&sources);
-    world.refresh(
-        *config,
-        (frame.frame, tick.tick),
-        (&colliders, &edited),
-        &globals,
-    );
-    stats.set_if_neq(world.stats());
-    queries.0 = Arc::new(world.sweep());
+#[derive(SystemParam)]
+pub(crate) struct Fresh<'w, 's> {
+    sources: Query<'w, 's, Sources>,
+    colliders: Query<'w, 's, ColliderData>,
+    edited: Edited<'w, 's>,
+    globals: Res<'w, GlobalTransforms>,
+    config: Res<'w, CollisionConfig>,
+    frame: Res<'w, FrameTime>,
+    tick: Res<'w, FixedTime>,
+    collision: ResMut<'w, Collision>,
+    stats: ResMut<'w, CollisionStats>,
+    queries: ResMut<'w, SceneQueries>,
+}
+
+impl Fresh<'_, '_> {
+    pub(crate) fn world(&mut self) -> &CollisionWorld {
+        let world = installed(&mut self.collision);
+        world.sync_ground(&self.sources);
+        world.refresh(
+            *self.config,
+            (self.frame.frame, self.tick.tick),
+            (&self.colliders, &self.edited),
+            &self.globals,
+        );
+        self.stats.set_if_neq(world.stats());
+        self.queries.0 = Arc::new(world.sweep());
+        world
+    }
 }
 
 pub(crate) fn detect(mut collision: ResMut<Collision>, time: Res<FixedTime>) {

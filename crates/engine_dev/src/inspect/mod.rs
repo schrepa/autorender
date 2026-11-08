@@ -406,6 +406,7 @@ impl DevTools {
                     if wrong_world(engine) {
                         return Err(refused());
                     }
+                    engine.refresh_transforms();
                     return crate::bricks::run(engine.app.world_mut(), name, args);
                 }
                 if !Query::NAMES.contains(&name) {
@@ -488,17 +489,6 @@ impl DevTools {
             offset: request.offset,
             limit: request.limit,
         };
-        let settled = request.component.as_deref().filter(|key| {
-            engine
-                .app
-                .world()
-                .get_resource::<Registry>()
-                .is_some_and(|registry| registry.stats_section(key).is_some())
-        });
-        if let Some(key) = settled {
-            self.inspect(engine.app.world(), context, selector)?;
-            engine_core::settle_stats(engine.app.world_mut(), key);
-        }
         engine.refresh_transforms();
         let mut inspected = self.inspect(engine.app.world(), context, selector)?;
         drawn_levels(engine.app.world_mut(), &mut inspected);

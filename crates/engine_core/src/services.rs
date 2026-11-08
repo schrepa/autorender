@@ -110,7 +110,6 @@ pub struct ComponentKind {
     placed: Option<PlacedHook>,
     files: Option<FilesHook>,
     schema: Option<SchemaHook>,
-    example: Option<fn() -> Value>,
     prepare: Option<PrepareHook>,
     view: Option<ViewHook>,
     view_schema: Option<fn() -> Value>,
@@ -151,7 +150,6 @@ impl ComponentKind {
                 placed: None,
                 files: None,
                 schema: None,
-                example: None,
                 prepare: None,
                 view: None,
                 view_schema: None,
@@ -178,7 +176,6 @@ impl ComponentKind {
                 placed: None,
                 files: None,
                 schema: None,
-                example: None,
                 prepare: None,
                 view: None,
                 view_schema: None,
@@ -307,11 +304,6 @@ impl ComponentKind {
     }
 
     #[doc(hidden)]
-    pub fn example_value(&self) -> Option<Value> {
-        self.example.map(|example| example())
-    }
-
-    #[doc(hidden)]
     pub fn view_schema(&self) -> Option<Value> {
         self.view_schema.map(|schema| schema())
     }
@@ -360,11 +352,6 @@ impl<C: Clone + Serialize + DeserializeOwned + Send + Sync + 'static> ComponentK
 
     pub fn schema_in(mut self, schema: fn(&SceneCx<'_>) -> Value) -> Self {
         self.kind.schema = Some(Arc::new(schema));
-        self
-    }
-
-    pub fn example(mut self, example: fn() -> Value) -> Self {
-        self.kind.example = Some(example);
         self
     }
 

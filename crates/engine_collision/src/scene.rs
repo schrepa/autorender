@@ -5,7 +5,7 @@ use engine_places_simulation::physics::{
 };
 use glam::Mat4;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::types::{validate_collider_transform, validate_shape};
 
@@ -87,10 +87,6 @@ impl SceneCollider {
 
 pub(crate) fn schema() -> Value {
     serde_json::to_value(schemars::schema_for!(SceneCollider)).unwrap_or(Value::Null)
-}
-
-pub(crate) fn example() -> Value {
-    json!({ "shape": { "kind": "cuboid", "half_extents": [0.5, 0.5, 0.5] } })
 }
 
 pub(crate) fn checked(collider: &Collider, path: &str) -> Result<(), Error> {

@@ -754,14 +754,12 @@ pub(crate) fn terrain_kind() -> ComponentKindOf<TerrainScene> {
         .prepare(prepare_terrain)
         .files_in(terrain_files)
         .schema_in(terrain_schema)
-        .example(terrain_example)
 }
 
 pub(crate) fn prefetch_kind() -> ComponentKindOf<TerrainPrefetch> {
     ComponentKind::of::<TerrainPrefetch>("prefetch")
         .check(check_prefetch)
         .schema(prefetch_schema)
-        .example(object_example)
 }
 
 
@@ -837,15 +835,6 @@ fn terrain_schema(cx: &SceneCx<'_>) -> Value {
     schema
 }
 
-fn terrain_example() -> Value {
-    json!({
-        "origin": [-128.0, 0.0, -128.0],
-        "tiles": [2, 2],
-        "spacing": 1.0,
-        "layers": [{ "type": "noise", "seed": 3, "height": 8.0, "wavelength": 120.0 }]
-    })
-}
-
 const PREFETCH: &str = "prefetch";
 
 fn check_prefetch(prefetch: &TerrainPrefetch, path: &str) -> Result<(), Error> {
@@ -861,8 +850,4 @@ fn check_prefetch(prefetch: &TerrainPrefetch, path: &str) -> Result<(), Error> {
 
 fn prefetch_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(TerrainPrefetch)).unwrap_or(Value::Null)
-}
-
-fn object_example() -> Value {
-    json!({})
 }

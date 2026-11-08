@@ -19,9 +19,8 @@ pub use library::{
 };
 pub use lod::{lod_input, takes_levels};
 pub use material::{
-    AlphaMode, BASE_COLOR_MAP, Cull, DepthBias, EMISSIVE_MAP, Filter, LightingModel,
-    METALLIC_ROUGHNESS_MAP, Material, MaterialBinding, NORMAL_MAP, OCCLUSION_MAP, RenderState,
-    STANDARD_MAPS, Sampler, Surface, SurfaceSlot, TextureRef, UvTransform, Wrap,
+    AlphaMode, Cull, DepthBias, Filter, LightingModel, Material, MaterialBinding, NORMAL_MAP,
+    RenderState, STANDARD_MAPS, Sampler, Surface, SurfaceSlot, TextureRef, UvTransform, Wrap,
 };
 pub use mesh::{Aabb, Mesh};
 pub use record::{

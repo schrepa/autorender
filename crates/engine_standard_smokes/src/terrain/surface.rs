@@ -1,6 +1,6 @@
-use engine_core::smoke::{
-    COMPILE_FRAMES, Checked, above, camera, compiling, environment, inspect, not, number, present,
-    refuse, render, renders_until, settled_by, shot, with,
+use engine_smoke::{
+    Checked, above, camera, compiling, environment, inspect, not, number, present, refuse, render,
+    rendered_when, renders_until, settled_by, shot, with,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
@@ -179,23 +179,18 @@ fn clipmap(session: &mut dyn SmokeSession) -> Checked<()> {
 
 fn shadowed(session: &mut dyn SmokeSession, shadows: Value) -> Checked<(Value, Value)> {
     environment(session, json!({ "shadows": shadows }))?;
-    let mut rendering = Value::Null;
-    let mut ready = false;
-    for frame in 0..COMPILE_FRAMES {
-        rendering = present(session, 1.0)?;
-        let drawn = number(&rendering["shadow_stats"]["tiles_marked"]) > 0.0
-            && rendering["shadow_stats"]["tile_cut"]["cut"] == 0;
-        ready = frame > 8 && drawn && !compiling(&rendering);
-        if ready {
-            break;
-        }
-    }
-    let wanted = json!({"tiles_marked": above(0), "tile_cut": {"cut": 0}});
-    smoke_eq!(
-        seen(ready, rendering["shadow_stats"].clone(), &wanted),
-        wanted,
-        "shadow_tiles_and_pipelines_finish"
-    );
+    let mut frame = 0;
+    let rendering = rendered_when(
+        session,
+        |session| present(session, 1.0),
+        |rendering| {
+            frame += 1;
+            frame > 9
+                && number(&rendering["shadow_stats"]["tiles_marked"]) > 0.0
+                && rendering["shadow_stats"]["tile_cut"]["cut"] == 0
+                && !compiling(rendering)
+        },
+    )?;
     let digest = shot(session, json!({"alpha": 1.0}))?;
     Ok((rendering, digest))
 }

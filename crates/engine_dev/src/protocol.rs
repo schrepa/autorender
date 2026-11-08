@@ -8,8 +8,27 @@ use std::collections::BTreeMap;
 #[cfg(not(target_arch = "wasm32"))]
 use engine_settings::stated;
 
-pub use engine_core::bounds;
 pub(crate) use engine_core::bounds::default_limit;
+
+pub mod bounds {
+    use engine_settings::Rule;
+
+    pub use engine_core::bounds::{
+        COORDINATE, MAX_PAGE_SIZE, MAX_SCAN_ENTITIES, PAGE, default_limit,
+    };
+
+    pub const ALPHA: Rule = Rule::Range(0.0, 1.0);
+    pub const WARMUP: Rule = Rule::Range(0.0, 120.0);
+    pub const SAMPLES: Rule = Rule::Range(1.0, 240.0);
+    pub const TICKS: Rule = Rule::Range(1.0, engine_core::MAX_DEV_TICKS as f64);
+    pub const FRAMES: Rule = Rule::Range(1.0, 240.0);
+    pub const FRAME_INTERVAL: Rule = Rule::Range(1.0, 1000.0);
+    pub const AXIS: Rule = Rule::Range(-1.0, 1.0);
+    pub const TURN: Rule = Rule::Range(-1000.0, 1000.0);
+    pub const MAX_AXES: usize = engine_core::AxisId::COUNT as usize;
+    pub const MAX_VALUES: usize = 1024;
+    pub const PIXEL: Rule = Rule::Range(0.0, 16_384.0);
+}
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_REQUEST_BYTES: usize = 16 * 1024;

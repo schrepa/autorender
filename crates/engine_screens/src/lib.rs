@@ -32,8 +32,7 @@ impl Brick for ScreensBrick {
         bricks
             .join::<SceneComponents>(
                 ComponentKind::of::<Screen>("screen")
-                    .schema(screen_schema)
-                    .example(screen_example),
+                    .schema(screen_schema),
                 None,
             )
             .join::<Pause>(SCREEN, None)
@@ -49,10 +48,6 @@ impl Brick for ScreensBrick {
 
 fn screen_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(Screen)).unwrap_or(Value::Null)
-}
-
-fn screen_example() -> Value {
-    json!({"name": "menu", "pauses": true})
 }
 
 fn follow_top(

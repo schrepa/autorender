@@ -3,14 +3,97 @@ use std::any::{Any, TypeId};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-pub use engine_place::ask;
-use engine_place::{smoke_check, smoke_eq};
+#[derive(Clone, Debug, Serialize)]
+pub struct SmokeFailure {
+    pub smoke: &'static str,
+    pub check: &'static str,
+    pub got: Value,
+    pub expected: Value,
+    pub at: &'static str,
+}
 
-use crate::{List, SmokeFailure, SmokeSession};
+impl SmokeFailure {
+    #[doc(hidden)]
+    pub fn new(
+        check: &'static str,
+        got: &impl Serialize,
+        expected: &impl Serialize,
+        at: &'static str,
+    ) -> Self {
+        Self {
+            smoke: "",
+            check,
+            got: serde_json::to_value(got).unwrap_or(Value::Null),
+            expected: serde_json::to_value(expected).unwrap_or(Value::Null),
+            at,
+        }
+    }
+}
+
+pub trait SmokeSession {
+    fn request(&mut self, verb: &str, body: Value) -> Result<Value, Value>;
+    fn step(&mut self, ticks: u32);
+    fn frame(&mut self) -> bool;
+    fn source(&mut self, document: &str);
+    fn file(&mut self, name: &str, bytes: &[u8]);
+    fn idle(&mut self, milliseconds: f64);
+    fn joined(&mut self, list: TypeId, each: &mut dyn FnMut(&dyn Any));
+    fn members(&mut self, _place: &str) -> Vec<&'static str> {
+        Vec::new()
+    }
+    fn slot(&mut self, _slot: TypeId, _each: &mut dyn FnMut(&dyn Any)) {}
+    fn without(&mut self, _bricks: &[&'static str]) {}
+    fn artifact(&mut self, _path: &str) -> Option<Vec<u8>> {
+        None
+    }
+    fn decode_image(&mut self, _path: &str, _bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), Value> {
+        Err(Value::Null)
+    }
+}
+
+#[macro_export]
+macro_rules! smoke_check {
+    ($condition:expr, $check:expr, $got:expr, $expected:expr $(,)?) => {
+        if !$condition {
+            return ::core::result::Result::Err($crate::SmokeFailure::new(
+                $check,
+                &$got,
+                &$expected,
+                ::core::concat!(::core::file!(), ":", ::core::line!()),
+            ));
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! smoke_eq {
+    ($got:expr, $expected:expr, $check:expr $(,)?) => {{
+        let (got, expected) = (&$got, &$expected);
+        if *got != *expected {
+            return ::core::result::Result::Err($crate::SmokeFailure::new(
+                $check,
+                got,
+                expected,
+                ::core::concat!(::core::file!(), ":", ::core::line!()),
+            ));
+        }
+    }};
+}
 
 pub type Checked<T> = Result<T, SmokeFailure>;
 
-pub const COMPILE_FRAMES: u32 = 20_000;
+pub fn ask(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Checked<Value> {
+    let reply = session.request(verb, body);
+    smoke_check!(
+        reply.is_ok(),
+        "request_answered",
+        &reply.as_ref().err().map(|refused| &refused["error"]),
+        &verb
+    );
+    Ok(reply
+        .map(|mut answered| answered["result"].take())
+        .unwrap_or_default())
+}
 
 pub fn control(session: &mut dyn SmokeSession, name: &str, args: Value) -> Checked<Value> {
     ask(session, "control", json!({"name": name, "args": args}))
@@ -86,21 +169,21 @@ pub fn renders_until(
     Ok((false, rendering))
 }
 
-pub fn compiled(session: &mut dyn SmokeSession) -> Checked<Value> {
-    let mut rendering = render(session)?;
-    for _ in 0..COMPILE_FRAMES {
-        if !compiling(&rendering) {
+pub fn rendered_when(
+    session: &mut dyn SmokeSession,
+    mut frame: impl FnMut(&mut dyn SmokeSession) -> Checked<Value>,
+    mut done: impl FnMut(&Value) -> bool,
+) -> Checked<Value> {
+    loop {
+        let rendering = frame(&mut *session)?;
+        if done(&rendering) {
             return Ok(rendering);
         }
-        rendering = render(session)?;
     }
-    smoke_check!(
-        !compiling(&rendering),
-        "pipelines_compile",
-        &rendering["readiness"]["compiling"],
-        &0
-    );
-    Ok(rendering)
+}
+
+pub fn compiled(session: &mut dyn SmokeSession) -> Checked<Value> {
+    rendered_when(session, render, |rendering| !compiling(rendering))
 }
 
 pub fn settled(session: &mut dyn SmokeSession) -> Checked<Value> {
@@ -181,12 +264,4 @@ pub fn near(value: impl Serialize, within: f64) -> Value {
 
 pub fn not(value: impl Serialize) -> Value {
     json!({ "not": value })
-}
-
-pub fn members<L: List>(session: &mut dyn SmokeSession, mut each: impl FnMut(&L::Member)) {
-    session.joined(TypeId::of::<L>(), &mut |member: &dyn Any| {
-        if let Some(member) = member.downcast_ref::<L::Member>() {
-            each(member);
-        }
-    });
 }

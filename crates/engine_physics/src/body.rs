@@ -5,7 +5,7 @@ use engine_places_simulation::physics::{BodyChange, BodyPush, RigidBody};
 use engine_places_simulation::water::WaterKind;
 use glam::Vec3;
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 const DENSITY: Rule = Rule::range(1.0, 100_000.0);
 const FRICTION: Rule = Rule::range(0.0, 10.0);
@@ -74,10 +74,6 @@ pub(crate) fn body_schema() -> Value {
     serde_json::to_value(schema).unwrap_or(Value::Null)
 }
 
-pub(crate) fn body_example() -> Value {
-    json!({})
-}
-
 pub(crate) fn refused(body: &RigidBody, push: Option<&BodyPush>) -> Option<BodyProblem> {
     ruled(body)
         .and_then(|()| push.map_or(Ok(()), push_ruled))
@@ -116,8 +112,4 @@ pub(crate) fn push_schema() -> Value {
         engine_core::state(&mut schema, field, rule);
     }
     serde_json::to_value(schema).unwrap_or(Value::Null)
-}
-
-pub(crate) fn push_example() -> Value {
-    json!({"force": [0.0, 500.0, 0.0]})
 }

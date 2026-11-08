@@ -30,7 +30,7 @@ pub use entries::{
     parse_section, set_section,
 };
 pub use explain::{ExplainAsk, ExplainEntry, ExplainRecord, explain};
-pub use hooks::{BrickHooks, NamedField, Removal, Settle, run_settles};
+pub use hooks::{BrickHooks, NamedField, Removal};
 pub use jobs::{
     JobBatch, JobKindRef, JobList, JobListed, JobMember, JobOrder, JobOrders, JobQueue,
     RecordParity, Shares,

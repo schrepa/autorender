@@ -27,6 +27,8 @@ const CLOSED: &[(&str, &[&str])] = &[
             "engine_lodbuild",
             "engine_sources",
             "engine_cards",
+            "engine_command_line",
+            "engine_smoke",
         ],
     ),
     (

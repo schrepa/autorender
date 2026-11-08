@@ -31,17 +31,6 @@ impl Removal {
     }
 }
 
-pub struct Settle {
-    pub(crate) operation: &'static str,
-    pub(crate) system: BoxedSystem,
-}
-
-impl Settle {
-    pub fn of(operation: &'static str, system: BoxedSystem) -> Self {
-        Self { operation, system }
-    }
-}
-
 type FieldNames = Box<dyn Fn(&World) -> Vec<&'static str> + Send + Sync>;
 
 pub struct NamedField {
@@ -115,7 +104,6 @@ struct Hooked<S> {
 pub struct BrickHooks {
     hooked: Vec<TypeId>,
     removals: Vec<(TypeId, Hooked<BoxedSystem<In<Entity>>>)>,
-    settles: Vec<(&'static str, Hooked<BoxedSystem>)>,
 }
 
 impl BrickHooks {
@@ -123,37 +111,16 @@ impl BrickHooks {
         for (_, hooked) in &mut self.removals {
             hooked.system.check_change_tick(check);
         }
-        for (_, hooked) in &mut self.settles {
-            hooked.system.check_change_tick(check);
-        }
     }
 
     fn run(&mut self, world: &mut World, run: HookRun) {
-        match run {
-            HookRun::Removal(component, entity) => {
-                for (of, hooked) in &mut self.removals {
-                    if *of == component && on(world, hooked.gate) {
-                        let ran = hooked.system.run(entity, world);
-                        failed(world, hooked, "on_remove", ran);
-                    }
-                }
-            }
-            HookRun::Settle(operation) => {
-                for (of, hooked) in &mut self.settles {
-                    if *of == operation && on(world, hooked.gate) {
-                        let ran = hooked.system.run((), world);
-                        failed(world, hooked, operation, ran);
-                    }
-                }
+        let HookRun::Removal(component, entity) = run;
+        for (of, hooked) in &mut self.removals {
+            if *of == component && on(world, hooked.gate) {
+                let ran = hooked.system.run(entity, world);
+                failed(world, hooked, "on_remove", ran);
             }
         }
-    }
-
-    fn settle_named(&self, operation: &str) -> Option<&'static str> {
-        self.settles
-            .iter()
-            .find(|(of, _)| *of == operation)
-            .map(|(of, _)| *of)
     }
 }
 
@@ -167,7 +134,6 @@ enum HookPhase {
 #[derive(Clone, Copy, Debug)]
 enum HookRun {
     Removal(TypeId, Entity),
-    Settle(&'static str),
 }
 
 #[derive(Resource, Default)]
@@ -210,17 +176,6 @@ pub(crate) fn add_removal(
     Ok(())
 }
 
-pub(crate) fn add_settle(world: &mut World, brick: &'static str, gate: GateId, settle: Settle) {
-    world.get_resource_or_init::<BrickHooks>().settles.push((
-        settle.operation,
-        Hooked {
-            brick,
-            gate,
-            system: settle.system,
-        },
-    ));
-}
-
 fn hook_removal<C: Component>(world: &mut World) -> bool {
     let id = world.register_component::<C>();
     if world
@@ -241,15 +196,6 @@ fn removed<C: Component>(mut world: DeferredWorld, context: HookContext) {
     world.commands().queue(move |world: &mut World| {
         hook_run(world, HookRun::Removal(TypeId::of::<C>(), entity));
     });
-}
-
-pub fn run_settles(world: &mut World, operation: &str) {
-    let named = world
-        .get_resource::<BrickHooks>()
-        .and_then(|hooks| hooks.settle_named(operation));
-    if let Some(operation) = named {
-        hook_run(world, HookRun::Settle(operation));
-    }
 }
 
 fn hook_run(world: &mut World, run: HookRun) {

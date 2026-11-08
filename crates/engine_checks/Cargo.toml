@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 bevy_ecs.workspace = true
+engine_command_line.workspace = true
 engine = { workspace = true, features = ["schema"] }
 engine_core.workspace = true
 engine_dev.workspace = true

@@ -18,7 +18,7 @@ use engine_render::{
     RenderPipeline, SamplerDesc, Scene, SceneDraw, Shape, wgpu,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 pub use flat::{DARK, LIGHT};
 
@@ -48,10 +48,6 @@ fn sprite_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(Sprite)).unwrap_or(Value::Null)
 }
 
-fn sprite_example() -> Value {
-    json!({ "sheet": "sheet", "rect": [0.0, 0.0, 1.0, 1.0], "tint": [1.0, 1.0, 1.0, 1.0] })
-}
-
 pub struct SpritesBrick;
 
 impl Brick for SpritesBrick {
@@ -66,8 +62,7 @@ impl Brick for SpritesBrick {
         bricks
             .join::<SceneComponents>(
                 ComponentKind::of::<Sprite>("sprite")
-                    .schema(sprite_schema)
-                    .example(sprite_example),
+                    .schema(sprite_schema),
                 None,
             )
             .systems(Schedule::ViewSync, (keep_rows, publish_sheets))

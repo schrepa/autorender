@@ -1,7 +1,7 @@
 use engine_core::{Error, ErrorCode, fields};
 use engine_places_rendering::probes::ReflectionProbe;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 fields! {
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -55,8 +55,4 @@ pub(crate) fn check(probe: &ReflectionProbe, path: &str) -> Result<(), Error> {
 pub(crate) fn schema() -> Value {
     serde_json::to_value(schemars::schema_for!(SceneReflectionProbe))
         .unwrap_or(Value::Null)
-}
-
-pub(crate) fn example() -> Value {
-    json!({ "extent": [1.0, 1.0, 1.0] })
 }

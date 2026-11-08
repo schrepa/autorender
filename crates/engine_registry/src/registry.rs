@@ -15,11 +15,11 @@ use crate::access::{AccessRule, MoverRule};
 use crate::attribution::CORE_ROW;
 use crate::entries::{Kept, OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
 use crate::explain::ExplainEntry;
-use crate::hooks::{Named, add_removal, add_settle};
+use crate::hooks::{Named, add_removal};
 use crate::jobs::JobQueue;
 use crate::order::{self, PlaceRules};
 use crate::owners::{Shared, Used, ValueKind, Values, note, ownership};
-use crate::record::BrickRecord;
+use crate::record::{BrickRecord, crate_segment};
 use crate::state::{
     BrickStates, Despawn, GateDriver, GateFn, GateId, Reset, Scope, Turning, state_on,
 };
@@ -239,10 +239,6 @@ impl Registry {
         self.core_operations.push(entry);
     }
 
-    pub fn profile_names(&self) -> Vec<&'static str> {
-        std::iter::once(CORE_ROW).chain(self.names()).collect()
-    }
-
     pub fn left_out(&self) -> &[&'static str] {
         &self.left_out
     }
@@ -254,6 +250,13 @@ impl Registry {
                 .bricks
                 .iter()
                 .any(|record| record.owner() == owner && record.owns(type_id))
+    }
+
+    pub fn private_type(&self, package: &str, type_id: TypeId, type_name: &str) -> bool {
+        self.brick(package)
+            .and_then(BrickRecord::owner)
+            .is_some_and(|owner| crate_segment(type_name) == owner)
+            && !self.rule.catalogued(type_id)
     }
 
     pub fn ownership(&self) -> &[Shared] {
@@ -282,10 +285,6 @@ impl Registry {
 
     pub fn take_problems(&mut self) -> Vec<Error> {
         std::mem::take(&mut self.problems)
-    }
-
-    pub fn access_rule(&self) -> &AccessRule {
-        &self.rule
     }
 
     pub fn bricks(&self) -> &[BrickRecord] {
@@ -318,17 +317,8 @@ impl Registry {
         self.record(self.id(package)?)
     }
 
-    pub fn brick_mut(&mut self, package: &str) -> Option<&mut BrickRecord> {
-        let id = self.id(package)?;
-        self.bricks.get_mut(id.index())
-    }
-
     pub fn record(&self, brick: BrickId) -> Option<&BrickRecord> {
         self.bricks.get(brick.index())
-    }
-
-    pub fn of_type(&self, brick: TypeId) -> Option<(BrickId, &BrickRecord)> {
-        self.iter().find(|(_, record)| record.brick() == brick)
     }
 
     pub fn render_entries<T: Any>(&self) -> impl Iterator<Item = (BrickId, &T)> + '_ {
@@ -336,18 +326,10 @@ impl Registry {
             .flat_map(|(id, record)| record.render_entries::<T>().map(move |entry| (id, entry)))
     }
 
-    pub fn system_set(&self, brick: BrickId) -> Option<BrickSet> {
-        self.record(brick).map(|record| BrickSet(record.package))
-    }
-
     pub fn gate(&self, brick: BrickId, scope: Scope) -> Option<GateId> {
         let base = *self.bases.get(brick.index())?;
         let record = self.record(brick)?;
         (scope.index() < record.scopes()).then_some(GateId(base + scope.0))
-    }
-
-    pub fn brick_gate(&self, brick: BrickId) -> Option<GateId> {
-        self.gate(brick, Scope::BRICK)
     }
 
     pub fn catalog(&self) -> &[PlaceDecl] {
@@ -801,14 +783,6 @@ impl Registry {
                 if let Err(error) = add_removal(world, package, root, removal) {
                     self.problems.push(error);
                 }
-            }
-            for mut settle in record.settles.drain(..) {
-                let access = settle.system.initialize(world);
-                let name = settle.system.name();
-                self.rule
-                    .check_into(brick, &name, &access, world, &mut self.problems);
-                note(uses, brick, &access);
-                add_settle(world, package, root, settle);
             }
         }
     }

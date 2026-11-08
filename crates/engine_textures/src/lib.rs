@@ -130,16 +130,9 @@ pub fn plain(source: &Source) -> Result<Texture, Error> {
             .range(expected as f64, expected as f64)
             .got(source.pixels.len()));
     }
-    let masked = source
-        .pixels
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .any(|texel| texel[3] != 255);
     Ok(
         Texture::from_levels(TextureFormat::Rgba8, source.width, source.height, levels(source))?
             .with_summary(TextureSummary::of_rgba8(&source.pixels))
-            .with_emission_mask(masked)
             .with_color_space(source.usage.space()),
     )
 }
@@ -176,7 +169,6 @@ pub fn decompress(texture: &Texture) -> Result<Texture, Error> {
         texture.height(),
         levels,
     )?
-    .with_emission_mask(texture.has_emission_mask())
     .with_color_space(texture.color_space());
     Ok(match texture.summary() {
         Some(summary) => decoded.with_summary(summary),
@@ -185,7 +177,7 @@ pub fn decompress(texture: &Texture) -> Result<Texture, Error> {
 }
 
 const MAGIC: &[u8; 4] = b"ETEX";
-const HEADER: usize = 4 + 4 + 8 + 28;
+const HEADER: usize = 4 + 3 + 8 + 28;
 
 pub fn record(texture: &Texture) -> Vec<u8> {
     let summary = texture.summary().unwrap_or(TextureSummary {
@@ -200,7 +192,6 @@ pub fn record(texture: &Texture) -> Vec<u8> {
         TextureFormat::Etc2Rgba8 => 2,
         TextureFormat::Astc4x4 => 3,
     });
-    out.push(u8::from(texture.has_emission_mask()));
     out.push(texture.levels().len() as u8);
     out.push(texture.color_space().tag());
     out.extend_from_slice(&texture.width().to_le_bytes());
@@ -228,15 +219,14 @@ pub fn decode(bytes: &[u8]) -> Result<Texture, String> {
         3 => TextureFormat::Astc4x4,
         other => return Err(format!("a texture record names format {other}")),
     };
-    let masked = header[5] != 0;
-    let count = usize::from(header[6]);
-    let space = ColorSpace::of_tag(header[7])
-        .ok_or_else(|| format!("a texture record names colour space {}", header[7]))?;
+    let count = usize::from(header[5]);
+    let space = ColorSpace::of_tag(header[6])
+        .ok_or_else(|| format!("a texture record names colour space {}", header[6]))?;
     let word = |at: usize| {
         u32::from_le_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
     };
-    let (width, height) = (word(8), word(12));
-    let value = |index: usize| f32::from_bits(word(16 + 4 * index));
+    let (width, height) = (word(7), word(11));
+    let value = |index: usize| f32::from_bits(word(15 + 4 * index));
     let summary = TextureSummary {
         color: [value(0), value(1), value(2)],
         mean: [value(3), value(4), value(5), value(6)],
@@ -258,7 +248,6 @@ pub fn decode(bytes: &[u8]) -> Result<Texture, String> {
         .map(|texture| {
             texture
                 .with_summary(summary)
-                .with_emission_mask(masked)
                 .with_color_space(space)
         })
         .map_err(|error| error.to_string())

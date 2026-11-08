@@ -2,7 +2,7 @@ use std::any::{Any, TypeId};
 use std::marker::PhantomData;
 
 use bevy_ecs::bundle::Bundle;
-use bevy_ecs::component::{Component, Immutable, Mutable};
+use bevy_ecs::component::{Component, ComponentId, Immutable, Mutable};
 use bevy_ecs::entity::Entity;
 use bevy_ecs::query::{QueryFilter, ReadOnlyQueryData};
 use bevy_ecs::resource::{IsResource, Resource};
@@ -15,8 +15,7 @@ use bevy_ecs::world::World;
 use engine_registry::{
     BrickRecord, BrickStates, ExplainAsk, ExplainEntry, ExplainRecord, GateFn, JobList,
     MembersOf, NamedField, OperationEntry, OperationScene, PlainSystems, Registry,
-    RegistryBuilder, Removal, SceneEntity, SectionRule, SettingsEntry, Settle, SpawnedBy,
-    StatsEntry,
+    RegistryBuilder, Removal, SceneEntity, SectionRule, SettingsEntry, SpawnedBy, StatsEntry,
 };
 use serde_json::Value;
 
@@ -127,20 +126,6 @@ impl Bricks<'_> {
         self
     }
 
-    #[track_caller]
-    pub fn settled_stats<S: Section + Resource<Mutability = Mutable>, M: 'static>(
-        &mut self,
-        settle: impl IntoSystem<(), (), M> + Send + Sync + 'static,
-    ) -> &mut Self {
-        self.record
-            .stats(StatsEntry::of::<S>(S::KEY, pending_of::<S>, S::schema));
-        self.record.settle(Settle::of(
-            S::KEY,
-            Box::new(IntoSystem::into_system(settle)),
-        ));
-        self
-    }
-
     pub fn piece<T: Resource<Mutability = Mutable> + Default + GpuStruct>(&mut self) -> &mut Self {
         const {
             assert!(
@@ -173,25 +158,6 @@ impl Bricks<'_> {
     {
         self.record.operation(
             OperationEntry::of::<O::Params>(O::NAME, false, run_operation::<O>)
-                .schemas(O::schema, O::result_schema),
-        );
-        self
-    }
-
-    #[track_caller]
-    pub fn settled<O: Operation, M: 'static>(
-        &mut self,
-        settle: impl IntoSystem<(), (), M> + Send + Sync + 'static,
-    ) -> &mut Self
-    where
-        O::Params: Read,
-    {
-        self.record.settle(Settle::of(
-            O::NAME,
-            Box::new(IntoSystem::into_system(settle)),
-        ));
-        self.record.operation(
-            OperationEntry::of::<O::Params>(O::NAME, false, run_settled::<O>)
                 .schemas(O::schema, O::result_schema),
         );
         self
@@ -247,26 +213,6 @@ impl Bricks<'_> {
                 world
                     .get_resource::<MembersOf<L>>()
                     .map_or_else(Vec::new, |members| members.all().iter().map(name).collect())
-            }));
-        self
-    }
-
-    pub fn named_by<S: Section, L: List>(
-        &mut self,
-        field: &'static str,
-        kept: &'static [&'static str],
-        name: fn(&L::Member) -> &'static str,
-        order: fn(&L::Member) -> u32,
-    ) -> &mut Self {
-        self.record
-            .named(NamedField::of(S::KEY, field, kept, move |world: &World| {
-                world
-                    .get_resource::<MembersOf<L>>()
-                    .map_or_else(Vec::new, |members| {
-                        let mut all: Vec<&L::Member> = members.all().iter().collect();
-                        all.sort_by_key(|member| order(member));
-                        all.into_iter().map(name).collect()
-                    })
             }));
         self
     }
@@ -332,17 +278,6 @@ pub(crate) fn run_operation<O: Operation>(
 ) -> Result<Value, Error> {
     let request: O::Request = engine_settings::parse_value(request)?;
     answer::<O>(world, request)
-}
-
-fn run_settled<O: Operation>(world: &mut World, request: Value) -> Result<Value, Error> {
-    let request: O::Request = engine_settings::parse_value(request)?;
-    settle_stats(world, O::NAME);
-    answer::<O>(world, request)
-}
-
-pub fn settle_stats(world: &mut World, key: &str) {
-    world.run_schedule(crate::schedules::TransformPropagation);
-    engine_registry::run_settles(world, key);
 }
 
 fn run_explain<E: Explain>(world: &mut World, ask: &ExplainAsk<'_>) -> Option<ExplainRecord> {
@@ -677,23 +612,9 @@ impl<B: Brick> Spawner<'_, '_, B> {
         entity
     }
 
-    pub fn spawn_then<R: Resource<Mutability = Mutable>>(
-        &mut self,
-        bundle: impl Bundle,
-        then: impl FnOnce(&mut R, Entity) + Send + 'static,
-    ) {
-        self.commands
-            .queue(move |world: &mut World| spawned_then::<B, R, _>(world, bundle, then));
-    }
-
     pub fn insert(&mut self, entity: Entity, bundle: impl Bundle) {
         self.commands
             .queue(move |world: &mut World| inserted::<B, _>(world, entity, bundle));
-    }
-
-    pub fn mark<C: Component, T: Component + Default>(&mut self, entity: Entity) {
-        self.commands
-            .queue(move |world: &mut World| marked::<B, C, T>(world, entity));
     }
 
     pub fn remove<T: Bundle>(&mut self, entity: Entity) {
@@ -731,38 +652,6 @@ impl<B: Brick> Spawner<'_, '_, B> {
         self.commands
             .queue(move |world: &mut World| parented::<B>(world, &changes));
     }
-
-    pub fn set_parents_of<C: Component>(&mut self, changes: Vec<(Entity, Option<Entity>)>) {
-        self.commands
-            .queue(move |world: &mut World| parented_of::<B, C>(world, &changes));
-    }
-
-    pub fn set_parents_then<R: Resource<Mutability = Mutable>>(
-        &mut self,
-        changes: Vec<(Entity, Option<Entity>)>,
-        then: impl FnOnce(&mut R, Result<(), Error>) + Send + 'static,
-    ) {
-        self.commands.queue(move |world: &mut World| {
-            parented_then::<B, R>(world, &changes, then);
-        });
-    }
-
-    pub fn set_parents_from<R: Resource<Mutability = Mutable>>(
-        &mut self,
-        changes: impl FnOnce(&R) -> Vec<(Entity, Option<Entity>)> + Send + 'static,
-        then: impl FnOnce(&mut R, Result<(), Error>) + Send + 'static,
-    ) {
-        self.commands.queue(move |world: &mut World| {
-            if !holds::<B, R>(world) {
-                return;
-            }
-            let Some(held) = world.get_resource::<R>() else {
-                return;
-            };
-            let changes = changes(held);
-            parented_then::<B, R>(world, &changes, then);
-        });
-    }
 }
 
 fn spawned<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
@@ -776,33 +665,8 @@ fn spawned<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
     }
 }
 
-fn spawned_then<B: Brick, R: Resource<Mutability = Mutable>, T: Bundle>(
-    world: &mut World,
-    bundle: T,
-    then: impl FnOnce(&mut R, Entity),
-) {
-    if carries_resource::<T>(world) {
-        let package = B::SOURCE.package();
-        let error = Error::new(
-            ErrorCode::ForeignEntity,
-            format!("$.bricks.{package}.spawner"),
-        )
-        .got(std::any::type_name::<T>());
-        report(world, error);
-        return;
-    }
-    if !holds::<B, R>(world) {
-        return;
-    }
-    let entity = world.spawn((bundle, SpawnedBy::<B>::new())).id();
-    if let Some(mut held) = world.get_resource_mut::<R>() {
-        then(&mut held, entity);
-    }
-}
-
-fn kind_of<B: Brick, C: Component>(world: &mut World) -> bool {
-    let component = world.register_component::<C>();
-    let kinds: Vec<fn(&mut World) -> bevy_ecs::component::ComponentId> = world
+fn scene_kinds<B: Brick>(world: &mut World) -> Vec<ComponentId> {
+    let kinds: Vec<fn(&mut World) -> ComponentId> = world
         .get_resource::<MembersOf<crate::SceneComponents>>()
         .map(|members| {
             members
@@ -812,38 +676,49 @@ fn kind_of<B: Brick, C: Component>(world: &mut World) -> bool {
                 .collect()
         })
         .unwrap_or_default();
-    kinds
-        .into_iter()
-        .any(|register| register(world) == component)
+    kinds.into_iter().map(|register| register(world)).collect()
 }
 
-fn marked<B: Brick, C: Component, T: Component + Default>(world: &mut World, entity: Entity) {
-    if !kind_of::<B, C>(world) || world.get::<C>(entity).is_none() {
+fn private<B: Brick, T: Bundle>(world: &mut World) -> bool {
+    let ids = world
+        .register_bundle::<T>()
+        .contributed_components()
+        .to_vec();
+    let Some(registry) = world.get_resource::<Registry>() else {
+        return false;
+    };
+    let package = B::SOURCE.package();
+    !ids.is_empty()
+        && ids.iter().all(|&id| {
+            world.components().get_info(id).is_some_and(|info| {
+                info.type_id().is_some_and(|type_id| {
+                    registry.private_type(package, type_id, &info.name().to_string())
+                })
+            })
+        })
+}
+
+fn touches<B: Brick, T: Bundle>(world: &mut World, entity: Entity) -> bool {
+    !carries_resource::<T>(world) && (owned::<B>(world, entity) || private::<B, T>(world))
+}
+
+fn inserted<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
+    if !touches::<B, T>(world, entity) {
         foreign::<B>(world, entity);
         return;
     }
     if let Ok(mut held) = world.get_entity_mut(entity) {
-        held.insert(T::default());
-    }
-}
-
-fn inserted<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
-    if !owned::<B>(world, entity) || carries_resource::<T>(world) {
-        foreign::<B>(world, entity);
-        return;
-    }
-    if let Ok(mut owned) = world.get_entity_mut(entity) {
-        owned.insert(bundle);
+        held.insert(bundle);
     }
 }
 
 fn removed<B: Brick, T: Bundle>(world: &mut World, entity: Entity) {
-    if !owned::<B>(world, entity) || carries_resource::<T>(world) {
+    if !touches::<B, T>(world, entity) {
         foreign::<B>(world, entity);
         return;
     }
-    if let Ok(mut owned) = world.get_entity_mut(entity) {
-        owned.remove::<T>();
+    if let Ok(mut held) = world.get_entity_mut(entity) {
+        held.remove::<T>();
     }
 }
 
@@ -924,67 +799,21 @@ fn install<B: Brick>(world: &mut World, entities: &[Entity], scene: &SubScene) -
 }
 
 fn parented<B: Brick>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
-    let stranger = changes
-        .iter()
-        .find(|&&(child, _)| !owned::<B>(world, child));
+    let kinds = scene_kinds::<B>(world);
+    let stranger = changes.iter().find(|&&(child, _)| {
+        !owned::<B>(world, child)
+            && !world
+                .get_entity(child)
+                .is_ok_and(|held| kinds.iter().any(|&kind| held.contains_id(kind)))
+    });
     if let Some(&(child, _)) = stranger {
         foreign::<B>(world, child);
         return;
     }
-    reparented::<B>(world, changes);
-}
-
-fn parented_of<B: Brick, C: Component>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
-    let kind = kind_of::<B, C>(world);
-    let stranger = changes
-        .iter()
-        .find(|&&(child, _)| !kind || world.get::<C>(child).is_none());
-    if let Some(&(child, _)) = stranger {
-        foreign::<B>(world, child);
-        return;
-    }
-    reparented::<B>(world, changes);
-}
-
-fn reparented<B: Brick>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
     if let Err(error) = crate::set_parents(world, changes) {
         let path = format!("$.bricks.{}.spawner.parent", B::SOURCE.package());
         report(world, error.within(&path));
     }
-}
-
-fn parented_then<B: Brick, R: Resource<Mutability = Mutable>>(
-    world: &mut World,
-    changes: &[(Entity, Option<Entity>)],
-    then: impl FnOnce(&mut R, Result<(), Error>),
-) {
-    let stranger = changes
-        .iter()
-        .find(|&&(child, _)| !owned::<B>(world, child));
-    if let Some(&(child, _)) = stranger {
-        foreign::<B>(world, child);
-        return;
-    }
-    if !holds::<B, R>(world) {
-        return;
-    }
-    let parented = crate::set_parents(world, changes);
-    if let Some(mut held) = world.get_resource_mut::<R>() {
-        then(&mut held, parented);
-    }
-}
-
-fn holds<B: Brick, R: Resource>(world: &mut World) -> bool {
-    let package = B::SOURCE.package();
-    let holds = world
-        .get_resource::<Registry>()
-        .is_some_and(|registry| registry.holds(package, TypeId::of::<R>()));
-    if !holds {
-        let name = std::any::type_name::<R>();
-        let path = format!("$.bricks.{package}.spawner.{name}");
-        report(world, Error::new(ErrorCode::ForeignAccess, path).got(name));
-    }
-    holds
 }
 
 fn owned<B: Brick>(world: &World, entity: Entity) -> bool {

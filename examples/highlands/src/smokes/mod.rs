@@ -4,7 +4,7 @@ mod torrent;
 
 use engine::BrickList;
 use engine::smokes::{Restart, Runs, Smoke, SmokeEntry};
-use engine_core::smoke::{Checked, control, inspect, number};
+use engine_smoke::{Checked, control, inspect, number};
 use engine_core::{SmokeSession, smoke_eq};
 use serde_json::json;
 
@@ -57,7 +57,7 @@ fn aim(session: &mut dyn SmokeSession, view: &str) -> Checked<()> {
 }
 
 fn settle(session: &mut dyn SmokeSession) -> Checked<()> {
-    engine_core::smoke::settled(session)?;
+    engine_smoke::settled(session)?;
     let shading = inspect(session, "terrain_shading_stats")?;
     let terrain = inspect(session, "terrain_stats")?;
     smoke_eq!(

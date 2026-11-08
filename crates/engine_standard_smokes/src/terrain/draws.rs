@@ -1,4 +1,4 @@
-use engine_core::smoke::{
+use engine_smoke::{
     Checked, above, ask, at_most, below, camera, capture, component, control, environment, inspect,
     not, number, present, refuse, render, renders_until, settled, with,
 };

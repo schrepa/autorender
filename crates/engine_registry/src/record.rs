@@ -11,7 +11,7 @@ use crate::entries::{
     Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry,
 };
 use crate::explain::ExplainEntry;
-use crate::hooks::{NamedField, Removal, Settle};
+use crate::hooks::{NamedField, Removal};
 use crate::jobs::JobMember;
 use crate::scene::SpawnedBy;
 use crate::state::{GateFn, Scope};
@@ -79,7 +79,6 @@ pub struct BrickRecord {
     explainers: Vec<ExplainEntry>,
     piece: Option<PieceEntry>,
     pub(crate) removals: Vec<Removal>,
-    pub(crate) settles: Vec<Settle>,
     pub(crate) named: Vec<NamedField>,
     problems: Vec<Error>,
     errors: Vec<&'static ErrorCode>,
@@ -120,7 +119,6 @@ impl BrickRecord {
             explainers: Vec::new(),
             piece: None,
             removals: Vec::new(),
-            settles: Vec::new(),
             named: Vec::new(),
             problems: Vec::new(),
             errors: Vec::new(),
@@ -365,10 +363,6 @@ impl BrickRecord {
 
     pub fn on_remove(&mut self, removal: Removal) {
         self.removals.push(removal);
-    }
-
-    pub fn settle(&mut self, settle: Settle) {
-        self.settles.push(settle);
     }
 
     pub fn named(&mut self, named: NamedField) {

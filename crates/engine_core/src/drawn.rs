@@ -284,10 +284,6 @@ impl DrawnTable {
             .map(|held| &held.drawn)
     }
 
-    pub fn slot_generation(&self, slot: u32) -> Option<u32> {
-        self.generations.get(slot as usize).copied()
-    }
-
     pub fn records(&self) -> &[DrawnRecord] {
         &self.records
     }

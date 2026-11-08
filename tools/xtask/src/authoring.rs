@@ -82,7 +82,7 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
     )?;
     let engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
     let world = engine.app.world();
-    let development = engine_dev::schemas::generated(world)?;
+    let development = engine_dev::schemas::generated(world, engine::tooling::frame_stats_schema())?;
     tooling_types(root)?;
     let stats = &development.frame_stats;
     let mut files: Vec<(String, String)> = development

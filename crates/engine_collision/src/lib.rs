@@ -61,7 +61,7 @@ impl Brick for CollisionBrick {
         bricks
             .when(|config: Res<CollisionConfig>| config.enabled)
             .settings::<CollisionConfig>()
-            .settled_stats::<CollisionStats, _>(world::refresh)
+            .stats::<CollisionStats>()
             .errors(ERRORS)
             .fill::<Collision>(None)
             .fill::<SceneQueries>(None)
@@ -69,8 +69,7 @@ impl Brick for CollisionBrick {
                 ComponentKind::of::<Collider>("collider")
                     .check(scene::checked)
                     .check_placed(scene::checked_world)
-                    .schema(scene::schema)
-                    .example(scene::example),
+                    .schema(scene::schema),
                 None,
             )
             .systems(
@@ -81,11 +80,11 @@ impl Brick for CollisionBrick {
                 Schedule::FixedPostSimulation,
                 (world::sync_ground, world::sync, world::detect),
             )
-            .settled::<queries::RaycastQuery, _>(world::refresh)
-            .settled::<queries::OverlapQuery, _>(world::refresh)
-            .settled::<queries::ShapeCastQuery, _>(world::refresh)
+            .operation::<queries::RaycastQuery>()
+            .operation::<queries::OverlapQuery>()
+            .operation::<queries::ShapeCastQuery>()
             .observation::<queries::CollisionEventsQuery>()
-            .settled::<terrain_sweep::TerrainSweepQuery, _>(world::refresh)
-            .settled::<views::ColliderQuery, _>(world::refresh);
+            .operation::<terrain_sweep::TerrainSweepQuery>()
+            .operation::<views::ColliderQuery>();
     }
 }

@@ -6,7 +6,7 @@ mod water_sky;
 
 use std::f64::consts::FRAC_PI_3;
 
-use engine_core::smoke::{
+use engine_smoke::{
     Checked, above, camera, control, environment, number, query, renders_until, settled,
 };
 use engine_core::{SmokeSession, smoke_eq};

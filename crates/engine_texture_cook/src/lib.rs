@@ -28,7 +28,6 @@ pub fn cook(source: &Source, family: Family) -> Result<Texture, Error> {
         })
         .collect();
     let texture = Texture::from_levels(family.format(), source.width, source.height, levels)?
-        .with_emission_mask(plain.has_emission_mask())
         .with_color_space(plain.color_space());
     Ok(match plain.summary() {
         Some(summary) => texture.with_summary(summary),

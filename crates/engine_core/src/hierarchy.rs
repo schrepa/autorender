@@ -2,8 +2,8 @@ use crate::collections::HashMap;
 use crate::presentation::pose_rows;
 use crate::ticks::{ChangeWindow, STAMP_BLOCK, ScanClock, consume_through};
 use crate::{
-    Cursor, Feed, FeedSettings, GpuBits, Mobility, NodePose, NodeWord, PoseRows, Since,
-    Transform, entity_indices::EntityIndices,
+    Cursor, Feed, FeedSettings, Mobility, NodePose, NodeWord, PoseRows, Since, Transform,
+    entity_indices::EntityIndices,
 };
 use bevy_ecs::change_detection::ContiguousRef;
 use bevy_ecs::prelude::*;
@@ -442,8 +442,6 @@ pub struct GlobalTransforms {
     touched: Vec<Entity>,
     declared: Vec<words::Declared>,
     words: Vec<NodeWord>,
-    packed: Vec<u32>,
-    word_changes: Feed<u32>,
     words_revision: u64,
     woken: Vec<Entity>,
     asleep: Vec<Entity>,
@@ -483,8 +481,6 @@ impl FromWorld for GlobalTransforms {
             touched: Vec::new(),
             declared: Vec::new(),
             words: Vec::new(),
-            packed: Vec::new(),
-            word_changes: Feed::new(feed),
             words_revision: 0,
             woken: Vec::new(),
             asleep: Vec::new(),
@@ -690,11 +686,6 @@ impl GlobalTransforms {
         Some(self.value_at(index))
     }
 
-    pub fn get_with_revision(&self, entity: Entity) -> Option<(GlobalTransform, Option<Revision>)> {
-        let index = *self.indices.get(&entity)?;
-        Some((self.value_at(index), self.revisions[index]))
-    }
-
     pub fn pose(&self, entity: Entity) -> Option<glam::Affine3A> {
         let index = *self.indices.get(&entity)?;
         self.global(index).map(glam::Affine3A::from_mat4)
@@ -710,7 +701,6 @@ impl GlobalTransforms {
 
     pub(crate) fn resize_changes(&mut self, size: usize) {
         self.changes.resize(size);
-        self.word_changes.resize(size);
         self.static_moves.feed.resize(size);
     }
 
@@ -999,7 +989,6 @@ impl GlobalTransforms {
             self.revisions.push(None);
             self.declared.push(words::Declared::default());
             self.words.push(NodeWord::ROOT);
-            self.packed.push(NodeWord::ROOT.pack());
         }
         self.indices.clear();
         self.indices.reserve(admitted);
@@ -1060,7 +1049,6 @@ impl GlobalTransforms {
     fn empty_tables(&mut self, admitted: usize) {
         self.declared.clear();
         self.words.clear();
-        self.packed.clear();
         self.entities.clear();
         self.sources.clear();
         self.locals.clear();
@@ -1081,7 +1069,6 @@ impl GlobalTransforms {
         self.revisions.reserve_exact(admitted);
         self.declared.reserve_exact(admitted);
         self.words.reserve_exact(admitted);
-        self.packed.reserve_exact(admitted);
         self.order.reserve_exact(admitted);
         self.path.reserve_exact(admitted);
         self.dirty.flags.clear();

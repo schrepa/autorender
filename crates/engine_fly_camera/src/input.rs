@@ -1,4 +1,4 @@
-use engine_core::smoke::{number, query};
+use engine_smoke::{number, query};
 use engine_core::{SmokeFailure, SmokeSession};
 use serde_json::{Value, json};
 

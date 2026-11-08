@@ -68,7 +68,7 @@ pub use surface::{
 #[doc(hidden)]
 pub use memory::GpuMemory;
 #[doc(hidden)]
-pub use platform::{AdapterInfo, RenderTarget, read_range};
+pub use platform::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub use platform::{GpuPreference, NativeWindow, start_native_instances_with};
@@ -1232,10 +1232,6 @@ fn streams<P, S>(streams: &[(DrawInput<P, S>, u64)]) -> encode::Streams {
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
     pub fn draw(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>) {
         self.issue(pipeline, (shape, &[]), None);
-    }
-
-    pub fn draw_at(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>, offsets: &[u32]) {
-        self.issue(pipeline, (shape, offsets), None);
     }
 
     pub fn draw_timed<'l>(

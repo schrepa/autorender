@@ -106,7 +106,6 @@ pub struct Texture {
     format: TextureFormat,
     space: ColorSpace,
     contents: Contents,
-    masked: bool,
     summary: OnceLock<TextureSummary>,
     identity: OnceLock<u128>,
 }
@@ -136,7 +135,6 @@ impl Texture {
             format: TextureFormat::Rgba8,
             space,
             contents: Contents::Drawn,
-            masked: false,
             summary: OnceLock::new(),
             identity: OnceLock::new(),
         })
@@ -164,19 +162,12 @@ impl Texture {
                     .got(bytes.len()));
             }
         }
-        let masked = !format.is_compressed()
-            && levels[0]
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .any(|pixel| pixel[3] != 255);
         Ok(Self {
             width,
             height,
             format,
             space: ColorSpace::Srgb,
             contents: Contents::Levels(levels.into_iter().map(Vec::into_boxed_slice).collect()),
-            masked: masked || format.is_compressed(),
             summary: OnceLock::new(),
             identity: OnceLock::new(),
         })
@@ -228,11 +219,6 @@ impl Texture {
         Self { summary, ..self }
     }
 
-    #[must_use]
-    pub fn with_emission_mask(self, masked: bool) -> Self {
-        Self { masked, ..self }
-    }
-
     pub fn width(&self) -> u32 {
         self.width
     }
@@ -269,10 +255,6 @@ impl Texture {
                 .summary
                 .get_or_init(|| TextureSummary::of_rgba8(self.pixels()))
         })
-    }
-
-    pub fn has_emission_mask(&self) -> bool {
-        self.masked
     }
 
     pub fn byte_len(&self) -> usize {

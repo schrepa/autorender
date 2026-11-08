@@ -47,8 +47,7 @@ impl Brick for AudioBrick {
                     .check(scene::check_sound)
                     .files(scene::sound_files)
                     .prepare(scene::prepare_sound)
-                    .schema(scene::sound_schema)
-                    .example(scene::sound_example),
+                    .schema(scene::sound_schema),
                 None,
             )
             .systems(Schedule::Presentation, mixer::mix)

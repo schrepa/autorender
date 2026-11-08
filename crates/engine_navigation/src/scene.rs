@@ -1,6 +1,6 @@
 use engine_core::{ComponentKind, ComponentKindOf, Error, ErrorCode, Placement};
 use engine_places_simulation::navigation::NavAgent;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::agents::SceneNavAgent;
 use crate::dev::schema_of;
@@ -12,15 +12,10 @@ pub(crate) fn nav_agent() -> ComponentKindOf<NavAgent> {
         .check(validate)
         .placement(Placement::Roots(INVALID_NAV_AGENT))
         .schema(schema)
-        .example(example)
 }
 
 fn schema() -> Value {
     schema_of::<SceneNavAgent>()
-}
-
-fn example() -> Value {
-    json!({})
 }
 
 fn validate(agent: &NavAgent, path: &str) -> Result<(), Error> {

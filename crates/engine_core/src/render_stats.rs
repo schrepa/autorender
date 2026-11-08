@@ -1,34 +1,4 @@
-use std::collections::BTreeMap;
-
 use serde::{Serialize, Serializer};
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct FrameStats {
-    pub frame: u64,
-    pub tick: u64,
-    pub simulation_ms: f64,
-    pub extraction_ms: f64,
-    pub render_ms: f64,
-    pub fixed_steps: u32,
-    pub dropped_seconds: f64,
-    pub cut_seconds: f64,
-    pub pipelines_listed: u32,
-    pub pipelines_unlisted: u32,
-    pub readiness: crate::Readiness,
-    pub budget: Vec<crate::BudgetUse>,
-    pub resolution: ResolutionStats,
-    pub dynamic_resolution: DynamicResolutionStats,
-    pub jobs: crate::JobStats,
-    pub refused_views: u32,
-    pub disabled_features: Names,
-    #[serde(flatten)]
-    pub render: RenderStats,
-    pub bricks_cost: Option<engine_registry::BrickCosts>,
-    #[serde(flatten)]
-    #[cfg_attr(feature = "schema", schemars(skip))]
-    pub bricks: BTreeMap<&'static str, serde_json::Value>,
-}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -112,9 +82,9 @@ impl schemars::JsonSchema for LinkedStats {
     }
 
     fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        let faces = generator.subschema_for::<BTreeMap<String, String>>();
+        let faces = generator.subschema_for::<std::collections::BTreeMap<String, String>>();
         let nobody = generator.subschema_for::<Vec<String>>();
-        let lists = generator.subschema_for::<BTreeMap<String, Vec<String>>>();
+        let lists = generator.subschema_for::<std::collections::BTreeMap<String, Vec<String>>>();
         schemars::json_schema!({
             "type": "object",
             "properties": {
@@ -160,23 +130,4 @@ impl schemars::JsonSchema for Names {
     fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         <Vec<String>>::json_schema(generator)
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct ResolutionStats {
-    pub display_width: u32,
-    pub display_height: u32,
-    pub render_width: u32,
-    pub render_height: u32,
-    pub dropped_pixels: u64,
-    pub gpu_ms: Option<f32>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct DynamicResolutionStats {
-    pub active: bool,
-    pub scale: f32,
-    pub budget_ms: f32,
 }

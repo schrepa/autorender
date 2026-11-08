@@ -1,4 +1,4 @@
-use engine_core::smoke::{Checked, inspect, query, render};
+use engine_smoke::{Checked, inspect, query, render};
 use engine_core::{SmokeFailure, SmokeSession, smoke_check};
 use serde_json::{Value, json};
 

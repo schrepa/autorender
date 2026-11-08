@@ -186,7 +186,6 @@ pub(super) fn mesh_view(
                         alive: texture.is_some(),
                         width: texture.map(|texture| texture.width()),
                         height: texture.map(|texture| texture.height()),
-                        emission_mask: texture.map(|texture| texture.has_emission_mask()),
                         gpu_resident: renderer
                             .map(|renderer| renderer.texture_resident(map.texture)),
                     }

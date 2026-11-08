@@ -24,10 +24,11 @@ pub use surface::runtime_typescript;
 pub mod tooling;
 
 pub use engine_core::collections;
-pub use engine_core::command_line;
+pub use engine_command_line as command_line;
 pub use engine_core::smoke_eq;
 
 mod games {
+    pub use crate::frame_stats::{DynamicResolutionStats, ResolutionStats};
     pub use crate::host::{MenuKey, MoveDirection};
     pub use crate::resolution::{DynamicResolution, Resolution};
     pub use engine_core::{
@@ -36,14 +37,14 @@ mod games {
         Picking, PrimaryView, Ray, Rect, Target, View, ViewCut, ViewFacts, ViewHistory, Views,
         main_camera, place_camera,
         CursorMode, CursorRequests, DrawKind, Drawn, DrawnProjection, DrawnState, DrawnTable,
-        DynamicResolutionStats, InstanceValues, KindDecl, Layers,
+        InstanceValues, KindDecl, Layers,
         Engine, EngineConfig,
         Filter, FixedTime, FrameLimits, FrameTime, GlobalTransform, GlobalTransforms,
         Asks, CameraHandoff, Clock, Cull, DepthBias, HandOver, LightingModel, Listing,
         MakeTextures, RenderState, SurfaceSlot,
         Material, Mobility, Mover, MoverId, Moves, Node, NodeWord, Pace, Teleport,
         MaterialHandle, MenuInput, Mesh, MeshHandle, MeshVertex, MoveInput, Parent,
-        Pause, PauseReason, PointerInput, Poses, Projection, ProvidedAssets, ResolutionStats, Sampler,
+        Pause, PauseReason, PointerInput, Poses, Projection, ProvidedAssets, Sampler,
         Surface, Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage,
         Transform, UvTransform, Wrap, make_fresh, math,
         set_parent, set_parents, Span, TimeScale,
@@ -64,9 +65,11 @@ pub mod bricks {
 }
 
 pub mod stats {
-    pub use engine_core::{Cut, FrameStats, JobStats, RenderStats};
+    pub use crate::frame_stats::FrameStats;
+    pub use engine_core::{Cut, JobStats, RenderStats};
 }
 
+mod frame_stats;
 pub mod host;
 #[cfg(feature = "dev")]
 pub mod smokes;

@@ -47,8 +47,7 @@ impl Brick for ParticlesBrick {
             .join::<SceneComponents>(
                 ComponentKind::of::<ParticleEmitter>("particles")
                     .check(scene::check_emitter)
-                    .schema(scene::emitter_schema)
-                    .example(scene::emitter_example),
+                    .schema(scene::emitter_schema),
                 None,
             )
             .systems(

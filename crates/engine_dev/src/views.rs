@@ -127,7 +127,6 @@ pub struct TextureView {
     pub alive: bool,
     pub width: Option<u32>,
     pub height: Option<u32>,
-    pub emission_mask: Option<bool>,
     pub gpu_resident: Option<bool>,
 }
 

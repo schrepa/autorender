@@ -1,4 +1,4 @@
-use engine_core::smoke::settled;
+use engine_smoke::settled;
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::json;
 
