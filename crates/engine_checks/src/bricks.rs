@@ -7,7 +7,7 @@ use bevy_ecs::schedule::{NodeId, ScheduleGraph, Schedules, SystemKey, SystemSet,
 use bevy_ecs::system::System;
 use bevy_ecs::world::World;
 use engine::Engine;
-use engine_core::{BrickList, PlaceDecl, Runs, Smoke};
+use engine_core::{BrickList, PlaceDecl, Smoke};
 use engine_place::PlaceKind;
 use engine_registry::{BrickRecord, BrickSet, Registry};
 use engine_render::Installation;
@@ -135,7 +135,7 @@ fn systems_under(graph: &ScheduleGraph, set: SystemSetKey) -> Vec<SystemKey> {
 fn smokes(smokes: &[Smoke]) -> Vec<Value> {
     smokes
         .iter()
-        .map(|smoke| json!({ "name": smoke.name, "gpu": smoke.runs == Runs::Gpu }))
+        .map(|smoke| json!({ "name": smoke.name }))
         .collect()
 }
 

@@ -109,18 +109,4 @@ impl<G: Game> SmokeHost<G> for Native<'_, G> {
         }
         std::future::ready(opened)
     }
-
-    fn rebuild(
-        &mut self,
-        gpu: DevSession<G>,
-        bricks: BrickList,
-        build: Build<'_, G>,
-    ) -> engine::Result<DevSession<G>> {
-        drop(gpu);
-        self.launch(bricks, build)
-    }
-
-    fn artifact(&mut self, path: &str) -> Option<Vec<u8>> {
-        std::fs::read(path).ok()
-    }
 }

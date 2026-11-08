@@ -948,10 +948,6 @@ pub(crate) fn encode(value: &impl Serialize, limit: usize) -> Result<String, ser
     Ok(String::from_utf8(output.bytes).expect("json_utf8"))
 }
 
-pub(crate) fn authored_entity(world: &World, scene: &SceneInstance, id: &str) -> Option<Entity> {
-    scene.authored_entity(world, id)
-}
-
 pub fn frustum_culling(world: &World) -> bool {
     world
         .get_resource::<Registry>()

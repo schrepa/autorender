@@ -7,7 +7,5 @@ export const HOST_PARAMETERS: Record<string, string> = {
   engine_build: "ID",
   workers: `0-${MAX_WORKERS}|off`,
   jobcache: `off|verify|0-${MAX_JOB_CACHE_MIB}`,
-  smoke: "NAME,...|all",
-  limit_ms: "MS",
   environment: "JSON",
 };

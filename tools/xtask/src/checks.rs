@@ -1,21 +1,16 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant, SystemTime};
+use std::process::Command;
+use std::time::{Instant, SystemTime};
 
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
-use crate::bench::hex;
 use crate::checkouts::checkout;
-use crate::measure::{commit_id, git, iso, output, read_json};
+use crate::measure::{commit_id, file_hash, git, iso, output, read_json};
 use crate::process::Project;
-use crate::serve::{Server, free_port};
 
 const ATTEMPTS: usize = 3;
-const SERVER_START: Duration = Duration::from_secs(30 * 60);
 
 fn holds(expect: &str, exit_code: i32) -> bool {
     match expect {
@@ -24,94 +19,57 @@ fn holds(expect: &str, exit_code: i32) -> bool {
     }
 }
 
-struct Served {
-    server: Server,
-    build: Value,
-}
-
-fn start_server(source: &Path, sha: &str, log: &Path) -> Result<Served, String> {
-    let port = free_port()?;
-    let mut command = Command::new("cargo");
-    command
-        .args(["xtask", "dev", "--port", &port.to_string()])
-        .current_dir(source);
-    let started = Instant::now();
-    let server = Server::start(command, port, log, sha, SERVER_START)?;
-    let build = web_build(source, sha, started.elapsed())?;
-    Ok(Served { server, build })
-}
-
-fn web_build(source: &Path, sha: &str, took: Duration) -> Result<Value, String> {
-    let identity = read_json(&source.join("web/pkg-dev/build.json")).unwrap_or_default();
-    let profile = identity["profile"].as_str().unwrap_or("release");
-    let features = match &identity["features"] {
-        Value::Array(features) => Value::Array(features.clone()),
-        _ => json!(["engine/dev"]),
-    };
-    let mut wasm: Vec<PathBuf> = fs::read_dir(source.join("web/pkg-dev"))
-        .map_err(|error| format!("cannot read web/pkg-dev: {error}"))?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "wasm")
-        })
-        .collect();
-    wasm.sort();
-    let mut hash = Sha256::new();
-    for path in &wasm {
-        let bytes = fs::read(path).map_err(|error| error.to_string())?;
-        hash.update(path.file_name().unwrap_or_default().as_encoded_bytes());
-        hash.update([0]);
-        hash.update(&bytes);
-    }
-    let wasm_bindgen = output(source, "wasm-bindgen", &["--version"]).unwrap_or_default();
-    Ok(json!({
-        "sha": sha,
-        "profile": profile,
-        "target": "web-wasm",
-        "features": features,
-        "toolchain": {
-            "rustc": output(source, "rustc", &["-V"])?,
-            "cargo": output(source, "cargo", &["-V"])?,
-            "node": output(source, "node", &["--version"])?,
-            "wasm-bindgen": wasm_bindgen,
-        },
-        "env": {"RUSTFLAGS": std::env::var("RUSTFLAGS").unwrap_or_default()},
-        "artifact_hash": hex(&hash.finalize()),
-        "build_ms": took.as_secs_f64() * 1000.0,
-    }))
-}
-
-fn failed_build(source: &Path, sha: &str, log: &Path) -> Result<Value, String> {
-    let quick = fs::read_to_string(source.join("Cargo.toml"))
-        .is_ok_and(|manifest| manifest.contains("[profile.quick]"));
-    Ok(json!({
-        "sha": sha,
-        "profile": if quick { crate::pipeline::QUICK } else { "release" },
-        "target": "web-wasm",
-        "features": ["engine/dev"],
-        "toolchain": {
-            "rustc": output(source, "rustc", &["-V"])?,
-            "cargo": output(source, "cargo", &["-V"])?,
-        },
-        "env": {"RUSTFLAGS": std::env::var("RUSTFLAGS").unwrap_or_default()},
-        "artifact_hash": crate::measure::file_hash(log)?,
-        "build_ms": 0,
-    }))
-}
-
-fn scripts_folder(
+fn build(
     root: &Path,
     source: &Path,
-    scripts_sha: Option<&str>,
-) -> Result<PathBuf, String> {
-    let Some(sha) = scripts_sha else {
-        return Ok(source.join("web"));
+    sha: &str,
+) -> Result<(Result<PathBuf, String>, Value), String> {
+    let project = Project::read(source, crate::smoke::PLAYER)?;
+    let quick = fs::read_to_string(source.join("Cargo.toml"))
+        .is_ok_and(|manifest| manifest.contains("[profile.quick]"));
+    let profile = if quick {
+        crate::pipeline::QUICK
+    } else {
+        "release"
     };
-    let scripts = checkout(root, sha, None)?;
-    crate::pipeline::install_web_dependencies(&scripts)?;
-    Ok(scripts.join("web"))
+    let target = root.join("target").join("measure").join("check-target");
+    let started = Instant::now();
+    let built = Command::new("cargo")
+        .args(["build", "-p", &project.package, "--bin", &project.native])
+        .args(["--profile", profile, "--features", "dev", "--locked"])
+        .env("CARGO_TARGET_DIR", &target)
+        .env("ENGINE_COMMIT", &sha[..12])
+        .current_dir(source)
+        .status()
+        .map_err(|error| format!("cannot run cargo: {error}"))
+        .and_then(|status| {
+            if status.success() {
+                Ok(target.join(profile).join(project.program()))
+            } else {
+                Err(format!(
+                    "building {} at {sha} failed ({status})",
+                    project.package
+                ))
+            }
+        });
+    let artifact_hash = match &built {
+        Ok(program) => Some(file_hash(program)?),
+        Err(_) => None,
+    };
+    let identity = json!({
+        "sha": sha,
+        "profile": profile,
+        "target": "native",
+        "features": ["dev"],
+        "toolchain": {
+            "rustc": output(source, "rustc", &["-V"])?,
+            "cargo": output(source, "cargo", &["-V"])?,
+        },
+        "env": {"RUSTFLAGS": std::env::var("RUSTFLAGS").unwrap_or_default()},
+        "artifact_hash": artifact_hash,
+        "build_ms": started.elapsed().as_secs_f64() * 1000.0,
+    });
+    Ok((built, identity))
 }
 
 pub fn run(
@@ -124,32 +82,19 @@ pub fn run(
     let mut by_commit: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
     for check in checks {
         let sha = commit_id(check["sha"].as_str(), "a check's sha")?;
-        if !check["scripts_sha"].is_null() {
-            commit_id(check["scripts_sha"].as_str(), "a check's scripts_sha")?;
-        }
         limit_ms(check)?;
         by_commit.entry(sha).or_default().push(check);
     }
     let (mut entries, mut incomplete) = (Vec::new(), false);
     for (sha, checks) in by_commit {
         let source = checkout(root, sha, None)?;
-        eprintln!("{}", json!({"event": "server_starting", "commit": sha}));
-        let log = folder.join(format!("server-{}.log", &sha[..12]));
-        let server = start_server(&source, sha, &log);
+        eprintln!("{}", json!({"event": "building", "commit": sha}));
+        let (program, identity) = build(root, &source, sha)?;
         for check in checks {
             let name = check["name"].as_str().ok_or("a check has a name")?;
             let expect = check["expect"].as_str().unwrap_or("pass");
-            let scripts_sha = check["scripts_sha"].as_str();
             let limit = limit_ms(check)?;
             let mut attempts = Vec::new();
-            let build = match &server {
-                Ok(server) => server.build.clone(),
-                Err(_) => failed_build(&source, sha, &log)?,
-            };
-            let web = match &server {
-                Ok(_) => Some(scripts_folder(root, &source, scripts_sha)?),
-                Err(_) => None,
-            };
             while attempts.len() < ATTEMPTS {
                 if !attempts.is_empty()
                     && deadline.is_some_and(|deadline| SystemTime::now() > deadline)
@@ -161,20 +106,13 @@ pub fn run(
                 let started = Instant::now();
                 let attempt_log =
                     folder.join(format!("{name}-{}-{}.log", &sha[..12], attempts.len() + 1));
-                let (exit_code, measurements) = match (&server, &web) {
-                    (Ok(served), Some(web)) => attempt(
-                        web,
-                        &source,
-                        (name, limit),
-                        &served.server.url,
-                        &attempt_log,
-                    )?,
-                    (Err(error), _) => {
+                let exit_code = match &program {
+                    Ok(program) => attempt(program, &source, (name, limit), &attempt_log)?,
+                    Err(error) => {
                         fs::write(&attempt_log, format!("{error}\n"))
                             .map_err(|error| error.to_string())?;
-                        (-1, Vec::new())
+                        -1
                     }
-                    (Ok(_), None) => unreachable!("served_commit_has_scripts"),
                 };
                 let record = json!({
                     "event": "check_attempted",
@@ -189,22 +127,19 @@ pub fn run(
                     "duration_ms": started.elapsed().as_secs_f64() * 1000.0,
                     "exit_code": exit_code,
                     "log": attempt_log.display().to_string(),
-                    "measurements": measurements,
                 }));
-                if holds(expect, exit_code) || server.is_err() {
+                if holds(expect, exit_code) || program.is_err() {
                     break;
                 }
             }
             entries.push(json!({
                 "name": name,
                 "sha": sha,
-                "scripts_sha": scripts_sha,
                 "expect": expect,
-                "build": build,
+                "build": identity,
                 "attempts": attempts,
             }));
         }
-        drop(server);
     }
     crate::checkouts::prune(root);
     Ok((entries, incomplete))
@@ -218,44 +153,20 @@ fn limit_ms(check: &Value) -> Result<u64, String> {
 }
 
 fn attempt(
-    web: &Path,
-    workspace: &Path,
+    program: &Path,
+    source: &Path,
     (name, limit): (&str, u64),
-    url: &str,
     log: &Path,
-) -> Result<(i32, Vec<Value>), String> {
-    let project = Project::read(workspace, crate::smoke::PLAYER)?;
-    let page = project
-        .client()
-        .and_then(|client| client.page.clone())
-        .ok_or_else(|| format!("{}: page", project.package))?;
-    let mut child = Command::new("node")
-        .args([
-            "scripts/smoke-browser.mjs",
-            &format!("{url}/{page}?smoke={name}&limit_ms={limit}"),
-            &limit.to_string(),
-        ])
-        .current_dir(web)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("cannot run node: {error}"))?;
-    let mut errors = child.stderr.take().expect("stdio_piped");
-    let stderr = std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = errors.read_to_string(&mut text);
-        text
-    });
-    let mut stdout = String::new();
-    let _ = child
-        .stdout
-        .take()
-        .expect("stdio_piped")
-        .read_to_string(&mut stdout);
-    let status = child.wait().map_err(|error| error.to_string())?;
-    let stderr = stderr.join().unwrap_or_default();
+) -> Result<i32, String> {
+    let ran = Command::new(program)
+        .args(["--smoke", name, "--limit-ms", &limit.to_string()])
+        .current_dir(source)
+        .output()
+        .map_err(|error| format!("cannot run {}: {error}", program.display()))?;
+    let stdout = String::from_utf8_lossy(&ran.stdout);
+    let stderr = String::from_utf8_lossy(&ran.stderr);
     fs::write(log, format!("{stdout}\n{stderr}")).map_err(|error| error.to_string())?;
-    Ok((judged(status.code(), &stdout), measurements(&stdout)))
+    Ok(judged(ran.status.code(), &stdout))
 }
 
 fn judged(code: Option<i32>, stdout: &str) -> i32 {
@@ -264,47 +175,13 @@ fn judged(code: Option<i32>, stdout: &str) -> i32 {
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .filter(|record| record["smoke"].is_string())
         .collect();
-    let unrun = records.is_empty() || records.iter().any(|record| record["skipped"] == true);
     let failed = records.iter().any(|record| record["ok"] != true);
     match code {
-        Some(0) if unrun => -1,
+        Some(0) if records.is_empty() => -1,
         Some(0) if failed => 3,
         Some(code) => code,
         None => -1,
     }
-}
-
-fn measurements(stdout: &str) -> Vec<Value> {
-    let last = stdout
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|line| !line.is_empty());
-    let Some(Ok(Value::Object(last))) = last.map(serde_json::from_str::<Value>) else {
-        return Vec::new();
-    };
-    let text = |entry: &Value, key: &str| {
-        entry[key]
-            .as_str()
-            .filter(|text| !text.is_empty())
-            .map(crate::measure::reason)
-    };
-    last.get("measurements")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            let mut kept = json!({
-                "name": text(entry, "name")?,
-                "value": entry["value"].as_f64()?,
-                "unit": text(entry, "unit")?,
-            });
-            if let Some(note) = text(entry, "note") {
-                kept["note"] = note.into();
-            }
-            Some(kept)
-        })
-        .collect()
 }
 
 pub fn check_task(root: &Path, arguments: &[String]) -> Result<(), String> {
@@ -388,18 +265,6 @@ pub fn check_task(root: &Path, arguments: &[String]) -> Result<(), String> {
             "exit_codes": codes,
         });
         println!("{record}");
-        for attempt in check["attempts"].as_array().into_iter().flatten() {
-            for measured in attempt["measurements"].as_array().into_iter().flatten() {
-                let record = json!({
-                    "event": "check_measured",
-                    "check": check["name"],
-                    "name": measured["name"],
-                    "value": measured["value"],
-                    "unit": measured["unit"],
-                });
-                println!("{record}");
-            }
-        }
     }
     println!(
         "{}",

@@ -320,23 +320,3 @@ fn number<T: TryFrom<u64> + Default>(
             }),
     }
 }
-
-pub(crate) fn check(root: &Path) -> Result<(), String> {
-    let (cells, problems) = read_matrix(root)?;
-    if !problems.is_empty() {
-        return Err(format!(
-            "{MATRIX} is not a valid matrix:\n  {}",
-            problems.join("\n  ")
-        ));
-    }
-    let captures: usize = cells.iter().map(|cell| cell.keys().len()).sum();
-    let record = serde_json::json!({
-        "event": "matrix_holds",
-        "file": MATRIX,
-        "cells": cells.len(),
-        "smoke_cells": cells.iter().filter(|cell| cell.tier == "smoke").count(),
-        "captures": captures,
-    });
-    println!("{record}");
-    Ok(())
-}

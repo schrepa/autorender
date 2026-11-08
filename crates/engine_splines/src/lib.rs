@@ -6,13 +6,10 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod scene;
-mod smokes;
 mod spline_mesh;
 mod views;
 
-use engine_core::{
-    Brick, Bricks, ComponentKind, ErrorCode, Runs, SceneComponents, Schedule, Smoke, Source,
-};
+use engine_core::{Brick, Bricks, ComponentKind, ErrorCode, SceneComponents, Schedule, Source};
 use engine_places_world::splines::SplineMesh;
 use engine_places_world::streaming::{StreamedKey, StreamedKeys, Streams};
 
@@ -24,11 +21,6 @@ pub struct SplinesBrick;
 
 impl Brick for SplinesBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "spline",
-        runs: Runs::Gpu,
-        run: smokes::run,
-    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { open } from "node:fs/promises";
+import { resolve } from "node:path";
 import { AgentError, VERSION, MAX_BYTES, atMost, checkTimeout, createBridge, failure, range, variants } from "./agent-protocol.mjs";
 import { launchBrowserSession } from "./agent-browser.mjs";
 import { launchNativeSession, nativeProgram } from "./agent-native.mjs";
@@ -15,6 +16,7 @@ const commands = {
   iterate: { options: ["web-port", "port", "game", "browser"] },
   serve: { options: ["url", "port", "browser", "native", "args", "profiling"] },
   ab: { options: ["native", "args", "url", "browser", "a", "b", "rounds", "samples", "warmup", "mode", "profile", "profile-ms"] },
+  look: { options: ["native", "source", "url", "browser", "plan", "out", "limit-ms"] },
   sessions: { options: ["port"] },
   development: { options: ["port"] },
   request: { options: verbOptions },
@@ -229,6 +231,17 @@ async function main() {
     try {
       console.log(JSON.stringify({ version: VERSION, ok: true, session: owned.session, url: owned.url, result: await runAb(owned, values) }));
     } finally { await owned.close(); }
+    return;
+  }
+  if (verb === "look") {
+    checkOptions(values, commands.look.options);
+    const { runLook } = await import("./agent-look.mjs");
+    if (values.native && (values.url || values.browser)) throw new AgentError("invalid_arguments", values.url ? "--url" : "--browser", { expected: "absent" });
+    if (values.source && !values.native) throw new AgentError("invalid_arguments", "--native", { expected: "present" });
+    const owned = values.native
+      ? await launchNativeSession({ program: resolve(values.native), args: values.source ? ["--source", values.source] : [] })
+      : await launchBrowserSession({ url: pageUrl(values.url), browserPath: values.browser });
+    try { process.exitCode = await runLook(owned, values); } finally { await owned.close(); }
     return;
   }
   if (verb === "iterate") {

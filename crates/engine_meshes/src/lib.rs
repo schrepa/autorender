@@ -17,10 +17,9 @@ mod order;
 mod prepare;
 mod presentation;
 mod settings;
-mod smokes;
 mod uploads;
 
-use engine_core::{Attributes, Brick, Bricks, DrawKind, KindDecl, Runs, Schedule, Smoke, Source};
+use engine_core::{Attributes, Brick, Bricks, DrawKind, KindDecl, Schedule, Source};
 use engine_places::meshes::Instances;
 use engine_render::RenderBricks;
 
@@ -45,11 +44,6 @@ pub struct MeshesBrick;
 
 impl Brick for MeshesBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "culling_settings",
-        runs: Runs::Gpu,
-        run: smokes::culling_settings,
-    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

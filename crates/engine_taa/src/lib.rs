@@ -8,13 +8,12 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod antialiasing;
-mod brick_smokes;
 mod previous;
 mod resolve;
 mod temporal;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Jitter, Runs, Schedule, Smoke, Source};
+use engine_core::{Brick, Bricks, Jitter, Schedule, Source};
 use engine_render::{RenderBricks, Resolve};
 
 pub use antialiasing::{TemporalAntialiasing, TemporalAntialiasingStats};
@@ -23,11 +22,6 @@ pub struct TaaBrick;
 
 impl Brick for TaaBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "temporal_antialiasing",
-        runs: Runs::Gpu,
-        run: brick_smokes::temporal_antialiasing,
-    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

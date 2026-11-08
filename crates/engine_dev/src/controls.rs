@@ -2,10 +2,10 @@ use crate::protocol::{
     BenchmarkInput, BenchmarkMode, CaptureRequest, ExplainQuestion, MAX_WATCHED, ProfileRequest,
     WatchRequest, bounds,
 };
-use crate::results::{DebugMissingAssetResult, EnvironmentResult, ParentResult, result};
+use crate::results::{EnvironmentResult, ParentResult, result};
 use crate::{BrowserControl, EnvironmentControl, bounded};
 use bevy_ecs::prelude::World;
-use engine_core::{AssetLibrary, Camera, Drawn, Engine, Projection, Transform, glam::Vec3};
+use engine_core::{Camera, Engine, Projection, Transform, glam::Vec3};
 use engine_registry::{OperationScene, Registry};
 use engine_scene::{SceneEnvironment, SceneInstance};
 use engine_settings::{Error, ErrorCode, Expected};
@@ -103,10 +103,6 @@ impl BrowserControl {
             | Self::Render { .. }
             | Self::Pause { .. }
             | Self::Resume { .. }
-            | Self::DebugPanic { .. }
-            | Self::DebugFault { .. }
-            | Self::DebugDeviceLoss { .. }
-            | Self::DebugMissingAsset { .. }
             | Self::Parent { .. }
             | Self::Jobs { .. } => {}
         }
@@ -278,7 +274,6 @@ pub fn validated_camera(
 pub enum OperationCall {
     Brick { name: &'static str, request: Value },
     Environment(EnvironmentControl),
-    MissingAsset { entity: String },
     Parent { entity: String, parent: String },
 }
 
@@ -300,9 +295,6 @@ impl OperationCall {
                         error
                     }
                 })
-            }
-            Self::MissingAsset { entity } => {
-                missing_asset(engine, scene, entity).map_err(|error| error.within("$.args"))
             }
             Self::Parent { entity, parent } => parented(engine, scene, (entity, parent)),
         }
@@ -396,41 +388,4 @@ fn parented(
     let (child, parent) = (found(entity, "$.entity")?, found(parent, "$.parent")?);
     engine_core::set_parent(world, child, Some(parent))?;
     Ok(result::parent(ParentResult { temporary: true }))
-}
-
-fn missing_asset(
-    engine: &mut Engine,
-    scene: Option<&SceneInstance>,
-    entity: &str,
-) -> Result<Value, Error> {
-    let scene = scene.ok_or_else(|| {
-        Error::new(ErrorCode::NoScene, "$.entity")
-            .expected(Expected::Entity)
-            .got(entity)
-    })?;
-    let world = engine.app.world_mut();
-    let mesh = crate::inspect::authored_entity(world, scene, entity)
-        .and_then(|entity| world.get::<Drawn>(entity))
-        .and_then(|drawn| drawn.geometry)
-        .ok_or_else(|| {
-            Error::new(ErrorCode::UnknownEntity, "$.entity")
-                .expected(Expected::Entity)
-                .got(entity)
-        })?;
-    let entities = world.try_query::<&Drawn>().map_or(0, |mut drawn| {
-        drawn
-            .iter(world)
-            .filter(|drawn| drawn.geometry == Some(mesh))
-            .count()
-    });
-    let mut assets = world.get_resource_mut::<AssetLibrary>().ok_or_else(|| {
-        Error::new(ErrorCode::MissingResource, "$")
-            .expected(Expected::Present)
-            .got("AssetLibrary")
-    })?;
-    assets.remove_mesh(mesh);
-    Ok(result::debug_missing_asset(DebugMissingAssetResult {
-        temporary: true,
-        entities,
-    }))
 }

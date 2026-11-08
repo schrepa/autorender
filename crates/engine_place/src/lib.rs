@@ -295,16 +295,9 @@ impl engine_codec::Codec for JobRef {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Runs {
-    Headless,
-    Gpu,
-}
-
 #[derive(Clone, Copy)]
 pub struct Smoke {
     pub name: &'static str,
-    pub runs: Runs,
     pub run: fn(&mut dyn SmokeSession) -> Result<(), SmokeFailure>,
 }
 

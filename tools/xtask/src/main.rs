@@ -11,6 +11,7 @@ mod importing;
 mod iteration_build;
 mod ladder;
 mod lint;
+mod look;
 mod measure;
 mod pipeline;
 mod process;
@@ -97,6 +98,9 @@ fn execute() -> Result<(), Failure> {
     }
     if task == "smoke" {
         return smoke::smoke(&root, &options);
+    }
+    if task == "look" {
+        return look::look(&root, &options);
     }
     if task == "pure" {
         return pure::pure(&root, &options);
@@ -291,7 +295,6 @@ fn authoring_commands() -> Vec<Command> {
                 CommandOption::taking("NAME", "NAME...|all"),
                 CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
                 CommandOption::taking("--project", "DIR"),
-                CommandOption::flag("--browser"),
             ],
         ),
         Command::new(
@@ -390,6 +393,15 @@ fn checking_commands() -> Vec<Command> {
                 CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
                 CommandOption::flag("--plan"),
                 CommandOption::flag("--json"),
+            ],
+        ),
+        Command::new(
+            "look",
+            [
+                CommandOption::taking("PROJECT", "DIR").required(),
+                CommandOption::taking("--limit-ms", "MS").in_unit("ms").required(),
+                CommandOption::flag("--browser"),
+                CommandOption::taking("--out", "DIR"),
             ],
         ),
         Command::new("lint", []),

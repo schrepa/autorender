@@ -47,10 +47,6 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("resume", "status"),
     ("game", "GameControls"),
     ("reload", "status"),
-    ("debug_panic", "status"),
-    ("debug_fault", "status"),
-    ("debug_device_loss", "status"),
-    ("debug_missing_asset", ""),
     ("parent", ""),
     ("probe", ""),
     ("jobs", "status"),
@@ -578,19 +574,6 @@ pub enum BrowserControl {
         )]
         revision: String,
     },
-    DebugPanic {},
-    DebugFault {
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(regex(pattern = r"^[a-z_]{1,64}$"))
-        )]
-        feature: String,
-    },
-    DebugDeviceLoss {},
-    DebugMissingAsset {
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 192)))]
-        entity: String,
-    },
     Parent {
         #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 192)))]
         entity: String,
@@ -619,7 +602,7 @@ pub enum BrowserControl {
 }
 
 impl BrowserControl {
-    pub const NAMES: [&'static str; 19] = [
+    pub const NAMES: [&'static str; 15] = [
         "present",
         "environment",
         "camera",
@@ -632,10 +615,6 @@ impl BrowserControl {
         "resume",
         "game",
         "reload",
-        "debug_panic",
-        "debug_fault",
-        "debug_device_loss",
-        "debug_missing_asset",
         "parent",
         "probe",
         "jobs",
@@ -643,9 +622,6 @@ impl BrowserControl {
 
     pub fn route(self) -> Control {
         match self {
-            Self::DebugMissingAsset { entity } => {
-                Control::Operation(crate::controls::OperationCall::MissingAsset { entity })
-            }
             Self::Parent { entity, parent } => {
                 Control::Operation(crate::controls::OperationCall::Parent { entity, parent })
             }
@@ -657,15 +633,12 @@ impl BrowserControl {
             | Self::Step { .. }
             | Self::Input { .. }
             | Self::Render {}
-            | Self::DebugPanic {}
-            | Self::DebugFault { .. }
             | Self::Benchmark { .. }
             | Self::Frames { .. }
             | Self::Pause { .. }
             | Self::Resume { .. }
             | Self::Probe { .. }
             | Self::Jobs { .. }
-            | Self::DebugDeviceLoss { .. }
             | Self::Game { .. }
             | Self::Reload { .. }) => Control::Host(control),
         }
@@ -684,10 +657,6 @@ impl BrowserControl {
             | Self::Probe { .. }
             | Self::Game { .. }
             | Self::Reload { .. }
-            | Self::DebugPanic { .. }
-            | Self::DebugFault { .. }
-            | Self::DebugDeviceLoss { .. }
-            | Self::DebugMissingAsset { .. }
             | Self::Parent { .. } => true,
             Self::Pause { .. } | Self::Resume { .. } | Self::Jobs { .. } => false,
         }

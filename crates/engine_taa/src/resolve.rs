@@ -7,7 +7,7 @@ use engine_render::{
 use crate::shaders::taa::{resolve, resolved};
 use crate::temporal::TaaView;
 
-pub(crate) const RESOLVE_PASS: &str = "temporal_resolve";
+const RESOLVE_PASS: &str = "temporal_resolve";
 const RESOLVED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 pub(crate) struct ResolveGpu {

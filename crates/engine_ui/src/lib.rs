@@ -8,7 +8,6 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod gpu;
 mod interact;
 mod operations;
-mod smokes;
 mod tree;
 
 use std::collections::BTreeSet;
@@ -17,8 +16,8 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     Asks, Asset, AssetResidency, AssetUses, AttachPoint, Brick, Bricks, ComponentKind, Contexts,
     CursorMode, CursorRequests, Devices, Error, ErrorCode, GlobalTransforms, Input, PassName,
-    PassViews, Runs, SceneComponents, SceneContext, SceneCx, Schedule, Views, Verbs,
-    SlotSet, Smoke, Source, Spawner, Writes, gpu_struct, never, settings, stats,
+    PassViews, SceneComponents, SceneContext, SceneCx, Schedule, SlotSet, Source, Spawner, Verbs,
+    Views, Writes, gpu_struct, never, settings, stats,
 };
 use engine_places_rendering::screens::{ScreenAsk, Screens};
 use engine_places_rendering::text::Text;
@@ -270,18 +269,6 @@ pub struct UiBrick;
 
 impl Brick for UiBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[
-        Smoke {
-            name: "ui_layout_press",
-            runs: Runs::Headless,
-            run: smokes::layout_press,
-        },
-        Smoke {
-            name: "ui_drawn",
-            runs: Runs::Gpu,
-            run: smokes::drawn,
-        },
-    ];
 
     fn register(bricks: &mut Bricks<'_>) {
         for verb in interact::VERBS {

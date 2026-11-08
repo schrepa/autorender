@@ -9,13 +9,11 @@ mod animator;
 mod import;
 mod scene;
 mod skins;
-mod smokes;
 mod views;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asked, Brick, Bricks, ComponentKind, GpuStruct, Runs, SceneComponents, Schedule, Smoke, Source,
-    settings,
+    Asked, Brick, Bricks, ComponentKind, GpuStruct, SceneComponents, Schedule, Source, settings,
 };
 use engine_places::skin::Skin;
 use engine_places_rendering::animation::{Animate, Animator, Attachment};
@@ -45,11 +43,6 @@ pub struct AnimationBrick;
 
 impl Brick for AnimationBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "animation_plays",
-        runs: Runs::Headless,
-        run: smokes::plays,
-    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

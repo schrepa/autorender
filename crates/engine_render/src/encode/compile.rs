@@ -845,10 +845,10 @@ fn blendable(format: wgpu::TextureFormat) -> bool {
 fn fragment_outputs<'a>(text: &'a str, entry: &str) -> Option<&'a str> {
     let at = text.find(&format!("fn {entry}("))?;
     let rest = &text[at..];
-    let (arrow, brace) = (rest.find("->")?, rest.find('{')?);
-    if arrow > brace {
-        return None;
-    }
+    let brace = rest.find('{')?;
+    let Some(arrow) = rest[..brace].find("->") else {
+        return Some("");
+    };
     let returns = rest[arrow + 2..brace].trim();
     if returns.starts_with('@') {
         return Some(returns);

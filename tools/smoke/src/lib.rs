@@ -1,5 +1,3 @@
-use std::any::{Any, TypeId};
-
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -33,22 +31,7 @@ impl SmokeFailure {
 pub trait SmokeSession {
     fn request(&mut self, verb: &str, body: Value) -> Result<Value, Value>;
     fn step(&mut self, ticks: u32);
-    fn frame(&mut self) -> bool;
     fn source(&mut self, document: &str);
-    fn file(&mut self, name: &str, bytes: &[u8]);
-    fn idle(&mut self, milliseconds: f64);
-    fn joined(&mut self, list: TypeId, each: &mut dyn FnMut(&dyn Any));
-    fn members(&mut self, _place: &str) -> Vec<&'static str> {
-        Vec::new()
-    }
-    fn slot(&mut self, _slot: TypeId, _each: &mut dyn FnMut(&dyn Any)) {}
-    fn without(&mut self, _bricks: &[&'static str]) {}
-    fn artifact(&mut self, _path: &str) -> Option<Vec<u8>> {
-        None
-    }
-    fn decode_image(&mut self, _path: &str, _bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), Value> {
-        Err(Value::Null)
-    }
 }
 
 #[macro_export]
@@ -103,36 +86,8 @@ pub fn query(session: &mut dyn SmokeSession, name: &str, args: Value) -> Checked
     ask(session, "query", json!({"name": name, "args": args}))
 }
 
-pub fn refuse(
-    session: &mut dyn SmokeSession,
-    verb: &str,
-    name: &str,
-    args: Value,
-) -> Checked<Value> {
-    let reply = session.request(verb, json!({"name": name, "args": args}));
-    smoke_check!(
-        reply.is_err(),
-        "request_refused",
-        &reply.as_ref().ok().map(|answered| &answered["result"]),
-        &name
-    );
-    Ok(reply
-        .err()
-        .map(|mut refused| refused["error"].take())
-        .unwrap_or_default())
-}
-
 pub fn environment(session: &mut dyn SmokeSession, sections: Value) -> Checked<Value> {
     control(session, "environment", sections)
-}
-
-pub fn camera(session: &mut dyn SmokeSession, view: Value) -> Checked<Value> {
-    control(session, "camera", view)
-}
-
-pub fn inspect(session: &mut dyn SmokeSession, component: &str) -> Checked<Value> {
-    let mut inspected = ask(session, "inspect", json!({"component": component}))?;
-    Ok(inspected["value"].take())
 }
 
 pub fn component(session: &mut dyn SmokeSession, id: &str, component: &str) -> Checked<Value> {
@@ -149,11 +104,6 @@ pub fn render(session: &mut dyn SmokeSession) -> Checked<Value> {
     Ok(rendered["rendering"].take())
 }
 
-pub fn present(session: &mut dyn SmokeSession, alpha: f64) -> Checked<Value> {
-    let mut presented = control(session, "present", json!({"alpha": alpha}))?;
-    Ok(presented["rendering"].take())
-}
-
 pub fn rendered_when(
     session: &mut dyn SmokeSession,
     mut frame: impl FnMut(&mut dyn SmokeSession) -> Checked<Value>,
@@ -167,19 +117,8 @@ pub fn rendered_when(
     }
 }
 
-pub fn compiled(session: &mut dyn SmokeSession) -> Checked<Value> {
-    rendered_when(session, render, |rendering| !compiling(rendering))
-}
-
 pub fn settled(session: &mut dyn SmokeSession) -> Checked<Value> {
-    settled_by(session, render)
-}
-
-pub fn settled_by(
-    session: &mut dyn SmokeSession,
-    frame: impl FnMut(&mut dyn SmokeSession) -> Checked<Value>,
-) -> Checked<Value> {
-    settled_when(session, frame, |_| true)
+    settled_when(session, render, |_| true)
 }
 
 pub fn settled_when(
@@ -205,39 +144,8 @@ pub fn settled_when(
     }
 }
 
-pub fn compiling(rendering: &Value) -> bool {
-    rendering["readiness"]["compiling"]
-        .as_u64()
-        .is_some_and(|compiling| compiling > 0)
-}
-
-pub fn shot(session: &mut dyn SmokeSession, body: Value) -> Checked<Value> {
-    let captured = ask(session, "capture", body)?;
-    let digest = captured["artifact"]["sha256"].clone();
-    smoke_check!(
-        digest.is_string(),
-        "capture_keeps_its_frame",
-        &captured["artifact"],
-        &json!({"sha256": "string"})
-    );
-    Ok(digest)
-}
-
-pub fn capture(session: &mut dyn SmokeSession) -> Checked<Value> {
-    compiled(session)?;
-    shot(session, json!({}))
-}
-
 pub fn number(value: &Value) -> f64 {
     value.as_f64().unwrap_or(f64::NAN)
-}
-
-pub fn with(base: &Value, fields: Value) -> Value {
-    let mut merged = base.clone();
-    if let (Value::Object(merged), Value::Object(fields)) = (&mut merged, fields) {
-        merged.extend(fields);
-    }
-    merged
 }
 
 pub fn above(value: impl Serialize) -> Value {
@@ -248,14 +156,6 @@ pub fn below(value: impl Serialize) -> Value {
     json!({ "below": value })
 }
 
-pub fn at_most(value: impl Serialize) -> Value {
-    json!({ "at_most": value })
-}
-
 pub fn near(value: impl Serialize, within: f64) -> Value {
     json!({"near": value, "within": within})
-}
-
-pub fn not(value: impl Serialize) -> Value {
-    json!({ "not": value })
 }

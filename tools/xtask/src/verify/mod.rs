@@ -16,20 +16,7 @@ const TOOLS: &str = "xtask";
 
 const CLIPPY: [&str; 5] = ["--all-targets", "--locked", "--", "-D", "warnings"];
 
-const QUICK_STAGES: &[&str] = &[
-    "kinds",
-    "policy",
-    "comments",
-    "fmt",
-    "web layers",
-    "web errors",
-    "web parameters",
-    "scene sources",
-    "bench",
-    "equivalence matrix",
-    "structure",
-    "install",
-];
+const QUICK_STAGES: &[&str] = &["kinds", "policy", "comments", "structure"];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Level {
@@ -82,12 +69,6 @@ impl Selection {
     fn affects(&self, package: &str) -> bool {
         self.affected.contains(package)
     }
-}
-
-fn project(folder: &str, within: &BTreeSet<String>) -> bool {
-    clients()
-        .iter()
-        .any(|client| client.folder == folder && within.contains(&client.package))
 }
 
 fn owner<'a>(repository: &'a Repository, path: &str) -> Option<&'a str> {
@@ -197,7 +178,7 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
         });
         println!("{record}");
     }
-    let steps = steps(root, level, (&base, limit.as_deref()), &selection)?;
+    let steps = steps(root, level, limit.as_deref(), &selection)?;
     let names: Vec<&str> = steps.iter().map(|step| step.name.as_str()).collect();
     println!(
         "{}",
@@ -259,11 +240,6 @@ fn quick<'a>(root: &'a Path, selection: &Selection) -> Result<Vec<Step<'a>>, Str
             Ok(clippy_free(root, &free, &["--all-targets"])?)
         }));
     }
-    if selection.affects(TOOLS) {
-        steps.push(Step::new("pure (every corpus)", move || {
-            crate::pure::pure(root, &[])
-        }));
-    }
     Ok(steps)
 }
 
@@ -282,103 +258,46 @@ fn smokes<'a>(
     if wanted.iter().any(|client| client.folder == PLAYER) {
         runs.push(Vec::new());
     }
-    if merge {
-        runs.push(vec!["--native-profile".to_owned(), "dev".to_owned()]);
-        runs.push(vec![
-            "input_camera".to_owned(),
-            "world_streaming".to_owned(),
-            "--browser".to_owned(),
-        ]);
-    }
     for client in wanted.iter().filter(|client| client.folder != PLAYER) {
         runs.push(vec!["--project".to_owned(), client.folder.clone()]);
     }
-    if runs.is_empty() {
+    if runs.is_empty() && !merge {
         return Ok(Vec::new());
     }
     let limit = limit.ok_or_else(|| format!("smoke runs need a wall-clock limit\n{USAGE}"))?;
-    Ok(runs
+    let mut steps: Vec<Step<'a>> = runs
         .into_iter()
         .map(|mut options| {
             let name = format!("smoke {}", options.join(" ")).trim_end().to_owned();
             options.extend(["--limit-ms".to_owned(), limit.to_owned()]);
             Step::new(name, move || crate::smoke::smoke(root, &options))
         })
-        .collect())
+        .collect();
+    if merge {
+        let options = [PLAYER, "--browser", "--limit-ms", limit].map(str::to_owned);
+        steps.push(Step::new(
+            format!("look {}", options.join(" ")),
+            move || crate::look::look(root, &options),
+        ));
+    }
+    Ok(steps)
 }
 
 fn steps<'a>(
     root: &'a Path,
     level: Level,
-    (base, limit): (&'a str, Option<&str>),
+    limit: Option<&str>,
     selection: &Selection,
 ) -> Result<Vec<Step<'a>>, String> {
     if level == Level::Quick {
         return quick(root, selection);
     }
     let merge = level == Level::Merge;
-    let tools = selection.affects(TOOLS);
     let mut steps = vec![Step::new("lint", move || {
         Ok(engine_checks::stages::run(root, crate::lint::LINT)?)
     })];
     steps.extend(smokes(root, merge, limit, selection)?);
-    if merge || tools {
-        steps.push(Step::new("pure --wasm terrain tables", move || {
-            crate::pure::pure(
-                root,
-                &[
-                    "--wasm".to_owned(),
-                    "terrain".to_owned(),
-                    "tables".to_owned(),
-                ],
-            )
-        }));
-    }
-    let tiers = crate::equivalence::tiers(root)?;
-    if merge {
-        let options = vec![
-            "--base".to_owned(),
-            base.to_owned(),
-            "--tier".into(),
-            "full".into(),
-        ];
-        steps.push(Step::new(
-            format!("equivalence {}", options.join(" ")),
-            move || crate::equivalence::equivalence(root, &options),
-        ));
-    } else {
-        let cells: BTreeSet<&str> = tiers
-            .iter()
-            .filter(|(_, tier, folder)| {
-                project(folder, &selection.touched)
-                    || (tier == "smoke" && project(folder, &selection.affected))
-            })
-            .map(|(name, _, _)| name.as_str())
-            .collect();
-        if !cells.is_empty() {
-            let options = vec![
-                "--base".to_owned(),
-                base.to_owned(),
-                "--cells".into(),
-                cells.into_iter().collect::<Vec<_>>().join(","),
-            ];
-            steps.push(Step::new(
-                format!("equivalence {}", options.join(" ")),
-                move || crate::equivalence::equivalence(root, &options),
-            ));
-        }
-    }
-    let browser = clients()
-        .iter()
-        .any(|client| selection.affects(&client.package));
-    if merge && browser {
-        let options = vec!["--base".to_owned(), base.to_owned(), "--browser".into()];
-        steps.push(Step::new(
-            format!("equivalence {}", options.join(" ")),
-            move || crate::equivalence::equivalence(root, &options),
-        ));
-    }
-    if tools {
+    if selection.affects(TOOLS) {
         steps.push(Step::new("selfcheck", move || {
             crate::selfcheck::selfcheck(root, &[])
         }));

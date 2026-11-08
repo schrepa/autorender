@@ -10,7 +10,6 @@ mod coupling;
 mod obstacles;
 mod settings;
 mod shapes;
-mod smoke;
 mod solids;
 mod solver;
 mod statics;
@@ -21,8 +20,8 @@ pub use settings::{Physics, PhysicsStats};
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asked, Brick, Bricks, ComponentKind, ErrorCode, Pace, Placement, Runs, SceneComponents,
-    Schedule, Smoke, Source,
+    Asked, Brick, Bricks, ComponentKind, ErrorCode, Pace, Placement, SceneComponents, Schedule,
+    Source,
 };
 use engine_places_simulation::physics::{BodyAsk, BodyPush, RigidBody};
 use engine_places_simulation::water::WaterObstacles;
@@ -33,11 +32,6 @@ pub struct PhysicsBrick;
 
 impl Brick for PhysicsBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "physics",
-        runs: Runs::Headless,
-        run: smoke::run,
-    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

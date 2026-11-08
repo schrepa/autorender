@@ -513,10 +513,6 @@ impl<G: Game> GameHost<G> {
 
 #[cfg(feature = "dev")]
 impl<G: Game> GameHost<G> {
-    pub(crate) fn lose_device(&mut self) {
-        self.app.renderer.lose_device();
-    }
-
     pub(crate) fn job_workers(&self) -> u32 {
         self.jobs.working()
     }

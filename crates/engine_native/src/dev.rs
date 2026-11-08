@@ -34,7 +34,6 @@ pub struct DevSession<G: Game> {
     controls: BTreeMap<String, GameControl<G>>,
     parameters: BTreeMap<String, String>,
     source: Option<Source>,
-    files: BTreeMap<String, Vec<u8>>,
     artifacts: PathBuf,
     pix: Option<Pix>,
     captures: u32,
@@ -62,7 +61,6 @@ impl<G: Game> DevSession<G> {
             controls: BTreeMap::new(),
             parameters: BTreeMap::new(),
             source: None,
-            files: BTreeMap::new(),
             artifacts,
             pix: None,
             captures: 0,
@@ -302,7 +300,7 @@ impl<G: Game> DevSession<G> {
         let path = match &self.source {
             None => return Ok(None),
             Some(Source::Document(document)) => {
-                let files = engine::smokes::scene_files(document, &self.files, &self.kinds())?;
+                let files = engine::smokes::scene_files(document, &self.kinds())?;
                 return Ok(Some((document.clone(), files)));
             }
             Some(Source::File(path)) => path,
@@ -504,18 +502,10 @@ impl<G: Game> engine::smokes::GpuSession for DevSession<G> {
         reply
     }
 
-    fn frame(&mut self, timestamp: f64) -> engine::Result<()> {
-        self.game.frame(timestamp)
-    }
-
     fn play(&mut self, document: &str) -> engine::Result<()> {
         self.source = Some(Source::Document(document.to_owned()));
-        let files = engine::smokes::scene_files(document, &self.files, &self.kinds())?;
+        let files = engine::smokes::scene_files(document, &self.kinds())?;
         self.game.host_mut().reload_scene(document, &files)
-    }
-
-    fn file(&mut self, name: &str, bytes: &[u8]) {
-        self.files.insert(name.to_owned(), bytes.to_vec());
     }
 }
 

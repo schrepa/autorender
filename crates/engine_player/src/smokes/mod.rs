@@ -1,28 +1,19 @@
-mod agent;
-mod gpu_presentation;
-mod native;
-mod pixels;
+mod counts;
+mod digest;
 
 use engine::BrickList;
-use engine::smokes::{Runs, Smoke, SmokeEntry};
+use engine::smokes::{Smoke, SmokeEntry};
 
 const GAME: &str = "player";
 
-const SMOKES: [Smoke; 3] = [
+const SMOKES: [Smoke; 2] = [
     Smoke {
-        name: "agent",
-        runs: Runs::Gpu,
-        run: agent::agent,
+        name: "drawn_and_culled_counts_agree",
+        run: counts::run,
     },
     Smoke {
-        name: "native",
-        runs: Runs::Gpu,
-        run: native::native,
-    },
-    Smoke {
-        name: "gpu_presentation",
-        runs: Runs::Gpu,
-        run: gpu_presentation::gpu_presentation,
+        name: "same_ticks_same_digest",
+        run: digest::run,
     },
 ];
 

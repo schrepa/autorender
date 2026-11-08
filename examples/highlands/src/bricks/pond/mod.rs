@@ -6,12 +6,11 @@
 include!(concat!(env!("OUT_DIR"), "/bricks/pond.rs"));
 
 mod part;
-mod smokes;
 mod water;
 
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, GpuStruct, Runs, SceneComponents, Schedule,
-    Smoke, Source, fields,
+    Brick, Bricks, ComponentKind, Error, ErrorCode, GpuStruct, SceneComponents, Schedule, Source,
+    fields,
 };
 use engine_places_rendering::reflections::TraceDepths;
 use engine_render::{RenderBricks, SurfaceKind};
@@ -25,11 +24,6 @@ pub struct PondBrick;
 
 impl Brick for PondBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "highlands_pond",
-        runs: Runs::Gpu,
-        run: smokes::run,
-    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

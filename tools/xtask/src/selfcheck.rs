@@ -11,7 +11,7 @@ const PAIRS: u64 = 2;
 const TIME_RATIO: f64 = 1.25;
 const FRAME_TIME: &str = "wall:frame_ms_mean";
 const BUSY_CPU_PCT: f64 = 50.0;
-const CHECK: &str = "input_camera";
+const CHECK: &str = "same_ticks_same_digest";
 const CHECK_LIMIT_MS: u64 = 120_000;
 pub(crate) const KINDS: [&str; 2] = ["measure", "checks"];
 
@@ -324,7 +324,6 @@ fn measure_aa(root: &Path, sha: &str, folder: &Path) -> Result<Vec<String>, Stri
 fn checks_aa(root: &Path, sha: &str, folder: &Path) -> Result<Vec<String>, String> {
     let checks = [
         json!({"name": CHECK, "sha": sha, "expect": "pass", "limit_ms": CHECK_LIMIT_MS}),
-        json!({"name": CHECK, "sha": sha, "scripts_sha": sha, "expect": "pass", "limit_ms": CHECK_LIMIT_MS}),
         json!({"name": CHECK, "sha": sha, "expect": "fail", "limit_ms": CHECK_LIMIT_MS}),
     ];
     let (entries, _) = crate::checks::run(root, &checks, folder, None)?;
@@ -338,19 +337,15 @@ fn checks_aa(root: &Path, sha: &str, folder: &Path) -> Result<Vec<String>, Strin
             .collect()
     };
     let mut differed = Vec::new();
-    for (entry, scripts) in entries
-        .iter()
-        .take(2)
-        .zip(["its own", "the same commit's checked out again"])
+    if let Some(passing) = entries.first()
+        && exits(passing) != [0]
     {
-        if exits(entry) != [0] {
-            differed.push(format!(
-                "{CHECK} with {scripts} scripts exited {:?}, not 0 at its first attempt",
-                exits(entry)
-            ));
-        }
+        differed.push(format!(
+            "{CHECK} exited {:?}, not 0 at its first attempt",
+            exits(passing)
+        ));
     }
-    if let Some(expecting_failure) = entries.get(2) {
+    if let Some(expecting_failure) = entries.get(1) {
         let attempts = exits(expecting_failure);
         if attempts.len() != 3 || attempts.iter().any(|code| *code != 0) {
             differed.push(format!(

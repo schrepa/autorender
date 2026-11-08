@@ -54,7 +54,6 @@ pub(crate) enum Awaited {
     Probe {
         alpha: Option<f64>,
     },
-    DeviceLoss,
     Explain {
         id: String,
         entity: Entity,
@@ -450,7 +449,6 @@ impl<G: Game> GameHost<G> {
     fn dev_read_back(&mut self, awaited: Awaited, since: f64, context: &HostContext) -> Step {
         let drawn = match &awaited {
             Awaited::Probe { alpha } => Some(shown(*alpha)),
-            Awaited::DeviceLoss => Some(render()),
             Awaited::Explain { .. } => None,
         };
         if let Some(call) = drawn {
@@ -460,7 +458,7 @@ impl<G: Game> GameHost<G> {
             }
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if !matches!(awaited, Awaited::DeviceLoss) {
+        {
             if let Err(error) = self.wait_for_gpu() {
                 return self.dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(error));
             }
@@ -476,7 +474,7 @@ impl<G: Game> GameHost<G> {
                 Awaited::Explain {
                     id, entity, slot, ..
                 } => self.dev_explained((id, entity), Some(slot), DrawState::Unread, context),
-                Awaited::Probe { .. } | Awaited::DeviceLoss => self.dev_refused(
+                Awaited::Probe { .. } => self.dev_refused(
                     Error::new(ErrorCode::RenderFailed, "$")
                         .at_most(READ_BACK_LIMIT_MS)
                         .got(waited),
@@ -485,7 +483,7 @@ impl<G: Game> GameHost<G> {
         }
         let effect = match awaited {
             Awaited::Explain { .. } => Effect::Frame { timestamp: 0.0 },
-            Awaited::Probe { .. } | Awaited::DeviceLoss => Effect::Wait { within_ms: 1000.0 },
+            Awaited::Probe { .. } => Effect::Wait { within_ms: 1000.0 },
         };
         self.dev_effect(Pending::ReadBack { awaited, since }, effect)
     }
@@ -499,7 +497,6 @@ impl<G: Game> GameHost<G> {
                 }
                 Ok(self.dev_probed(probed, context))
             }
-            Awaited::DeviceLoss => Err(Awaited::DeviceLoss),
             Awaited::Explain {
                 id,
                 entity,
@@ -659,16 +656,6 @@ impl<G: Game> GameHost<G> {
                 let status = self.dev_invoke(status(), context);
                 self.dev_done(status, context)
             }
-            BrowserControl::DebugDeviceLoss {} => {
-                self.lose_device();
-                self.dev_effect(
-                    Pending::ReadBack {
-                        awaited: Awaited::DeviceLoss,
-                        since: now_ms(),
-                    },
-                    Effect::Wait { within_ms: 1000.0 },
-                )
-            }
             BrowserControl::Game { name, args } => {
                 let pending = Pending::Game { name: name.clone() };
                 self.dev_effect(pending, Effect::Game { name, args })
@@ -695,9 +682,6 @@ impl<G: Game> GameHost<G> {
             | BrowserControl::Step { .. }
             | BrowserControl::Input { .. }
             | BrowserControl::Render {}
-            | BrowserControl::DebugPanic {}
-            | BrowserControl::DebugFault { .. }
-            | BrowserControl::DebugMissingAsset { .. }
             | BrowserControl::Parent { .. }) => {
                 let op = serde_json::to_value(&other)
                     .ok()

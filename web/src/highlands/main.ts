@@ -1,6 +1,5 @@
 import { loadGame } from "../engine/bindings";
 import { type GameOptions, startGame } from "../engine/host";
-import { runSmokes, smokeSelection, type SmokeRun } from "../engine/smokes";
 import type { HighlandsGame, HighlandsRocks } from "../../pkg/highlands";
 import JobWorker from "./worker.ts?worker";
 
@@ -20,16 +19,7 @@ async function rocks(found: HighlandsRocks, signal: AbortSignal): Promise<Highla
   return found;
 }
 
-type HighlandsSmokes = (canvas: HTMLCanvasElement, names: string, limitMs: number, report: (line: string) => void, query: string) => Promise<boolean>;
-
-const smoke = smokeSelection();
-if (smoke !== null) {
-  void runSmokes(smoke, async (): Promise<SmokeRun | undefined> => {
-    const { HighlandsGame } = await loadGame("highlands", () => import("../../pkg/highlands"), JobWorker);
-    const smokes = (HighlandsGame as unknown as { smokes?: HighlandsSmokes }).smokes;
-    return smokes && ((canvas, names, limitMs, report) => smokes.call(HighlandsGame, canvas, names, limitMs, report, location.search));
-  });
-} else startGame<HighlandsGame>({
+startGame<HighlandsGame>({
   parameters,
   controls,
   async create(canvas, signal) {

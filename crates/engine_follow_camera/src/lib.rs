@@ -6,11 +6,10 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod camera;
-mod smoke;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source, Verbs, settings,
+    Brick, Bricks, ComponentKind, SceneComponents, Schedule, Source, Verbs, settings,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -44,11 +43,6 @@ pub struct FollowCameraBrick;
 
 impl Brick for FollowCameraBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "follow_camera",
-        runs: Runs::Gpu,
-        run: smoke::run,
-    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

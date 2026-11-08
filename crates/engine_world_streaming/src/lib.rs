@@ -9,7 +9,6 @@ mod dev;
 mod instance;
 mod keys;
 mod scene;
-mod smoke;
 
 pub use dev::{
     MAX_CHANGES, StreamedCellView, StreamedIdQuery, StreamedIdView, StreamingGridView,
@@ -31,7 +30,7 @@ use serde::Serialize;
 use engine_core::math::{max, min};
 use engine_core::{
     AssetLibrary, Brick, Bricks, FrameTime, GlobalTransforms, Interest, Poses, Request, Requests,
-    Runs, SceneContext, Schedule, Smoke, Source, Spawner, ViewFacts, Views, settings, stats,
+    SceneContext, Schedule, Source, Spawner, ViewFacts, Views, settings, stats,
 };
 use engine_places_world::streaming::{StreamedKeys, StreamingFocus};
 
@@ -604,11 +603,6 @@ pub struct WorldStreamingBrick;
 
 impl Brick for WorldStreamingBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "world_streaming",
-        runs: Runs::Gpu,
-        run: smoke::run,
-    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::{InspectorDescriptor, InspectorKind};
 
-pub const UNTYPED_RESULTS: &[&str] = &["benchmark", "debug_device_loss", "debug_panic", "reload"];
+pub const UNTYPED_RESULTS: &[&str] = &["benchmark", "reload"];
 
 pub const HOST_VERBS: &[&str] = &["check"];
 
@@ -37,8 +37,6 @@ results! {
     present: crate::results::PresentResult,
     camera: crate::results::CameraResult,
     render: crate::results::RenderResult,
-    debug_fault: crate::results::DebugFaultResult,
-    debug_missing_asset: crate::results::DebugMissingAssetResult,
     parent: crate::results::ParentResult,
     input: crate::results::InputResult,
     step: crate::results::StepResult,
@@ -329,19 +327,6 @@ pub struct CameraResult {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct RenderResult {
     pub rendered: bool,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct DebugFaultResult {
-    pub injected: bool,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct DebugMissingAssetResult {
-    pub temporary: bool,
-    pub entities: usize,
 }
 
 #[derive(Serialize)]

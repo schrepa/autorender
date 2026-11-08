@@ -11,7 +11,6 @@ mod placed;
 mod queries;
 mod results;
 mod scene;
-mod smoke;
 mod terrain;
 mod terrain_sweep;
 mod types;
@@ -21,9 +20,7 @@ mod world;
 pub use types::{CollisionConfig, CollisionLimits, CollisionStats, Count};
 
 use bevy_ecs::prelude::*;
-use engine_core::{
-    Brick, Bricks, ComponentKind, ErrorCode, Runs, SceneComponents, Schedule, Smoke, Source,
-};
+use engine_core::{Brick, Bricks, ComponentKind, ErrorCode, SceneComponents, Schedule, Source};
 use engine_places_simulation::physics::{
     COLLISION_CANDIDATE_BUDGET, COLLISION_INCOMPLETE_WORLD, COLLISION_INVALID_CAST,
     COLLISION_INVALID_CONFIG, COLLISION_INVALID_RAY, COLLISION_INVALID_SHAPE,
@@ -51,11 +48,6 @@ pub struct CollisionBrick;
 
 impl Brick for CollisionBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "collision",
-        runs: Runs::Headless,
-        run: smoke::run,
-    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

@@ -1,7 +1,6 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod flat;
-mod smokes;
 
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -10,8 +9,8 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     Asset, AssetResidency, AssetUses, AttachPoint, Attributes, Brick, Bricks, ComponentKind,
     DrawKind, Drawn, DrawnPoses, DrawnTable, Error, GlobalTransforms, KindDecl, PassViews,
-    Runs, SceneComponents, ScenePass, Schedule, Smoke, Source, Spawner, TargetName, TextureHandle,
-    ViewFacts, gpu_struct,
+    SceneComponents, ScenePass, Schedule, Source, Spawner, TargetName, TextureHandle, ViewFacts,
+    gpu_struct,
 };
 use engine_render::{
     Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare,
@@ -52,11 +51,6 @@ pub struct SpritesBrick;
 
 impl Brick for SpritesBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "sprites_drawn",
-        runs: Runs::Gpu,
-        run: smokes::drawn,
-    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

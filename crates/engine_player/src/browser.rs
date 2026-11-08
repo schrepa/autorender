@@ -26,38 +26,3 @@ impl PlayerGame {
         host.game().progress(host.engine()).to_string()
     }
 }
-
-engine::__if_dev! {
-    #[wasm_bindgen]
-    impl PlayerGame {
-        pub async fn smokes(
-            canvas: web_sys::HtmlCanvasElement,
-            names: String,
-            limit_ms: f64,
-            report: JsValue,
-        ) -> Result<bool, JsValue> {
-            let list = crate::bricks(engine::BrickList::default());
-            let entries = crate::smokes(&list).map_err(engine::settings::js_error)?;
-            engine::smokes::page::run::<engine::smokes::Played<ScenePlayer>>(
-                canvas,
-                &names,
-                limit_ms,
-                &entries,
-                &list,
-                &|source, engine| {
-                    let world = engine.app.world_mut();
-                    if source.is_none() && engine::host::has_setting(world, crate::player::FLIES) {
-                        engine::host::apply_setting(
-                            world,
-                            crate::player::FLIES,
-                            &serde_json::json!(false),
-                        )?;
-                    }
-                    engine::smokes::played(source, engine, ScenePlayer::new)
-                },
-                &report,
-            )
-            .await
-        }
-    }
-}

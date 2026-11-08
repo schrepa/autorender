@@ -5,12 +5,10 @@
 
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-mod smoke;
-
 use bevy_ecs::prelude::*;
 use engine_core::{
     Applies, Asked, Brick, Bricks, ComponentKind, Error, ErrorCode, Level, Operation, Pause,
-    PauseReason, Runs, SceneComponents, Schedule, Smoke, Source,
+    PauseReason, SceneComponents, Schedule, Source,
 };
 use engine_places_rendering::screens::{Screen, ScreenAsk, Screens};
 use serde::Deserialize;
@@ -22,11 +20,6 @@ pub struct ScreensBrick;
 
 impl Brick for ScreensBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "screens",
-        runs: Runs::Headless,
-        run: smoke::run,
-    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

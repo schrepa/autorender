@@ -3,7 +3,7 @@ use serde_json::Value;
 use super::{rendered, then_render};
 use crate::app_host::AppHost;
 use engine_core::{Error, ErrorCode, Expected};
-use engine_dev::results::{CameraResult, DebugFaultResult, PresentResult, RenderResult, result};
+use engine_dev::results::{CameraResult, PresentResult, RenderResult, result};
 
 pub(super) fn present(
     app: &mut AppHost,
@@ -44,17 +44,4 @@ pub(super) fn camera(
 pub(super) fn render(app: &mut AppHost, (width, height): (u32, u32)) -> Result<Value, Error> {
     rendered(app.dev_render(width, height))?;
     Ok(result::render(RenderResult { rendered: true }))
-}
-
-pub(super) fn fault(app: &mut AppHost, feature: &str, size: (u32, u32)) -> Result<Value, Error> {
-    app.renderer.inject_fault(feature).map_err(|error| Error {
-        code: ErrorCode::InvalidValue,
-        path: "$.feature".to_owned(),
-        detail: error.detail,
-    })?;
-    then_render(
-        app,
-        size,
-        result::debug_fault(DebugFaultResult { injected: true }),
-    )
 }

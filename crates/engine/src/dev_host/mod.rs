@@ -94,22 +94,18 @@ impl DevHost {
                 | BrowserControl::Resume { .. }
                 | BrowserControl::Probe { .. }
                 | BrowserControl::Jobs { .. }
-                | BrowserControl::DebugDeviceLoss { .. }
                 | BrowserControl::Game { .. }
                 | BrowserControl::Reload { .. }
                 | BrowserControl::Environment(_)
-                | BrowserControl::DebugMissingAsset { .. }
                 | BrowserControl::Parent { .. }
-                | BrowserControl::Input { .. }
-                | BrowserControl::DebugPanic {},
+                | BrowserControl::Input { .. },
             ))
             | Err(_) => false,
             Ok(Control::Host(
                 BrowserControl::Present { .. }
                 | BrowserControl::Camera { .. }
                 | BrowserControl::Step { .. }
-                | BrowserControl::Render {}
-                | BrowserControl::DebugFault { .. },
+                | BrowserControl::Render {},
             )) => true,
         }
     }

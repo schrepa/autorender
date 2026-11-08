@@ -1,18 +1,10 @@
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 pub type Asked = Result<Value, SmokeFailure>;
 
-pub const FRAME_MS: f64 = 1000.0 / 60.0;
-
 pub fn seen(held: bool, got: Value, expected: &Value) -> Value {
     if held { expected.clone() } else { got }
-}
-
-pub fn reply(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Value {
-    match session.request(verb, body) {
-        Ok(reply) | Err(reply) => reply,
-    }
 }
 
 pub fn accepted(
@@ -21,7 +13,9 @@ pub fn accepted(
     body: Value,
     check: &'static str,
 ) -> Asked {
-    let reply = reply(session, verb, body);
+    let reply = match session.request(verb, body) {
+        Ok(reply) | Err(reply) => reply,
+    };
     let wanted = json!({ "ok": true });
     smoke_eq!(
         seen(reply["ok"] == true, reply["error"].clone(), &wanted),
@@ -31,44 +25,7 @@ pub fn accepted(
     Ok(reply)
 }
 
-pub fn refused_with(
-    session: &mut dyn SmokeSession,
-    verb: &str,
-    body: Value,
-    code: &str,
-    check: &'static str,
-) -> Asked {
-    let reply = reply(session, verb, body);
-    let wanted = json!({ "code": code });
-    smoke_eq!(
-        seen(
-            reply["error"]["code"] == code,
-            reply["error"].clone(),
-            &wanted
-        ),
-        wanted,
-        check
-    );
-    Ok(reply)
-}
-
-pub fn refused(
-    session: &mut dyn SmokeSession,
-    verb: &str,
-    body: Value,
-    check: &'static str,
-) -> Asked {
-    let reply = reply(session, verb, body);
-    let wanted = json!({ "ok": false });
-    smoke_eq!(
-        seen(reply["ok"] == false, reply["result"].clone(), &wanted),
-        wanted,
-        check
-    );
-    Ok(reply)
-}
-
-pub fn named(name: &str, args: Value) -> Value {
+fn named(name: &str, args: Value) -> Value {
     json!({ "name": name, "args": args })
 }
 
@@ -90,95 +47,8 @@ pub fn query(
     accepted(session, "query", named(name, args), check)
 }
 
-pub fn status(session: &mut dyn SmokeSession, check: &'static str) -> Asked {
-    query(session, "status", json!({}), check)
-}
-
-pub fn inspected(
-    session: &mut dyn SmokeSession,
-    component: &str,
-    check: &'static str,
-) -> Asked {
-    let reply = accepted(session, "inspect", json!({ "component": component }), check)?;
-    Ok(reply["result"]["value"].clone())
-}
-
-pub fn component(
-    session: &mut dyn SmokeSession,
-    entity: &str,
-    component: &str,
-    check: &'static str,
-) -> Asked {
-    let body = json!({ "entity": entity, "component": component });
-    let reply = accepted(session, "inspect", body, check)?;
-    Ok(reply["result"]["entity"]["components"][component].clone())
-}
-
-pub fn environment(session: &mut dyn SmokeSession, args: Value, check: &'static str) -> Asked {
-    control(session, "environment", args, check)
-}
-
-pub fn frames(session: &mut dyn SmokeSession, count: u32, check: &'static str) -> Asked {
-    control(
-        session,
-        "frames",
-        json!({ "count": count, "interval_ms": FRAME_MS }),
-        check,
-    )
-}
-
-pub fn counter(reply: &Value, field: &str) -> u64 {
-    let observation = &reply["observation"];
-    let observation = if observation.is_object() {
-        observation
-    } else {
-        &reply["result"]["observation"]
-    };
-    observation[field]
-        .as_str()
-        .and_then(|text| text.parse().ok())
-        .unwrap_or(u64::MAX)
-}
-
-pub fn tick(reply: &Value) -> u64 {
-    counter(reply, "tick")
-}
-
-pub fn frame(reply: &Value) -> u64 {
-    counter(reply, "frame")
-}
-
 pub fn number(value: &Value) -> f64 {
     value.as_f64().unwrap_or(f64::NAN)
-}
-
-pub fn names(value: &Value) -> Vec<String> {
-    value
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect()
-}
-
-pub fn sorted_keys(value: &Value) -> Vec<String> {
-    let mut keys: Vec<String> = value
-        .as_object()
-        .map(|object| object.keys().cloned().collect())
-        .unwrap_or_default();
-    keys.sort();
-    keys
-}
-
-pub fn object(value: &Value) -> Map<String, Value> {
-    value.as_object().cloned().unwrap_or_default()
-}
-
-pub fn serve(session: &mut dyn SmokeSession, document: &Value) -> Result<(), SmokeFailure> {
-    session.source(&document.to_string());
-    control(session, "pause", json!({}), "pauses")?;
-    Ok(())
 }
 
 fn checkered() -> Value {
@@ -188,27 +58,22 @@ fn checkered() -> Value {
     })
 }
 
-pub fn grid(side: usize, moving: bool) -> Value {
+pub fn grid(side: usize) -> Value {
     let paints = [
         [0.85, 0.35, 0.2, 1.0],
         [0.25, 0.6, 0.85, 1.0],
         [0.4, 0.75, 0.3, 1.0],
         [0.9, 0.75, 0.25, 1.0],
     ];
-    let cube = json!({ "kind": "cuboid", "half_extents": [0.5, 0.5, 0.5] });
-    let mut ground = json!({
+    let mut entities = vec![json!({
         "id": "ground", "drawn": {"mesh": "box", "material": "ground"},
         "transform": { "translation": [0.0, -0.5, 0.0], "scale": [side as f64 * 6.0, 1.0, side as f64 * 6.0] },
-    });
-    if moving {
-        ground["collider"] = json!({ "shape": cube });
-    }
-    let mut entities = vec![ground];
+    })];
     let middle = (side as f64 - 1.0) / 2.0;
     for index in 0..side * side {
         let (row, column) = ((index / side) as f64, (index % side) as f64);
         let scale = 0.8 + (index % 5) as f64 * 0.3;
-        let mut piece = json!({
+        entities.push(json!({
             "id": format!("piece-{index}"),
             "drawn": {
                 "mesh": if index % 3 == 0 { "gem" } else { "box" },
@@ -219,15 +84,7 @@ pub fn grid(side: usize, moving: bool) -> Value {
                 "rotation_degrees": [0, (index * 37) % 360, 0],
                 "scale": [scale, scale, scale],
             },
-        });
-        if moving {
-            piece["collider"] = json!({ "shape": cube });
-            piece["rigid_body"] = json!({
-                "velocity": [0, 4 + index % 7, 0],
-                "spin": [0, 1 + index % 3, 0],
-            });
-        }
-        entities.push(piece);
+        }));
         if index % 4 == 0 {
             entities.push(json!({
                 "id": format!("cap-{index}"), "parent": format!("piece-{index}"),

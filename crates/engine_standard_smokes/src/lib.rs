@@ -5,19 +5,12 @@
 
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-mod debug_view_smoke;
-mod hierarchy;
-mod host_faults;
-mod navigation;
+mod ground;
+mod image;
+mod poses;
 pub mod requests;
-mod scene_kit;
-mod stats;
-mod streamed_scene;
-mod terrain;
-mod terrain_views;
-mod texture;
 
-use engine_core::{Brick, Bricks, Runs, Smoke, Source};
+use engine_core::{Brick, Bricks, Smoke, Source};
 
 pub struct StandardSmokesBrick;
 
@@ -25,59 +18,16 @@ impl Brick for StandardSmokesBrick {
     const SOURCE: &'static Source = &SOURCE;
     const SMOKES: &'static [Smoke] = &[
         Smoke {
-            name: "host_faults",
-            runs: Runs::Gpu,
-            run: host_faults::host_faults,
+            name: "drawn_poses_agree",
+            run: poses::run,
         },
         Smoke {
-            name: "hierarchy",
-            runs: Runs::Gpu,
-            run: hierarchy::run,
+            name: "collision_matches_drawn_ground",
+            run: ground::run,
         },
         Smoke {
-            name: "texture",
-            runs: Runs::Gpu,
-            run: texture::run,
-        },
-        Smoke {
-            name: "streamed_scene",
-            runs: Runs::Gpu,
-            run: streamed_scene::run,
-        },
-        Smoke {
-            name: "debug_view_terrain",
-            runs: Runs::Gpu,
-            run: terrain_views::run,
-        },
-        Smoke {
-            name: "debug_view",
-            runs: Runs::Gpu,
-            run: debug_view_smoke::run,
-        },
-        Smoke {
-            name: "terrain_draws",
-            runs: Runs::Gpu,
-            run: terrain::draws,
-        },
-        Smoke {
-            name: "terrain_shapes",
-            runs: Runs::Gpu,
-            run: terrain::shapes,
-        },
-        Smoke {
-            name: "terrain_surface",
-            runs: Runs::Gpu,
-            run: terrain::surface,
-        },
-        Smoke {
-            name: "terrain_water_sky",
-            runs: Runs::Gpu,
-            run: terrain::water_sky,
-        },
-        Smoke {
-            name: "navigation_walks",
-            runs: Runs::Gpu,
-            run: navigation::walks,
+            name: "settled_image_repeats",
+            run: image::run,
         },
     ];
 

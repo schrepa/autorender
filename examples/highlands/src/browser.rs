@@ -67,36 +67,6 @@ impl HighlandsGame {
     }
 }
 
-engine::__if_dev! {
-    #[wasm_bindgen]
-    impl HighlandsGame {
-        pub async fn smokes(
-            canvas: web_sys::HtmlCanvasElement,
-            names: String,
-            limit_ms: f64,
-            report: JsValue,
-            query: String,
-        ) -> Result<bool, JsValue> {
-            let options = page_options(&query)?;
-            let build = move |source: Option<&str>, engine: &mut engine::Engine| {
-                Highlands::played(options.clone(), source, engine)
-            };
-            let bricks = crate::bricks(engine::BrickList::default());
-            let smokes = crate::smokes(&bricks).map_err(js_error)?;
-            engine::smokes::page::run::<Highlands>(
-                canvas,
-                &names,
-                limit_ms,
-                &smokes,
-                &bricks,
-                &build,
-                &report,
-            )
-            .await
-        }
-    }
-}
-
 fn page_options(query: &str) -> Result<Options, JsValue> {
     let search = web_sys::UrlSearchParams::new_with_str(query)?;
     let mut options = Options::default();

@@ -183,6 +183,27 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
     listen(page, "framenavigated", frame => { if (!initialNavigation && frame === page.mainFrame()) invalidate(); });
     listen(page, "close", invalidate);
     listen(page, "crash", invalidate);
+    await page.addInitScript(() => {
+      const device = /** @type {any} */ (globalThis).GPUDevice;
+      if (device === undefined) return;
+      const create = device.prototype.createShaderModule;
+      device.prototype.createShaderModule = /** @this {any} @param {any} descriptor */ function (descriptor) {
+        const module = create.call(this, descriptor);
+        void module.getCompilationInfo().then(info => {
+          for (const message of info.messages) {
+            if (message.type === "error") console.error(`createShaderModule ${descriptor.label ?? ""}:${message.lineNum}:${message.linePos} ${message.message}`);
+          }
+        });
+        return module;
+      };
+      const pop = device.prototype.popErrorScope;
+      device.prototype.popErrorScope = /** @this {any} */ function () {
+        return pop.call(this).then(/** @param {any} error */ error => {
+          if (error) console.error(`popErrorScope ${error.constructor?.name ?? "GPUError"}: ${error.message}`);
+          return error;
+        });
+      };
+    });
     await page.exposeBinding("__engineWatch", (_source, records) => {
       for (const record of Array.isArray(records) ? records : []) watching?.(record);
     });
@@ -210,9 +231,8 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
       build = identity.build;
       if (typeof instance !== "string" || !instance) throw new AgentError("missing_runtime_identity", "$", { expected: "id", got: instance ?? null });
       if (expectedBuild !== undefined && build !== expectedBuild) throw new AgentError("build_mismatch", "build", { allowed: variants([expectedBuild]), got: build });
-      await readyRequest({ verb: "control", name: "render" }, FIRST_RENDER_MS);
       const compiled = Date.now() + FIRST_RENDER_MS;
-      while ((await readyRequest(status, FIRST_RENDER_MS)).result.rendering?.readiness?.compiling > 0) {
+      while ((await readyRequest({ verb: "control", name: "render" }, FIRST_RENDER_MS)).result.rendering?.readiness?.compiling > 0) {
         if (Date.now() > compiled) throw new AgentError("runtime_busy", "$", { allowed: atMost(FIRST_RENDER_MS), got: { compiling: true } });
         await delay(50);
       }

@@ -8,7 +8,6 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod atlas;
 mod fonts;
 mod operations;
-mod smokes;
 mod typeset;
 
 use std::sync::Arc;
@@ -16,10 +15,10 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::World;
 use engine_core::{
-    AttachPoint, Attributes, Brick, Bricks, ComponentKind, DrawKind, Drawn, DrawnPoses,
-    DrawnTable, Error, ErrorCode, GlobalTransforms, KindDecl, PassName, PassViews,
-    Runs, SceneComponents, SceneCx, SceneForm, ScenePass, Schedule, SlotSet, Smoke, Source,
-    TargetName, Views, Writes, gpu_struct, never, settings, stats,
+    AttachPoint, Attributes, Brick, Bricks, ComponentKind, DrawKind, Drawn, DrawnPoses, DrawnTable,
+    Error, ErrorCode, GlobalTransforms, KindDecl, PassName, PassViews, SceneComponents, SceneCx,
+    SceneForm, ScenePass, Schedule, SlotSet, Source, TargetName, Views, Writes, gpu_struct, never,
+    settings, stats,
 };
 use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Glyph, Text, TextAlign};
 use engine_render::{
@@ -236,18 +235,6 @@ pub struct TextBrick;
 
 impl Brick for TextBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[
-        Smoke {
-            name: "text_measure",
-            runs: Runs::Headless,
-            run: smokes::measure,
-        },
-        Smoke {
-            name: "text_drawn",
-            runs: Runs::Gpu,
-            run: smokes::drawn,
-        },
-    ];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

@@ -16,7 +16,6 @@ schema = ["engine_core/schema", "engine_settings/schema", "engine_panic/schema",
 [dependencies]
 engine_command_line.workspace = true
 engine_core.workspace = true
-engine_smoke.workspace = true
 engine_registry.workspace = true
 engine_profile.workspace = true
 engine_scene.workspace = true

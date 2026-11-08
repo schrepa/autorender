@@ -6,10 +6,9 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod camera;
-mod input;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source, Verbs, settings};
+use engine_core::{Brick, Bricks, Schedule, Source, Verbs, settings};
 
 settings! {
     #[section("fly_camera")]
@@ -28,11 +27,6 @@ pub struct FlyCameraBrick;
 
 impl Brick for FlyCameraBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "input_camera",
-        runs: Runs::Gpu,
-        run: input::input_camera,
-    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

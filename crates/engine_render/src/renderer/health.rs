@@ -288,40 +288,4 @@ impl Renderer {
         self.lost_bricks = bricks;
         self.change(Change::BricksFaulted);
     }
-
-    #[cfg(feature = "dev")]
-    pub fn lose_device(&mut self) {
-        self.core.device.destroy();
-        crate::platform::poll(&self.core.device);
-    }
-
-    #[cfg(feature = "dev")]
-    pub fn inject_fault(&mut self, feature: &str) -> Result<(), Error> {
-        let Some(run) = self.run.as_mut() else {
-            return Err(
-                Error::new(engine_core::ErrorCode::UnknownVariant, "$.feature").got(feature),
-            );
-        };
-        let parts = &run.machine.declared.parts;
-        let Some(index) = parts
-            .iter()
-            .position(|known| known.lazy && known.name == feature)
-        else {
-            let names: Vec<&str> = parts
-                .iter()
-                .filter(|known| known.lazy)
-                .map(|known| known.name)
-                .collect();
-            return Err(
-                Error::new(engine_core::ErrorCode::UnknownVariant, "$.feature")
-                    .got(feature)
-                    .variants(names),
-            );
-        };
-        let saved = run.part;
-        run.part = index as u32;
-        run.fault(failed("$.gpu").got("injected"));
-        run.part = saved;
-        Ok(())
-    }
 }

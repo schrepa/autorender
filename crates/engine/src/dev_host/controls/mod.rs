@@ -73,21 +73,15 @@ fn host_control(
         ),
         BrowserControl::Step { ticks } => input::step(host, app, ticks, size),
         BrowserControl::Render {} => view::render(app, size),
-        BrowserControl::DebugPanic {} => {
-            panic!("debug_panic")
-        }
-        BrowserControl::DebugFault { feature } => view::fault(app, &feature, size),
         control @ (BrowserControl::Benchmark { .. }
         | BrowserControl::Frames { .. }
         | BrowserControl::Pause { .. }
         | BrowserControl::Resume { .. }
         | BrowserControl::Probe { .. }
         | BrowserControl::Jobs { .. }
-        | BrowserControl::DebugDeviceLoss { .. }
         | BrowserControl::Game { .. }
         | BrowserControl::Reload { .. }
         | BrowserControl::Environment(_)
-        | BrowserControl::DebugMissingAsset { .. }
         | BrowserControl::Parent { .. }) => return Ok(Done::Loop(Looped::Control(control))),
     };
     done.map(Done::Result)

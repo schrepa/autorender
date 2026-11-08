@@ -1,0 +1,40 @@
+{
+  "poses": [
+    {
+      "name": "start",
+      "ticks": 900,
+      "views": ["normals", "levels", "overdraw", "shadows", "water_depth"]
+    },
+    {
+      "name": "trees_and_grass",
+      "camera": {
+        "position": [2693.100830078125, 467.66173095703124, 26.62613868713379],
+        "target": [2571.128662109375, 475.1537780761719, -20.944562911987305],
+        "vertical_fov_radians": 1.0472,
+        "near": 0.2,
+        "far": 20000.0
+      }
+    },
+    {
+      "name": "forest",
+      "camera": {
+        "position": [2530, 540, -20],
+        "target": [2330, 503, 107],
+        "vertical_fov_radians": 1.0472,
+        "near": 0.2,
+        "far": 20000.0
+      }
+    },
+    {
+      "name": "water",
+      "ticks": 900,
+      "camera": {
+        "position": [-1584, 700, -2930],
+        "target": [-1584, 672, -2990],
+        "vertical_fov_radians": 1.0472,
+        "near": 0.2,
+        "far": 20000.0
+      }
+    }
+  ]
+}

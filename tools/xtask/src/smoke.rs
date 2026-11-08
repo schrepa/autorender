@@ -1,23 +1,20 @@
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::Duration;
 
 use serde_json::{Value, json};
 
 use crate::Failure;
 use crate::pipeline::QUICK;
 use crate::process::{Project, engine_commit, project_option, run};
-use crate::serve::Server;
 
 pub const PLAYER: &str = "crates/engine_player";
 
-const USAGE: &str = "usage: cargo xtask smoke [NAME...] --limit-ms MS [--project DIR] [--browser] [--native-profile PROFILE] | [--project DIR] --list";
+const USAGE: &str = "usage: cargo xtask smoke [NAME...] --limit-ms MS [--project DIR] [--native-profile PROFILE] | [--project DIR] --list";
 
 struct Options {
     project: String,
     names: Vec<String>,
-    browser: bool,
     list: bool,
     profile: String,
     limit_ms: Option<String>,
@@ -28,7 +25,6 @@ fn options(arguments: &[String]) -> Result<Options, String> {
     let mut options = Options {
         project: project.unwrap_or_else(|| PLAYER.to_owned()),
         names: Vec::new(),
-        browser: false,
         list: false,
         profile: QUICK.to_owned(),
         limit_ms: None,
@@ -36,7 +32,6 @@ fn options(arguments: &[String]) -> Result<Options, String> {
     let mut given = rest.into_iter();
     while let Some(option) = given.next() {
         match option.as_str() {
-            "--browser" => options.browser = true,
             "--list" => options.list = true,
             "--native-profile" => {
                 options.profile = given
@@ -56,8 +51,7 @@ fn options(arguments: &[String]) -> Result<Options, String> {
             _ => options.names.push(option),
         }
     }
-    if options.list && (options.browser || !options.names.is_empty() || options.limit_ms.is_some())
-    {
+    if options.list && (!options.names.is_empty() || options.limit_ms.is_some()) {
         return Err(USAGE.to_owned());
     }
     Ok(options)
@@ -66,8 +60,8 @@ fn options(arguments: &[String]) -> Result<Options, String> {
 pub fn smoke(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     let options = options(arguments)?;
     let project = Project::read(root, &options.project)?;
+    let program = build(root, &project, &options.profile)?;
     if options.list {
-        let program = build(root, &project, &options.profile)?;
         return Ok(run(root, &program, &["--smoke", engine::smokes::LIST])?);
     }
     let names = if options.names.is_empty() {
@@ -76,21 +70,15 @@ pub fn smoke(root: &Path, arguments: &[String]) -> Result<(), Failure> {
         options.names.join(",")
     };
     let limit = options.limit_ms.ok_or_else(|| USAGE.to_owned())?;
-    let records = if options.browser {
-        browser(root, &project, &names, &limit)?
-    } else {
-        let program = build(root, &project, &options.profile)?;
-        let mut command = Command::new(&program);
-        command
-            .args(["--smoke", &names, "--limit-ms", &limit])
-            .envs([engine_commit()])
-            .current_dir(root);
-        collect(command, &program)?
-    };
-    judged(&records)
+    let mut command = Command::new(&program);
+    command
+        .args(["--smoke", &names, "--limit-ms", &limit])
+        .envs([engine_commit()])
+        .current_dir(root);
+    judged(&collect(command, &program)?)
 }
 
-fn build(root: &Path, project: &Project, profile: &str) -> Result<String, String> {
+pub fn build(root: &Path, project: &Project, profile: &str) -> Result<String, String> {
     run(
         root,
         "cargo",
@@ -113,35 +101,6 @@ fn build(root: &Path, project: &Project, profile: &str) -> Result<String, String
     };
     let program = root.join("target").join(folder).join(project.program());
     Ok(program.to_string_lossy().into_owned())
-}
-
-fn browser(
-    root: &Path,
-    project: &Project,
-    names: &str,
-    limit: &str,
-) -> Result<Vec<Value>, Failure> {
-    let page = project
-        .client()
-        .and_then(|client| client.page.clone())
-        .ok_or_else(|| format!("{}: page", project.package))?;
-    let wait = limit
-        .parse()
-        .map(Duration::from_millis)
-        .map_err(|_| USAGE.to_owned())?;
-    let server = Server::page(
-        root,
-        &root.join("target").join("smoke").join("server.log"),
-        wait,
-    )?;
-    let url = format!("{}/{page}?smoke={names}&limit_ms={limit}", server.url);
-    let mut command = Command::new("node");
-    command
-        .args(["scripts/smoke-browser.mjs", &url, limit])
-        .current_dir(root.join("web"));
-    let records = collect(command, "scripts/smoke-browser.mjs");
-    drop(server);
-    records
 }
 
 fn collect(mut command: Command, program: &str) -> Result<Vec<Value>, Failure> {
@@ -178,21 +137,16 @@ fn collect(mut command: Command, program: &str) -> Result<Vec<Value>, Failure> {
 }
 
 fn judged(records: &[Value]) -> Result<(), Failure> {
-    let named = |wanted: fn(&Value) -> bool| -> Vec<&str> {
-        records
-            .iter()
-            .filter(|record| wanted(record))
-            .filter_map(|record| record["smoke"].as_str())
-            .collect()
-    };
-    let failed = named(|record| record["ok"] != true);
-    let skipped = named(|record| record["skipped"] == true);
+    let failed: Vec<&str> = records
+        .iter()
+        .filter(|record| record["ok"] != true)
+        .filter_map(|record| record["smoke"].as_str())
+        .collect();
     println!(
         "{}",
         json!({
             "smokes": records.len(),
             "failed": failed,
-            "skipped": skipped,
         })
     );
     if failed.is_empty() {

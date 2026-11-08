@@ -21,7 +21,6 @@ use session::run_cell;
 use sides::{Side, commit_side, prune, working_tree};
 
 pub(crate) use judge::decode;
-pub(crate) use matrix::check;
 
 const FOLDER: &str = "target/equivalence";
 
@@ -118,14 +117,6 @@ fn options(arguments: &[String]) -> Result<Options, String> {
         ));
     }
     Ok(options)
-}
-
-pub(crate) fn tiers(root: &Path) -> Result<Vec<(String, String, String)>, String> {
-    let (cells, _) = matrix::read_matrix(root)?;
-    Ok(cells
-        .into_iter()
-        .map(|cell| (cell.name, cell.tier, cell.project))
-        .collect())
 }
 
 fn default_base(root: &Path, rev: &str) -> Result<String, String> {
