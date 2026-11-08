@@ -9,7 +9,6 @@ fn fixture() -> Value {
     let cube = json!({"shape": {"kind": "cuboid", "half_extents": [0.5, 0.5, 0.5]}});
     json!({
         "id": "streaming-fixture", "revision": 1,
-        "camera": {"position": [0, 60, 40], "target": [20, 20, 0], "fov_degrees": 60, "near": 0.5, "far": 20000},
         "materials": [{"id": "plain", "color": [0.8, 0.3, 0.2, 1]}],
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
         "prefabs": [{"id": "lamp", "entities": [
@@ -22,6 +21,7 @@ fn fixture() -> Value {
              "transform": {"translation": [0, 200, 0]}},
             {"id": "ground", "terrain": {"origin": [-1024, 0, -1024], "tiles": [8, 8], "spacing": 1,
              "layers": [{"type": "noise", "seed": 5, "height": 40, "wavelength": 400}]}},
+            {"id": "camera", "transform": {"translation": [0, 60, 40], "rotation_degrees": [-45, -19.4712, -18.4349]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.5, "far": 20000, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}},
         ],
         "environment": {"streamed": {"streamed": [
             {"id": "crate-near", "mesh": "box", "material": "plain", "collider": cube, "grounded": {"offset": 0.5}, "transform": {"translation": [20, 0, 0]}},

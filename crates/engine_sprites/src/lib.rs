@@ -10,8 +10,8 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     Asset, AssetResidency, AssetUses, AttachPoint, Attributes, Brick, Bricks, ComponentKind,
     DrawKind, Drawn, DrawnPoses, DrawnTable, Error, GlobalTransforms, KindDecl, PassViews,
-    PrimaryView, Runs, SceneComponents, ScenePass, Schedule, Smoke, Source, Spawner, TargetName,
-    TextureHandle, gpu_struct,
+    Runs, SceneComponents, ScenePass, Schedule, Smoke, Source, Spawner, TargetName, TextureHandle,
+    ViewFacts, gpu_struct,
 };
 use engine_render::{
     Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare, RenderBricks,
@@ -153,7 +153,6 @@ impl GpuPart for SpritesGpu {
     type Reads = (
         (Query<'static, 'static, &'static Sprite>, Res<'static, DrawnTable>),
         (Res<'static, GlobalTransforms>, Res<'static, DrawnPoses>),
-        Res<'static, PrimaryView>,
     );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
@@ -198,10 +197,10 @@ impl GpuPart for SpritesGpu {
 
     fn prepare(
         &mut self,
-        ((sprites, table), (globals, poses), view): SystemParamItem<'_, '_, Self::Reads>,
+        ((sprites, table), (globals, poses)): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.flat.prepare(&view, cx);
+        self.flat.prepare(cx);
         stage(
             (&sprites, &table),
             (&globals, &poses),
@@ -220,6 +219,10 @@ impl GpuPart for SpritesGpu {
                     .push((*name, cx.fill(pipeline, &[*sheet]), range.clone()));
             }
         }
+    }
+
+    fn view(&mut self, view: &ViewFacts, _cx: &mut Prepare<'_, Self>) {
+        self.flat.view(view);
     }
 }
 

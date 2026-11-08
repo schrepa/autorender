@@ -1,21 +1,6 @@
 {
   "id": "render-world",
   "revision": 1,
-  "camera": {
-    "position": [
-      -430,
-      280,
-      -430
-    ],
-    "target": [
-      40,
-      40,
-      40
-    ],
-    "fov_degrees": 55,
-    "near": 0.5,
-    "far": 4000
-  },
   "environment": {
     "ground_cover": {
       "looks": {
@@ -144,6 +129,35 @@
           "blend": 128
         }
       }
+    },
+    {
+      "id": "camera",
+      "transform": {
+        "translation": [
+          -430.0,
+          280.0,
+          -430.0
+        ],
+        "rotation_degrees": [
+          -152.9494,
+          -41.6884,
+          -161.2417
+        ]
+      },
+      "node": {
+        "clock": "real",
+        "mobility": "moving"
+      },
+      "camera": {
+        "near": 0.5,
+        "far": 4000.0,
+        "projection": {
+          "Perspective": {
+            "vertical_fov_radians": 0.9599311
+          }
+        }
+      },
+      "view": {}
     }
   ]
 }

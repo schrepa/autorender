@@ -40,7 +40,6 @@ pub fn options() -> Vec<CommandOption> {
         .defaults_to(jobcache)
         .in_unit("MiB"),
         CommandOption::taking("--vsync", "on|off").defaults_to(switch(defaults.vsync)),
-        CommandOption::taking("--view", "NAME"),
         CommandOption::taking("--look", "NAME"),
     ];
     options.extend(SETTINGS.iter().map(|setting| {
@@ -253,7 +252,6 @@ pub struct HostOptions {
     pub jobs: JobOptions,
     pub vsync: bool,
     pub settings: HostSettings,
-    pub view: Option<String>,
     pub look: Option<String>,
     pub frames: Option<u32>,
     pub settle_ms: u64,
@@ -283,7 +281,6 @@ impl Default for HostOptions {
             jobs: JobOptions::default(),
             vsync: true,
             settings: HostSettings::default(),
-            view: None,
             look: None,
             frames: None,
             settle_ms: 20_000,
@@ -379,7 +376,6 @@ impl HostOptions {
             }
             "--jobcache" => self.jobs.cache = job_cache(argument, arguments)?,
             "--vsync" => self.vsync = arguments.switch(argument)?,
-            "--view" => self.view = Some(arguments.value(argument)?),
             "--look" => self.look = Some(arguments.value(argument)?),
             switch if switch.strip_prefix("--").is_some_and(HostSettings::takes) => {
                 let value = arguments.value(argument)?;
@@ -630,9 +626,6 @@ impl HostOptions {
         let world = engine.app.world_mut();
         if let Some(look) = &self.look {
             engine::host::show_look(world, look, "--look")?;
-        }
-        if let Some(view) = &self.view {
-            engine::host::show_view(world, view, "--view")?;
         }
         Ok(game)
     }

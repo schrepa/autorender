@@ -1,9 +1,9 @@
 use bevy_ecs::prelude::*;
-use engine_core::glam::{Mat4, Vec4};
+use engine_core::glam::{Mat4, UVec2, Vec4};
 use engine_core::math::{clamp, half, max, pow};
 use engine_core::{
     AttachPoint, DrawKind, DrawnTable, Error, ErrorCode, GpuBits, Interest, Joined, Operation,
-    PassMask, PassViews, PrimaryView, Readable, Readback, ScenePasses, ViewFacts, WholeFrames,
+    PassMask, PassViews, Readable, Readback, ScenePasses, ViewFacts, Views, WholeFrames,
 };
 use engine_render::debug::DebugRecord;
 use engine_render::{
@@ -224,7 +224,7 @@ fn unpacked_normal(packed: u32) -> [f32; 3] {
     [x / length, y / length, z / length]
 }
 
-pub(crate) fn advance(view: Res<PrimaryView>, mut steps: ResMut<ProbeSteps>, mut probe: ResMut<Probe>) {
+pub(crate) fn advance(views: Res<Views>, mut steps: ResMut<ProbeSteps>, mut probe: ResMut<Probe>) {
     let probe = &mut *probe;
     let done = std::mem::take(&mut steps.done);
     let next = match &probe.stage {
@@ -232,10 +232,12 @@ pub(crate) fn advance(view: Res<PrimaryView>, mut steps: ResMut<ProbeSteps>, mut
         Stage::Capturing => done.contains(&probe.armed).then_some(Stage::Waiting),
         Stage::Idle | Stage::Waiting | Stage::Read(_) => None,
     };
-    if next == Some(Stage::Capturing) {
-        let size = view.display_size();
+    if next == Some(Stage::Capturing)
+        && let Some(main) = views.main()
+    {
+        let size = main.size();
         probe.size = (size.x, size.y);
-        probe.view_projection = view.view_projection();
+        probe.view_projection = main.view_projection;
     }
     if let Some(next) = next {
         probe.stage = next;
@@ -254,17 +256,17 @@ pub(crate) struct ProbePixel;
 impl Operation for ProbePixel {
     const NAME: &'static str = "probe_pixel";
     type Params = (
-        Res<'static, PrimaryView>,
+        Res<'static, Views>,
         ResMut<'static, Probe>,
         ResMut<'static, WholeFrames>,
     );
     type Request = PixelRequest;
 
     fn run(
-        (view, mut probe, mut frames): SystemParamItem<'_, '_, Self::Params>,
+        (views, mut probe, mut frames): SystemParamItem<'_, '_, Self::Params>,
         request: PixelRequest,
     ) -> Result<Value, Error> {
-        let size = view.display_size();
+        let size = views.main().map_or(UVec2::ZERO, ViewFacts::size);
         for (path, value, size) in [("$.x", request.x, size.x), ("$.y", request.y, size.y)] {
             if value >= size {
                 return Err(Error::new(ErrorCode::OutOfRange, path)
@@ -337,7 +339,7 @@ pub(crate) struct ProbeGpu {
 }
 
 impl GpuPart for ProbeGpu {
-    type Reads = (Res<'static, Probe>, Res<'static, PrimaryView>);
+    type Reads = (Res<'static, Probe>, Res<'static, Views>);
     const NAME: &'static str = "debug_view";
     const LAZY: bool = true;
     const LABELS: &'static [&'static str] = &["engine/debug-view"];
@@ -366,10 +368,10 @@ impl GpuPart for ProbeGpu {
 
     fn prepare(
         &mut self,
-        (probe, view): SystemParamItem<'_, '_, Self::Reads>,
+        (probe, views): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        let size = view.display_size();
+        let size = views.main().map_or(UVec2::ZERO, ViewFacts::size);
         let at = wgpu::Origin3d {
             x: probe.pixel.0.min(size.x.saturating_sub(1)),
             y: probe.pixel.1.min(size.y.saturating_sub(1)),

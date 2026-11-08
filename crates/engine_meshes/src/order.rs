@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Detail, DeviceLimits, DrawnTable, MaterialHandle, MeshHandle, PlanState, PrimaryView,
+    Detail, DeviceLimits, DrawnTable, MaterialHandle, MeshHandle, PlanState, Views,
 };
 use engine_render::slots::DRAWN_SLOTS;
 
@@ -91,14 +91,16 @@ pub(crate) struct MeshPlan {
 
 pub(crate) fn plan_draws(
     table: Res<DrawnTable>,
-    (view, detail): (Res<PrimaryView>, Res<Detail>),
+    (views, detail): (Res<Views>, Res<Detail>),
     (culling, occlusion, subpixel): (Res<Culling>, Res<OcclusionCulling>, Res<SubpixelCulling>),
     mut decided: ResMut<MeshPlan>,
 ) {
-    let (planes, absolute) = frustum_uniform(rasterized(&view));
-    let bounded = absolute.iter().flatten().all(|value| {
-        value.is_finite() && *value <= engine_core::presentation_bounds::MAX_COEFFICIENT
-    }) && planes.iter().flatten().all(|value| value.is_finite());
+    let bounded = views.main().is_some_and(|main| {
+        let (planes, absolute) = frustum_uniform(rasterized(main));
+        absolute.iter().flatten().all(|value| {
+            value.is_finite() && *value <= engine_core::presentation_bounds::MAX_COEFFICIENT
+        }) && planes.iter().flatten().all(|value| value.is_finite())
+    });
     let frustum = culling.frustum && bounded;
     let candidates = table.census(MESH).drawn as usize;
     let unbudgeted = frustum && culling.budget() >= candidates;

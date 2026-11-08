@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Cursor, DeviceLimits, Error, PassViews, PrimaryView, ScenePass, TargetName,
+    AssetLibrary, Cursor, DeviceLimits, Error, PassViews, ScenePass, TargetName, Views,
 };
 use engine_places_rendering::probes::{MIRRORED, ProbeCaptures};
 use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, ShadowMaps};
@@ -156,7 +156,7 @@ type Neighbors = (
     Res<'static, ProbeCaptures>,
 );
 
-type Frame = Res<'static, PrimaryView>;
+type Frame = Res<'static, Views>;
 
 impl GpuPart for TerrainGpu {
     type Reads = (
@@ -595,12 +595,13 @@ impl GpuPart for TerrainGpu {
     ) {
         let (settings, tiles, atlas, bakes, ground) = lists;
         let (water, cover, shadows, captures) = neighbors;
-        let view = frame;
-        self.temporal = view.jitter().is_some();
-        let size = view.render_size();
+        let main = frame.main();
+        self.temporal = main.is_some_and(|main| main.jitter.is_some());
+        let size = main.map_or(glam::UVec2::ZERO, |main| main.render);
         self.render = (size.x, size.y);
         let moves = AtlasMoves::since(&atlas, &mut self.cursor);
-        if tiles.terrains.is_empty() && atlas.slots.is_empty() {
+        let Some(main) = main.filter(|_| !tiles.terrains.is_empty() || !atlas.slots.is_empty())
+        else {
             self.atlas.rest();
             self.tables = TerrainTables::default();
             self.surface.rest();
@@ -614,11 +615,11 @@ impl GpuPart for TerrainGpu {
             );
             cx.deliver::<SurfaceTotals>(SURFACE_TOTALS, Vec::new());
             return;
-        }
+        };
         let h = &self.handles;
-        let eye = view.eye();
-        let culling = view.view_projection() * Mat4::from_translation(eye);
-        let jitter = view.jitter().map_or([0.0; 2], |offset| {
+        let eye = main.eye;
+        let culling = main.view_projection * Mat4::from_translation(eye);
+        let jitter = main.jitter.map_or([0.0; 2], |offset| {
             engine_render::jitter_clip(offset.to_array(), size.x, size.y)
         });
         let regions: Vec<(usize, KeptRefresh)> = shadows
@@ -630,7 +631,7 @@ impl GpuPart for TerrainGpu {
             })
             .collect();
         let canopy = (cover.density > 0.0).then(|| {
-            let height = view.display_size().y as f32;
+            let height = main.size().y as f32;
             (Cover::clone(&cover), pixels_per_meter(culling, height))
         });
         let views = TerrainViews {
@@ -706,7 +707,7 @@ impl GpuPart for TerrainGpu {
                 &tiles,
                 &bakes,
                 &settings,
-                view.detail_eye(),
+                main.detail_eye,
                 (limits.texture_layers, limits.storage_room),
             ),
             (
@@ -787,7 +788,7 @@ impl GpuPart for TerrainGpu {
         }
         self.deferred = !self.frame.terrains.is_empty();
         if self.deferred {
-            let display = view.display_size();
+            let display = frame.frame().display_size;
             let size = wgpu::Extent3d {
                 width: display.x,
                 height: display.y,

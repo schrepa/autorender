@@ -362,17 +362,6 @@ impl AppHost {
         }
     }
 
-    pub fn work(&mut self, width: u32, height: u32) {
-        let viewport = engine_core::Viewport {
-            width: width.max(1),
-            height: height.max(1),
-        };
-        let world = self.engine.app.world_mut();
-        if world.get_resource::<engine_core::Viewport>() != Some(&viewport) {
-            world.insert_resource(viewport);
-        }
-    }
-
     pub fn set_spare_time(&mut self, milliseconds: f64) {
         self.engine.set_spare_time(milliseconds);
     }
@@ -668,13 +657,6 @@ impl AppHost {
         if self.size != (width, height) {
             self.renderer.resize(width, height);
             self.size = (width, height);
-            self.engine
-                .app
-                .world_mut()
-                .insert_resource(engine_core::Viewport {
-                    width: width.max(1),
-                    height: height.max(1),
-                });
         }
         let (dynamic_resolution, (render_width, render_height)) =
             self.size_frame(interval, (width, height));

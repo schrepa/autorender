@@ -3,7 +3,7 @@ use engine_core::collections::HashMap;
 use engine_core::glam::{Quat, Vec3};
 use engine_core::{
     Camera, DrawKind, Drawn, Engine, GlobalTransforms, Listing, Material, MaterialHandle, Mesh,
-    MeshHandle, Mover, MoverId, Pace, Parent, Schedule, Transform, main_camera, make_fresh,
+    MeshHandle, Mover, MoverId, Pace, Parent, Schedule, Transform, make_fresh,
     set_parent, set_parents,
 };
 use engine_meshes::MeshesBrick;
@@ -373,9 +373,6 @@ fn rebuild(
         .collect();
     let target = fresh.app.world_mut();
     let mut map = HashMap::with_capacity_and_hasher(held.len(), Default::default());
-    if let (Some(from), Some(to)) = (main_camera(world), main_camera(target)) {
-        map.insert(from, to);
-    }
     for (entity, authored) in &held {
         map.insert(*entity, spawn(target, &assets, authored));
     }

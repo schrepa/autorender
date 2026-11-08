@@ -6,7 +6,7 @@
       "scene": "highlands",
       "options": { "terrain-clock": "frames" },
       "ticks": 30,
-      "views": ["overview"],
+      "views": ["scene"],
       "captures": ["exact", "gpu:0.5"]
     },
     {
@@ -15,7 +15,10 @@
       "scene": "highlands",
       "options": { "terrain-clock": "frames" },
       "ticks": 30,
-      "views": ["close", "away"],
+      "views": [
+        { "name": "close", "camera": { "position": [87.271164, 670.1879, -87.271095], "target": [1060.6606, 120.0, -1060.6598], "vertical_fov_radians": 0.9599311, "near": 0.2, "far": 20000.0 } },
+        { "name": "away", "camera": { "position": [0.0, 1360.188, 600.0], "target": [0.0, 860.188, -3000.0], "vertical_fov_radians": 0.9599311, "near": 0.5, "far": 20000.0 } }
+      ],
       "captures": ["exact", "gpu:0.5"]
     }
   ]

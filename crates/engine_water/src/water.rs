@@ -197,7 +197,7 @@ impl GpuPart for WaterGpu {
         Res<'static, Water>,
         Res<'static, WaterState>,
         Res<'static, SettleFeedback>,
-        Res<'static, engine_core::PrimaryView>,
+        Res<'static, engine_core::Views>,
         Res<'static, GroundTiles>,
         Res<'static, Heightfield>,
     );
@@ -305,7 +305,7 @@ impl GpuPart for WaterGpu {
 
     fn prepare(
         &mut self,
-        (water, state, feedback, view, ground, heightfield): SystemParamItem<'_, '_, Self::Reads>,
+        (water, state, feedback, views, ground, heightfield): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         let pattern = &heightfield.leaf_indices;
@@ -337,7 +337,7 @@ impl GpuPart for WaterGpu {
             self.leaf_args,
             u64::from(WATER_LEAF_FIRST + 2 * terrains.max(1)) * 4,
         );
-        let size = view.display_size();
+        let size = views.frame().display_size;
         cx.allocate(
             self.foam,
             wgpu::Extent3d {

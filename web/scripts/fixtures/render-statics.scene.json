@@ -1,21 +1,6 @@
 {
   "id": "render-statics",
   "revision": 1,
-  "camera": {
-    "position": [
-      -200,
-      90,
-      -200
-    ],
-    "target": [
-      0,
-      0,
-      0
-    ],
-    "fov_degrees": 55,
-    "near": 0.5,
-    "far": 1200
-  },
   "materials": [
     {
       "id": "ground",
@@ -6786,6 +6771,35 @@
           0
         ]
       }
+    },
+    {
+      "id": "camera",
+      "transform": {
+        "translation": [
+          -200.0,
+          90.0,
+          -200.0
+        ],
+        "rotation_degrees": [
+          -155.7723,
+          -42.3624,
+          -163.1318
+        ]
+      },
+      "node": {
+        "clock": "real",
+        "mobility": "moving"
+      },
+      "camera": {
+        "near": 0.5,
+        "far": 1200.0,
+        "projection": {
+          "Perspective": {
+            "vertical_fov_radians": 0.9599311
+          }
+        }
+      },
+      "view": {}
     }
   ]
 }

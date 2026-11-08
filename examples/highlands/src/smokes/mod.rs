@@ -52,8 +52,21 @@ fn open(session: &mut dyn SmokeSession) -> Checked<()> {
     Ok(())
 }
 
-fn aim(session: &mut dyn SmokeSession, view: &str) -> Checked<()> {
-    control(session, "scene_view", json!({ "name": view })).map(drop)
+pub(super) type Aim = ([f32; 3], [f32; 3], f32);
+
+fn aim(session: &mut dyn SmokeSession, (position, target, fov_degrees): Aim) -> Checked<()> {
+    control(
+        session,
+        "camera",
+        json!({
+            "position": position,
+            "target": target,
+            "vertical_fov_radians": fov_degrees.to_radians(),
+            "near": 0.2,
+            "far": 20_000.0,
+        }),
+    )
+    .map(drop)
 }
 
 fn settle(session: &mut dyn SmokeSession) -> Checked<()> {

@@ -2,9 +2,15 @@ use engine_smoke::{Checked, control, environment, number};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-use super::{aim, open};
+use super::{Aim, aim, open};
 
-const STREAMS: [&str; 3] = ["torrent", "rapids", "meadow_river"];
+const TORRENT: Aim = ([-1584.0, 675.0, -2973.0], [-1584.0, 674.440_8, -2973.829], 60.0);
+
+const STREAMS: [Aim; 3] = [
+    TORRENT,
+    ([-3008.0, 228.0, -168.0], [-3008.0, 227.5, -168.866_03], 60.0),
+    ([-266.0, 671.0, -2986.0], [-266.0, 670.470_1, -2986.848_1], 60.0),
+];
 
 const WATER_VIEWS: [&str; 9] = [
     "water_depth",
@@ -47,7 +53,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
 }
 
 fn probed(session: &mut dyn SmokeSession) -> Checked<()> {
-    aim(session, "torrent")?;
+    aim(session, TORRENT)?;
     environment(session, json!({"debug_view": {"view": "water_depth"}}))?;
     let rendering = engine_smoke::settled(session)?;
     let width = number(&rendering["resolution"]["display_width"]);

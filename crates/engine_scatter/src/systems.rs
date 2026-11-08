@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::{
     Asset, AssetLibrary, AssetResidency, AssetUses, Cut, Detail, DeviceLimits, Drawn, FrameTime,
-    PrimaryView, Readable, Readback, Spawner, Transform,
+    Readable, Readback, Spawner, Transform, Views,
 };
 use engine_math::collections::HashMap;
 use engine_places::impostors::{ImpostorAsks, ImpostorRecord, ImpostorRecords, Impostors};
@@ -183,7 +183,7 @@ pub(crate) fn take_impostors(
 }
 
 pub(crate) fn place_windows(
-    (settings, foliage, view): (Res<OccupancySettings>, Res<FoliageSettings>, Res<PrimaryView>),
+    (settings, foliage, views): (Res<OccupancySettings>, Res<FoliageSettings>, Res<Views>),
     state: Res<ScatterState>,
     mut windows: ResMut<OccupancyWindows>,
     mut piece: ResMut<CanopyPiece>,
@@ -192,12 +192,15 @@ pub(crate) fn place_windows(
     if state.covers_changed {
         windows.redraw_all();
     }
+    let Some(main) = views.main() else {
+        return;
+    };
     let lit = windows.place(
         &settings,
-        view.detail_eye(),
+        main.detail_eye,
         (state.groups.covers.as_slice(), state.objects),
     );
-    piece.set_if_neq(canopy(lit, &foliage, view.jitter().is_some()));
+    piece.set_if_neq(canopy(lit, &foliage, main.jitter.is_some()));
     source.set_if_neq(OcclusionSource {
         texel_share: texel_share(&settings),
     });
@@ -423,7 +426,7 @@ pub(crate) fn place_pool(
 }
 
 pub(crate) fn plan_cull(
-    (view, detail, policy): (Res<PrimaryView>, Res<Detail>, Res<Impostors>),
+    (views, detail, policy): (Res<Views>, Res<Detail>, Res<Impostors>),
     mut state: ResMut<ScatterState>,
 ) {
     let state = &mut *state;
@@ -434,9 +437,12 @@ pub(crate) fn plan_cull(
     if state.resident == 0 {
         return;
     }
-    let view_projection = view.view_projection();
-    let eye = view.detail_eye();
-    let height = view.display_size().y as f32;
+    let Some(main) = views.main() else {
+        return;
+    };
+    let view_projection = main.view_projection;
+    let eye = main.detail_eye;
+    let height = main.size().y as f32;
     let pixel_error = detail.enabled.then_some(detail.pixel_error);
     let impostors = plan.cards.then_some(policy.pixels);
     let y_row = view_projection.row(1).truncate().length();

@@ -33,7 +33,6 @@ const GROUND_POINTS: [[f64; 2]; 6] = [
 fn fixture() -> Value {
     json!({
         "id": "terrain-views-fixture", "revision": 1,
-        "camera": {"position": [0, 80, 140], "target": [0, 30, 0], "fov_degrees": 60, "near": 0.5, "far": 4000},
         "materials": [],
         "meshes": [],
         "environment": {"ground_cover": {"looks": {"meadow": {"density": 60}}}},
@@ -54,7 +53,8 @@ fn fixture() -> Value {
                     {"id": "summit", "fitness": {"ramp": {"map": "height", "from": 110, "to": 130}}, "layers": [{"material": "snow"}]},
                 ],
             },
-        }}],
+        }},
+            {"id": "camera", "transform": {"translation": [0, 80, 140], "rotation_degrees": [-19.6538, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.5, "far": 4000, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}}],
     })
 }
 

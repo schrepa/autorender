@@ -5,7 +5,7 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::world::World;
 use engine_core::{
     CookAsks, DeviceLimits, Error, ErrorCode, FrameBudget, FrameTime, IDLE_JOBS, Interest,
-    JobFailures, Jobs, PrimaryView, RecordKey, Records, Request, Requests, VIEW_JOBS, job_priority,
+    JobFailures, Jobs, RecordKey, Records, Request, Requests, VIEW_JOBS, Views, job_priority,
 };
 use engine_heightfield::tile::Solid;
 use engine_heightfield::{Pyramid, Stamp, reaches};
@@ -1182,14 +1182,14 @@ pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {
 
 pub(crate) fn request_settle(
     water: Res<Water>,
-    view: Res<PrimaryView>,
+    views: Res<Views>,
     (time, records): (Res<FrameTime>, Res<Records>),
     limits: Res<DeviceLimits>,
     mut budget: ResMut<FrameBudget>,
     mut jobs: Jobs,
     mut state: ResMut<WaterState>,
 ) {
-    let eye = view.detail_eye();
+    let eye = views.main().map_or(glam::Vec3::ZERO, |main| main.detail_eye);
     let state = &mut *state;
     state.everything.settle(time.real_elapsed);
     let limits_changed = limits.is_changed();

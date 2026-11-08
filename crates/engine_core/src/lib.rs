@@ -110,7 +110,7 @@ pub use shared::{FeedSettings, FrameBudgetSettings};
 pub use services::{
     Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, Placed,
     Placement, Prepared, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm,
-    SceneIds, PrimaryView, SubScene, SubSceneEntity, WorkClock, scene_component, scene_components,
+    SceneIds, SubScene, SubSceneEntity, WorkClock, scene_component, scene_components,
 };
 pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
@@ -247,11 +247,11 @@ fn core_entries(registry: &mut RegistryBuilder) {
     registry.core_settings(bricks::settings_entry::<DrawnSettings>());
     registry.core_settings(bricks::settings_entry::<FrameLimits>());
     registry.core_operation(OperationEntry::of::<
-        <services::ViewControl as Operation>::Params,
+        <views::ViewControl as Operation>::Params,
     >(
-        services::ViewControl::NAME,
+        views::ViewControl::NAME,
         true,
-        bricks::run_operation::<services::ViewControl>,
+        bricks::run_operation::<views::ViewControl>,
     ));
     registry.core_operation(OperationEntry::of::<
         <moves::TeleportControl as Operation>::Params,
@@ -332,37 +332,6 @@ fn refused(problems: &[Error]) -> Result<(), Error> {
     }
 }
 
-fn publish_view(world: &mut World, facts: FrameFacts) {
-    let scene = world.resource::<PrimaryView>().scene();
-    views::settle(world, facts, scene);
-    let main = world.resource::<Views>().main().copied();
-    let held = world.resource::<PrimaryView>();
-    let (shown, view_projection, eye) = match main {
-        Some(main) => (
-            FrameFacts {
-                display_size: main.size(),
-                render_size: main.render,
-                ..facts
-            },
-            main.view_projection,
-            main.eye,
-        ),
-        None => (facts, held.view_projection(), held.eye()),
-    };
-    let state = held.state();
-    if state.facts() == shown
-        && state.view_projection() == view_projection
-        && state.eye() == eye
-        && held.same(main.as_ref())
-    {
-        return;
-    }
-    modify(world, |view: &mut PrimaryView| {
-        view.state_mut().set(shown, view_projection, eye);
-        view.shown(main);
-    });
-}
-
 impl Engine {
     pub fn new(config: EngineConfig) -> Self {
         let clock = FixedClock::new(config);
@@ -413,12 +382,10 @@ impl Engine {
             .init_resource::<engine_registry::JobQueue>()
             .init_resource::<Records>()
             .init_resource::<RecordExchange>()
-            .insert_resource(PrimaryView::empty())
             .insert_resource(DeviceLimits::without_device(cores))
             .init_resource::<WorkClock>()
             .init_resource::<PartDraws>()
             .init_resource::<MeshLevels>()
-            .init_resource::<Viewport>()
             .init_resource::<MoveInput>()
             .init_resource::<ActionInput>()
             .init_resource::<AxisInput>()
@@ -483,7 +450,6 @@ impl Engine {
         moves::install_kinds(world);
         install_passes(world);
         drawn::install_kinds(world);
-        scene::spawn_main_view(world);
         let mut twice = world
             .get_resource::<MembersOf<SceneComponents>>()
             .map(|members| members.names_twice(|kind| kind.key()))
@@ -849,22 +815,12 @@ impl Engine {
 
     fn sync_view(&mut self) {
         let _profile = engine_profile::span("ecs", "ViewSync");
-        let facts = self.facts.unwrap_or_else(|| self.viewport_facts());
+        let facts = self.facts.unwrap_or_default();
         let world = self.app.world_mut();
-        publish_view(world, facts);
+        views::settle(world, facts);
         world.run_schedule(ViewSync);
         views::settle_owned(world);
         assets::settle_assets(world);
-    }
-
-    fn viewport_facts(&self) -> FrameFacts {
-        let viewport = *self.app.world().resource::<Viewport>();
-        let size = glam::UVec2::new(viewport.width, viewport.height);
-        FrameFacts {
-            display_size: size,
-            render_size: size,
-            ..FrameFacts::default()
-        }
     }
 
     fn finalize(&mut self) {

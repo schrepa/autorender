@@ -26,7 +26,7 @@ struct Player {
 pub struct ScenePlayer {
     instance: Option<SceneInstance>,
     player: Option<Player>,
-    view: (Transform, Camera),
+    view: Option<(Entity, Transform, Camera)>,
 }
 
 impl ScenePlayer {
@@ -34,7 +34,7 @@ impl ScenePlayer {
         let mut player = Self {
             instance: None,
             player: None,
-            view: (Transform::looking_at(Camera::EYE, Vec3::ZERO), Camera::default()),
+            view: None,
         };
         player.load(engine, source, files)?;
         Ok(player)
@@ -88,7 +88,9 @@ impl ScenePlayer {
             previous.despawn(world);
         }
         self.player = player;
-        self.view = document.camera.placed();
+        self.view = main_camera(world).and_then(|camera| {
+            Some((camera, *world.get::<Transform>(camera)?, *world.get::<Camera>(camera)?))
+        });
         engine.reset_clock();
         Ok(())
     }
@@ -118,8 +120,8 @@ impl Game for ScenePlayer {
         match self.player {
             Some(player) => reset_player(world, player),
             None => {
-                if let Some(camera) = main_camera(world) {
-                    place_camera(world, camera, self.view.0, self.view.1);
+                if let Some((camera, at, lens)) = self.view {
+                    place_camera(world, camera, at, lens);
                 }
             }
         }

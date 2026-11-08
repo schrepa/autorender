@@ -54,6 +54,9 @@ fn document(hiker: bool) -> Value {
             "transform": {"translation": [0.0, 45.0, 0.0]}}),
         json!({"id": "hall", "reflection_probe": {"extent": [20.0, 200.0, 20.0], "blend": 0.5,
             "interior": {"sky": 0.1, "sun": 0.1}}, "transform": {"translation": [-300.0, 40.0, 300.0]}}),
+        json!({"id": "camera", "transform": {"translation": [0.0, 80.0, 140.0], "rotation_degrees": [-19.6538, 0.0, 0.0]},
+            "node": {"clock": "real", "mobility": "moving"},
+            "camera": {"near": 0.5, "far": 4000.0, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}}),
     ];
     if hiker {
         entities.push(json!({"id": "hiker", "mesh": "cube", "material": "plain",
@@ -70,7 +73,6 @@ fn document(hiker: bool) -> Value {
     }
     json!({
         "id": "terrain-fixture", "revision": 1,
-        "camera": {"position": [0.0, 80.0, 140.0], "target": [0.0, 30.0, 0.0], "fov_degrees": 60, "near": 0.5, "far": 4000.0},
         "materials": [
             {"id": "plain", "color": [0.8, 0.3, 0.2, 1.0]},
             {"id": "grain", "color": [1.0, 1.0, 1.0, 1.0]},

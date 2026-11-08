@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
-use engine_core::{Cut, Error, FrameTime, GpuBits, PrimaryView, Readable, Readback, RecordKey};
+use engine_core::{Cut, Error, FrameTime, GpuBits, Readable, Readback, RecordKey, Views};
 use engine_heightfield::TileKey;
 use engine_places_simulation::water::{WaterObstacle, WaterObstacles};
 use engine_places_world::ground::{GroundBaking, GroundTiles, TerrainTiles};
@@ -760,7 +760,7 @@ fn touching(window: &WaterWindow, touches: &[WaterObstacle]) -> Option<SimTouche
 
 pub(crate) fn plan_sim(
     obstacles: Res<WaterObstacles>,
-    (ground, time, view): (Res<GroundTiles>, Res<FrameTime>, Res<PrimaryView>),
+    (ground, time, views): (Res<GroundTiles>, Res<FrameTime>, Res<Views>),
     (tiles, baking): (Res<TerrainTiles>, Res<GroundBaking>),
     mut state: ResMut<WaterState>,
 ) {
@@ -776,7 +776,7 @@ pub(crate) fn plan_sim(
         state.live.rest();
         return;
     }
-    let eye = view.eye();
+    let eye = views.main().map_or(Vec3::ZERO, |main| main.eye);
     let index_of = |entity: Entity| {
         ground
             .tables

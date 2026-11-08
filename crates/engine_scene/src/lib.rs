@@ -11,16 +11,16 @@ mod files;
 mod hierarchy;
 mod instance;
 mod loading;
+mod looks;
 mod material;
 mod texture;
 mod validation;
-mod views;
 mod writer;
 
 pub use components::SceneKinds;
 pub use document::{
-    MAX_SOURCE_BYTES, MeshSource, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
-    SceneSurface, SceneTransform, SceneVertex,
+    MAX_SOURCE_BYTES, MeshSource, SceneDocument, SceneMesh, SceneObject, ScenePrefab, SceneSurface,
+    SceneTransform, SceneVertex,
 };
 pub use engine_assets::{MeshStreams, encode_mesh_buffer_with};
 pub use engine_registry::SceneEntity;
@@ -30,13 +30,10 @@ pub use environment::SceneEnvironment;
 pub use environment::section_schemas;
 pub use files::{SceneFile, SceneFileKind, SceneFiles};
 pub use instance::{MeshOrigin, SceneInstance, TextureOrigin};
+pub use looks::{SCENE_LOOK, SceneLook, SceneLookControl, SceneLooks, show_look};
 pub use material::{
     SceneAlphaMode, SceneCull, SceneDepthBias, SceneFilter, SceneMap, SceneMaterial,
     SceneMaterialControl, SceneMipmapFilter, SceneTextureMap, SceneWrap,
 };
 pub use texture::SceneTexture;
 pub use validation::{identifier, unknown};
-pub use views::{
-    SCENE_LOOK, SceneLook, SceneLookControl, SceneView, SceneViewControl, SceneViews, show_look,
-    show_view,
-};

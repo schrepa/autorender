@@ -47,7 +47,7 @@ impl Highlands {
             reflections,
         } = furnished;
         self.scene = Some(instance);
-        self.start = Some(start);
+        self.start = start;
         self.reflections = reflections;
         for name in APPLIED {
             self.apply(world, options, name)?;

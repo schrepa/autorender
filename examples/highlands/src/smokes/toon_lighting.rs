@@ -2,9 +2,13 @@ use engine_smoke::{Checked, ask, capture};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-use super::{aim, open, settle};
+use super::{Aim, aim, open, settle};
 
-const VIEW: &str = "close";
+const VIEW: Aim = (
+    [87.271_164, 670.187_9, -87.271_095],
+    [1060.660_6, 120.0, -1060.659_8],
+    55.0,
+);
 
 const UNLINKED: [&str; 3] = ["shader_link", "unknown_module", "place_not_filled"];
 

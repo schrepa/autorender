@@ -260,9 +260,6 @@ impl<G: Game> PageHost<G> {
         if let Some(look) = parameters.get("look") {
             crate::host::show_look(world, &look, "?look").map_err(js)?;
         }
-        if let Some(view) = parameters.get("view") {
-            crate::host::show_view(world, &view, "?view").map_err(js)?;
-        }
         settings.apply(&mut self.host).map_err(js)
     }
 

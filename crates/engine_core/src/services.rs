@@ -2,21 +2,20 @@ use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use bevy_ecs::component::{Component, ComponentId};
 use bevy_ecs::entity::Entity;
 use bevy_ecs::lifecycle::{Discard, Insert};
 use bevy_ecs::observer::On;
 use bevy_ecs::resource::Resource;
-use bevy_ecs::system::{Commands, Query, Res, ResMut, SystemParam, SystemParamItem};
+use bevy_ecs::system::{Query, Res, ResMut, SystemParam};
 use bevy_ecs::world::World;
 use engine_registry::{AuthoredId, JobList, OperationScene, SceneEntity};
 use glam::Mat4;
 use serde::{Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use crate::{Error, ErrorCode, Expected, List, Operation, settings};
+use crate::{Error, ErrorCode, Expected, List, settings};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
@@ -629,135 +628,6 @@ impl SceneContext {
 
     pub fn members<L: List>(&self) -> impl Iterator<Item = &L::Member> + '_ {
         self.list.as_deref().into_iter().flat_map(JobList::members::<L>)
-    }
-}
-
-static VIEWS: AtomicU64 = AtomicU64::new(1);
-
-#[derive(Resource)]
-#[component(immutable)]
-pub struct PrimaryView {
-    cameras: engine_registry::ViewState,
-    facts: Option<crate::ViewFacts>,
-}
-
-impl PrimaryView {
-    pub(crate) fn empty() -> Self {
-        let identity = VIEWS
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-            .expect("view_identities_left");
-        Self {
-            cameras: engine_registry::ViewState::identified(identity),
-            facts: None,
-        }
-    }
-
-    pub fn render_size(&self) -> glam::UVec2 {
-        self.cameras.render_size()
-    }
-
-    pub fn display_size(&self) -> glam::UVec2 {
-        self.cameras.display_size()
-    }
-
-    pub fn pixel_ratio(&self) -> f32 {
-        self.cameras.facts().pixel_ratio
-    }
-
-    pub fn render_share(&self) -> f32 {
-        let (render, display) = (self.render_size(), self.display_size());
-        render.y as f32 / display.y.max(1) as f32
-    }
-
-    pub fn view_projection(&self) -> glam::Mat4 {
-        self.cameras.view_projection()
-    }
-
-    pub fn eye(&self) -> glam::Vec3 {
-        self.cameras.eye()
-    }
-
-    pub fn detail_eye(&self) -> glam::Vec3 {
-        self.cameras.detail_eye()
-    }
-
-    pub fn jitter(&self) -> Option<glam::Vec2> {
-        self.facts.and_then(|facts| facts.jitter)
-    }
-
-    pub fn scene(&self) -> u64 {
-        self.cameras.scene()
-    }
-
-    pub fn facts(&self) -> Option<&crate::ViewFacts> {
-        self.facts.as_ref()
-    }
-
-    pub fn view(&self) -> Option<Entity> {
-        self.facts.map(|facts| facts.view)
-    }
-
-    pub fn camera(&self) -> Option<Entity> {
-        self.facts.map(|facts| facts.camera)
-    }
-
-    pub fn lens(&self) -> crate::Camera {
-        self.facts.map(|facts| facts.lens).unwrap_or_default()
-    }
-
-    pub fn forward(&self) -> glam::Vec3 {
-        self.facts.map_or(glam::Vec3::NEG_Z, |facts| facts.forward)
-    }
-
-    pub fn history(&self) -> crate::ViewHistory {
-        self.facts
-            .map_or(crate::ViewHistory::Fresh, |facts| facts.history)
-    }
-
-    #[doc(hidden)]
-    pub fn state(&self) -> &engine_registry::ViewState {
-        &self.cameras
-    }
-
-    #[doc(hidden)]
-    pub fn state_mut(&mut self) -> &mut engine_registry::ViewState {
-        &mut self.cameras
-    }
-
-    pub(crate) fn shown(&mut self, facts: Option<crate::ViewFacts>) {
-        self.facts = facts;
-    }
-
-    pub(crate) fn same(&self, facts: Option<&crate::ViewFacts>) -> bool {
-        self.facts.as_ref() == facts
-    }
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ViewControl {
-    #[serde(default)]
-    freeze: Option<bool>,
-}
-
-impl Operation for ViewControl {
-    const NAME: &'static str = "view";
-    type Params = (Res<'static, PrimaryView>, Commands<'static, 'static>);
-    type Request = Self;
-
-    fn run(params: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<Value, Error> {
-        let (view, mut commands) = params;
-        let frozen = match request.freeze {
-            Some(true) => Some(view.cameras.frozen().unwrap_or_else(|| view.eye())),
-            Some(false) => None,
-            None => view.cameras.frozen(),
-        };
-        if frozen != view.cameras.frozen() {
-            commands.queue(move |world: &mut World| {
-                crate::modify(world, |view: &mut PrimaryView| view.cameras.freeze(frozen));
-            });
-        }
-        Ok(json!({ "frozen_at": frozen.map(|eye| eye.to_array()) }))
     }
 }
 

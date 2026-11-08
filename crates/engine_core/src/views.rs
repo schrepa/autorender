@@ -1,6 +1,6 @@
 use bevy_ecs::entity::Entity;
 use bevy_ecs::prelude::{Query, Res, Resource, World};
-use bevy_ecs::system::{SystemParam, SystemParamItem};
+use bevy_ecs::system::{Commands, SystemParam, SystemParamItem};
 use glam::{Mat4, UVec2, Vec2, Vec3, Vec4};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use crate::{
     AssetLibrary, Camera, Clear, ColorSpace, DRAWN_UNBOUNDED, Detail, Drawn, DrawnPoses, DrawnTable, Error,
     ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Interest, Jitter, Layers, List,
-    Mobility, Operation, OwnedView, OwnedViews, PassBit, PassMask, PassViews, PrimaryView, Requests,
+    Mobility, Operation, OwnedView, OwnedViews, PassBit, PassMask, PassViews, Requests,
     ScenePasses, Target, View, ViewCut, ViewHistory, ViewJitter, ViewLayer, take_asks,
 };
 
@@ -37,9 +37,11 @@ pub struct ViewFacts {
     pub order: i32,
     pub lens: Camera,
     pub eye: Vec3,
+    pub detail_eye: Vec3,
     pub forward: Vec3,
     pub view_projection: Mat4,
     pub previous_view_projection: Mat4,
+    pub previous_eye: Vec3,
     pub history: ViewHistory,
     pub jitter: Option<Vec2>,
     pub noise: f32,
@@ -120,6 +122,7 @@ impl ViewFacts {
             "clear_color": self.clear_color,
             "order": self.order,
             "eye": self.eye.to_array(),
+            "detail_eye": self.detail_eye.to_array(),
             "forward": self.forward.to_array(),
             "history": self.history,
             "jitter": self.jitter.map(|jitter| jitter.to_array()),
@@ -154,7 +157,6 @@ struct Key {
     render: UVec2,
     camera: Entity,
     cut: Option<u64>,
-    scene: u64,
     jittered: bool,
 }
 
@@ -164,6 +166,7 @@ struct Held {
     key: Key,
     started: FrameId,
     view_projection: Mat4,
+    eye: Vec3,
 }
 
 #[derive(Resource, Default)]
@@ -173,6 +176,8 @@ pub struct Views {
     held: Vec<Held>,
     drawn: Vec<DrawnView>,
     owned: Vec<(&'static str, u32, u32)>,
+    frame: FrameFacts,
+    frozen: Option<(Entity, Vec3)>,
 }
 
 impl Views {
@@ -189,6 +194,10 @@ impl Views {
             .iter()
             .find(|(known, _, _)| *known == pass)
             .map(|&(_, base, count)| base..base + count)
+    }
+
+    pub fn frame(&self) -> FrameFacts {
+        self.frame
     }
 
     pub fn main(&self) -> Option<&ViewFacts> {
@@ -265,21 +274,22 @@ fn eye_of(pose: Mat4) -> Option<(Vec3, Vec3, Vec3)> {
 fn history_of(
     before: Option<&Held>,
     reset: bool,
-    (frame, view_projection): (FrameId, Mat4),
-) -> (FrameId, Mat4, ViewHistory) {
+    (frame, view_projection, eye): (FrameId, Mat4, Vec3),
+) -> (FrameId, Mat4, Vec3, ViewHistory) {
     match before {
         Some(held) if !reset => (
             held.started,
             held.view_projection,
+            held.eye,
             ViewHistory::Valid {
                 since: held.started,
             },
         ),
-        Some(_) | None => (frame, view_projection, ViewHistory::Fresh),
+        Some(_) | None => (frame, view_projection, eye, ViewHistory::Fresh),
     }
 }
 
-pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
+pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
     let cuts: Vec<Entity> = take_asks::<ViewCut>(world)
         .into_iter()
         .map(|cut| cut.view)
@@ -290,9 +300,9 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
         .map(|mut views| views.iter(world).map(|(entity, view)| (entity, *view)).collect())
         .unwrap_or_default();
     found.sort_by_key(|(entity, view)| (!view.target.surface(), view.order, *entity));
-    let held = world
+    let (held, frozen) = world
         .get_resource::<Views>()
-        .map(|views| views.held.clone())
+        .map(|views| (views.held.clone(), views.frozen))
         .unwrap_or_default();
     let (globals, poses) = (
         world.get_resource::<GlobalTransforms>(),
@@ -353,18 +363,22 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
             render,
             camera: view.camera,
             cut,
-            scene,
             jittered: jitter.is_some(),
         };
         let before = held.iter().find(|held| held.view == entity);
         let reset = cuts.contains(&entity) || before.is_none_or(|held| held.key != key);
-        let (started, previous, history) = history_of(before, reset, (frame, view_projection));
+        let (started, previous, previous_eye, history) =
+            history_of(before, reset, (frame, view_projection, eye));
         kept.push(Held {
             view: entity,
             key,
             started,
             view_projection,
+            eye,
         });
+        let detail_eye = frozen
+            .filter(|(view, _)| *view == entity)
+            .map_or(eye, |(_, at)| at);
         listed.push(ViewFacts {
             view: entity,
             camera: view.camera,
@@ -377,9 +391,11 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
             order: view.order,
             lens,
             eye,
+            detail_eye,
             forward,
             view_projection,
             previous_view_projection: previous,
+            previous_eye,
             history,
             jitter,
             noise,
@@ -392,6 +408,8 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
         held: kept,
         drawn: Vec::new(),
         owned: Vec::new(),
+        frame: facts,
+        frozen,
     });
 }
 
@@ -400,7 +418,6 @@ pub(crate) fn settle_owned(world: &mut World) {
         .get_resource::<Detail>()
         .filter(|detail| detail.enabled)
         .map_or(0.0, |detail| detail.pixel_error);
-    let detail_eye = world.get_resource::<PrimaryView>().map(PrimaryView::detail_eye);
     let mut published: Vec<OwnedViews> = world
         .try_query::<&OwnedViews>()
         .map(|mut query| query.iter(world).cloned().collect())
@@ -440,7 +457,7 @@ pub(crate) fn settle_owned(world: &mut World) {
             view_projection: facts.view_projection,
             planes: None,
             position: facts.eye,
-            eye: detail_eye.filter(|_| index == 0).unwrap_or(facts.eye),
+            eye: facts.detail_eye,
             size: facts.render,
             detail,
             takes: None,
@@ -607,5 +624,41 @@ impl Operation for ViewsState {
 
     fn run(views: SystemParamItem<'_, '_, Self::Params>, _: ViewsRequest) -> Result<Value, Error> {
         Ok(views.map_or_else(|| json!({ "views": [], "refused": [] }), |views| views.json()))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ViewControl {
+    #[serde(default)]
+    freeze: Option<bool>,
+}
+
+impl Operation for ViewControl {
+    const NAME: &'static str = "view";
+    type Params = (Res<'static, Views>, Commands<'static, 'static>);
+    type Request = Self;
+
+    fn run(
+        (views, mut commands): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Value, Error> {
+        let main = views.main();
+        let held = views
+            .frozen
+            .filter(|(view, _)| main.is_some_and(|facts| facts.view == *view));
+        let frozen = match request.freeze {
+            Some(true) => held.or_else(|| main.map(|facts| (facts.view, facts.eye))),
+            Some(false) => None,
+            None => held,
+        };
+        if frozen != views.frozen {
+            commands.queue(move |world: &mut World| {
+                if let Some(mut views) = world.get_resource_mut::<Views>() {
+                    views.frozen = frozen;
+                }
+            });
+        }
+        Ok(json!({ "frozen_at": frozen.map(|(_, eye)| eye.to_array()) }))
     }
 }

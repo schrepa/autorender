@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::math::{max, min};
-use engine_core::{Error, FrameBudget, FrameTime, PrimaryView, StoreId};
+use engine_core::{Error, FrameBudget, FrameTime, StoreId, Views};
 use engine_places_rendering::sky::EyeMedium;
 use engine_places_rendering::sun::{Sun, SunPath};
 use engine_places_rendering::wind::ViewWind;
@@ -10,7 +10,7 @@ use engine_render::{
     Count, DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare,
     RenderPipeline, Sampler, SamplerDesc, Shape, Texture, wgpu,
 };
-use glam::{Mat4, Vec3};
+use glam::{Mat4, UVec2, Vec3};
 
 use crate::clouds::{
     CloudFrame, CloudPass, CloudPlan, CloudSteps, cloud_regions, shadow_lighting,
@@ -320,7 +320,7 @@ type SkyLights<'w> = (
 type SkyFrame<'w> = (
     Res<'w, StaticTables>,
     Res<'w, EyeMedium>,
-    Res<'w, PrimaryView>,
+    Res<'w, Views>,
     Res<'w, FrameTime>,
 );
 
@@ -334,14 +334,17 @@ type SkySteps<'w> = (
 pub(crate) fn plan_sky(
     (sky, clouds, haze, night): SkySections<'_>,
     (sun, path, wind): SkyLights<'_>,
-    (tables, medium, view, time): SkyFrame<'_>,
+    (tables, medium, views, time): SkyFrame<'_>,
     (mut cloud_steps, mut haze_steps, mut fresh, mut budget): SkySteps<'_>,
     mut plan: ResMut<SkyPlan>,
 ) {
     let plan = &mut *plan;
     plan.clouds.acknowledge(&mut cloud_steps);
-    let eye = view.eye();
-    let view_projection = view.view_projection();
+    let main = views.main();
+    let eye = main.map_or(Vec3::ZERO, |main| main.eye);
+    let view_projection = main.map_or(Mat4::IDENTITY, |main| main.view_projection);
+    let (display, render) =
+        main.map_or((UVec2::ZERO, UVec2::ZERO), |main| (main.size(), main.render));
     let seconds = time.elapsed;
     let sun_direction = Vec3::from_slice(&sun.direction[..3]);
     let [night_light, _, moon] = night_lighting(&night, &path, sun_direction);
@@ -372,7 +375,7 @@ pub(crate) fn plan_sky(
     );
     plan.clouds.prepare_view(
         (&clouds, eye, seconds),
-        (view_projection, view.display_size(), view.render_size()),
+        (display, render),
         (&*sun, &plan.piece),
     );
     [
@@ -394,11 +397,9 @@ pub(crate) fn plan_sky(
     let keys = (plan.clouds.environment_key(), plan.tables.environment_key());
     plan.environment.prepare(&light, keys, fresh.take());
     let haze_frame = HazeFrame {
-        view_projection,
-        eye,
-        display: view.display_size(),
-        render: view.render_size(),
-        history: view.history().valid(),
+        display,
+        render,
+        history: main.is_some_and(|main| main.history.valid()),
         frame: time.frame,
     };
     plan.piece.haze = plan.haze.prepare((hazes, haze_steps.missed()), &haze_frame);

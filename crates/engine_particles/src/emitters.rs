@@ -4,7 +4,7 @@ use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
     Allowed, Clock, Cut, Drawn, DrawnPoses, DrawnTable, Expected, FrameTime, GlobalTransforms,
-    InvalidSetting, Nearest, Rule, PrimaryView, Spawner, fields, gpu_struct, settings, stats,
+    InvalidSetting, Nearest, Rule, Spawner, Views, fields, gpu_struct, settings, stats,
 };
 use engine_places_rendering::particles::{
     MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleBursts, ParticleEmitter,
@@ -255,7 +255,7 @@ impl Gather {
         &mut self,
         (entity, slot, emitter): (Entity, u32, &ParticleEmitter),
         model: Mat4,
-        eye: Vec3,
+        eyes: &[Vec3],
         now: f32,
     ) -> Option<Candidate> {
         let emission = self.emission(entity, emitter.emitting, now);
@@ -265,7 +265,7 @@ impl Gather {
         let (stop, start) = Emission::window(emission);
         let origin = model.transform_point3(emitter.offset);
         Some(Candidate {
-            distance: origin.distance_squared(eye),
+            distance: closest(origin, eyes),
             entity: Some(entity),
             emitter: RenderEmitter {
                 origin,
@@ -286,7 +286,7 @@ impl Gather {
         })
     }
 
-    fn gather_bursts(&mut self, bursts: &ParticleBursts, eye: Vec3, time: f32) -> u64 {
+    fn gather_bursts(&mut self, bursts: &ParticleBursts, eyes: &[Vec3], time: f32) -> u64 {
         for mut burst in bursts.take_bursts() {
             self.bursts_taken = self.bursts_taken.wrapping_add(1);
             burst.look.seed = burst.look.seed.wrapping_add(self.bursts_taken);
@@ -301,7 +301,7 @@ impl Gather {
             let count = burst.count.min(MAX_EMITTER_PARTICLES);
             wanted += u64::from(count);
             self.candidates.push(Candidate {
-                distance: burst.at.distance_squared(eye),
+                distance: closest(burst.at, eyes),
                 entity: None,
                 emitter: RenderEmitter {
                     origin: burst.at,
@@ -327,7 +327,7 @@ impl Gather {
         (emitters, table): (&Query<'_, '_, &'static ParticleEmitter>, &DrawnTable),
         bursts: &ParticleBursts,
         (globals, poses): (&GlobalTransforms, &DrawnPoses),
-        eye: Vec3,
+        eyes: &[Vec3],
         (game, real): (f32, f32),
     ) {
         self.list.clear();
@@ -351,12 +351,12 @@ impl Gather {
                 Clock::Game => game,
                 Clock::Real => real,
             };
-            if let Some(candidate) = self.steady((entity, slot, emitter), model, eye, now) {
+            if let Some(candidate) = self.steady((entity, slot, emitter), model, eyes, now) {
                 wanted += u64::from(candidate.emitter.count);
                 self.candidates.push(candidate);
             }
         }
-        wanted += self.gather_bursts(bursts, eye, game);
+        wanted += self.gather_bursts(bursts, eyes, game);
         let budget = settings.max_particles.map(u64::from);
         let mut total = 0_u64;
         let mut steady = 0_usize;
@@ -443,10 +443,16 @@ pub(crate) fn keep_rows(
     }
 }
 
+fn closest(point: Vec3, eyes: &[Vec3]) -> f32 {
+    eyes.iter()
+        .map(|eye| point.distance_squared(*eye))
+        .fold(f32::INFINITY, f32::min)
+}
+
 type GatherFrame<'w> = (
     Res<'w, GlobalTransforms>,
     Res<'w, DrawnPoses>,
-    Res<'w, PrimaryView>,
+    Res<'w, Views>,
     Res<'w, FrameTime>,
     Res<'w, ParticleBursts>,
 );
@@ -454,17 +460,18 @@ type GatherFrame<'w> = (
 pub(crate) fn gather_emitters(
     settings: Res<ParticleSettings>,
     (emitters, table): (Query<&'static ParticleEmitter>, Res<DrawnTable>),
-    (globals, poses, view, time, bursts): GatherFrame<'_>,
+    (globals, poses, views, time, bursts): GatherFrame<'_>,
     mut gather: ResMut<Gather>,
     mut packed: ResMut<Packed>,
 ) {
     let gather = &mut *gather;
+    let eyes: Vec<Vec3> = views.listed().iter().map(|facts| facts.detail_eye).collect();
     gather.fill(
         &settings,
         (&emitters, &table),
         &bursts,
         (&globals, &poses),
-        view.detail_eye(),
+        &eyes,
         (time.elapsed as f32, time.real_elapsed as f32),
     );
     let packed = &mut *packed;

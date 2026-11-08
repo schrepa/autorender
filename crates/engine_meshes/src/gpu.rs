@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetLibrary, AssetResidency, Detail, DeviceLimits, DrawnPoses, DrawnTable, Error, FrameTime,
-    GlobalTransforms, MAX_HIERARCHY_DEPTH, PassViews, PrimaryView, ScenePass, Views,
+    GlobalTransforms, MAX_HIERARCHY_DEPTH, PassViews, ScenePass, Views,
 };
 use engine_places::impostors::{ImpostorRecords, Impostors};
 use engine_render::{
@@ -225,7 +225,6 @@ pub(crate) type FrameReads = (
     Res<'static, MeshPlan>,
     Res<'static, DrawnPoses>,
     Res<'static, GlobalTransforms>,
-    Res<'static, PrimaryView>,
     Res<'static, Detail>,
     Res<'static, Impostors>,
     Res<'static, FrameTime>,

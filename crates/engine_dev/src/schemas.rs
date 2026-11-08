@@ -659,10 +659,8 @@ const DOCUMENT: &[(&str, &str)] = &[
     ("revision", "structure"),
     ("entities", "structure"),
     ("prefabs", "structure"),
-    ("views", "structure"),
     ("looks", "structure"),
     ("environment", "Environment"),
-    ("camera", "Camera"),
     ("meshes", "DrawnMesh.mesh"),
     ("materials", "DrawnMesh.material"),
     ("textures", "DrawnMesh.textures"),
@@ -670,7 +668,6 @@ const DOCUMENT: &[(&str, &str)] = &[
 
 const RENAMED: &[(&str, &str)] = &[
     ("SceneTransform.rotation_degrees", "rotation"),
-    ("SceneCamera.fov_degrees", "vertical_fov_radians"),
     ("SceneTexture.rgba8", "inline"),
 ];
 

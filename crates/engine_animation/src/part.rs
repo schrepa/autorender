@@ -5,8 +5,8 @@ use bevy_ecs::prelude::*;
 use engine_core::math::max;
 use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, AttachPoint, Cull, DrawKind, DrawnPoses, DrawnTable,
-    Error, GlobalTransforms, MaterialHandle, MeshHandle, MeshVertex, PassViews,
-    PrimaryView, ScenePass, TargetName, Views, gpu_struct,
+    Error, GlobalTransforms, MaterialHandle, MeshHandle, MeshVertex, PassViews, ScenePass,
+    TargetName, Views, gpu_struct,
 };
 use engine_places_rendering::animation::{Animator, Rig, RigPart, VertexSkin};
 use engine_render::{
@@ -275,14 +275,9 @@ fn layout_key(table: &DrawnTable, animators: &Animators<'_, '_>, assets: &AssetL
     key
 }
 
-fn view_planes(views: &Views, view: &PrimaryView) -> Vec<SkinView> {
-    let drawn = views.drawn();
-    if drawn.is_empty() {
-        return vec![SkinView {
-            planes: planes(view.view_projection()),
-        }];
-    }
-    drawn
+fn view_planes(views: &Views) -> Vec<SkinView> {
+    views
+        .drawn()
         .iter()
         .map(|view| SkinView {
             planes: view
@@ -681,7 +676,6 @@ impl GpuPart for SkinningGpu {
         Res<'static, DrawnPoses>,
         Res<'static, AssetResidency>,
         Res<'static, AssetLibrary>,
-        Res<'static, PrimaryView>,
         Res<'static, Views>,
     );
     const NAME: &'static str = "animation";
@@ -743,7 +737,7 @@ impl GpuPart for SkinningGpu {
 
     fn prepare(
         &mut self,
-        (animators, table, globals, poses, residency, assets, view, views): SystemParamItem<
+        (animators, table, globals, poses, residency, assets, views): SystemParamItem<
             '_,
             '_,
             Self::Reads,
@@ -755,7 +749,7 @@ impl GpuPart for SkinningGpu {
             self.lay_out(&key, &animators, &assets, cx);
             self.held.key = Some(key);
         }
-        let planes = view_planes(&views, &view);
+        let planes = view_planes(&views);
         self.held.views = planes.len() as u32;
         if self.held.slots.is_empty() {
             return;

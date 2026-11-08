@@ -10,13 +10,15 @@ pub mod bricks {
 
 use crate::bricks::turning::{Turning, TurningBrick};
 
+const EYE: Vec3 = Vec3::new(24.0, 19.0, 28.0);
+
 pub struct Template;
 
 impl Game for Template {
     fn reset_camera(&mut self, engine: &mut Engine) {
         let world = engine.app.world_mut();
         if let Some(camera) = main_camera(world) {
-            let at = Transform::looking_at(Camera::EYE, Vec3::ZERO);
+            let at = Transform::looking_at(EYE, Vec3::ZERO);
             place_camera(world, camera, at, Camera::default());
         }
     }
@@ -66,6 +68,18 @@ pub fn build(engine: &mut Engine) -> engine::Result<Template> {
         block,
         spawned,
     ));
+    let camera = world
+        .spawn((
+            Transform::looking_at(EYE, Vec3::ZERO),
+            Camera::default(),
+            Node {
+                clock: Some(Clock::Real),
+                mobility: Some(Mobility::Moving),
+                ..Node::default()
+            },
+        ))
+        .id();
+    world.spawn(View::new(camera));
     Ok(Template)
 }
 

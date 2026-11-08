@@ -1242,16 +1242,16 @@ fn scene(
         layers.push(given);
     }
     layers.push(json!({"type": "hydrology", "level": 4}));
+    let position = [eye[0], camera_height, eye[1]];
+    let (x, y, z) = engine_core::Transform::looking_at(
+        engine_core::glam::Vec3::new(eye[0] as f32, camera_height as f32, eye[1] as f32),
+        engine_core::glam::Vec3::new(peak[0] as f32, (summit - 500.0) as f32, peak[1] as f32),
+    )
+    .rotation
+    .to_euler(engine_core::glam::EulerRot::XYZ);
     json!({
         "id": id,
         "revision": 1,
-        "camera": {
-            "position": [eye[0], camera_height, eye[1]],
-            "target": [peak[0], summit - 500.0, peak[1]],
-            "fov_degrees": 55.0,
-            "near": 0.5,
-            "far": 60000.0,
-        },
         "textures": textures,
         "materials": materials,
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
@@ -1271,6 +1271,12 @@ fn scene(
                 "layers": layers,
                 "surface": {"materials": surface_materials, "biomes": biomes},
             },
+        }, {
+            "id": "camera",
+            "transform": {"translation": position, "rotation_degrees": [x.to_degrees(), y.to_degrees(), z.to_degrees()]},
+            "node": {"clock": "real", "mobility": "moving"},
+            "camera": {"near": 0.5, "far": 60000.0, "projection": {"Perspective": {"vertical_fov_radians": 55.0_f64.to_radians()}}},
+            "view": {},
         }],
     })
 }

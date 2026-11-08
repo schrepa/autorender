@@ -17,9 +17,9 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::world::World;
 use engine_core::{
     AttachPoint, Attributes, Brick, Bricks, ComponentKind, DrawKind, Drawn, DrawnPoses,
-    DrawnTable, Error, ErrorCode, GlobalTransforms, KindDecl, PassName, PassViews, PrimaryView,
+    DrawnTable, Error, ErrorCode, GlobalTransforms, KindDecl, PassName, PassViews,
     Runs, SceneComponents, SceneCx, SceneForm, ScenePass, Schedule, SlotSet, Smoke, Source,
-    TargetName, Writes, gpu_struct, never, settings, stats,
+    TargetName, Views, Writes, gpu_struct, never, settings, stats,
 };
 use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Glyph, Text, TextAlign};
 use engine_render::{
@@ -215,7 +215,7 @@ fn install(mut text: ResMut<Text>) {
 }
 
 fn sync(
-    (text, settings, view): (Res<Text>, Res<TextSettings>, Res<PrimaryView>),
+    (text, settings, views): (Res<Text>, Res<TextSettings>, Res<Views>),
     mut labels: Query<&mut Label>,
     mut stats: ResMut<TextStats>,
 ) {
@@ -223,7 +223,7 @@ fn sync(
         return;
     };
     let mut state = typesetter.lock();
-    state.sync(&settings, &view);
+    state.sync(&settings, views.frame());
     state.advance();
     for mut label in labels.iter_mut().filter(|label| label.bytes.is_some()) {
         let bytes = label.bytes.take();
@@ -372,7 +372,7 @@ impl GpuPart for TextGpu {
         ),
         Res<'static, Text>,
         Res<'static, TextSettings>,
-        Res<'static, PrimaryView>,
+        Res<'static, Views>,
     );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
@@ -452,7 +452,7 @@ impl GpuPart for TextGpu {
 
     fn prepare(
         &mut self,
-        ((labels, table, globals, poses), text, settings, view): SystemParamItem<
+        ((labels, table, globals, poses), text, settings, views): SystemParamItem<
             '_,
             '_,
             Self::Reads,
@@ -483,7 +483,7 @@ impl GpuPart for TextGpu {
         let shown = state.frame(
             screen.chain(worlds),
             &settings,
-            &view,
+            views.frame(),
             (&mut self.placed, &mut self.placed_world),
         );
         self.staged.extend(self.placed.iter().map(|glyph| GlyphInstance {

@@ -39,9 +39,15 @@ fn grid() -> Value {
         }));
     }
     let eye = SIDE as f64 * 2.6;
+    entities.push(json!({
+        "id": "camera",
+        "transform": {"translation": [0.0, 30.0, eye], "rotation_degrees": [-(30.0_f64.atan2(eye).to_degrees()), 0.0, 0.0]},
+        "node": {"clock": "real", "mobility": "moving"},
+        "camera": {"near": 0.1, "far": 1000.0, "projection": {"Perspective": {"vertical_fov_radians": 60.0_f64.to_radians()}}},
+        "view": {},
+    }));
     json!({
         "id": "culling-grid", "revision": 1,
-        "camera": {"position": [0.0, 30.0, eye], "target": [0.0, 0.0, 0.0], "fov_degrees": 60, "near": 0.1, "far": 1000.0},
         "materials": materials,
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
         "entities": entities,
@@ -160,7 +166,6 @@ fn fixture() -> Value {
         .collect();
     json!({
         "id": "mesh-fixture", "revision": 1,
-        "camera": {"position": [0, 1, 4], "target": [0, 1, 0], "fov_degrees": 60, "near": 0.1, "far": 2000},
         "materials": [
             {"id": "plain", "color": [0.8, 0.4, 0.2, 1], "cull": "none"},
             {"id": "stone", "color": [0.5, 0.55, 0.6, 1], "cull": "none"},
@@ -174,6 +179,7 @@ fn fixture() -> Value {
             {"id": "limb", "mesh": "ribbon", "material": "plain"},
             {"id": "near-ball", "mesh": "ball", "material": "stone", "transform": {"translation": [2.5, 1, -2]}},
             {"id": "far-ball", "mesh": "ball", "material": "stone", "transform": {"translation": [-40, 1, -300]}},
+            {"id": "camera", "transform": {"translation": [0, 1, 4]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 2000, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}},
         ],
     })
 }

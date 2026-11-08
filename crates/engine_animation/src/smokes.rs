@@ -109,13 +109,6 @@ fn scene() -> Value {
     json!({
         "id": "animation-plays",
         "revision": 1,
-        "camera": {
-            "position": [0.0, 1.0, 6.0],
-            "target": [0.0, 1.0, 0.0],
-            "fov_degrees": 50,
-            "near": 0.1,
-            "far": 100.0,
-        },
         "materials": [{
             "id": "paint",
             "color": [0.8, 0.2, 0.2, 1.0],
@@ -125,6 +118,17 @@ fn scene() -> Value {
         "entities": [
             { "id": "bar", "animator": { "rig": rig(), "play": { "clip": "bend" } } },
             { "id": "gun", "parent": "bar", "attachment": { "joint": "tip" } },
+            {
+                "id": "camera",
+                "transform": { "translation": [0.0, 1.0, 6.0] },
+                "node": { "clock": "real", "mobility": "moving" },
+                "camera": {
+                    "near": 0.1,
+                    "far": 100.0,
+                    "projection": { "Perspective": { "vertical_fov_radians": 0.872_664_6 } },
+                },
+                "view": {},
+            },
         ],
     })
 }

@@ -6,7 +6,7 @@ use bevy_ecs::world::World;
 use engine_core::collections::{HashMap, HashSet};
 use engine_core::{
     CookAsks, Error, ErrorCode, FrameBudget, FrameTime, IDLE_JOBS, Interest, JobFailures, Jobs,
-    MISSING_RECORD, RecordKey, Records, VIEW_JOBS, PrimaryView, job_priority,
+    MISSING_RECORD, RecordKey, Records, VIEW_JOBS, Views, job_priority,
 };
 use engine_heightfield::Stamp;
 use engine_heightfield::tile::shaded_elsewhere;
@@ -450,13 +450,13 @@ struct Follow<'a, 'w, 's> {
 pub(crate) fn shade(
     tiles: Res<TerrainTiles>,
     records: Res<Records>,
-    view: Res<PrimaryView>,
+    views: Res<Views>,
     time: Res<FrameTime>,
     mut budget: ResMut<FrameBudget>,
     mut jobs: Jobs,
     mut bakes: ResMut<Bakes>,
 ) {
-    let eye = view.detail_eye();
+    let eye = views.main().map_or(glam::Vec3::ZERO, |main| main.detail_eye);
     let frame = time.frame;
     let moved = tiles.is_changed();
     let bakes = &mut *bakes;

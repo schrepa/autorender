@@ -7,7 +7,6 @@ use super::scene_kit::{ask, component, control, load, near_all, refuse, render};
 fn fixture() -> Value {
     json!({
         "id": "surfaces-fixture", "revision": 1,
-        "camera": {"position": [0, 9, 16], "target": [0, 0, 0], "fov_degrees": 55, "near": 0.1, "far": 500},
         "materials": [
             {"id": "ground", "color": [0.6, 0.62, 0.58, 1]},
             {"id": "plain", "color": [0.8, 0.3, 0.2, 1]},
@@ -18,6 +17,7 @@ fn fixture() -> Value {
             {"id": "behind", "mesh": "box", "material": "plain", "transform": {"translation": [0, 1, -2], "scale": [2, 2, 2]}},
             {"id": "tinted", "mesh": "box", "material": "plain", "drawn": {"values": {"tint": [0.2, 0.9, 0.3, 1]}}, "transform": {"translation": [5, 1, 0]}},
             {"id": "probe", "reflection_probe": {"extent": [12, 6, 12]}, "transform": {"translation": [0, 3, 0]}},
+            {"id": "camera", "transform": {"translation": [0, 9, 16], "rotation_degrees": [-29.3578, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 500, "projection": {"Perspective": {"vertical_fov_radians": 0.9599311}}}, "view": {}},
         ],
     })
 }

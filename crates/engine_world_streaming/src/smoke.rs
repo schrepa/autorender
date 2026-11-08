@@ -7,14 +7,15 @@ const SCENE: &str = "streaming-fixture";
 fn fixture(streamed: &[Value]) -> Value {
     json!({
         "id": SCENE, "revision": 1,
-        "camera": {"position": [0, 60, 40], "target": [20, 20, 0], "fov_degrees": 60, "near": 0.5, "far": 20000},
         "materials": [{"id": "plain", "color": [0.8, 0.3, 0.2, 1]}],
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
         "prefabs": [{"id": "lamp", "entities": [
             {"id": "post", "mesh": "box", "material": "plain", "transform": {"translation": [0, 1, 0], "scale": [0.2, 2, 0.2]}},
             {"id": "shade", "mesh": "box", "material": "plain", "transform": {"translation": [0, 2.2, 0], "scale": [12, 0.2, 12]}},
         ]}],
-        "entities": [],
+        "entities": [
+            {"id": "camera", "transform": {"translation": [0, 60, 40], "rotation_degrees": [-45, -19.4712, -18.4349]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.5, "far": 20000, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}},
+        ],
         "environment": {"streamed": {"streamed": streamed}},
     })
 }
