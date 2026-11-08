@@ -1,9 +1,12 @@
-use engine_core::GpuBits;
+use engine_core::{GpuBits, InstanceInput};
 use engine_render::debug::DebugRecord;
 use engine_render::wgpu;
 
-pub(crate) const RECORD_ATTRIBUTES: [wgpu::VertexAttribute; 1] =
-    wgpu::vertex_attr_array![14 => Uint32x4];
+pub(crate) const RECORD_ATTRIBUTES: [wgpu::VertexAttribute; 1] = [wgpu::VertexAttribute {
+    format: wgpu::VertexFormat::Uint32x4,
+    offset: 0,
+    shader_location: InstanceInput::Draw.location(),
+}];
 pub(crate) const RECORD_STREAM: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
     array_stride: 0,
     step_mode: wgpu::VertexStepMode::Instance,

@@ -29,7 +29,6 @@ mod encode;
 mod frame_group;
 mod gpu_calls;
 mod gpu_data;
-mod gpu_layouts;
 mod graph;
 mod install;
 mod linker;
@@ -497,7 +496,7 @@ pub enum DepthUse {
 
 #[derive(Clone, Debug)]
 pub enum VertexLayout {
-    Mesh,
+    Geometry(engine_core::GeometryStream),
     Buffer(wgpu::VertexBufferLayout<'static>),
 }
 

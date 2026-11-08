@@ -22,6 +22,7 @@ macro_rules! contract {
 pub mod impostors;
 pub mod meshes;
 pub mod queries;
+pub mod skin;
 
 use engine_place::PlaceDecl;
 
@@ -170,6 +171,7 @@ pub mod contract {
 
 pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<meshes::Instances>(),
+    PlaceDecl::slot::<skin::Skin>(),
     PlaceDecl::slot::<queries::SceneQueries>(),
     PlaceDecl::slot::<impostors::Impostors>(),
     PlaceDecl::component::<impostors::ImpostorAsks>("impostor_asks"),

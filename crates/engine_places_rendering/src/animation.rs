@@ -122,19 +122,11 @@ impl Clip {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct VertexSkin {
-    pub joints: [u32; 4],
-    pub weights: [f32; 4],
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RigPart {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
-    pub skin: Vec<VertexSkin>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -185,9 +177,6 @@ impl Rig {
         for (index, clip) in self.clips.iter().enumerate() {
             clip.check(&format!("$.clips[{index}]"), self.joints.len())?;
         }
-        for (index, part) in self.parts.iter().enumerate() {
-            check_part(part, index, self.palette.len())?;
-        }
         Ok(())
     }
 }
@@ -220,26 +209,6 @@ fn check_joint(joint: &Joint, index: usize) -> Result<(), Error> {
     }
     if !unit_rotation(&joint.rotation) {
         return Err(invalid(format!("{path}.rotation")).expected(Expected::Normalized));
-    }
-    Ok(())
-}
-
-fn check_part(part: &RigPart, index: usize, palette: usize) -> Result<(), Error> {
-    for (at, skin) in part.skin.iter().enumerate() {
-        let path = format!("$.parts[{index}].skin[{at}]");
-        if skin.joints.iter().any(|&joint| joint as usize >= palette) {
-            return Err(invalid(format!("{path}.joints"))
-                .at_most(palette as u64)
-                .got(skin.joints));
-        }
-        let sum: f32 = skin.weights.iter().sum();
-        let fine = skin
-            .weights
-            .iter()
-            .all(|weight| weight.is_finite() && *weight >= 0.0);
-        if !fine || sum <= 0.0 {
-            return Err(invalid(format!("{path}.weights")).expected(Expected::Nonzero));
-        }
     }
     Ok(())
 }

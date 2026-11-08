@@ -303,8 +303,8 @@ impl Draws {
                 let material = batch.material.and_then(|handle| assets.material(handle));
                 let mesh = assets.mesh(batch.mesh);
                 let resident = residency.mesh(batch.mesh);
-                let extended =
-                    mesh.is_some_and(|mesh| mesh.colors().is_some() || mesh.uv1().is_some());
+                let extended = batch.skinned
+                    || mesh.is_some_and(|mesh| mesh.colors().is_some() || mesh.uv1().is_some());
                 let flat = mesh.is_some_and(|mesh| {
                     let bounds = mesh.bounds();
                     let size = bounds.max() - bounds.min();
@@ -321,6 +321,7 @@ impl Draws {
                         }),
                         double_sided: material.is_some_and(|material| material.cull() == Cull::None),
                         extended,
+                        skinned: batch.skinned,
                     },
                     levels: drawn_levels(resident),
                     blended: material.is_some_and(|material| material.alpha_mode().blended()),

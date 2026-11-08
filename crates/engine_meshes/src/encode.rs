@@ -122,7 +122,12 @@ impl MeshesGpu {
         }
         let occluded = &self.occluded;
         let mut draw = cx.render(Attach::Declared);
-        let drawn = self.draw_meshes(&mut draw, &occluded.streams, &occluded.lit, PHASE_TWO);
+        let drawn = [false, true]
+            .into_iter()
+            .map(|skinned| {
+                self.draw_meshes(&mut draw, &occluded.streams, &occluded.lit, (PHASE_TWO, skinned))
+            })
+            .sum::<u32>();
         drawn + self.draw_cards(&mut draw, &occluded.streams, &occluded.card, PHASE_TWO)
     }
 }

@@ -27,7 +27,7 @@ use serde_json::Value;
 pub use asks::{Applied, ApplyAt, Ask, Asked, Moment};
 pub use budget::{BudgetUse, FrameBudget};
 pub use drawn::{
-    DrawKind, Drawn, DrawnProjection, GeometryHandle, InstanceValues, KindDecl, Layers, NodeId,
+    DrawKind, Drawn, DrawnBounds, DrawnProjection, InstanceValues, KindDecl, Layers, NodeId,
     PositionReach,
 };
 pub use engine_assets::{MaterialHandle, MeshHandle, TextureHandle};

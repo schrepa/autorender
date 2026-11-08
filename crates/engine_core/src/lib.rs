@@ -56,7 +56,8 @@ pub use drawn::{
     DrawnRecord, DrawnSettings, DrawnState, DrawnTable, PlanState, drawn_wgsl,
 };
 pub use engine_assets::{
-    Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, Attributes,
+    Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, Attributes, GeometryStream,
+    AttributeFormat, InstanceInput, VertexSkin,
     ColorSpace, Cull, DepthBias, Filter, LightingModel, LodInput,
     LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding, Mesh,
     MeshLods, MeshVertex, BASE_COLOR_MAP, EMISSIVE_MAP, MAPPED, MAPPED_MAPS, MAPPED_SLOTS,
@@ -68,8 +69,8 @@ pub use engine_textures::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image
 pub use engine_place::{
     Applied, ApplyAt, Ask, Asked, AttachPoint, BlendedPass, BudgetUse, Census,
     Clock, ColorPass, PositionReach,
-    Cursor, DrawKind, Drawn, DrawnProjection, Error, ErrorCode, Events,
-    Feed, FeedView, FrameBudget, GeometryHandle, GpuStruct, InstanceValues, Interest, JobRef,
+    Cursor, DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode, Events,
+    Feed, FeedView, FrameBudget, GpuStruct, InstanceValues, Interest, JobRef,
     KindDecl, Layers, Level, LevelView, List, MaterialHandle, MeshHandle, Mobility, Moment,
     Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit, PassCull, PassEntry,
     PassMask, PassName, PassRaster, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring, Runs,

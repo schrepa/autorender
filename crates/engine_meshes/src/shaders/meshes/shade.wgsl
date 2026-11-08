@@ -1,5 +1,5 @@
 import package::engine::materials::alpha_test;
-import package::engine::mesh::declarations::{MotionOutput, VertexOutput, fade_hidden};
+import package::engine::mesh::declarations::{MotionOutput, VertexOutput};
 import package::engine::mesh::vertex::output_color;
 import package::engine::shading::{SurfaceInput, SurfacePoint};
 import package::engine::slots::{shade_model, slot_output};
@@ -61,14 +61,6 @@ fn extended_fragment(input: ExtendedOutput) -> SlotFragment {
     values.color *= input.color;
     values.uv1 = input.uv1;
     return values;
-}
-
-fn placed_fragment(clip_position: vec4<f32>, normal_u: vec4<f32>, world_v: vec4<f32>,
-        material: vec4<u32>) -> SlotFragment {
-    if fade_hidden(material.w, clip_position.xy) {
-        discard;
-    }
-    return fragment_values(clip_position, normal_u, world_v, material);
 }
 
 fn masked_depth(input: SlotFragment) {

@@ -19,13 +19,6 @@ fn fade_hidden(fade: u32, position: vec2<f32>) -> bool {
     return shows == fade_word_out(fade);
 }
 
-struct AffineVertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec2<f32>,
-    @location(2) slot: u32,
-    @location(7) uv: vec2<f32>,
-}
-
 struct VertexOutput {
     @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_u: vec4<f32>,

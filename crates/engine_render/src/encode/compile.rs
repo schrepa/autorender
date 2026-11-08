@@ -69,22 +69,13 @@ fn named_constants(constants: &[Vec<(String, f64)>]) -> Vec<Vec<(&str, f64)>> {
 }
 
 fn vertex_layouts(vertices: &[VertexLayout]) -> Vec<Option<wgpu::VertexBufferLayout<'static>>> {
-    let mut layouts = Vec::new();
-    let mut meshes = 0;
-    for layout in vertices {
-        match layout {
-            VertexLayout::Mesh => {
-                layouts.push(if meshes == 0 {
-                    crate::mesh_arena::vertex_layout()
-                } else {
-                    crate::mesh_arena::extra_layout()
-                });
-                meshes += 1;
-            }
-            VertexLayout::Buffer(layout) => layouts.push(Some(layout.clone())),
-        }
-    }
-    layouts
+    vertices
+        .iter()
+        .map(|layout| match layout {
+            VertexLayout::Geometry(stream) => Some(crate::mesh_arena::geometry_layout(*stream)),
+            VertexLayout::Buffer(layout) => Some(layout.clone()),
+        })
+        .collect()
 }
 
 fn depth_stencil_state(

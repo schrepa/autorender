@@ -1,6 +1,7 @@
+import package::engine::drawn::{GeometryExtra, GeometryVertex, INPUT_DRAW, INPUT_SLOT};
 import package::engine::materials::alpha_test;
-import package::engine::mesh::declarations::{AffinePose, AffineVertexInput, faded_entry_fade,
-    faded_slot_slot, fade_hidden};
+import package::engine::mesh::declarations::{AffinePose, faded_entry_fade, faded_slot_slot,
+    fade_hidden};
 import package::engine::mesh::vertex::{output_color, pose_matrix, transform_vertex};
 import package::engine::shading::{PositionInput, Shaded, SurfaceInput, SurfacePoint};
 import package::engine::slots::{shade_model, slot_output, slot_position};
@@ -53,11 +54,11 @@ fn placed_position(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>, sl
     return slot_position(input);
 }
 
-fn placed_vertex(input: AffineVertexInput, slot: u32, fade: u32, draw: vec4<u32>)
+fn placed_vertex(input: GeometryVertex, slot: u32, fade: u32, draw: vec4<u32>)
         -> PlacedVertex {
     let model = pose_matrix(poses[slot]);
     let color = colors[slot];
-    let vertex = transform_vertex(input.position, input.normal, color.xy, color.z, input.uv,
+    let vertex = transform_vertex(input.position, input.normal, color.xy, color.z, input.uv0,
         model);
     let world = placed_position(model, input.position, vertex.world_v.xyz, slot,
         camera.position.w);
@@ -73,11 +74,11 @@ fn placed_vertex(input: AffineVertexInput, slot: u32, fade: u32, draw: vec4<u32>
     return output;
 }
 
-fn placed_extended_vertex(input: AffineVertexInput, color: vec4<f32>, uv1: vec2<f32>, slot: u32,
-        fade: u32, draw: vec4<u32>) -> PlacedExtendedVertex {
+fn placed_extended_vertex(input: GeometryVertex, extra: GeometryExtra, slot: u32, fade: u32,
+        draw: vec4<u32>) -> PlacedExtendedVertex {
     let vertex = placed_vertex(input, slot, fade, draw);
     return PlacedExtendedVertex(vertex.clip_position, vertex.normal_u, vertex.world_v,
-        vertex.material, vertex.previous, color, uv1, vertex.object);
+        vertex.material, vertex.previous, extra.color, extra.uv1, vertex.object);
 }
 
 fn extended_of(input: PlacedVertex) -> PlacedExtendedVertex {
@@ -142,26 +143,30 @@ fn debug_object(input: PlacedExtendedVertex, front: bool) -> DebugTargets {
 }
 
 @vertex
-fn vs_object(input: AffineVertexInput, @location(14) draw: vec4<u32>) -> PlacedVertex {
-    return placed_vertex(input, input.slot, 0u, draw);
+fn vs_object(input: GeometryVertex, @location(INPUT_SLOT) slot: u32,
+        @location(INPUT_DRAW) draw: vec4<u32>) -> PlacedVertex {
+    return placed_vertex(input, slot, 0u, draw);
 }
 
 @vertex
-fn vs_object_fading(input: AffineVertexInput, @location(14) draw: vec4<u32>) -> PlacedVertex {
-    return placed_vertex(input, faded_slot_slot(input.slot), faded_entry_fade(input.slot), draw);
+fn vs_object_fading(input: GeometryVertex, @location(INPUT_SLOT) slot: u32,
+        @location(INPUT_DRAW) draw: vec4<u32>) -> PlacedVertex {
+    return placed_vertex(input, faded_slot_slot(slot), faded_entry_fade(slot), draw);
 }
 
 @vertex
-fn vs_object_extended(input: AffineVertexInput, @location(9) color: vec4<f32>,
-        @location(10) uv1: vec2<f32>, @location(14) draw: vec4<u32>) -> PlacedExtendedVertex {
-    return placed_extended_vertex(input, color, uv1, input.slot, 0u, draw);
+fn vs_object_extended(input: GeometryVertex, extra: GeometryExtra,
+        @location(INPUT_SLOT) slot: u32, @location(INPUT_DRAW) draw: vec4<u32>)
+        -> PlacedExtendedVertex {
+    return placed_extended_vertex(input, extra, slot, 0u, draw);
 }
 
 @vertex
-fn vs_object_extended_fading(input: AffineVertexInput, @location(9) color: vec4<f32>,
-        @location(10) uv1: vec2<f32>, @location(14) draw: vec4<u32>) -> PlacedExtendedVertex {
-    return placed_extended_vertex(input, color, uv1, faded_slot_slot(input.slot),
-        faded_entry_fade(input.slot), draw);
+fn vs_object_extended_fading(input: GeometryVertex, extra: GeometryExtra,
+        @location(INPUT_SLOT) slot: u32, @location(INPUT_DRAW) draw: vec4<u32>)
+        -> PlacedExtendedVertex {
+    return placed_extended_vertex(input, extra, faded_slot_slot(slot), faded_entry_fade(slot),
+        draw);
 }
 
 @fragment

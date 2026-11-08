@@ -1,7 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, AssetResidency, Detail, DeviceLimits, DrawnPoses, DrawnTable, Error, FrameTime,
-    GlobalTransforms, MAX_HIERARCHY_DEPTH, PassViews, ScenePass, Views,
+    AssetLibrary, AssetResidency, Detail, DeviceLimits, DrawnPoses, DrawnTable, Entry, Error,
+    FrameTime, GeometryStream, GlobalTransforms, InstanceInput, MAX_HIERARCHY_DEPTH, PassViews,
+    ScenePass, Views,
 };
 use engine_places::impostors::{ImpostorRecords, Impostors};
 use engine_render::{
@@ -11,7 +12,6 @@ use engine_render::{
     TargetName, Texture, VertexLayout, wgpu,
 };
 
-use crate::MESH;
 use crate::assets::MeshAssets;
 use crate::debug::RECORD_STREAM;
 use crate::drawn::WatchedSlot;
@@ -21,37 +21,57 @@ use crate::presentation::{FrameState, PresentationTotals};
 use crate::shaders::meshes::{
     blended, cards, debug, forward, presentation, pyramid, vertex,
 };
+use crate::{MESH, SKIN};
 
 pub(crate) const PYRAMID_LEVELS: usize = 16;
 pub(crate) const NODE_LEVELS: usize = MAX_HIERARCHY_DEPTH + 1;
 pub(crate) const PYRAMID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 pub(crate) const VIEW_FRAME_BYTES: u64 = 512;
 
-const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
+const fn instance_input(input: InstanceInput, offset: u64) -> wgpu::VertexAttribute {
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Uint32,
+        offset,
+        shader_location: input.location(),
+    }
+}
+
+const VERTEX: VertexLayout = VertexLayout::Geometry(GeometryStream::Vertex);
+const EXTRA: VertexLayout = VertexLayout::Geometry(GeometryStream::Extra);
+const SKIN_STREAM: VertexLayout = VertexLayout::Geometry(GeometryStream::Skin);
+const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = [instance_input(InstanceInput::Slot, 0)];
 const SLOT_STREAM: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
     array_stride: 4,
     step_mode: wgpu::VertexStepMode::Instance,
     attributes: &SLOT_ATTRIBUTES,
 };
 const MESH_STREAMS: &[VertexLayout] = &[
-    VertexLayout::Mesh,
+    VERTEX,
     VertexLayout::Buffer(SLOT_STREAM),
     VertexLayout::Buffer(RECORD_STREAM),
 ];
 const EXTENDED_STREAMS: &[VertexLayout] = &[
-    VertexLayout::Mesh,
-    VertexLayout::Mesh,
+    VERTEX,
+    EXTRA,
     VertexLayout::Buffer(SLOT_STREAM),
     VertexLayout::Buffer(RECORD_STREAM),
 ];
-const VIEW_STREAMS: &[VertexLayout] = &[VertexLayout::Mesh, VertexLayout::Buffer(SLOT_STREAM)];
-const EXTENDED_VIEW_STREAMS: &[VertexLayout] = &[
-    VertexLayout::Mesh,
-    VertexLayout::Mesh,
+const SKIN_STREAMS: &[VertexLayout] = &[
+    VERTEX,
+    EXTRA,
+    SKIN_STREAM,
     VertexLayout::Buffer(SLOT_STREAM),
+    VertexLayout::Buffer(RECORD_STREAM),
 ];
-const CARD_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
-    wgpu::vertex_attr_array![2 => Uint32, 3 => Uint32];
+const VIEW_STREAMS: &[VertexLayout] = &[VERTEX, VertexLayout::Buffer(SLOT_STREAM)];
+const EXTENDED_VIEW_STREAMS: &[VertexLayout] =
+    &[VERTEX, EXTRA, VertexLayout::Buffer(SLOT_STREAM)];
+const SKIN_VIEW_STREAMS: &[VertexLayout] =
+    &[VERTEX, EXTRA, SKIN_STREAM, VertexLayout::Buffer(SLOT_STREAM)];
+const CARD_ATTRIBUTES: [wgpu::VertexAttribute; 2] = [
+    instance_input(InstanceInput::Slot, 0),
+    instance_input(InstanceInput::Batch, 4),
+];
 const CARD_STREAM: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
     array_stride: 8,
     step_mode: wgpu::VertexStepMode::Instance,
@@ -144,10 +164,51 @@ pub(crate) struct Looked<P> {
 
 impl<P> Looked<P> {
     pub(crate) fn of(&self, look: BatchLook) -> &P {
-        let index = usize::from(look.masked) << 2
-            | usize::from(look.double_sided) << 1
-            | usize::from(look.extended);
+        let index = if look.skinned {
+            PLAIN_LOOKS | usize::from(look.masked) << 1 | usize::from(look.double_sided)
+        } else {
+            usize::from(look.masked) << 2
+                | usize::from(look.double_sided) << 1
+                | usize::from(look.extended)
+        };
         &self.looks[index]
+    }
+}
+
+const PLAIN_LOOKS: usize = 8;
+const LOOKS: usize = 12;
+
+fn look_of(index: usize) -> BatchLook {
+    if index < PLAIN_LOOKS {
+        BatchLook {
+            masked: index & 4 != 0,
+            double_sided: index & 2 != 0,
+            extended: index & 1 != 0,
+            skinned: false,
+        }
+    } else {
+        BatchLook {
+            masked: index & 2 != 0,
+            double_sided: index & 1 != 0,
+            extended: true,
+            skinned: true,
+        }
+    }
+}
+
+fn vertex_of(look: BatchLook) -> (Entry, &'static [VertexLayout]) {
+    match (look.skinned, look.extended) {
+        (true, _) => (vertex::VS_SKIN, SKIN_STREAMS),
+        (false, true) => (vertex::VS_MESH_EXTENDED, EXTENDED_STREAMS),
+        (false, false) => (vertex::VS_MESH, MESH_STREAMS),
+    }
+}
+
+fn view_vertex_of(look: BatchLook) -> (Entry, &'static [VertexLayout]) {
+    match (look.skinned, look.extended) {
+        (true, _) => (vertex::VS_SKIN_VIEW, SKIN_VIEW_STREAMS),
+        (false, true) => (vertex::VS_VIEW_EXTENDED, EXTENDED_VIEW_STREAMS),
+        (false, false) => (vertex::VS_VIEW, VIEW_STREAMS),
     }
 }
 
@@ -716,33 +777,26 @@ const WRITE: DepthUse = DepthUse::Write {
     },
 };
 
-fn look_of(index: usize) -> (bool, bool, bool) {
-    (index & 4 != 0, index & 2 != 0, index & 1 != 0)
-}
-
 fn unlit_looks(
     cx: &mut Install<'_, MeshesGpu>,
     scene: Scene,
 ) -> Result<Looked<Pipeline<MeshesGpu, Scene>>, Error> {
-    let mut looks = Vec::with_capacity(8);
-    for index in 0..8_usize {
-        let (masked, double_sided, extended) = look_of(index);
-        let (vertex, streams, masked_depth) = if extended {
-            (
-                vertex::VS_MESH_EXTENDED,
-                EXTENDED_STREAMS,
-                forward::FS_MASKED_DEPTH_EXTENDED,
-            )
+    let mut looks = Vec::with_capacity(LOOKS);
+    for index in 0..LOOKS {
+        let look = look_of(index);
+        let (vertex, streams) = vertex_of(look);
+        let masked_depth = if look.extended {
+            forward::FS_MASKED_DEPTH_EXTENDED
         } else {
-            (vertex::VS_MESH, MESH_STREAMS, forward::FS_MASKED_DEPTH)
+            forward::FS_MASKED_DEPTH
         };
         let mut pipeline = mesh_pipeline(
             (vertex, masked_depth),
-            (streams, double_sided, false),
+            (streams, look.double_sided, false),
             WRITE,
             wgpu::ColorWrites::ALL,
         );
-        if !masked {
+        if !look.masked {
             pipeline.fragment = None;
         }
         looks.push(cx.render_pipeline(scene, &pipeline, &[])?);
@@ -755,27 +809,18 @@ fn lit_looks<S: Scope<MeshesGpu> + Copy>(
     scope: S,
     shown: bool,
 ) -> Result<Looked<Pipeline<MeshesGpu, S::Tag>>, Error> {
-    let mut looks = Vec::with_capacity(8);
-    for index in 0..8_usize {
-        let (_, double_sided, extended) = look_of(index);
-        let (vertex, streams, lit, debugged) = if extended {
-            (
-                vertex::VS_MESH_EXTENDED,
-                EXTENDED_STREAMS,
-                forward::FS_MESH_EXTENDED,
-                debug::FS_DEBUG_MESH_EXTENDED,
-            )
-        } else {
-            (
-                vertex::VS_MESH,
-                MESH_STREAMS,
-                forward::FS_MESH,
-                debug::FS_DEBUG_MESH,
-            )
+    let mut looks = Vec::with_capacity(LOOKS);
+    for index in 0..LOOKS {
+        let look = look_of(index);
+        let (vertex, streams) = vertex_of(look);
+        let (lit, debugged) = match (look.skinned, look.extended) {
+            (true, _) => (forward::FS_MESH_EXTENDED, debug::FS_DEBUG_SKIN),
+            (false, true) => (forward::FS_MESH_EXTENDED, debug::FS_DEBUG_MESH_EXTENDED),
+            (false, false) => (forward::FS_MESH, debug::FS_DEBUG_MESH),
         };
         let mut pipeline = mesh_pipeline(
             (vertex, if shown { debugged } else { lit }),
-            (streams, double_sided, false),
+            (streams, look.double_sided, false),
             WRITE,
             wgpu::ColorWrites::ALL,
         );
@@ -789,23 +834,20 @@ fn blended_looks(
     cx: &mut Install<'_, MeshesGpu>,
     scene: Scene,
 ) -> Result<Looked<Pipeline<MeshesGpu, Scene>>, Error> {
-    let mut looks = Vec::with_capacity(8);
-    for index in 0..8_usize {
-        let (_, double_sided, extended) = look_of(index);
-        let (vertex, streams, shown) = if extended {
-            (
-                vertex::VS_MESH_EXTENDED,
-                EXTENDED_STREAMS,
-                forward::FS_MESH_EXTENDED_BLENDED,
-            )
+    let mut looks = Vec::with_capacity(LOOKS);
+    for index in 0..LOOKS {
+        let look = look_of(index);
+        let (vertex, streams) = vertex_of(look);
+        let shown = if look.extended {
+            forward::FS_MESH_EXTENDED_BLENDED
         } else {
-            (vertex::VS_MESH, MESH_STREAMS, forward::FS_MESH_BLENDED)
+            forward::FS_MESH_BLENDED
         };
         looks.push(cx.render_pipeline(
             scene,
             &mesh_pipeline(
                 (vertex, shown),
-                (streams, double_sided, false),
+                (streams, look.double_sided, false),
                 WRITE,
                 wgpu::ColorWrites::ALL,
             ),
@@ -820,23 +862,14 @@ fn view_looks(
     scene: Scene,
     (mirrored, lit): (bool, bool),
 ) -> Result<Looked<Pipeline<MeshesGpu, Scene>>, Error> {
-    let mut looks = Vec::with_capacity(8);
-    for index in 0..8_usize {
-        let (masked, double_sided, extended) = look_of(index);
-        let (vertex, streams, shown, depth) = if extended {
-            (
-                vertex::VS_VIEW_EXTENDED,
-                EXTENDED_VIEW_STREAMS,
-                forward::FS_VIEW_EXTENDED,
-                forward::FS_MASKED_DEPTH_EXTENDED,
-            )
+    let mut looks = Vec::with_capacity(LOOKS);
+    for index in 0..LOOKS {
+        let look = look_of(index);
+        let (vertex, streams) = view_vertex_of(look);
+        let (shown, depth) = if look.extended {
+            (forward::FS_VIEW_EXTENDED, forward::FS_MASKED_DEPTH_EXTENDED)
         } else {
-            (
-                vertex::VS_VIEW,
-                VIEW_STREAMS,
-                forward::FS_VIEW,
-                forward::FS_MASKED_DEPTH,
-            )
+            (forward::FS_VIEW, forward::FS_MASKED_DEPTH)
         };
         let writes = if lit {
             wgpu::ColorWrites::ALL
@@ -845,11 +878,11 @@ fn view_looks(
         };
         let mut pipeline = mesh_pipeline(
             (vertex, if lit { shown } else { depth }),
-            (streams, double_sided, mirrored),
+            (streams, look.double_sided, mirrored),
             WRITE,
             writes,
         );
-        if !lit && !masked {
+        if !lit && !look.masked {
             pipeline.fragment = None;
         }
         looks.push(cx.render_pipeline(scene, &pipeline, &[])?);
@@ -913,7 +946,9 @@ fn install_scenes(
         .passes()
         .listed()
         .iter()
-        .filter(|listed| listed.bit.is_some() && (listed.pass.takes)(MESH))
+        .filter(|listed| {
+            listed.bit.is_some() && ((listed.pass.takes)(MESH) || (listed.pass.takes)(SKIN))
+        })
         .copied()
         .collect();
     let mut scenes = Vec::with_capacity(listed.len());

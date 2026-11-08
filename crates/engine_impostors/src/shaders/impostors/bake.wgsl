@@ -1,3 +1,4 @@
+import package::engine::drawn::{GeometryExtra, GeometryVertex};
 import package::engine::materials::alpha_test;
 import package::engine::mesh::vertex::octahedral_normal;
 import package::engine::shading::SurfaceInput;
@@ -91,23 +92,22 @@ fn bake_vertex(position: vec3<f32>, encoded_normal: vec2<f32>, uv: vec2<f32>, in
 }
 
 @vertex
-fn vs_impostor_bake(@location(0) position: vec3<f32>, @location(1) normal: vec2<f32>,
-        @location(7) uv: vec2<f32>, @builtin(instance_index) instance: u32) -> BakeOutput {
-    return bake_vertex(position, normal, uv, instance);
+fn vs_impostor_bake(input: GeometryVertex, @builtin(instance_index) instance: u32)
+        -> BakeOutput {
+    return bake_vertex(input.position, input.normal, input.uv0, instance);
 }
 
 @vertex
-fn vs_impostor_bake_extended(@location(0) position: vec3<f32>, @location(1) normal: vec2<f32>,
-        @location(7) uv: vec2<f32>, @location(9) color: vec4<f32>, @location(10) uv1: vec2<f32>,
+fn vs_impostor_bake_extended(input: GeometryVertex, extra: GeometryExtra,
         @builtin(instance_index) instance: u32) -> BakeExtendedOutput {
-    let vertex = bake_vertex(position, normal, uv, instance);
+    let vertex = bake_vertex(input.position, input.normal, input.uv0, instance);
     var output: BakeExtendedOutput;
     output.clip_position = vertex.clip_position;
     output.normal_u = vertex.normal_u;
     output.local_v = vertex.local_v;
     output.depth = vertex.depth;
-    output.color = color;
-    output.uv1 = uv1;
+    output.color = extra.color;
+    output.uv1 = extra.uv1;
     return output;
 }
 

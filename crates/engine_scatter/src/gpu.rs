@@ -1,7 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetResidency, AttachPoint, Cull, Cursor, DrawnTable, DrawnView, Error, MaterialHandle,
-    MeshHandle, PassBit, PassViews, ScenePass, Since, TargetName, Var, Views,
+    AssetResidency, AttachPoint, Cull, Cursor, DrawnTable, DrawnView, Error, GeometryStream,
+    InstanceInput, MaterialHandle, MeshHandle, PassBit, PassViews, ScenePass, Since, TargetName,
+    Var, Views,
 };
 use engine_places::impostors::IMPOSTOR_VERTICES;
 use engine_places_world::ground::{GroundTiles, TerrainTiles};
@@ -29,7 +30,7 @@ const IDS: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
     attributes: &[wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Uint32,
         offset: 0,
-        shader_location: 2,
+        shader_location: InstanceInput::Slot.location(),
     }],
 };
 
@@ -39,7 +40,7 @@ const RECORD: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
     attributes: &[wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Uint32x4,
         offset: 0,
-        shader_location: 14,
+        shader_location: InstanceInput::Draw.location(),
     }],
 };
 
@@ -50,25 +51,25 @@ const CARDS: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Uint32,
             offset: 0,
-            shader_location: 2,
+            shader_location: InstanceInput::Slot.location(),
         },
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Uint32,
             offset: 4,
-            shader_location: 3,
+            shader_location: InstanceInput::Batch.location(),
         },
     ],
 };
 
 const PLAIN_STREAMS: &[VertexLayout] = &[
-    VertexLayout::Mesh,
+    VertexLayout::Geometry(GeometryStream::Vertex),
     VertexLayout::Buffer(IDS),
     VertexLayout::Buffer(RECORD),
 ];
 
 const EXTENDED_STREAMS: &[VertexLayout] = &[
-    VertexLayout::Mesh,
-    VertexLayout::Mesh,
+    VertexLayout::Geometry(GeometryStream::Vertex),
+    VertexLayout::Geometry(GeometryStream::Extra),
     VertexLayout::Buffer(IDS),
     VertexLayout::Buffer(RECORD),
 ];

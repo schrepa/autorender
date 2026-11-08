@@ -29,6 +29,7 @@ pub use settings::{
 };
 
 pub const MESH: DrawKind = DrawKind::MESH;
+pub const SKIN: DrawKind = DrawKind::SKIN;
 
 const GENERATED: &[&str] = &[
     layouts::WGSL,
@@ -87,6 +88,12 @@ impl Brick for MeshesBrick {
                 vertex: shaders::meshes::vertex::VS_MESH.name(),
                 needs: Attributes::BASE,
             })
-            .draws::<gpu::MeshesGpu>(MESH, gpu::MeshesGpu::draw);
+            .draw_kind(KindDecl {
+                kind: SKIN,
+                vertex: shaders::meshes::vertex::VS_SKIN.name(),
+                needs: Attributes::SKINNED,
+            })
+            .draws::<gpu::MeshesGpu>(MESH, gpu::MeshesGpu::draw)
+            .draws::<gpu::MeshesGpu>(SKIN, gpu::MeshesGpu::draw_skins);
     }
 }

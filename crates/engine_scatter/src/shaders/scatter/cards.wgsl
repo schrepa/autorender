@@ -2,6 +2,7 @@ import package::face::instances::{
     AffinePose, CardDebugTargets, CardVertex, SlotColor, placed_card_debug, placed_card_depth,
     placed_card_pixel, placed_card_shade, placed_card_vertex
 };
+import package::engine::drawn::{INPUT_BATCH, INPUT_DRAW, INPUT_SLOT};
 import package::engine::mesh::declarations::faded_slot_slot;
 import package::face::debug::debug_record_with_kind;
 import package::generated::kinds::KIND_PLACED;
@@ -36,8 +37,9 @@ fn card_of(input: PlacedCardVertex) -> CardVertex {
 }
 
 @vertex
-fn vs_placed_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
-        @location(3) batch: u32, @location(14) draw: vec4<u32>) -> PlacedCardVertex {
+fn vs_placed_card(@builtin(vertex_index) vertex: u32, @location(INPUT_SLOT) slot: u32,
+        @location(INPUT_BATCH) batch: u32, @location(INPUT_DRAW) draw: vec4<u32>)
+        -> PlacedCardVertex {
     let pose = poses[slot];
     let card = placed_card_vertex(vertex, batch, pose, pose, colors[slot],
         placed_impostor(faded_slot_slot(batch)));

@@ -18,12 +18,13 @@ const POSE_PIXELS: usize = 200;
 fn limb() -> Value {
     let vertices: Vec<Value> = RINGS
         .iter()
-        .flat_map(|&(height, _)| {
+        .flat_map(|&(height, joint)| {
             CORNERS.iter().map(move |&[x, z]| {
                 json!({
                     "position": [x, height, z],
                     "normal": [x * 10.0, 0.0, z * 10.0],
                     "uv": [0.0, 0.0],
+                    "skin": { "joints": [joint, 0, 0, 0], "weights": [1.0, 0.0, 0.0, 0.0] },
                 })
             })
         })
@@ -66,14 +67,6 @@ fn held_translation(joint: u32, translation: [f32; 3]) -> Value {
 }
 
 fn rig() -> Value {
-    let skin: Vec<Value> = RINGS
-        .iter()
-        .flat_map(|&(_, joint)| {
-            CORNERS.iter().map(
-                move |_| json!({ "joints": [joint, 0, 0, 0], "weights": [1.0, 0.0, 0.0, 0.0] }),
-            )
-        })
-        .collect();
     json!({
         "joints": [
             { "name": "base" },
@@ -101,7 +94,7 @@ fn rig() -> Value {
                 ],
             },
         ],
-        "parts": [{ "mesh": "limb", "material": "paint", "skin": skin }],
+        "parts": [{ "mesh": "limb", "material": "paint" }],
     })
 }
 

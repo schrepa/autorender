@@ -1,4 +1,4 @@
-use engine_core::{MeshVertex, Surface, glam::Mat4};
+use engine_core::{Surface, glam::Mat4};
 
 use crate::targets::FrameRegion;
 
@@ -102,55 +102,6 @@ pub fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
         glam::Vec4::Z,
         glam::Vec4::new(jitter[0], jitter[1], 0.0, 1.0),
     ) * view_projection
-}
-
-pub use crate::gpu_layouts::scene::Vertex;
-
-impl From<&MeshVertex> for Vertex {
-    fn from(vertex: &MeshVertex) -> Self {
-        Self {
-            position: vertex.position,
-            normal: octahedral(vertex.normal),
-            uv: vertex.uv,
-        }
-    }
-}
-
-pub use crate::gpu_layouts::scene::ExtraVertex;
-
-impl ExtraVertex {
-    pub fn stream(mesh: &engine_core::Mesh) -> Option<Vec<Self>> {
-        if mesh.colors().is_none() && mesh.uv1().is_none() {
-            return None;
-        }
-        Some(
-            mesh.vertices()
-                .iter()
-                .enumerate()
-                .map(|(index, vertex)| Self {
-                    color: mesh.colors().map_or([u16::MAX; 4], |colors| {
-                        colors[index].map(|value| {
-                            (engine_core::math::clamp(value, 0.0, 1.0) * 65535.0).round() as u16
-                        })
-                    }),
-                    uv1: mesh.uv1().map_or(vertex.uv, |uv1| uv1[index]),
-                })
-                .collect(),
-        )
-    }
-}
-
-pub fn octahedral(normal: [f32; 3]) -> [i16; 2] {
-    let [x, y, z] = normal;
-    let length = x.abs() + y.abs() + z.abs();
-    let (u, v) = (x / length, y / length);
-    let sign = |value: f32| if value >= 0.0 { 1.0 } else { -1.0 };
-    let (u, v) = if z < 0.0 {
-        ((1.0 - v.abs()) * sign(u), (1.0 - u.abs()) * sign(v))
-    } else {
-        (u, v)
-    };
-    [u, v].map(|value| (engine_core::math::clamp(value, -1.0, 1.0) * 32767.0).round() as i16)
 }
 
 pub fn mip_levels(width: u32, height: u32) -> u32 {

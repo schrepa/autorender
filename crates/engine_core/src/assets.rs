@@ -1,7 +1,9 @@
 use bevy_ecs::component::Component;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
-use engine_assets::{Asset, AssetLibrary, MaterialHandle, Mesh, MeshHandle, MeshLods, TextureHandle};
+use engine_assets::{
+    Asset, AssetLibrary, GeometryStream, MaterialHandle, Mesh, MeshHandle, MeshLods, TextureHandle,
+};
 
 use crate::{Census, Feed, Interest, Request, Requests};
 
@@ -38,6 +40,39 @@ impl PartialEq for AssetUses {
 pub enum MeshStreams {
     Plain = 0,
     Extended = 1,
+    Skinned = 2,
+}
+
+impl MeshStreams {
+    pub fn of(mesh: &Mesh) -> Self {
+        if mesh.skin().is_some() {
+            Self::Skinned
+        } else if mesh.colors().is_some() || mesh.uv1().is_some() {
+            Self::Extended
+        } else {
+            Self::Plain
+        }
+    }
+
+    pub const fn streams(self) -> &'static [GeometryStream] {
+        match self {
+            Self::Plain => &[GeometryStream::Vertex],
+            Self::Extended => &[GeometryStream::Vertex, GeometryStream::Extra],
+            Self::Skinned => &[
+                GeometryStream::Vertex,
+                GeometryStream::Extra,
+                GeometryStream::Skin,
+            ],
+        }
+    }
+
+    fn widest(self) -> u64 {
+        self.streams()
+            .iter()
+            .map(|stream| stream.stride())
+            .max()
+            .unwrap_or(1)
+    }
 }
 
 #[doc(hidden)]
@@ -117,15 +152,13 @@ const INDEX_BYTES: u64 = 4;
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArenaShape {
-    pub vertex: u64,
-    pub extra: u64,
     pub limit: u64,
 }
 
 #[derive(Clone, Debug)]
 struct Arena {
     shape: ArenaShape,
-    classes: [Space; 2],
+    classes: [Space; 3],
     indices: Space,
 }
 
@@ -133,15 +166,8 @@ impl Arena {
     fn new(shape: ArenaShape) -> Self {
         Self {
             shape,
-            classes: [Space::default(), Space::default()],
+            classes: [Space::default(), Space::default(), Space::default()],
             indices: Space::default(),
-        }
-    }
-
-    fn widest(&self, streams: MeshStreams) -> u64 {
-        match streams {
-            MeshStreams::Plain => self.shape.vertex,
-            MeshStreams::Extended => self.shape.vertex.max(self.shape.extra),
         }
     }
 
@@ -160,7 +186,7 @@ impl Arena {
                 self.indices.allocate(index_count)?
             }
         };
-        let widest = self.widest(streams);
+        let widest = streams.widest();
         let space = &mut self.classes[streams as usize];
         let base_vertex = match space.allocate(vertex_count) {
             Some(start) => Some(start),
@@ -194,7 +220,7 @@ impl Arena {
 pub struct ResidentMesh {
     placement: MeshResidence,
     revision: u64,
-    extended: bool,
+    streams: MeshStreams,
     index_count: u32,
     byte_len: u64,
     lods: Vec<(u32, u32, f32)>,
@@ -226,7 +252,11 @@ impl ResidentMesh {
     }
 
     pub fn extended(&self) -> bool {
-        self.extended
+        self.streams != MeshStreams::Plain
+    }
+
+    pub fn streams(&self) -> MeshStreams {
+        self.streams
     }
 
     pub fn byte_len(&self) -> u64 {
@@ -262,12 +292,7 @@ fn resident_mesh(
     revision: u64,
     arena: &mut Arena,
 ) -> ResidentMesh {
-    let extended = mesh.colors().is_some() || mesh.uv1().is_some();
-    let streams = if extended {
-        MeshStreams::Extended
-    } else {
-        MeshStreams::Plain
-    };
+    let streams = MeshStreams::of(mesh);
     let total = mesh.indices().len() + lods.map_or(0, |lods| lods.indices.len());
     let placement = u32::try_from(total)
         .ok()
@@ -282,7 +307,7 @@ fn resident_mesh(
     ResidentMesh {
         placement,
         revision,
-        extended,
+        streams,
         index_count: mesh.indices().len() as u32,
         byte_len: mesh.byte_len() as u64,
         plan: plan_levels(&levels),
@@ -433,10 +458,10 @@ impl AssetResidency {
     }
 
     #[doc(hidden)]
-    pub fn capacities(&self) -> Option<([u32; 2], u32)> {
+    pub fn capacities(&self) -> Option<([u32; 3], u32)> {
         self.arena.as_ref().map(|arena| {
             (
-                [arena.classes[0].capacity, arena.classes[1].capacity],
+                arena.classes.each_ref().map(|class| class.capacity),
                 arena.indices.capacity,
             )
         })

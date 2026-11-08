@@ -114,6 +114,7 @@ fn import_primitive(
             MeshStreams {
                 colors: colors.as_deref(),
                 uv1: uv1.as_deref(),
+                skin: None,
                 lods: Some(&lods),
             },
         ),
@@ -345,6 +346,7 @@ fn primitive_data(
             uv,
             color,
             uv1,
+            skin: None,
         });
     }
     Ok((vertices, indices))

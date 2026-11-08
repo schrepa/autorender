@@ -1,7 +1,7 @@
 import package::engine::shading::SurfacePoint;
 import package::face::debug::{DebugTargets, debug_record_with_kind, debug_targets};
 import package::face::debug_modes::point_source;
-import package::generated::kinds::KIND_MESH;
+import package::generated::kinds::{KIND_MESH, KIND_SKIN};
 import package::meshes::shade::{extended_fragment, mesh_point};
 import package::meshes::vertex::{ExtendedMeshOutput, ExtendedOutput, MeshOutput};
 
@@ -9,9 +9,14 @@ fn point_targets(record: u32, object: u32, detail: u32, point: SurfacePoint) -> 
     return debug_targets(record, object, detail, point.normal, point_source(0u, point));
 }
 
-fn debug_mesh(extended: ExtendedOutput, object: vec4<u32>, front: bool) -> DebugTargets {
+fn debug_kind(extended: ExtendedOutput, object: vec4<u32>, front: bool, kind: u32)
+        -> DebugTargets {
     let point = mesh_point(extended_fragment(extended), front);
-    return point_targets(debug_record_with_kind(object.x, KIND_MESH), object.y, object.z, point);
+    return point_targets(debug_record_with_kind(object.x, kind), object.y, object.z, point);
+}
+
+fn debug_mesh(extended: ExtendedOutput, object: vec4<u32>, front: bool) -> DebugTargets {
+    return debug_kind(extended, object, front, KIND_MESH);
 }
 
 fn plain_output(input: MeshOutput) -> ExtendedOutput {
@@ -45,4 +50,10 @@ fn fs_debug_mesh(input: MeshOutput, @builtin(front_facing) front: bool) -> Debug
 fn fs_debug_mesh_extended(input: ExtendedMeshOutput, @builtin(front_facing) front: bool)
         -> DebugTargets {
     return debug_mesh(extended_output(input), input.object, front);
+}
+
+@fragment
+fn fs_debug_skin(input: ExtendedMeshOutput, @builtin(front_facing) front: bool)
+        -> DebugTargets {
+    return debug_kind(extended_output(input), input.object, front, KIND_SKIN);
 }

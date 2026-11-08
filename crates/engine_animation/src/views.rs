@@ -12,6 +12,8 @@ use glam::Quat;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::skins::Skins;
+
 fn schema_of<T: schemars::JsonSchema>() -> Value {
     serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null)
 }
@@ -230,6 +232,7 @@ pub struct AnimationStateView {
     pub drawn: BTreeMap<String, [f32; 3]>,
     pub parts: usize,
     pub resident: usize,
+    pub posed: usize,
 }
 
 fn playing_view(rig: &Rig, track: Track, weight: f32) -> PlayingView {
@@ -259,7 +262,7 @@ fn playing_view(rig: &Rig, track: Track, weight: f32) -> PlayingView {
 fn state_of(
     animator: &Animator,
     (globals, poses): (&GlobalTransforms, &DrawnPoses),
-    residency: Option<&AssetResidency>,
+    (residency, skins): (Option<&AssetResidency>, &Skins),
 ) -> AnimationStateView {
     let rig = animator.rig();
     let layers = animator
@@ -315,6 +318,11 @@ fn state_of(
         drawn,
         parts: rig.parts.len(),
         resident,
+        posed: animator
+            .part_nodes()
+            .iter()
+            .filter(|&&part| skins.posed(part))
+            .count(),
     }
 }
 
@@ -331,19 +339,23 @@ impl Operation for AnimationState {
         Query<'static, 'static, &'static Animator>,
         Res<'static, GlobalTransforms>,
         Res<'static, DrawnPoses>,
-        Option<Res<'static, AssetResidency>>,
+        (Option<Res<'static, AssetResidency>>, Res<'static, Skins>),
     );
     type Request = Self;
 
     fn run(
-        (ids, animators, globals, poses, residency): SystemParamItem<'_, '_, Self::Params>,
+        (ids, animators, globals, poses, (residency, skins)): SystemParamItem<
+            '_,
+            '_,
+            Self::Params,
+        >,
         request: Self,
     ) -> Result<Value, Error> {
         let (_, animator) = animator_of(&ids, &animators, &request.entity)?;
         Ok(json!(state_of(
             animator,
             (&globals, &poses),
-            residency.as_deref()
+            (residency.as_deref(), &skins)
         )))
     }
 

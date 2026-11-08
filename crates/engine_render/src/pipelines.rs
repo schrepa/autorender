@@ -215,19 +215,3 @@ pub(crate) fn bind_group(
         entries,
     })
 }
-
-macro_rules! vertex_attributes {
-    ($ty:ident { $($location:literal => $field:ident as $format:ident),+ $(,)? }) => {
-        [$({
-            const FIELD: &crate::gpu_layouts::Field = $ty::LAYOUT.field(stringify!($field));
-            const _: () = assert!(::wgpu::VertexFormat::$format.size() as usize == FIELD.size);
-            ::wgpu::VertexAttribute {
-                format: ::wgpu::VertexFormat::$format,
-                offset: FIELD.offset as u64,
-                shader_location: $location,
-            }
-        }),+]
-    };
-}
-
-pub(crate) use vertex_attributes;

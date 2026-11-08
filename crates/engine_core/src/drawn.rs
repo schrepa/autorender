@@ -14,9 +14,9 @@ use engine_registry::Registry;
 
 use crate::math::sin_cos;
 use crate::{
-    AssetResidency, Cursor, DeviceLimits, DrawKind, Drawn, Error, ErrorCode, Expected, Feed,
-    GeometryHandle, GlobalTransforms, GpuBits, GpuStruct, Interest, KindDecl, MaterialHandle, PassMask,
-    PositionReach, Request, Revision, ScenePasses, Since, gpu_struct, settings,
+    AssetResidency, Cursor, DeviceLimits, DrawKind, Drawn, DrawnBounds, Error, ErrorCode,
+    Expected, Feed, GlobalTransforms, GpuBits, GpuStruct, Interest, KindDecl, MaterialHandle,
+    MeshHandle, PassMask, PositionReach, Request, Revision, ScenePasses, Since, gpu_struct, settings,
 };
 
 settings! {
@@ -113,7 +113,7 @@ pub enum PlanState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DrawnBatch {
     pub kind: DrawKind,
-    pub geometry: Option<GeometryHandle>,
+    pub geometry: Option<MeshHandle>,
     pub material: Option<MaterialHandle>,
     pub order: i16,
     pub instances: Range<u32>,
@@ -378,7 +378,9 @@ impl DrawnTable {
         };
         for entity in touched {
             match world.get::<Drawn>(entity) {
-                Some(drawn) => self.refresh(entity, drawn, &cx),
+                Some(drawn) => {
+                    self.refresh(entity, (drawn, world.get::<DrawnBounds>(entity)), &cx);
+                }
                 None => self.forget(entity),
             }
         }
@@ -387,7 +389,12 @@ impl DrawnTable {
         }
     }
 
-    fn refresh(&mut self, entity: Entity, drawn: &Drawn, cx: &Context<'_>) {
+    fn refresh(
+        &mut self,
+        entity: Entity,
+        (drawn, bounds): (&Drawn, Option<&DrawnBounds>),
+        cx: &Context<'_>,
+    ) {
         let previous = self.held.remove(&entity);
         let (slot, uses) = match previous {
             Some(held) => {
@@ -414,7 +421,7 @@ impl DrawnTable {
         };
         let state = match (self.refusal(drawn, cx), slot) {
             (None, Some(slot)) => {
-                self.write(slot, drawn, cx);
+                self.write(slot, (drawn, bounds), cx);
                 DrawnState::Drawn { slot }
             }
             (None, None) => {
@@ -427,7 +434,7 @@ impl DrawnTable {
                             .got((u64::from(slot) + 1) * self.slot_bytes()),
                     )
                 } else {
-                    self.write(slot, drawn, cx);
+                    self.write(slot, (drawn, bounds), cx);
                     DrawnState::Drawn { slot }
                 }
             }
@@ -574,15 +581,22 @@ impl DrawnTable {
         }
     }
 
-    fn write(&mut self, slot: u32, drawn: &Drawn, cx: &Context<'_>) {
+    fn write(
+        &mut self,
+        slot: u32,
+        (drawn, supplied): (&Drawn, Option<&DrawnBounds>),
+        cx: &Context<'_>,
+    ) {
         let at = slot as usize;
-        let bounds = drawn
-            .geometry
-            .and_then(|geometry| cx.library.mesh(geometry))
-            .map(|mesh| {
-                let bounds = mesh.bounds();
-                (bounds.min().to_array(), bounds.max().to_array())
-            });
+        let bounds = supplied.map(|bounds| (bounds.min, bounds.max)).or_else(|| {
+            drawn
+                .geometry
+                .and_then(|geometry| cx.library.mesh(geometry))
+                .map(|mesh| {
+                    let bounds = mesh.bounds();
+                    (bounds.min().to_array(), bounds.max().to_array())
+                })
+        });
         let reach = drawn
             .material
             .and_then(|material| cx.library.material(material))
@@ -737,10 +751,20 @@ fn dropped(remove: On<Remove, Drawn>, mut table: ResMut<DrawnTable>) {
     table.touched.push(remove.entity);
 }
 
+fn bounded(insert: On<Insert, DrawnBounds>, mut table: ResMut<DrawnTable>) {
+    table.touched.push(insert.entity);
+}
+
+fn unbounded(remove: On<Remove, DrawnBounds>, mut table: ResMut<DrawnTable>) {
+    table.touched.push(remove.entity);
+}
+
 pub(crate) fn install(world: &mut World) {
     world.init_resource::<DrawnTable>();
     world.add_observer(touched);
     world.add_observer(dropped);
+    world.add_observer(bounded);
+    world.add_observer(unbounded);
 }
 
 pub(crate) fn install_kinds(world: &mut World) {

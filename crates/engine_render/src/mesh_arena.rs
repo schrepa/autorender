@@ -1,45 +1,113 @@
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 use bevy_ecs::world::World;
 use engine_core::{
-    ArenaShape, AssetLibrary, AssetResidency, Cursor, Mesh, MeshHandle, MeshLods, MeshPlacement,
-    MeshResidence, MeshStreams, ResidentMesh, Since,
+    ArenaShape, AssetLibrary, AssetResidency, Attribute, AttributeFormat, Cursor, GeometryStream,
+    Mesh, MeshHandle, MeshLods, MeshPlacement, MeshResidence, MeshStreams, ResidentMesh, Since,
+    math::clamp,
 };
 
 use crate::gpu_calls::Queue;
-use crate::gpu_data::{ExtraVertex, Vertex};
 use crate::memory::buffer_init;
 
-const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = crate::pipelines::vertex_attributes!(Vertex {
-    0 => position as Float32x3,
-    1 => normal as Snorm16x2,
-    7 => uv as Float32x2,
-});
-const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] = crate::pipelines::vertex_attributes!(ExtraVertex {
-    9 => color as Unorm16x4,
-    10 => uv1 as Float32x2,
-});
-
-pub fn extra_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
-    Some(wgpu::VertexBufferLayout {
-        array_stride: size_of::<ExtraVertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &EXTRA_ATTRIBUTES,
-    })
+const fn format_of(stored: AttributeFormat) -> wgpu::VertexFormat {
+    match stored {
+        AttributeFormat::Float32x2 => wgpu::VertexFormat::Float32x2,
+        AttributeFormat::Float32x3 => wgpu::VertexFormat::Float32x3,
+        AttributeFormat::Float32x4 => wgpu::VertexFormat::Float32x4,
+        AttributeFormat::Snorm16x2 => wgpu::VertexFormat::Snorm16x2,
+        AttributeFormat::Unorm16x4 => wgpu::VertexFormat::Unorm16x4,
+        AttributeFormat::Uint32x4 => wgpu::VertexFormat::Uint32x4,
+    }
 }
 
-pub fn vertex_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
-    Some(wgpu::VertexBufferLayout {
-        array_stride: size_of::<Vertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &VERTEX_ATTRIBUTES,
+static ATTRIBUTES: LazyLock<[Vec<wgpu::VertexAttribute>; 3]> = LazyLock::new(|| {
+    GeometryStream::ALL.map(|stream| {
+        stream
+            .placed()
+            .map(|(attribute, stored, offset)| wgpu::VertexAttribute {
+                format: format_of(stored),
+                offset,
+                shader_location: attribute.location(),
+            })
+            .collect()
     })
+});
+
+pub(crate) fn geometry_layout(stream: GeometryStream) -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: stream.stride(),
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &ATTRIBUTES[stream as usize],
+    }
+}
+
+fn octahedral(normal: [f32; 3]) -> [i16; 2] {
+    let [x, y, z] = normal;
+    let length = x.abs() + y.abs() + z.abs();
+    let (u, v) = (x / length, y / length);
+    let sign = |value: f32| if value >= 0.0 { 1.0 } else { -1.0 };
+    let (u, v) = if z < 0.0 {
+        ((1.0 - v.abs()) * sign(u), (1.0 - u.abs()) * sign(v))
+    } else {
+        (u, v)
+    };
+    [u, v].map(|value| (clamp(value, -1.0, 1.0) * 32767.0).round() as i16)
+}
+
+fn packed(mesh: &Mesh, index: usize, attribute: Attribute, bytes: &mut Vec<u8>) {
+    let vertex = &mesh.vertices()[index];
+    let floats = |bytes: &mut Vec<u8>, values: &[f32]| {
+        for value in values {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    };
+    let skin = mesh.skin().map(|skin| skin[index]);
+    match attribute {
+        Attribute::Position => floats(bytes, &vertex.position),
+        Attribute::Normal => {
+            for value in octahedral(vertex.normal) {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        Attribute::Uv0 => floats(bytes, &vertex.uv),
+        Attribute::Uv1 => floats(bytes, &mesh.uv1().map_or(vertex.uv, |uv1| uv1[index])),
+        Attribute::Color => {
+            let color = mesh.colors().map_or([1.0; 4], |colors| colors[index]);
+            for value in color {
+                let unit = (clamp(value, 0.0, 1.0) * 65535.0).round() as u16;
+                bytes.extend_from_slice(&unit.to_le_bytes());
+            }
+        }
+        Attribute::Joints => {
+            for joint in skin.map_or([0; 4], |skin| skin.joints) {
+                bytes.extend_from_slice(&joint.to_le_bytes());
+            }
+        }
+        Attribute::Weights => {
+            let weights = skin.map_or([1.0, 0.0, 0.0, 0.0], |skin| {
+                let total: f32 = skin.weights.iter().sum();
+                skin.weights.map(|weight| weight / total)
+            });
+            floats(bytes, &weights);
+        }
+        Attribute::Tangent => {}
+    }
+}
+
+fn stream_bytes(mesh: &Mesh, stream: GeometryStream, bytes: &mut Vec<u8>) {
+    bytes.clear();
+    bytes.reserve(mesh.vertices().len() * stream.stride() as usize);
+    for index in 0..mesh.vertices().len() {
+        for (attribute, _, _) in stream.placed() {
+            packed(mesh, index, attribute, bytes);
+        }
+    }
 }
 
 pub(crate) fn arena_shape(device: &wgpu::Device) -> ArenaShape {
     ArenaShape {
-        vertex: size_of::<Vertex>() as u64,
-        extra: size_of::<ExtraVertex>() as u64,
         limit: device.limits().max_buffer_size,
     }
 }
@@ -56,12 +124,21 @@ pub(crate) fn configure(
 
 #[derive(Clone, Copy)]
 pub struct MeshDraw<'a> {
-    pub vertices: &'a wgpu::Buffer,
-    pub extras: Option<&'a wgpu::Buffer>,
+    pub buffers: &'a [wgpu::Buffer],
     pub indices: &'a wgpu::Buffer,
     pub first_index: u32,
     pub base_vertex: i32,
     pub index_count: u32,
+}
+
+impl<'a> MeshDraw<'a> {
+    pub fn stream(&self, stream: GeometryStream) -> Option<&'a wgpu::Buffer> {
+        self.buffers.get(stream as usize)
+    }
+
+    pub fn holds(&self, streams: &[GeometryStream]) -> bool {
+        streams.iter().all(|&stream| self.stream(stream).is_some())
+    }
 }
 
 struct Class {
@@ -71,7 +148,7 @@ struct Class {
 }
 
 struct MeshArena {
-    classes: [Class; 2],
+    classes: [Class; 3],
     indices: wgpu::Buffer,
     index_capacity: u32,
 }
@@ -118,17 +195,28 @@ fn regrown(
 }
 
 impl MeshArena {
-    fn new(device: &wgpu::Device, [vertex, extra]: [u64; 2]) -> Self {
-        let class = |strides: Vec<u64>| Class {
-            buffers: strides
+    fn new(device: &wgpu::Device) -> Self {
+        let class = |streams: MeshStreams| {
+            let strides: Vec<u64> = streams
+                .streams()
                 .iter()
-                .map(|_| buffer(device, "engine/mesh-arena", 0, VERTEX_USAGE))
-                .collect(),
-            strides,
-            capacity: 0,
+                .map(|stream| stream.stride())
+                .collect();
+            Class {
+                buffers: strides
+                    .iter()
+                    .map(|_| buffer(device, "engine/mesh-arena", 0, VERTEX_USAGE))
+                    .collect(),
+                strides,
+                capacity: 0,
+            }
         };
         Self {
-            classes: [class(vec![vertex]), class(vec![vertex, extra])],
+            classes: [
+                class(MeshStreams::Plain),
+                class(MeshStreams::Extended),
+                class(MeshStreams::Skinned),
+            ],
             indices: buffer(device, "engine/mesh-arena-indices", 0, INDEX_USAGE),
             index_capacity: 0,
         }
@@ -144,7 +232,7 @@ impl MeshArena {
                 .sum::<u64>()
     }
 
-    fn fit(&mut self, device: &wgpu::Device, queue: &Queue, vertices: [u32; 2], indices: u32) {
+    fn fit(&mut self, device: &wgpu::Device, queue: &Queue, vertices: [u32; 3], indices: u32) {
         if indices > self.index_capacity {
             self.indices = regrown(
                 device,
@@ -172,7 +260,7 @@ impl MeshArena {
         }
     }
 
-    fn write(&self, queue: &Queue, placement: MeshPlacement, streams: &[&[u8]], indices: &[u32]) {
+    fn write(&self, queue: &Queue, placement: MeshPlacement, streams: &[Vec<u8>], indices: &[u32]) {
         let class = &self.classes[placement.streams as usize];
         for ((buffer, stride), bytes) in class.buffers.iter().zip(&class.strides).zip(streams) {
             if !bytes.is_empty() {
@@ -189,10 +277,8 @@ impl MeshArena {
     }
 
     fn draw(&self, placement: MeshPlacement) -> MeshDraw<'_> {
-        let buffers = &self.classes[placement.streams as usize].buffers;
         MeshDraw {
-            vertices: &buffers[0],
-            extras: buffers.get(1),
+            buffers: &self.classes[placement.streams as usize].buffers,
             indices: &self.indices,
             first_index: placement.first_index,
             base_vertex: placement.base_vertex as i32,
@@ -202,8 +288,7 @@ impl MeshArena {
 }
 
 struct OwnMesh {
-    vertices: wgpu::Buffer,
-    extras: Option<wgpu::Buffer>,
+    buffers: Vec<wgpu::Buffer>,
     indices: wgpu::Buffer,
 }
 
@@ -222,8 +307,7 @@ impl GpuMesh {
                 ..arena.draw(placement)
             }),
             (MeshResidence::Own, Some(own)) => Some(MeshDraw {
-                vertices: &own.vertices,
-                extras: own.extras.as_ref(),
+                buffers: &own.buffers,
                 indices: &own.indices,
                 first_index: 0,
                 base_vertex: 0,
@@ -247,7 +331,7 @@ fn with_levels(mesh: &Mesh, lods: Option<&MeshLods>) -> Vec<u32> {
 pub struct GpuMeshes {
     meshes: BTreeMap<MeshHandle, GpuMesh>,
     arena: MeshArena,
-    staging: Vec<Vertex>,
+    staging: Vec<Vec<u8>>,
     placed: Cursor,
 }
 
@@ -255,10 +339,7 @@ impl GpuMeshes {
     pub fn new(device: &wgpu::Device) -> Self {
         Self {
             meshes: BTreeMap::new(),
-            arena: MeshArena::new(
-                device,
-                [size_of::<Vertex>(), size_of::<ExtraVertex>()].map(|bytes| bytes as u64),
-            ),
+            arena: MeshArena::new(device),
             staging: Vec::new(),
             placed: Cursor::default(),
         }
@@ -285,7 +366,7 @@ impl GpuMeshes {
     }
 
     pub(crate) fn staging_bytes(&self) -> u64 {
-        (self.staging.capacity() * size_of::<Vertex>()) as u64
+        self.staging.iter().map(Vec::capacity).sum::<usize>() as u64
     }
 
     pub fn sync(&mut self, device: &wgpu::Device, queue: &Queue, world: &World) -> u64 {
@@ -343,25 +424,17 @@ impl GpuMeshes {
         source: &Mesh,
         lods: Option<&MeshLods>,
     ) -> u64 {
-        self.staging.clear();
-        self.staging.reserve_exact(source.vertices().len());
-        self.staging
-            .extend(source.vertices().iter().map(Vertex::from));
-        let extras = ExtraVertex::stream(source);
-        let mut streams: Vec<&[u8]> = vec![bytemuck::cast_slice(&self.staging)];
-        if let Some(extras) = &extras {
-            streams.push(bytemuck::cast_slice(extras));
+        let streams = resident.streams().streams();
+        self.staging.resize_with(streams.len().max(self.staging.len()), Vec::new);
+        for (&stream, bytes) in streams.iter().zip(&mut self.staging) {
+            stream_bytes(source, stream, bytes);
         }
+        let staged = &self.staging[..streams.len()];
         let indices = with_levels(source, lods);
         let placement = resident.placement();
         let own = match placement {
             MeshResidence::Arena(placement) => {
-                debug_assert_eq!(
-                    placement.streams == MeshStreams::Extended,
-                    extras.is_some(),
-                    "resident_mesh_streams_match"
-                );
-                self.arena.write(queue, placement, &streams, &indices);
+                self.arena.write(queue, placement, staged, &indices);
                 None
             }
             MeshResidence::Own => {
@@ -377,10 +450,10 @@ impl GpuMeshes {
                 };
                 let vertex = wgpu::BufferUsages::VERTEX;
                 Some(OwnMesh {
-                    vertices: buffer("engine/mesh-vertices", streams[0], vertex),
-                    extras: extras.as_ref().map(|stream| {
-                        buffer("engine/mesh-extras", bytemuck::cast_slice(stream), vertex)
-                    }),
+                    buffers: staged
+                        .iter()
+                        .map(|bytes| buffer("engine/mesh-vertices", bytes, vertex))
+                        .collect(),
                     indices: buffer(
                         "engine/mesh-indices",
                         bytemuck::cast_slice(&indices),

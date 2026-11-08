@@ -6,10 +6,10 @@ use engine_core::{
 };
 use engine_render::slots::DRAWN_SLOTS;
 
-use crate::MESH;
 use crate::presentation::{frustum_uniform, rasterized};
 use crate::settings::{Culling, OcclusionCulling, SubpixelCulling};
 use crate::uploads::PoseData;
+use crate::{MESH, SKIN};
 
 const INITIAL_CAPACITY: usize = 1_024;
 
@@ -30,6 +30,7 @@ pub(crate) struct BatchLook {
     pub masked: bool,
     pub double_sided: bool,
     pub extended: bool,
+    pub skinned: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -37,6 +38,7 @@ pub(crate) struct DrawBatch {
     pub mesh: MeshHandle,
     pub material: Option<MaterialHandle>,
     pub instances: Range<u32>,
+    pub skinned: bool,
 }
 
 #[derive(Default)]
@@ -61,7 +63,11 @@ impl MeshBatches {
         self.generation = Some(generation);
         self.ordered.clear();
         self.batches.clear();
-        for batch in table.batches().iter().filter(|batch| batch.kind == MESH) {
+        for batch in table
+            .batches()
+            .iter()
+            .filter(|batch| batch.kind == MESH || batch.kind == SKIN)
+        {
             let Some(mesh) = batch.geometry else {
                 continue;
             };
@@ -72,6 +78,7 @@ impl MeshBatches {
                 mesh,
                 material: batch.material,
                 instances: start..self.ordered.len() as u32,
+                skinned: batch.kind == SKIN,
             });
         }
         true
@@ -102,7 +109,7 @@ pub(crate) fn plan_draws(
         }) && planes.iter().flatten().all(|value| value.is_finite())
     });
     let frustum = culling.frustum && bounded;
-    let candidates = table.census(MESH).drawn as usize;
+    let candidates = (table.census(MESH).drawn + table.census(SKIN).drawn) as usize;
     let unbudgeted = frustum && culling.budget() >= candidates;
     decided.set_if_neq(MeshPlan {
         culling: culling.frustum,

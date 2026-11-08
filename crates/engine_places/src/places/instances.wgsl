@@ -1,4 +1,3 @@
-import package::engine::mesh::declarations::AffineVertexInput;
 import package::place::impostors::ImpostorRecord;
 import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};
 
@@ -11,14 +10,6 @@ struct AffinePose {
 struct SlotColor {
     color: vec2<u32>,
     surface: u32,
-}
-
-struct SlotVertex {
-    @invariant @builtin(position) clip_position: vec4<f32>,
-    @location(0) normal_u: vec4<f32>,
-    @location(1) world_v: vec4<f32>,
-    @location(2) @interpolate(flat) material: vec4<u32>,
-    @location(3) previous: vec3<f32>,
 }
 
 struct SlotFragment {
@@ -69,35 +60,6 @@ struct CardDebugTargets {
 fn instance_pose(slot: u32) -> AffinePose {
     var pose: AffinePose;
     return pose;
-}
-
-fn instance_color(slot: u32) -> SlotColor {
-    var color: SlotColor;
-    return color;
-}
-
-fn slot_vertex(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,
-        color: SlotColor, fade: u32) -> SlotVertex {
-    var vertex: SlotVertex;
-    return vertex;
-}
-
-fn slot_fragment(input: SlotVertex) -> SlotFragment {
-    var fragment: SlotFragment;
-    return fragment;
-}
-
-fn slot_shade(fragment: SlotFragment, front: bool) -> SlotShaded {
-    var shaded: SlotShaded;
-    return shaded;
-}
-
-fn slot_masked_depth(fragment: SlotFragment) {
-}
-
-fn slot_pixel(input: SlotVertex) -> ViewPixel {
-    var pixel: ViewPixel;
-    return pixel;
 }
 
 fn placed_card_vertex(vertex: u32, batch: u32, pose: AffinePose, previous: AffinePose,

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use engine_assets::MeshBuffer;
+use engine_assets::{MeshBuffer, VertexSkin};
 use engine_core::{Error, Mesh, MeshVertex, Surface, Transform, glam};
 use engine_settings::{ErrorCode, Expected, InvalidSetting, Rule, Setting, valid_uri};
 use serde::{Deserialize, Serialize};
@@ -243,6 +243,7 @@ impl MeshSource {
                 };
                 let colored = extras(&|vertex| vertex.color.is_some(), "color")?;
                 let second = extras(&|vertex| vertex.uv1.is_some(), "uv1")?;
+                let skinned = extras(&|vertex| vertex.skin.is_some(), "skin")?;
                 MeshBuffer {
                     vertices: vertices.iter().copied().map(MeshVertex::from).collect(),
                     indices: indices.clone(),
@@ -258,6 +259,8 @@ impl MeshSource {
                             .map(|vertex| vertex.uv1.unwrap_or([0.0; 2]))
                             .collect()
                     }),
+                    skin: skinned
+                        .then(|| vertices.iter().filter_map(|vertex| vertex.skin).collect()),
                     lods: None,
                 }
                 .mesh(path)
@@ -278,6 +281,8 @@ pub struct SceneVertex {
     pub color: Option<[f32; 4]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uv1: Option<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin: Option<VertexSkin>,
 }
 
 impl From<SceneVertex> for MeshVertex {
