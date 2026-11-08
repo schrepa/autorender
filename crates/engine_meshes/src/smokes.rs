@@ -179,7 +179,7 @@ fn fixture() -> Value {
             {"id": "limb", "mesh": "ribbon", "material": "plain"},
             {"id": "near-ball", "mesh": "ball", "material": "stone", "transform": {"translation": [2.5, 1, -2]}},
             {"id": "far-ball", "mesh": "ball", "material": "stone", "transform": {"translation": [-40, 1, -300]}},
-            {"id": "camera", "transform": {"translation": [0, 1, 4]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 2000, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}},
+            {"id": "camera", "transform": {"translation": [0, 1, 4]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 2000, "projection": {"Perspective": {"vertical_fov_radians": std::f64::consts::FRAC_PI_3}}}, "view": {}},
         ],
     })
 }

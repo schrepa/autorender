@@ -446,7 +446,7 @@ pub(crate) fn keep_rows(
 fn closest(point: Vec3, eyes: &[Vec3]) -> f32 {
     eyes.iter()
         .map(|eye| point.distance_squared(*eye))
-        .fold(f32::INFINITY, f32::min)
+        .fold(f32::INFINITY, engine_core::math::min)
 }
 
 type GatherFrame<'w> = (

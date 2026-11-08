@@ -12,8 +12,8 @@ pub struct FrameFacts {
 impl Default for FrameFacts {
     fn default() -> Self {
         Self {
-            display_size: UVec2::new(1920, 1080),
-            render_size: UVec2::new(1920, 1080),
+            display_size: UVec2::ZERO,
+            render_size: UVec2::ZERO,
             pixel_ratio: 1.0,
         }
     }

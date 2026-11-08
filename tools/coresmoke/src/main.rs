@@ -7,7 +7,15 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use engine_command_line::{self as command_line, CommandOption};
+use engine_core::FrameFacts;
+use engine_core::glam::UVec2;
 use serde_json::{Value, json};
+
+pub const FRAME: FrameFacts = FrameFacts {
+    display_size: UVec2::new(1920, 1080),
+    render_size: UVec2::new(1920, 1080),
+    pixel_ratio: 1.0,
+};
 
 #[derive(Default)]
 pub struct Report {

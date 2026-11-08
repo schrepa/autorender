@@ -93,7 +93,7 @@ fn scene(walled: bool) -> Value {
         "camera": {
             "near": 0.1,
             "far": 1000,
-            "projection": {"Perspective": {"vertical_fov_radians": 1.047_197_6}},
+            "projection": {"Perspective": {"vertical_fov_radians": std::f64::consts::FRAC_PI_3}},
         },
         "view": {},
     }));

@@ -16,7 +16,7 @@
       "meshes": 2,
       "textures": 1
     },
-    "gltf prefab document": "95018c7f47ec4be1",
+    "gltf prefab document": "3998e635eab3d136",
     "gltf prefab file prop/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
     "gltf prefab file prop/node1.p0.761ae8786249.bin": "761ae878624921a2",
     "gltf prefab file prop/node1.p1.8e944532b4c2.bin": "8e944532b4c2174d",
@@ -28,7 +28,7 @@
       "meshes": 2,
       "textures": 1
     },
-    "gltf scene document": "cc01c8bfadfc5ec8",
+    "gltf scene document": "e7e28e7bbd689626",
     "gltf scene file prop/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
     "gltf scene file prop/node1.p0.761ae8786249.bin": "761ae878624921a2",
     "gltf scene file prop/node1.p1.8e944532b4c2.bin": "8e944532b4c2174d"
@@ -379,7 +379,6 @@
           "SceneAutoExposure",
           "SceneBloom",
           "SceneBodyPush",
-          "SceneCamera",
           "SceneClouds",
           "SceneCollider",
           "SceneColliderShape",
@@ -451,7 +450,6 @@
           "SceneTimeOfDay",
           "SceneTransform",
           "SceneVertex",
-          "SceneView",
           "SceneWater",
           "SceneWind",
           "SceneWorldStreaming",
@@ -711,37 +709,37 @@
     }
   },
   "scenes": {
-    "document components": "5cef6848b7c8d675",
+    "document components": "344246953edb010b",
     "document components counts": {
-      "bytes": 7946,
-      "entities": 9,
+      "bytes": 8383,
+      "entities": 10,
       "materials": 3,
       "meshes": 3,
       "prefabs": 1,
       "textures": 1
     },
-    "document garden": "4feea2bd1e300696",
+    "document garden": "b1d4a513e91b4c57",
     "document garden counts": {
-      "bytes": 95458,
-      "entities": 30,
+      "bytes": 95903,
+      "entities": 31,
       "materials": 9,
       "meshes": 6,
       "prefabs": 1,
       "textures": 1
     },
-    "document minimal": "508776c4ee5977f1",
+    "document minimal": "3fe241e270f4e5ef",
     "document minimal counts": {
-      "bytes": 285,
+      "bytes": 92,
       "entities": 0,
       "materials": 0,
       "meshes": 0,
       "prefabs": 0,
       "textures": 0
     },
-    "document terrain": "789ea1baed2b3671",
+    "document terrain": "a6f627e9521099c0",
     "document terrain counts": {
-      "bytes": 23508,
-      "entities": 5,
+      "bytes": 23946,
+      "entities": 6,
       "materials": 2,
       "meshes": 2,
       "prefabs": 0,
@@ -791,15 +789,9 @@
       "got": 2,
       "path": "$.entities"
     },
-    "refusal invalid_camera at $.camera.near": {
-      "allowed": {
-        "kind": "range",
-        "max": 1000000.0,
-        "min": 0.001
-      },
+    "refusal invalid_camera at $.entities[0].camera.near": {
       "code": "invalid_camera",
-      "got": 0.0,
-      "path": "$.camera.near"
+      "path": "$.entities[0].camera.near"
     },
     "refusal invalid_collider at $.entities[0].collider.shape": {
       "allowed": {
@@ -1057,14 +1049,12 @@
         "values": [
           "id",
           "revision",
-          "camera",
           "environment",
           "textures",
           "materials",
           "meshes",
           "prefabs",
           "entities",
-          "views",
           "looks"
         ]
       },

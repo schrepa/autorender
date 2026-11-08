@@ -53,7 +53,7 @@ pub(crate) fn gather_probes(
                     .max(Vec3::ZERO)
                     .length_squared()
             })
-            .fold(f32::INFINITY, f32::min);
+            .fold(f32::INFINITY, engine_math::min);
         gathered.candidates.push((
             outside,
             RenderReflectionProbe {

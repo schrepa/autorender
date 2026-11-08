@@ -56,7 +56,7 @@ fn document(hiker: bool) -> Value {
             "interior": {"sky": 0.1, "sun": 0.1}}, "transform": {"translation": [-300.0, 40.0, 300.0]}}),
         json!({"id": "camera", "transform": {"translation": [0.0, 80.0, 140.0], "rotation_degrees": [-19.6538, 0.0, 0.0]},
             "node": {"clock": "real", "mobility": "moving"},
-            "camera": {"near": 0.5, "far": 4000.0, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}}),
+            "camera": {"near": 0.5, "far": 4000.0, "projection": {"Perspective": {"vertical_fov_radians": std::f64::consts::FRAC_PI_3}}}, "view": {}}),
     ];
     if hiker {
         entities.push(json!({"id": "hiker", "mesh": "cube", "material": "plain",

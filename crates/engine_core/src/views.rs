@@ -289,17 +289,22 @@ fn history_of(
     }
 }
 
+fn found(world: &World) -> Vec<(Entity, View)> {
+    let mut found: Vec<(Entity, View)> = world
+        .try_query::<(Entity, &View)>()
+        .map(|mut views| views.iter(world).map(|(entity, view)| (entity, *view)).collect())
+        .unwrap_or_default();
+    found.sort_by_key(|(entity, view)| (!view.target.surface(), view.order, *entity));
+    found
+}
+
 pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
     let cuts: Vec<Entity> = take_asks::<ViewCut>(world)
         .into_iter()
         .map(|cut| cut.view)
         .collect();
     let frame = FrameId(world.get_resource::<FrameTime>().map_or(0, |time| time.frame));
-    let mut found: Vec<(Entity, View)> = world
-        .try_query::<(Entity, &View)>()
-        .map(|mut views| views.iter(world).map(|(entity, view)| (entity, *view)).collect())
-        .unwrap_or_default();
-    found.sort_by_key(|(entity, view)| (!view.target.surface(), view.order, *entity));
+    let found = found(world);
     let (held, frozen) = world
         .get_resource::<Views>()
         .map(|views| (views.held.clone(), views.frozen))

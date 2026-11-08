@@ -13,7 +13,7 @@ pub(crate) fn boxed(id: &str) -> Value {
         "materials": [{ "id": "plain", "color": [0.8, 0.3, 0.2, 1] }],
         "meshes": [{ "id": "box", "source": { "kind": "cube" } }],
         "entities": [{ "id": "box", "mesh": "box", "material": "plain", "transform": { "translation": [0, 0, 0] } },
-            { "id": "camera", "transform": { "translation": [0, 2, 4], "rotation_degrees": [-26.5651, 0, 0] }, "node": { "clock": "real", "mobility": "moving" }, "camera": { "near": 0.1, "far": 100, "projection": { "Perspective": { "vertical_fov_radians": 1.0471976 } } }, "view": {} }],
+            { "id": "camera", "transform": { "translation": [0, 2, 4], "rotation_degrees": [-26.5651, 0, 0] }, "node": { "clock": "real", "mobility": "moving" }, "camera": { "near": 0.1, "far": 100, "projection": { "Perspective": { "vertical_fov_radians": std::f64::consts::FRAC_PI_3 } } }, "view": {} }],
     })
 }
 
@@ -486,7 +486,7 @@ fn textured(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         "materials": [{ "id": "alpha", "color": [1, 1, 1, 1], "texture": "alpha" }],
         "meshes": [{ "id": "panel", "source": { "kind": "cube" } }],
         "entities": [{ "id": "panel", "mesh": "panel", "material": "alpha", "transform": { "translation": [2, 0, 0] } },
-            { "id": "camera", "transform": { "translation": [0, 2, 4], "rotation_degrees": [-26.5651, 0, 0] }, "node": { "clock": "real", "mobility": "moving" }, "camera": { "near": 0.1, "far": 100, "projection": { "Perspective": { "vertical_fov_radians": 1.0471976 } } }, "view": {} }],
+            { "id": "camera", "transform": { "translation": [0, 2, 4], "rotation_degrees": [-26.5651, 0, 0] }, "node": { "clock": "real", "mobility": "moving" }, "camera": { "near": 0.1, "far": 100, "projection": { "Perspective": { "vertical_fov_radians": std::f64::consts::FRAC_PI_3 } } }, "view": {} }],
     });
     let spawned = reload(session, &source);
     let wanted = json!(null);

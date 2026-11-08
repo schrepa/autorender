@@ -71,7 +71,7 @@ fn fixture(inverted: bool) -> Value {
             {"id": "trunk", "mesh": "box", "material": "bark", "transform": {"translation": [-1.5, 1.5, 0], "scale": [1, 3, 1]}},
             {"id": "crown", "mesh": "gem", "material": "leaf", "transform": {"translation": [-1.5, 3.8, 0], "scale": [2.4, 2, 2.4]}},
             {"id": "stump", "mesh": "box", "material": "bark", "transform": {"translation": [2, 0.4, -1], "scale": [1.4, 0.8, 1.4]}},
-            {"id": "camera", "transform": {"translation": [0, 6, 10], "rotation_degrees": [-26.5651, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 300, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}},
+            {"id": "camera", "transform": {"translation": [0, 6, 10], "rotation_degrees": [-26.5651, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 300, "projection": {"Perspective": {"vertical_fov_radians": std::f64::consts::FRAC_PI_3}}}, "view": {}},
         ],
     })
 }

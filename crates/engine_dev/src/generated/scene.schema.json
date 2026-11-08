@@ -2366,65 +2366,6 @@
       },
       "type": "object"
     },
-    "SceneCamera": {
-      "additionalProperties": false,
-      "properties": {
-        "far": {
-          "default": 500.0,
-          "format": "float",
-          "maximum": 1000000.0,
-          "minimum": 0.001,
-          "type": "number"
-        },
-        "fov_degrees": {
-          "default": 55.0,
-          "format": "float",
-          "maximum": 179.0,
-          "minimum": 1.0,
-          "type": "number"
-        },
-        "near": {
-          "default": 0.10000000149011612,
-          "format": "float",
-          "maximum": 1000000.0,
-          "minimum": 0.001,
-          "type": "number"
-        },
-        "position": {
-          "default": [
-            24.0,
-            19.0,
-            28.0
-          ],
-          "items": {
-            "format": "float",
-            "maximum": 1000000.0,
-            "minimum": -1000000.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": "array"
-        },
-        "target": {
-          "default": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "items": {
-            "format": "float",
-            "maximum": 1000000.0,
-            "minimum": -1000000.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
     "SceneClouds": {
       "additionalProperties": false,
       "properties": {
@@ -6308,74 +6249,6 @@
       ],
       "type": "object"
     },
-    "SceneView": {
-      "additionalProperties": false,
-      "properties": {
-        "far": {
-          "default": 500.0,
-          "format": "float",
-          "maximum": 1000000.0,
-          "minimum": 0.001,
-          "type": "number"
-        },
-        "fov_degrees": {
-          "default": 55.0,
-          "format": "float",
-          "maximum": 179.0,
-          "minimum": 1.0,
-          "type": "number"
-        },
-        "name": {
-          "maxLength": 64,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9_.-]+$",
-          "type": "string"
-        },
-        "near": {
-          "default": 0.10000000149011612,
-          "format": "float",
-          "maximum": 1000000.0,
-          "minimum": 0.001,
-          "type": "number"
-        },
-        "position": {
-          "default": [
-            24.0,
-            19.0,
-            28.0
-          ],
-          "items": {
-            "format": "float",
-            "maximum": 1000000.0,
-            "minimum": -1000000.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": "array"
-        },
-        "target": {
-          "default": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "items": {
-            "format": "float",
-            "maximum": 1000000.0,
-            "minimum": -1000000.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": "array"
-        }
-      },
-      "required": [
-        "name"
-      ],
-      "type": "object"
-    },
     "SceneWater": {
       "additionalProperties": false,
       "properties": {
@@ -7577,24 +7450,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
-    "camera": {
-      "$ref": "#/$defs/SceneCamera",
-      "default": {
-        "far": 500.0,
-        "fov_degrees": 55.0,
-        "near": 0.10000000149011612,
-        "position": [
-          24.0,
-          19.0,
-          28.0
-        ],
-        "target": [
-          0.0,
-          0.0,
-          0.0
-        ]
-      }
-    },
     "entities": {
       "items": {
         "$ref": "#/$defs/SceneObject"
@@ -7649,12 +7504,6 @@
     "textures": {
       "items": {
         "$ref": "#/$defs/SceneTexture"
-      },
-      "type": "array"
-    },
-    "views": {
-      "items": {
-        "$ref": "#/$defs/SceneView"
       },
       "type": "array"
     }

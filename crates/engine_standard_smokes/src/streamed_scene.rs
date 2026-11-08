@@ -21,7 +21,7 @@ fn fixture() -> Value {
              "transform": {"translation": [0, 200, 0]}},
             {"id": "ground", "terrain": {"origin": [-1024, 0, -1024], "tiles": [8, 8], "spacing": 1,
              "layers": [{"type": "noise", "seed": 5, "height": 40, "wavelength": 400}]}},
-            {"id": "camera", "transform": {"translation": [0, 60, 40], "rotation_degrees": [-45, -19.4712, -18.4349]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.5, "far": 20000, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}},
+            {"id": "camera", "transform": {"translation": [0, 60, 40], "rotation_degrees": [-45, -19.4712, -18.4349]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.5, "far": 20000, "projection": {"Perspective": {"vertical_fov_radians": std::f64::consts::FRAC_PI_3}}}, "view": {}},
         ],
         "environment": {"streamed": {"streamed": [
             {"id": "crate-near", "mesh": "box", "material": "plain", "collider": cube, "grounded": {"offset": 0.5}, "transform": {"translation": [20, 0, 0]}},

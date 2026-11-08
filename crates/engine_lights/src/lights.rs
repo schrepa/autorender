@@ -207,7 +207,7 @@ pub(crate) fn gather_lights(
             .listed()
             .iter()
             .map(|facts| at.distance_squared(facts.detail_eye))
-            .fold(f32::INFINITY, f32::min)
+            .fold(f32::INFINITY, engine_math::min)
             - light.range * light.range;
         ranked.push((distance, entity));
     }

@@ -155,7 +155,7 @@ fn room_scene() -> Value {
             {"id": "back_wall", "mesh": "cube", "material": "wall", "transform": {"translation": [0, 2, -6], "scale": [12, 4, 0.3]}},
             {"id": "side_wall", "mesh": "cube", "material": "wall", "transform": {"translation": [-6, 2, 0], "scale": [0.3, 4, 12]}},
             {"id": "lamp", "mesh": "cube", "material": "glow", "light": {"color": [1, 0.8, 0.6], "intensity": 14.0}, "transform": {"translation": [3, 2, 2], "scale": [0.2, 0.2, 0.2]}},
-            {"id": "camera", "transform": {"translation": [0, 3, 9], "rotation_degrees": [-12.5288, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 200, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}},
+            {"id": "camera", "transform": {"translation": [0, 3, 9], "rotation_degrees": [-12.5288, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 200, "projection": {"Perspective": {"vertical_fov_radians": std::f64::consts::FRAC_PI_3}}}, "view": {}},
         ],
     })
 }
@@ -184,7 +184,7 @@ fn outdoor_scene() -> Value {
                 },
             }},
             {"id": "block", "mesh": "cube", "material": "stone", "transform": {"translation": [0, 34, 0], "scale": [4, 4, 4]}},
-            {"id": "camera", "transform": {"translation": [0, 80, 140], "rotation_degrees": [-19.6538, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.5, "far": 4000, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}},
+            {"id": "camera", "transform": {"translation": [0, 80, 140], "rotation_degrees": [-19.6538, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.5, "far": 4000, "projection": {"Perspective": {"vertical_fov_radians": std::f64::consts::FRAC_PI_3}}}, "view": {}},
         ],
     })
 }

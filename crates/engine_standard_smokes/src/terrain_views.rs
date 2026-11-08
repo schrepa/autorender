@@ -54,7 +54,7 @@ fn fixture() -> Value {
                 ],
             },
         }},
-            {"id": "camera", "transform": {"translation": [0, 80, 140], "rotation_degrees": [-19.6538, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.5, "far": 4000, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}}],
+            {"id": "camera", "transform": {"translation": [0, 80, 140], "rotation_degrees": [-19.6538, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.5, "far": 4000, "projection": {"Perspective": {"vertical_fov_radians": std::f64::consts::FRAC_PI_3}}}, "view": {}}],
     })
 }
 

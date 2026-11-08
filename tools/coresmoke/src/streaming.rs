@@ -199,6 +199,7 @@ fn load() -> Result<Engine, String> {
         .map_err(|error| format!("cannot read {FIXTURE}: {error}"))?;
     let mut engine = engine::engine(engine_standard::everything::<BrickList>)
         .map_err(|error| error.to_string())?;
+    engine.set_frame(crate::FRAME);
     let kinds = SceneKinds::of(engine.app.world());
     let document = SceneDocument::from_json(&source).map_err(|error| error.to_string())?;
     document

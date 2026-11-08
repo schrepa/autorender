@@ -102,6 +102,7 @@ fn engine() -> Result<(Engine, Assets), String> {
             .places(engine_places_world::PLACES)
     })
     .map_err(|error| error.to_string())?;
+    engine.set_frame(crate::FRAME);
     engine.app.add_systems(
         Schedule::FixedSimulation.label(),
         drift.ambiguous_with_all(),
