@@ -41,9 +41,10 @@ impl FrameBudget {
     }
 
     pub fn spend(&mut self, by: &str, bytes: u64) -> bool {
-        let fits = bytes <= self.upload_left;
+        let first = self.uses.iter().all(|used| used.spent == 0);
+        let fits = bytes <= self.upload_left || first;
         if fits {
-            self.upload_left -= bytes;
+            self.upload_left = self.upload_left.saturating_sub(bytes);
         }
         let used = match self.uses.iter().position(|used| used.by == by) {
             Some(at) => &mut self.uses[at],

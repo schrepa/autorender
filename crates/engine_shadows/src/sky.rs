@@ -156,7 +156,9 @@ impl SkyMaps {
         self.left = in_use(count as usize)
             .filter(|&layer| {
                 let layer = &self.layers[layer];
-                layer.drawn.is_none() || layer.stale
+                layer.drawn.is_none()
+                    || layer.stale
+                    || layer.faded(now, settings.fade_seconds) < 1.0
             })
             .count() as u32;
         self.write(count, reaches, settings, now);

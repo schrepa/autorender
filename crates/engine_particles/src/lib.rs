@@ -50,13 +50,10 @@ impl Brick for ParticlesBrick {
                     .schema(scene::emitter_schema),
                 None,
             )
+            .systems(Schedule::WorldSync, emitters::keep_rows)
             .systems(
                 Schedule::ViewSync,
-                (
-                    emitters::keep_rows,
-                    emitters::gather_emitters,
-                    emitters::particle_stats,
-                ),
+                (emitters::gather_emitters, emitters::particle_stats),
             )
             .generated(GENERATED)
             .draw_kind(KindDecl {

@@ -349,7 +349,7 @@ pub(crate) struct UiState {
 
 impl UiState {
     pub(crate) fn is_idle(&self) -> bool {
-        self.seen.is_empty() && self.nodes.is_empty() && !self.wanting
+        self.seen.is_empty() && self.nodes.is_empty() && self.rects.is_empty() && !self.wanting
     }
 
     pub(crate) fn stats(&self) -> UiStats {

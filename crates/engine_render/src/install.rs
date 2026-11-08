@@ -146,6 +146,13 @@ impl PassDecl {
             .map(|(_, clear)| *clear)
     }
 
+    pub(crate) fn view_depth(&self, texture: u32, access: Access) -> bool {
+        access == Access::Clear
+            && self
+                .clear_of(texture)
+                .is_none_or(|clear| clear == Clear::Depth(crate::graph::FAR))
+    }
+
     pub(crate) fn per_view(&self) -> bool {
         self.views != PassViews::Owned
             && (self.layer.is_some() || crate::shared::composites(self))

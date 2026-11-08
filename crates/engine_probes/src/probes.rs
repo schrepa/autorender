@@ -293,6 +293,7 @@ pub(crate) struct ProbeState {
     words_changed: bool,
     stats: ReflectionProbeStats,
     settling: Settling,
+    cameras: Vec<Entity>,
 }
 
 impl Default for ProbeState {
@@ -321,6 +322,7 @@ impl Default for ProbeState {
             words_changed: false,
             stats: ReflectionProbeStats::default(),
             settling: Settling::default(),
+            cameras: Vec::new(),
         }
     }
 }
@@ -553,7 +555,7 @@ pub(crate) fn publish_captures(
     mut stats: ResMut<ReflectionProbeStats>,
     mut published: Query<&mut OwnedViews, With<CaptureViews>>,
     mut spawner: Spawner<ReflectionProbesBrick>,
-    (mut pool, mut moves, mut lenses): (Local<Vec<Entity>>, Moves<ReflectionProbesBrick>, Lenses),
+    (mut moves, mut lenses): (Moves<ReflectionProbesBrick>, Lenses),
 ) {
     let state = &mut *state;
     if std::mem::take(&mut state.words_changed) {
@@ -566,10 +568,10 @@ pub(crate) fn publish_captures(
     }
     place_cameras(
         &state.faces,
-        &mut pool,
+        &mut state.cameras,
         (&mut spawner, &mut moves, &mut lenses),
     );
-    let views = capture_views(state, &pool);
+    let views = capture_views(state, &state.cameras);
     match published.single_mut() {
         Ok(mut held) => {
             held.set_if_neq(views);

@@ -137,7 +137,6 @@ fn removals(session: &mut dyn SmokeSession) -> Checked<()> {
     look(session, 0.0, 0.0)?;
     session.step(1);
     look_from(session, [10.0, 60.0, 40.0], [30.0, 20.0, 0.0])?;
-    session.step(1);
     let moving = cells(session)?;
     smoke_eq!(
         moving["velocity"][0].as_f64().unwrap_or(0.0) > 100.0,

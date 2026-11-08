@@ -147,6 +147,7 @@ pub(crate) struct ShadowPlan {
     pub(crate) revisions: Vec<u64>,
     pub(crate) mask_words: u32,
     settling: Settling,
+    cameras: Vec<Entity>,
 }
 
 impl ShadowPlan {
@@ -397,7 +398,7 @@ pub(crate) fn plan_shadows(
         Query<&mut OwnedViews, With<ShadowViews>>,
         Spawner<ShadowsBrick>,
     ),
-    (mut pool, mut moves, mut lenses): (Local<Vec<Entity>>, Moves<ShadowsBrick>, Lenses),
+    (mut moves, mut lenses): (Moves<ShadowsBrick>, Lenses),
 ) {
     let plan = &mut *plan;
     let eye = views.main().map_or(Vec3::ZERO, |main| main.detail_eye);
@@ -485,11 +486,11 @@ pub(crate) fn plan_shadows(
     place_cameras(
         &plan.placed,
         eye,
-        &mut pool,
+        &mut plan.cameras,
         (&mut spawner, &mut moves, &mut lenses),
     );
     publish_views(
-        scene_views(&maps, &plan.placed, (&pool, eye)),
+        scene_views(&maps, &plan.placed, (&plan.cameras, eye)),
         &mut published,
         &mut spawner,
     );

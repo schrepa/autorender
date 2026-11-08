@@ -30,9 +30,6 @@ pub(super) fn reload(session: &mut dyn SmokeSession, document: &Value) -> Result
     let args = json!({"expected_revision": revision, "revision": revision});
     session
         .request("control", json!({"name": "reload", "args": args}))
-        .map_err(|reply| reply["error"].clone())?;
-    session
-        .request("control", json!({"name": "render"}))
         .map(|reply| reply["result"].clone())
         .map_err(|reply| reply["error"].clone())
 }

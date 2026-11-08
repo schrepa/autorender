@@ -307,7 +307,8 @@ impl Run {
                     });
                     let format = self.machine.declared.textures[texture as usize].format;
                     if let Some(view) = self.attachment_view(texture, 0, 0) {
-                        depth = Some((u64::from(texture) + 2_000, view, format, ops, false));
+                        let tested = pass.view_depth(texture, access);
+                        depth = Some((u64::from(texture) + 2_000, view, format, ops, tested));
                     }
                 }
             }
@@ -551,7 +552,7 @@ impl Run {
                 view,
                 format,
                 ops,
-                false,
+                pass.view_depth(texture, access),
             ));
         }
         true

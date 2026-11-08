@@ -613,14 +613,15 @@ impl Run {
             );
         }
         if depth.is_none()
-            && let Some(&(texture, _)) = pass.depths.first()
+            && let Some(&(texture, access)) = pass.depths.first()
         {
+            let view = pass.view_depth(texture, access);
             depth = self
                 .machine
                 .declared
                 .textures
                 .get(texture as usize)
-                .map(|texture| (texture.format, false));
+                .map(|texture| (texture.format, view));
         }
         (formats, depth, shown)
     }

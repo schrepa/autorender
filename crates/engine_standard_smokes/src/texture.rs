@@ -249,7 +249,7 @@ fn replacement(
     if let Some(materials) = untextured["materials"].as_array_mut() {
         for material in materials {
             if let Some(fields) = material.as_object_mut() {
-                fields.remove("texture");
+                fields.remove("slots");
             }
         }
     }

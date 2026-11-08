@@ -1,6 +1,6 @@
 use engine_smoke::{
     Checked, above, camera, capture, control, environment, inspect, not, number, query, refuse,
-    render, rendered_when, settled, settled_by, with,
+    render, rendered_when, settled, settled_when, with,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
@@ -524,14 +524,9 @@ fn horizons(session: &mut dyn SmokeSession) -> Checked<Value> {
 }
 
 fn bounce(session: &mut dyn SmokeSession) -> Checked<()> {
-    let mut changed = environment(session, json!({ "terrain": {}, "terrain_shading": {} }))?;
-    let mut bounced = changed["rendering"].take();
-    settled_by(session, |session| {
-        let rendering = render(session)?;
-        if terrain(&bounced)["bounce"]["relit"] == 0 {
-            bounced = rendering.clone();
-        }
-        Ok(rendering)
+    environment(session, json!({ "terrain": {}, "terrain_shading": {} }))?;
+    let bounced = settled_when(session, render, |rendering| {
+        terrain(rendering)["bounce"]["relit"] != 0
     })?;
     smoke_eq!(
         terrain(&bounced)["bounce"]["relit"].clone(),

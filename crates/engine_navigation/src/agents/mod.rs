@@ -263,11 +263,7 @@ impl NavAgents {
         ends: (Vec2, Vec2),
         options: &NavOptions,
     ) -> NavQuery {
-        self.records.settle(
-            (records, self.elapsed, self.tick),
-            settings,
-            &mut self.failures,
-        );
+        self.settle_records(settings, records);
         let mut asked = self
             .query
             .take()
@@ -296,6 +292,21 @@ impl NavAgents {
             None => NavQuery::Unreachable,
         }
     }
+
+    fn settle_records(&mut self, settings: &Navigation, records: &Records) {
+        self.records.settle(
+            (records, self.elapsed, self.tick),
+            settings,
+            &mut self.failures,
+        );
+    }
+}
+
+pub(crate) fn settle_walk_records(
+    (settings, records): (Res<Navigation>, Res<Records>),
+    mut navigation: ResMut<NavAgents>,
+) {
+    navigation.settle_records(&settings, &records);
 }
 
 type Agents<'w, 's> = Query<
@@ -389,11 +400,7 @@ fn walk(
     let mut stats = NavStats::default();
     navigation.tick = time.tick;
     navigation.elapsed = time.elapsed_seconds;
-    navigation.records.settle(
-        (records, navigation.elapsed, navigation.tick),
-        settings,
-        &mut navigation.failures,
-    );
+    navigation.settle_records(settings, records);
     for (entity, agent, mut walk, transform) in agents.iter_mut() {
         if let Err(invalid) = SceneNavAgent::from(*agent).validate() {
             let field = invalid.field.into_owned();

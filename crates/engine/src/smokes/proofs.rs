@@ -107,7 +107,7 @@ fn lit_room(session: &mut dyn SmokeSession) -> Checked<()> {
     );
     let shadows = inspect(session, "shadow_stats")?;
     smoke_eq!(
-        json!({"active": shadows["active"], "drawn": number(&shadows["draws"]) > 0.0}),
+        json!({"active": shadows["active"], "drawn": number(&shadows["tiles_resident"]) > 0.0}),
         json!({"active": true, "drawn": true}),
         "room_shadows_draw"
     );

@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, io::Write};
 use bevy_ecs::prelude::{Component, Entity, Resource, World};
 use engine_core::{
     AssetLibrary, Drawn, Engine, FixedTime, FrameTime, GlobalTransforms, JobExchange,
-    MaterialHandle, MeshHandle, Parent, PresentationState, TextureHandle, Transform,
+    MaterialHandle, MeshHandle, Mover, Pace, Parent, PresentationState, TextureHandle, Transform,
 };
 use engine_registry::{BrickRecord, OperationScene, Registry};
 use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
@@ -285,7 +285,15 @@ impl DevTools {
         world: &World,
         context: Context<'_>,
     ) -> BTreeMap<String, Vec<String>> {
-        let entities: Vec<Entity> = world.iter_entities().map(|entity| entity.id()).collect();
+        let entities: Vec<Entity> = world
+            .iter_entities()
+            .filter(|entity| {
+                entity
+                    .get::<Mover>()
+                    .is_none_or(|mover| mover.pace == Pace::Tick)
+            })
+            .map(|entity| entity.id())
+            .collect();
         let bricks = self.brick_inspectors(world);
         self.all_inspectors(&bricks)
             .filter(|inspector| inspector.kind == InspectorKind::Component)

@@ -1,4 +1,4 @@
-use engine_smoke::settled_by;
+use engine_smoke::{render, settled_by};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
@@ -287,12 +287,8 @@ fn surface(probed: &Value) -> bool {
         && (normal - 1.0).abs() < 0.01
 }
 
-fn present(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
-    Ok(control(session, "present", json!({"alpha": 0}))?["rendering"].clone())
-}
-
 fn capture(session: &mut dyn SmokeSession) -> Result<(Value, Value), SmokeFailure> {
-    settled_by(session, present)?;
+    settled_by(session, render)?;
     let captured = ask(session, "capture", json!({"alpha": 0}))?;
     let image = captured["artifact"]["sha256"].clone();
     let wanted = json!("sha256");
@@ -305,7 +301,7 @@ fn capture(session: &mut dyn SmokeSession) -> Result<(Value, Value), SmokeFailur
 }
 
 fn settled(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
-    settled_by(session, present)?;
+    settled_by(session, render)?;
     let first = ask(session, "capture", json!({"alpha": 0}))?["artifact"]["sha256"].take();
     let image = ask(session, "capture", json!({"alpha": 0}))?["artifact"]["sha256"].take();
     let wanted = json!("two equal captures");
