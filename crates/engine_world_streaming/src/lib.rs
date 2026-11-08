@@ -30,8 +30,8 @@ use serde::Serialize;
 
 use engine_core::math::{max, min};
 use engine_core::{
-    AssetLibrary, Brick, Bricks, FrameTime, GlobalTransforms, Interest, Request, Requests, Runs,
-    SceneContext, Schedule, Smoke, Source, Spawner, Views, settings, stats,
+    AssetLibrary, Brick, Bricks, FrameTime, GlobalTransforms, Interest, Poses, Request, Requests,
+    Runs, SceneContext, Schedule, Smoke, Source, Spawner, ViewFacts, Views, settings, stats,
 };
 use engine_places_world::streaming::{StreamedKeys, StreamingFocus};
 
@@ -472,7 +472,7 @@ impl WorldCells {
 
 type StreamReads<'w> = (
     Res<'w, WorldStreaming>,
-    Res<'w, Views>,
+    (Res<'w, Views>, Poses<'w>),
     Res<'w, FrameTime>,
     Res<'w, GlobalTransforms>,
 );
@@ -486,7 +486,7 @@ type SceneReads<'w> = (
 type FocusQuery<'w, 's> = Query<'w, 's, Entity, With<StreamingFocus>>;
 
 pub(crate) fn stream_cells(
-    (settings, views, frame, globals): StreamReads<'_>,
+    (settings, (views, poses), frame, globals): StreamReads<'_>,
     (scene, context, assets): SceneReads<'_>,
     (focus, live): (FocusQuery<'_, '_>, Query<Entity>),
     mut cells: ResMut<WorldCells>,
@@ -515,7 +515,13 @@ pub(crate) fn stream_cells(
     cells.stats.spawned = 0;
     cells.stats.despawned = 0;
     if !cells.cells.is_empty() {
-        sources(&views, &frame, (&*globals, &focus), cells, settings);
+        sources(
+            (&views, &poses),
+            &frame,
+            (&*globals, &focus),
+            cells,
+            settings,
+        );
         let revised = tracked.is_changed();
         let changes = tracked.bypass_change_detection();
         let (despawned, removed) = cells.reconcile(changes, revised, &mut act);
@@ -539,13 +545,18 @@ pub(crate) fn stream_cells(
 }
 
 fn sources(
-    views: &Views,
+    (views, poses): (&Views, &Poses<'_>),
     frame: &FrameTime,
     (globals, focus): (&GlobalTransforms, &FocusQuery<'_, '_>),
     cells: &mut WorldCells,
     settings: WorldStreaming,
 ) {
-    let eye = views.main().map_or(Vec3::ZERO, |main| main.eye);
+    let eye_of = |facts: &ViewFacts| {
+        poses
+            .drawn_pose(facts.camera)
+            .map_or(facts.eye, |pose| pose.w_axis.truncate())
+    };
+    let eye = views.main().map_or(Vec3::ZERO, eye_of);
     let (number, elapsed) = (frame.frame, frame.real_elapsed);
     let motion = &mut cells.motion;
     match motion.last {
@@ -573,7 +584,7 @@ fn sources(
     cells.sources.clear();
     cells
         .sources
-        .extend(views.listed().iter().map(|facts| flat(facts.eye)));
+        .extend(views.listed().iter().map(|facts| flat(eye_of(facts))));
     let ahead = eye + motion.velocity * settings.prefetch;
     if ahead.distance_squared(eye) > 1.0 {
         cells.sources.push(flat(ahead));

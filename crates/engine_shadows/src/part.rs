@@ -8,14 +8,13 @@ use engine_render::{
 };
 
 use crate::ShadowPass;
-use crate::constants::{LEVEL_WORDS, MARK_GROUP, SKY_LAYERS};
+use crate::constants::{MARK_GROUP, SKY_LAYERS};
 use crate::gpu_layouts::{CasterCull, ComposeData, Route, SkyViews};
 use crate::plan::{LOST, MarkKind, SKIPPED, SKY_LOST, ShadowDrawn, ShadowFeedback, ShadowPlan};
 use crate::shaders;
 use crate::sky::RESOLUTION;
 
 pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
-const TABLE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 const SKY_OPEN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 const COMPOSE_ATTRIBUTES: [wgpu::VertexAttribute; 2] = [
     wgpu::VertexAttribute {
@@ -44,7 +43,7 @@ pub(crate) struct ShadowsGpu {
     atlas: Texture<Self>,
     sky: Texture<Self>,
     sky_open: Texture<Self>,
-    tiles: Texture<Self>,
+    tiles: Buffer<Self>,
     map_marks: Buffer<Self>,
     depth_marks: Buffer<Self>,
     routes: Buffer<Self>,
@@ -119,40 +118,12 @@ impl ShadowsGpu {
             let Some(block) = plan.table.get(level * cells..(level + 1) * cells) else {
                 continue;
             };
-            cx.write_texture(
-                self.tiles,
-                wgpu::Origin3d {
-                    x: 0,
-                    y: level as u32 * side,
-                    z: 0,
-                },
-                bytemuck::cast_slice(block),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(side * 4),
-                    rows_per_image: Some(side),
-                },
-                extent(side, side, 1),
-            );
+            cx.write(self.tiles, (level * cells * 4) as u64, block);
             self.written_table[level] = revision;
         }
         if !plan.levels.is_empty() {
-            let count = plan.levels.len() as u32;
-            cx.write_texture(
-                self.tiles,
-                wgpu::Origin3d {
-                    x: 0,
-                    y: count * side,
-                    z: 0,
-                },
-                bytemuck::cast_slice(&plan.levels),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(LEVEL_WORDS * 4),
-                    rows_per_image: Some(count),
-                },
-                extent(LEVEL_WORDS, count, 1),
-            );
+            let start = plan.levels.len() * cells * 4;
+            cx.write(self.tiles, start as u64, &plan.levels);
         }
     }
 
@@ -162,11 +133,10 @@ impl ShadowsGpu {
         };
         let (width, height) = key.atlas.size();
         let side = key.region_side();
-        let (columns, rows) = key.table_size();
         let atlas = cx.allocate(self.atlas, extent(width, height, 1), 1) == Allocation::Fresh;
         let (Allocation::Fresh | Allocation::Kept) =
             cx.allocate(self.regions, extent(side, side, SHADOW_REGIONS), 1);
-        if cx.allocate(self.tiles, extent(columns, rows, 1), 1) == Allocation::Fresh {
+        if cx.allocate_buffer(self.tiles, key.table_bytes()) == Allocation::Fresh {
             self.written_table.clear();
         }
         let mut sky = false;
@@ -199,7 +169,7 @@ impl GpuPart for ShadowsGpu {
         let atlas = cx.texture("shadow_atlas", SHADOW_FORMAT, Lifetime::Kept);
         let sky = cx.texture("sky_maps", SHADOW_FORMAT, Lifetime::Kept);
         let opened = cx.view_texture("sky_open", SKY_OPEN_FORMAT, Lifetime::Kept);
-        let tiles = cx.texture("shadow_tiles", TABLE_FORMAT, Lifetime::Kept);
+        let tiles = cx.buffer("shadow_tiles", Lifetime::Kept);
         let map_marks = cx.buffer("caster_marks", Lifetime::Kept);
         let depth_marks = cx.buffer("shadow_marks", Lifetime::Kept);
         let routes = cx.buffer("shadow_routes", Lifetime::Kept);
@@ -209,7 +179,7 @@ impl GpuPart for ShadowsGpu {
         let compare = cx.sampler(engine_core::Sampler::COMPARE_LINEAR);
         let texels = cx.sampler(engine_core::Sampler::NEAREST);
         cx.frame(sample::SHADOW_ATLAS, Bind::Texture(atlas))?;
-        cx.frame(sample::SHADOW_TILES, Bind::Texture(tiles))?;
+        cx.frame(sample::SHADOW_TILES, Bind::Buffer(tiles))?;
         cx.frame(sample::SHADOW_SAMPLER, Bind::Sampler(compare))?;
         cx.frame(sample::SHADOW_TEXELS, Bind::Sampler(texels))?;
         cx.frame(sky_shaders::SKY_MAPS, Bind::Texture(sky))?;

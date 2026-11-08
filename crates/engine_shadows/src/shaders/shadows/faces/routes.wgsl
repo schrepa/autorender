@@ -1,6 +1,6 @@
 import package::generated::shadows::{CasterCull, LEVEL_WINDOW, Route, caster_mode_sky_refresh,
     tile_entry_moving, tile_entry_still};
-import package::shadows::sample::{level_words, shadow_tiles};
+import package::shadows::sample::{level_words, tile_entry, words_start};
 
 @group(0) @binding(0) var<uniform> caster_cull: CasterCull;
 @group(0) @binding(0) var<storage, read> caster_routes: array<Route>;
@@ -48,7 +48,8 @@ fn caster_span(level: u32, low: vec2<f32>, high: vec2<f32>) -> vec4<i32> {
         return vec4<i32>(0, 0, -1, -1);
     }
     let last = i32(caster_cull.counts.w) - 1;
-    let window = level_words(caster_cull.counts.w * caster_cull.counts.y + level, LEVEL_WINDOW);
+    let window = level_words(words_start(caster_cull.counts.w, caster_cull.counts.y, level),
+        LEVEL_WINDOW);
     let first = vec2<i32>(round(window.xy / window.z));
     let from_tile = max(vec2<i32>(floor(low / window.z)), first);
     let to_tile = min(vec2<i32>(floor(high / window.z)), first + vec2<i32>(last));
@@ -59,7 +60,7 @@ fn mark_caster(level: u32, tile: vec2<i32>, moving: bool) -> u32 {
     let side = caster_cull.counts.w;
     let last = i32(side) - 1;
     let cell = vec2<u32>(tile & vec2<i32>(last));
-    let entry = textureLoad(shadow_tiles, vec2<u32>(cell.x, level * side + cell.y), 0).r;
+    let entry = tile_entry(side, level, cell);
     if tile_entry_still(entry) == 0u {
         return 0u;
     }

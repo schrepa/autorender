@@ -13,7 +13,7 @@ use crate::{Game, Result};
 
 pub trait GpuSession {
     fn world(&self) -> &World;
-    fn send(&mut self, line: &str) -> Value;
+    fn send(&mut self, line: &str, late: &dyn Fn() -> Option<Value>) -> Value;
     fn frame(&mut self, timestamp: f64) -> Result<()>;
     fn play(&mut self, document: &str) -> Result<()>;
     fn file(&mut self, name: &str, bytes: &[u8]);
@@ -196,11 +196,14 @@ impl<G: Game, H: SmokeHost<G>> Harness<'_, '_, G, H> {
 
     fn send(&mut self, line: &str) -> Value {
         self.close_when_late();
-        match &mut self.backend {
-            Backend::Gpu(gpu) => gpu.send(line),
+        let runner = &*self.runner;
+        let reply = match &mut self.backend {
+            Backend::Gpu(gpu) => gpu.send(line, &|| runner.late()),
             Backend::Headless(headless) => headless.request(line),
             Backend::Closed(error) => json!({"ok": false, "error": error}),
-        }
+        };
+        self.close_when_late();
+        reply
     }
 
     fn give(&mut self, name: &str, bytes: &[u8]) {

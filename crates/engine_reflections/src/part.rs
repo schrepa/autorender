@@ -62,7 +62,7 @@ impl GpuPart for TraceGpu {
             .views(views)
             .label("engine/post-scene-levels")
             .span(SPAN)
-            .color(levels_texture, Access::Load)
+            .color(levels_texture, Access::Clear)
             .id();
         let reflect = cx
             .screen::<ReflectionsPass>()

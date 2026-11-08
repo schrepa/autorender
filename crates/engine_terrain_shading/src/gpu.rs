@@ -38,6 +38,9 @@ gpu_consts! {
     pub const PEAKS_GROUP: u32 = 16;
     pub const PEAKS_SIDE: u32 = 128;
     pub const ANCESTORS_GROUP: u32 = 16;
+    pub const NORMAL_PLANE: u32 = 0;
+    pub const CONTROL_PLANE: u32 = 1;
+    pub const TILE_PLANES: u32 = 2;
     pub const RIVER_PLANE_FAR: u32 = 0xffff;
     pub const ARRIVAL_SECONDS: f32 = 0.4;
     pub const DEBUG_SHOWN_TILES: u32 = 1;
@@ -296,7 +299,7 @@ gpu_struct! {
         pub layer: u32,
         pub held_layer: u32,
         pub shift: u32,
-        pub pad: u32,
+        pub plane: u32,
         pub first: [i32; 2],
         pub held_first: [i32; 2],
     }

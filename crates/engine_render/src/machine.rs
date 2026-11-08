@@ -803,6 +803,9 @@ impl Machine {
                 }
             }
             groups.sort_by_key(|group| group.index);
+            if skipped {
+                groups.clear();
+            }
             let mut layout_key = String::new();
             for group in &mut groups {
                 group.windows = group
@@ -830,13 +833,10 @@ impl Machine {
                     })
                     .collect();
                 layout_key.push_str(&format!("{}:{entries:?};", group.index));
-                if !skipped {
-                    group.layout =
-                        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                            label: Some("engine/part-group"),
-                            entries: &entries,
-                        });
-                }
+                group.layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("engine/part-group"),
+                    entries: &entries,
+                });
             }
             let variant = plan.of_pipeline.get(index).copied().unwrap_or(0);
             layout_key.push_str(&format!("frame {variant} material {material}"));

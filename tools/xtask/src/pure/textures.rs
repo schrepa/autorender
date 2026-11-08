@@ -3,7 +3,7 @@ use std::path::Path;
 use engine_assets::Texture;
 use engine_core::math::sin;
 use engine_core::{BrickList, Listing};
-use engine_native::{TEXTURE_COOK, TextureCook};
+use engine_texture_cook::{TEXTURE_COOK, TextureCook};
 use engine_textures::{Family, Source, Usage};
 use serde_json::{Map, json};
 

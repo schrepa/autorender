@@ -142,7 +142,7 @@ impl<G: Game> DevSession<G> {
                 Ok(line) => {
                     let (id, line) = request_id(&line);
                     self.id = id;
-                    let mut reply = self.request(&line);
+                    let mut reply = self.request(&line, &|| None);
                     if let Some(id) = self.id.take() {
                         reply["id"] = id;
                     }
@@ -172,7 +172,7 @@ impl<G: Game> DevSession<G> {
         let _ = out.flush();
     }
 
-    fn request(&mut self, line: &str) -> Value {
+    fn request(&mut self, line: &str, late: &dyn Fn() -> Option<Value>) -> Value {
         if line.len() <= engine::dev::MAX_REQUEST_BYTES
             && let Ok(Value::Object(command)) = serde_json::from_str::<Value>(line)
             && command.get("verb") == Some(&json!("profile"))
@@ -197,7 +197,10 @@ impl<G: Game> DevSession<G> {
             }
             match step {
                 Step::Reply(reply) => return reply,
-                Step::Effect(effect) => step = self.carry(effect),
+                Step::Effect(effect) => match late() {
+                    Some(error) => return json!({"ok": false, "error": error}),
+                    None => step = self.carry(effect),
+                },
             }
         }
     }
@@ -495,8 +498,8 @@ impl<G: Game> engine::smokes::GpuSession for DevSession<G> {
         self.game.host().engine().app.world()
     }
 
-    fn send(&mut self, line: &str) -> Value {
-        let reply = self.request(line);
+    fn send(&mut self, line: &str, late: &dyn Fn() -> Option<Value>) -> Value {
+        let reply = self.request(line, late);
         self.game.exchange_jobs();
         reply
     }

@@ -643,7 +643,18 @@ impl Linker {
             .iter()
             .map(|composed| (composed.module.clone(), composed.text.clone()))
             .collect();
-        for (module, name) in roots {
+        let entries: Vec<(String, String)> = self
+            .modules
+            .iter()
+            .filter(|module| !module.generated && module.package != CORE_PACKAGE)
+            .flat_map(|module| {
+                entry_points(&module.text)
+                    .into_iter()
+                    .map(|name| (module.path.clone(), name))
+            })
+            .collect();
+        let roots: Vec<(String, String)> = roots.iter().cloned().chain(entries).collect();
+        for (module, name) in &roots {
             if mentioned(&texts, module, name) || !self.defines(module, name) {
                 continue;
             }
@@ -761,6 +772,33 @@ fn items(text: &str) -> Vec<String> {
             GlobalDeclaration::Declaration(item) => Some(item.ident.to_string()),
             GlobalDeclaration::TypeAlias(item) => Some(item.ident.to_string()),
             GlobalDeclaration::Void
+            | GlobalDeclaration::ConstAssert(_)
+            | GlobalDeclaration::Compound(_) => None,
+        })
+        .collect()
+}
+
+fn entry_points(text: &str) -> Vec<String> {
+    use wesl::syntax::{GlobalDeclaration, TranslationUnit};
+    let Ok(unit) = text.parse::<TranslationUnit>() else {
+        return Vec::new();
+    };
+    unit.global_declarations
+        .iter()
+        .filter_map(|declaration| match declaration.node() {
+            GlobalDeclaration::Function(item)
+                if item
+                    .attributes
+                    .iter()
+                    .any(|attribute| attribute.node().is_entry_point()) =>
+            {
+                Some(item.ident.to_string())
+            }
+            GlobalDeclaration::Void
+            | GlobalDeclaration::Declaration(_)
+            | GlobalDeclaration::TypeAlias(_)
+            | GlobalDeclaration::Struct(_)
+            | GlobalDeclaration::Function(_)
             | GlobalDeclaration::ConstAssert(_)
             | GlobalDeclaration::Compound(_) => None,
         })

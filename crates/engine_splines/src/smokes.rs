@@ -1,4 +1,4 @@
-use engine_smoke::{Checked, ask, capture, control, not, query, render};
+use engine_smoke::{Checked, ask, capture, control, not, query, render, settled};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
@@ -142,12 +142,14 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         "built"
     );
 
+    settled(session)?;
     let with_rail = capture(session)?;
     let mut bare = source.clone();
     if let Some(rail) = bare["entities"][2].as_object_mut() {
         rail.remove("spline");
     }
     reloaded(session, &bare)?;
+    settled(session)?;
     let without = capture(session)?;
     smoke_eq!(
         shown(without != with_rail, json!(without), &not(&with_rail)),

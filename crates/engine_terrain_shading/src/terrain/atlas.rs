@@ -13,8 +13,9 @@ use glam::Vec2;
 use super::LAYER_SIZE;
 use super::part::{Handles, TerrainGpu};
 use crate::gpu::{
-    ANCESTORS_GROUP, AncestorJob, CONTROL_GROUP, ControlJob, NORMALS_GROUP, NOT_RESIDENT,
-    NormalJob, PEAKS_GROUP, RiverMaps, SURFACE_ERROR_MIPS,
+    ANCESTORS_GROUP, AncestorJob, CONTROL_GROUP, CONTROL_PLANE, ControlJob, NORMAL_PLANE,
+    NORMALS_GROUP, NOT_RESIDENT, NormalJob, PEAKS_GROUP, RiverMaps, SURFACE_ERROR_MIPS,
+    TILE_PLANES,
 };
 use crate::state::{
     Atlas, AtlasMoves, Bakes, TerrainBakes, TileId, Upload, all_uploads, listed_tile, programmed,
@@ -140,9 +141,8 @@ impl TileAtlas {
         let mut allocations = Vec::new();
         let (size, mips) = array(HEIGHT_MIPS, layers);
         allocations.push(cx.allocate(handles.heights, size, mips));
-        let (size, mips) = array(1, layers);
-        allocations.push(cx.allocate(handles.normals, size, mips));
-        allocations.push(cx.allocate(handles.control, size, mips));
+        let (size, mips) = array(1, layers * TILE_PLANES);
+        allocations.push(cx.allocate(handles.tile_maps, size, mips));
         allocations.push(cx.allocate(
             handles.rivers,
             wgpu::Extent3d {
@@ -366,8 +366,8 @@ impl TileAtlas {
         if let Some(values) = &tile.control {
             write_layer(
                 cx,
-                handles.control,
-                layer,
+                handles.tile_maps,
+                layer * TILE_PLANES + CONTROL_PLANE,
                 (bytemuck::cast_slice(&values[..]), 4),
             );
         } else if programmed(entry, tile) {
@@ -426,14 +426,14 @@ impl TileAtlas {
         };
         write_layer(
             cx,
-            handles.control,
-            layer,
+            handles.tile_maps,
+            layer * TILE_PLANES + CONTROL_PLANE,
             (bytemuck::cast_slice(&shading.control_texels()[..]), 4),
         );
         write_layer(
             cx,
-            handles.normals,
-            layer,
+            handles.tile_maps,
+            layer * TILE_PLANES + NORMAL_PLANE,
             (bytemuck::cast_slice(&shading.gradient_texels()[..]), 4),
         );
     }
@@ -446,6 +446,7 @@ fn ancestor_job(
     control: bool,
 ) -> AncestorJob {
     let quads = engine_heightfield::TILE_QUADS as i32;
+    let plane = if control { CONTROL_PLANE } else { NORMAL_PLANE };
     let first_of = |key: TileKey| [i32::from(key.x) * quads - 1, i32::from(key.z) * quads - 1];
     let (mut at, mut shift) = (key, 0);
     while let Some(parent) = entry.pyramid.parent(at) {
@@ -459,7 +460,7 @@ fn ancestor_job(
                 layer,
                 held_layer,
                 shift,
-                pad: 0,
+                plane,
                 first: first_of(key),
                 held_first: first_of(at),
             };
@@ -469,7 +470,7 @@ fn ancestor_job(
         layer,
         held_layer: NOT_RESIDENT,
         shift: 0,
-        pad: 0,
+        plane,
         first: first_of(key),
         held_first: [0; 2],
     }

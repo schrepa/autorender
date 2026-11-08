@@ -48,8 +48,9 @@ pub(crate) struct MapsKey {
 }
 
 impl MapsKey {
-    pub(crate) fn new(settings: &crate::ShadowSettings, limit: u32) -> Self {
+    pub(crate) fn new(settings: &crate::ShadowSettings, (limit, room): (u32, u64)) -> Self {
         let side = (LEVEL_TEXELS / settings.tile_texels).max(1);
+        let held = room / level_bytes(side);
         Self {
             atlas: AtlasLayout::new(
                 settings.tile_texels,
@@ -57,16 +58,23 @@ impl MapsKey {
                 limit,
             ),
             tile_texels: settings.tile_texels,
-            levels: settings.levels.min(limit / (side + 1)).max(1),
+            levels: settings
+                .levels
+                .min(held.min(u64::from(u32::MAX)) as u32)
+                .max(1),
             side,
         }
     }
 
-    pub(crate) fn table_size(&self) -> (u32, u32) {
-        (self.side.max(LEVEL_WORDS), (self.side + 1) * self.levels)
+    pub(crate) fn table_bytes(&self) -> u64 {
+        level_bytes(self.side) * u64::from(self.levels)
     }
 
     pub(crate) fn region_side(&self) -> u32 {
         region_tiles(self.tile_texels) * self.tile_texels + 2 * SHADOW_APRON
     }
+}
+
+fn level_bytes(side: u32) -> u64 {
+    (u64::from(side) * u64::from(side) + u64::from(LEVEL_WORDS)) * 4
 }

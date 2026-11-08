@@ -681,7 +681,7 @@ impl Book {
             .map(|supply| (*supply.interest.key(), supply.since));
         let Some((identity, since)) = asked else {
             let identity = identity(self.shape.facing(key.2), bake.content);
-            let fetch = cx.jobs.fetch(&BAKE, &identity, job_priority(VIEW_JOBS, 0));
+            let fetch = cx.jobs.look(&BAKE, &identity, job_priority(VIEW_JOBS, 0));
             let supply = Supply {
                 material: bake.material.clone(),
                 interest: self.answers.ask(identity),

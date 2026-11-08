@@ -20,12 +20,11 @@ import package::terrain_shading::field::spread_slopes;
 import package::terrain_shading::sky::terrain_sky_map;
 import package::terrain_shading::surface::{surface_leaf, surface_relative, terrain_true_height};
 import package::terrain_shading::tables::{table_fades, terrain_tables};
-import package::generated::terrain_shading::{PaletteEntry, SURFACE_MESHLET_LEVEL, SURFACE_VERTEX_STRIDE,
-    control_a, control_b, control_blend, control_wet};
+import package::generated::terrain_shading::{CONTROL_PLANE, NORMAL_PLANE, PaletteEntry, SURFACE_MESHLET_LEVEL,
+    SURFACE_VERTEX_STRIDE, TILE_PLANES, control_a, control_b, control_blend, control_wet};
 import package::place::ground_tiles::PALETTE_ENTRIES;
 
-@group(0) @binding(21) var terrain_normals: texture_2d_array<u32>;
-@group(0) @binding(24) var terrain_control: texture_2d_array<u32>;
+@group(0) @binding(21) var terrain_tile_maps: texture_2d_array<u32>;
 @group(0) @binding(32) var terrain_control_sampler: sampler;
 
 @group(0) @binding(25) var<uniform> terrain_palette: array<PaletteEntry, PALETTE_ENTRIES>;
@@ -181,8 +180,8 @@ fn terrain_level_gradient(local: vec2<f32>, level: u32) -> vec2<f32> {
         let within = clamp(samples - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
         let corner = min(vec2<u32>(within), vec2<u32>(255u));
         let f = within - vec2<f32>(corner);
-        let texels = textureGather(0, terrain_normals, terrain_control_sampler,
-            (vec2<f32>(corner) + vec2<f32>(2.0)) / 259.0, layer);
+        let texels = textureGather(0, terrain_tile_maps, terrain_control_sampler,
+            (vec2<f32>(corner) + vec2<f32>(2.0)) / 259.0, layer * TILE_PLANES + NORMAL_PLANE);
         let fade = terrain_layer_fades(layer).x;
         gradient += terrain_gradient_between(texels, f) * (left * (1.0 - fade));
         left *= fade;
@@ -325,8 +324,8 @@ fn terrain_level_own(blend: ptr<function, TerrainBlend>, local: vec2<f32>, level
         let f = within - vec2<f32>(corner);
         let texel = corner + vec2<u32>(1u);
         let own = weight * (1.0 - fade);
-        let controls = textureGather(0, terrain_control, terrain_control_sampler,
-            (vec2<f32>(texel) + vec2<f32>(1.0)) / 259.0, layer);
+        let controls = textureGather(0, terrain_tile_maps, terrain_control_sampler,
+            (vec2<f32>(texel) + vec2<f32>(1.0)) / 259.0, layer * TILE_PLANES + CONTROL_PLANE);
         terrain_controls_blend(blend, controls, f, own);
     }
     return weight * fade;
@@ -444,8 +443,8 @@ fn terrain_level_wetness(local: vec2<f32>, level: u32) -> f32 {
             let corner = min(vec2<u32>(within), vec2<u32>(255u));
             let f = within - vec2<f32>(corner);
             let texel = corner + vec2<u32>(1u);
-            let controls = textureGather(0, terrain_control, terrain_control_sampler,
-                (vec2<f32>(texel) + vec2<f32>(1.0)) / 259.0, layer);
+            let controls = textureGather(0, terrain_tile_maps, terrain_control_sampler,
+                (vec2<f32>(texel) + vec2<f32>(1.0)) / 259.0, layer * TILE_PLANES + CONTROL_PLANE);
             let wets = vec4<f32>(vec4<u32>(control_wet(controls.x), control_wet(controls.y),
                 control_wet(controls.z), control_wet(controls.w))) * (1.0 / 255.0);
             let low = mix(wets.w, wets.z, f.x);

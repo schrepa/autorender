@@ -1,11 +1,11 @@
 import package::engine::view::{DetailLevel, PI, detail_across, detail_level, fade_noise};
 import package::generated::pieces::shadows::piece;
-import package::generated::shadows::{LEVEL_BAND, LEVEL_BEFORE, LEVEL_WINDOW, SHADOW_APRON,
-    tile_entry_moving, tile_entry_old_sun, tile_entry_still};
+import package::generated::shadows::{LEVEL_BAND, LEVEL_BEFORE, LEVEL_WINDOW, LEVEL_WORDS,
+    SHADOW_APRON, tile_entry_moving, tile_entry_old_sun, tile_entry_still};
 import package::place::sun_blockers::SunAt;
 
 @group(0) @binding(0) var shadow_atlas: texture_depth_2d;
-@group(0) @binding(0) var shadow_tiles: texture_2d<u32>;
+@group(0) @binding(0) var<storage, read> shadow_tiles: array<u32>;
 @group(0) @binding(0) var shadow_sampler: sampler_comparison;
 @group(0) @binding(0) var shadow_texels: sampler;
 
@@ -73,27 +73,34 @@ fn shadow_level(world: vec3<f32>) -> DetailLevel {
         u32(piece().level_state.x));
 }
 
-fn level_words(row: u32, first: u32) -> vec4<f32> {
-    return bitcast<vec4<f32>>(vec4<u32>(textureLoad(shadow_tiles, vec2<u32>(first, row), 0).r,
-        textureLoad(shadow_tiles, vec2<u32>(first + 1u, row), 0).r,
-        textureLoad(shadow_tiles, vec2<u32>(first + 2u, row), 0).r,
-        textureLoad(shadow_tiles, vec2<u32>(first + 3u, row), 0).r));
+fn level_words(start: u32, first: u32) -> vec4<f32> {
+    let at = start + first;
+    return bitcast<vec4<f32>>(vec4<u32>(shadow_tiles[at], shadow_tiles[at + 1u],
+        shadow_tiles[at + 2u], shadow_tiles[at + 3u]));
 }
 
-fn level_row(level: u32) -> u32 {
-    return u32(piece().atlas.x) * u32(piece().level_state.x) + level;
+fn words_start(side: u32, levels: u32, level: u32) -> u32 {
+    return side * side * levels + level * LEVEL_WORDS;
+}
+
+fn tile_entry(side: u32, level: u32, cell: vec2<u32>) -> u32 {
+    return shadow_tiles[(level * side + cell.y) * side + cell.x];
+}
+
+fn level_start(level: u32) -> u32 {
+    return words_start(u32(piece().atlas.x), u32(piece().level_state.x), level);
 }
 
 fn level_window(level: u32) -> vec4<f32> {
-    return level_words(level_row(level), LEVEL_WINDOW);
+    return level_words(level_start(level), LEVEL_WINDOW);
 }
 
 fn level_band(level: u32) -> vec4<f32> {
-    return level_words(level_row(level), LEVEL_BAND);
+    return level_words(level_start(level), LEVEL_BAND);
 }
 
 fn level_before(level: u32) -> vec4<f32> {
-    return level_words(level_row(level), LEVEL_BEFORE);
+    return level_words(level_start(level), LEVEL_BEFORE);
 }
 
 struct LevelPoint {
@@ -122,9 +129,7 @@ fn level_at(window: vec4<f32>, band: vec4<f32>, light: vec3<f32>) -> LevelPoint 
 }
 
 fn level_slots(level: u32, point: LevelPoint) -> vec3<u32> {
-    let side = u32(piece().atlas.x);
-    let entry = textureLoad(shadow_tiles, vec2<u32>(point.cell.x, level * side + point.cell.y),
-        0).r;
+    let entry = tile_entry(u32(piece().atlas.x), level, point.cell);
     return vec3<u32>(tile_entry_still(entry), tile_entry_moving(entry),
         select(0u, 1u, tile_entry_old_sun(entry)));
 }

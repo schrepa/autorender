@@ -693,7 +693,7 @@ impl HostOptions {
             let cores = std::thread::available_parallelism().map_or(1, usize::from);
             jobs.workers = policy::cook_workers(u32::try_from(cores).unwrap_or(u32::MAX)) as usize;
         }
-        let bricks = move |list: BrickList| bricks(list).with::<crate::TextureCook>();
+        let bricks = move |list: BrickList| bricks(list).with::<engine_texture_cook::TextureCook>();
         let mut game = Offscreen::launch_with(size, self.gpu, jobs.pool(true), bricks, build)?;
         self.settings.apply(game.host_mut())?;
         let read = game.jobs_mut().packed();

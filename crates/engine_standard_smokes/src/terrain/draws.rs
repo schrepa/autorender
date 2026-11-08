@@ -309,9 +309,10 @@ fn detail(session: &mut dyn SmokeSession) -> Checked<()> {
         "small_pixel_error_refused_at"
     );
     let shaded = capture(session)?;
-    let off = environment(session, json!({"terrain": {"enabled": false}}))?;
+    environment(session, json!({"terrain": {"enabled": false}}))?;
+    let off = settled(session)?;
     smoke_eq!(
-        terrain(&off["rendering"])["leaf_cut"]["kept"].clone(),
+        terrain(&off)["leaf_cut"]["kept"].clone(),
         json!(0),
         "disabled_terrain_draws_nothing"
     );

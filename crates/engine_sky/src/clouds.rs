@@ -10,14 +10,13 @@ use engine_render::{
 
 use crate::gpu_layouts::{
     CLOUD_GROUP, CLOUD_LIGHT_BYTES, CLOUD_SHADOW_BYTES, CLOUD_SHADOW_CELLS, CloudUniform,
-    DOME_LAYERS, LIGHT_TEXELS, SkyPiece,
+    DOME_FIRST, DOME_LAYERS, LIGHT_TEXELS, SkyPiece,
 };
 use crate::settings::Clouds;
 use crate::sky::SkyGpu;
 use crate::tables::StaticTable;
 use crate::tables::clouds::{CloudNoise, DETAIL_SIZE, SHAPE_SIZE};
 
-const DOME_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DOME_ROLES: u32 = 3;
 const ENVIRONMENT_EVERY: u64 = 16;
 const SHADOW_EXTENT: f32 = 8192.0;
@@ -332,10 +331,30 @@ impl CloudPlan {
         self.active && self.ready && self.recorded_generation == Some(self.generation)
     }
 
+    pub(crate) fn layers_extent(&self, view: (u32, u32)) -> wgpu::Extent3d {
+        let ((width, height), layers) = match self.dome_size {
+            Some([width, height]) => (
+                (width.max(view.0), height.max(view.1)),
+                DOME_FIRST + DOME_ROLES * DOME_LAYERS,
+            ),
+            None => (view, DOME_FIRST),
+        };
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: layers,
+        }
+    }
+
+    pub(crate) fn dome_size(&self) -> [f32; 4] {
+        let [width, height] = self.dome_size.unwrap_or([1, 1]);
+        [width as f32, height as f32, 0.0, 0.0]
+    }
+
     pub(crate) fn dome_layers(&self) -> [u32; 4] {
         [
-            self.roles[0] as u32 * DOME_LAYERS,
-            self.roles[1] as u32 * DOME_LAYERS,
+            DOME_FIRST + self.roles[0] as u32 * DOME_LAYERS,
+            DOME_FIRST + self.roles[1] as u32 * DOME_LAYERS,
             u32::from(self.environment_shows()),
             0,
         ]
@@ -435,7 +454,7 @@ impl CloudPlan {
         });
         uniform.light_rows = self.plan_light(&uniform, budget);
         uniform.light = self.light_uniform();
-        uniform.layers = [target as u32 * DOME_LAYERS, 0, 0, 0];
+        uniform.layers = [DOME_FIRST + target as u32 * DOME_LAYERS, 0, 0, 0];
         self.uniform = uniform;
         self.step = CloudStep {
             completed: self.completed,
@@ -524,7 +543,6 @@ struct CloudRun {
 pub(crate) struct CloudPass {
     noise_shape: Texture<SkyGpu>,
     noise_detail: Texture<SkyGpu>,
-    domes: Texture<SkyGpu>,
     view_texture: Texture<SkyGpu>,
     shadows: Buffer<SkyGpu>,
     shadow_cells: Buffer<SkyGpu>,
@@ -654,6 +672,7 @@ impl CloudPass {
         cx: &mut Install<'_, SkyGpu>,
         (transmittance, table_sampler): (Texture<SkyGpu>, Sampler<SkyGpu>),
         (environment, dome): (Pass<SkyGpu>, Pass<SkyGpu>),
+        domes: Texture<SkyGpu>,
     ) -> Result<Self, Error> {
         use crate::shaders::sky::{clouds, faces::cloud_shadows, light};
         let noise_shape = cx.texture(
@@ -666,7 +685,6 @@ impl CloudPass {
             wgpu::TextureFormat::R8Unorm,
             Lifetime::Kept,
         );
-        let domes = cx.texture("cloud_domes", DOME_FORMAT, Lifetime::Kept);
         let view_texture = cx.texture(
             "cloud_view",
             wgpu::TextureFormat::Rgba16Float,
@@ -679,7 +697,6 @@ impl CloudPass {
         let view_clouds = cx.buffer("cloud_view_march", Lifetime::Kept);
         let composite_args = cx.buffer("cloud_composite_draw", Lifetime::Kept);
         let [dome_sampler, noise_sampler] = samplers(cx);
-        cx.frame(light::SKY_DOMES, Bind::Texture(domes))?;
         cx.frame(light::SKY_CLOUD_SAMPLER, Bind::Sampler(dome_sampler))?;
         cx.frame(cloud_shadows::CLOUD_SHADOWS, Bind::Buffer(shadows))?;
         let [
@@ -739,7 +756,6 @@ impl CloudPass {
         Ok(Self {
             noise_shape,
             noise_detail,
-            domes,
             view_texture,
             shadows,
             shadow_cells,
@@ -789,7 +805,7 @@ impl CloudPass {
         &mut self,
         cx: &mut Prepare<'_, SkyGpu>,
         (plan, noise): (&CloudPlan, Option<&StaticTable<CloudNoise>>),
-        frame: Option<CloudFrame>,
+        (frame, fresh): (Option<CloudFrame>, bool),
     ) {
         if let Some((step, light, march)) = self.stepped.take() {
             let ran = (!light || cx.ran(self.light_pass)) && (!march || cx.ran(self.march_pass));
@@ -805,16 +821,9 @@ impl CloudPass {
             upload_noise(cx, (self.noise_shape, self.noise_detail), noise);
             self.noise = plan.noise;
         }
-        let mut lost =
-            cx.allocate_buffer(self.light_cells, CLOUD_LIGHT_BYTES as u64) == Allocation::Fresh;
-        if let Some(size) = plan.dome_size {
-            let domes = wgpu::Extent3d {
-                width: size[0],
-                height: size[1],
-                depth_or_array_layers: DOME_ROLES * DOME_LAYERS,
-            };
-            lost |= cx.allocate(self.domes, domes, 1) == Allocation::Fresh;
-        }
+        let lost = cx.allocate_buffer(self.light_cells, CLOUD_LIGHT_BYTES as u64)
+            == Allocation::Fresh
+            || (fresh && plan.dome_size.is_some());
         if lost {
             cx.deliver::<CloudSteps>(0, plan.step.bytes(false));
         }

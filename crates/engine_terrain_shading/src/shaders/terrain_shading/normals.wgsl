@@ -1,5 +1,6 @@
 import package::terrain_shading::tile::tile_shape;
-import package::generated::terrain_shading::{NORMALS_GROUP, NormalJob, TILE_STRIDE};
+import package::generated::terrain_shading::{NORMAL_PLANE, NORMALS_GROUP, NormalJob, TILE_PLANES,
+    TILE_STRIDE};
 
 @group(1) @binding(0) var<storage, read> normal_jobs: array<NormalJob>;
 @group(1) @binding(1) var normals: texture_storage_2d_array<r32uint, write>;
@@ -11,5 +12,6 @@ fn tile_normals(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let job = normal_jobs[id.z];
     let gradient = tile_shape(id.x, id.y, bitcast<f32>(job.spacing), job.layer).xy;
-    textureStore(normals, id.xy, job.layer, vec4<u32>(pack2x16float(gradient), 0u, 0u, 0u));
+    textureStore(normals, id.xy, job.layer * TILE_PLANES + NORMAL_PLANE,
+        vec4<u32>(pack2x16float(gradient), 0u, 0u, 0u));
 }

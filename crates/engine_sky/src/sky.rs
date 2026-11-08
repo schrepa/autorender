@@ -388,6 +388,7 @@ pub(crate) fn plan_sky(
         plan.piece.domes_view,
     ] = plan.clouds.dome_piece();
     plan.piece.domes_layers = plan.clouds.dome_layers();
+    plan.piece.domes_size = plan.clouds.dome_size();
     let light: EnvironmentLight = [
         sun.direction,
         plan.piece.sun_light,
@@ -410,7 +411,6 @@ pub(crate) fn plan_sky(
 pub(crate) struct AirTables {
     transmittance: Texture<SkyGpu>,
     multiple: Texture<SkyGpu>,
-    view: Texture<SkyGpu>,
     derived: Buffer<SkyGpu>,
     sampler: Sampler<SkyGpu>,
     pass: Pass<SkyGpu>,
@@ -421,17 +421,16 @@ pub(crate) struct AirTables {
 }
 
 impl AirTables {
-    fn install(cx: &mut Install<'_, SkyGpu>) -> Result<Self, Error> {
+    fn install(cx: &mut Install<'_, SkyGpu>, view: Texture<SkyGpu>) -> Result<Self, Error> {
         use crate::shaders::sky::{light, tables};
         let transmittance = cx.texture("sky_transmittance", FORMAT, Lifetime::Kept);
         let multiple = cx.texture("sky_multiple", FORMAT, Lifetime::Kept);
-        let view = cx.texture("sky_view", FORMAT, Lifetime::Kept);
         let derived = cx.buffer("sky_derived", Lifetime::Kept);
         let sampler = cx.sampler(engine_core::Sampler {
             mipmap_filter: Some(Filter::Nearest),
             ..engine_core::Sampler::LINEAR_CLAMP
         });
-        cx.frame(light::SKY_VIEW_TABLE, Bind::Texture(view))?;
+        cx.frame(light::SKY_LAYERS, Bind::Texture(view))?;
         cx.frame(light::SKY_TABLE_SAMPLER, Bind::Sampler(sampler))?;
         let pass = cx.pass("sky").label("engine/sky").span("sky").id();
         let building = cx.compute_pipeline(
@@ -457,7 +456,6 @@ impl AirTables {
         Ok(Self {
             transmittance,
             multiple,
-            view,
             derived,
             sampler,
             pass,
@@ -536,12 +534,6 @@ impl AirTables {
         if transmittance == Allocation::Fresh || multiple == Allocation::Fresh {
             self.uploaded = None;
         }
-        let view = if shown.is_some() {
-            VIEW_SIZE
-        } else {
-            NO_VIEW_SIZE
-        };
-        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.view, extent(view), 1);
         let (Allocation::Fresh | Allocation::Kept) =
             cx.allocate_buffer(self.derived, DERIVED_BYTES);
         if shown.is_none() {
@@ -585,6 +577,7 @@ impl AirTables {
 }
 
 pub(crate) struct SkyGpu {
+    layers: Texture<Self>,
     tables: AirTables,
     clouds: CloudPass,
     environment: Environment,
@@ -636,13 +629,20 @@ impl GpuPart for SkyGpu {
             .label("engine/sky-dome")
             .span("sky_dome")
             .id();
-        let mut tables = AirTables::install(cx)?;
+        let layers = cx.texture("sky_layers", FORMAT, Lifetime::Kept);
+        let mut tables = AirTables::install(cx, layers)?;
         let environment = Environment::install(cx)?;
-        let clouds = CloudPass::install(cx, tables.bindings(), (environment.pass(), dome_pass))?;
+        let clouds = CloudPass::install(
+            cx,
+            tables.bindings(),
+            (environment.pass(), dome_pass),
+            layers,
+        )?;
         tables.connect(cx, piece_buffer, clouds.uniforms(), environment.pass());
         let haze = Haze::install(cx)?;
         let dome = dome_pipeline(cx, dome_pass, tables.transmittance)?;
         Ok(Self {
+            layers,
             tables,
             clouds,
             environment,
@@ -659,9 +659,19 @@ impl GpuPart for SkyGpu {
         if plan.tables.shows() {
             cx.run(self.dome_pass);
         }
+        let view = if plan.tables.shows() {
+            VIEW_SIZE
+        } else {
+            NO_VIEW_SIZE
+        };
+        let fresh =
+            cx.allocate(self.layers, plan.clouds.layers_extent(view), 1) == Allocation::Fresh;
         self.tables.prepare(cx, (&plan.tables, tables.sky()));
-        self.clouds
-            .prepare(cx, (&plan.clouds, tables.cloud_noise()), plan.frame);
+        self.clouds.prepare(
+            cx,
+            (&plan.clouds, tables.cloud_noise()),
+            (plan.frame, fresh),
+        );
         self.environment.prepare(cx, &plan.environment);
         let mut piece = plan.piece;
         if self.haze.prepare(cx, &plan.haze) {

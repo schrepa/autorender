@@ -1,10 +1,10 @@
 import package::place::heightfield::{SurfaceTriangle, TerrainGroundRise, TerrainGroundSamples,
     TerrainLevelHeight, TerrainUniform, TerrainView};
 import package::engine::view::camera;
-import package::terrain_shading::draw::{TerrainBlend, TerrainShadingLevel, terrain_band_rise, terrain_border_blend, terrain_control, terrain_control_sampler, terrain_controls_blend, terrain_gradient_between, terrain_layer_fades, terrain_material, terrain_material_rises, terrain_normals, terrain_steep_blend};
+import package::terrain_shading::draw::{TerrainBlend, TerrainShadingLevel, terrain_band_rise, terrain_border_blend, terrain_control_sampler, terrain_controls_blend, terrain_gradient_between, terrain_layer_fades, terrain_material, terrain_material_rises, terrain_steep_blend, terrain_tile_maps};
 import package::terrain_shading::field::{surface_along, terrain_load};
 import package::terrain_shading::tables::{table_terrain, table_view, terrain_tables};
-import package::generated::terrain_shading::{PATCH_GRID, SUBDIVISION_ARGS, SUBDIVISION_LEAVES, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES};
+import package::generated::terrain_shading::{CONTROL_PLANE, NORMAL_PLANE, PATCH_GRID, SUBDIVISION_ARGS, SUBDIVISION_LEAVES, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES, TILE_PLANES};
 
 @group(0) @binding(0) var<storage, read> terrain_surface_leaves: array<SurfaceTriangle>;
 
@@ -112,8 +112,10 @@ fn terrain_ground_samples(local: vec2<f32>) -> TerrainGroundSamples {
         let within = clamp(at - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
         let corner = min(vec2<u32>(within), vec2<u32>(255u));
         let uv = (vec2<f32>(corner) + vec2<f32>(2.0)) / 259.0;
-        samples.controls = textureGather(0, terrain_control, terrain_control_sampler, uv, layer);
-        samples.gradients = textureGather(0, terrain_normals, terrain_control_sampler, uv, layer);
+        samples.controls = textureGather(0, terrain_tile_maps, terrain_control_sampler, uv,
+            layer * TILE_PLANES + CONTROL_PLANE);
+        samples.gradients = textureGather(0, terrain_tile_maps, terrain_control_sampler, uv,
+            layer * TILE_PLANES + NORMAL_PLANE);
         samples.within = within - vec2<f32>(corner);
         return samples;
     }

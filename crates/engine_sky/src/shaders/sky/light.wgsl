@@ -3,23 +3,27 @@ import package::sky::air::{behind_clouds, cloud_dome_direction, cloud_dome_uv};
 import package::sky::common::air_sky;
 import package::sky::piece::sky_piece;
 
-@group(0) @binding(0) var sky_view_table: texture_2d<f32>;
+@group(0) @binding(0) var sky_layers: texture_2d_array<f32>;
 @group(0) @binding(0) var sky_table_sampler: sampler;
-@group(0) @binding(0) var sky_domes: texture_2d_array<f32>;
 @group(0) @binding(0) var sky_cloud_sampler: sampler;
 
 fn sky_air_light(direction: vec3<f32>) -> vec3<f32> {
-    return air_sky(sky_view_table, sky_table_sampler, direction);
+    return air_sky(sky_layers, sky_table_sampler, direction);
+}
+
+fn dome_tap(uv: vec2<f32>, layer: u32) -> vec4<f32> {
+    let dome = sky_piece.domes_size.xy;
+    let edge = 0.5 / dome.y;
+    let at = vec2<f32>(uv.x, clamp(uv.y, edge, 1.0 - edge)) * dome
+        / vec2<f32>(textureDimensions(sky_layers));
+    return textureSampleLevel(sky_layers, sky_cloud_sampler, at, layer, 0.0);
 }
 
 fn dome_at(uv: vec2<f32>, layer: u32) -> vec4<f32> {
-    let half_texel = 0.5 / vec2<f32>(textureDimensions(sky_domes));
-    return 0.25 * (textureSampleLevel(sky_domes, sky_cloud_sampler, uv - half_texel, layer, 0.0)
-        + textureSampleLevel(sky_domes, sky_cloud_sampler, uv + half_texel, layer, 0.0)
-        + textureSampleLevel(sky_domes, sky_cloud_sampler,
-            uv + vec2<f32>(half_texel.x, -half_texel.y), layer, 0.0)
-        + textureSampleLevel(sky_domes, sky_cloud_sampler,
-            uv + vec2<f32>(-half_texel.x, half_texel.y), layer, 0.0));
+    let half_texel = 0.5 / sky_piece.domes_size.xy;
+    return 0.25 * (dome_tap(uv - half_texel, layer) + dome_tap(uv + half_texel, layer)
+        + dome_tap(uv + vec2<f32>(half_texel.x, -half_texel.y), layer)
+        + dome_tap(uv + vec2<f32>(-half_texel.x, half_texel.y), layer));
 }
 
 fn sky_cloud_in(layer: u32, start: vec3<f32>, ray: vec3<f32>, shown: bool) -> vec4<f32> {

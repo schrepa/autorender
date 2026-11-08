@@ -1,4 +1,5 @@
-import package::generated::terrain_shading::{ANCESTORS_GROUP, AncestorJob, NOT_RESIDENT, TILE_STRIDE};
+import package::generated::terrain_shading::{ANCESTORS_GROUP, AncestorJob, NOT_RESIDENT, TILE_PLANES,
+    TILE_STRIDE};
 
 @group(1) @binding(0) var<storage, read> ancestor_jobs: array<AncestorJob>;
 @group(1) @binding(1) var ancestor_texels: texture_storage_2d_array<r32uint, read_write>;
@@ -15,7 +16,8 @@ fn tile_ancestors(@builtin(global_invocation_id) id: vec3<u32>) {
         let sample = job.first + vec2<i32>(id.xy);
         let there = ((sample + half) >> vec2<u32>(job.shift)) - job.held_first;
         let texel = clamp(there, vec2<i32>(0), vec2<i32>(i32(TILE_STRIDE) - 1));
-        value = textureLoad(ancestor_texels, texel, job.held_layer).x;
+        value = textureLoad(ancestor_texels, texel, job.held_layer * TILE_PLANES + job.plane).x;
     }
-    textureStore(ancestor_texels, id.xy, job.layer, vec4<u32>(value, 0u, 0u, 0u));
+    textureStore(ancestor_texels, id.xy, job.layer * TILE_PLANES + job.plane,
+        vec4<u32>(value, 0u, 0u, 0u));
 }

@@ -15,7 +15,6 @@ profiling = ["engine/profiling", "engine_profiler/profiling"]
 engine.workspace = true
 engine_core.workspace = true
 engine_texture_cook.workspace = true
-engine_textures.workspace = true
 engine_profiler.workspace = true
 engine_worker.workspace = true
 png.workspace = true

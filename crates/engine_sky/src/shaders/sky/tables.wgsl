@@ -1,16 +1,16 @@
 import package::engine::color::luminance;
-import package::generated::sky::{SKY_MULTIPLE_SIZE, SKY_TABLE_GROUP};
+import package::generated::sky::{SKY_MULTIPLE_SIZE, SKY_TABLE_GROUP, SKY_VIEW_LAYER};
 import package::sky::common::{
-    SKY_PI, air_radius, air_sky, air_transmittance, sky_view_parameters, sphere_hit, to_sub_uv,
-    transmittance_uv
+    SKY_PI, SKY_VIEW_SIZE, air_radius, air_sky, air_transmittance, sky_view_parameters,
+    sphere_hit, to_sub_uv, transmittance_uv
 };
 import package::sky::piece::sky_air;
 
 @group(1) @binding(1) var transmittance_table: texture_2d<f32>;
 @group(1) @binding(2) var multiple_table: texture_2d<f32>;
-@group(1) @binding(3) var view_table: texture_2d<f32>;
+@group(1) @binding(3) var view_table: texture_2d_array<f32>;
 @group(1) @binding(4) var table_sampler: sampler;
-@group(1) @binding(5) var table_out: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(5) var table_out: texture_storage_2d_array<rgba16float, write>;
 @group(1) @binding(6) var<storage, read_write> derived: array<vec4<f32>, 6>;
 
 const VIEW_STEPS: u32 = 30u;
@@ -114,11 +114,10 @@ fn scattered(origin: vec3<f32>, direction: vec3<f32>, sun: vec3<f32>, steps: u32
 
 @compute @workgroup_size(SKY_TABLE_GROUP, SKY_TABLE_GROUP)
 fn build_sky_view(@builtin(global_invocation_id) id: vec3<u32>) {
-    let size = textureDimensions(table_out);
-    if id.x >= size.x || id.y >= size.y {
+    if any(vec2<f32>(id.xy) >= SKY_VIEW_SIZE) {
         return;
     }
-    let uv = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(size);
+    let uv = (vec2<f32>(id.xy) + 0.5) / SKY_VIEW_SIZE;
     let r = air_radius();
     let parameters = sky_view_parameters(uv, r);
     let view_cos = parameters.x;
@@ -132,7 +131,8 @@ fn build_sky_view(@builtin(global_invocation_id) id: vec3<u32>) {
         view_sin * sqrt(max(1.0 - light_cos * light_cos, 0.0)),
     );
     let light = scattered(vec3<f32>(0.0, r, 0.0), direction, sun, VIEW_STEPS);
-    textureStore(table_out, id.xy, vec4<f32>((light + NIGHT) * sky_air.ozone.w, 1.0));
+    textureStore(table_out, id.xy, SKY_VIEW_LAYER,
+        vec4<f32>((light + NIGHT) * sky_air.ozone.w, 1.0));
 }
 
 fn view_light(direction: vec3<f32>) -> vec3<f32> {

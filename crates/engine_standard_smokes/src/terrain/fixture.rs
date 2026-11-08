@@ -167,9 +167,9 @@ fn surface() -> Value {
             {"id": "summit", "fitness": ramp("height", 110.0, 130.0), "layers": [{"material": "snow"}]},
         ],
         "assets": [
-            {"id": "crate", "drawn": {"mesh": "cube", "material": "plain"},
+            {"id": "crate", "mesh": "cube", "material": "plain",
              "collider": {"shape": {"kind": "cuboid", "half_extents": [0.5, 0.5, 0.5]}}},
-            {"id": "ball", "drawn": {"mesh": "ball", "material": "plain"},
+            {"id": "ball", "mesh": "ball", "material": "plain",
              "collider": {"shape": {"kind": "sphere", "radius": 1.0}}},
         ],
         "placements": [{

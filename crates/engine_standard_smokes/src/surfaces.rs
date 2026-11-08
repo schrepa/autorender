@@ -36,7 +36,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         wanted,
         "stats_name_frame_and_tick"
     );
-    let tint = component(session, "tinted", "drawn")?["values"]["tint"].clone();
+    let tint = component(session, "tinted", "drawn_component")?["values"]["tint"].clone();
     let wanted = json!([0.2, 0.9, 0.3, 1]);
     smoke_eq!(
         seen(

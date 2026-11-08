@@ -547,13 +547,19 @@ impl AssetResidency {
     fn restate(&mut self, asset: Asset, library: &AssetLibrary) {
         let held = self.wanted.get(&asset);
         let was_ready = matches!(held, Some(Request::Ready(_)));
-        let placed = if let Some(Request::Ready(Resident::Mesh(mesh))) = held {
-            Some(mesh.placement)
+        let placed = if let (Asset::Mesh(handle), Some(Request::Ready(Resident::Mesh(mesh)))) =
+            (asset, held)
+        {
+            Some((handle, mesh.placement))
         } else {
             None
         };
-        if let (Some(MeshResidence::Arena(placement)), Some(arena)) = (placed, self.arena.as_mut()) {
-            arena.remove(placement);
+        if let Some((handle, placement)) = placed {
+            if let (MeshResidence::Arena(placement), Some(arena)) = (placement, self.arena.as_mut())
+            {
+                arena.remove(placement);
+            }
+            self.placed.push(handle);
         }
         let resolved = self.resolve(asset, library);
         let Some(ticket) = self.wanted.ask_again(&asset) else {

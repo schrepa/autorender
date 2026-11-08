@@ -38,6 +38,13 @@ fn overlaid(rendering: &Value) -> bool {
 }
 
 fn scene(entities: &Value) -> String {
+    let mut entities = entities.as_array().cloned().unwrap_or_default();
+    entities.push(json!({
+        "id": "camera",
+        "node": {"clock": "real", "mobility": "moving"},
+        "camera": {"near": 0.1, "far": 100.0, "projection": {"Perspective": {"vertical_fov_radians": std::f64::consts::FRAC_PI_3}}},
+        "view": {},
+    }));
     json!({
         "id": "text",
         "revision": 1,

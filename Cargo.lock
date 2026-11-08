@@ -1577,7 +1577,6 @@ dependencies = [
  "engine_core",
  "engine_profiler",
  "engine_texture_cook",
- "engine_textures",
  "engine_worker",
  "gilrs",
  "gltf",
@@ -2146,6 +2145,8 @@ version = "0.1.0"
 dependencies = [
  "engine_assets",
  "engine_codec",
+ "engine_core",
+ "engine_ecs",
  "engine_math",
  "engine_textures",
 ]

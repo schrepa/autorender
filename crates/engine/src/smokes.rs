@@ -756,13 +756,16 @@ pub mod page {
             self.host.engine().app.world()
         }
 
-        fn send(&mut self, line: &str) -> Value {
+        fn send(&mut self, line: &str, late: &dyn Fn() -> Option<Value>) -> Value {
             let context = self.context();
             let mut step = self.host.dev_request(line, &context);
             let reply = loop {
                 match step {
                     Step::Reply(reply) => break reply,
-                    Step::Effect(effect) => step = self.carry(effect, &context),
+                    Step::Effect(effect) => match late() {
+                        Some(error) => break serde_json::json!({"ok": false, "error": error}),
+                        None => step = self.carry(effect, &context),
+                    },
                 }
             };
             let _ = self.host.take_jobs();

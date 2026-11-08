@@ -114,6 +114,12 @@ fn scene() -> Value {
             },
         }));
     }
+    entities.push(json!({
+        "id": "camera",
+        "node": { "clock": "real", "mobility": "moving" },
+        "camera": { "near": 0.1, "far": 1000, "projection": { "Perspective": { "vertical_fov_radians": 60.0_f64.to_radians() } } },
+        "view": {},
+    }));
     let mut materials = vec![json!({ "id": "ground", "color": [0.55, 0.58, 0.52, 1.0] })];
     materials.extend(
         PAINTS

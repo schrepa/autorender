@@ -1,4 +1,4 @@
-import package::generated::sky::{SKY_VIEW_HEIGHT, SKY_VIEW_WIDTH};
+import package::generated::sky::{SKY_VIEW_HEIGHT, SKY_VIEW_LAYER, SKY_VIEW_WIDTH};
 import package::sky::piece::sky_air;
 
 const SKY_PI: f32 = 3.14159265358979;
@@ -112,7 +112,7 @@ fn air_radius() -> f32 {
     return sky_air.radii.x + max(sky_air.radii.w, 0.0005);
 }
 
-fn air_sky(view_table: texture_2d<f32>, table_sampler: sampler,
+fn air_sky(view_table: texture_2d_array<f32>, table_sampler: sampler,
         direction: vec3<f32>) -> vec3<f32> {
     let r = air_radius();
     let origin = vec3<f32>(0.0, r, 0.0);
@@ -124,8 +124,10 @@ fn air_sky(view_table: texture_2d<f32>, table_sampler: sampler,
     if dot(across, across) > 1e-8 && dot(sun_across, sun_across) > 1e-8 {
         light_cos = dot(normalize(across), normalize(sun_across));
     }
-    let uv = sky_view_uv(ground, direction.y, light_cos, r);
-    return textureSampleLevel(view_table, table_sampler, uv, 0.0).rgb;
+    let texel = clamp(sky_view_uv(ground, direction.y, light_cos, r) * SKY_VIEW_SIZE,
+        vec2<f32>(0.5), SKY_VIEW_SIZE - 0.5);
+    let uv = texel / vec2<f32>(textureDimensions(view_table));
+    return textureSampleLevel(view_table, table_sampler, uv, SKY_VIEW_LAYER, 0.0).rgb;
 }
 
 fn air_disc(transmittance: texture_2d<f32>, table_sampler: sampler,

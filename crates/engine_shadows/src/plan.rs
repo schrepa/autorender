@@ -184,10 +184,10 @@ impl ShadowPlan {
     fn place(
         &mut self,
         settings: &ShadowSettings,
-        limit: u32,
+        limits: (u32, u64),
         (sun, eye): (Vec3, Vec3),
     ) -> LightBasis {
-        let key = MapsKey::new(settings, limit);
+        let key = MapsKey::new(settings, limits);
         let made = self.key != Some(key);
         self.key = Some(key);
         let (basis, restarted) = self.clipmap.place(
@@ -414,7 +414,8 @@ pub(crate) fn plan_shadows(
         publish_views(scene_views(&maps, &[], (&[], eye)), &mut published, &mut spawner);
         return;
     }
-    let basis = plan.place(&settings, limits.max_texture_dimension_2d, (sun, eye));
+    let room = (limits.max_texture_dimension_2d, limits.storage_room);
+    let basis = plan.place(&settings, room, (sun, eye));
     plan.acknowledge(&mut drawn);
     let still_changed = plan.merge(&mut feedback);
     let mut casters_changed = false;

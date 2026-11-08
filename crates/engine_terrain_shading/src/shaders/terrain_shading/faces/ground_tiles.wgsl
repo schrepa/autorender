@@ -1,12 +1,12 @@
 import package::place::ground_tiles::{GroundHeight, GroundMaterial, GroundTerrain, GroundTile,
     LevelTile, MaterialLook, NOT_RESIDENT, PALETTE_ENTRIES, PEAK_CELLS, PEAK_MIPS, TILE_QUADS,
     TerrainInfo};
-import package::generated::terrain_shading::{PaletteEntry, control_a, control_b, control_blend};
+import package::generated::terrain_shading::{CONTROL_PLANE, NORMAL_PLANE, PaletteEntry, TILE_PLANES,
+    control_a, control_b, control_blend};
 import package::terrain_shading::tables::{table_terrain, terrain_tables};
 
 @group(0) @binding(0) var heights: texture_2d_array<f32>;
-@group(0) @binding(2) var control: texture_2d_array<u32>;
-@group(0) @binding(3) var normals: texture_2d_array<u32>;
+@group(0) @binding(2) var tile_maps: texture_2d_array<u32>;
 @group(0) @binding(4) var macro_maps: texture_2d_array<f32>;
 @group(0) @binding(5) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;
 @group(0) @binding(7) var ground_sky_map: texture_2d_array<f32>;
@@ -70,12 +70,13 @@ fn tile_peak(tile: LevelTile, texel: vec2<u32>, mip: u32) -> f32 {
 
 fn tile_gradient(tile: LevelTile, sample: vec2<u32>) -> vec2<f32> {
     let texel = min(sample - tile.first, vec2<u32>(256u)) + vec2<u32>(1u);
-    return unpack2x16float(textureLoad(normals, texel, tile.layer, 0).x);
+    return unpack2x16float(textureLoad(tile_maps, texel, tile.layer * TILE_PLANES + NORMAL_PLANE,
+        0).x);
 }
 
 fn tile_material(tile: LevelTile, sample: vec2<u32>) -> GroundMaterial {
     let texel = min(sample - tile.first, vec2<u32>(256u)) + vec2<u32>(1u);
-    let value = textureLoad(control, texel, tile.layer, 0).x;
+    let value = textureLoad(tile_maps, texel, tile.layer * TILE_PLANES + CONTROL_PLANE, 0).x;
     return GroundMaterial(control_a(value), control_b(value), control_blend(value));
 }
 

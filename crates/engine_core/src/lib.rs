@@ -179,6 +179,7 @@ static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::ledger::<FrameBudget>("frame_budget"),
     PlaceDecl::ledger::<Readiness>("readiness"),
     PlaceDecl::ledger::<AssetLibrary>("asset_library"),
+    PlaceDecl::ledger::<RecordExchange>("record_exchange"),
     PlaceDecl::component::<Drawn>("drawn"),
     PlaceDecl::component::<OwnedViews>("owned_views"),
     PlaceDecl::ask::<Teleport>(),
@@ -661,6 +662,22 @@ impl Engine {
     }
 
     #[cfg(feature = "dev")]
+    pub fn frame_without_ticks(&mut self) {
+        self.scoped(|engine| {
+            engine.finalize();
+            engine.clock.reset();
+            engine.interval = engine.interval.next(None).0;
+            let step = engine.clock.step_seconds();
+            let advanced = Advanced {
+                ticks: 0,
+                dropped_seconds: 0.0,
+                alpha: 1.0,
+            };
+            engine.run_frame(Presented::Tick, advanced, (step, 0.0), 0.0);
+        });
+    }
+
+    #[cfg(feature = "dev")]
     fn step_ticks(&mut self, ticks: u32) {
         self.finalize();
         self.clock.reset();
@@ -868,10 +885,12 @@ impl Engine {
         let facts = self.facts.unwrap_or_default();
         let world = self.app.world_mut();
         views::settle(world, facts);
+        assets::settle_assets(world);
+        cull::settle(world);
         world.run_schedule(ViewSync);
         views::settle_owned(world);
-        cull::settle(world);
         assets::settle_assets(world);
+        cull::settle(world);
     }
 
     fn finalize(&mut self) {

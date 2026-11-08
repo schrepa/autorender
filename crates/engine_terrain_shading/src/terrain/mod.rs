@@ -16,9 +16,7 @@ const LAYER_SIZE: u32 = crate::gpu::TILE_STRIDE;
 const SLOT: u64 = 256;
 const VIEWS: u64 = 7;
 const SURFACE_SLOTS: usize = 8;
-const NORMAL_FORMAT: engine_render::wgpu::TextureFormat =
-    engine_render::wgpu::TextureFormat::R32Uint;
-const CONTROL_FORMAT: engine_render::wgpu::TextureFormat =
+const TILE_MAPS_FORMAT: engine_render::wgpu::TextureFormat =
     engine_render::wgpu::TextureFormat::R32Uint;
 const RIVER_FORMAT: engine_render::wgpu::TextureFormat =
     engine_render::wgpu::TextureFormat::R16Uint;

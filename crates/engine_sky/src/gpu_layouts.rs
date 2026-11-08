@@ -43,6 +43,7 @@ gpu_struct! {
         pub domes_eye: [f32; 4],
         pub domes_view: [f32; 4],
         pub domes_layers: [u32; 4],
+        pub domes_size: [f32; 4],
         pub haze: [f32; 4],
         pub wind: [f32; 4],
     }
@@ -67,6 +68,8 @@ gpu_consts! {
     pub(crate) const EYE_LAYER: u32 = 0;
     pub(crate) const MIRROR_LAYER: u32 = 1;
     pub(crate) const DOME_LAYERS: u32 = MIRROR_LAYER + 1;
+    pub(crate) const SKY_VIEW_LAYER: u32 = 0;
+    pub(crate) const DOME_FIRST: u32 = SKY_VIEW_LAYER + 1;
     pub(crate) const CLOUD_GROUP: u32 = 8;
     pub(crate) const SKY_TABLE_GROUP: u32 = 8;
     pub(crate) const SKY_VIEW_WIDTH: u32 = 192;

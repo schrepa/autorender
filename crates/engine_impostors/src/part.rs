@@ -101,7 +101,9 @@ fn bake_pipeline(
             cull_mode: (!two_sided).then_some(wgpu::Face::Back),
             ..Default::default()
         },
-        depth: DepthUse::Write {
+        depth: DepthUse::Compare {
+            compare: wgpu::CompareFunction::GreaterEqual,
+            write: true,
             bias: wgpu::DepthBiasState::default(),
         },
         blend: None,

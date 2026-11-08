@@ -5,7 +5,9 @@
 
 mod astc;
 mod bc7;
+mod brick;
 
+pub use brick::{TEXTURE_COOK, TextureCook};
 use engine_assets::Texture;
 use engine_codec::Error;
 use engine_textures::{Family, Source};

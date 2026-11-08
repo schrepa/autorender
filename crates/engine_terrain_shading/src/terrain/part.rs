@@ -43,8 +43,7 @@ pub(crate) struct TerrainViews<'a> {
 
 pub(crate) struct Handles {
     pub(crate) heights: Texture<TerrainGpu>,
-    pub(crate) normals: Texture<TerrainGpu>,
-    pub(crate) control: Texture<TerrainGpu>,
+    pub(crate) tile_maps: Texture<TerrainGpu>,
     pub(crate) rivers: Texture<TerrainGpu>,
     pub(crate) errors: Texture<TerrainGpu>,
     pub(crate) water_errors: Texture<TerrainGpu>,
@@ -178,8 +177,7 @@ impl GpuPart for TerrainGpu {
         };
         let handles = Handles {
             heights: cx.texture("heights", HEIGHT_FORMAT, Lifetime::Kept),
-            normals: cx.texture("normals", super::NORMAL_FORMAT, Lifetime::Kept),
-            control: cx.texture("control", super::CONTROL_FORMAT, Lifetime::Kept),
+            tile_maps: cx.texture("tile_maps", super::TILE_MAPS_FORMAT, Lifetime::Kept),
             rivers: cx.texture("rivers", super::RIVER_FORMAT, Lifetime::Kept),
             errors: cx.texture("errors", wgpu::TextureFormat::R16Float, Lifetime::Kept),
             water_errors: cx.texture(
@@ -226,8 +224,7 @@ impl GpuPart for TerrainGpu {
             Bind::Buffer(h.counters),
         )?;
         cx.frame(field::TERRAIN_HEIGHTS, Bind::Texture(h.heights))?;
-        cx.frame(draw::TERRAIN_NORMALS, Bind::Texture(h.normals))?;
-        cx.frame(draw::TERRAIN_CONTROL, Bind::Texture(h.control))?;
+        cx.frame(draw::TERRAIN_TILE_MAPS, Bind::Texture(h.tile_maps))?;
         cx.frame(
             draw::TERRAIN_CONTROL_SAMPLER,
             Bind::Sampler(h.control_sampler),
@@ -247,8 +244,7 @@ impl GpuPart for TerrainGpu {
         )?;
         cx.frame(horizons::TERRAIN_HORIZON_SAMPLER, Bind::Sampler(h.linear))?;
         cx.frame(faces::ground_tiles::HEIGHTS, Bind::Texture(h.heights))?;
-        cx.frame(faces::ground_tiles::CONTROL, Bind::Texture(h.control))?;
-        cx.frame(faces::ground_tiles::NORMALS, Bind::Texture(h.normals))?;
+        cx.frame(faces::ground_tiles::TILE_MAPS, Bind::Texture(h.tile_maps))?;
         cx.frame(
             faces::ground_tiles::MACRO_MAPS,
             Bind::Texture(macro_maps.texture),
@@ -264,7 +260,11 @@ impl GpuPart for TerrainGpu {
         )?;
 
         let normals_pass = cx.pass("tile_normals").label("engine/terrain-normals").id();
-        let control_pass = cx.pass("tile_control").label("engine/terrain-control").id();
+        let control_pass = cx
+            .pass("tile_control")
+            .label("engine/terrain-control")
+            .after(normals_pass)
+            .id();
         let peaks_pass = cx.pass("tile_peaks").label("engine/terrain-peaks").id();
         let ancestors_pass = cx
             .pass("tile_ancestors")
@@ -317,7 +317,7 @@ impl GpuPart for TerrainGpu {
             normals::TILE_NORMALS,
             &[
                 (normals::NORMAL_JOBS, Bind::Buffer(h.normal_jobs)),
-                (normals::NORMALS, Bind::Texture(h.normals)),
+                (normals::NORMALS, Bind::Texture(h.tile_maps)),
             ],
         )?;
         let control_pipeline = cx.compute_pipeline(
@@ -325,7 +325,7 @@ impl GpuPart for TerrainGpu {
             control::TILE_CONTROL,
             &[
                 (control::CONTROL_JOBS, Bind::Buffer(h.control_jobs)),
-                (control::CONTROL, Bind::Texture(h.control)),
+                (control::CONTROL, Bind::Texture(h.tile_maps)),
                 (control::CONTROL_RIVERS, Bind::Texture(h.rivers)),
             ],
         )?;
@@ -357,7 +357,7 @@ impl GpuPart for TerrainGpu {
                 ancestors::TILE_ANCESTORS,
                 &[
                     (ancestors::ANCESTOR_JOBS, Bind::Buffer(h.control_ancestors)),
-                    (ancestors::ANCESTOR_TEXELS, Bind::Texture(h.control)),
+                    (ancestors::ANCESTOR_TEXELS, Bind::Texture(h.tile_maps)),
                 ],
             )?,
             cx.compute_pipeline(
@@ -365,7 +365,7 @@ impl GpuPart for TerrainGpu {
                 ancestors::TILE_ANCESTORS,
                 &[
                     (ancestors::ANCESTOR_JOBS, Bind::Buffer(h.normal_ancestors)),
-                    (ancestors::ANCESTOR_TEXELS, Bind::Texture(h.normals)),
+                    (ancestors::ANCESTOR_TEXELS, Bind::Texture(h.tile_maps)),
                 ],
             )?,
         ];

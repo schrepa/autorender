@@ -1,7 +1,7 @@
 import package::face::ground_surface::{SurfaceGround, surface_control, surface_inputs, surface_level,
     surface_river};
-import package::generated::terrain_shading::{CONTROL_GROUP, ControlJob, RIVER_PLANE_FAR,
-    TILE_STRIDE, river_maps_beds, river_maps_edges};
+import package::generated::terrain_shading::{CONTROL_GROUP, CONTROL_PLANE, ControlJob,
+    RIVER_PLANE_FAR, TILE_PLANES, TILE_STRIDE, river_maps_beds, river_maps_edges};
 import package::terrain_shading::tile::{tile_height, tile_shape};
 
 @group(1) @binding(0) var<storage, read> control_jobs: array<ControlJob>;
@@ -43,5 +43,6 @@ fn tile_control(@builtin(global_invocation_id) id: vec3<u32>) {
     let river = surface_river(river_planes(id.xy, job), job.rivers != 0u);
     let inputs = surface_inputs(job.terrain, ground, surface_level(job.terrain, spacing), river);
     let packed = surface_control(job.terrain, inputs);
-    textureStore(control, id.xy, job.layer, vec4<u32>(packed, 0u, 0u, 0u));
+    textureStore(control, id.xy, job.layer * TILE_PLANES + CONTROL_PLANE,
+        vec4<u32>(packed, 0u, 0u, 0u));
 }

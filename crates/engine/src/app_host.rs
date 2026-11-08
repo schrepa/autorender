@@ -524,7 +524,7 @@ impl AppHost {
         {
             let _core = attribution::core_scope();
             self.deliver();
-            self.engine.present(engine_core::Presented::Tick)?;
+            self.engine.frame_without_ticks();
             self.render_frame(width, height, 0.0, 0, None)?;
         }
         self.end_attribution();

@@ -1,8 +1,8 @@
-use engine::bevy_ecs::world::World;
 use engine_core::{
     Brick, Bricks, Cook, CookAsks, CookList, Error, Job, JobCx, JobKind, RecordExchange, Source,
     TEXTURE_COOK_NAME, TEXTURE_COOK_SOURCE, TextureFamily,
 };
+use engine_ecs::world::World;
 
 pub static TEXTURE_COOK: JobKind = JobKind::new(TEXTURE_COOK_NAME, &TEXTURE_COOK_SOURCE, start);
 
@@ -10,7 +10,7 @@ struct Cooking(Vec<u8>);
 
 impl Job for Cooking {
     fn step(&mut self, _: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
-        engine_texture_cook::cook_job(&self.0).map(Some)
+        crate::cook_job(&self.0).map(Some)
     }
 }
 
