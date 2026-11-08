@@ -182,7 +182,11 @@ pub(crate) fn input_camera(session: &mut dyn SmokeSession) -> Result<(), SmokeFa
     let flies = inspected(session, "fly_camera", "fly_camera_added")?["enabled"] == true;
     check!(flies, "fly_camera_added", json!(flies), json!(true));
     let start = camera(session)?;
-    steps(session, json!({ "forward": 1 }), 20)?;
+    steps(
+        session,
+        json!({ "verbs": { "fly_camera.move": [0, 1] } }),
+        20,
+    )?;
     let moves = query(session, "moves", json!({}))?;
     let handover = moves["asks"]
         .as_array()
@@ -209,7 +213,7 @@ pub(crate) fn input_camera(session: &mut dyn SmokeSession) -> Result<(), SmokeFa
     check!(drift < 1e-3, "release_stops", json!(drift), json!(1e-3));
     steps(
         session,
-        json!({ "look_right_pixels": 120, "look_down_pixels": 40 }),
+        json!({ "verbs": { "fly_camera.look": [120, 40] } }),
         10,
     )?;
     let turned = camera(session)?;

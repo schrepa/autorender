@@ -15,9 +15,9 @@ use std::collections::BTreeSet;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asks, Asset, AssetResidency, AssetUses, AttachPoint, Brick, Bricks, ComponentKind, CursorMode,
-    CursorRequests, Error, ErrorCode, GlobalTransforms, MenuInput, PassName,
-    PassViews, PointerInput, Runs, SceneComponents, SceneContext, SceneCx, Schedule, Views,
+    Asks, Asset, AssetResidency, AssetUses, AttachPoint, Brick, Bricks, ComponentKind, Contexts,
+    CursorMode, CursorRequests, Devices, Error, ErrorCode, GlobalTransforms, Input, PassName,
+    PassViews, Runs, SceneComponents, SceneContext, SceneCx, Schedule, Views, Verbs,
     SlotSet, Smoke, Source, Spawner, Writes, gpu_struct, never, settings, stats,
 };
 use engine_places_rendering::screens::{ScreenAsk, Screens};
@@ -30,6 +30,8 @@ use gpu::UiGpu;
 use tree::{Facts, Roots, UiState};
 
 const GENERATED: &[&str] = &[<UiRect as engine_core::GpuStruct>::WGSL];
+const ASKER: &str = "engine_ui";
+const CONTEXT: &str = "ui";
 
 settings! {
     #[section("ui")]
@@ -91,7 +93,7 @@ type Reading<'w, 's> = (
 );
 
 type Steering<'w, 's> = (
-    ResMut<'w, MenuInput>,
+    ResMut<'w, Contexts>,
     ResMut<'w, CursorRequests>,
     (Res<'w, Screens>, Asks<'w, 's, ScreenAsk>),
     ResMut<'w, UiEvents>,
@@ -165,8 +167,8 @@ fn root_schema() -> Value {
 
 fn follow(
     (roots, text, values, views, settings, (scene, globals)): Reading<'_, '_>,
-    pointer: Res<PointerInput>,
-    (mut menu, mut cursor, (screens, mut asks), mut events): Steering<'_, '_>,
+    (input, devices): (Res<Input>, Res<Devices>),
+    (mut contexts, mut cursor, (screens, mut asks), mut events): Steering<'_, '_>,
     mut state: ResMut<UiState>,
     mut stats: ResMut<UiStats>,
 ) {
@@ -177,10 +179,16 @@ fn follow(
         return;
     }
     let reach = reaches(&cursor);
-    let pointer = PointerInput {
-        inside: pointer.inside && reach,
-        ..*pointer
-    };
+    let pointer = interact::Pointer::of(&devices, reach);
+    if state.verbs.is_none() {
+        let [Some(up), Some(down), Some(left), Some(right), Some(accept), Some(back)] =
+            interact::VERBS.map(|verb| input.find(verb.name))
+        else {
+            return;
+        };
+        state.verbs = Some([up, down, left, right, accept, back]);
+    }
+    let menu = interact::Menu::of(&input, state.verbs);
     interact::run(
         &mut state,
         (&pointer, reach),
@@ -200,8 +208,8 @@ fn follow(
     let wanted = state.menu;
     if wanted != state.wanting {
         state.wanting = wanted;
-        menu.wanted = wanted;
-        state.cursor = wanted.then(|| cursor.ask("engine_ui", CursorMode::Free));
+        state.context = wanted.then(|| contexts.ask(ASKER, CONTEXT, true));
+        state.cursor = wanted.then(|| cursor.ask(ASKER, CursorMode::Free));
     }
     let over = interact::over(&state, &pointer);
     if events.pointer_over() != over {
@@ -276,6 +284,9 @@ impl Brick for UiBrick {
     ];
 
     fn register(bricks: &mut Bricks<'_>) {
+        for verb in interact::VERBS {
+            bricks.join::<Verbs>(verb, None);
+        }
         bricks
             .settings::<UiSettings>()
             .stats::<UiStats>()

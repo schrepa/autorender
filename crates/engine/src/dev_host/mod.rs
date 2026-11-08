@@ -22,24 +22,14 @@ impl RendererFacts for Facts<'_> {
 #[derive(Default)]
 pub(crate) struct DevHost {
     pub(crate) tools: DevTools,
-    pub(crate) gatherer: Option<crate::host::InputGatherer>,
+    agent: crate::host::DeviceGatherer,
     input: InputBatch,
 }
 
 #[derive(Default)]
 struct InputBatch {
-    forward: f32,
-    right: f32,
-    up: f32,
-    look_right_pixels: f32,
-    look_down_pixels: f32,
-    keys: Vec<String>,
-    pointer_pixels: Option<[f32; 2]>,
-    pointer_delta_pixels: [f32; 2],
-    wheel_up_notches: f32,
-    wheel_right_notches: f32,
-    axes: Vec<f32>,
-    menu: Vec<engine_dev::MenuPress>,
+    held: Vec<engine_core::Driven>,
+    once: Vec<engine_core::Driven>,
 }
 
 pub(crate) enum Call<'a> {
@@ -68,9 +58,7 @@ enum Done {
 impl DevHost {
     pub fn drop_edges(&mut self) {
         self.input.drop_edges();
-        if let Some(gatherer) = &mut self.gatherer {
-            gatherer.drop_edges();
-        }
+        self.agent.drop_edges();
     }
 
     pub fn submits_frame(

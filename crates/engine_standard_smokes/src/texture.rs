@@ -121,16 +121,15 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
             "warm_upload_reuse"
         );
     }
-    control(session, "input", json!({"forward": 1, "keys": ["Space"]}))?;
+    control(session, "input", json!({"keys": ["Space"]}))?;
     control(session, "step", json!({"ticks": 6}))?;
-    let moving = ask(session, "inspect", json!({"component": "MoveInput"}))?["value"].clone();
-    let actions = ask(session, "inspect", json!({"component": "ActionInput"}))?["value"].clone();
+    let devices = ask(session, "inspect", json!({"component": "Devices"}))?["value"].clone();
     smoke_eq!(
-        json!({"forward": moving["move_forward"], "held": actions["held"]}),
-        json!({"forward": 1.0, "held": [0]}),
+        devices["keyboard"]["held"].clone(),
+        json!(["Space"]),
         "input_reaches_engine"
     );
-    control(session, "input", json!({"forward": 0}))?;
+    control(session, "input", json!({}))?;
     let player = component(session, "player", "Transform")?;
     let mut invalid = source.clone();
     invalid["textures"][0]["rgba8"] = json!("!invalid-base64!");

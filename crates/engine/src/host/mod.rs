@@ -22,10 +22,7 @@ pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
 pub use engine_registry::JobList;
 pub use environment::{HostEnvironment, KNOWN_DIFFERENCES};
 pub use frame_loop::{FrameLoop, FramePhase, HostPause};
-pub use input::{
-    FrameInput, Holder, InputGatherer, InputSource, KEYS, MENU_KEYS, MOVE_KEYS, MenuKey,
-    MoveDirection,
-};
+pub use input::{DeviceGatherer, InputSource};
 pub(crate) use jobs::{Finished, JobScheduler};
 pub use jobs::JobOrder;
 pub(crate) use level::{LevelLoad, LevelStep};
@@ -81,6 +78,11 @@ pub fn typescript() -> String {
         .map(|&(mode, name)| (name.to_owned(), (mode as u32).into()))
         .collect();
     output.push_str(&constant("CURSOR_MODES", &cursors.into()));
+    let touches: serde_json::Map<String, serde_json::Value> = engine_core::TouchPhase::ALL
+        .iter()
+        .map(|&(phase, name)| (name.to_owned(), (phase as u32).into()))
+        .collect();
+    output.push_str(&constant("TOUCH_PHASES", &touches.into()));
     let formats: Vec<serde_json::Value> = IMAGE_FORMATS
         .iter()
         .map(|format| format.name.into())

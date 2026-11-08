@@ -343,7 +343,8 @@ fn explained(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
 fn digest_after(session: &mut dyn SmokeSession, revision: &str, ticks: u32) -> Asked {
     let args = json!({ "expected_revision": revision, "revision": revision });
     control(session, "reload", args, "reloads")?;
-    control(session, "input", json!({ "forward": 1 }), "walks")?;
+    let walking = json!({ "verbs": { "walk.move": [0, 1] } });
+    control(session, "input", walking, "walks")?;
     control(session, "step", json!({ "ticks": ticks }), "steps_walking")?;
     control(session, "input", json!({}), "stops")?;
     Ok(query(session, "digest", json!({}), "digests")?["result"].clone())

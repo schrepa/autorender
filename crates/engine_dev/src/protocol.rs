@@ -23,9 +23,7 @@ pub mod bounds {
     pub const TICKS: Rule = Rule::Range(1.0, engine_core::MAX_DEV_TICKS as f64);
     pub const FRAMES: Rule = Rule::Range(1.0, 240.0);
     pub const FRAME_INTERVAL: Rule = Rule::Range(1.0, 1000.0);
-    pub const AXIS: Rule = Rule::Range(-1.0, 1.0);
     pub const TURN: Rule = Rule::Range(-1000.0, 1000.0);
-    pub const MAX_AXES: usize = engine_core::AxisId::COUNT as usize;
     pub const MAX_VALUES: usize = 1024;
     pub const PIXEL: Rule = Rule::Range(0.0, 16_384.0);
 }
@@ -43,7 +41,7 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("benchmark", ""),
     ("step", "PresentationState"),
     ("frames", "PresentationState"),
-    ("input", "MoveInput"),
+    ("input", "Input"),
     ("render", ""),
     ("pause", "status"),
     ("resume", "status"),
@@ -448,16 +446,37 @@ pub enum Control {
     Host(BrowserControl),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum MenuPress {
-    Up,
-    Down,
-    Left,
-    Right,
-    Accept,
-    Back,
+#[serde(deny_unknown_fields)]
+pub struct PointerControl {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        schemars(with = "[f32; 2]", transform = stated(bounds::COORDINATE))
+    )]
+    pub position_pixels: Option<[f32; 2]>,
+    #[serde(default)]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
+    pub motion_pixels: [f32; 2],
+    #[serde(default)]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
+    pub wheel_notches: [f32; 2],
+    #[serde(default)]
+    pub buttons: Vec<engine_core::MouseButton>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TouchControl {
+    pub id: u32,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        schemars(transform = stated(bounds::COORDINATE))
+    )]
+    pub position_pixels: [f32; 2],
+    pub phase: engine_core::TouchPhase,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -522,45 +541,15 @@ pub enum BrowserControl {
     },
     Input {
         #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::AXIS)))]
-        forward: f32,
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::AXIS)))]
-        right: f32,
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::AXIS)))]
-        up: f32,
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
-        look_right_pixels: f32,
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
-        look_down_pixels: f32,
+        verbs: BTreeMap<String, Value>,
+        #[serde(default = "first_player")]
+        player: u8,
         #[serde(default)]
         keys: Vec<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(with = "[f32; 2]", transform = stated(bounds::COORDINATE))
-        )]
-        pointer_pixels: Option<[f32; 2]>,
         #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
-        pointer_delta_pixels: [f32; 2],
+        pointer: PointerControl,
         #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
-        wheel_up_notches: f32,
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
-        wheel_right_notches: f32,
-        #[serde(default)]
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(length(max = bounds::MAX_AXES), transform = stated(bounds::AXIS))
-        )]
-        axes: Vec<f32>,
-        #[serde(default)]
-        menu: Vec<MenuPress>,
+        touches: Vec<TouchControl>,
     },
     Render {},
     Pause {},
@@ -752,6 +741,10 @@ pub enum BenchmarkMode {
 pub struct BenchmarkInput {
     pub at: u32,
     pub input: serde_json::Map<String, serde_json::Value>,
+}
+
+fn first_player() -> u8 {
+    1
 }
 
 fn default_warmup() -> u32 {

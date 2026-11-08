@@ -239,6 +239,7 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                     | WindowEvent::MouseWheel { .. }
                     | WindowEvent::CursorMoved { .. }
                     | WindowEvent::CursorLeft { .. }
+                    | WindowEvent::Touch(_)
                     | WindowEvent::Focused(_)
             )
         {
@@ -277,7 +278,7 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                self.input.button(&mut running.host, button, state);
+                Input::button(&mut running.host, button, state);
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 Input::wheel(&mut running.host, delta, running.window.scale_factor());
@@ -289,7 +290,8 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                     running.window.scale_factor(),
                 );
             }
-            WindowEvent::CursorLeft { .. } => running.host.pointer_left(),
+            WindowEvent::CursorLeft { .. } => self.input.left(&mut running.host),
+            WindowEvent::Touch(touch) => Input::touch(&mut running.host, touch),
             WindowEvent::RedrawRequested => {
                 let start = Instant::now();
                 self.input.poll_pads(&mut running.host, &running.window);
@@ -378,14 +380,15 @@ impl<G: Game> Running<G> {
             return None;
         }
         if self.flown.is_empty() {
-            self.host.look(0.0, flight.look);
+            self.host.mouse_button(engine::MouseButton::Left, true);
+            self.host.motion(0.0, flight.look);
             drop(engine::profiling::take_rows());
             _ = engine::profiling::take_speed();
         }
         self.host.key("KeyW", true);
         let now = engine::host::now_ms();
         let since = self.flown.last().map_or(0.0, |&(before, _)| now - before);
-        self.host.look(flight.turn * (since / 1000.0) as f32, 0.0);
+        self.host.motion(flight.turn * (since / 1000.0) as f32, 0.0);
         self.flown.push((now, engine::profiling::frame_mark()));
         let resolution = self.host.frame_times().resolution;
         let size = (resolution.render_width, resolution.render_height);

@@ -159,7 +159,8 @@ fn walked(session: &mut dyn SmokeSession, before: &Value) -> Asked {
         wanted,
         "digest"
     );
-    control(session, "input", json!({ "forward": 1 }), "input")?;
+    let walking = json!({ "verbs": { "walk.move": [0, 1] } });
+    control(session, "input", walking, "input")?;
     let stepped = control(session, "step", json!({ "ticks": 30 }), "steps")?;
     smoke_eq!(
         json!(tick(&stepped).wrapping_sub(tick(before))),
@@ -199,7 +200,7 @@ fn walked(session: &mut dyn SmokeSession, before: &Value) -> Asked {
         walked["hash"].clone(),
         "digest_changes_nothing"
     );
-    control(session, "input", json!({ "forward": 0 }), "input_released")?;
+    control(session, "input", json!({}), "input_released")?;
     let bad = refused(
         session,
         "control",

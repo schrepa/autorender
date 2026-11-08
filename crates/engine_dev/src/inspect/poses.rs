@@ -30,18 +30,16 @@ impl DevTools {
             read: Box::new(node_word_view),
         })
         .expect("descriptor_bounded");
-        let states: [(&str, StateRegister); 12] = [
+        let states: [(&str, StateRegister); 10] = [
             ("PresentationState", Self::register_state::<PresentationState>),
             ("Readiness", Self::register_state::<engine_core::Readiness>),
             ("FrameBudget", Self::register_state::<engine_core::FrameBudget>),
             ("Level", Self::register_state::<engine_core::Level>),
             ("Records", Self::register_state::<engine_core::Records>),
             ("MeshLevels", Self::register_state::<engine_core::MeshLevels>),
-            ("MoveInput", Self::register_state::<engine_core::MoveInput>),
-            ("ActionInput", Self::register_state::<engine_core::ActionInput>),
-            ("AxisInput", Self::register_state::<engine_core::AxisInput>),
-            ("PointerInput", Self::register_state::<engine_core::PointerInput>),
-            ("MenuInput", Self::register_state::<engine_core::MenuInput>),
+            ("Input", Self::register_state::<engine_core::Input>),
+            ("Devices", Self::register_state::<engine_core::Devices>),
+            ("Contexts", Self::register_state::<engine_core::Contexts>),
             ("CursorRequests", Self::register_state::<engine_core::CursorRequests>),
         ];
         for (name, register) in states {

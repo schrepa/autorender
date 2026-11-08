@@ -29,11 +29,12 @@ pub use engine_core::smoke_eq;
 
 mod games {
     pub use crate::frame_stats::{DynamicResolutionStats, ResolutionStats};
-    pub use crate::host::{MenuKey, MoveDirection};
     pub use crate::resolution::{DynamicResolution, Resolution};
     pub use engine_core::{
-        Aabb, ActionId, ActionInput, AlphaMode, AssetBudget, AssetLibrary, Attribute,
-        Attributes, AxisId, AxisInput, BrickList, Camera, Clear, ColorSpace, CursorAsk, Hit,
+        Aabb, AlphaMode, AssetBudget, AssetLibrary, Attribute,
+        Attributes, BrickList, Camera, Clear, ColorSpace, CursorAsk, Hit,
+        Binding, BindingSource, Button, ContextAsk, Contexts, Devices, Input, InputSettings,
+        MouseButton, PadButton, Player, Stick, TouchPhase, Trigger, Verb, VerbId, VerbShape, Verbs,
         Picking, Ray, Rect, Target, View, ViewCut, ViewFacts, ViewHistory, Views,
         main_camera, place_camera,
         CursorMode, CursorRequests, DrawKind, Drawn, DrawnProjection, DrawnState, DrawnTable,
@@ -43,8 +44,8 @@ mod games {
         Asks, Clock, Compare, Cull, DepthBias, HandOver, LightingModel, Listing,
         MakeTextures, RenderState, SurfaceSlot,
         Material, Mobility, Mover, MoverId, Moves, Node, NodeWord, Pace, Teleport,
-        MaterialHandle, MenuInput, Mesh, MeshHandle, MeshVertex, MoveInput, Parent,
-        Pause, PauseReason, PointerInput, Poses, Projection, ProvidedAssets, Sampler,
+        MaterialHandle, Mesh, MeshHandle, MeshVertex, Parent,
+        Pause, PauseReason, Poses, Projection, ProvidedAssets, Sampler,
         Surface, Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage,
         Transform, UvTransform, Wrap, make_fresh, math,
         set_parent, set_parents, Span, TimeScale,

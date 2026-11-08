@@ -41,7 +41,7 @@ pub use registry::{BrickId, BrickSet, Registry, RegistryBuilder, check_sections,
 pub use scene::{
     AuthoredId, OperationScene, SceneEntity, SceneRead, SpawnedBy, authored_entity, authored_id,
 };
-pub use services::{FrameFacts, InputState};
+pub use services::FrameFacts;
 pub use state::{
     BrickState, BrickStates, Despawn, GateDriver, GateFn, GateId, Scope, ask_on, fault, fault_of,
 };

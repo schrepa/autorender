@@ -65,7 +65,7 @@ fn frame_cases() -> Vec<Case> {
                     "mode": "paced",
                     "warmup": 0,
                     "samples": 2,
-                    "script": [{ "at": 0, "input": { "forward": 1 } }],
+                    "script": [{ "at": 0, "input": { "keys": ["KeyW"] } }],
                 }),
             ),
             true,
@@ -87,7 +87,10 @@ fn frame_cases() -> Vec<Case> {
         (
             "input_taken",
             "control",
-            named("input", json!({ "forward": 1, "look_right_pixels": 0.25 })),
+            named(
+                "input",
+                json!({ "keys": ["KeyW"], "pointer": { "motion_pixels": [0.25, 0] } }),
+            ),
             true,
         ),
         (
@@ -226,7 +229,7 @@ fn refused_cases(padding: String) -> Vec<Case> {
         (
             "invalid_input_refused",
             "control",
-            named("input", json!({ "forward": 2 })),
+            named("input", json!({ "pointer": { "motion_pixels": [5000, 0] } })),
             false,
         ),
         (
