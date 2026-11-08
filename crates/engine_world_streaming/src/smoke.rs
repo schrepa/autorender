@@ -44,7 +44,7 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     );
     smoke_eq!(
         counts(&rendering),
-        json!({"cells": 5, "loaded": 4, "pending": 0, "entities": 7}),
+        json!({"cells": 5, "loaded": 4, "entities": 7}),
         "binning_stats"
     );
     smoke_eq!(
@@ -92,17 +92,13 @@ fn settings(session: &mut dyn SmokeSession) -> Checked<()> {
     smoke_eq!(
         [
             count(&rendering, "spawned") > 0,
-            stat(&rendering, "pending") == 1
+            stat(&rendering, "loaded") == 3
         ],
         [true, true],
         "budget_defers"
     );
     let rendering = render(session)?;
-    smoke_eq!(
-        [stat(&rendering, "pending"), stat(&rendering, "loaded")],
-        [json!(0), json!(4)],
-        "budget_catches_up"
-    );
+    smoke_eq!(stat(&rendering, "loaded"), json!(4), "budget_catches_up");
 
     streaming(session, json!({"frozen": true}))?;
     let rendering = look(session, 3000.0, 3000.0)?;
@@ -240,7 +236,6 @@ fn counts(rendering: &Value) -> Value {
     json!({
         "cells": streamed["cells"],
         "loaded": streamed["loaded"],
-        "pending": streamed["pending"],
         "entities": streamed["entities"],
     })
 }

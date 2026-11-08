@@ -12,7 +12,6 @@ pub const MAX_CHANGES: usize = 256;
 pub struct WorldCellsView {
     pub cells: u32,
     pub loaded: u32,
-    pub pending: u32,
     pub items: u32,
     pub entities: u32,
     pub spawned: u32,
@@ -122,7 +121,6 @@ fn world_cells(cells: &WorldCells) -> WorldCellsView {
     WorldCellsView {
         cells: stats.cells,
         loaded: stats.loaded,
-        pending: stats.pending,
         items: stats.items,
         entities: stats.entities,
         spawned: stats.spawned,

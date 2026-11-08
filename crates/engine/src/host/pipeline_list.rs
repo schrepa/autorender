@@ -1,5 +1,6 @@
 use engine_core::{
-    Engine, JobExchange, JobId, MISSING_RECORD, RecordKey, URGENT_JOBS, job_priority,
+    Engine, Interest, JobExchange, RecordKey, Records, Request, URGENT_JOBS, job_priority,
+    look_record,
 };
 use engine_registry::Registry;
 use engine_render::Renderer;
@@ -19,7 +20,7 @@ enum State {
     Unasked,
     Asked {
         key: RecordKey,
-        fetch: JobId,
+        fetch: Interest<RecordKey>,
     },
     Making {
         key: RecordKey,
@@ -61,10 +62,6 @@ impl PipelineList {
         matches!(self.state, State::Asked { .. })
     }
 
-    pub(crate) fn making(&self) -> bool {
-        matches!(self.state, State::Making { kept: 0, .. })
-    }
-
     pub(crate) fn ask(&mut self, engine: &mut Engine, content: Option<Vec<u8>>) {
         let Some(mut identity) = content else {
             self.state = State::Done;
@@ -92,34 +89,36 @@ impl PipelineList {
             self.state = State::Making { key, kept: 0 };
             return;
         }
-        self.state = match engine.app.world_mut().get_resource_mut::<JobExchange>() {
-            Some(mut jobs) => State::Asked {
+        let world = engine.app.world_mut();
+        self.state = if world.contains_resource::<JobExchange>() {
+            State::Asked {
                 key,
-                fetch: jobs.fetch(None, key, job_priority(URGENT_JOBS, 0)),
-            },
-            None => State::Done,
+                fetch: look_record(world, None, key, job_priority(URGENT_JOBS, 0)),
+            }
+        } else {
+            State::Done
         };
     }
 
     pub(crate) fn take(&mut self, engine: &mut Engine, renderer: &mut Renderer) {
-        let State::Asked { key, fetch } = self.state else {
+        let State::Asked { key, fetch } = &self.state else {
             return;
         };
-        let world = engine.app.world_mut();
-        let Some(mut jobs) = world.get_resource_mut::<JobExchange>() else {
+        let key = *key;
+        let Some(records) = engine.app.world().get_resource::<Records>() else {
             return;
         };
-        let Some(output) = jobs.take(fetch) else {
-            return;
-        };
-        self.state = match output.map(|record| renderer.create_listed_pipelines(&record)) {
-            Ok(Ok(_)) => State::Making {
-                key,
-                kept: compiled(renderer),
+        self.state = match records.request(fetch) {
+            Some(Request::Ready(record)) => match renderer.create_listed_pipelines(record) {
+                Ok(_) => State::Making {
+                    key,
+                    kept: compiled(renderer),
+                },
+                Err(_) => State::Making { key, kept: 0 },
             },
-            Ok(Err(_)) => State::Making { key, kept: 0 },
-            Err(error) if error == MISSING_RECORD => State::Making { key, kept: 0 },
-            Err(_) => State::Done,
+            Some(Request::Missing) => State::Making { key, kept: 0 },
+            Some(Request::Failed(_)) => State::Done,
+            Some(Request::Asked(_)) | None => return,
         };
     }
 

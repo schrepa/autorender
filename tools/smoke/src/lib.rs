@@ -154,21 +154,6 @@ pub fn present(session: &mut dyn SmokeSession, alpha: f64) -> Checked<Value> {
     Ok(presented["rendering"].take())
 }
 
-pub fn renders_until(
-    session: &mut dyn SmokeSession,
-    frames: u32,
-    mut done: impl FnMut(&Value) -> bool,
-) -> Checked<(bool, Value)> {
-    let mut rendering = Value::Null;
-    for _ in 0..frames {
-        rendering = render(session)?;
-        if done(&rendering) {
-            return Ok((true, rendering));
-        }
-    }
-    Ok((false, rendering))
-}
-
 pub fn rendered_when(
     session: &mut dyn SmokeSession,
     mut frame: impl FnMut(&mut dyn SmokeSession) -> Checked<Value>,
@@ -192,7 +177,15 @@ pub fn settled(session: &mut dyn SmokeSession) -> Checked<Value> {
 
 pub fn settled_by(
     session: &mut dyn SmokeSession,
+    frame: impl FnMut(&mut dyn SmokeSession) -> Checked<Value>,
+) -> Checked<Value> {
+    settled_when(session, frame, |_| true)
+}
+
+pub fn settled_when(
+    session: &mut dyn SmokeSession,
     mut frame: impl FnMut(&mut dyn SmokeSession) -> Checked<Value>,
+    mut done: impl FnMut(&Value) -> bool,
 ) -> Checked<Value> {
     loop {
         let rendering = frame(&mut *session)?;
@@ -205,6 +198,7 @@ pub fn settled_by(
         if readiness["loading"]["total"] == 0
             && readiness["compiling"] == 0
             && readiness["settling"] == 0
+            && done(&rendering)
         {
             return Ok(rendering);
         }

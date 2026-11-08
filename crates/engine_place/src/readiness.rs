@@ -1,7 +1,7 @@
 use bevy_ecs::resource::Resource;
 use serde::Serialize;
 
-use crate::{Census, Error, Progress};
+use crate::{Error, Progress};
 
 #[derive(Resource, Clone, Debug, Default, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -15,10 +15,6 @@ pub struct Readiness {
 impl Readiness {
     pub fn settled(&self) -> bool {
         self.loading.total == 0 && self.compiling == 0 && self.settling == 0
-    }
-
-    pub fn load(&mut self, census: &Census) {
-        self.loading = self.loading.and(census.loading);
     }
 
     pub fn settle(&mut self, left: u32) {

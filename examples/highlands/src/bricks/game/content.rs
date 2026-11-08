@@ -5,7 +5,7 @@ use engine_core::{
 };
 use glam::Vec3;
 
-use crate::bricks::game::cave::{CAVE_RADIUS, Cave};
+use crate::bricks::game::cave::CAVE_RADIUS;
 use crate::bricks::game::{HighlandsStats, SOURCE, caves, rocks, trees};
 
 pub(crate) const SEED: u32 = 1337;
@@ -127,9 +127,8 @@ pub(crate) fn arrive(
     }
 }
 
-pub(crate) fn publish(content: Res<Content>, cave: Res<Cave>, mut stats: ResMut<HighlandsStats>) {
+pub(crate) fn publish(content: Res<Content>, mut stats: ResMut<HighlandsStats>) {
     stats.set_if_neq(HighlandsStats {
-        content: (content.asked.len() + usize::from(cave.asking())) as u32,
         failed_jobs: content.failures,
         latest_job_failure: content.latest.clone(),
     });

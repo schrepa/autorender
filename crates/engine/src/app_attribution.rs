@@ -50,9 +50,7 @@ mod unmeasured {
 #[cfg(any(feature = "dev", feature = "profiling"))]
 mod measured {
     use engine_profile::MAX_BRICKS;
-    use engine_registry::{
-        BrickCost, BrickCosts, CORE_ROW, GPU_IDLE_ROW, Registry, UNATTRIBUTED_ROW, WARMUP_FRAMES,
-    };
+    use engine_registry::{BrickCost, BrickCosts, CORE_ROW, GPU_IDLE_ROW, Registry, UNATTRIBUTED_ROW};
 
     use super::AppHost;
     use crate::app_host::now_ms;
@@ -60,21 +58,10 @@ mod measured {
     #[cfg(feature = "profiling")]
     const CAPTURED_FRAMES: usize = 4_096;
 
-    #[derive(Clone, Copy)]
-    enum Warmup {
-        Warming { frames: u64, settled: bool },
-        Warm,
-    }
-
-    const WARMING: Warmup = Warmup::Warming {
-        frames: 0,
-        settled: false,
-    };
-
     pub(in crate::app_host) struct Attribution {
         started: Option<f64>,
         allocations: [u64; MAX_BRICKS],
-        warmup: Warmup,
+        warm: bool,
         #[cfg(feature = "profiling")]
         pub(in crate::app_host) captured: Vec<BrickCosts>,
     }
@@ -84,7 +71,7 @@ mod measured {
             Self {
                 started: None,
                 allocations: [0; MAX_BRICKS],
-                warmup: WARMING,
+                warm: false,
                 #[cfg(feature = "profiling")]
                 captured: Vec::new(),
             }
@@ -118,22 +105,16 @@ mod measured {
         }
 
         pub(in crate::app_host) fn restart_attribution(&mut self) {
-            self.attribution.warmup = WARMING;
+            self.attribution.warm = false;
             self.renderer.begin_gpu_warmup();
         }
 
         fn warm_up(&mut self) {
-            let Warmup::Warming { frames, settled } = self.attribution.warmup else {
+            if self.attribution.warm || !self.engine.readiness().settled() {
                 return;
-            };
-            let frames = frames + 1;
-            let settled = settled || self.engine.readiness().settled();
-            self.attribution.warmup = if settled && frames >= WARMUP_FRAMES {
-                self.renderer.end_gpu_warmup();
-                Warmup::Warm
-            } else {
-                Warmup::Warming { frames, settled }
-            };
+            }
+            self.renderer.end_gpu_warmup();
+            self.attribution.warm = true;
         }
 
         fn brick_costs(&mut self, frame_ms: f64) -> BrickCosts {

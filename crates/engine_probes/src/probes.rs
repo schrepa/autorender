@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     Camera, Clear, Cursor, Cut, DeviceLimits, Events, FrameBudget, GlobalTransforms, Mobility,
     Mover, Moves, Node, OwnedView, OwnedViews, Pace, PassName, Readable, Readback,
-    Spawner, StoreId, Transform, ViewLayer, mover_of,
+    Settling, Spawner, StoreId, Transform, ViewLayer, mover_of,
 };
 use engine_math as math;
 use engine_places_rendering::probes::{ProbeCaptures, ProbeFace};
@@ -292,6 +292,7 @@ pub(crate) struct ProbeState {
     words: Vec<[u32; 4]>,
     words_changed: bool,
     stats: ReflectionProbeStats,
+    settling: Settling,
 }
 
 impl Default for ProbeState {
@@ -319,6 +320,7 @@ impl Default for ProbeState {
             words: Vec::new(),
             words_changed: false,
             stats: ReflectionProbeStats::default(),
+            settling: Settling::default(),
         }
     }
 }
@@ -447,13 +449,14 @@ pub(crate) fn plan_captures(
     if state.captures && state.views {
         drawn = state.capture(probes, &mut budget);
     }
+    let waiting = if state.captures && state.views {
+        state.slots.unready()
+    } else {
+        0
+    };
+    state.settling.left(waiting);
     state.stats = ReflectionProbeStats {
         ready: state.slots.ready(),
-        waiting: if state.captures && state.views {
-            state.slots.unready()
-        } else {
-            0
-        },
         faces: drawn,
         probe_cut,
     };

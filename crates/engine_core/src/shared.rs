@@ -1,10 +1,6 @@
 use bevy_ecs::world::World;
-use engine_registry::Registry;
 
-use crate::{
-    FrameBudget, GlobalTransforms, Level, MeshLevels, Readiness, RecordExchange, Records,
-    WorkClock, settings,
-};
+use crate::{Board, FrameBudget, GlobalTransforms, Level, Readiness, WorkClock, settings};
 
 settings! {
     #[section("feeds")]
@@ -50,7 +46,7 @@ pub(crate) fn start_frame(world: &mut World, spare_ms: f64) {
     }
 }
 
-pub(crate) fn settle_readiness(world: &mut World) {
+pub(crate) fn settle_readiness(world: &mut World, board: &Board) {
     let compiling = world
         .get_resource::<Readiness>()
         .map_or(0, |readiness| readiness.compiling);
@@ -58,37 +54,9 @@ pub(crate) fn settle_readiness(world: &mut World) {
         compiling,
         ..Readiness::default()
     };
-    if let Some(registry) = world.get_resource::<Registry>() {
-        readiness.settle(registry.pending(world));
-    }
-    if let Some(records) = world.get_resource::<Records>() {
-        readiness.load(&records.census());
-        for (key, error) in records.failures() {
-            readiness.fail(&format!("records.{}", key.hex()), error.clone());
-        }
-    }
-    if let Some(exchange) = world.get_resource::<RecordExchange>() {
-        readiness.load(&exchange.census());
-        for (key, error) in exchange.failures() {
-            readiness.fail(&format!("textures.{}", key.hex()), error.clone());
-        }
-    }
-    if let Some(levels) = world.get_resource::<MeshLevels>() {
-        readiness.load(&levels.census());
-        for (key, request) in levels.unsettled() {
-            if let crate::Request::Failed(error) = request {
-                readiness.fail(&format!("mesh_lods.{}", key.hex()), error.clone());
-            }
-        }
-    }
+    board.add_to(&mut readiness);
     if let Some(cooking) = world.get_resource::<crate::cook::Cooking>() {
         readiness.settle(u32::try_from(cooking.left()).unwrap_or(u32::MAX));
-    }
-    if let Some(level) = world.get_resource::<Level>() {
-        readiness.load(&level.census());
-        if let Some((path, error)) = level.failure() {
-            readiness.fail(&format!("level.{path}"), error.clone());
-        }
     }
     world.insert_resource(readiness);
 }

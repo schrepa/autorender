@@ -1,11 +1,11 @@
 use engine_smoke::{
     Checked, above, camera, capture, control, environment, inspect, not, number, query, refuse,
-    render, rendered_when, settled_by, with,
+    render, rendered_when, settled, settled_by, with,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-use super::{WAIT_FRAMES, height_at, heights, open, overview, settle, view, viewed};
+use super::{height_at, heights, open, overview, settle, view, viewed};
 use crate::requests::seen;
 use crate::stats::terrain;
 
@@ -103,17 +103,8 @@ fn lakes(session: &mut dyn SmokeSession) -> Checked<()> {
             (0..25).map(move |column| [f64::from(-480 + column * 40), f64::from(-480 + row * 40)])
         })
         .collect();
-    let mut found = heights(session, &grid)?;
-    for _ in 0..WAIT_FRAMES {
-        if found
-            .iter()
-            .any(|sample| sample["standing_water"].is_object())
-        {
-            break;
-        }
-        render(session)?;
-        found = heights(session, &grid)?;
-    }
+    settled(session)?;
+    let found = heights(session, &grid)?;
     let lakes: Vec<&Value> = found
         .iter()
         .filter(|sample| sample["standing_water"].is_object())
@@ -401,13 +392,7 @@ fn exposure(session: &mut dyn SmokeSession, starry: &Value) -> Checked<()> {
         &json!(true),
         "frames_meter_their_exposure"
     );
-    for _ in 0..WAIT_FRAMES {
-        if number(&exposure["stops"]) > 0.0 {
-            break;
-        }
-        let mut rendering = render(session)?;
-        exposure = rendering["exposure_stats"].take();
-    }
+    exposure = settled(session)?["exposure_stats"].take();
     let stops = number(&exposure["stops"]);
     let wanted = json!({"stops": {"above": 0, "at_most": 400}});
     smoke_eq!(

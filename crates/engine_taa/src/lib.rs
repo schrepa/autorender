@@ -35,6 +35,7 @@ impl Brick for TaaBrick {
             .settings::<TemporalAntialiasing>()
             .stats::<TemporalAntialiasingStats>()
             .piece::<temporal::TaaPiece>()
+            .resource::<temporal::TaaSettling>()
             .generated(temporal::GENERATED)
             .fill::<Resolve>(Some(shaders::taa::resolved::MODULE))
             .fill::<Jitter>(None)

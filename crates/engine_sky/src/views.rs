@@ -33,7 +33,6 @@ pub struct StaticTableRow {
 stats! {
     #[section("static_tables")]
     pub struct StaticTablesView {
-        #[pending] pub loading: u32,
         pub tables: Vec<StaticTableRow>,
         pub failed_jobs: u64,
         pub latest_job_failure: Option<String>,

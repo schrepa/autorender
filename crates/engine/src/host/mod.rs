@@ -14,9 +14,9 @@ mod settings;
 pub use crate::app_host::{TerrainClock, now_ms};
 pub use adapter::{AdapterStatus, vendor};
 pub use engine_core::{
-    Distribution, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRef, JobRequest, JobShare, MISSING_RECORD,
-    RecordFetch, RecordKey, RecordParity, URGENT_JOBS, VIEW_JOBS, content_hash, job_class,
-    job_priority, median,
+    Distribution, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobMessage, JobRef, JobRequest, JobShare,
+    MISSING_RECORD, RecordFetch, RecordKey, RecordParity, URGENT_JOBS, VIEW_JOBS, content_hash,
+    job_class, job_priority, median,
 };
 pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
 pub use engine_registry::JobList;
@@ -27,7 +27,7 @@ pub use input::{
     MoveDirection,
 };
 pub(crate) use jobs::{Finished, JobScheduler};
-pub use jobs::{JobMessage, JobOrder};
+pub use jobs::JobOrder;
 pub(crate) use level::{LevelLoad, LevelStep};
 pub(crate) use pipeline_list::PipelineList;
 pub(crate) use resolution::DynamicScale;

@@ -147,10 +147,6 @@ impl<T: Assembly> TableState<T> {
         self.parts.iter().filter(|part| state(part)).count() as u64
     }
 
-    fn left(&self) -> u64 {
-        self.count(|part| matches!(part, Part::Asked(_)))
-    }
-
     fn row(&self) -> StaticTableRow {
         StaticTableRow {
             kind: self.name.to_owned(),
@@ -191,13 +187,8 @@ impl StaticTables {
         self.sky.ready.as_ref()
     }
 
-    fn left(&self) -> u64 {
-        self.cloud_noise.left() + self.sky.left()
-    }
-
     fn view(&self) -> StaticTablesView {
         StaticTablesView {
-            loading: u32::try_from(self.left()).unwrap_or(u32::MAX),
             tables: vec![self.cloud_noise.row(), self.sky.row()],
             failed_jobs: self.failures.count,
             latest_job_failure: self.failures.last.clone(),

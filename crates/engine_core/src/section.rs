@@ -19,10 +19,6 @@ pub trait Section:
         Ok(())
     }
 
-    fn pending(&self) -> u32 {
-        0
-    }
-
     fn schema() -> schemars::Schema {
         schemars::schema_for!(Self)
     }

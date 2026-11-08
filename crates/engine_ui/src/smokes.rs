@@ -1,9 +1,8 @@
-use engine_smoke::{Checked, control, inspect, query, refuse, render, renders_until};
+use engine_smoke::{Checked, control, inspect, query, refuse, render, settled};
 use engine_core::{SmokeFailure, SmokeSession, smoke_check, smoke_eq};
 use serde_json::{Value, json};
 
 const OVERLAY: &str = "ui";
-const FRAMES: u32 = 240;
 
 fn scene(entities: &Value) -> String {
     json!({
@@ -158,15 +157,8 @@ pub fn drawn(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         &OVERLAY
     );
     session.source(&scene(&menu()));
-    let mut rendering = Value::Null;
-    let mut stats = Value::Null;
-    for _ in 0..FRAMES {
-        rendering = render(session)?;
-        stats = inspect(session, "ui_stats")?;
-        if stats["rects_drawn"].as_u64().unwrap_or(0) > 0 {
-            break;
-        }
-    }
+    let rendering = settled(session)?;
+    let stats = inspect(session, "ui_stats")?;
     smoke_check!(
         stats["rects_drawn"].as_u64().unwrap_or(0) > 0,
         "ui_rects_drawn",
@@ -180,9 +172,9 @@ pub fn drawn(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         &OVERLAY
     );
     session.source(&scene(&json!([])));
-    let (gone, after) = renders_until(session, FRAMES, |rendering| !overlaid(rendering))?;
+    let after = settled(session)?;
     smoke_check!(
-        gone,
+        !overlaid(&after),
         "removed_ui_no_overlay",
         &after["render_passes"],
         &OVERLAY

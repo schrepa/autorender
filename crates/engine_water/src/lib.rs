@@ -68,8 +68,6 @@ use water_sim::LiveSteps;
 stats! {
     #[section("water_stats")]
     pub struct WaterStats {
-        #[pending] pub squares_left: u32,
-        #[pending] pub settles_left: u32,
         pub blocks: u32,
         pub dropped_blocks: u32,
         pub live_cut: u32,
@@ -189,6 +187,10 @@ fn water_stats(
         PARTICLE_FOAM_BORN, PARTICLE_FOAM_DROPPED, PARTICLE_FOAM_LIVE, PARTICLE_WAVES_BORN,
         PARTICLE_WAVES_DROPPED, PARTICLE_WAVES_LIVE,
     };
+    let left = u64::from(state.squares_left).saturating_add(state.settles_left);
+    state
+        .unsettled
+        .left(u32::try_from(left).unwrap_or(u32::MAX));
     let frame = !state.watered.is_empty();
     let live = state.live.cells().filter(|_| frame);
     let [live_steps, live_behind] = if live.is_some() {
@@ -216,8 +218,6 @@ fn water_stats(
         }
     };
     let next = WaterStats {
-        squares_left: state.squares_left,
-        settles_left: state.settles_left.min(u64::from(u32::MAX)) as u32,
         blocks: if frame { state.blocks.resident() } else { 0 },
         dropped_blocks: if frame { state.blocks.dropped } else { 0 },
         live_cut,

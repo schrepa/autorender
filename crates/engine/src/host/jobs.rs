@@ -2,18 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use engine_core::collections::HashMap;
-use engine_core::{
-    JobId, JobRef, JobRequest, JobShare, MISSING_RECORD, RecordFetch, RecordKey, RecordParity,
-};
-
-#[derive(Debug)]
-pub enum JobMessage {
-    Cancel(JobId),
-    Share(JobShare),
-    Run(JobRequest),
-    Fetch(RecordFetch),
-    Keep(RecordKey, Option<JobRef>, Vec<u8>, RecordParity),
-}
+use engine_core::{JobId, JobMessage, JobRef, JobRequest, JobShare, MISSING_RECORD, RecordKey};
 
 #[derive(Debug)]
 pub enum JobOrder {

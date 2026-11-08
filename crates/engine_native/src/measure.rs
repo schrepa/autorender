@@ -21,9 +21,7 @@ pub struct Method {
 #[derive(Clone, Debug)]
 pub struct Settle {
     pub stats: Map<String, Value>,
-    pub quiet_frames: u32,
     pub below: BTreeMap<String, f64>,
-    pub min_ms: f64,
     pub max_ms: f64,
 }
 
@@ -122,9 +120,7 @@ impl Method {
         Ok(Self {
             settle: Settle {
                 stats,
-                quiet_frames: count(&settle["quiet_frames"], "settle.quiet_frames")?,
                 below,
-                min_ms: number(&settle["min_ms"], "settle.min_ms")?,
                 max_ms: number(&settle["max_ms"], "settle.max_ms")?,
             },
             warmup_frames: count(&sample["warmup_frames"], "sample.warmup_frames")?,
@@ -250,7 +246,6 @@ fn settle<G: Game>(
     rule: &Settle,
     launched: Instant,
 ) -> engine::Result<(bool, f64)> {
-    let mut quiet = 0;
     loop {
         let elapsed = launched.elapsed().as_secs_f64() * 1000.0;
         if elapsed >= rule.max_ms {
@@ -271,8 +266,7 @@ fn settle<G: Game>(
                 && rule.below.iter().all(|(metric, threshold)| {
                     spans.get(metric).copied().unwrap_or(0.0) < *threshold
                 });
-        quiet = if holds { quiet + 1 } else { 0 };
-        if quiet >= rule.quiet_frames && elapsed >= rule.min_ms {
+        if holds {
             return Ok((true, launched.elapsed().as_secs_f64() * 1000.0));
         }
     }

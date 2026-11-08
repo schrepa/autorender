@@ -85,7 +85,6 @@ stats! {
     pub struct CellStats {
         pub cells: u32,
         pub loaded: u32,
-        #[pending] pub pending: u32,
         pub items: u32,
         pub entities: u32,
         pub spawned: u32,
@@ -533,11 +532,6 @@ pub(crate) fn stream_cells(
         .cells
         .iter()
         .filter(|cell| cell.loaded() && !cell.waiting(spawns))
-        .count() as u32;
-    cells.stats.pending = cells
-        .cells
-        .iter()
-        .filter(|cell| cell.waiting(spawns))
         .count() as u32;
     cells.stats.items = cells.items() as u32;
     cells.stats.entities = cells.cells.iter().map(|cell| cell.spawned(spawns)).sum();

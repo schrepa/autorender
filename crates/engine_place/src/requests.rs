@@ -1,16 +1,20 @@
+use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::fmt;
 use std::hash::Hash;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use engine_math::collections::HashMap;
 use serde::{Serialize, Serializer};
 
-use crate::Error;
+use crate::{Error, Readiness};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Ticket(u64);
+
+static TICKETS: AtomicU64 = AtomicU64::new(0);
 
 impl Ticket {
     #[doc(hidden)]
@@ -20,6 +24,10 @@ impl Ticket {
 
     pub fn number(self) -> u64 {
         self.0
+    }
+
+    fn next() -> Self {
+        Self(TICKETS.fetch_add(1, Ordering::Relaxed) + 1)
     }
 }
 
@@ -40,6 +48,13 @@ impl Progress {
         Self {
             done: self.done.saturating_add(other.done),
             total: self.total.saturating_add(other.total),
+        }
+    }
+
+    fn less(self, other: Self) -> Self {
+        Self {
+            done: self.done.saturating_sub(other.done),
+            total: self.total.saturating_sub(other.total),
         }
     }
 
@@ -88,7 +103,7 @@ enum Change<K> {
 
 type Changes<K> = Arc<Mutex<Vec<Change<K>>>>;
 
-fn changes<K>(held: &Mutex<Vec<Change<K>>>) -> MutexGuard<'_, Vec<Change<K>>> {
+fn lock<T>(held: &Mutex<T>) -> MutexGuard<'_, T> {
     held.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -106,7 +121,7 @@ impl<K: Clone> Interest<K> {
 
 impl<K: Clone> Clone for Interest<K> {
     fn clone(&self) -> Self {
-        changes(&self.changes).push(Change::Ask(self.key.clone()));
+        lock(&self.changes).push(Change::Ask(self.key.clone()));
         Self {
             key: self.key.clone(),
             changes: Arc::clone(&self.changes),
@@ -116,7 +131,7 @@ impl<K: Clone> Clone for Interest<K> {
 
 impl<K: Clone> Drop for Interest<K> {
     fn drop(&mut self) {
-        changes(&self.changes).push(Change::Release(self.key.clone()));
+        lock(&self.changes).push(Change::Release(self.key.clone()));
     }
 }
 
@@ -126,11 +141,113 @@ impl<K: Clone + fmt::Debug> fmt::Debug for Interest<K> {
     }
 }
 
-struct Held<V> {
+#[derive(Default)]
+struct Tally {
+    loading: Progress,
+    settling: u32,
+    failed: Vec<(u64, Error)>,
+    joined: bool,
+}
+
+type Tallied = Arc<Mutex<Tally>>;
+
+#[doc(hidden)]
+#[derive(Clone, Default)]
+pub struct Board(Arc<Mutex<Vec<Weak<Mutex<Tally>>>>>);
+
+thread_local! {
+    static BOARD: RefCell<Option<Board>> = const { RefCell::new(None) };
+}
+
+struct Restore(Option<Board>);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        let _ = BOARD.try_with(|board| *board.borrow_mut() = previous);
+    }
+}
+
+impl Board {
+    pub fn scope<R>(&self, run: impl FnOnce() -> R) -> R {
+        let previous = BOARD
+            .try_with(|board| board.borrow_mut().replace(self.clone()))
+            .ok()
+            .flatten();
+        let _restore = Restore(previous);
+        run()
+    }
+
+    pub fn add_to(&self, readiness: &mut Readiness) {
+        lock(&self.0).retain(|member| {
+            let Some(tally) = member.upgrade() else {
+                return false;
+            };
+            let tally = lock(&tally);
+            readiness.loading = readiness.loading.and(tally.loading);
+            readiness.settle(tally.settling);
+            for (_, error) in &tally.failed {
+                readiness.fail(&error.path, error.clone());
+            }
+            true
+        });
+    }
+}
+
+impl fmt::Debug for Board {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Board").field(&lock(&self.0).len()).finish()
+    }
+}
+
+fn joined() -> Tallied {
+    let tally = Arc::new(Mutex::new(Tally::default()));
+    join(&tally);
+    tally
+}
+
+fn join(tally: &Tallied) {
+    if lock(tally).joined {
+        return;
+    }
+    let _ = BOARD.try_with(|board| {
+        if let Some(board) = board.borrow().as_ref() {
+            lock(&board.0).push(Arc::downgrade(tally));
+            lock(tally).joined = true;
+        }
+    });
+}
+
+pub struct Settling(Tallied);
+
+impl Default for Settling {
+    fn default() -> Self {
+        Self(joined())
+    }
+}
+
+impl Settling {
+    pub fn left(&self, left: u32) {
+        join(&self.0);
+        lock(&self.0).settling = left;
+    }
+}
+
+impl fmt::Debug for Settling {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Settling")
+            .field(&lock(&self.0).settling)
+            .finish()
+    }
+}
+
+struct Held<V, A> {
     request: Request<V>,
     interests: u32,
     progress: Option<Progress>,
     since: f64,
+    serial: u64,
+    work: Option<A>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
@@ -145,25 +262,29 @@ pub struct Census {
     pub oldest_asked_seconds: f64,
 }
 
-pub struct Requests<K: Clone, V> {
-    entries: HashMap<K, Held<V>>,
+pub struct Requests<K: Clone, V, A = ()> {
+    entries: HashMap<K, Held<V, A>>,
+    asked: HashMap<Ticket, K>,
     changes: Changes<K>,
-    tickets: u64,
+    tally: Tallied,
+    serials: u64,
     now: f64,
 }
 
-impl<K: Clone, V> Default for Requests<K, V> {
+impl<K: Clone, V, A> Default for Requests<K, V, A> {
     fn default() -> Self {
         Self {
             entries: HashMap::default(),
+            asked: HashMap::default(),
             changes: Arc::new(Mutex::new(Vec::new())),
-            tickets: 0,
+            tally: joined(),
+            serials: 0,
             now: 0.0,
         }
     }
 }
 
-impl<K: Clone, V> fmt::Debug for Requests<K, V> {
+impl<K: Clone, V, A> fmt::Debug for Requests<K, V, A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Requests")
             .field("entries", &self.entries.len())
@@ -171,7 +292,15 @@ impl<K: Clone, V> fmt::Debug for Requests<K, V> {
     }
 }
 
-impl<K: Clone + Eq + Hash, V> Requests<K, V> {
+fn left_asked<V, A>(tally: &mut Tally, held: &Held<V, A>) {
+    match &held.request {
+        Request::Asked(_) => tally.loading = tally.loading.less(Progress::asked(held.progress)),
+        Request::Failed(_) => tally.failed.retain(|(serial, _)| *serial != held.serial),
+        Request::Ready(_) | Request::Missing => {}
+    }
+}
+
+impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
     pub fn ask(&mut self, key: K) -> Interest<K> {
         self.count(key.clone());
         Interest {
@@ -181,7 +310,7 @@ impl<K: Clone + Eq + Hash, V> Requests<K, V> {
     }
 
     pub fn ask_later(&self, key: K) -> Interest<K> {
-        changes(&self.changes).push(Change::Ask(key.clone()));
+        lock(&self.changes).push(Change::Ask(key.clone()));
         Interest {
             key,
             changes: Arc::clone(&self.changes),
@@ -193,11 +322,15 @@ impl<K: Clone + Eq + Hash, V> Requests<K, V> {
         if let Request::Asked(ticket) = held.request {
             return Some(ticket);
         }
-        self.tickets += 1;
-        let ticket = Ticket(self.tickets);
+        let ticket = Ticket::next();
+        let mut tally = lock(&self.tally);
+        left_asked(&mut tally, held);
+        tally.loading = tally.loading.and(Progress::asked(None));
         held.request = Request::Asked(ticket);
         held.progress = None;
         held.since = self.now;
+        held.work = None;
+        self.asked.insert(ticket, key.clone());
         Some(ticket)
     }
 
@@ -207,20 +340,34 @@ impl<K: Clone + Eq + Hash, V> Requests<K, V> {
                 held.get_mut().interests = held.get().interests.saturating_add(1);
             }
             Entry::Vacant(free) => {
-                self.tickets += 1;
+                let ticket = Ticket::next();
+                self.serials += 1;
+                self.asked.insert(ticket, free.key().clone());
+                let mut tally = lock(&self.tally);
+                tally.loading = tally.loading.and(Progress::asked(None));
                 free.insert(Held {
-                    request: Request::Asked(Ticket(self.tickets)),
+                    request: Request::Asked(ticket),
                     interests: 1,
                     progress: None,
                     since: self.now,
+                    serial: self.serials,
+                    work: None,
                 });
             }
         }
     }
 
     pub fn settle(&mut self, now: f64) -> Vec<(K, Request<V>)> {
+        self.settle_work(now)
+            .into_iter()
+            .map(|(key, request, _)| (key, request))
+            .collect()
+    }
+
+    pub fn settle_work(&mut self, now: f64) -> Vec<(K, Request<V>, Option<A>)> {
+        join(&self.tally);
         self.now = now;
-        let queued = std::mem::take(&mut *changes(&self.changes));
+        let queued = std::mem::take(&mut *lock(&self.changes));
         let mut released = Vec::new();
         for change in queued {
             match change {
@@ -233,7 +380,11 @@ impl<K: Clone + Eq + Hash, V> Requests<K, V> {
                     if held.interests == 0
                         && let Some(held) = self.entries.remove(&key)
                     {
-                        released.push((key, held.request));
+                        left_asked(&mut lock(&self.tally), &held);
+                        if let Some(ticket) = held.request.asked() {
+                            self.asked.remove(&ticket);
+                        }
+                        released.push((key, held.request, held.work));
                     }
                 }
             }
@@ -242,7 +393,7 @@ impl<K: Clone + Eq + Hash, V> Requests<K, V> {
     }
 
     pub fn changed(&self) -> bool {
-        !changes(&self.changes).is_empty()
+        !lock(&self.changes).is_empty()
     }
 
     pub fn get(&self, key: &K) -> Option<&Request<V>> {
@@ -257,8 +408,36 @@ impl<K: Clone + Eq + Hash, V> Requests<K, V> {
         self.get(key).and_then(Request::asked)
     }
 
+    pub fn key_of(&self, ticket: Ticket) -> Option<&K> {
+        self.asked.get(&ticket)
+    }
+
     pub fn interests(&self, key: &K) -> u32 {
         self.entries.get(key).map_or(0, |held| held.interests)
+    }
+
+    pub fn work(&self, key: &K) -> Option<&A> {
+        self.entries.get(key)?.work.as_ref()
+    }
+
+    pub fn work_mut(&mut self, key: &K) -> Option<&mut A> {
+        self.entries.get_mut(key)?.work.as_mut()
+    }
+
+    pub fn set_work(&mut self, key: &K, work: A) -> bool {
+        match self.entries.get_mut(key) {
+            Some(held) if held.request.asked().is_some() => {
+                held.work = Some(work);
+                true
+            }
+            Some(_) | None => false,
+        }
+    }
+
+    pub fn works(&self) -> impl Iterator<Item = (&K, &A)> + '_ {
+        self.entries
+            .iter()
+            .filter_map(|(key, held)| Some((key, held.work.as_ref()?)))
     }
 
     pub fn progress_of(&self, key: &K) -> Option<Progress> {
@@ -269,6 +448,11 @@ impl<K: Clone + Eq + Hash, V> Requests<K, V> {
         if let Some(held) = self.entries.get_mut(key)
             && matches!(held.request, Request::Asked(_))
         {
+            let mut tally = lock(&self.tally);
+            tally.loading = tally
+                .loading
+                .less(Progress::asked(held.progress))
+                .and(Progress::asked(Some(progress)));
             held.progress = Some(progress);
         }
     }
@@ -292,8 +476,15 @@ impl<K: Clone + Eq + Hash, V> Requests<K, V> {
         if held.request.asked() != Some(ticket) {
             return false;
         }
+        let mut tally = lock(&self.tally);
+        left_asked(&mut tally, held);
+        if let Request::Failed(error) = &end {
+            tally.failed.push((held.serial, error.clone()));
+        }
+        self.asked.remove(&ticket);
         held.request = end;
         held.progress = None;
+        held.work = None;
         true
     }
 
@@ -342,14 +533,14 @@ impl<K: Clone + Eq + Hash, V> Requests<K, V> {
     }
 }
 
-impl<K: Clone + Eq + Hash, V> Serialize for Requests<K, V> {
+impl<K: Clone + Eq + Hash, V, A> Serialize for Requests<K, V, A> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.census().serialize(serializer)
     }
 }
 
 #[cfg(feature = "schema")]
-impl<K: Clone, V> schemars::JsonSchema for Requests<K, V> {
+impl<K: Clone, V, A> schemars::JsonSchema for Requests<K, V, A> {
     fn inline_schema() -> bool {
         true
     }

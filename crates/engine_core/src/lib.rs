@@ -72,7 +72,7 @@ pub use engine_assets::{
 };
 pub use engine_textures::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 pub use engine_place::{
-    Applied, ApplyAt, Ask, Asked, AttachPoint, BlendedPass, BudgetUse, Census,
+    Applied, ApplyAt, Ask, Asked, AttachPoint, BlendedPass, Board, BudgetUse, Census,
     Clock, ColorPass, PositionReach,
     Cursor, DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode, Events,
     Feed, FeedView, FrameBudget, GpuStruct, InstanceValues, Interest, JobRef,
@@ -81,7 +81,8 @@ pub use engine_place::{
     PassMask, PassName, PassRaster, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring, Runs,
     ScenePass, ScenePasses, Since, Slot, SlotSet, Smoke,
     SmokeFailure, SmokeSession,
-    Stamp, StoreId, TargetName, TextureHandle, Ticket, Writes, every, gpu_consts, never,
+    Settling, Stamp, StoreId, TargetName, TextureHandle, Ticket, Writes, every, gpu_consts,
+    never,
     smoke_check, smoke_eq,
 };
 pub use engine_place::{
@@ -203,6 +204,7 @@ pub struct Engine {
     facts: Option<FrameFacts>,
     spare_ms: f64,
     finalized: bool,
+    board: Board,
 }
 
 #[doc(hidden)]
@@ -340,6 +342,11 @@ fn refused(problems: &[Error]) -> Result<(), Error> {
 
 impl Engine {
     pub fn new(config: EngineConfig) -> Self {
+        let board = Board::default();
+        board.scope(|| Self::on_board(config, board.clone()))
+    }
+
+    fn on_board(config: EngineConfig, board: Board) -> Self {
         let clock = FixedClock::new(config);
         let mut assets = AssetLibrary::default();
         assets.insert_cube().expect("unlimited_library_holds_cube");
@@ -425,12 +432,18 @@ impl Engine {
             facts: None,
             spare_ms: 0.0,
             finalized: false,
+            board,
         }
+    }
+
+    fn scoped<R>(&mut self, run: impl FnOnce(&mut Self) -> R) -> R {
+        let board = self.board.clone();
+        board.scope(|| run(self))
     }
 
     pub fn listed(list: BrickList) -> Result<Self, Error> {
         let mut engine = Self::default();
-        engine.install(&list)?;
+        engine.scoped(|engine| engine.install(&list))?;
         Ok(engine)
     }
 
@@ -506,13 +519,15 @@ impl Engine {
     }
 
     pub fn ask_on(&mut self, package: &str) -> Result<(), Error> {
-        let world = self.app.world_mut();
-        let brick = world
-            .get_resource::<Registry>()
-            .and_then(|registry| registry.id(package))
-            .ok_or_else(|| Error::new(ErrorCode::UnknownValue, "$.brick").got(package))?;
-        engine_registry::ask_on(world, brick);
-        Ok(())
+        self.scoped(|engine| {
+            let world = engine.app.world_mut();
+            let brick = world
+                .get_resource::<Registry>()
+                .and_then(|registry| registry.id(package))
+                .ok_or_else(|| Error::new(ErrorCode::UnknownValue, "$.brick").got(package))?;
+            engine_registry::ask_on(world, brick);
+            Ok(())
+        })
     }
 
     #[doc(hidden)]
@@ -521,10 +536,8 @@ impl Engine {
     }
 
     #[doc(hidden)]
-    pub fn arrive(&mut self, key: RecordKey, record: Result<Arc<[u8]>, Error>) {
-        modify(self.app.world_mut(), |records: &mut Records| {
-            records.arrive(key, record);
-        });
+    pub fn land_job(&mut self, id: JobId, output: Result<Arc<[u8]>, String>) {
+        jobs::land_job(self.app.world_mut(), id, output);
     }
 
     #[doc(hidden)]
@@ -553,6 +566,11 @@ impl Engine {
                 .expected(Expected::Finite)
                 .got(timestamp_seconds));
         }
+        self.scoped(|engine| engine.frame_at(timestamp_seconds));
+        Ok(())
+    }
+
+    fn frame_at(&mut self, timestamp_seconds: f64) {
         self.finalize();
         let (interval, real_seconds) = self.interval.next(Some(timestamp_seconds));
         self.interval = interval;
@@ -570,16 +588,17 @@ impl Engine {
             (shown, shown * rate),
             real_seconds - shown,
         );
-        Ok(())
     }
 
     pub fn present(&mut self, presented: Presented) -> Result<(), Error> {
         presentation::check_alpha(presented.alpha())?;
-        self.finalize();
-        if moves::start_frame(self.app.world_mut()) {
-            self.refresh_transforms();
-        }
-        presentation::present(self.app.world_mut(), presented);
+        self.scoped(|engine| {
+            engine.finalize();
+            if moves::start_frame(engine.app.world_mut()) {
+                engine.refresh_transforms();
+            }
+            presentation::present(engine.app.world_mut(), presented);
+        });
         Ok(())
     }
 
@@ -624,6 +643,12 @@ impl Engine {
     #[cfg(feature = "dev")]
     pub fn step_fixed(&mut self, ticks: u32) -> Result<(), Error> {
         check_dev_ticks(ticks)?;
+        self.scoped(|engine| engine.step_ticks(ticks));
+        Ok(())
+    }
+
+    #[cfg(feature = "dev")]
+    fn step_ticks(&mut self, ticks: u32) {
         self.finalize();
         self.clock.reset();
         self.interval = self.interval.next(None).0;
@@ -642,7 +667,6 @@ impl Engine {
                 0.0,
             );
         }
-        Ok(())
     }
 
     pub fn set_spare_time(&mut self, milliseconds: f64) {
@@ -654,11 +678,13 @@ impl Engine {
     }
 
     pub fn start_frame(&mut self) {
-        self.finalize();
-        let world = self.app.world_mut();
-        if has_systems(world, FrameStart) {
-            world.run_schedule(FrameStart);
-        }
+        self.scoped(|engine| {
+            engine.finalize();
+            let world = engine.app.world_mut();
+            if has_systems(world, FrameStart) {
+                world.run_schedule(FrameStart);
+            }
+        });
     }
 
     fn run_gates(&mut self) {
@@ -799,14 +825,16 @@ impl Engine {
 
     pub fn extract_frame(&mut self) -> Result<RenderFrame<'_>, Error> {
         let _profile = engine_profile::span("cpu", "extraction");
-        self.finalize();
-        self.run_gates();
-        self.sync_world();
-        self.refresh_transforms();
-        presentation::gather(self.app.world_mut());
-        self.sync_view();
-        shared::settle_readiness(self.app.world_mut());
-        modify(self.app.world_mut(), ActionInput::hide_edges);
+        self.scoped(|engine| {
+            engine.finalize();
+            engine.run_gates();
+            engine.sync_world();
+            engine.refresh_transforms();
+            presentation::gather(engine.app.world_mut());
+            engine.sync_view();
+            shared::settle_readiness(engine.app.world_mut(), &engine.board);
+            modify(engine.app.world_mut(), ActionInput::hide_edges);
+        });
         Ok(RenderFrame {
             world: self.app.world(),
         })

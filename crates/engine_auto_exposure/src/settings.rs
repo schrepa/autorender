@@ -29,6 +29,5 @@ stats! {
         pub metered: i32,
         pub view: i32,
         pub wanted: i32,
-        #[pending] pub settling: u32,
     }
 }

@@ -7,8 +7,9 @@ use bevy_ecs::world::World;
 use engine_registry::{BrickStates, JobBatch, JobOrder, JobQueue, MembersOf};
 
 use crate::collections::HashSet;
+use crate::jobs::RecordSet;
 use crate::{
-    Interest, JobExchange, JobKind, List, RecordKey, Records, Request, Requests, VIEW_JOBS,
+    Interest, JobExchange, JobKind, JobRef, List, RecordKey, Records, Request, VIEW_JOBS,
     job_priority,
 };
 
@@ -111,7 +112,7 @@ impl Cooking {
     fn step(
         &mut self,
         fresh: Vec<Ask>,
-        records: &mut Requests<RecordKey, Arc<[u8]>>,
+        records: &mut RecordSet,
         exchange: &mut JobExchange,
     ) -> Vec<JobOrder> {
         let Self { known, asked, .. } = self;
@@ -189,12 +190,12 @@ fn release(asked: &mut Asked, exchange: &mut JobExchange) {
 }
 
 fn order(ask: &Ask, place: usize) -> JobOrder {
-    JobOrder::Fetch {
+    JobOrder::Start {
         key: ask.key.hash(),
-        kind: ask.kind.name(),
-        source: ask.kind.source().hash(),
+        kind: JobRef::from(ask.kind),
         input: ask.input.clone(),
         priority: job_priority(VIEW_JOBS, u32::try_from(place).unwrap_or(u32::MAX)),
+        admitted: false,
     }
 }
 

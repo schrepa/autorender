@@ -118,13 +118,11 @@ macro_rules! __checked {
 
 #[macro_export]
 macro_rules! stats {
-    (@pending $this:tt $field:ident pending) => { $this.$field };
-    (@pending $this:tt $field:ident) => { 0u32 };
     (
         #[section($key:literal)]
         $(#[$meta:meta])*
         $vis:vis struct $name:ident {
-            $($(#[$mark:ident])? $field_vis:vis $field:ident: $ty:ty),* $(,)?
+            $($field_vis:vis $field:ident: $ty:ty),* $(,)?
         }
     ) => {
         #[derive(
@@ -146,10 +144,6 @@ macro_rules! stats {
 
         impl ::engine_core::Section for $name {
             const KEY: &'static str = $key;
-
-            fn pending(&self) -> u32 {
-                0u32 $(.saturating_add($crate::stats!(@pending self $field $($mark)?)))*
-            }
         }
     };
 }

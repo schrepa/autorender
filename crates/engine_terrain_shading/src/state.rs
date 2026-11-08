@@ -6,7 +6,7 @@ use engine_core::collections::HashMap;
 use engine_core::{
     AssetLibrary, Cursor, DeviceLimits, Error, Feed, FrameId, FrameTime, Interest,
     JobFailures, JobKind, Jobs, Readable, Readback, RecordExchange, RecordKey, Records,
-    Since, Stamp, TextureHandle, TextureSet, TextureSource, TextureUsage, Views, codec,
+    Settling, Since, Stamp, TextureHandle, TextureSet, TextureSource, TextureUsage, Views, codec,
     content_hash,
 };
 use engine_heightfield::tile::shaded_elsewhere;
@@ -1127,6 +1127,9 @@ pub(crate) fn publish_heightfield(
     });
 }
 
+#[derive(Resource, Default)]
+pub(crate) struct RecordsSettling(Settling);
+
 fn records_left(settings: &TerrainShading, tiles: &TerrainTiles, bakes: &Bakes) -> u32 {
     let mut left = 0;
     for entry in tiles.terrains.iter() {
@@ -1147,8 +1150,9 @@ pub(crate) fn count(
     bakes: Res<Bakes>,
     totals: Res<SurfaceTotals>,
     part: Res<PartStats>,
-    mut stats: ResMut<TerrainShadingStats>,
+    (mut stats, settling): (ResMut<TerrainShadingStats>, Res<RecordsSettling>),
 ) {
+    settling.0.left(records_left(&settings, &tiles, &bakes));
     let drawn = part.drawn;
     let [leaves, refused] = totals.grounds;
     let (shaded_tiles, shading_records) = bakes
@@ -1189,7 +1193,6 @@ pub(crate) fn count(
         .filter(|held| held.colors.asking())
         .count() as u32;
     let next = TerrainShadingStats {
-        pending: records_left(&settings, &tiles, &bakes),
         triangles: leaves.saturating_mul(crate::gpu::SURFACE_MESHLET_INDICES / 3),
         leaves: engine_core::Cut::of(leaves.saturating_add(refused), leaves),
         shallow_subdivisions: drawn.shallow_subdivisions,

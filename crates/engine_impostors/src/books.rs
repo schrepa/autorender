@@ -8,8 +8,8 @@ use engine_core::glam::Vec3;
 use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, Census, CookAsks, Cull, Detail, DeviceLimits, Error,
     ErrorCode, Feed, Filter, FrameBudget, FrameTime, GpuBits, IDLE_JOBS, Interest, Job, JobCx,
-    JobExchange, JobId, JobKind, JobRef, Jobs, LightingModel, Material, MaterialHandle, MeshHandle,
-    RecordKey, Records, Request, Requests, TextureRef, VIEW_JOBS, WorkClock, Wrap, content_hash,
+    JobKind, Jobs, LightingModel, Material, MaterialHandle, MeshHandle, RecordKey, Records,
+    Request, Requests, Settling, TextureRef, VIEW_JOBS, WorkClock, Wrap, content_hash,
     job_priority,
 };
 use engine_places::impostors::{
@@ -845,6 +845,20 @@ impl Book {
             .count();
         (waiting + self.baking.len()) as u64
     }
+
+    fn unsettled(&self) -> u32 {
+        let waiting = self
+            .supplies
+            .values()
+            .filter(|supply| {
+                matches!(
+                    self.answers.of(&supply.interest),
+                    Some(Request::Ready(_) | Request::Missing)
+                )
+            })
+            .count();
+        u32::try_from(waiting).unwrap_or(u32::MAX)
+    }
 }
 
 type Made = Result<Arc<[u8]>, Error>;
@@ -862,8 +876,9 @@ pub(crate) struct ImpostorBooks {
     serials: Serials,
     missed: bool,
     read: Vec<(ImpostorIdentity, Result<Vec<u8>, Error>)>,
-    assembling: Vec<(JobId, ImpostorIdentity)>,
+    assembling: Vec<(Interest<RecordKey>, ImpostorIdentity)>,
     made: Vec<(ImpostorIdentity, Made)>,
+    settling: Settling,
 }
 
 impl Default for ImpostorBooks {
@@ -878,6 +893,7 @@ impl Default for ImpostorBooks {
             read: Vec::new(),
             assembling: Vec::new(),
             made: Vec::new(),
+            settling: Settling::default(),
         }
     }
 }
@@ -887,12 +903,7 @@ impl ImpostorBooks {
         &self.log
     }
 
-    fn configure(&mut self, exchange: Option<&mut JobExchange>) {
-        if let Some(exchange) = exchange {
-            for (job, _) in self.assembling.drain(..) {
-                exchange.cancel(job);
-            }
-        }
+    fn configure(&mut self) {
         self.log.replace();
         self.installed = true;
         self.book = None;
@@ -919,7 +930,7 @@ impl ImpostorBooks {
         self.read.push((identity, input));
     }
 
-    fn assemble(&mut self, exchange: &mut JobExchange) {
+    fn assemble(&mut self, jobs: &mut Jobs<'_, '_>, records: &Records) {
         let empty = BTreeSet::new();
         let baking = self.book.as_ref().map_or(&empty, |book| &book.baking);
         for (identity, read) in self.read.drain(..) {
@@ -928,26 +939,21 @@ impl ImpostorBooks {
             }
             match read {
                 Ok(input) => {
-                    let kind = JobRef::from(&ASSEMBLY);
-                    let job = exchange.submit(kind, input, job_priority(IDLE_JOBS, 0));
+                    let job = jobs.run(&ASSEMBLY, input, job_priority(IDLE_JOBS, 0));
                     self.assembling.push((job, identity));
                 }
                 Err(error) => self.made.push((identity, Err(error))),
             }
         }
         let made = &mut self.made;
-        self.assembling.retain(|&(job, identity)| {
-            if !baking.contains(&identity) {
-                exchange.cancel(job);
+        self.assembling.retain(|(job, identity)| {
+            if !baking.contains(identity) {
                 return false;
             }
-            let Some(output) = exchange.take(job) else {
+            let Some(output) = records.get(job) else {
                 return true;
             };
-            let output = output.map_err(|message| {
-                Error::new(ErrorCode::InvalidRecord, "$.jobs.impostors::assembly").got(message)
-            });
-            made.push((identity, output));
+            made.push((*identity, output));
             false
         });
     }
@@ -964,22 +970,20 @@ impl ImpostorBooks {
 }
 
 pub(crate) fn assemble(
-    settings: Res<ImpostorSettings>,
+    (settings, records): (Res<ImpostorSettings>, Res<Records>),
     mut books: ResMut<ImpostorBooks>,
     mut reads: ResMut<BakeReads>,
-    mut exchange: Option<ResMut<JobExchange>>,
+    mut jobs: Jobs,
 ) {
     if std::mem::take(&mut reads.installed) {
-        books.configure(exchange.as_deref_mut());
+        books.configure();
     }
     books.missed |= std::mem::take(&mut reads.missed);
     books.log.resize(settings.work as usize);
     for (serial, bytes) in std::mem::take(&mut reads.read) {
         books.arrived(serial, bytes);
     }
-    if let Some(exchange) = exchange.as_deref_mut() {
-        books.assemble(exchange);
-    }
+    books.assemble(&mut jobs, &records);
 }
 
 pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {
@@ -1026,6 +1030,9 @@ pub(crate) fn settle(
     mut held: Query<&mut ImpostorRecords>,
 ) {
     books.everything.settle(time.real_elapsed);
+    if let Some(ticket) = books.everything.ticket(&()) {
+        books.everything.ready(&(), ticket, ());
+    }
     let cooking = books.everything.interests(&()) > 0;
     let frame = Frame {
         enabled: settings.enabled,
@@ -1049,10 +1056,10 @@ pub(crate) fn settle(
             current.set_if_neq(records);
         }
     }
-    let census = books.census();
+    let unsettled = books.book.as_ref().map_or(0, Book::unsettled);
+    books.settling.left(unsettled);
     stats.set_if_neq(ImpostorStats {
-        pending: u32::try_from(books.left()).unwrap_or(u32::MAX),
-        failed: census.failed,
+        failed: books.census().failed,
     });
 }
 

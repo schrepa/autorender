@@ -1,9 +1,9 @@
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
+use engine_smoke::settled_by;
 use serde_json::{Value, json};
 
 use super::requests::seen;
 use super::scene_kit::{ask, component, control, load, query, reload, render};
-use super::stats::terrain;
 
 fn fixture() -> Value {
     let cube = json!({"shape": {"kind": "cuboid", "half_extents": [0.5, 0.5, 0.5]}});
@@ -42,14 +42,8 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let source = fixture();
     load(session, &source)?;
     ask(session, "control", json!({"name": "pause"}))?;
-    let mut rendering = look(session, 0.0, 0.0)?;
-    for _ in 0..400 {
-        let drawn = terrain(&rendering);
-        if drawn["loading_tiles"] == 0 && drawn["fallback_tiles"] == 0 {
-            break;
-        }
-        rendering = render(session)?;
-    }
+    look(session, 0.0, 0.0)?;
+    let rendering = settled_by(session, render)?;
     let cells = query(session, "world_cells", json!({}))?;
     let grids: Vec<Value> = cells["grids"]
         .as_array()
@@ -67,10 +61,9 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         json!([
             streamed["cells"],
             streamed["loaded"],
-            streamed["pending"],
             streamed["entities"]
         ]),
-        json!([5, 4, 0, 7]),
+        json!([5, 4, 7]),
         "binning_stats"
     );
     let wanted = json!("unloaded");

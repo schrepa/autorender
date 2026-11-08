@@ -5,7 +5,9 @@ mod proofs;
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 
-use engine_core::{BrickList, Engine, ErrorCode, JobExchange, MAX_DEV_TICKS, MISSING_RECORD};
+use engine_core::{
+    BrickList, Engine, ErrorCode, JobExchange, JobMessage, MAX_DEV_TICKS, MISSING_RECORD,
+};
 pub use engine_core::{Runs, Smoke, SmokeFailure, SmokeSession};
 use engine_registry::Registry;
 use engine_scene::{SceneFiles, SceneInstance, SceneKinds};
@@ -568,19 +570,21 @@ impl<G: Game> Headless<G> {
         let Some(mut jobs) = world.get_resource_mut::<JobExchange>() else {
             return;
         };
-        let (mut requests, mut fetches) = (Vec::new(), Vec::new());
-        let (mut shares, mut keeps, mut cancels) = (Vec::new(), Vec::new(), Vec::new());
-        jobs.take_shares(&mut shares);
-        jobs.take_keeps(&mut keeps);
-        jobs.take_cancels(&mut cancels);
-        jobs.take_requests(&mut requests);
-        jobs.take_fetches(&mut fetches);
-        for request in requests {
-            let output = jobs.run_here(&request.kind, &request.input);
-            jobs.complete(request.id, output.map(std::sync::Arc::from));
+        let mut landed = Vec::new();
+        for message in jobs.take() {
+            match message {
+                JobMessage::Run(request) => {
+                    let output = jobs.run_here(&request.kind, &request.input);
+                    landed.push((request.id, output.map(std::sync::Arc::from)));
+                }
+                JobMessage::Fetch(fetch) => {
+                    landed.push((fetch.id, Err(MISSING_RECORD.to_owned())));
+                }
+                JobMessage::Cancel(_) | JobMessage::Share(_) | JobMessage::Keep(..) => {}
+            }
         }
-        for fetch in fetches {
-            jobs.complete(fetch.id, Err(MISSING_RECORD.to_owned()));
+        for (id, output) in landed {
+            self.engine.land_job(id, output);
         }
     }
 }

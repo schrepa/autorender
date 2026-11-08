@@ -68,10 +68,6 @@ fn without_device(session: &mut dyn SmokeSession) -> Checked<()> {
     let stats = inspect(session, "audio_stats")?;
     smoke_eq!(stats["device"], json!(false), "missing_device_reported");
     smoke_eq!(stats["voices"], json!(0), "missing_device_plays_nothing");
-    let counted = number(&stats["sounds_loaded"])
-        + number(&stats["decoding"])
-        + number(&stats["decode_failures"]);
-    smoke_eq!(counted, 2.0, "every_file_counted");
     smoke_eq!(
         stats["latest_failure"].is_string(),
         true,

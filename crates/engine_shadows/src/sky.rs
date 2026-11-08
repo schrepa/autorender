@@ -9,9 +9,7 @@ pub(crate) const RESOLUTION: u32 = 512;
 const SPAN: f32 = 4.0 / 3.0;
 const STRAY: f32 = 0.1;
 const ANEW: f32 = 0.5;
-const FADE_FRAMES: u32 = 12;
-const SETTLE_FRAMES: u32 = 10;
-const STALE_FRAMES: u32 = 16;
+const FADE_SECONDS: f64 = 0.2;
 const DIRECTIONS: usize = SKY_DIRECTIONS as usize;
 const LAYERS: usize = SKY_LAYERS as usize;
 
@@ -27,8 +25,14 @@ pub(crate) struct SkyDraw {
 #[derive(Clone, Copy, Debug, Default)]
 struct Layer {
     drawn: Option<(Vec3, Mat4)>,
-    age: u32,
+    since: f64,
     stale: bool,
+}
+
+impl Layer {
+    fn faded(&self, now: f64) -> f32 {
+        (((now - self.since) / FADE_SECONDS).clamp(0.0, 1.0)) as f32
+    }
 }
 
 fn direction(count: u32, index: usize) -> Vec3 {
@@ -46,6 +50,10 @@ fn direction(count: u32, index: usize) -> Vec3 {
     Vec3::new(cos_e * cos_a, sin_e, cos_e * sin_a)
 }
 
+fn in_use(count: usize) -> impl Iterator<Item = usize> {
+    (0..count).chain(DIRECTIONS..DIRECTIONS + count)
+}
+
 fn axes(toward_sky: Vec3) -> (Vec3, Vec3) {
     let reference = if toward_sky.y.abs() > 0.99 {
         Vec3::X
@@ -59,12 +67,11 @@ fn axes(toward_sky: Vec3) -> (Vec3, Vec3) {
 pub(crate) struct SkyMaps {
     layers: [Layer; LAYERS],
     key: Option<(u32, u32, u32)>,
-    frames: u32,
-    since_stale: u32,
     pub(crate) uniform: Box<SkyViews>,
     pub(crate) live: bool,
     ready: u32,
     drawn: u32,
+    left: u32,
 }
 
 impl Default for SkyMaps {
@@ -72,12 +79,11 @@ impl Default for SkyMaps {
         Self {
             layers: [Layer::default(); LAYERS],
             key: None,
-            frames: 0,
-            since_stale: 0,
             uniform: Box::new(SkyViews::zeroed()),
             live: false,
             ready: 0,
             drawn: 0,
+            left: 0,
         }
     }
 }
@@ -85,6 +91,14 @@ impl Default for SkyMaps {
 impl SkyMaps {
     pub(crate) fn counts(&self) -> (u32, u32) {
         (self.ready, self.drawn)
+    }
+
+    pub(crate) fn left(&self) -> u32 {
+        self.left
+    }
+
+    pub(crate) fn idle(&mut self) {
+        self.left = 0;
     }
 
     pub(crate) fn forget(&mut self) {
@@ -95,16 +109,15 @@ impl SkyMaps {
         self.live = false;
         self.layers = [Layer::default(); LAYERS];
         self.key = None;
-        self.frames = 0;
-        (self.ready, self.drawn) = (0, 0);
+        (self.ready, self.drawn, self.left) = (0, 0, 0);
         *self.uniform = SkyViews::zeroed();
     }
 
     pub(crate) fn prepare(
         &mut self,
         settings: &SkyOcclusion,
-        eye: Vec3,
-        changed: bool,
+        (eye, now): (Vec3, f64),
+        (changed, quiet): (bool, bool),
     ) -> Option<SkyDraw> {
         if !settings.enabled {
             self.release();
@@ -122,32 +135,32 @@ impl SkyMaps {
             self.key = Some(key);
             self.layers = [Layer::default(); LAYERS];
         }
-        self.frames = self.frames.saturating_add(1);
         for layer in &mut self.layers {
             if layer.drawn.is_some() {
-                layer.age = layer.age.saturating_add(1);
                 layer.stale |= changed;
             }
         }
         let reaches = [near * SPAN, far * SPAN];
-        self.since_stale = self.since_stale.saturating_add(1);
-        let draw = if self.frames > SETTLE_FRAMES {
-            self.choose(count as usize, eye, reaches)
-                .map(|layer| self.redraw(layer, count, eye, reaches))
-        } else {
-            None
-        };
+        let draw = self
+            .choose(count as usize, eye, reaches, quiet)
+            .map(|layer| self.redraw(layer, count, (eye, now), reaches));
         self.drawn = u32::from(draw.is_some());
         self.ready = self
             .layers
             .iter()
             .filter(|layer| layer.drawn.is_some())
             .count() as u32;
-        self.write(count, reaches, settings);
+        self.left = in_use(count as usize)
+            .filter(|&layer| {
+                let layer = &self.layers[layer];
+                layer.drawn.is_none() || layer.stale || layer.faded(now) < 1.0
+            })
+            .count() as u32;
+        self.write(count, reaches, settings, now);
         draw
     }
 
-    fn write(&mut self, count: u32, reaches: [f32; 2], settings: &SkyOcclusion) {
+    fn write(&mut self, count: u32, reaches: [f32; 2], settings: &SkyOcclusion, now: f64) {
         let mut uniform = SkyViews::zeroed();
         for (index, layer) in self.layers.iter().enumerate() {
             let within = index % DIRECTIONS;
@@ -156,7 +169,7 @@ impl SkyMaps {
             }
             let weight = layer.drawn.map_or(0.0, |(_, clip)| {
                 uniform.clips[index] = clip.to_cols_array_2d();
-                (layer.age + 1).min(FADE_FRAMES) as f32 / FADE_FRAMES as f32
+                layer.faded(now)
             });
             uniform.directions[index] = direction(count, within).extend(weight).to_array();
         }
@@ -166,12 +179,14 @@ impl SkyMaps {
         *self.uniform = uniform;
     }
 
-    fn choose(&mut self, count: usize, eye: Vec3, reaches: [f32; 2]) -> Option<usize> {
-        let in_use = || (0..count).chain(DIRECTIONS..DIRECTIONS + count);
+    fn choose(&self, count: usize, eye: Vec3, reaches: [f32; 2], quiet: bool) -> Option<usize> {
         let mut best: Option<(usize, f32)> = None;
-        for layer in in_use() {
+        for layer in in_use(count) {
             let Some((center, _)) = self.layers[layer].drawn else {
-                return Some(layer);
+                if quiet {
+                    return Some(layer);
+                }
+                continue;
             };
             let stray = center.distance(eye) / (STRAY * reaches[layer / DIRECTIONS]);
             if stray >= 1.0 && best.is_none_or(|(_, most)| stray > most) {
@@ -181,15 +196,19 @@ impl SkyMaps {
         if let Some((layer, _)) = best {
             return Some(layer);
         }
-        if self.since_stale < STALE_FRAMES {
+        if !quiet {
             return None;
         }
-        let stale = in_use().find(|&layer| self.layers[layer].stale)?;
-        self.since_stale = 0;
-        Some(stale)
+        in_use(count).find(|&layer| self.layers[layer].stale)
     }
 
-    fn redraw(&mut self, layer: usize, count: u32, eye: Vec3, reaches: [f32; 2]) -> SkyDraw {
+    fn redraw(
+        &mut self,
+        layer: usize,
+        count: u32,
+        (eye, now): (Vec3, f64),
+        reaches: [f32; 2],
+    ) -> SkyDraw {
         let toward_sky = direction(count, layer % DIRECTIONS);
         let (right, up) = axes(toward_sky);
         let away = -toward_sky;
@@ -211,7 +230,7 @@ impl SkyMaps {
             .drawn
             .is_none_or(|(center, _)| center.distance(eye) > ANEW * reach);
         if anew {
-            state.age = 0;
+            state.since = now;
         }
         state.drawn = Some((eye, clip));
         state.stale = false;

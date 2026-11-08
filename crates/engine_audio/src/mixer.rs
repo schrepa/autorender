@@ -602,7 +602,6 @@ impl Mixer {
         let census = self.sounds.census();
         stats.device = self.backend.opened();
         stats.sounds_loaded = census.ready;
-        stats.decoding = census.asked;
         stats.voices = self.live() as u32;
         stats.voices_cut = self.cut;
         stats.decode_failures = self.failures;

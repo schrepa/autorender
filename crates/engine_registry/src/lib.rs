@@ -23,7 +23,6 @@ mod state;
 pub use access::{AccessRule, MoverRule};
 pub use attribution::{
     BrickCost, BrickCosts, BrickRow, BrickTable, CORE_ROW, GPU_IDLE_ROW, UNATTRIBUTED_ROW,
-    WARMUP_FRAMES,
 };
 pub use entries::{
     Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry, access_of,

@@ -65,7 +65,6 @@ stats! {
         pub tiles_resident: u32,
         pub tiles_drawn: u32,
         pub tiles_reclaimed: u32,
-        #[pending] pub tiles_waiting: u32,
         pub sky_maps: u32,
         pub sky_drawn: u32,
         pub tile_cut: Cut,

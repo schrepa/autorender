@@ -35,7 +35,6 @@ settings! {
 stats! {
     #[section("glimmer_stats")]
     pub struct GlimmerStats {
-        #[pending] pub asked: u32,
         pub ready: u32,
         pub lit: u32,
         pub missed: u32,
@@ -194,9 +193,7 @@ fn answer(
         Events::Listed(listed) => stats.lit += listed.len() as u32,
         Events::Missed(missed) => stats.missed += missed as u32,
     }
-    let census = sparks.census();
-    stats.asked = census.asked;
-    stats.ready = census.ready;
+    stats.ready = sparks.census().ready;
 }
 
 struct GlimmerGpu {

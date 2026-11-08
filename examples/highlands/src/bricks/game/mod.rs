@@ -20,7 +20,6 @@ use engine_core::{Brick, Bricks, JobKind, Schedule, Source, stats};
 stats! {
     #[section("highlands_stats")]
     pub struct HighlandsStats {
-        #[pending] pub content: u32,
         pub failed_jobs: u64,
         pub latest_job_failure: Option<String>,
     }

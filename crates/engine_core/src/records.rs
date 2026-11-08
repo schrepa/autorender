@@ -7,9 +7,11 @@ pub use engine_textures::{
     Family as TextureFamily, Source as TextureSource, Usage as TextureUsage,
 };
 
+use engine_registry::{JobBatch, JobOrder, JobQueue};
+
 use crate::jobs::record_key;
 use crate::{
-    Census, Interest, JobExchange, JobId, JobRef, RecordKey, Requests, TEXTURE_COOK_NAME,
+    Interest, JobExchange, JobRef, RecordKey, Records, Requests, TEXTURE_COOK_NAME,
     TEXTURE_COOK_SOURCE, URGENT_JOBS, job_priority,
 };
 
@@ -75,10 +77,9 @@ enum Make {
     Texture { batch: u64, index: usize },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
     Asking,
-    Fetching(JobId),
+    Fetching(Interest<RecordKey>),
     Making,
 }
 
@@ -160,25 +161,12 @@ impl RecordExchange {
             handles: handles.clone(),
             asked: false,
         });
+        self.ask_textures();
         Ok(handles)
     }
 
     pub fn texture_sets(&self) -> impl Iterator<Item = &TextureSet> + '_ {
         self.sets.iter().map(|asked| &*asked.set)
-    }
-
-    pub fn census(&self) -> Census {
-        let mut census = self.records.census();
-        if self.sampling.is_some() {
-            census.loading.total += self.sets.iter().filter(|asked| !asked.asked).count() as u64;
-        }
-        census
-    }
-
-    pub fn failures(&self) -> impl Iterator<Item = (&RecordKey, &Error)> + '_ {
-        self.failed
-            .iter()
-            .filter_map(|(held, _)| Some((held.key(), self.failure(held)?)))
     }
 
     pub fn failed(&self, handle: TextureHandle) -> Option<&Error> {
@@ -294,30 +282,25 @@ enum Step {
 fn step(
     records: &mut RecordExchange,
     mut request: Asking,
-    (jobs, place): (&mut JobExchange, u32),
+    (stored, orders, place): (&Records, &mut Vec<JobOrder>, u32),
 ) -> Step {
     loop {
-        match request.stage {
+        let found = match &request.stage {
             Stage::Asking => {
                 let kind = match request.make {
                     Make::Here(_) => None,
                     Make::Texture { .. } => Some(texture_cook()),
                 };
-                let id = jobs.fetch(kind, request.key(), job_priority(URGENT_JOBS, place));
-                request.stage = Stage::Fetching(id);
+                let key = request.key();
+                orders.push(JobOrder::Look {
+                    key: key.hash(),
+                    kind,
+                    priority: job_priority(URGENT_JOBS, place),
+                });
+                request.stage = Stage::Fetching(stored.requests.ask_later(key));
+                return Step::Waiting(request);
             }
-            Stage::Fetching(id) => match jobs.take(id) {
-                None => return Step::Waiting(request),
-                Some(Ok(bytes)) => {
-                    request.stage = Stage::Making;
-                    return Step::Arrived {
-                        request,
-                        bytes,
-                        fetched: true,
-                    };
-                }
-                Some(Err(_)) => request.stage = Stage::Making,
-            },
+            Stage::Fetching(fetch) => stored.get(fetch),
             Stage::Making => {
                 let made = match &mut request.make {
                     Make::Here(make) => match make.take() {
@@ -335,6 +318,18 @@ fn step(
                     Err(error) => Step::Failed(request, error),
                 };
             }
+        };
+        match found {
+            None => return Step::Waiting(request),
+            Some(Ok(bytes)) => {
+                request.stage = Stage::Making;
+                return Step::Arrived {
+                    request,
+                    bytes,
+                    fetched: true,
+                };
+            }
+            Some(Err(_)) => request.stage = Stage::Making,
         }
     }
 }
@@ -355,11 +350,16 @@ pub(crate) fn exchange(world: &mut World) {
     let mut waiting = Vec::with_capacity(asking.len());
     let mut arrived = Vec::new();
     let mut ends = Vec::new();
-    world.resource_scope(|world, mut jobs: Mut<JobExchange>| {
-        let verifying = jobs.verifying();
-        let mut records = world.resource_mut::<RecordExchange>();
+    let mut orders = Vec::new();
+    let mut kept = Vec::new();
+    let verifying = world
+        .get_resource::<JobExchange>()
+        .is_some_and(JobExchange::verifying);
+    world.resource_scope(|world, mut records: Mut<RecordExchange>| {
+        let stored = world.resource::<Records>();
         for (place, request) in asking.into_iter().enumerate() {
-            match step(&mut records, request, (&mut *jobs, place as u32)) {
+            let place = u32::try_from(place).unwrap_or(u32::MAX);
+            match step(&mut records, request, (stored, &mut orders, place)) {
                 Step::Waiting(request) => waiting.push(request),
                 Step::Arrived {
                     mut request,
@@ -369,7 +369,7 @@ pub(crate) fn exchange(world: &mut World) {
                     let key = request.key();
                     let here = matches!(request.make, Make::Here(_));
                     if here && !fetched {
-                        jobs.keep(key, None, bytes.to_vec());
+                        kept.push((key, bytes.to_vec()));
                     }
                     let deliver = request.deliver.take();
                     let held = if here && fetched && verifying {
@@ -387,6 +387,18 @@ pub(crate) fn exchange(world: &mut World) {
             }
         }
     });
+    if !orders.is_empty() {
+        let batch = JobBatch { owner: 0, run: 0 };
+        world
+            .get_resource_or_init::<JobQueue>()
+            .orders
+            .extend(orders.into_iter().map(|order| (batch, order)));
+    }
+    if let Some(mut jobs) = world.get_resource_mut::<JobExchange>() {
+        for (key, bytes) in kept {
+            jobs.keep(key, None, bytes);
+        }
+    }
     for (key, held, deliver, bytes) in arrived {
         let delivered = match deliver {
             Some(deliver) => deliver(world, &bytes),

@@ -3,7 +3,6 @@ use super::*;
 stats! {
     #[section("terrain_stats")]
     pub struct TerrainStats {
-        #[pending] pub pending: u32,
         pub terrains: u32,
         pub resident_tiles: u32,
         pub loading_tiles: u32,

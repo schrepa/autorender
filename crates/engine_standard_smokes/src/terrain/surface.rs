@@ -1,11 +1,11 @@
 use engine_smoke::{
-    Checked, above, camera, compiling, environment, inspect, not, number, present, refuse, render,
-    rendered_when, renders_until, settled_by, shot, with,
+    Checked, above, camera, environment, inspect, not, number, present, refuse, render,
+    settled_by, settled_when, shot, with,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-use super::{WAIT_FRAMES, open, overview, settle, view};
+use super::{open, overview, settle, view};
 use crate::requests::seen;
 use crate::stats::terrain;
 
@@ -52,15 +52,9 @@ fn cover(session: &mut dyn SmokeSession) -> Checked<()> {
             "far": 5000.0,
         }),
     )?;
-    let (grew, grown) = renders_until(session, WAIT_FRAMES, |rendering| {
+    let grown = settled_when(session, render, |rendering| {
         number(&rendering["ground_cover_stats"]["blade_cut"]["kept"]) > 0.0
     })?;
-    let wanted = json!({"blade_cut": {"kept": above(0)}});
-    smoke_eq!(
-        seen(grew, grown["ground_cover_stats"].clone(), &wanted),
-        wanted,
-        "grass_grows"
-    );
     smoke_eq!(
         &grown["ground_cover_stats"]["blade_cut"]["cut"],
         &json!(0),
@@ -71,15 +65,9 @@ fn cover(session: &mut dyn SmokeSession) -> Checked<()> {
         session,
         json!({"ground_cover": with(&cover, json!({"enabled": false}))}),
     )?;
-    let mut bare = Value::Null;
-    for _ in 0..8 {
-        bare = render(session)?;
-    }
-    smoke_eq!(
-        &bare["ground_cover_stats"]["blade_cut"]["kept"],
-        &json!(0),
-        "no_blades_once_cover_stops"
-    );
+    settled_when(session, render, |rendering| {
+        rendering["ground_cover_stats"]["blade_cut"]["kept"] == 0
+    })?;
     environment(session, json!({ "ground_cover": cover }))?;
     Ok(())
 }
@@ -179,16 +167,12 @@ fn clipmap(session: &mut dyn SmokeSession) -> Checked<()> {
 
 fn shadowed(session: &mut dyn SmokeSession, shadows: Value) -> Checked<(Value, Value)> {
     environment(session, json!({ "shadows": shadows }))?;
-    let mut frame = 0;
-    let rendering = rendered_when(
+    let rendering = settled_when(
         session,
         |session| present(session, 1.0),
         |rendering| {
-            frame += 1;
-            frame > 9
-                && number(&rendering["shadow_stats"]["tiles_marked"]) > 0.0
+            number(&rendering["shadow_stats"]["tiles_marked"]) > 0.0
                 && rendering["shadow_stats"]["tile_cut"]["cut"] == 0
-                && !compiling(rendering)
         },
     )?;
     let digest = shot(session, json!({"alpha": 1.0}))?;

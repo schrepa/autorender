@@ -17,6 +17,5 @@ stats! {
     #[section("temporal_antialiasing_stats")]
     pub struct TemporalAntialiasingStats {
         pub active: bool,
-        #[pending] pub settling: u32,
     }
 }

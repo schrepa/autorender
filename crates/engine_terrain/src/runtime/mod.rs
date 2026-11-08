@@ -66,7 +66,8 @@ use crate::{
 use engine_core::{
     AssetLibrary, Camera, Cut, Error, ErrorCode, Expected, ExtraRules, IDLE_JOBS, Interest,
     InvalidSetting, JobFailures, Jobs, MaterialHandle, MeshHandle, Records, Rule, Setting,
-    URGENT_JOBS, VIEW_JOBS, content_hash, fields, job_output, job_priority, settings, stats,
+    Settling, URGENT_JOBS, VIEW_JOBS, content_hash, fields, job_output, job_priority, settings,
+    stats,
 };
 use engine_heightfield::tile::{
     Biome, BiomeLayer, BiomeRules, Biomes, Expr, NoiseMask, PATCH_QUADS, PATCHES_PER_TILE, Solid,

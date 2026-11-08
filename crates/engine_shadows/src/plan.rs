@@ -3,9 +3,9 @@ use std::any::TypeId;
 use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{
-    Camera, Cursor, Cut, DeviceLimits, FrameBudget, GpuBits, Mobility, Mover, Moves, Node,
-    OwnedView, OwnedViews, Pace, PartDraws, PassName, Readable, Readback, Since, Views,
-    Spawner, Transform, gpu_bits, mover_of,
+    Camera, Cursor, Cut, DeviceLimits, FrameBudget, FrameTime, GpuBits, Mobility, Mover, Moves,
+    Node, OwnedView, OwnedViews, Pace, PartDraws, PassName, Readable, Readback, Readiness,
+    Settling, Since, Views, Spawner, Transform, gpu_bits, mover_of,
 };
 use engine_places_rendering::shadows::{
     CasterMap, GROUND_TEXELS, Refresh, Region as MapView, ShadowChange, ShadowChanges,
@@ -146,6 +146,7 @@ pub(crate) struct ShadowPlan {
     pub(crate) table: Vec<u32>,
     pub(crate) revisions: Vec<u64>,
     pub(crate) mask_words: u32,
+    settling: Settling,
 }
 
 impl ShadowPlan {
@@ -223,6 +224,7 @@ impl ShadowPlan {
 
     fn idle(&mut self) {
         self.clipmap.idle();
+        self.sky.idle();
         self.sky_draw = None;
         self.drawn.clear();
         self.views.clear();
@@ -378,7 +380,12 @@ fn publish_views(
 pub(crate) fn plan_shadows(
     (settings, sky): (Res<ShadowSettings>, Res<SkyOcclusion>),
     (sun, views, limits): (Res<Sun>, Res<Views>, Res<DeviceLimits>),
-    (changes, shown): (Res<ShadowChanges>, Res<DebugShown>),
+    (changes, shown, time, readiness): (
+        Res<ShadowChanges>,
+        Res<DebugShown>,
+        Res<FrameTime>,
+        Res<Readiness>,
+    ),
     (mut feedback, mut drawn, mut budget): (
         ResMut<ShadowFeedback>,
         ResMut<ShadowDrawn>,
@@ -435,9 +442,12 @@ pub(crate) fn plan_shadows(
         &mut plan.plan,
     );
     plan.drawn = plan.clipmap.take_drawing();
-    plan.sky_draw = plan
-        .sky
-        .prepare(&sky, eye, still_changed || casters_changed);
+    let quiet = readiness.loading.total == 0 && readiness.compiling == 0;
+    plan.sky_draw = plan.sky.prepare(
+        &sky,
+        (eye, time.real_elapsed),
+        (still_changed || casters_changed, quiet),
+    );
     let regions = FrameRegions {
         basis,
         clipmap: &plan.clipmap,
@@ -490,6 +500,8 @@ pub(crate) fn shadow_stats(
     mut stats: ResMut<ShadowStats>,
 ) {
     let tiles = plan.clipmap.stats();
+    let left = tiles.waiting.saturating_add(plan.sky.left());
+    plan.settling.left(left);
     let (sky_maps, sky_drawn) = plan.sky.counts();
     let (levels, moving) = plan
         .key
@@ -501,7 +513,6 @@ pub(crate) fn shadow_stats(
         tiles_resident: tiles.resident,
         tiles_drawn: tiles.drawn,
         tiles_reclaimed: tiles.reclaimed,
-        tiles_waiting: tiles.waiting,
         sky_maps,
         sky_drawn,
         tile_cut: tiles.tile_cut,
