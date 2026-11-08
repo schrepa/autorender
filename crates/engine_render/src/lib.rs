@@ -1231,7 +1231,7 @@ fn streams<P, S>(streams: &[(DrawInput<P, S>, u64)]) -> encode::Streams {
 
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
     pub fn draw(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>) {
-        self.issue(pipeline, (shape, &[]), None);
+        self.issue(pipeline, shape, None);
     }
 
     pub fn draw_timed<'l>(
@@ -1243,13 +1243,13 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         let timer = self.raw.timer();
         let mut label = Some(label);
         let mut named = || label.take().map_or_else(String::new, |label| label());
-        self.issue(pipeline, (shape, &[]), Some((timer, &mut named)));
+        self.issue(pipeline, shape, Some((timer, &mut named)));
     }
 
     fn issue(
         &mut self,
         pipeline: &Pipeline<P, S>,
-        (shape, offsets): (Shape<'_, P, S>, &[u32]),
+        shape: Shape<'_, P, S>,
         timed: encode::TimedDraw<'_>,
     ) {
         let shape = match shape {
@@ -1319,7 +1319,7 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         let part = self.raw.part();
         let run = self.raw.run();
         let point = run.point;
-        run.draw(part, point, pipeline.0, (shape, offsets), timed);
+        run.draw(part, point, pipeline.0, shape, timed);
     }
 }
 

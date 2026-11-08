@@ -1,7 +1,9 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use bevy_ecs::change_detection::Tick;
 use bevy_ecs::prelude::*;
+use bevy_ecs::system::SystemChangeTick;
 use engine_core::profile::{Aggregate, span};
 use engine_core::{
     Cursor, Error, Events, Feed, FixedTime, FrameTime, GlobalTransforms, Section, Since, Transform,
@@ -27,7 +29,7 @@ const SKIN: f32 = 0.002;
 const STOPPED: f32 = 1.0e-10;
 
 type ColliderData = (Entity, &'static Collider, Has<Transform>);
-type Edited<'w, 's> = Query<'w, 's, (), Changed<Collider>>;
+type Edits = Ref<'static, Collider>;
 type Sources = &'static SolidSource;
 
 fn read(
@@ -93,6 +95,7 @@ pub struct CollisionWorld {
     bvh: Arc<Bvh>,
     moved: Cursor,
     words: u64,
+    applied: Tick,
     next_pairs: Vec<SensorPair>,
     report: CollisionReport,
     synced: Synced,
@@ -142,7 +145,15 @@ impl CollisionWorld {
         self.synced.ready()
     }
 
-    fn sync_ground(&mut self, sources: &Query<'_, '_, Sources>) {
+    fn sync_ground(&mut self, sources: &Query<'_, '_, Sources>) -> bool {
+        if sources.iter().len() == self.sources.len()
+            && sources
+                .iter()
+                .zip(&self.sources)
+                .all(|(source, held)| Arc::ptr_eq(&source.field, held))
+        {
+            return false;
+        }
         self.sources.clear();
         self.sources
             .extend(sources.iter().map(|source| Arc::clone(&source.field)));
@@ -151,25 +162,30 @@ impl CollisionWorld {
             .iter()
             .map(|source| source.solids.solids().len())
             .sum();
+        true
     }
 
     fn refresh(
         &mut self,
         config: CollisionConfig,
         (frame, tick): (u64, u64),
-        (colliders, edited): (&Query<'_, '_, ColliderData>, &Edited<'_, '_>),
+        (colliders, edits, now): (&Query<'_, '_, ColliderData>, &Query<'_, '_, Edits>, Tick),
         globals: &GlobalTransforms,
-    ) {
+    ) -> bool {
         let _profile = span("collision", "sync");
         self.report.frame = frame;
         self.report.tick = tick;
         let since = globals.changes_since(&mut self.moved);
         let words = std::mem::replace(&mut self.words, globals.words_revision());
+        let applied = std::mem::replace(&mut self.applied, now);
+        let moved = matches!(since, Since::Listed(moved) if !moved.is_empty());
         let settled = self.synced != Synced::Never
             && config == self.config
             && words == self.words
             && colliders.iter().len() == self.report.colliders
-            && edited.is_empty()
+            && !edits
+                .iter()
+                .any(|collider| collider.last_changed().is_newer_than(applied, now))
             && match since {
                 Since::Same => true,
                 Since::Listed(moved) => self.sync_moved(moved, colliders, globals),
@@ -178,6 +194,7 @@ impl CollisionWorld {
         if !settled {
             self.sync_all(config, colliders, globals);
         }
+        !settled || moved
     }
 
     fn sync_all(
@@ -809,7 +826,7 @@ pub(crate) fn sync_ground(sources: Query<Sources>, mut collision: ResMut<Collisi
 }
 
 pub(crate) fn sync(
-    (colliders, edited): (Query<ColliderData>, Edited),
+    (colliders, edits, ticks): (Query<ColliderData>, Query<Edits>, SystemChangeTick),
     globals: Res<GlobalTransforms>,
     config: Res<CollisionConfig>,
     (frame, tick): (Res<FrameTime>, Res<FixedTime>),
@@ -820,7 +837,7 @@ pub(crate) fn sync(
     world.refresh(
         *config,
         (frame.frame, tick.tick),
-        (&colliders, &edited),
+        (&colliders, &edits, ticks.this_run()),
         &globals,
     );
     stats.set_if_neq(world.stats());
@@ -831,7 +848,8 @@ pub(crate) fn sync(
 pub(crate) struct Fresh<'w, 's> {
     sources: Query<'w, 's, Sources>,
     colliders: Query<'w, 's, ColliderData>,
-    edited: Edited<'w, 's>,
+    edits: Query<'w, 's, Edits>,
+    ticks: SystemChangeTick,
     globals: Res<'w, GlobalTransforms>,
     config: Res<'w, CollisionConfig>,
     frame: Res<'w, FrameTime>,
@@ -844,15 +862,17 @@ pub(crate) struct Fresh<'w, 's> {
 impl Fresh<'_, '_> {
     pub(crate) fn world(&mut self) -> &CollisionWorld {
         let world = installed(&mut self.collision);
-        world.sync_ground(&self.sources);
-        world.refresh(
+        let grounded = world.sync_ground(&self.sources);
+        let refreshed = world.refresh(
             *self.config,
             (self.frame.frame, self.tick.tick),
-            (&self.colliders, &self.edited),
+            (&self.colliders, &self.edits, self.ticks.this_run()),
             &self.globals,
         );
         self.stats.set_if_neq(world.stats());
-        self.queries.0 = Arc::new(world.sweep());
+        if grounded || refreshed {
+            self.queries.0 = Arc::new(world.sweep());
+        }
         world
     }
 }

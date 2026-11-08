@@ -1307,7 +1307,7 @@
       "steepest": 0.016481399536132812,
       "tunnels": 1
     },
-    "bakes": "8cfc45f3747bf972",
+    "bakes": "be1e9bbcd447e511",
     "bounce": {
       "blocks": 1024,
       "detailed blocks": 474,
@@ -1331,7 +1331,7 @@
       ],
       "texels": 65536
     },
-    "pack": "97ab0aca8f92d92e",
+    "pack": "32f2acd6ccc12d45",
     "pack records": 46,
     "portals 0/0/0": "fb26e1b9f5bd9fd8",
     "portals 0/0/1": "29e88506dde27d87",
@@ -1414,7 +1414,7 @@
   "textures": {
     "textures cutout": {
       "astc": {
-        "hash": "9feddc7010eb343b",
+        "hash": "d95746090cf0a7df",
         "psnr by level": [
           99.0,
           60.2,
@@ -1426,7 +1426,7 @@
         ]
       },
       "bc7": {
-        "hash": "2c6510fb3cde1335",
+        "hash": "5f6b821bb1549fe6",
         "psnr by level": [
           57.2,
           57.2,
@@ -1440,7 +1440,7 @@
     },
     "textures data with height": {
       "astc": {
-        "hash": "fcbcfb2360e04d5a",
+        "hash": "321493f6cae299b5",
         "psnr by level": [
           41.4,
           37.1,
@@ -1452,7 +1452,7 @@
         ]
       },
       "bc7": {
-        "hash": "5022f241bce36b81",
+        "hash": "1a4d3214fa5d0cc4",
         "psnr by level": [
           43.2,
           39.7,
@@ -1466,7 +1466,7 @@
     },
     "textures noisy color": {
       "astc": {
-        "hash": "3432b371c9be74a2",
+        "hash": "ebca5402abf003dd",
         "psnr by level": [
           26.2,
           31.6,
@@ -1478,7 +1478,7 @@
         ]
       },
       "bc7": {
-        "hash": "eb3e975f17e5bb80",
+        "hash": "ad59b5f9728e53c7",
         "psnr by level": [
           28.0,
           33.6,
@@ -1492,7 +1492,7 @@
     },
     "textures normal map": {
       "astc": {
-        "hash": "a22bcd126e892a0d",
+        "hash": "8c81dd0dea111fb0",
         "psnr by level": [
           32.0,
           27.9,
@@ -1504,7 +1504,7 @@
         ]
       },
       "bc7": {
-        "hash": "6354efeca823e791",
+        "hash": "e5c425472bdac174",
         "psnr by level": [
           36.4,
           30.6,
@@ -1518,7 +1518,7 @@
     },
     "textures smooth color": {
       "astc": {
-        "hash": "376c6161403aa13d",
+        "hash": "0b072941ef355349",
         "psnr by level": [
           46.4,
           40.7,
@@ -1530,7 +1530,7 @@
         ]
       },
       "bc7": {
-        "hash": "2973479fed4e4d17",
+        "hash": "b6aec104838c46bd",
         "psnr by level": [
           46.8,
           41.3,

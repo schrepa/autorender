@@ -84,7 +84,7 @@ impl Run {
         part: u32,
         point: Option<&'static str>,
         handle: u32,
-        (shape, offsets): (RawShape, &[u32]),
+        shape: RawShape,
         timed: TimedDraw<'_>,
     ) {
         let _row = engine_profile::timed(engine_profile::row("render.draw"));
@@ -162,10 +162,9 @@ impl Run {
             render.set_bind_group(0, group, &[open.offset][..camera]);
             open.set.frame = Some((built.variant, open.offset));
         }
-        let mut given = offsets;
-        let mut held = [0_u32; MOST_OFFSETS];
+        let held = [0_u32; MOST_OFFSETS];
         for (at, group) in built.groups.iter().enumerate() {
-            let dynamic = offsets_of(group.windows, &mut given, &mut held);
+            let dynamic = &held[..group.windows.min(MOST_OFFSETS)];
             let holding = (pipeline, filled, at);
             let slot = group.index as usize;
             if group.windows == 0 && open.set.own.get(slot).copied().flatten() == Some(holding) {

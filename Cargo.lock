@@ -751,6 +751,7 @@ version = "0.1.0"
 dependencies = [
  "bevy_ecs",
  "engine",
+ "engine_command_line",
  "engine_core",
  "engine_meshes",
  "engine_native",
@@ -1029,6 +1030,7 @@ name = "engine"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
+ "engine_command_line",
  "engine_core",
  "engine_dev",
  "engine_panic",
@@ -1037,6 +1039,7 @@ dependencies = [
  "engine_render",
  "engine_scene",
  "engine_settings",
+ "engine_smoke",
  "engine_worker",
  "glam 0.30.9",
  "js-sys",
@@ -1069,6 +1072,7 @@ dependencies = [
  "engine_ecs",
  "engine_places_rendering",
  "engine_render",
+ "engine_smoke",
  "engine_sources",
  "glam 0.30.9",
  "gltf",
@@ -1081,6 +1085,7 @@ dependencies = [
 name = "engine_assetc"
 version = "0.1.0"
 dependencies = [
+ "engine_command_line",
  "engine_core",
  "engine_heightfield",
  "engine_layer_hydrology",
@@ -1116,6 +1121,7 @@ dependencies = [
  "engine_core",
  "engine_ecs",
  "engine_places_rendering",
+ "engine_smoke",
  "engine_sources",
  "glam 0.30.9",
  "js-sys",
@@ -1165,6 +1171,7 @@ version = "0.1.0"
 dependencies = [
  "bevy_ecs",
  "engine",
+ "engine_command_line",
  "engine_core",
  "engine_dev",
  "engine_place",
@@ -1193,10 +1200,19 @@ dependencies = [
  "engine_math",
  "engine_places",
  "engine_places_simulation",
+ "engine_smoke",
  "engine_sources",
  "glam 0.30.9",
  "parry3d",
  "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "engine_command_line"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
 ]
@@ -1277,6 +1293,7 @@ dependencies = [
  "engine_core",
  "engine_ecs",
  "engine_math",
+ "engine_smoke",
  "engine_sources",
  "glam 0.30.9",
  "serde_json",
@@ -1290,6 +1307,7 @@ dependencies = [
  "engine_ecs",
  "engine_math",
  "engine_places",
+ "engine_smoke",
  "engine_sources",
  "glam 0.30.9",
  "schemars",
@@ -1542,6 +1560,7 @@ dependencies = [
  "engine_ecs",
  "engine_places",
  "engine_render",
+ "engine_smoke",
  "engine_sources",
  "glam 0.30.9",
  "schemars",
@@ -1620,6 +1639,7 @@ dependencies = [
  "engine_ecs",
  "engine_math",
  "engine_places_simulation",
+ "engine_smoke",
  "engine_sources",
  "glam 0.30.9",
  "hashbrown 0.16.1",
@@ -1641,6 +1661,7 @@ dependencies = [
  "engine_gpu_bits",
  "engine_math",
  "engine_settings",
+ "engine_smoke",
  "schemars",
  "serde",
  "serde_json",
@@ -1866,6 +1887,7 @@ dependencies = [
  "engine_core",
  "engine_ecs",
  "engine_places_rendering",
+ "engine_smoke",
  "engine_sources",
  "glam 0.30.9",
  "schemars",
@@ -1894,6 +1916,7 @@ dependencies = [
  "engine_ecs",
  "engine_places_rendering",
  "engine_render",
+ "engine_smoke",
  "engine_sources",
  "serde",
  "serde_json",
@@ -1917,6 +1940,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_smoke"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "engine_sources"
 version = "0.1.0"
 dependencies = [
@@ -1933,6 +1964,7 @@ dependencies = [
  "engine_ecs",
  "engine_math",
  "engine_places_world",
+ "engine_smoke",
  "engine_sources",
  "glam 0.30.9",
  "schemars",
@@ -2021,6 +2053,7 @@ version = "0.1.0"
 dependencies = [
  "engine_core",
  "engine_ecs",
+ "engine_smoke",
  "engine_sources",
  "glam 0.30.9",
  "serde_json",
@@ -2096,6 +2129,7 @@ dependencies = [
  "engine_ecs",
  "engine_places_rendering",
  "engine_render",
+ "engine_smoke",
  "engine_sources",
  "glam 0.30.9",
  "schemars",
@@ -2159,6 +2193,7 @@ dependencies = [
  "engine_ecs",
  "engine_places_rendering",
  "engine_render",
+ "engine_smoke",
  "engine_sources",
  "glam 0.30.9",
  "schemars",
@@ -2225,6 +2260,7 @@ dependencies = [
  "engine_places_rendering",
  "engine_places_simulation",
  "engine_places_world",
+ "engine_smoke",
  "engine_sources",
  "glam 0.30.9",
  "serde",
@@ -2800,6 +2836,7 @@ dependencies = [
  "engine_places_simulation",
  "engine_places_world",
  "engine_render",
+ "engine_smoke",
  "engine_sources",
  "engine_standard",
  "engine_worker",
@@ -5959,6 +5996,7 @@ dependencies = [
  "engine_assets",
  "engine_checks",
  "engine_codec",
+ "engine_command_line",
  "engine_core",
  "engine_dev",
  "engine_heightfield",
