@@ -27,7 +27,6 @@ use bakes::*;
 pub use brick::TerrainBrick;
 pub use bridges::*;
 pub use components::*;
-use cook::CookTiles;
 use dispatch::*;
 pub use edits::{
     TerrainEditControl, TerrainEdited, TerrainRedo, TerrainRedoControl, TerrainRiverControl,

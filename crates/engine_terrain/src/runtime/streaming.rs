@@ -1,6 +1,6 @@
 use super::*;
 use engine_core::{
-    CookMode, DeviceLimits, FrameBudget, FrameTime, GlobalTransforms, Joined, PrimaryView,
+    DeviceLimits, FrameBudget, FrameTime, GlobalTransforms, Joined, PrimaryView,
     WorkClock, WorkRemaining,
 };
 use engine_places_world::streaming::StreamingFocus;
@@ -159,7 +159,6 @@ impl Terrains {
         let mut remaining = limit.map_or(usize::MAX, |limit| limit as usize);
         let frame = self.frame;
         for state in &mut self.entries {
-            state.cook = None;
             if state.terrain.validate().is_err() {
                 continue;
             }
@@ -339,7 +338,6 @@ pub(crate) struct TerrainStreaming {
 pub(crate) type StreamReads<'w> = (
     Res<'w, PrimaryView>,
     Res<'w, FrameTime>,
-    Res<'w, CookMode>,
     Res<'w, DeviceLimits>,
     Res<'w, GlobalTransforms>,
     Res<'w, Records>,
@@ -351,7 +349,7 @@ pub(crate) type StreamReads<'w> = (
 )]
 pub(crate) fn stream_terrains(
     settings: Res<TerrainSettings>,
-    (view, time, cooking, limits, globals, records): StreamReads<'_>,
+    (view, time, limits, globals, records): StreamReads<'_>,
     kinds: Joined<TerrainLayers>,
     focus: Query<Entity, With<StreamingFocus>>,
     prefetch: Query<(Entity, &TerrainPrefetch)>,
@@ -404,15 +402,7 @@ pub(crate) fn stream_terrains(
         (&streaming.points, &streaming.places),
         (&mut asking, &mut *budget),
     );
-    let pending = if cooking.cooking {
-        terrains.cook(&settings, &mut asking)
-    } else {
-        terrains.stats.pending
-    };
-    stats.set_if_neq(TerrainStats {
-        pending,
-        ..terrains.stats.clone()
-    });
+    stats.set_if_neq(terrains.stats.clone());
 }
 
 pub(crate) fn work_between_frames(

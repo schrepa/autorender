@@ -154,8 +154,7 @@ impl JobCx<'_> {
 
 #[doc(hidden)]
 pub fn job_list(kinds: &[&'static JobKind]) -> Result<JobList, Error> {
-    let core: [&'static JobKind; 4] = [
-        &TEXTURE_COOK,
+    let core: [&'static JobKind; 3] = [
         &MESH_LODS,
         &crate::assets::IMPOSTOR,
         &crate::assets::IMPOSTOR_ASSEMBLY,
@@ -377,7 +376,7 @@ impl Jobs<'_, '_> {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[component(immutable)]
 pub struct Records {
-    requests: Requests<RecordKey, Arc<[u8]>>,
+    pub(crate) requests: Requests<RecordKey, Arc<[u8]>>,
 }
 
 impl Records {
@@ -417,24 +416,17 @@ fn missing_record(path: &str) -> Error {
     Error::new(ErrorCode::InvalidRecord, path).got(MISSING_RECORD)
 }
 
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[component(immutable)]
-pub struct CookMode {
-    pub cooking: bool,
-}
-
-static TEXTURES: Source =
-    Source::generated("engine_textures", false, crate::sources::TEXTURES, &[]);
+#[doc(hidden)]
+pub static TEXTURE_COOK_SOURCE: Source =
+    Source::generated("engine_texture_cook", false, crate::sources::TEXTURE_COOK, &[]);
 
 static LODBUILD: Source =
     Source::generated("engine_lodbuild", false, crate::sources::LODBUILD, &[]);
 
-pub(crate) const TEXTURE_COOK_NAME: &str = "engine::texture_cook";
+#[doc(hidden)]
+pub const TEXTURE_COOK_NAME: &str = "engine::texture_cook";
 
 pub(crate) const MESH_LODS_NAME: &str = "engine::mesh_lods";
-
-#[doc(hidden)]
-pub static TEXTURE_COOK: JobKind = JobKind::new(TEXTURE_COOK_NAME, &TEXTURES, start_texture_cook);
 
 #[doc(hidden)]
 pub static MESH_LODS: JobKind = JobKind::new(MESH_LODS_NAME, &LODBUILD, start_mesh_lods);
@@ -448,13 +440,6 @@ impl Job for Whole {
     fn step(&mut self, _: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
         (self.run)(&self.input).map(Some)
     }
-}
-
-fn start_texture_cook(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    Ok(Box::new(Whole {
-        input: input.to_vec(),
-        run: engine_textures::cook_job,
-    }))
 }
 
 fn start_mesh_lods(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
@@ -611,14 +596,21 @@ struct Flight {
     asked: f64,
 }
 
-struct Shared<'a>(&'a [(RecordKey, Arc<[u8]>)]);
+struct Share {
+    key: RecordKey,
+    bytes: Arc<[u8]>,
+    shared: bool,
+    reads: u32,
+}
+
+struct Shared<'a>(&'a [Share]);
 
 impl Shares for Shared<'_> {
     fn share(&self, key: [u8; 32]) -> Option<&[u8]> {
         self.0
             .iter()
-            .find(|(shared, _)| shared.0 == key)
-            .map(|(_, bytes)| &**bytes)
+            .find(|share| share.key.0 == key)
+            .map(|share| &*share.bytes)
     }
 }
 
@@ -646,7 +638,7 @@ pub struct JobExchange {
     admitted: AtomicUsize,
     cache: [u64; 4],
     held: u32,
-    shared: Vec<(RecordKey, Arc<[u8]>)>,
+    shared: Vec<Share>,
     memo: JobMemo,
     stats: JobStats,
     last_failure: Option<String>,
@@ -825,16 +817,47 @@ impl JobExchange {
     }
 
     pub fn share(&mut self, key: RecordKey, bytes: Arc<[u8]>) {
-        if self.shared.iter().any(|(shared, _)| *shared == key) {
-            return;
+        match self.shared.iter_mut().find(|share| share.key == key) {
+            Some(share) => share.shared = true,
+            None => self.add_share(key, bytes, (true, 0)),
         }
-        self.shared.push((key, Arc::clone(&bytes)));
-        self.shares.push(JobShare::Set { key, bytes });
     }
 
     pub fn unshare(&mut self, key: RecordKey) {
+        if let Some(share) = self.shared.iter_mut().find(|share| share.key == key) {
+            share.shared = false;
+        }
+        self.drop_share(key);
+    }
+
+    pub(crate) fn hold_read(&mut self, key: RecordKey, bytes: Arc<[u8]>) {
+        match self.shared.iter_mut().find(|share| share.key == key) {
+            Some(share) => share.reads += 1,
+            None => self.add_share(key, bytes, (false, 1)),
+        }
+    }
+
+    pub(crate) fn release_read(&mut self, key: RecordKey) {
+        if let Some(share) = self.shared.iter_mut().find(|share| share.key == key) {
+            share.reads = share.reads.saturating_sub(1);
+        }
+        self.drop_share(key);
+    }
+
+    fn add_share(&mut self, key: RecordKey, bytes: Arc<[u8]>, (shared, reads): (bool, u32)) {
+        self.shared.push(Share {
+            key,
+            bytes: Arc::clone(&bytes),
+            shared,
+            reads,
+        });
+        self.shares.push(JobShare::Set { key, bytes });
+    }
+
+    fn drop_share(&mut self, key: RecordKey) {
         let before = self.shared.len();
-        self.shared.retain(|(shared, _)| *shared != key);
+        self.shared
+            .retain(|share| share.key != key || share.shared || share.reads > 0);
         if self.shared.len() < before {
             self.shares.push(JobShare::Remove { key });
         }
@@ -917,7 +940,7 @@ impl JobExchange {
             shared_bytes: self
                 .shared
                 .iter()
-                .map(|(_, bytes)| bytes.len() as u64)
+                .map(|share| share.bytes.len() as u64)
                 .sum(),
             cache_hits: self.cache[0],
             cache_misses: self.cache[1],
@@ -1031,7 +1054,11 @@ impl JobExchange {
         let Some(ticket) = records.ticket(&key) else {
             return;
         };
-        if self.work.iter().any(|flight| flight.key == key) {
+        if let Some(flight) = self.work.iter_mut().find(|flight| flight.key == key) {
+            if flight.want == Want::Fetch && want != Want::Fetch {
+                flight.want = Want::FetchOrMake;
+                flight.input = input;
+            }
             return;
         }
         self.work.push(Flight {

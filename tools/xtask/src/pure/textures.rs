@@ -1,15 +1,15 @@
 use std::path::Path;
 
 use engine_assets::Texture;
-use engine_core::TEXTURE_COOK;
 use engine_core::math::sin;
+use engine_core::{BrickList, Listing};
+use engine_native::{TEXTURE_COOK, TextureCook};
 use engine_textures::{Family, Source, Usage};
 use serde_json::{Map, json};
 
 use super::{JobLog, Observations};
 
 const SIDE: u32 = 64;
-pub const JOBS: &str = "target/pure/textures-jobs.json";
 const SLICE: u64 = 4096;
 
 struct Image {
@@ -148,13 +148,14 @@ fn reference(texture: &Texture, level: usize) -> Result<Vec<u8>, String> {
         .collect())
 }
 
-pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
-    let mut worker = JobLog::new()?;
+pub fn run(_: &Path, observed: &mut Observations) -> Result<(), String> {
+    let mut worker =
+        JobLog::of(|list: BrickList| engine_standard::everything(list).with::<TextureCook>())?;
     for image in images() {
         let levels = engine_textures::levels(&image.source);
         let mut observation = Map::new();
         for (family, floor) in Family::ALL.into_iter().zip(image.floors) {
-            let texture = engine_textures::cook(&image.source, family)
+            let texture = engine_texture_cook::cook(&image.source, family)
                 .map_err(|error| format!("{} does not cook: {error}", image.name))?;
             let record = engine_textures::record(&texture);
             let back = engine_textures::decode(&record)?;
@@ -213,5 +214,5 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         }
         observed.record(format!("textures {}", image.name), observation);
     }
-    worker.write(root, JOBS)
+    Ok(())
 }

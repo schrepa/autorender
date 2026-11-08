@@ -4,7 +4,6 @@
 )]
 
 mod attributes;
-mod cards;
 mod library;
 mod lod;
 mod material;
@@ -13,7 +12,6 @@ mod record;
 mod texture;
 
 pub use attributes::{Attribute, Attributes, attributes_wgsl};
-pub use cards::{AlphaImage, trim_cards};
 pub use engine_lodbuild::{LodInput, LodLevel, MeshLods, MeshVertex};
 pub use library::{
     Asset, AssetBudget, AssetLibrary, MaterialHandle, MeshHandle, SceneAssets, SceneTable,

@@ -5,8 +5,9 @@ use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
     AssetLibrary, Cursor, DeviceLimits, Error, Feed, FrameId, FrameTime, Interest,
-    JobFailures, JobKind, Jobs, MakeSources, Readable, Readback, RecordExchange, RecordKey, Records,
-    Since, Stamp, TextureHandle, TextureSet, TextureUsage, PrimaryView, codec, content_hash,
+    JobFailures, JobKind, Jobs, Readable, Readback, RecordExchange, RecordKey, Records,
+    Since, Stamp, TextureHandle, TextureSet, TextureSource, TextureUsage, PrimaryView, codec,
+    content_hash,
 };
 use engine_heightfield::tile::shaded_elsewhere;
 use engine_places_rendering::shadows::{ShadowChange, ShadowChanges};
@@ -133,6 +134,11 @@ impl<T: engine_codec::Codec> Bake<T> {
 enum Coloring {
     #[default]
     Unasked,
+    Making {
+        job: MacroJob,
+        interest: Interest<RecordKey>,
+        shown: Option<TextureHandle>,
+    },
     Loading {
         job: MacroJob,
         handle: TextureHandle,
@@ -152,9 +158,10 @@ impl Coloring {
     fn job(&self) -> Option<&MacroJob> {
         match self {
             Self::Unasked => None,
-            Self::Loading { job, .. } | Self::Shown { job, .. } | Self::Failed { job, .. } => {
-                Some(job)
-            }
+            Self::Making { job, .. }
+            | Self::Loading { job, .. }
+            | Self::Shown { job, .. }
+            | Self::Failed { job, .. } => Some(job),
         }
     }
 }
@@ -169,19 +176,24 @@ impl Colors {
     pub(crate) fn shown(&self) -> Option<TextureHandle> {
         match self.coloring {
             Coloring::Unasked => None,
-            Coloring::Loading { shown, .. } | Coloring::Failed { shown, .. } => shown,
+            Coloring::Making { shown, .. }
+            | Coloring::Loading { shown, .. }
+            | Coloring::Failed { shown, .. } => shown,
             Coloring::Shown { handle, .. } => Some(handle),
         }
     }
 
     fn asking(&self) -> bool {
-        matches!(self.coloring, Coloring::Loading { .. })
+        matches!(
+            self.coloring,
+            Coloring::Making { .. } | Coloring::Loading { .. }
+        )
     }
 
     fn left(&self) -> bool {
         let settled = match &self.coloring {
             Coloring::Shown { job, .. } | Coloring::Failed { job, .. } => Some(job),
-            Coloring::Unasked | Coloring::Loading { .. } => None,
+            Coloring::Unasked | Coloring::Making { .. } | Coloring::Loading { .. } => None,
         };
         self.wanted
             .as_ref()
@@ -191,6 +203,7 @@ impl Colors {
     fn handles(&self) -> Vec<TextureHandle> {
         match self.coloring {
             Coloring::Unasked => Vec::new(),
+            Coloring::Making { shown, .. } => shown.into_iter().collect(),
             Coloring::Loading { handle, shown, .. } => {
                 std::iter::once(handle).chain(shown).collect()
             }
@@ -201,17 +214,39 @@ impl Colors {
 
     fn step(
         &mut self,
-        (records, assets): (&mut RecordExchange, &mut AssetLibrary),
+        (exchange, assets): (&mut RecordExchange, &mut AssetLibrary),
+        (records, jobs): (&Records, &mut Jobs<'_, '_>),
         gone: &mut Vec<TextureHandle>,
     ) -> Option<Error> {
         let coloring = std::mem::take(&mut self.coloring);
         let mut failed = None;
         let coloring = match coloring {
+            Coloring::Making {
+                job,
+                interest,
+                shown,
+            } => match records.get(&interest).map(|made| {
+                made.and_then(|pixels| exchange.textures(assets, colors_set(&job, pixels)))
+            }) {
+                None => Coloring::Making {
+                    job,
+                    interest,
+                    shown,
+                },
+                Some(Ok(handles)) => match handles.first() {
+                    Some(&handle) => Coloring::Loading { job, handle, shown },
+                    None => Coloring::Failed { job, shown },
+                },
+                Some(Err(error)) => {
+                    failed = Some(error);
+                    Coloring::Failed { job, shown }
+                }
+            },
             Coloring::Loading { job, handle, shown } if assets.texture(handle).is_some() => {
                 gone.extend(shown);
                 Coloring::Shown { job, handle }
             }
-            Coloring::Loading { job, handle, shown } => match records.failed(handle) {
+            Coloring::Loading { job, handle, shown } => match exchange.failed(handle) {
                 Some(error) => {
                     failed = Some(error.clone());
                     assets.remove_texture(handle);
@@ -231,29 +266,19 @@ impl Colors {
         };
         let shown = match coloring {
             Coloring::Unasked => None,
+            Coloring::Making { shown, .. } | Coloring::Failed { shown, .. } => shown,
             Coloring::Loading { handle, shown, .. } => {
                 gone.push(handle);
                 shown
             }
             Coloring::Shown { handle, .. } => Some(handle),
-            Coloring::Failed { shown, .. } => shown,
         };
-        let (coloring, error) = match records.textures(assets, colors_set(&wanted)) {
-            Ok(handles) => match handles.first() {
-                Some(&handle) => (
-                    Coloring::Loading {
-                        job: wanted,
-                        handle,
-                        shown,
-                    },
-                    None,
-                ),
-                None => (Coloring::Failed { job: wanted, shown }, None),
-            },
-            Err(error) => (Coloring::Failed { job: wanted, shown }, Some(error)),
+        self.coloring = Coloring::Making {
+            interest: jobs.fetch(&MACRO_COLORS, &codec::encode(&wanted), VIEW_PRIORITY),
+            job: wanted,
+            shown,
         };
-        self.coloring = coloring;
-        error.or(failed)
+        failed
     }
 }
 
@@ -919,33 +944,39 @@ fn macro_texels(settings: &TerrainShading) -> u32 {
         .min(crate::macro_colors::MAX_MACRO_TEXELS)
 }
 
-fn colors_set(job: &MacroJob) -> TextureSet {
+fn colors_set(job: &MacroJob, pixels: Arc<[u8]>) -> TextureSet {
     let identity = codec::encode(job);
+    let size = job.size;
     TextureSet {
         source: crate::SOURCE.hash(),
         name: format!("terrain/macro/{:032x}", content_hash(&identity)),
         textures: vec![("colors".to_owned(), TextureUsage::Data)],
-        make: MakeSources::Job {
-            kind: &MACRO_COLORS,
-            input: identity,
-            size: [job.size, job.size],
-        },
+        make: Arc::new(move || {
+            Ok::<_, String>(vec![TextureSource {
+                width: size,
+                height: size,
+                pixels: pixels.to_vec(),
+                usage: TextureUsage::Data,
+            }])
+        }),
     }
 }
 
 pub(crate) fn color(
     time: Res<FrameTime>,
     mut bakes: ResMut<Bakes>,
-    mut records: ResMut<RecordExchange>,
+    (records, mut jobs): (Res<Records>, Jobs),
+    mut exchange: ResMut<RecordExchange>,
     mut assets: ResMut<AssetLibrary>,
 ) {
     let frame = time.frame;
     let bakes = &mut *bakes;
     for held in bakes.terrains.values_mut() {
-        if let Some(error) = held
-            .colors
-            .step((&mut records, &mut assets), &mut bakes.colors_gone)
-        {
+        if let Some(error) = held.colors.step(
+            (&mut exchange, &mut assets),
+            (&records, &mut jobs),
+            &mut bakes.colors_gone,
+        ) {
             bakes
                 .failures
                 .record(frame, format!("macro colors: {error}"));
@@ -1102,7 +1133,6 @@ fn records_left(settings: &TerrainShading, tiles: &TerrainTiles, bakes: &Bakes) 
         left += u32::from(held.lighting_left(settings, entry));
         left += u32::from(held.bounce_left(settings, entry));
         left += u32::from(held.colors.left());
-        left = left.saturating_add(u32::try_from(held.flow.left()).unwrap_or(u32::MAX));
     }
     left
 }

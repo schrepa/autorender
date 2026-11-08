@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use engine::command_line::CommandOption;
 use engine::host::{HostSettings, JobRef, OVERLAY, SETTINGS, policy};
+use engine::bricks::Listing;
 use engine::{BrickList, Engine, Error, ErrorCode, Expected, Game, GpuPreference};
 use serde_json::json;
 
@@ -683,13 +684,14 @@ impl HostOptions {
             let cores = std::thread::available_parallelism().map_or(1, usize::from);
             jobs.workers = policy::cook_workers(u32::try_from(cores).unwrap_or(u32::MAX)) as usize;
         }
+        let bricks = move |list: BrickList| bricks(list).with::<crate::TextureCook>();
         let mut game = Offscreen::launch_with(size, self.gpu, jobs.pool(true), bricks, build)?;
         self.settings.apply(game.host_mut())?;
-        game.host_mut().cook();
         let read = game.jobs_mut().packed();
         let (mut frame, mut said) = (0_u32, Instant::now());
         let (mut last, mut moved) = (None, Instant::now());
         loop {
+            game.host_mut().cook();
             game.frame(f64::from(frame) * 1000.0 / 60.0)?;
             frame += 1;
             let readiness = game.host().frame_times().readiness.clone();

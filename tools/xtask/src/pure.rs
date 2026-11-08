@@ -71,7 +71,6 @@ pub(crate) const CORPORA: &[Corpus] = &[
 const REPLAYED: &[(&str, &str)] = &[
     ("terrain", terrain::JOBS),
     ("tables", tables::JOBS),
-    ("textures", textures::JOBS),
 ];
 
 #[derive(Default)]
@@ -105,10 +104,11 @@ pub(crate) struct JobLog {
 
 impl JobLog {
     pub fn new() -> Result<Self, String> {
-        let list = Arc::new(
-            engine_worker::job_list(engine_standard::everything::<BrickList>)
-                .map_err(|error| error.to_string())?,
-        );
+        Self::of(engine_standard::everything::<BrickList>)
+    }
+
+    pub fn of(bricks: impl FnOnce(BrickList) -> BrickList) -> Result<Self, String> {
+        let list = Arc::new(engine_worker::job_list(bricks).map_err(|error| error.to_string())?);
         let named: String = list.hash().iter().map(|byte| format!("{byte:02x}")).collect();
         Ok(Self {
             worker: engine_worker::Worker::new(Arc::clone(&list), engine_worker::now_ms),

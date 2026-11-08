@@ -2,7 +2,6 @@ use bevy_ecs::component::Component;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_assets::{Asset, AssetLibrary, MaterialHandle, Mesh, MeshHandle, MeshLods, TextureHandle};
-pub use engine_textures::solid_block;
 
 use crate::{Census, Feed, Interest, Request, Requests};
 

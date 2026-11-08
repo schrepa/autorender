@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
-use engine_core::{CookMode, DeviceLimits, Error, GpuBits, Jobs, Readable, Readback};
+use engine_core::{DeviceLimits, Error, GpuBits, Jobs, Readable, Readback};
 use engine_places_world::ground::GroundTiles;
 use engine_render::{
     AfterRead, Allocation, ComputePipeline, Count, Encode, Install, Pass, Prepare,
@@ -822,7 +822,7 @@ pub(crate) fn hand_settles(mut state: ResMut<WaterState>, mut feedback: ResMut<S
 
 pub(crate) fn plan_settles(
     ground: Res<GroundTiles>,
-    (limits, cook): (Res<DeviceLimits>, Res<CookMode>),
+    limits: Res<DeviceLimits>,
     mut jobs: Jobs,
     mut state: ResMut<WaterState>,
     mut feedback: ResMut<SettleFeedback>,
@@ -837,7 +837,8 @@ pub(crate) fn plan_settles(
     let feedback = &mut *feedback;
     let live: Vec<Entity> = state.terrains.iter().map(|terrain| terrain.entity).collect();
     feedback.evict(&live);
-    feedback.prepare((cook.cooking, limits.storage_room), &index_of);
+    let cooking = state.terrains.iter().any(|terrain| terrain.settled.cooking());
+    feedback.prepare((cooking, limits.storage_room), &index_of);
     for (input, made) in std::mem::take(&mut feedback.made) {
         if let Ok(bytes) = &made {
             jobs.keep(&SETTLED, &input, bytes.clone());

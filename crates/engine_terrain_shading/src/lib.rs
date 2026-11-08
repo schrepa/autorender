@@ -25,7 +25,7 @@ mod trace;
 mod world_trace;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Attributes, Brick, Bricks, JobKind, KindDecl, Schedule, Source};
+use engine_core::{Attributes, Brick, Bricks, Cook, CookList, JobKind, KindDecl, Schedule, Source};
 use engine_places_rendering::lighting::{Ambient, SunBlockers};
 use engine_places_rendering::reflections::{TraceDepths, TraceSource};
 use engine_places_rendering::sky::OpenSky;
@@ -64,6 +64,7 @@ impl Brick for TerrainShadingBrick {
             .generated(debug::GENERATED)
             .surface_kind(SurfaceKind { name: "ground" })
             .join::<TraceDepths>((), Some(trace_depth::MODULE))
+            .join::<CookList>(Cook::new(shadings::cook), None)
             .fill::<Heightfield>(Some(faces::heightfield::MODULE))
             .fill::<GroundTiles>(Some(faces::ground_tiles::MODULE))
             .fill::<GroundBaking>(None)

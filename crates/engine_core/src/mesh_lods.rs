@@ -5,7 +5,7 @@ use engine_assets::{AssetLibrary, MeshHandle, MeshLods, lod_input};
 
 use crate::jobs::{MESH_LODS_NAME, record_key};
 use crate::{
-    Census, CookMode, Error, ErrorCode, Interest, JobExchange, JobId, JobRef, MESH_LODS,
+    Census, Error, ErrorCode, Interest, JobExchange, JobId, JobRef, MESH_LODS,
     MISSING_RECORD, RecordKey, Request, Requests, Ticket, VIEW_JOBS, content_hash, job_priority,
 };
 
@@ -55,18 +55,14 @@ fn landed(output: Result<Arc<[u8]>, String>) -> Result<Option<MeshLods>, Error> 
 }
 
 impl MeshLevels {
-    fn ask(&mut self, jobs: &mut JobExchange, handle: MeshHandle, input: Vec<u8>, cooking: bool) {
+    fn ask(&mut self, jobs: &mut JobExchange, handle: MeshHandle, input: Vec<u8>) {
         let key = lod_record(&input);
         let interest = self.requests.ask(key);
         if let Some(ticket) = self.requests.ticket(&key)
             && !self.jobs.iter().any(|&(asked, ..)| asked == key)
         {
             let priority = job_priority(VIEW_JOBS, self.jobs.len() as u32);
-            let job = if cooking {
-                jobs.submit_record(JobRef::from(&MESH_LODS), input, priority, key)
-            } else {
-                jobs.fetch(Some(JobRef::from(&MESH_LODS)), key, priority)
-            };
+            let job = jobs.submit_record(JobRef::from(&MESH_LODS), input, priority, key);
             self.jobs.push((key, ticket, job));
         }
         self.waiting.push((handle, interest));
@@ -122,9 +118,6 @@ impl MeshLevels {
 }
 
 pub(crate) fn settle(world: &mut World) {
-    let cooking = world
-        .get_resource::<CookMode>()
-        .is_some_and(|mode| mode.cooking);
     let now = world
         .get_resource::<crate::FrameTime>()
         .map_or(0.0, |time| time.real_elapsed);
@@ -134,7 +127,7 @@ pub(crate) fn settle(world: &mut World) {
             let mut assets = world.resource_mut::<AssetLibrary>();
             for handle in awaiting {
                 match assets.mesh(handle).and_then(|mesh| lod_input(mesh)) {
-                    Some(input) => levels.ask(&mut jobs, handle, input, cooking),
+                    Some(input) => levels.ask(&mut jobs, handle, input),
                     None => {
                         let _ = assets.settle_lods(handle, None);
                     }

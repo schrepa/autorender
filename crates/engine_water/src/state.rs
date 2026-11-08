@@ -4,7 +4,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use bevy_ecs::prelude::*;
 use engine_core::{
     Cursor, Feed, FrameBudget, FrameTime, Interest, JobFailures, Jobs, RecordKey,
-    Records, Since, Spawner, VIEW_JOBS, PrimaryView, job_priority,
+    Records, Requests, Since, Spawner, VIEW_JOBS, PrimaryView, job_priority,
 };
 use engine_heightfield::tile::{Solid, TileJob};
 use engine_heightfield::{
@@ -342,6 +342,7 @@ pub(crate) struct WaterState {
     pub(crate) failures: JobFailures,
     pub(crate) settling: SettleQueue,
     pub(crate) shares: Shares,
+    pub(crate) everything: Requests<Entity, ()>,
     pub(crate) blocks: Blocks,
     pub(crate) live: LiveSim,
     pub(crate) particles: Particles,

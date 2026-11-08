@@ -4,7 +4,7 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::collections::{HashMap, HashSet};
 use engine_core::{
-    CookMode, Error, ErrorCode, FrameBudget, FrameTime, IDLE_JOBS, Interest, JobFailures, Jobs,
+    CookAsks, Error, ErrorCode, FrameBudget, FrameTime, IDLE_JOBS, Interest, JobFailures, Jobs,
     MISSING_RECORD, RecordKey, Records, VIEW_JOBS, PrimaryView, job_priority,
 };
 use engine_heightfield::Stamp;
@@ -70,10 +70,6 @@ impl Shading {
         matches!(self, Self::Held { .. } | Self::Made { .. })
     }
 
-    fn failed(&self) -> bool {
-        matches!(self, Self::Failed { .. })
-    }
-
     fn held(&self) -> bool {
         matches!(self, Self::Held { .. })
     }
@@ -104,8 +100,6 @@ pub(crate) struct Shadings {
     attached: Vec<TileKey>,
     attaching: bool,
     shaded: u32,
-    cooking: bool,
-    left: u64,
 }
 
 impl Shadings {
@@ -128,10 +122,6 @@ impl Shadings {
         (self.shaded, asked as u32)
     }
 
-    pub(crate) fn left(&self) -> u64 {
-        self.left
-    }
-
     pub(crate) fn holds_share(&self, key: &RecordKey) -> bool {
         self.sharing.contains(key)
     }
@@ -141,13 +131,11 @@ impl Shadings {
     }
 
     fn made(&self, key: TileKey, record: RecordKey) -> bool {
-        let tile = self.tiles.get(&key);
         let missing = matches!(
-            tile,
+            self.tiles.get(&key),
             Some(Shading::Missing { record: at } | Shading::Making { record: at, .. }) if *at == record
         );
-        let arrived = tile.is_some_and(Shading::arrived);
-        key.level == 1 || missing || (self.cooking && !arrived)
+        key.level == 1 || missing
     }
 
     fn rebase(&mut self, entry: &TerrainEntry, recipe: [u8; 32]) {
@@ -239,7 +227,6 @@ impl Shadings {
             .filter(|key| shaded_elsewhere(key.level, false))
             .collect();
         resident.sort_unstable_by_key(|&key| place(key));
-        let cooking = self.cooking;
         let mut wants: Vec<Want> = Vec::with_capacity(resident.len());
         let mut listed: HashMap<TileKey, usize> = HashMap::default();
         let mut list =
@@ -258,14 +245,6 @@ impl Shadings {
         for &key in &resident {
             list(&mut wants, key, VIEW_JOBS, true);
         }
-        if cooking {
-            for level in 1..levels {
-                for key in pyramid.level_tiles(level) {
-                    list(&mut wants, key, VIEW_JOBS, false);
-                }
-            }
-        }
-        let class = if cooking { VIEW_JOBS } else { IDLE_JOBS };
         let mut at = 0;
         while let Some(&want) = wants.get(at) {
             at += 1;
@@ -277,7 +256,7 @@ impl Shadings {
                 continue;
             }
             for read in TileShading::reads(&pyramid, want.key) {
-                list(&mut wants, read, class, true);
+                list(&mut wants, read, IDLE_JOBS, true);
             }
         }
         wants
@@ -295,18 +274,6 @@ impl Shadings {
                 *tile = Shading::Made { record };
             }
         }
-        self.left = if self.cooking {
-            wants
-                .iter()
-                .filter(|want| {
-                    self.tiles
-                        .get(&want.key)
-                        .is_none_or(|tile| !tile.arrived() && !tile.failed())
-                })
-                .count() as u64
-        } else {
-            0
-        };
     }
 
     fn ask(
@@ -344,19 +311,6 @@ impl Shadings {
                     .iter()
                     .all(|at| self.tiles.get(at).is_some_and(Shading::held))
             {
-                if self.cooking
-                    && finer
-                        .iter()
-                        .any(|at| self.tiles.get(at).is_some_and(Shading::failed))
-                {
-                    self.tiles.insert(
-                        key,
-                        Shading::Failed {
-                            record,
-                            interest: None,
-                        },
-                    );
-                }
                 continue;
             }
             let tile = if made {
@@ -443,6 +397,36 @@ impl Shadings {
     }
 }
 
+pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {
+    let Some(tiles) = world.get_resource::<TerrainTiles>() else {
+        return;
+    };
+    for entry in tiles.terrains.iter() {
+        let Some(recipe) = entry.recipe.filter(|_| !entry.surroundings) else {
+            continue;
+        };
+        let pyramid = entry.pyramid;
+        let record = |key: TileKey| ShadingJob::of(recipe, &pyramid, &entry.edits, key).record();
+        for level in 1..pyramid.levels() {
+            for key in pyramid.level_tiles(level) {
+                let input = engine_codec::encode(&ShadingJob::of(recipe, &pyramid, &entry.edits, key));
+                if asks.asked(&RecordKey::of(&SHADING, &input)) {
+                    continue;
+                }
+                let reads = if key.level > 1 {
+                    TileShading::reads(&pyramid, key)
+                        .into_iter()
+                        .map(record)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                asks.ask_reading(&SHADING, input, reads);
+            }
+        }
+    }
+}
+
 fn missing(error: &Error) -> bool {
     error.code == ErrorCode::InvalidRecord
         && error
@@ -467,7 +451,7 @@ pub(crate) fn shade(
     records: Res<Records>,
     view: Res<PrimaryView>,
     time: Res<FrameTime>,
-    (cook, mut budget): (Res<CookMode>, ResMut<FrameBudget>),
+    mut budget: ResMut<FrameBudget>,
     mut jobs: Jobs,
     mut bakes: ResMut<Bakes>,
 ) {
@@ -495,9 +479,6 @@ pub(crate) fn shade(
         };
         let local = Vec2::new(eye.x - entry.origin.x, eye.z - entry.origin.z);
         follow(held, entry, &mut cx, (local, frame, moved));
-        if cook.cooking && !entry.surroundings && entry.recipe.is_some() {
-            held.flow.cooking = true;
-        }
     }
     for key in released {
         if !bakes
@@ -517,14 +498,7 @@ fn follow(
     (eye, frame, moved): (Vec2, u64, bool),
 ) {
     let Some(recipe) = entry.recipe.filter(|_| !entry.surroundings) else {
-        let cooking = held.flow.cooking;
-        let left = std::mem::replace(
-            &mut held.flow,
-            Shadings {
-                cooking,
-                ..Shadings::default()
-            },
-        );
+        let left = std::mem::take(&mut held.flow);
         cx.released.extend(left.release());
         return;
     };
@@ -535,7 +509,7 @@ fn follow(
         flow.rebase(entry, recipe);
     }
     let arrived = flow.take_arrived(cx.records, (&mut *cx.failures, frame));
-    let dirty = moved || arrived || flow.cooking;
+    let dirty = moved || arrived;
     if dirty {
         let wants = flow.wanted(entry, recipe, eye);
         flow.keep(&wants);

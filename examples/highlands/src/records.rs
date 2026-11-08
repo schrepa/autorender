@@ -16,7 +16,7 @@ pub(crate) fn textures(
             .iter()
             .map(|&(texture, usage)| (texture.to_owned(), usage))
             .collect(),
-        make: MakeSources::Here(Arc::new(make)),
+        make: Arc::new(make),
     };
     records.textures(assets, set)
 }

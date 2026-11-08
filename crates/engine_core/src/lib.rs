@@ -11,6 +11,7 @@ pub mod bounds;
 mod bricks;
 mod clock;
 pub mod command_line;
+mod cook;
 mod drawn;
 mod entity_indices;
 mod frame_stats;
@@ -51,17 +52,18 @@ pub use authoring::{DrawnForm, ViewForm, core_components};
 pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
+pub use cook::{Cook, CookAsks, CookList, cook};
 pub use drawn::{
     DRAWN_OWN_PROJECTION, DRAWN_UNBOUNDED, DrawnBatch, DrawnCensus,
     DrawnRecord, DrawnSettings, DrawnState, DrawnTable, PlanState, drawn_wgsl,
 };
 pub use engine_assets::{
-    Aabb, AlphaImage, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, Attributes,
+    Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, Attributes,
     BASE_COLOR_MAP, ColorSpace, Cull, DepthBias, EMISSIVE_MAP, Filter, LightingModel, LodInput,
     LodLevel, MAX_TEXTURE_DIMENSION, METALLIC_ROUGHNESS_MAP, Material, MaterialBinding, Mesh,
     MeshLods, MeshVertex, NORMAL_MAP, OCCLUSION_MAP, RenderState, STANDARD_MAPS, Sampler,
     Surface, SurfaceSlot, Texture, TextureFormat, TextureRef, UvTransform, Wrap, attributes_wgsl,
-    lod_input, trim_cards,
+    lod_input,
 };
 pub use engine_textures::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 pub use engine_place::{
@@ -163,6 +165,7 @@ static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::list::<SceneComponents>(),
     PlaceDecl::list::<CursorRequests>(),
     PlaceDecl::list::<Pause>(),
+    PlaceDecl::list::<CookList>(),
     PlaceDecl::slot::<ImpostorPolicy>(),
     PlaceDecl::ledger::<FrameBudget>("frame_budget"),
     PlaceDecl::ledger::<Readiness>("readiness"),
@@ -402,7 +405,6 @@ impl Engine {
             .init_resource::<FeedSettings>()
             .init_resource::<FrameBudgetSettings>()
             .init_resource::<DrawnSettings>()
-            .init_resource::<CookMode>()
             .insert_resource(exchange)
             .insert_resource(listed)
             .init_resource::<engine_registry::JobQueue>()

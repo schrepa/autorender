@@ -12,6 +12,7 @@ engine_dev.workspace = true
 base64.workspace = true
 engine_assets.workspace = true
 engine_textures.workspace = true
+engine_texture_cook.workspace = true
 texture2ddecoder.workspace = true
 engine_lodbuild.workspace = true
 engine_core.workspace = true

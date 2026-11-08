@@ -26,6 +26,7 @@ const CLOSED: &[(&str, &[&str])] = &[
             "engine_codec",
             "engine_lodbuild",
             "engine_sources",
+            "engine_cards",
         ],
     ),
     (
@@ -52,6 +53,7 @@ const CLOSED: &[(&str, &[&str])] = &[
             "engine_dev",
             "engine_worker",
             "engine_profiler",
+            "engine_texture_cook",
         ],
     ),
 ];

@@ -223,8 +223,13 @@ impl AppHost {
         self.pipeline_list.waiting()
     }
 
+    pub(crate) fn cook(&mut self) {
+        self.pipeline_list.cook();
+        engine_core::cook(self.engine.app.world_mut());
+    }
+
     pub(crate) fn reloaded(&mut self) {
-        self.pipeline_list = crate::host::PipelineList::default();
+        self.pipeline_list.restart();
         self.restart_attribution();
     }
 

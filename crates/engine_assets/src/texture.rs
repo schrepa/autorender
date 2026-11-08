@@ -61,8 +61,6 @@ enum Contents {
 pub struct TextureSummary {
     pub color: [f32; 3],
     pub mean: [f32; 4],
-    pub slopes: f32,
-    pub deviation: [f32; 4],
 }
 
 impl TextureSummary {
@@ -72,31 +70,17 @@ impl TextureSummary {
         let decode = srgb_decoded();
         let mut color = [0.0_f64; 3];
         let mut mean = [0_u64; 4];
-        let mut squares = [0_u64; 4];
-        let mut slopes = 0.0_f64;
-        let unit = |value: u8| f64::from(value) / 127.5 - 1.0;
         for texel in texels {
             for channel in 0..3 {
                 color[channel] += f64::from(decode[usize::from(texel[channel])]);
             }
-            for ((sum, square), &value) in mean.iter_mut().zip(&mut squares).zip(texel) {
+            for (sum, &value) in mean.iter_mut().zip(texel) {
                 *sum += u64::from(value);
-                *square += u64::from(value) * u64::from(value);
             }
-            let (x, y, z) = (unit(texel[0]), unit(texel[1]), unit(texel[2]).max(0.25));
-            slopes += (x * x + y * y) / (z * z);
-        }
-        let mut deviation = [0.0_f32; 4];
-        for ((spread, &sum), &square) in deviation.iter_mut().zip(&mean).zip(&squares) {
-            let average = sum as f64 / count;
-            let variance = (square as f64 / count - average * average).max(0.0);
-            *spread = (variance.sqrt() / 255.0) as f32;
         }
         Self {
             color: color.map(|sum| (sum / count) as f32),
             mean: mean.map(|sum| (sum as f64 / (255.0 * count)) as f32),
-            slopes: (slopes / count) as f32,
-            deviation,
         }
     }
 }
