@@ -16,10 +16,10 @@
       "meshes": 2,
       "textures": 1
     },
-    "gltf prefab document": "f943072100d6f0c6",
+    "gltf prefab document": "95018c7f47ec4be1",
     "gltf prefab file prop/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
-    "gltf prefab file prop/node1.p0.f11bc280da7c.bin": "f11bc280da7c472e",
-    "gltf prefab file prop/node1.p1.fc2cf9b9803f.bin": "fc2cf9b9803ffa4b",
+    "gltf prefab file prop/node1.p0.761ae8786249.bin": "761ae878624921a2",
+    "gltf prefab file prop/node1.p1.8e944532b4c2.bin": "8e944532b4c2174d",
     "gltf scene": {
       "entities": 2,
       "files": 3,
@@ -28,10 +28,10 @@
       "meshes": 2,
       "textures": 1
     },
-    "gltf scene document": "33695d8a21e816fb",
+    "gltf scene document": "cc01c8bfadfc5ec8",
     "gltf scene file prop/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
-    "gltf scene file prop/node1.p0.f11bc280da7c.bin": "f11bc280da7c472e",
-    "gltf scene file prop/node1.p1.fc2cf9b9803f.bin": "fc2cf9b9803ffa4b"
+    "gltf scene file prop/node1.p0.761ae8786249.bin": "761ae878624921a2",
+    "gltf scene file prop/node1.p1.8e944532b4c2.bin": "8e944532b4c2174d"
   },
   "import": {
     "import": {
@@ -555,6 +555,7 @@
           "haze_stats",
           "highlights",
           "impostors",
+          "impostors_stats",
           "light",
           "local_light_stats",
           "local_lights",
@@ -1148,14 +1149,13 @@
   },
   "simplify": {
     "levels grid 24x24": {
-      "casters": 0,
       "errors": [
         0.05175086855888367,
         0.08545374870300293,
         0.13046325743198395,
         20.22975730895996
       ],
-      "hash": "539a65d2272eb0d5",
+      "hash": "95a2d19c22328659",
       "triangles": [
         528,
         263,
@@ -1164,38 +1164,35 @@
       ]
     },
     "levels prop 0": {
-      "casters": 0,
       "errors": [
         2.75,
         4.538997650146484
       ],
-      "hash": "8d037fc2a948950b",
+      "hash": "0a1b152923efee36",
       "triangles": [
         24,
         0
       ]
     },
     "levels prop 1": {
-      "casters": 0,
       "errors": [
         1.1700000762939453,
         1.908769130706787
       ],
-      "hash": "44fad901f4239b09",
+      "hash": "75d6c9bfdcfa3a74",
       "triangles": [
         12,
         0
       ]
     },
     "levels seamed grid 16x16": {
-      "casters": 0,
       "errors": [
         0.04555187001824379,
         0.1196901872754097,
         0.22284014523029327,
         17.882017135620117
       ],
-      "hash": "43d03fb2c9171b3a",
+      "hash": "f603c618a882ee07",
       "triangles": [
         224,
         112,
@@ -1204,14 +1201,13 @@
       ]
     },
     "levels sphere 20x12": {
-      "casters": 0,
       "errors": [
         0.048499271273612976,
         0.15071861445903778,
         0.2899521589279175,
         5.716494560241699
       ],
-      "hash": "827065b3f8419904",
+      "hash": "1673615939b18279",
       "triangles": [
         239,
         119,
@@ -1220,14 +1216,13 @@
       ]
     },
     "levels torus 28x12": {
-      "casters": 0,
       "errors": [
         0.0861457958817482,
         0.2045636624097824,
         0.2953835129737854,
         3.979196071624756
       ],
-      "hash": "e5c827bb22f5bc88",
+      "hash": "4e3506443cfd68cd",
       "triangles": [
         336,
         168,
@@ -1312,7 +1307,7 @@
       "steepest": 0.016481399536132812,
       "tunnels": 1
     },
-    "bakes": "73f96f7072c9bf0e",
+    "bakes": "8cfc45f3747bf972",
     "bounce": {
       "blocks": 1024,
       "detailed blocks": 474,
@@ -1336,7 +1331,7 @@
       ],
       "texels": 65536
     },
-    "pack": "96abb10c3005a687",
+    "pack": "97ab0aca8f92d92e",
     "pack records": 46,
     "portals 0/0/0": "fb26e1b9f5bd9fd8",
     "portals 0/0/1": "29e88506dde27d87",
@@ -1419,7 +1414,7 @@
   "textures": {
     "textures cutout": {
       "astc": {
-        "hash": "6e1ed61cf4b9f8ea",
+        "hash": "9feddc7010eb343b",
         "psnr by level": [
           99.0,
           60.2,
@@ -1431,7 +1426,7 @@
         ]
       },
       "bc7": {
-        "hash": "752ae7fb302137a4",
+        "hash": "2c6510fb3cde1335",
         "psnr by level": [
           57.2,
           57.2,
@@ -1445,7 +1440,7 @@
     },
     "textures data with height": {
       "astc": {
-        "hash": "a124efbbe2ae70a9",
+        "hash": "fcbcfb2360e04d5a",
         "psnr by level": [
           41.4,
           37.1,
@@ -1457,7 +1452,7 @@
         ]
       },
       "bc7": {
-        "hash": "c3d5968ae59fae71",
+        "hash": "5022f241bce36b81",
         "psnr by level": [
           43.2,
           39.7,
@@ -1471,7 +1466,7 @@
     },
     "textures noisy color": {
       "astc": {
-        "hash": "7c05750c7d92a840",
+        "hash": "3432b371c9be74a2",
         "psnr by level": [
           26.2,
           31.6,
@@ -1483,7 +1478,7 @@
         ]
       },
       "bc7": {
-        "hash": "fa324d8b7d305557",
+        "hash": "eb3e975f17e5bb80",
         "psnr by level": [
           28.0,
           33.6,
@@ -1497,7 +1492,7 @@
     },
     "textures normal map": {
       "astc": {
-        "hash": "31130f7eb738f4e8",
+        "hash": "a22bcd126e892a0d",
         "psnr by level": [
           32.0,
           27.9,
@@ -1509,7 +1504,7 @@
         ]
       },
       "bc7": {
-        "hash": "2b9a9768762d9b2d",
+        "hash": "6354efeca823e791",
         "psnr by level": [
           36.4,
           30.6,
@@ -1523,7 +1518,7 @@
     },
     "textures smooth color": {
       "astc": {
-        "hash": "42244f8de15109dc",
+        "hash": "376c6161403aa13d",
         "psnr by level": [
           46.4,
           40.7,
@@ -1535,7 +1530,7 @@
         ]
       },
       "bc7": {
-        "hash": "1b3fd24bc96dac5d",
+        "hash": "2973479fed4e4d17",
         "psnr by level": [
           46.8,
           41.3,

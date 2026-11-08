@@ -1,4 +1,5 @@
 use super::*;
+use bevy_ecs::world::World;
 use engine_core::CookAsks;
 
 pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {

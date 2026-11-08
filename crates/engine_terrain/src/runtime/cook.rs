@@ -1,4 +1,5 @@
 use super::*;
+use bevy_ecs::world::World;
 use engine_core::CookAsks;
 
 const COOK_VIEW_HEIGHT: f32 = 2160.0;

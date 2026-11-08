@@ -107,16 +107,15 @@ impl Renderer {
         let mut parts = Vec::new();
         run.reading.list
             .take(|reader, written, deliver, arrival| match (reader, arrival) {
-                (Reader::Part { part, tag }, Arrival::Read(bytes)) => {
+                (Reader::Part { part, tag }, arrival) => {
                     if let Some(deliver) = deliver {
-                        let read = Readback {
-                            value: bytes.to_vec(),
-                            written,
+                        let value = match arrival {
+                            Arrival::Read(bytes) => Some(bytes.to_vec()),
+                            Arrival::Failed => None,
                         };
-                        parts.push(((part, tag), read, deliver));
+                        parts.push(((part, tag), Readback { value, written }, deliver));
                     }
                 }
-                (Reader::Part { .. }, Arrival::Failed) => {}
                 (Reader::FrameTimer, arrival) => display.timed(written, arrival),
                 (Reader::Profiler(slot), arrival) => profiler.arrived(slot, arrival),
             });

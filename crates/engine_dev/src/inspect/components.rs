@@ -1,8 +1,7 @@
 use engine_core::{
     AssetResidency, AxisInput, CursorMode, CursorRequests, Drawn, MaterialHandle, MenuInput,
-    MeshHandle, PointerInput, ResidentMesh,
+    MeshHandle, PointerInput,
 };
-use engine_places::impostors::{IMPOSTOR_MIN_TRIANGLES, ImpostorAsks, ImpostorRecords};
 
 use super::*;
 use crate::MenuPress;
@@ -129,26 +128,6 @@ fn current<R: Resource + Copy + Default>(world: &World) -> R {
     world.get_resource::<R>().copied().unwrap_or_default()
 }
 
-fn impostor_resident(
-    world: &World,
-    resident: &ResidentMesh,
-    (mesh, material): (MeshHandle, Option<MaterialHandle>),
-) -> Option<bool> {
-    if (resident.index_count() as usize) / 3 < IMPOSTOR_MIN_TRIANGLES {
-        return None;
-    }
-    let mut held = world.try_query::<(&ImpostorAsks, &ImpostorRecords)>()?;
-    Some(held.iter(world).any(|(asks, records)| {
-        asks.generation == records.generation
-            && asks.asks.iter().zip(&records.records).any(|(ask, record)| {
-                record.framed()
-                    && ask
-                        .as_ref()
-                        .is_some_and(|ask| ask.mesh == mesh && ask.material == material)
-            })
-    }))
-}
-
 pub(super) fn mesh_view(
     world: &World,
     assets: &AssetLibrary,
@@ -180,8 +159,6 @@ pub(super) fn mesh_view(
                         .iter()
                         .map(|&(_, indices, error)| LodLevelView { indices, error })
                         .collect(),
-                    impostor: impostor_resident(world, resident, shown)
-                        .filter(|_| mesh.takes_impostor()),
                 })
             }),
         }

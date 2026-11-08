@@ -2,14 +2,15 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Weak};
 
 use bevy_ecs::prelude::*;
+use bevy_ecs::world::World;
 use engine_core::collections::{HashMap, HashSet};
 use engine_core::glam::Vec3;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, Census, CookMode, Cull, Detail, DeviceLimits, Error,
+    AlphaMode, AssetLibrary, AssetResidency, Census, CookAsks, Cull, Detail, DeviceLimits, Error,
     ErrorCode, Feed, Filter, FrameBudget, FrameTime, GpuBits, IDLE_JOBS, Interest, Job, JobCx,
-    JobExchange, JobId, JobKind, JobRef, Jobs, LightingModel, Material, MaterialHandle,
-    MeshHandle, RecordKey, Records, Request, Requests, TextureFamily, TextureRef, VIEW_JOBS,
-    WorkClock, Wrap, compress_texture, content_hash, job_priority,
+    JobExchange, JobId, JobKind, JobRef, Jobs, LightingModel, Material, MaterialHandle, MeshHandle,
+    RecordKey, Records, Request, Requests, TextureRef, VIEW_JOBS, WorkClock, Wrap, content_hash,
+    job_priority,
 };
 use engine_places::impostors::{
     ImpostorAsk, ImpostorAsks, ImpostorFlags, ImpostorRecord, ImpostorRecords, Impostors,
@@ -25,8 +26,6 @@ const BAKES_IN_FLIGHT: usize = 4;
 
 const BAKE_DELAY_MS: f64 = 1000.0;
 
-const BLOCK_ROWS: u32 = 4;
-
 const RGBA8_SIZE: u32 = 512;
 
 const ATLAS_FRAMES: u32 = 12;
@@ -35,7 +34,7 @@ const FIRST_BYTES: u64 = 16 << 20;
 
 const RECORD_MAGIC: &[u8; 4] = b"EIMP";
 
-const RECORD_HEADER: usize = 24;
+const RECORD_HEADER: usize = 20;
 
 pub(crate) const RECORD_START: usize = RECORD_HEADER + 4;
 
@@ -101,18 +100,19 @@ impl AtlasShape {
         }
     }
 
-    fn held(self, format: AtlasFormat) -> Self {
-        match format {
-            AtlasFormat::Rgba8 if self.size() > RGBA8_SIZE => Self {
+    fn held(self) -> Self {
+        if self.size() > RGBA8_SIZE {
+            Self {
                 texels: self.texels / 2,
                 ..self
-            },
-            AtlasFormat::Bc7 | AtlasFormat::Astc | AtlasFormat::Rgba8 => self,
+            }
+        } else {
+            self
         }
     }
 
     fn held_on(self, device: &AtlasDevice) -> Self {
-        let mut shape = self.held(device.format);
+        let mut shape = self.held();
         while (shape.size() > device.max_texture_dimension
             || readback_bytes(shape, ROW_ALIGNMENT) + 4 > device.max_buffer_size)
             && shape.texels > 2
@@ -123,56 +123,25 @@ impl AtlasShape {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AtlasFormat {
-    Bc7,
-    Astc,
-    Rgba8,
+pub(crate) fn rows(size: u32) -> (u32, u32) {
+    (size * 4, size)
 }
 
-impl AtlasFormat {
-    pub(crate) fn tag(self) -> u32 {
-        match self {
-            Self::Rgba8 => 0,
-            Self::Bc7 => 1,
-            Self::Astc => 2,
-        }
-    }
-
-    pub(crate) fn of_tag(tag: u32) -> Option<Self> {
-        match tag {
-            0 => Some(Self::Rgba8),
-            1 => Some(Self::Bc7),
-            2 => Some(Self::Astc),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn rows(self, size: u32) -> (u32, u32) {
-        match self {
-            Self::Bc7 | Self::Astc => (size.div_ceil(4) * 16, size.div_ceil(4)),
-            Self::Rgba8 => (size * 4, size),
-        }
-    }
-
-    fn level_bytes(self, size: u32) -> usize {
-        let (row, rows) = self.rows(size);
-        row as usize * rows as usize
-    }
+fn level_bytes(size: u32) -> usize {
+    let (row, rows) = rows(size);
+    row as usize * rows as usize
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct AtlasDevice {
-    format: AtlasFormat,
     max_texture_dimension: u32,
     max_buffer_size: u64,
     max_layers: u32,
 }
 
 impl AtlasDevice {
-    fn of(format: AtlasFormat, limits: &DeviceLimits) -> Self {
+    fn of(limits: &DeviceLimits) -> Self {
         Self {
-            format,
             max_texture_dimension: limits.max_texture_dimension_2d,
             max_buffer_size: limits.storage_room,
             max_layers: limits.texture_layers,
@@ -185,7 +154,7 @@ impl AtlasDevice {
 }
 
 pub(crate) fn level_rows(shape: AtlasShape, level: u32, alignment: u32) -> (u32, u32, u32) {
-    let (row, rows) = AtlasFormat::Rgba8.rows(shape.size() >> level);
+    let (row, rows) = rows(shape.size() >> level);
     (rows, row.next_multiple_of(alignment), row)
 }
 
@@ -199,11 +168,10 @@ pub(crate) fn readback_bytes(shape: AtlasShape, alignment: u32) -> u64 {
             .sum::<u64>()
 }
 
-fn record_header(shape: AtlasShape, format: AtlasFormat) -> Vec<u8> {
+fn record_header(shape: AtlasShape) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(RECORD_HEADER);
     bytes.extend_from_slice(RECORD_MAGIC);
     for word in [
-        format.tag(),
         shape.frames,
         shape.texels,
         u32::from(shape.hemisphere),
@@ -214,31 +182,26 @@ fn record_header(shape: AtlasShape, format: AtlasFormat) -> Vec<u8> {
     bytes
 }
 
-fn record_bytes(shape: AtlasShape, format: AtlasFormat) -> usize {
+fn record_bytes(shape: AtlasShape) -> usize {
     RECORD_START
         + IMPOSTOR_KINDS as usize
             * (0..shape.levels())
-                .map(|level| format.level_bytes(shape.size() >> level))
+                .map(|level| level_bytes(shape.size() >> level))
                 .sum::<usize>()
 }
 
-type ImpostorIdentity = [u8; 48];
+type ImpostorIdentity = [u8; 44];
 
-fn identity(shape: AtlasShape, format: AtlasFormat, content: (u128, u128)) -> ImpostorIdentity {
-    let mut bytes = [0_u8; 48];
-    for (at, word) in [
-        format.tag(),
-        shape.frames,
-        shape.texels,
-        u32::from(shape.hemisphere),
-    ]
-    .into_iter()
-    .enumerate()
+fn identity(shape: AtlasShape, content: (u128, u128)) -> ImpostorIdentity {
+    let mut bytes = [0_u8; 44];
+    for (at, word) in [shape.frames, shape.texels, u32::from(shape.hemisphere)]
+        .into_iter()
+        .enumerate()
     {
         bytes[at * 4..at * 4 + 4].copy_from_slice(&word.to_le_bytes());
     }
-    bytes[16..32].copy_from_slice(&content.0.to_le_bytes());
-    bytes[32..48].copy_from_slice(&content.1.to_le_bytes());
+    bytes[12..28].copy_from_slice(&content.0.to_le_bytes());
+    bytes[28..44].copy_from_slice(&content.1.to_le_bytes());
     bytes
 }
 
@@ -253,9 +216,9 @@ pub(crate) static ASSEMBLY: JobKind =
 
 const ASSEMBLY_HEADER: usize = RECORD_HEADER + 4;
 
-fn assembly_input(shape: AtlasShape, format: AtlasFormat, read: &[u8]) -> Vec<u8> {
+fn assembly_input(shape: AtlasShape, read: &[u8]) -> Vec<u8> {
     let mut input = Vec::with_capacity(ASSEMBLY_HEADER + read.len());
-    input.extend_from_slice(&record_header(shape, format));
+    input.extend_from_slice(&record_header(shape));
     input.extend_from_slice(&ROW_ALIGNMENT.to_le_bytes());
     input.extend_from_slice(read);
     input
@@ -269,21 +232,18 @@ fn input_word(input: &[u8], at: usize) -> Option<u32> {
 struct Assembly {
     input: Vec<u8>,
     shape: AtlasShape,
-    family: Option<TextureFamily>,
     alignment: u32,
     out: Vec<u8>,
     region: u32,
     at: usize,
-    row: u32,
 }
 
 impl Assembly {
     fn parse(input: &[u8]) -> Option<Self> {
-        let format = AtlasFormat::of_tag(input_word(input, 4)?)?;
         let shape = AtlasShape {
-            frames: input_word(input, 8)?,
-            texels: input_word(input, 12)?,
-            hemisphere: input_word(input, 16)? != 0,
+            frames: input_word(input, 4)?,
+            texels: input_word(input, 8)?,
+            hemisphere: input_word(input, 12)? != 0,
         };
         let alignment = input_word(input, RECORD_HEADER)?;
         let regions = readback_bytes(shape, alignment);
@@ -291,50 +251,28 @@ impl Assembly {
             return None;
         }
         let thin = input_word(input, input.len() - 4)?;
-        let mut out = Vec::with_capacity(record_bytes(shape, format));
+        let mut out = Vec::with_capacity(record_bytes(shape));
         out.extend_from_slice(&input[..RECORD_HEADER]);
         out.extend_from_slice(&u32::from(thin != 0).to_le_bytes());
         Some(Self {
             input: input.to_vec(),
             shape,
-            family: match format {
-                AtlasFormat::Bc7 => Some(TextureFamily::Bc7),
-                AtlasFormat::Astc => Some(TextureFamily::Astc),
-                AtlasFormat::Rgba8 => None,
-            },
             alignment,
             out,
             region: 0,
             at: ASSEMBLY_HEADER,
-            row: 0,
         })
     }
 
-    fn band(&mut self, level: u32) {
+    fn level(&mut self, level: u32) {
         let (rows, stride, row) = level_rows(self.shape, level, self.alignment);
-        let band = match self.family {
-            Some(_) => (rows - self.row).min(BLOCK_ROWS),
-            None => rows,
-        };
-        let mut texels = Vec::with_capacity(row as usize * band as usize);
-        for at in self.row..self.row + band {
+        for at in 0..rows {
             let start = self.at + at as usize * stride as usize;
-            texels.extend_from_slice(&self.input[start..start + row as usize]);
+            self.out
+                .extend_from_slice(&self.input[start..start + row as usize]);
         }
-        match self.family {
-            Some(family) => {
-                let size = self.shape.size() >> level;
-                let blocks = compress_texture(size, band, &texels, family);
-                self.out.extend_from_slice(&blocks);
-            }
-            None => self.out.extend_from_slice(&texels),
-        }
-        self.row += band;
-        if self.row == rows {
-            self.at += stride as usize * rows as usize;
-            self.row = 0;
-            self.region += 1;
-        }
+        self.at += stride as usize * rows as usize;
+        self.region += 1;
     }
 }
 
@@ -342,7 +280,7 @@ impl Job for Assembly {
     fn step(&mut self, _: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
         let levels = self.shape.levels();
         if self.region < IMPOSTOR_KINDS * levels {
-            self.band(self.region % levels);
+            self.level(self.region % levels);
         }
         Ok((self.region >= IMPOSTOR_KINDS * levels).then(|| std::mem::take(&mut self.out)))
     }
@@ -742,7 +680,7 @@ impl Book {
             .filter(|supply| supply.material.as_ref() == bake.material.as_ref())
             .map(|supply| (*supply.interest.key(), supply.since));
         let Some((identity, since)) = asked else {
-            let identity = identity(self.shape.facing(key.2), cx.device.format, bake.content);
+            let identity = identity(self.shape.facing(key.2), bake.content);
             let fetch = cx.jobs.fetch(&BAKE, &identity, job_priority(VIEW_JOBS, 0));
             let supply = Supply {
                 material: bake.material.clone(),
@@ -764,10 +702,7 @@ impl Book {
                     return self.supplied(key, bake);
                 }
             }
-            Some(Request::Failed(_)) => {
-                self.supplies.remove(&key);
-                return Supplied::Refused;
-            }
+            Some(Request::Failed(_)) => return Supplied::Refused,
             Some(Request::Missing) => {}
             Some(Request::Asked(_)) | None => return Supplied::Coming,
         }
@@ -786,8 +721,8 @@ impl Book {
             .map_or(Supplied::Refused, Supplied::Resident)
     }
 
-    fn layer_bytes(&self, device: &AtlasDevice) -> u64 {
-        device.format.level_bytes(self.shape.size()) as u64 * 4 * 4 / 3
+    fn layer_bytes(&self) -> u64 {
+        level_bytes(self.shape.size()) as u64 * 4 * 4 / 3
     }
 
     fn layer(&mut self, cx: &mut Supplying<'_, '_, '_>, budget: Option<u32>) -> Option<u32> {
@@ -797,11 +732,7 @@ impl Book {
         let layer = self.layers.allocate(cx.device.max_layers)?;
         let extent = self.layers.extent();
         if self.capacity < extent {
-            let capacity = grown_layers(
-                extent,
-                self.layer_bytes(&cx.device),
-                cx.device.max_layers,
-            );
+            let capacity = grown_layers(extent, self.layer_bytes(), cx.device.max_layers);
             self.capacity = capacity;
             self.push(cx, AtlasWork::Grow { layers: capacity });
         }
@@ -817,8 +748,8 @@ impl Book {
         budget: Option<u32>,
     ) -> bool {
         let shape = self.shape.facing(key.2);
-        let header = record_header(shape, cx.device.format);
-        if bytes.len() != record_bytes(shape, cx.device.format)
+        let header = record_header(shape);
+        if bytes.len() != record_bytes(shape)
             || bytes.get(..RECORD_HEADER) != Some(header.as_slice())
         {
             return false;
@@ -901,27 +832,36 @@ impl Book {
             return;
         };
         match made {
-            Some(Ok(bytes)) => self.answers.ready(&identity, ticket, bytes),
-            Some(Err(error)) => self.answers.fail(&identity, ticket, error),
-            None => self.answers.miss(&identity, ticket),
+            Ok(bytes) => self.answers.ready(&identity, ticket, bytes),
+            Err(error) => self.answers.fail(&identity, ticket, error),
         };
     }
 
     fn left(&self) -> u64 {
-        (self.supplies.len() + self.baking.len()) as u64
+        let waiting = self
+            .supplies
+            .values()
+            .filter(|supply| !matches!(self.answers.of(&supply.interest), Some(Request::Failed(_))))
+            .count();
+        (waiting + self.baking.len()) as u64
     }
 }
 
-type Made = Option<Result<Arc<[u8]>, Error>>;
+type Made = Result<Arc<[u8]>, Error>;
+
+fn bake_failed(got: impl Into<serde_json::Value>) -> Error {
+    Error::new(ErrorCode::RenderFailed, "$.impostors.bake").got(got.into())
+}
 
 #[derive(Resource)]
 pub(crate) struct ImpostorBooks {
-    format: Option<AtlasFormat>,
+    installed: bool,
+    everything: Requests<(), ()>,
     book: Option<Book>,
     log: Feed<AtlasWork>,
     serials: Serials,
     missed: bool,
-    read: Vec<(ImpostorIdentity, Option<Vec<u8>>)>,
+    read: Vec<(ImpostorIdentity, Result<Vec<u8>, Error>)>,
     assembling: Vec<(JobId, ImpostorIdentity)>,
     made: Vec<(ImpostorIdentity, Made)>,
 }
@@ -929,7 +869,8 @@ pub(crate) struct ImpostorBooks {
 impl Default for ImpostorBooks {
     fn default() -> Self {
         Self {
-            format: None,
+            installed: false,
+            everything: Requests::default(),
             book: None,
             log: Feed::new(ImpostorSettings::default().work as usize),
             serials: Serials::default(),
@@ -946,14 +887,14 @@ impl ImpostorBooks {
         &self.log
     }
 
-    fn configure(&mut self, format: AtlasFormat, exchange: Option<&mut JobExchange>) {
+    fn configure(&mut self, exchange: Option<&mut JobExchange>) {
         if let Some(exchange) = exchange {
             for (job, _) in self.assembling.drain(..) {
                 exchange.cancel(job);
             }
         }
         self.log.replace();
-        self.format = Some(format);
+        self.installed = true;
         self.book = None;
         self.serials = Serials::default();
         self.missed = false;
@@ -962,14 +903,19 @@ impl ImpostorBooks {
         self.made.clear();
     }
 
-    fn arrived(&mut self, serial: u32, bytes: Vec<u8>) {
-        let (Some(format), Some((identity, shape))) =
-            (self.format, self.serials.baking.remove(&serial))
-        else {
+    fn arrived(&mut self, serial: u32, read: Option<Vec<u8>>) {
+        if !self.installed {
+            return;
+        }
+        let Some((identity, shape)) = self.serials.baking.remove(&serial) else {
             return;
         };
         let expected = readback_bytes(shape, ROW_ALIGNMENT) + 4;
-        let input = (bytes.len() as u64 == expected).then(|| assembly_input(shape, format, &bytes));
+        let input = match read {
+            Some(bytes) if bytes.len() as u64 == expected => Ok(assembly_input(shape, &bytes)),
+            Some(bytes) => Err(bake_failed(bytes.len())),
+            None => Err(bake_failed("lost")),
+        };
         self.read.push((identity, input));
     }
 
@@ -981,12 +927,12 @@ impl ImpostorBooks {
                 continue;
             }
             match read {
-                Some(input) => {
+                Ok(input) => {
                     let kind = JobRef::from(&ASSEMBLY);
                     let job = exchange.submit(kind, input, job_priority(IDLE_JOBS, 0));
                     self.assembling.push((job, identity));
                 }
-                None => self.made.push((identity, None)),
+                Err(error) => self.made.push((identity, Err(error))),
             }
         }
         let made = &mut self.made;
@@ -1001,7 +947,7 @@ impl ImpostorBooks {
             let output = output.map_err(|message| {
                 Error::new(ErrorCode::InvalidRecord, "$.jobs.impostors::assembly").got(message)
             });
-            made.push((identity, Some(output)));
+            made.push((identity, output));
             false
         });
     }
@@ -1023,8 +969,8 @@ pub(crate) fn assemble(
     mut reads: ResMut<BakeReads>,
     mut exchange: Option<ResMut<JobExchange>>,
 ) {
-    if let Some(format) = reads.format.take().and_then(AtlasFormat::of_tag) {
-        books.configure(format, exchange.as_deref_mut());
+    if std::mem::take(&mut reads.installed) {
+        books.configure(exchange.as_deref_mut());
     }
     books.missed |= std::mem::take(&mut reads.missed);
     books.log.resize(settings.work as usize);
@@ -1034,6 +980,14 @@ pub(crate) fn assemble(
     if let Some(exchange) = exchange.as_deref_mut() {
         books.assemble(exchange);
     }
+}
+
+pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {
+    let Some(books) = world.get_resource::<ImpostorBooks>() else {
+        return;
+    };
+    asks.hold(books.everything.ask_later(()));
+    asks.left(books.left());
 }
 
 pub(crate) fn policy(
@@ -1059,22 +1013,20 @@ struct Frame {
 type Sources<'a> = (&'a AssetLibrary, &'a AssetResidency);
 
 pub(crate) fn settle(
-    (settings, detail, cook, clock, time, limits): (
-        Res<ImpostorSettings>,
-        Res<Detail>,
-        Res<CookMode>,
-        Res<WorkClock>,
-        Res<FrameTime>,
-        Res<DeviceLimits>,
+    (settings, detail, limits): (Res<ImpostorSettings>, Res<Detail>, Res<DeviceLimits>),
+    (clock, time, records): (Res<WorkClock>, Res<FrameTime>, Res<Records>),
+    (library, residency): (Res<AssetLibrary>, Res<AssetResidency>),
+    (mut books, mut budget, mut stats): (
+        ResMut<ImpostorBooks>,
+        ResMut<FrameBudget>,
+        ResMut<ImpostorStats>,
     ),
-    (library, residency, records): (Res<AssetLibrary>, Res<AssetResidency>, Res<Records>),
-    (mut books, mut budget): (ResMut<ImpostorBooks>, ResMut<FrameBudget>),
     mut jobs: Jobs,
     asks: Query<(Entity, &ImpostorAsks)>,
     mut held: Query<&mut ImpostorRecords>,
-    mut stats: ResMut<ImpostorStats>,
 ) {
-    let cooking = cook.cooking;
+    books.everything.settle(time.real_elapsed);
+    let cooking = books.everything.interests(&()) > 0;
     let frame = Frame {
         enabled: settings.enabled,
         pixels: settings.pixels,
@@ -1111,10 +1063,10 @@ fn settle_books(
     sources: Sources<'_>,
     asks: &Query<'_, '_, (Entity, &ImpostorAsks)>,
 ) -> Vec<(Entity, ImpostorRecords)> {
-    let Some(format) = books.format else {
+    if !books.installed {
         return Vec::new();
-    };
-    let device = AtlasDevice::of(format, limits);
+    }
+    let device = AtlasDevice::of(limits);
     let made = std::mem::take(&mut books.made);
     let missed = std::mem::take(&mut books.missed);
     let ImpostorBooks {
@@ -1137,7 +1089,7 @@ fn settle_books(
         book.restart(&mut cx, shape);
     }
     for (identity, made) in made {
-        if let Some(Ok(bytes)) = &made {
+        if let Ok(bytes) = &made {
             cx.jobs.keep(&BAKE, &identity, bytes.to_vec());
         }
         if let Some(book) = held.as_mut() {

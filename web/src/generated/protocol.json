@@ -9,6 +9,7 @@
     "engine_dither",
     "engine_ground_cover",
     "engine_grounding",
+    "engine_impostors",
     "engine_layer_erosion",
     "engine_layer_heightmap",
     "engine_layer_hydrology",

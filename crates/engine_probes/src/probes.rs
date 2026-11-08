@@ -399,10 +399,6 @@ impl ProbeState {
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the plan joins the probes, the sky, the static moves, the budget and the view"
-)]
 pub(crate) fn plan_captures(
     settings: Res<ReflectionProbeSettings>,
     limits: Res<DeviceLimits>,

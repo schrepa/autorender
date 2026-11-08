@@ -13,8 +13,8 @@ use engine_render::{
 };
 
 use crate::books::{
-    AtlasFormat, AtlasShape, AtlasWork, ImpostorBooks, RECORD_START, ROW_ALIGNMENT, level_rows,
-    readback_bytes, record_of,
+    AtlasShape, AtlasWork, ImpostorBooks, RECORD_START, ROW_ALIGNMENT, level_rows, readback_bytes,
+    record_of, rows,
 };
 use crate::shaders::impostors::bake;
 use crate::shaders::impostors::faces::impostors as face;
@@ -27,30 +27,6 @@ const FORMATS: [wgpu::TextureFormat; 4] = [
     wgpu::TextureFormat::Rgba8UnormSrgb,
     wgpu::TextureFormat::Rgba8Unorm,
     wgpu::TextureFormat::Rgba8Unorm,
-];
-const BC7_FORMATS: [wgpu::TextureFormat; 4] = [
-    wgpu::TextureFormat::Bc7RgbaUnormSrgb,
-    wgpu::TextureFormat::Bc7RgbaUnormSrgb,
-    wgpu::TextureFormat::Bc7RgbaUnorm,
-    wgpu::TextureFormat::Bc7RgbaUnorm,
-];
-const ASTC_FORMATS: [wgpu::TextureFormat; 4] = [
-    wgpu::TextureFormat::Astc {
-        block: wgpu::AstcBlock::B4x4,
-        channel: wgpu::AstcChannel::UnormSrgb,
-    },
-    wgpu::TextureFormat::Astc {
-        block: wgpu::AstcBlock::B4x4,
-        channel: wgpu::AstcChannel::UnormSrgb,
-    },
-    wgpu::TextureFormat::Astc {
-        block: wgpu::AstcBlock::B4x4,
-        channel: wgpu::AstcChannel::Unorm,
-    },
-    wgpu::TextureFormat::Astc {
-        block: wgpu::AstcBlock::B4x4,
-        channel: wgpu::AstcChannel::Unorm,
-    },
 ];
 const ATLAS_LABELS: [&str; 4] = [
     "impostor_albedo",
@@ -80,42 +56,24 @@ gpu_struct! {
 
 #[derive(Resource, Default)]
 pub(crate) struct BakeReads {
-    pub(crate) format: Option<u32>,
+    pub(crate) installed: bool,
     pub(crate) missed: bool,
-    pub(crate) read: Vec<(u32, Vec<u8>)>,
+    pub(crate) read: Vec<(u32, Option<Vec<u8>>)>,
 }
 
 impl Readable for BakeReads {
     fn arrived(&mut self, tag: u32, read: Readback<&[u8]>) {
         match tag {
-            DEVICE => {
-                self.format = read
-                    .value
-                    .get(..4)
-                    .and_then(|word| <[u8; 4]>::try_from(word).ok())
-                    .map(u32::from_le_bytes);
-            }
+            DEVICE => self.installed = true,
             MISSED => self.missed = true,
-            serial => self.read.push((serial, read.value.to_vec())),
+            serial => self.read.push((serial, Some(read.value.to_vec()))),
         }
     }
-}
 
-fn format_of(features: wgpu::Features) -> AtlasFormat {
-    if features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
-        AtlasFormat::Bc7
-    } else if features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC) {
-        AtlasFormat::Astc
-    } else {
-        AtlasFormat::Rgba8
-    }
-}
-
-fn formats_of(format: AtlasFormat) -> [wgpu::TextureFormat; 4] {
-    match format {
-        AtlasFormat::Bc7 => BC7_FORMATS,
-        AtlasFormat::Astc => ASTC_FORMATS,
-        AtlasFormat::Rgba8 => FORMATS,
+    fn lost(&mut self, tag: u32) {
+        if tag != DEVICE && tag != MISSED {
+            self.read.push((tag, None));
+        }
     }
 }
 
@@ -134,7 +92,6 @@ fn bake_pipeline(
     RenderPipeline {
         vertex,
         fragment: Some(fragment),
-        debug: None,
         vertices,
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
@@ -165,7 +122,6 @@ struct Drawn {
 }
 
 pub(crate) struct ImpostorGpu {
-    format: AtlasFormat,
     atlas: [Texture<Self>; 4],
     colors: [Texture<Self>; 4],
     depth: Texture<Self>,
@@ -262,7 +218,7 @@ impl ImpostorGpu {
         for texture in self.atlas {
             for level in 0..shape.levels() {
                 let size = shape.size() >> level;
-                let (row, rows) = self.format.rows(size);
+                let (row, rows) = rows(size);
                 let length = row as usize * rows as usize;
                 let Some(texels) = bytes.get(at..at + length) else {
                     return;
@@ -394,10 +350,8 @@ impl GpuPart for ImpostorGpu {
     const NAME: &'static str = "impostors";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let format = format_of(cx.features());
-        let formats = formats_of(format);
         let atlas: [Texture<Self>; 4] = std::array::from_fn(|kind| {
-            cx.texture(ATLAS_LABELS[kind], formats[kind], Lifetime::Kept)
+            cx.texture(ATLAS_LABELS[kind], FORMATS[kind], Lifetime::Kept)
         });
         let colors: [Texture<Self>; 4] = std::array::from_fn(|kind| {
             cx.texture(BAKE_LABELS[kind], FORMATS[kind], Lifetime::Kept)
@@ -407,12 +361,7 @@ impl GpuPart for ImpostorGpu {
         let uniform = cx.buffer("impostor_bake", Lifetime::Kept);
         let kinds = cx.buffer("impostor_bake_kinds", Lifetime::Kept);
         let read = cx.buffer("impostor_bake_read", Lifetime::Kept);
-        let sampler = cx.sampler(SamplerDesc {
-            filter: wgpu::FilterMode::Linear,
-            mipmap: wgpu::MipmapFilterMode::Linear,
-            address: [wgpu::AddressMode::ClampToEdge; 3],
-            compare: None,
-        });
+        let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
         let views = [
             face::ATLAS_ALBEDO,
             face::ATLAS_EMISSIVE,
@@ -471,7 +420,6 @@ impl GpuPart for ImpostorGpu {
             )?);
         }
         Ok(Self {
-            format,
             atlas,
             colors,
             depth,
@@ -498,7 +446,7 @@ impl GpuPart for ImpostorGpu {
     ) {
         if !self.announced {
             self.announced = true;
-            cx.deliver::<BakeReads>(DEVICE, self.format.tag().to_le_bytes().to_vec());
+            cx.deliver::<BakeReads>(DEVICE, Vec::new());
         }
         let drawn = self.drawing.take();
         if let Some(drawn) = &drawn {

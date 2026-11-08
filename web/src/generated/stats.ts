@@ -17,6 +17,7 @@ export interface FrameStats {
   frame: number;
   ground_cover_stats: GroundCoverStats;
   haze_stats: HazeStats;
+  impostors_stats: ImpostorStats;
   instances: number;
   jobs: JobStats;
   linked: { faces: Record<string, string>; lists: Record<string, string[]>; nobody: string[] };
@@ -201,6 +202,11 @@ export interface HazeStats {
   active: boolean;
 }
 
+export interface ImpostorStats {
+  failed: number;
+  pending: number;
+}
+
 export interface JobStats {
   cache_bytes: number;
   cache_hits: number;
@@ -248,7 +254,6 @@ export interface NavStats {
   agents: number;
   arrived: number;
   collision_errors: number;
-  cooking: number;
   grounds: number;
   portals: number;
   refused: number;

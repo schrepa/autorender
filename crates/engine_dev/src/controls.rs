@@ -388,7 +388,7 @@ fn parented(
         .or_else(|| world.get_resource::<OperationScene>().cloned())
         .ok_or_else(|| Error::new(ErrorCode::NoScene, "$"))?;
     let found = |id: &str, path: &str| {
-        scene.entity(world, id).ok_or_else(|| {
+        scene.entity(id).ok_or_else(|| {
             Error::new(ErrorCode::UnknownEntity, path)
                 .expected(Expected::Entity)
                 .got(id)

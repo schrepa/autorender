@@ -5,7 +5,6 @@ use engine_assets::{AssetLibrary, TextureHandle};
 use engine_settings::{Error, ErrorCode};
 pub use engine_textures::{
     Family as TextureFamily, Source as TextureSource, Usage as TextureUsage,
-    compress as compress_texture,
 };
 
 use crate::jobs::record_key;

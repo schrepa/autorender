@@ -9,7 +9,7 @@ mod books;
 mod part;
 mod settings;
 
-use engine_core::{Brick, Bricks, GpuBits, JobKind, Schedule, Source};
+use engine_core::{Brick, Bricks, Cook, CookList, GpuBits, JobKind, Schedule, Source};
 use engine_places::impostors::{ImpostorFlags, Impostors};
 use engine_render::RenderBricks;
 
@@ -30,6 +30,7 @@ impl Brick for ImpostorsBrick {
             .resource::<books::ImpostorBooks>()
             .resource::<part::BakeReads>()
             .fill::<Impostors>(Some(shaders::impostors::faces::impostors::MODULE))
+            .join::<CookList>(Cook::new(books::cook), None)
             .systems(
                 Schedule::ViewSync,
                 (books::assemble, books::settle, books::policy),

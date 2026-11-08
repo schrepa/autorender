@@ -20,6 +20,22 @@ use crate::settings::{PlacedLook, ScatterSettings};
 
 pub(crate) const GROUNDING_HEIGHT: &str = "grounding_height";
 
+fn slot_color(material: &Material) -> SlotColor {
+    SlotColor {
+        color: pack_color(material.color()),
+        surface: pack_surface(material.surface()),
+        pad: 0,
+    }
+}
+
+fn reach_of(material: &Material) -> f32 {
+    if material.slot(SurfaceSlot::Position) == Some(crate::WIND) {
+        WIND_REACH
+    } else {
+        0.0
+    }
+}
+
 fn origin_tint(origin: Vec3) -> u32 {
     let cell = |value: f32| (value * 4.0).floor() as i32 as u32;
     let mut hash =
@@ -264,17 +280,11 @@ impl Groups {
                 };
                 let objects = groups.len() as u32;
                 indices.insert((*terrain, asset_index), objects);
-                let color = SlotColor {
-                    color: pack_color(material.color()),
-                    surface: pack_surface(material.surface()),
-                    pad: 0,
-                };
-                let reach = if material.slot(SurfaceSlot::Position) == Some(crate::WIND) {
-                    WIND_REACH
-                } else {
-                    0.0
-                };
-                let sphere = ((low + high) * 0.5, (high - low).length() * 0.5 + reach);
+                let color = slot_color(material);
+                let sphere = (
+                    (low + high) * 0.5,
+                    (high - low).length() * 0.5 + reach_of(material),
+                );
                 let cover = Cover::of(bounds.min(), bounds.max());
                 groups.push(DrawGroup {
                     meshes,

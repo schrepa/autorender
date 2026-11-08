@@ -20,8 +20,6 @@ export interface Runtime {
   pad(buttons: number, axes: Float32Array): void;
   clear_input(): void;
   animation_frame(timestamp: number, width: number, height: number): number;
-  work_while_compiling(width: number, height: number): boolean;
-  load_between_frames(): boolean;
   set_preparation(enabled: boolean): void;
   set_job_workers(workers: number): boolean;
   set_job_cache(caching: boolean, verify: boolean): void;

@@ -262,6 +262,23 @@ fn eye_of(pose: Mat4) -> Option<(Vec3, Vec3, Vec3)> {
     eye.is_finite().then_some((eye, forward, up))
 }
 
+fn history_of(
+    before: Option<&Held>,
+    reset: bool,
+    (frame, view_projection): (FrameId, Mat4),
+) -> (FrameId, Mat4, ViewHistory) {
+    match before {
+        Some(held) if !reset => (
+            held.started,
+            held.view_projection,
+            ViewHistory::Valid {
+                since: held.started,
+            },
+        ),
+        Some(_) | None => (frame, view_projection, ViewHistory::Fresh),
+    }
+}
+
 pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
     let cuts: Vec<Entity> = take_asks::<ViewCut>(world)
         .into_iter()
@@ -341,16 +358,7 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts, scene: u64) {
         };
         let before = held.iter().find(|held| held.view == entity);
         let reset = cuts.contains(&entity) || before.is_none_or(|held| held.key != key);
-        let (started, previous, history) = match before {
-            Some(held) if !reset => (
-                held.started,
-                held.view_projection,
-                ViewHistory::Valid {
-                    since: held.started,
-                },
-            ),
-            Some(_) | None => (frame, view_projection, ViewHistory::Fresh),
-        };
+        let (started, previous, history) = history_of(before, reset, (frame, view_projection));
         kept.push(Held {
             view: entity,
             key,

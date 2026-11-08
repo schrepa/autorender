@@ -41,6 +41,21 @@ pub(crate) struct Installs {
     pub(crate) applied: Vec<crate::shared::AppliedModule>,
 }
 
+impl Installs {
+    fn of(count: usize) -> Self {
+        Self {
+            turned: vec![Some(0); count],
+            faults: Vec::new(),
+            reinstalls: Vec::new(),
+            draw_entries: Vec::new(),
+            installed: vec![FrameId::default(); count],
+            gates: Vec::new(),
+            pass_gates: Vec::new(),
+            applied: Vec::new(),
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Frames {
     pub(crate) current: u64,
@@ -252,16 +267,7 @@ impl Run {
             spare: Spare::default(),
             reached: Reached::default(),
             filled: Vec::new(),
-            installs: Installs {
-                turned: vec![Some(0); count],
-                faults: Vec::new(),
-                reinstalls: Vec::new(),
-                draw_entries: Vec::new(),
-                installed: vec![FrameId::default(); count],
-                gates: Vec::new(),
-                pass_gates: Vec::new(),
-                applied: Vec::new(),
-            },
+            installs: Installs::of(count),
             frames: Frames::default(),
             bindings: Bindings {
                 holders,

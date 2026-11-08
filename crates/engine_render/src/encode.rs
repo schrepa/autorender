@@ -329,7 +329,7 @@ pub(crate) struct Asked {
 pub(crate) struct Arrived {
     part: u32,
     tag: u32,
-    read: Readback<Vec<u8>>,
+    read: Readback<Option<Vec<u8>>>,
     deliver: Deliver,
 }
 
@@ -1080,7 +1080,7 @@ impl Run {
     pub(crate) fn arrived(
         &mut self,
         (part, tag): (u32, u32),
-        read: Readback<Vec<u8>>,
+        read: Readback<Option<Vec<u8>>>,
         deliver: Deliver,
     ) {
         self.reading.arrived.push(Arrived {
@@ -1102,7 +1102,7 @@ impl Run {
                 continue;
             }
             let read = Readback {
-                value: arrived.read.value.as_slice(),
+                value: arrived.read.value.as_deref(),
                 written: arrived.read.written,
             };
             (arrived.deliver)(world, arrived.tag, read);

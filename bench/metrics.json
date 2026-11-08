@@ -695,6 +695,28 @@
       "direction": null
     },
     {
+      "name": "impostors_stats.failed",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "impostors_stats.pending",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "instances",
       "kind": "work",
       "rule": "shown",

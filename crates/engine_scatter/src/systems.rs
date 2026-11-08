@@ -6,9 +6,7 @@ use engine_core::{
     PrimaryView, Readable, Readback, Spawner, Transform,
 };
 use engine_math::collections::HashMap;
-use engine_places::impostors::{
-    IMPOSTOR_VERTICES, ImpostorAsks, ImpostorRecord, ImpostorRecords, Impostors,
-};
+use engine_places::impostors::{ImpostorAsks, ImpostorRecord, ImpostorRecords, Impostors};
 use engine_places_rendering::occlusion::OcclusionSource;
 use engine_places_rendering::shadows::{ShadowChange, ShadowChanges};
 use engine_places_simulation::ground::TileKey;

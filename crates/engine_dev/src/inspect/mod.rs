@@ -776,7 +776,7 @@ impl DevTools {
                     .range(0.0, 0.0)
                     .got(offset));
             }
-            let entity = scene.entity(world, id).ok_or_else(|| {
+            let entity = scene.entity(id).ok_or_else(|| {
                 Error::new(ErrorCode::UnknownEntity, "$.entity")
                     .expected(Expected::Entity)
                     .got(id)
@@ -793,7 +793,7 @@ impl DevTools {
         let parent = parent
             .map(|id| {
                 validate_name(id, "$.parent")?;
-                let entity = scene.entity(world, id).ok_or_else(|| {
+                let entity = scene.entity(id).ok_or_else(|| {
                     Error::new(ErrorCode::UnknownEntity, "$.parent")
                         .expected(Expected::Entity)
                         .got(id)

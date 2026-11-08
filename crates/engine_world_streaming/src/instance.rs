@@ -67,16 +67,16 @@ fn size(bounds: &Aabb) -> f32 {
 }
 
 fn of_box(at: &StreamedAt<'_>, bounds: &Aabb) -> f32 {
-    let (min, max) = (bounds.min(), bounds.max());
+    let (low, high) = (bounds.min(), bounds.max());
     (0..8)
         .map(|corner| {
             let pick = |bit: u32, low: f32, high: f32| {
                 if corner & (1 << bit) == 0 { low } else { high }
             };
             let point = Vec3::new(
-                pick(0, min.x, max.x),
-                pick(1, min.y, max.y),
-                pick(2, min.z, max.z),
+                pick(0, low.x, high.x),
+                pick(1, low.y, high.y),
+                pick(2, low.z, high.z),
             );
             at.world.transform_point3(point).distance(at.position)
         })

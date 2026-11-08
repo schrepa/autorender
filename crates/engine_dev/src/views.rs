@@ -108,7 +108,6 @@ pub struct MeshView {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct MeshRenderView {
     pub levels: Vec<LodLevelView>,
-    pub impostor: Option<bool>,
 }
 
 #[derive(Serialize)]

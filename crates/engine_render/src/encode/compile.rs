@@ -580,15 +580,14 @@ impl Compiler<'_> {
     }
 }
 
+type PassFormats = (
+    Vec<Option<wgpu::TextureFormat>>,
+    Option<(wgpu::TextureFormat, bool)>,
+    (bool, bool),
+);
+
 impl Run {
-    pub(super) fn pass_formats(
-        &self,
-        index: u32,
-    ) -> (
-        Vec<Option<wgpu::TextureFormat>>,
-        Option<(wgpu::TextureFormat, bool)>,
-        (bool, bool),
-    ) {
+    pub(super) fn pass_formats(&self, index: u32) -> PassFormats {
         let Some(pass) = self.machine.declared.passes.get(index as usize) else {
             return (Vec::new(), None, (false, false));
         };

@@ -705,6 +705,23 @@
       },
       "type": "object"
     },
+    "ImpostorStats": {
+      "properties": {
+        "failed": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pending": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "JobStats": {
       "properties": {
         "cache_bytes": {
@@ -973,12 +990,6 @@
           "type": "integer"
         },
         "collision_errors": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "cooking": {
           "default": 0,
           "format": "uint32",
           "minimum": 0,
@@ -2149,6 +2160,9 @@
     "haze_stats": {
       "$ref": "#/$defs/HazeStats"
     },
+    "impostors_stats": {
+      "$ref": "#/$defs/ImpostorStats"
+    },
     "instances": {
       "format": "uint32",
       "minimum": 0,
@@ -2381,6 +2395,7 @@
     "bloom_stats",
     "collision_stats",
     "ground_cover_stats",
+    "impostors_stats",
     "local_light_stats",
     "meshes_stats",
     "navigation_stats",

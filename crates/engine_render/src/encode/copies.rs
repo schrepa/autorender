@@ -143,8 +143,10 @@ impl Run {
         let (slots, most) = (self.reading.slots, self.reading.slot_bytes);
         let written = self.written();
         let device = self.device.clone();
+        let mut lost = Vec::new();
         for request in asked {
             let Some(buffer) = self.buffer_held(request.buffer).map(|(buffer, _)| buffer.clone()) else {
+                lost.push(request);
                 continue;
             };
             let bytes = request.range.end.saturating_sub(request.range.start).next_multiple_of(4);
@@ -155,15 +157,20 @@ impl Run {
             let keep = if request.once || over { Keep::Once } else { Keep::Ring(slots) };
             let reader = Reader::Part { part: request.part, tag: request.tag };
             let Some(encoder) = self.recording.encoder() else {
+                lost.push(request);
                 continue;
             };
             let asked = (reader, written, Some(request.deliver));
             if !self.reading.list.record((&device, encoder), (&buffer, request.range.clone()), asked, keep) {
+                lost.push(request);
                 continue;
             }
             if request.then == AfterRead::Clear {
                 encoder.clear_buffer(&buffer, request.range.start, Some(bytes));
             }
+        }
+        for request in lost {
+            self.arrived((request.part, request.tag), Readback { value: None, written }, request.deliver);
         }
     }
 }

@@ -21,4 +21,6 @@ pub struct Readback<T> {
 
 pub trait Readable: Resource<Mutability = Mutable> + Default {
     fn arrived(&mut self, tag: u32, read: Readback<&[u8]>);
+
+    fn lost(&mut self, _tag: u32) {}
 }

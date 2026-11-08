@@ -394,6 +394,7 @@ pub enum Copied<P> {
     Canvas,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum CopyRegion {
     Bytes {
         from: u64,
@@ -898,40 +899,6 @@ pub struct Prepare<'f, P> {
     part: PhantomData<fn() -> P>,
 }
 
-fn delivered<R: Readable>(world: &mut bevy_ecs::world::World, tag: u32, read: Readback<&[u8]>) {
-    world.get_resource_or_init::<R>().arrived(tag, read);
-}
-
-fn region_of(region: &CopyRegion) -> CopyRegion {
-    match region {
-        CopyRegion::Bytes { from, to, size } => CopyRegion::Bytes {
-            from: *from,
-            to: *to,
-            size: *size,
-        },
-        CopyRegion::Texels { from, to, size } => CopyRegion::Texels {
-            from: *from,
-            to: *to,
-            size: *size,
-        },
-        CopyRegion::Levels { from, to, size } => CopyRegion::Levels {
-            from: *from,
-            to: *to,
-            size: *size,
-        },
-        CopyRegion::ToBuffer { from, to, size } => CopyRegion::ToBuffer {
-            from: *from,
-            to: *to,
-            size: *size,
-        },
-        CopyRegion::LevelToBuffer { from, to, size } => CopyRegion::LevelToBuffer {
-            from: *from,
-            to: *to,
-            size: *size,
-        },
-    }
-}
-
 impl<P: GpuPart> Prepare<'_, P> {
     pub fn run(&mut self, pass: Pass<P>) {
         self.core.run_pass(pass.0);
@@ -1074,7 +1041,7 @@ impl<P: GpuPart> Prepare<'_, P> {
     }
 
     pub fn copy(&mut self, pass: Pass<P>, regions: &[CopyRegion]) {
-        let regions = regions.iter().map(region_of).collect();
+        let regions = regions.to_vec();
         let copies = &mut self.core.queued.copies;
         copies.retain(|(known, _)| *known != pass.0);
         copies.push((pass.0, regions));
@@ -1082,7 +1049,7 @@ impl<P: GpuPart> Prepare<'_, P> {
     }
 
     pub fn copy_at_end(&mut self, from: Copied<P>, to: Copied<P>, regions: &[CopyRegion]) {
-        let regions = regions.iter().map(region_of).collect();
+        let regions = regions.to_vec();
         match (copied(from), copied(to)) {
             (Ok(from), Ok(to)) => self.core.queued.ending.push((from, to, regions)),
             (Err(error), _) | (_, Err(error)) => self.core.refuse(error),
@@ -1112,7 +1079,7 @@ impl<P: GpuPart> Prepare<'_, P> {
             range,
             then,
             once: false,
-            deliver: delivered::<R>,
+            deliver: readback::delivered::<R>,
         })
     }
 
@@ -1131,7 +1098,7 @@ impl<P: GpuPart> Prepare<'_, P> {
             range,
             then,
             once: true,
-            deliver: delivered::<R>,
+            deliver: readback::delivered::<R>,
         })
     }
 
@@ -1140,10 +1107,10 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.arrived(
             (part, tag),
             Readback {
-                value: bytes,
+                value: Some(bytes),
                 written,
             },
-            delivered::<R>,
+            readback::delivered::<R>,
         );
     }
 

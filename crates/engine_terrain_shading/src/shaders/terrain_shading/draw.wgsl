@@ -10,7 +10,7 @@ import package::face::shadows::{kept_level, kept_texels};
 import package::face::sun::sun_direction;
 import package::engine::view::{DETAIL_EDGE_ON, PI, camera, detail_across, detail_distance, detail_level,
     detail_resolved, detail_span, eye_world, fade_noise, material_detail, stable_normalize, view_pixel};
-import package::engine::shading::{Shaded, SurfacePoint, world_plane};
+import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::surfaces::SURFACE_GROUND;
 import package::face::water::{WATER_HELD, WaterCell, water_cell, water_level};
 import package::generated::targets::{DepthViewTargets, depth_view_targets};
@@ -572,6 +572,16 @@ fn terrain_lattice(uv: vec2<f32>, axis: u32, lattice: u32) -> vec2<f32> {
             TERRAIN_TURN.y * uv.x + TERRAIN_TURN.x * uv.y);
     }
     return vec2<f32>(uv.x * TERRAIN_STRETCH, uv.y);
+}
+
+fn world_plane(p: vec3<f32>, axis: u32) -> vec2<f32> {
+    if axis == 0u {
+        return vec2<f32>(p.z, -p.y);
+    }
+    if axis == 2u {
+        return vec2<f32>(p.x, -p.y);
+    }
+    return p.xz;
 }
 
 fn terrain_lattice_at(world: vec3<f32>, mapping: TerrainMapping, axis: u32, lattice: u32)

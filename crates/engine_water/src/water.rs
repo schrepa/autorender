@@ -86,7 +86,7 @@ fn pipelines(
     behind: &dyn Fn() -> Vec<(Var, Bind<WaterGpu>)>,
     foam_all: Vec<(Var, Bind<WaterGpu>)>,
 ) -> Result<Pipelines, Error> {
-    use crate::shaders::water::{debug, falls, particles, surface};
+    use crate::shaders::water::{falls, particles, surface};
     let surface_pass = Scene::of::<WaterPass>();
     let blended = wgpu::BlendState {
         color: wgpu::BlendComponent {
@@ -105,14 +105,13 @@ fn pipelines(
         cull_mode: None,
         ..Default::default()
     };
-    let entries = [surface::VS_WATER, surface::FS_WATER, debug::FS_DEBUG_WATER];
+    let entries = [surface::VS_WATER, surface::FS_WATER];
     let drawing_bound = reached(cx, &entries, behind());
     let drawing = cx.render_pipeline(
         surface_pass,
         &RenderPipeline {
             vertex: surface::VS_WATER,
             fragment: Some(surface::FS_WATER),
-            debug: Some(debug::FS_DEBUG_WATER),
             vertices: &[],
             primitive,
             depth: DepthUse::Write {
@@ -123,18 +122,13 @@ fn pipelines(
         },
         &drawing_bound,
     )?;
-    let entries = [
-        falls::VS_FALL_TEMPORAL,
-        falls::FS_FALL,
-        debug::FS_DEBUG_FALL,
-    ];
+    let entries = [falls::VS_FALL_TEMPORAL, falls::FS_FALL];
     let falling_bound = reached(cx, &entries, behind());
     let falling = cx.render_pipeline(
         surface_pass,
         &RenderPipeline {
             vertex: falls::VS_FALL_TEMPORAL,
             fragment: Some(falls::FS_FALL),
-            debug: Some(debug::FS_DEBUG_FALL),
             vertices: &[VertexLayout::Buffer(fall_layout())],
             primitive,
             depth: DepthUse::Write {
@@ -156,7 +150,6 @@ fn pipelines(
         &RenderPipeline {
             vertex: particles::VS_FOAM,
             fragment: Some(particles::FS_FOAM),
-            debug: None,
             vertices: &[],
             primitive,
             depth: DepthUse::None,

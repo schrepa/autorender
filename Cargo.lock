@@ -1102,7 +1102,6 @@ dependencies = [
  "bevy_ecs",
  "engine_codec",
  "engine_lodbuild",
- "engine_math",
  "engine_settings",
  "glam 0.30.9",
  "libm",
@@ -1149,6 +1148,15 @@ dependencies = [
  "engine_ecs",
  "engine_render",
  "engine_sources",
+]
+
+[[package]]
+name = "engine_cards"
+version = "0.1.0"
+dependencies = [
+ "engine_codec",
+ "engine_lodbuild",
+ "engine_math",
 ]
 
 [[package]]
@@ -1338,6 +1346,18 @@ dependencies = [
  "libm",
  "schemars",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "engine_impostors"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_ecs",
+ "engine_places",
+ "engine_render",
+ "engine_sources",
  "serde_json",
 ]
 
@@ -1533,7 +1553,10 @@ name = "engine_native"
 version = "0.1.0"
 dependencies = [
  "engine",
+ "engine_core",
  "engine_profiler",
+ "engine_texture_cook",
+ "engine_textures",
  "engine_worker",
  "gilrs",
  "gltf",
@@ -1811,6 +1834,7 @@ dependencies = [
  "engine_core",
  "engine_ecs",
  "engine_math",
+ "engine_places",
  "engine_places_rendering",
  "engine_places_simulation",
  "engine_places_world",
@@ -1970,6 +1994,7 @@ dependencies = [
  "engine_core",
  "engine_debug_view",
  "engine_dither",
+ "engine_impostors",
  "engine_lighting",
  "engine_lights",
  "engine_meshes",
@@ -2076,6 +2101,16 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "engine_texture_cook"
+version = "0.1.0"
+dependencies = [
+ "engine_assets",
+ "engine_codec",
+ "engine_math",
+ "engine_textures",
 ]
 
 [[package]]
@@ -2187,6 +2222,7 @@ dependencies = [
  "engine_codec",
  "engine_core",
  "engine_ecs",
+ "engine_places_rendering",
  "engine_places_simulation",
  "engine_places_world",
  "engine_sources",
@@ -2753,6 +2789,7 @@ name = "highlands"
 version = "0.1.0"
 dependencies = [
  "engine",
+ "engine_cards",
  "engine_core",
  "engine_ecs",
  "engine_fly_camera",
@@ -5938,6 +5975,7 @@ dependencies = [
  "engine_standard",
  "engine_terrain",
  "engine_terrain_shading",
+ "engine_texture_cook",
  "engine_textures",
  "engine_water",
  "engine_worker",

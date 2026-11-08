@@ -303,6 +303,7 @@ fn core_entries(registry: &mut RegistryBuilder) {
     registry.fill_core::<Asked<ViewCut>>();
     registry.writers_first::<Pause>();
     registry.writers_first::<TimeScale>();
+    registry.writers_first::<JobExchange>();
 }
 
 fn install_passes(world: &mut World) {

@@ -211,7 +211,6 @@ pub struct GpuMesh {
     placement: MeshResidence,
     revision: u64,
     own: Option<OwnMesh>,
-    pub extended: bool,
     pub index_count: u32,
 }
 
@@ -396,7 +395,6 @@ impl GpuMeshes {
                 placement,
                 revision: resident.revision(),
                 own,
-                extended: extras.is_some(),
                 index_count: resident.index_count(),
             },
         );

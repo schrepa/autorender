@@ -677,12 +677,6 @@
     },
     "FeedSettings": {
       "properties": {
-        "impostor_work": {
-          "default": 64,
-          "format": "uint32",
-          "minimum": 1,
-          "type": "integer"
-        },
         "mesh_residency": {
           "default": 4096,
           "format": "uint32",
@@ -700,13 +694,6 @@
     },
     "FrameBudgetSettings": {
       "properties": {
-        "loading_work_ms": {
-          "default": 50.0,
-          "format": "float",
-          "maximum": 1000.0,
-          "minimum": 0.1,
-          "type": "number"
-        },
         "upload_bytes": {
           "default": 16777216,
           "format": "uint32",
@@ -3703,6 +3690,12 @@
           "maximum": 4096.0,
           "minimum": 8.0,
           "type": "number"
+        },
+        "work": {
+          "default": 64,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -7531,6 +7524,21 @@
           "$ref": "#/$defs/Clear",
           "default": "all"
         },
+        "clear_color": {
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
         "layers": {
           "$ref": "#/$defs/Layers",
           "default": 4294967295
@@ -7539,6 +7547,10 @@
           "default": 0,
           "format": "int32",
           "type": "integer"
+        },
+        "steady": {
+          "default": false,
+          "type": "boolean"
         },
         "texture": {
           "maxLength": 64,

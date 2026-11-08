@@ -3,9 +3,23 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use bevy_ecs::world::World;
-use engine_core::{FrameId, Readback};
+use engine_core::{FrameId, Readable, Readback};
 
-pub(crate) type Deliver = fn(&mut World, u32, Readback<&[u8]>);
+pub(crate) type Deliver = fn(&mut World, u32, Readback<Option<&[u8]>>);
+
+pub(crate) fn delivered<R: Readable>(world: &mut World, tag: u32, read: Readback<Option<&[u8]>>) {
+    let mut readable = world.get_resource_or_init::<R>();
+    match read.value {
+        Some(value) => readable.arrived(
+            tag,
+            Readback {
+                value,
+                written: read.written,
+            },
+        ),
+        None => readable.lost(tag),
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Reader {

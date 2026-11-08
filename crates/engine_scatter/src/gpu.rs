@@ -3,6 +3,7 @@ use engine_core::{
     AssetResidency, AttachPoint, Cull, Cursor, DrawnTable, DrawnView, Error, MaterialHandle,
     MeshHandle, PassBit, PassViews, ScenePass, Since, TargetName, Var, Views,
 };
+use engine_places::impostors::IMPOSTOR_VERTICES;
 use engine_places_world::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
     Access, AfterRead, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND,
@@ -875,7 +876,7 @@ impl ScatterGpu {
         frame.counts[3] = view_count;
         frame.drawn[0] = drawn;
         held.fading_view = listed.len();
-        let mut card_args = vec![[engine_render::IMPOSTOR_VERTICES, 0, 0, 0]; listed.len()];
+        let mut card_args = vec![[IMPOSTOR_VERTICES, 0, 0, 0]; listed.len()];
         card_args.push([0; 4]);
         let mut args = Vec::new();
         for (view, _) in &listed {

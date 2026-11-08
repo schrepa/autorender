@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
+use bevy_ecs::world::World;
 use engine_core::{
     CookAsks, DeviceLimits, Error, ErrorCode, FrameBudget, FrameTime, IDLE_JOBS, Interest,
     JobFailures, Jobs, PrimaryView, RecordKey, Records, Request, Requests, VIEW_JOBS, job_priority,
