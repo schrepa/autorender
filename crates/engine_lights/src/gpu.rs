@@ -32,10 +32,15 @@ pub(crate) struct LightPlace {
     pub(crate) moving: bool,
 }
 
+#[engine_core::gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LightShading {
+    pub(crate) shaped: bool,
+    pub(crate) regions: bool,
+}
+
 engine_core::gpu_consts! {
     pub(crate) const NO_SLOT: u32 = 0xffffffff;
     pub(crate) const GROUP_LIGHTS: u32 = 8;
-    pub(crate) const SHAPED_LIGHTS: u32 = 1;
-    pub(crate) const KEPT_REGIONS: u32 = 2;
     pub(crate) const LIT_VIEWS: u32 = 7;
 }

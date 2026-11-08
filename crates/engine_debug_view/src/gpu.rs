@@ -97,9 +97,9 @@ impl GpuPart for OverlayGpu {
             return;
         }
         self.pixels = view.pixels;
-        match cx.allocate_buffer(self.placed, size_of::<[u32; 4]>() as u64) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.placed, 0, &[view.pixels]),
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.placed, size_of::<[u32; 4]>() as u64);
+        cx.write(self.placed, 0, &[view.pixels]);
     }
 
     fn encode(&mut self, _: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

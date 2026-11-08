@@ -300,9 +300,8 @@ impl GpuPart for UiGpu {
             return;
         }
         let bytes = std::mem::size_of_val(state.rects.as_slice()) as u64;
-        match cx.grow_buffer(self.instances, bytes) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.instances, 0, &state.rects),
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.grow_buffer(self.instances, bytes);
+        cx.write(self.instances, 0, &state.rects);
         for (fill, range) in &state.runs {
             let pipeline = match fill {
                 Fill::Solid => self.solid,

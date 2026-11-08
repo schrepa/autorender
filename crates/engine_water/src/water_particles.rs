@@ -521,6 +521,36 @@ impl ParticlesGpu {
         ]
     }
 
+    fn rest(&mut self, framed: Allocation, cx: &mut Prepare<'_, WaterGpu>) {
+        self.history = History::FRESH;
+        if framed == Allocation::Fresh {
+            cx.write(self.frame, 0, &[ParticleFrame::zeroed()]);
+        }
+        for buffer in [self.lattice, self.pool, self.counts, self.splat] {
+            if cx.allocate_buffer(buffer, 256) == Allocation::Fresh {
+                cx.write(buffer, 0, &[0_u32; 64]);
+            }
+        }
+        let bytes = DRAW_ARGS + DRAW_BYTES;
+        if cx.allocate_buffer(self.args, bytes) == Allocation::Fresh {
+            cx.write(self.args, 0, &vec![0_u8; bytes as usize]);
+        }
+        let layers = wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: TEXTURE_LAYERS,
+        };
+        if cx.allocate(self.texture, layers, 1) == Allocation::Fresh {
+            let rows = wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(8),
+                rows_per_image: Some(1),
+            };
+            let zeros = vec![0_u8; 8 * TEXTURE_LAYERS as usize];
+            cx.write_texture(self.texture, wgpu::Origin3d::ZERO, &zeros, rows, layers);
+        }
+    }
+
     pub(crate) fn prepare(
         &mut self,
         particles: &crate::water_particles::Particles,
@@ -529,33 +559,7 @@ impl ParticlesGpu {
         self.running = None;
         let framed = cx.allocate_buffer(self.frame, size_of::<ParticleFrame>() as u64);
         let (Some(grid), Some(frame)) = (particles.grid.as_ref(), particles.frame.as_ref()) else {
-            self.history = History::FRESH;
-            if framed == Allocation::Fresh {
-                cx.write(self.frame, 0, &[ParticleFrame::zeroed()]);
-            }
-            for buffer in [self.lattice, self.pool, self.counts, self.splat] {
-                if cx.allocate_buffer(buffer, 256) == Allocation::Fresh {
-                    cx.write(buffer, 0, &[0_u32; 64]);
-                }
-            }
-            let bytes = DRAW_ARGS + DRAW_BYTES;
-            if cx.allocate_buffer(self.args, bytes) == Allocation::Fresh {
-                cx.write(self.args, 0, &vec![0_u8; bytes as usize]);
-            }
-            let layers = wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: TEXTURE_LAYERS,
-            };
-            if cx.allocate(self.texture, layers, 1) == Allocation::Fresh {
-                let rows = wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(8),
-                    rows_per_image: Some(1),
-                };
-                let zeros = vec![0_u8; 8 * TEXTURE_LAYERS as usize];
-                cx.write_texture(self.texture, wgpu::Origin3d::ZERO, &zeros, rows, layers);
-            }
+            self.rest(framed, cx);
             return;
         };
         let ParticleSizes {
@@ -620,9 +624,7 @@ impl ParticlesGpu {
         frame.flags[0] = u32::from(fresh);
         frame.pool[2] = read;
         self.history.planned = Some(([frame.window[0], frame.window[1]], read));
-        match framed {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.frame, 0, &[frame]),
-        }
+        cx.write(self.frame, 0, &[frame]);
         self.running = Some((points.div_ceil(PARTICLE_SIDE), texels));
         let args = u64::from(PARTICLE_ARGS) * 4;
         cx.run(self.lattice_pass);

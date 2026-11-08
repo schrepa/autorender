@@ -24,6 +24,7 @@ const GENERATED: &[&str] = &[
     <gpu::Clusters as GpuStruct>::WGSL,
     <gpu::LightInput as GpuStruct>::WGSL,
     <gpu::LightPlace as GpuBits>::WGSL,
+    <gpu::LightShading as GpuBits>::WGSL,
 ];
 
 pub struct LightsBrick;

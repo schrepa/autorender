@@ -82,10 +82,10 @@ pub(crate) fn settle(world: &mut World) {
     let culling = world.get_resource::<Culling>().cloned().unwrap_or_default();
     let occlusion = world
         .get_resource::<OcclusionCulling>()
-        .map_or(true, |occlusion| occlusion.enabled);
+        .is_none_or(|occlusion| occlusion.enabled);
     let subpixel = world
         .get_resource::<SubpixelCulling>()
-        .map_or(true, |subpixel| subpixel.enabled);
+        .is_none_or(|subpixel| subpixel.enabled);
     let bounded = world
         .get_resource::<Views>()
         .and_then(Views::main)

@@ -144,9 +144,8 @@ fn upload_volume(
         height: side,
         depth_or_array_layers: side,
     };
-    match cx.allocate(texture, volume, levels.len() as u32) {
-        Allocation::Fresh | Allocation::Kept => write_volume(cx, texture, side, levels),
-    }
+    let (Allocation::Fresh | Allocation::Kept) = cx.allocate(texture, volume, levels.len() as u32);
+    write_volume(cx, texture, side, levels);
 }
 
 fn write_volume(
@@ -770,17 +769,20 @@ impl CloudPass {
         [self.uniform, self.view_clouds]
     }
 
-    fn allocate(&mut self, cx: &mut Prepare<'_, SkyGpu>) -> [Allocation; 4] {
+    fn allocate(&mut self, cx: &mut Prepare<'_, SkyGpu>) {
         if cx.allocate_buffer(self.shadows, CLOUD_SHADOW_BYTES as u64) == Allocation::Fresh {
             let ones = vec![0x3c00_3c00_u32; CLOUD_SHADOW_BYTES / 4];
             cx.write(self.shadows, 0, &ones);
         }
-        [
-            cx.allocate_buffer(self.uniform, size_of::<CloudUniform>() as u64),
-            cx.allocate_buffer(self.view_clouds, size_of::<CloudUniform>() as u64),
-            cx.allocate_buffer(self.composite_args, size_of_val(&COMPOSITE_ARGS) as u64),
-            cx.allocate_buffer(self.shadow_cells, CLOUD_SHADOW_BYTES as u64),
-        ]
+        let sizes = [
+            (self.uniform, size_of::<CloudUniform>() as u64),
+            (self.view_clouds, size_of::<CloudUniform>() as u64),
+            (self.composite_args, size_of_val(&COMPOSITE_ARGS) as u64),
+            (self.shadow_cells, CLOUD_SHADOW_BYTES as u64),
+        ];
+        for (buffer, bytes) in sizes {
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
+        }
     }
 
     pub(crate) fn prepare(
@@ -793,7 +795,7 @@ impl CloudPass {
             let ran = (!light || cx.ran(self.light_pass)) && (!march || cx.ran(self.march_pass));
             cx.deliver::<CloudSteps>(0, step.bytes(ran));
         }
-        let [uniform, view_clouds, composite_args, shadow_cells] = self.allocate(cx);
+        self.allocate(cx);
         if !plan.active {
             return;
         }
@@ -816,30 +818,18 @@ impl CloudPass {
         if lost {
             cx.deliver::<CloudSteps>(0, plan.step.bytes(false));
         }
-        match uniform {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.uniform, 0, &[plan.uniform]),
-        }
-        let view = if let Some(pixels) = plan.view_job {
+        cx.write(self.uniform, 0, &[plan.uniform]);
+        if let Some(pixels) = plan.view_job {
             let size = wgpu::Extent3d {
                 width: plan.view_size[0],
                 height: plan.view_size[1],
                 depth_or_array_layers: 1,
             };
-            match view_clouds {
-                Allocation::Fresh | Allocation::Kept => {
-                    cx.write(self.view_clouds, 0, &[plan.view_clouds]);
-                }
-            }
-            match composite_args {
-                Allocation::Fresh | Allocation::Kept => {
-                    cx.write(self.composite_args, 0, &COMPOSITE_ARGS);
-                }
-            }
+            cx.write(self.view_clouds, 0, &[plan.view_clouds]);
+            cx.write(self.composite_args, 0, &COMPOSITE_ARGS);
             self.run.view = pixels;
-            Some(cx.allocate(self.view_texture, size, 1))
-        } else {
-            None
-        };
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.view_texture, size, 1);
+        }
         let Some(frame) = frame else {
             return;
         };
@@ -854,9 +844,7 @@ impl CloudPass {
             if count > 0 {
                 cx.run(self.march_pass);
             }
-            match shadow_cells {
-                Allocation::Fresh | Allocation::Kept => cx.run(self.shadow_pass),
-            }
+            cx.run(self.shadow_pass);
             cx.copy(
                 self.shadow_copy,
                 &[CopyRegion::Bytes {
@@ -867,9 +855,7 @@ impl CloudPass {
             );
         }
         if frame.view {
-            match view {
-                Some(Allocation::Fresh | Allocation::Kept) | None => cx.run(self.view_pass),
-            }
+            cx.run(self.view_pass);
             cx.run(self.composite_pass);
         }
     }

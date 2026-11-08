@@ -402,12 +402,10 @@ impl TerrainTables {
                 *held = entry;
             }
         }
-        match cx.allocate_buffer(handles.palette, crate::gpu::PALETTE_BYTES as u64) {
-            Allocation::Fresh | Allocation::Kept => {
-                if !self.palette.is_empty() {
-                    cx.write(handles.palette, 0, &self.palette);
-                }
-            }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(handles.palette, crate::gpu::PALETTE_BYTES as u64);
+        if !self.palette.is_empty() {
+            cx.write(handles.palette, 0, &self.palette);
         }
     }
 

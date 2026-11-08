@@ -7,11 +7,14 @@ import package::engine::view::{PI, camera, stable_normalize, view_pixel};
 import package::face::lit::finish;
 import package::face::foliage::foliage;
 import package::face::sun::sun_direction;
-import package::generated::cover::{CoverBlade, CoverFrame};
+import package::generated::cover::{CoverBlade, CoverFrame, cover_facing_angle,
+    cover_facing_tilt_x, cover_facing_tilt_y, cover_ground, cover_ground_height,
+    cover_ground_tilt_x, cover_ground_tilt_y, cover_leaves_lean_x, cover_leaves_lean_y,
+    cover_leaves_steps};
 import package::generated::writes::{Outputs, outputs};
 
 fn blade_facing(blade: CoverBlade) -> f32 {
-    return f32(blade.facing & 0xffffu) / 65535.0 * (2.0 * PI);
+    return f32(cover_facing_angle(blade.facing)) / 65535.0 * (2.0 * PI);
 }
 
 @group(1) @binding(0) var<storage, read> cover_blades: array<CoverBlade>;
@@ -33,7 +36,7 @@ const COVER_GOLDEN_ANGLE: f32 = 2.3999632;
 
 fn cover_leaf(blade: CoverBlade, leaf: u32) -> CoverLeaf {
     let size = unpack2x16float(blade.size);
-    let steps = blade.leaves & 0xffu;
+    let steps = cover_leaves_steps(blade.leaves);
     let whole = steps / COVER_LEAF_STEPS;
     var stands = select(0.0, 1.0, leaf < whole);
     if leaf == whole {
@@ -50,7 +53,8 @@ fn cover_leaf(blade: CoverBlade, leaf: u32) -> CoverLeaf {
         made.height *= 0.85 + 0.3 * fract(made.turn * 5.3);
         made.curl += 0.2;
     }
-    made.lean = unpack4x8unorm(blade.leaves).yz * 2.0 - 1.0;
+    made.lean = vec2<f32>(f32(cover_leaves_lean_x(blade.leaves)),
+        f32(cover_leaves_lean_y(blade.leaves))) / 255.0 * 2.0 - 1.0;
     made.sway = unpack4x8unorm(blade.tip_color).w;
     return made;
 }
@@ -152,8 +156,8 @@ fn cover_output(instance: u32, vertex: u32, time: f32) -> CoverOutput {
     output.color = cover_color(at.blade, at.along);
     output.along = at.along;
     if cover_frame.ground.x != 0.0 {
-        output.ground = (at.blade.facing & 0xffff0000u)
-            | (pack2x16float(vec2<f32>(at.leaf.height, 0.0)) & 0xffffu);
+        output.ground = cover_ground(pack2x16float(vec2<f32>(at.leaf.height, 0.0)),
+            cover_facing_tilt_x(at.blade.facing), cover_facing_tilt_y(at.blade.facing));
     }
     return output;
 }
@@ -176,10 +180,10 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     let lit = select(face, -face, through);
     var normal = normalize(mix(lit, vec3<f32>(0.0, 1.0, 0.0), 0.6));
     if foliage().w > 0.0 && input.ground != 0u {
-        let tilt = vec2<f32>(f32((input.ground >> 16u) & 0xffu), f32(input.ground >> 24u))
-            / 255.0 * 2.0 - 1.0;
+        let tilt = vec2<f32>(f32(cover_ground_tilt_x(input.ground)),
+            f32(cover_ground_tilt_y(input.ground))) / 255.0 * 2.0 - 1.0;
         let ground = vec3<f32>(tilt.x, sqrt(max(1.0 - dot(tilt, tilt), 0.0)), tilt.y);
-        let above = input.along * unpack2x16float(input.ground & 0xffffu).x;
+        let above = input.along * unpack2x16float(cover_ground_height(input.ground)).x;
         normal = normalize(mix(normal, ground, 1.0 - smoothstep(0.0, foliage().w, above)));
     }
     let relative = input.world - camera.position.xyz;

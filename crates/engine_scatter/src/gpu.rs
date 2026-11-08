@@ -752,12 +752,9 @@ impl ScatterGpu {
             .map(|(&impostor, &color)| placed_group(impostor, color))
             .collect();
         let bytes = (groups.len().max(1) * size_of::<PlacedGroup>()) as u64;
-        match cx.allocate_buffer(self.placed_groups, bytes) {
-            Allocation::Fresh | Allocation::Kept => {
-                if !groups.is_empty() {
-                    cx.write(self.placed_groups, 0, &groups);
-                }
-            }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.placed_groups, bytes);
+        if !groups.is_empty() {
+            cx.write(self.placed_groups, 0, &groups);
         }
     }
 
@@ -855,16 +852,21 @@ impl ScatterGpu {
         grow(&mut sizes.cards, cards, state.room);
         grow(&mut sizes.card_args, lists * 16, state.room);
         let sizes = *sizes;
-        cx.allocate_buffer(
-            self.groups,
-            state.group_bytes.max(size_of::<CullGroup>() as u64),
-        );
-        cx.allocate_buffer(self.views, sizes.views);
-        cx.allocate_buffer(self.ids, sizes.ids);
-        cx.allocate_buffer(self.draws, sizes.draws);
-        cx.allocate_buffer(self.cards, sizes.cards);
-        cx.allocate_buffer(self.card_args, sizes.card_args);
-        cx.allocate_buffer(self.frame, size_of::<CullFrame>() as u64);
+        let rebuilt = [
+            (
+                self.groups,
+                state.group_bytes.max(size_of::<CullGroup>() as u64),
+            ),
+            (self.views, sizes.views),
+            (self.ids, sizes.ids),
+            (self.draws, sizes.draws),
+            (self.cards, sizes.cards),
+            (self.card_args, sizes.card_args),
+            (self.frame, size_of::<CullFrame>() as u64),
+        ];
+        for (buffer, bytes) in rebuilt {
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
+        }
         held.ids_room = sizes.ids;
         held.cards_room = sizes.cards;
         if !state.group_data.data.is_empty() {
@@ -935,12 +937,9 @@ impl ScatterGpu {
         if windows.runs && windows.slots > 0 && !covers.is_empty() {
             grow(&mut held.listed, 2 * u64::from(windows.slots) * word, room);
         }
-        match cx.allocate_buffer(self.covers, held.covers) {
-            Allocation::Fresh | Allocation::Kept => {
-                if !covers.is_empty() {
-                    cx.write(self.covers, 0, covers);
-                }
-            }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.covers, held.covers);
+        if !covers.is_empty() {
+            cx.write(self.covers, 0, covers);
         }
         fresh |= cx.allocate_buffer(self.listed, held.listed) == Allocation::Fresh;
         held.workgroups = windows.workgroups;
@@ -1349,13 +1348,11 @@ impl GpuPart for ScatterGpu {
         self.write_placed_groups(cx, &state);
         if far.is_changed() {
             let words = far.words();
-            let placed = cx.allocate_buffer(
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(
                 self.placed_far,
                 std::mem::size_of_val(words.as_slice()) as u64,
             );
-            match placed {
-                Allocation::Fresh | Allocation::Kept => cx.write(self.placed_far, 0, &words),
-            }
+            cx.write(self.placed_far, 0, &words);
         }
         self.prepare_snap(cx, &state, (&tiles, &ground, &baking));
         self.prepare_cull(cx, &state, (&*views, &*table));

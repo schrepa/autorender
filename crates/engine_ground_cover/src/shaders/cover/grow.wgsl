@@ -7,7 +7,7 @@ import package::engine::math::unit;
 import package::face::ground_tiles::{GroundMaterial, GroundTerrain, NOT_RESIDENT, ground_colors,
     ground_extent, ground_height, level_tile, macro_color, material_look, terrain_info,
     tile_gradient, tile_height, tile_material};
-import package::generated::cover::{COVER_LEAVES, CoverBlade, Grow};
+import package::generated::cover::{COVER_LEAVES, CoverBlade, Grow, cover_facing, cover_leaves};
 import package::place::cover::CoverLaw;
 
 struct Counts {
@@ -135,10 +135,13 @@ fn ground_normal(grow: Grow, terrain: GroundTerrain, local: vec2<f32>) -> vec3<f
     return vec3<f32>(0.0, 1.0, 0.0);
 }
 
-fn grounded_tilt(normal: vec3<f32>) -> u32 {
-    let tilt = vec2<u32>(round((clamp(normal.xz, vec2<f32>(-1.0), vec2<f32>(1.0)) * 0.5
+fn grounded_tilt(normal: vec3<f32>) -> vec2<u32> {
+    return vec2<u32>(round((clamp(normal.xz, vec2<f32>(-1.0), vec2<f32>(1.0)) * 0.5
         + 0.5) * 255.0));
-    return (tilt.x << 16u) | (tilt.y << 24u);
+}
+
+fn unorm8(value: f32) -> u32 {
+    return u32(floor(0.5 + 255.0 * saturate(value)));
 }
 
 fn pack_color(color: vec3<f32>, w: f32) -> u32 {
@@ -312,13 +315,15 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         blade.root = root;
         let tuft = cover_tuft(away, height, spec.shape.w, law);
         blade.size = pack2x16float(vec2<f32>(height, tuft.x));
-        blade.facing = u32(round(unit(hash(seed ^ 0x85ebca6bu)) * 65535.0));
+        var tilt = vec2<u32>(0u);
         if grow.foliage.x > 0.0 {
-            blade.facing |= grounded_tilt(ground_normal(grow, terrain, local));
+            tilt = grounded_tilt(ground_normal(grow, terrain, local));
         }
-        let lean = cover_clump_lean(world_xz);
-        blade.leaves = u32(round(tuft.y * f32(COVER_LEAF_STEPS)))
-            | (pack4x8unorm(vec4<f32>(0.0, lean * 0.5 + 0.5, 0.0)) & 0xffff00u);
+        blade.facing = cover_facing(u32(round(unit(hash(seed ^ 0x85ebca6bu)) * 65535.0)),
+            tilt.x, tilt.y);
+        let lean = cover_clump_lean(world_xz) * 0.5 + 0.5;
+        blade.leaves = cover_leaves(u32(round(tuft.y * f32(COVER_LEAF_STEPS))), unorm8(lean.x),
+            unorm8(lean.y));
         blade.root_color = pack_color(material_look(info.levels.z, material).far.rgb
             * variation, 0.0);
         blade.tip_color = pack_color(spec.color.rgb * variation * clumped.tint, spec.color.w);

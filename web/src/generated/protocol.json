@@ -45,7 +45,6 @@
   ],
   "controls": [
     "present",
-    "culling",
     "environment",
     "camera",
     "benchmark",

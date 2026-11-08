@@ -14,6 +14,7 @@ pub(crate) const GENERATED: &[&str] = &[
     <engine_places_rendering::shadows::SunShown as GpuBits>::WGSL,
     CasterCull::WGSL,
     Route::WGSL,
+    <CasterMode as GpuBits>::WGSL,
     SkyViews::WGSL,
 ];
 
@@ -37,6 +38,12 @@ gpu_struct! {
         pub atlas: [f32; 4],
         pub sky: [f32; 4],
     }
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CasterMode {
+    pub sky_refresh: bool,
 }
 
 gpu_struct! {

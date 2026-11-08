@@ -90,9 +90,8 @@ impl GpuPart for BloomGpu {
             height: half.1,
             depth_or_array_layers: 1,
         };
-        match cx.allocate(self.levels, extent, self.count) {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.pass),
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.levels, extent, self.count);
+        cx.run(self.pass);
     }
 
     fn encode(&mut self, _pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

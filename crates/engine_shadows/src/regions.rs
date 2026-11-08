@@ -1,13 +1,13 @@
 use bytemuck::Zeroable;
 use engine_core::glam::{Mat4, Vec3, Vec4};
-use engine_core::{Clear, ViewLayer};
+use engine_core::{Clear, GpuBits, ViewLayer};
 use engine_places_rendering::shadows::{
     CasterMap, KeptRefresh, Refresh, Region as MapView, SHADOW_REGIONS,
 };
 
 use crate::atlas::AtlasLayout;
-use crate::constants::{LEVEL_BAND, LEVEL_BEFORE, LEVEL_WINDOW, LEVEL_WORDS, SKY_REFRESH};
-use crate::gpu_layouts::{CasterCull, ComposeData, Route, ShadowPiece};
+use crate::constants::{LEVEL_BAND, LEVEL_BEFORE, LEVEL_WINDOW, LEVEL_WORDS};
+use crate::gpu_layouts::{CasterCull, CasterMode, ComposeData, Route, ShadowPiece};
 use crate::shadow_fit::{ClipPlan, Clipmap, LightBasis, MapRegion, MovingTile, Region, region_tiles};
 use crate::sky::{RESOLUTION, SkyDraw};
 
@@ -220,7 +220,7 @@ impl FrameRegions<'_> {
             cull.sky = draw.rows;
             cull.sky_rect = draw.rect;
             cull.sky_depths = [draw.depth, 0.0, 0.0, 0.0];
-            cull.mode[0] |= SKY_REFRESH;
+            cull.mode[0] = CasterMode { sky_refresh: true }.pack();
         }
         cull
     }

@@ -6,7 +6,7 @@ use engine_core::{
     Spawner, gpu_struct,
 };
 use engine_places_rendering::animation::{Animator, Bound};
-use engine_render::{Bind, Buffer, GpuPart, Install, Lifetime, Prepare};
+use engine_render::{Allocation, Bind, Buffer, GpuPart, Install, Lifetime, Prepare};
 use glam::{Mat4, Vec3, Vec4};
 
 use crate::AnimationBrick;
@@ -244,11 +244,16 @@ impl GpuPart for SkinGpu {
             }
         }
         let rows = skins.rows.len().max(1) * size_of::<JointRows>();
-        cx.allocate_buffer(self.rows, rows as u64);
-        cx.allocate_buffer(
-            self.slots,
-            (self.table.len() * size_of::<SkinSlot>()) as u64,
-        );
+        let sizes = [
+            (self.rows, rows as u64),
+            (
+                self.slots,
+                (self.table.len() * size_of::<SkinSlot>()) as u64,
+            ),
+        ];
+        for (buffer, bytes) in sizes {
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
+        }
         if !skins.rows.is_empty() {
             cx.write(self.rows, 0, &skins.rows);
         }

@@ -3873,16 +3873,6 @@
             "null"
           ]
         },
-        "emissive_texture": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneMap"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "id": {
           "maxLength": 64,
           "minLength": 1,
@@ -3895,31 +3885,11 @@
             "null"
           ]
         },
-        "metallic_roughness_texture": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneMap"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "normal_scale": {
           "format": "float",
           "type": [
             "number",
             "null"
-          ]
-        },
-        "normal_texture": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneMap"
-            },
-            {
-              "type": "null"
-            }
           ]
         },
         "occlusion_strength": {
@@ -3929,16 +3899,6 @@
           "type": [
             "number",
             "null"
-          ]
-        },
-        "occlusion_texture": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneMap"
-            },
-            {
-              "type": "null"
-            }
           ]
         },
         "opacity": {
@@ -3961,7 +3921,7 @@
         },
         "slots": {
           "additionalProperties": {
-            "type": "string"
+            "$ref": "#/$defs/SceneSlot"
           },
           "type": [
             "object",
@@ -3972,16 +3932,6 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneSurface"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "texture": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneMap"
             },
             {
               "type": "null"
@@ -4210,24 +4160,6 @@
             {
               "type": "null"
             }
-          ]
-        },
-        "material": {
-          "maxLength": 64,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9_.-]+$",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "mesh": {
-          "maxLength": 64,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9_.-]+$",
-          "type": [
-            "string",
-            "null"
           ]
         },
         "mover": {
@@ -5048,6 +4980,34 @@
           "type": "number"
         }
       },
+      "type": "object"
+    },
+    "SceneSlot": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/SceneSlotFill"
+        }
+      ]
+    },
+    "SceneSlotFill": {
+      "additionalProperties": false,
+      "properties": {
+        "maps": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SceneMap"
+          },
+          "type": "object"
+        },
+        "module": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "module"
+      ],
       "type": "object"
     },
     "SceneSound": {
@@ -6221,6 +6181,16 @@
           "minItems": 3,
           "type": "array"
         },
+        "skin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VertexSkin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "uv": {
           "items": {
             "format": "float",
@@ -7382,6 +7352,35 @@
           "type": "number"
         }
       },
+      "type": "object"
+    },
+    "VertexSkin": {
+      "additionalProperties": false,
+      "properties": {
+        "joints": {
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "weights": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        }
+      },
+      "required": [
+        "joints",
+        "weights"
+      ],
       "type": "object"
     },
     "ViewForm": {

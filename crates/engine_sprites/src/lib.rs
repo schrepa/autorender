@@ -208,9 +208,8 @@ impl GpuPart for SpritesGpu {
             &mut self.runs,
         );
         let bytes = std::mem::size_of_val(self.staged.as_slice()) as u64;
-        match cx.allocate_buffer(self.instances, bytes) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.instances, 0, &self.staged),
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.instances, bytes);
+        cx.write(self.instances, 0, &self.staged);
         self.drawn.clear();
         for (name, pipeline) in &self.pipelines {
             for (sheet, range) in &self.runs {

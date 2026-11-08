@@ -1,4 +1,4 @@
-use engine_core::GpuStruct;
+use engine_core::{GpuBits, GpuStruct, gpu_bits};
 
 engine_core::gpu_struct! {
     pub(crate) struct Grow {
@@ -30,6 +30,39 @@ engine_core::gpu_struct! {
         pub(crate) root_color: u32,
         pub(crate) tip_color: u32,
     }
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CoverFacing {
+    #[bits(16)]
+    pub(crate) angle: u32,
+    #[bits(8)]
+    pub(crate) tilt_x: u32,
+    #[bits(8)]
+    pub(crate) tilt_y: u32,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CoverLeaves {
+    #[bits(8)]
+    pub(crate) steps: u32,
+    #[bits(8)]
+    pub(crate) lean_x: u32,
+    #[bits(8)]
+    pub(crate) lean_y: u32,
+}
+
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CoverGround {
+    #[bits(16)]
+    pub(crate) height: u32,
+    #[bits(8)]
+    pub(crate) tilt_x: u32,
+    #[bits(8)]
+    pub(crate) tilt_y: u32,
 }
 
 engine_core::gpu_struct! {
@@ -66,6 +99,9 @@ pub(crate) const GENERATED: &[&str] = &[
     Grow::WGSL,
     CoverFrame::WGSL,
     CoverBlade::WGSL,
+    <CoverFacing as GpuBits>::WGSL,
+    <CoverLeaves as GpuBits>::WGSL,
+    <CoverGround as GpuBits>::WGSL,
     CoverMaterial::WGSL,
     CoverTerrain::WGSL,
     WGSL,

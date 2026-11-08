@@ -103,6 +103,10 @@ const UNREACHED: &[(&str, &str)] = &[
     ("invalid_measurement", PAGE),
     ("invalid_pack", PACKS),
     ("invalid_record", RECORDS),
+    (
+        "invalid_renderable",
+        "the drawn table refuses a drawn thing whose geometry is missing or lacks its kind's attributes as frames settle (crates/engine_core/src/drawn.rs); the corpora instantiate scenes but run no frames",
+    ),
     ("invalid_request_id", BRIDGE),
     ("invalid_session", BRIDGE),
     (
@@ -122,7 +126,6 @@ const UNREACHED: &[(&str, &str)] = &[
     ("missing_layer", LAYERS),
     ("missing_runtime_identity", BRIDGE),
     ("module_outside_brick", APP_BUILD),
-    ("name_twice", APP_BUILD),
     ("not_inherited", CHECKS),
     ("origin_rejected", BRIDGE),
     (

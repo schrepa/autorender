@@ -94,25 +94,20 @@ fn extent(width: u32, height: u32, layers: u32) -> wgpu::Extent3d {
 impl ShadowsGpu {
     fn upload(&mut self, plan: &ShadowPlan, cx: &mut Prepare<'_, Self>) {
         let routes = (plan.routes.len().max(1) * size_of::<Route>()) as u64;
-        match cx.allocate_buffer(self.routes, routes) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.routes, 0, &plan.routes),
-        }
-        match cx.allocate_buffer(self.cull, size_of::<CasterCull>() as u64) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.cull, 0, &[plan.cull]),
-        }
-        match cx.allocate_buffer(self.sky_views, size_of::<SkyViews>() as u64) {
-            Allocation::Fresh | Allocation::Kept => {
-                cx.write(self.sky_views, 0, std::slice::from_ref(&*plan.sky.uniform));
-            }
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.routes, routes);
+        cx.write(self.routes, 0, &plan.routes);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.cull, size_of::<CasterCull>() as u64);
+        cx.write(self.cull, 0, &[plan.cull]);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.sky_views, size_of::<SkyViews>() as u64);
+        cx.write(self.sky_views, 0, std::slice::from_ref(&*plan.sky.uniform));
         if !plan.composes.is_empty() {
             let bytes = std::mem::size_of_val(plan.composes.as_slice()) as u64;
             self.compose_bytes = self.compose_bytes.max(bytes);
-            match cx.allocate_buffer(self.composes, self.compose_bytes) {
-                Allocation::Fresh | Allocation::Kept => {
-                    cx.write(self.composes, 0, &plan.composes);
-                }
-            }
+            let (Allocation::Fresh | Allocation::Kept) =
+                cx.allocate_buffer(self.composes, self.compose_bytes);
+            cx.write(self.composes, 0, &plan.composes);
         }
         let side = plan.side();
         let cells = (side * side) as usize;
@@ -161,20 +156,16 @@ impl ShadowsGpu {
         }
     }
 
-
-    fn allocate(
-        &mut self,
-        plan: &ShadowPlan,
-        cx: &mut Prepare<'_, Self>,
-    ) -> (bool, bool, Option<Allocation>) {
+    fn allocate(&mut self, plan: &ShadowPlan, cx: &mut Prepare<'_, Self>) -> (bool, bool) {
         let Some(key) = plan.key else {
-            return (false, false, None);
+            return (false, false);
         };
         let (width, height) = key.atlas.size();
         let side = key.region_side();
         let (columns, rows) = key.table_size();
         let atlas = cx.allocate(self.atlas, extent(width, height, 1), 1) == Allocation::Fresh;
-        let regions = cx.allocate(self.regions, extent(side, side, SHADOW_REGIONS), 1);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate(self.regions, extent(side, side, SHADOW_REGIONS), 1);
         if cx.allocate(self.tiles, extent(columns, rows, 1), 1) == Allocation::Fresh {
             self.written_table.clear();
         }
@@ -185,7 +176,7 @@ impl ShadowsGpu {
         } else {
             cx.release(self.sky);
         }
-        (atlas, sky, Some(regions))
+        (atlas, sky)
     }
 }
 
@@ -326,15 +317,13 @@ impl GpuPart for ShadowsGpu {
             cx.deliver::<ShadowDrawn>(layout, tiles);
         }
         self.sky_live = plan.sky.live && shown.owner.is_none();
-        let (atlas_lost, sky_lost, regions) = self.allocate(&plan, cx);
+        let (atlas_lost, sky_lost) = self.allocate(&plan, cx);
         self.upload(&plan, cx);
         self.at.clear();
         self.at.extend(maps.views());
         (self.composed, self.moving) = (plan.composes.len() as u32, plan.moving);
         if !self.at.is_empty() || self.composed > 0 {
-            match regions {
-                Some(Allocation::Fresh | Allocation::Kept) | None => cx.run(self.maps),
-            }
+            cx.run(self.maps);
         }
         let layout = u32::from(plan.layout);
         if atlas_lost {
@@ -353,41 +342,35 @@ impl GpuPart for ShadowsGpu {
             1,
         ]);
         let mask_bytes = plan.mark_bytes().max(4);
-        let map_marks = cx.allocate_buffer(self.map_marks, 2 * mask_bytes);
-        let depth_marks = cx.allocate_buffer(self.depth_marks, mask_bytes);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.map_marks, 2 * mask_bytes);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.depth_marks, mask_bytes);
         if plan.mask_words == 0 {
             return;
         }
         let bytes = 0..plan.mark_bytes();
-        match depth_marks {
-            Allocation::Fresh | Allocation::Kept => {
-                if self.marked.is_some() {
-                    cx.run(self.marks);
-                    cx.read_back::<ShadowFeedback>(
-                        plan.tag(MarkKind::Depth),
-                        self.depth_marks,
-                        bytes.clone(),
-                        AfterRead::Clear,
-                    );
-                }
-            }
+        if self.marked.is_some() {
+            cx.run(self.marks);
+            cx.read_back::<ShadowFeedback>(
+                plan.tag(MarkKind::Depth),
+                self.depth_marks,
+                bytes.clone(),
+                AfterRead::Clear,
+            );
         }
-        match map_marks {
-            Allocation::Fresh | Allocation::Kept => {
-                cx.read_back::<ShadowFeedback>(
-                    plan.tag(MarkKind::Map),
-                    self.map_marks,
-                    bytes.clone(),
-                    AfterRead::Clear,
-                );
-                cx.read_back::<ShadowFeedback>(
-                    plan.tag(MarkKind::Masks),
-                    self.map_marks,
-                    bytes.end..2 * bytes.end,
-                    AfterRead::Clear,
-                );
-            }
-        }
+        cx.read_back::<ShadowFeedback>(
+            plan.tag(MarkKind::Map),
+            self.map_marks,
+            bytes.clone(),
+            AfterRead::Clear,
+        );
+        cx.read_back::<ShadowFeedback>(
+            plan.tag(MarkKind::Masks),
+            self.map_marks,
+            bytes.end..2 * bytes.end,
+            AfterRead::Clear,
+        );
     }
 
     fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
@@ -400,9 +383,12 @@ impl GpuPart for ShadowsGpu {
         let render = view.render;
         let within = |size: u32, whole: u32| size.clamp(1, whole.max(1));
         self.opened = Some((within(render.x, display.x), within(render.y, display.y)));
-        match cx.allocate(self.sky_open, extent(display.x.max(1), display.y.max(1), 1), 1) {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.opening),
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(
+            self.sky_open,
+            extent(display.x.max(1), display.y.max(1), 1),
+            1,
+        );
+        cx.run(self.opening);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

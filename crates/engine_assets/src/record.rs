@@ -150,7 +150,7 @@ impl MeshBuffer {
         }
     }
 
-    pub fn parse(bytes: &[u8], path: &str) -> Result<Self, Error> {
+    fn layout(bytes: &[u8], path: &str) -> Result<(usize, usize, usize, u32), Error> {
         let invalid = || Error::new(ErrorCode::InvalidMesh, path);
         let word = |offset: usize| {
             bytes
@@ -198,6 +198,12 @@ impl MeshBuffer {
                 Some(Err(_)) | None => failure,
             });
         }
+        Ok((header, vertex_count, index_count, flags))
+    }
+
+    pub fn parse(bytes: &[u8], path: &str) -> Result<Self, Error> {
+        let invalid = || Error::new(ErrorCode::InvalidMesh, path);
+        let (header, vertex_count, index_count, flags) = Self::layout(bytes, path)?;
         let float = |offset: usize| {
             f32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("four_bytes"))
         };

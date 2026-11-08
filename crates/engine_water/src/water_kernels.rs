@@ -312,13 +312,13 @@ impl SlotHandles {
         written: &[SimSlot],
         cx: &mut Prepare<'_, WaterGpu>,
     ) {
-        match cx.allocate_buffer(self.squares, size_of::<SimSlots>() as u64) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.squares, 0, &[squares(written)]),
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.squares, size_of::<SimSlots>() as u64);
+        cx.write(self.squares, 0, &[squares(written)]);
         for (buffer, frame) in self.frames.iter().zip(layout.frames()) {
-            match cx.allocate_buffer(*buffer, size_of::<SimFrame>() as u64) {
-                Allocation::Fresh | Allocation::Kept => cx.write(*buffer, 0, &[frame]),
-            }
+            let (Allocation::Fresh | Allocation::Kept) =
+                cx.allocate_buffer(*buffer, size_of::<SimFrame>() as u64);
+            cx.write(*buffer, 0, &[frame]);
         }
         for at in layout.step_tails() {
             cx.write(self.steps, at, &[0.0_f32; 2]);

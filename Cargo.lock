@@ -1070,6 +1070,7 @@ version = "0.1.0"
 dependencies = [
  "engine_core",
  "engine_ecs",
+ "engine_places",
  "engine_places_rendering",
  "engine_render",
  "engine_smoke",
@@ -1359,6 +1360,7 @@ version = "0.1.0"
 dependencies = [
  "engine_codec",
  "engine_math",
+ "engine_place",
  "engine_places_simulation",
  "glam 0.30.9",
  "libm",

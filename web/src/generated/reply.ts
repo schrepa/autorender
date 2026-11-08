@@ -53,11 +53,6 @@ export interface CaptureResult {
   temporary?: boolean | null;
 }
 
-export interface CullingResult {
-  culling_enabled: boolean;
-  temporary: boolean;
-}
-
 export interface DebugFaultResult {
   injected: boolean;
 }
@@ -266,7 +261,6 @@ export interface OpResults {
   assets: AssetsResult;
   camera: CameraResult;
   capture: CaptureResult;
-  culling: CullingResult;
   debug_fault: DebugFaultResult;
   debug_missing_asset: DebugMissingAssetResult;
   describe: DescribeResult;

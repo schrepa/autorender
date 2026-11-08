@@ -76,13 +76,12 @@ impl GpuPart for ResolveGpu {
             history: u32::from(kept && view.history.valid()),
             pad: 0,
         };
-        match cx.allocate_buffer(self.view, size_of::<TaaView>().next_multiple_of(16) as u64) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.view, 0, &[values]),
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.view, size_of::<TaaView>().next_multiple_of(16) as u64);
+        cx.write(self.view, 0, &[values]);
         self.whole = (whole.width, whole.height);
-        match cx.allocate(self.resolved, whole, 1) {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.resolve),
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.resolved, whole, 1);
+        cx.run(self.resolve);
     }
 
     fn encode(&mut self, _pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

@@ -494,9 +494,9 @@ fn write_jobs<T: bytemuck::Pod>(
     jobs: &[T],
 ) {
     if !jobs.is_empty() {
-        match cx.grow_buffer(buffer, std::mem::size_of_val(jobs) as u64) {
-            Allocation::Fresh | Allocation::Kept => cx.write(buffer, 0, jobs),
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.grow_buffer(buffer, std::mem::size_of_val(jobs) as u64);
+        cx.write(buffer, 0, jobs);
     }
 }
 

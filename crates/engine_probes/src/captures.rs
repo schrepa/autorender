@@ -184,9 +184,8 @@ impl GpuPart for ProbesGpu {
             if bytes > self.grid && grown > self.grid {
                 self.grid = grown;
             }
-            match cx.allocate_buffer(self.words, self.grid) {
-                Allocation::Fresh | Allocation::Kept => cx.write(self.words, 0, &words.words),
-            }
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.words, self.grid);
+            cx.write(self.words, 0, &words.words);
         }
         self.drawn.clone_from(&state.drawn);
         self.finished = state
@@ -197,9 +196,8 @@ impl GpuPart for ProbesGpu {
             cx.release(self.depth);
         }
         if !self.drawn.is_empty() {
-            match cx.allocate(self.depth, extent(state.size, 1), 1) {
-                Allocation::Fresh | Allocation::Kept => cx.run(self.captures),
-            }
+            let (Allocation::Fresh | Allocation::Kept) =
+                cx.allocate(self.depth, extent(state.size, 1), 1);
         }
         if state.captures {
             cx.run(self.captures);

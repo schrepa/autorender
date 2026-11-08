@@ -529,6 +529,7 @@ fn sampler_of(texture: &gltf::Texture<'_>) -> Sampler {
         mag_filter,
         min_filter,
         mipmap_filter,
+        ..Sampler::REPEAT
     }
 }
 

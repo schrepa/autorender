@@ -327,23 +327,23 @@ impl Bounce {
         }
         for (records, &buffer) in self.records.iter().zip(&self.terrains) {
             let bytes = (records.len() * size_of::<BounceTerrain>()) as u64;
-            match cx.allocate_buffer(buffer, bytes.next_power_of_two().max(16)) {
-                Allocation::Fresh | Allocation::Kept => cx.write(buffer, 0, records),
-            }
+            let (Allocation::Fresh | Allocation::Kept) =
+                cx.allocate_buffer(buffer, bytes.next_power_of_two().max(16));
+            cx.write(buffer, 0, records);
         }
         let scratch_bytes = u64::from(scratch) * SCRATCH_PROBE_BYTES;
-        match cx.allocate_buffer(self.scratch, scratch_bytes.next_power_of_two().max(16)) {
-            Allocation::Fresh | Allocation::Kept => self.relights(),
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.scratch, scratch_bytes.next_power_of_two().max(16));
+        self.relights()
     }
 
     fn first_frame(&self, cx: &mut Prepare<'_, TerrainGpu>) {
         let frame = BounceFrame {
             bins: bin_moments(),
         };
-        match cx.allocate_buffer(self.frame, size_of::<BounceFrame>() as u64) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.frame, 0, &[frame]),
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.frame, size_of::<BounceFrame>() as u64);
+        cx.write(self.frame, 0, &[frame]);
         let texel = wgpu::Extent3d {
             width: 1,
             height: 1,
@@ -355,11 +355,8 @@ impl Bounce {
             rows_per_image: Some(1),
         };
         for stand_in in self.stand_ins {
-            match cx.allocate(stand_in, texel, 1) {
-                Allocation::Fresh | Allocation::Kept => {
-                    cx.write_texture(stand_in, wgpu::Origin3d::ZERO, &[0; 8], layout, texel);
-                }
-            }
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate(stand_in, texel, 1);
+            cx.write_texture(stand_in, wgpu::Origin3d::ZERO, &[0; 8], layout, texel);
         }
     }
 
@@ -453,20 +450,14 @@ impl Bounce {
             }
         }
         let bytes = ((words.len() * 4) as u64).next_power_of_two().max(16);
-        match cx.allocate_buffer(self.blocks, bytes) {
-            Allocation::Fresh | Allocation::Kept => {
-                if !words.is_empty() {
-                    cx.write(self.blocks, 0, &words);
-                }
-            }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.blocks, bytes);
+        if !words.is_empty() {
+            cx.write(self.blocks, 0, &words);
         }
         let bytes = (probes.len() as u64).next_power_of_two().max(16);
-        match cx.allocate_buffer(self.probes, bytes) {
-            Allocation::Fresh | Allocation::Kept => {
-                if !probes.is_empty() {
-                    cx.write(self.probes, 0, &probes);
-                }
-            }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.probes, bytes);
+        if !probes.is_empty() {
+            cx.write(self.probes, 0, &probes);
         }
     }
 

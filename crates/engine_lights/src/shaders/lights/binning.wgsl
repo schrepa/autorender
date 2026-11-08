@@ -1,7 +1,7 @@
 import package::engine::drawn::drawn_views;
 import package::face::instances::{AffinePose, instance_pose};
-import package::generated::lights::{GROUP_LIGHTS, LightInput, NO_SLOT, SHAPED_LIGHTS,
-    light_place_moving, light_place_region};
+import package::generated::lights::{GROUP_LIGHTS, LightInput, NO_SLOT, light_place_moving,
+    light_place_region, light_shading_shaped};
 import package::lights::clusters::clusters;
 
 @group(1) @binding(0) var<storage, read> inputs: array<LightInput>;
@@ -78,7 +78,7 @@ fn place(view: u32, index: u32, fill: bool) -> LightBox {
     }
     var center = position;
     var radius = input.range;
-    if (clusters[view].lights.y & SHAPED_LIGHTS) != 0u {
+    if light_shading_shaped(clusters[view].lights.y) {
         center += direction * (0.5 * tube);
         radius += 0.5 * tube;
     }

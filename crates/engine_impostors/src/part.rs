@@ -290,35 +290,31 @@ impl ImpostorGpu {
             flags: [baking.flags, 0, 0, 0],
             tile: [0, 0, shape.frames, shape.frames],
         };
-        match cx.allocate_buffer(self.uniform, size_of::<ImpostorBake>() as u64) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.uniform, 0, &[uniform]),
-        }
-        match cx.allocate_buffer(self.kinds, 4) {
-            Allocation::Fresh | Allocation::Kept => cx.clear_buffer_range(self.kinds, 0..4),
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.uniform, size_of::<ImpostorBake>() as u64);
+        cx.write(self.uniform, 0, &[uniform]);
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.kinds, 4);
+        cx.clear_buffer_range(self.kinds, 0..4);
         self.drawing = Some(Drawn {
             serial: asked.serial,
             shape,
             draws,
         });
-        match cx.allocate(self.shade, flat((size * SHADE_SCALE).min(SHADE_MOST)), 1) {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.shading),
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate(self.shade, flat((size * SHADE_SCALE).min(SHADE_MOST)), 1);
+        cx.run(self.shading);
         for texture in self.colors {
-            match cx.allocate(texture, flat(size), shape.levels()) {
-                Allocation::Fresh | Allocation::Kept => cx.run(self.baking),
-            }
+            let (Allocation::Fresh | Allocation::Kept) =
+                cx.allocate(texture, flat(size), shape.levels());
         }
-        match cx.allocate(self.depth, flat(size), 1) {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.baking),
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.depth, flat(size), 1);
+        cx.run(self.baking);
     }
 
     fn read_back(&self, drawn: &Drawn, cx: &mut Prepare<'_, Self>) {
         let regions = readback_bytes(drawn.shape, ROW_ALIGNMENT);
-        match cx.allocate_buffer(self.read, regions + 4) {
-            Allocation::Fresh | Allocation::Kept => self.copy_out(drawn, regions, cx),
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.read, regions + 4);
+        self.copy_out(drawn, regions, cx);
     }
 
     fn copy_out(&self, drawn: &Drawn, regions: u64, cx: &mut Prepare<'_, Self>) {

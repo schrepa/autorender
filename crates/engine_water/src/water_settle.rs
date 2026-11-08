@@ -1003,26 +1003,20 @@ impl SettleGpu {
                 *held = *count;
             }
         }
-        let setup = match work.room {
+        match work.room {
             Some(room) => {
                 let fresh = fresh || self.room != Some(room);
-                let held = self.setup.hold((room, 0), fresh, cx);
+                let (Allocation::Fresh | Allocation::Kept) = self.setup.hold((room, 0), fresh, cx);
                 self.room = Some(room);
-                Some(held)
             }
             None => {
                 self.room = None;
                 self.setup.release(cx);
-                None
             }
-        };
+        }
         if let Some(raise) = &work.raise {
-            match setup {
-                Some(Allocation::Fresh | Allocation::Kept) | None => {
-                    cx.write(self.setup.list, 0, &raise.list);
-                    cx.write(self.setup.frame, 0, &[raise.frame]);
-                }
-            }
+            cx.write(self.setup.list, 0, &raise.list);
+            cx.write(self.setup.frame, 0, &[raise.frame]);
             self.raised = raise.blocks;
             self.raising = Some(raise.tag);
             cx.run(self.raise);

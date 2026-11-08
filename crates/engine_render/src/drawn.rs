@@ -112,8 +112,8 @@ fn set_drawn_fade(slot: u32, fade: u32) {
 }
 ";
 
-const CULL_IMPORTS: &str = "import package::engine::drawn::{DRAWN_OWN_PROJECTION, DRAWN_UNBOUNDED,
-    DrawnPose, DrawnRecord, drawn_in_view, drawn_mark_first, drawn_mark_with_first,
+const CULL_IMPORTS: &str = "import package::engine::drawn::{DrawnPose, DrawnRecord,
+    drawn_flags_own_projection, drawn_flags_unbounded, drawn_in_view, drawn_mark_first, drawn_mark_with_first,
     drawn_mark_with_moving, drawn_mark_with_subpixel, drawn_marks, drawn_model,
     drawn_occlusion, drawn_records, drawn_views, frustum_reach,
     occlusion_mark_hidden, occlusion_mark_with_hidden, occlusion_mark_with_late};
@@ -379,11 +379,11 @@ fn hidden(clip_from_box: mat4x4<f32>, low: vec3<f32>, high: vec3<f32>,
 
 fn seen(view: u32, slot: u32, record: DrawnRecord) -> Seen {
     var result = Seen(false, 0u);
-    let own = (record.flags & DRAWN_OWN_PROJECTION) != 0u;
+    let own = drawn_flags_own_projection(record.flags);
     if own && drawn_views[view].owned != 0u {
         return result;
     }
-    if (record.flags & DRAWN_UNBOUNDED) != 0u {
+    if drawn_flags_unbounded(record.flags) {
         result.shown = true;
         return result;
     }
@@ -471,7 +471,8 @@ fn drawn_occlusion_test(@builtin(global_invocation_id) id: vec3<u32>) {
     var hidden_now = occlusion_mark_hidden(cull_occlusion[slot]);
     var late = false;
     let record = drawn_records[slot];
-    if drawn_in_view(0u, slot) && (record.flags & (DRAWN_OWN_PROJECTION | DRAWN_UNBOUNDED)) == 0u {
+    if drawn_in_view(0u, slot) && !drawn_flags_own_projection(record.flags)
+            && !drawn_flags_unbounded(record.flags) {
         hidden_now = hidden(drawn_views[0].rasterized * drawn_model(slot), record.bounds_min.xyz,
             record.bounds_max.xyz, drawn_views[0].viewport);
         late = !hidden_now && !drawn_mark_first(drawn_marks[slot]);
@@ -660,7 +661,7 @@ fn cull_views(
             };
             let planes = match view.planes {
                 Some(planes) if owned => planes,
-                Some(_) | None => frustum_planes(placed).map(Vec4::to_array),
+                Some(_) | None => frustum_planes(placed).map(|plane| plane.to_array()),
             };
             let occluding = index == 0 && levels != 0;
             CullView {
@@ -709,9 +710,8 @@ impl DrawnGpu {
         ) | (stride != self.stride);
         self.stride = stride;
         let fades = slots * 4;
-        match cx.allocate_buffer(self.fades, fades) {
-            Allocation::Fresh | Allocation::Kept => cx.clear_buffer_range(self.fades, 0..fades),
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.fades, fades);
+        cx.clear_buffer_range(self.fades, 0..fades);
         let changes = table.changes_since(&mut self.seen);
         if records.is_empty() {
             return;
@@ -771,10 +771,10 @@ impl DrawnGpu {
         if parents != 0 && held.composed_capacity < held.capacity {
             held.composed_capacity = held.capacity;
         }
-        cx.allocate_buffer(
+        fresh |= cx.allocate_buffer(
             held.composed,
             storage_bytes(held.composed_capacity as u64 * COMPOSED_BYTES),
-        );
+        ) == Allocation::Fresh;
         if parents > held.parent_capacity {
             held.parent_capacity = grow(parents);
         }
@@ -929,7 +929,7 @@ impl DrawnGpu {
             display.y.div_ceil(2).max(1).next_power_of_two(),
         );
         let count = mip_levels(base.0, base.1).min(PYRAMID_LEVELS as u32);
-        cx.allocate(
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(
             occlusion.pyramid,
             wgpu::Extent3d {
                 width: base.0,
@@ -944,7 +944,7 @@ impl DrawnGpu {
             .enumerate()
         {
             let buffer = occlusion.extents[level];
-            cx.allocate_buffer(buffer, 16);
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, 16);
             cx.write(buffer, 0, extent);
             occlusion.written.push((extent[0], extent[1]));
         }
@@ -1176,7 +1176,7 @@ impl GpuPart for DrawnGpu {
         let streams = poses.streams(&hierarchy);
         let uploaded = self.upload_nodes(&poses, &streams, cx);
         let motion = self.prepare_poses((&*table, main), slots, cx);
-        cx.allocate_buffer(self.marks, slots * 4);
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.marks, slots * 4);
         let levels = self.prepare_occlusion(main, (plan.occlusion, slots), cx);
         let entries = cull_views(&views, passes.as_deref(), &plan, levels);
         let words = (count as u32).div_ceil(SLOT_BITS).max(1);
@@ -1189,12 +1189,15 @@ impl GpuPart for DrawnGpu {
             );
             return;
         }
-        cx.allocate_buffer(self.views, (entries.len() * size_of::<CullView>()) as u64);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.views, (entries.len() * size_of::<CullView>()) as u64);
         cx.write(self.views, 0, &entries);
-        cx.allocate_buffer(self.culled, bytes.next_power_of_two());
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.culled, bytes.next_power_of_two());
         cx.write(self.culled, 0, &[words]);
         self.slots = count as u32;
-        cx.allocate_buffer(self.frame, size_of::<DrawnFrame>() as u64);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.frame, size_of::<DrawnFrame>() as u64);
         cx.write(
             self.frame,
             0,
@@ -1225,9 +1228,8 @@ impl GpuPart for DrawnGpu {
 
     fn view(&mut self, _: &ViewFacts, cx: &mut Prepare<'_, Self>) {
         let index = cx.view_index();
-        match cx.allocate_buffer(self.view, VIEW_BYTES) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.view, 0, &[index, 0, 0, 0]),
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.view, VIEW_BYTES);
+        cx.write(self.view, 0, &[index, 0, 0, 0]);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

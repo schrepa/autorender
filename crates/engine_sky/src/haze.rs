@@ -150,12 +150,10 @@ impl Haze {
             depth_or_array_layers: 1,
         };
         self.drawn = plan.drawn;
-        match cx.allocate(self.marched, extent, 1) {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.march_pass),
-        }
-        match cx.allocate(self.hazed, extent, 1) {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.filter_pass),
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.marched, extent, 1);
+        cx.run(self.march_pass);
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.hazed, extent, 1);
+        cx.run(self.filter_pass);
         self.stepped = true;
         cx.allocate(self.history_texture, extent, 1) == Allocation::Fresh
     }

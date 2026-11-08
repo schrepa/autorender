@@ -173,28 +173,25 @@ impl GpuPart for TraceGpu {
             *drawn = level_region(view, level);
         }
         let whole = extent(display.x, display.y);
-        match cx.allocate(self.reflected, whole, 1) {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.reflect),
-        }
-        match cx.allocate(self.levels, whole, 1 + self.count) {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.chain),
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.reflected, whole, 1);
+        cx.run(self.reflect);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate(self.levels, whole, 1 + self.count);
+        cx.run(self.chain);
         let base = (
             display.x.div_ceil(2).max(1).next_power_of_two(),
             display.y.div_ceil(2).max(1).next_power_of_two(),
         );
         let reductions = mip_levels(base.0, base.1).min(PYRAMID_LEVELS);
-        match cx.allocate(self.pyramid, extent(base.0, base.1), reductions) {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.reduce),
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate(self.pyramid, extent(base.0, base.1), reductions);
+        cx.run(self.reduce);
         self.reduced = extents(self.render, reductions);
         for (at, buffer) in self.extents.iter().enumerate() {
-            match cx.allocate_buffer(*buffer, size_of::<PyramidExtent>() as u64) {
-                Allocation::Fresh | Allocation::Kept => {
-                    if let Some(written) = self.reduced.get(at) {
-                        cx.write(*buffer, 0, &[*written]);
-                    }
-                }
+            let (Allocation::Fresh | Allocation::Kept) =
+                cx.allocate_buffer(*buffer, size_of::<PyramidExtent>() as u64);
+            if let Some(written) = self.reduced.get(at) {
+                cx.write(*buffer, 0, &[*written]);
             }
         }
         cx.run(self.blend);

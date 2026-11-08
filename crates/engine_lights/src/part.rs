@@ -10,8 +10,7 @@ use engine_render::{
 use glam::Mat4;
 
 use crate::gpu::{
-    Clusters, GROUP_LIGHTS, KEPT_REGIONS, LIT_VIEWS, LightInput, LightPlace, NO_SLOT,
-    SHAPED_LIGHTS,
+    Clusters, GROUP_LIGHTS, LIT_VIEWS, LightInput, LightPlace, LightShading, NO_SLOT,
 };
 use crate::lights::{LightList, LocalLightSettings, RenderLight};
 use crate::shaders;
@@ -72,17 +71,6 @@ impl Clusters {
             offsets: [0; 4],
         }
     }
-}
-
-fn shading_flags(shaped: bool, regions: bool) -> u32 {
-    let mut flags = 0;
-    if shaped {
-        flags |= SHAPED_LIGHTS;
-    }
-    if regions {
-        flags |= KEPT_REGIONS;
-    }
-    flags
 }
 
 impl From<&RenderLight> for LightInput {
@@ -229,7 +217,11 @@ impl LightsGpu {
             return;
         };
         let size = main.size;
-        let flags = shading_flags(shaped, self.regions);
+        let flags = LightShading {
+            shaped,
+            regions: self.regions,
+        }
+        .pack();
         let capacity = self.index_capacity();
         let mut header = Clusters::new(
             (main.view_projection, 0),
@@ -381,31 +373,26 @@ impl GpuPart for LightsGpu {
             .any(|light| light.region != LightRegion::Both);
         let needed = totals.needed().max(count as u64 * 32);
         self.grow_indices(needed * 4);
-        let binned = [
-            cx.allocate_buffer(self.data, self.data_bytes()),
-            cx.allocate_buffer(self.counts, u64::from(self.arena) * CLUSTERS * 4),
-            cx.allocate_buffer(self.totals, u64::from(self.arena) * TOTALS_BYTES),
-        ];
-        match cx.allocate_buffer(self.inputs, self.capacity as u64 * LIGHT_BYTES) {
-            Allocation::Fresh | Allocation::Kept => {
-                if !self.staged.is_empty() {
-                    cx.write(self.inputs, 0, &self.staged);
-                }
-            }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.data, self.data_bytes());
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.counts, u64::from(self.arena) * CLUSTERS * 4);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.totals, u64::from(self.arena) * TOTALS_BYTES);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.inputs, self.capacity as u64 * LIGHT_BYTES);
+        if !self.staged.is_empty() {
+            cx.write(self.inputs, 0, &self.staged);
         }
         self.count = count as u32;
         self.place_headers(&settings, &views, &captures, lighting.highlights);
-        match cx.allocate_buffer(self.clusters, u64::from(LIT_VIEWS) * CLUSTER_BYTES) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.clusters, 0, &self.headers),
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.clusters, u64::from(LIT_VIEWS) * CLUSTER_BYTES);
+        cx.write(self.clusters, 0, &self.headers);
         if count == 0 {
             return;
         }
-        for allocation in binned {
-            match allocation {
-                Allocation::Fresh | Allocation::Kept => cx.run(self.binning),
-            }
-        }
+        cx.run(self.binning);
         cx.read_back::<LightTotals>(0, self.totals, 0..TOTALS_BYTES, AfterRead::Keep);
     }
 

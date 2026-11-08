@@ -16,7 +16,7 @@
       "meshes": 2,
       "textures": 1
     },
-    "gltf prefab document": "3998e635eab3d136",
+    "gltf prefab document": "2eeb1b30b872960d",
     "gltf prefab file prop/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
     "gltf prefab file prop/node1.p0.761ae8786249.bin": "761ae878624921a2",
     "gltf prefab file prop/node1.p1.8e944532b4c2.bin": "8e944532b4c2174d",
@@ -28,7 +28,7 @@
       "meshes": 2,
       "textures": 1
     },
-    "gltf scene document": "e7e28e7bbd689626",
+    "gltf scene document": "e3afc3fa321e7732",
     "gltf scene file prop/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
     "gltf scene file prop/node1.p0.761ae8786249.bin": "761ae878624921a2",
     "gltf scene file prop/node1.p1.8e944532b4c2.bin": "8e944532b4c2174d"
@@ -425,6 +425,8 @@
           "SceneShadows",
           "SceneSky",
           "SceneSkyOcclusion",
+          "SceneSlot",
+          "SceneSlotFill",
           "SceneSound",
           "SceneSpline",
           "SceneSpot",
@@ -475,6 +477,7 @@
           "UiNode",
           "UiRoot",
           "UiSettings",
+          "VertexSkin",
           "ViewForm"
         ]
       },
@@ -502,19 +505,23 @@
       "allowed": {
         "kind": "variants",
         "values": [
+          "ActionInput",
+          "AxisInput",
           "Bricks",
-          "Camera",
+          "CursorRequests",
           "DrawnMesh",
           "Environment",
           "FrameBudget",
           "GlobalTransform",
           "Hierarchy",
-          "Input",
           "Jobs",
           "Level",
+          "MenuInput",
           "MeshLevels",
+          "MoveInput",
           "NodeWord",
           "Ownership",
+          "PointerInput",
           "PresentationState",
           "Readiness",
           "Records",
@@ -709,18 +716,18 @@
     }
   },
   "scenes": {
-    "document components": "344246953edb010b",
+    "document components": "975779be2d183b64",
     "document components counts": {
-      "bytes": 8383,
+      "bytes": 8756,
       "entities": 10,
       "materials": 3,
       "meshes": 3,
       "prefabs": 1,
       "textures": 1
     },
-    "document garden": "b1d4a513e91b4c57",
+    "document garden": "dfb0732efc571268",
     "document garden counts": {
-      "bytes": 95903,
+      "bytes": 97126,
       "entities": 31,
       "materials": 9,
       "meshes": 6,
@@ -736,9 +743,9 @@
       "prefabs": 0,
       "textures": 0
     },
-    "document terrain": "a6f627e9521099c0",
+    "document terrain": "4f88ae63758bd166",
     "document terrain counts": {
-      "bytes": 23946,
+      "bytes": 24163,
       "entities": 6,
       "materials": 2,
       "meshes": 2,
@@ -885,11 +892,6 @@
       "got": 2000000.0,
       "path": "$.meshes[0].source.vertices[0].position[0]"
     },
-    "refusal invalid_renderable at $.entities[0].material": {
-      "code": "invalid_renderable",
-      "expected": "present",
-      "path": "$.entities[0].material"
-    },
     "refusal invalid_rigid_body at $.entities[1].rigid_body": {
       "code": "invalid_rigid_body",
       "expected": "absent",
@@ -1004,6 +1006,11 @@
       "got": "absent.png",
       "path": "$.textures[0].uri"
     },
+    "refusal name_twice at $.materials[0].slots.emissive.maps.base_color": {
+      "code": "name_twice",
+      "got": "base_color",
+      "path": "$.materials[0].slots.emissive.maps.base_color"
+    },
     "refusal nested_prefab at $.prefabs[1].entities[0].prefab": {
       "code": "nested_prefab",
       "expected": "absent",
@@ -1092,10 +1099,10 @@
       "got": "nobody",
       "path": "$.entities[0].parent"
     },
-    "refusal unknown_reference at $.entities[0].material": {
+    "refusal unknown_reference at $.entities[0].drawn.material": {
       "code": "unknown_reference",
       "got": "missing",
-      "path": "$.entities[0].material"
+      "path": "$.entities[0].drawn.material"
     },
     "refusal unknown_variant at $.meshes[0].source.kind": {
       "allowed": {
@@ -1297,7 +1304,7 @@
       "steepest": 0.016481399536132812,
       "tunnels": 1
     },
-    "bakes": "be1e9bbcd447e511",
+    "bakes": "a4d2368c0307c8f6",
     "bounce": {
       "blocks": 1024,
       "detailed blocks": 474,
@@ -1321,7 +1328,7 @@
       ],
       "texels": 65536
     },
-    "pack": "32f2acd6ccc12d45",
+    "pack": "4a4910cecea20f5f",
     "pack records": 46,
     "portals 0/0/0": "fb26e1b9f5bd9fd8",
     "portals 0/0/1": "29e88506dde27d87",

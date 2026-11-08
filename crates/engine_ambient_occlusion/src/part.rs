@@ -92,12 +92,10 @@ impl GpuPart for AmbientGpu {
         };
         let within = |size: u32, whole: u32| size.clamp(1, whole.max(1));
         self.drawn = (within(render.x, display.x), within(render.y, display.y));
-        match cx.allocate(self.raw, extent, 1) {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.occluding),
-        }
-        match cx.allocate(self.occlusion, extent, 1) {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.filtering),
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.raw, extent, 1);
+        cx.run(self.occluding);
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.occlusion, extent, 1);
+        cx.run(self.filtering);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

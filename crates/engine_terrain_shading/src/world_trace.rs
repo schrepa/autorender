@@ -325,12 +325,9 @@ impl WorldTrace {
         if let Some(size) = grown(self.terrains, bytes, frame.room) {
             self.terrains = size;
         }
-        match cx.allocate_buffer(buffer, self.terrains) {
-            Allocation::Fresh | Allocation::Kept => {
-                if !records.is_empty() {
-                    cx.write(buffer, 0, &records);
-                }
-            }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, self.terrains);
+        if !records.is_empty() {
+            cx.write(buffer, 0, &records);
         }
         self.listed = records.len() as u32;
     }

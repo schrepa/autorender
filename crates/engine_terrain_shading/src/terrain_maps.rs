@@ -201,11 +201,9 @@ impl TerrainMaps {
                 height: shape.size.1,
                 depth_or_array_layers: layers,
             };
-            match cx.allocate_as(texture, format, size, levels) {
-                Allocation::Fresh | Allocation::Kept => {
-                    write_array(cx, (texture, array), (kept, assets), shape);
-                }
-            }
+            let (Allocation::Fresh | Allocation::Kept) =
+                cx.allocate_as(texture, format, size, levels);
+            write_array(cx, (texture, array), (kept, assets), shape);
         }
         if rendered && levels > 1 {
             for (array, layers) in arrays.into_iter().zip([count, 2 * count]) {
@@ -223,19 +221,10 @@ impl TerrainMaps {
                 height: 1,
                 depth_or_array_layers: 1 + array as u32,
             };
-            match cx.allocate_as(texture, format, size, 1) {
-                Allocation::Fresh | Allocation::Kept => {
-                    for (default, (held, layer)) in DEFAULTS.iter().zip([(0, 0), (1, 0), (1, 1)]) {
-                        if held == array {
-                            cx.write_level(
-                                texture,
-                                (0, layer),
-                                (1, 1),
-                                TextureFormat::Rgba8,
-                                default,
-                            );
-                        }
-                    }
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_as(texture, format, size, 1);
+            for (default, (held, layer)) in DEFAULTS.iter().zip([(0, 0), (1, 0), (1, 1)]) {
+                if held == array {
+                    cx.write_level(texture, (0, layer), (1, 1), TextureFormat::Rgba8, default);
                 }
             }
         }

@@ -1,4 +1,4 @@
-import package::generated::shadows::{CasterCull, LEVEL_WINDOW, Route, SKY_REFRESH,
+import package::generated::shadows::{CasterCull, LEVEL_WINDOW, Route, caster_mode_sky_refresh,
     tile_entry_moving, tile_entry_still};
 import package::shadows::sample::{level_words, shadow_tiles};
 
@@ -28,7 +28,7 @@ fn caster_in_region(region: u32, low: vec3<f32>, high: vec3<f32>) -> bool {
 }
 
 fn caster_in_sky(center: vec3<f32>, half: vec3<f32>) -> bool {
-    if (caster_cull.mode.x & SKY_REFRESH) == 0u {
+    if !caster_mode_sky_refresh(caster_cull.mode.x) {
         return false;
     }
     let sky_center = vec3<f32>(dot(caster_cull.sky[0].xyz, center),

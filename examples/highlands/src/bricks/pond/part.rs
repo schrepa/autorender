@@ -90,9 +90,9 @@ impl GpuPart for PondGpu {
             return;
         }
         let (shapes, count) = shapes(ponds.iter(), &tiles.terrains, &ground);
-        match cx.allocate_buffer(self.ponds, std::mem::size_of_val(&shapes) as u64) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.ponds, 0, &shapes),
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.ponds, std::mem::size_of_val(&shapes) as u64);
+        cx.write(self.ponds, 0, &shapes);
         self.drawn = count;
         cx.run(self.pass);
     }

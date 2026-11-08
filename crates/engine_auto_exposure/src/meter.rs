@@ -147,12 +147,11 @@ impl GpuPart for MeterGpu {
             values.frame[1] = 0.0;
         }
         values.drawn = [view.render.x as f32, view.render.y as f32, 0.0, 0.0];
-        match cx.allocate_buffer(self.uniform, UNIFORM_BYTES) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.uniform, 0, &[values]),
-        }
-        match cx.allocate_buffer(self.bins, BIN_BYTES) {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.meter),
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.uniform, UNIFORM_BYTES);
+        cx.write(self.uniform, 0, &[values]);
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.bins, BIN_BYTES);
+        cx.run(self.meter);
     }
 
     fn encode(&mut self, _: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

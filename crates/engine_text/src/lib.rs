@@ -524,17 +524,15 @@ impl GpuPart for TextGpu {
         }
         if !self.labeled.is_empty() {
             let bytes = std::mem::size_of_val(self.labeled.as_slice()) as u64;
-            match cx.grow_buffer(self.labels, bytes) {
-                Allocation::Fresh | Allocation::Kept => cx.write(self.labels, 0, &self.labeled),
-            }
+            let (Allocation::Fresh | Allocation::Kept) = cx.grow_buffer(self.labels, bytes);
+            cx.write(self.labels, 0, &self.labeled);
         }
         if self.staged.is_empty() {
             return;
         }
         let bytes = std::mem::size_of_val(self.staged.as_slice()) as u64;
-        match cx.grow_buffer(self.instances, bytes) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.instances, 0, &self.staged),
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.grow_buffer(self.instances, bytes);
+        cx.write(self.instances, 0, &self.staged);
         cx.run(self.pass);
     }
 

@@ -158,15 +158,13 @@ impl GpuPart for CoverGpu {
     ) {
         if table.is_changed() {
             let terrains = size_of_val(table.terrains.as_slice()) as u64;
-            match cx.allocate_buffer(self.table, MATERIAL_BYTES + terrains.max(TERRAIN_BYTES)) {
-                Allocation::Fresh | Allocation::Kept => {
-                    if !table.terrains.is_empty() {
-                        cx.write(self.table, MATERIAL_BYTES, &table.terrains);
-                    }
-                    if !table.materials.is_empty() {
-                        cx.write(self.table, 0, &table.materials);
-                    }
-                }
+            let (Allocation::Fresh | Allocation::Kept) =
+                cx.allocate_buffer(self.table, MATERIAL_BYTES + terrains.max(TERRAIN_BYTES));
+            if !table.terrains.is_empty() {
+                cx.write(self.table, MATERIAL_BYTES, &table.terrains);
+            }
+            if !table.materials.is_empty() {
+                cx.write(self.table, 0, &table.materials);
             }
         }
         if !plan.shown {
@@ -185,11 +183,16 @@ impl GpuPart for CoverGpu {
                 self.row_bytes = rows.next_power_of_two();
             }
         }
-        cx.allocate_buffer(self.counts, COUNT_BYTES);
-        cx.allocate_buffer(self.args, 2 * DRAW_ARGS);
-        cx.allocate_buffer(self.frame, FRAME_BYTES);
-        cx.allocate_buffer(self.blades, self.blade_bytes);
-        cx.allocate_buffer(self.rows, self.row_bytes);
+        let sizes = [
+            (self.counts, COUNT_BYTES),
+            (self.args, 2 * DRAW_ARGS),
+            (self.frame, FRAME_BYTES),
+            (self.blades, self.blade_bytes),
+            (self.rows, self.row_bytes),
+        ];
+        for (buffer, bytes) in sizes {
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
+        }
         self.cells.clear();
         if !self.drawn {
             return;

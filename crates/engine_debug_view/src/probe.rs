@@ -348,36 +348,34 @@ impl ProbeGpu {
         if (size.x, size.y) == probe.armed_size {
             let (width, height) = probe.armed_size;
             let row = u64::from(probe.depth_row);
-            match cx.allocate_buffer(self.rows, row * u64::from(height)) {
-                Allocation::Fresh | Allocation::Kept => {
-                    cx.copy_at_end(
-                        Copied::Target(TargetName::DEPTH),
-                        Copied::Buffer(self.rows),
-                        &[CopyRegion::ToBuffer {
-                            from: wgpu::Origin3d::ZERO,
-                            to: wgpu::TexelCopyBufferLayout {
-                                offset: 0,
-                                bytes_per_row: Some(probe.depth_row),
-                                rows_per_image: Some(height),
-                            },
-                            size: wgpu::Extent3d {
-                                width,
-                                height,
-                                depth_or_array_layers: 1,
-                            },
-                        }],
-                    );
-                    cx.copy_at_end(
-                        Copied::Buffer(self.rows),
-                        Copied::Buffer(self.probed),
-                        &[CopyRegion::Bytes {
-                            from: u64::from(at.y) * row + u64::from(at.x) * 4,
-                            to: DEPTH,
-                            size: 4,
-                        }],
-                    );
-                }
-            }
+            let (Allocation::Fresh | Allocation::Kept) =
+                cx.allocate_buffer(self.rows, row * u64::from(height));
+            cx.copy_at_end(
+                Copied::Target(TargetName::DEPTH),
+                Copied::Buffer(self.rows),
+                &[CopyRegion::ToBuffer {
+                    from: wgpu::Origin3d::ZERO,
+                    to: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(probe.depth_row),
+                        rows_per_image: Some(height),
+                    },
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                }],
+            );
+            cx.copy_at_end(
+                Copied::Buffer(self.rows),
+                Copied::Buffer(self.probed),
+                &[CopyRegion::Bytes {
+                    from: u64::from(at.y) * row + u64::from(at.x) * 4,
+                    to: DEPTH,
+                    size: 4,
+                }],
+            );
         } else {
             cx.write(self.probed, DEPTH, &[0_u32]);
         }
@@ -457,9 +455,11 @@ impl GpuPart for ProbeGpu {
         };
         self.capturing = probe.capturing();
         match probe.stage {
-            Stage::Capturing => match cx.allocate_buffer(self.probed, PROBED_BYTES) {
-                Allocation::Fresh | Allocation::Kept => self.capture(&probe, (size, at), cx),
-            },
+            Stage::Capturing => {
+                let (Allocation::Fresh | Allocation::Kept) =
+                    cx.allocate_buffer(self.probed, PROBED_BYTES);
+                self.capture(&probe, (size, at), cx);
+            }
             Stage::Waiting => cx.release_buffer(self.rows),
             Stage::Idle | Stage::Armed | Stage::Read(_) => {}
         }

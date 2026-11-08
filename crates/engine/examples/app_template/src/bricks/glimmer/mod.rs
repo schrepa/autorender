@@ -300,9 +300,9 @@ impl GpuPart for GlimmerGpu {
             });
         }
         let bytes = self.staged.len().max(1) * std::mem::size_of::<GlimmerInstance>();
-        match cx.allocate_buffer(self.instances, bytes as u64) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.instances, 0, &self.staged),
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.instances, bytes as u64);
+        cx.write(self.instances, 0, &self.staged);
     }
 }
 

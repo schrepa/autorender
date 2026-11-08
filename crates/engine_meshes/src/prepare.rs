@@ -130,21 +130,16 @@ impl MeshesGpu {
         let batches = self.state.blended.batches.len() as u64;
         let sorted = &self.sorted;
         let view = cx.view_index();
-        match cx.allocate_buffer(sorted.view, size_of::<BlendedView>() as u64) {
-            Allocation::Fresh | Allocation::Kept => {
-                cx.write(sorted.view, 0, &[view, rows as u32, batches as u32, 0]);
-            }
-        }
-        let rebuilt = [
-            cx.allocate_buffer(sorted.keys, storage_bytes(rows * 4)),
-            cx.allocate_buffer(sorted.ids, storage_bytes(rows * 4)),
-            cx.allocate_buffer(sorted.args, storage_bytes(batches * DRAW_ARGS_BYTES)),
-        ];
-        for allocation in rebuilt {
-            match allocation {
-                Allocation::Fresh | Allocation::Kept => cx.run(self.passes.blended),
-            }
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(sorted.view, size_of::<BlendedView>() as u64);
+        cx.write(sorted.view, 0, &[view, rows as u32, batches as u32, 0]);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(sorted.keys, storage_bytes(rows * 4));
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(sorted.ids, storage_bytes(rows * 4));
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(sorted.args, storage_bytes(batches * DRAW_ARGS_BYTES));
+        cx.run(self.passes.blended);
     }
 
     fn fade_share(&mut self, seconds: f32, fade_seconds: f32, shown: bool) -> f32 {
@@ -164,12 +159,10 @@ impl MeshesGpu {
     fn write_impostors(&mut self, records: &[ImpostorRecord], cx: &mut Prepare<'_, Self>) {
         self.state.cards = records.iter().any(|record| record.sphere[3] > 0.0);
         let bytes = (records.len().max(1) * size_of::<ImpostorRecord>()) as u64;
-        match cx.allocate_buffer(self.instances.impostors, bytes) {
-            Allocation::Fresh | Allocation::Kept => {
-                if !records.is_empty() {
-                    cx.write(self.instances.impostors, 0, records);
-                }
-            }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.instances.impostors, bytes);
+        if !records.is_empty() {
+            cx.write(self.instances.impostors, 0, records);
         }
     }
 
@@ -269,8 +262,8 @@ impl MeshesGpu {
         self.state.watched = view
             .watched
             .filter(|&slot| u64::from(slot) * 4 + 4 <= states);
-        let group_bytes = self.write_batches(&sources, table, cx)
-            + self.write_candidates(table, sources.hierarchy, cx);
+        let group_bytes =
+            self.write_batches(&sources, table, cx) + self.write_candidates(sources.hierarchy, cx);
         self.write_frame_uniform(view, plan, cx);
         cx.run(self.passes.presentation);
         if self.state.occlusion {
@@ -325,43 +318,43 @@ impl MeshesGpu {
                 presented.slot_candidates,
                 storage_bytes(capacity * size_of::<CandidateData>() as u64),
             ),
+            cx.allocate_buffer(
+                presented.scan,
+                storage_bytes((capacity + 4 * (scan_groups + 1) + 1) * 4),
+            ),
         ];
         if staged.contains(&Allocation::Fresh) {
             groups.key = None;
         }
-        cx.allocate_buffer(
-            presented.scan,
-            storage_bytes((capacity + 4 * (scan_groups + 1) + 1) * 4),
-        );
         let batch_capacity = groups.batch_capacity as u64;
-        cx.allocate_buffer(
-            presented.batches,
-            storage_bytes(batch_capacity * size_of::<BatchData>() as u64),
-        );
-        cx.allocate_buffer(presented.batch_bases, storage_bytes(batch_capacity * 16));
         let planes = u64::from(LOD_LEVELS);
         let args = (planes * batch_capacity + 1) * DRAW_ARGS_BYTES;
         let ids = planes * capacity * 4;
-        let compactions = [true, kept.phase_two];
-        for (index, wanted) in compactions.into_iter().enumerate() {
-            cx.allocate_buffer(
-                presented.visible[index],
-                storage_bytes(if wanted { ids } else { 0 }),
-            );
-            cx.allocate_buffer(
-                presented.draws[index],
-                storage_bytes(if wanted { args } else { 0 }),
-            );
+        let [two_ids, two_args, impostor_ids, two_impostor_ids] = [
+            (kept.phase_two, ids),
+            (kept.phase_two, args),
+            (kept.impostors, capacity * 8),
+            (kept.impostors && kept.phase_two, capacity * 8),
+        ]
+        .map(|(wanted, bytes)| storage_bytes(if wanted { bytes } else { 0 }));
+        let rebuilt = [
+            (
+                presented.batches,
+                storage_bytes(batch_capacity * size_of::<BatchData>() as u64),
+            ),
+            (presented.batch_bases, storage_bytes(batch_capacity * 16)),
+            (presented.visible[0], storage_bytes(ids)),
+            (presented.draws[0], storage_bytes(args)),
+            (presented.visible[1], two_ids),
+            (presented.draws[1], two_args),
+            (presented.impostor_ids[0], impostor_ids),
+            (presented.impostor_ids[1], two_impostor_ids),
+            (presented.counts, storage_bytes(16)),
+            (presented.totals, storage_bytes(TOTALS_BYTES)),
+        ];
+        for (buffer, bytes) in rebuilt {
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
         }
-        let impostors = [kept.impostors, kept.impostors && kept.phase_two];
-        for (index, wanted) in impostors.into_iter().enumerate() {
-            cx.allocate_buffer(
-                presented.impostor_ids[index],
-                storage_bytes(if wanted { capacity * 8 } else { 0 }),
-            );
-        }
-        cx.allocate_buffer(presented.counts, storage_bytes(16));
-        cx.allocate_buffer(presented.totals, storage_bytes(TOTALS_BYTES));
         groups.kept = kept;
     }
 
@@ -381,15 +374,11 @@ impl MeshesGpu {
         if states == Allocation::Fresh {
             state.groups.key = None;
         }
-        let cards = cx.allocate_buffer(
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(
             self.presented.fade_cards,
             storage_bytes(16 + state.card_capacity as u64 * 8),
         );
-        match cards {
-            Allocation::Fresh | Allocation::Kept => {
-                cx.write(self.presented.fade_cards, 0, &[IMPOSTOR_VERTICES, 0, 0, 0]);
-            }
-        }
+        cx.write(self.presented.fade_cards, 0, &[IMPOSTOR_VERTICES, 0, 0, 0]);
     }
 
     fn write_batches(
@@ -423,7 +412,6 @@ impl MeshesGpu {
 
     fn write_candidates(
         &mut self,
-        table: &DrawnTable,
         hierarchy: &GlobalTransforms,
         cx: &mut Prepare<'_, Self>,
     ) -> u64 {
@@ -489,9 +477,9 @@ impl MeshesGpu {
             fade: [view.fade, FADE_MARGIN, 0.0, 0.0],
             bases: [0; 4],
         };
-        match cx.allocate_buffer(self.presented.frame, size_of::<PresentationFrame>() as u64) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.presented.frame, 0, &[uniform]),
-        }
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.presented.frame, size_of::<PresentationFrame>() as u64);
+        cx.write(self.presented.frame, 0, &[uniform]);
         state.lod = uniform.lod_error > 0.0;
         state.frame = Some(uniform);
         if state.occlusion {
@@ -500,15 +488,11 @@ impl MeshesGpu {
                 ..CandidateState::default()
             }
             .pack();
-            let two = cx.allocate_buffer(
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(
                 self.presented.frame_two,
                 size_of::<PresentationFrame>() as u64,
             );
-            match two {
-                Allocation::Fresh | Allocation::Kept => {
-                    cx.write(self.presented.frame_two, 0, &[uniform]);
-                }
-            }
+            cx.write(self.presented.frame_two, 0, &[uniform]);
         }
     }
 
@@ -573,10 +557,17 @@ impl MeshesGpu {
             return;
         }
         let presented = &self.presented;
-        cx.allocate_buffer(
-            presented.view_frames,
-            frames.len() as u64 * VIEW_FRAME_BYTES,
-        );
+        let rebuilt = [
+            (
+                presented.view_frames,
+                frames.len() as u64 * VIEW_FRAME_BYTES,
+            ),
+            (presented.view_visible, storage_bytes(ids * 4)),
+            (presented.view_draws, storage_bytes(args * DRAW_ARGS_BYTES)),
+        ];
+        for (buffer, bytes) in rebuilt {
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
+        }
         for (at, frame) in frames.iter().enumerate() {
             cx.write(
                 presented.view_frames,
@@ -584,11 +575,6 @@ impl MeshesGpu {
                 std::slice::from_ref(frame),
             );
         }
-        cx.allocate_buffer(presented.view_visible, storage_bytes(ids * 4));
-        cx.allocate_buffer(
-            presented.view_draws,
-            storage_bytes(args * DRAW_ARGS_BYTES),
-        );
         cx.run(self.passes.views);
     }
 }

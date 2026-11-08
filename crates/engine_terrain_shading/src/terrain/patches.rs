@@ -68,9 +68,8 @@ impl PatchDraws {
             let indices = grid_indices();
             self.index_count = indices.len() as u32;
             let bytes = std::mem::size_of_val(indices.as_slice()) as u64;
-            match cx.allocate_buffer(handles.grid, bytes) {
-                Allocation::Fresh | Allocation::Kept => cx.write(handles.grid, 0, &indices),
-            }
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(handles.grid, bytes);
+            cx.write(handles.grid, 0, &indices);
             self.indexed = true;
         }
         let eye = views.eye.as_dvec3();
@@ -135,12 +134,9 @@ impl PatchDraws {
                 (self.records.len() as u64).next_power_of_two() * size_of::<PatchRecord>() as u64;
         }
         let room = self.record_room.max(size_of::<PatchRecord>() as u64);
-        match cx.allocate_buffer(handles.patches, room) {
-            Allocation::Fresh | Allocation::Kept => {
-                if !self.records.is_empty() {
-                    cx.write(handles.patches, 0, &self.records);
-                }
-            }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(handles.patches, room);
+        if !self.records.is_empty() {
+            cx.write(handles.patches, 0, &self.records);
         }
         frame
     }

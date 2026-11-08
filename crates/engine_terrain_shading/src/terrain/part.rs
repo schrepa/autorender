@@ -746,7 +746,7 @@ impl GpuPart for TerrainGpu {
                     .any(|(terrain, _)| *terrain == entry.terrain)
             })
             .collect();
-        let rebuilt = self.surface.prepare(
+        self.surface.prepare(
             cx,
             h,
             (&tiles, &views, limits.storage_room, &drawn),
@@ -778,11 +778,7 @@ impl GpuPart for TerrainGpu {
                     size: bytes,
                 }],
             );
-            for allocation in rebuilt {
-                match allocation {
-                    Allocation::Fresh | Allocation::Kept => cx.run(self.passes.subdivide),
-                }
-            }
+            cx.run(self.passes.subdivide);
             cx.read_back::<SurfaceTotals>(
                 SURFACE_TOTALS,
                 h.counters,
@@ -798,9 +794,8 @@ impl GpuPart for TerrainGpu {
                 height: display.y,
                 depth_or_array_layers: 1,
             };
-            match cx.allocate(h.ids, size, 1) {
-                Allocation::Fresh | Allocation::Kept => cx.run(self.passes.ids),
-            }
+            let (Allocation::Fresh | Allocation::Kept) = cx.allocate(h.ids, size, 1);
+            cx.run(self.passes.ids);
             cx.run(self.passes.resolve);
         } else {
             cx.release(h.ids);

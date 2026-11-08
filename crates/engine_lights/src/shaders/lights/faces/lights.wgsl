@@ -1,5 +1,5 @@
 import package::engine::view::camera;
-import package::generated::lights::{KEPT_REGIONS, LIT_VIEWS, SHAPED_LIGHTS};
+import package::generated::lights::{LIT_VIEWS, light_shading_regions, light_shading_shaped};
 import package::lights::clusters::{clusters, light_data};
 import package::place::lights::{Light, LightCluster};
 
@@ -49,11 +49,11 @@ fn cluster_light(cluster: LightCluster, n: u32) -> Light {
 }
 
 fn shaped_lights() -> bool {
-    return (clusters[0u].lights.y & SHAPED_LIGHTS) != 0u;
+    return light_shading_shaped(clusters[0u].lights.y);
 }
 
 fn kept_regions() -> bool {
-    return (clusters[0u].lights.y & KEPT_REGIONS) != 0u;
+    return light_shading_regions(clusters[0u].lights.y);
 }
 
 fn lights_on() -> bool {

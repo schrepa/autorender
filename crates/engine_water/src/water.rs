@@ -324,7 +324,8 @@ impl GpuPart for WaterGpu {
             }
             self.pattern_written = Some(Arc::clone(pattern));
         }
-        let uniform = cx.allocate_buffer(self.uniform, size_of::<WaterUniform>() as u64);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.uniform, size_of::<WaterUniform>() as u64);
         self.settle.prepare(&feedback.work, cx);
         self.blocks
             .prepare(&state.blocks, (&ground, &state.terrains), cx);
@@ -333,12 +334,12 @@ impl GpuPart for WaterGpu {
         let watering = !state.watered.is_empty();
         self.prepare_falls(&state, &ground, cx);
         let terrains = ground.tables.len() as u32;
-        let leaf_args = cx.allocate_buffer(
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(
             self.leaf_args,
             u64::from(WATER_LEAF_FIRST + 2 * terrains.max(1)) * 4,
         );
         let size = views.frame().display_size;
-        let foam = cx.allocate(
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(
             self.foam,
             wgpu::Extent3d {
                 width: size.x.max(1),
@@ -382,15 +383,9 @@ impl GpuPart for WaterGpu {
             ],
             terrains: [terrains, 0, 0, 0],
         };
-        match uniform {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.uniform, 0, &[values]),
-        }
-        match leaf_args {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.count_leaves),
-        }
-        match foam {
-            Allocation::Fresh | Allocation::Kept => cx.run(self.foam_pass),
-        }
+        cx.write(self.uniform, 0, &[values]);
+        cx.run(self.count_leaves);
+        cx.run(self.foam_pass);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
@@ -498,15 +493,11 @@ impl WaterGpu {
             return;
         }
         let bytes = std::mem::size_of_val(&self.vertices[..]) as u64;
-        match cx.allocate_buffer(self.fall_vertices, bytes) {
-            Allocation::Fresh | Allocation::Kept => {
-                cx.write(self.fall_vertices, 0, &self.vertices);
-            }
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.fall_vertices, bytes);
+        cx.write(self.fall_vertices, 0, &self.vertices);
         let bytes = std::mem::size_of_val(&self.indices[..]) as u64;
-        match cx.allocate_buffer(self.fall_indices, bytes) {
-            Allocation::Fresh | Allocation::Kept => cx.write(self.fall_indices, 0, &self.indices),
-        }
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.fall_indices, bytes);
+        cx.write(self.fall_indices, 0, &self.indices);
     }
 }
 
