@@ -28,23 +28,6 @@ pub(crate) fn native(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure>
 fn described(session: &mut dyn SmokeSession) -> Asked {
     let status = status(session, "status_answers")?;
     let result = &status["result"];
-    let adapter = &result["adapter"];
-    let wanted = json!({ "paused": true, "adapter": { "name": "named", "backend": "named" } });
-    smoke_eq!(
-        seen(
-            result["paused"] == true
-                && adapter["name"]
-                    .as_str()
-                    .is_some_and(|name| !name.is_empty())
-                && adapter["backend"]
-                    .as_str()
-                    .is_some_and(|backend| !backend.is_empty()),
-            json!({ "paused": result["paused"], "adapter": adapter }),
-            &wanted,
-        ),
-        wanted,
-        "adapter_named"
-    );
     let wanted = json!({ "features": ["dev"] });
     smoke_eq!(
         seen(

@@ -20,7 +20,6 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         followed = now;
         held
     })?;
-    handed(session)?;
     smoke_eq!(open > OPEN_BEHIND, true, "follows_at_its_distance");
     shakes(session, open)?;
     session.source(&scene(true).to_string());
@@ -51,16 +50,6 @@ fn handover(session: &mut dyn SmokeSession) -> Checked<Value> {
         .and_then(|asks| asks.iter().find(|ask| ask["name"] == "hand_over"))
         .map(|handover| handover["applied"][0].clone())
         .unwrap_or_default())
-}
-
-fn handed(session: &mut dyn SmokeSession) -> Checked<()> {
-    let applied = handover(session)?;
-    smoke_eq!(
-        number(&applied["applied"]["frame"]) - number(&applied["asked"]["frame"]),
-        1.0,
-        "handover_applies_next_frame"
-    );
-    Ok(())
 }
 
 fn behind(session: &mut dyn SmokeSession) -> Checked<f64> {

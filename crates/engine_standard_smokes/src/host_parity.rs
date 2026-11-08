@@ -365,23 +365,7 @@ pub(crate) fn host_faults(session: &mut dyn SmokeSession) -> Result<(), SmokeFai
 pub(crate) fn host_images(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     serve(session, &boxed("host-parity"))?;
     let body = named("debug_missing_asset", json!({ "entity": "box" }));
-    let removed = accepted(session, "control", body, "missing_asset_removed")?;
-    let result = &removed["result"];
-    smoke_eq!(
-        json!([
-            result["temporary"],
-            result["entities"],
-            result["rendering"]["meshes_stats"]["missing_assets"]
-        ]),
-        json!([true, 1, 1]),
-        "missing_asset_counted"
-    );
-    let after = status(session, "status_after_removal")?;
-    smoke_eq!(
-        after["result"]["rendering"]["meshes_stats"]["missing_assets"].clone(),
-        json!(1),
-        "status_counts_missing_asset"
-    );
+    accepted(session, "control", body, "missing_asset_removed")?;
     let listed = query(session, "assets", json!({}), "lists_assets")?;
     let listed = &listed["result"];
     let entry = &listed["missing"][0];

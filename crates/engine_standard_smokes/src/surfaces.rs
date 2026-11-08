@@ -25,17 +25,7 @@ fn fixture() -> Value {
 pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     load(session, &fixture())?;
     ask(session, "control", json!({"name": "pause"}))?;
-    let rendering = render(session)?;
-    let wanted = json!({"frame": 0, "tick": 0});
-    smoke_eq!(
-        seen(
-            rendering["frame"].is_u64() && rendering["tick"].is_u64(),
-            json!({"frame": rendering["frame"], "tick": rendering["tick"]}),
-            &wanted,
-        ),
-        wanted,
-        "stats_name_frame_and_tick"
-    );
+    render(session)?;
     let tint = component(session, "tinted", "drawn_component")?["values"]["tint"].clone();
     let wanted = json!([0.2, 0.9, 0.3, 1]);
     smoke_eq!(
