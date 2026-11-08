@@ -1,7 +1,7 @@
 import package::engine::mesh::declarations::MotionOutput;
 import package::engine::shading::ViewPixel;
 import package::engine::view::view_pixel;
-import package::generated::targets::{ViewTargets, blended_targets, view_targets};
+import package::generated::writes::{Outputs, blended_outputs, outputs};
 import package::meshes::shade::{extended_fragment, extended_motion_output, fragment, masked_depth,
     shade, motion_output};
 import package::meshes::vertex::ExtendedMotionOutput;
@@ -12,8 +12,8 @@ fn drawn_pixel(clip_position: vec4<f32>, previous: vec3<f32>) -> ViewPixel {
 }
 
 fn mesh_targets(shaded: SlotShaded, clip_position: vec4<f32>, previous: vec3<f32>)
-        -> ViewTargets {
-    return view_targets(shaded.point, shaded.shaded, drawn_pixel(clip_position, previous));
+        -> Outputs {
+    return outputs(shaded.point, shaded.shaded, drawn_pixel(clip_position, previous));
 }
 
 @fragment
@@ -27,30 +27,30 @@ fn fs_masked_depth_extended(input: ExtendedMotionOutput) {
 }
 
 @fragment
-fn fs_mesh(input: MotionOutput, @builtin(front_facing) front: bool) -> ViewTargets {
+fn fs_mesh(input: MotionOutput, @builtin(front_facing) front: bool) -> Outputs {
     let shaded = shade(fragment(motion_output(input)), front);
     return mesh_targets(shaded, input.clip_position, input.previous);
 }
 
 @fragment
 fn fs_mesh_extended(input: ExtendedMotionOutput, @builtin(front_facing) front: bool)
-        -> ViewTargets {
+        -> Outputs {
     let shaded = shade(extended_fragment(extended_motion_output(input)), front);
     return mesh_targets(shaded, input.clip_position, input.previous);
 }
 
 @fragment
-fn fs_mesh_blended(input: MotionOutput, @builtin(front_facing) front: bool) -> ViewTargets {
+fn fs_mesh_blended(input: MotionOutput, @builtin(front_facing) front: bool) -> Outputs {
     let shaded = shade(fragment(motion_output(input)), front);
-    return blended_targets(shaded.point, shaded.shaded,
+    return blended_outputs(shaded.point, shaded.shaded,
         drawn_pixel(input.clip_position, input.previous));
 }
 
 @fragment
 fn fs_mesh_extended_blended(input: ExtendedMotionOutput,
-        @builtin(front_facing) front: bool) -> ViewTargets {
+        @builtin(front_facing) front: bool) -> Outputs {
     let shaded = shade(extended_fragment(extended_motion_output(input)), front);
-    return blended_targets(shaded.point, shaded.shaded,
+    return blended_outputs(shaded.point, shaded.shaded,
         drawn_pixel(input.clip_position, input.previous));
 }
 

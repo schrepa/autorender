@@ -214,9 +214,9 @@ impl Run {
                     let set = self.pass_set(self.pass);
                     main = lit_set(&set);
                     plain = !set.is_empty() && !main;
-                    for &(target, format, _, written) in set.iter() {
+                    for &(target, format, _) in set.iter() {
                         let id = self.machine.ids.target(target);
-                        match ops_of(id).filter(|_| written) {
+                        match ops_of(id) {
                             Some(ops) => colors.push((
                                 key(target),
                                 self.view_of(target).cloned(),

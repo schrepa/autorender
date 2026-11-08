@@ -1,13 +1,15 @@
 import package::engine::post::frame::{depth_texture, linear, post};
+import package::engine::transparency::cover;
 import package::face::tonemap::exposure;
 import package::face::transparency::revealed;
 import package::generated::pieces::taa::piece;
-import package::generated::targets::{blended_cover, output_motion};
 import package::generated::taa::TaaView;
 
 @group(1) @binding(0) var scene_color: texture_2d<f32>;
 @group(1) @binding(1) var history: texture_2d<f32>;
 @group(1) @binding(2) var<uniform> taa_view: TaaView;
+@group(1) @binding(3) var motion_vectors: texture_2d<f32>;
+@group(1) @binding(4) var blended_mask: texture_2d<f32>;
 
 const STILL_PIXELS: f32 = 0.015625f;
 
@@ -82,7 +84,7 @@ fn nearest_motion(pixel: vec2<i32>, last: vec2<i32>) -> vec2<f32> {
             }
         }
     }
-    return textureLoad(output_motion, nearest, 0).xy;
+    return textureLoad(motion_vectors, nearest, 0).xy;
 }
 
 fn neighbor(pixel: vec2<i32>, offset: vec2<i32>, last: vec2<i32>) -> vec3<f32> {
@@ -126,7 +128,7 @@ fn fs_temporal_resolve(@builtin(position) position: vec4<f32>) -> Resolved {
     if near < 1.0 {
         color = weighed(upsampled(jittered, last));
     }
-    var offset = textureLoad(output_motion, pixel, 0).xy;
+    var offset = textureLoad(motion_vectors, pixel, 0).xy;
     if piece().options.x != 0.0 {
         offset = nearest_motion(pixel, last);
     }
@@ -156,7 +158,7 @@ fn fs_temporal_resolve(@builtin(position) position: vec4<f32>) -> Resolved {
         past = weighed(max(past, vec3<f32>(0.0)));
         var weight = piece().options.w * near;
         if piece().options.z > 0.0 {
-            let covered = 1.0 - revealed(pixel).y * (1.0 - blended_cover(pixel));
+            let covered = 1.0 - revealed(pixel).y * (1.0 - cover(blended_mask, pixel));
             weight = max(weight, min(piece().options.z * covered, 1.0));
         }
         color = mix(rgb(clamp(ycocg(past), low, high)), current, weight);

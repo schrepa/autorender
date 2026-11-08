@@ -18,6 +18,7 @@ use engine_core::{
 use engine_registry::RecordExt;
 
 use crate::draws::RawDraw;
+use crate::machine::OutputDecl;
 
 pub use engine_core::{AttachPoint, TargetName};
 pub use wgpu;
@@ -511,17 +512,20 @@ pub struct RenderPipeline<'a> {
     pub writes: wgpu::ColorWrites,
 }
 
-fn target_of(name: TargetName) -> Result<install::ViewTarget, Error> {
-    install::ViewTarget::of(name).ok_or_else(|| {
-        Error::new(
-            engine_core::ErrorCode::UnknownVariable,
-            format!("$.targets.{}", name.name()),
-        )
-        .got(name.name())
-    })
+fn target_of(name: TargetName, outputs: &[OutputDecl]) -> Result<install::ViewTarget, Error> {
+    let output = outputs.iter().position(|output| output.name == name.name());
+    install::ViewTarget::of(name)
+        .or_else(|| output.map(|at| install::ViewTarget::Output(at as u32)))
+        .ok_or_else(|| {
+            Error::new(
+                engine_core::ErrorCode::UnknownVariable,
+                format!("$.targets.{}", name.name()),
+            )
+            .got(name.name())
+        })
 }
 
-fn bound_of<P>(bound: &Bind<P>) -> Result<install::Bound, Error> {
+fn bound_of<P>(bound: &Bind<P>, outputs: &[OutputDecl]) -> Result<install::Bound, Error> {
     Ok(match bound {
         Bind::Texture(texture) => install::Bound::Texture(texture.0),
         Bind::Slice {
@@ -535,15 +539,18 @@ fn bound_of<P>(bound: &Bind<P>) -> Result<install::Bound, Error> {
         },
         Bind::Buffer(buffer) => install::Bound::Buffer(buffer.0),
         Bind::Sampler(sampler) => install::Bound::Sampler(sampler.0),
-        Bind::Target(name) => install::Bound::Target(target_of(*name)?),
+        Bind::Target(name) => install::Bound::Target(target_of(*name, outputs)?),
         Bind::Asset => install::Bound::Asset,
     })
 }
 
-fn bound_list<P>(bound: &[(Var, Bind<P>)]) -> Result<Vec<(Var, install::Bound)>, Error> {
+fn bound_list<P>(
+    bound: &[(Var, Bind<P>)],
+    outputs: &[OutputDecl],
+) -> Result<Vec<(Var, install::Bound)>, Error> {
     bound
         .iter()
-        .map(|(var, bound)| Ok((*var, bound_of(bound)?)))
+        .map(|(var, bound)| Ok((*var, bound_of(bound, outputs)?)))
         .collect()
 }
 
@@ -554,11 +561,11 @@ fn scoped<P, S: Scope<P>>(scope: &S) -> install::Scoped {
     }
 }
 
-fn copied<P>(copied: Copied<P>) -> Result<install::Copied, Error> {
+fn copied<P>(copied: Copied<P>, outputs: &[OutputDecl]) -> Result<install::Copied, Error> {
     Ok(match copied {
         Copied::Buffer(buffer) => install::Copied::Buffer(buffer.0),
         Copied::Texture(texture) => install::Copied::Texture(texture.0),
-        Copied::Target(name) => install::Copied::Target(target_of(name)?),
+        Copied::Target(name) => install::Copied::Target(target_of(name, outputs)?),
         Copied::Canvas => install::Copied::Canvas,
     })
 }
@@ -612,7 +619,8 @@ impl<P: GpuPart> Install<'_, P> {
     }
 
     pub fn frame(&mut self, variable: Var, bound: Bind<P>) -> Result<(), Error> {
-        self.core.frame(variable, bound_of(&bound)?)
+        let bound = bound_of(&bound, &self.core.outputs)?;
+        self.core.frame(variable, bound)
     }
 
     pub fn pass(&mut self, name: &'static str) -> PassBuilder<'_, P> {
@@ -625,7 +633,8 @@ impl<P: GpuPart> Install<'_, P> {
     }
 
     pub fn copy(&mut self, name: &'static str, from: Copied<P>, to: Copied<P>) -> Pass<P> {
-        let work = match (copied(from), copied(to)) {
+        let outputs = &self.core.outputs;
+        let work = match (copied(from, outputs), copied(to, outputs)) {
             (Ok(from), Ok(to)) => install::Work::Copy { from, to },
             (Err(error), _) | (_, Err(error)) => {
                 self.core.problems.push(error);
@@ -695,9 +704,8 @@ impl<P: GpuPart> Install<'_, P> {
             targets,
             samples: 1,
         });
-        let pipeline = self
-            .core
-            .pipeline(scoped(scope), program, bound_list(bound)?)?;
+        let bound = bound_list(bound, &self.core.outputs)?;
+        let pipeline = self.core.pipeline(scoped(scope), program, bound)?;
         Ok(Pipeline(pipeline, PhantomData))
     }
 
@@ -707,10 +715,11 @@ impl<P: GpuPart> Install<'_, P> {
         entry: Entry,
         bound: &[(Var, Bind<P>)],
     ) -> Result<ComputePipeline<P>, Error> {
+        let bound = bound_list(bound, &self.core.outputs)?;
         let pipeline = self.core.pipeline(
             install::Scoped::Pass(pass.0),
             install::Program::Compute(entry),
-            bound_list(bound)?,
+            bound,
         )?;
         Ok(ComputePipeline(pipeline, PhantomData))
     }
@@ -1017,7 +1026,8 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn copy_at_end(&mut self, from: Copied<P>, to: Copied<P>, regions: &[CopyRegion]) {
         let regions = regions.to_vec();
-        match (copied(from), copied(to)) {
+        let outputs = &self.core.machine.outputs;
+        match (copied(from, outputs), copied(to, outputs)) {
             (Ok(from), Ok(to)) => self.core.queued.ending.push((from, to, regions)),
             (Err(error), _) | (_, Err(error)) => self.core.refuse(error),
         }

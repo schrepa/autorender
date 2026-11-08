@@ -30,6 +30,7 @@ pub(crate) enum Bound {
 pub(crate) enum ViewTarget {
     Scene,
     Depth,
+    Output(u32),
 }
 
 impl ViewTarget {
@@ -273,6 +274,7 @@ pub(crate) struct InstallCore {
     pub(crate) declared: Declared,
     pub(crate) draws: Vec<KindMember>,
     pub(crate) passes: engine_core::ScenePasses,
+    pub(crate) outputs: Vec<crate::machine::OutputDecl>,
     pub(crate) linker: Linker,
     pub(crate) features: wgpu::Features,
     pub(crate) limits: engine_core::DeviceLimits,
@@ -296,6 +298,7 @@ impl InstallCore {
             declared: Declared::default(),
             draws: Vec::new(),
             passes: engine_core::ScenePasses::default(),
+            outputs: Vec::new(),
             linker,
             features,
             limits,

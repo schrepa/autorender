@@ -13,7 +13,7 @@ import package::engine::view::{DETAIL_EDGE_ON, PI, camera, detail_across, detail
 import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::surfaces::SURFACE_GROUND;
 import package::face::water::{WATER_HELD, WaterCell, water_cell, water_level};
-import package::generated::targets::{DepthViewTargets, depth_view_targets};
+import package::generated::writes::{DepthOutputs, depth_outputs};
 import package::terrain_shading::draw_shared::{terrain_hash2, terrain_value, terrain_value2};
 import package::terrain_shading::faces::heightfield::{surface_vertex, terrain, terrain_index, terrain_level_height, terrain_view, use_terrain};
 import package::terrain_shading::field::spread_slopes;
@@ -1442,23 +1442,23 @@ fn vs_terrain_resolve(@builtin(vertex_index) vertex: u32, @builtin(instance_inde
     return TerrainResolveInput(vec4<f32>(x, y, 0.0, 1.0), index);
 }
 
-fn terrain_resolve_targets(input: TerrainResolveInput, dither: f32) -> DepthViewTargets {
+fn terrain_resolve_targets(input: TerrainResolveInput, dither: f32) -> DepthOutputs {
     use_terrain(input.terrain);
     let position = input.position;
     let resolved = terrain_resolved(position, dither);
     let point = resolved.point;
     let shaded = finish(point, position.xy, vec3<f32>(0.0));
     let previous = vec4<f32>(resolved.previous.xy, 0.0, resolved.previous.z);
-    return depth_view_targets(point, shaded, view_pixel(position, previous), resolved.depth);
+    return depth_outputs(point, shaded, view_pixel(position, previous), resolved.depth);
 }
 
 @fragment
-fn fs_terrain_resolve_post(input: TerrainResolveInput) -> DepthViewTargets {
+fn fs_terrain_resolve_post(input: TerrainResolveInput) -> DepthOutputs {
     return terrain_resolve_targets(input, 0.5);
 }
 
 @fragment
-fn fs_terrain_resolve_temporal(input: TerrainResolveInput) -> DepthViewTargets {
+fn fs_terrain_resolve_temporal(input: TerrainResolveInput) -> DepthOutputs {
     return terrain_resolve_targets(input, fade_noise(input.position.xy));
 }
 

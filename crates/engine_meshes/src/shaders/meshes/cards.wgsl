@@ -17,7 +17,7 @@ import package::generated::kinds::KIND_MESH;
 import package::generated::meshes::{card_frames_first, card_frames_second, card_frames_third,
     card_frames_with_first, card_frames_with_origin, card_frames_with_second,
     card_frames_with_third};
-import package::generated::targets::{DepthViewTargets, depth_view_targets};
+import package::generated::writes::{DepthOutputs, depth_outputs};
 import package::meshes::debug::point_targets;
 import package::meshes::forward::drawn_pixel;
 import package::meshes::slots::{instance_colors, slot_pose, slot_previous_pose};
@@ -320,11 +320,11 @@ fn card_debug(input: CardVertex, point: SurfacePoint, ids: vec2<u32>, index: u32
 }
 
 @fragment
-fn fs_card(input: CardOutput) -> DepthViewTargets {
+fn fs_card(input: CardOutput) -> DepthOutputs {
     let card = card_vertex(input);
     let fade = drawn_fade(input.object.y);
     let shaded = card_lit(card, mesh_card_point(card, fade), fade_word_on(fade));
-    return depth_view_targets(shaded.point, shaded.shaded,
+    return depth_outputs(shaded.point, shaded.shaded,
         drawn_pixel(input.clip_position, input.previous), shaded.depth);
 }
 

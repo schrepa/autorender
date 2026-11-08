@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::{Res, Resource, SystemParamItem};
 use engine_core::{AttachPoint, Error, PassViews, ViewFacts, gpu_consts, gpu_struct};
 use engine_render::{
-    Allocation, Attach, Bind, Buffer, DebugShown, DepthUse, Encode, FULLSCREEN, GpuPart, Install,
-    Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, wgpu,
+    Allocation, Attach, Bind, Buffer, DEBUG_TARGETS, DebugShown, DepthUse, Encode, FULLSCREEN,
+    GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, wgpu,
 };
 
 use crate::probe::Probe;
@@ -65,7 +65,12 @@ impl GpuPart for OverlayGpu {
                 blend: None,
                 writes: wgpu::ColorWrites::ALL,
             },
-            &[(overlay::PLACED, Bind::Buffer(placed))],
+            &[
+                (overlay::PLACED, Bind::Buffer(placed)),
+                (overlay::DEBUG_IDS, Bind::Target(DEBUG_TARGETS[0])),
+                (overlay::DEBUG_COUNT, Bind::Target(DEBUG_TARGETS[1])),
+                (overlay::DEBUG_WORDS, Bind::Target(DEBUG_TARGETS[2])),
+            ],
         )?;
         Ok(Self {
             pass,

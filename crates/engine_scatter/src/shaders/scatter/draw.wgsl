@@ -10,7 +10,7 @@ import package::engine::view::{camera, detail_across, material_bias, view_clip, 
 import package::face::debug::{DebugTargets, debug_record_with_kind, debug_targets};
 import package::face::debug_modes::point_source;
 import package::generated::kinds::KIND_PLACED;
-import package::generated::targets::{ViewTargets, view_targets};
+import package::generated::writes::{Outputs, outputs};
 
 @group(2) @binding(0) var<storage, read> poses: array<AffinePose>;
 @group(2) @binding(1) var<storage, read> colors: array<vec4<u32>>;
@@ -124,9 +124,9 @@ fn placed_shade(input: PlacedExtendedVertex, front: bool) -> PlacedShaded {
     return PlacedShaded(point, slot_output(surface, point, shade_model(point, surface.pixel)));
 }
 
-fn lit(input: PlacedExtendedVertex, front: bool) -> ViewTargets {
+fn lit(input: PlacedExtendedVertex, front: bool) -> Outputs {
     let shaded = placed_shade(input, front);
-    return view_targets(shaded.point, shaded.shaded, view_pixel(input.clip_position,
+    return outputs(shaded.point, shaded.shaded, view_pixel(input.clip_position,
         vec4<f32>(input.previous.xy, 0.0, input.previous.z)));
 }
 
@@ -170,13 +170,13 @@ fn vs_object_extended_fading(input: GeometryVertex, extra: GeometryExtra,
 }
 
 @fragment
-fn fs_object(input: PlacedVertex, @builtin(front_facing) front: bool) -> ViewTargets {
+fn fs_object(input: PlacedVertex, @builtin(front_facing) front: bool) -> Outputs {
     return lit(extended_of(input), front);
 }
 
 @fragment
 fn fs_object_extended(input: PlacedExtendedVertex, @builtin(front_facing) front: bool)
-        -> ViewTargets {
+        -> Outputs {
     return lit(input, front);
 }
 

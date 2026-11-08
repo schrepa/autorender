@@ -125,6 +125,8 @@ impl GpuPart for TraceGpu {
             &[
                 (trace::NEAREST_DEPTH, Bind::Texture(pyramid)),
                 (trace::SCENE_LEVELS, Bind::Texture(levels_texture)),
+                (trace::SURFACE_TARGET, Bind::Target(crate::SURFACE.name)),
+                (trace::REFLECTED_TARGET, Bind::Target(crate::REFLECTED.name)),
             ],
         )?;
         let blending = cx.render_pipeline(
@@ -133,7 +135,11 @@ impl GpuPart for TraceGpu {
                 blend: Some(ADDED_COLOR),
                 ..screen(blend::FS_REFLECTIONS_BLEND)
             },
-            &[(blend::REFLECTIONS, Bind::Texture(reflected))],
+            &[
+                (blend::REFLECTIONS, Bind::Texture(reflected)),
+                (blend::REFLECTED_TARGET, Bind::Target(crate::REFLECTED.name)),
+                (blend::BLENDED_MASK, Bind::Target(TargetName::TRANSPARENCY)),
+            ],
         )?;
         Ok(Self {
             reduce,

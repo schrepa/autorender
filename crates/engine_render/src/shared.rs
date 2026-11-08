@@ -3,16 +3,15 @@ use std::fmt::Write as _;
 use engine_core::{AttachPoint, Error, ErrorCode, PassViews, PlaceDecl, ShaderText, Source};
 
 use crate::install::{PassDecl, Work};
-use crate::machine::{OutputDecl, layered};
+use crate::machine::OutputDecl;
 use crate::{DebugModes, DebugShown, GpuPart, Install, Lit, Pass, Prepare, Resolve};
 
 pub(crate) const COMPOSITE: &str = "composite";
-pub(crate) const OUTPUT_PREFIX: &str = "output_";
 pub(crate) const POST: &str = "post";
 pub(crate) const LINEAR: &str = "linear";
 pub(crate) const SCENE: &str = "scene";
 pub(crate) const DEPTH: &str = "depth_texture";
-pub(crate) const TARGETS_MODULE: &str = "generated::targets";
+pub(crate) const WRITES_MODULE: &str = "generated::writes";
 pub(crate) const COMPOSITE_MODULE: &str = "generated::composite";
 pub(crate) const APPLIED_MODULE: &str = "generated::applied";
 pub(crate) const PASSES_MODULE: &str = "generated::passes";
@@ -256,103 +255,31 @@ fn output_type(format: wgpu::TextureFormat) -> String {
     }
 }
 
-fn sampled_type(format: wgpu::TextureFormat) -> &'static str {
-    match format.sample_type(None, None) {
-        Some(wgpu::TextureSampleType::Uint) => "texture_2d<u32>",
-        Some(wgpu::TextureSampleType::Sint) => "texture_2d<i32>",
-        Some(_) | None => "texture_2d<f32>",
-    }
-}
-
-pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
-    let mut imports = String::from(
-        "import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};\n",
-    );
-    let mut body = String::new();
-    for (index, output) in outputs.iter().enumerate() {
+pub(crate) fn pass_module(written: &[&OutputDecl]) -> (String, String) {
+    let mut key = String::from(engine_core::TargetName::COLOR.name());
+    let mut imports =
+        String::from("import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};\n");
+    let mut fields = String::from("    @location(0) color: vec4<f32>,\n");
+    let (mut filled, mut copied) = (String::new(), String::new());
+    for (location, output) in (1..).zip(written) {
+        let name = output.name;
+        key.push('+');
+        key.push_str(name);
+        let _ = writeln!(
+            fields,
+            "    @location({location}) {name}: {},",
+            output_type(output.format)
+        );
+        let _ = writeln!(copied, "    out.{name} = written.{name};");
         if let Some(module) = &output.module {
-            let _ = writeln!(
-                imports,
-                "import package::{module}::{} as member_{index};",
-                output.name
-            );
-        }
-        let _ = writeln!(
-            body,
-            "@group(0) @binding(0) var {OUTPUT_PREFIX}{}: {};",
-            output.name,
-            sampled_type(output.format)
-        );
-    }
-    for depth in [false, true] {
-        let name = if depth {
-            "DepthViewTargets"
-        } else {
-            "ViewTargets"
-        };
-        let _ = writeln!(
-            body,
-            "\nstruct {name} {{\n    @location(0) color: vec4<f32>,"
-        );
-        for (location, output) in (1..).zip(outputs.iter().filter(|output| layered(output))) {
-            let _ = writeln!(
-                body,
-                "    @location({location}) {}: {},",
-                output.name,
-                output_type(output.format)
-            );
-        }
-        if depth {
-            let _ = writeln!(body, "    @builtin(frag_depth) depth: f32,");
-        }
-        let _ = writeln!(body, "}}");
-    }
-    let _ = writeln!(
-        body,
-        "\nfn view_targets(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> ViewTargets {{"
-    );
-    let _ = writeln!(
-        body,
-        "    var targets: ViewTargets;\n    targets.color = vec4<f32>(shaded.linear, 1.0);"
-    );
-    for (index, output) in outputs.iter().enumerate() {
-        if output.module.is_some() && layered(output) {
-            let _ = writeln!(
-                body,
-                "    targets.{} = member_{index}(point, shaded, at);",
-                output.name
-            );
+            let _ = writeln!(imports, "import package::{module}::{name} as written_{location};");
+            let _ = writeln!(filled, "    written.{name} = written_{location}(point, shaded, at);");
         }
     }
-    let _ = writeln!(
-        body,
-        "    return targets;\n}}\n\nfn blended_targets(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> ViewTargets {{\n    var targets = view_targets(point, shaded, at);\n    targets.color = vec4<f32>(shaded.linear * shaded.opacity, shaded.opacity);\n    return targets;\n}}"
+    let text = format!(
+        "{imports}\nstruct Outputs {{\n{fields}}}\n\nstruct DepthOutputs {{\n{fields}    @builtin(frag_depth) depth: f32,\n}}\n\nfn outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written: Outputs;\n    written.color = vec4<f32>(shaded.linear, 1.0);\n{filled}    return written;\n}}\n\nfn blended_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written = outputs(point, shaded, at);\n    written.color = vec4<f32>(shaded.linear * shaded.opacity, shaded.opacity);\n    return written;\n}}\n\nfn depth_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel, depth: f32) -> DepthOutputs {{\n    let written = outputs(point, shaded, at);\n    var out: DepthOutputs;\n    out.color = written.color;\n{copied}    out.depth = depth;\n    return out;\n}}\n"
     );
-    if outputs
-        .iter()
-        .any(|output| output.name == engine_core::TargetName::TRANSPARENCY.name())
-    {
-        let _ = writeln!(
-            body,
-            "\nfn blended_cover(pixel: vec2<i32>) -> f32 {{\n    let covered = min(pixel, vec2<i32>(textureDimensions({OUTPUT_PREFIX}transparency)) - 1);\n    return textureLoad({OUTPUT_PREFIX}transparency, covered, 0).r;\n}}"
-        );
-    }
-    let _ = writeln!(
-        body,
-        "\nfn depth_view_targets(point: SurfacePoint, shaded: Shaded, at: ViewPixel, depth: f32) -> DepthViewTargets {{"
-    );
-    let _ = writeln!(
-        body,
-        "    let targets = view_targets(point, shaded, at);\n    var out: DepthViewTargets;\n    out.color = targets.color;"
-    );
-    for output in outputs.iter().filter(|output| layered(output)) {
-        let _ = writeln!(body, "    out.{name} = targets.{name};", name = output.name);
-    }
-    let _ = writeln!(
-        body,
-        "    out.depth = depth;\n    return out;\n}}"
-    );
-    format!("{imports}\n{body}")
+    (key, text)
 }
 
 pub(crate) fn composite_source() -> String {

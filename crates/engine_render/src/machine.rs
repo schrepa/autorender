@@ -41,6 +41,7 @@ pub(crate) fn final_target(view: ViewTarget) -> Target {
     match view {
         ViewTarget::Scene => Target::Scene,
         ViewTarget::Depth => Target::Depth,
+        ViewTarget::Output(index) => Target::Output(index),
     }
 }
 
@@ -140,7 +141,7 @@ pub(crate) struct FrameSlot {
     pub(crate) core: Option<CoreFrame>,
 }
 
-pub(crate) type SetFormat = (Target, wgpu::TextureFormat, Clear, bool);
+pub(crate) type SetFormat = (Target, wgpu::TextureFormat, Clear);
 
 pub(crate) struct Machine {
     pub(crate) declared: Declared,
@@ -247,14 +248,50 @@ pub(crate) fn pass_set(outputs: &[OutputDecl], pass: &PassDecl) -> Vec<SetFormat
                     Target::Output(index as u32),
                     outputs[index].format,
                     Clear::Color(TRANSPARENT),
-                    true,
                 )
             })
             .collect(),
-        Some(_) => set_formats(outputs, layer),
+        Some(_) => set_formats(outputs, pass, layer),
         None if !pass.colors.is_empty() => Vec::new(),
-        None => set_formats(outputs, layer),
+        None => set_formats(outputs, pass, layer),
     }
+}
+
+fn written_module(
+    declared: &Declared,
+    decl: &PipelineDecl,
+    outputs: &[OutputDecl],
+    (path, problems): (&str, &mut Vec<Error>),
+) -> Option<Option<(String, String)>> {
+    let mut found: Option<Vec<u32>> = None;
+    for (index, pass) in declared.passes.iter().enumerate() {
+        if !decl_in_pass(decl, index as u32, pass) {
+            continue;
+        }
+        let set = pass_set(outputs, pass);
+        if !lit_set(&set) {
+            continue;
+        }
+        let written: Vec<u32> = set
+            .iter()
+            .filter_map(|(target, ..)| match target {
+                Target::Output(output) => Some(*output),
+                Target::Scene | Target::Depth | Target::Canvas | Target::Copy(..) => None,
+            })
+            .collect();
+        if found.as_ref().is_some_and(|known| *known != written) {
+            problems.push(Error::new(ErrorCode::PassMismatch, path.to_owned()).got(pass.name));
+            return None;
+        }
+        found = Some(written);
+    }
+    Some(found.map(|written| {
+        let listed: Vec<&OutputDecl> = written
+            .iter()
+            .filter_map(|at| outputs.get(*at as usize))
+            .collect();
+        crate::shared::pass_module(&listed)
+    }))
 }
 
 pub(crate) fn lit_set(set: &[SetFormat]) -> bool {
@@ -379,14 +416,11 @@ fn handle_of(bound: &Bound) -> Option<Handle> {
     }
 }
 
-pub(crate) fn core_target(name: &str, outputs: &[OutputDecl]) -> Option<Target> {
+pub(crate) fn core_target(name: &str) -> Option<Target> {
     match name {
         crate::shared::SCENE => Some(Target::Scene),
         crate::shared::DEPTH => Some(Target::Depth),
-        _ => name
-            .strip_prefix(crate::shared::OUTPUT_PREFIX)
-            .and_then(|output| outputs.iter().position(|known| known.name == output))
-            .map(|index| Target::Output(index as u32)),
+        _ => None,
     }
 }
 
@@ -422,10 +456,8 @@ fn attachments(
         }
     }
     if pass_layer(pass).is_some() {
-        for (target, _, _, written) in pass_set(outputs, pass) {
-            if written {
-                found.push(Handle::Target(target));
-            }
+        for (target, ..) in pass_set(outputs, pass) {
+            found.push(Handle::Target(target));
         }
         if shared(pass) || depth_writes {
             found.push(Handle::Target(Target::Depth));
@@ -504,11 +536,13 @@ impl Machine {
                     .collect::<Vec<_>>()
                     .join("+")
             );
-            let mut stages = Vec::new();
-            let mut reached: Reached = Vec::new();
-            let mut failed = false;
+            let Some(writes) = written_module(&declared, decl, &outputs, (&named, &mut *problems))
+            else {
+                continue;
+            };
+            let (mut stages, mut reached, mut failed) = (Vec::new(), Reached::new(), false);
             for entry in decl.entries() {
-                match linker.compose(entry) {
+                match linker.compose_in(entry, writes.as_ref()) {
                     Ok(composed) => {
                         let at = stage_of(entry, &linker);
                         for (module, declaration) in linker.reached(&composed) {
@@ -649,7 +683,7 @@ impl Machine {
                 let (path, name, ty) = &core_frame[at];
                 let handle = match numbers.get(at).and_then(|number| frame_bound.get(number)) {
                     Some(bound) => handle_of(bound),
-                    None if linker.is_core(path) => core_target(name, &outputs).map(Handle::Target),
+                    None if linker.is_core(path) => core_target(name).map(Handle::Target),
                     None => None,
                 };
                 let handle = handle.filter(|handle| match handle {
@@ -736,7 +770,7 @@ impl Machine {
             for (module, found, _) in &reached {
                 if found.group == 0 {
                     if linker.is_core(module) {
-                        view_reads.extend(core_target(&found.name, &outputs));
+                        view_reads.extend(core_target(&found.name));
                     }
                     if let Some(bound) = linker
                         .binding_of(module, &found.name)
@@ -897,7 +931,7 @@ impl Machine {
                 } else if name == crate::shared::LINEAR {
                     Some(CoreFrame::Linear)
                 } else {
-                    core_target(name, &outputs).map(CoreFrame::Target)
+                    core_target(name).map(CoreFrame::Target)
                 };
                 Some((number, FrameSlot { ty: *ty, core }))
             })
@@ -1043,23 +1077,30 @@ pub(crate) fn layered(output: &OutputDecl) -> bool {
     !output.layers.is_empty()
 }
 
-pub(crate) fn cover_location(outputs: &[OutputDecl]) -> Option<usize> {
-    outputs
+pub(crate) fn cover_location(outputs: &[OutputDecl], pass: &PassDecl) -> Option<usize> {
+    let cover = outputs
         .iter()
-        .filter(|output| layered(output))
-        .position(|output| output.name == engine_core::TargetName::TRANSPARENCY.name())
-        .map(|at| at + 1)
+        .position(|output| output.name == engine_core::TargetName::TRANSPARENCY.name())?;
+    pass_set(outputs, pass)
+        .iter()
+        .position(|(target, ..)| *target == Target::Output(cover as u32))
 }
 
-fn set_formats(outputs: &[OutputDecl], layer: AttachPoint) -> Vec<SetFormat> {
-    let mut set = vec![(Target::Scene, SCENE_FORMAT, Clear::Color(BLACK), true)];
-    for (index, output) in outputs.iter().enumerate().filter(|(_, output)| layered(output)) {
-        set.push((
-            Target::Output(index as u32),
-            output.format,
-            Clear::Color(TRANSPARENT),
-            output.layers.contains(&layer),
-        ));
+fn set_formats(outputs: &[OutputDecl], pass: &PassDecl, layer: AttachPoint) -> Vec<SetFormat> {
+    let named = pass
+        .scene
+        .map_or(engine_core::Writes::NOTHING, |scene| scene.pass.writes);
+    let mut set = vec![(Target::Scene, SCENE_FORMAT, Clear::Color(BLACK))];
+    for (index, output) in outputs.iter().enumerate() {
+        if output.layers.contains(&layer)
+            || named.targets().iter().any(|name| name.name() == output.name)
+        {
+            set.push((
+                Target::Output(index as u32),
+                output.format,
+                Clear::Color(TRANSPARENT),
+            ));
+        }
     }
     set
 }
@@ -1226,8 +1267,8 @@ fn graph_of(
             Work::Render => {}
         }
         if scene.is_some() {
-            for (target, _, clear, written) in pass_set(outputs, pass) {
-                if let Some(id) = ids.target(target).filter(|_| written) {
+            for (target, _, clear) in pass_set(outputs, pass) {
+                if let Some(id) = ids.target(target) {
                     let access = if entry.shared {
                         GraphAccess::Draw(clear)
                     } else {

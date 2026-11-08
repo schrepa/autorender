@@ -4,10 +4,11 @@ import package::engine::screen_points::{depth_normal, world_at};
 import package::face::trace_depths::{TRACE_DEPTH_OPAQUE, TRACE_DEPTH_SOLID, TRACE_DEPTH_THIN};
 import package::face::trace_source::{trace_holds, trace_world};
 import package::generated::pieces::reflections::piece;
-import package::generated::targets::{output_reflected, output_surface};
 
 @group(1) @binding(0) var nearest_depth: texture_2d<f32>;
 @group(1) @binding(1) var scene_levels: texture_2d<f32>;
+@group(1) @binding(2) var surface_target: texture_2d<u32>;
+@group(1) @binding(3) var reflected_target: texture_2d<f32>;
 
 const REFLECTION_STEPS: u32 = 96u;
 const REFLECTION_THIN: f32 = 0.05;
@@ -49,7 +50,7 @@ struct Mirroring {
 }
 
 fn mirroring_at(pixel: vec2<i32>) -> Mirroring {
-    let words = textureLoad(output_surface, pixel, 0);
+    let words = textureLoad(surface_target, pixel, 0);
     var mirroring: Mirroring;
     mirroring.normal = normalize(octahedral_normal(vec2<f32>(words.xy) / 65535.0 * 2.0 - 1.0));
     mirroring.roughness = unpack4x8unorm(words.z).xy;
@@ -57,7 +58,7 @@ fn mirroring_at(pixel: vec2<i32>) -> Mirroring {
 }
 
 fn body_at(pixel: vec2<i32>) -> u32 {
-    return textureLoad(output_surface, pixel, 0).w;
+    return textureLoad(surface_target, pixel, 0).w;
 }
 
 fn blurred_scene(at: vec2<f32>, level: f32) -> vec3<f32> {
@@ -230,7 +231,7 @@ fn reach_fade(travelled: f32, reach: f32) -> f32 {
 @fragment
 fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(position.xy);
-    let stored = textureLoad(output_reflected, pixel, 0).a;
+    let stored = textureLoad(reflected_target, pixel, 0).a;
     if stored < 0.01 {
         return vec4<f32>(0.0);
     }

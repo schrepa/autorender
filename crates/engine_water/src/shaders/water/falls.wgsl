@@ -8,7 +8,7 @@ import package::face::lighting::{environment_brdf, sun_visibility};
 import package::face::lit::finish;
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
-import package::generated::targets::{ViewTargets, view_targets};
+import package::generated::writes::{Outputs, outputs};
 import package::place::water::WATER_HELD;
 import package::water::footprint::WATER_SMOOTHEST;
 import package::water::surface::{water_body, water_ground, water_pixel, water_scattered,
@@ -192,11 +192,11 @@ fn fall_mirroring(shade: FallShade) -> FallShade {
 }
 
 @fragment
-fn fs_fall(input: FallTemporalOutput) -> ViewTargets {
+fn fs_fall(input: FallTemporalOutput) -> Outputs {
     use_terrain(input.terrain);
     let shade = fall_mirroring(shade_fall(fall_temporal_output(input)));
     let previous = input.previous;
-    var targets = view_targets(shade.point, shade.shaded,
+    var targets = outputs(shade.point, shade.shaded,
         view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
     targets.color = vec4<f32>(shade.shaded.linear * shade.shown, shade.coverage);
     return targets;

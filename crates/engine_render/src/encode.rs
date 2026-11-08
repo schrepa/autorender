@@ -491,6 +491,7 @@ fn target_key(target: Target) -> u64 {
             let view = match view {
                 ViewTarget::Scene => 0,
                 ViewTarget::Depth => 1,
+                ViewTarget::Output(index) => 2 + u64::from(index),
             };
             (5, view << 8 | layer as u64)
         }
@@ -580,7 +581,9 @@ fn target_format(
     match target {
         Target::Scene | Target::Copy(_, ViewTarget::Scene) => Some(crate::machine::SCENE_FORMAT),
         Target::Depth | Target::Copy(_, ViewTarget::Depth) => Some(DEPTH_FORMAT),
-        Target::Output(index) => outputs.get(index as usize).map(|output| output.format),
+        Target::Output(index) | Target::Copy(_, ViewTarget::Output(index)) => {
+            outputs.get(index as usize).map(|output| output.format)
+        }
         Target::Canvas => None,
     }
 }
