@@ -94,7 +94,7 @@ fn active(rendering: &Value) -> Value {
 
 fn scene() -> Value {
     let mut entities = vec![json!({
-        "id": "ground", "mesh": "box", "material": "ground",
+        "id": "ground", "drawn": {"mesh": "box", "material": "ground"},
         "transform": {
             "translation": [0.0, -0.5, 0.0],
             "scale": [SIDE as f64 * 6.0, 1.0, SIDE as f64 * 6.0],
@@ -105,8 +105,8 @@ fn scene() -> Value {
         let (row, column) = ((index / SIDE) as f64, (index % SIDE) as f64);
         let scale = 0.8 + (index % 5) as f64 * 0.3;
         entities.push(json!({
-            "id": format!("piece-{index}"), "mesh": "box",
-            "material": format!("paint-{}", index % PAINTS.len()),
+            "id": format!("piece-{index}"),
+            "drawn": {"mesh": "box", "material": format!("paint-{}", index % PAINTS.len())},
             "transform": {
                 "translation": [(column - middle) * 4.0, scale / 2.0, (row - middle) * 4.0],
                 "rotation_degrees": [0, (index * 37) % 360, 0],

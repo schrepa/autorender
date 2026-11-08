@@ -21,7 +21,7 @@ fn grid() -> Value {
             .map(|(index, paint)| json!({"id": format!("paint-{index}"), "color": paint})),
     );
     let mut entities = vec![json!({
-        "id": "ground", "mesh": "box", "material": "ground",
+        "id": "ground", "drawn": {"mesh": "box", "material": "ground"},
         "transform": {"translation": [0.0, -0.5, 0.0], "scale": [SIDE as f32 * 6.0, 1.0, SIDE as f32 * 6.0]},
     })];
     let middle = (SIDE as f32 - 1.0) / 2.0;
@@ -30,7 +30,8 @@ fn grid() -> Value {
         let scale = 0.8 + (index % 5) as f32 * 0.3;
         let turn = ((index * 37) % 360) as f32;
         entities.push(json!({
-            "id": format!("box-{index}"), "mesh": "box", "material": format!("paint-{}", index % PAINTS.len()),
+            "id": format!("box-{index}"),
+            "drawn": {"mesh": "box", "material": format!("paint-{}", index % PAINTS.len())},
             "transform": {
                 "translation": [(column - middle) * 4.0, scale / 2.0, (row - middle) * 4.0],
                 "rotation_degrees": [0.0, turn, 0.0],
@@ -176,9 +177,9 @@ fn fixture() -> Value {
             {"id": "ball", "source": ball(24, 32)},
         ],
         "entities": [
-            {"id": "limb", "mesh": "ribbon", "material": "plain"},
-            {"id": "near-ball", "mesh": "ball", "material": "stone", "transform": {"translation": [2.5, 1, -2]}},
-            {"id": "far-ball", "mesh": "ball", "material": "stone", "transform": {"translation": [-40, 1, -300]}},
+            {"id": "limb", "drawn": {"mesh": "ribbon", "material": "plain"}},
+            {"id": "near-ball", "drawn": {"mesh": "ball", "material": "stone"}, "transform": {"translation": [2.5, 1, -2]}},
+            {"id": "far-ball", "drawn": {"mesh": "ball", "material": "stone"}, "transform": {"translation": [-40, 1, -300]}},
             {"id": "camera", "transform": {"translation": [0, 1, 4]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 2000, "projection": {"Perspective": {"vertical_fov_radians": std::f64::consts::FRAC_PI_3}}}, "view": {}},
         ],
     })

@@ -54,8 +54,7 @@
   "entities": [
     {
       "id": "floor",
-      "mesh": "floor",
-      "material": "ground",
+      "drawn": {"mesh": "floor", "material": "ground"},
       "transform": {
         "scale": [
           80,
@@ -66,8 +65,7 @@
     },
     {
       "id": "screen-0",
-      "mesh": "floor",
-      "material": "screen",
+      "drawn": {"mesh": "floor", "material": "screen"},
       "transform": {
         "translation": [
           -8,
@@ -88,8 +86,7 @@
     },
     {
       "id": "screen-1",
-      "mesh": "floor",
-      "material": "screen",
+      "drawn": {"mesh": "floor", "material": "screen"},
       "transform": {
         "translation": [
           8,
@@ -110,8 +107,7 @@
     },
     {
       "id": "screen-2",
-      "mesh": "floor",
-      "material": "screen",
+      "drawn": {"mesh": "floor", "material": "screen"},
       "transform": {
         "translation": [
           -8,
@@ -132,8 +128,7 @@
     },
     {
       "id": "screen-3",
-      "mesh": "floor",
-      "material": "screen",
+      "drawn": {"mesh": "floor", "material": "screen"},
       "transform": {
         "translation": [
           8,

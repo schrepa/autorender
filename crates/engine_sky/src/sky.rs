@@ -18,7 +18,7 @@ use crate::clouds::{
 use crate::environment::{Environment, EnvironmentFresh, EnvironmentLight, EnvironmentPlan};
 use crate::gpu_layouts::{SKY_TABLE_GROUP, SKY_VIEW_HEIGHT, SKY_VIEW_WIDTH, SkyAir, SkyPiece};
 use crate::haze::{Haze, HazeFrame, HazePlan, HazeSteps};
-use crate::settings::{Clouds, Haze as HazeSettings, NightSky, Sky, haze_runs};
+use crate::settings::{Clouds, Haze as HazeSettings, NightSky, Sky};
 use crate::tables::sky::{MULTIPLE_SIZE, SkyTables, TRANSMITTANCE_SIZE};
 use crate::tables::{StaticTable, StaticTables};
 use crate::views::SkyLightLevel;
@@ -182,8 +182,9 @@ fn write_air(
 }
 
 fn night_lighting(night: &NightSky, path: &SunPath, sun: Vec3) -> [[f32; 4]; 3] {
-    let moon = path.moon.filter(|_| night.moon > 0.0);
+    let moon = path.moon;
     let lit = moon.map_or(0.0, |moon| 0.5 - 0.5 * moon.dot(sun));
+    let disc = moon.map_or([0.0, 1.0, 0.0, 0.0], |moon| moon.extend(night.moon_size).to_array());
     [
         [
             night.stars,
@@ -192,7 +193,7 @@ fn night_lighting(night: &NightSky, path: &SunPath, sun: Vec3) -> [[f32; 4]; 3] 
             lit,
         ],
         path.stars.to_array(),
-        moon.unwrap_or(Vec3::Y).extend(night.moon_size).to_array(),
+        disc,
     ]
 }
 
@@ -362,7 +363,7 @@ pub(crate) fn plan_sky(
         enabled: clouds.enabled && shows,
         ..*clouds
     };
-    let hazes = haze_runs(&haze);
+    let hazes = haze.enabled;
     plan.piece = sky_piece(&sky, shows, sun_direction, &plan.piece);
     apply_night(&mut plan.piece, &night, &path, sun_direction);
     apply_haze(&mut plan.piece, &haze, view_projection, eye, hazes);

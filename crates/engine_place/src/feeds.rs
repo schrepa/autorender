@@ -83,13 +83,6 @@ pub enum Events<'a, T> {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct CursorView {
-    pub behind: u64,
-    pub missed: u64,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FeedView {
     pub store: StoreId,
     pub first: u64,
@@ -169,13 +162,6 @@ impl<T> Feed<T> {
             self.next.saturating_sub(cursor.seen)
         } else {
             self.next.saturating_sub(self.log.first)
-        }
-    }
-
-    pub fn view(&self, cursor: &Cursor) -> CursorView {
-        CursorView {
-            behind: self.behind(cursor),
-            missed: cursor.missed,
         }
     }
 }

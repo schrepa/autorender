@@ -118,7 +118,6 @@ impl DevHost {
             | Err(_) => false,
             Ok(Control::Host(
                 BrowserControl::Present { .. }
-                | BrowserControl::Culling { .. }
                 | BrowserControl::Camera { .. }
                 | BrowserControl::Step { .. }
                 | BrowserControl::Render {}

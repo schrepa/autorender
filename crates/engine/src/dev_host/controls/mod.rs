@@ -41,7 +41,6 @@ fn host_control(
 ) -> Result<Done, Error> {
     let done = match control {
         BrowserControl::Present { alpha } => view::present(app, alpha, size),
-        BrowserControl::Culling { enabled } => view::culling(app, enabled, size),
         BrowserControl::Camera {
             position,
             target,

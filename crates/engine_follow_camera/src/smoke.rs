@@ -1,4 +1,4 @@
-use engine_smoke::{Checked, ask, control, inspect, number, query};
+use engine_smoke::{Checked, ask, control, number, query};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
@@ -34,24 +34,23 @@ fn settle(session: &mut dyn SmokeSession) {
 
 fn handed(session: &mut dyn SmokeSession) -> Checked<()> {
     let moves = query(session, "moves", json!({}))?;
-    let handoff = moves["asks"]
+    let handover = moves["asks"]
         .as_array()
-        .and_then(|asks| asks.iter().find(|ask| ask["name"] == "camera_handoff"))
+        .and_then(|asks| asks.iter().find(|ask| ask["name"] == "hand_over"))
         .cloned()
         .unwrap_or_default();
-    smoke_eq!(handoff["at"], json!("frame_start"), "handoff_applies_at_frame_start");
-    let applied = &handoff["applied"][0];
+    let applied = &handover["applied"][0];
     smoke_eq!(
         number(&applied["applied"]["frame"]) - number(&applied["asked"]["frame"]),
         1.0,
-        "handoff_applies_next_frame"
+        "handover_applies_next_frame"
     );
     Ok(())
 }
 
 fn behind(session: &mut dyn SmokeSession) -> Checked<f64> {
-    let camera = inspect(session, "Camera")?;
-    Ok(number(&camera["position"][2]))
+    let views = query(session, "views", json!({}))?;
+    Ok(number(&views["views"][0]["eye"][2]))
 }
 
 fn shakes(session: &mut dyn SmokeSession, steady: f64) -> Checked<()> {

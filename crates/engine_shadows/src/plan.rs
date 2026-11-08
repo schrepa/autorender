@@ -457,7 +457,7 @@ pub(crate) fn plan_shadows(
         sky.strength,
         sky.floor,
         0.0,
-        if sky.darkens() { 1.0 } else { 0.0 },
+        if sky.enabled { 1.0 } else { 0.0 },
     ];
     piece.set_if_neq(regions.lookup_piece(
         settings.tile_texels,

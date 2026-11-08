@@ -48,23 +48,12 @@ impl SceneDocument {
             .collect())
     }
 
-    pub(crate) fn expand(
-        &self,
-        mesh_ids: &BTreeSet<&str>,
-        material_ids: &BTreeSet<&str>,
-        kinds: &SceneKinds,
-    ) -> Result<ExpandedScene, Error> {
-        let (prefab_ids, prefabs) = self.validate_prefabs(mesh_ids, material_ids, kinds)?;
-        let ids = (mesh_ids, material_ids, &prefab_ids);
-        expand_list(&listed(&self.entities, "$.entities"), ids, &prefabs, kinds)
+    pub(crate) fn expand(&self, kinds: &SceneKinds) -> Result<ExpandedScene, Error> {
+        let (prefab_ids, prefabs) = self.validate_prefabs(kinds)?;
+        expand_list(&listed(&self.entities, "$.entities"), &prefab_ids, &prefabs, kinds)
     }
 
-    fn validate_prefabs(
-        &self,
-        mesh_ids: &BTreeSet<&str>,
-        material_ids: &BTreeSet<&str>,
-        kinds: &SceneKinds,
-    ) -> Result<(BTreeSet<&str>, Prefabs<'_>), Error> {
+    fn validate_prefabs(&self, kinds: &SceneKinds) -> Result<(BTreeSet<&str>, Prefabs<'_>), Error> {
         let prefab_ids = unique_ids(
             self.prefabs.iter().map(|prefab| prefab.id.as_str()),
             "$.prefabs",
@@ -88,12 +77,7 @@ impl SceneDocument {
                             .got(nested),
                     );
                 }
-                transforms.push(validate_object(
-                    entity,
-                    &path,
-                    (mesh_ids, material_ids, &prefab_ids),
-                    kinds,
-                )?);
+                transforms.push(validate_object(entity, &path, &prefab_ids, kinds)?);
             }
             validate_graph(
                 prefab
@@ -116,11 +100,9 @@ impl SceneDocument {
     }
 }
 
-type Ids<'a, 'b> = (&'b BTreeSet<&'a str>, &'b BTreeSet<&'a str>, &'b BTreeSet<&'a str>);
-
 fn expand_list(
     list: &[Listed<'_>],
-    ids: Ids<'_, '_>,
+    prefab_ids: &BTreeSet<&str>,
     prefab_lookup: &Prefabs<'_>,
     kinds: &SceneKinds,
 ) -> Result<ExpandedScene, Error> {
@@ -136,7 +118,7 @@ fn expand_list(
     }
     let mut expanded_count = list.len();
     for entry in list {
-        validate_object(entry.object, &entry.path, ids, kinds)?;
+        validate_object(entry.object, &entry.path, prefab_ids, kinds)?;
         if let Some(id) = &entry.object.prefab {
             expanded_count += prefab_lookup[id.as_str()].1.entities.len();
         }
@@ -204,35 +186,10 @@ fn expand_list(
 fn validate_object(
     entity: &SceneObject,
     path: &str,
-    (mesh_ids, material_ids, prefab_ids): Ids<'_, '_>,
+    prefab_ids: &BTreeSet<&str>,
     kinds: &SceneKinds,
 ) -> Result<Transform, Error> {
     kinds.check(entity, path)?;
-    match (&entity.mesh, &entity.material) {
-        (Some(mesh), Some(material)) if entity.prefab.is_none() => {
-            reference(mesh, mesh_ids, &format!("{path}.mesh"))?;
-            reference(material, material_ids, &format!("{path}.material"))?;
-        }
-        (None, None) => {}
-        (Some(_), Some(_)) => {
-            return Err(
-                Error::new(ErrorCode::InvalidRenderable, format!("{path}.mesh"))
-                    .expected(Expected::Absent),
-            );
-        }
-        (Some(_), None) => {
-            return Err(
-                Error::new(ErrorCode::InvalidRenderable, format!("{path}.material"))
-                    .expected(Expected::Present),
-            );
-        }
-        (None, Some(_)) => {
-            return Err(
-                Error::new(ErrorCode::InvalidRenderable, format!("{path}.mesh"))
-                    .expected(Expected::Present),
-            );
-        }
-    }
     if let Some(prefab) = &entity.prefab {
         reference(prefab, prefab_ids, &format!("{path}.prefab"))?;
     }

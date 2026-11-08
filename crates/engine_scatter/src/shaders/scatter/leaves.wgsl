@@ -18,9 +18,6 @@ fn leafiness(color: vec3<f32>) -> f32 {
 
 fn plant_tint(plant: u32, leaf: f32) -> vec3<f32> {
     let strength = foliage().y * leaf;
-    if strength <= 0.0 {
-        return vec3<f32>(1.0);
-    }
     let along = f32(plant >> 24u) / 255.0;
     let gradient = mix(vec3<f32>(1.16, 1.05, 0.64), vec3<f32>(0.80, 0.97, 1.08), along);
     return mix(vec3<f32>(1.0), gradient, strength);

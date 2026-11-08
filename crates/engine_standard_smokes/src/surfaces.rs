@@ -13,9 +13,9 @@ fn fixture() -> Value {
         ],
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
         "entities": [
-            {"id": "floor", "mesh": "box", "material": "ground", "transform": {"translation": [0, -0.5, 0], "scale": [30, 1, 30]}},
-            {"id": "behind", "mesh": "box", "material": "plain", "transform": {"translation": [0, 1, -2], "scale": [2, 2, 2]}},
-            {"id": "tinted", "mesh": "box", "material": "plain", "drawn": {"values": {"tint": [0.2, 0.9, 0.3, 1]}}, "transform": {"translation": [5, 1, 0]}},
+            {"id": "floor", "drawn": {"mesh": "box", "material": "ground"}, "transform": {"translation": [0, -0.5, 0], "scale": [30, 1, 30]}},
+            {"id": "behind", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"translation": [0, 1, -2], "scale": [2, 2, 2]}},
+            {"id": "tinted", "drawn": {"mesh": "box", "material": "plain", "values": {"tint": [0.2, 0.9, 0.3, 1]}}, "transform": {"translation": [5, 1, 0]}},
             {"id": "probe", "reflection_probe": {"extent": [12, 6, 12]}, "transform": {"translation": [0, 3, 0]}},
             {"id": "camera", "transform": {"translation": [0, 9, 16], "rotation_degrees": [-29.3578, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 500, "projection": {"Perspective": {"vertical_fov_radians": 0.9599311}}}, "view": {}},
         ],
@@ -58,10 +58,10 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         wanted,
         "probe_inspects"
     );
-    let camera = ask(session, "inspect", json!({"component": "Camera"}))?["value"].clone();
-    let wanted = json!({"position": []});
+    let camera = component(session, "camera", "GlobalTransform")?;
+    let wanted = json!({"translation": []});
     smoke_eq!(
-        seen(camera["position"].is_array(), json!(camera), &wanted),
+        seen(camera["translation"].is_array(), json!(camera), &wanted),
         wanted,
         "camera_inspects"
     );

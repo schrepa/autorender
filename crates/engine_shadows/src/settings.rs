@@ -47,10 +47,6 @@ impl SkyOcclusion {
         }
     }
 
-    pub fn darkens(&self) -> bool {
-        self.enabled && self.strength > 0.0
-    }
-
     pub fn direction_count(&self) -> u32 {
         match self.directions {
             ..9 => 5,

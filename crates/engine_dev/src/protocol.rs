@@ -38,13 +38,12 @@ pub const MAX_EXPLAINED: usize = 64;
 
 pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("present", "PresentationState"),
-    ("culling", "status"),
     ("environment", "Environment"),
-    ("camera", "Camera"),
+    ("camera", "GlobalTransform"),
     ("benchmark", ""),
     ("step", "PresentationState"),
     ("frames", "PresentationState"),
-    ("input", "Input"),
+    ("input", "MoveInput"),
     ("render", ""),
     ("pause", "status"),
     ("resume", "status"),
@@ -469,9 +468,6 @@ pub enum BrowserControl {
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::ALPHA)))]
         alpha: f64,
     },
-    Culling {
-        enabled: bool,
-    },
     Environment(EnvironmentControl),
     Camera {
         #[cfg_attr(
@@ -631,9 +627,8 @@ pub enum BrowserControl {
 }
 
 impl BrowserControl {
-    pub const NAMES: [&'static str; 20] = [
+    pub const NAMES: [&'static str; 19] = [
         "present",
-        "culling",
         "environment",
         "camera",
         "benchmark",
@@ -666,7 +661,6 @@ impl BrowserControl {
                 Control::Operation(crate::controls::OperationCall::Environment(control))
             }
             control @ (Self::Present { .. }
-            | Self::Culling { .. }
             | Self::Camera { .. }
             | Self::Step { .. }
             | Self::Input { .. }
@@ -688,7 +682,6 @@ impl BrowserControl {
     pub fn needs_pause(&self) -> bool {
         match self {
             Self::Present { .. }
-            | Self::Culling { .. }
             | Self::Environment(..)
             | Self::Camera { .. }
             | Self::Benchmark { .. }

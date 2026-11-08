@@ -72,7 +72,7 @@ impl Brick for ReflectionsBrick {
 }
 
 fn reflecting(reflections: Res<Reflections>) -> bool {
-    reflections.reflects()
+    reflections.enabled
 }
 
 fn publish_piece(
@@ -80,7 +80,7 @@ fn publish_piece(
     mut piece: ResMut<ReflectionsPiece>,
     mut stats: ResMut<ReflectionsStats>,
 ) {
-    let active = reflections.reflects();
+    let active = reflections.enabled;
     piece.set_if_neq(ReflectionsPiece {
         surface: [reflections.max_roughness, 0.0, 0.0, 0.0],
         trace: [reflections.distance, 0.0, 0.0, 0.0],

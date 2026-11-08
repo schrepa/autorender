@@ -416,8 +416,8 @@ fn darkened(session: &mut dyn SmokeSession, after: &Value, day: &Value, look: &V
         "time_of_day": { "hours": 23.0 },
         "surface_light": { "rim": 0.8, "emission": 1.0 },
         "grading": { "exposure": 1.35 },
-        "bloom": { "intensity": 0 },
-        "haze": { "enabled": false, "reach": 0 },
+        "bloom": { "enabled": false },
+        "haze": { "enabled": false },
         "reflections": { "enabled": true },
         "highlights": { "capped": false },
         "sky_occlusion": { "strength": 0.5, "floor": 0.1 },
@@ -516,7 +516,7 @@ fn candidate(source: &Value) -> Value {
         "time_of_day": { "hours": 19.0 },
         "surface_light": { "rim": 0.6, "emission": 1.0 },
         "grading": { "exposure": 0.95 },
-        "ambient_occlusion": { "intensity": 0 },
+        "ambient_occlusion": { "enabled": false },
     });
     if let Some(entities) = candidate["entities"].as_array_mut() {
         for entity in entities.iter_mut().filter(|entity| entity["id"] == PLAYER) {
@@ -528,7 +528,8 @@ fn candidate(source: &Value) -> Value {
             "particles": { "rate": 20, "lifetime": 1 },
         }));
         entities.push(json!({
-            "id": "agent-glass-box", "mesh": source["meshes"][0]["id"], "material": "agent-glass",
+            "id": "agent-glass-box",
+            "drawn": { "mesh": source["meshes"][0]["id"], "material": "agent-glass" },
             "transform": { "translation": [0, 1, 0] },
         }));
     }
@@ -568,7 +569,7 @@ fn reloaded(
     );
     let mut invalid = source.clone();
     invalid["revision"] = json!(revision + 1);
-    invalid["entities"][0]["material"] = json!("agent-missing-material");
+    invalid["entities"][0]["drawn"]["material"] = json!("agent-missing-material");
     let wanted = json!("refused");
     smoke_eq!(
         seen(
@@ -647,7 +648,7 @@ fn saved(session: &mut dyn SmokeSession, look: &Value, night: &Value) -> Result<
     let saved = inspected(session, "Environment", "inspects_saved_environment")?;
     smoke_eq!(
         json!([
-            number(&saved["ambient_occlusion"]["intensity"]),
+            saved["ambient_occlusion"]["enabled"],
             saved["bloom"],
             saved["shadows"],
             saved["haze"],
@@ -656,7 +657,7 @@ fn saved(session: &mut dyn SmokeSession, look: &Value, night: &Value) -> Result<
             saved["highlights"]["capped"],
         ]),
         json!([
-            0.0,
+            false,
             look["bloom"],
             look["shadows"],
             look["haze"],

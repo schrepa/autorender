@@ -313,12 +313,6 @@ pub struct SceneObject {
     #[serde(default)]
     #[schemars(length(max = crate::validation::MAX_NAME_BYTES))]
     pub name: String,
-    #[schemars(transform = engine_settings::stated(engine_settings::fields::id()))]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mesh: Option<String>,
-    #[schemars(transform = engine_settings::stated(engine_settings::fields::id()))]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub material: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(transform = engine_settings::stated(engine_settings::fields::id()))]
     pub parent: Option<String>,

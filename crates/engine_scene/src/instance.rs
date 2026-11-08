@@ -7,8 +7,8 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::world::{World, WorldId};
 use engine_assets::SceneAssets;
 use engine_core::{
-    AssetLibrary, DrawKind, Drawn, Error, MaterialHandle, MeshHandle, ProvidedAssets, SceneContext,
-    TextureHandle, Transform, propagate_transforms, set_parents,
+    AssetLibrary, Error, MaterialHandle, MeshHandle, ProvidedAssets, SceneContext, TextureHandle,
+    Transform, propagate_transforms, set_parents,
 };
 use engine_registry::{OperationScene, SceneEntity, SettingsEntry};
 use serde_json::Value;
@@ -305,7 +305,7 @@ impl SceneDocument {
         let replaced = Replaced::of(world);
         let (assets, owned) = self.insert_assets(world, &mut prepared)?;
         let table = Arc::new(self.table(&assets));
-        let spawned = self.spawn(world, &prepared, &table);
+        let spawned = self.spawn(world, &prepared);
         let entities: BTreeMap<String, Entity> = prepared
             .entities
             .iter()
@@ -481,19 +481,12 @@ impl SceneDocument {
         Ok((handles, owned))
     }
 
-    fn spawn(
-        &self,
-        world: &mut World,
-        prepared: &PreparedScene,
-        table: &SceneAssets,
-    ) -> Vec<Entity> {
+    fn spawn(&self, world: &mut World, prepared: &PreparedScene) -> Vec<Entity> {
         prepared
             .entities
             .iter()
             .zip(&prepared.transforms)
-            .map(|(expanded, &transform)| {
-                spawn_entity(world, (self.id.as_str(), table), expanded, transform)
-            })
+            .map(|(expanded, &transform)| spawn_entity(world, &self.id, expanded, transform))
             .collect()
     }
 }
@@ -583,32 +576,24 @@ fn read(
 
 fn spawn_entity(
     world: &mut World,
-    (scene_id, table): (&str, &SceneAssets),
+    scene_id: &str,
     expanded: &ExpandedObject,
     transform: Transform,
 ) -> Entity {
     let source = &expanded.source;
-    let mut entity = world.spawn((
-        transform,
-        SceneEntity {
-            scene_id: scene_id.to_owned(),
-            authored_id: source.id.clone(),
-            name: source.name.clone(),
-            tags: source.tags.clone(),
-            authored_parent: source.parent.clone(),
-            prefab_id: expanded.prefab_id.clone(),
-            prefab_instance: expanded.prefab_instance.clone(),
-            prefab_local_id: expanded.prefab_local_id.clone(),
-        },
-    ));
-    let id = entity.id();
-    if let (Some(mesh), Some(material)) = (&source.mesh, &source.material) {
-        entity.insert(Drawn::new(
-            DrawKind::MESH,
-            table.meshes[mesh.as_str()],
-            table.materials[material.as_str()],
-            id,
-        ));
-    }
-    id
+    world
+        .spawn((
+            transform,
+            SceneEntity {
+                scene_id: scene_id.to_owned(),
+                authored_id: source.id.clone(),
+                name: source.name.clone(),
+                tags: source.tags.clone(),
+                authored_parent: source.parent.clone(),
+                prefab_id: expanded.prefab_id.clone(),
+                prefab_instance: expanded.prefab_instance.clone(),
+                prefab_local_id: expanded.prefab_local_id.clone(),
+            },
+        ))
+        .id()
 }

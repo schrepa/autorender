@@ -35,7 +35,6 @@ results! {
     digest: crate::results::DigestResult,
     distribution: crate::results::DistributionResult,
     present: crate::results::PresentResult,
-    culling: crate::results::CullingResult,
     camera: crate::results::CameraResult,
     render: crate::results::RenderResult,
     debug_fault: crate::results::DebugFaultResult,
@@ -317,13 +316,6 @@ impl From<InspectorKind> for TypeKind {
 pub struct PresentResult {
     pub temporary: bool,
     pub rendered: bool,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct CullingResult {
-    pub temporary: bool,
-    pub culling_enabled: bool,
 }
 
 #[derive(Serialize)]

@@ -137,21 +137,6 @@ impl Ask for HandOver {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CameraHandoff {
-    pub camera: Entity,
-    pub to: Mover,
-}
-
-impl Ask for CameraHandoff {
-    const NAME: &'static str = "camera_handoff";
-    const AT: ApplyAt = ApplyAt::FrameStart;
-
-    fn node(&self) -> Option<Entity> {
-        Some(self.camera)
-    }
-}
-
 #[derive(SystemParam)]
 pub struct Asks<'w, 's, A: Ask> {
     commands: Commands<'w, 's>,
@@ -207,8 +192,18 @@ pub(crate) fn moment(world: &World) -> Moment {
     }
 }
 
+fn paced_handovers(world: &mut World, pace: Pace) -> Vec<HandOver> {
+    if world.get_resource::<Asked<HandOver>>().is_none_or(Asked::is_empty) {
+        return Vec::new();
+    }
+    let now = moment(world);
+    world
+        .resource_mut::<Asked<HandOver>>()
+        .take_where(now, |handover| handover.to.pace == pace)
+}
+
 pub(crate) fn end_tick(world: &mut World) -> bool {
-    let handovers = take_asks::<HandOver>(world);
+    let handovers = paced_handovers(world, Pace::Tick);
     let teleports = take_asks::<Teleport>(world);
     if handovers.is_empty() && teleports.is_empty() {
         return false;
@@ -254,16 +249,16 @@ fn frame_teleports(world: &mut World) -> Vec<Teleport> {
 }
 
 pub(crate) fn start_frame(world: &mut World) -> bool {
-    let handoffs = take_asks::<CameraHandoff>(world);
+    let handovers = paced_handovers(world, Pace::Frame);
     let teleports = frame_teleports(world);
-    if handoffs.is_empty() && teleports.is_empty() {
+    if handovers.is_empty() && teleports.is_empty() {
         return false;
     }
-    let mut fresh = Vec::with_capacity(handoffs.len() + teleports.len());
-    for CameraHandoff { camera, to } in handoffs {
-        if let Ok(mut held) = world.get_entity_mut(camera) {
+    let mut fresh = Vec::with_capacity(handovers.len() + teleports.len());
+    for HandOver { node, to } in handovers {
+        if let Ok(mut held) = world.get_entity_mut(node) {
             held.insert(to);
-            fresh.push(camera);
+            fresh.push(node);
         }
     }
     for Teleport { node, to } in teleports {

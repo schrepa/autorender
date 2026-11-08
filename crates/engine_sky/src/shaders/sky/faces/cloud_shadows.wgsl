@@ -11,7 +11,7 @@ fn cloud_shadow_cell(x: u32, z: u32) -> f32 {
 
 fn cloud_shadow(world: vec3<f32>) -> f32 {
     let strength = sky_piece.cloud_shadow.w;
-    if strength <= 0.0 || sun_direction().y <= 0.01 {
+    if sun_direction().y <= 0.01 {
         return 1.0;
     }
     let rise = max(sky_piece.cloud_layer.x - world.y, 0.0);

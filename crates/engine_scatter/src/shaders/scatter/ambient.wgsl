@@ -50,9 +50,6 @@ fn occupancy_cover(world: vec3<f32>, map: u32) -> f32 {
 fn occupancy_visibility(world: vec3<f32>) -> f32 {
     let canopy = piece();
     let strength = canopy.occupancy.w;
-    if strength <= 0.0 {
-        return 1.0;
-    }
     let maps = u32(canopy.occupancy_maps.x);
     let picked = detail_level(detail_distance(world), 0.5 * canopy.occupancy.z,
         maps + 1u);

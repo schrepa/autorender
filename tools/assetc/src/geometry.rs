@@ -121,11 +121,14 @@ fn import_primitive(
     let source = MeshSource::Buffer {
         uri: file.uri.clone(),
     };
+    let drawn = serde_json::json!({
+        "mesh": mesh_id,
+        "material": format!("{id}.material{material_index}"),
+    });
     let object = SceneObject {
         id: object_id,
         name: node_name(node, "Imported mesh"),
-        mesh: Some(mesh_id.clone()),
-        material: Some(format!("{id}.material{material_index}")),
+        components: [("drawn".to_owned(), drawn)].into(),
         transform: SceneTransform::default(),
         tags: vec!["imported".into()],
         ..SceneObject::default()

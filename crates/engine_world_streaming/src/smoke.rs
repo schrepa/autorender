@@ -10,8 +10,8 @@ fn fixture(streamed: &[Value]) -> Value {
         "materials": [{"id": "plain", "color": [0.8, 0.3, 0.2, 1]}],
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
         "prefabs": [{"id": "lamp", "entities": [
-            {"id": "post", "mesh": "box", "material": "plain", "transform": {"translation": [0, 1, 0], "scale": [0.2, 2, 0.2]}},
-            {"id": "shade", "mesh": "box", "material": "plain", "transform": {"translation": [0, 2.2, 0], "scale": [12, 0.2, 12]}},
+            {"id": "post", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"translation": [0, 1, 0], "scale": [0.2, 2, 0.2]}},
+            {"id": "shade", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"translation": [0, 2.2, 0], "scale": [12, 0.2, 12]}},
         ]}],
         "entities": [
             {"id": "camera", "transform": {"translation": [0, 60, 40], "rotation_degrees": [-45, -19.4712, -18.4349]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.5, "far": 20000, "projection": {"Perspective": {"vertical_fov_radians": std::f64::consts::FRAC_PI_3}}}, "view": {}},
@@ -22,12 +22,12 @@ fn fixture(streamed: &[Value]) -> Value {
 
 fn objects() -> Vec<Value> {
     vec![
-        json!({"id": "crate-near", "mesh": "box", "material": "plain", "transform": {"translation": [20, 0.5, 0]}}),
-        json!({"id": "crate-mid", "mesh": "box", "material": "plain", "transform": {"translation": [900, 0.5, 0]}}),
+        json!({"id": "crate-near", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"translation": [20, 0.5, 0]}}),
+        json!({"id": "crate-mid", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"translation": [900, 0.5, 0]}}),
         json!({"id": "spinner", "transform": {"translation": [-30, 30, 10]}}),
-        json!({"id": "spinner-blade", "parent": "spinner", "mesh": "box", "material": "plain", "transform": {"scale": [3, 0.2, 0.4]}}),
+        json!({"id": "spinner-blade", "parent": "spinner", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"scale": [3, 0.2, 0.4]}}),
         json!({"id": "lamp-far", "prefab": "lamp", "transform": {"translation": [1500, 0, 300]}}),
-        json!({"id": "tower", "mesh": "box", "material": "plain", "transform": {"translation": [5000, 30, 0], "scale": [10, 60, 10]}}),
+        json!({"id": "tower", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"translation": [5000, 30, 0], "scale": [10, 60, 10]}}),
     ]
 }
 

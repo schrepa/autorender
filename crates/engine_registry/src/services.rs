@@ -19,7 +19,7 @@ impl Default for FrameFacts {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 struct Edges {
     pressed: BTreeSet<u32>,
     released: BTreeSet<u32>,
@@ -31,7 +31,7 @@ impl Edges {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub struct InputState {
     held: BTreeSet<u32>,
     consumer: u64,

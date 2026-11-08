@@ -507,7 +507,6 @@ impl<G: Game> Headless<G> {
             }
             Control::Host(
                 BrowserControl::Present { .. }
-                | BrowserControl::Culling { .. }
                 | BrowserControl::Environment(_)
                 | BrowserControl::Camera { .. }
                 | BrowserControl::Input { .. }

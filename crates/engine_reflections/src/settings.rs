@@ -19,9 +19,3 @@ stats! {
         pub active: bool,
     }
 }
-
-impl Reflections {
-    pub fn reflects(&self) -> bool {
-        self.enabled && self.intensity > 0.0
-    }
-}

@@ -214,7 +214,7 @@ struct Wants {
 impl Wants {
     fn of(clouds: Clouds, sky: Sky) -> Self {
         Self {
-            clouds: sky.enabled && clouds.enabled && clouds.coverage > 0.0,
+            clouds: sky.enabled && clouds.enabled,
             sky: sky.enabled.then_some(Air {
                 rayleigh: sky.rayleigh,
                 rayleigh_height: sky.rayleigh_height,

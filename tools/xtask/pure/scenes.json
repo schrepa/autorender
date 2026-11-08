@@ -15,8 +15,8 @@
         "clouds": {"enabled": true},
         "time_of_day": {"enabled": true, "hours": 19.0},
         "streamed": {"streamed": [
-          {"id": "crate", "mesh": "box", "material": "plain", "transform": {"translation": [12, 0.5, 0]}},
-          {"id": "crate-lid", "parent": "crate", "mesh": "box", "material": "plain", "transform": {"translation": [0, 0.6, 0], "scale": [1, 0.2, 1]}}
+          {"id": "crate", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"translation": [12, 0.5, 0]}},
+          {"id": "crate-lid", "parent": "crate", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"translation": [0, 0.6, 0], "scale": [1, 0.2, 1]}}
         ]}
       },
       "textures": [{"id": "checker", "width": 2, "height": 2, "rgba8": "/////wAAAP8AAAD//////w=="}],
@@ -31,12 +31,12 @@
         {"id": "gem", "source": {"kind": "octahedron"}}
       ],
       "prefabs": [{"id": "lamp", "entities": [
-        {"id": "post", "mesh": "box", "material": "plain", "transform": {"scale": [0.1, 2, 0.1]}},
+        {"id": "post", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"scale": [0.1, 2, 0.1]}},
         {"id": "bulb", "parent": "post", "transform": {"translation": [0, 0.6, 0]}, "light": {"intensity": 12, "range": 6}}
       ]}],
       "entities": [
-        {"id": "ground", "name": "The ground", "mesh": "floor", "material": "tiled", "transform": {"scale": [20, 1, 20]}, "collider": {"shape": {"kind": "cuboid", "half_extents": [0.5, 0.05, 0.5]}}, "tags": ["static", "walkable"]},
-        {"id": "spinner", "mesh": "gem", "material": "tinted", "transform": {"translation": [2, 1, 0], "rotation_degrees": [0, 45, 0]}, "drawn": {"values": {"tint": [1, 0.8, 0.8, 1]}}},
+        {"id": "ground", "name": "The ground", "drawn": {"mesh": "floor", "material": "tiled"}, "transform": {"scale": [20, 1, 20]}, "collider": {"shape": {"kind": "cuboid", "half_extents": [0.5, 0.05, 0.5]}}, "tags": ["static", "walkable"]},
+        {"id": "spinner", "transform": {"translation": [2, 1, 0], "rotation_degrees": [0, 45, 0]}, "drawn": {"mesh": "gem", "material": "tinted", "values": {"tint": [1, 0.8, 0.8, 1]}}},
         {"id": "fountain", "transform": {"translation": [-2, 0.5, 0]}, "particles": {"rate": 30, "lifetime": 1.5, "speed": 2}},
         {"id": "spot", "transform": {"translation": [0, 5, 0]}, "light": {"intensity": 40, "range": 12, "spot": {"inner_angle_degrees": 15, "outer_angle_degrees": 30}}},
         {"id": "probe", "transform": {"translation": [0, 2, 0]}, "reflection_probe": {"extent": [6, 3, 6]}},
@@ -58,8 +58,7 @@
     {"rule": "source_too_large", "path": "$", "source": "OVERSIZED"},
     {"rule": "invalid_id", "path": "$.id", "document": {"id": "has space", "revision": 1, "materials": [], "meshes": [], "entities": []}},
     {"rule": "duplicate_id", "path": "$.materials[1].id", "document": {"id": "a", "revision": 1, "materials": [{"id": "m", "color": [1, 1, 1, 1]}, {"id": "m", "color": [0, 0, 0, 1]}], "meshes": [], "entities": []}},
-    {"rule": "unknown_reference", "path": "$.entities[0].material", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "entities": [{"id": "e", "mesh": "box", "material": "missing"}]}},
-    {"rule": "invalid_renderable", "path": "$.entities[0].material", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "entities": [{"id": "e", "mesh": "box"}]}},
+    {"rule": "unknown_reference", "path": "$.entities[0].drawn.material", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "entities": [{"id": "e", "drawn": {"mesh": "box", "material": "missing"}}]}},
     {"rule": "invalid_name", "path": "$.entities[0].name", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "name": "line\nbreak"}]}},
     {"rule": "duplicate_tag", "path": "$.entities[0].tags[1]", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "tags": ["t", "t"]}]}},
     {"rule": "invalid_world_transform", "path": "$.entities[1].transform", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p", "transform": {"scale": [100, 1, 1]}}, {"id": "c", "parent": "p", "transform": {"scale": [100, 0.01, 1]}}]}},
@@ -84,7 +83,7 @@
     {"rule": "invalid_streamed", "path": "$.environment.streamed.streamed[0].terrain", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [], "environment": {"streamed": {"streamed": [{"id": "s", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"type": "noise", "seed": 1, "height": 1, "wavelength": 10}]}}]}}}},
     {"rule": "unreadable_map", "path": "$.entities[0].terrain.surface.biomes[0].layers[0].mask.map", "document": {"id": "a", "revision": 1, "materials": [{"id": "plain", "color": [1, 1, 1, 1]}], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "entities": [{"id": "e", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"type": "noise", "seed": 1, "height": 1, "wavelength": 400}], "surface": {"materials": [{"id": "m", "color": [0.1, 0.1, 0.1]}], "biomes": [{"id": "b", "layers": [{"material": "m", "mask": {"map": "custom"}}]}]}}}]}},
     {"rule": "unknown_map", "path": "$.entities[0].terrain.surface.placements[0].mask.map", "document": {"id": "a", "revision": 1, "materials": [{"id": "plain", "color": [1, 1, 1, 1]}], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "entities": [{"id": "e", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"type": "noise", "seed": 1, "height": 1, "wavelength": 400}], "surface": {"materials": [{"id": "m", "color": [0.1, 0.1, 0.1]}], "biomes": [{"id": "b", "layers": [{"material": "m"}]}], "assets": [{"id": "a", "mesh": "box", "material": "plain"}], "placements": [{"id": "p", "assets": [{"asset": "a"}], "density": 1, "footprint": 4, "materials": ["m"], "mask": {"map": "custom"}}]}}}]}},
-    {"rule": "out_of_range", "path": "$.environment.streamed.along[0].every", "document": {"id": "a", "revision": 1, "materials": [{"id": "plain", "color": [1, 1, 1, 1]}], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "prefabs": [{"id": "p", "entities": [{"id": "x", "mesh": "box", "material": "plain"}]}], "entities": [{"id": "e", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"type": "noise", "seed": 1, "height": 1, "wavelength": 400}, {"type": "path", "id": "road", "points": [[10, 10], [240, 10]], "width": 4, "shoulder": 2, "smoothing": 10, "bridge_fill": 4, "tunnel_cut": 25}]}}], "environment": {"streamed": {"along": [{"id": "l", "prefab": "p", "terrain": "e", "layer": "road", "every": 0.01}]}}}},
+    {"rule": "out_of_range", "path": "$.environment.streamed.along[0].every", "document": {"id": "a", "revision": 1, "materials": [{"id": "plain", "color": [1, 1, 1, 1]}], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "prefabs": [{"id": "p", "entities": [{"id": "x", "drawn": {"mesh": "box", "material": "plain"}}]}], "entities": [{"id": "e", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"type": "noise", "seed": 1, "height": 1, "wavelength": 400}, {"type": "path", "id": "road", "points": [[10, 10], [240, 10]], "width": 4, "shoulder": 2, "smoothing": 10, "bridge_fill": 4, "tunnel_cut": 25}]}}], "environment": {"streamed": {"along": [{"id": "l", "prefab": "p", "terrain": "e", "layer": "road", "every": 0.01}]}}}},
     {"rule": "invalid_nav_agent", "path": "$.entities[1].nav_agent", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "nav_agent": {}}]}},
     {"rule": "invalid_grounded", "path": "$.entities[1].grounded", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "grounded": {}}]}},
     {"rule": "invalid_rigid_body", "path": "$.entities[1].rigid_body", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "rigid_body": {}}]}},

@@ -690,7 +690,6 @@ impl<G: Game> GameHost<G> {
                 script,
             } => self.dev_benchmark_start((warmup, samples), (mode, script), context),
             other @ (BrowserControl::Present { .. }
-            | BrowserControl::Culling { .. }
             | BrowserControl::Environment(_)
             | BrowserControl::Camera { .. }
             | BrowserControl::Step { .. }

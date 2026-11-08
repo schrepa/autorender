@@ -3041,8 +3041,7 @@
     {
       "id": "ground",
       "name": "ground",
-      "mesh": "floor",
-      "material": "ground",
+      "drawn": {"mesh": "floor", "material": "ground"},
       "transform": {
         "translation": [
           0,
@@ -3065,8 +3064,7 @@
     {
       "id": "player",
       "name": "player",
-      "mesh": "box",
-      "material": "player",
+      "drawn": {"mesh": "box", "material": "player"},
       "transform": {
         "translation": [
           0,
@@ -3104,8 +3102,7 @@
     {
       "id": "north-wall",
       "name": "north wall",
-      "mesh": "box",
-      "material": "edge",
+      "drawn": {"mesh": "box", "material": "edge"},
       "transform": {
         "translation": [
           0,
@@ -3143,8 +3140,7 @@
     {
       "id": "south-wall",
       "name": "south wall",
-      "mesh": "box",
-      "material": "edge",
+      "drawn": {"mesh": "box", "material": "edge"},
       "transform": {
         "translation": [
           0,
@@ -3182,8 +3178,7 @@
     {
       "id": "east-wall",
       "name": "east wall",
-      "mesh": "box",
-      "material": "edge",
+      "drawn": {"mesh": "box", "material": "edge"},
       "transform": {
         "translation": [
           12,
@@ -3221,8 +3216,7 @@
     {
       "id": "west-wall",
       "name": "west wall",
-      "mesh": "box",
-      "material": "edge",
+      "drawn": {"mesh": "box", "material": "edge"},
       "transform": {
         "translation": [
           -12,
@@ -3260,8 +3254,7 @@
     {
       "id": "block-1",
       "name": "block 1",
-      "mesh": "box",
-      "material": "stone",
+      "drawn": {"mesh": "box", "material": "stone"},
       "transform": {
         "translation": [
           -4,
@@ -3299,8 +3292,7 @@
     {
       "id": "block-2",
       "name": "block 2",
-      "mesh": "box",
-      "material": "stone",
+      "drawn": {"mesh": "box", "material": "stone"},
       "transform": {
         "translation": [
           4,
@@ -3338,8 +3330,7 @@
     {
       "id": "block-3",
       "name": "block 3",
-      "mesh": "box",
-      "material": "stone",
+      "drawn": {"mesh": "box", "material": "stone"},
       "transform": {
         "translation": [
           -7,
@@ -3377,8 +3368,7 @@
     {
       "id": "block-4",
       "name": "block 4",
-      "mesh": "box",
-      "material": "stone",
+      "drawn": {"mesh": "box", "material": "stone"},
       "transform": {
         "translation": [
           7,
@@ -3416,8 +3406,7 @@
     {
       "id": "block-5",
       "name": "block 5",
-      "mesh": "box",
-      "material": "stone",
+      "drawn": {"mesh": "box", "material": "stone"},
       "transform": {
         "translation": [
           0,
@@ -3455,8 +3444,7 @@
     {
       "id": "crystal-1",
       "name": "crystal 1",
-      "mesh": "gem",
-      "material": "crystal",
+      "drawn": {"mesh": "gem", "material": "crystal"},
       "transform": {
         "translation": [
           0,
@@ -3490,8 +3478,7 @@
     {
       "id": "crystal-2",
       "name": "crystal 2",
-      "mesh": "gem",
-      "material": "gold",
+      "drawn": {"mesh": "gem", "material": "gold"},
       "transform": {
         "translation": [
           -7,
@@ -3525,8 +3512,7 @@
     {
       "id": "crystal-3",
       "name": "crystal 3",
-      "mesh": "gem",
-      "material": "crystal",
+      "drawn": {"mesh": "gem", "material": "crystal"},
       "transform": {
         "translation": [
           7,
@@ -3560,8 +3546,7 @@
     {
       "id": "crystal-4",
       "name": "crystal 4",
-      "mesh": "gem",
-      "material": "gold",
+      "drawn": {"mesh": "gem", "material": "gold"},
       "transform": {
         "translation": [
           -5,
@@ -3595,8 +3580,7 @@
     {
       "id": "crystal-5",
       "name": "crystal 5",
-      "mesh": "gem",
-      "material": "crystal",
+      "drawn": {"mesh": "gem", "material": "crystal"},
       "transform": {
         "translation": [
           5,
@@ -3630,8 +3614,7 @@
     {
       "id": "crystal-6",
       "name": "crystal 6",
-      "mesh": "gem",
-      "material": "gold",
+      "drawn": {"mesh": "gem", "material": "gold"},
       "transform": {
         "translation": [
           0,
@@ -3665,8 +3648,7 @@
     {
       "id": "path-1",
       "name": "path 1",
-      "mesh": "box",
-      "material": "path",
+      "drawn": {"mesh": "box", "material": "path"},
       "transform": {
         "translation": [
           0,
@@ -3689,8 +3671,7 @@
     {
       "id": "path-2",
       "name": "path 2",
-      "mesh": "box",
-      "material": "path",
+      "drawn": {"mesh": "box", "material": "path"},
       "transform": {
         "translation": [
           0,
@@ -3713,8 +3694,7 @@
     {
       "id": "path-3",
       "name": "path 3",
-      "mesh": "box",
-      "material": "path",
+      "drawn": {"mesh": "box", "material": "path"},
       "transform": {
         "translation": [
           0,
@@ -3737,8 +3717,7 @@
     {
       "id": "path-4",
       "name": "path 4",
-      "mesh": "box",
-      "material": "path",
+      "drawn": {"mesh": "box", "material": "path"},
       "transform": {
         "translation": [
           0,
@@ -3761,8 +3740,7 @@
     {
       "id": "path-5",
       "name": "path 5",
-      "mesh": "box",
-      "material": "path",
+      "drawn": {"mesh": "box", "material": "path"},
       "transform": {
         "translation": [
           0,
@@ -3785,8 +3763,7 @@
     {
       "id": "path-6",
       "name": "path 6",
-      "mesh": "box",
-      "material": "path",
+      "drawn": {"mesh": "box", "material": "path"},
       "transform": {
         "translation": [
           0,
@@ -3809,8 +3786,7 @@
     {
       "id": "path-7",
       "name": "path 7",
-      "mesh": "box",
-      "material": "path",
+      "drawn": {"mesh": "box", "material": "path"},
       "transform": {
         "translation": [
           0,
@@ -3833,8 +3809,7 @@
     {
       "id": "spire-west",
       "name": "spire west",
-      "mesh": "spire",
-      "material": "crystal",
+      "drawn": {"mesh": "spire", "material": "crystal"},
       "transform": {
         "translation": [
           -9,
@@ -3857,8 +3832,7 @@
     {
       "id": "spire-east",
       "name": "spire east",
-      "mesh": "spire",
-      "material": "gold",
+      "drawn": {"mesh": "spire", "material": "gold"},
       "transform": {
         "translation": [
           9,
@@ -3906,8 +3880,7 @@
       "id": "player-accessory",
       "name": "Golden shoulder crystal",
       "parent": "player",
-      "mesh": "gem",
-      "material": "gold",
+      "drawn": {"mesh": "gem", "material": "gold"},
       "transform": {
         "translation": [
           0.62,
@@ -3983,8 +3956,7 @@
         {
           "id": "planter",
           "name": "Stone planter",
-          "mesh": "garden.node1.p0.mesh",
-          "material": "garden.material0",
+          "drawn": {"mesh": "garden.node1.p0.mesh", "material": "garden.material0"},
           "tags": [
             "imported"
           ]
@@ -3992,8 +3964,7 @@
         {
           "id": "lantern",
           "name": "Garden lantern",
-          "mesh": "garden.node1.p1.mesh",
-          "material": "garden.material1",
+          "drawn": {"mesh": "garden.node1.p1.mesh", "material": "garden.material1"},
           "tags": [
             "imported"
           ]

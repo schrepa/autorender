@@ -3,9 +3,7 @@ use serde_json::Value;
 use super::{rendered, then_render};
 use crate::app_host::AppHost;
 use engine_core::{Error, ErrorCode, Expected};
-use engine_dev::results::{
-    CameraResult, CullingResult, DebugFaultResult, PresentResult, RenderResult, result,
-};
+use engine_dev::results::{CameraResult, DebugFaultResult, PresentResult, RenderResult, result};
 
 pub(super) fn present(
     app: &mut AppHost,
@@ -18,22 +16,6 @@ pub(super) fn present(
         temporary: true,
         rendered: true,
     }))
-}
-
-pub(super) fn culling(app: &mut AppHost, enabled: bool, size: (u32, u32)) -> Result<Value, Error> {
-    crate::host::apply_setting(
-        app.engine.app.world_mut(),
-        "culling.frustum",
-        &Value::Bool(enabled),
-    )?;
-    then_render(
-        app,
-        size,
-        result::culling(CullingResult {
-            temporary: true,
-            culling_enabled: enabled,
-        }),
-    )
 }
 
 pub(super) fn camera(

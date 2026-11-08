@@ -215,7 +215,7 @@ impl OccupancyWindows {
         for frame in &mut self.frames {
             frame.held = false;
         }
-        self.runs = settings.runs();
+        self.runs = settings.enabled;
         if !self.runs {
             self.release();
             return None;

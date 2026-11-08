@@ -195,9 +195,3 @@ impl ScatterSettings {
         self.looks.iter().find(|look| look.mesh == mesh)
     }
 }
-
-impl OccupancySettings {
-    pub(crate) fn runs(&self) -> bool {
-        self.enabled && self.strength > 0.0
-    }
-}

@@ -6,9 +6,8 @@ use std::{collections::BTreeMap, io::Write};
 
 use bevy_ecs::prelude::{Component, Entity, Resource, World};
 use engine_core::{
-    ActionInput, AssetLibrary, Camera, Drawn, Engine, FixedTime, FrameTime, GlobalTransforms,
-    JobExchange, MaterialHandle, MeshHandle, MoveInput, Parent, PresentationState, Projection,
-    TextureHandle, Transform, Views,
+    AssetLibrary, Drawn, Engine, FixedTime, FrameTime, GlobalTransforms, JobExchange,
+    MaterialHandle, MeshHandle, Parent, PresentationState, TextureHandle, Transform,
 };
 use engine_registry::{BrickRecord, OperationScene, Registry};
 use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
@@ -29,8 +28,8 @@ use crate::{
     BrowserControl, MAX_INSPECTOR_BYTES, MAX_INSPECTORS, MAX_PAGE_SIZE, MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
     views::{
-        CameraView, DrawnMeshView, GlobalTransformView, HierarchyView, InputView, LodLevelView,
-        MeshBoundsView, MeshRenderView, MeshView, TextureView, TransformView,
+        DrawnMeshView, GlobalTransformView, HierarchyView, LodLevelView, MeshBoundsView,
+        MeshRenderView, MeshView, TextureView, TransformView,
     },
 };
 

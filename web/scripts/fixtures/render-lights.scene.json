@@ -1273,8 +1273,7 @@
       "entities": [
         {
           "id": "column-0-0",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               -12.0,
@@ -1290,8 +1289,7 @@
         },
         {
           "id": "column-0-1",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               -12.0,
@@ -1307,8 +1305,7 @@
         },
         {
           "id": "column-0-2",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               -12.0,
@@ -1324,8 +1321,7 @@
         },
         {
           "id": "column-0-3",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               -12.0,
@@ -1341,8 +1337,7 @@
         },
         {
           "id": "column-1-0",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               -4.0,
@@ -1358,8 +1353,7 @@
         },
         {
           "id": "column-1-1",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               -4.0,
@@ -1375,8 +1369,7 @@
         },
         {
           "id": "column-1-2",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               -4.0,
@@ -1392,8 +1385,7 @@
         },
         {
           "id": "column-1-3",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               -4.0,
@@ -1409,8 +1401,7 @@
         },
         {
           "id": "column-2-0",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               4.0,
@@ -1426,8 +1417,7 @@
         },
         {
           "id": "column-2-1",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               4.0,
@@ -1443,8 +1433,7 @@
         },
         {
           "id": "column-2-2",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               4.0,
@@ -1460,8 +1449,7 @@
         },
         {
           "id": "column-2-3",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               4.0,
@@ -1477,8 +1465,7 @@
         },
         {
           "id": "column-3-0",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               12.0,
@@ -1494,8 +1481,7 @@
         },
         {
           "id": "column-3-1",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               12.0,
@@ -1511,8 +1497,7 @@
         },
         {
           "id": "column-3-2",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               12.0,
@@ -1528,8 +1513,7 @@
         },
         {
           "id": "column-3-3",
-          "mesh": "box",
-          "material": "column",
+          "drawn": {"mesh": "box", "material": "column"},
           "transform": {
             "translation": [
               12.0,
@@ -1549,8 +1533,7 @@
   "entities": [
     {
       "id": "floor",
-      "mesh": "floor",
-      "material": "ground",
+      "drawn": {"mesh": "floor", "material": "ground"},
       "transform": {
         "scale": [
           160,
