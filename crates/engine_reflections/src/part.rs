@@ -1,8 +1,8 @@
 use engine_core::{Entry, Error, PassName, ViewFacts};
 use engine_render::{
-    Access, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, Encode, FULLSCREEN, GpuPart,
-    Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, SCENE_FORMAT, Shape,
-    TargetName, Texture, level_region, mip_levels, pyramid_extents, wgpu,
+    Access, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, Encode,
+    FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
+    SCENE_FORMAT, Shape, TargetName, Texture, level_region, mip_levels, pyramid_extents, wgpu,
 };
 
 use crate::ReflectionsPass;
@@ -167,24 +167,30 @@ impl GpuPart for TraceGpu {
             *drawn = level_region(view, level);
         }
         let whole = extent(display.x, display.y);
-        cx.allocate(self.reflected, whole, 1);
-        cx.allocate(self.levels, whole, 1 + self.count);
+        match cx.allocate(self.reflected, whole, 1) {
+            Allocation::Fresh | Allocation::Kept => cx.run(self.reflect),
+        }
+        match cx.allocate(self.levels, whole, 1 + self.count) {
+            Allocation::Fresh | Allocation::Kept => cx.run(self.chain),
+        }
         let base = (
             display.x.div_ceil(2).max(1).next_power_of_two(),
             display.y.div_ceil(2).max(1).next_power_of_two(),
         );
         let reductions = mip_levels(base.0, base.1).min(PYRAMID_LEVELS);
-        cx.allocate(self.pyramid, extent(base.0, base.1), reductions);
+        match cx.allocate(self.pyramid, extent(base.0, base.1), reductions) {
+            Allocation::Fresh | Allocation::Kept => cx.run(self.reduce),
+        }
         self.reduced = extents(self.render, reductions);
-        for buffer in &self.extents {
-            cx.allocate_buffer(*buffer, size_of::<PyramidExtent>() as u64);
+        for (at, buffer) in self.extents.iter().enumerate() {
+            match cx.allocate_buffer(*buffer, size_of::<PyramidExtent>() as u64) {
+                Allocation::Fresh | Allocation::Kept => {
+                    if let Some(written) = self.reduced.get(at) {
+                        cx.write(*buffer, 0, &[*written]);
+                    }
+                }
+            }
         }
-        for (buffer, written) in self.extents.iter().zip(&self.reduced) {
-            cx.write(*buffer, 0, &[*written]);
-        }
-        cx.run(self.reduce);
-        cx.run(self.chain);
-        cx.run(self.reflect);
         cx.run(self.blend);
     }
 

@@ -48,7 +48,15 @@
         1,
         1
       ],
-      "texture": "grain"
+      "slots": {
+        "base_color": {
+          "module": "mapped",
+          "maps": {
+            "base_color": "grain"
+          }
+        },
+        "opacity": "mapped"
+      }
     }
   ],
   "meshes": [

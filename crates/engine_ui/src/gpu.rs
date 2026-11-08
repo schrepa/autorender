@@ -6,8 +6,8 @@ use engine_core::{Entry, Error, PassName, TextureHandle};
 use engine_places_rendering::text::{Glyph, Text};
 use engine_places_rendering::ui::UiKind;
 use engine_render::{
-    Attach, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass, Pipeline,
-    Prepare, RenderPipeline, SamplerDesc, Shape, wgpu,
+    Allocation, Attach, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass,
+    Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, wgpu,
 };
 
 use crate::tree::{Flat, UiState};
@@ -299,11 +299,10 @@ impl GpuPart for UiGpu {
         if state.rects.is_empty() {
             return;
         }
-        cx.grow_buffer(
-            self.instances,
-            std::mem::size_of_val(state.rects.as_slice()) as u64,
-        );
-        cx.write(self.instances, 0, &state.rects);
+        let bytes = std::mem::size_of_val(state.rects.as_slice()) as u64;
+        match cx.grow_buffer(self.instances, bytes) {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.instances, 0, &state.rects),
+        }
         for (fill, range) in &state.runs {
             let pipeline = match fill {
                 Fill::Solid => self.solid,

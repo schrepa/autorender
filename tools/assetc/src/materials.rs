@@ -1,11 +1,17 @@
+use std::collections::BTreeMap;
+
 use engine_scene::{
     SceneAlphaMode, SceneCull, SceneDocument, SceneFilter, SceneMap, SceneMaterial,
-    SceneMipmapFilter, SceneSurface, SceneTexture, SceneTextureMap, SceneWrap,
+    SceneMipmapFilter, SceneSlot, SceneSlotFill, SceneSurface, SceneTexture, SceneTextureMap,
+    SceneWrap,
 };
 use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 use serde_json::Value;
 
-use engine_core::{Error, ErrorCode, Expected};
+use engine_core::{
+    BASE_COLOR_MAP, EMISSIVE_MAP, Error, ErrorCode, Expected, MAPPED, MAPPED_SLOTS,
+    METALLIC_ROUGHNESS_MAP, NORMAL_MAP, OCCLUSION_MAP, SurfaceSlot,
+};
 
 use crate::{ImportedFile, unsupported};
 
@@ -113,28 +119,33 @@ pub(crate) fn import(
             .as_f64()
             .unwrap_or(1.0) as f32;
         let emissive = material.emissive_factor().map(|value| value * strength);
+        let slots = mapped_slots(
+            [
+                (BASE_COLOR_MAP, texture),
+                (METALLIC_ROUGHNESS_MAP, metallic_roughness_texture),
+                (NORMAL_MAP, normal_texture),
+                (OCCLUSION_MAP, occlusion_texture),
+                (EMISSIVE_MAP, emissive_texture),
+            ],
+            alpha_mode == Some(SceneAlphaMode::Mask),
+        );
         scene.materials.push(SceneMaterial {
             id: format!("{id}.material{index}"),
             provided: None,
             color: Some([red, green, blue, 1.0]),
-            texture,
             surface: Some(SceneSurface {
                 roughness: pbr.roughness_factor(),
                 metalness: pbr.metallic_factor(),
                 emission: 0.0,
             }),
             opacity,
-            metallic_roughness_texture,
-            normal_texture,
             normal_scale: normal
                 .map(|normal| normal.scale())
                 .filter(|scale| *scale != 1.0),
-            occlusion_texture,
             occlusion_strength: occlusion
                 .map(|occlusion| occlusion.strength())
                 .filter(|strength| *strength != 1.0),
             emissive: (emissive != [0.0; 3]).then_some(emissive),
-            emissive_texture,
             alpha_mode,
             alpha_cutoff,
             cull: material.double_sided().then_some(SceneCull::None),
@@ -142,12 +153,39 @@ pub(crate) fn import(
             depth_write: None,
             depth_bias: None,
             transmission: None,
-            slots: None,
+            slots,
             values: None,
             lighting: None,
         });
     }
     Ok(())
+}
+
+fn mapped_slots(
+    maps: [(&str, Option<SceneMap>); 5],
+    masked: bool,
+) -> Option<BTreeMap<String, SceneSlot>> {
+    let mut slots: BTreeMap<String, SceneSlot> = BTreeMap::new();
+    for (name, map) in maps {
+        let Some(map) = map else {
+            continue;
+        };
+        let reading = MAPPED_SLOTS.iter().filter(|(slot, read)| {
+            read.first() == Some(&name) && (masked || *slot != SurfaceSlot::Cutoff)
+        });
+        for (at, (slot, _)) in reading.enumerate() {
+            let filled = if at == 0 {
+                SceneSlot::Filled(SceneSlotFill {
+                    module: MAPPED.to_owned(),
+                    maps: BTreeMap::from([(name.to_owned(), map.clone())]),
+                })
+            } else {
+                SceneSlot::Module(MAPPED.to_owned())
+            };
+            slots.insert(slot.name().to_owned(), filled);
+        }
+    }
+    (!slots.is_empty()).then_some(slots)
 }
 
 fn texture_map(

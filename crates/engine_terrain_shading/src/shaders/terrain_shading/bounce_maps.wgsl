@@ -7,6 +7,8 @@ import package::engine::view::PI;
 import package::generated::pieces::terrain_shading::piece;
 import package::terrain_shading::horizons::{terrain_horizon_sampler, terrain_horizons};
 import package::generated::terrain_shading::{BOUNCE_BINS, BOUNCE_GROUP, BOUNCE_NEAREST, BOUNCE_PROBE_LAYERS, BOUNCE_RECORD_WORDS, BOUNCE_STEPS, BounceFrame, BounceTerrain, HORIZON_LAYERS, HORIZON_RECORD_VECTORS, PaletteEntry};
+import package::generated::terrain_shading::{bounce_bin_distance, bounce_bin_filled,
+    bounce_block_word_detailed, bounce_block_word_first};
 import package::place::ground_tiles::PALETTE_ENTRIES;
 
 struct BounceProbe {
@@ -128,10 +130,10 @@ fn bounce_probe(terrain: BounceTerrain, record: u32, layer: u32, center: vec2<f3
         for (var side = 0u; side < 2u; side++) {
             let bits = word >> (16u * side);
             let moment = bounce_frame.bins[2u * pair + side];
-            let filled = f32(bits & 0xffu) / 255.0;
+            let filled = f32(bounce_bin_filled(bits)) / 255.0;
             var light = vec3<f32>(0.0);
             if filled > 0.0 {
-                let distance = BOUNCE_NEAREST * exp2(f32((bits >> 8u) & 0xffu) / BOUNCE_STEPS);
+                let distance = BOUNCE_NEAREST * exp2(f32(bounce_bin_distance(bits)) / BOUNCE_STEPS);
                 let level = length(moment.xz);
                 let toward = select(vec2<f32>(0.0), moment.xz / max(level, 1.0e-6),
                     level > 1.0e-6);
@@ -179,9 +181,9 @@ fn bounce_keep(terrain: BounceTerrain, local: vec2<u32>, layer: u32, probe: Boun
 fn bounce_block(terrain: BounceTerrain, block: vec2<u32>, local: vec2<u32>, layer: u32) {
     let blocks = terrain.grid.x / 2u;
     let word = bounce_blocks[terrain.sources.x + block.y * blocks + block.x];
-    let first = terrain.sources.y + (word >> 1u);
+    let first = terrain.sources.y + bounce_block_word_first(word);
     let spacing = terrain.place.zw / f32(terrain.grid.x);
-    if (word & 1u) == 0u {
+    if !bounce_block_word_detailed(word) {
         let middle = vec2<f32>(block * 2u + 1u) * spacing;
         let probe = bounce_probe(terrain, first, layer, middle, 0.0);
         for (var corner = 0u; corner < 4u; corner++) {
@@ -200,9 +202,9 @@ fn bounce_block(terrain: BounceTerrain, block: vec2<u32>, local: vec2<u32>, laye
 fn bounce_block_mean(terrain: BounceTerrain, block: vec2<u32>, layer: u32) -> BounceProbe {
     let blocks = terrain.grid.x / 2u;
     let word = bounce_blocks[terrain.sources.x + block.y * blocks + block.x];
-    let first = terrain.sources.y + (word >> 1u);
+    let first = terrain.sources.y + bounce_block_word_first(word);
     let spacing = terrain.place.zw / f32(terrain.grid.x);
-    if (word & 1u) == 0u {
+    if !bounce_block_word_detailed(word) {
         return bounce_probe(terrain, first, layer, vec2<f32>(block * 2u + 1u) * spacing, 0.0);
     }
     var probe: BounceProbe;

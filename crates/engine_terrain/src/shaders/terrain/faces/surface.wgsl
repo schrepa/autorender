@@ -7,7 +7,7 @@ import package::place::ground_surface::{
 };
 import package::generated::terrain::{
     NONE, SURFACE_PATH_FAR, SURFACE_RIVER_EDGE_FAR, SURFACE_RIVER_EDGE_STEP, SURFACE_RIVER_EDGE_ZERO,
-    SURFACE_RIVER_FAR, SurfaceEntry,
+    SURFACE_RIVER_FAR, SurfaceEntry, control,
 };
 
 @group(0) @binding(0) var<storage, read> surface_program: array<u32>;
@@ -575,8 +575,6 @@ fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
     }
     let blend = second_weight / pmax(first_weight + second_weight, 1.0e-12);
     let soaked = clamp_rule(wet, 0.0, 1.0);
-    let packed = (first & 0xffu) | ((second & 0xffu) << 8u)
-        | (min(u32(blend * 255.0 + 0.5), 255u) << 16u)
-        | (min(u32(soaked * 255.0 + 0.5), 255u) << 24u);
-    return packed;
+    return control(first, second, min(u32(blend * 255.0 + 0.5), 255u),
+        min(u32(soaked * 255.0 + 0.5), 255u));
 }

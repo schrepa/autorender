@@ -544,8 +544,10 @@ impl AirTables {
         } else {
             NO_VIEW_SIZE
         };
-        cx.allocate(self.view, extent(view), 1);
-        cx.allocate_buffer(self.derived, DERIVED_BYTES);
+        let built = [
+            cx.allocate(self.view, extent(view), 1),
+            cx.allocate_buffer(self.derived, DERIVED_BYTES),
+        ];
         if shown.is_none() {
             return;
         }
@@ -555,7 +557,11 @@ impl AirTables {
             self.upload(cx, &tables.table);
             self.uploaded = shown;
         }
-        cx.run(self.pass);
+        for allocation in built {
+            match allocation {
+                Allocation::Fresh | Allocation::Kept => cx.run(self.pass),
+            }
+        }
         cx.read_back::<SkyLightLevel>(
             0,
             self.derived,
@@ -665,11 +671,17 @@ impl GpuPart for SkyGpu {
         self.clouds
             .prepare(cx, (&plan.clouds, tables.cloud_noise()), plan.frame);
         self.environment.prepare(cx, &plan.environment);
-        self.haze.prepare(cx, &plan.haze);
-        cx.allocate_buffer(self.piece_buffer, size_of::<SkyPiece>() as u64);
-        cx.write(self.piece_buffer, 0, &[plan.piece]);
-        cx.allocate_buffer(self.air_buffer, size_of::<SkyAir>() as u64);
-        cx.write(self.air_buffer, 0, &[plan.air]);
+        let mut piece = plan.piece;
+        if self.haze.prepare(cx, &plan.haze) {
+            piece.haze[1] = 0.0;
+            piece.haze[2] = 0.0;
+        }
+        match cx.allocate_buffer(self.piece_buffer, size_of::<SkyPiece>() as u64) {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.piece_buffer, 0, &[piece]),
+        }
+        match cx.allocate_buffer(self.air_buffer, size_of::<SkyAir>() as u64) {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.air_buffer, 0, &[plan.air]),
+        }
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

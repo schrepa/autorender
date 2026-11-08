@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::world::World;
 use engine_core::{
-    AssetLibrary, AssetResidency, ColorSpace, Error, Filter, Material, MaterialHandle,
-    NORMAL_MAP, Sampler, Texture, TextureFormat, TextureHandle, Wrap,
+    AssetLibrary, AssetResidency, ColorSpace, Error, Filter, Material, MaterialHandle, Sampler,
+    Texture, TextureFormat, TextureHandle, Wrap,
 };
 
 use crate::bindings::Table;
@@ -38,9 +38,8 @@ pub(crate) struct GpuMaterial {
 }
 
 struct Defaults {
-    _textures: [wgpu::Texture; 2],
+    _texture: wgpu::Texture,
     white: wgpu::TextureView,
-    flat_normal: wgpu::TextureView,
     _uniform: wgpu::Buffer,
     group: wgpu::BindGroup,
     variant: MaterialVariant,
@@ -65,25 +64,20 @@ impl MaterialStore {
         let layout = MaterialLayout::standard();
         let table = layout.table();
         let group_layout = crate::pipelines::layout(device, table);
-        let texel =
-            |label, format, pixel| crate::targets::texel(device, queue, label, format, pixel);
-        let textures = [
-            texel("engine/white", wgpu::TextureFormat::Rgba8Unorm, [255; 4]),
-            texel(
-                "engine/flat-normal",
-                wgpu::TextureFormat::Rgba8Unorm,
-                [128, 128, 255, 255],
-            ),
-        ];
-        let [white, flat_normal] = textures
-            .each_ref()
-            .map(|texture| texture.create_view(&Default::default()));
+        let texture = crate::targets::texel(
+            device,
+            queue,
+            "engine/white",
+            wgpu::TextureFormat::Rgba8Unorm,
+            [255; 4],
+        );
+        let white = texture.create_view(&Default::default());
         let mut samplers = HashMap::default();
         sampler(device, &mut samplers, Sampler::CLAMP);
         let (group, uniform) = default_group(
             device,
             (&layout, table, &group_layout),
-            (&white, &flat_normal),
+            &white,
             &samplers[&Sampler::CLAMP],
         );
         let variant = layout.variant(None, &layout.plain_record());
@@ -97,9 +91,8 @@ impl MaterialStore {
             generation: 0,
             synced: None,
             defaults: Defaults {
-                _textures: textures,
+                _texture: texture,
                 white,
-                flat_normal,
                 _uniform: uniform,
                 group,
                 variant,
@@ -118,7 +111,7 @@ impl MaterialStore {
         let (group, uniform) = default_group(
             device,
             (&layout, table, &self.group_layout),
-            (&self.defaults.white, &self.defaults.flat_normal),
+            &self.defaults.white,
             &self.samplers[&Sampler::CLAMP],
         );
         self.defaults.group = group;
@@ -279,19 +272,19 @@ impl MaterialStore {
         let mut views = Vec::with_capacity(self.layout.maps().len());
         let mut used = Vec::new();
         for name in self.layout.maps() {
-            let found = material.map(name).and_then(|map| {
-                let held = self.textures.get(&map.texture)?;
-                Some((map, held))
-            });
+            let found = material
+                .map(name)
+                .filter(|_| self.layout.reads(material, name))
+                .and_then(|map| {
+                    let held = self.textures.get(&map.texture)?;
+                    Some((map, held))
+                });
             match found {
                 Some((map, held)) => {
                     used.push((map.texture, held.revision));
                     views.push((&held.view, &self.samplers[&map.sampler]));
                 }
-                None => views.push((
-                    default_view(name, &self.defaults.white, &self.defaults.flat_normal),
-                    &self.samplers[&Sampler::CLAMP],
-                )),
+                None => views.push((&self.defaults.white, &self.samplers[&Sampler::CLAMP])),
             }
         }
         let uniform = uniform_buffer(device, &words);
@@ -348,25 +341,14 @@ impl MaterialStore {
     }
 }
 
-fn default_view<'a>(
-    name: &str,
-    white: &'a wgpu::TextureView,
-    flat_normal: &'a wgpu::TextureView,
-) -> &'a wgpu::TextureView {
-    if name == NORMAL_MAP { flat_normal } else { white }
-}
-
 fn default_group(
     device: &wgpu::Device,
     (layout, table, group_layout): (&MaterialLayout, &Table, &crate::pipelines::GroupLayout),
-    (white, flat_normal): (&wgpu::TextureView, &wgpu::TextureView),
+    white: &wgpu::TextureView,
     clamp: &wgpu::Sampler,
 ) -> (wgpu::BindGroup, wgpu::Buffer) {
-    let views: Vec<(&wgpu::TextureView, &wgpu::Sampler)> = layout
-        .maps()
-        .iter()
-        .map(|name| (default_view(name, white, flat_normal), clamp))
-        .collect();
+    let views: Vec<(&wgpu::TextureView, &wgpu::Sampler)> =
+        layout.maps().iter().map(|_| (white, clamp)).collect();
     let uniform = uniform_buffer(device, &layout.plain_record());
     let group = bind_group(device, (layout, table, group_layout), &views, &uniform);
     (group, uniform)
@@ -434,11 +416,11 @@ fn bind_group(
         .map(|name| (format!("{name}_map"), format!("{name}_sampler")))
         .collect();
     let mut resources = Vec::with_capacity(2 * names.len() + 1);
+    resources.push((RECORD, uniform.as_entire_binding()));
     for ((texture_name, sampler_name), (view, sampler)) in names.iter().zip(views) {
         resources.push((texture_name.as_str(), crate::pipelines::view(view)));
         resources.push((sampler_name.as_str(), crate::pipelines::sampler(sampler)));
     }
-    resources.push((RECORD, uniform.as_entire_binding()));
     crate::pipelines::group(device, "engine/material-group", table, group_layout, &resources)
 }
 

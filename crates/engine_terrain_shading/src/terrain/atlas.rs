@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use engine_core::Stamp;
+use engine_core::{GpuBits, Stamp};
 use engine_core::collections::HashMap;
 use engine_heightfield::ErrorPyramid;
 use engine_heightfield::tile::shaded_elsewhere;
@@ -14,7 +14,7 @@ use super::LAYER_SIZE;
 use super::part::{Handles, TerrainGpu};
 use crate::gpu::{
     ANCESTORS_GROUP, AncestorJob, CONTROL_GROUP, ControlJob, NORMALS_GROUP, NOT_RESIDENT,
-    NormalJob, PEAKS_GROUP, RIVER_BEDS, RIVER_EDGES, SURFACE_ERROR_MIPS,
+    NormalJob, PEAKS_GROUP, RiverMaps, SURFACE_ERROR_MIPS,
 };
 use crate::state::{
     Atlas, AtlasMoves, Bakes, TerrainBakes, TileId, Upload, all_uploads, listed_tile, programmed,
@@ -371,13 +371,13 @@ impl TileAtlas {
                 (bytemuck::cast_slice(&values[..]), 4),
             );
         } else if programmed(entry, tile) {
-            let mut rivers = 0;
+            let mut rivers = RiverMaps::default();
             if let Some(edges) = &tile.river_edges {
-                rivers |= RIVER_EDGES;
+                rivers.edges = true;
                 write_river(cx, handles.rivers, (layer, 0), edges);
             }
             if let Some(beds) = &tile.river_beds {
-                rivers |= RIVER_BEDS;
+                rivers.beds = true;
                 for (plane, bed) in beds.as_chunks::<BED_SAMPLES>().0.iter().take(3).enumerate() {
                     write_river(cx, handles.rivers, (layer, plane as u32 + 1), bed);
                 }
@@ -385,7 +385,7 @@ impl TileAtlas {
             let spacing = tile.spacing;
             self.control_jobs.push(ControlJob {
                 layer,
-                rivers,
+                rivers: rivers.pack(),
                 first: first_sample(entry, id.1, spacing),
                 spacing,
                 terrain: index as u32,
@@ -494,8 +494,9 @@ fn write_jobs<T: bytemuck::Pod>(
     jobs: &[T],
 ) {
     if !jobs.is_empty() {
-        cx.grow_buffer(buffer, std::mem::size_of_val(jobs) as u64);
-        cx.write(buffer, 0, jobs);
+        match cx.grow_buffer(buffer, std::mem::size_of_val(jobs) as u64) {
+            Allocation::Fresh | Allocation::Kept => cx.write(buffer, 0, jobs),
+        }
     }
 }
 

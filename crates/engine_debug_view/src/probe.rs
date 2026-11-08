@@ -7,8 +7,8 @@ use engine_core::{
 };
 use engine_render::debug::DebugRecord;
 use engine_render::{
-    AfterRead, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DebugModes, Encode,
-    GpuPart, Install, Lifetime, Pass, Prepare, TargetName, wgpu,
+    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DebugModes,
+    Encode, GpuPart, Install, Lifetime, Pass, Prepare, TargetName, wgpu,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -338,6 +338,79 @@ pub(crate) struct ProbeGpu {
     capturing: bool,
 }
 
+impl ProbeGpu {
+    fn capture(
+        &self,
+        probe: &Probe,
+        (size, at): (UVec2, wgpu::Origin3d),
+        cx: &mut Prepare<'_, Self>,
+    ) {
+        if (size.x, size.y) == probe.armed_size {
+            let (width, height) = probe.armed_size;
+            let row = u64::from(probe.depth_row);
+            match cx.allocate_buffer(self.rows, row * u64::from(height)) {
+                Allocation::Fresh | Allocation::Kept => {
+                    cx.copy_at_end(
+                        Copied::Target(TargetName::DEPTH),
+                        Copied::Buffer(self.rows),
+                        &[CopyRegion::ToBuffer {
+                            from: wgpu::Origin3d::ZERO,
+                            to: wgpu::TexelCopyBufferLayout {
+                                offset: 0,
+                                bytes_per_row: Some(probe.depth_row),
+                                rows_per_image: Some(height),
+                            },
+                            size: wgpu::Extent3d {
+                                width,
+                                height,
+                                depth_or_array_layers: 1,
+                            },
+                        }],
+                    );
+                    cx.copy_at_end(
+                        Copied::Buffer(self.rows),
+                        Copied::Buffer(self.probed),
+                        &[CopyRegion::Bytes {
+                            from: u64::from(at.y) * row + u64::from(at.x) * 4,
+                            to: DEPTH,
+                            size: 4,
+                        }],
+                    );
+                }
+            }
+        } else {
+            cx.write(self.probed, DEPTH, &[0_u32]);
+        }
+        cx.copy_at_end(
+            Copied::Target(TargetName::COLOR),
+            Copied::Buffer(self.probed),
+            &[texel(at, SCENE)],
+        );
+        let order = cx.canvas().map_or(0, |format| {
+            if matches!(
+                format,
+                wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+            ) {
+                BLUE_FIRST
+            } else {
+                IN_ORDER
+            }
+        });
+        if order != 0 {
+            cx.copy_at_end(
+                Copied::Canvas,
+                Copied::Buffer(self.probed),
+                &[texel(at, CANVAS)],
+            );
+        }
+        cx.write(self.probed, CANVAS_ORDER, &[order]);
+        let range = 0..PROBED_BYTES;
+        if cx.read_back::<Probe>(probe.armed, self.probed, range, AfterRead::Keep) {
+            cx.deliver::<ProbeSteps>(probe.armed, Vec::new());
+        }
+    }
+}
+
 impl GpuPart for ProbeGpu {
     type Reads = (Res<'static, Probe>, Res<'static, Views>);
     const NAME: &'static str = "debug_view";
@@ -379,72 +452,10 @@ impl GpuPart for ProbeGpu {
         };
         self.capturing = probe.capturing();
         match probe.stage {
-            Stage::Capturing => {
-                cx.allocate_buffer(self.probed, PROBED_BYTES);
-                if (size.x, size.y) == probe.armed_size {
-                    let (width, height) = probe.armed_size;
-                    let row = u64::from(probe.depth_row);
-                    cx.allocate_buffer(self.rows, row * u64::from(height));
-                    cx.copy_at_end(
-                        Copied::Target(TargetName::DEPTH),
-                        Copied::Buffer(self.rows),
-                        &[CopyRegion::ToBuffer {
-                            from: wgpu::Origin3d::ZERO,
-                            to: wgpu::TexelCopyBufferLayout {
-                                offset: 0,
-                                bytes_per_row: Some(probe.depth_row),
-                                rows_per_image: Some(height),
-                            },
-                            size: wgpu::Extent3d {
-                                width,
-                                height,
-                                depth_or_array_layers: 1,
-                            },
-                        }],
-                    );
-                    cx.copy_at_end(
-                        Copied::Buffer(self.rows),
-                        Copied::Buffer(self.probed),
-                        &[CopyRegion::Bytes {
-                            from: u64::from(at.y) * row + u64::from(at.x) * 4,
-                            to: DEPTH,
-                            size: 4,
-                        }],
-                    );
-                } else {
-                    cx.write(self.probed, DEPTH, &[0_u32]);
-                }
-                cx.copy_at_end(
-                    Copied::Target(TargetName::COLOR),
-                    Copied::Buffer(self.probed),
-                    &[texel(at, SCENE)],
-                );
-                let order = cx.canvas().map_or(0, |format| {
-                    if matches!(
-                        format,
-                        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
-                    ) {
-                        BLUE_FIRST
-                    } else {
-                        IN_ORDER
-                    }
-                });
-                if order != 0 {
-                    cx.copy_at_end(
-                        Copied::Canvas,
-                        Copied::Buffer(self.probed),
-                        &[texel(at, CANVAS)],
-                    );
-                }
-                cx.write(self.probed, CANVAS_ORDER, &[order]);
-                let range = 0..PROBED_BYTES;
-                if cx.read_back::<Probe>(probe.armed, self.probed, range, AfterRead::Keep) {
-                    cx.deliver::<ProbeSteps>(probe.armed, Vec::new());
-                }
-            }
-            Stage::Waiting => {
-                cx.allocate_buffer(self.rows, 0);
-            }
+            Stage::Capturing => match cx.allocate_buffer(self.probed, PROBED_BYTES) {
+                Allocation::Fresh | Allocation::Kept => self.capture(&probe, (size, at), cx),
+            },
+            Stage::Waiting => cx.release_buffer(self.rows),
             Stage::Idle | Stage::Armed | Stage::Read(_) => {}
         }
     }

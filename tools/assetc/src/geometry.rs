@@ -77,11 +77,11 @@ fn import_primitive(
         unsupported(format!("{primitive_path}.material")).expected(Expected::Present)
     })?;
     let material = &output.materials[material_index];
-    let textured = material.texture.is_some()
-        || material.metallic_roughness_texture.is_some()
-        || material.normal_texture.is_some()
-        || material.occlusion_texture.is_some()
-        || material.emissive_texture.is_some();
+    let textured = material
+        .slots
+        .iter()
+        .flatten()
+        .any(|(_, slot)| slot.maps().next().is_some());
     let (vertices, mut indices) = primitive_data(
         primitive,
         binary,

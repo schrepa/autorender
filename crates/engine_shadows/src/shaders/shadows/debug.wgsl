@@ -7,12 +7,13 @@ import package::face::lighting::{sun_debug, surface_sun};
 import package::generated::kinds::KIND_MESH;
 import package::generated::passes::PASS_SHADOW;
 import package::generated::pieces::shadows::piece;
-import package::generated::shadows::{DEBUG_SHOWN_CASTERS, DEBUG_SHOWN_SHADOWS};
-import package::place::sun_blockers::{DEBUG_SHADOWED, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON,
-    DEBUG_SUN_LEVEL, DEBUG_SUN_NONE};
+import package::generated::shadows::{DEBUG_SHOWN_CASTERS, DEBUG_SHOWN_SHADOWS,
+    sun_shown_shadowed, sun_shown_source};
+import package::place::sun_blockers::{DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL,
+    DEBUG_SUN_NONE};
 
 fn debug_sun_color(sun: u32) -> vec3<f32> {
-    let source = sun & (DEBUG_SHADOWED - 1u);
+    let source = sun_shown_source(sun);
     var color = vec3<f32>(0.0);
     if source >= DEBUG_SUN_LEVEL {
         let level = f32(source - DEBUG_SUN_LEVEL)
@@ -27,7 +28,7 @@ fn debug_sun_color(sun: u32) -> vec3<f32> {
     } else if source == DEBUG_SUN_NONE {
         color = vec3<f32>(0.0);
     }
-    return select(color, color * 0.45, (sun & DEBUG_SHADOWED) != 0u);
+    return select(color, color * 0.45, sun_shown_shadowed(sun));
 }
 
 fn drawn_casts(kind: u32, object: u32) -> bool {

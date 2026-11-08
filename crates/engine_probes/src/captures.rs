@@ -184,8 +184,9 @@ impl GpuPart for ProbesGpu {
             if bytes > self.grid && grown > self.grid {
                 self.grid = grown;
             }
-            cx.allocate_buffer(self.words, self.grid);
-            cx.write(self.words, 0, &words.words);
+            match cx.allocate_buffer(self.words, self.grid) {
+                Allocation::Fresh | Allocation::Kept => cx.write(self.words, 0, &words.words),
+            }
         }
         self.drawn.clone_from(&state.drawn);
         self.finished = state
@@ -196,7 +197,9 @@ impl GpuPart for ProbesGpu {
             cx.release(self.depth);
         }
         if !self.drawn.is_empty() {
-            cx.allocate(self.depth, extent(state.size, 1), 1);
+            match cx.allocate(self.depth, extent(state.size, 1), 1) {
+                Allocation::Fresh | Allocation::Kept => cx.run(self.captures),
+            }
         }
         if state.captures {
             cx.run(self.captures);
@@ -257,7 +260,7 @@ impl ProbesGpu {
     fn allocate(&mut self, state: &ProbeState, cx: &mut Prepare<'_, Self>) {
         let size = state.size;
         self.levels = mip_levels(size);
-        cx.allocate(self.radiance, extent(size, SETS * SIDES), self.levels);
+        let radiance = cx.allocate(self.radiance, extent(size, SETS * SIDES), self.levels);
         let layers = state.cubes.saturating_sub(1).max(1) * SIDES;
         let kept = self.layout.replace(state.layout) == Some(state.layout);
         let maps = if kept {
@@ -265,7 +268,7 @@ impl ProbesGpu {
         } else {
             cx.allocate(self.maps, extent(size, layers), self.levels)
         };
-        if maps == Allocation::Fresh {
+        if maps == Allocation::Fresh || radiance == Allocation::Fresh {
             cx.deliver::<ProbeAcks>(LOST_ACK, Vec::new());
         }
     }

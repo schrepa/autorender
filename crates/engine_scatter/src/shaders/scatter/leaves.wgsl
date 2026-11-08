@@ -1,9 +1,10 @@
 import package::engine::shading::{SurfaceInput, SurfacePoint};
-import package::engine::standard::base_color as standard_base_color;
-import package::engine::standard::cutoff as standard_cutoff;
-import package::engine::standard::metalness as standard_metalness;
-import package::engine::standard::normal as standard_normal;
-import package::engine::standard::roughness as standard_roughness;
+import package::engine::mapped::base_color as mapped_base_color;
+import package::engine::mapped::cutoff as mapped_cutoff;
+import package::engine::mapped::mask_coverage;
+import package::engine::mapped::metalness as mapped_metalness;
+import package::engine::mapped::normal as mapped_normal;
+import package::engine::mapped::roughness as mapped_roughness;
 import package::engine::surfaces::SURFACE_THIN;
 import package::engine::view::fade_noise;
 import package::face::foliage::foliage;
@@ -24,32 +25,32 @@ fn plant_tint(plant: u32, leaf: f32) -> vec3<f32> {
 }
 
 fn base_color(input: SurfaceInput, point: SurfacePoint) -> vec3<f32> {
-    let color = standard_base_color(input, point);
+    let color = mapped_base_color(input, point);
     let plant = placed_values_of(input.kind, input.object).tint;
     return grounded_color(input, color * plant_tint(plant, leafiness(color)));
 }
 
 fn normal(input: SurfaceInput, point: SurfacePoint) -> vec3<f32> {
-    return grounded_normal(input, standard_normal(input, point));
+    return grounded_normal(input, mapped_normal(input, point));
 }
 
 fn roughness(input: SurfaceInput, point: SurfacePoint) -> f32 {
-    return grounded_roughness(input, standard_roughness(input, point));
+    return grounded_roughness(input, mapped_roughness(input, point));
 }
 
 fn metalness(input: SurfaceInput, point: SurfacePoint) -> f32 {
-    return grounded_metalness(input, standard_metalness(input, point));
+    return grounded_metalness(input, mapped_metalness(input, point));
 }
 
 fn transmission(input: SurfaceInput, point: SurfacePoint) -> f32 {
-    return foliage().x * leafiness(standard_base_color(input, point));
+    return foliage().x * leafiness(mapped_base_color(input, point));
 }
 
 fn cutoff(input: SurfaceInput, point: SurfacePoint) -> f32 {
     if foliage().z == 0.0 {
-        return standard_cutoff(input, point);
+        return mapped_cutoff(input, point);
     }
-    return max(fade_noise(input.pixel), 1.0 / 255.0);
+    return max(fade_noise(input.pixel), 1.0 / 255.0) / mask_coverage(input);
 }
 
 fn kind(input: SurfaceInput, point: SurfacePoint) -> u32 {
@@ -58,6 +59,6 @@ fn kind(input: SurfaceInput, point: SurfacePoint) -> u32 {
 
 fn light_inputs(input: SurfaceInput, point: SurfacePoint) -> LightInputs {
     var inputs = point.inputs;
-    inputs.shadow_softness = leafiness(standard_base_color(input, point));
+    inputs.shadow_softness = leafiness(mapped_base_color(input, point));
     return inputs;
 }

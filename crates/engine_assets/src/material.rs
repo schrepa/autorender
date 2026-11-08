@@ -1,7 +1,7 @@
 use engine_codec::{Error, ErrorCode, Expected};
 use engine_settings::{InvalidSetting, Rule, Setting, fields};
 
-use crate::TextureHandle;
+use crate::{ColorSpace, TextureHandle};
 
 fn invalid(setting: InvalidSetting) -> Error {
     setting.error(ErrorCode::InvalidMaterial, "$")
@@ -296,17 +296,28 @@ pub enum LightingModel {
     Named(String),
 }
 
+pub const MAPPED: &str = "mapped";
 pub const BASE_COLOR_MAP: &str = "base_color";
 pub const METALLIC_ROUGHNESS_MAP: &str = "metallic_roughness";
 pub const NORMAL_MAP: &str = "normal";
 pub const OCCLUSION_MAP: &str = "occlusion";
 pub const EMISSIVE_MAP: &str = "emissive";
-pub const STANDARD_MAPS: [&str; 5] = [
-    BASE_COLOR_MAP,
-    METALLIC_ROUGHNESS_MAP,
-    NORMAL_MAP,
-    OCCLUSION_MAP,
-    EMISSIVE_MAP,
+pub const MAPPED_MAPS: [(&str, ColorSpace); 5] = [
+    (BASE_COLOR_MAP, ColorSpace::Srgb),
+    (METALLIC_ROUGHNESS_MAP, ColorSpace::Linear),
+    (NORMAL_MAP, ColorSpace::Linear),
+    (OCCLUSION_MAP, ColorSpace::Linear),
+    (EMISSIVE_MAP, ColorSpace::Srgb),
+];
+pub const MAPPED_SLOTS: [(SurfaceSlot, &[&str]); 8] = [
+    (SurfaceSlot::BaseColor, &[BASE_COLOR_MAP]),
+    (SurfaceSlot::Opacity, &[BASE_COLOR_MAP]),
+    (SurfaceSlot::Cutoff, &[BASE_COLOR_MAP]),
+    (SurfaceSlot::Normal, &[NORMAL_MAP]),
+    (SurfaceSlot::Roughness, &[METALLIC_ROUGHNESS_MAP]),
+    (SurfaceSlot::Metalness, &[METALLIC_ROUGHNESS_MAP]),
+    (SurfaceSlot::Emissive, &[EMISSIVE_MAP, BASE_COLOR_MAP]),
+    (SurfaceSlot::Occlusion, &[OCCLUSION_MAP]),
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -333,6 +344,10 @@ impl Material {
     pub const EMISSIVE: Rule = Rule::at_least(0.0);
     pub const TRANSMISSION: Rule = Rule::range(0.0, 1.0);
     pub const VALUE: Rule = Rule::finite();
+
+    pub fn is_name(name: &str) -> bool {
+        is_identifier(name)
+    }
 
     pub fn new(color: [f32; 4]) -> Result<Self, Error> {
         color.check("color", Self::COLOR).map_err(invalid)?;
@@ -417,7 +432,7 @@ impl Material {
 
     pub fn textured(color: [f32; 4], texture: TextureHandle) -> Result<Self, Error> {
         Self::new(color)?
-            .with_map(BASE_COLOR_MAP, TextureRef::new(texture).with_sampler(Sampler::CLAMP))
+            .with_mapped(BASE_COLOR_MAP, TextureRef::new(texture).with_sampler(Sampler::CLAMP))
     }
 
     pub fn with_map(mut self, name: impl Into<String>, texture: TextureRef) -> Result<Self, Error> {
@@ -435,42 +450,36 @@ impl Material {
         Ok(self)
     }
 
-    pub fn with_base_color_texture(self, texture: TextureRef) -> Result<Self, Error> {
-        self.with_map(BASE_COLOR_MAP, texture)
+    pub fn with_mapped(self, map: &str, texture: TextureRef) -> Result<Self, Error> {
+        let mut material = self.with_map(map, texture)?;
+        for (slot, maps) in MAPPED_SLOTS {
+            if maps.contains(&map) && material.slot(slot).is_none() {
+                material = material.with_slot(slot, MAPPED)?;
+            }
+        }
+        Ok(material)
     }
 
-    pub fn with_metallic_roughness_texture(self, texture: TextureRef) -> Result<Self, Error> {
-        self.with_map(METALLIC_ROUGHNESS_MAP, texture)
-    }
-
-    pub fn with_normal_texture(mut self, texture: TextureRef, scale: f32) -> Result<Self, Error> {
+    pub fn with_normal_scale(mut self, scale: f32) -> Result<Self, Error> {
         scale
             .check("normal_scale", Self::NORMAL_SCALE)
             .map_err(invalid)?;
         self.normal_scale = scale;
-        self.with_map(NORMAL_MAP, texture)
+        Ok(self)
     }
 
-    pub fn with_occlusion_texture(
-        mut self,
-        texture: TextureRef,
-        strength: f32,
-    ) -> Result<Self, Error> {
+    pub fn with_occlusion_strength(mut self, strength: f32) -> Result<Self, Error> {
         strength
             .check("occlusion_strength", Self::OCCLUSION_STRENGTH)
             .map_err(invalid)?;
         self.occlusion_strength = strength;
-        self.with_map(OCCLUSION_MAP, texture)
+        Ok(self)
     }
 
     pub fn with_emissive(mut self, color: [f32; 3]) -> Result<Self, Error> {
         color.check("emissive", Self::EMISSIVE).map_err(invalid)?;
         self.emissive = color;
         Ok(self)
-    }
-
-    pub fn with_emissive_texture(self, texture: TextureRef) -> Result<Self, Error> {
-        self.with_map(EMISSIVE_MAP, texture)
     }
 
     pub fn with_transmission(mut self, transmission: f32) -> Result<Self, Error> {
@@ -536,30 +545,6 @@ impl Material {
 
     pub fn maps(&self) -> &[(String, TextureRef)] {
         &self.maps
-    }
-
-    pub fn texture(&self) -> Option<TextureHandle> {
-        self.map(BASE_COLOR_MAP).map(|texture| texture.texture)
-    }
-
-    pub fn base_color_texture(&self) -> Option<TextureRef> {
-        self.map(BASE_COLOR_MAP)
-    }
-
-    pub fn metallic_roughness_texture(&self) -> Option<TextureRef> {
-        self.map(METALLIC_ROUGHNESS_MAP)
-    }
-
-    pub fn normal_texture(&self) -> Option<TextureRef> {
-        self.map(NORMAL_MAP)
-    }
-
-    pub fn occlusion_texture(&self) -> Option<TextureRef> {
-        self.map(OCCLUSION_MAP)
-    }
-
-    pub fn emissive_texture(&self) -> Option<TextureRef> {
-        self.map(EMISSIVE_MAP)
     }
 
     pub fn normal_scale(&self) -> f32 {

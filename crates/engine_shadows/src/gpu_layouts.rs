@@ -11,6 +11,7 @@ const _: () = assert!(SKY_LAYERS == 26, "sky_views_hold_every_layer");
 pub(crate) const GENERATED: &[&str] = &[
     crate::constants::WGSL,
     <TileEntry as GpuBits>::WGSL,
+    <engine_places_rendering::shadows::SunShown as GpuBits>::WGSL,
     CasterCull::WGSL,
     Route::WGSL,
     SkyViews::WGSL,

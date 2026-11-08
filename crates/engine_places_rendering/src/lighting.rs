@@ -1,9 +1,7 @@
 use bevy_ecs::prelude::Resource;
 use engine_place::{List, Slot};
 
-use crate::shadows::{
-    DEBUG_SHADOWED, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL, DEBUG_SUN_NONE,
-};
+use crate::shadows::{DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL, DEBUG_SUN_NONE};
 
 pub const SPECULAR_VARIANCE: f32 = 0.15;
 pub const SPECULAR_LIMIT: f32 = 0.2;
@@ -33,7 +31,6 @@ impl List for SunBlockers {
         DEBUG_SUN_LEVEL,
         DEBUG_SUN_HORIZON,
         DEBUG_SUN_BEYOND,
-        DEBUG_SHADOWED,
     ));
 }
 

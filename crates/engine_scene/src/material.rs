@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::system::{Res, ResMut, SystemParamItem};
 use engine_core::{
-    AlphaMode, AssetLibrary, ColorSpace, Cull, DepthBias, Error, Filter, LightingModel, Material,
-    Operation, Sampler, SceneContext, SurfaceSlot, TextureHandle, TextureRef, UvTransform, Wrap,
+    AlphaMode, AssetLibrary, ColorSpace, Cull, DepthBias, Error, Filter, LightingModel, MAPPED,
+    MAPPED_MAPS, MAPPED_SLOTS, Material, Operation, Sampler, SceneContext, SurfaceSlot,
+    TextureHandle, TextureRef, UvTransform, Wrap,
 };
 use engine_settings::{ErrorCode, Expected};
 use serde::{Deserialize, Serialize};
@@ -34,25 +35,15 @@ pub struct SceneMaterial {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<[f32; 4]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub texture: Option<SceneMap>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<SceneSurface>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub metallic_roughness_texture: Option<SceneMap>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub normal_texture: Option<SceneMap>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub normal_scale: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub occlusion_texture: Option<SceneMap>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occlusion_strength: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emissive: Option<[f32; 3]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub emissive_texture: Option<SceneMap>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpha_mode: Option<SceneAlphaMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -68,7 +59,7 @@ pub struct SceneMaterial {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transmission: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub slots: Option<BTreeMap<String, String>>,
+    pub slots: Option<BTreeMap<String, SceneSlot>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub values: Option<BTreeMap<String, f32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,6 +96,48 @@ pub enum SceneCull {
 pub struct SceneDepthBias {
     pub constant: i32,
     pub slope: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum SceneSlot {
+    Module(String),
+    Filled(SceneSlotFill),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SceneSlotFill {
+    pub module: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub maps: BTreeMap<String, SceneMap>,
+}
+
+impl SceneSlot {
+    pub fn module(&self) -> &str {
+        match self {
+            Self::Module(module) => module,
+            Self::Filled(fill) => &fill.module,
+        }
+    }
+
+    pub fn maps(&self) -> impl Iterator<Item = (&str, &SceneMap)> {
+        let maps = match self {
+            Self::Module(_) => None,
+            Self::Filled(fill) => Some(&fill.maps),
+        };
+        maps.into_iter()
+            .flatten()
+            .map(|(name, map)| (name.as_str(), map))
+    }
+}
+
+impl From<&str> for SceneSlot {
+    fn from(module: &str) -> Self {
+        Self::Module(module.to_owned())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -195,54 +228,42 @@ pub enum SceneAlphaMode {
     Additive,
 }
 
-const MAP_FIELDS: [&str; 5] = [
-    "texture",
-    "metallic_roughness_texture",
-    "normal_texture",
-    "occlusion_texture",
-    "emissive_texture",
-];
+type PreparedMap = (String, String, Sampler, UvTransform, u32);
 
 pub(crate) struct PreparedMaterial {
     material: Material,
-    maps: [Option<(String, Sampler, UvTransform, u32)>; 5],
-    normal_scale: f32,
-    occlusion_strength: f32,
+    maps: Vec<PreparedMap>,
 }
 
 impl PreparedMaterial {
     pub(crate) fn material(&self, texture: impl Fn(&str) -> TextureHandle) -> Material {
-        let [base, packed, normal, occlusion, emissive] = self.maps.each_ref().map(|map| {
-            map.as_ref().map(|(id, sampler, transform, tex_coord)| {
-                TextureRef::new(texture(id))
-                    .with_sampler(*sampler)
-                    .with_transform(*transform)
-                    .with_tex_coord(*tex_coord)
-            })
-        });
         let mut material = self.material.clone();
-        let valid = "prepared_maps_valid";
-        if let Some(map) = base {
-            material = material.with_base_color_texture(map).expect(valid);
-        }
-        if let Some(map) = packed {
-            material = material.with_metallic_roughness_texture(map).expect(valid);
-        }
-        if let Some(map) = normal {
+        for (name, id, sampler, transform, tex_coord) in &self.maps {
+            let map = TextureRef::new(texture(id))
+                .with_sampler(*sampler)
+                .with_transform(*transform)
+                .with_tex_coord(*tex_coord);
             material = material
-                .with_normal_texture(map, self.normal_scale)
-                .expect(valid);
-        }
-        if let Some(map) = occlusion {
-            material = material
-                .with_occlusion_texture(map, self.occlusion_strength)
-                .expect(valid);
-        }
-        if let Some(map) = emissive {
-            material = material.with_emissive_texture(map).expect(valid);
+                .with_map(name.as_str(), map)
+                .expect("prepared_maps_valid");
         }
         material
     }
+}
+
+fn home_slot(material: &Material, map: &str) -> Option<SurfaceSlot> {
+    let mapped = |slot: SurfaceSlot| {
+        MAPPED_SLOTS
+            .iter()
+            .any(|(known, maps)| *known == slot && maps.contains(&map))
+    };
+    let slots = material.slots();
+    slots
+        .iter()
+        .find(|(slot, module)| module == MAPPED && mapped(*slot))
+        .or_else(|| slots.iter().find(|(_, module)| module != MAPPED))
+        .or_else(|| slots.first())
+        .map(|(slot, _)| *slot)
 }
 
 impl SceneMaterial {
@@ -251,9 +272,28 @@ impl SceneMaterial {
         material: &Material,
         texture: impl Fn(TextureHandle) -> String,
     ) -> Self {
-        let map = |map: Option<TextureRef>| {
-            map.map(|map| SceneMap::Map(SceneTextureMap::from_runtime(texture(map.texture), &map)))
-        };
+        let mut fills: BTreeMap<String, SceneSlotFill> = material
+            .slots()
+            .iter()
+            .map(|(slot, module)| {
+                (
+                    slot.name().to_owned(),
+                    SceneSlotFill {
+                        module: module.clone(),
+                        maps: BTreeMap::new(),
+                    },
+                )
+            })
+            .collect();
+        for (name, map) in material.maps() {
+            let fill = home_slot(material, name).and_then(|slot| fills.get_mut(slot.name()));
+            if let Some(fill) = fill {
+                fill.maps.insert(
+                    name.clone(),
+                    SceneMap::Map(SceneTextureMap::from_runtime(texture(map.texture), map)),
+                );
+            }
+        }
         let [red, green, blue, opacity] = material.color();
         let surface = material.surface();
         let state = material.render_state();
@@ -267,20 +307,15 @@ impl SceneMaterial {
             id: id.into(),
             provided: None,
             color: Some([red, green, blue, 1.0]),
-            texture: map(material.base_color_texture()),
             surface: Some(SceneSurface {
                 roughness: surface.roughness,
                 metalness: surface.metalness,
                 emission: surface.emission,
             }),
             opacity: Some(opacity),
-            metallic_roughness_texture: map(material.metallic_roughness_texture()),
-            normal_texture: map(material.normal_texture()),
             normal_scale: Some(material.normal_scale()),
-            occlusion_texture: map(material.occlusion_texture()),
             occlusion_strength: Some(material.occlusion_strength()),
             emissive: Some(material.emissive()),
-            emissive_texture: map(material.emissive_texture()),
             alpha_mode: Some(alpha_mode),
             alpha_cutoff,
             cull: Some(match state.cull {
@@ -295,11 +330,17 @@ impl SceneMaterial {
                 slope: state.bias.slope,
             }),
             transmission: Some(material.transmission()),
-            slots: (!material.slots().is_empty()).then(|| {
-                material
-                    .slots()
-                    .iter()
-                    .map(|(slot, module)| (slot.name().to_owned(), module.clone()))
+            slots: (!fills.is_empty()).then(|| {
+                fills
+                    .into_iter()
+                    .map(|(slot, fill)| {
+                        let slot_fill = if fill.maps.is_empty() {
+                            SceneSlot::Module(fill.module)
+                        } else {
+                            SceneSlot::Filled(fill)
+                        };
+                        (slot, slot_fill)
+                    })
                     .collect()
             }),
             values: (!material.values().is_empty())
@@ -312,34 +353,26 @@ impl SceneMaterial {
         }
     }
 
-    pub(crate) fn texture_ids(&self) -> impl Iterator<Item = (&'static str, &str)> {
+    fn maps(&self) -> impl Iterator<Item = (&str, &str, &SceneMap)> {
+        self.slots.iter().flatten().flat_map(|(slot, fill)| {
+            fill.maps()
+                .map(move |(name, map)| (slot.as_str(), name, map))
+        })
+    }
+
+    pub(crate) fn texture_ids(&self) -> impl Iterator<Item = (String, &str)> {
         self.maps()
-            .into_iter()
-            .zip(MAP_FIELDS)
-            .filter_map(|(map, field)| map.map(|map| (field, map.id())))
+            .map(|(slot, name, map)| (format!("slots.{slot}.maps.{name}"), map.id()))
     }
 
     pub(crate) fn map_spaces(&self) -> impl Iterator<Item = (&str, ColorSpace)> + '_ {
-        self.maps()
-            .into_iter()
-            .zip([
-                ColorSpace::Srgb,
-                ColorSpace::Linear,
-                ColorSpace::Linear,
-                ColorSpace::Linear,
-                ColorSpace::Srgb,
-            ])
-            .filter_map(|(map, space)| map.map(|map| (map.id(), space)))
-    }
-
-    fn maps(&self) -> [Option<&SceneMap>; 5] {
-        [
-            self.texture.as_ref(),
-            self.metallic_roughness_texture.as_ref(),
-            self.normal_texture.as_ref(),
-            self.occlusion_texture.as_ref(),
-            self.emissive_texture.as_ref(),
-        ]
+        self.maps().map(|(_, name, map)| {
+            let space = MAPPED_MAPS
+                .iter()
+                .find(|(known, _)| *known == name)
+                .map_or(ColorSpace::Linear, |(_, space)| *space);
+            (map.id(), space)
+        })
     }
 
     pub(crate) fn prepare(&self, path: &str) -> Result<PreparedMaterial, Error> {
@@ -355,19 +388,11 @@ impl SceneMaterial {
         identifier(name, &format!("{path}.provided"))?;
         let given = [
             ("color", self.color.is_some()),
-            ("texture", self.texture.is_some()),
             ("surface", self.surface.is_some()),
             ("opacity", self.opacity.is_some()),
-            (
-                "metallic_roughness_texture",
-                self.metallic_roughness_texture.is_some(),
-            ),
-            ("normal_texture", self.normal_texture.is_some()),
             ("normal_scale", self.normal_scale.is_some()),
-            ("occlusion_texture", self.occlusion_texture.is_some()),
             ("occlusion_strength", self.occlusion_strength.is_some()),
             ("emissive", self.emissive.is_some()),
-            ("emissive_texture", self.emissive_texture.is_some()),
             ("alpha_mode", self.alpha_mode.is_some()),
             ("alpha_cutoff", self.alpha_cutoff.is_some()),
             ("cull", self.cull.is_some()),
@@ -387,9 +412,7 @@ impl SceneMaterial {
         }
         Ok(PreparedMaterial {
             material: Material::new([1.0; 4]).expect("white_material_valid"),
-            maps: Default::default(),
-            normal_scale: 1.0,
-            occlusion_strength: 1.0,
+            maps: Vec::new(),
         })
     }
 
@@ -465,7 +488,7 @@ impl SceneMaterial {
                 .with_transmission(transmission)
                 .map_err(|error| failed(error, "transmission"))?;
         }
-        for (name, module) in self.slots.iter().flatten() {
+        for (name, fill) in self.slots.iter().flatten() {
             let Some(slot) = SurfaceSlot::named(name) else {
                 return Err(
                     Error::new(ErrorCode::UnknownVariant, format!("{path}.slots.{name}"))
@@ -474,7 +497,7 @@ impl SceneMaterial {
                 );
             };
             material = material
-                .with_slot(slot, module.as_str())
+                .with_slot(slot, fill.module())
                 .map_err(|error| failed(error, &format!("slots.{name}")))?;
         }
         for (name, value) in self.values.iter().flatten() {
@@ -489,24 +512,26 @@ impl SceneMaterial {
                 named => LightingModel::Named(named.to_owned()),
             });
         }
-        let normal_scale = self.normal_scale.unwrap_or(1.0);
-        if !normal_scale.is_finite() {
-            return Err(invalid("normal_scale")
-                .expected(Expected::Finite)
-                .got(normal_scale));
+        if let Some(scale) = self.normal_scale {
+            material = material
+                .with_normal_scale(scale)
+                .map_err(|error| failed(error, "normal_scale"))?;
         }
-        let occlusion_strength = self.occlusion_strength.unwrap_or(1.0);
-        if !occlusion_strength.is_finite() || !(0.0..=1.0).contains(&occlusion_strength) {
-            return Err(invalid("occlusion_strength")
-                .range(0.0, 1.0)
-                .got(occlusion_strength));
+        if let Some(strength) = self.occlusion_strength {
+            material = material
+                .with_occlusion_strength(strength)
+                .map_err(|error| failed(error, "occlusion_strength"))?;
         }
-        let mut maps: [Option<(String, Sampler, UvTransform, u32)>; 5] = Default::default();
-        for ((slot, map), field) in maps.iter_mut().zip(self.maps()).zip(MAP_FIELDS) {
-            let Some(map) = map else {
-                continue;
-            };
-            *slot = Some(match map {
+        let mut maps: Vec<PreparedMap> = Vec::new();
+        for (slot, name, map) in self.maps() {
+            let field = format!("slots.{slot}.maps.{name}");
+            if maps.iter().any(|(known, ..)| known == name) {
+                return Err(Error::new(ErrorCode::NameTwice, format!("{path}.{field}")).got(name));
+            }
+            if !Material::is_name(name) {
+                return Err(invalid(&field).expected(Expected::Id).got(name));
+            }
+            let (id, sampler, transform, tex_coord) = match map {
                 SceneMap::Id(id) => (id.clone(), Sampler::REPEAT, UvTransform::IDENTITY, 0),
                 SceneMap::Map(map) => {
                     let transform = UvTransform {
@@ -538,14 +563,10 @@ impl SceneMaterial {
                     }
                     (map.id.clone(), map.sampler(), transform, tex_coord)
                 }
-            });
+            };
+            maps.push((name.to_owned(), id, sampler, transform, tex_coord));
         }
-        Ok(PreparedMaterial {
-            material,
-            maps,
-            normal_scale,
-            occlusion_strength,
-        })
+        Ok(PreparedMaterial { material, maps })
     }
 }
 

@@ -10,7 +10,14 @@ pub const DEBUG_SUN_NONE: u32 = 0;
 pub const DEBUG_SUN_HORIZON: u32 = 1;
 pub const DEBUG_SUN_BEYOND: u32 = 2;
 pub const DEBUG_SUN_LEVEL: u32 = 3;
-pub const DEBUG_SHADOWED: u32 = 0x80;
+
+#[engine_place::gpu_bits(crate = engine_place)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SunShown {
+    #[bits(7)]
+    pub source: u32,
+    pub shadowed: bool,
+}
 
 pub fn ground_level(levels: u32, spacing: impl Fn(u32) -> f32, texel: f32) -> u32 {
     let coarsest = levels.saturating_sub(1);
@@ -51,8 +58,7 @@ impl Slot for ShadowMaps {
         DEBUG_SUN_NONE,
         DEBUG_SUN_LEVEL,
         DEBUG_SUN_HORIZON,
-        DEBUG_SUN_BEYOND,
-        DEBUG_SHADOWED;
+        DEBUG_SUN_BEYOND;
         GROUND_TEXELS,
     ));
 }

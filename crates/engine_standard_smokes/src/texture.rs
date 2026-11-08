@@ -61,8 +61,14 @@ fn fixture(inverted: bool) -> Value {
         "textures": textures,
         "materials": [
             {"id": "ground", "color": [0.5, 0.55, 0.45, 1]},
-            {"id": "bark", "color": [1, 1, 1, 1], "texture": "bark"},
-            {"id": "leaf", "color": [1, 1, 1, 1], "texture": "leaf"},
+            {"id": "bark", "color": [1, 1, 1, 1], "slots": {
+                "base_color": {"module": "mapped", "maps": {"base_color": "bark"}},
+                "opacity": "mapped",
+            }},
+            {"id": "leaf", "color": [1, 1, 1, 1], "slots": {
+                "base_color": {"module": "mapped", "maps": {"base_color": "leaf"}},
+                "opacity": "mapped",
+            }},
         ],
         "meshes": [{"id": "box", "source": {"kind": "cube"}}, {"id": "gem", "source": {"kind": "octahedron"}}],
         "entities": [

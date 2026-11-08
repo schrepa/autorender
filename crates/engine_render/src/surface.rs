@@ -2,8 +2,8 @@ use std::fmt::Write as _;
 use std::sync::Mutex;
 
 use engine_core::{
-    AlphaMode, BitValue, Error, ErrorCode, GpuBits, LightingModel, Material, MaterialHandle,
-    Module, STANDARD_MAPS, SurfaceSlot, UvTransform, gpu_bits,
+    AlphaMode, BitValue, Error, ErrorCode, GpuBits, LightingModel, MAPPED, MAPPED_SLOTS, Material,
+    MaterialHandle, Module, SurfaceSlot, UvTransform, gpu_bits,
 };
 
 use crate::bindings::{Sample, Sampling, Stages, Table, View, sampler, texture, uniform_of};
@@ -11,6 +11,7 @@ use crate::bindings::{Sample, Sampling, Stages, Table, View, sampler, texture, u
 pub const MATERIALS_MODULE: &str = "engine::materials";
 pub const SLOTS_MODULE: &str = "engine::slots";
 pub const SURFACES_MODULE: &str = "engine::surfaces";
+pub const MAPPED_MODULE: &str = "engine::mapped";
 pub const RECORD: &str = "material_record";
 pub const MASK_MIP_SCALE: f32 = 0.25;
 const MODULE_ROWS: usize = SurfaceSlot::ALL.len().div_ceil(4);
@@ -173,13 +174,35 @@ pub struct LightingModule {
     pub module: Module,
 }
 
+type LaidSlot = (SurfaceSlot, &'static str, String, &'static [&'static str]);
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MaterialLayout {
     maps: Vec<&'static str>,
     values: Vec<&'static str>,
-    slots: Vec<(SurfaceSlot, &'static str, String)>,
+    slots: Vec<LaidSlot>,
     models: Vec<(&'static str, String)>,
     kinds: Vec<SurfaceKind>,
+}
+
+pub(crate) fn core_slots() -> Vec<(SlotModule, String)> {
+    let module = crate::shaders::core_module(MAPPED_MODULE);
+    MAPPED_SLOTS
+        .iter()
+        .map(|&(slot, maps)| {
+            (
+                SlotModule {
+                    slot,
+                    name: MAPPED,
+                    module,
+                    maps,
+                    values: &[],
+                    reach: 0.0,
+                },
+                MAPPED_MODULE.to_owned(),
+            )
+        })
+        .collect()
 }
 
 fn upper(name: &str) -> String {
@@ -192,13 +215,7 @@ fn wrong_name(path: String, name: &str) -> Error {
 
 impl MaterialLayout {
     pub(crate) fn standard() -> Self {
-        Self {
-            maps: STANDARD_MAPS.to_vec(),
-            values: Vec::new(),
-            slots: Vec::new(),
-            models: Vec::new(),
-            kinds: vec![SurfaceKind::SOLID, SurfaceKind::THIN],
-        }
+        Self::of(&core_slots(), &[], &[], &mut Vec::new())
     }
 
     pub(crate) fn of(
@@ -207,12 +224,18 @@ impl MaterialLayout {
         kinds: &[SurfaceKind],
         problems: &mut Vec<Error>,
     ) -> Self {
-        let mut layout = Self::standard();
+        let mut layout = Self {
+            maps: Vec::new(),
+            values: Vec::new(),
+            slots: Vec::new(),
+            models: Vec::new(),
+            kinds: vec![SurfaceKind::SOLID, SurfaceKind::THIN],
+        };
         for (declared, path) in slots {
             if layout
                 .slots
                 .iter()
-                .any(|(slot, name, _)| *slot == declared.slot && *name == declared.name)
+                .any(|(slot, name, _, _)| *slot == declared.slot && *name == declared.name)
             {
                 problems.push(wrong_name(
                     format!("$.material_slots.{}.{}", declared.slot.name(), declared.name),
@@ -232,7 +255,7 @@ impl MaterialLayout {
             }
             layout
                 .slots
-                .push((declared.slot, declared.name, path.clone()));
+                .push((declared.slot, declared.name, path.clone(), declared.maps));
         }
         for (declared, path) in models {
             let core = [Lighting::Lit, Lighting::Unlit]
@@ -272,9 +295,22 @@ impl MaterialLayout {
     pub(crate) fn slot_module(&self, slot: SurfaceSlot, name: &str) -> Option<u32> {
         self.slots
             .iter()
-            .filter(|(known, _, _)| *known == slot)
-            .position(|(_, known, _)| *known == name)
+            .filter(|(known, _, _, _)| *known == slot)
+            .position(|(_, known, _, _)| *known == name)
             .map(|at| at as u32 + 1)
+    }
+
+    fn read_maps<'a>(&'a self, material: &'a Material) -> impl Iterator<Item = &'static str> + 'a {
+        material.slots().iter().flat_map(move |(slot, module)| {
+            self.slots
+                .iter()
+                .filter(move |(known, name, _, _)| known == slot && name == module)
+                .flat_map(|(_, _, _, maps)| maps.iter().copied())
+        })
+    }
+
+    pub(crate) fn reads(&self, material: &Material, map: &str) -> bool {
+        self.read_maps(material).any(|read| read == map)
     }
 
     pub(crate) fn model(&self, lighting: &LightingModel) -> Option<u32> {
@@ -291,30 +327,21 @@ impl MaterialLayout {
 
     pub(crate) fn materials_source(&self) -> String {
         let mut source = String::new();
-        let mut binding = 0;
-        let declare_map = |source: &mut String, name: &str, binding: &mut u32| {
+        let _ = writeln!(
+            source,
+            "@group(1) @binding(0) var<uniform> {RECORD}: MaterialRecord;"
+        );
+        for (index, name) in self.maps.iter().enumerate() {
+            let binding = 1 + 2 * index;
             let _ = writeln!(
                 source,
-                "@group(1) @binding({}) var {name}_map: texture_2d<f32>;",
-                *binding
+                "@group(1) @binding({binding}) var {name}_map: texture_2d<f32>;"
             );
             let _ = writeln!(
                 source,
                 "@group(1) @binding({}) var {name}_sampler: sampler;",
-                *binding + 1
+                binding + 1
             );
-            *binding += 2;
-        };
-        for name in &self.maps[..STANDARD_MAPS.len()] {
-            declare_map(&mut source, name, &mut binding);
-        }
-        let _ = writeln!(
-            source,
-            "@group(1) @binding({binding}) var<uniform> {RECORD}: MaterialRecord;"
-        );
-        binding += 1;
-        for name in &self.maps[STANDARD_MAPS.len()..] {
-            declare_map(&mut source, name, &mut binding);
         }
         let _ = writeln!(
             source,
@@ -395,10 +422,10 @@ impl MaterialLayout {
                 body,
                 "\nfn slot_{name}({params}) -> {returns} {{"
             );
-            let modules: Vec<&(SurfaceSlot, &'static str, String)> = self
+            let modules: Vec<&LaidSlot> = self
                 .slots
                 .iter()
-                .filter(|(known, _, _)| *known == slot)
+                .filter(|(known, _, _, _)| *known == slot)
                 .collect();
             if full && !modules.is_empty() {
                 let _ = writeln!(
@@ -406,7 +433,7 @@ impl MaterialLayout {
                     "    let picked = material_module(SLOT_{});",
                     upper(name)
                 );
-                for (index, (_, _, path)) in modules.iter().enumerate() {
+                for (index, (_, _, path, _)) in modules.iter().enumerate() {
                     let id = index + 1;
                     let _ = writeln!(
                         imports,
@@ -487,7 +514,8 @@ impl MaterialLayout {
         let number = tables.len();
         let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
         let mut bindings = Vec::with_capacity(2 * self.maps.len() + 1);
-        let add_map = |bindings: &mut Vec<_>, name: &str| {
+        bindings.push(uniform_of(RECORD, size, Stages::VERTEX_FRAGMENT));
+        for name in &self.maps {
             bindings.push(texture(
                 leak(format!("{name}_map")),
                 Sample::Float,
@@ -499,13 +527,6 @@ impl MaterialLayout {
                 Sampling::Filtering,
                 Stages::FRAGMENT,
             ));
-        };
-        for name in &self.maps[..STANDARD_MAPS.len()] {
-            add_map(&mut bindings, name);
-        }
-        bindings.push(uniform_of(RECORD, size, Stages::VERTEX_FRAGMENT));
-        for name in &self.maps[STANDARD_MAPS.len()..] {
-            add_map(&mut bindings, name);
         }
         let table: &'static Table = Box::leak(Box::new(Table {
             label: leak(format!("engine/material-layout-{number}")),
@@ -553,10 +574,16 @@ impl MaterialLayout {
             }
         }
         for (name, map) in material.maps() {
-            let Some(index) = self.maps.iter().position(|known| known == name) else {
+            let index = self
+                .maps
+                .iter()
+                .position(|known| known == name)
+                .filter(|_| self.reads(material, name));
+            let Some(index) = index else {
                 problems.push(
                     Error::new(ErrorCode::UnknownVariable, format!("{path}.maps.{name}"))
-                        .got(name.as_str()),
+                        .got(name.as_str())
+                        .variants(self.read_maps(material)),
                 );
                 continue;
             };

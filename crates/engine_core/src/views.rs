@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
-    AssetLibrary, Camera, Clear, ColorSpace, DRAWN_UNBOUNDED, Detail, Drawn, DrawnPoses, DrawnTable, Error,
+    AssetLibrary, Camera, Clear, ColorSpace, Detail, Drawn, DrawnFlags, DrawnPoses, DrawnTable, Error,
     ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Interest, Jitter, Layers, List,
     Mobility, Operation, OwnedView, OwnedViews, PassBit, PassMask, PassViews, Requests,
     ScenePasses, Target, View, ViewCut, ViewHistory, ViewJitter, ViewLayer, take_asks,
@@ -582,7 +582,7 @@ impl Picking<'_, '_> {
             let Some(owner) = self.table.owner(slot as u32) else {
                 continue;
             };
-            if record.flags & DRAWN_UNBOUNDED != 0 {
+            if DrawnFlags::of(record).unbounded {
                 continue;
             }
             let Ok(drawn) = self.drawn.get(owner) else {

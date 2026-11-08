@@ -4,7 +4,7 @@ use engine_places_simulation::ground::Ground;
 use engine_places_world::ground::{
     PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles,
 };
-use engine_core::Spawner;
+use engine_core::{BASE_COLOR_MAP, METALLIC_ROUGHNESS_MAP, NORMAL_MAP, Spawner};
 use engine_places_world::water::Hydrology;
 
 #[derive(Component)]
@@ -22,9 +22,9 @@ fn maps_of(look: &SurfaceMaterial, assets: &AssetLibrary) -> Option<SurfaceMaps>
     let material = assets.material(handle)?;
     Some(SurfaceMaps {
         material: handle,
-        base_color: material.base_color_texture().map(|map| map.texture),
-        normal: material.normal_texture().map(|map| map.texture),
-        metallic_roughness: material.metallic_roughness_texture().map(|map| map.texture),
+        base_color: material.map(BASE_COLOR_MAP).map(|map| map.texture),
+        normal: material.map(NORMAL_MAP).map(|map| map.texture),
+        metallic_roughness: material.map(METALLIC_ROUGHNESS_MAP).map(|map| map.texture),
     })
 }
 
@@ -40,7 +40,7 @@ fn relief_of(materials: &[SurfaceMaterial], assets: &AssetLibrary) -> u128 {
         });
         let map = look.material.and_then(|handle| {
             let material = assets.material(handle)?;
-            Some(material.metallic_roughness_texture()?.texture)
+            Some(material.map(METALLIC_ROUGHNESS_MAP)?.texture)
         });
         let content = map
             .and_then(|handle| assets.texture(handle))

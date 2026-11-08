@@ -1,5 +1,6 @@
 use engine_codec::{Error, ErrorCode, Expected, ExtraRules, InvalidSetting, Rule, Setting, fields};
 use engine_math::{clamp, max, min, sin_cos};
+use engine_place::GpuBits;
 use serde::{Deserialize, Serialize};
 
 use super::Control;
@@ -1207,7 +1208,7 @@ impl BiomeRules {
                     |biome| values[biome][self.biomes[biome].layers.len() + 1][sample],
                     weights,
                 )
-                .packed();
+                .pack();
         }
         for rows in values {
             for row in rows {

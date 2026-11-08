@@ -2,7 +2,7 @@ import package::face::ground_tiles::{GroundTerrain, NOT_RESIDENT, level_tiles, t
 import package::face::heightfield::{TERRAIN_GRID, terrain_uniform};
 import package::generated::water::{NO_WATER_BLOCK, NO_WATER_SURFACE, WATER_BLOCK, WATER_BLOCKS_SIDE,
     WATER_FLOW_RANGE, WATER_SHEAR_RANGE, WATER_SPAN_LEAST, WATER_SPAN_MOST, WATER_SPAN_STEPS,
-    WATER_TILE_PATCHES, WATER_TILE_WORDS, WATER_WAITING};
+    WATER_TILE_PATCHES, WATER_TILE_WORDS, WATER_WAITING, water_state_word_reach};
 import package::place::water::{WaterAt, WaterCell, WaterLevel, WaterWords};
 
 @group(0) @binding(0) var water_surface: texture_2d_array<f32>;
@@ -78,7 +78,7 @@ fn water_words(words: vec4<u32>) -> WaterWords {
     read.lake = info.w < 0.0;
     read.sheet = info.z < 0.0;
     read.state = vec3<f32>(state.xy, state.z * WATER_SHEAR_RANGE);
-    read.reach = words.y >> 24u;
+    read.reach = water_state_word_reach(words.y);
     return read;
 }
 

@@ -25,6 +25,7 @@ shader_modules! {
     "engine::view" = "frame/view.wgsl";
     "engine::shading" = "shading.wgsl";
     "engine::standard" = "standard.wgsl";
+    "engine::mapped" = "mapped.wgsl";
     "engine::surface" = "surface.wgsl";
     "engine::transparency" = "transparency.wgsl";
     "engine::mesh::vertex" = "meshes/vertex.wgsl";

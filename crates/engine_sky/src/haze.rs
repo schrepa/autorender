@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::Resource;
 use engine_core::{Error, Readable, Readback};
 use engine_render::{
-    Access, Attach, Bind, DepthUse, Encode, FULLSCREEN, Install, Lifetime, Own, Pass,
+    Access, Allocation, Attach, Bind, DepthUse, Encode, FULLSCREEN, Install, Lifetime, Own, Pass,
     Pipeline, Prepare, RenderPipeline, Shape, TargetName, Texture, wgpu,
 };
 use glam::UVec2;
@@ -135,12 +135,12 @@ impl Haze {
         })
     }
 
-    pub(crate) fn prepare(&mut self, cx: &mut Prepare<'_, SkyGpu>, plan: &HazePlan) {
+    pub(crate) fn prepare(&mut self, cx: &mut Prepare<'_, SkyGpu>, plan: &HazePlan) -> bool {
         if std::mem::take(&mut self.stepped) {
             cx.deliver::<HazeSteps>(0, vec![u8::from(cx.ran(self.filter_pass))]);
         }
         if !plan.runs {
-            return;
+            return false;
         }
         let size = plan.size;
         let extent = wgpu::Extent3d {
@@ -148,13 +148,15 @@ impl Haze {
             height: size.y,
             depth_or_array_layers: 1,
         };
-        for texture in [self.marched, self.hazed, self.history_texture] {
-            cx.allocate(texture, extent, 1);
-        }
         self.drawn = plan.drawn;
-        cx.run(self.march_pass);
-        cx.run(self.filter_pass);
+        match cx.allocate(self.marched, extent, 1) {
+            Allocation::Fresh | Allocation::Kept => cx.run(self.march_pass),
+        }
+        match cx.allocate(self.hazed, extent, 1) {
+            Allocation::Fresh | Allocation::Kept => cx.run(self.filter_pass),
+        }
         self.stepped = true;
+        cx.allocate(self.history_texture, extent, 1) == Allocation::Fresh
     }
 
     pub(crate) fn owns(&self, pass: Pass<SkyGpu>) -> bool {

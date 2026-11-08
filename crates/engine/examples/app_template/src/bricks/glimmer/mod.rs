@@ -6,14 +6,14 @@ use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{
     AttachPoint, Attributes, Brick, Bricks, Camera, Clear, Cursor, DrawKind, Drawn, DrawnPoses,
-    DrawnTable, Error, Events, Feed, FrameTime, GlobalTransforms, GpuStruct, Interest, KindDecl,
-    Node, Pass, PassName, PassViews, Rect, Requests, ScenePass, Schedule, SlotSet, Source,
-    Spawner, SurfaceSlot, TargetName, Ticket, Transform, View, Writes, gpu_struct, settings,
-    stats,
+    DrawnTable, EMISSIVE_MAP, Error, Events, Feed, FrameTime, GlobalTransforms, GpuStruct,
+    Interest, KindDecl, Node, Pass, PassName, PassViews, Rect, Requests, ScenePass, Schedule,
+    SlotSet, Source, Spawner, SurfaceSlot, TargetName, Ticket, Transform, View, Writes,
+    gpu_struct, settings, stats,
 };
 use engine_render::{
-    Bind, Buffer, DepthUse, Draw, GpuPart, Install, LightingModule, Lifetime, Pipeline, Prepare,
-    RenderBricks, RenderPipeline, Scene, SceneDraw, Shape, SlotModule, wgpu,
+    Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, LightingModule, Lifetime, Pipeline,
+    Prepare, RenderBricks, RenderPipeline, Scene, SceneDraw, Shape, SlotModule, wgpu,
 };
 
 pub const GLIMMER: DrawKind = DrawKind("glimmer");
@@ -112,7 +112,7 @@ impl Brick for GlimmerBrick {
                 slot: SurfaceSlot::Emissive,
                 name: "glimmer",
                 module: shaders::glimmer::glow::MODULE,
-                maps: &[],
+                maps: &[EMISSIVE_MAP],
                 values: &["glimmer"],
                 reach: 0.0,
             })
@@ -300,8 +300,9 @@ impl GpuPart for GlimmerGpu {
             });
         }
         let bytes = self.staged.len().max(1) * std::mem::size_of::<GlimmerInstance>();
-        cx.allocate_buffer(self.instances, bytes as u64);
-        cx.write(self.instances, 0, &self.staged);
+        match cx.allocate_buffer(self.instances, bytes as u64) {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.instances, 0, &self.staged),
+        }
     }
 }
 

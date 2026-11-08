@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{Entity, Resource};
-use engine_core::AssetLibrary;
+use engine_core::{AssetLibrary, BASE_COLOR_MAP};
 use engine_places_world::ground::{PALETTE_ENTRIES, PlacedLayer, TerrainEntry};
 
 use crate::groups::Resolved;
@@ -146,7 +146,7 @@ fn placed_color(asset: &Resolved<'_>, library: &AssetLibrary) -> [f32; 3] {
     let material = asset.material.material;
     let factor = material.color();
     let mean = material
-        .base_color_texture()
+        .map(BASE_COLOR_MAP)
         .filter(|map| asset.textures.contains(&map.texture))
         .and_then(|map| library.texture(map.texture))
         .and_then(|texture| texture.summary())

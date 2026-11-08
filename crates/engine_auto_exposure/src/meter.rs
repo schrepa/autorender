@@ -122,7 +122,6 @@ impl GpuPart for MeterGpu {
 
     fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
         let (settings, sky, display, time) = reads;
-        cx.allocate_buffer(self.bins, BIN_BYTES);
         let authored = display.exposure[0];
         let seconds = if time.real_seconds > 0.0 {
             time.real_seconds as f32
@@ -137,7 +136,6 @@ impl GpuPart for MeterGpu {
         let Some((mut values, authored)) = self.frame else {
             return;
         };
-        cx.allocate_buffer(self.uniform, UNIFORM_BYTES);
         if cx.allocate_buffer(self.state, STATE_BYTES) == Allocation::Fresh {
             let state = ExposureState {
                 exposure: authored,
@@ -149,8 +147,12 @@ impl GpuPart for MeterGpu {
             values.frame[1] = 0.0;
         }
         values.drawn = [view.render.x as f32, view.render.y as f32, 0.0, 0.0];
-        cx.write(self.uniform, 0, &[values]);
-        cx.run(self.meter);
+        match cx.allocate_buffer(self.uniform, UNIFORM_BYTES) {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.uniform, 0, &[values]),
+        }
+        match cx.allocate_buffer(self.bins, BIN_BYTES) {
+            Allocation::Fresh | Allocation::Kept => cx.run(self.meter),
+        }
     }
 
     fn encode(&mut self, _: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

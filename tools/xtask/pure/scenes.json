@@ -23,7 +23,7 @@
       "materials": [
         {"id": "plain", "color": [0.6, 0.5, 0.4, 1], "surface": {"roughness": 0.7, "metalness": 0}},
         {"id": "tinted", "color": [0.7, 0.9, 1, 1]},
-        {"id": "tiled", "color": [1, 1, 1, 1], "texture": {"id": "checker", "wrap_u": "mirrored_repeat", "scale": [4, 4]}, "alpha_mode": "mask", "alpha_cutoff": 0.3, "cull": "none"}
+        {"id": "tiled", "color": [1, 1, 1, 1], "slots": {"base_color": {"module": "mapped", "maps": {"base_color": {"id": "checker", "wrap_u": "mirrored_repeat", "scale": [4, 4]}}}, "opacity": "mapped", "cutoff": "mapped"}, "alpha_mode": "mask", "alpha_cutoff": 0.3, "cull": "none"}
       ],
       "meshes": [
         {"id": "box", "source": {"kind": "cube"}},

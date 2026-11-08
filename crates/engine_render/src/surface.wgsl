@@ -1,4 +1,3 @@
-import package::engine::materials::{MAP_BASE_COLOR, MASK_MIP_SCALE, base_color_map, map_uv};
 import package::engine::shading::{SurfaceInput, SurfacePoint, derived};
 import package::engine::slots::{slot_base_color, slot_cutoff, slot_emissive, slot_kind,
     slot_light_inputs, slot_metalness, slot_normal, slot_occlusion, slot_opacity, slot_roughness,
@@ -44,16 +43,8 @@ fn surface_point(input: SurfaceInput) -> SurfacePoint {
     return point;
 }
 
-fn mask_coverage(input: SurfaceInput) -> f32 {
-    let uv = map_uv(MAP_BASE_COLOR, input.uv, input.uv1);
-    let size = vec2<f32>(textureDimensions(base_color_map)) * exp2(input.bias);
-    let x = dpdx(uv) * size;
-    let y = dpdy(uv) * size;
-    return 1.0 + MASK_MIP_SCALE * max(0.5 * log2(max(dot(x, x), dot(y, y))), 0.0);
-}
-
 fn masked_out(input: SurfaceInput, point: SurfacePoint) -> bool {
-    return point.opacity * mask_coverage(input) < slot_cutoff(input, point);
+    return point.opacity < slot_cutoff(input, point);
 }
 
 fn opacity_cut(input: SurfaceInput) -> bool {

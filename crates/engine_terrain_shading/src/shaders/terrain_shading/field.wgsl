@@ -1,5 +1,6 @@
 import package::terrain_shading::faces::heightfield::terrain;
-import package::generated::terrain_shading::{SURFACE_MESHLET_LEVEL, PATCH_GRID, PATCH_GRID_VERTICES};
+import package::generated::terrain_shading::{SURFACE_MESHLET_LEVEL, PATCH_GRID, PATCH_GRID_VERTICES,
+    patch_texel_x, patch_texel_z};
 
 @group(0) @binding(17) var terrain_heights: texture_2d_array<f32>;
 
@@ -32,7 +33,8 @@ fn terrain_vertex(input: PatchInput) -> vec3<f32> {
         skirt = true;
     }
     let spacing = input.shape.x;
-    let texel = vec2<u32>(input.atlas.y & 0xffffu, input.atlas.y >> 16u) + grid + 1u;
+    let texel = vec2<u32>(patch_texel_x(input.atlas.y), patch_texel_z(input.atlas.y)) + grid
+        + 1u;
     let height = terrain_load(input.atlas.x, texel);
     let base = vec2<f32>(input.first + vec2<i32>(grid));
     return vec3<f32>(base.x * spacing + terrain.anchor.x,

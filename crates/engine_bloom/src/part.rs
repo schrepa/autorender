@@ -1,7 +1,8 @@
 use engine_core::{Entry, Error, ViewFacts};
 use engine_render::{
-    Access, Attach, Bind, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass,
-    Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, level_region, mip_levels, wgpu,
+    Access, Allocation, Attach, Bind, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
+    Own, Pass, Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, level_region,
+    mip_levels, wgpu,
 };
 
 use crate::BloomPass;
@@ -82,19 +83,17 @@ impl GpuPart for BloomGpu {
         let display = view.size();
         let half = ((display.x / 2).max(1), (display.y / 2).max(1));
         self.count = BLOOM_LEVELS.min(mip_levels(half.0, half.1));
-        cx.allocate(
-            self.levels,
-            wgpu::Extent3d {
-                width: half.0,
-                height: half.1,
-                depth_or_array_layers: 1,
-            },
-            self.count,
-        );
         for (level, drawn) in (0..).zip(&mut self.drawn) {
             *drawn = level_region(view, level);
         }
-        cx.run(self.pass);
+        let extent = wgpu::Extent3d {
+            width: half.0,
+            height: half.1,
+            depth_or_array_layers: 1,
+        };
+        match cx.allocate(self.levels, extent, self.count) {
+            Allocation::Fresh | Allocation::Kept => cx.run(self.pass),
+        }
     }
 
     fn encode(&mut self, _pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

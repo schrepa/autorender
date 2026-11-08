@@ -166,7 +166,7 @@ impl Environment {
             height: ENVIRONMENT_SIZE,
             depth_or_array_layers: FACES,
         };
-        cx.allocate(self.radiance, extent, self.levels);
+        let radiance = cx.allocate(self.radiance, extent, self.levels);
         if cx.allocate(self.maps, extent, self.levels) == Allocation::Fresh {
             self.drawn = None;
             cx.deliver::<EnvironmentFresh>(0, vec![1]);
@@ -174,7 +174,9 @@ impl Environment {
         self.runs = self.drawn != Some(plan.changes);
         if self.runs {
             self.drawn = Some(plan.changes);
-            cx.run(self.pass);
+            match radiance {
+                Allocation::Fresh | Allocation::Kept => cx.run(self.pass),
+            }
         }
     }
 

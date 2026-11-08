@@ -6,7 +6,9 @@ use engine::host::Image;
 use engine::bricks::parse_value_at;
 use engine::prelude::*;
 use engine::{Error, ErrorCode, Expected};
-use engine_core::RecordExchange;
+use engine_core::{
+    BASE_COLOR_MAP, METALLIC_ROUGHNESS_MAP, NORMAL_MAP, OCCLUSION_MAP, RecordExchange,
+};
 use serde_json::{Value, json};
 
 use crate::records;
@@ -256,10 +258,12 @@ fn scanned(
                 ..Surface::MATTE
             })
         })
-        .and_then(|material| material.with_base_color_texture(TextureRef::new(textures[0])))
-        .and_then(|material| material.with_normal_texture(TextureRef::new(textures[1]), 1.0))
-        .and_then(|material| material.with_metallic_roughness_texture(TextureRef::new(textures[2])))
-        .and_then(|material| material.with_occlusion_texture(TextureRef::new(textures[2]), 1.0))
+        .and_then(|material| material.with_mapped(BASE_COLOR_MAP, TextureRef::new(textures[0])))
+        .and_then(|material| material.with_mapped(NORMAL_MAP, TextureRef::new(textures[1])))
+        .and_then(|material| {
+            material.with_mapped(METALLIC_ROUGHNESS_MAP, TextureRef::new(textures[2]))
+        })
+        .and_then(|material| material.with_mapped(OCCLUSION_MAP, TextureRef::new(textures[2])))
         .and_then(|material| world_mapped(material, tiling, top))
         .map(Some)
 }
@@ -278,9 +282,12 @@ fn in_terrain_rock(
                 ..Surface::MATTE
             })
         })
-        .and_then(|material| material.with_base_color_texture(TextureRef::new(textures[0])))
-        .and_then(|material| material.with_normal_texture(TextureRef::new(textures[1]), 0.8))
-        .and_then(|material| material.with_metallic_roughness_texture(TextureRef::new(textures[2])))
-        .and_then(|material| material.with_occlusion_texture(TextureRef::new(textures[2]), 1.0))
+        .and_then(|material| material.with_mapped(BASE_COLOR_MAP, TextureRef::new(textures[0])))
+        .and_then(|material| material.with_mapped(NORMAL_MAP, TextureRef::new(textures[1])))
+        .and_then(|material| material.with_normal_scale(0.8))
+        .and_then(|material| {
+            material.with_mapped(METALLIC_ROUGHNESS_MAP, TextureRef::new(textures[2]))
+        })
+        .and_then(|material| material.with_mapped(OCCLUSION_MAP, TextureRef::new(textures[2])))
         .and_then(|material| world_mapped(material, tiling, top))
 }

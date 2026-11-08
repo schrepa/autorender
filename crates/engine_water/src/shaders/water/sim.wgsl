@@ -6,7 +6,9 @@ import package::generated::water::{BLOCK_GROUND, BREAK_FULL, BREAK_ONSET, BREAK_
     SimSlot, SimTouch, THETA, THIN, TURBULENT_SPEED, TURBULENT_SWIRL, UNHELD, WATER_FLOW_RANGE,
     WATER_SHEAR_RANGE, WATER_SIM_GROUP, WATER_SIM_SOURCE_GROUP, WET_MOST, sim_flags_bursting,
     sim_flags_keeping, sim_flags_live, sim_flags_local, sim_flags_looking, sim_flags_open,
-    sim_flags_sparse, sim_flags_stepping, sim_flags_summing};
+    sim_flags_sparse, sim_flags_stepping, sim_flags_summing, block_place_x, block_place_z,
+    water_info_word_kind, water_info_word_with_kind, water_state_word_reach,
+    water_state_word_with_reach};
 import package::water::bursts::water_burst;
 import package::water::sim_shared::sim_minmod;
 
@@ -158,7 +160,7 @@ fn sim_block(q: Square, block: vec2<i32>) -> u32 {
 
 fn sim_place(q: Square, block: u32) -> vec2<u32> {
     let place = sim_blocks[sim_table_base(q) + sim_mapped() + block];
-    return vec2<u32>(place & 0xffffu, place >> 16u);
+    return vec2<u32>(block_place_x(place), block_place_z(place));
 }
 
 fn sim_at(q: Square, i: i32, j: i32) -> u32 {
@@ -1519,8 +1521,8 @@ fn sim_drawn(
     let at = cell.at;
     let looks = sim_looks(at);
     let kept = sim_averages[looks + 1u];
-    let span = bitcast<u32>(kept.z) & 0xff000000u;
-    let reach = bitcast<u32>(kept.w) & 0xff000000u;
+    let span = water_info_word_kind(bitcast<u32>(kept.z));
+    let reach = water_state_word_reach(bitcast<u32>(kept.w));
     let i = i32(cell.i);
     let j = i32(cell.j);
     let dx = q.dx;
@@ -1573,6 +1575,7 @@ fn sim_drawn(
     }
     let flowing = pack4x8snorm(vec4<f32>(velocity / WATER_FLOW_RANGE, 0.0, 0.0));
     let stirred = pack4x8unorm(vec4<f32>(state.xy, state.z / WATER_SHEAR_RANGE, 0.0));
-    let words = vec2<u32>((flowing & 0x00ffffffu) | span, (stirred & 0x00ffffffu) | reach);
+    let words = vec2<u32>(water_info_word_with_kind(flowing, span),
+        water_state_word_with_reach(stirred, reach));
     sim_averages[looks + 1u] = vec4<f32>(surface, ground, bitcast<vec2<f32>>(words));
 }

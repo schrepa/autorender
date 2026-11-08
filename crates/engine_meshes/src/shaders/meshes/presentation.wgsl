@@ -1,4 +1,4 @@
-import package::engine::drawn::{DRAWN_OWN_PROJECTION, drawn_in_view, drawn_records};
+import package::engine::drawn::{drawn_flags_own_projection, drawn_in_view, drawn_records};
 import package::engine::math::maximum_abs;
 import package::engine::drawn_fades::set_drawn_fade;
 import package::engine::mesh::declarations::{FADE_LEVEL_MAX, drawn_slot, fade_word};
@@ -75,7 +75,7 @@ var<workgroup> shared_values: array<u32, GROUP>;
 var<workgroup> shared_counts: array<vec4<u32>, GROUP>;
 
 fn own_projection(slot: u32) -> bool {
-    return (drawn_records[slot].flags & DRAWN_OWN_PROJECTION) != 0u;
+    return drawn_flags_own_projection(drawn_records[slot].flags);
 }
 
 fn rows_matrix(rows: Rows) -> mat4x4<f32> {

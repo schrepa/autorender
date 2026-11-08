@@ -1,6 +1,6 @@
 use engine_core::{AttachPoint, Entry, Error, PassViews, ViewFacts};
 use engine_render::{
-    Access, Attach, Bind, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
+    Access, Allocation, Attach, Bind, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
     Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, wgpu,
 };
 
@@ -90,12 +90,14 @@ impl GpuPart for AmbientGpu {
             height: display.y.max(1),
             depth_or_array_layers: 1,
         };
-        cx.allocate(self.raw, extent, 1);
-        cx.allocate(self.occlusion, extent, 1);
         let within = |size: u32, whole: u32| size.clamp(1, whole.max(1));
         self.drawn = (within(render.x, display.x), within(render.y, display.y));
-        cx.run(self.occluding);
-        cx.run(self.filtering);
+        match cx.allocate(self.raw, extent, 1) {
+            Allocation::Fresh | Allocation::Kept => cx.run(self.occluding),
+        }
+        match cx.allocate(self.occlusion, extent, 1) {
+            Allocation::Fresh | Allocation::Kept => cx.run(self.filtering),
+        }
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

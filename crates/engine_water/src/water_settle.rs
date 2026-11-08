@@ -10,14 +10,15 @@ use engine_render::{
     AfterRead, Allocation, ComputePipeline, Count, Encode, Install, Pass, Prepare,
 };
 
-use crate::gpu::{SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_SLOTS, SimFlags, SimSetup, SimSlot};
+use crate::gpu::{
+    BlockPlace, SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_SLOTS, SimFlags, SimSetup, SimSlot,
+};
 use crate::jobs::SETTLED;
 use crate::shallow_water::{CELL_MEANS, DRY, step_seconds};
 use crate::state::WaterState;
 use crate::water::WaterGpu;
 use crate::water_kernels::{
     Capacity, Kernels, Layout, SetupHandles, SlotHandles, grid, slot_bytes, slot_largest_bytes,
-    squares,
 };
 use crate::{BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, SettleStart, SteadyWater};
 
@@ -304,9 +305,10 @@ impl SettleFeedback {
         let mut list: Vec<[u32; 4]> = Vec::with_capacity(entries);
         let blocks_and_samples = start.stored.places.iter().zip(&start.windows);
         for (block, (&place, sample)) in blocks_and_samples.enumerate() {
+            let place = BlockPlace::unpack(place).unwrap_or_default();
             let corner = [
-                start.first[0] + i64::from(place & 0xffff) * side,
-                start.first[1] + i64::from(place >> 16) * side,
+                start.first[0] + i64::from(place.x) * side,
+                start.first[1] + i64::from(place.z) * side,
             ];
             let bits = |value: i64| value as i32 as u32;
             list.push([
@@ -646,7 +648,8 @@ fn blocks(start: &SettleStart) -> (Vec<[f32; 2]>, u64) {
         .places
         .iter()
         .filter(|&&place| {
-            let (x, z) = (i64::from(place & 0xffff), i64::from(place >> 16));
+            let place = BlockPlace::unpack(place).unwrap_or_default();
+            let (x, z) = (i64::from(place.x), i64::from(place.z));
             (-1..=1).any(|dz| {
                 (-1..=1).any(|dx| {
                     stored
@@ -1000,26 +1003,31 @@ impl SettleGpu {
                 *held = *count;
             }
         }
-        match work.room {
+        let setup = match work.room {
             Some(room) => {
                 let fresh = fresh || self.room != Some(room);
-                self.setup.hold((room, 0), fresh, cx);
+                let held = self.setup.hold((room, 0), fresh, cx);
                 self.room = Some(room);
+                Some(held)
             }
             None => {
                 self.room = None;
                 self.setup.release(cx);
+                None
             }
-        }
+        };
         if let Some(raise) = &work.raise {
-            cx.write(self.setup.list, 0, &raise.list);
-            cx.write(self.setup.frame, 0, &[raise.frame]);
+            match setup {
+                Some(Allocation::Fresh | Allocation::Kept) | None => {
+                    cx.write(self.setup.list, 0, &raise.list);
+                    cx.write(self.setup.frame, 0, &[raise.frame]);
+                }
+            }
             self.raised = raise.blocks;
             self.raising = Some(raise.tag);
             cx.run(self.raise);
         }
-        self.slots.write_frames(&layout, cx);
-        cx.write(self.slots.squares, 0, &[squares(&work.squares)]);
+        self.slots.write_frames(&layout, &work.squares, cx);
         if work.steps > 0 {
             self.run = Some((
                 work.steps,

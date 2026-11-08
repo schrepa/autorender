@@ -20,7 +20,8 @@ import package::terrain_shading::field::spread_slopes;
 import package::terrain_shading::sky::terrain_sky_map;
 import package::terrain_shading::surface::{surface_leaf, surface_relative, terrain_true_height};
 import package::terrain_shading::tables::{table_fades, terrain_tables};
-import package::generated::terrain_shading::{PaletteEntry, SURFACE_MESHLET_LEVEL, SURFACE_VERTEX_STRIDE};
+import package::generated::terrain_shading::{PaletteEntry, SURFACE_MESHLET_LEVEL, SURFACE_VERTEX_STRIDE,
+    control_a, control_b, control_blend, control_wet};
 import package::place::ground_tiles::PALETTE_ENTRIES;
 
 @group(0) @binding(21) var terrain_normals: texture_2d_array<u32>;
@@ -274,14 +275,14 @@ fn terrain_blend_add(blend: ptr<function, TerrainBlend>, material: u32, weight: 
 }
 
 fn terrain_control_blend(blend: ptr<function, TerrainBlend>, control: u32, weight: f32) {
-    let share = f32((control >> 16u) & 0xffu) * (1.0 / 255.0);
+    let share = f32(control_blend(control)) * (1.0 / 255.0);
     let first = weight * (1.0 - share);
     if first != 0.0 {
-        terrain_blend_add(blend, control & 0xffu, first);
+        terrain_blend_add(blend, control_a(control), first);
     }
     let second = weight * share;
     if second != 0.0 {
-        terrain_blend_add(blend, (control >> 8u) & 0xffu, second);
+        terrain_blend_add(blend, control_b(control), second);
     }
 }
 
@@ -445,7 +446,8 @@ fn terrain_level_wetness(local: vec2<f32>, level: u32) -> f32 {
             let texel = corner + vec2<u32>(1u);
             let controls = textureGather(0, terrain_control, terrain_control_sampler,
                 (vec2<f32>(texel) + vec2<f32>(1.0)) / 259.0, layer);
-            let wets = vec4<f32>(controls >> vec4<u32>(24u)) * (1.0 / 255.0);
+            let wets = vec4<f32>(vec4<u32>(control_wet(controls.x), control_wet(controls.y),
+                control_wet(controls.z), control_wet(controls.w))) * (1.0 / 255.0);
             let low = mix(wets.w, wets.z, f.x);
             let high = mix(wets.x, wets.y, f.x);
             let spacing = terrain.anchor.w * f32(1u << index);

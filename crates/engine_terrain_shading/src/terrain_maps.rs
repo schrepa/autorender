@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
-use engine_core::{AssetLibrary, ColorSpace, Error, Texture, TextureFormat, TextureHandle};
+use engine_core::{
+    AssetLibrary, ColorSpace, Error, METALLIC_ROUGHNESS_MAP, OCCLUSION_MAP, Texture,
+    TextureFormat, TextureHandle,
+};
 use engine_places_world::ground::{SurfaceMaps, TerrainTiles};
-use engine_render::{Install, Lifetime, Prepare, Sampler, SamplerDesc, wgpu};
+use engine_render::{Allocation, Install, Lifetime, Prepare, Sampler, SamplerDesc, wgpu};
 
 use crate::terrain::TerrainGpu;
 
@@ -123,8 +126,8 @@ impl TerrainMaps {
         let material = assets.material(maps.material)?;
         let color = material.color();
         let surface = material.surface();
-        let packed = material.occlusion_texture().map(|map| map.texture)
-            == material.metallic_roughness_texture().map(|map| map.texture);
+        let packed = material.map(OCCLUSION_MAP).map(|map| map.texture)
+            == material.map(METALLIC_ROUGHNESS_MAP).map(|map| map.texture);
         Some(MapMaterial {
             color: [color[0], color[1], color[2]],
             roughness: surface.roughness,
@@ -203,36 +206,14 @@ impl TerrainMaps {
         for (array, texture) in arrays.into_iter().enumerate() {
             let format = engine_render::texture_format(shape.formats[array], array_space(array)).0;
             let layers = count * if array == 0 { 1 } else { 2 };
-            cx.allocate_as(
-                texture,
-                format,
-                wgpu::Extent3d {
-                    width: shape.size.0,
-                    height: shape.size.1,
-                    depth_or_array_layers: layers,
-                },
-                levels,
-            );
-        }
-        for (layer, maps) in kept.iter().enumerate() {
-            let layer = layer as u32;
-            let places = [(0, layer), (1, 2 * layer), (1, 2 * layer + 1)];
-            for (default, (texture, (array, at))) in
-                textures(maps, assets).iter().zip(places).enumerate()
-            {
-                let format = shape.formats[array];
-                for level in 0..shape.levels {
-                    let bytes = match texture {
-                        Some(texture) => texture.levels()[level].to_vec(),
-                        None => solid_level(format, shape.size, level as u32, default),
-                    };
-                    cx.write_level(
-                        arrays[array],
-                        (level as u32, at),
-                        shape.size,
-                        format,
-                        &bytes,
-                    );
+            let size = wgpu::Extent3d {
+                width: shape.size.0,
+                height: shape.size.1,
+                depth_or_array_layers: layers,
+            };
+            match cx.allocate_as(texture, format, size, levels) {
+                Allocation::Fresh | Allocation::Kept => {
+                    write_array(cx, (texture, array), (kept, assets), shape);
                 }
             }
         }
@@ -247,25 +228,53 @@ impl TerrainMaps {
         let arrays = [self.albedo, self.data];
         for (array, texture) in arrays.into_iter().enumerate() {
             let format = engine_render::texture_format(TextureFormat::Rgba8, array_space(array)).0;
-            cx.allocate_as(
-                texture,
-                format,
-                wgpu::Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1 + array as u32,
-                },
-                1,
-            );
+            let size = wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1 + array as u32,
+            };
+            match cx.allocate_as(texture, format, size, 1) {
+                Allocation::Fresh | Allocation::Kept => {
+                    for (default, (held, layer)) in DEFAULTS.iter().zip([(0, 0), (1, 0), (1, 1)]) {
+                        if held == array {
+                            cx.write_level(
+                                texture,
+                                (0, layer),
+                                (1, 1),
+                                TextureFormat::Rgba8,
+                                default,
+                            );
+                        }
+                    }
+                }
+            }
         }
-        for (default, (array, layer)) in DEFAULTS.iter().zip([(0, 0), (1, 0), (1, 1)]) {
-            cx.write_level(
-                arrays[array],
-                (0, layer),
-                (1, 1),
-                TextureFormat::Rgba8,
-                default,
-            );
+    }
+}
+
+fn write_array(
+    cx: &mut Prepare<'_, TerrainGpu>,
+    (texture, array): (engine_render::Texture<TerrainGpu>, usize),
+    (kept, assets): (&[&SurfaceMaps], &AssetLibrary),
+    shape: Shape,
+) {
+    let format = shape.formats[array];
+    for (layer, maps) in kept.iter().enumerate() {
+        let layer = layer as u32;
+        let places = [(0, layer), (1, 2 * layer), (1, 2 * layer + 1)];
+        for (default, (source, (held, at))) in
+            textures(maps, assets).iter().zip(places).enumerate()
+        {
+            if held != array {
+                continue;
+            }
+            for level in 0..shape.levels {
+                let bytes = match source {
+                    Some(source) => source.levels()[level].to_vec(),
+                    None => solid_level(format, shape.size, level as u32, default),
+                };
+                cx.write_level(texture, (level as u32, at), shape.size, format, &bytes);
+            }
         }
     }
 }

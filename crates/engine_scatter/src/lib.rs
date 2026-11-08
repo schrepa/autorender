@@ -16,7 +16,8 @@ mod smokes;
 mod systems;
 
 use engine_core::{
-    Attributes, Brick, Bricks, KindDecl, Module, Runs, Schedule, Smoke, Source, SurfaceSlot,
+    Attributes, BASE_COLOR_MAP, Brick, Bricks, KindDecl, METALLIC_ROUGHNESS_MAP, Module,
+    NORMAL_MAP, OCCLUSION_MAP, Runs, Schedule, Smoke, Source, SurfaceSlot,
 };
 use engine_places_rendering::lighting::Ambient;
 use engine_places_rendering::occlusion::OcclusionSource;
@@ -27,6 +28,8 @@ pub use settings::{
     FoliageSettings, OccupancySettings, PlacedLod, PlacedLook, PlacedPart, ScatterSettings,
     ScatterStats,
 };
+
+const SURFACE_MAPS: &[&str] = &[BASE_COLOR_MAP, NORMAL_MAP, METALLIC_ROUGHNESS_MAP];
 
 const GROUNDED: [SurfaceSlot; 4] = [
     SurfaceSlot::BaseColor,
@@ -42,11 +45,19 @@ type Look = (
     Module,
     &'static [SurfaceSlot],
     &'static [&'static str],
+    &'static [&'static str],
     f32,
 );
 
 const LOOKS: [Look; 4] = [
-    ("grounded", shaders::scatter::grounded::MODULE, &GROUNDED, &[], 0.0),
+    (
+        "grounded",
+        shaders::scatter::grounded::MODULE,
+        &GROUNDED,
+        SURFACE_MAPS,
+        &[],
+        0.0,
+    ),
     (
         "foliage",
         shaders::scatter::leaves::MODULE,
@@ -60,6 +71,7 @@ const LOOKS: [Look; 4] = [
             SurfaceSlot::Kind,
             SurfaceSlot::LightInputs,
         ],
+        SURFACE_MAPS,
         &[],
         0.0,
     ),
@@ -67,6 +79,7 @@ const LOOKS: [Look; 4] = [
         WIND,
         shaders::scatter::wind::MODULE,
         &[SurfaceSlot::Position],
+        &[],
         &[],
         layouts::WIND_REACH,
     ),
@@ -80,6 +93,7 @@ const LOOKS: [Look; 4] = [
             SurfaceSlot::Metalness,
             SurfaceSlot::Occlusion,
         ],
+        &[BASE_COLOR_MAP, NORMAL_MAP, METALLIC_ROUGHNESS_MAP, OCCLUSION_MAP],
         &[
             "world_tiling",
             "top_red",
@@ -147,13 +161,13 @@ impl Brick for ScatterBrick {
                 needs: Attributes::NONE,
             })
             .draws::<gpu::ScatterGpu>(gpu::PLACED, gpu::ScatterGpu::draw);
-        for (name, module, slots, values, reach) in LOOKS {
+        for (name, module, slots, maps, values, reach) in LOOKS {
             for &slot in slots {
                 bricks.material_slot(SlotModule {
                     slot,
                     name,
                     module,
-                    maps: &[],
+                    maps,
                     values,
                     reach,
                 });

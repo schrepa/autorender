@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat3, Vec3};
 use engine_core::{
-    Cursor, DRAWN_UNBOUNDED, DrawKind, DrawnTable, Events, GlobalTransforms, MaterialHandle,
+    Cursor, DrawKind, DrawnFlags, DrawnTable, Events, GlobalTransforms, MaterialHandle,
     MeshHandle, Mobility, PlanState, ScenePasses, Since,
 };
 use engine_places_rendering::shadows::{SHADOW_PASS, ShadowChange, ShadowChanges};
@@ -31,7 +31,7 @@ fn caster_box(
     let drawn = table.drawn(slot)?;
     let casts = drawn.kind == MESH
         && record.passes & shadow != 0
-        && record.flags & DRAWN_UNBOUNDED == 0
+        && !DrawnFlags::of(record).unbounded
         && record.mobility == Mobility::Static as u32 + 1;
     if !casts {
         return None;

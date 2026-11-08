@@ -6,7 +6,10 @@ use engine_render::{DebugMode, DebugShown};
 use serde_json::{Value, json};
 
 use crate::TerrainShadingBrick;
-use crate::gpu::{DEBUG_SHOWN_DETAIL, DEBUG_SHOWN_MATERIALS, DEBUG_SHOWN_SKY, DEBUG_SHOWN_TILES};
+use crate::gpu::{
+    DEBUG_SHOWN_DETAIL, DEBUG_SHOWN_MATERIALS, DEBUG_SHOWN_SKY, DEBUG_SHOWN_TILES, ShownMaterials,
+    ShownTile,
+};
 
 #[gpu_bits]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,20 +71,20 @@ fn terrain(
     if kind != Some(crate::terrain::TERRAIN) {
         return json!({ "terrain": null });
     }
-    let ids = ids.to_bits();
+    let ids = ShownMaterials::unpack(ids.to_bits()).unwrap_or_default();
     let share = |word: u32, byte: u32| f32::from(((word >> (byte * 8)) & 0xff) as u8) / 255.0;
-    let mut materials: Vec<(u32, f32)> = (0..4)
-        .map(|slot| ((ids >> (slot * 8)) & 0xff, share(detail, slot)))
+    let mut materials: Vec<(u32, f32)> = [ids.first, ids.second, ids.third, ids.fourth]
+        .into_iter()
+        .zip(0..)
+        .map(|(material, slot)| (u32::from(material), share(detail, slot)))
         .filter(|&(material, share)| material != DEBUG_NO_MATERIAL && share > 0.0)
         .collect();
     materials.sort_by(|a, b| b.1.total_cmp(&a.1));
     let patch = TerrainDebug::unpack(record).map_or([0, 0], |bits| [bits.patch_x, bits.patch_y]);
+    let tile = ShownTile::unpack(tiles).unwrap_or_default();
     json!({
         "terrain": {
-            "tile": [
-                i32::from((tiles & 0xffff) as u16 as i16),
-                i32::from((tiles >> 16) as u16 as i16),
-            ],
+            "tile": [i32::from(tile.x as i16), i32::from(tile.z as i16)],
             "patch": patch,
             "materials": materials
                 .iter()

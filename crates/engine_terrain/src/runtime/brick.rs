@@ -6,8 +6,8 @@ use crate::expr_layer::EXPRESSION;
 use crate::jobs::GROUND_GRID;
 use crate::scene::{INVALID_STREAMED, TERRAIN, prefetch_kind, terrain_kind, terrain_paths};
 use engine_core::{
-    Brick, Bricks, Cook, CookList, Explain, ExplainAsk, ExplainRecord, GlobalTransforms, GpuStruct,
-    JobKind, SceneComponents, Schedule, Source,
+    Brick, Bricks, Cook, CookList, Explain, ExplainAsk, ExplainRecord, GlobalTransforms, GpuBits,
+    GpuStruct, JobKind, SceneComponents, Schedule, Source,
 };
 use engine_heightfield::{INVALID_TERRAIN, MISSING_LAYER, UNKNOWN_MAP, UNREADABLE_MAP};
 use engine_places_simulation::ground::{Ground, UNKNOWN_TERRAIN};
@@ -20,7 +20,11 @@ use engine_render::RenderBricks;
 
 pub struct TerrainBrick;
 
-const GENERATED: &[&str] = &[crate::gpu::WGSL, <SurfaceEntry as GpuStruct>::WGSL];
+const GENERATED: &[&str] = &[
+    crate::gpu::WGSL,
+    <SurfaceEntry as GpuStruct>::WGSL,
+    <engine_heightfield::tile::Control as GpuBits>::WGSL,
+];
 const ERRORS: &[ErrorCode] = &[
     INVALID_TERRAIN,
     MISSING_LAYER,

@@ -4,8 +4,8 @@ use engine_places_rendering::lighting::Lighting;
 use engine_places_rendering::lights::{LIGHT_EXTERIOR, LIGHT_INTERIOR, LightRegion};
 use engine_places_rendering::probes::ProbeCaptures;
 use engine_render::{
-    AfterRead, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime, Pass,
-    Prepare,
+    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install,
+    Lifetime, Pass, Prepare,
 };
 use glam::Mat4;
 
@@ -371,23 +371,33 @@ impl GpuPart for LightsGpu {
             .any(|light| light.region != LightRegion::Both);
         let needed = totals.needed().max(count as u64 * 32);
         self.grow_indices(needed * 4);
-        cx.allocate_buffer(self.inputs, self.capacity as u64 * LIGHT_BYTES);
-        cx.allocate_buffer(self.data, self.data_bytes());
-        cx.allocate_buffer(self.counts, u64::from(self.arena) * CLUSTERS * 4);
-        cx.allocate_buffer(self.totals, u64::from(self.arena) * TOTALS_BYTES);
-        cx.allocate_buffer(self.clusters, u64::from(LIT_VIEWS) * CLUSTER_BYTES);
-        if !self.staged.is_empty() {
-            cx.write(self.inputs, 0, &self.staged);
+        let binned = [
+            cx.allocate_buffer(self.data, self.data_bytes()),
+            cx.allocate_buffer(self.counts, u64::from(self.arena) * CLUSTERS * 4),
+            cx.allocate_buffer(self.totals, u64::from(self.arena) * TOTALS_BYTES),
+        ];
+        match cx.allocate_buffer(self.inputs, self.capacity as u64 * LIGHT_BYTES) {
+            Allocation::Fresh | Allocation::Kept => {
+                if !self.staged.is_empty() {
+                    cx.write(self.inputs, 0, &self.staged);
+                }
+            }
         }
         self.count = count as u32;
         if let Some(main) = views.main() {
             self.place_headers(&settings, main, &captures, lighting.highlights);
         }
-        cx.write(self.clusters, 0, &self.headers);
+        match cx.allocate_buffer(self.clusters, u64::from(LIT_VIEWS) * CLUSTER_BYTES) {
+            Allocation::Fresh | Allocation::Kept => cx.write(self.clusters, 0, &self.headers),
+        }
         if count == 0 {
             return;
         }
-        cx.run(self.binning);
+        for allocation in binned {
+            match allocation {
+                Allocation::Fresh | Allocation::Kept => cx.run(self.binning),
+            }
+        }
         cx.read_back::<LightTotals>(0, self.totals, 0..TOTALS_BYTES, AfterRead::Keep);
     }
 
