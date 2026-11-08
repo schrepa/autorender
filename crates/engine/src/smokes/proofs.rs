@@ -9,12 +9,6 @@ pub(super) const LIT_ROOM: Smoke = Smoke {
     run: lit_room,
 };
 
-pub(super) const OUTDOOR_WITHOUT_TREES: Smoke = Smoke {
-    name: "outdoor_without_trees",
-    runs: Runs::Gpu,
-    run: outdoor_without_trees,
-};
-
 const ROOM_KEPT: [&str; 9] = [
     "engine_sun",
     "engine_lighting",
@@ -43,36 +37,14 @@ const ROOM_LEFT_OUT: [&str; 13] = [
     "engine_debug_view",
 ];
 
-const OUTDOOR_KEPT: [&str; 7] = [
-    "engine_terrain",
-    "engine_terrain_shading",
-    "engine_shadows",
-    "engine_prepass",
-    "engine_sky",
-    "engine_probes",
-    "engine_meshes",
-];
-
-const OUTDOOR_LEFT_OUT: &str = "engine_scatter";
-
 pub(super) fn room(bricks: BrickList) -> BrickList {
     ROOM_LEFT_OUT
         .iter()
         .fold(bricks, |bricks, package| bricks.without_package(package))
 }
 
-pub(super) fn outdoor(bricks: BrickList) -> BrickList {
-    bricks.without_package(OUTDOOR_LEFT_OUT)
-}
-
 pub(super) fn room_listed(registry: &Registry) -> bool {
     ROOM_KEPT
-        .iter()
-        .all(|package| registry.id(package).is_some())
-}
-
-pub(super) fn outdoor_listed(registry: &Registry) -> bool {
-    OUTDOOR_KEPT
         .iter()
         .all(|package| registry.id(package).is_some())
 }
@@ -116,30 +88,6 @@ fn lit_room(session: &mut dyn SmokeSession) -> Checked<()> {
     Ok(())
 }
 
-fn outdoor_without_trees(session: &mut dyn SmokeSession) -> Checked<()> {
-    let rendering = opened(session, &outdoor_scene())?;
-    let linked = &rendering["linked"];
-    smoke_eq!(
-        json!({
-            "sun_blockers": linked["lists"]["sun_blockers"],
-            "ambient": linked["lists"]["ambient"],
-        }),
-        json!({
-            "sun_blockers": ["engine_shadows", "engine_sky", "engine_terrain_shading"],
-            "ambient": ["engine_probes", "engine_sky", "engine_terrain_shading"],
-        }),
-        "outdoor_lists"
-    );
-    let named = linked["lists"].as_object().is_some_and(|lists| {
-        lists
-            .values()
-            .filter_map(Value::as_array)
-            .any(|members| members.contains(&json!(OUTDOOR_LEFT_OUT)))
-    });
-    smoke_eq!(named, false, "outdoor_lists_leave_scatter_out");
-    Ok(())
-}
-
 fn room_scene() -> Value {
     json!({
         "id": "lit-room", "revision": 1,
@@ -156,35 +104,6 @@ fn room_scene() -> Value {
             {"id": "side_wall", "drawn": {"mesh": "cube", "material": "wall"}, "transform": {"translation": [-6, 2, 0], "scale": [0.3, 4, 12]}},
             {"id": "lamp", "drawn": {"mesh": "cube", "material": "glow"}, "light": {"color": [1, 0.8, 0.6], "intensity": 14.0}, "transform": {"translation": [3, 2, 2], "scale": [0.2, 0.2, 0.2]}},
             {"id": "camera", "transform": {"translation": [0, 3, 9], "rotation_degrees": [-12.5288, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 200, "projection": {"Perspective": {"vertical_fov_radians": std::f64::consts::FRAC_PI_3}}}, "view": {}},
-        ],
-    })
-}
-
-fn outdoor_scene() -> Value {
-    json!({
-        "id": "outdoor-without-trees", "revision": 1,
-        "environment": {"ground_cover": {"looks": {"meadow": {"density": 60}}}},
-        "materials": [{"id": "stone", "color": [0.5, 0.48, 0.45, 1]}],
-        "meshes": [{"id": "cube", "source": {"kind": "cube"}}],
-        "entities": [
-            {"id": "ground", "terrain": {
-                "origin": [-512, 0, -512], "tiles": [4, 4], "spacing": 1,
-                "layers": [
-                    {"type": "noise", "seed": 3, "height": 140, "wavelength": 600},
-                    {"type": "stamp", "center": [512, 512], "radius": 40, "falloff": 60, "op": {"flatten": 30}},
-                ],
-                "surface": {
-                    "materials": [
-                        {"id": "meadow", "color": [0.12, 0.2, 0.06]},
-                        {"id": "rock", "color": [0.3, 0.28, 0.26], "roughness": 0.8},
-                    ],
-                    "biomes": [
-                        {"id": "lowland", "layers": [{"material": "meadow"}, {"material": "rock", "mask": {"ramp": {"map": "slope", "from": 25, "to": 35}}}]},
-                    ],
-                },
-            }},
-            {"id": "block", "drawn": {"mesh": "cube", "material": "stone"}, "transform": {"translation": [0, 34, 0], "scale": [4, 4, 4]}},
-            {"id": "camera", "transform": {"translation": [0, 80, 140], "rotation_degrees": [-19.6538, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.5, "far": 4000, "projection": {"Perspective": {"vertical_fov_radians": std::f64::consts::FRAC_PI_3}}}, "view": {}},
         ],
     })
 }

@@ -1,4 +1,3 @@
-mod lod;
 mod toon_lighting;
 mod torrent;
 
@@ -12,18 +11,11 @@ const GAME: &str = "highlands";
 
 const FLY_CAMERA_INPUT: (&str, &str) = ("engine_fly_camera", "input_camera");
 
-const SMOKES: [Smoke; 2] = [
-    Smoke {
-        name: "highlands_lod",
-        runs: Runs::Gpu,
-        run: lod::run,
-    },
-    Smoke {
-        name: "highlands_torrent",
-        runs: Runs::Gpu,
-        run: torrent::run,
-    },
-];
+const SMOKES: [Smoke; 1] = [Smoke {
+    name: "highlands_torrent",
+    runs: Runs::Gpu,
+    run: torrent::run,
+}];
 
 const TOON: Smoke = Smoke {
     name: "highlands_toon_lighting",

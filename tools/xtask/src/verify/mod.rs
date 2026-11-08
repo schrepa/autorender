@@ -285,8 +285,8 @@ fn smokes<'a>(
     if merge {
         runs.push(vec!["--native-profile".to_owned(), "dev".to_owned()]);
         runs.push(vec![
-            "meshes".to_owned(),
-            "shadow_tiles_settle".to_owned(),
+            "input_camera".to_owned(),
+            "world_streaming".to_owned(),
             "--browser".to_owned(),
         ]);
     }

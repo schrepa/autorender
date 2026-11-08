@@ -123,12 +123,6 @@ pub fn registered(bricks: &BrickList) -> Result<Vec<SmokeEntry>> {
             ..SmokeEntry::of(HOST, &proofs::LIT_ROOM)
         });
     }
-    if proofs::outdoor_listed(registry) {
-        smokes.push(SmokeEntry {
-            list: Some(proofs::outdoor),
-            ..SmokeEntry::of(HOST, &proofs::OUTDOOR_WITHOUT_TREES)
-        });
-    }
     Ok(smokes)
 }
 

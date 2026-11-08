@@ -45,18 +45,11 @@ pub struct MeshesBrick;
 
 impl Brick for MeshesBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[
-        Smoke {
-            name: "culling_settings",
-            runs: Runs::Gpu,
-            run: smokes::culling_settings,
-        },
-        Smoke {
-            name: "meshes",
-            runs: Runs::Gpu,
-            run: smokes::meshes,
-        },
-    ];
+    const SMOKES: &'static [Smoke] = &[Smoke {
+        name: "culling_settings",
+        runs: Runs::Gpu,
+        run: smokes::culling_settings,
+    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

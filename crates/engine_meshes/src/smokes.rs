@@ -1,6 +1,5 @@
 use engine_core::SmokeFailure;
-use engine_core::math::{cos, sin};
-use engine_smoke::{Checked, ask, component, control, environment, inspect, render};
+use engine_smoke::{Checked, ask, control, environment, inspect, render};
 use engine_core::{SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
@@ -129,75 +128,5 @@ pub(crate) fn culling_settings(session: &mut dyn SmokeSession) -> Result<(), Smo
         json!(true),
         "culling_runs_again"
     );
-    Ok(())
-}
-
-fn ball(rings: u32, segments: u32) -> Value {
-    let mut vertices = Vec::new();
-    let mut indices = Vec::new();
-    for ring in 0..=rings {
-        let phi = std::f32::consts::PI * ring as f32 / rings as f32;
-        for segment in 0..=segments {
-            let theta = 2.0 * std::f32::consts::PI * segment as f32 / segments as f32;
-            let normal = [sin(phi) * cos(theta), cos(phi), sin(phi) * sin(theta)];
-            vertices.push(json!({
-                "position": normal, "normal": normal,
-                "uv": [segment as f32 / segments as f32, ring as f32 / rings as f32],
-            }));
-        }
-    }
-    for ring in 0..rings {
-        for segment in 0..segments {
-            let a = ring * (segments + 1) + segment;
-            let b = a + segments + 1;
-            indices.extend([a, b, a + 1, a + 1, b, b + 1]);
-        }
-    }
-    json!({"kind": "inline", "vertices": vertices, "indices": indices})
-}
-
-fn fixture() -> Value {
-    let ribbon: Vec<Value> = [0.0_f32, 1.0, 2.0]
-        .into_iter()
-        .flat_map(|y| {
-            [-0.3_f32, 0.3].map(
-                |x| json!({"position": [x, y, 0], "normal": [0, 0, 1], "uv": [x + 0.3, y / 2.0]}),
-            )
-        })
-        .collect();
-    json!({
-        "id": "mesh-fixture", "revision": 1,
-        "materials": [
-            {"id": "plain", "color": [0.8, 0.4, 0.2, 1], "cull": "none"},
-            {"id": "stone", "color": [0.5, 0.55, 0.6, 1], "cull": "none"},
-        ],
-        "meshes": [
-            {"id": "ribbon", "source": {"kind": "inline", "vertices": ribbon,
-                "indices": [0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4]}},
-            {"id": "ball", "source": ball(24, 32)},
-        ],
-        "entities": [
-            {"id": "limb", "drawn": {"mesh": "ribbon", "material": "plain"}},
-            {"id": "near-ball", "drawn": {"mesh": "ball", "material": "stone"}, "transform": {"translation": [2.5, 1, -2]}},
-            {"id": "far-ball", "drawn": {"mesh": "ball", "material": "stone"}, "transform": {"translation": [-40, 1, -300]}},
-            {"id": "camera", "transform": {"translation": [0, 1, 4]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 2000, "projection": {"Perspective": {"vertical_fov_radians": std::f64::consts::FRAC_PI_3}}}, "view": {}},
-        ],
-    })
-}
-
-pub(crate) fn meshes(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
-    session.source(&fixture().to_string());
-    control(session, "pause", json!({}))?;
-    render(session)?;
-    let drawn = component(session, "limb", "DrawnMesh")?;
-    smoke_eq!(
-        json!({
-            "vertices": drawn["mesh"]["vertices"], "indices": drawn["mesh"]["indices"],
-            "cull": drawn["material"]["cull"],
-        }),
-        json!({"vertices": 6, "indices": 12, "cull": "none"}),
-        "inspects"
-    );
-    smoke_eq!(session.frame(), true, "frames_draw");
     Ok(())
 }

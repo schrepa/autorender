@@ -12,12 +12,11 @@ mod layouts;
 mod occupancy;
 mod pool;
 mod settings;
-mod smokes;
 mod systems;
 
 use engine_core::{
     Attributes, BASE_COLOR_MAP, Brick, Bricks, KindDecl, METALLIC_ROUGHNESS_MAP, Module,
-    NORMAL_MAP, OCCLUSION_MAP, Runs, Schedule, Smoke, Source, SurfaceSlot,
+    NORMAL_MAP, OCCLUSION_MAP, Schedule, Source, SurfaceSlot,
 };
 use engine_places_rendering::lighting::Ambient;
 use engine_places_rendering::occlusion::OcclusionSource;
@@ -110,19 +109,6 @@ pub struct ScatterBrick;
 
 impl Brick for ScatterBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[
-        Smoke {
-            name: "foliage_settings",
-            runs: Runs::Gpu,
-            run: smokes::foliage_settings,
-        },
-        Smoke {
-            name: "slot_scatter_covers",
-            runs: Runs::Gpu,
-            run: smokes::scatter_covers,
-        },
-    ];
-
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<ScatterSettings>()

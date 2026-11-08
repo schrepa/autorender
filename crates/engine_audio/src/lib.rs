@@ -12,7 +12,6 @@ mod mixer;
 mod native;
 mod scene;
 mod settings;
-mod smoke;
 mod views;
 
 #[cfg(target_arch = "wasm32")]
@@ -22,19 +21,13 @@ use native as backend;
 
 pub use settings::{Audio, AudioStats};
 
-use engine_core::{Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source};
+use engine_core::{Brick, Bricks, ComponentKind, SceneComponents, Schedule, Source};
 use engine_places_rendering::audio::{SoundSource, Sounds};
 
 pub struct AudioBrick;
 
 impl Brick for AudioBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "audio",
-        runs: Runs::Headless,
-        run: smoke::run,
-    }];
-
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<Audio>()

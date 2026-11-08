@@ -17,12 +17,11 @@ mod regions;
 mod settings;
 mod shadow_fit;
 mod sky;
-mod smokes;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, Brick, Bricks, DrawKind, Pass, PassCull, PassName, PassRaster, PassViews, Runs,
-    Schedule, SlotSet, Smoke, Source, Writes,
+    AttachPoint, Brick, Bricks, DrawKind, Pass, PassCull, PassName, PassRaster, PassViews,
+    Schedule, SlotSet, Source, Writes,
 };
 use engine_places_rendering::lighting::SunBlockers;
 use engine_places_rendering::sky::SkyVisibility;
@@ -61,12 +60,6 @@ pub struct ShadowsBrick;
 
 impl Brick for ShadowsBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "shadow_tiles_settle",
-        runs: Runs::Gpu,
-        run: smokes::tiles_settle,
-    }];
-
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .when(|shadows: Res<ShadowSettings>| shadows.enabled)

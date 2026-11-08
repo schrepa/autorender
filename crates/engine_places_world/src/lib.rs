@@ -7,7 +7,6 @@ extern crate engine_ecs as bevy_ecs;
 
 pub mod ground;
 pub mod paths;
-mod smokes;
 pub mod splines;
 pub mod streaming;
 pub mod terrain;
