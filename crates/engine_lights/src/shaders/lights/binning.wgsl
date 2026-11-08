@@ -1,3 +1,4 @@
+import package::engine::drawn::drawn_views;
 import package::face::instances::{AffinePose, instance_pose};
 import package::generated::lights::{GROUP_LIGHTS, LightInput, NO_SLOT, SHAPED_LIGHTS,
     light_place_moving, light_place_region};
@@ -91,8 +92,8 @@ fn place(view: u32, index: u32, fill: bool) -> LightBox {
             center = position + direction * radius;
         }
     }
-    let clip = clusters[view].view_projection * vec4<f32>(center, 1.0);
-    let depth = dot(clusters[view].depth.xyz, center) + clusters[view].depth.w;
+    let clip = drawn_views[clusters[view].view.x].view_projection * vec4<f32>(center, 1.0);
+    let depth = clip.w;
     if depth + radius <= 0.0 || depth - radius > clusters[view].projection.w {
         return none;
     }

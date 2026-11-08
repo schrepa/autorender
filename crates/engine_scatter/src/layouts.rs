@@ -17,7 +17,6 @@ gpu_struct! {
 
 gpu_struct! {
     pub(crate) struct CullView {
-        pub planes: [[f32; 4]; 6],
         pub eye: [f32; 4],
         pub shape: [u32; 4],
     }

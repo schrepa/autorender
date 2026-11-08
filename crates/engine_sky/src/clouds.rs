@@ -1,11 +1,11 @@
 use bevy_ecs::prelude::Resource;
 use engine_core::math::min;
-use engine_core::{Error, FrameBudget, Readable, Readback};
+use engine_core::{Error, Filter, FrameBudget, Readable, Readback, Wrap};
 use engine_places_rendering::sun::Sun;
 use engine_render::{
     Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count,
     DepthUse, Draw, DrawInput, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare,
-    RenderPipeline, Sampler, SamplerDesc, Shape, TargetName, Texture, wgpu,
+    RenderPipeline, Sampler, Shape, TargetName, Texture, wgpu,
 };
 
 use crate::gpu_layouts::{
@@ -583,23 +583,16 @@ fn composite_pipeline(
 }
 
 fn samplers(cx: &mut Install<'_, SkyGpu>) -> [Sampler<SkyGpu>; 2] {
-    let dome = cx.sampler(SamplerDesc {
-        filter: wgpu::FilterMode::Linear,
-        mipmap: wgpu::MipmapFilterMode::Nearest,
-        address: [
-            wgpu::AddressMode::Repeat,
-            wgpu::AddressMode::ClampToEdge,
-            wgpu::AddressMode::ClampToEdge,
-        ],
-        compare: None,
-        anisotropy: 1,
+    let dome = cx.sampler(engine_core::Sampler {
+        wrap_u: Wrap::Repeat,
+        mipmap_filter: Some(Filter::Nearest),
+        ..engine_core::Sampler::LINEAR_CLAMP
     });
-    let noise = cx.sampler(SamplerDesc {
-        filter: wgpu::FilterMode::Linear,
-        mipmap: wgpu::MipmapFilterMode::Linear,
-        address: [wgpu::AddressMode::Repeat; 3],
-        compare: None,
-        anisotropy: 1,
+    let noise = cx.sampler(engine_core::Sampler {
+        wrap_u: Wrap::Repeat,
+        wrap_v: Wrap::Repeat,
+        wrap_w: Wrap::Repeat,
+        ..engine_core::Sampler::LINEAR_CLAMP
     });
     [dome, noise]
 }

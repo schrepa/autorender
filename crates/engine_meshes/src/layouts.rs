@@ -5,10 +5,8 @@ use engine_core::{GpuBits, gpu_bits, gpu_consts, gpu_struct};
 pub(crate) struct CandidateState {
     pub visible: bool,
     pub moving: bool,
-    pub valid: bool,
     pub phase_one: bool,
     pub phase_two: bool,
-    pub occluded: bool,
     pub subpixel: bool,
     pub view: bool,
     #[bits(2)]
@@ -61,10 +59,8 @@ pub(crate) struct CardFrames {
 gpu_consts! {
     pub const LOD_LEVELS: u32 = 3;
     pub const LOD_FADED: u32 = 65535;
-    pub const NO_NODE: u32 = u32::MAX;
     pub const CULL_GROUP: u32 = 256;
     pub const GROUP: u32 = 64;
-    pub const PARENT_GROUP: u32 = 64;
     pub const ARGS_GROUP: u32 = 64;
     pub const BLEND_GROUP: u32 = 64;
     pub const UNWATCHED: u32 = u32::MAX;
@@ -85,30 +81,21 @@ gpu_struct! {
 }
 
 pub(crate) const DRAW_ARGS_BYTES: u64 = 20;
-pub(crate) const COMPOSED_BYTES: u64 = 112;
 
 gpu_struct! {
     pub(crate) struct PresentationFrame {
-        pub alpha: f32,
         pub candidates: u32,
         pub budget: u32,
-        pub culling: u32,
         pub groups: u32,
         pub batches: u32,
-        pub node_capacity: u32,
-        pub pad_nodes: u32,
-        pub planes: [[f32; 4]; 6],
-        pub absolute_view_projection: [[f32; 4]; 4],
-        pub motion: u32,
         pub mask: u32,
         pub occlusion: u32,
-        pub subpixel: u32,
-        pub view_projection: [[f32; 4]; 4],
-        pub viewport: [f32; 4],
         pub plane: u32,
         pub lod_error: f32,
         pub watched: u32,
-        pub pad: u32,
+        pub pad_0: u32,
+        pub pad_1: u32,
+        pub pad_2: u32,
         pub eye: [f32; 4],
         pub fade: [f32; 4],
         pub bases: [u32; 4],
@@ -118,9 +105,9 @@ gpu_struct! {
 gpu_struct! {
     pub(crate) struct CandidateData {
         pub slot: u32,
-        pub node: u32,
         pub batch: u32,
         pub position: u32,
+        pub pad: u32,
     }
 }
 

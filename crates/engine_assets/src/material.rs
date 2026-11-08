@@ -47,27 +47,64 @@ pub enum Filter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Compare {
+    Never,
+    Less,
+    Equal,
+    LessEqual,
+    Greater,
+    NotEqual,
+    GreaterEqual,
+    Always,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Sampler {
     pub wrap_u: Wrap,
     pub wrap_v: Wrap,
+    pub wrap_w: Wrap,
     pub mag_filter: Filter,
     pub min_filter: Filter,
     pub mipmap_filter: Option<Filter>,
+    pub compare: Option<Compare>,
+    pub anisotropy: u16,
 }
 
 impl Sampler {
+    pub const ANISOTROPY: u16 = 16;
+
     pub const REPEAT: Self = Self {
         wrap_u: Wrap::Repeat,
         wrap_v: Wrap::Repeat,
+        wrap_w: Wrap::ClampToEdge,
         mag_filter: Filter::Linear,
         min_filter: Filter::Linear,
         mipmap_filter: Some(Filter::Linear),
+        compare: None,
+        anisotropy: Self::ANISOTROPY,
     };
 
     pub const CLAMP: Self = Self {
         wrap_u: Wrap::ClampToEdge,
         wrap_v: Wrap::ClampToEdge,
         ..Self::REPEAT
+    };
+
+    pub const LINEAR_CLAMP: Self = Self {
+        anisotropy: 1,
+        ..Self::CLAMP
+    };
+
+    pub const NEAREST: Self = Self {
+        mag_filter: Filter::Nearest,
+        min_filter: Filter::Nearest,
+        mipmap_filter: Some(Filter::Nearest),
+        ..Self::LINEAR_CLAMP
+    };
+
+    pub const COMPARE_LINEAR: Self = Self {
+        compare: Some(Compare::LessEqual),
+        ..Self::LINEAR_CLAMP
     };
 }
 

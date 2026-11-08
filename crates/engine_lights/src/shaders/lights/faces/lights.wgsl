@@ -9,7 +9,7 @@ fn light_cluster(world: vec3<f32>, pixel: vec2<f32>) -> LightCluster {
     if view >= LIT_VIEWS {
         return found;
     }
-    found.depth = dot(clusters[view].depth.xyz, world) + clusters[view].depth.w;
+    found.depth = (camera.view_projection * vec4<f32>(world, 1.0)).w;
     found.end = clusters[view].projection.w;
     if found.depth >= found.end {
         return found;

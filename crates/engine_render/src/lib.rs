@@ -43,6 +43,7 @@ mod shared;
 mod sizes;
 pub mod slots;
 mod surface;
+mod uploads;
 
 mod materials;
 mod memory;
@@ -56,11 +57,11 @@ mod targets;
 
 pub use gpu_data::{
     jitter_clip, mip_levels, pack_color, pack_surface, pixel_angle, pixels_per_meter,
-    planes, pyramid_extents,
+    pyramid_extents,
 };
+pub use uploads::{UploadRange, listed_ranges};
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;
-pub use materials::MATERIAL_ANISOTROPY;
 pub use surface::{
     DrawState, LightingModule, MaterialVariant, SlotModule, SurfaceKind, material_state,
 };
@@ -510,40 +511,6 @@ pub struct RenderPipeline<'a> {
     pub writes: wgpu::ColorWrites,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SamplerDesc {
-    pub filter: wgpu::FilterMode,
-    pub mipmap: wgpu::MipmapFilterMode,
-    pub address: [wgpu::AddressMode; 3],
-    pub compare: Option<wgpu::CompareFunction>,
-    pub anisotropy: u16,
-}
-
-impl SamplerDesc {
-    pub const NEAREST: Self = Self {
-        filter: wgpu::FilterMode::Nearest,
-        mipmap: wgpu::MipmapFilterMode::Nearest,
-        address: [wgpu::AddressMode::ClampToEdge; 3],
-        compare: None,
-        anisotropy: 1,
-    };
-    pub const LINEAR_CLAMP: Self = Self {
-        filter: wgpu::FilterMode::Linear,
-        mipmap: wgpu::MipmapFilterMode::Linear,
-        address: [wgpu::AddressMode::ClampToEdge; 3],
-        compare: None,
-        anisotropy: 1,
-    };
-    pub const COMPARE_LINEAR: Self = Self {
-        filter: wgpu::FilterMode::Linear,
-        mipmap: wgpu::MipmapFilterMode::Linear,
-        address: [wgpu::AddressMode::ClampToEdge; 3],
-        compare: Some(wgpu::CompareFunction::LessEqual),
-        anisotropy: 1,
-    };
-}
-
-
 fn target_of(name: TargetName) -> Result<install::ViewTarget, Error> {
     install::ViewTarget::of(name).ok_or_else(|| {
         Error::new(
@@ -628,7 +595,7 @@ impl<P: GpuPart> Install<'_, P> {
         Buffer(self.core.buffer(label, (lifetime, true)), PhantomData)
     }
 
-    pub fn sampler(&mut self, desc: SamplerDesc) -> Sampler<P> {
+    pub fn sampler(&mut self, desc: engine_core::Sampler) -> Sampler<P> {
         Sampler(self.core.sampler(desc), PhantomData)
     }
 

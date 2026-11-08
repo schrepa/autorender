@@ -1,13 +1,8 @@
 use std::ops::Range;
 
-use bevy_ecs::prelude::*;
-use engine_core::{
-    Detail, DeviceLimits, DrawnTable, MaterialHandle, MeshHandle, PlanState, Views,
-};
+use engine_core::{DeviceLimits, DrawnTable, MaterialHandle, MeshHandle, PlanState};
 use engine_render::slots::DRAWN_SLOTS;
 
-use crate::presentation::{frustum_uniform, rasterized};
-use crate::settings::{Culling, OcclusionCulling, SubpixelCulling};
 use crate::uploads::PoseData;
 use crate::{MESH, SKIN};
 
@@ -83,41 +78,4 @@ impl MeshBatches {
         }
         true
     }
-}
-
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct MeshPlan {
-    pub culling: bool,
-    pub occlusion_enabled: bool,
-    pub occlusion: bool,
-    pub subpixel_enabled: bool,
-    pub subpixel: bool,
-    pub budget: u32,
-    pub lod_levels: bool,
-}
-
-pub(crate) fn plan_draws(
-    table: Res<DrawnTable>,
-    (views, detail): (Res<Views>, Res<Detail>),
-    (culling, occlusion, subpixel): (Res<Culling>, Res<OcclusionCulling>, Res<SubpixelCulling>),
-    mut decided: ResMut<MeshPlan>,
-) {
-    let bounded = views.main().is_some_and(|main| {
-        let (planes, absolute) = frustum_uniform(rasterized(main));
-        absolute.iter().flatten().all(|value| {
-            value.is_finite() && *value <= engine_core::presentation_bounds::MAX_COEFFICIENT
-        }) && planes.iter().flatten().all(|value| value.is_finite())
-    });
-    let frustum = culling.frustum && bounded;
-    let candidates = (table.census(MESH).drawn + table.census(SKIN).drawn) as usize;
-    let unbudgeted = frustum && culling.budget() >= candidates;
-    decided.set_if_neq(MeshPlan {
-        culling: culling.frustum,
-        occlusion_enabled: occlusion.enabled,
-        occlusion: occlusion.enabled && unbudgeted && candidates != 0,
-        subpixel_enabled: subpixel.enabled,
-        subpixel: subpixel.enabled && unbudgeted && candidates != 0,
-        budget: culling.budget().min(u32::MAX as usize) as u32,
-        lod_levels: detail.enabled,
-    });
 }

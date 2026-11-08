@@ -1,36 +1,20 @@
-import package::engine::drawn::{drawn_flags_own_projection, drawn_in_view, drawn_records};
-import package::engine::math::maximum_abs;
+import package::engine::drawn::{drawn_in_view, drawn_mark_first, drawn_mark_moving,
+    drawn_mark_subpixel, drawn_marks, drawn_model, drawn_occlusion, drawn_poses, drawn_views,
+    occlusion_mark_hidden, occlusion_mark_late};
 import package::engine::drawn_fades::set_drawn_fade;
 import package::engine::mesh::declarations::{FADE_LEVEL_MAX, drawn_slot, fade_word};
-import package::engine::presentation::{MAX_COEFFICIENT, MAX_PRODUCT_BOUND,
-    NO_PARENT, POSE_FLOATS, Pose, ROUNDING_MARGIN, drawn_local, pose_admitted, pose_trs,
-    pose_word_blend, pose_word_composed, pose_word_parent_composed, pose_word_valid};
 import package::generated::meshes::{ARGS_GROUP, BatchData as Batch, CULL_GROUP,
     CandidateData as Candidate, GROUP, LOD_FADED, LOD_HISTORY_HELD,
-    LOD_LEVELS, NO_NODE, PARENT_GROUP, PresentationFrame as Frame, UNWATCHED,
-    candidate_state_level, candidate_state_moving, candidate_state_occluded,
+    LOD_LEVELS, PresentationFrame as Frame, UNWATCHED,
+    candidate_state_level, candidate_state_moving,
     candidate_state_phase_one, candidate_state_phase_two, candidate_state_subpixel,
-    candidate_state_valid, candidate_state_view, candidate_state_view_level,
+    candidate_state_view, candidate_state_view_level,
     candidate_state_visible, candidate_state_with_level, candidate_state_with_moving,
-    candidate_state_with_occluded, candidate_state_with_phase_one,
-    candidate_state_with_phase_two, candidate_state_with_subpixel, candidate_state_with_valid,
+    candidate_state_with_phase_one,
+    candidate_state_with_phase_two, candidate_state_with_subpixel,
     candidate_state_with_view, candidate_state_with_view_level, candidate_state_with_visible,
     lod_fade, lod_fade_history, lod_fade_previous, lod_fade_progress, lod_fade_shown};
 import package::face::impostors::IMPOSTOR_VERTICES;
-import package::meshes::screen_cull::{F32_MAX, covers_no_pixel, hidden};
-import package::meshes::slots::instance_poses;
-
-struct Rows {
-    r0: vec4<f32>,
-    r1: vec4<f32>,
-    r2: vec4<f32>,
-}
-
-struct Composed {
-    display: Rows,
-    current: Rows,
-    status: vec4<u32>,
-}
 
 struct DrawArgs {
     index_count: u32,
@@ -40,159 +24,24 @@ struct DrawArgs {
     first_instance: u32,
 }
 
-struct Level {
-    start: u32,
-    end: u32,
-    pad0: u32,
-    pad1: u32,
-}
-
 @group(1) @binding(0) var<uniform> frame: Frame;
-@group(1) @binding(1) var<storage, read> locals: array<f32>;
-@group(1) @binding(2) var<storage, read> info: array<vec2<u32>>;
-@group(1) @binding(3) var<storage, read> authority: array<Rows>;
-@group(1) @binding(4) var<storage, read_write> composed: array<Composed>;
-@group(1) @binding(5) var<storage, read> parents: array<u32>;
 @group(1) @binding(6) var<storage, read> candidates: array<Candidate>;
 @group(1) @binding(7) var<storage, read> batches: array<Batch>;
-@group(1) @binding(8) var<storage, read_write> poses: array<Rows>;
 @group(1) @binding(9) var<storage, read_write> scan: array<u32>;
 @group(1) @binding(10) var<storage, read_write> batch_bases: array<u32>;
 @group(1) @binding(11) var<storage, read_write> visible_ids: array<u32>;
 @group(1) @binding(12) var<storage, read_write> draws: array<DrawArgs>;
 @group(1) @binding(14) var<storage, read> slot_candidates: array<Candidate>;
-@group(1) @binding(18) var depth_pyramid: texture_2d<f32>;
 @group(1) @binding(19) var<storage, read_write> occlusion_counts: array<atomic<u32>>;
 @group(1) @binding(24) var<storage, read_write> impostor_ids: array<vec2<u32>>;
 @group(1) @binding(25) var<storage, read_write> lod_states: array<u32>;
 @group(1) @binding(26) var<storage, read_write> fade_cards: array<atomic<u32>>;
-@group(1) @binding(27) var<storage, read_write> totals: array<u32, 14>;
-@group(2) @binding(0) var<uniform> level: Level;
+@group(1) @binding(27) var<storage, read_write> totals: array<u32, 26>;
 
 const IMPOSTOR: u32 = LOD_LEVELS;
 
 var<workgroup> shared_values: array<u32, GROUP>;
 var<workgroup> shared_counts: array<vec4<u32>, GROUP>;
-
-fn own_projection(slot: u32) -> bool {
-    return drawn_flags_own_projection(drawn_records[slot].flags);
-}
-
-fn rows_matrix(rows: Rows) -> mat4x4<f32> {
-    return transpose(mat4x4<f32>(rows.r0, rows.r1, rows.r2, vec4<f32>(0.0, 0.0, 0.0, 1.0)));
-}
-
-fn matrix_rows(m: mat4x4<f32>) -> Rows {
-    let t = transpose(m);
-    return Rows(t[0], t[1], t[2]);
-}
-
-fn slot_rows(slot: u32) -> Rows {
-    let pose = instance_poses[slot];
-    return Rows(pose.row_0, pose.row_1, pose.row_2);
-}
-
-fn finite(value: vec4<f32>) -> bool {
-    return all(abs(value) <= vec4<f32>(F32_MAX));
-}
-
-fn node_pose(at: u32) -> Pose {
-    return Pose(
-        vec3<f32>(locals[at], locals[at + 1u], locals[at + 2u]),
-        vec4<f32>(locals[at + 4u], locals[at + 5u], locals[at + 6u], locals[at + 7u]),
-        vec3<f32>(locals[at + 3u], locals[at + 8u], locals[at + 9u]),
-    );
-}
-
-fn compose(node: u32) -> Composed {
-    let record = info[node];
-    let parent = record.x;
-    let word = record.y;
-    var base_display = mat4x4<f32>(
-        vec4<f32>(1.0, 0.0, 0.0, 0.0),
-        vec4<f32>(0.0, 1.0, 0.0, 0.0),
-        vec4<f32>(0.0, 0.0, 1.0, 0.0),
-        vec4<f32>(0.0, 0.0, 0.0, 1.0),
-    );
-    var base_current = base_display;
-    var parent_fallback = false;
-    if pose_word_parent_composed(word) {
-        let above = composed[parent];
-        base_display = rows_matrix(above.display);
-        base_current = rows_matrix(above.current);
-        parent_fallback = above.status.x != 0u;
-    } else if parent != NO_PARENT {
-        base_display = rows_matrix(authority[parent]);
-        base_current = base_display;
-    }
-    let now = node_pose(node * POSE_FLOATS);
-    let current = base_current * pose_trs(now);
-    var result: Composed;
-    result.current = matrix_rows(current);
-    if !parent_fallback {
-        let was = node_pose((frame.node_capacity + node) * POSE_FLOATS);
-        let display = base_display * drawn_local(was, now, frame.alpha, pose_word_blend(word));
-        if pose_admitted(display) {
-            result.display = matrix_rows(display);
-            result.status = vec4<u32>(0u);
-            return result;
-        }
-    }
-    result.display = result.current;
-    result.status = vec4<u32>(1u, 0u, 0u, 0u);
-    return result;
-}
-
-fn outside(m: mat4x4<f32>, bounds_min: vec3<f32>, bounds_max: vec3<f32>) -> bool {
-    if frame.culling == 0u {
-        return false;
-    }
-    let maximum = max(abs(bounds_min), abs(bounds_max));
-    let absolute = mat4x4<f32>(abs(m[0]), abs(m[1]), abs(m[2]), abs(m[3]));
-    if maximum_abs(maximum) > MAX_COEFFICIENT
-        || max(maximum_abs(absolute[0].xyz), max(maximum_abs(absolute[1].xyz),
-            max(maximum_abs(absolute[2].xyz), maximum_abs(absolute[3].xyz)))) > MAX_COEFFICIENT {
-        return false;
-    }
-    let world_bound = absolute * vec4<f32>(maximum, 1.0);
-    let clip_bound = frame.absolute_view_projection * world_bound;
-    if !finite(world_bound) || !finite(clip_bound)
-        || max(maximum_abs(world_bound.xyz), world_bound.w) > MAX_PRODUCT_BOUND
-        || max(maximum_abs(clip_bound.xyz), abs(clip_bound.w)) > MAX_PRODUCT_BOUND {
-        return false;
-    }
-    var plane_bounds = array<f32, 6>(
-        clip_bound.x + clip_bound.w,
-        clip_bound.x + clip_bound.w,
-        clip_bound.y + clip_bound.w,
-        clip_bound.y + clip_bound.w,
-        clip_bound.z,
-        clip_bound.z + clip_bound.w,
-    );
-    let t = transpose(m);
-    for (var plane = 0u; plane < 6u; plane++) {
-        let local = t * frame.planes[plane];
-        let support = select(bounds_min, bounds_max, local.xyz >= vec3<f32>(0.0));
-        let distance = dot(local.xyz, support) + local.w;
-        if !finite(local) || !(abs(distance) <= F32_MAX) {
-            return false;
-        }
-        if distance < -ROUNDING_MARGIN * max(plane_bounds[plane], 1.0) {
-            return true;
-        }
-    }
-    return false;
-}
-
-@compute @workgroup_size(PARENT_GROUP)
-fn compose_parents(@builtin(global_invocation_id) id: vec3<u32>) {
-    let position = level.start + id.x;
-    if position >= level.end {
-        return;
-    }
-    let node = parents[position];
-    composed[node] = compose(node);
-}
 
 @compute @workgroup_size(CULL_GROUP)
 fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -200,45 +49,24 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let candidate = slot_candidates[id.x];
-    let previous = frame.occlusion != 0u && candidate_state_occluded(scan[candidate.position]);
-    var state = candidate_state_with_occluded(0u, previous);
-    if candidate.node != NO_NODE && pose_word_valid(info[candidate.node].y)
-            && drawn_in_view(0u, candidate.slot) {
-        let word = info[candidate.node].y;
-        state = candidate_state_with_valid(state, true);
-        var model: mat4x4<f32>;
-        if pose_word_composed(word) {
-            model = rows_matrix(compose(candidate.node).display);
-        } else {
-            model = rows_matrix(authority[candidate.node]);
-        }
-        poses[candidate.slot] = matrix_rows(model);
-        let batch = batches[candidate.batch];
-        let own = own_projection(candidate.slot);
-        var visible = own || !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz);
-        if visible && frame.subpixel != 0u && !own
-                && covers_no_pixel(frame.view_projection * model, batch.bounds_min.xyz,
-                    batch.bounds_max.xyz, frame.viewport.xy) {
-            visible = false;
-            state = candidate_state_with_subpixel(state, true);
-        }
-        if visible {
-            let occludable = frame.occlusion != 0u && !own;
-            state = candidate_state_with_visible(state, true);
-            state = candidate_state_with_moving(state,
-                frame.motion != 0u && pose_word_composed(word));
-            state = candidate_state_with_phase_one(state, !occludable || !previous);
-            state = candidate_state_with_level(state, lod_level(batch, model));
-        }
+    let mark = drawn_marks[candidate.slot];
+    var state = candidate_state_with_subpixel(0u, drawn_mark_subpixel(mark));
+    if drawn_in_view(0u, candidate.slot) {
+        state = candidate_state_with_visible(state, true);
+        state = candidate_state_with_moving(state, drawn_mark_moving(mark));
+        state = candidate_state_with_phase_one(state,
+            frame.occlusion == 0u || drawn_mark_first(mark));
+        state = candidate_state_with_level(state,
+            lod_level(batches[candidate.batch], drawn_model(candidate.slot), 0u));
     }
     scan[candidate.position] = state;
 }
 
-fn lod_level(batch: Batch, model: mat4x4<f32>) -> u32 {
-    return lod_level_at(batch, model, 1.0);
+fn lod_level(batch: Batch, model: mat4x4<f32>, view: u32) -> u32 {
+    return lod_level_at(batch, model, 1.0, view);
 }
 
-fn lod_level_at(batch: Batch, model: mat4x4<f32>, scale_distance: f32) -> u32 {
+fn lod_level_at(batch: Batch, model: mat4x4<f32>, scale_distance: f32, view: u32) -> u32 {
     let levels = u32(batch.lod_errors.z);
     let impostor = frame.eye.w != 0.0 && batch.lod_errors.w > 0.0;
     if (levels <= 1u && !impostor) || !(frame.lod_error > 0.0) {
@@ -247,10 +75,10 @@ fn lod_level_at(batch: Batch, model: mat4x4<f32>, scale_distance: f32) -> u32 {
     let center = (model * vec4<f32>((batch.bounds_min.xyz + batch.bounds_max.xyz) * 0.5, 1.0)).xyz;
     let scale = max(length(model[0].xyz), max(length(model[1].xyz), length(model[2].xyz)));
     let radius = length(batch.bounds_max.xyz - batch.bounds_min.xyz) * 0.5 * scale;
-    let projection = frame.view_projection;
+    let projection = drawn_views[view].rasterized;
     let y_row = vec3<f32>(projection[0].y, projection[1].y, projection[2].y);
     let w_row = vec3<f32>(projection[0].w, projection[1].w, projection[2].w);
-    let pixels = length(y_row) * frame.viewport.y * 0.5 / frame.lod_error;
+    let pixels = length(y_row) * drawn_views[view].viewport.y * 0.5 / frame.lod_error;
     let perspective = length(w_row) > 0.5;
     let to_eye = center - frame.eye.xyz;
     let distance_squared = dot(to_eye, to_eye) * scale_distance * scale_distance;
@@ -304,9 +132,9 @@ fn fade_levels(@builtin(global_invocation_id) id: vec3<u32>) {
         shown = lod_fade_shown(state);
         previous = lod_fade_previous(state);
         progress = lod_fade_progress(state);
-        let model = rows_matrix(slot_rows(candidate.slot));
-        let nearer = lod_level_at(batch, model, 1.0 - frame.fade.y);
-        let farther = lod_level_at(batch, model, 1.0 + frame.fade.y);
+        let model = drawn_model(candidate.slot);
+        let nearer = lod_level_at(batch, model, 1.0 - frame.fade.y, 0u);
+        let farther = lod_level_at(batch, model, 1.0 + frame.fade.y, 0u);
         let wanted = max(nearer, min(shown, farther));
         if progress >= LOD_FADED {
             if wanted != shown {
@@ -340,28 +168,20 @@ fn fade_levels(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 @compute @workgroup_size(CULL_GROUP)
-fn occlusion_test(@builtin(global_invocation_id) id: vec3<u32>) {
+fn occluded_lists(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= frame.candidates {
         return;
     }
     let candidate = slot_candidates[id.x];
     var flags = scan[candidate.position];
-    if !candidate_state_visible(flags) {
+    if !candidate_state_visible(flags) || candidate_state_phase_one(flags) {
         return;
     }
-    if own_projection(candidate.slot) {
-        return;
-    }
-    let batch = batches[candidate.batch];
-    let is_hidden = hidden(frame.view_projection * rows_matrix(slot_rows(candidate.slot)),
-        batch.bounds_min.xyz, batch.bounds_max.xyz, depth_pyramid, frame.viewport);
-    flags = candidate_state_with_occluded(flags, is_hidden);
-    if !candidate_state_phase_one(flags) {
-        if is_hidden {
-            atomicAdd(&occlusion_counts[0], 1u);
-        } else {
-            flags = candidate_state_with_phase_two(flags, true);
-        }
+    let held = drawn_occlusion[candidate.slot];
+    if occlusion_mark_late(held) {
+        flags = candidate_state_with_phase_two(flags, true);
+    } else if occlusion_mark_hidden(held) {
+        atomicAdd(&occlusion_counts[0], 1u);
     }
     scan[candidate.position] = flags;
 }
@@ -373,16 +193,10 @@ fn view_cull(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let candidate = slot_candidates[id.x];
     var flags = candidate_state_with_view(scan[candidate.position], false);
-    let batch = batches[candidate.batch];
-    if candidate_state_valid(flags) && !own_projection(candidate.slot)
-            && drawn_in_view(frame.bases.z, candidate.slot) {
-        let model = rows_matrix(slot_rows(candidate.slot));
-        if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz)
-                && !(frame.subpixel != 0u && covers_no_pixel(frame.view_projection * model,
-                    batch.bounds_min.xyz, batch.bounds_max.xyz, frame.viewport.xy)) {
-            flags = candidate_state_with_view(flags, true);
-            flags = candidate_state_with_view_level(flags, lod_level(batch, model));
-        }
+    if drawn_in_view(frame.bases.z, candidate.slot) {
+        flags = candidate_state_with_view(flags, true);
+        flags = candidate_state_with_view_level(flags,
+            lod_level(batches[candidate.batch], drawn_model(candidate.slot), frame.bases.z));
     }
     scan[candidate.position] = flags;
 }
@@ -611,7 +425,7 @@ fn totals_at() -> u32 {
 
 @compute @workgroup_size(1)
 fn gather_phase_one() {
-    for (var word = 0u; word < 14u; word++) {
+    for (var word = 0u; word < 26u; word++) {
         totals[word] = 0u;
     }
     let at = totals_at();
@@ -641,5 +455,11 @@ fn gather_phase_two() {
 fn gather_watched() {
     if frame.watched != UNWATCHED {
         totals[13] = lod_states[frame.watched];
+        let pose = drawn_poses[frame.watched];
+        for (var lane = 0u; lane < 4u; lane++) {
+            totals[14u + lane] = bitcast<u32>(pose.row_0[lane]);
+            totals[18u + lane] = bitcast<u32>(pose.row_1[lane]);
+            totals[22u + lane] = bitcast<u32>(pose.row_2[lane]);
+        }
     }
 }

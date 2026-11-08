@@ -4,12 +4,12 @@ import package::engine::shading::ViewPixel;
 import package::meshes::cards::{card_debug, card_depth, placed_card, placed_card_lit,
     placed_card_point};
 import package::meshes::forward::drawn_pixel;
-import package::meshes::slots::instance_poses;
+import package::meshes::slots::slot_pose;
 import package::place::instances::{AffinePose, CardDebugTargets, CardShaded, CardVertex,
     SlotColor};
 
 fn instance_pose(slot: u32) -> AffinePose {
-    return instance_poses[slot];
+    return slot_pose(slot);
 }
 
 fn placed_card_vertex(vertex: u32, batch: u32, pose: AffinePose, previous: AffinePose,

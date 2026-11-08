@@ -1,7 +1,7 @@
 use engine_core::{Error, ScenePass, TargetName, ViewFacts};
 use engine_render::{
     Allocation, Bind, DepthUse, Draw, Install, Lifetime, Pipeline, Prepare, RenderPipeline,
-    SamplerDesc, Scene, Shape, Texture, wgpu,
+    Scene, Shape, Texture, wgpu,
 };
 
 use crate::SpritesGpu;
@@ -35,7 +35,7 @@ impl Flat {
             wgpu::TextureFormat::Rgba8UnormSrgb,
             Lifetime::Kept,
         );
-        let sampler = cx.sampler(SamplerDesc::NEAREST);
+        let sampler = cx.sampler(engine_core::Sampler::NEAREST);
         let mut pipelines = Vec::with_capacity(listed.len());
         for listed in listed {
             let lit = listed.pass.writes.contains(TargetName::COLOR);

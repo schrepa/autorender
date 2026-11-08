@@ -5,7 +5,7 @@ use engine_core::{
     TextureFormat, TextureHandle,
 };
 use engine_places_world::ground::{SurfaceMaps, TerrainTiles};
-use engine_render::{Allocation, Install, Lifetime, Prepare, Sampler, SamplerDesc, wgpu};
+use engine_render::{Allocation, Install, Lifetime, Prepare, Sampler, wgpu};
 
 use crate::terrain::TerrainGpu;
 
@@ -87,17 +87,7 @@ impl TerrainMaps {
                 wgpu::TextureFormat::Rgba8Unorm,
                 Lifetime::Kept,
             ),
-            sampler: cx.sampler(SamplerDesc {
-                filter: wgpu::FilterMode::Linear,
-                mipmap: wgpu::MipmapFilterMode::Linear,
-                address: [
-                    wgpu::AddressMode::Repeat,
-                    wgpu::AddressMode::Repeat,
-                    wgpu::AddressMode::ClampToEdge,
-                ],
-                compare: None,
-                anisotropy: engine_render::MATERIAL_ANISOTROPY,
-            }),
+            sampler: cx.sampler(engine_core::Sampler::REPEAT),
             features: cx.features(),
             filled: false,
             layers: Vec::new(),

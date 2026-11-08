@@ -8,7 +8,6 @@ engine_core::gpu_struct! {
         pub(crate) counts: [u32; 4],
         pub(crate) scale: [f32; 4],
         pub(crate) tier: [f32; 4],
-        pub(crate) planes: [[f32; 4]; 6],
         pub(crate) foliage: [f32; 4],
         pub(crate) view: [f32; 4],
     }

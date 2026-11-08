@@ -254,21 +254,14 @@ fn ground_bounds(store: &TileStore, pyramid: &Pyramid, key: TileKey) -> Option<[
     None
 }
 
-pub(super) struct ViewPlanes(Option<[Vec4; 5]>);
+pub(super) struct ViewPlanes(Option<[Vec4; 6]>);
 
 impl ViewPlanes {
     pub(super) fn new(camera: &Camera, (eye, forward): (Vec3, Vec3), size: glam::UVec2) -> Self {
         let aspect = size.x as f32 / size.y.max(1) as f32;
-        let rows = camera.view_projection(eye, forward, aspect).transpose();
-        let planes = [
-            rows.w_axis + rows.x_axis,
-            rows.w_axis - rows.x_axis,
-            rows.w_axis + rows.y_axis,
-            rows.w_axis - rows.y_axis,
-            rows.w_axis - rows.z_axis,
-        ];
+        let planes = engine_core::frustum_planes(camera.view_projection(eye, forward, aspect));
         Self(
-            planes
+            planes[..5]
                 .iter()
                 .all(|plane| plane.is_finite())
                 .then_some(planes),
@@ -276,17 +269,9 @@ impl ViewPlanes {
     }
 
     pub(super) fn sees(&self, low: Vec3, high: Vec3) -> bool {
-        let Some(planes) = &self.0 else {
-            return true;
-        };
-        planes.iter().all(|plane| {
-            let corner = Vec3::new(
-                if plane.x >= 0.0 { high.x } else { low.x },
-                if plane.y >= 0.0 { high.y } else { low.y },
-                if plane.z >= 0.0 { high.z } else { low.z },
-            );
-            plane.truncate().dot(corner) + plane.w >= 0.0
-        })
+        self.0
+            .as_ref()
+            .is_none_or(|planes| engine_core::frustum_sees(&planes[..5], low, high))
     }
 }
 

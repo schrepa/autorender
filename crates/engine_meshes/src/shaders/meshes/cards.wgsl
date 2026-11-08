@@ -20,7 +20,7 @@ import package::generated::meshes::{card_frames_first, card_frames_second, card_
 import package::generated::targets::{DepthViewTargets, depth_view_targets};
 import package::meshes::debug::point_targets;
 import package::meshes::forward::drawn_pixel;
-import package::meshes::slots::{instance_colors, instance_poses, instance_previous_poses};
+import package::meshes::slots::{instance_colors, slot_pose, slot_previous_pose};
 import package::meshes::vertex::posed;
 import package::place::instances::{AffinePose, CardDebugTargets, CardShaded, CardVertex,
     SlotColor};
@@ -166,11 +166,11 @@ fn placed_card(vertex: u32, batch: u32, pose: AffinePose, previous: AffinePose,
 fn vs_card(input: CardInput) -> CardOutput {
     let slot = drawn_slot_slot(input.slot);
     let color = instance_colors[slot];
-    let made = posed_card(input.vertex, input.batch, instance_poses[slot], color,
+    let made = posed_card(input.vertex, input.batch, slot_pose(slot), color,
         impostor_records[input.batch]);
-    var pose = instance_poses[slot];
+    var pose = slot_pose(slot);
     if drawn_slot_moved(input.slot) {
-        pose = instance_previous_poses[slot];
+        pose = slot_previous_pose(slot);
     }
     let card = made.output;
     return CardOutput(card.clip_position, card.frames_ab, card.frame_c, card.world,

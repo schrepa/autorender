@@ -6,7 +6,7 @@ use engine_places_simulation::wind::Wind;
 use engine_places_world::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
     AfterRead, Allocation, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, Draw,
-    DrawInput, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare, Sampler, SamplerDesc, Shape,
+    DrawInput, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare, Sampler, Shape,
     Texture, wgpu,
 };
 use glam::{UVec2, Vec2, Vec3};
@@ -26,7 +26,7 @@ const TEXEL_SPLIT: u32 = 16;
 const HANDOVER_PIXELS: f32 = 1.0;
 const TEXTURE_LEVELS: u32 = 6;
 const TEXTURE_LAYERS: u32 = 2;
-const WINDOW_MARGIN: u32 = engine_render::MATERIAL_ANISOTROPY as u32 / HANDOVER_PIXELS as u32 + 1;
+const WINDOW_MARGIN: u32 = engine_core::Sampler::ANISOTROPY as u32 / HANDOVER_PIXELS as u32 + 1;
 const FOAM_PIXELS: u32 = 4;
 const WAVE_TEXELS: u32 = 16;
 const SPLAT_BYTES: u64 = 16;
@@ -428,17 +428,7 @@ impl ParticlesGpu {
             wgpu::TextureFormat::Rgba16Float,
             Lifetime::Kept,
         );
-        let sampler = cx.sampler(SamplerDesc {
-            filter: wgpu::FilterMode::Linear,
-            mipmap: wgpu::MipmapFilterMode::Linear,
-            address: [
-                wgpu::AddressMode::Repeat,
-                wgpu::AddressMode::Repeat,
-                wgpu::AddressMode::ClampToEdge,
-            ],
-            compare: None,
-            anisotropy: engine_render::MATERIAL_ANISOTROPY,
-        });
+        let sampler = cx.sampler(engine_core::Sampler::REPEAT);
         let [lattice_pass, first_copy, scan_pass, second_copy, splat_pass] =
             passes(cx, after, (counts, args));
         let own = [

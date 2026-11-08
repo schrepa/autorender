@@ -2,6 +2,7 @@ import package::cover::faces::cover::{cover_clumped, cover_growth, cover_share, 
     material_cover};
 import package::cover::laws::{COVER_CLUMP_HEIGHT, COVER_LEAF_STEPS, STRAIGHT_FIRST_VERTEX,
     STRAIGHT_JOINTS, cover_clump, cover_clump_lean, cover_tuft};
+import package::engine::drawn::drawn_view_sees;
 import package::engine::math::unit;
 import package::face::ground_tiles::{GroundMaterial, GroundTerrain, NOT_RESIDENT, ground_colors,
     ground_extent, ground_height, level_tile, macro_color, material_look, terrain_info,
@@ -94,27 +95,6 @@ fn ordered_height(height: f32) -> u32 {
 
 fn ordered_to_height(ordered: u32) -> f32 {
     return bitcast<f32>(select(~ordered, ordered & 0x7fffffffu, (ordered & 0x80000000u) != 0u));
-}
-
-fn box_in_view(grow: Grow, low: vec3<f32>, high: vec3<f32>, radius: f32) -> bool {
-    let center = 0.5 * (low + high);
-    let extent = 0.5 * (high - low);
-    for (var plane = 0u; plane < 6u; plane++) {
-        let normal = grow.planes[plane].xyz;
-        if dot(normal, center) + dot(abs(normal), extent) + grow.planes[plane].w < -radius {
-            return false;
-        }
-    }
-    return true;
-}
-
-fn in_view(grow: Grow, center: vec3<f32>, radius: f32) -> bool {
-    for (var plane = 0u; plane < 6u; plane++) {
-        if dot(grow.planes[plane].xyz, center) + grow.planes[plane].w < -radius {
-            return false;
-        }
-    }
-    return true;
 }
 
 const CELL_MARGIN: f32 = 0.05;
@@ -266,9 +246,9 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
             let low = ordered_to_height(~atomicLoad(&cell_low));
             let high = ordered_to_height(atomicLoad(&cell_high));
             let origin = grow.origin.xyz + vec3<f32>(corner.x, -0.02, corner.y);
-            cell_seen = u32(box_in_view(grow, origin + vec3<f32>(0.0, low, 0.0),
-                origin + vec3<f32>(spacing, high + 0.5 * tallest, spacing),
-                tallest + CELL_MARGIN));
+            let margin = vec3<f32>(tallest + CELL_MARGIN);
+            cell_seen = u32(drawn_view_sees(0u, origin + vec3<f32>(0.0, low, 0.0) - margin,
+                origin + vec3<f32>(spacing, high + 0.5 * tallest, spacing) + margin));
         }
         if workgroupUniformLoad(&cell_seen) == 0u {
             return;
@@ -322,7 +302,8 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         if height < 0.02 {
             continue;
         }
-        if !in_view(grow, root + vec3<f32>(0.0, 0.5 * height, 0.0), height) {
+        let middle = root + vec3<f32>(0.0, 0.5 * height, 0.0);
+        if !drawn_view_sees(0u, middle - vec3<f32>(height), middle + vec3<f32>(height)) {
             continue;
         }
         let variation = (0.85 + 0.3 * unit(hash(seed ^ 0x9e3779b9u)))

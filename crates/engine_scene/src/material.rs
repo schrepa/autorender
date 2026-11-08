@@ -620,6 +620,7 @@ impl SceneTextureMap {
                 SceneMipmapFilter::Nearest => Some(Filter::Nearest),
                 SceneMipmapFilter::Linear => Some(Filter::Linear),
             },
+            ..Sampler::REPEAT
         }
     }
 }

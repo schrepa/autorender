@@ -450,7 +450,6 @@ pub(crate) fn plan_cull(
     let pixels = pixel_error.map_or(0.0, |error| spanned / error);
     let cards = impostors.map_or(0.0, |size| y_row * height / size);
     plan.main = Some(CullView {
-        planes: engine_render::planes(view_projection),
         eye: eye.extend(pixels).to_array(),
         shape: [1, 1, 0, 0],
     });

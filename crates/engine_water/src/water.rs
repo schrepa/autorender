@@ -9,7 +9,7 @@ use engine_places_world::ground::{GroundTiles, Heightfield};
 use engine_render::{
     Access, Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw,
     DrawInput, Encode, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
-    SamplerDesc, Scene, SceneDraw, Shape, TargetName, Texture, VertexLayout, wgpu,
+    Scene, SceneDraw, Shape, TargetName, Texture, VertexLayout, wgpu,
 };
 use glam::Vec3;
 
@@ -211,7 +211,7 @@ impl GpuPart for WaterGpu {
         let leaf_pattern = cx.buffer("water_leaf_pattern", Lifetime::Kept);
         let fall_vertices = cx.buffer("water_falls", Lifetime::Kept);
         let fall_indices = cx.buffer("water_fall_indices", Lifetime::Kept);
-        let refraction_sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
+        let refraction_sampler = cx.sampler(engine_core::Sampler::LINEAR_CLAMP);
         cx.frame(
             refraction::REFRACTION_SAMPLER,
             Bind::Sampler(refraction_sampler),

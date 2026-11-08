@@ -280,7 +280,7 @@ fn kept_patches(
             let child = TileKey::new(at as u8 - 1, (2 * x / side) as u16, (2 * z / side) as u16);
             if held(child).is_some() {
                 let widened = Vec3::Y * stray(at);
-                if visible(planes, min - widened, max + widened) {
+                if engine_core::frustum_sees(planes, min - widened, max + widened) {
                     for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
                         stack.push((at - 1, 2 * x + dx, 2 * z + dz));
                     }
@@ -288,7 +288,7 @@ fn kept_patches(
                 continue;
             }
         }
-        if !visible(planes, min, max) {
+        if !engine_core::frustum_sees(planes, min, max) {
             continue;
         }
         if let Some(record) = TileRecord::of(parts, terrain, tile) {
@@ -523,30 +523,4 @@ fn terrain_uniform(
             0,
         ],
     }
-}
-
-pub(crate) fn planes(clip: Mat4, sides_only: bool) -> Vec<Vec4> {
-    let rows = [clip.row(0), clip.row(1), clip.row(2), clip.row(3)];
-    let mut planes = vec![
-        rows[3] + rows[0],
-        rows[3] - rows[0],
-        rows[3] + rows[1],
-        rows[3] - rows[1],
-    ];
-    if !sides_only {
-        planes.push(rows[2]);
-        planes.push(rows[3] - rows[2]);
-    }
-    planes
-}
-
-pub(crate) fn visible(planes: &[Vec4], min: Vec3, max: Vec3) -> bool {
-    planes.iter().all(|plane| {
-        let corner = Vec3::new(
-            if plane.x >= 0.0 { max.x } else { min.x },
-            if plane.y >= 0.0 { max.y } else { min.y },
-            if plane.z >= 0.0 { max.z } else { min.z },
-        );
-        plane.truncate().dot(corner) + plane.w >= 0.0
-    })
 }

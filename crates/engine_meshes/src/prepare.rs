@@ -1,43 +1,31 @@
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
-    AssetLibrary, DrawnPoses, DrawnTable, Error, ErrorCode, GlobalTransforms, GpuBits,
-    NodeInfo, NodePose, NodeStreams, PoseRows, Since, Views,
+    AssetLibrary, CullPlan, DrawnTable, Error, ErrorCode, GlobalTransforms, GpuBits, Since, Views,
 };
 use engine_places::impostors::{IMPOSTOR_VERTICES, ImpostorRecord};
-use engine_render::{
-    AfterRead, Allocation, CopyRegion, GpuPart, Prepare, TargetName, mip_levels, pyramid_extents,
-    wgpu,
-};
+use engine_render::{AfterRead, Allocation, GpuPart, Prepare, UploadRange, listed_ranges};
 
-use crate::gpu::{Drawing, MeshesGpu, NODE_LEVELS, PYRAMID_LEVELS, VIEW_FRAME_BYTES};
+use crate::gpu::{Drawing, MeshesGpu, VIEW_FRAME_BYTES};
 use crate::layouts::{
-    BatchData, BlendedView, COMPOSED_BYTES, CandidateData, CandidateState, DRAW_ARGS_BYTES, GROUP,
-    LOD_LEVELS, NO_NODE, PresentationFrame, UNWATCHED,
+    BatchData, BlendedView, CandidateData, CandidateState, DRAW_ARGS_BYTES, GROUP,
+    LOD_LEVELS, PresentationFrame, UNWATCHED,
 };
-use crate::order::{MeshPlan, capacity_for, instance_limit};
+use crate::order::{capacity_for, instance_limit};
 use crate::presentation::{
-    FADE_MARGIN, Kept, POSE, PresentationTotals, TOTALS_BYTES, UploadSources, VIEWS, ViewSlot,
-    WATCHED, frustum_uniform, grow, rasterized, storage_bytes,
+    FADE_MARGIN, Kept, PresentationTotals, TOTALS_BYTES, UploadSources, VIEWS, ViewSlot,
+    WATCHED, grow, storage_bytes,
 };
-use crate::uploads::{ColorData, PoseData, UploadRange, color_data, listed_ranges};
+use crate::uploads::{ColorData, color_data};
 
 const TOTALS: u32 = 0;
 
 struct View {
-    view_projection: glam::Mat4,
     eye: glam::Vec3,
-    viewport: (u32, u32),
-    motion: bool,
-    occlusion: Option<u32>,
+    occlusion: bool,
     lod_error: f32,
     impostors: bool,
     fade: f32,
     watched: Option<u32>,
-}
-
-struct Prepared {
-    uploaded: Option<(bool, u64)>,
-    group_bytes: u64,
 }
 
 impl MeshesGpu {
@@ -47,8 +35,7 @@ impl MeshesGpu {
             (
                 table,
                 assets,
-                decided,
-                presented,
+                plan,
                 hierarchy,
                 detail,
                 impostors,
@@ -88,24 +75,12 @@ impl MeshesGpu {
         if self.state.capacity == 0 || slots > self.state.capacity {
             self.state.capacity = capacity_for(slots, limit);
         }
-        let kept = cx.read_target(TargetName::MOTION);
-        let fresh = self.prepare_instances(&table, &assets, kept, cx);
-        let size = main.render;
-        let motion = self.prepare_motion(generation, (kept, main.history.valid(), fresh), cx);
+        self.prepare_instances(&table, &assets, cx);
         let shown = cx.ran(self.passes.presentation);
         let fade = self.fade_share(time.real_elapsed as f32, detail.fade_seconds, shown);
-        if !decided.occlusion_enabled {
-            self.release_pyramid(cx);
-        }
         let culling = View {
-            view_projection: rasterized(main),
             eye: main.detail_eye,
-            viewport: (size.x, size.y),
-            motion,
-            occlusion: decided.occlusion_enabled.then(|| {
-                let display = main.size();
-                self.prepare_pyramid(((display.x, display.y), (size.x, size.y)), cx)
-            }),
+            occlusion: plan.occlusion,
             lod_error: if detail.enabled {
                 detail.pixel_error * main.render.y as f32 / main.size().y.max(1) as f32
             } else {
@@ -115,12 +90,10 @@ impl MeshesGpu {
             fade,
             watched: watched.slot,
         };
-        let nodes = presented.streams(&hierarchy);
-        let prepared = self.prepare_presentation(
+        let group_bytes = self.prepare_presentation(
             &table,
-            (&*presented, &nodes),
             &culling,
-            &decided,
+            &plan,
             UploadSources {
                 assets: &assets,
                 residency: &residency,
@@ -130,7 +103,7 @@ impl MeshesGpu {
             cx,
         );
         if engine_core::profile::active() {
-            self.gpu_counters(&prepared, totals.last().map(|last| last.visible));
+            self.gpu_counters(group_bytes, totals.last().map(|last| last.visible));
         }
         self.prepare_views(&views, limits.storage_room, cx);
         self.prepare_blended(cx);
@@ -174,32 +147,6 @@ impl MeshesGpu {
         }
     }
 
-    fn prepare_motion(
-        &mut self,
-        generation: u64,
-        (kept, history, fresh): (bool, bool, bool),
-        cx: &mut Prepare<'_, Self>,
-    ) -> bool {
-        let shown = cx.ran(self.passes.presentation);
-        let state = &mut self.state;
-        let motion =
-            kept && history && !fresh && shown && state.motion_generation == Some(generation);
-        state.motion_generation = kept.then_some(generation);
-        if kept {
-            engine_core::profile::counter("render.object_motion", f64::from(u8::from(motion)));
-            let bytes = (state.capacity * size_of::<PoseData>()) as u64;
-            cx.copy(
-                self.passes.keep_poses,
-                &[CopyRegion::Bytes {
-                    from: 0,
-                    to: 0,
-                    size: bytes,
-                }],
-            );
-        }
-        motion
-    }
-
     fn fade_share(&mut self, seconds: f32, fade_seconds: f32, shown: bool) -> f32 {
         let state = &mut self.state;
         if shown {
@@ -230,9 +177,8 @@ impl MeshesGpu {
         &mut self,
         table: &DrawnTable,
         assets: &AssetLibrary,
-        kept: bool,
         cx: &mut Prepare<'_, Self>,
-    ) -> bool {
+    ) {
         let _profile = engine_core::profile::span("render", "instance_buffer_and_packing");
         let state = &mut self.state;
         let instances = &self.instances;
@@ -241,19 +187,12 @@ impl MeshesGpu {
         if cx.allocate_buffer(instances.records, records_bytes) == Allocation::Fresh {
             cx.write(instances.records, 0, &crate::debug::record_words());
         }
-        let poses = cx.allocate_buffer(instances.poses, capacity * size_of::<PoseData>() as u64);
-        if poses == Allocation::Fresh && state.poses_capacity != 0 {
-            engine_core::profile::counter("render.instance_buffer_growth", 1.0);
-        }
-        state.poses_capacity = state.capacity;
         let colors =
             cx.allocate_buffer(instances.colors, capacity * size_of::<ColorData>() as u64);
-        let previous_bytes = if kept {
-            capacity * size_of::<PoseData>() as u64
-        } else {
-            storage_bytes(0)
-        };
-        let previous = cx.allocate_buffer(instances.previous_poses, previous_bytes);
+        if colors == Allocation::Fresh && state.colors_capacity != 0 {
+            engine_core::profile::counter("render.instance_buffer_growth", 1.0);
+        }
+        state.colors_capacity = state.capacity;
         let records = table.records().len();
         let stride = size_of::<ColorData>();
         state.color_ranges.clear();
@@ -302,76 +241,24 @@ impl MeshesGpu {
             color_bytes += std::mem::size_of_val(state.color_staging.as_slice()) as u64;
         }
         cx.count_upload(color_bytes);
-        let (pose, color) = (size_of::<PoseData>() as u64, size_of::<ColorData>() as u64);
-        cx.memory(
-            "memory.gpu_previous_pose_bytes",
-            if kept { capacity * pose } else { 0 },
-        );
+        let color = size_of::<ColorData>() as u64;
         cx.memory(
             "memory.render_staging_capacity_bytes",
             (state.color_staging.capacity() * size_of::<ColorData>()) as u64,
         );
-        cx.memory(
-            "memory.gpu_instance_buffer_bytes",
-            capacity * (pose + color),
-        );
-        poses == Allocation::Fresh || previous == Allocation::Fresh
-    }
-
-    fn prepare_pyramid(
-        &mut self,
-        (display, render): ((u32, u32), (u32, u32)),
-        cx: &mut Prepare<'_, Self>,
-    ) -> u32 {
-        let pyramid = &mut self.state.pyramid;
-        let base = (
-            display.0.div_ceil(2).max(1).next_power_of_two(),
-            display.1.div_ceil(2).max(1).next_power_of_two(),
-        );
-        let count = mip_levels(base.0, base.1).min(PYRAMID_LEVELS as u32);
-        pyramid.count = count;
-        cx.allocate(
-            self.presented.pyramid,
-            wgpu::Extent3d {
-                width: base.0,
-                height: base.1,
-                depth_or_array_layers: 1,
-            },
-            count,
-        );
-        pyramid.written.clear();
-        for (level, extent) in pyramid_extents(render, count).iter().enumerate() {
-            let buffer = self.presented.extents[level];
-            cx.allocate_buffer(buffer, 16);
-            cx.write(buffer, 0, extent);
-            pyramid.written.push((extent[0], extent[1]));
-        }
-        count
-    }
-
-    fn release_pyramid(&mut self, cx: &mut Prepare<'_, Self>) {
-        let pyramid = std::mem::take(&mut self.state.pyramid);
-        if pyramid.count == 0 {
-            return;
-        }
-        cx.release(self.presented.pyramid);
-        for level in 0..pyramid.written.len() {
-            cx.release_buffer(self.presented.extents[level]);
-        }
+        cx.memory("memory.gpu_instance_buffer_bytes", capacity * color);
     }
 
     fn prepare_presentation(
         &mut self,
         table: &DrawnTable,
-        (poses, streams): (&DrawnPoses, &NodeStreams<'_>),
         view: &View,
-        decided: &MeshPlan,
+        plan: &CullPlan,
         sources: UploadSources<'_>,
         cx: &mut Prepare<'_, Self>,
-    ) -> Prepared {
-        self.ensure_nodes(streams.info.len(), streams.parents.len(), cx);
+    ) -> u64 {
         let kept = Kept {
-            phase_two: view.occlusion.is_some(),
+            phase_two: view.occlusion,
             impostors: view.impostors && view.lod_error > 0.0,
         };
         let batches = &self.state.batches;
@@ -382,14 +269,9 @@ impl MeshesGpu {
         self.state.watched = view
             .watched
             .filter(|&slot| u64::from(slot) * 4 + 4 <= states);
-        let uploaded = self
-            .state
-            .nodes
-            .plan(poses, streams.info.len())
-            .map(|full| (full, self.upload_nodes(streams, cx)));
         let group_bytes = self.write_batches(&sources, table, cx)
             + self.write_candidates(table, sources.hierarchy, cx);
-        self.write_frame_uniform(streams.alpha, view, decided, cx);
+        self.write_frame_uniform(view, plan, cx);
         cx.run(self.passes.presentation);
         if self.state.occlusion {
             cx.run(self.passes.occlusion);
@@ -405,79 +287,16 @@ impl MeshesGpu {
             && let Some(slot) = self.state.watched
         {
             cx.deliver::<PresentationTotals>(WATCHED, slot.to_le_bytes().to_vec());
-            if (slot as usize) < self.state.capacity {
-                let (at, size) = (u64::from(slot), size_of::<PoseData>() as u64);
-                cx.read_back::<PresentationTotals>(
-                    POSE,
-                    self.instances.poses,
-                    at * size..(at + 1) * size,
-                    AfterRead::Keep,
-                );
-            }
         }
-        Prepared {
-            uploaded,
-            group_bytes,
-        }
+        group_bytes
     }
 
-    fn gpu_counters(&self, prepared: &Prepared, visible: Option<u32>) {
+    fn gpu_counters(&self, group_bytes: u64, visible: Option<u32>) {
         use engine_core::profile::counter;
-        let nodes = &self.state.nodes;
-        let (full, bytes) = prepared.uploaded.unwrap_or((false, 0));
         counter("render.gpu_candidates", f64::from(self.state.groups.count));
-        counter("render.gpu_node_upload_bytes", bytes as f64);
-        counter("render.gpu_group_upload_bytes", prepared.group_bytes as f64);
-        counter("render.gpu_full_node_upload", f64::from(u8::from(full)));
-        counter("render.gpu_parent_levels", nodes.level_ranges.len() as f64);
+        counter("render.gpu_group_upload_bytes", group_bytes as f64);
         if let Some(visible) = visible {
             counter("render.gpu_visible_readback", f64::from(visible));
-        }
-    }
-
-    fn ensure_nodes(&mut self, nodes: usize, parents: usize, cx: &mut Prepare<'_, Self>) {
-        let inputs = &mut self.state.nodes;
-        let presented = &self.presented;
-        if nodes > inputs.capacity {
-            inputs.capacity = grow(nodes);
-            inputs.composed_capacity = 0;
-        }
-        let capacity = inputs.capacity as u64;
-        let sizes = [
-            (
-                presented.locals,
-                storage_bytes(2 * capacity * size_of::<NodePose>() as u64),
-            ),
-            (
-                presented.info,
-                storage_bytes(capacity * size_of::<NodeInfo>() as u64),
-            ),
-            (
-                presented.authority,
-                storage_bytes(capacity * size_of::<PoseRows>() as u64),
-            ),
-        ];
-        let mut fresh = false;
-        for (buffer, bytes) in sizes {
-            fresh |= cx.allocate_buffer(buffer, bytes) == Allocation::Fresh;
-        }
-        if parents != 0 && inputs.composed_capacity < inputs.capacity {
-            inputs.composed_capacity = inputs.capacity;
-        }
-        fresh |= cx.allocate_buffer(
-            presented.composed,
-            storage_bytes(inputs.composed_capacity as u64 * COMPOSED_BYTES),
-        ) == Allocation::Fresh;
-        if parents > inputs.parent_capacity {
-            inputs.parent_capacity = grow(parents);
-        }
-        let parent_bytes = storage_bytes(inputs.parent_capacity as u64 * 4);
-        fresh |= cx.allocate_buffer(presented.parents, parent_bytes) == Allocation::Fresh;
-        for &level in &presented.levels {
-            fresh |= cx.allocate_buffer(level, 16) == Allocation::Fresh;
-        }
-        if fresh {
-            inputs.whole = true;
         }
     }
 
@@ -573,45 +392,6 @@ impl MeshesGpu {
         }
     }
 
-    fn upload_nodes(&mut self, streams: &NodeStreams<'_>, cx: &mut Prepare<'_, Self>) -> u64 {
-        let nodes = &mut self.state.nodes;
-        let presented = &self.presented;
-        let bytes = nodes.planned_bytes();
-        let pose = size_of::<NodePose>();
-        let previous = (nodes.capacity * pose) as u64;
-        for range in &nodes.ranges {
-            let (start, end) = (range.start, range.end);
-            cx.write(
-                presented.locals,
-                (start * pose) as u64,
-                &streams.current[start..end],
-            );
-            cx.write(
-                presented.locals,
-                previous + (start * pose) as u64,
-                &streams.previous[start..end],
-            );
-            cx.write(
-                presented.info,
-                (start * size_of::<NodeInfo>()) as u64,
-                &streams.info[start..end],
-            );
-            cx.write(
-                presented.authority,
-                (start * size_of::<PoseRows>()) as u64,
-                &streams.authority[start..end],
-            );
-        }
-        if !streams.parents.is_empty() {
-            cx.write(presented.parents, 0, streams.parents);
-        }
-        nodes.levels(streams);
-        for (level, &(start, end)) in nodes.level_ranges.iter().enumerate().take(NODE_LEVELS) {
-            cx.write(presented.levels[level], 0, &[start, end, 0, 0]);
-        }
-        bytes
-    }
-
     fn write_batches(
         &mut self,
         sources: &UploadSources<'_>,
@@ -664,10 +444,7 @@ impl MeshesGpu {
             cx.clear_buffer_range(self.presented.lod_states, 0..fades);
         }
         groups.key = Some(key);
-        let records = table.records();
-        groups.stage_candidates(&state.batches.batches, &state.batches.ordered, |slot| {
-            records.get(slot).map_or(NO_NODE, |record| record.node)
-        });
+        groups.stage_candidates(&state.batches.batches, &state.batches.ordered);
         if !groups.candidate_staging.is_empty() {
             cx.write(self.presented.candidates, 0, &groups.candidate_staging);
             cx.write(self.presented.slot_candidates, 0, &groups.slot_staging);
@@ -675,37 +452,17 @@ impl MeshesGpu {
         (2 * groups.candidate_staging.len() * size_of::<CandidateData>()) as u64
     }
 
-    fn write_frame_uniform(
-        &mut self,
-        alpha: f32,
-        view: &View,
-        decided: &MeshPlan,
-        cx: &mut Prepare<'_, Self>,
-    ) {
+    fn write_frame_uniform(&mut self, view: &View, plan: &CullPlan, cx: &mut Prepare<'_, Self>) {
         let state = &mut self.state;
-        let (planes, absolute) = frustum_uniform(view.view_projection);
-        let bounded = absolute.iter().flatten().all(|value| {
-            value.is_finite() && *value <= engine_core::presentation_bounds::MAX_COEFFICIENT
-        }) && planes.iter().flatten().all(|value| value.is_finite());
-        let culling = decided.culling && bounded;
         let candidates = state.groups.count;
         state.candidates = candidates;
-        let unbudgeted = culling && decided.budget as usize >= candidates as usize;
-        state.occlusion = view.occlusion.is_some() && unbudgeted && candidates != 0;
-        let subpixel = decided.subpixel_enabled && unbudgeted && candidates != 0;
-        let (width, height) = view.viewport;
+        let unbudgeted = plan.frustum && plan.budget >= candidates;
+        state.occlusion = view.occlusion && candidates != 0;
         let mut uniform = PresentationFrame {
-            alpha,
             candidates,
-            budget: decided.budget,
-            culling: u32::from(culling),
+            budget: plan.budget,
             groups: candidates.div_ceil(GROUP),
             batches: state.groups.batch_count,
-            node_capacity: state.nodes.capacity as u32,
-            pad_nodes: 0,
-            planes,
-            absolute_view_projection: absolute,
-            motion: u32::from(view.motion),
             mask: if state.occlusion {
                 CandidateState {
                     phase_one: true,
@@ -719,18 +476,12 @@ impl MeshesGpu {
             }
             .pack(),
             occlusion: u32::from(state.occlusion),
-            subpixel: u32::from(subpixel),
-            view_projection: view.view_projection.to_cols_array_2d(),
-            viewport: [
-                width as f32,
-                height as f32,
-                view.occlusion.unwrap_or(0) as f32,
-                0.0,
-            ],
             plane: state.groups.capacity as u32,
             lod_error: if unbudgeted { view.lod_error } else { 0.0 },
             watched: state.watched.unwrap_or(UNWATCHED),
-            pad: 0,
+            pad_0: 0,
+            pad_1: 0,
+            pad_2: 0,
             eye: view
                 .eye
                 .extend(if view.impostors { 1.0 } else { 0.0 })
@@ -790,22 +541,13 @@ impl MeshesGpu {
                     refused += 1;
                     continue;
                 }
-                let view_projection = view.view_projection;
-                let (planes, absolute) = frustum_uniform(view_projection);
                 let mut uniform = base;
-                uniform.planes = view.planes.unwrap_or(planes);
-                uniform.absolute_view_projection = absolute;
-                uniform.view_projection = view_projection.to_cols_array_2d();
-                uniform.culling = 1;
                 uniform.mask = CandidateState {
                     view: true,
                     ..CandidateState::default()
                 }
                 .pack();
                 uniform.occlusion = 0;
-                uniform.subpixel = 1;
-                uniform.viewport = [view.size.x as f32, view.size.y as f32, 0.0, 0.0];
-                uniform.motion = 0;
                 uniform.budget = u32::MAX;
                 uniform.lod_error = view.detail;
                 uniform.watched = UNWATCHED;
@@ -818,7 +560,7 @@ impl MeshesGpu {
                     ids_base: ids,
                     args_base: args,
                     detailed,
-                    mirrored: view_projection.determinant() < 0.0,
+                    mirrored: view.view_projection.determinant() < 0.0,
                 });
                 frames.push(uniform);
                 ids += id_words;

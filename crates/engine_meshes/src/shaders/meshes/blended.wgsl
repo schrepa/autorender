@@ -1,8 +1,7 @@
-import package::engine::drawn::{drawn_flags_own_projection, drawn_in_view, drawn_records};
+import package::engine::drawn::{drawn_in_view, drawn_poses};
 import package::engine::mesh::declarations::drawn_slot;
 import package::engine::view::camera;
 import package::generated::meshes::{BLEND_GROUP, BatchData as Batch, BlendedView};
-import package::meshes::slots::instance_poses;
 
 struct SortArgs {
     index_count: u32,
@@ -21,40 +20,16 @@ struct SortArgs {
 
 const UNSEEN: f32 = 3.0e38;
 
-fn outside(center: vec3<f32>, radius: f32) -> bool {
-    let m = camera.view_projection;
-    let x = vec4<f32>(m[0].x, m[1].x, m[2].x, m[3].x);
-    let y = vec4<f32>(m[0].y, m[1].y, m[2].y, m[3].y);
-    let z = vec4<f32>(m[0].z, m[1].z, m[2].z, m[3].z);
-    let w = vec4<f32>(m[0].w, m[1].w, m[2].w, m[3].w);
-    var planes = array<vec4<f32>, 5>(w + x, w - x, w + y, w - y, w - z);
-    for (var at = 0u; at < 5u; at++) {
-        let plane = planes[at];
-        if dot(plane.xyz, center) + plane.w < -radius * length(plane.xyz) {
-            return true;
-        }
-    }
-    return false;
-}
-
 fn row_depth(row: vec4<u32>) -> f32 {
     let slot = row.x;
     if !drawn_in_view(sort_view.view, slot) {
         return UNSEEN;
     }
-    let pose = instance_poses[slot];
+    let pose = drawn_poses[slot];
     let batch = sort_batches[row.y];
     let local = vec4<f32>((batch.bounds_min.xyz + batch.bounds_max.xyz) * 0.5, 1.0);
     let center = vec3<f32>(dot(pose.row_0, local), dot(pose.row_1, local),
         dot(pose.row_2, local));
-    let scale = max(length(vec3<f32>(pose.row_0.x, pose.row_1.x, pose.row_2.x)),
-        max(length(vec3<f32>(pose.row_0.y, pose.row_1.y, pose.row_2.y)),
-            length(vec3<f32>(pose.row_0.z, pose.row_1.z, pose.row_2.z))));
-    let radius = length(batch.bounds_max.xyz - batch.bounds_min.xyz) * 0.5 * scale;
-    let own = drawn_flags_own_projection(drawn_records[slot].flags);
-    if !own && outside(center, radius) {
-        return UNSEEN;
-    }
     let clip = camera.view_projection * vec4<f32>(center, 1.0);
     return clip.z / max(clip.w, 1.0e-6);
 }

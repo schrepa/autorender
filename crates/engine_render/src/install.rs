@@ -6,7 +6,7 @@ use engine_core::{AttachPoint, Entry, Error, ErrorCode, PassBit, PassViews, Targ
 use crate::graph::Clear;
 use crate::linker::Linker;
 use crate::registration::KindMember;
-use crate::{Access, DepthUse, Lifetime, SamplerDesc, VertexLayout};
+use crate::{Access, DepthUse, Lifetime, VertexLayout};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Bound {
@@ -211,7 +211,7 @@ pub(crate) struct Declared {
     pub(crate) parts: Vec<PartInfo>,
     pub(crate) textures: Vec<TextureDecl>,
     pub(crate) buffers: Vec<BufferDecl>,
-    pub(crate) samplers: Vec<SamplerDesc>,
+    pub(crate) samplers: Vec<engine_core::Sampler>,
     pub(crate) passes: Vec<PassDecl>,
     pub(crate) pipelines: Vec<PipelineDecl>,
     pub(crate) inputs: Vec<DrawInputDecl>,
@@ -358,7 +358,7 @@ impl InstallCore {
         }
     }
 
-    pub(crate) fn sampler(&mut self, desc: SamplerDesc) -> u32 {
+    pub(crate) fn sampler(&mut self, desc: engine_core::Sampler) -> u32 {
         match self
             .declared
             .samplers

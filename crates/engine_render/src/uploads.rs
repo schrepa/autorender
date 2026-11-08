@@ -1,0 +1,76 @@
+const WRITE_CALL_BYTES: usize = 16 * 1024;
+const MAX_RANGES: usize = 64;
+
+fn whole_stream(changed: usize, len: usize) -> bool {
+    changed * 4 >= len * 3
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct UploadRange {
+    pub start: usize,
+    pub end: usize,
+}
+
+pub fn listed_ranges(
+    nodes: &[u32],
+    len: usize,
+    stride: usize,
+    bits: &mut Vec<u64>,
+    ranges: &mut Vec<UploadRange>,
+) -> bool {
+    ranges.clear();
+    let words = len.div_ceil(64);
+    if bits.len() < words {
+        bits.resize(words, 0);
+    }
+    for &node in nodes {
+        let node = node as usize;
+        debug_assert!(node < len, "changed_node_in_array");
+        bits[node / 64] |= 1 << (node % 64);
+    }
+    let gap = WRITE_CALL_BYTES.div_ceil(stride);
+    let mut covered = 0;
+    let mut partial = true;
+    'words: for (word, &value) in bits[..words].iter().enumerate() {
+        let mut value = value;
+        while value != 0 {
+            let first = value.trailing_zeros() as usize;
+            let run = (value >> first).trailing_ones() as usize;
+            let (start, end) = (word * 64 + first, word * 64 + first + run);
+            match ranges.last_mut() {
+                Some(range) if start - range.end <= gap => {
+                    covered += end - range.end;
+                    range.end = end;
+                }
+                _ => {
+                    if ranges.len() == MAX_RANGES {
+                        partial = false;
+                        break 'words;
+                    }
+                    ranges.push(UploadRange { start, end });
+                    covered += end - start;
+                }
+            }
+            value = if first + run == 64 {
+                0
+            } else {
+                value & !(((1 << run) - 1) << first)
+            };
+        }
+    }
+    for &node in nodes {
+        bits[node as usize / 64] = 0;
+    }
+    if !partial || (whole_stream(covered, len) && !ranges.is_empty()) {
+        return full(len, ranges);
+    }
+    true
+}
+
+fn full(len: usize, ranges: &mut Vec<UploadRange>) -> bool {
+    ranges.clear();
+    if len != 0 {
+        ranges.push(UploadRange { start: 0, end: len });
+    }
+    false
+}

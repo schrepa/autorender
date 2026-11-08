@@ -7,7 +7,7 @@ import package::engine::shading::PositionInput;
 import package::engine::slots::slot_position;
 import package::engine::view::{camera, detail_across, view_clip};
 import package::face::skin::skin_pose;
-import package::meshes::slots::{instance_colors, instance_poses, instance_previous_poses};
+import package::meshes::slots::{instance_colors, slot_pose, slot_previous_pose};
 import package::place::instances::{AffinePose, SlotColor};
 
 fn rows(pose: AffinePose) -> PoseRows {
@@ -77,9 +77,9 @@ fn mesh_motion(input: GeometryVertex, drawn: u32) -> MotionOutput {
     let moved = drawn_slot_moved(drawn);
     var previous: AffinePose;
     if moved {
-        previous = instance_previous_poses[slot];
+        previous = slot_previous_pose(slot);
     }
-    let model = posed(instance_poses[slot]);
+    let model = posed(slot_pose(slot));
     return own_projection(affine_motion(input, model, rows(previous), moved, model[3].xyz,
         instance_colors[slot]), slot);
 }
@@ -91,7 +91,7 @@ fn skin_motion(input: GeometryVertex, skin: GeometrySkin, drawn: u32) -> MotionO
         var hidden: MotionOutput;
         return hidden;
     }
-    let node = instance_poses[slot];
+    let node = slot_pose(slot);
     let origin = vec3<f32>(node.row_0.w, node.row_1.w, node.row_2.w);
     return own_projection(affine_motion(input, pose_matrix(pose.now), pose.was, true, origin,
         instance_colors[slot]), slot);

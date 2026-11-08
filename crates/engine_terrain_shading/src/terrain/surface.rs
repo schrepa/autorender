@@ -6,7 +6,7 @@ use engine_render::{Allocation, Prepare};
 use glam::{Mat4, Vec3};
 
 use super::part::{Handles, TerrainGpu, TerrainViews};
-use super::{SLOT, SURFACE_SLOTS, planes};
+use super::{SLOT, SURFACE_SLOTS};
 use crate::gpu::{
     SUBDIVISION_ARGS, SUBDIVISION_COUNTED, SUBDIVISION_DRAW, SURFACE_MESHLET_INDICES,
     SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES, SubdivisionUniform,
@@ -365,7 +365,7 @@ fn lattice_vertex(i: u32, j: u32) -> u32 {
 
 fn world_planes(culling: Mat4, eye: Vec3) -> [[f32; 4]; 6] {
     let mut world = [[0.0; 4]; 6];
-    for (plane, held) in planes(culling, false).iter().zip(&mut world) {
+    for (plane, held) in engine_core::frustum_planes(culling).iter().zip(&mut world) {
         let normal = plane.truncate().as_dvec3();
         let offset = f64::from(plane.w) - normal.dot(eye.as_dvec3());
         *held = [plane.x, plane.y, plane.z, offset as f32];

@@ -4,7 +4,7 @@ use engine_places_rendering::shadows::{CasterMap, CasterView, SHADOW_REGIONS, Sh
 use engine_render::{
     Access, AfterRead, Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count,
     DebugShown, DepthUse, DrawInput, Encode, FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass,
-    Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, TargetName, Texture, VertexLayout, wgpu,
+    Pipeline, Prepare, RenderPipeline, Shape, TargetName, Texture, VertexLayout, wgpu,
 };
 
 use crate::ShadowPass;
@@ -215,8 +215,8 @@ impl GpuPart for ShadowsGpu {
         let cull = cx.buffer("caster_cull", Lifetime::Kept);
         let sky_views = cx.buffer("sky_views", Lifetime::Kept);
         let composes = cx.buffer("shadow_composes", Lifetime::Kept);
-        let compare = cx.sampler(SamplerDesc::COMPARE_LINEAR);
-        let texels = cx.sampler(SamplerDesc::NEAREST);
+        let compare = cx.sampler(engine_core::Sampler::COMPARE_LINEAR);
+        let texels = cx.sampler(engine_core::Sampler::NEAREST);
         cx.frame(sample::SHADOW_ATLAS, Bind::Texture(atlas))?;
         cx.frame(sample::SHADOW_TILES, Bind::Texture(tiles))?;
         cx.frame(sample::SHADOW_SAMPLER, Bind::Sampler(compare))?;

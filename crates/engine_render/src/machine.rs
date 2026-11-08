@@ -1008,7 +1008,9 @@ fn doubled_of(
 fn filterable_bound(bound: Option<&Bound>, declared: &Declared) -> bool {
     if let Some(Bound::Sampler(sampler)) = bound {
         return declared.samplers.get(*sampler as usize).is_none_or(|desc| {
-            desc.filter == wgpu::FilterMode::Linear || desc.mipmap == wgpu::MipmapFilterMode::Linear
+            desc.mag_filter == engine_core::Filter::Linear
+                || desc.min_filter == engine_core::Filter::Linear
+                || desc.mipmap_filter == Some(engine_core::Filter::Linear)
         });
     }
     let format = match bound {

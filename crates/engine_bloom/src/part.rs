@@ -1,8 +1,7 @@
 use engine_core::{Entry, Error, ViewFacts};
 use engine_render::{
     Access, Allocation, Attach, Bind, DepthUse, Encode, FULLSCREEN, GpuPart, Install, Lifetime,
-    Own, Pass, Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, level_region,
-    mip_levels, wgpu,
+    Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, level_region, mip_levels, wgpu,
 };
 
 use crate::BloomPass;
@@ -42,7 +41,7 @@ impl GpuPart for BloomGpu {
             wgpu::TextureFormat::Rgba16Float
         };
         let levels = cx.view_texture("engine/bloom", format, Lifetime::Kept);
-        let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
+        let sampler = cx.sampler(engine_core::Sampler::LINEAR_CLAMP);
         cx.frame(apply::BLOOM, mip(levels, 0))?;
         cx.frame(apply::BLOOM_SAMPLER, Bind::Sampler(sampler))?;
         let pass = cx

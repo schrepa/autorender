@@ -1,9 +1,9 @@
 use bevy_ecs::prelude::*;
-use engine_core::glam::{Mat4, Vec3};
-use engine_core::{Cut, DeviceLimits, FrameTime, Readable, Readback, Views};
+use engine_core::glam::Mat4;
+use engine_core::{Cut, DeviceLimits, FrameTime, Readable, Readback, ViewFacts, Views};
 use engine_places_rendering::wind::ViewWind;
 use engine_places_world::ground::{Foliage, GroundTiles, TerrainEntry, TerrainTiles};
-use engine_render::{pixels_per_meter, planes};
+use engine_render::pixels_per_meter;
 
 use crate::covers::{CoverTable, CoverTerms};
 use crate::layouts::{COVER_LEAVES, COVER_LUSH_RATIO, CoverBlade, CoverFrame, Grow};
@@ -51,15 +51,7 @@ fn word(bytes: &[u8], index: usize) -> u32 {
 }
 
 #[derive(Clone, Copy)]
-struct Sight {
-    culling: Mat4,
-    eye: Vec3,
-    height: f32,
-}
-
-#[derive(Clone, Copy)]
 struct Common {
-    planes: [[f32; 4]; 6],
     pixels_per_meter: f32,
     density: f32,
     tallest: f32,
@@ -95,12 +87,7 @@ pub(crate) fn plan_cover(
     let Some(main) = views.main() else {
         return;
     };
-    let sight = Sight {
-        culling: main.view_projection,
-        eye: main.detail_eye,
-        height: main.size().y as f32,
-    };
-    if !plan.grow(&cover, &table, (&tiles, &ground), sight, grounded) {
+    if !plan.grow(&cover, &table, (&tiles, &ground), main, grounded) {
         counts.latest = Some(Cut::default());
         return;
     }
@@ -129,15 +116,14 @@ impl CoverPlan {
         cover: &GroundCover,
         table: &CoverTable,
         (tiles, ground): (&TerrainTiles, &GroundTiles),
-        sight: Sight,
+        main: &ViewFacts,
         grounded: bool,
     ) -> bool {
         if cover.density <= 0.0 {
             return false;
         }
         let common = Common {
-            planes: planes(sight.culling),
-            pixels_per_meter: pixels_per_meter(sight.culling, sight.height),
+            pixels_per_meter: pixels_per_meter(main.view_projection, main.size().y as f32),
             density: cover.density,
             tallest: table.tallest * lushest(),
             grounded,
@@ -162,7 +148,7 @@ impl CoverPlan {
                 terrain,
                 (at, table.base(index)),
                 (law, density),
-                sight,
+                main,
                 common,
             );
             most += law.area() * density;
@@ -171,7 +157,7 @@ impl CoverPlan {
             return false;
         }
         let room = (self.room / BLADE_BYTES).min(u64::from(u32::MAX)) as u32;
-        let seen = (most * turn_share(sight.culling)).ceil() as u32;
+        let seen = (most * turn_share(main.view_projection)).ceil() as u32;
         let capacity = cover
             .max_blades
             .map_or(seen, |budget| budget.min(seen))
@@ -189,12 +175,12 @@ impl CoverPlan {
         terrain: &TerrainEntry,
         (at, base): (u32, u32),
         (law, density): (CoverLaw, f32),
-        sight: Sight,
+        main: &ViewFacts,
         common: Common,
     ) {
         let spacing = terrain.pyramid.spacing(0);
         let candidates = engine_core::math::max((density * spacing * spacing).ceil(), 1.0);
-        let local = sight.eye - terrain.origin;
+        let local = main.detail_eye - terrain.origin;
         let (tiers, count) = law.tiers();
         self.reach = engine_core::math::max(self.reach, tiers[count - 1].1);
         self.tiers = self.tiers.max(count as u32);
@@ -212,12 +198,11 @@ impl CoverPlan {
             let cells = (2.0 * outer / cell).ceil() as u32 + 1;
             self.rows.push(Grow {
                 origin: terrain.origin.extend(spacing).to_array(),
-                eye: sight.eye.extend(outer).to_array(),
+                eye: main.detail_eye.extend(outer).to_array(),
                 grid: [first[0], first[1], cells as i32, candidates as i32],
                 counts: [at, terrain.pyramid.levels(), base, 0],
                 scale: [common.density, tried, 0.0, common.tallest],
                 tier: [inner, law.span, scale, 0.0],
-                planes: common.planes,
                 foliage: [f32::from(u8::from(common.grounded)), 0.0, 0.0, 0.0],
                 view: [common.pixels_per_meter, 0.0, 0.0, 0.0],
             });

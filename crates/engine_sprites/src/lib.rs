@@ -15,7 +15,7 @@ use engine_core::{
 };
 use engine_render::{
     Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare,
-    RenderBricks, RenderPipeline, SamplerDesc, Scene, SceneDraw, Shape, wgpu,
+    RenderBricks, RenderPipeline, Scene, SceneDraw, Shape, wgpu,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -160,7 +160,7 @@ impl GpuPart for SpritesGpu {
         let listed = drawn_in(cx);
         let flat = flat::Flat::install(cx, &listed)?;
         let instances = cx.buffer("instances", Lifetime::Kept);
-        let sampler = cx.sampler(SamplerDesc::NEAREST);
+        let sampler = cx.sampler(engine_core::Sampler::NEAREST);
         let mut pipelines = Vec::with_capacity(listed.len());
         for listed in listed
             .iter()

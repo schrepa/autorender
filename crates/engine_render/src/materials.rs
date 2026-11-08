@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::world::World;
 use engine_core::{
-    AssetLibrary, AssetResidency, ColorSpace, Error, Filter, Material, MaterialHandle, Sampler,
-    Texture, TextureFormat, TextureHandle, Wrap,
+    AssetLibrary, AssetResidency, ColorSpace, Compare, Error, Filter, Material, MaterialHandle,
+    Sampler, Texture, TextureFormat, TextureHandle, Wrap,
 };
 
 use crate::bindings::Table;
@@ -17,8 +17,6 @@ use crate::encode::Compiler;
 use crate::gpu_data::{level_copy, mip_chain_bytes, mip_levels};
 use crate::mipmaps::MipGenerator;
 use crate::surface::{MaterialLayout, MaterialVariant, RECORD};
-
-pub const MATERIAL_ANISOTROPY: u16 = 16;
 
 pub(crate) struct GpuTexture {
     texture: wgpu::Texture,
@@ -359,37 +357,60 @@ fn sampler<'a>(
     cache: &'a mut HashMap<Sampler, wgpu::Sampler>,
     key: Sampler,
 ) -> &'a wgpu::Sampler {
-    cache.entry(key).or_insert_with(|| {
-        let address = |wrap| match wrap {
-            Wrap::Repeat => wgpu::AddressMode::Repeat,
-            Wrap::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
-            Wrap::ClampToEdge => wgpu::AddressMode::ClampToEdge,
-        };
-        let filter = |filter| match filter {
-            Filter::Nearest => wgpu::FilterMode::Nearest,
-            Filter::Linear => wgpu::FilterMode::Linear,
-        };
-        let trilinear = key.mag_filter == Filter::Linear
-            && key.min_filter == Filter::Linear
-            && key.mipmap_filter == Some(Filter::Linear);
-        device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("engine/material-sampler"),
-            address_mode_u: address(key.wrap_u),
-            address_mode_v: address(key.wrap_v),
-            mag_filter: filter(key.mag_filter),
-            min_filter: filter(key.min_filter),
-            mipmap_filter: match key.mipmap_filter {
-                Some(Filter::Nearest) | None => wgpu::MipmapFilterMode::Nearest,
-                Some(Filter::Linear) => wgpu::MipmapFilterMode::Linear,
-            },
-            lod_max_clamp: if key.mipmap_filter.is_some() {
-                32.0
-            } else {
-                0.0
-            },
-            anisotropy_clamp: if trilinear { MATERIAL_ANISOTROPY } else { 1 },
-            ..Default::default()
-        })
+    cache
+        .entry(key)
+        .or_insert_with(|| gpu_sampler(device, "engine/material-sampler", key))
+}
+
+pub(crate) fn gpu_sampler(
+    device: &wgpu::Device,
+    label: &'static str,
+    sampler: Sampler,
+) -> wgpu::Sampler {
+    let address = |wrap| match wrap {
+        Wrap::Repeat => wgpu::AddressMode::Repeat,
+        Wrap::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+        Wrap::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+    };
+    let filter = |filter| match filter {
+        Filter::Nearest => wgpu::FilterMode::Nearest,
+        Filter::Linear => wgpu::FilterMode::Linear,
+    };
+    let trilinear = sampler.mag_filter == Filter::Linear
+        && sampler.min_filter == Filter::Linear
+        && sampler.mipmap_filter == Some(Filter::Linear);
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some(label),
+        address_mode_u: address(sampler.wrap_u),
+        address_mode_v: address(sampler.wrap_v),
+        address_mode_w: address(sampler.wrap_w),
+        mag_filter: filter(sampler.mag_filter),
+        min_filter: filter(sampler.min_filter),
+        mipmap_filter: match sampler.mipmap_filter {
+            Some(Filter::Nearest) | None => wgpu::MipmapFilterMode::Nearest,
+            Some(Filter::Linear) => wgpu::MipmapFilterMode::Linear,
+        },
+        lod_max_clamp: if sampler.mipmap_filter.is_some() {
+            32.0
+        } else {
+            0.0
+        },
+        compare: sampler.compare.map(|compare| match compare {
+            Compare::Never => wgpu::CompareFunction::Never,
+            Compare::Less => wgpu::CompareFunction::Less,
+            Compare::Equal => wgpu::CompareFunction::Equal,
+            Compare::LessEqual => wgpu::CompareFunction::LessEqual,
+            Compare::Greater => wgpu::CompareFunction::Greater,
+            Compare::NotEqual => wgpu::CompareFunction::NotEqual,
+            Compare::GreaterEqual => wgpu::CompareFunction::GreaterEqual,
+            Compare::Always => wgpu::CompareFunction::Always,
+        }),
+        anisotropy_clamp: if trilinear {
+            sampler.anisotropy.max(1)
+        } else {
+            1
+        },
+        ..Default::default()
     })
 }
 

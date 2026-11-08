@@ -1,46 +1,13 @@
 use bevy_ecs::prelude::*;
-use engine_core::{AssetResidency, Cut, Detail, DrawnTable, settings, stats};
+use engine_core::{
+    AssetResidency, CullPlan, Culling, Cut, Detail, DrawnTable, OcclusionCulling,
+    SubpixelCulling, stats,
+};
 use engine_places::impostors::ImpostorRecords;
 
 use crate::assets::MeshAssets;
 use crate::MESH;
-use crate::order::MeshPlan;
 use crate::presentation::PresentationTotals;
-
-settings! {
-    #[section("culling")]
-    #[serde(deny_unknown_fields)]
-    #[schemars(rename = "SceneCulling")]
-    pub struct Culling {
-        pub frustum: bool = true => any,
-        pub instances: Option<u32> = None => at_least(1),
-    }
-}
-
-impl Culling {
-    pub(crate) fn budget(&self) -> usize {
-        self.instances
-            .map_or(usize::MAX, |instances| instances as usize)
-    }
-}
-
-settings! {
-    #[section("occlusion_culling")]
-    #[serde(deny_unknown_fields)]
-    #[schemars(rename = "SceneOcclusionCulling")]
-    pub struct OcclusionCulling {
-        pub enabled: bool = true => any,
-    }
-}
-
-settings! {
-    #[section("subpixel_culling")]
-    #[serde(deny_unknown_fields)]
-    #[schemars(rename = "SceneSubpixelCulling")]
-    pub struct SubpixelCulling {
-        pub enabled: bool = true => any,
-    }
-}
 
 #[derive(
     Clone,
@@ -108,7 +75,7 @@ fn counted(value: usize) -> u32 {
 }
 
 pub(crate) fn mesh_stats(
-    (table, plan): (Res<DrawnTable>, Res<MeshPlan>),
+    (table, plan): (Res<DrawnTable>, Res<CullPlan>),
     (culling, occlusion, subpixel, detail): (
         Res<Culling>,
         Res<OcclusionCulling>,
@@ -122,7 +89,7 @@ pub(crate) fn mesh_stats(
     mut stats: ResMut<MeshStats>,
 ) {
     let last = totals.last();
-    let budget = culling.budget();
+    let budget = culling.budget() as usize;
     let census = table.census(MESH);
     let instance_count = census.drawn as usize;
     let gpu_visible = last.map(|totals| totals.visible);

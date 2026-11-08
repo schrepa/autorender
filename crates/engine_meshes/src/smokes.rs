@@ -87,7 +87,7 @@ pub(crate) fn culling_settings(session: &mut dyn SmokeSession) -> Result<(), Smo
         "gpu_frames_cull_subpixel"
     );
     smoke_eq!(
-        passes(&rendering, "occlusion_test"),
+        passes(&rendering, "drawn_occlusion"),
         true,
         "occlusion_test_runs"
     );
@@ -111,7 +111,7 @@ pub(crate) fn culling_settings(session: &mut dyn SmokeSession) -> Result<(), Smo
         "culling_settings_observed"
     );
     smoke_eq!(
-        passes(&rendering, "occlusion_test"),
+        passes(&rendering, "drawn_occlusion"),
         false,
         "no_occlusion_test_while_off"
     );

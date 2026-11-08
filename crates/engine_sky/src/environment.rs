@@ -2,7 +2,7 @@ use bevy_ecs::prelude::Resource;
 use engine_core::{Error, Readable, Readback, StoreId};
 use engine_render::{
     Allocation, Attach, Bind, DepthUse, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare,
-    RenderPipeline, SamplerDesc, Shape, Texture, mip_levels, wgpu,
+    RenderPipeline, Shape, Texture, mip_levels, wgpu,
 };
 
 use crate::sky::SkyGpu;
@@ -90,7 +90,7 @@ impl Environment {
         use crate::shaders::sky::{environment, environment_maps as maps_shaders};
         let radiance = cx.texture("sky_radiance", ENVIRONMENT_FORMAT, Lifetime::Kept);
         let maps = cx.texture("sky_environment", ENVIRONMENT_FORMAT, Lifetime::Kept);
-        let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
+        let sampler = cx.sampler(engine_core::Sampler::LINEAR_CLAMP);
         cx.frame(environment::ENVIRONMENT_MAPS, Bind::Texture(maps))?;
         cx.frame(environment::ENVIRONMENT_SAMPLER, Bind::Sampler(sampler))?;
         let pass = cx
