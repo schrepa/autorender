@@ -63,7 +63,6 @@ stats! {
     #[section("reflection_probes_stats")]
     pub struct ReflectionProbeStats {
         pub ready: u32,
-        #[pending] pub waiting: u32,
         pub faces: u32,
         pub probe_cut: Cut,
     }

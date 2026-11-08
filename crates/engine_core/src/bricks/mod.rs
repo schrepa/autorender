@@ -121,8 +121,7 @@ impl Bricks<'_> {
 
     #[track_caller]
     pub fn stats<S: Section + Resource<Mutability = Mutable>>(&mut self) -> &mut Self {
-        self.record
-            .stats(StatsEntry::of::<S>(S::KEY, pending_of::<S>, S::schema));
+        self.record.stats(StatsEntry::of::<S>(S::KEY, S::schema));
         self
     }
 
@@ -266,10 +265,6 @@ fn scene_of<S: Section>(value: &Value, path: &str, scene: &dyn Any) -> Result<()
             .check_scene(scene)
             .map_err(|error| error.within(path))
     })
-}
-
-fn pending_of<S: Section>(world: &World) -> u32 {
-    world.get_resource::<S>().map_or(0, Section::pending)
 }
 
 pub(crate) fn run_operation<O: Operation>(

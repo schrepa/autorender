@@ -16,7 +16,6 @@ settings! {
 stats! {
     #[section("impostors_stats")]
     pub struct ImpostorStats {
-        #[pending] pub pending: u32,
         pub failed: u32,
     }
 }

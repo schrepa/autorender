@@ -1,4 +1,5 @@
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
+use engine_smoke::settled_by;
 use serde_json::{Value, json};
 
 use super::requests::{FRAME_MS, seen};
@@ -277,17 +278,15 @@ fn reloaded(session: &mut dyn SmokeSession, document: &Value) -> Result<u64, Smo
     settled(session, rendering)
 }
 
-fn settled(session: &mut dyn SmokeSession, mut rendering: Value) -> Result<u64, SmokeFailure> {
+fn settled(session: &mut dyn SmokeSession, rendering: Value) -> Result<u64, SmokeFailure> {
     let uploads = |rendering: &Value| rendering["texture_upload_bytes"].as_u64().unwrap_or(0);
     let mut uploaded = uploads(&rendering);
-    for _ in 0..600 {
-        if rendering["meshes_stats"]["missing_assets"] == 0 {
-            return Ok(uploaded);
-        }
+    let rendering = settled_by(session, |session| {
         session.idle(FRAME_MS);
-        rendering = render(session)?;
+        let rendering = render(session)?;
         uploaded += uploads(&rendering);
-    }
+        Ok(rendering)
+    })?;
     smoke_eq!(
         rendering["meshes_stats"]["missing_assets"].clone(),
         json!(0),

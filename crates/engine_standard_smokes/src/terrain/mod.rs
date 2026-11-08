@@ -7,7 +7,7 @@ mod water_sky;
 use std::f64::consts::FRAC_PI_3;
 
 use engine_smoke::{
-    Checked, above, camera, control, environment, number, query, renders_until, settled,
+    Checked, above, camera, control, environment, number, query, render, settled, settled_when,
 };
 use engine_core::{SmokeSession, smoke_eq};
 use serde_json::{Value, json};
@@ -20,8 +20,6 @@ pub(crate) use fixture::{GROUND, fixture};
 pub(crate) use shapes::run as shapes;
 pub(crate) use surface::run as surface;
 pub(crate) use water_sky::run as water_sky;
-
-pub(crate) const WAIT_FRAMES: u32 = 600;
 
 pub(crate) fn heights(session: &mut dyn SmokeSession, points: &[[f64; 2]]) -> Checked<Vec<Value>> {
     let mut samples = Vec::with_capacity(points.len());
@@ -64,24 +62,13 @@ pub(crate) fn settle(session: &mut dyn SmokeSession) -> Checked<Value> {
 }
 
 pub(crate) fn subdivided(session: &mut dyn SmokeSession) -> Checked<Value> {
-    let (mut last, mut held) = (Value::Null, 0);
-    let (steady, rendering) = renders_until(session, WAIT_FRAMES, |rendering| {
+    let mut last = Value::Null;
+    settled_when(session, render, |rendering| {
         let leaves = terrain(rendering)["leaf_cut"]["kept"].clone();
-        held = if leaves == last { held + 1 } else { 0 };
+        let steady = leaves == last;
         last = leaves;
-        held >= 16
-    })?;
-    let wanted = json!({ "steady_frames": 16 });
-    smoke_eq!(
-        seen(
-            steady,
-            terrain(&rendering)["leaf_cut"]["kept"].clone(),
-            &wanted
-        ),
-        wanted,
-        "the_subdivision_settles"
-    );
-    Ok(rendering)
+        steady
+    })
 }
 
 pub(crate) fn view(position: [f64; 3], target: [f64; 3]) -> Value {

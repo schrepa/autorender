@@ -123,17 +123,6 @@
       "direction": null
     },
     {
-      "name": "audio_stats.decoding",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "audio_stats.device",
       "kind": "work",
       "rule": "shown",
@@ -280,17 +269,6 @@
       "name": "readiness.settling",
       "kind": "work",
       "rule": "equal",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "reflection_probes_stats.waiting",
-      "kind": "work",
-      "rule": "shown",
       "statistic": "last_frame",
       "runtimes": [
         "native"
@@ -574,17 +552,6 @@
       "direction": null
     },
     {
-      "name": "exposure_stats.settling",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "exposure_stats.stops",
       "kind": "work",
       "rule": "shown",
@@ -704,17 +671,6 @@
       ],
       "unit": "count",
       "direction": "lower"
-    },
-    {
-      "name": "impostors_stats.pending",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
     },
     {
       "name": "instances",
@@ -2147,17 +2103,6 @@
       "direction": null
     },
     {
-      "name": "shadow_stats.tiles_waiting",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "sky_stats.light",
       "kind": "work",
       "rule": "shown",
@@ -2191,17 +2136,6 @@
       "direction": null
     },
     {
-      "name": "static_tables.loading",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "boolean",
-      "direction": null
-    },
-    {
       "name": "static_tables.tables",
       "kind": "work",
       "rule": "shown",
@@ -2221,17 +2155,6 @@
         "native"
       ],
       "unit": "boolean",
-      "direction": null
-    },
-    {
-      "name": "temporal_antialiasing_stats.settling",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
       "direction": null
     },
     {
@@ -2434,17 +2357,6 @@
     },
     {
       "name": "terrain_shading_stats.macro_maps",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain_shading_stats.pending",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -2720,17 +2632,6 @@
     },
     {
       "name": "terrain_stats.missing_tiles",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain_stats.pending",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -3280,17 +3181,6 @@
       "direction": "lower"
     },
     {
-      "name": "water_stats.squares_left",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "water_stats.particle_texels",
       "kind": "work",
       "rule": "shown",
@@ -3325,17 +3215,6 @@
     },
     {
       "name": "water_stats.settled_records",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "water_stats.settles_left",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -3446,17 +3325,6 @@
     },
     {
       "name": "world_streaming_stats.loaded",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "world_streaming_stats.pending",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",

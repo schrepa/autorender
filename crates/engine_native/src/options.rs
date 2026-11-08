@@ -682,7 +682,6 @@ impl HostOptions {
         self.settings.apply(game.host_mut())?;
         let read = game.jobs_mut().packed();
         let (mut frame, mut said) = (0_u32, Instant::now());
-        let (mut last, mut moved) = (None, Instant::now());
         loop {
             game.host_mut().cook();
             game.frame(f64::from(frame) * 1000.0 / 60.0)?;
@@ -696,28 +695,12 @@ impl HostOptions {
             if readiness.settled() {
                 break;
             }
-            if last.as_ref() != Some(&readiness) {
-                (last, moved) = (Some(readiness.clone()), Instant::now());
-            }
-            if moved.elapsed() > COOK_STALL {
-                return Err(Error::new(ErrorCode::RenderFailed, "--cook").got(json!({
-                    "readiness": readiness,
-                    "unchanged_s": COOK_STALL.as_secs(),
-                })));
-            }
             if said.elapsed() > Duration::from_secs(5) {
                 said = Instant::now();
-                let features: serde_json::Map<String, serde_json::Value> = game
-                    .host()
-                    .cook_features()
-                    .into_iter()
-                    .map(|(feature, left)| (feature.to_owned(), left.into()))
-                    .collect();
                 let record = json!({
                     "event": "cooking",
                     "readiness": readiness,
                     "jobs_held": game.host().jobs_held(),
-                    "features_records_left": features,
                 });
                 eprintln!("{record}");
             }
@@ -853,8 +836,6 @@ impl HostOptions {
         Ok(())
     }
 }
-
-const COOK_STALL: Duration = Duration::from_secs(600);
 
 fn shader_hash(bricks: impl FnOnce(BrickList) -> BrickList) -> engine::Result<String> {
     use sha2::Digest;

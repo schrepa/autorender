@@ -1,20 +1,19 @@
 use engine_smoke::{
     Checked, above, ask, at_most, below, camera, capture, component, control, environment, inspect,
-    not, number, present, refuse, render, renders_until, settled, with,
+    not, number, present, refuse, render, settled, settled_by, with,
 };
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
 use super::{
-    WAIT_FRAMES, fixture, heights, layer_sweep, open, opened, overview, settle,
-    subdivided, view, viewed,
+    fixture, heights, layer_sweep, open, opened, overview, settle, subdivided, view, viewed,
 };
 use crate::requests::seen;
 use crate::stats::terrain;
 
 pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
-    let settled = open(session, false)?;
-    streams(session, &settled)?;
+    let opened = open(session, false)?;
+    streams(session, &opened)?;
     listed(session)?;
     surroundings(session)?;
     budget(session)?;
@@ -26,8 +25,8 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     prefetch(session)
 }
 
-fn streams(session: &mut dyn SmokeSession, settled: &Value) -> Checked<()> {
-    let drawn = terrain(settled);
+fn streams(session: &mut dyn SmokeSession, opened: &Value) -> Checked<()> {
+    let drawn = terrain(opened);
     let wanted = json!({"leaf_cut": {"kept": above(0)}, "triangles": above(0)});
     smoke_eq!(
         seen(
@@ -44,9 +43,8 @@ fn streams(session: &mut dyn SmokeSession, settled: &Value) -> Checked<()> {
         session,
         json!({"shadows": with(&shadows, json!({"finest_texel": finer}))}),
     )?;
-    let (cast, casting) = renders_until(session, WAIT_FRAMES, |rendering| {
-        number(&terrain(rendering)["shadow_patches"]) > 0.0
-    })?;
+    let casting = settled(session)?;
+    let cast = number(&terrain(&casting)["shadow_patches"]) > 0.0;
     let wanted = json!({"shadow_patches": above(0)});
     smoke_eq!(
         seen(cast, terrain(&casting), &wanted),
@@ -76,13 +74,7 @@ fn streams(session: &mut dyn SmokeSession, settled: &Value) -> Checked<()> {
         wanted,
         "far_crates_place"
     );
-    let mut presented = Value::Null;
-    for _ in 0..WAIT_FRAMES {
-        presented = present(session, 0.0)?;
-        if number(&terrain(&presented)["placed_impostors"]) > 0.0 {
-            break;
-        }
-    }
+    let presented = settled_by(session, |session| present(session, 0.0))?;
     smoke_eq!(
         terrain(&presented)["placed_impostors"].clone(),
         json!(1),
@@ -357,9 +349,7 @@ fn motion(session: &mut dyn SmokeSession) -> Checked<()> {
         wanted,
         "tiles_wait_while_the_camera_races"
     );
-    for _ in 0..80 {
-        session.step(1);
-    }
+    settled(session)?;
     let rested = inspect(session, "terrain_stats")?;
     smoke_eq!(
         &rested["waiting_tiles"],

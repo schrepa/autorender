@@ -188,8 +188,6 @@ fn measure_task(sha: &str, scene: &str) -> (Value, Value) {
                             "readiness.compiling": 0,
                             "readiness.settling": 0,
                         },
-                        "quiet_frames": 3,
-                        "min_ms": 2000,
                         "max_ms": 120_000,
                     },
                     "sample": {"warmup_frames": 60, "frames": 300, "paced": false},

@@ -305,22 +305,20 @@ fn capture(session: &mut dyn SmokeSession) -> Result<(Value, Value), SmokeFailur
 }
 
 fn settled(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
-    let mut previous = Value::Null;
-    for _ in 0..20 {
-        let captured = ask(session, "capture", json!({"alpha": 0}))?;
-        let image = captured["artifact"]["sha256"].clone();
-        if image.is_string() && image == previous {
-            return Ok(image);
-        }
-        previous = image;
-    }
+    settled_by(session, present)?;
+    let first = ask(session, "capture", json!({"alpha": 0}))?["artifact"]["sha256"].take();
+    let image = ask(session, "capture", json!({"alpha": 0}))?["artifact"]["sha256"].take();
     let wanted = json!("two equal captures");
     smoke_eq!(
-        seen(false, json!(previous), &wanted),
+        seen(
+            image.is_string() && image == first,
+            json!([first, image.clone()]),
+            &wanted
+        ),
         wanted,
         "captures_settle"
     );
-    Ok(previous)
+    Ok(image)
 }
 
 fn passes(rendering: &Value) -> Vec<String> {

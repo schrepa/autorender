@@ -1,4 +1,5 @@
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
+use engine_smoke::settled_by;
 use serde_json::{Value, json};
 
 use super::requests::seen;
@@ -201,41 +202,17 @@ fn terrain_probe(ground: &Value) -> Result<(), SmokeFailure> {
 }
 
 fn settle(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
-    let mut resident = 0;
-    let mut rendering = Value::Null;
-    for _ in 0..600 {
-        rendering = render(session)?;
-        let drawn = terrain(&rendering);
-        let ready = drawn["tiles"].as_u64().unwrap_or(0) > 0
-            && drawn["loading_tiles"] == 0
-            && drawn["fallback_tiles"] == 0;
-        resident = if ready { resident + 1 } else { 0 };
-        if resident > 1 {
-            return Ok(());
-        }
-    }
-    let wanted = json!({"loading_tiles": 0});
-    smoke_eq!(
-        seen(false, terrain(&rendering), &wanted),
-        wanted,
-        "terrain_settles"
-    );
+    let rendering = settled_by(session, render)?;
+    let drawn = terrain(&rendering);
+    let ready = drawn["tiles"].as_u64().unwrap_or(0) > 0
+        && drawn["loading_tiles"] == 0
+        && drawn["fallback_tiles"] == 0;
+    let wanted = json!({"tiles": {"above": 0}, "loading_tiles": 0, "fallback_tiles": 0});
+    smoke_eq!(seen(ready, drawn, &wanted), wanted, "terrain_settles");
     Ok(())
 }
 
 fn shown(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
-    let mut compiling = true;
-    for _ in 0..600 {
-        compiling = engine_smoke::compiling(&render(session)?);
-        if !compiling {
-            break;
-        }
-    }
-    let wanted = json!(false);
-    smoke_eq!(
-        seen(!compiling, json!(compiling), &wanted),
-        wanted,
-        "pipelines_compile"
-    );
+    settled_by(session, render)?;
     capture(session)
 }

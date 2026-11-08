@@ -2,7 +2,7 @@ use crate::collections::HashMap;
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bevy_ecs::change_detection::Mut;
 use bevy_ecs::resource::Resource;
@@ -237,6 +237,14 @@ fn key_of(kind: &JobKind, input: &[u8]) -> RecordKey {
     record_key(&kind.source.hash(), kind.name, input)
 }
 
+fn run_key(kind: &JobKind, input: &[u8]) -> RecordKey {
+    record_key(
+        &kind.source.hash(),
+        kind.name,
+        &content_hash(input).to_le_bytes(),
+    )
+}
+
 fn share_key(bytes: &[u8]) -> RecordKey {
     RecordKey(Sha256::digest(bytes).into())
 }
@@ -254,7 +262,7 @@ impl Jobs<'_, '_> {
         let exchange = self.exchange.as_deref();
         let (workers, running) = exchange.map_or((0, 0), |exchange| {
             let admitted = exchange.admitted.load(Ordering::Relaxed);
-            (exchange.workers, exchange.running() + admitted)
+            (exchange.workers, exchange.running + admitted)
         });
         let admitted = JobBudget::of(workers, running).take(priority);
         if admitted {
@@ -272,18 +280,8 @@ impl Jobs<'_, '_> {
         input: Vec<u8>,
         priority: u32,
     ) -> Interest<RecordKey> {
-        let key = self.listed_key(kind, &input);
         let admitted = std::mem::take(&mut self.orders.admitted);
-        let interest = self.records.requests.ask_later(key);
-        self.orders.orders.push(JobOrder::Start {
-            key: key.0,
-            kind: kind.name,
-            source: kind.source.hash(),
-            input,
-            priority,
-            admitted,
-        });
-        interest
+        self.make(kind, input, priority, admitted)
     }
 
     pub fn fetch(
@@ -292,13 +290,41 @@ impl Jobs<'_, '_> {
         input: &[u8],
         priority: u32,
     ) -> Interest<RecordKey> {
-        let key = self.listed_key(kind, input);
+        self.make(kind, input.to_vec(), priority, false)
+    }
+
+    fn make(
+        &mut self,
+        kind: &'static JobKind,
+        input: Vec<u8>,
+        priority: u32,
+        admitted: bool,
+    ) -> Interest<RecordKey> {
+        let key = self.listed_key(kind, &input);
         let interest = self.records.requests.ask_later(key);
-        self.orders.orders.push(JobOrder::Fetch {
+        self.orders.orders.push(JobOrder::Start {
             key: key.0,
-            kind: kind.name,
-            source: kind.source.hash(),
-            input: input.to_vec(),
+            kind: JobRef::from(kind),
+            input,
+            priority,
+            admitted,
+        });
+        interest
+    }
+
+    pub fn run(
+        &mut self,
+        kind: &'static JobKind,
+        input: Vec<u8>,
+        priority: u32,
+    ) -> Interest<RecordKey> {
+        self.listed(kind);
+        let key = run_key(kind, &input);
+        let interest = self.records.requests.ask_later(key);
+        self.orders.orders.push(JobOrder::Run {
+            key: key.0,
+            kind: JobRef::from(kind),
+            input,
             priority,
         });
         interest
@@ -314,8 +340,7 @@ impl Jobs<'_, '_> {
         let interest = self.records.requests.ask_later(key);
         self.orders.orders.push(JobOrder::Look {
             key: key.0,
-            kind: kind.name,
-            source: kind.source.hash(),
+            kind: Some(JobRef::from(kind)),
             priority,
         });
         interest
@@ -351,28 +376,46 @@ impl Jobs<'_, '_> {
         let key = self.listed_key(kind, input);
         self.orders.orders.push(JobOrder::Keep {
             key: key.0,
-            kind: kind.name,
-            source: kind.source.hash(),
+            kind: Some(JobRef::from(kind)),
             bytes,
             parity: kind.parity,
         });
     }
 
-    fn listed_key(&self, kind: &JobKind, input: &[u8]) -> RecordKey {
+    fn listed(&self, kind: &JobKind) {
         debug_assert!(
             self.listed.listed(kind.name, &kind.source.hash()),
             "job_kind_unlisted {}",
             kind.name
         );
+    }
+
+    fn listed_key(&self, kind: &JobKind, input: &[u8]) -> RecordKey {
+        self.listed(kind);
         key_of(kind, input)
     }
 }
+
+pub(crate) enum Work {
+    Waiting {
+        batch: JobBatch,
+        admitted: bool,
+        message: JobMessage,
+    },
+    Sent {
+        kind: Option<JobRef>,
+        asked: f64,
+        then: Option<JobRequest>,
+    },
+}
+
+pub(crate) type RecordSet = Requests<RecordKey, Arc<[u8]>, Work>;
 
 #[derive(Resource, Default, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[component(immutable)]
 pub struct Records {
-    pub(crate) requests: Requests<RecordKey, Arc<[u8]>>,
+    pub(crate) requests: RecordSet,
 }
 
 impl Records {
@@ -396,16 +439,28 @@ impl Records {
     pub fn failures(&self) -> impl Iterator<Item = (&RecordKey, &Error)> + '_ {
         self.requests.failures()
     }
+}
 
-    pub(crate) fn arrive(&mut self, key: RecordKey, record: Result<Arc<[u8]>, Error>) {
-        let Some(ticket) = self.requests.ticket(&key) else {
-            return;
-        };
-        match record {
-            Ok(bytes) => self.requests.ready(&key, ticket, bytes),
-            Err(error) => self.requests.fail(&key, ticket, error),
-        };
-    }
+#[doc(hidden)]
+pub fn look_record(
+    world: &mut World,
+    kind: Option<JobRef>,
+    key: RecordKey,
+    priority: u32,
+) -> Interest<RecordKey> {
+    let interest = world.resource::<Records>().requests.ask_later(key);
+    world
+        .get_resource_or_init::<engine_registry::JobQueue>()
+        .orders
+        .push((
+            JobBatch { owner: 0, run: 0 },
+            JobOrder::Look {
+                key: key.0,
+                kind,
+                priority,
+            },
+        ));
+    interest
 }
 
 fn missing_record(path: &str) -> Error {
@@ -445,8 +500,6 @@ fn start_mesh_lods(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Erro
     }))
 }
 
-static SUBMITTED: AtomicU64 = AtomicU64::new(0);
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct JobId(pub u64);
 
@@ -469,8 +522,24 @@ pub struct RecordFetch {
     pub priority: u32,
 }
 
-#[doc(hidden)]
-pub type KeptRecord = (RecordKey, Option<JobRef>, Vec<u8>, RecordParity);
+#[derive(Debug)]
+pub enum JobMessage {
+    Cancel(JobId),
+    Share(JobShare),
+    Run(JobRequest),
+    Fetch(RecordFetch),
+    Keep(RecordKey, Option<JobRef>, Vec<u8>, RecordParity),
+}
+
+impl JobMessage {
+    fn asked(&self) -> Option<(JobId, Option<&JobRef>, u32)> {
+        match self {
+            Self::Run(request) => Some((request.id, Some(&request.kind), request.priority)),
+            Self::Fetch(fetch) => Some((fetch.id, fetch.kind.as_ref(), fetch.priority)),
+            Self::Cancel(_) | Self::Share(_) | Self::Keep(..) => None,
+        }
+    }
+}
 
 pub const URGENT_JOBS: u8 = 0;
 pub const GAMEPLAY_JOBS: u8 = 1;
@@ -567,31 +636,6 @@ pub struct JobStats {
     pub in_place: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Want {
-    Make,
-    Fetch,
-    FetchOrMake,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Stage {
-    Waiting { batch: JobBatch, admitted: bool },
-    Fetching(JobId),
-    Making(JobId),
-}
-
-struct Flight {
-    key: RecordKey,
-    ticket: Ticket,
-    kind: JobRef,
-    input: Vec<u8>,
-    priority: u32,
-    want: Want,
-    stage: Stage,
-    asked: f64,
-}
-
 struct Share {
     key: RecordKey,
     bytes: Arc<[u8]>,
@@ -610,13 +654,6 @@ impl Shares for Shared<'_> {
     }
 }
 
-fn message(error: &Error) -> String {
-    match error.detail.got.as_ref().and_then(serde_json::Value::as_str) {
-        Some(message) => message.to_owned(),
-        None => error.to_string(),
-    }
-}
-
 #[doc(hidden)]
 #[derive(Resource)]
 pub struct JobExchange {
@@ -624,13 +661,9 @@ pub struct JobExchange {
     hosted: bool,
     verifying: bool,
     list: Arc<JobList>,
-    requests: Vec<JobRequest>,
-    fetches: Vec<RecordFetch>,
-    keeps: Vec<KeptRecord>,
-    shares: Vec<JobShare>,
-    cancels: Vec<JobId>,
-    jobs: HashMap<JobId, Request<Arc<[u8]>>>,
-    work: Vec<Flight>,
+    sent: Vec<JobMessage>,
+    queue: Vec<RecordKey>,
+    running: usize,
     admitted: AtomicUsize,
     cache: [u64; 4],
     held: u32,
@@ -647,13 +680,9 @@ impl Default for JobExchange {
             hosted: false,
             verifying: false,
             list: Arc::new(job_list(&[]).expect("core_job_kinds_distinct")),
-            requests: Vec::new(),
-            fetches: Vec::new(),
-            keeps: Vec::new(),
-            shares: vec![JobShare::Clear],
-            cancels: Vec::new(),
-            jobs: HashMap::default(),
-            work: Vec::new(),
+            sent: vec![JobMessage::Share(JobShare::Clear)],
+            queue: Vec::new(),
+            running: 0,
             admitted: AtomicUsize::new(0),
             cache: [0; 4],
             held: 0,
@@ -671,10 +700,7 @@ impl JobExchange {
     }
 
     pub fn running(&self) -> usize {
-        self.jobs
-            .values()
-            .filter(|job| job.asked().is_some())
-            .count()
+        self.running
     }
 
     pub fn verifying(&self) -> bool {
@@ -707,70 +733,11 @@ impl JobExchange {
         self.memo = JobMemo::default();
     }
 
-    pub fn submit(&mut self, kind: JobRef, input: Vec<u8>, priority: u32) -> JobId {
-        self.submit_with(kind, input, priority, None)
-    }
-
-    pub fn submit_record(
-        &mut self,
-        kind: JobRef,
-        input: Vec<u8>,
-        priority: u32,
-        record: RecordKey,
-    ) -> JobId {
-        self.submit_with(kind, input, priority, Some(record))
-    }
-
-    fn submit_with(
-        &mut self,
-        kind: JobRef,
-        input: Vec<u8>,
-        priority: u32,
-        record: Option<RecordKey>,
-    ) -> JobId {
-        let id = self.ask();
-        if !self.hosted {
-            let output = self.run_here(&kind, &input);
-            self.finish(id, output.map(Arc::from));
-            return id;
-        }
-        self.requests.push(JobRequest {
-            id,
-            kind,
-            input,
-            priority,
-            record,
-        });
-        id
-    }
-
-    pub fn fetch(&mut self, kind: Option<JobRef>, record: RecordKey, priority: u32) -> JobId {
-        let id = self.ask();
-        if !self.hosted {
-            self.finish(id, Err(MISSING_RECORD.to_owned()));
-            return id;
-        }
-        self.fetches.push(RecordFetch {
-            id,
-            kind,
-            record,
-            priority,
-        });
-        id
-    }
-
-    fn ask(&mut self) -> JobId {
-        let id = next_id();
-        self.stats.submitted += 1;
-        self.jobs.insert(id, Request::Asked(Ticket::numbered(id.0)));
-        id
-    }
-
     pub fn keep(&mut self, record: RecordKey, kind: Option<JobRef>, bytes: Vec<u8>) {
         self.keep_with(record, kind, bytes, RecordParity::Exact);
     }
 
-    pub fn keep_with(
+    fn keep_with(
         &mut self,
         record: RecordKey,
         kind: Option<JobRef>,
@@ -778,38 +745,12 @@ impl JobExchange {
         parity: RecordParity,
     ) {
         if self.hosted {
-            self.keeps.push((record, kind, bytes, parity));
+            self.sent.push(JobMessage::Keep(record, kind, bytes, parity));
         }
     }
 
-    pub fn take(&mut self, id: JobId) -> Option<Result<Arc<[u8]>, String>> {
-        match self.ended(id)? {
-            Request::Ready(bytes) => Some(Ok(bytes)),
-            Request::Failed(error) => Some(Err(message(&error))),
-            Request::Missing => Some(Err(MISSING_RECORD.to_owned())),
-            Request::Asked(_) => None,
-        }
-    }
-
-    fn ended(&mut self, id: JobId) -> Option<Request<Arc<[u8]>>> {
-        if self.jobs.get(&id)?.asked().is_some() {
-            return None;
-        }
-        self.jobs.remove(&id)
-    }
-
-    pub fn cancel(&mut self, id: JobId) {
-        let Some(Request::Asked(_)) = self.jobs.remove(&id) else {
-            return;
-        };
-        self.stats.cancelled += 1;
-        if let Some(index) = self.requests.iter().position(|request| request.id == id) {
-            self.requests.remove(index);
-        } else if let Some(index) = self.fetches.iter().position(|fetch| fetch.id == id) {
-            self.fetches.remove(index);
-        } else {
-            self.cancels.push(id);
-        }
+    pub fn take(&mut self) -> Vec<JobMessage> {
+        std::mem::take(&mut self.sent)
     }
 
     pub fn share(&mut self, key: RecordKey, bytes: Arc<[u8]>) {
@@ -847,7 +788,7 @@ impl JobExchange {
             shared,
             reads,
         });
-        self.shares.push(JobShare::Set { key, bytes });
+        self.sent.push(JobMessage::Share(JobShare::Set { key, bytes }));
     }
 
     fn drop_share(&mut self, key: RecordKey) {
@@ -855,7 +796,7 @@ impl JobExchange {
         self.shared
             .retain(|share| share.key != key || share.shared || share.reads > 0);
         if self.shared.len() < before {
-            self.shares.push(JobShare::Remove { key });
+            self.sent.push(JobMessage::Share(JobShare::Remove { key }));
         }
     }
 
@@ -874,54 +815,12 @@ impl JobExchange {
         }
     }
 
-    pub fn take_shares(&mut self, out: &mut Vec<JobShare>) {
-        out.append(&mut self.shares);
-    }
-
-    pub fn take_requests(&mut self, out: &mut Vec<JobRequest>) {
-        out.append(&mut self.requests);
-    }
-
-    pub fn take_fetches(&mut self, out: &mut Vec<RecordFetch>) {
-        out.append(&mut self.fetches);
-    }
-
-    pub fn take_keeps(&mut self, out: &mut Vec<KeptRecord>) {
-        out.append(&mut self.keeps);
-    }
-
-    pub fn take_cancels(&mut self, out: &mut Vec<JobId>) {
-        out.append(&mut self.cancels);
-    }
-
-    pub fn complete(&mut self, id: JobId, output: Result<Arc<[u8]>, String>) {
-        if self.jobs.get(&id).is_some_and(|job| job.asked().is_some()) {
-            self.finish(id, output);
-        }
-    }
-
     pub fn report_cache(&mut self, hits: u64, misses: u64, bytes: u64, mismatches: u64) {
         self.cache = [hits, misses, bytes, mismatches];
     }
 
     pub fn report_held(&mut self, held: u32) {
         self.held = held;
-    }
-
-    fn finish(&mut self, id: JobId, output: Result<Arc<[u8]>, String>) {
-        let ended = match output {
-            Ok(bytes) => {
-                self.stats.completed += 1;
-                Request::Ready(bytes)
-            }
-            Err(message) if message == MISSING_RECORD => Request::Missing,
-            Err(message) => {
-                self.stats.failed += 1;
-                self.last_failure = Some(message.clone());
-                Request::Failed(Error::new(ErrorCode::InvalidRecord, "$.jobs").got(message))
-            }
-        };
-        self.jobs.insert(id, ended);
     }
 
     pub fn last_failure(&self) -> Option<&str> {
@@ -931,7 +830,7 @@ impl JobExchange {
     pub fn stats(&self) -> JobStats {
         JobStats {
             workers: self.workers,
-            running: self.running() as u32,
+            running: self.running as u32,
             shares: self.shared.len() as u32,
             shared_bytes: self
                 .shared
@@ -947,16 +846,9 @@ impl JobExchange {
         }
     }
 
-    fn settle(
-        &mut self,
-        orders: Vec<(JobBatch, JobOrder)>,
-        records: &mut Requests<RecordKey, Arc<[u8]>>,
-        now: f64,
-    ) {
-        for (key, released) in records.settle(now) {
-            if released.asked().is_some() {
-                self.abandon(key);
-            }
+    fn settle(&mut self, orders: Vec<(JobBatch, JobOrder)>, records: &mut RecordSet, now: f64) {
+        for (key, released, work) in records.settle_work(now) {
+            self.abandon(key, &released, work);
         }
         let mut firsts: Vec<JobBatch> = Vec::new();
         for (batch, order) in orders {
@@ -967,51 +859,44 @@ impl JobExchange {
                 JobOrder::Start {
                     key,
                     kind,
-                    source,
                     input,
                     priority,
                     admitted,
-                } => self.want(
-                    records,
-                    RecordKey(key),
-                    (JobRef::named(kind, source), input, priority),
-                    (Want::Make, Stage::Waiting { batch, admitted }),
-                ),
-                JobOrder::Fetch {
+                } => self.want(records, RecordKey(key), (batch, admitted), |id| {
+                    JobMessage::Run(JobRequest {
+                        id,
+                        kind,
+                        input,
+                        priority,
+                        record: Some(RecordKey(key)),
+                    })
+                }),
+                JobOrder::Run {
                     key,
                     kind,
-                    source,
                     input,
                     priority,
-                } => self.want(
-                    records,
-                    RecordKey(key),
-                    (JobRef::named(kind, source), input, priority),
-                    (
-                        Want::FetchOrMake,
-                        Stage::Waiting {
-                            batch,
-                            admitted: false,
-                        },
-                    ),
-                ),
+                } => self.want(records, RecordKey(key), (batch, false), |id| {
+                    JobMessage::Run(JobRequest {
+                        id,
+                        kind,
+                        input,
+                        priority,
+                        record: None,
+                    })
+                }),
                 JobOrder::Look {
                     key,
                     kind,
-                    source,
                     priority,
-                } => self.want(
-                    records,
-                    RecordKey(key),
-                    (JobRef::named(kind, source), Vec::new(), priority),
-                    (
-                        Want::Fetch,
-                        Stage::Waiting {
-                            batch,
-                            admitted: false,
-                        },
-                    ),
-                ),
+                } => self.want(records, RecordKey(key), (batch, false), |id| {
+                    JobMessage::Fetch(RecordFetch {
+                        id,
+                        kind,
+                        record: RecordKey(key),
+                        priority,
+                    })
+                }),
                 JobOrder::Share { key, bytes } => self.share(RecordKey(key), bytes),
                 JobOrder::ShareRecord { key } => {
                     if let Some(bytes) = records.get(&RecordKey(key)).and_then(Request::ready) {
@@ -1023,160 +908,215 @@ impl JobExchange {
                 JobOrder::Keep {
                     key,
                     kind,
-                    source,
                     bytes,
                     parity,
                 } => {
                     let key = RecordKey(key);
                     if let Some(ticket) = records.ticket(&key) {
+                        let sent = matches!(records.work(&key), Some(Work::Sent { .. }));
                         records.ready(&key, ticket, Arc::from(bytes.as_slice()));
-                        self.abandon(key);
+                        self.queue.retain(|queued| *queued != key);
+                        if sent {
+                            self.cancel(JobId(ticket.number()));
+                        }
                     }
-                    self.keep_with(key, Some(JobRef::named(kind, source)), bytes, parity);
+                    self.keep_with(key, kind, bytes, parity);
                 }
             }
         }
-        self.admit(&firsts);
-        self.land(records);
+        self.admit(records, &firsts);
     }
 
     fn want(
         &mut self,
-        records: &Requests<RecordKey, Arc<[u8]>>,
+        records: &mut RecordSet,
         key: RecordKey,
-        (kind, input, priority): (JobRef, Vec<u8>, u32),
-        (want, stage): (Want, Stage),
+        (batch, admitted): (JobBatch, bool),
+        message: impl FnOnce(JobId) -> JobMessage,
     ) {
         let Some(ticket) = records.ticket(&key) else {
             return;
         };
-        if let Some(flight) = self.work.iter_mut().find(|flight| flight.key == key) {
-            if flight.want == Want::Fetch && want != Want::Fetch {
-                flight.want = Want::FetchOrMake;
-                flight.input = input;
+        let message = message(JobId(ticket.number()));
+        let made = matches!(message, JobMessage::Run(_));
+        match records.work_mut(&key) {
+            None => {
+                records.set_work(
+                    &key,
+                    Work::Waiting {
+                        batch,
+                        admitted,
+                        message,
+                    },
+                );
+                self.queue.push(key);
             }
-            return;
+            Some(Work::Waiting {
+                message: waiting, ..
+            }) => {
+                if made && matches!(waiting, JobMessage::Fetch(_)) {
+                    *waiting = message;
+                }
+            }
+            Some(Work::Sent { then, .. }) => {
+                if let JobMessage::Run(request) = message {
+                    then.get_or_insert(request);
+                }
+            }
         }
-        self.work.push(Flight {
-            key,
-            ticket,
-            kind,
-            input,
-            priority,
-            want,
-            stage,
-            asked: crate::profile::now_ms(),
-        });
     }
 
-    fn admit(&mut self, firsts: &[JobBatch]) {
+    fn admit(&mut self, records: &mut RecordSet, firsts: &[JobBatch]) {
         *self.admitted.get_mut() = 0;
+        self.running = records
+            .works()
+            .filter(|(_, work)| matches!(work, Work::Sent { .. }))
+            .count();
         let mut budgets: Vec<(JobBatch, JobBudget)> = Vec::new();
-        for at in 0..self.work.len() {
-            let Stage::Waiting { batch, admitted } = self.work[at].stage else {
-                continue;
-            };
-            if !admitted {
-                let batch = if batch.run == LEFT_OVER {
-                    firsts
-                        .iter()
-                        .copied()
-                        .find(|first| first.owner == batch.owner)
-                        .unwrap_or(batch)
-                } else {
-                    batch
-                };
-                let slot = match budgets.iter().position(|(held, _)| *held == batch) {
-                    Some(slot) => slot,
-                    None => {
-                        budgets.push((batch, JobBudget::of(self.workers, self.running())));
-                        budgets.len() - 1
-                    }
-                };
-                if !budgets[slot].1.take(self.work[at].priority) {
-                    self.work[at].stage = Stage::Waiting {
-                        batch: JobBatch {
-                            run: LEFT_OVER,
-                            ..batch
-                        },
-                        admitted: false,
+        for key in std::mem::take(&mut self.queue) {
+            let begun = match records.work_mut(&key) {
+                Some(Work::Waiting { admitted: true, .. }) => true,
+                Some(Work::Waiting { batch, message, .. }) => {
+                    let held = if batch.run == LEFT_OVER {
+                        firsts
+                            .iter()
+                            .copied()
+                            .find(|first| first.owner == batch.owner)
+                            .unwrap_or(*batch)
+                    } else {
+                        *batch
                     };
-                    continue;
+                    let slot = match budgets.iter().position(|(kept, _)| *kept == held) {
+                        Some(slot) => slot,
+                        None => {
+                            budgets.push((held, JobBudget::of(self.workers, self.running)));
+                            budgets.len() - 1
+                        }
+                    };
+                    let priority = message.asked().map_or(0, |(_, _, priority)| priority);
+                    let taken = budgets[slot].1.take(priority);
+                    if !taken {
+                        *batch = JobBatch {
+                            run: LEFT_OVER,
+                            ..held
+                        };
+                    }
+                    taken
                 }
+                Some(Work::Sent { .. }) | None => continue,
+            };
+            if begun {
+                self.begin(records, key);
+            } else {
+                self.queue.push(key);
             }
-            self.begin(at);
         }
     }
 
-    fn begin(&mut self, at: usize) {
-        let (kind, key, priority, want) = {
-            let flight = &self.work[at];
-            (flight.kind.clone(), flight.key, flight.priority, flight.want)
-        };
-        let stage = match want {
-            Want::Fetch | Want::FetchOrMake => {
-                Stage::Fetching(self.fetch(Some(kind), key, priority))
-            }
-            Want::Make => {
-                let input = std::mem::take(&mut self.work[at].input);
-                Stage::Making(self.submit_record(kind, input, priority, key))
-            }
-        };
-        let flight = &mut self.work[at];
-        flight.stage = stage;
-        flight.asked = crate::profile::now_ms();
-    }
-
-    fn abandon(&mut self, key: RecordKey) {
-        let Some(at) = self.work.iter().position(|flight| flight.key == key) else {
+    fn begin(&mut self, records: &mut RecordSet, key: RecordKey) {
+        let Some(work) = records.work_mut(&key) else {
             return;
         };
-        let flight = self.work.remove(at);
-        match flight.stage {
-            Stage::Fetching(job) | Stage::Making(job) => self.cancel(job),
-            Stage::Waiting { .. } => {}
+        let kind = match &*work {
+            Work::Waiting { message, .. } => message.asked().and_then(|(_, kind, _)| kind.cloned()),
+            Work::Sent { .. } => return,
+        };
+        let sent = Work::Sent {
+            kind,
+            asked: crate::profile::now_ms(),
+            then: None,
+        };
+        let Work::Waiting { message, .. } = std::mem::replace(work, sent) else {
+            return;
+        };
+        self.send(records, message);
+    }
+
+    fn send(&mut self, records: &mut RecordSet, message: JobMessage) {
+        self.stats.submitted += 1;
+        if self.hosted {
+            self.running += 1;
+            self.sent.push(message);
+            return;
+        }
+        let (id, output) = match message {
+            JobMessage::Run(request) => (
+                request.id,
+                self.run_here(&request.kind, &request.input).map(Arc::from),
+            ),
+            JobMessage::Fetch(fetch) => (fetch.id, Err(MISSING_RECORD.to_owned())),
+            JobMessage::Cancel(_) | JobMessage::Share(_) | JobMessage::Keep(..) => return,
+        };
+        self.running += 1;
+        self.land(records, id, output);
+    }
+
+    pub(crate) fn land(
+        &mut self,
+        records: &mut RecordSet,
+        id: JobId,
+        output: Result<Arc<[u8]>, String>,
+    ) {
+        let ticket = Ticket::numbered(id.0);
+        let Some(&key) = records.key_of(ticket) else {
+            return;
+        };
+        let Some(Work::Sent { kind, asked, then }) = records.work_mut(&key) else {
+            return;
+        };
+        let (name, asked, then) = (
+            kind.as_ref().map_or("records", |kind| kind.name()).to_owned(),
+            *asked,
+            then.take(),
+        );
+        self.running = self.running.saturating_sub(1);
+        let missing = matches!(&output, Err(message) if message == MISSING_RECORD);
+        if let (true, Some(request)) = (missing, then) {
+            if let Some(Work::Sent { kind, .. }) = records.work_mut(&key) {
+                *kind = Some(request.kind.clone());
+            }
+            self.send(records, JobMessage::Run(request));
+            return;
+        }
+        crate::profile::waited(&name, asked);
+        match output {
+            Ok(bytes) => {
+                self.stats.completed += 1;
+                records.ready(&key, ticket, bytes);
+            }
+            Err(_) if missing => {
+                records.miss(&key, ticket);
+            }
+            Err(message) => {
+                self.stats.failed += 1;
+                self.last_failure = Some(message.clone());
+                let error =
+                    Error::new(ErrorCode::InvalidRecord, format!("$.jobs.{name}")).got(message);
+                records.fail(&key, ticket, error);
+            }
         }
     }
 
-    fn land(&mut self, records: &mut Requests<RecordKey, Arc<[u8]>>) {
-        let mut at = 0;
-        while at < self.work.len() {
-            let (Stage::Fetching(job) | Stage::Making(job)) = self.work[at].stage else {
-                at += 1;
-                continue;
-            };
-            let Some(ended) = self.ended(job) else {
-                at += 1;
-                continue;
-            };
-            let flight = &mut self.work[at];
-            let fetched = matches!(flight.stage, Stage::Fetching(_));
-            if fetched && flight.want == Want::FetchOrMake && ended.ready().is_none() {
-                let input = std::mem::take(&mut flight.input);
-                let (kind, priority, key) = (flight.kind.clone(), flight.priority, flight.key);
-                let job = self.submit_record(kind, input, priority, key);
-                self.work[at].stage = Stage::Making(job);
-                continue;
+    fn abandon(&mut self, key: RecordKey, released: &Request<Arc<[u8]>>, work: Option<Work>) {
+        match (work, released.asked()) {
+            (Some(Work::Waiting { .. }), _) => self.queue.retain(|queued| *queued != key),
+            (Some(Work::Sent { .. }), Some(ticket)) => self.cancel(JobId(ticket.number())),
+            (Some(Work::Sent { .. }) | None, _) => {}
+        }
+    }
+
+    fn cancel(&mut self, id: JobId) {
+        self.stats.cancelled += 1;
+        self.running = self.running.saturating_sub(1);
+        match self
+            .sent
+            .iter()
+            .position(|message| message.asked().is_some_and(|(sent, ..)| sent == id))
+        {
+            Some(at) => {
+                self.sent.remove(at);
             }
-            let flight = self.work.remove(at);
-            crate::profile::waited(flight.kind.name(), flight.asked);
-            match ended {
-                Request::Ready(bytes) => {
-                    records.ready(&flight.key, flight.ticket, bytes);
-                }
-                Request::Missing => {
-                    records.miss(&flight.key, flight.ticket);
-                }
-                Request::Failed(error) => {
-                    let error = Error::new(
-                        ErrorCode::InvalidRecord,
-                        format!("$.jobs.{}", flight.kind.name()),
-                    )
-                    .got(message(&error));
-                    records.fail(&flight.key, flight.ticket, error);
-                }
-                Request::Asked(_) => {}
-            }
+            None => self.sent.push(JobMessage::Cancel(id)),
         }
     }
 }
@@ -1189,7 +1129,7 @@ pub(crate) fn exchange_orders(world: &mut World) {
     let idle = orders.is_empty()
         && world
             .get_resource::<JobExchange>()
-            .is_none_or(|exchange| exchange.work.is_empty())
+            .is_none_or(|exchange| exchange.queue.is_empty())
         && world
             .get_resource::<Records>()
             .is_none_or(|records| !records.requests.changed());
@@ -1206,8 +1146,12 @@ pub(crate) fn exchange_orders(world: &mut World) {
     });
 }
 
-fn next_id() -> JobId {
-    JobId(SUBMITTED.fetch_add(1, Ordering::Relaxed) + 1)
+pub(crate) fn land_job(world: &mut World, id: JobId, output: Result<Arc<[u8]>, String>) {
+    world.resource_scope(|world, mut exchange: Mut<JobExchange>| {
+        crate::modify(world, |records: &mut Records| {
+            exchange.land(&mut records.requests, id, output);
+        });
+    });
 }
 
 pub fn job_output<T, B: AsRef<[u8]>, F: std::fmt::Display, E: std::fmt::Display>(

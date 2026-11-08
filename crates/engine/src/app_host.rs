@@ -1,13 +1,13 @@
 use engine_core::{
-    ActionInput, BrickList, Engine, ErrorCode, FrameFacts, JobExchange, JobId, JobRef, MenuInput,
-    MoveInput, PauseReason, RecordExchange, RenderStats, WorkClock,
+    ActionInput, BrickList, Engine, ErrorCode, FrameFacts, JobExchange, JobId, JobMessage, JobRef,
+    MenuInput, MoveInput, PauseReason, RecordExchange, RenderStats, WorkClock,
 };
 use engine_registry::Registry;
 use engine_render::{RenderTarget, Renderer};
 
 use crate::frame_stats::{DynamicResolutionStats, FrameStats, ResolutionStats};
 use crate::host::policy::{FRAME_INTERVAL_MS, PACE_INTERVAL_LIMIT_MS, PACE_SMOOTHING};
-use crate::host::{FrameInput, InputSource, JobMessage};
+use crate::host::{FrameInput, InputSource};
 use crate::resolution::{DynamicResolution, Resolution};
 use crate::{Error, Result};
 
@@ -389,37 +389,12 @@ impl AppHost {
     }
 
     pub fn take_jobs(&mut self) -> Vec<JobMessage> {
-        let Some(mut jobs) = self
-            .engine
+        self.engine
             .app
             .world_mut()
             .get_resource_mut::<JobExchange>()
-        else {
-            return Vec::new();
-        };
-        let mut cancels = Vec::new();
-        let mut shares = Vec::new();
-        let mut requests = Vec::new();
-        let mut fetches = Vec::new();
-        let mut keeps = Vec::new();
-        jobs.take_cancels(&mut cancels);
-        jobs.take_shares(&mut shares);
-        jobs.take_requests(&mut requests);
-        jobs.take_fetches(&mut fetches);
-        jobs.take_keeps(&mut keeps);
-        let cancels = cancels.into_iter().map(JobMessage::Cancel);
-        let shares = shares.into_iter().map(JobMessage::Share);
-        let requests = requests.into_iter().map(JobMessage::Run);
-        let fetches = fetches.into_iter().map(JobMessage::Fetch);
-        let keeps = keeps
-            .into_iter()
-            .map(|(record, kind, bytes, parity)| JobMessage::Keep(record, kind, bytes, parity));
-        cancels
-            .chain(shares)
-            .chain(requests)
-            .chain(fetches)
-            .chain(keeps)
-            .collect()
+            .map(|mut jobs| jobs.take())
+            .unwrap_or_default()
     }
 
     pub fn run_job_here(
@@ -471,14 +446,7 @@ impl AppHost {
     }
 
     fn finish_job(&mut self, id: JobId, output: std::result::Result<std::sync::Arc<[u8]>, String>) {
-        if let Some(mut jobs) = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<JobExchange>()
-        {
-            jobs.complete(id, output);
-        }
+        self.engine.land_job(id, output);
     }
 
     pub(crate) fn deliver(&mut self) {
@@ -733,8 +701,7 @@ impl AppHost {
             pixel_ratio: self.pixel_ratio as f32,
         };
         self.engine.set_frame(facts);
-        let compiling =
-            self.renderer.pipelines_compiling() + u32::from(self.pipeline_list.waiting());
+        let compiling = self.renderer.pipelines_compiling();
         self.engine.set_compiling(compiling);
         let frame = self.engine.extract_frame()?;
         let after_extraction = now_ms();
@@ -744,21 +711,6 @@ impl AppHost {
             now_ms() - after_extraction,
             rendered,
         ))
-    }
-
-    pub(crate) fn cook_features(&self) -> Vec<(&'static str, u64)> {
-        let world = self.engine.app.world();
-        let mut features: Vec<(&'static str, u64)> = world
-            .get_resource::<Registry>()
-            .into_iter()
-            .flat_map(|registry| {
-                registry
-                    .stats()
-                    .map(|entry| (entry.key, u64::from(entry.pending(world))))
-            })
-            .collect();
-        features.push(("pipelines", u64::from(self.pipeline_list.making())));
-        features
     }
 
     pub fn job_list(&self) -> std::sync::Arc<engine_registry::JobList> {

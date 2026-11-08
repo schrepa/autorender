@@ -5,7 +5,8 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::world::World;
 use engine_core::{
     CookAsks, DeviceLimits, Error, ErrorCode, FrameBudget, FrameTime, IDLE_JOBS, Interest,
-    JobFailures, Jobs, RecordKey, Records, Request, Requests, VIEW_JOBS, Views, job_priority,
+    JobFailures, Jobs, RecordKey, Records, Request, Requests, Ticket, VIEW_JOBS, Views,
+    job_priority,
 };
 use engine_heightfield::tile::Solid;
 use engine_heightfield::{Pyramid, Stamp, reaches};
@@ -1192,6 +1193,14 @@ pub(crate) fn request_settle(
     let eye = views.main().map_or(glam::Vec3::ZERO, |main| main.detail_eye);
     let state = &mut *state;
     state.everything.settle(time.real_elapsed);
+    let asked: Vec<(Entity, Ticket)> = state
+        .everything
+        .asked()
+        .map(|(entity, ticket)| (*entity, ticket))
+        .collect();
+    for (entity, ticket) in asked {
+        state.everything.ready(&entity, ticket, ());
+    }
     let limits_changed = limits.is_changed();
     let mut cx = Follow {
         jobs: &mut jobs,

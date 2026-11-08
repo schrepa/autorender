@@ -237,17 +237,12 @@ pub struct StatsEntry {
     init: fn(&mut World),
     remove: fn(&mut World),
     read: fn(&World) -> Value,
-    pending: fn(&World) -> u32,
     schema: fn() -> schemars::Schema,
 }
 
 impl StatsEntry {
     #[track_caller]
-    pub fn of<T>(
-        key: &'static str,
-        pending: fn(&World) -> u32,
-        schema: fn() -> schemars::Schema,
-    ) -> Self
+    pub fn of<T>(key: &'static str, schema: fn() -> schemars::Schema) -> Self
     where
         T: Resource<Mutability = Mutable> + Default + Serialize,
     {
@@ -260,7 +255,6 @@ impl StatsEntry {
             init: init_of::<T>,
             remove: remove_of::<T>,
             read: current_of::<T>,
-            pending,
             schema,
         }
     }
@@ -276,10 +270,6 @@ impl StatsEntry {
 
     pub fn read(&self, world: &World) -> Value {
         (self.read)(world)
-    }
-
-    pub fn pending(&self, world: &World) -> u32 {
-        (self.pending)(world)
     }
 
     pub fn schema(&self) -> schemars::Schema {

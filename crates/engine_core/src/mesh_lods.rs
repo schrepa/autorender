@@ -2,38 +2,23 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_assets::{AssetLibrary, MeshHandle, MeshLods, lod_input};
+use engine_registry::{JobBatch, JobOrder, JobQueue};
 
 use crate::jobs::{MESH_LODS_NAME, record_key};
 use crate::{
-    Census, Error, ErrorCode, Interest, JobExchange, JobId, JobRef, MESH_LODS,
-    MISSING_RECORD, RecordKey, Request, Requests, Ticket, VIEW_JOBS, content_hash, job_priority,
+    Interest, JobRef, MESH_LODS, RecordKey, Records, Request, VIEW_JOBS, content_hash,
+    job_priority,
 };
 
 #[derive(Resource, Default, serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct MeshLevels {
-    requests: Requests<RecordKey, Arc<MeshLods>>,
-    #[serde(skip)]
-    #[cfg_attr(feature = "schema", schemars(skip))]
-    jobs: Vec<(RecordKey, Ticket, JobId)>,
     #[serde(skip)]
     #[cfg_attr(feature = "schema", schemars(skip))]
     waiting: Vec<(MeshHandle, Interest<RecordKey>)>,
     #[serde(skip)]
     #[cfg_attr(feature = "schema", schemars(skip))]
     ended: Vec<(MeshHandle, Interest<RecordKey>)>,
-}
-
-impl MeshLevels {
-    pub fn census(&self) -> Census {
-        self.requests.census()
-    }
-
-    pub fn unsettled(&self) -> impl Iterator<Item = (&RecordKey, &Request<Arc<MeshLods>>)> + '_ {
-        self.requests
-            .iter()
-            .filter(|(_, request)| request.ready().is_none())
-    }
 }
 
 fn lod_record(input: &[u8]) -> RecordKey {
@@ -44,98 +29,68 @@ fn lod_record(input: &[u8]) -> RecordKey {
     )
 }
 
-fn landed(output: Result<Arc<[u8]>, String>) -> Result<Option<MeshLods>, Error> {
-    match output {
-        Ok(bytes) => MeshLods::from_bytes(&bytes).map(Some).map_err(|error| {
-            Error::new(ErrorCode::InvalidRecord, "$.mesh_lods").got(error.to_string())
-        }),
-        Err(message) if message == MISSING_RECORD => Ok(None),
-        Err(message) => Err(Error::new(ErrorCode::InvalidRecord, "$.mesh_lods").got(message)),
-    }
-}
-
-impl MeshLevels {
-    fn ask(&mut self, jobs: &mut JobExchange, handle: MeshHandle, input: Vec<u8>) {
-        let key = lod_record(&input);
-        let interest = self.requests.ask(key);
-        if let Some(ticket) = self.requests.ticket(&key)
-            && !self.jobs.iter().any(|&(asked, ..)| asked == key)
-        {
-            let priority = job_priority(VIEW_JOBS, self.jobs.len() as u32);
-            let job = jobs.submit_record(JobRef::from(&MESH_LODS), input, priority, key);
-            self.jobs.push((key, ticket, job));
-        }
-        self.waiting.push((handle, interest));
-    }
-
-    fn land(&mut self, jobs: &mut JobExchange) {
-        let requests = &mut self.requests;
-        self.jobs.retain(|&(key, ticket, job)| {
-            let Some(output) = jobs.take(job) else {
-                return true;
-            };
-            match landed(output) {
-                Ok(Some(lods)) => requests.ready(&key, ticket, Arc::new(lods)),
-                Ok(None) => requests.miss(&key, ticket),
-                Err(error) => requests.fail(&key, ticket, error),
-            };
-            false
-        });
-    }
-
-    fn settle_meshes(&mut self, assets: &mut AssetLibrary) {
-        for (handle, interest) in std::mem::take(&mut self.waiting) {
-            if assets.mesh(handle).is_none() {
-                continue;
-            }
-            match self.requests.of(&interest) {
-                Some(Request::Ready(lods)) => {
-                    if assets.settle_lods(handle, Some(Arc::clone(lods))).is_err() {
-                        let _ = assets.settle_lods(handle, None);
-                    }
-                }
-                Some(Request::Failed(_) | Request::Missing) => {
-                    let _ = assets.settle_lods(handle, None);
-                    self.ended.push((handle, interest));
-                }
-                Some(Request::Asked(_)) | None => self.waiting.push((handle, interest)),
-            }
-        }
-        self.ended.retain(|&(handle, _)| assets.mesh(handle).is_some());
-    }
-
-    fn release(&mut self, jobs: &mut JobExchange, now: f64) {
-        for (key, released) in self.requests.settle(now) {
-            if released.asked().is_none() {
-                continue;
-            }
-            if let Some(at) = self.jobs.iter().position(|&(asked, ..)| asked == key) {
-                let (_, _, job) = self.jobs.remove(at);
-                jobs.cancel(job);
-            }
-        }
-    }
-}
-
 pub(crate) fn settle(world: &mut World) {
-    let now = world
-        .get_resource::<crate::FrameTime>()
-        .map_or(0.0, |time| time.real_elapsed);
     let awaiting = world.resource_mut::<AssetLibrary>().take_awaiting_lods();
+    let mut orders = Vec::new();
     world.resource_scope(|world, mut levels: Mut<MeshLevels>| {
-        world.resource_scope(|world, mut jobs: Mut<JobExchange>| {
+        let levels = &mut *levels;
+        let mut inputs = Vec::new();
+        {
             let mut assets = world.resource_mut::<AssetLibrary>();
             for handle in awaiting {
                 match assets.mesh(handle).and_then(|mesh| lod_input(mesh)) {
-                    Some(input) => levels.ask(&mut jobs, handle, input),
+                    Some(input) => inputs.push((handle, input)),
                     None => {
                         let _ = assets.settle_lods(handle, None);
                     }
                 }
             }
-            levels.land(&mut jobs);
-            levels.settle_meshes(&mut assets);
-            levels.release(&mut jobs, now);
-        });
+        }
+        let records = world.resource::<Records>();
+        for (handle, input) in inputs {
+            let key = lod_record(&input);
+            let place = u32::try_from(levels.waiting.len()).unwrap_or(u32::MAX);
+            levels
+                .waiting
+                .push((handle, records.requests.ask_later(key)));
+            orders.push(JobOrder::Start {
+                key: key.hash(),
+                kind: JobRef::from(&MESH_LODS),
+                input,
+                priority: job_priority(VIEW_JOBS, place),
+                admitted: true,
+            });
+        }
+        let mut landed = Vec::new();
+        for (handle, interest) in std::mem::take(&mut levels.waiting) {
+            match records.request(&interest) {
+                Some(Request::Ready(bytes)) => {
+                    landed.push((handle, MeshLods::from_bytes(bytes).ok().map(Arc::new)));
+                }
+                Some(Request::Failed(_) | Request::Missing) => {
+                    landed.push((handle, None));
+                    levels.ended.push((handle, interest));
+                }
+                Some(Request::Asked(_)) | None => levels.waiting.push((handle, interest)),
+            }
+        }
+        let mut assets = world.resource_mut::<AssetLibrary>();
+        for (handle, lods) in landed {
+            if assets.mesh(handle).is_none() {
+                continue;
+            }
+            if lods.is_some() && assets.settle_lods(handle, lods).is_ok() {
+                continue;
+            }
+            let _ = assets.settle_lods(handle, None);
+        }
+        levels.ended.retain(|&(handle, _)| assets.mesh(handle).is_some());
     });
+    if !orders.is_empty() {
+        let batch = JobBatch { owner: 0, run: 0 };
+        world
+            .get_resource_or_init::<JobQueue>()
+            .orders
+            .extend(orders.into_iter().map(|order| (batch, order)));
+    }
 }

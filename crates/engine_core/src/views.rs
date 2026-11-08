@@ -536,12 +536,26 @@ impl List for WholeFrames {
 
 impl WholeFrames {
     pub fn ask(&mut self, by: &'static str) -> Interest<&'static str> {
-        self.requests.ask(by)
+        let interest = self.requests.ask(by);
+        self.end();
+        interest
     }
 
     pub fn asked(&mut self) -> bool {
         self.requests.settle(0.0);
-        self.requests.asked().next().is_some()
+        self.end();
+        !self.requests.is_empty()
+    }
+
+    fn end(&mut self) {
+        let asked: Vec<(&'static str, crate::Ticket)> = self
+            .requests
+            .asked()
+            .map(|(&by, ticket)| (by, ticket))
+            .collect();
+        for (by, ticket) in asked {
+            self.requests.ready(&by, ticket, ());
+        }
     }
 }
 

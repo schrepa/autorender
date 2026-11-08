@@ -512,11 +512,6 @@ impl Registry {
             .collect()
     }
 
-    pub fn pending(&self, world: &World) -> u32 {
-        self.stats()
-            .fold(0_u32, |sum, entry| sum.saturating_add(entry.pending(world)))
-    }
-
     pub(crate) fn turning(&self, brick: BrickId, gate: GateId) -> Turning {
         let (Some(record), Some(&base)) = (self.record(brick), self.bases.get(brick.index())) else {
             return Turning::default();

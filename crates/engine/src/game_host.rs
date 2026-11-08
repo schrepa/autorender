@@ -68,10 +68,6 @@ impl<G: Game> GameHost<G> {
         self.app.cook();
     }
 
-    pub fn cook_features(&self) -> Vec<(&'static str, u64)> {
-        self.app.cook_features()
-    }
-
     pub fn jobs_held(&self) -> u32 {
         self.jobs.held()
     }

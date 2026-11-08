@@ -30,12 +30,6 @@ pub(crate) struct Cave {
     asked: Option<Asked>,
 }
 
-impl Cave {
-    pub(crate) fn asking(&self) -> bool {
-        self.asked.is_some()
-    }
-}
-
 struct Asked {
     ticket: Interest<RecordKey>,
     mesh: MeshHandle,

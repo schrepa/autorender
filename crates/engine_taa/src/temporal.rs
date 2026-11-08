@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    FrameTime, GpuStruct, Jitter, View, ViewFacts, ViewHistory, ViewJitter, Views, gpu_struct,
-    profile,
+    FrameTime, GpuStruct, Jitter, Settling, View, ViewFacts, ViewHistory, ViewJitter, Views,
+    gpu_struct, profile,
 };
 
 use crate::antialiasing::{TemporalAntialiasing, TemporalAntialiasingStats};
@@ -25,6 +25,9 @@ gpu_struct! {
         pub(crate) pad: u32,
     }
 }
+
+#[derive(Resource, Default)]
+pub(crate) struct TaaSettling(Settling);
 
 fn cycled(facts: &ViewFacts) -> bool {
     match facts.history {
@@ -52,14 +55,14 @@ pub(crate) fn publish(
     views: Res<Views>,
     settings: Res<TemporalAntialiasing>,
     mut piece: ResMut<TaaPiece>,
-    mut stats: ResMut<TemporalAntialiasingStats>,
+    (mut stats, settling): (ResMut<TemporalAntialiasingStats>, Res<TaaSettling>),
 ) {
     let jittered = || views.listed().iter().filter(|facts| facts.jitter.is_some());
     let active = jittered().next().is_some();
-    stats.set_if_neq(TemporalAntialiasingStats {
-        active,
-        settling: u32::from(jittered().any(|facts| !cycled(facts))),
-    });
+    settling
+        .0
+        .left(u32::from(jittered().any(|facts| !cycled(facts))));
+    stats.set_if_neq(TemporalAntialiasingStats { active });
     if !active {
         return;
     }

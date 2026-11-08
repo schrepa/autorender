@@ -36,7 +36,6 @@ stats! {
     pub struct AudioStats {
         pub device: bool,
         pub sounds_loaded: u32,
-        #[pending] pub decoding: u32,
         pub voices: u32,
         pub voices_cut: u32,
         pub decode_failures: u32,

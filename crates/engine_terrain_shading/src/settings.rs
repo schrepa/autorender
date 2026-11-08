@@ -37,7 +37,6 @@ impl TerrainShading {
 stats! {
     #[section("terrain_shading_stats")]
     pub struct TerrainShadingStats {
-        #[pending] pub pending: u32,
         pub triangles: u32,
         pub leaves: Cut,
         pub shallow_subdivisions: u32,

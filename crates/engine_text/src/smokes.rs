@@ -1,9 +1,8 @@
-use engine_smoke::{Checked, inspect, query, render};
+use engine_smoke::{Checked, inspect, query, render, settled};
 use engine_core::{SmokeFailure, SmokeSession, smoke_check};
 use serde_json::{Value, json};
 
 const OVERLAY: &str = "text";
-const FRAMES: u32 = 240;
 
 fn measured(session: &mut dyn SmokeSession, args: Value) -> Checked<(f64, f64)> {
     let size = query(session, "text_measure", args)?;
@@ -63,15 +62,8 @@ pub fn drawn(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         "id": "label",
         "text": { "text": "Hello", "size": 24.0, "offset": [8.0, 8.0] },
     }])));
-    let mut rendering = Value::Null;
-    let mut stats = Value::Null;
-    for _ in 0..FRAMES {
-        rendering = render(session)?;
-        stats = inspect(session, "text_stats")?;
-        if stats["glyphs_drawn"].as_u64().unwrap_or(0) > 0 {
-            break;
-        }
-    }
+    let rendering = settled(session)?;
+    let stats = inspect(session, "text_stats")?;
     smoke_check!(
         stats["glyphs_drawn"].as_u64().unwrap_or(0) > 0,
         "text_glyphs_drawn",

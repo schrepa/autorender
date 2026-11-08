@@ -3,7 +3,6 @@ use bevy_ecs::resource::Resource;
 pub const CORE_ROW: &str = "core";
 pub const UNATTRIBUTED_ROW: &str = "unattributed";
 pub const GPU_IDLE_ROW: &str = "gpu_idle";
-pub const WARMUP_FRAMES: u64 = 120;
 
 #[derive(Resource, Clone, Debug, Default, PartialEq, serde::Serialize, schemars::JsonSchema)]
 pub struct BrickCosts {

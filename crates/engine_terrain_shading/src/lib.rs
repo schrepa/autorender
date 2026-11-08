@@ -60,6 +60,7 @@ impl Brick for TerrainShadingBrick {
             .resource::<state::Atlas>()
             .resource::<state::SurfaceTotals>()
             .resource::<state::PartStats>()
+            .resource::<state::RecordsSettling>()
             .piece::<HorizonsPiece>()
             .generated(debug::GENERATED)
             .surface_kind(SurfaceKind { name: "ground" })

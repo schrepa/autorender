@@ -16,7 +16,7 @@ use std::mem::offset_of;
 use bevy_ecs::prelude::*;
 use engine_core::{
     AttachPoint, Brick, Bricks, GpuStruct, Pass, PassName, PassViews, Readable, Readback,
-    Schedule, SlotSet, Source, Writes, never,
+    Schedule, Settling, SlotSet, Source, Writes, never,
 };
 use engine_places_rendering::exposure::Exposure;
 use engine_render::RenderBricks;
@@ -62,6 +62,7 @@ impl Brick for AutoExposureBrick {
 #[derive(Resource, Default)]
 pub(crate) struct ExposureFeedback {
     read: Option<[f32; 5]>,
+    settling: Settling,
 }
 
 impl Readable for ExposureFeedback {
@@ -91,14 +92,17 @@ fn hundredths(stops: f32) -> i32 {
 }
 
 fn exposure_stats(feedback: Res<ExposureFeedback>, mut stats: ResMut<ExposureStats>) {
+    let unread = feedback.read.is_none();
     let [stops, metered, viewed, wanted, moving] = feedback.read.unwrap_or_default();
     let (stops, wanted) = (hundredths(stops), hundredths(wanted));
+    feedback
+        .settling
+        .left(u32::from(unread || (moving != 0.0 && stops != wanted)));
     stats.set_if_neq(ExposureStats {
         active: true,
         stops,
         metered: hundredths(metered),
         view: hundredths(viewed),
         wanted,
-        settling: u32::from(moving != 0.0 && stops != wanted),
     });
 }

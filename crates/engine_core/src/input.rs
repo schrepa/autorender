@@ -163,7 +163,7 @@ pub type CursorAsk = (&'static str, CursorMode);
 
 #[derive(Resource, Debug, Default)]
 pub struct CursorRequests {
-    requests: Requests<CursorAsk, ()>,
+    requests: Requests<CursorAsk, Ticket>,
     applied: CursorMode,
 }
 
@@ -174,24 +174,40 @@ impl List for CursorRequests {
 
 impl CursorRequests {
     pub fn ask(&mut self, by: &'static str, mode: CursorMode) -> Interest<CursorAsk> {
-        self.requests.ask((by, mode))
+        let interest = self.requests.ask((by, mode));
+        self.end();
+        interest
+    }
+
+    fn end(&mut self) {
+        let asked: Vec<(CursorAsk, Ticket)> = self
+            .requests
+            .asked()
+            .map(|(&ask, ticket)| (ask, ticket))
+            .collect();
+        for (ask, ticket) in asked {
+            self.requests.ready(&ask, ticket, ticket);
+        }
+    }
+
+    fn held(&self) -> Vec<(Ticket, CursorAsk)> {
+        let mut held: Vec<(Ticket, CursorAsk)> = self
+            .requests
+            .iter()
+            .filter_map(|(&ask, request)| Some((*request.ready()?, ask)))
+            .collect();
+        held.sort_unstable_by_key(|&(ticket, _)| ticket);
+        held
     }
 
     pub fn wanted(&self) -> CursorMode {
-        self.requests
-            .asked()
-            .max_by_key(|&(_, ticket)| ticket)
-            .map_or_else(CursorMode::default, |(&(_, mode), _)| mode)
+        self.held()
+            .last()
+            .map_or_else(CursorMode::default, |&(_, (_, mode))| mode)
     }
 
     pub fn asked(&self) -> Vec<CursorAsk> {
-        let mut asked: Vec<(Ticket, CursorAsk)> = self
-            .requests
-            .asked()
-            .map(|(&ask, ticket)| (ticket, ask))
-            .collect();
-        asked.sort_unstable_by_key(|&(ticket, _)| ticket);
-        asked.into_iter().map(|(_, ask)| ask).collect()
+        self.held().into_iter().map(|(_, ask)| ask).collect()
     }
 
     pub fn applied(&self) -> CursorMode {
@@ -201,6 +217,7 @@ impl CursorRequests {
     #[doc(hidden)]
     pub fn apply(&mut self) {
         self.requests.settle(0.0);
+        self.end();
         self.applied = self.wanted();
     }
 }

@@ -54,6 +54,7 @@ impl Terrains {
         self.frame += 1;
         self.sync_surroundings(asking.kinds);
         let mut released = std::mem::take(&mut self.retired.shares);
+        let mut missing_left = 0_u32;
         let mut stats = TerrainStats {
             terrains: self
                 .entries
@@ -209,7 +210,7 @@ impl Terrains {
                 .collect();
             stats.resident_tiles += state.store.len() as u32;
             stats.missing_tiles += state.missing.len() as u32;
-            stats.pending += state
+            missing_left += state
                 .missing
                 .iter()
                 .filter(|(key, _)| !state.failed(key))
@@ -265,7 +266,11 @@ impl Terrains {
             .map(|state| state.store.kept_tiles() as u32)
             .sum();
         release(&self.entries, &mut self.stacks, released, asking.jobs);
-        stats.pending += stats.baking;
+        self.settling.left(
+            missing_left
+                .saturating_add(stats.baking)
+                .saturating_add(stats.waiting_tiles),
+        );
         stats.dropped_tiles = stats.tile_cut.cut;
         let (failed_jobs, latest) = self.job_failures();
         stats.failed_jobs = failed_jobs;

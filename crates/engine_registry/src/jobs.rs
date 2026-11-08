@@ -136,23 +136,20 @@ impl JobListed {
 pub enum JobOrder {
     Start {
         key: [u8; 32],
-        kind: &'static str,
-        source: [u8; 32],
+        kind: JobRef,
         input: Vec<u8>,
         priority: u32,
         admitted: bool,
     },
-    Fetch {
+    Run {
         key: [u8; 32],
-        kind: &'static str,
-        source: [u8; 32],
+        kind: JobRef,
         input: Vec<u8>,
         priority: u32,
     },
     Look {
         key: [u8; 32],
-        kind: &'static str,
-        source: [u8; 32],
+        kind: Option<JobRef>,
         priority: u32,
     },
     Share {
@@ -167,8 +164,7 @@ pub enum JobOrder {
     },
     Keep {
         key: [u8; 32],
-        kind: &'static str,
-        source: [u8; 32],
+        kind: Option<JobRef>,
         bytes: Vec<u8>,
         parity: RecordParity,
     },

@@ -1,4 +1,5 @@
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
+use engine_smoke::{settled_by, settled_when};
 use glam::{Mat4, Quat, Vec3};
 use serde_json::{Value, json};
 
@@ -11,7 +12,6 @@ const SCENE: &str = "hierarchy-fixture";
 const PREFAB: &str = "garden-lantern";
 const PARTS: [&str; 2] = ["lantern", "planter"];
 const EPSILON: f64 = 0.0002;
-const SETTLE_RENDERS: usize = 240;
 
 fn fixture() -> Value {
     json!({
@@ -54,7 +54,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         "fixture_transforms_valid"
     );
     ask(session, "control", json!({"name": "pause"}))?;
-    settled(session, loaded["rendering"].clone())?;
+    settled(session)?;
     discovery(session)?;
     children(session)?;
     let initial = residency(session)?;
@@ -251,14 +251,16 @@ fn drawn_poses(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let mut gpu = serde_json::Map::new();
     let mut agree = true;
     for id in ["player", "player-accessory"] {
-        let mut drawn = Value::Null;
-        for _ in 0..SETTLE_RENDERS {
-            render(session)?;
-            drawn = query(session, "mesh_drawn", json!({"entity": id}))?;
-            if drawn["read_back"]["pose"].is_array() {
-                break;
-            }
-        }
+        let drawn = settled_when(
+            session,
+            |session| {
+                let mut rendering = render(session)?;
+                rendering["drawn"] = query(session, "mesh_drawn", json!({"entity": id}))?;
+                Ok(rendering)
+            },
+            |rendering| rendering["drawn"]["read_back"]["pose"].is_array(),
+        )?["drawn"]
+            .take();
         let (computed, read) = (
             flat_rows(&drawn["drawn_pose"]),
             flat_rows(&drawn["read_back"]["pose"]),
@@ -651,16 +653,11 @@ fn reloaded(session: &mut dyn SmokeSession, document: &Value) -> Result<Value, S
         json!(0),
         "reload_transforms_valid"
     );
-    settled(session, rendering)
+    settled(session)
 }
 
-fn settled(session: &mut dyn SmokeSession, mut rendering: Value) -> Result<Value, SmokeFailure> {
-    for _ in 0..SETTLE_RENDERS {
-        if rendering["meshes_stats"]["missing_assets"] == 0 {
-            break;
-        }
-        rendering = render(session)?;
-    }
+fn settled(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
+    let rendering = settled_by(session, render)?;
     smoke_eq!(
         json!(rendering["meshes_stats"]["missing_assets"]),
         json!(0),
