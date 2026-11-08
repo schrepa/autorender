@@ -6,8 +6,8 @@ use crate::expr_layer::EXPRESSION;
 use crate::jobs::GROUND_GRID;
 use crate::scene::{INVALID_STREAMED, TERRAIN, prefetch_kind, terrain_kind, terrain_paths};
 use engine_core::{
-    Brick, Bricks, Explain, ExplainAsk, ExplainRecord, GlobalTransforms, GpuStruct, JobKind,
-    SceneComponents, Schedule, Source,
+    Brick, Bricks, Cook, CookList, Explain, ExplainAsk, ExplainRecord, GlobalTransforms, GpuStruct,
+    JobKind, SceneComponents, Schedule, Source,
 };
 use engine_heightfield::{INVALID_TERRAIN, MISSING_LAYER, UNKNOWN_MAP, UNREADABLE_MAP};
 use engine_places_simulation::ground::{Ground, UNKNOWN_TERRAIN};
@@ -65,6 +65,7 @@ impl Brick for TerrainBrick {
                 None,
             )
             .join::<TerrainLayers>(&EXPRESSION, None)
+            .join::<CookList>(Cook::new(super::cook::cook), None)
             .generated(GENERATED)
             .systems(
                 Schedule::ViewSync,

@@ -5,7 +5,7 @@ use crate::host::{
     JobScheduler, LevelLoad, LevelStep,
 };
 use engine_core::{
-    BrickList, CookMode, CursorMode, CursorRequests, Engine, ErrorCode, Level, MenuInput, Pause,
+    BrickList, CursorMode, CursorRequests, Engine, ErrorCode, Level, MenuInput, Pause,
     Progress,
 };
 use engine_render::RenderTarget;
@@ -65,11 +65,7 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn cook(&mut self) {
-        self.app
-            .engine_mut()
-            .app
-            .world_mut()
-            .insert_resource(CookMode { cooking: true });
+        self.app.cook();
     }
 
     pub fn cook_features(&self) -> Vec<(&'static str, u64)> {

@@ -1,5 +1,5 @@
 use engine_core::{
-    CookMode, Engine, JobExchange, JobId, MISSING_RECORD, RecordKey, URGENT_JOBS, job_priority,
+    Engine, JobExchange, JobId, MISSING_RECORD, RecordKey, URGENT_JOBS, job_priority,
 };
 use engine_registry::Registry;
 use engine_render::Renderer;
@@ -10,6 +10,7 @@ const KIND: &str = "pipeline_list";
 #[derive(Debug, Default)]
 pub(crate) struct PipelineList {
     state: State,
+    cooks: bool,
 }
 
 #[derive(Debug, Default)]
@@ -35,14 +36,6 @@ fn compiled(renderer: &Renderer) -> u32 {
         .sum()
 }
 
-fn cooking(engine: &Engine) -> bool {
-    engine
-        .app
-        .world()
-        .get_resource::<CookMode>()
-        .is_some_and(|mode| mode.cooking)
-}
-
 fn key_of(identity: &[u8]) -> RecordKey {
     let mut hash = Sha256::new();
     hash.update((KIND.len() as u64).to_le_bytes());
@@ -52,6 +45,14 @@ fn key_of(identity: &[u8]) -> RecordKey {
 }
 
 impl PipelineList {
+    pub(crate) fn cook(&mut self) {
+        self.cooks = true;
+    }
+
+    pub(crate) fn restart(&mut self) {
+        self.state = State::Unasked;
+    }
+
     pub(crate) fn unasked(&self) -> bool {
         matches!(self.state, State::Unasked)
     }
@@ -87,7 +88,7 @@ impl PipelineList {
             }
         }
         let key = key_of(&identity);
-        if cooking(engine) {
+        if self.cooks {
             self.state = State::Making { key, kept: 0 };
             return;
         }

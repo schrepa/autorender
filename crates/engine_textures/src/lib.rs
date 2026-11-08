@@ -3,8 +3,8 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-mod astc;
-mod bc7;
+#[doc(hidden)]
+pub mod bc7;
 mod image;
 mod mips;
 
@@ -32,7 +32,7 @@ pub fn cook_input(source: &Source, family: Family) -> Vec<u8> {
     input
 }
 
-pub fn cook_job(input: &[u8]) -> Result<Vec<u8>, Error> {
+pub fn cook_source(input: &[u8]) -> Result<(Source, Family), Error> {
     let header = input.get(..COOK_HEADER).ok_or_else(|| {
         Error::new(ErrorCode::InvalidTexture, "$.input")
             .expected(Expected::Present)
@@ -67,7 +67,7 @@ pub fn cook_job(input: &[u8]) -> Result<Vec<u8>, Error> {
         pixels: input[COOK_HEADER..].to_vec(),
         usage,
     };
-    cook(&source, family).map(|texture| record(&texture))
+    Ok((source, family))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -122,7 +122,7 @@ pub fn levels(source: &Source) -> Vec<Vec<u8>> {
     mips::chain(source.width, source.height, &source.pixels, source.usage)
 }
 
-pub fn cook(source: &Source, family: Family) -> Result<Texture, Error> {
+pub fn plain(source: &Source) -> Result<Texture, Error> {
     let expected = TextureFormat::Rgba8.level_bytes(source.width, source.height);
     if source.pixels.len() != expected {
         return Err(Error::new(ErrorCode::InvalidTexture, "$.pixels")
@@ -130,16 +130,6 @@ pub fn cook(source: &Source, family: Family) -> Result<Texture, Error> {
             .range(expected as f64, expected as f64)
             .got(source.pixels.len()));
     }
-    let levels = levels(source);
-    let compressed = levels
-        .iter()
-        .enumerate()
-        .map(|(level, pixels)| {
-            let width = (source.width >> level).max(1);
-            let height = (source.height >> level).max(1);
-            compress(width, height, pixels, family)
-        })
-        .collect();
     let masked = source
         .pixels
         .as_chunks::<4>()
@@ -147,71 +137,11 @@ pub fn cook(source: &Source, family: Family) -> Result<Texture, Error> {
         .iter()
         .any(|texel| texel[3] != 255);
     Ok(
-        Texture::from_levels(family.format(), source.width, source.height, compressed)?
+        Texture::from_levels(TextureFormat::Rgba8, source.width, source.height, levels(source))?
             .with_summary(TextureSummary::of_rgba8(&source.pixels))
             .with_emission_mask(masked)
             .with_color_space(source.usage.space()),
     )
-}
-
-pub fn compress(width: u32, height: u32, pixels: &[u8], family: Family) -> Vec<u8> {
-    let (columns, rows) = (width.div_ceil(4) as usize, height.div_ceil(4) as usize);
-    let block_row = |row: usize| -> Vec<u8> {
-        let mut out = Vec::with_capacity(columns * 16);
-        for column in 0..columns {
-            let texels: [[u8; 4]; 16] = std::array::from_fn(|index| {
-                let x = (column * 4 + index % 4).min(width as usize - 1);
-                let y = (row * 4 + index / 4).min(height as usize - 1);
-                let at = (y * width as usize + x) * 4;
-                [pixels[at], pixels[at + 1], pixels[at + 2], pixels[at + 3]]
-            });
-            out.extend_from_slice(&match family {
-                Family::Bc7 => bc7::encode_block(&texels),
-                Family::Astc => astc::encode_block(&texels),
-            });
-        }
-        out
-    };
-    rows_in_parallel(rows, block_row).concat()
-}
-
-fn rows_in_parallel<T: Send>(rows: usize, make: impl Fn(usize) -> T + Sync) -> Vec<T> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let threads = std::thread::available_parallelism().map_or(1, usize::from);
-        if threads > 1 && rows > 1 {
-            let per = rows.div_ceil(threads);
-            let make = &make;
-            return std::thread::scope(|scope| {
-                let parts: Vec<_> = (0..rows)
-                    .step_by(per)
-                    .map(|first| {
-                        scope.spawn(move || {
-                            (first..(first + per).min(rows))
-                                .map(make)
-                                .collect::<Vec<T>>()
-                        })
-                    })
-                    .collect();
-                parts
-                    .into_iter()
-                    .flat_map(|part| {
-                        part.join()
-                            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-                    })
-                    .collect()
-            });
-        }
-    }
-    (0..rows).map(make).collect()
-}
-
-pub fn solid_block(format: TextureFormat, color: [u8; 4]) -> Option<[u8; 16]> {
-    match format {
-        TextureFormat::Bc7 => Some(bc7::encode_block(&[color; 16])),
-        TextureFormat::Astc4x4 => Some(astc::encode_block(&[color; 16])),
-        TextureFormat::Rgba8 | TextureFormat::Etc2Rgba8 => None,
-    }
 }
 
 pub fn decompress(texture: &Texture) -> Result<Texture, Error> {
@@ -255,14 +185,12 @@ pub fn decompress(texture: &Texture) -> Result<Texture, Error> {
 }
 
 const MAGIC: &[u8; 4] = b"ETEX";
-const HEADER: usize = 4 + 4 + 8 + 48;
+const HEADER: usize = 4 + 4 + 8 + 28;
 
 pub fn record(texture: &Texture) -> Vec<u8> {
     let summary = texture.summary().unwrap_or(TextureSummary {
         color: [1.0; 3],
         mean: [1.0; 4],
-        slopes: 0.0,
-        deviation: [0.0; 4],
     });
     let mut out = Vec::with_capacity(HEADER + texture.byte_len());
     out.extend_from_slice(MAGIC);
@@ -277,13 +205,7 @@ pub fn record(texture: &Texture) -> Vec<u8> {
     out.push(texture.color_space().tag());
     out.extend_from_slice(&texture.width().to_le_bytes());
     out.extend_from_slice(&texture.height().to_le_bytes());
-    for value in summary
-        .color
-        .iter()
-        .chain(&summary.mean)
-        .chain([&summary.slopes])
-        .chain(&summary.deviation)
-    {
+    for value in summary.color.iter().chain(&summary.mean) {
         out.extend_from_slice(&value.to_le_bytes());
     }
     for level in texture.levels() {
@@ -318,8 +240,6 @@ pub fn decode(bytes: &[u8]) -> Result<Texture, String> {
     let summary = TextureSummary {
         color: [value(0), value(1), value(2)],
         mean: [value(3), value(4), value(5), value(6)],
-        slopes: value(7),
-        deviation: [value(8), value(9), value(10), value(11)],
     };
     let mut levels = Vec::with_capacity(count);
     let mut at = HEADER;

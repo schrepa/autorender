@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    CookMode, DeviceLimits, Error, ErrorCode, FrameBudget, FrameTime, IDLE_JOBS, Interest,
+    CookAsks, DeviceLimits, Error, ErrorCode, FrameBudget, FrameTime, IDLE_JOBS, Interest,
     JobFailures, Jobs, PrimaryView, RecordKey, Records, Request, Requests, VIEW_JOBS, job_priority,
 };
 use engine_heightfield::tile::Solid;
@@ -200,6 +200,10 @@ pub(crate) struct Settled {
 }
 
 impl Settled {
+    pub(crate) fn cooking(&self) -> bool {
+        self.cooking
+    }
+
     pub(crate) fn counts(&self) -> (u32, u32) {
         let settled = self
             .tiles
@@ -1163,17 +1167,30 @@ fn leave(
     }
 }
 
+pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {
+    let Some(state) = world.get_resource::<WaterState>() else {
+        return;
+    };
+    for terrain in &state.terrains {
+        if !terrain.surroundings && terrain.recipe.is_some() {
+            asks.hold(state.everything.ask_later(terrain.entity));
+            asks.left(u64::from(!terrain.settled.cooking));
+        }
+    }
+}
+
 pub(crate) fn request_settle(
     water: Res<Water>,
     view: Res<PrimaryView>,
     (time, records): (Res<FrameTime>, Res<Records>),
-    (limits, cook): (Res<DeviceLimits>, Res<CookMode>),
+    limits: Res<DeviceLimits>,
     mut budget: ResMut<FrameBudget>,
     mut jobs: Jobs,
     mut state: ResMut<WaterState>,
 ) {
     let eye = view.detail_eye();
     let state = &mut *state;
+    state.everything.settle(time.real_elapsed);
     let limits_changed = limits.is_changed();
     let mut cx = Follow {
         jobs: &mut jobs,
@@ -1191,7 +1208,9 @@ pub(crate) fn request_settle(
             terrain.settled.stir(true);
         }
         let watering = !terrain.surroundings;
-        let cooks = cook.cooking && watering && terrain.recipe.is_some();
+        let cooks = state.everything.interests(&terrain.entity) > 0
+            && watering
+            && terrain.recipe.is_some();
         if terrain.settled.cooking != cooks {
             terrain.settled.cooking = cooks;
             terrain.settled.stir(true);

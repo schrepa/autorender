@@ -1,9 +1,10 @@
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::sync::{Arc, OnceLock};
 
+use engine_cards::{AlphaImage, Cards, trim_cards};
 use engine_core::{
-    AlphaImage, AssetLibrary, Error, MakeSources, Mesh, MeshVertex, RecordExchange, TextureHandle,
-    TextureSet, TextureSource, TextureUsage, math, trim_cards,
+    AssetLibrary, Error, Mesh, MeshVertex, RecordExchange, TextureHandle,
+    TextureSet, TextureSource, TextureUsage, math,
 };
 use glam::{Vec2, Vec3};
 
@@ -19,14 +20,14 @@ pub(crate) fn bark_atlas(
         source: crate::bricks::game::SOURCE.hash(),
         name: "highlands/bark_atlas".into(),
         textures: vec![("atlas".to_owned(), TextureUsage::Color)],
-        make: MakeSources::Here(Arc::new(|| {
+        make: Arc::new(|| {
             Ok::<_, String>(vec![TextureSource {
                 width: ATLAS,
                 height: ATLAS,
                 pixels: texels().to_vec(),
                 usage: TextureUsage::Color,
             }])
-        })),
+        }),
     };
     let handles = records.textures(assets, set)?;
     Ok(handles[0])
@@ -114,7 +115,20 @@ pub(crate) fn conifer(seed: u32, detail: usize) -> Result<Mesh, Error> {
     };
     builder
         .mesh()
-        .and_then(|mesh| trim_cards(&mesh, atlas, CUTOFF))
+        .and_then(|mesh| {
+            let cards = Cards {
+                vertices: mesh.vertices().to_vec(),
+                indices: mesh.indices().to_vec(),
+                colors: mesh.colors().map(<[_]>::to_vec),
+                uv1: None,
+            };
+            let trimmed = trim_cards(&cards, atlas, CUTOFF)?;
+            let mesh = Mesh::new(trimmed.vertices, trimmed.indices)?;
+            match trimmed.colors {
+                Some(colors) => mesh.with_colors(colors),
+                None => Ok(mesh),
+            }
+        })
         .map_err(|error| error.within(&format!("$.conifers[{seed}].details[{detail}]")))
 }
 

@@ -31,7 +31,7 @@ mod games {
     pub use crate::host::{MenuKey, MoveDirection};
     pub use crate::resolution::{DynamicResolution, Resolution};
     pub use engine_core::{
-        Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, Attribute,
+        Aabb, ActionId, ActionInput, AlphaMode, AssetBudget, AssetLibrary, Attribute,
         Attributes, AxisId, AxisInput, BrickList, Camera, Clear, ColorSpace, CursorAsk, Hit,
         Picking, PrimaryView, Ray, Rect, Target, View, ViewCut, ViewFacts, ViewHistory, Views,
         main_camera, place_camera,
@@ -40,13 +40,13 @@ mod games {
         Engine, EngineConfig,
         Filter, FixedTime, FrameLimits, FrameTime, GlobalTransform, GlobalTransforms,
         Asks, CameraHandoff, Clock, Cull, DepthBias, HandOver, LightingModel, Listing,
-        MakeSources, MakeTextures, RenderState, SurfaceSlot,
+        MakeTextures, RenderState, SurfaceSlot,
         Material, Mobility, Mover, MoverId, Moves, Node, NodeWord, Pace, Teleport,
         MaterialHandle, MenuInput, Mesh, MeshHandle, MeshVertex, MoveInput, Parent,
         Pause, PauseReason, PointerInput, Poses, Projection, ProvidedAssets, ResolutionStats, Sampler,
         Surface, Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage,
         Transform, UvTransform, Wrap, make_fresh, math,
-        set_parent, set_parents, Span, TimeScale, trim_cards,
+        set_parent, set_parents, Span, TimeScale,
     };
 }
 pub use games::*;

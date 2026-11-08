@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    CookMode, Error, ErrorCode, Filled, FixedTime, GAMEPLAY_JOBS, GlobalTransforms, IDLE_JOBS,
+    Error, ErrorCode, Filled, FixedTime, GAMEPLAY_JOBS, GlobalTransforms,
     Interest, JobFailures, JobKind, JobRef, Jobs, Parent, RecordKey, Records, Request, Requests,
     Transform, fields, job_output, job_priority, settings, stats,
 };
@@ -29,7 +29,7 @@ use crate::jobs::{
 use crate::{
     Gait, NavOptions, NavPath, Stepped, TilePortals, WalkData, WalkGround, WalkSearch, Want,
 };
-use cook::CookGraph;
+pub(crate) use cook::cook;
 pub use obstacles::ObstacleColliders;
 use records::{Interests, Resolved, WalkRecords};
 
@@ -111,7 +111,6 @@ stats! {
         pub work: u64,
         pub grounds: u32,
         pub portals: u32,
-        #[pending] pub cooking: u32,
     }
 }
 
@@ -120,7 +119,6 @@ pub struct NavAgents {
     searches: Vec<(Entity, Search)>,
     query: Option<WalkQuery>,
     records: WalkRecords,
-    cook: Vec<CookGraph>,
     turn: usize,
     tick: u64,
     elapsed: f64,
@@ -364,17 +362,17 @@ fn worker_message(error: Error) -> String {
 }
 
 pub(crate) fn walk_agents(
-    (time, settings, cook): (Res<FixedTime>, Res<Navigation>, Res<CookMode>),
+    (time, settings): (Res<FixedTime>, Res<Navigation>),
     (ground, colliders, records): (Res<Ground>, ObstacleColliders, Res<Records>),
     (collision, collides, bodies): (Res<Collision>, Filled<Collision>, Query<&Collider>),
-    (mut jobs, mut cooks): (Jobs, Jobs),
+    mut jobs: Jobs,
     mut navigation: ResMut<NavAgents>,
     mut stats: ResMut<NavStats>,
     (mut agents, globals): (Agents, Res<GlobalTransforms>),
 ) {
     *stats = walk(
-        (&*settings, *time, cook.cooking),
-        ((&*ground, &colliders), &*records, (&mut jobs, &mut cooks)),
+        (&*settings, *time),
+        ((&*ground, &colliders), &*records, &mut jobs),
         (collides.on().then_some(&*collision), &bodies),
         &mut navigation,
         (&mut agents, &globals),
@@ -382,12 +380,8 @@ pub(crate) fn walk_agents(
 }
 
 fn walk(
-    (settings, time, cooking): (&Navigation, FixedTime, bool),
-    ((ground, colliders), records, (jobs, cooks)): (
-        (&Ground, &ObstacleColliders),
-        &Records,
-        (&mut Jobs, &mut Jobs),
-    ),
+    (settings, time): (&Navigation, FixedTime),
+    ((ground, colliders), records, jobs): ((&Ground, &ObstacleColliders), &Records, &mut Jobs),
     bodies: (Option<&Collision>, &Query<&Collider>),
     navigation: &mut NavAgents,
     (agents, globals): (&mut Agents, &GlobalTransforms),
@@ -438,10 +432,6 @@ fn walk(
         (&mut *navigation, &mut stats),
         agents,
     );
-    if cooking {
-        let left = navigation.cook(ground, agents, (records, &mut *cooks));
-        stats.cooking = u32::try_from(left).unwrap_or(u32::MAX);
-    }
     let (grounds, portals) = navigation.records.held();
     stats.grounds = grounds;
     stats.portals = portals;

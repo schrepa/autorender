@@ -29,6 +29,7 @@ engine_sources.workspace = true
 
 [dependencies]
 engine.workspace = true
+engine_cards.workspace = true
 engine_core.workspace = true
 engine_ecs.workspace = true
 engine_fly_camera.workspace = true

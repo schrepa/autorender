@@ -145,7 +145,6 @@ pub(super) struct TerrainState {
     pub(super) recipe: Option<SharedRecipe>,
     pub(super) bake: TerrainBake,
     pub(super) failures: JobFailures,
-    pub(super) cook: Option<CookTiles>,
     pub(super) surface: Option<(Arc<Layers>, Option<Arc<SurfaceData>>)>,
     pub(super) materials: TileMaterials,
 }
@@ -208,7 +207,6 @@ impl TerrainState {
             recipe: None,
             bake: TerrainBake::default(),
             failures: JobFailures::default(),
-            cook: None,
             surface: None,
             materials: TileMaterials::Baked,
         }

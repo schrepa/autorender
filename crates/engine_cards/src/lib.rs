@@ -1,8 +1,12 @@
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
+
 use std::collections::BTreeMap;
 
 use engine_codec::{Error, ErrorCode, Expected};
-
-use crate::{MAX_TEXTURE_DIMENSION, Mesh, MeshVertex};
+pub use engine_lodbuild::MeshVertex;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AlphaImage<'a> {
@@ -11,21 +15,26 @@ pub struct AlphaImage<'a> {
     pub rgba: &'a [u8],
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Cards {
+    pub vertices: Vec<MeshVertex>,
+    pub indices: Vec<u32>,
+    pub colors: Option<Vec<[f32; 4]>>,
+    pub uv1: Option<Vec<[f32; 2]>>,
+}
+
 const CORNERS: usize = 8;
 const GROWTH: f64 = 1.5;
 const SAVING: f64 = 0.1;
 const SNAP: f32 = 1.0 / 64.0;
 const SLACK: f64 = 1.0e-6;
 
-pub fn trim_cards(mesh: &Mesh, alpha: AlphaImage<'_>, cutoff: f32) -> Result<Mesh, Error> {
+pub fn trim_cards(cards: &Cards, alpha: AlphaImage<'_>, cutoff: f32) -> Result<Cards, Error> {
     let coverage = Coverage::new(alpha, cutoff)?;
-    if mesh.lods().is_some() {
-        return Err(Error::new(ErrorCode::InvalidMesh, "$.mesh.lods").expected(Expected::Absent));
-    }
-    let cards = find_cards(mesh, coverage.snap);
+    let found = find_cards(cards, coverage.snap);
     let mut fitted = BTreeMap::new();
     let mut fits = Vec::new();
-    let card_fits: Vec<usize> = cards
+    let card_fits: Vec<usize> = found
         .iter()
         .map(|card| {
             *fitted
@@ -36,9 +45,9 @@ pub fn trim_cards(mesh: &Mesh, alpha: AlphaImage<'_>, cutoff: f32) -> Result<Mes
                 })
         })
         .collect();
-    let mut roles = vec![Role::Kept; mesh.indices().len() / 3];
-    let mut trimmed = Trimmed::new(mesh);
-    for (card, &fit) in cards.iter().zip(&card_fits) {
+    let mut roles = vec![Role::Kept; cards.indices.len() / 3];
+    let mut trimmed = Trimmed::new(cards);
+    for (card, &fit) in found.iter().zip(&card_fits) {
         let [first, second] = card.triangles;
         match &fits[fit] {
             Fit::Keep => continue,
@@ -144,8 +153,8 @@ impl Half {
     }
 }
 
-fn find_cards(mesh: &Mesh, snap: [f32; 2]) -> Vec<Card> {
-    let (vertices, indices) = (mesh.vertices(), mesh.indices());
+fn find_cards(cards: &Cards, snap: [f32; 2]) -> Vec<Card> {
+    let (vertices, indices) = (&cards.vertices[..], &cards.indices[..]);
     let triangle = |number: usize| -> [u32; 3] {
         [
             indices[number * 3],
@@ -162,7 +171,7 @@ fn find_cards(mesh: &Mesh, snap: [f32; 2]) -> Vec<Card> {
         .collect();
     edges.sort_unstable();
     let mut paired = vec![false; count];
-    let mut cards = Vec::new();
+    let mut found = Vec::new();
     for first in 0..count {
         if paired[first] {
             continue;
@@ -183,10 +192,10 @@ fn find_cards(mesh: &Mesh, snap: [f32; 2]) -> Vec<Card> {
         if let Some((second, fourth)) = partner {
             paired[first] = true;
             paired[second] = true;
-            cards.push(half.card(fourth, [first, second], vertices));
+            found.push(half.card(fourth, [first, second], vertices));
         }
     }
-    cards
+    found
 }
 
 fn across(triangle: [u32; 3], edge: [u32; 2]) -> Option<u32> {
@@ -210,11 +219,10 @@ impl<'a> Coverage<'a> {
             height,
             rgba,
         } = image;
-        let sides = 1..=MAX_TEXTURE_DIMENSION;
         for (path, side) in [("$.alpha.width", width), ("$.alpha.height", height)] {
-            if !sides.contains(&side) {
+            if side == 0 {
                 return Err(Error::new(ErrorCode::InvalidTexture, path)
-                    .range(1.0, f64::from(MAX_TEXTURE_DIMENSION))
+                    .at_least(1)
                     .got(side));
             }
         }
@@ -405,7 +413,7 @@ fn meeting(
 }
 
 struct Trimmed<'a> {
-    mesh: &'a Mesh,
+    cards: &'a Cards,
     indices: Vec<usize>,
     added: Vec<Added>,
     places: BTreeMap<([u32; 4], [u64; 2]), usize>,
@@ -413,19 +421,18 @@ struct Trimmed<'a> {
 }
 
 impl<'a> Trimmed<'a> {
-    fn new(mesh: &'a Mesh) -> Self {
+    fn new(cards: &'a Cards) -> Self {
         Self {
-            mesh,
-            indices: Vec::with_capacity(mesh.indices().len()),
+            cards,
+            indices: Vec::with_capacity(cards.indices.len()),
             added: Vec::new(),
             places: BTreeMap::new(),
-            replaced: vec![false; mesh.vertices().len()],
+            replaced: vec![false; cards.vertices.len()],
         }
     }
 
     fn copy(&mut self, triangle: usize) {
-        let mesh = self.mesh;
-        let corners = &mesh.indices()[triangle * 3..triangle * 3 + 3];
+        let corners = &self.cards.indices[triangle * 3..triangle * 3 + 3];
         self.indices
             .extend(corners.iter().map(|&index| index as usize));
     }
@@ -453,7 +460,7 @@ impl<'a> Trimmed<'a> {
         if (s == 0.0 || s == 1.0) && (t == 0.0 || t == 1.0) {
             return card.corners[usize::from(s == 1.0) + 2 * usize::from(t == 1.0)] as usize;
         }
-        let next = self.mesh.vertices().len() + self.added.len();
+        let next = self.cards.vertices.len() + self.added.len();
         *self
             .places
             .entry((card.corners, at.map(f64::to_bits)))
@@ -466,9 +473,9 @@ impl<'a> Trimmed<'a> {
             })
     }
 
-    fn finish(self) -> Result<Mesh, Error> {
-        let mesh = self.mesh;
-        let own = mesh.vertices().len();
+    fn finish(self) -> Result<Cards, Error> {
+        let cards = self.cards;
+        let own = cards.vertices.len();
         let mut used = vec![false; own];
         for &index in &self.indices {
             if index < own {
@@ -503,28 +510,32 @@ impl<'a> Trimmed<'a> {
                 .expected(Expected::NonEmpty)
                 .got(0));
         }
-        let (vertices, added) = (mesh.vertices(), &self.added);
+        let (vertices, added) = (&cards.vertices[..], &self.added);
         let blended = added.iter().map(|vertex| MeshVertex {
             position: vertex.blend(|corner| vertices[corner].position),
             normal: vertex.blend(|corner| vertices[corner].normal),
             uv: vertex.blend(|corner| vertices[corner].uv),
         });
-        let mut trimmed = Mesh::new(joined(vertices, &kept, blended), indices)?;
-        if let Some(colors) = mesh.colors() {
+        let colors = cards.colors.as_deref().map(|colors| {
             let blended = added.iter().map(|vertex| {
                 vertex
                     .blend(|corner| colors[corner])
                     .map(|value| engine_math::clamp(value, 0.0, 1.0))
             });
-            trimmed = trimmed.with_colors(joined(colors, &kept, blended))?;
-        }
-        if let Some(uv1) = mesh.uv1() {
+            joined(colors, &kept, blended)
+        });
+        let uv1 = cards.uv1.as_deref().map(|uv1| {
             let blended = added
                 .iter()
                 .map(|vertex| vertex.blend(|corner| uv1[corner]));
-            trimmed = trimmed.with_uv1(joined(uv1, &kept, blended))?;
-        }
-        Ok(trimmed)
+            joined(uv1, &kept, blended)
+        });
+        Ok(Cards {
+            vertices: joined(vertices, &kept, blended),
+            indices,
+            colors,
+            uv1,
+        })
     }
 }
 

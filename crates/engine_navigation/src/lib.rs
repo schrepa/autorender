@@ -12,7 +12,7 @@ mod nav;
 mod scene;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, JobKind, SceneComponents, Schedule, Source};
+use engine_core::{Brick, Bricks, Cook, CookList, JobKind, SceneComponents, Schedule, Source};
 use engine_places_simulation::ground::UNKNOWN_TERRAIN;
 
 pub use agents::{NavAgents, NavQuery, NavStats, Navigation, ObstacleColliders, SceneNavAgent};
@@ -44,6 +44,7 @@ impl Brick for NavigationBrick {
             .operation::<NavPathQuery>()
             .observation::<NavAgentQuery>()
             .observation::<NavAgentsQuery>()
-            .join::<SceneComponents>(scene::nav_agent(), None);
+            .join::<SceneComponents>(scene::nav_agent(), None)
+            .join::<CookList>(Cook::new(agents::cook), None);
     }
 }

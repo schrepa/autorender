@@ -1,71 +1,39 @@
 use super::*;
+use engine_core::CookAsks;
 
-pub(super) struct CookGraph {
-    walked: Walked,
-    gait: Gait,
-    tiles: Vec<TileKey>,
-    next: usize,
-    pub(super) flight: Vec<Interest<RecordKey>>,
-}
-
-impl NavAgents {
-    pub(super) fn cook(
-        &mut self,
-        ground: &Ground,
-        agents: &Agents,
-        (records, jobs): (&Records, &mut Jobs),
-    ) -> u64 {
-        let mut left = 0;
-        for (_, agent, walk, transform) in agents.iter() {
-            if walk.status == NavStatus::Refused {
-                continue;
-            }
-            let at = Vec2::new(transform.translation.x, transform.translation.z);
-            match ground_source(ground, at, at) {
-                GroundRead::Ready(walked) => {
-                    let gait = options(agent).gait(&walked.source.pyramid);
-                    if !self.cook.iter().any(|graph| {
-                        graph.walked.source.identity == walked.source.identity
-                            && graph.walked.grid == walked.grid
-                            && graph.gait == gait
-                    }) {
-                        self.cook.push(CookGraph {
-                            tiles: walked.source.pyramid.level_tiles(gait.level).collect(),
-                            walked,
-                            gait,
-                            next: 0,
-                            flight: Vec::new(),
-                        });
-                    }
-                }
-                GroundRead::NotLoaded => left += 1,
-                GroundRead::Off => {}
-            }
+pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {
+    let Some(ground) = world.get_resource::<Ground>() else {
+        return;
+    };
+    let Some(mut agents) =
+        world.try_query_filtered::<(&NavAgent, &NavWalk, &Transform), Without<Parent>>()
+    else {
+        return;
+    };
+    let mut graphs: Vec<(Walked, Gait)> = Vec::new();
+    for (agent, walk, transform) in agents.iter(world) {
+        if walk.status == NavStatus::Refused {
+            continue;
         }
-        for graph in &mut self.cook {
-            let mut flying = Vec::with_capacity(graph.flight.len());
-            for interest in std::mem::take(&mut graph.flight) {
-                let Some(output) = records.get(&interest) else {
-                    flying.push(interest);
-                    continue;
-                };
-                drop(interest);
-                if let Err(error) = made(PORTALS_NAME, output, portals_output) {
-                    self.failures.record(self.tick, error);
+        let at = Vec2::new(transform.translation.x, transform.translation.z);
+        match ground_source(ground, at, at) {
+            GroundRead::Ready(walked) => {
+                let gait = options(agent).gait(&walked.source.pyramid);
+                if !graphs.iter().any(|(known, known_gait)| {
+                    known.source.identity == walked.source.identity
+                        && known.grid == walked.grid
+                        && *known_gait == gait
+                }) {
+                    graphs.push((walked, gait));
                 }
             }
-            graph.flight = flying;
-            while let Some(&key) = graph.tiles.get(graph.next) {
-                let priority = job_priority(IDLE_JOBS, graph.next as u32);
-                if !jobs.admit(priority) {
-                    break;
-                }
-                let input = portals_input(&graph.walked, key, &graph.gait);
-                graph.flight.push(jobs.start(&PORTALS, input, priority));
-                graph.next += 1;
-            }
-            left += (graph.tiles.len() - graph.next + graph.flight.len()) as u64;
+            GroundRead::NotLoaded => asks.left(1),
+            GroundRead::Off => {}
         }
-        left
+    }
+    for (walked, gait) in &graphs {
+        for key in walked.source.pyramid.level_tiles(gait.level) {
+            asks.ask(&PORTALS, portals_input(walked, key, gait));
+        }
     }
 }

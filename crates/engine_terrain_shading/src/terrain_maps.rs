@@ -18,6 +18,18 @@ type LayerKey = [Option<TextureHandle>; 3];
 
 const DEFAULTS: [[u8; 4]; 3] = [[255; 4], [128, 128, 255, 255], [255, 255, 255, 128]];
 
+const BC7_DEFAULTS: [[u8; 16]; 3] = [
+    [0x20, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x03, 0, 0, 0, 0, 0, 0, 0],
+    [0x20, 0xc0, 0x1f, 0xf0, 0xf7, 0xff, 0xff, 0xff, 0xaf, 0xaa, 0xaa, 0xaa, 0, 0, 0, 0],
+    [0x20, 0xff, 0xff, 0xff, 0xff, 0xff, 0x03, 0x02, 0x02, 0, 0, 0, 0, 0, 0, 0],
+];
+
+const ASTC_DEFAULTS: [[u8; 16]; 3] = [
+    [0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+    [0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x80, 0x80, 0x80, 0x80, 0xff, 0xff, 0xff, 0xff],
+    [0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x80, 0x80],
+];
+
 pub(crate) struct TerrainMaps {
     pub(crate) albedo: engine_render::Texture<TerrainGpu>,
     pub(crate) data: engine_render::Texture<TerrainGpu>,
@@ -205,8 +217,8 @@ impl TerrainMaps {
         for (layer, maps) in kept.iter().enumerate() {
             let layer = layer as u32;
             let places = [(0, layer), (1, 2 * layer), (1, 2 * layer + 1)];
-            for ((texture, (array, at)), default) in
-                textures(maps, assets).iter().zip(places).zip(DEFAULTS)
+            for (default, (texture, (array, at))) in
+                textures(maps, assets).iter().zip(places).enumerate()
             {
                 let format = shape.formats[array];
                 for level in 0..shape.levels {
@@ -291,12 +303,16 @@ fn shape_of(maps: &SurfaceMaps, assets: &AssetLibrary, features: wgpu::Features)
     })
 }
 
-fn solid_level(format: TextureFormat, size: (u32, u32), level: u32, color: [u8; 4]) -> Vec<u8> {
+fn solid_level(format: TextureFormat, size: (u32, u32), level: u32, default: usize) -> Vec<u8> {
     let (width, height) = ((size.0 >> level).max(1), (size.1 >> level).max(1));
-    match engine_core::solid_block(format, color) {
-        Some(block) => block.repeat(format.level_bytes(width, height) / 16),
-        None => color.repeat((width * height) as usize),
-    }
+    let block = match format {
+        TextureFormat::Bc7 => BC7_DEFAULTS[default],
+        TextureFormat::Astc4x4 => ASTC_DEFAULTS[default],
+        TextureFormat::Rgba8 | TextureFormat::Etc2Rgba8 => {
+            return DEFAULTS[default].repeat((width * height) as usize);
+        }
+    };
+    block.repeat(format.level_bytes(width, height) / 16)
 }
 
 fn means(maps: &SurfaceMaps, assets: &AssetLibrary) -> Means {

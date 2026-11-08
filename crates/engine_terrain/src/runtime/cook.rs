@@ -1,94 +1,30 @@
 use super::*;
+use engine_core::CookAsks;
 
 const COOK_VIEW_HEIGHT: f32 = 2160.0;
 
-pub(super) struct CookTiles {
-    keys: Vec<TileKey>,
-    next: usize,
-    made: Generation,
-    flight: TileMap<Interest<engine_core::RecordKey>>,
-    failed: Vec<Interest<engine_core::RecordKey>>,
-}
-
-impl CookTiles {
-    fn of(keys: Vec<TileKey>, made: Generation) -> Self {
-        Self {
-            keys,
-            next: 0,
-            made,
-            flight: TileMap::default(),
-            failed: Vec::new(),
+pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {
+    let (Some(terrains), Some(settings)) = (
+        world.get_resource::<Terrains>(),
+        world.get_resource::<TerrainSettings>(),
+    ) else {
+        return;
+    };
+    for state in &terrains.entries {
+        if state.terrain.validate().is_err() || (state.around.is_some() && !settings.surroundings)
+        {
+            continue;
         }
-    }
-
-    fn take(
-        &mut self,
-        kind: &str,
-        asking: &mut Asking<'_, '_, '_>,
-        (failures, frame): (&mut JobFailures, u64),
-    ) {
-        for key in self.flight.keys() {
-            let Some(output) = self.flight.get(&key).and_then(|ticket| asking.take(ticket)) else {
-                continue;
-            };
-            let Some(interest) = self.flight.remove(&key) else {
-                continue;
-            };
-            if let Err(error) = job_output(kind, output, |_| Ok::<_, Error>(())) {
-                failures.record(frame, error);
-                self.failed.push(interest);
-            }
+        if state.bake.baking() {
+            asks.left(1);
+            continue;
         }
-    }
-
-    fn left(&self) -> u64 {
-        (self.keys.len() - self.next + self.flight.len()) as u64
-    }
-}
-
-impl Terrains {
-    pub(super) fn cook(
-        &mut self,
-        settings: &TerrainSettings,
-        asking: &mut Asking<'_, '_, '_>,
-    ) -> u32 {
-        self.frame += 1;
-        let frame = self.frame;
-        self.sync_surroundings(asking.kinds);
-        let mut released = Vec::new();
-        let mut left = 0;
-        for state in &mut self.entries {
-            let authored = state.terrain.layers.clone();
-            if state.terrain.validate().is_err() {
-                continue;
-            }
-            state.update_materials(settings.gpu_materials);
-            if bake(state, &authored, asking, frame) {
-                left += 1;
-                continue;
-            }
-            share_recipe(state, asking.jobs, &mut self.stacks, &mut released);
-            let Some(recipe) = state.recipe.as_ref().map(|recipe| recipe.key) else {
-                continue;
-            };
-            let generation = state.store.generation();
-            let mut cook = state
-                .cook
-                .take()
-                .filter(|cook| cook.made == generation)
-                .unwrap_or_else(|| CookTiles::of(cooked_tiles(state, settings), generation));
-            cook.take(TILE_BUILD.name(), asking, (&mut state.failures, frame));
-            while let Some(&key) = cook.keys.get(cook.next) {
-                let priority = job_priority(VIEW_JOBS, cook.next as u32);
-                let job = state.tile_job(recipe.hash(), key);
-                let ticket = asking.jobs.fetch(&TILE_BUILD, &job.identity(), priority);
-                cook.flight.insert(key, ticket);
-                cook.next += 1;
-            }
-            left += cook.left();
-            state.cook = Some(cook);
+        let Some(recipe) = state.recipe.as_ref().map(|recipe| recipe.key) else {
+            continue;
+        };
+        for key in cooked_tiles(state, settings) {
+            asks.ask(&TILE_BUILD, state.tile_job(recipe.hash(), key).identity());
         }
-        u32::try_from(left).unwrap_or(u32::MAX)
     }
 }
 

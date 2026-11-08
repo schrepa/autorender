@@ -1300,17 +1300,6 @@
       "direction": "lower"
     },
     {
-      "name": "navigation_stats.cooking",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "navigation_stats.grounds",
       "kind": "work",
       "rule": "shown",

@@ -38,7 +38,8 @@ mod windows;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Attributes, Brick, Bricks, Cut, JobKind, KindDecl, Schedule, Source, SurfaceSlot, stats,
+    Attributes, Brick, Bricks, Cook, CookList, Cut, JobKind, KindDecl, Schedule, Source,
+    SurfaceSlot, stats,
 };
 use engine_places_rendering::reflections::TraceDepths;
 use engine_places_rendering::sky::EyeMedium;
@@ -125,6 +126,7 @@ impl Brick for WaterBrick {
             .piece::<gpu::WaterPiece>()
             .surface_kind(SurfaceKind { name: "water" })
             .join::<TraceDepths>((), Some(shaders::water::trace_depth::MODULE))
+            .join::<CookList>(Cook::new(settled::cook), None)
             .material_slot(SlotModule {
                 slot: SurfaceSlot::Normal,
                 name: "ripples",

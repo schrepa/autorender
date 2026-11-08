@@ -2,7 +2,7 @@ use bevy_ecs::world::World;
 use engine_registry::Registry;
 
 use crate::{
-    Census, Error, ErrorCode, FrameBudget, GlobalTransforms, Level, MeshLevels, Readiness,
+    Error, ErrorCode, FrameBudget, GlobalTransforms, Level, MeshLevels, Readiness,
     RecordExchange, Records, WorkClock, settings,
 };
 
@@ -50,17 +50,6 @@ pub(crate) fn start_frame(world: &mut World, spare_ms: f64) {
     }
 }
 
-fn load(readiness: &mut Readiness, by: &str, census: &Census) {
-    readiness.load(census);
-    if census.missing > 0 {
-        readiness.fail(
-            by,
-            Error::new(ErrorCode::InvalidRecord, format!("$.{by}"))
-                .got(serde_json::json!({ "missing": census.missing })),
-        );
-    }
-}
-
 pub(crate) fn settle_readiness(world: &mut World) {
     let compiling = world
         .get_resource::<Readiness>()
@@ -73,24 +62,27 @@ pub(crate) fn settle_readiness(world: &mut World) {
         readiness.settle(registry.pending(world));
     }
     if let Some(records) = world.get_resource::<Records>() {
-        load(&mut readiness, "records", &records.census());
+        readiness.load(&records.census());
         for (key, error) in records.failures() {
             readiness.fail(&format!("records.{}", key.hex()), error.clone());
         }
     }
     if let Some(exchange) = world.get_resource::<RecordExchange>() {
-        load(&mut readiness, "textures", &exchange.census());
+        readiness.load(&exchange.census());
         for (key, error) in exchange.failures() {
             readiness.fail(&format!("textures.{}", key.hex()), error.clone());
         }
     }
     if let Some(levels) = world.get_resource::<MeshLevels>() {
-        load(&mut readiness, "mesh_lods", &levels.census());
+        readiness.load(&levels.census());
         for (key, request) in levels.unsettled() {
             if let crate::Request::Failed(error) = request {
                 readiness.fail(&format!("mesh_lods.{}", key.hex()), error.clone());
             }
         }
+    }
+    if let Some(cooking) = world.get_resource::<crate::cook::Cooking>() {
+        readiness.settle(u32::try_from(cooking.left()).unwrap_or(u32::MAX));
     }
     if let Some(level) = world.get_resource::<Level>() {
         readiness.load(&level.census());
