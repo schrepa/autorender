@@ -96,7 +96,6 @@ impl BrowserControl {
                 }
             }
             Self::Present { .. }
-            | Self::Culling { .. }
             | Self::Environment(_)
             | Self::Camera { .. }
             | Self::Step { .. }

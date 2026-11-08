@@ -59,7 +59,7 @@ fn document(hiker: bool) -> Value {
             "camera": {"near": 0.5, "far": 4000.0, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}}),
     ];
     if hiker {
-        entities.push(json!({"id": "hiker", "mesh": "cube", "material": "plain",
+        entities.push(json!({"id": "hiker", "drawn": {"mesh": "cube", "material": "plain"},
             "nav_agent": {"speed": 6.0}, "grounded": {"offset": 0.5}, "transform": {"translation": [20.0, 31.0, 20.0]}}));
         let solid = |half_extents: [f32; 3]| json!({"shape": {"kind": "cuboid", "half_extents": half_extents}, "memberships": 2, "filter": 2});
         entities.extend([
@@ -167,9 +167,9 @@ fn surface() -> Value {
             {"id": "summit", "fitness": ramp("height", 110.0, 130.0), "layers": [{"material": "snow"}]},
         ],
         "assets": [
-            {"id": "crate", "mesh": "cube", "material": "plain",
+            {"id": "crate", "drawn": {"mesh": "cube", "material": "plain"},
              "collider": {"shape": {"kind": "cuboid", "half_extents": [0.5, 0.5, 0.5]}}},
-            {"id": "ball", "mesh": "ball", "material": "plain",
+            {"id": "ball", "drawn": {"mesh": "ball", "material": "plain"},
              "collider": {"shape": {"kind": "sphere", "radius": 1.0}}},
         ],
         "placements": [{

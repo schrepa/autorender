@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asks, CameraHandoff, Clock, Error, ErrorCode, FrameTime, GlobalTransforms, MoveInput, Mover,
-    Moves, Operation, Pace, Poses, Rule, Setting, Views, mover_of,
+    Asks, Clock, Error, ErrorCode, FrameTime, GlobalTransforms, HandOver, MoveInput, Mover, Moves,
+    Operation, Pace, Poses, Rule, Setting, Views, mover_of,
 };
 use engine_math::{atan2, clamp, exp, max, min, sin, sin_cos};
 use engine_places::queries::{CastFilter, CastShape, SceneQueries};
@@ -102,7 +102,7 @@ pub(crate) fn follow(
     (time, input, settings): (Res<FrameTime>, Res<MoveInput>, Res<FollowCamera>),
     (globals, poses, queries): (Res<GlobalTransforms>, Poses, Res<SceneQueries>),
     (views, targets): (Res<Views>, Query<Entity, With<CameraTarget>>),
-    mut handoff: Asks<CameraHandoff>,
+    mut handover: Asks<HandOver>,
     (mut orbit, mut shake): (ResMut<Orbit>, ResMut<Shake>),
     mut moves: Moves<FollowCameraBrick>,
 ) {
@@ -111,8 +111,8 @@ pub(crate) fn follow(
     };
     let held = match *orbit {
         Orbit::Taking => {
-            handoff.send(CameraHandoff {
-                camera,
+            handover.send(HandOver {
+                node: camera,
                 to: Mover {
                     by: mover_of::<FollowCameraBrick>(),
                     pace: Pace::Frame,

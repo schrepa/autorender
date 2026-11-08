@@ -78,7 +78,3 @@ settings! {
         pub in_view: bool = true => any,
     }
 }
-
-pub(crate) fn haze_runs(haze: &Haze) -> bool {
-    haze.enabled && haze.reach > 0.0 && haze.strength > 0.0
-}

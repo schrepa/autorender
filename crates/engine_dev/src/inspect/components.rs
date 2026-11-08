@@ -1,33 +1,9 @@
-use engine_core::{
-    AssetResidency, AxisInput, CursorMode, CursorRequests, Drawn, MaterialHandle, MenuInput,
-    MeshHandle, PointerInput,
-};
+use engine_core::{AssetResidency, Drawn, MaterialHandle, MeshHandle};
 
 use super::*;
-use crate::MenuPress;
 
 impl DevTools {
     pub(super) fn register_components(&mut self, schemas: &Value) {
-        self.insert(Inspector {
-            brick: None,
-            descriptor: InspectorDescriptor::generated(schemas, "Camera")
-                .with_default(camera_value(
-                    &Camera::default(),
-                    engine_core::glam::Vec3::ZERO,
-                    engine_core::glam::Vec3::NEG_Z,
-                )),
-            kind: InspectorKind::Resource,
-            has: Box::new(|world, _| {
-                world
-                    .get_resource::<Views>()
-                    .is_some_and(|views| views.main().is_some())
-            }),
-            read: Box::new(|world, _, _| {
-                let facts = world.get_resource::<Views>()?.main().copied()?;
-                Some(camera_value(&facts.lens, facts.eye, facts.forward))
-            }),
-        })
-        .expect("descriptor_bounded");
         self.insert(Inspector {
             brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "DrawnMesh"),
@@ -45,14 +21,6 @@ impl DevTools {
                 let assets = world.get_resource::<AssetLibrary>()?;
                 Some(json!(mesh_view(world, assets, shown, context)))
             }),
-        })
-        .expect("descriptor_bounded");
-        self.insert(Inspector {
-            brick: None,
-            descriptor: InspectorDescriptor::generated(schemas, "Input"),
-            kind: InspectorKind::Resource,
-            has: Box::new(|world, _| world.get_resource::<MoveInput>().is_some()),
-            read: Box::new(input_view),
         })
         .expect("descriptor_bounded");
         self.register_resource::<JobExchange>(
@@ -80,55 +48,6 @@ impl DevTools {
         )
         .expect("descriptor_bounded");
     }
-}
-
-fn input_view(world: &World, _: Option<Entity>, _: &Context<'_>) -> Option<Value> {
-    let input = world.get_resource::<MoveInput>()?;
-    let actions = world.get_resource::<ActionInput>();
-    let pointer = current::<PointerInput>(world);
-    let menu = current::<MenuInput>(world);
-    let cursor = world.get_resource::<CursorRequests>();
-    let pressed = [
-        (menu.up, MenuPress::Up),
-        (menu.down, MenuPress::Down),
-        (menu.left, MenuPress::Left),
-        (menu.right, MenuPress::Right),
-        (menu.accept, MenuPress::Accept),
-        (menu.back, MenuPress::Back),
-    ];
-    Some(json!(InputView {
-        move_forward: input.move_forward,
-        move_right: input.move_right,
-        move_up: input.move_up,
-        look_right_pixels: input.look_right_pixels,
-        look_down_pixels: input.look_down_pixels,
-        held: actions.map_or_else(Vec::new, |actions| actions.held().collect()),
-        pointer_pixels: pointer.position_pixels.map(|position| position.to_array()),
-        pointer_delta_pixels: pointer.delta_pixels.to_array(),
-        pointer_inside: pointer.inside,
-        wheel_up_notches: pointer.wheel_up_notches,
-        wheel_right_notches: pointer.wheel_right_notches,
-        axes: current::<AxisInput>(world).values().to_vec(),
-        menu: pressed
-            .iter()
-            .filter(|&&(on, _)| on)
-            .map(|&(_, press)| press)
-            .collect(),
-        menu_wanted: menu.wanted,
-        cursor: cursor.map_or(CursorMode::default(), CursorRequests::applied).name(),
-        cursor_wanted: cursor.map_or(CursorMode::default(), CursorRequests::wanted).name(),
-        cursor_asked: cursor.map_or_else(Vec::new, |cursor| {
-            cursor
-                .asked()
-                .into_iter()
-                .map(|(by, mode)| [by, mode.name()])
-                .collect()
-        }),
-    }))
-}
-
-fn current<R: Resource + Copy + Default>(world: &World) -> R {
-    world.get_resource::<R>().copied().unwrap_or_default()
 }
 
 pub(super) fn mesh_view(
@@ -218,26 +137,4 @@ pub(super) fn mesh_view(
         textures,
         drawn_level: None,
     }
-}
-
-pub(super) fn camera_value(
-    value: &Camera,
-    eye: engine_core::glam::Vec3,
-    forward: engine_core::glam::Vec3,
-) -> Value {
-    let (vertical_fov_radians, height) = match value.projection {
-        Projection::Perspective {
-            vertical_fov_radians,
-        } => (Some(vertical_fov_radians), None),
-        Projection::Orthographic { height } => (None, Some(height)),
-        Projection::Fitted { .. } => (None, None),
-    };
-    json!(CameraView {
-        position: eye.to_array(),
-        target: (eye + forward).to_array(),
-        vertical_fov_radians,
-        height,
-        near: value.near,
-        far: value.far
-    })
 }

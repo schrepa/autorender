@@ -190,7 +190,7 @@ pub fn grid(side: usize, moving: bool) -> Value {
     ];
     let cube = json!({ "kind": "cuboid", "half_extents": [0.5, 0.5, 0.5] });
     let mut ground = json!({
-        "id": "ground", "mesh": "box", "material": "ground",
+        "id": "ground", "drawn": {"mesh": "box", "material": "ground"},
         "transform": { "translation": [0.0, -0.5, 0.0], "scale": [side as f64 * 6.0, 1.0, side as f64 * 6.0] },
     });
     if moving {
@@ -203,8 +203,10 @@ pub fn grid(side: usize, moving: bool) -> Value {
         let scale = 0.8 + (index % 5) as f64 * 0.3;
         let mut piece = json!({
             "id": format!("piece-{index}"),
-            "mesh": if index % 3 == 0 { "gem" } else { "box" },
-            "material": format!("paint-{}", index % paints.len()),
+            "drawn": {
+                "mesh": if index % 3 == 0 { "gem" } else { "box" },
+                "material": format!("paint-{}", index % paints.len()),
+            },
             "transform": {
                 "translation": [(column - middle) * 4.0, scale / 2.0, (row - middle) * 4.0],
                 "rotation_degrees": [0, (index * 37) % 360, 0],
@@ -221,8 +223,8 @@ pub fn grid(side: usize, moving: bool) -> Value {
         entities.push(piece);
         if index % 4 == 0 {
             entities.push(json!({
-                "id": format!("cap-{index}"), "parent": format!("piece-{index}"), "mesh": "box",
-                "material": format!("paint-{}", (index + 1) % paints.len()),
+                "id": format!("cap-{index}"), "parent": format!("piece-{index}"),
+                "drawn": { "mesh": "box", "material": format!("paint-{}", (index + 1) % paints.len()) },
                 "transform": { "translation": [0.0, 0.75, 0.0], "scale": [0.5, 0.5, 0.5] },
             }));
         }

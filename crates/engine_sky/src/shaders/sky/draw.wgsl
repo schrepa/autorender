@@ -231,7 +231,7 @@ fn moon_albedo(place: vec3<f32>, local: vec2<f32>) -> f32 {
 
 fn moon_disc(ray: vec3<f32>, moon: vec3<f32>, sun: vec3<f32>) -> vec4<f32> {
     let radius = MOON_RADIUS * sky_piece.moon.w;
-    if dot(ray, moon) < cos(radius * 1.1) {
+    if dot(ray, moon) <= cos(radius * 1.1) {
         return vec4<f32>(0.0);
     }
     let back = vec4<f32>(-sky_piece.star_turn.xyz, sky_piece.star_turn.w);
@@ -309,13 +309,10 @@ fn cirrus_light(ray: vec3<f32>) -> vec3<f32> {
 
 fn with_night_sky(light: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
     let night = sky_piece.night;
-    if all(night.xyz == vec3<f32>(0.0)) {
-        return light;
-    }
     let dark = (1.0 - smoothstep(0.4 * STAR_SKY, STAR_SKY, luminance(light)))
         * (1.0 - smoothstep(-0.1, 0.0, sun_direction().y));
     var beyond = vec3<f32>(0.0);
-    if night.x > 0.0 && dark > 0.0 {
+    if dark > 0.0 {
         let galactic = turned(sky_piece.star_turn, ray);
         let spread = max(0.8 * camera.pixel_angle, 1.0e-5);
         beyond = star_light(galactic, spread) * (night.x * dark);
@@ -331,21 +328,16 @@ fn with_night_sky(light: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
             beyond += light * (night.x * deep);
         }
     }
-    var glow = vec3<f32>(0.0);
-    if night.y > 0.0 {
-        let disc = moon_disc(ray, sky_piece.moon.xyz, sun_direction());
-        beyond = mix(beyond, disc.rgb * night.y, disc.a);
-        glow = moon_glow(ray, sky_piece.moon.xyz, night.w) * (night.y * dark);
-    }
+    let disc = moon_disc(ray, sky_piece.moon.xyz, sun_direction());
+    beyond = mix(beyond, disc.rgb * night.y, disc.a);
+    let glow = moon_glow(ray, sky_piece.moon.xyz, night.w) * (night.y * dark);
     var sky = light;
     if any(beyond + glow > vec3<f32>(0.0)) {
         sky += (beyond + glow) * beyond_air(ray);
     }
-    if night.z > 0.0 {
-        let cover = cirrus_cover(ray, night.z, camera.position.w);
-        if cover > 0.0 {
-            sky = mix(sky, cirrus_light(ray), cover);
-        }
+    let cover = cirrus_cover(ray, night.z, camera.position.w);
+    if cover > 0.0 {
+        sky = mix(sky, cirrus_light(ray), cover);
     }
     return sky;
 }

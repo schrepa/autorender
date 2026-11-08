@@ -12,11 +12,11 @@ fn fixture() -> Value {
         "materials": [{"id": "plain", "color": [0.8, 0.3, 0.2, 1]}],
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
         "prefabs": [{"id": "lamp", "entities": [
-            {"id": "post", "mesh": "box", "material": "plain", "transform": {"translation": [0, 1, 0], "scale": [0.2, 2, 0.2]}},
+            {"id": "post", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"translation": [0, 1, 0], "scale": [0.2, 2, 0.2]}},
             {"id": "light", "light": {"color": [1, 0.7, 0.4], "intensity": 10, "range": 10}, "transform": {"translation": [0, 2.2, 0]}},
         ]}],
         "entities": [
-            {"id": "player", "mesh": "box", "material": "plain", "tags": ["player"],
+            {"id": "player", "drawn": {"mesh": "box", "material": "plain"}, "tags": ["player"],
              "collider": {"shape": cube["shape"], "memberships": 2, "filter": 1, "sensor": false},
              "transform": {"translation": [0, 200, 0]}},
             {"id": "ground", "terrain": {"origin": [-1024, 0, -1024], "tiles": [8, 8], "spacing": 1,
@@ -24,12 +24,12 @@ fn fixture() -> Value {
             {"id": "camera", "transform": {"translation": [0, 60, 40], "rotation_degrees": [-45, -19.4712, -18.4349]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.5, "far": 20000, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}},
         ],
         "environment": {"streamed": {"streamed": [
-            {"id": "crate-near", "mesh": "box", "material": "plain", "collider": cube, "grounded": {"offset": 0.5}, "transform": {"translation": [20, 0, 0]}},
-            {"id": "crate-mid", "mesh": "box", "material": "plain", "grounded": {"offset": 0.5}, "transform": {"translation": [900, 0, 0]}},
+            {"id": "crate-near", "drawn": {"mesh": "box", "material": "plain"}, "collider": cube, "grounded": {"offset": 0.5}, "transform": {"translation": [20, 0, 0]}},
+            {"id": "crate-mid", "drawn": {"mesh": "box", "material": "plain"}, "grounded": {"offset": 0.5}, "transform": {"translation": [900, 0, 0]}},
             {"id": "spinner", "transform": {"translation": [-30, 30, 10]}},
-            {"id": "spinner-blade", "parent": "spinner", "mesh": "box", "material": "plain", "transform": {"scale": [3, 0.2, 0.4]}},
+            {"id": "spinner-blade", "parent": "spinner", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"scale": [3, 0.2, 0.4]}},
             {"id": "lamp-far", "prefab": "lamp", "transform": {"translation": [1500, 0, 300]}},
-            {"id": "tower", "mesh": "box", "material": "plain", "transform": {"translation": [5000, 30, 0], "scale": [10, 60, 10]}},
+            {"id": "tower", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"translation": [5000, 30, 0], "scale": [10, 60, 10]}},
         ]}},
     })
 }

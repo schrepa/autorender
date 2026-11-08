@@ -47,7 +47,7 @@ impl Section for StreamedScene {
     const KEY: &'static str = "streamed";
 
     fn check_scene(&self, scene: &SceneContext) -> Result<(), Error> {
-        self.expand(scene).map(drop)
+        scene.scope(|| self.expand(scene)).map(drop)
     }
 }
 
@@ -63,12 +63,6 @@ pub struct StreamedObject {
     #[serde(default)]
     #[schemars(length(max = MAX_NAME_BYTES))]
     pub name: String,
-    #[schemars(transform = engine_core::stated(engine_core::fields::id()))]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mesh: Option<String>,
-    #[schemars(transform = engine_core::stated(engine_core::fields::id()))]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub material: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(transform = engine_core::stated(engine_core::fields::id()))]
     pub parent: Option<String>,
@@ -301,12 +295,6 @@ struct Prefab {
 
 type Prefabs<'a> = BTreeMap<&'a str, Prefab>;
 
-struct Names<'a> {
-    meshes: BTreeSet<&'a str>,
-    materials: BTreeSet<&'a str>,
-    prefabs: BTreeSet<&'a str>,
-}
-
 fn prefabs(scene: &SceneContext) -> Result<Prefabs<'_>, Error> {
     scene
         .prefabs
@@ -328,11 +316,7 @@ fn prefabs(scene: &SceneContext) -> Result<Prefabs<'_>, Error> {
 impl StreamedScene {
     pub(crate) fn expand(&self, scene: &SceneContext) -> Result<Expanded, Error> {
         let prefabs = prefabs(scene)?;
-        let names = Names {
-            meshes: scene.assets.meshes.keys().map(String::as_str).collect(),
-            materials: scene.assets.materials.keys().map(String::as_str).collect(),
-            prefabs: prefabs.keys().copied().collect(),
-        };
+        let names: BTreeSet<&str> = prefabs.keys().copied().collect();
         let kinds: &[ComponentKind] = &scene.kinds;
         let placed = self.placed_along(kinds, scene)?;
         let mut kept = Vec::new();
@@ -451,7 +435,7 @@ fn along_path(along: &StreamedAlong, path: &str, scene: &SceneContext) -> Result
 
 fn expand_list(
     list: &[Listed<'_>],
-    (names, prefabs): (&Names<'_>, &Prefabs<'_>),
+    (names, prefabs): (&BTreeSet<&str>, &Prefabs<'_>),
     kinds: &[ComponentKind],
     taken: Option<&BTreeMap<String, Entity>>,
 ) -> Result<ExpandedList, Error> {
@@ -538,7 +522,7 @@ fn expand_list(
 fn validate_object(
     entity: &StreamedObject,
     path: &str,
-    names: &Names<'_>,
+    prefab_names: &BTreeSet<&str>,
     kinds: &[ComponentKind],
 ) -> Result<Transform, Error> {
     for (name, value) in entity.authored() {
@@ -546,33 +530,8 @@ fn validate_object(
             kind.validate(value, &format!("{path}.{name}"))?;
         }
     }
-    match (&entity.mesh, &entity.material) {
-        (Some(mesh), Some(material)) if entity.prefab.is_none() => {
-            reference(mesh, &names.meshes, &format!("{path}.mesh"))?;
-            reference(material, &names.materials, &format!("{path}.material"))?;
-        }
-        (None, None) => {}
-        (Some(_), Some(_)) => {
-            return Err(
-                Error::new(ErrorCode::InvalidRenderable, format!("{path}.mesh"))
-                    .expected(Expected::Absent),
-            );
-        }
-        (Some(_), None) => {
-            return Err(
-                Error::new(ErrorCode::InvalidRenderable, format!("{path}.material"))
-                    .expected(Expected::Present),
-            );
-        }
-        (None, Some(_)) => {
-            return Err(
-                Error::new(ErrorCode::InvalidRenderable, format!("{path}.mesh"))
-                    .expected(Expected::Present),
-            );
-        }
-    }
     if let Some(prefab) = &entity.prefab {
-        reference(prefab, &names.prefabs, &format!("{path}.prefab"))?;
+        reference(prefab, prefab_names, &format!("{path}.prefab"))?;
     }
     entity
         .validate()

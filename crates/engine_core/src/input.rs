@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use bevy_ecs::prelude::Resource;
 use glam::Vec2;
+use serde::Serialize;
 
 use crate::{Interest, List, Requests, Ticket};
 
@@ -14,7 +15,9 @@ impl ActionId {
     }
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(transparent)]
 #[component(immutable)]
 pub struct ActionInput {
     state: engine_registry::InputState,
@@ -68,7 +71,8 @@ impl ActionInput {
     }
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default)]
+#[derive(Resource, Debug, Clone, Copy, Default, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[component(immutable)]
 pub struct MoveInput {
     pub move_forward: f32,
@@ -93,7 +97,8 @@ impl AxisId {
     }
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[component(immutable)]
 pub struct AxisInput {
     values: [f32; AxisId::COUNT as usize],
@@ -114,10 +119,13 @@ impl AxisInput {
     }
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[component(immutable)]
 pub struct PointerInput {
+    #[cfg_attr(feature = "schema", schemars(with = "Option<[f32; 2]>"))]
     pub position_pixels: Option<Vec2>,
+    #[cfg_attr(feature = "schema", schemars(with = "[f32; 2]"))]
     pub delta_pixels: Vec2,
     pub wheel_up_notches: f32,
     pub wheel_right_notches: f32,
@@ -127,7 +135,8 @@ pub struct PointerInput {
     pub released: bool,
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct MenuInput {
     pub up: bool,
     pub down: bool,
@@ -138,7 +147,9 @@ pub struct MenuInput {
     pub wanted: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
 #[repr(u32)]
 pub enum CursorMode {
     #[default]
@@ -161,8 +172,10 @@ impl CursorMode {
 
 pub type CursorAsk = (&'static str, CursorMode);
 
-#[derive(Resource, Debug, Default)]
+#[derive(Resource, Debug, Default, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct CursorRequests {
+    #[serde(skip)]
     requests: Requests<CursorAsk, ()>,
     applied: CursorMode,
 }

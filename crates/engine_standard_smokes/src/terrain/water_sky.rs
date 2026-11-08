@@ -289,12 +289,12 @@ fn clouds_around(session: &mut dyn SmokeSession) -> Checked<()> {
     );
     let none = environment(
         session,
-        json!({"clouds": with(&layer(), json!({"coverage": 0.0}))}),
+        json!({"clouds": with(&layer(), json!({"enabled": false}))}),
     )?;
     smoke_eq!(
         &none["rendering"]["cloud_stats"]["rows"],
         &json!(0),
-        "no_coverage_marches_nothing"
+        "clouds_off_march_nothing"
     );
     let odd = refuse(
         session,

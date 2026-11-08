@@ -816,8 +816,7 @@
   "entities": [
     {
       "id": "player",
-      "mesh": "box",
-      "material": "plain",
+      "drawn": {"mesh": "box", "material": "plain"},
       "tags": [
         "player"
       ],
@@ -1186,8 +1185,7 @@
     },
     {
       "id": "hiker",
-      "mesh": "box",
-      "material": "plain",
+      "drawn": {"mesh": "box", "material": "plain"},
       "nav_agent": {
         "speed": 6
       },

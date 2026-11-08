@@ -93,9 +93,7 @@ pub use hierarchy::*;
 pub use input::*;
 pub use jobs::*;
 pub use mesh_lods::MeshLevels;
-pub use moves::{
-    Applies, Asks, CameraHandoff, HandOver, Moves, Teleport, mover_of, send_ask, take_asks,
-};
+pub use moves::{Applies, Asks, HandOver, Moves, Teleport, mover_of, send_ask, take_asks};
 pub use nearest::Nearest;
 pub use presentation::*;
 pub use provided::*;
@@ -173,7 +171,6 @@ static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::component::<OwnedViews>("owned_views"),
     PlaceDecl::ask::<Teleport>(),
     PlaceDecl::ask::<HandOver>(),
-    PlaceDecl::ask::<CameraHandoff>(),
     PlaceDecl::ask::<ViewCut>(),
     PlaceDecl::component::<View>("view"),
     PlaceDecl::slot::<Jitter>(),
@@ -297,7 +294,6 @@ fn core_entries(registry: &mut RegistryBuilder) {
     registry.despawn_rule(hierarchy::despawn_owned);
     registry.fill_core::<Asked<Teleport>>();
     registry.fill_core::<Asked<HandOver>>();
-    registry.fill_core::<Asked<CameraHandoff>>();
     registry.fill_core::<Asked<ViewCut>>();
     registry.writers_first::<Pause>();
     registry.writers_first::<TimeScale>();
@@ -401,7 +397,6 @@ impl Engine {
             .init_resource::<moves::MovingKinds>()
             .init_resource::<Asked<Teleport>>()
             .init_resource::<Asked<HandOver>>()
-            .init_resource::<Asked<CameraHandoff>>()
             .init_resource::<Asked<ViewCut>>()
             .insert_resource(TransformNodeLimit(config.max_transform_nodes))
             .init_resource::<GlobalTransforms>()

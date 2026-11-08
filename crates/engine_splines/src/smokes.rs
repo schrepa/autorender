@@ -25,8 +25,8 @@ fn fixture(points: &[[f64; 3]]) -> Value {
         ],
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
         "entities": [
-            {"id": "player", "mesh": "box", "material": "plain", "transform": {"translation": [0, 0.5, 8]}},
-            {"id": "floor", "mesh": "box", "material": "ground", "transform": {"translation": [0, -0.5, 0], "scale": [40, 1, 30]}},
+            {"id": "player", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"translation": [0, 0.5, 8]}},
+            {"id": "floor", "drawn": {"mesh": "box", "material": "ground"}, "transform": {"translation": [0, -0.5, 0], "scale": [40, 1, 30]}},
             {"id": "rail", "spline": {"points": points, "mesh": "box", "material": "rail"}, "transform": {"scale": [1, 1, 1]}},
             {"id": "camera", "transform": {"translation": [0, 14, 22], "rotation_degrees": [-32.4712, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 500, "projection": {"Perspective": {"vertical_fov_radians": 0.9599311}}}, "view": {}},
         ],

@@ -33,7 +33,7 @@ pub use drawn::{
 pub use engine_assets::{MaterialHandle, MeshHandle, TextureHandle};
 pub use engine_settings::{Error, ErrorCode};
 pub use engine_smoke::{SmokeFailure, SmokeSession, ask, smoke_check, smoke_eq};
-pub use feeds::{Cursor, CursorView, Events, Feed, FeedView, Ring, Since, StoreId};
+pub use feeds::{Cursor, Events, Feed, FeedView, Ring, Since, StoreId};
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{
     AttachPoint, BlendedPass, CORE_BRICK, ColorPass, Pass,

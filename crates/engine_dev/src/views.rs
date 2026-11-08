@@ -2,28 +2,6 @@ use serde::Serialize;
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct InputView {
-    pub move_forward: f32,
-    pub move_right: f32,
-    pub move_up: f32,
-    pub look_right_pixels: f32,
-    pub look_down_pixels: f32,
-    pub held: Vec<u32>,
-    pub pointer_pixels: Option<[f32; 2]>,
-    pub pointer_delta_pixels: [f32; 2],
-    pub pointer_inside: bool,
-    pub wheel_up_notches: f32,
-    pub wheel_right_notches: f32,
-    pub axes: Vec<f32>,
-    pub menu: Vec<crate::MenuPress>,
-    pub menu_wanted: bool,
-    pub cursor: &'static str,
-    pub cursor_wanted: &'static str,
-    pub cursor_asked: Vec<[&'static str; 2]>,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct JobsView {
     pub workers: u32,
     pub running: u32,
@@ -69,17 +47,6 @@ pub struct HierarchyView {
     pub prefab_id: Option<String>,
     pub prefab_instance: Option<String>,
     pub prefab_local_id: Option<String>,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct CameraView {
-    pub position: [f32; 3],
-    pub target: [f32; 3],
-    pub vertical_fov_radians: Option<f32>,
-    pub height: Option<f32>,
-    pub near: f32,
-    pub far: f32,
 }
 
 #[derive(Serialize)]

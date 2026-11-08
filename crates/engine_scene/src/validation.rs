@@ -85,8 +85,8 @@ impl SceneDocument {
     ) -> Result<PreparedScene, Error> {
         identifier(&self.id, "$.id")?;
         self.validate_looks()?;
-        let mesh_ids = unique_ids(self.meshes.iter().map(|mesh| mesh.id.as_str()), "$.meshes")?;
-        let material_ids = unique_ids(
+        unique_ids(self.meshes.iter().map(|mesh| mesh.id.as_str()), "$.meshes")?;
+        unique_ids(
             self.materials.iter().map(|material| material.id.as_str()),
             "$.materials",
         )?;
@@ -104,7 +104,7 @@ impl SceneDocument {
             }
         }
         let named = crate::loading::named(self);
-        let expanded = named.lenient(|| self.expand(&mesh_ids, &material_ids, kinds))?;
+        let expanded = named.lenient(|| self.expand(kinds))?;
         let entities = expanded
             .entities
             .iter()

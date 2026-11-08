@@ -1257,8 +1257,7 @@ fn scene(
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
         "entities": [{
             "id": "player",
-            "mesh": "box",
-            "material": "plain",
+            "drawn": {"mesh": "box", "material": "plain"},
             "tags": ["player"],
             "collider": {"shape": {"kind": "cuboid", "half_extents": [0.5, 0.5, 0.5]}, "memberships": 2, "filter": 1, "sensor": false},
             "transform": {"translation": [0.0, middle + 1.0, 0.0]},

@@ -66,11 +66,11 @@ fn fixture(inverted: bool) -> Value {
         ],
         "meshes": [{"id": "box", "source": {"kind": "cube"}}, {"id": "gem", "source": {"kind": "octahedron"}}],
         "entities": [
-            {"id": "ground", "mesh": "box", "material": "ground", "transform": {"translation": [0, -0.5, 0], "scale": [20, 1, 20]}},
-            {"id": "player", "mesh": "box", "material": "ground", "transform": {"translation": [0, 0.5, 4]}},
-            {"id": "trunk", "mesh": "box", "material": "bark", "transform": {"translation": [-1.5, 1.5, 0], "scale": [1, 3, 1]}},
-            {"id": "crown", "mesh": "gem", "material": "leaf", "transform": {"translation": [-1.5, 3.8, 0], "scale": [2.4, 2, 2.4]}},
-            {"id": "stump", "mesh": "box", "material": "bark", "transform": {"translation": [2, 0.4, -1], "scale": [1.4, 0.8, 1.4]}},
+            {"id": "ground", "drawn": {"mesh": "box", "material": "ground"}, "transform": {"translation": [0, -0.5, 0], "scale": [20, 1, 20]}},
+            {"id": "player", "drawn": {"mesh": "box", "material": "ground"}, "transform": {"translation": [0, 0.5, 4]}},
+            {"id": "trunk", "drawn": {"mesh": "box", "material": "bark"}, "transform": {"translation": [-1.5, 1.5, 0], "scale": [1, 3, 1]}},
+            {"id": "crown", "drawn": {"mesh": "gem", "material": "leaf"}, "transform": {"translation": [-1.5, 3.8, 0], "scale": [2.4, 2, 2.4]}},
+            {"id": "stump", "drawn": {"mesh": "box", "material": "bark"}, "transform": {"translation": [2, 0.4, -1], "scale": [1.4, 0.8, 1.4]}},
             {"id": "camera", "transform": {"translation": [0, 6, 10], "rotation_degrees": [-26.5651, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 300, "projection": {"Perspective": {"vertical_fov_radians": 1.0471976}}}, "view": {}},
         ],
     })
@@ -116,9 +116,10 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     }
     control(session, "input", json!({"forward": 1, "keys": ["Space"]}))?;
     control(session, "step", json!({"ticks": 6}))?;
-    let input = ask(session, "inspect", json!({"component": "Input"}))?["value"].clone();
+    let moving = ask(session, "inspect", json!({"component": "MoveInput"}))?["value"].clone();
+    let actions = ask(session, "inspect", json!({"component": "ActionInput"}))?["value"].clone();
     smoke_eq!(
-        json!({"forward": input["move_forward"], "held": input["held"]}),
+        json!({"forward": moving["move_forward"], "held": actions["held"]}),
         json!({"forward": 1.0, "held": [0]}),
         "input_reaches_engine"
     );

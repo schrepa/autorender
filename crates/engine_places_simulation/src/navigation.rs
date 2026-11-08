@@ -3,12 +3,10 @@ use engine_math::clamp;
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::ground::Grounded;
-
 #[derive(
     Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
 )]
-#[require(NavWalk, Grounded)]
+#[require(NavWalk)]
 #[serde(default, deny_unknown_fields)]
 pub struct NavAgent {
     #[serde(skip_serializing_if = "Option::is_none")]

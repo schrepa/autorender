@@ -8,7 +8,7 @@ use engine_core::{
 };
 use engine_places_world::streaming::{StreamedAt, StreamedKey, StreamedKeys, Streams};
 use glam::{Mat4, Vec3};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::scene::{ExpandedList, ExpandedObject, StreamedScene, kind};
 
@@ -153,8 +153,10 @@ fn tree(list: ExpandedList, context: &SceneContext, reaching: &Reaching<'_>) -> 
         let mut reach = from;
         let mut extend = |value: f32| reach = max(reach, value);
         let mesh = source
-            .mesh
-            .as_ref()
+            .components
+            .get(DRAWN)
+            .and_then(|drawn| drawn.get("mesh"))
+            .and_then(Value::as_str)
             .and_then(|id| context.assets.meshes.get(id))
             .and_then(|&mesh| (reaching.bounds)(mesh));
         if let Some(bounds) = mesh {
@@ -196,21 +198,11 @@ fn tree(list: ExpandedList, context: &SceneContext, reaching: &Reaching<'_>) -> 
 
 fn prepared(entity: ExpandedObject, transform: Transform, context: &SceneContext) -> SubSceneEntity {
     let source = entity.source;
-    let drawn = match (&source.mesh, &source.material) {
-        (Some(mesh), Some(material)) => {
-            Some((DRAWN.to_owned(), json!({ "mesh": mesh, "material": material })))
-        }
-        (Some(_), None) | (None, Some(_)) | (None, None) => None,
-    };
-    let components = drawn
-        .into_iter()
-        .chain(
-            source
-                .authored()
-                .filter(|&(name, _)| kind(&context.kinds, name).is_some())
-                .map(|(name, value)| (name.to_owned(), value.clone())),
-        )
-        .collect::<Vec<(String, Value)>>();
+    let components = source
+        .authored()
+        .filter(|&(name, _)| kind(&context.kinds, name).is_some())
+        .map(|(name, value)| (name.to_owned(), value.clone()))
+        .collect();
     SubSceneEntity {
         transform,
         authored: Authored {

@@ -53,7 +53,7 @@ fn grid(side: usize) -> Value {
         [0.9, 0.75, 0.25, 1.0],
     ];
     let ground = json!({
-        "id": "ground", "mesh": "box", "material": "ground",
+        "id": "ground", "drawn": {"mesh": "box", "material": "ground"},
         "transform": { "translation": [0.0, -0.5, 0.0], "scale": [side as f64 * 6.0, 1.0, side as f64 * 6.0] },
     });
     let mut entities = vec![ground];
@@ -63,8 +63,10 @@ fn grid(side: usize) -> Value {
         let scale = 0.8 + (index % 5) as f64 * 0.3;
         entities.push(json!({
             "id": format!("piece-{index}"),
-            "mesh": if index % 3 == 0 { "gem" } else { "box" },
-            "material": format!("paint-{}", index % paints.len()),
+            "drawn": {
+                "mesh": if index % 3 == 0 { "gem" } else { "box" },
+                "material": format!("paint-{}", index % paints.len()),
+            },
             "transform": {
                 "translation": [(column - middle) * 4.0, scale / 2.0, (row - middle) * 4.0],
                 "rotation_degrees": [0, (index * 37) % 360, 0],
@@ -73,8 +75,8 @@ fn grid(side: usize) -> Value {
         }));
         if index % 4 == 0 {
             entities.push(json!({
-                "id": format!("cap-{index}"), "parent": format!("piece-{index}"), "mesh": "box",
-                "material": format!("paint-{}", (index + 1) % paints.len()),
+                "id": format!("cap-{index}"), "parent": format!("piece-{index}"),
+                "drawn": { "mesh": "box", "material": format!("paint-{}", (index + 1) % paints.len()) },
                 "transform": { "translation": [0.0, 0.75, 0.0], "scale": [0.5, 0.5, 0.5] },
             }));
         }
@@ -143,14 +145,13 @@ fn axes(value: &Value) -> [f64; 3] {
 }
 
 fn direction(camera: &Value) -> [f64; 3] {
-    let (position, target) = (axes(&camera["position"]), axes(&camera["target"]));
-    let delta: [f64; 3] = std::array::from_fn(|axis| target[axis] - position[axis]);
-    let length = delta.iter().map(|value| value * value).sum::<f64>().sqrt();
-    delta.map(|value| value / length)
+    let forward = axes(&camera["forward"]);
+    let length = forward.iter().map(|value| value * value).sum::<f64>().sqrt();
+    forward.map(|value| value / length)
 }
 
 fn moved(from: &Value, to: &Value) -> [f64; 3] {
-    let (from, to) = (axes(&from["position"]), axes(&to["position"]));
+    let (from, to) = (axes(&from["eye"]), axes(&to["eye"]));
     std::array::from_fn(|axis| to[axis] - from[axis])
 }
 
@@ -159,7 +160,7 @@ fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
 }
 
 fn camera(session: &mut dyn SmokeSession) -> Asked {
-    inspected(session, "Camera", "inspects_camera")
+    Ok(query(session, "views", json!({}))?["views"][0].clone())
 }
 
 fn steps(session: &mut dyn SmokeSession, input: Value, ticks: u32) -> Result<(), SmokeFailure> {
@@ -176,15 +177,15 @@ pub(crate) fn input_camera(session: &mut dyn SmokeSession) -> Result<(), SmokeFa
     let start = camera(session)?;
     steps(session, json!({ "forward": 1 }), 20)?;
     let moves = query(session, "moves", json!({}))?;
-    let handoff = moves["asks"]
+    let handover = moves["asks"]
         .as_array()
-        .and_then(|asks| asks.iter().find(|ask| ask["name"] == "camera_handoff"))
+        .and_then(|asks| asks.iter().find(|ask| ask["name"] == "hand_over"))
         .map_or(Value::Null, |ask| ask["applied"][0].clone());
-    let late = number(&handoff["applied"]["frame"]) - number(&handoff["asked"]["frame"]);
+    let late = number(&handover["applied"]["frame"]) - number(&handover["asked"]["frame"]);
     check!(
         late == 1.0,
-        "handoff_applies_next_frame",
-        handoff,
+        "handover_applies_next_frame",
+        handover,
         json!({ "frames_late": 1 })
     );
     let forward = camera(session)?;

@@ -102,8 +102,7 @@
       "entities": [
         {
           "id": "m-0-0",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -15.0,
@@ -124,8 +123,7 @@
         },
         {
           "id": "m-0-1",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -15.0,
@@ -146,8 +144,7 @@
         },
         {
           "id": "m-0-2",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -15.0,
@@ -168,8 +165,7 @@
         },
         {
           "id": "m-0-3",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -15.0,
@@ -190,8 +186,7 @@
         },
         {
           "id": "m-0-4",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -15.0,
@@ -212,8 +207,7 @@
         },
         {
           "id": "m-0-5",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -15.0,
@@ -234,8 +228,7 @@
         },
         {
           "id": "m-0-6",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -15.0,
@@ -256,8 +249,7 @@
         },
         {
           "id": "m-0-7",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -15.0,
@@ -278,8 +270,7 @@
         },
         {
           "id": "m-0-8",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -15.0,
@@ -300,8 +291,7 @@
         },
         {
           "id": "m-0-9",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -15.0,
@@ -322,8 +312,7 @@
         },
         {
           "id": "m-0-10",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -15.0,
@@ -344,8 +333,7 @@
         },
         {
           "id": "m-0-11",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -15.0,
@@ -366,8 +354,7 @@
         },
         {
           "id": "m-0-12",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -15.0,
@@ -388,8 +375,7 @@
         },
         {
           "id": "m-0-13",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -15.0,
@@ -410,8 +396,7 @@
         },
         {
           "id": "m-0-14",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -15.0,
@@ -432,8 +417,7 @@
         },
         {
           "id": "m-0-15",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -15.0,
@@ -454,8 +438,7 @@
         },
         {
           "id": "m-1-0",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -13.0,
@@ -476,8 +459,7 @@
         },
         {
           "id": "m-1-1",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -13.0,
@@ -498,8 +480,7 @@
         },
         {
           "id": "m-1-2",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -13.0,
@@ -520,8 +501,7 @@
         },
         {
           "id": "m-1-3",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -13.0,
@@ -542,8 +522,7 @@
         },
         {
           "id": "m-1-4",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -13.0,
@@ -564,8 +543,7 @@
         },
         {
           "id": "m-1-5",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -13.0,
@@ -586,8 +564,7 @@
         },
         {
           "id": "m-1-6",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -13.0,
@@ -608,8 +585,7 @@
         },
         {
           "id": "m-1-7",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -13.0,
@@ -630,8 +606,7 @@
         },
         {
           "id": "m-1-8",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -13.0,
@@ -652,8 +627,7 @@
         },
         {
           "id": "m-1-9",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -13.0,
@@ -674,8 +648,7 @@
         },
         {
           "id": "m-1-10",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -13.0,
@@ -696,8 +669,7 @@
         },
         {
           "id": "m-1-11",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -13.0,
@@ -718,8 +690,7 @@
         },
         {
           "id": "m-1-12",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -13.0,
@@ -740,8 +711,7 @@
         },
         {
           "id": "m-1-13",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -13.0,
@@ -762,8 +732,7 @@
         },
         {
           "id": "m-1-14",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -13.0,
@@ -784,8 +753,7 @@
         },
         {
           "id": "m-1-15",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -13.0,
@@ -806,8 +774,7 @@
         },
         {
           "id": "m-2-0",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -11.0,
@@ -828,8 +795,7 @@
         },
         {
           "id": "m-2-1",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -11.0,
@@ -850,8 +816,7 @@
         },
         {
           "id": "m-2-2",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -11.0,
@@ -872,8 +837,7 @@
         },
         {
           "id": "m-2-3",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -11.0,
@@ -894,8 +858,7 @@
         },
         {
           "id": "m-2-4",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -11.0,
@@ -916,8 +879,7 @@
         },
         {
           "id": "m-2-5",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -11.0,
@@ -938,8 +900,7 @@
         },
         {
           "id": "m-2-6",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -11.0,
@@ -960,8 +921,7 @@
         },
         {
           "id": "m-2-7",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -11.0,
@@ -982,8 +942,7 @@
         },
         {
           "id": "m-2-8",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -11.0,
@@ -1004,8 +963,7 @@
         },
         {
           "id": "m-2-9",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -11.0,
@@ -1026,8 +984,7 @@
         },
         {
           "id": "m-2-10",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -11.0,
@@ -1048,8 +1005,7 @@
         },
         {
           "id": "m-2-11",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -11.0,
@@ -1070,8 +1026,7 @@
         },
         {
           "id": "m-2-12",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -11.0,
@@ -1092,8 +1047,7 @@
         },
         {
           "id": "m-2-13",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -11.0,
@@ -1114,8 +1068,7 @@
         },
         {
           "id": "m-2-14",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -11.0,
@@ -1136,8 +1089,7 @@
         },
         {
           "id": "m-2-15",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -11.0,
@@ -1158,8 +1110,7 @@
         },
         {
           "id": "m-3-0",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -9.0,
@@ -1180,8 +1131,7 @@
         },
         {
           "id": "m-3-1",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -9.0,
@@ -1202,8 +1152,7 @@
         },
         {
           "id": "m-3-2",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -9.0,
@@ -1224,8 +1173,7 @@
         },
         {
           "id": "m-3-3",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -9.0,
@@ -1246,8 +1194,7 @@
         },
         {
           "id": "m-3-4",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -9.0,
@@ -1268,8 +1215,7 @@
         },
         {
           "id": "m-3-5",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -9.0,
@@ -1290,8 +1236,7 @@
         },
         {
           "id": "m-3-6",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -9.0,
@@ -1312,8 +1257,7 @@
         },
         {
           "id": "m-3-7",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -9.0,
@@ -1334,8 +1278,7 @@
         },
         {
           "id": "m-3-8",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -9.0,
@@ -1356,8 +1299,7 @@
         },
         {
           "id": "m-3-9",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -9.0,
@@ -1378,8 +1320,7 @@
         },
         {
           "id": "m-3-10",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -9.0,
@@ -1400,8 +1341,7 @@
         },
         {
           "id": "m-3-11",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -9.0,
@@ -1422,8 +1362,7 @@
         },
         {
           "id": "m-3-12",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -9.0,
@@ -1444,8 +1383,7 @@
         },
         {
           "id": "m-3-13",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -9.0,
@@ -1466,8 +1404,7 @@
         },
         {
           "id": "m-3-14",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -9.0,
@@ -1488,8 +1425,7 @@
         },
         {
           "id": "m-3-15",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -9.0,
@@ -1510,8 +1446,7 @@
         },
         {
           "id": "m-4-0",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -7.0,
@@ -1532,8 +1467,7 @@
         },
         {
           "id": "m-4-1",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -7.0,
@@ -1554,8 +1488,7 @@
         },
         {
           "id": "m-4-2",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -7.0,
@@ -1576,8 +1509,7 @@
         },
         {
           "id": "m-4-3",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -7.0,
@@ -1598,8 +1530,7 @@
         },
         {
           "id": "m-4-4",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -7.0,
@@ -1620,8 +1551,7 @@
         },
         {
           "id": "m-4-5",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -7.0,
@@ -1642,8 +1572,7 @@
         },
         {
           "id": "m-4-6",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -7.0,
@@ -1664,8 +1593,7 @@
         },
         {
           "id": "m-4-7",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -7.0,
@@ -1686,8 +1614,7 @@
         },
         {
           "id": "m-4-8",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -7.0,
@@ -1708,8 +1635,7 @@
         },
         {
           "id": "m-4-9",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -7.0,
@@ -1730,8 +1656,7 @@
         },
         {
           "id": "m-4-10",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -7.0,
@@ -1752,8 +1677,7 @@
         },
         {
           "id": "m-4-11",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -7.0,
@@ -1774,8 +1698,7 @@
         },
         {
           "id": "m-4-12",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -7.0,
@@ -1796,8 +1719,7 @@
         },
         {
           "id": "m-4-13",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -7.0,
@@ -1818,8 +1740,7 @@
         },
         {
           "id": "m-4-14",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -7.0,
@@ -1840,8 +1761,7 @@
         },
         {
           "id": "m-4-15",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -7.0,
@@ -1862,8 +1782,7 @@
         },
         {
           "id": "m-5-0",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -5.0,
@@ -1884,8 +1803,7 @@
         },
         {
           "id": "m-5-1",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -5.0,
@@ -1906,8 +1824,7 @@
         },
         {
           "id": "m-5-2",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -5.0,
@@ -1928,8 +1845,7 @@
         },
         {
           "id": "m-5-3",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -5.0,
@@ -1950,8 +1866,7 @@
         },
         {
           "id": "m-5-4",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -5.0,
@@ -1972,8 +1887,7 @@
         },
         {
           "id": "m-5-5",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -5.0,
@@ -1994,8 +1908,7 @@
         },
         {
           "id": "m-5-6",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -5.0,
@@ -2016,8 +1929,7 @@
         },
         {
           "id": "m-5-7",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -5.0,
@@ -2038,8 +1950,7 @@
         },
         {
           "id": "m-5-8",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -5.0,
@@ -2060,8 +1971,7 @@
         },
         {
           "id": "m-5-9",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -5.0,
@@ -2082,8 +1992,7 @@
         },
         {
           "id": "m-5-10",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -5.0,
@@ -2104,8 +2013,7 @@
         },
         {
           "id": "m-5-11",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -5.0,
@@ -2126,8 +2034,7 @@
         },
         {
           "id": "m-5-12",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -5.0,
@@ -2148,8 +2055,7 @@
         },
         {
           "id": "m-5-13",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -5.0,
@@ -2170,8 +2076,7 @@
         },
         {
           "id": "m-5-14",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -5.0,
@@ -2192,8 +2097,7 @@
         },
         {
           "id": "m-5-15",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -5.0,
@@ -2214,8 +2118,7 @@
         },
         {
           "id": "m-6-0",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -3.0,
@@ -2236,8 +2139,7 @@
         },
         {
           "id": "m-6-1",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -3.0,
@@ -2258,8 +2160,7 @@
         },
         {
           "id": "m-6-2",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -3.0,
@@ -2280,8 +2181,7 @@
         },
         {
           "id": "m-6-3",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -3.0,
@@ -2302,8 +2202,7 @@
         },
         {
           "id": "m-6-4",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -3.0,
@@ -2324,8 +2223,7 @@
         },
         {
           "id": "m-6-5",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -3.0,
@@ -2346,8 +2244,7 @@
         },
         {
           "id": "m-6-6",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -3.0,
@@ -2368,8 +2265,7 @@
         },
         {
           "id": "m-6-7",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -3.0,
@@ -2390,8 +2286,7 @@
         },
         {
           "id": "m-6-8",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -3.0,
@@ -2412,8 +2307,7 @@
         },
         {
           "id": "m-6-9",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -3.0,
@@ -2434,8 +2328,7 @@
         },
         {
           "id": "m-6-10",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -3.0,
@@ -2456,8 +2349,7 @@
         },
         {
           "id": "m-6-11",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -3.0,
@@ -2478,8 +2370,7 @@
         },
         {
           "id": "m-6-12",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -3.0,
@@ -2500,8 +2391,7 @@
         },
         {
           "id": "m-6-13",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -3.0,
@@ -2522,8 +2412,7 @@
         },
         {
           "id": "m-6-14",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -3.0,
@@ -2544,8 +2433,7 @@
         },
         {
           "id": "m-6-15",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -3.0,
@@ -2566,8 +2454,7 @@
         },
         {
           "id": "m-7-0",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -1.0,
@@ -2588,8 +2475,7 @@
         },
         {
           "id": "m-7-1",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -1.0,
@@ -2610,8 +2496,7 @@
         },
         {
           "id": "m-7-2",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -1.0,
@@ -2632,8 +2517,7 @@
         },
         {
           "id": "m-7-3",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -1.0,
@@ -2654,8 +2538,7 @@
         },
         {
           "id": "m-7-4",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -1.0,
@@ -2676,8 +2559,7 @@
         },
         {
           "id": "m-7-5",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -1.0,
@@ -2698,8 +2580,7 @@
         },
         {
           "id": "m-7-6",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -1.0,
@@ -2720,8 +2601,7 @@
         },
         {
           "id": "m-7-7",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -1.0,
@@ -2742,8 +2622,7 @@
         },
         {
           "id": "m-7-8",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -1.0,
@@ -2764,8 +2643,7 @@
         },
         {
           "id": "m-7-9",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               -1.0,
@@ -2786,8 +2664,7 @@
         },
         {
           "id": "m-7-10",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -1.0,
@@ -2808,8 +2685,7 @@
         },
         {
           "id": "m-7-11",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -1.0,
@@ -2830,8 +2706,7 @@
         },
         {
           "id": "m-7-12",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               -1.0,
@@ -2852,8 +2727,7 @@
         },
         {
           "id": "m-7-13",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               -1.0,
@@ -2874,8 +2748,7 @@
         },
         {
           "id": "m-7-14",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               -1.0,
@@ -2896,8 +2769,7 @@
         },
         {
           "id": "m-7-15",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               -1.0,
@@ -2918,8 +2790,7 @@
         },
         {
           "id": "m-8-0",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               1.0,
@@ -2940,8 +2811,7 @@
         },
         {
           "id": "m-8-1",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               1.0,
@@ -2962,8 +2832,7 @@
         },
         {
           "id": "m-8-2",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               1.0,
@@ -2984,8 +2853,7 @@
         },
         {
           "id": "m-8-3",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               1.0,
@@ -3006,8 +2874,7 @@
         },
         {
           "id": "m-8-4",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               1.0,
@@ -3028,8 +2895,7 @@
         },
         {
           "id": "m-8-5",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               1.0,
@@ -3050,8 +2916,7 @@
         },
         {
           "id": "m-8-6",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               1.0,
@@ -3072,8 +2937,7 @@
         },
         {
           "id": "m-8-7",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               1.0,
@@ -3094,8 +2958,7 @@
         },
         {
           "id": "m-8-8",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               1.0,
@@ -3116,8 +2979,7 @@
         },
         {
           "id": "m-8-9",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               1.0,
@@ -3138,8 +3000,7 @@
         },
         {
           "id": "m-8-10",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               1.0,
@@ -3160,8 +3021,7 @@
         },
         {
           "id": "m-8-11",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               1.0,
@@ -3182,8 +3042,7 @@
         },
         {
           "id": "m-8-12",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               1.0,
@@ -3204,8 +3063,7 @@
         },
         {
           "id": "m-8-13",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               1.0,
@@ -3226,8 +3084,7 @@
         },
         {
           "id": "m-8-14",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               1.0,
@@ -3248,8 +3105,7 @@
         },
         {
           "id": "m-8-15",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               1.0,
@@ -3270,8 +3126,7 @@
         },
         {
           "id": "m-9-0",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               3.0,
@@ -3292,8 +3147,7 @@
         },
         {
           "id": "m-9-1",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               3.0,
@@ -3314,8 +3168,7 @@
         },
         {
           "id": "m-9-2",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               3.0,
@@ -3336,8 +3189,7 @@
         },
         {
           "id": "m-9-3",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               3.0,
@@ -3358,8 +3210,7 @@
         },
         {
           "id": "m-9-4",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               3.0,
@@ -3380,8 +3231,7 @@
         },
         {
           "id": "m-9-5",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               3.0,
@@ -3402,8 +3252,7 @@
         },
         {
           "id": "m-9-6",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               3.0,
@@ -3424,8 +3273,7 @@
         },
         {
           "id": "m-9-7",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               3.0,
@@ -3446,8 +3294,7 @@
         },
         {
           "id": "m-9-8",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               3.0,
@@ -3468,8 +3315,7 @@
         },
         {
           "id": "m-9-9",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               3.0,
@@ -3490,8 +3336,7 @@
         },
         {
           "id": "m-9-10",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               3.0,
@@ -3512,8 +3357,7 @@
         },
         {
           "id": "m-9-11",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               3.0,
@@ -3534,8 +3378,7 @@
         },
         {
           "id": "m-9-12",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               3.0,
@@ -3556,8 +3399,7 @@
         },
         {
           "id": "m-9-13",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               3.0,
@@ -3578,8 +3420,7 @@
         },
         {
           "id": "m-9-14",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               3.0,
@@ -3600,8 +3441,7 @@
         },
         {
           "id": "m-9-15",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               3.0,
@@ -3622,8 +3462,7 @@
         },
         {
           "id": "m-10-0",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               5.0,
@@ -3644,8 +3483,7 @@
         },
         {
           "id": "m-10-1",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               5.0,
@@ -3666,8 +3504,7 @@
         },
         {
           "id": "m-10-2",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               5.0,
@@ -3688,8 +3525,7 @@
         },
         {
           "id": "m-10-3",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               5.0,
@@ -3710,8 +3546,7 @@
         },
         {
           "id": "m-10-4",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               5.0,
@@ -3732,8 +3567,7 @@
         },
         {
           "id": "m-10-5",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               5.0,
@@ -3754,8 +3588,7 @@
         },
         {
           "id": "m-10-6",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               5.0,
@@ -3776,8 +3609,7 @@
         },
         {
           "id": "m-10-7",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               5.0,
@@ -3798,8 +3630,7 @@
         },
         {
           "id": "m-10-8",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               5.0,
@@ -3820,8 +3651,7 @@
         },
         {
           "id": "m-10-9",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               5.0,
@@ -3842,8 +3672,7 @@
         },
         {
           "id": "m-10-10",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               5.0,
@@ -3864,8 +3693,7 @@
         },
         {
           "id": "m-10-11",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               5.0,
@@ -3886,8 +3714,7 @@
         },
         {
           "id": "m-10-12",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               5.0,
@@ -3908,8 +3735,7 @@
         },
         {
           "id": "m-10-13",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               5.0,
@@ -3930,8 +3756,7 @@
         },
         {
           "id": "m-10-14",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               5.0,
@@ -3952,8 +3777,7 @@
         },
         {
           "id": "m-10-15",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               5.0,
@@ -3974,8 +3798,7 @@
         },
         {
           "id": "m-11-0",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               7.0,
@@ -3996,8 +3819,7 @@
         },
         {
           "id": "m-11-1",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               7.0,
@@ -4018,8 +3840,7 @@
         },
         {
           "id": "m-11-2",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               7.0,
@@ -4040,8 +3861,7 @@
         },
         {
           "id": "m-11-3",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               7.0,
@@ -4062,8 +3882,7 @@
         },
         {
           "id": "m-11-4",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               7.0,
@@ -4084,8 +3903,7 @@
         },
         {
           "id": "m-11-5",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               7.0,
@@ -4106,8 +3924,7 @@
         },
         {
           "id": "m-11-6",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               7.0,
@@ -4128,8 +3945,7 @@
         },
         {
           "id": "m-11-7",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               7.0,
@@ -4150,8 +3966,7 @@
         },
         {
           "id": "m-11-8",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               7.0,
@@ -4172,8 +3987,7 @@
         },
         {
           "id": "m-11-9",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               7.0,
@@ -4194,8 +4008,7 @@
         },
         {
           "id": "m-11-10",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               7.0,
@@ -4216,8 +4029,7 @@
         },
         {
           "id": "m-11-11",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               7.0,
@@ -4238,8 +4050,7 @@
         },
         {
           "id": "m-11-12",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               7.0,
@@ -4260,8 +4071,7 @@
         },
         {
           "id": "m-11-13",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               7.0,
@@ -4282,8 +4092,7 @@
         },
         {
           "id": "m-11-14",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               7.0,
@@ -4304,8 +4113,7 @@
         },
         {
           "id": "m-11-15",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               7.0,
@@ -4326,8 +4134,7 @@
         },
         {
           "id": "m-12-0",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               9.0,
@@ -4348,8 +4155,7 @@
         },
         {
           "id": "m-12-1",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               9.0,
@@ -4370,8 +4176,7 @@
         },
         {
           "id": "m-12-2",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               9.0,
@@ -4392,8 +4197,7 @@
         },
         {
           "id": "m-12-3",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               9.0,
@@ -4414,8 +4218,7 @@
         },
         {
           "id": "m-12-4",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               9.0,
@@ -4436,8 +4239,7 @@
         },
         {
           "id": "m-12-5",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               9.0,
@@ -4458,8 +4260,7 @@
         },
         {
           "id": "m-12-6",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               9.0,
@@ -4480,8 +4281,7 @@
         },
         {
           "id": "m-12-7",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               9.0,
@@ -4502,8 +4302,7 @@
         },
         {
           "id": "m-12-8",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               9.0,
@@ -4524,8 +4323,7 @@
         },
         {
           "id": "m-12-9",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               9.0,
@@ -4546,8 +4344,7 @@
         },
         {
           "id": "m-12-10",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               9.0,
@@ -4568,8 +4365,7 @@
         },
         {
           "id": "m-12-11",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               9.0,
@@ -4590,8 +4386,7 @@
         },
         {
           "id": "m-12-12",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               9.0,
@@ -4612,8 +4407,7 @@
         },
         {
           "id": "m-12-13",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               9.0,
@@ -4634,8 +4428,7 @@
         },
         {
           "id": "m-12-14",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               9.0,
@@ -4656,8 +4449,7 @@
         },
         {
           "id": "m-12-15",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               9.0,
@@ -4678,8 +4470,7 @@
         },
         {
           "id": "m-13-0",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               11.0,
@@ -4700,8 +4491,7 @@
         },
         {
           "id": "m-13-1",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               11.0,
@@ -4722,8 +4512,7 @@
         },
         {
           "id": "m-13-2",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               11.0,
@@ -4744,8 +4533,7 @@
         },
         {
           "id": "m-13-3",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               11.0,
@@ -4766,8 +4554,7 @@
         },
         {
           "id": "m-13-4",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               11.0,
@@ -4788,8 +4575,7 @@
         },
         {
           "id": "m-13-5",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               11.0,
@@ -4810,8 +4596,7 @@
         },
         {
           "id": "m-13-6",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               11.0,
@@ -4832,8 +4617,7 @@
         },
         {
           "id": "m-13-7",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               11.0,
@@ -4854,8 +4638,7 @@
         },
         {
           "id": "m-13-8",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               11.0,
@@ -4876,8 +4659,7 @@
         },
         {
           "id": "m-13-9",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               11.0,
@@ -4898,8 +4680,7 @@
         },
         {
           "id": "m-13-10",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               11.0,
@@ -4920,8 +4701,7 @@
         },
         {
           "id": "m-13-11",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               11.0,
@@ -4942,8 +4722,7 @@
         },
         {
           "id": "m-13-12",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               11.0,
@@ -4964,8 +4743,7 @@
         },
         {
           "id": "m-13-13",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               11.0,
@@ -4986,8 +4764,7 @@
         },
         {
           "id": "m-13-14",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               11.0,
@@ -5008,8 +4785,7 @@
         },
         {
           "id": "m-13-15",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               11.0,
@@ -5030,8 +4806,7 @@
         },
         {
           "id": "m-14-0",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               13.0,
@@ -5052,8 +4827,7 @@
         },
         {
           "id": "m-14-1",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               13.0,
@@ -5074,8 +4848,7 @@
         },
         {
           "id": "m-14-2",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               13.0,
@@ -5096,8 +4869,7 @@
         },
         {
           "id": "m-14-3",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               13.0,
@@ -5118,8 +4890,7 @@
         },
         {
           "id": "m-14-4",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               13.0,
@@ -5140,8 +4911,7 @@
         },
         {
           "id": "m-14-5",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               13.0,
@@ -5162,8 +4932,7 @@
         },
         {
           "id": "m-14-6",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               13.0,
@@ -5184,8 +4953,7 @@
         },
         {
           "id": "m-14-7",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               13.0,
@@ -5206,8 +4974,7 @@
         },
         {
           "id": "m-14-8",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               13.0,
@@ -5228,8 +4995,7 @@
         },
         {
           "id": "m-14-9",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               13.0,
@@ -5250,8 +5016,7 @@
         },
         {
           "id": "m-14-10",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               13.0,
@@ -5272,8 +5037,7 @@
         },
         {
           "id": "m-14-11",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               13.0,
@@ -5294,8 +5058,7 @@
         },
         {
           "id": "m-14-12",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               13.0,
@@ -5316,8 +5079,7 @@
         },
         {
           "id": "m-14-13",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               13.0,
@@ -5338,8 +5100,7 @@
         },
         {
           "id": "m-14-14",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               13.0,
@@ -5360,8 +5121,7 @@
         },
         {
           "id": "m-14-15",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               13.0,
@@ -5382,8 +5142,7 @@
         },
         {
           "id": "m-15-0",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               15.0,
@@ -5404,8 +5163,7 @@
         },
         {
           "id": "m-15-1",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               15.0,
@@ -5426,8 +5184,7 @@
         },
         {
           "id": "m-15-2",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               15.0,
@@ -5448,8 +5205,7 @@
         },
         {
           "id": "m-15-3",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               15.0,
@@ -5470,8 +5226,7 @@
         },
         {
           "id": "m-15-4",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               15.0,
@@ -5492,8 +5247,7 @@
         },
         {
           "id": "m-15-5",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               15.0,
@@ -5514,8 +5268,7 @@
         },
         {
           "id": "m-15-6",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               15.0,
@@ -5536,8 +5289,7 @@
         },
         {
           "id": "m-15-7",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               15.0,
@@ -5558,8 +5310,7 @@
         },
         {
           "id": "m-15-8",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               15.0,
@@ -5580,8 +5331,7 @@
         },
         {
           "id": "m-15-9",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               15.0,
@@ -5602,8 +5352,7 @@
         },
         {
           "id": "m-15-10",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               15.0,
@@ -5624,8 +5373,7 @@
         },
         {
           "id": "m-15-11",
-          "mesh": "box",
-          "material": "stone",
+          "drawn": {"mesh": "box", "material": "stone"},
           "transform": {
             "translation": [
               15.0,
@@ -5646,8 +5394,7 @@
         },
         {
           "id": "m-15-12",
-          "mesh": "box",
-          "material": "clay",
+          "drawn": {"mesh": "box", "material": "clay"},
           "transform": {
             "translation": [
               15.0,
@@ -5668,8 +5415,7 @@
         },
         {
           "id": "m-15-13",
-          "mesh": "box",
-          "material": "slate",
+          "drawn": {"mesh": "box", "material": "slate"},
           "transform": {
             "translation": [
               15.0,
@@ -5690,8 +5436,7 @@
         },
         {
           "id": "m-15-14",
-          "mesh": "box",
-          "material": "moss",
+          "drawn": {"mesh": "box", "material": "moss"},
           "transform": {
             "translation": [
               15.0,
@@ -5712,8 +5457,7 @@
         },
         {
           "id": "m-15-15",
-          "mesh": "gem",
-          "material": "brass",
+          "drawn": {"mesh": "gem", "material": "brass"},
           "transform": {
             "translation": [
               15.0,
@@ -5738,8 +5482,7 @@
   "entities": [
     {
       "id": "floor",
-      "mesh": "floor",
-      "material": "ground",
+      "drawn": {"mesh": "floor", "material": "ground"},
       "transform": {
         "scale": [
           320,

@@ -106,7 +106,7 @@ impl SkyMaps {
         eye: Vec3,
         changed: bool,
     ) -> Option<SkyDraw> {
-        if !settings.darkens() {
+        if !settings.enabled {
             self.release();
             return None;
         }

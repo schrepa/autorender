@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asks, CameraHandoff, Clock, FrameTime, GlobalTransforms, MoveInput, Mover, Moves, Pace, Views,
+    Asks, Clock, FrameTime, GlobalTransforms, HandOver, MoveInput, Mover, Moves, Pace, Views,
     mover_of,
 };
 use engine_math::{atan2, clamp};
@@ -76,7 +76,7 @@ pub(crate) fn fly(
     ),
     views: Res<Views>,
     mut rig: ResMut<Rig>,
-    mut handoff: Asks<CameraHandoff>,
+    mut handover: Asks<HandOver>,
     mut moves: Moves<FlyCameraBrick>,
 ) {
     let Some(camera) = views.main().map(|main| main.camera) else {
@@ -84,8 +84,8 @@ pub(crate) fn fly(
     };
     match *rig {
         Rig::Taking => {
-            handoff.send(CameraHandoff {
-                camera,
+            handover.send(HandOver {
+                node: camera,
                 to: Mover {
                     by: mover_of::<FlyCameraBrick>(),
                     pace: Pace::Frame,

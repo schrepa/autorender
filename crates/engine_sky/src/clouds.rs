@@ -218,7 +218,6 @@ pub(crate) struct CloudPlan {
     pub(crate) step: CloudStep,
     job: Option<(usize, u32, u32)>,
     active: bool,
-    shadowing: bool,
     pub(crate) rows: u32,
     view_size: [u32; 2],
     view_job: Option<[u32; 2]>,
@@ -252,7 +251,6 @@ impl Default for CloudPlan {
             },
             job: None,
             active: false,
-            shadowing: false,
             rows: 0,
             view_size: [0, 0],
             view_job: None,
@@ -359,7 +357,7 @@ impl CloudPlan {
     ) {
         self.rows = 0;
         self.job = None;
-        let wanted = settings.enabled && settings.coverage > 0.0;
+        let wanted = settings.enabled;
         if let Some(noise) = noise.filter(|_| wanted)
             && self.noise.is_none_or(|held| held != noise.id)
         {
@@ -367,7 +365,6 @@ impl CloudPlan {
             self.generation += 1;
         }
         self.active = wanted && self.noise.is_some();
-        self.shadowing = settings.shadows > 0.0;
         if !self.active {
             self.marched = None;
             self.cycle = None;
@@ -846,17 +843,15 @@ impl CloudPass {
             if count > 0 {
                 cx.run(self.march_pass);
             }
-            if plan.shadowing {
-                cx.run(self.shadow_pass);
-                cx.copy(
-                    self.shadow_copy,
-                    &[CopyRegion::Bytes {
-                        from: 0,
-                        to: 0,
-                        size: CLOUD_SHADOW_BYTES as u64,
-                    }],
-                );
-            }
+            cx.run(self.shadow_pass);
+            cx.copy(
+                self.shadow_copy,
+                &[CopyRegion::Bytes {
+                    from: 0,
+                    to: 0,
+                    size: CLOUD_SHADOW_BYTES as u64,
+                }],
+            );
         }
         if frame.view {
             cx.run(self.view_pass);
@@ -976,7 +971,7 @@ pub(crate) fn shadow_grid(eye: glam::Vec3) -> Option<([f32; 2], f32)> {
 
 pub(crate) fn shadow_lighting(clouds: &Clouds, eye: glam::Vec3) -> ([f32; 4], [f32; 4]) {
     match shadow_grid(eye) {
-        Some((first, cell)) if clouds.enabled && clouds.coverage > 0.0 => (
+        Some((first, cell)) if clouds.enabled => (
             [first[0], first[1], 1.0 / cell, clouds.shadows],
             [clouds.base, 0.0, 0.0, 0.0],
         ),

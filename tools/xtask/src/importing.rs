@@ -18,6 +18,8 @@ const COLLIDER: &str = "collider";
 
 const DRAWN: &str = "drawn";
 
+const IMPORTED: [&str; 2] = ["mesh", "material"];
+
 pub fn asset(arguments: &[String]) -> Result<(), String> {
     let result = command(arguments);
     let succeeded = result.is_ok();
@@ -284,11 +286,21 @@ fn merge(
                 }
                 entity.name.clone_from(&old.name);
                 entity.tags.clone_from(&old.tags);
-                for kept in [COLLIDER, DRAWN] {
-                    if let Some(value) = old.component(kept) {
-                        entity.components.insert(kept.to_owned(), value.clone());
-                    } else {
-                        entity.components.remove(kept);
+                match old.component(COLLIDER) {
+                    Some(value) => {
+                        entity.components.insert(COLLIDER.to_owned(), value.clone());
+                    }
+                    None => {
+                        entity.components.remove(COLLIDER);
+                    }
+                }
+                if let (Some(Value::Object(kept)), Some(Value::Object(drawn))) =
+                    (old.component(DRAWN), entity.components.get_mut(DRAWN))
+                {
+                    for (field, value) in kept {
+                        if !IMPORTED.contains(&field.as_str()) {
+                            drawn.insert(field.clone(), value.clone());
+                        }
                     }
                 }
             }
