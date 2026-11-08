@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::math::max;
-use engine_core::{DrawKind, Entry, Error, PassName, PassViews, SlotSet, Var, Writes};
+use engine_core::{DrawKind, Entry, Error, PassName, PassViews, ScenePass, SlotSet, Var, Writes};
 use engine_heightfield::Fall;
 use engine_places_world::ground::{GroundTiles, Heightfield};
 use engine_render::{
-    Access, Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw,
-    DrawInput, Encode, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
-    Scene, SceneDraw, Shape, TargetName, Texture, VertexLayout, wgpu,
+    Access, Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND,
+    DEBUG_TARGETS, DepthUse, Draw, DrawInput, Encode, GpuPart, Install, Lifetime, Own, Pass,
+    Pipeline, Prepare, RenderPipeline, Scene, SceneDraw, Shape, TargetName, Texture, VertexLayout,
+    wgpu,
 };
 use glam::Vec3;
 
@@ -45,11 +46,18 @@ fn takes_water(kind: DrawKind) -> bool {
 
 type BuiltFalls = (Entity, Vec3, Arc<[Fall]>, Option<u32>, Range<u32>);
 
-type Pipelines = (
-    Pipeline<WaterGpu, Scene>,
-    Pipeline<WaterGpu, Scene>,
-    Pipeline<WaterGpu, Own>,
-);
+const BLENDED: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
 
 pub(crate) fn copied<P>(bound: &Bind<P>) -> Bind<P> {
     match bound {
@@ -80,72 +88,102 @@ pub(crate) fn reached(
         .collect()
 }
 
-fn pipelines(
+fn shows_water(listed: &ScenePass) -> bool {
+    listed.bit.is_some()
+        && listed.pass.views != PassViews::Owned
+        && (listed.pass.takes)(WATER_KIND)
+        && listed.pass.writes.contains(DEBUG_TARGETS[0])
+}
+
+fn joined(
     cx: &mut Install<'_, WaterGpu>,
-    foam_pass: Pass<WaterGpu>,
+    (name, shows): (&'static str, bool),
     behind: &dyn Fn() -> Vec<(Var, Bind<WaterGpu>)>,
-    foam_all: Vec<(Var, Bind<WaterGpu>)>,
-) -> Result<Pipelines, Error> {
-    use crate::shaders::water::{falls, particles, surface};
-    let surface_pass = Scene::of::<WaterPass>();
-    let blended = wgpu::BlendState {
-        color: wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::One,
-            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-            operation: wgpu::BlendOperation::Add,
-        },
-        alpha: wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::Zero,
-            dst_factor: wgpu::BlendFactor::One,
-            operation: wgpu::BlendOperation::Add,
-        },
+    [leaf_args, leaf_pattern, fall_vertices, fall_indices]: [Buffer<WaterGpu>; 4],
+) -> Result<Joined, Error> {
+    use crate::shaders::water::{debug, falls, surface};
+    let scene = Scene::named(name);
+    let (surface_fragment, fall_fragment, blend, depth) = if shows {
+        (
+            debug::FS_DEBUG_WATER,
+            debug::FS_DEBUG_FALL,
+            DEBUG_BLEND,
+            DepthUse::Test,
+        )
+    } else {
+        (
+            surface::FS_WATER,
+            falls::FS_FALL,
+            BLENDED,
+            DepthUse::Write {
+                bias: wgpu::DepthBiasState::default(),
+            },
+        )
     };
     let primitive = wgpu::PrimitiveState {
         topology: wgpu::PrimitiveTopology::TriangleList,
         cull_mode: None,
         ..Default::default()
     };
-    let entries = [surface::VS_WATER, surface::FS_WATER];
+    let entries = [surface::VS_WATER, surface_fragment];
     let drawing_bound = reached(cx, &entries, behind());
     let drawing = cx.render_pipeline(
-        surface_pass,
+        scene,
         &RenderPipeline {
             vertex: surface::VS_WATER,
-            fragment: Some(surface::FS_WATER),
+            fragment: Some(surface_fragment),
             vertices: &[],
             primitive,
-            depth: DepthUse::Write {
-                bias: wgpu::DepthBiasState::default(),
-            },
-            blend: Some(blended),
+            depth,
+            blend: Some(blend),
             writes: wgpu::ColorWrites::ALL,
         },
         &drawing_bound,
     )?;
-    let entries = [falls::VS_FALL_TEMPORAL, falls::FS_FALL];
+    let entries = [falls::VS_FALL_TEMPORAL, fall_fragment];
     let falling_bound = reached(cx, &entries, behind());
     let falling = cx.render_pipeline(
-        surface_pass,
+        scene,
         &RenderPipeline {
             vertex: falls::VS_FALL_TEMPORAL,
-            fragment: Some(falls::FS_FALL),
+            fragment: Some(fall_fragment),
             vertices: &[VertexLayout::Buffer(fall_layout())],
             primitive,
-            depth: DepthUse::Write {
-                bias: wgpu::DepthBiasState::default(),
-            },
-            blend: Some(blended),
+            depth,
+            blend: Some(blend),
             writes: wgpu::ColorWrites::ALL,
         },
         &falling_bound,
     )?;
+    Ok(Joined {
+        name,
+        drawing,
+        falling,
+        leaves: cx.draw_input(scene, leaf_args),
+        pattern: cx.draw_input(scene, leaf_pattern),
+        sheet_vertices: cx.draw_input(scene, fall_vertices),
+        sheet_indices: cx.draw_input(scene, fall_indices),
+    })
+}
+
+fn foam_pipeline(
+    cx: &mut Install<'_, WaterGpu>,
+    foam_pass: Pass<WaterGpu>,
+    foam_all: Vec<(Var, Bind<WaterGpu>)>,
+) -> Result<Pipeline<WaterGpu, Own>, Error> {
+    use crate::shaders::water::particles;
+    let primitive = wgpu::PrimitiveState {
+        topology: wgpu::PrimitiveTopology::TriangleList,
+        cull_mode: None,
+        ..Default::default()
+    };
     let added = wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
         dst_factor: wgpu::BlendFactor::One,
         operation: wgpu::BlendOperation::Add,
     };
     let foam_bound = reached(cx, &[particles::VS_FOAM, particles::FS_FOAM], foam_all);
-    let foaming = cx.render_pipeline(
+    cx.render_pipeline(
         foam_pass,
         &RenderPipeline {
             vertex: particles::VS_FOAM,
@@ -160,8 +198,17 @@ fn pipelines(
             writes: wgpu::ColorWrites::ALL,
         },
         &foam_bound,
-    )?;
-    Ok((drawing, falling, foaming))
+    )
+}
+
+struct Joined {
+    name: &'static str,
+    drawing: Pipeline<WaterGpu, Scene>,
+    falling: Pipeline<WaterGpu, Scene>,
+    leaves: DrawInput<WaterGpu, Scene>,
+    pattern: DrawInput<WaterGpu, Scene>,
+    sheet_vertices: DrawInput<WaterGpu, Scene>,
+    sheet_indices: DrawInput<WaterGpu, Scene>,
 }
 
 pub(crate) struct WaterGpu {
@@ -174,13 +221,8 @@ pub(crate) struct WaterGpu {
     count_leaves: Pass<Self>,
     foam_pass: Pass<Self>,
     counting: ComputePipeline<Self>,
-    drawing: Pipeline<Self, Scene>,
-    falling: Pipeline<Self, Scene>,
     foaming: Pipeline<Self, Own>,
-    leaves: DrawInput<Self, Scene>,
-    pattern: DrawInput<Self, Scene>,
-    sheet_vertices: DrawInput<Self, Scene>,
-    sheet_indices: DrawInput<Self, Scene>,
+    joined: Vec<Joined>,
     blocks: BlocksGpu,
     settle: SettleGpu,
     sim: SimGpu,
@@ -267,13 +309,20 @@ impl GpuPart for WaterGpu {
             (surface::WATER_DEPTH, Bind::Target(TargetName::DEPTH)),
         ];
         foam_all.extend(particles_gpu.bound());
-        let (drawing, falling, foaming) = pipelines(cx, foam_pass, &behind, foam_all)?;
+        let foaming = foam_pipeline(cx, foam_pass, foam_all)?;
+        let shown: Vec<&'static str> = cx
+            .passes()
+            .listed()
+            .iter()
+            .filter(|listed| shows_water(listed))
+            .map(|listed| listed.name)
+            .collect();
+        let inputs = [leaf_args, leaf_pattern, fall_vertices, fall_indices];
+        let mut scenes = vec![joined(cx, (WaterPass::NAME, false), &behind, inputs)?];
+        for name in shown {
+            scenes.push(joined(cx, (name, true), &behind, inputs)?);
+        }
         particles_gpu.foam_args = Some(cx.draw_input(foam_pass, particles_gpu.args()));
-        let surface_pass = Scene::of::<WaterPass>();
-        let leaves = cx.draw_input(surface_pass, leaf_args);
-        let pattern = cx.draw_input(surface_pass, leaf_pattern);
-        let sheet_vertices = cx.draw_input(surface_pass, fall_vertices);
-        let sheet_indices = cx.draw_input(surface_pass, fall_indices);
         Ok(Self {
             uniform,
             foam: foam_texture,
@@ -284,13 +333,8 @@ impl GpuPart for WaterGpu {
             count_leaves,
             foam_pass,
             counting,
-            drawing,
-            falling,
             foaming,
-            leaves,
-            pattern,
-            sheet_vertices,
-            sheet_indices,
+            joined: scenes,
             blocks,
             settle,
             sim,
@@ -409,16 +453,23 @@ impl GpuPart for WaterGpu {
 
 impl WaterGpu {
     pub(crate) fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
-        if scene.pass != Scene::of::<WaterPass>() || !self.drawn {
+        if !self.drawn {
             return 0;
         }
+        let Some(joined) = self
+            .joined
+            .iter()
+            .find(|joined| joined.name == scene.pass.name())
+        else {
+            return 0;
+        };
         let mut draws = 0;
         draw.draw(
-            &self.drawing,
+            &joined.drawing,
             Shape::Indirect {
                 vertices: &[],
-                indices: Some(self.pattern),
-                args: self.leaves,
+                indices: Some(joined.pattern),
+                args: joined.leaves,
                 offset: 0,
             },
         );
@@ -428,10 +479,10 @@ impl WaterGpu {
                 continue;
             }
             draw.draw(
-                &self.falling,
+                &joined.falling,
                 Shape::Buffers {
-                    vertices: &[self.sheet_vertices],
-                    indices: Some(self.sheet_indices),
+                    vertices: &[joined.sheet_vertices],
+                    indices: Some(joined.sheet_indices),
                     elements: run.clone(),
                     instances: 0..1,
                 },

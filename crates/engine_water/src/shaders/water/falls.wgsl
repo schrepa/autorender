@@ -117,10 +117,22 @@ struct FallShade {
     coverage: f32,
 }
 
-fn shade_fall(input: FallOutput) -> FallShade {
+fn fall_facing(input: FallOutput) -> f32 {
+    return dot(normalize(input.normal), stable_normalize(-input.relative)); // optics: the face of the sheet the eye sees
+}
+
+fn fall_crossing(input: FallOutput) -> f32 {
+    return input.sheet.w / max(abs(fall_facing(input)), 0.05);
+}
+
+fn fall_held(input: FallOutput) -> f32 {
+    let behind = water_ground(input.clip_position.xy);
+    return saturate((length(behind) - length(input.relative)) / fall_crossing(input)); // optics: what the view meets behind the sheet
+}
+
+fn shade_fall(input: FallOutput, held: f32) -> FallShade {
     let world = eye_world(input.relative);
-    let thickness = input.sheet.w;
-    let clear = fall_clear(world, thickness);
+    let clear = fall_clear(world, input.sheet.w);
     if clear < 0.01 {
         discard;
     }
@@ -128,13 +140,9 @@ fn shade_fall(input: FallOutput) -> FallShade {
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
     let normal = normalize(input.normal);
-    let facing = dot(normal, view); // optics: the face of the sheet the eye sees
+    let facing = fall_facing(input);
     let seen = select(-normal, normal, facing >= 0.0);
-    let squarely = max(abs(facing), 0.05);
-    let crossing = thickness / squarely;
-    let behind = water_ground(input.clip_position.xy);
-    let held = saturate((length(behind) - length(input.relative)) / crossing); // optics: what the view meets behind the sheet
-    let path = crossing * held;
+    let path = fall_crossing(input) * held;
     let shares = fall_water(input.sheet.x, input.sheet.y, input.sheet.z);
     let white = 1.0 - (1.0 - input.state.x) * (1.0 - input.state.y) * (1.0 - shares.y);
     let shown = shares.x * held * clear;
@@ -194,7 +202,8 @@ fn fall_mirroring(shade: FallShade) -> FallShade {
 @fragment
 fn fs_fall(input: FallTemporalOutput) -> Outputs {
     use_terrain(input.terrain);
-    let shade = fall_mirroring(shade_fall(fall_temporal_output(input)));
+    let fall = fall_temporal_output(input);
+    let shade = fall_mirroring(shade_fall(fall, fall_held(fall)));
     let previous = input.previous;
     var targets = outputs(shade.point, shade.shaded,
         view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));

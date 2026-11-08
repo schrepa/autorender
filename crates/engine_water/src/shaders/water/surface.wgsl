@@ -21,7 +21,8 @@ import package::water::faces::water::{water_at_level, water_cell, water_info_at,
 import package::water::flow::{water_detail, water_stirring};
 import package::water::foam::{water_blocking, water_contact, water_foam, water_foam_layers,
     water_layers, water_splatted};
-import package::water::footprint::{water_footprint, water_roughness, water_turning};
+import package::water::footprint::{WaterFootprint, water_footprint, water_roughness,
+    water_turning};
 import package::water::refraction::refraction_sampler;
 
 @group(1) @binding(52) var<uniform> water: WaterUniform;
@@ -564,14 +565,24 @@ fn water_ramped(meters: f32, width: f32) -> f32 {
     return width * u * u * u * (1.0 - 0.5 * u) + max(meters - width, 0.0);
 }
 
-fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
-        -> WaterShade {
+struct WaterFace {
+    plane: vec3<f32>,
+    standing: f32,
+    standing_change: f32,
+    world_dx: vec3<f32>,
+    world_dy: vec3<f32>,
+    footprint: WaterFootprint,
+    normal: vec3<f32>,
+    view: vec3<f32>,
+    roughness: vec2<f32>,
+}
+
+fn water_face(point: vec3<f32>, at: WaterAt, own: vec3<f32>) -> WaterFace {
     let world = eye_world(point);
     if at.held < WATER_HELD {
         discard;
     }
     let plane = normalize(vec3<f32>(at.slope.x, 1.0, at.slope.y));
-    let own = water_ground(pixel);
     let standing = max(dot(point - own, plane) / plane.y, 0.0); // optics: what the view meets behind the pixel
     if standing <= 0.0 {
         discard;
@@ -595,12 +606,20 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let unresolved = vec3<f32>(0.5 * detail.hidden, 0.5 * detail.hidden, 0.0)
         + splatted.hidden * splatted.shown;
     let roughness = water_roughness(unresolved + water_turning(fall), water_heading(view));
-    var behind: WaterBehind;
-    behind.ground = own;
-    behind.color = vec3<f32>(0.0);
-    if refracts {
-        behind = water_behind(point, normal, view, pixel, own, plane);
-    }
+    return WaterFace(plane, standing, standing_change, world_dx, world_dy, footprint, normal, view,
+        roughness);
+}
+
+fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, face: WaterFace,
+        behind: WaterBehind, layers: vec2<f32>) -> WaterShade {
+    let world = eye_world(point);
+    let plane = face.plane;
+    let standing = face.standing;
+    let standing_change = face.standing_change;
+    let depth = at.depth;
+    let speed = length(at.words.flow);
+    let normal = face.normal;
+    let view = face.view;
     let bed_depth = min(depth, standing);
     let gathered = water_caustics(world, normal, bed_depth);
     let racing = smoothstep(WATER_RACING.x, WATER_RACING.y, speed);
@@ -610,9 +629,8 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let through = min(max(length(behind.ground - point), 0.0), // optics: the view's way through the water
         depth * plane.y / max(dot(view, plane), 0.1)); // optics: the view's way through the water
     let down = clamp(dot(point - behind.ground, plane) / plane.y, 0.0, through); // optics: the light's way down to what the view meets
-    let contact = water_contact(standing, standing_change, footprint, speed,
+    let contact = water_contact(standing, standing_change, face.footprint, speed,
         water_blocking(standing, depth));
-    let layers = water_foam_layers(pixel);
     let white = layers.x + water_layers(contact);
     let foam = water_foam(white, layers.y);
     let cover = foam.cover;
@@ -620,10 +638,10 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let transmit = water_transmitted(through + down, aerated);
     var surface: WaterSurface;
     surface.relative = point;
-    surface.world_dx = world_dx;
-    surface.world_dy = world_dy;
+    surface.world_dx = face.world_dx;
+    surface.world_dy = face.world_dy;
     surface.normal = normal;
-    surface.roughness = roughness;
+    surface.roughness = face.roughness;
     surface.plane = plane;
     surface.foam_shade = foam.shade;
     surface.foam_thin = foam.thin;
@@ -643,7 +661,7 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     result.behind = behind.color * transmit * (caustic * let_through * (1.0 - wet)
         * (1.0 - atmospheric_cover(camera.position.xyz, world)));
     result.fade = fade;
-    result.flow = flow;
+    result.flow = at.words.flow;
     return water_mirroring(result);
 }
 
@@ -655,7 +673,11 @@ fn water_mirroring(shade: WaterShade) -> WaterShade {
 
 fn shade_mesh(mesh: vec3<f32>, pixel: vec2<f32>) -> WaterShade {
     let at = water_drawn(mesh);
-    return shade_water(water_on_surface(mesh, at), pixel, at, true);
+    let point = water_on_surface(mesh, at);
+    let own = water_ground(pixel);
+    let face = water_face(point, at, own);
+    let behind = water_behind(point, face.normal, face.view, pixel, own, face.plane);
+    return shade_water(point, pixel, at, face, behind, water_foam_layers(pixel));
 }
 
 @fragment
