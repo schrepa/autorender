@@ -119,9 +119,20 @@ impl<G: Game> PageHost<G> {
             .map_err(js)? as u32)
     }
 
-    pub fn pad(&mut self, buttons: u32, axes: Vec<f32>) {
+    pub fn mouse_button(&mut self, button: u32, down: bool) -> bool {
+        engine_core::MouseButton::of(button)
+            .is_some_and(|button| self.host.mouse_button(button, down))
+    }
+
+    pub fn pad(&mut self, index: u32, buttons: u32, axes: Vec<f32>) {
         if let Ok(axes) = <[f32; 6]>::try_from(axes) {
-            self.host.pad(buttons, axes);
+            self.host.pad(index, buttons, axes);
+        }
+    }
+
+    pub fn touch(&mut self, id: u32, x: f32, y: f32, phase: u32) {
+        if let Some(phase) = engine_core::TouchPhase::of(phase) {
+            self.host.touch(id, x, y, phase);
         }
     }
 

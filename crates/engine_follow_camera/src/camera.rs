@@ -1,17 +1,38 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asks, Clock, Error, ErrorCode, FrameTime, GlobalTransforms, HandOver, MoveInput, Mover, Moves,
-    Operation, Pace, Poses, Rule, Setting, Views, mover_of,
+    Asks, Binding, BindingSource, Button, Clock, ContextAsk, Contexts, CursorAsk, CursorMode,
+    CursorRequests, Error, ErrorCode, FrameTime, GlobalTransforms, HandOver, Input, Interest,
+    MouseButton, Mover, Moves, Operation, Pace, Player, Poses, Rule, Setting, Stick, Verb, VerbId,
+    VerbShape, Views, mover_of,
 };
 use engine_math::{atan2, clamp, exp, max, min, sin, sin_cos};
 use engine_places::queries::{CastFilter, CastShape, SceneQueries};
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec2, Vec3};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{CameraTarget, FollowCamera, FollowCameraBrick};
 
-const SENSITIVITY: f32 = 0.003;
+const CONTEXT: &str = "follow_camera";
+
+pub(crate) const LOOK: Verb = Verb {
+    name: "follow_camera.look",
+    shape: VerbShape::Delta2,
+    bindings: &[Binding::held(
+        "follow_camera.look",
+        BindingSource::MouseMotion,
+        Button::Mouse(MouseButton::Left),
+    )],
+};
+
+pub(crate) const TURN: Verb = Verb {
+    name: "follow_camera.turn",
+    shape: VerbShape::Value2,
+    bindings: &[
+        Binding::new("follow_camera.turn", BindingSource::Stick(Stick::Right)).dead_zone(0.15),
+    ],
+};
+
 const STRENGTH: Rule = Rule::range(0.0, 10.0);
 const SECONDS: Rule = Rule::range(0.0, 60.0);
 const SHAKE_RATES: [f32; 3] = [37.0, 53.0, 71.0];
@@ -42,12 +63,31 @@ impl Follow {
     }
 }
 
+pub(crate) struct Controls {
+    look: VerbId,
+    turn: VerbId,
+    _context: Interest<ContextAsk>,
+    _cursor: Interest<CursorAsk>,
+}
+
+impl Controls {
+    fn turn(&self, input: &Input, settings: &FollowCamera, real_seconds: f32) -> Vec2 {
+        let turned = input.value2(self.turn, Player::ONE);
+        let unit = Vec2::new(clamp(turned.x, -1.0, 1.0), clamp(turned.y, -1.0, 1.0));
+        let looked = input.value2(self.look, Player::ONE);
+        Vec2::new(
+            looked.x * settings.look_sensitivity + unit.x * settings.turn_speed * real_seconds,
+            looked.y * settings.look_sensitivity - unit.y * settings.turn_speed * real_seconds,
+        )
+    }
+}
+
 #[derive(Resource, Default)]
 pub(crate) enum Orbit {
     #[default]
     Taking,
-    Waiting,
-    Following(Follow),
+    Waiting(Controls),
+    Following(Follow, Controls),
 }
 
 #[derive(Resource, Default)]
@@ -98,19 +138,45 @@ fn eased(seconds: f32, smoothing: f32) -> f32 {
     }
 }
 
+fn kept(held: Option<Follow>, controls: Controls) -> Orbit {
+    match held {
+        Some(follow) => Orbit::Following(follow, controls),
+        None => Orbit::Waiting(controls),
+    }
+}
+
+fn taken(
+    input: &Input,
+    (contexts, cursor): (&mut Contexts, &mut CursorRequests),
+) -> Option<Controls> {
+    Some(Controls {
+        look: input.find(LOOK.name)?,
+        turn: input.find(TURN.name)?,
+        _context: contexts.ask(CONTEXT, CONTEXT, false),
+        _cursor: cursor.ask(CONTEXT, CursorMode::Drag),
+    })
+}
+
 pub(crate) fn follow(
-    (time, input, settings): (Res<FrameTime>, Res<MoveInput>, Res<FollowCamera>),
+    (time, input, settings): (Res<FrameTime>, Res<Input>, Res<FollowCamera>),
     (globals, poses, queries): (Res<GlobalTransforms>, Poses, Res<SceneQueries>),
     (views, targets): (Res<Views>, Query<Entity, With<CameraTarget>>),
-    mut handover: Asks<HandOver>,
+    (mut contexts, mut cursor, mut handover): (
+        ResMut<Contexts>,
+        ResMut<CursorRequests>,
+        Asks<HandOver>,
+    ),
     (mut orbit, mut shake): (ResMut<Orbit>, ResMut<Shake>),
     mut moves: Moves<FollowCameraBrick>,
 ) {
     let Some(camera) = views.main().map(|main| main.camera) else {
         return;
     };
-    let held = match *orbit {
+    let (held, controls) = match std::mem::take(&mut *orbit) {
         Orbit::Taking => {
+            let Some(controls) = taken(&input, (&mut *contexts, &mut *cursor)) else {
+                return;
+            };
             handover.send(HandOver {
                 node: camera,
                 to: Mover {
@@ -118,23 +184,25 @@ pub(crate) fn follow(
                     pace: Pace::Frame,
                 },
             });
-            *orbit = Orbit::Waiting;
+            *orbit = Orbit::Waiting(controls);
             return;
         }
-        Orbit::Waiting => None,
-        Orbit::Following(follow) => Some(follow),
+        Orbit::Waiting(controls) => (None, controls),
+        Orbit::Following(follow, controls) => (Some(follow), controls),
     };
     let Some(target) = targets.iter().min() else {
-        *orbit = Orbit::Waiting;
+        *orbit = Orbit::Waiting(controls);
         return;
     };
     let Some(pose) = poses.drawn_pose(target) else {
+        *orbit = kept(held, controls);
         return;
     };
     let goal = pose.w_axis.truncate() + Vec3::Y * settings.height;
     let clock = globals.word(camera).map_or(Clock::Real, |word| word.clock);
     let seconds = time.seconds_on(clock) as f32;
     let Some(mut transform) = moves.get_mut(camera) else {
+        *orbit = kept(held, controls);
         return;
     };
     let mut follow = match held {
@@ -146,12 +214,9 @@ pub(crate) fn follow(
         min(settings.pitch_min, settings.pitch_max),
         max(settings.pitch_min, settings.pitch_max),
     );
-    follow.yaw = (follow.yaw - input.look_right_pixels * SENSITIVITY) % std::f32::consts::TAU;
-    follow.pitch = clamp(
-        follow.pitch - input.look_down_pixels * SENSITIVITY,
-        low,
-        high,
-    );
+    let turned = controls.turn(&input, &settings, time.real_seconds as f32);
+    follow.yaw = (follow.yaw - turned.x) % std::f32::consts::TAU;
+    follow.pitch = clamp(follow.pitch - turned.y, low, high);
     follow.focus = follow.focus.lerp(goal, blend);
     let rotation = follow.rotation();
     let back = rotation * Vec3::Z * settings.distance;
@@ -179,7 +244,7 @@ pub(crate) fn follow(
         transform.translation = position;
         transform.rotation = rotation;
     }
-    *orbit = Orbit::Following(follow);
+    *orbit = Orbit::Following(follow, controls);
 }
 
 #[derive(Deserialize)]

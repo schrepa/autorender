@@ -169,6 +169,8 @@ pub const MAX_DEV_TICKS: u32 = 120;
 static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::list::<SceneComponents>(),
     PlaceDecl::list::<CursorRequests>(),
+    PlaceDecl::list::<Contexts>(),
+    PlaceDecl::list::<Verbs>(),
     PlaceDecl::list::<WholeFrames>(),
     PlaceDecl::list::<Pause>(),
     PlaceDecl::list::<CookList>(),
@@ -255,6 +257,7 @@ fn core_entries(registry: &mut RegistryBuilder) {
     registry.core_settings(bricks::settings_entry::<OcclusionCulling>());
     registry.core_settings(bricks::settings_entry::<SubpixelCulling>());
     registry.core_settings(bricks::settings_entry::<FrameLimits>());
+    registry.core_settings(bricks::settings_entry::<InputSettings>());
     registry.core_operation(OperationEntry::of::<
         <views::ViewControl as Operation>::Params,
     >(
@@ -302,6 +305,14 @@ fn core_entries(registry: &mut RegistryBuilder) {
         views::ViewsState::CONTROL,
         bricks::run_operation::<views::ViewsState>,
     ));
+    registry.core_operation(
+        OperationEntry::of::<<input::Rebind as Operation>::Params>(
+            input::Rebind::NAME,
+            input::Rebind::CONTROL,
+            bricks::run_operation::<input::Rebind>,
+        )
+        .schemas(input::Rebind::schema, input::Rebind::result_schema),
+    );
     registry.mover_rule(moves::rule());
     registry.despawn_rule(hierarchy::despawn_owned);
     registry.fill_core::<Asked<Teleport>>();
@@ -403,11 +414,10 @@ impl Engine {
             .init_resource::<WorkClock>()
             .init_resource::<PartDraws>()
             .init_resource::<MeshLevels>()
-            .init_resource::<MoveInput>()
-            .init_resource::<ActionInput>()
-            .init_resource::<AxisInput>()
-            .init_resource::<PointerInput>()
-            .init_resource::<MenuInput>()
+            .init_resource::<Input>()
+            .init_resource::<Devices>()
+            .init_resource::<Contexts>()
+            .init_resource::<InputSettings>()
             .init_resource::<CursorRequests>()
             .init_resource::<WholeFrames>()
             .init_resource::<ProvidedAssets>()
@@ -477,6 +487,7 @@ impl Engine {
             .map(|members| members.names_twice(|kind| kind.key()))
             .unwrap_or_default();
         twice.extend(authoring::keys_taken(world));
+        twice.extend(input::install(world));
         let registrars: Vec<fn(&mut World) -> ComponentId> = world
             .get_resource::<MembersOf<SceneComponents>>()
             .map(|members| members.all().iter().map(ComponentKind::registrar).collect())
@@ -745,11 +756,11 @@ impl Engine {
             self.run_fixed_tick();
         }
         if self.app.world().resource::<Pause>().paused() {
-            modify(self.app.world_mut(), ActionInput::drop_tick_edges);
+            modify(self.app.world_mut(), Input::drop_tick_edges);
         }
         records::exchange(self.app.world_mut());
         jobs::exchange_orders(self.app.world_mut());
-        modify(self.app.world_mut(), ActionInput::begin_frame);
+        modify(self.app.world_mut(), Input::begin_frame);
         presentation::present(self.app.world_mut(), presented);
         {
             let _profile = engine_profile::span("ecs", "Presentation");
@@ -769,7 +780,7 @@ impl Engine {
             time.tick = time.tick.saturating_add(1);
             tick = time.tick;
         });
-        modify(self.app.world_mut(), |input: &mut ActionInput| {
+        modify(self.app.world_mut(), |input: &mut Input| {
             input.begin_tick(tick);
         });
         if has_systems(self.app.world(), FixedPreSimulation) {
@@ -799,7 +810,7 @@ impl Engine {
             self.refresh_transforms();
         }
         presentation::capture(self.app.world_mut());
-        modify(self.app.world_mut(), ActionInput::hide_edges);
+        modify(self.app.world_mut(), Input::hide_edges);
     }
 
     pub fn reset_clock(&mut self) {
@@ -807,7 +818,7 @@ impl Engine {
         self.interval = self.interval.next(None).0;
         let world = self.app.world_mut();
         presentation::fresh_all(world);
-        modify(world, ActionInput::drop_tick_edges);
+        modify(world, Input::drop_tick_edges);
         modify(world, |time: &mut FrameTime| {
             time.ticks = 0;
             time.seconds = 0.0;
@@ -833,7 +844,7 @@ impl Engine {
             presentation::gather(engine.app.world_mut());
             engine.sync_view();
             shared::settle_readiness(engine.app.world_mut(), &engine.board);
-            modify(engine.app.world_mut(), ActionInput::hide_edges);
+            modify(engine.app.world_mut(), Input::hide_edges);
         });
         Ok(RenderFrame {
             world: self.app.world(),

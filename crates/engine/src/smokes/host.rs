@@ -1,10 +1,12 @@
-use std::collections::BTreeSet;
-
-use engine_core::{Runs, Smoke, SmokeFailure, SmokeSession, smoke_eq};
+use bevy_ecs::world::World;
+use engine_core::{
+    Binding, BindingSource, Button, ContextAsk, Contexts, Devices, Gathered, Input, InputSettings,
+    Interest, MouseButton, PadButton, Player, PlayerDevices, Runs, Smoke, SmokeFailure,
+    SmokeSession, Stick, TouchPhase, Verb, VerbId, VerbShape, accept_input, smoke_eq,
+};
 use serde_json::json;
 
-use crate::host::{InputGatherer, MENU_KEYS, MOVE_KEYS, MoveDirection, SceneLoad};
-use engine_registry::InputState;
+use crate::host::{DeviceGatherer, SceneLoad};
 
 pub(super) const SMOKES: &[Smoke] = &[
     Smoke {
@@ -19,422 +21,333 @@ pub(super) const SMOKES: &[Smoke] = &[
     },
 ];
 
-const ACTIONS: &[(&str, u32)] = &[("Space", 0), ("MouseRight", 1)];
-const AXES: &[(&str, u32, f32)] = &[("KeyL", 0, 1.0), ("KeyJ", 0, -1.0), ("PadLeftX", 1, 0.5)];
-const PAD_UP: u32 = 1 << 12;
+const VERBS: [Verb; 4] = [
+    Verb {
+        name: "test.move",
+        shape: VerbShape::Value2,
+        bindings: &[
+            Binding::new("test.move", BindingSource::keys("KeyD", "KeyA", "KeyW", "KeyS")),
+            Binding::new("test.move", BindingSource::Stick(Stick::Left)).dead_zone(0.15),
+        ],
+    },
+    Verb {
+        name: "test.look",
+        shape: VerbShape::Delta2,
+        bindings: &[Binding::held(
+            "test.look",
+            BindingSource::MouseMotion,
+            Button::Mouse(MouseButton::Left),
+        )],
+    },
+    Verb {
+        name: "test.jump",
+        shape: VerbShape::Button,
+        bindings: &[
+            Binding::new("test.jump", BindingSource::key("Space")),
+            Binding::new("test.jump", BindingSource::key("Enter")),
+            Binding::new("test.jump", BindingSource::Pad(PadButton::South)),
+        ],
+    },
+    Verb {
+        name: "menu.accept",
+        shape: VerbShape::Button,
+        bindings: &[Binding::new("menu.accept", BindingSource::key("Enter"))],
+    },
+];
 const PAD_SOUTH: u32 = 1;
+const ONE: Player = Player::ONE;
+
+fn rig() -> (World, [VerbId; 4]) {
+    let mut world = World::new();
+    world.init_resource::<Input>();
+    world.init_resource::<Contexts>();
+    world.init_resource::<InputSettings>();
+    world.init_resource::<Devices>();
+    let ids = {
+        let mut input = world.resource_mut::<Input>();
+        VERBS.map(|verb| input.declare(&verb))
+    };
+    (world, ids)
+}
+
+fn ask(world: &mut World, context: &'static str, blocks: bool) -> Interest<ContextAsk> {
+    world
+        .resource_mut::<Contexts>()
+        .ask("smoke", context, blocks)
+}
+
+fn accept(world: &mut World, keys: &mut DeviceGatherer) {
+    accept_input(
+        world,
+        Gathered {
+            devices: keys.take(),
+            driven: Vec::new(),
+        },
+    );
+}
+
+fn frame<'w>(world: &'w mut World, keys: &mut DeviceGatherer) -> &'w Input {
+    accept(world, keys);
+    world.resource_mut::<Input>().begin_frame();
+    world.resource::<Input>()
+}
 
 fn input_keys(_: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
-    let built = InputGatherer::new(ACTIONS, AXES, MOVE_KEYS, MENU_KEYS);
-    smoke_eq!(built.is_ok(), true, "gatherer_builds");
-    let Ok(mut keys) = built else {
-        return Ok(());
-    };
-    keyboard(&mut keys)?;
-    pointer(&mut keys)?;
-    mouse_binding(&mut keys)?;
-    axes(&mut keys)?;
-    pad(&mut keys)?;
-    menu(&mut keys)?;
-    move_keys()?;
-    one_action_two_keys()?;
+    keyboard()?;
+    pointer()?;
+    pads()?;
+    contexts()?;
+    players()?;
+    touches()?;
     edges()
 }
 
-fn move_keys() -> Result<(), SmokeFailure> {
-    let built = InputGatherer::new(
-        ACTIONS,
-        AXES,
-        &[("KeyW", MoveDirection::Forward)],
-        MENU_KEYS,
-    );
-    smoke_eq!(built.is_ok(), true, "game_move_keys_build");
-    let Ok(mut keys) = built else {
-        return Ok(());
-    };
-    smoke_eq!(
-        keys.key("KeyE", true, false),
-        false,
-        "unlisted_move_key_stays_free"
-    );
-    smoke_eq!(keys.key("KeyW", true, false), true, "listed_move_key_used");
-    let state = keys.take(0.0).state;
-    smoke_eq!(
-        json!([state.move_forward, state.move_up]),
-        json!([1.0, 0.0]),
-        "only_listed_keys_move"
-    );
-    let unknown = InputGatherer::new(ACTIONS, AXES, &[("KeyNone", MoveDirection::Up)], MENU_KEYS);
-    smoke_eq!(
-        json!(unknown.err().map(|error| error.path)),
-        json!("$.move_keys[0]"),
-        "unknown_move_key_refused"
-    );
-    Ok(())
-}
-
-fn edges() -> Result<(), SmokeFailure> {
-    let shown = |state: &InputState| json!([state.just_pressed(0), state.just_released(0)]);
-    let mut state = InputState::default();
-    let first = BTreeSet::from([0]);
-    let none = BTreeSet::new();
-    state.ingest(&first, &first, &none);
-    smoke_eq!(
-        json!(state.pending_tick()),
-        json!(1),
-        "a_press_is_stamped_with_its_tick"
-    );
-    state.begin_tick(1);
-    smoke_eq!(
-        shown(&state),
-        json!([true, false]),
-        "first_tick_sees_a_press"
-    );
-    state.hide_edges();
-    state.begin_tick(2);
-    smoke_eq!(shown(&state), json!([false, false]), "second_tick_does_not");
-    state.hide_edges();
-    state.begin_frame();
-    smoke_eq!(
-        shown(&state),
-        json!([true, false]),
-        "the_frame_sees_the_press"
-    );
-    state.hide_edges();
-    state.begin_frame();
-    smoke_eq!(
-        shown(&state),
-        json!([false, false]),
-        "the_next_frame_does_not"
-    );
-    state.hide_edges();
-    state.ingest(&none, &none, &first);
-    state.begin_frame();
-    smoke_eq!(
-        shown(&state),
-        json!([false, true]),
-        "a_frame_without_ticks_sees_a_release"
-    );
-    state.hide_edges();
-    state.begin_tick(3);
-    smoke_eq!(
-        shown(&state),
-        json!([false, true]),
-        "the_tick_after_still_sees_it"
-    );
-    state.hide_edges();
-    state.ingest(&first, &first, &none);
-    state.drop_tick_edges();
-    state.begin_tick(4);
-    smoke_eq!(
-        shown(&state),
-        json!([false, false]),
-        "a_press_dropped_by_a_pause_never_fires"
-    );
-    Ok(())
-}
-
-fn keyboard(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
-    smoke_eq!(keys.key("KeyW", true, false), true, "movement_key_used");
-    let held = [keys.take(0.0), keys.take(0.0)].map(|input| input.state.move_forward);
-    smoke_eq!(json!(held), json!([1.0, 1.0]), "key_moves");
-    keys.key("KeyW", false, false);
-    smoke_eq!(
-        json!(keys.take(0.0).state.move_forward),
-        json!(0.0),
-        "release_stops"
-    );
-    keys.look(120.0, 40.0);
-    let turned = keys.take(0.0).state;
-    smoke_eq!(
-        json!([turned.look_right_pixels, turned.look_down_pixels]),
-        json!([120.0, 40.0]),
-        "drag_turns"
-    );
-    let after = keys.take(0.0).state;
-    smoke_eq!(
-        json!([after.look_right_pixels, after.look_down_pixels]),
-        json!([0.0, 0.0]),
-        "turns_apply_once"
-    );
-    smoke_eq!(
-        json!([keys.key("KeyW", true, false), keys.key("KeyF", true, false)]),
-        json!([true, false]),
-        "unused_keys_stay"
-    );
-    keys.key("KeyW", false, false);
-    keys.key("Space", true, false);
-    let pressed = keys.take(0.0);
-    smoke_eq!(
-        json!([pressed.held, pressed.pressed]),
-        json!([[0], [0]]),
-        "actions_press"
-    );
-    keys.key("Space", false, false);
-    keys.take(0.0);
-    keys.key("Space", true, false);
+fn keyboard() -> Result<(), SmokeFailure> {
+    let (mut world, [moving, look, jump, _]) = rig();
+    let _asked = ask(&mut world, "test", false);
+    let mut keys = DeviceGatherer::default();
+    keys.key("KeyW", true);
+    let first = frame(&mut world, &mut keys).value2(moving, ONE).to_array();
+    let second = frame(&mut world, &mut keys).value2(moving, ONE).to_array();
+    smoke_eq!(json!([first, second]), json!([[0.0, 1.0], [0.0, 1.0]]), "keys_hold_a_value");
+    keys.key("KeyW", false);
+    let released = frame(&mut world, &mut keys).value2(moving, ONE).to_array();
+    smoke_eq!(json!(released), json!([0.0, 0.0]), "release_stops");
+    keys.motion(120.0, 40.0);
+    let unheld = frame(&mut world, &mut keys).value2(look, ONE).to_array();
+    smoke_eq!(json!(unheld), json!([0.0, 0.0]), "motion_waits_for_its_modifier");
+    keys.mouse_button(MouseButton::Left, true);
+    keys.motion(120.0, 40.0);
+    let turned = frame(&mut world, &mut keys).value2(look, ONE).to_array();
+    smoke_eq!(json!(turned), json!([120.0, 40.0]), "drag_turns");
+    let after = frame(&mut world, &mut keys).value2(look, ONE).to_array();
+    smoke_eq!(json!(after), json!([0.0, 0.0]), "turns_apply_once");
+    keys.mouse_button(MouseButton::Left, false);
+    keys.key("Space", true);
+    let input = frame(&mut world, &mut keys);
+    let pressed = json!([input.held(jump, ONE), input.pressed(jump, ONE)]);
+    smoke_eq!(pressed, json!([true, true]), "buttons_press");
+    keys.key("Enter", true);
+    keys.key("Space", false);
+    let input = frame(&mut world, &mut keys);
+    let still = json!([
+        input.held(jump, ONE),
+        input.pressed(jump, ONE),
+        input.released(jump, ONE)
+    ]);
+    smoke_eq!(still, json!([true, false, false]), "one_key_still_holds_the_verb");
+    keys.key("Enter", false);
+    let input = frame(&mut world, &mut keys);
+    let last = json!([input.held(jump, ONE), input.released(jump, ONE)]);
+    smoke_eq!(last, json!([false, true]), "the_last_key_releases_the_verb");
+    keys.key("Space", true);
     keys.drop_edges();
-    let kept = keys.take(0.0);
+    let kept = keys.take();
     smoke_eq!(
-        json!([kept.held, kept.pressed]),
-        json!([[0], []]),
+        json!([kept.keyboard.held.contains("Space"), kept.keyboard.pressed.is_empty()]),
+        json!([true, true]),
         "a_suspend_keeps_keys_and_drops_edges"
     );
-    keys.agent_key("Space", true);
-    keys.key("Space", false, false);
-    let shared = keys.take(0.0);
-    smoke_eq!(
-        json!([shared.held, shared.released]),
-        json!([[0], []]),
-        "the_agent_holds_beside_the_player"
-    );
     keys.clear();
     smoke_eq!(
-        json!(keys.take(0.0).held),
-        json!([0]),
-        "blur_leaves_agent_keys"
-    );
-    keys.agent_key("Space", false);
-    keys.key("KeyW", true, false);
-    keys.clear();
-    let blurred = keys.take(0.0);
-    smoke_eq!(
-        json!([blurred.state.move_forward, blurred.held]),
-        json!([0.0, []]),
+        json!(keys.take().keyboard.held.is_empty()),
+        json!(true),
         "blur_releases"
     );
     Ok(())
 }
 
-fn one_action_two_keys() -> Result<(), SmokeFailure> {
-    let built = InputGatherer::new(&[("Space", 0), ("Enter", 0)], &[], MOVE_KEYS, MENU_KEYS);
-    smoke_eq!(built.is_ok(), true, "shared_action_builds");
-    let Ok(mut keys) = built else {
-        return Ok(());
-    };
-    keys.key("Space", true, false);
-    keys.key("Enter", true, false);
-    keys.key("Space", false, false);
-    let first = keys.take(0.0);
-    smoke_eq!(
-        json!([first.held, first.pressed, first.released]),
-        json!([[0], [0], []]),
-        "one_key_still_holds_the_action"
-    );
-    keys.key("Enter", false, false);
-    let last = keys.take(0.0);
-    smoke_eq!(
-        json!([last.held, last.released]),
-        json!([[], [0]]),
-        "the_last_key_releases_the_action"
-    );
-    Ok(())
-}
-
-fn pointer(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
-    keys.pointer(10.0, 20.0);
+fn pointer() -> Result<(), SmokeFailure> {
+    let mut keys = DeviceGatherer::default();
     keys.pointer(13.0, 24.0);
     keys.wheel(0.0, 2.0);
-    let moved = keys.take(0.0).pointer;
+    keys.motion(3.0, 4.0);
+    let moved = keys.take().mouse;
     smoke_eq!(
         json!([
             moved.position_pixels.map(|position| position.to_array()),
-            moved.delta_pixels.to_array(),
-            [moved.wheel_right_notches, moved.wheel_up_notches],
+            moved.motion_pixels.to_array(),
+            moved.wheel_notches.to_array(),
             moved.inside
         ]),
         json!([[13.0, 24.0], [3.0, 4.0], [0.0, 2.0], true]),
         "pointer_moves"
     );
-    let still = keys.take(0.0).pointer;
+    let still = keys.take().mouse;
     smoke_eq!(
-        json!([
-            still.delta_pixels.to_array(),
-            [still.wheel_right_notches, still.wheel_up_notches]
-        ]),
+        json!([still.motion_pixels.to_array(), still.wheel_notches.to_array()]),
         json!([[0.0, 0.0], [0.0, 0.0]]),
         "pointer_motion_covers_one_frame"
     );
     keys.pointer_left();
-    smoke_eq!(
-        json!(keys.take(0.0).pointer.inside),
-        json!(false),
-        "pointer_left"
-    );
-    keys.motion(5.0, 6.0);
-    let captured = keys.take(0.0);
-    smoke_eq!(
-        json!([
-            captured.pointer.delta_pixels.to_array(),
-            captured.state.look_right_pixels,
-            captured.state.look_down_pixels
-        ]),
-        json!([[5.0, 6.0], 5.0, 6.0]),
-        "motion_looks"
-    );
+    smoke_eq!(json!(keys.take().mouse.inside), json!(false), "pointer_left");
     keys.pointer(1.0, 2.0);
-    keys.wheel(1.0, 0.0);
     keys.clear();
-    let cleared = keys.take(0.0).pointer;
     smoke_eq!(
-        json!([
-            cleared.position_pixels.is_none(),
-            cleared.delta_pixels.to_array(),
-            [cleared.wheel_right_notches, cleared.wheel_up_notches]
-        ]),
-        json!([true, [0.0, 0.0], [0.0, 0.0]]),
+        json!(keys.take().mouse.position_pixels.is_none()),
+        json!(true),
         "pointer_clears"
     );
     Ok(())
 }
 
-fn mouse_binding(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
+fn pads() -> Result<(), SmokeFailure> {
+    let (mut world, [moving, _, jump, _]) = rig();
+    let _asked = ask(&mut world, "test", false);
+    let mut keys = DeviceGatherer::default();
+    keys.pad(0, 0, [0.1, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    let zoned = frame(&mut world, &mut keys).value2(moving, ONE).to_array();
+    smoke_eq!(json!(zoned), json!([0.0, 0.0]), "the_binding_holds_the_dead_zone");
+    keys.pad(0, 0, [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
+    keys.pad(1, PAD_SOUTH, [0.0; 6]);
+    let input = frame(&mut world, &mut keys);
+    let both = json!([input.value2(moving, ONE).to_array(), input.pressed(jump, ONE)]);
+    smoke_eq!(both, json!([[0.0, 1.0], true]), "each_pad_by_index");
+    let input = frame(&mut world, &mut keys);
+    let unplugged = json!([input.value2(moving, ONE).to_array(), input.released(jump, ONE)]);
+    smoke_eq!(unplugged, json!([[0.0, 0.0], true]), "a_pad_needs_polling");
+    Ok(())
+}
+
+fn contexts() -> Result<(), SmokeFailure> {
+    let (mut world, [_, _, jump, accepting]) = rig();
+    let mut keys = DeviceGatherer::default();
+    keys.key("Enter", true);
+    let read = |input: &Input| {
+        json!([
+            input.held(jump, ONE),
+            input.held(accepting, ONE),
+            input.uses_key("Enter")
+        ])
+    };
+    let unasked = read(frame(&mut world, &mut keys));
+    smoke_eq!(unasked, json!([false, false, false]), "unasked_contexts_stay_off");
+    let game = ask(&mut world, "test", false);
+    let menu = ask(&mut world, "menu", true);
+    let opened = read(frame(&mut world, &mut keys));
+    smoke_eq!(opened, json!([false, true, true]), "a_blocking_context_takes_the_keys");
+    drop(menu);
+    let closed = read(frame(&mut world, &mut keys));
+    smoke_eq!(closed, json!([true, false, true]), "closing_hands_the_keys_back");
+    let shared = ask(&mut world, "menu", false);
+    let newest = read(frame(&mut world, &mut keys));
+    smoke_eq!(newest, json!([false, true, true]), "the_newest_context_wins_a_key");
+    drop(shared);
+    world.insert_resource(InputSettings {
+        players: Vec::new(),
+        bindings: vec![Binding::new("test.look", BindingSource::key("Space"))],
+    });
+    let conflicts: Vec<Vec<&str>> = frame(&mut world, &mut keys)
+        .conflicts()
+        .iter()
+        .map(|conflict| conflict.verbs.clone())
+        .collect();
+    smoke_eq!(
+        json!(conflicts),
+        json!([["test.look", "test.jump"]]),
+        "conflicts_name_both_verbs"
+    );
+    drop(game);
+    Ok(())
+}
+
+fn players() -> Result<(), SmokeFailure> {
+    let (mut world, [moving, ..]) = rig();
+    world.insert_resource(InputSettings {
+        players: vec![
+            PlayerDevices {
+                keyboard_mouse: true,
+                pads: Vec::new(),
+            },
+            PlayerDevices {
+                keyboard_mouse: false,
+                pads: vec![3],
+            },
+        ],
+        bindings: Vec::new(),
+    });
+    let _asked = ask(&mut world, "test", false);
+    let mut keys = DeviceGatherer::default();
+    keys.key("KeyD", true);
+    keys.pad(3, 0, [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
+    let input = frame(&mut world, &mut keys);
     smoke_eq!(
         json!([
-            keys.key("MouseRight", true, false),
-            keys.key("MouseLeft", true, false)
+            input.players(),
+            input.value2(moving, Player(1)).to_array(),
+            input.value2(moving, Player(2)).to_array()
         ]),
-        json!([true, true]),
-        "mouse_bindings_used"
-    );
-    let pressed = keys.take(0.0);
-    smoke_eq!(
-        json!([pressed.held, pressed.pressed]),
-        json!([[1], [1]]),
-        "mouse_presses_action"
-    );
-    smoke_eq!(
-        json!([pressed.pointer.held, pressed.pointer.pressed]),
-        json!([true, true]),
-        "mouse_left_presses_pointer"
-    );
-    keys.key("MouseRight", false, false);
-    keys.key("MouseLeft", false, false);
-    let released = keys.take(0.0);
-    smoke_eq!(
-        json!([released.held, released.released]),
-        json!([[], [1]]),
-        "mouse_releases_action"
-    );
-    smoke_eq!(
-        json!([
-            released.pointer.held,
-            released.pointer.pressed,
-            released.pointer.released
-        ]),
-        json!([false, false, true]),
-        "mouse_left_releases_pointer"
-    );
-    let after = keys.take(0.0).pointer;
-    smoke_eq!(
-        json!([after.held, after.pressed, after.released]),
-        json!([false, false, false]),
-        "pointer_press_covers_one_frame"
+        json!([2, [1.0, 0.0], [0.0, 1.0]]),
+        "each_player_reads_its_own_devices"
     );
     Ok(())
 }
 
-fn axes(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
-    keys.key("KeyL", true, false);
+fn touches() -> Result<(), SmokeFailure> {
+    let mut keys = DeviceGatherer::default();
+    keys.touch(7, 10.0, 20.0, TouchPhase::Began);
+    keys.touch(7, 12.0, 20.0, TouchPhase::Ended);
+    let phases = [keys.take(), keys.take(), keys.take()].map(|devices| {
+        devices
+            .touches
+            .iter()
+            .map(|touch| touch.phase)
+            .collect::<Vec<_>>()
+    });
     smoke_eq!(
-        json!(keys.take(0.0).axes.values()[0]),
-        json!(1.0),
-        "axis_key_counts"
-    );
-    keys.key("KeyJ", true, false);
-    smoke_eq!(
-        json!(keys.take(0.0).axes.values()[0]),
-        json!(0.0),
-        "axis_sums"
-    );
-    keys.key("KeyL", false, false);
-    keys.key("KeyJ", false, false);
-    keys.pad(0, [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
-    smoke_eq!(
-        json!(keys.take(0.0).axes.values()[1]),
-        json!(0.5),
-        "axis_analog_scales"
-    );
-    keys.pad(0, [0.1, 0.0, 0.0, 0.0, 0.0, 0.0]);
-    smoke_eq!(
-        json!(keys.take(0.0).axes.values()[1]),
-        json!(0.0),
-        "stick_dead_zone"
+        json!(phases),
+        json!([["began"], ["ended"], []]),
+        "a_tap_inside_one_frame_still_ends"
     );
     Ok(())
 }
 
-fn pad(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
-    keys.take(0.0);
-    keys.pad(0, [0.0, 1.0, 1.0, 0.0, 0.0, 1.0]);
-    keys.pad(0, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
-    let moved = keys.take(1.0).state;
+fn edges() -> Result<(), SmokeFailure> {
+    let (mut world, [_, _, jump, _]) = rig();
+    let _asked = ask(&mut world, "test", false);
+    let mut keys = DeviceGatherer::default();
+    let shown = |world: &World| {
+        let input = world.resource::<Input>();
+        json!([input.pressed(jump, ONE), input.released(jump, ONE)])
+    };
+    let run = |world: &mut World, change: fn(&mut Input)| {
+        let mut input = world.resource_mut::<Input>();
+        input.hide_edges();
+        change(&mut input);
+    };
+    keys.key("Space", true);
+    accept(&mut world, &mut keys);
     smoke_eq!(
-        json!([moved.move_forward, moved.move_up, moved.look_right_pixels]),
-        json!([1.0, 1.0, 600.0]),
-        "pads_merge_and_move"
+        json!(world.resource::<Input>().pending_tick()),
+        json!(1),
+        "a_press_is_stamped_with_its_tick"
     );
-    let unplugged = keys.take(1.0).state;
+    run(&mut world, |input| input.begin_tick(1));
+    smoke_eq!(shown(&world), json!([true, false]), "first_tick_sees_a_press");
+    run(&mut world, |input| input.begin_tick(2));
+    smoke_eq!(shown(&world), json!([false, false]), "second_tick_does_not");
+    run(&mut world, Input::begin_frame);
+    smoke_eq!(shown(&world), json!([true, false]), "the_frame_sees_the_press");
+    run(&mut world, Input::begin_frame);
+    smoke_eq!(shown(&world), json!([false, false]), "the_next_frame_does_not");
+    keys.key("Space", false);
+    accept(&mut world, &mut keys);
+    run(&mut world, Input::begin_frame);
     smoke_eq!(
-        json!([unplugged.move_forward, unplugged.look_right_pixels]),
-        json!([0.0, 0.0]),
-        "pad_needs_polling"
+        shown(&world),
+        json!([false, true]),
+        "a_frame_without_ticks_sees_a_release"
     );
-    Ok(())
-}
-
-fn menu(keys: &mut InputGatherer) -> Result<(), SmokeFailure> {
+    run(&mut world, |input| input.begin_tick(3));
+    smoke_eq!(shown(&world), json!([false, true]), "the_tick_after_still_sees_it");
+    keys.key("Space", true);
+    accept(&mut world, &mut keys);
+    run(&mut world, Input::drop_tick_edges);
+    run(&mut world, |input| input.begin_tick(4));
     smoke_eq!(
-        json!(keys.key("Tab", true, false)),
-        json!(false),
-        "menu_key_stays_with_browser"
-    );
-    keys.key("Tab", false, false);
-    smoke_eq!(
-        json!(keys.take(0.0).menu.down),
-        json!(true),
-        "menu_gathered_unwanted"
-    );
-    smoke_eq!(
-        json!(keys.key("Tab", true, true)),
-        json!(true),
-        "menu_key_taken_while_wanted"
-    );
-    smoke_eq!(
-        json!(keys.take(0.0).menu.down),
-        json!(true),
-        "menu_pressed_wanted"
-    );
-    smoke_eq!(
-        json!(keys.take(0.0).menu.down),
-        json!(false),
-        "menu_pressed_once"
-    );
-    smoke_eq!(
-        json!(keys.key("Tab", false, false)),
-        json!(true),
-        "menu_release_taken_after_unwanted"
-    );
-    keys.pad(PAD_UP | PAD_SOUTH, [0.0; 6]);
-    let pressed = keys.take(0.0).menu;
-    smoke_eq!(
-        json!([pressed.up, pressed.accept]),
-        json!([true, true]),
-        "pad_menu"
-    );
-    keys.pad(PAD_UP | PAD_SOUTH, [0.0; 6]);
-    let held = keys.take(0.0).menu;
-    smoke_eq!(
-        json!([held.up, held.accept]),
+        shown(&world),
         json!([false, false]),
-        "pad_menu_once"
-    );
-    keys.key("Enter", true, true);
-    keys.clear();
-    smoke_eq!(
-        json!(keys.take(0.0).menu.accept),
-        json!(false),
-        "menu_clears"
+        "a_press_dropped_by_a_pause_never_fires"
     );
     Ok(())
 }

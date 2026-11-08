@@ -142,6 +142,7 @@ error_codes! {
     InvalidBenchmark => "invalid_benchmark",
     InvalidPresentationAlpha => "invalid_presentation_alpha",
     InvalidShape => "invalid_shape",
+    BindingConflict => "binding_conflict",
 
     GameRule => "game_rule",
     NoScene => "no_scene",

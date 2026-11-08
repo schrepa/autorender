@@ -1,13 +1,13 @@
 use engine_core::{
-    ActionInput, BrickList, Engine, ErrorCode, FrameFacts, JobExchange, JobId, JobMessage, JobRef,
-    MenuInput, MoveInput, PauseReason, RecordExchange, RenderStats, WorkClock,
+    BrickList, Engine, ErrorCode, FrameFacts, Gathered, JobExchange, JobId, JobMessage, JobRef,
+    PauseReason, RecordExchange, RenderStats, WorkClock,
 };
 use engine_registry::Registry;
 use engine_render::{RenderTarget, Renderer};
 
 use crate::frame_stats::{DynamicResolutionStats, FrameStats, ResolutionStats};
 use crate::host::policy::{FRAME_INTERVAL_MS, PACE_INTERVAL_LIMIT_MS, PACE_SMOOTHING};
-use crate::host::{FrameInput, InputSource};
+use crate::host::InputSource;
 use crate::resolution::{DynamicResolution, Resolution};
 use crate::{Error, Result};
 
@@ -513,27 +513,7 @@ impl AppHost {
 
     #[cfg(feature = "dev")]
     fn keep_held(&mut self) {
-        let world = self.engine.app.world();
-        let moving = *world.resource::<MoveInput>();
-        let pointer = *world.resource::<engine_core::PointerInput>();
-        let axes = *world.resource::<engine_core::AxisInput>();
-        self.set_gated(MoveInput {
-            look_right_pixels: 0.0,
-            look_down_pixels: 0.0,
-            ..moving
-        });
-        self.set_gathered(&FrameInput {
-            pointer: engine_core::PointerInput {
-                delta_pixels: glam::Vec2::ZERO,
-                wheel_up_notches: 0.0,
-                wheel_right_notches: 0.0,
-                pressed: false,
-                released: false,
-                ..pointer
-            },
-            axes,
-            ..FrameInput::default()
-        });
+        engine_core::hold_input(self.engine.app.world_mut());
     }
 
     #[cfg(feature = "dev")]
@@ -567,46 +547,9 @@ impl AppHost {
         Ok(())
     }
 
-    pub(crate) fn accept(&mut self, input: &FrameInput) {
-        let world = self.engine.app.world_mut();
-        let _ = world.modify_resource(|actions: &mut ActionInput| {
-            actions.ingest(&input.held, &input.pressed, &input.released);
-        });
-        self.set_gated(input.state);
-    }
-
-    fn set_gated(&mut self, input: MoveInput) {
-        let wanted = self.engine.app.world().resource::<MenuInput>().wanted;
-        self.set_input(if wanted { MoveInput::default() } else { input });
-    }
-
-    fn set_input(&mut self, input: MoveInput) {
+    pub(crate) fn accept(&mut self, input: Gathered) {
         let _profile = engine_profile::span("cpu", "host.input");
-        fn bounded(value: f32, limit: f32) -> f32 {
-            if value.is_finite() {
-                engine_core::math::clamp(value, -limit, limit)
-            } else {
-                0.0
-            }
-        }
-        self.engine.app.world_mut().insert_resource(MoveInput {
-            move_forward: bounded(input.move_forward, 1.0),
-            move_right: bounded(input.move_right, 1.0),
-            move_up: bounded(input.move_up, 1.0),
-            look_right_pixels: bounded(input.look_right_pixels, crate::host::policy::LOOK_LIMIT),
-            look_down_pixels: bounded(input.look_down_pixels, crate::host::policy::LOOK_LIMIT),
-        });
-    }
-
-    pub(crate) fn set_gathered(&mut self, input: &FrameInput) {
-        let world = self.engine.app.world_mut();
-        let wanted = world.resource::<MenuInput>().wanted;
-        world.insert_resource(input.pointer);
-        world.insert_resource(input.axes);
-        world.insert_resource(MenuInput {
-            wanted,
-            ..input.menu
-        });
+        engine_core::accept_input(self.engine.app.world_mut(), input);
     }
 
     fn display_size(&self, (width, height): (u32, u32)) -> glam::UVec2 {
@@ -749,10 +692,6 @@ impl AppHost {
     pub fn suspend(&mut self) {
         self.dynamic.reset();
         self.engine.reset_clock();
-        self.engine
-            .app
-            .world_mut()
-            .insert_resource(MoveInput::default());
-        self.set_gathered(&FrameInput::default());
+        engine_core::suspend_input(self.engine.app.world_mut());
     }
 }

@@ -1,11 +1,19 @@
 use bevy_ecs::prelude::*;
 use engine::prelude::{Commands, World};
-use engine_core::{Camera, MoveInput, Projection, Transform, main_camera, math, place_camera};
+use engine_core::{
+    Camera, Input, Player, Projection, Transform, main_camera, math, place_camera,
+};
 use engine_places_simulation::ground::Ground;
 use engine_places_simulation::physics::RigidBody;
 use glam::{Vec2, Vec3};
 
 const EYE_HEIGHT: f32 = 1.7;
+const STEERING: [&str; 4] = [
+    "fly_camera.move",
+    "fly_camera.rise",
+    "fly_camera.look",
+    "fly_camera.turn",
+];
 
 pub(crate) type Placed = (Transform, Camera);
 
@@ -99,7 +107,7 @@ pub(crate) fn watch(bodies: Query<&Transform, With<RigidBody>>, mut view: ResMut
 }
 
 pub(crate) fn look(
-    (ground, input, bodies): (Option<Res<Ground>>, Option<Res<MoveInput>>, Res<BodiesView>),
+    (ground, input, bodies): (Option<Res<Ground>>, Res<Input>, Res<BodiesView>),
     mut views: ResMut<Views>,
     mut commands: Commands,
 ) {
@@ -110,27 +118,21 @@ pub(crate) fn look(
     {
         show(&mut commands, view);
     }
-    let input = input.as_deref().copied().unwrap_or_default();
-    hold_standing_eye(views, (ground.as_deref(), &input), &mut commands);
+    let steered = STEERING
+        .into_iter()
+        .filter_map(|name| input.find(name))
+        .any(|verb| input.value2(verb, Player::ONE) != Vec2::ZERO);
+    hold_standing_eye(views, (ground.as_deref(), steered), &mut commands);
 }
 
 fn hold_standing_eye(
     views: &mut Views,
-    (ground, input): (Option<&Ground>, &MoveInput),
+    (ground, steered): (Option<&Ground>, bool),
     commands: &mut Commands,
 ) {
     let Some(standing) = views.standing else {
         return;
     };
-    let steered = [
-        input.move_forward,
-        input.move_right,
-        input.move_up,
-        input.look_right_pixels,
-        input.look_down_pixels,
-    ]
-    .into_iter()
-    .any(|amount| amount != 0.0);
     if steered {
         views.standing = None;
         return;

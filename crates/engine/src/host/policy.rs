@@ -19,7 +19,6 @@ policy! {
     pub const MAX_WORKERS: u32 = 32;
     pub const JOB_CACHE_MIB: u64 = 1024;
     pub const MAX_JOB_CACHE_MIB: u64 = 9_999_999;
-    pub const LOOK_LIMIT: f32 = 1000.0;
     pub const WHEEL_PIXELS: f32 = 100.0;
     pub const BENCHMARK_LIMIT_MS: u64 = 10_000;
     pub const READ_BACK_LIMIT_MS: u64 = 120_000;

@@ -7,12 +7,13 @@ macro_rules! __game_surface {
             always_mut {
                 fn frame(timestamp: f64, width: u32, height: u32) -> Result<(), $crate::__private::JsValue>;
                 fn key(code: &str, down: bool) -> bool;
-                fn look(dx: f32, dy: f32);
+                fn mouse_button(button: u32, down: bool) -> bool;
                 fn motion(dx: f32, dy: f32);
                 fn pointer(x: f32, y: f32);
                 fn pointer_left();
                 fn wheel(right_notches: f32, up_notches: f32);
-                fn pad(buttons: u32, axes: Vec<f32>);
+                fn pad(index: u32, buttons: u32, axes: Vec<f32>);
+                fn touch(id: u32, x: f32, y: f32, phase: u32);
                 fn clear_input();
                 fn animation_frame(timestamp: f64, width: u32, height: u32) -> Result<u32, $crate::__private::JsValue>;
                 fn set_preparation(enabled: bool);

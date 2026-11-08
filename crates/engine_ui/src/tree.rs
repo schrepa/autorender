@@ -2,7 +2,10 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::math::{clamp, max, min};
-use engine_core::{CursorAsk, FrameFacts, GlobalTransforms, Interest, SceneContext, TextureHandle};
+use engine_core::{
+    ContextAsk, CursorAsk, FrameFacts, GlobalTransforms, Interest, SceneContext, TextureHandle,
+    VerbId,
+};
 use engine_places_rendering::text::{FontId, Text, TextRun};
 use engine_places_rendering::ui::{
     UiAction, UiAlign, UiDirection, UiInsets, UiJustify, UiKind, UiLength, UiNode, UiRoot, UiValue,
@@ -326,6 +329,8 @@ pub(crate) struct UiState {
     pub(crate) menu: bool,
     pub(crate) wanting: bool,
     pub(crate) cursor: Option<Interest<CursorAsk>>,
+    pub(crate) context: Option<Interest<ContextAsk>>,
+    pub(crate) verbs: Option<[VerbId; 6]>,
     pub(crate) textures: Vec<TextureHandle>,
     pub(crate) rects: Vec<UiRect>,
     pub(crate) runs: Vec<(Fill, Range<u32>)>,

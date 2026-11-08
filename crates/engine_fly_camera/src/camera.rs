@@ -1,21 +1,99 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asks, Clock, FrameTime, GlobalTransforms, HandOver, MoveInput, Mover, Moves, Pace, Views,
-    mover_of,
+    Asks, Binding, BindingSource, Button, Clock, ContextAsk, Contexts, CursorAsk, CursorMode,
+    CursorRequests, FrameTime, GlobalTransforms, HandOver, Input, Interest, MouseButton, Mover,
+    Moves, Pace, Player, Stick, Trigger, Verb, VerbId, VerbShape, Views, mover_of,
 };
 use engine_math::{atan2, clamp};
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec2, Vec3};
 
 use crate::{FlyCamera, FlyCameraBrick};
 
-const SENSITIVITY: f32 = 0.003;
 const PITCH_LIMIT: f32 = 1.48;
+const CONTEXT: &str = "fly_camera";
+
+pub(crate) const MOVE: Verb = Verb {
+    name: "fly_camera.move",
+    shape: VerbShape::Value2,
+    bindings: &[
+        Binding::new(
+            "fly_camera.move",
+            BindingSource::keys("KeyD", "KeyA", "KeyW", "KeyS"),
+        ),
+        Binding::new(
+            "fly_camera.move",
+            BindingSource::keys("ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"),
+        ),
+        Binding::new("fly_camera.move", BindingSource::Stick(Stick::Left)).dead_zone(0.15),
+    ],
+};
+
+pub(crate) const RISE: Verb = Verb {
+    name: "fly_camera.rise",
+    shape: VerbShape::Value,
+    bindings: &[
+        Binding::new("fly_camera.rise", BindingSource::key("KeyE")),
+        Binding::new("fly_camera.rise", BindingSource::key("KeyQ")).scaled(-1.0),
+        Binding::new("fly_camera.rise", BindingSource::Trigger(Trigger::Right)),
+        Binding::new("fly_camera.rise", BindingSource::Trigger(Trigger::Left)).scaled(-1.0),
+    ],
+};
+
+pub(crate) const LOOK: Verb = Verb {
+    name: "fly_camera.look",
+    shape: VerbShape::Delta2,
+    bindings: &[Binding::held(
+        "fly_camera.look",
+        BindingSource::MouseMotion,
+        Button::Mouse(MouseButton::Left),
+    )],
+};
+
+pub(crate) const TURN: Verb = Verb {
+    name: "fly_camera.turn",
+    shape: VerbShape::Value2,
+    bindings: &[Binding::new("fly_camera.turn", BindingSource::Stick(Stick::Right)).dead_zone(0.15)],
+};
+
+pub(crate) struct Controls {
+    verbs: [VerbId; 4],
+    _context: Interest<ContextAsk>,
+    _cursor: Interest<CursorAsk>,
+}
 
 #[derive(Resource, Default)]
 pub(crate) enum Rig {
     #[default]
     Taking,
-    Holding,
+    Holding(Controls),
+}
+
+struct Steer {
+    moving: Vec2,
+    rising: f32,
+    looking: Vec2,
+    turning: Vec2,
+}
+
+impl Steer {
+    fn of(input: &Input, [moving, rising, looking, turning]: [VerbId; 4]) -> Self {
+        let unit = |value: f32| clamp(value, -1.0, 1.0);
+        let moved = input.value2(moving, Player::ONE);
+        let turned = input.value2(turning, Player::ONE);
+        Self {
+            moving: Vec2::new(unit(moved.x), unit(moved.y)),
+            rising: unit(input.value(rising, Player::ONE)),
+            looking: input.value2(looking, Player::ONE),
+            turning: Vec2::new(unit(turned.x), unit(turned.y)),
+        }
+    }
+
+    fn steered(&self) -> bool {
+        self.moving != Vec2::ZERO
+            || self.rising != 0.0
+            || self.looking != Vec2::ZERO
+            || self.turning != Vec2::ZERO
+    }
 }
 
 struct Flight {
@@ -39,11 +117,14 @@ impl Flight {
     }
 
     #[must_use]
-    fn turned(self, input: &MoveInput) -> Self {
+    fn turned(self, steer: &Steer, settings: &FlyCamera, real_seconds: f32) -> Self {
+        let turn = settings.turn_speed * real_seconds;
+        let sensitivity = settings.look_sensitivity;
         Self {
-            yaw: (self.yaw - input.look_right_pixels * SENSITIVITY) % std::f32::consts::TAU,
+            yaw: (self.yaw - steer.looking.x * sensitivity - steer.turning.x * turn)
+                % std::f32::consts::TAU,
             pitch: clamp(
-                self.pitch - input.look_down_pixels * SENSITIVITY,
+                self.pitch - steer.looking.y * sensitivity + steer.turning.y * turn,
                 -PITCH_LIMIT,
                 PITCH_LIMIT,
             ),
@@ -55,26 +136,14 @@ impl Flight {
     }
 }
 
-fn steered(input: &MoveInput) -> bool {
-    [
-        input.move_forward,
-        input.move_right,
-        input.move_up,
-        input.look_right_pixels,
-        input.look_down_pixels,
-    ]
-    .iter()
-    .any(|&value| value != 0.0)
-}
-
 pub(crate) fn fly(
     (time, input, settings, globals): (
         Res<FrameTime>,
-        Res<MoveInput>,
+        Res<Input>,
         Res<FlyCamera>,
         Res<GlobalTransforms>,
     ),
-    views: Res<Views>,
+    (views, mut contexts, mut cursor): (Res<Views>, ResMut<Contexts>, ResMut<CursorRequests>),
     mut rig: ResMut<Rig>,
     mut handover: Asks<HandOver>,
     mut moves: Moves<FlyCameraBrick>,
@@ -82,8 +151,14 @@ pub(crate) fn fly(
     let Some(camera) = views.main().map(|main| main.camera) else {
         return;
     };
-    match *rig {
+    let verbs = match &*rig {
+        Rig::Holding(controls) => controls.verbs,
         Rig::Taking => {
+            let [Some(moving), Some(rising), Some(looking), Some(turning)] =
+                [MOVE, RISE, LOOK, TURN].map(|verb| input.find(verb.name))
+            else {
+                return;
+            };
             handover.send(HandOver {
                 node: camera,
                 to: Mover {
@@ -91,12 +166,16 @@ pub(crate) fn fly(
                     pace: Pace::Frame,
                 },
             });
-            *rig = Rig::Holding;
+            *rig = Rig::Holding(Controls {
+                verbs: [moving, rising, looking, turning],
+                _context: contexts.ask(CONTEXT, CONTEXT, false),
+                _cursor: cursor.ask(CONTEXT, CursorMode::Drag),
+            });
             return;
         }
-        Rig::Holding => {}
-    }
-    if !steered(&input) {
+    };
+    let steer = Steer::of(&input, verbs);
+    if !steer.steered() {
         return;
     }
     let clock = globals.word(camera).map_or(Clock::Real, |word| word.clock);
@@ -104,11 +183,11 @@ pub(crate) fn fly(
     let Some(mut transform) = moves.get_mut(camera) else {
         return;
     };
-    let flight = Flight::of(transform.rotation).turned(&input);
+    let flight = Flight::of(transform.rotation).turned(&steer, &settings, time.real_seconds as f32);
     let rotation = flight.rotation();
-    let movement = rotation * Vec3::NEG_Z * input.move_forward
-        + rotation * Vec3::X * input.move_right
-        + Vec3::Y * input.move_up;
+    let movement = rotation * Vec3::NEG_Z * steer.moving.y
+        + rotation * Vec3::X * steer.moving.x
+        + Vec3::Y * steer.rising;
     transform.translation += movement.normalize_or_zero() * seconds * settings.speed;
     transform.rotation = rotation;
 }

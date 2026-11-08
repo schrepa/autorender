@@ -1,12 +1,12 @@
 use crate::app_host::{AppHost, Focus};
 use crate::game::Game;
 use crate::host::{
-    FrameInput, FrameLoop, FramePhase, HostPause, InputGatherer, InputSource, JobId, JobOrder,
-    JobScheduler, LevelLoad, LevelStep,
+    DeviceGatherer, FrameLoop, FramePhase, HostPause, InputSource, JobId, JobOrder, JobScheduler,
+    LevelLoad, LevelStep,
 };
 use engine_core::{
-    BrickList, CursorMode, CursorRequests, Engine, ErrorCode, Level, MenuInput, Pause,
-    Progress,
+    BrickList, CursorMode, CursorRequests, Engine, ErrorCode, Gathered, Input, Level, MouseButton,
+    Pause, Progress, TouchPhase,
 };
 use engine_render::RenderTarget;
 use engine_scene::SceneFiles;
@@ -14,7 +14,7 @@ use engine_scene::SceneFiles;
 pub struct GameHost<G: Game> {
     app: AppHost,
     game: G,
-    input: InputGatherer,
+    input: DeviceGatherer,
     frames: FrameLoop,
     jobs: JobScheduler,
     level: LevelLoad,
@@ -31,7 +31,6 @@ impl<G: Game> GameHost<G> {
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> crate::Result<Self> {
         engine_panic::install();
-        let input = InputGatherer::new(G::ACTIONS, G::AXES, G::MOVE_KEYS, G::MENU_KEYS)?;
         let mut game = None;
         let app = AppHost::launch(target, bricks, |engine| {
             game = Some(build(engine).map_err(Into::into)?);
@@ -42,14 +41,13 @@ impl<G: Game> GameHost<G> {
         #[cfg(feature = "dev")]
         let development = {
             let mut development = crate::dev_host::DevHost::default();
-            development.gatherer = Some(input.clone());
             G::inspectors(&mut crate::game::Inspectors::new(&mut development.tools));
             development
         };
         Ok(Self {
             app,
             game,
-            input,
+            input: DeviceGatherer::default(),
             frames: FrameLoop::default(),
             jobs: JobScheduler::default(),
             level: LevelLoad::default(),
@@ -162,9 +160,8 @@ impl<G: Game> GameHost<G> {
         let source = self.input_source();
         self.app.follow_focus(source);
         let input = self.frame_input(source);
-        self.app.set_gathered(&input);
+        self.app.accept(input);
         self.game.before_frame(self.app.engine_mut());
-        self.app.accept(&input);
         let framed = self.app.frame(timestamp, width, height);
         self.apply_cursor();
         framed
@@ -178,27 +175,27 @@ impl<G: Game> GameHost<G> {
         InputSource::Player
     }
 
-    fn frame_input(&mut self, source: InputSource) -> FrameInput {
+    fn frame_input(&mut self, source: InputSource) -> Gathered {
         match source {
             InputSource::Agent => {
                 self.input.drop_edges();
                 self.agent_input()
             }
-            InputSource::Player => {
-                let seconds = self.app.engine().frame_time().real_seconds;
-                self.input.take(seconds as f32)
-            }
+            InputSource::Player => Gathered {
+                devices: self.input.take(),
+                driven: Vec::new(),
+            },
         }
     }
 
     #[cfg(feature = "dev")]
-    fn agent_input(&mut self) -> FrameInput {
+    fn agent_input(&mut self) -> Gathered {
         self.development.take_input()
     }
 
     #[cfg(not(feature = "dev"))]
-    fn agent_input(&mut self) -> FrameInput {
-        FrameInput::default()
+    fn agent_input(&mut self) -> Gathered {
+        Gathered::default()
     }
 
     pub fn pause(&mut self, pause: HostPause) {
@@ -262,13 +259,20 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn key(&mut self, code: &str, down: bool) -> bool {
-        let world = self.app.engine().app.world();
-        let wanted = world.resource::<MenuInput>().wanted;
-        self.input.key(code, down, wanted)
+        self.input.key(code, down);
+        self.app.engine().app.world().resource::<Input>().uses_key(code)
     }
 
-    pub fn look(&mut self, dx: f32, dy: f32) {
-        self.input.look(dx, dy);
+    pub fn mouse_button(&mut self, button: MouseButton, down: bool) -> bool {
+        self.input.mouse_button(button, down);
+        button == MouseButton::Left
+            || self
+                .app
+                .engine()
+                .app
+                .world()
+                .resource::<Input>()
+                .uses_mouse(button)
     }
 
     pub fn motion(&mut self, dx: f32, dy: f32) {
@@ -287,8 +291,12 @@ impl<G: Game> GameHost<G> {
         self.input.wheel(right_notches, up_notches);
     }
 
-    pub fn pad(&mut self, buttons: u32, axes: [f32; 6]) {
-        self.input.pad(buttons, axes);
+    pub fn pad(&mut self, index: u32, buttons: u32, axes: [f32; 6]) {
+        self.input.pad(index, buttons, axes);
+    }
+
+    pub fn touch(&mut self, id: u32, x: f32, y: f32, phase: TouchPhase) {
+        self.input.touch(id, x, y, phase);
     }
 
     pub fn cursor_mode(&self) -> CursorMode {

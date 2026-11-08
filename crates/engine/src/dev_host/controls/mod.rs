@@ -6,7 +6,7 @@ use engine_dev::{BrowserControl, Control};
 use engine_scene::SceneInstance;
 use serde_json::Value;
 
-use super::{DevHost, Done, InputBatch, Looped};
+use super::{DevHost, Done, Looped};
 use crate::app_host::AppHost;
 
 pub(super) fn run(
@@ -55,33 +55,20 @@ fn host_control(
             size,
         ),
         BrowserControl::Input {
-            forward,
-            right,
-            up,
-            look_right_pixels,
-            look_down_pixels,
+            verbs,
+            player,
             keys,
-            pointer_pixels,
-            pointer_delta_pixels,
-            wheel_up_notches,
-            wheel_right_notches,
-            axes,
-            menu,
+            pointer,
+            touches,
         } => input::batch(
             host,
-            InputBatch {
-                forward,
-                right,
-                up,
-                look_right_pixels,
-                look_down_pixels,
+            app,
+            input::Asked {
+                verbs,
+                player,
                 keys,
-                pointer_pixels,
-                pointer_delta_pixels,
-                wheel_up_notches,
-                wheel_right_notches,
-                axes,
-                menu,
+                pointer,
+                touches,
             },
         ),
         BrowserControl::Step { ticks } => input::step(host, app, ticks, size),

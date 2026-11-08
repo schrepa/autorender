@@ -1,75 +1,162 @@
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 
 use super::super::{DevHost, InputBatch};
 use crate::app_host::AppHost;
-use crate::host::{FrameInput, KEYS};
-use engine_core::{AxisInput, Error, ErrorCode, MenuInput, MoveInput, PointerInput};
-use engine_dev::MenuPress;
+use engine_core::{Driven, Error, ErrorCode, Gathered, Input, MouseButton, Player, VerbShape};
 use engine_dev::bounds;
 use engine_dev::results::{InputResult, StepResult, result};
-use engine_settings::Setting;
+use engine_dev::{PointerControl, TouchControl};
+use engine_settings::{Expected, InvalidSetting, Setting};
 use glam::Vec2;
 
-pub(super) fn batch(host: &mut DevHost, input: InputBatch) -> Result<Value, Error> {
-    let [pointer_x, pointer_y] = input.pointer_pixels.unwrap_or_default();
-    let [delta_x, delta_y] = input.pointer_delta_pixels;
-    let fields = [
-        (input.forward, "forward", bounds::AXIS),
-        (input.right, "right", bounds::AXIS),
-        (input.up, "up", bounds::AXIS),
-        (input.look_right_pixels, "look_right_pixels", bounds::TURN),
-        (input.look_down_pixels, "look_down_pixels", bounds::TURN),
-        (pointer_x, "pointer_pixels", bounds::COORDINATE),
-        (pointer_y, "pointer_pixels", bounds::COORDINATE),
-        (delta_x, "pointer_delta_pixels", bounds::TURN),
-        (delta_y, "pointer_delta_pixels", bounds::TURN),
-        (input.wheel_up_notches, "wheel_up_notches", bounds::TURN),
-        (
-            input.wheel_right_notches,
-            "wheel_right_notches",
-            bounds::TURN,
-        ),
-    ];
-    let axes = input.axes.iter().map(|&axis| (axis, "axes", bounds::AXIS));
-    for (value, field, rule) in fields.into_iter().chain(axes) {
-        if let Err(invalid) = value.check(field, rule) {
-            return Err(invalid.error(ErrorCode::InvalidInput, "$"));
+pub(super) struct Asked {
+    pub(super) verbs: BTreeMap<String, Value>,
+    pub(super) player: u8,
+    pub(super) keys: Vec<String>,
+    pub(super) pointer: PointerControl,
+    pub(super) touches: Vec<TouchControl>,
+}
+
+pub(super) fn batch(host: &mut DevHost, app: &AppHost, asked: Asked) -> Result<Value, Error> {
+    let input = app.engine.app.world().resource::<Input>();
+    let player = player_of(input, asked.player)?;
+    let driven = verbs_of(input, player, &asked.verbs)?;
+    checked(&asked)?;
+    let agent = &mut host.agent;
+    let held: Vec<String> = agent.keys_held().map(str::to_owned).collect();
+    for key in held.iter().filter(|key| !asked.keys.contains(key)) {
+        agent.key(key, false);
+    }
+    for key in &asked.keys {
+        agent.key(key, true);
+    }
+    let pressed: Vec<MouseButton> = agent.mouse_held().collect();
+    for &button in pressed.iter().filter(|button| !asked.pointer.buttons.contains(button)) {
+        agent.mouse_button(button, false);
+    }
+    for &button in &asked.pointer.buttons {
+        agent.mouse_button(button, true);
+    }
+    match asked.pointer.position_pixels {
+        Some([x, y]) => agent.pointer(x, y),
+        None => agent.pointer_left(),
+    }
+    let [dx, dy] = asked.pointer.motion_pixels;
+    agent.motion(dx, dy);
+    let [right, up] = asked.pointer.wheel_notches;
+    agent.wheel(right, up);
+    for touch in &asked.touches {
+        let [x, y] = touch.position_pixels;
+        agent.touch(touch.id, x, y, touch.phase);
+    }
+    let mut batch = InputBatch::default();
+    for (shape, drive) in driven {
+        match shape {
+            VerbShape::Delta | VerbShape::Delta2 => batch.once.push(drive),
+            VerbShape::Button | VerbShape::Value | VerbShape::Value2 => batch.held.push(drive),
         }
     }
-    if input.axes.len() > bounds::MAX_AXES {
-        return Err(Error::new(ErrorCode::InvalidInput, "$.axes")
-            .at_most(bounds::MAX_AXES as u64)
-            .got(input.axes.len()));
-    }
-    for (at, key) in input.keys.iter().enumerate() {
-        if !KEYS.contains(&key.as_str()) {
-            return Err(Error::new(ErrorCode::InvalidInput, format!("$.keys[{at}]"))
-                .got(key.as_str())
-                .variants(KEYS.iter().copied()));
-        }
-    }
-    if let Some(gatherer) = &mut host.gatherer {
-        for key in host
-            .input
-            .keys
-            .iter()
-            .filter(|key| !input.keys.contains(key))
-        {
-            gatherer.agent_key(key, false);
-        }
-        for key in input
-            .keys
-            .iter()
-            .filter(|key| !host.input.keys.contains(key))
-        {
-            gatherer.agent_key(key, true);
-        }
-    }
-    host.input = input;
+    host.input = batch;
     Ok(result::input(InputResult {
         temporary: true,
         applies_on: "next_step",
     }))
+}
+
+fn player_of(input: &Input, asked: u8) -> Result<Player, Error> {
+    let players = input.players();
+    if (1..=players).contains(&asked) {
+        return Ok(Player(asked));
+    }
+    Err(Error::new(ErrorCode::InvalidInput, "$.player")
+        .range(1.0, f64::from(players))
+        .got(asked))
+}
+
+fn verbs_of(
+    input: &Input,
+    player: Player,
+    verbs: &BTreeMap<String, Value>,
+) -> Result<Vec<(VerbShape, Driven)>, Error> {
+    let mut driven = Vec::with_capacity(verbs.len());
+    for (name, value) in verbs {
+        let path = format!("$.verbs.{name}");
+        let Some(shape) = input.find(name).and_then(|verb| input.shape(verb)) else {
+            return Err(Error::new(ErrorCode::UnknownVariant, path)
+                .got(name.as_str())
+                .variants(input.names()));
+        };
+        let Some(level) = level_of(shape, value) else {
+            return Err(Error::new(ErrorCode::InvalidInput, path)
+                .expected(expected_of(shape))
+                .got(value));
+        };
+        for part in level.to_array() {
+            part.check("value", bounds::TURN).map_err(|invalid| Error {
+                path: path.clone(),
+                ..invalid.error(ErrorCode::InvalidInput, "$")
+            })?;
+        }
+        driven.push((
+            shape,
+            Driven {
+                player,
+                verb: name.clone(),
+                value: level,
+            },
+        ));
+    }
+    Ok(driven)
+}
+
+fn level_of(shape: VerbShape, value: &Value) -> Option<Vec2> {
+    let number = |value: &Value| value.as_f64().map(|number| number as f32);
+    match (shape, value) {
+        (VerbShape::Button, Value::Bool(down)) => Some(Vec2::new(f32::from(u8::from(*down)), 0.0)),
+        (VerbShape::Button | VerbShape::Value | VerbShape::Delta, value) => {
+            Some(Vec2::new(number(value)?, 0.0))
+        }
+        (VerbShape::Value2 | VerbShape::Delta2, Value::Array(parts)) => match parts.as_slice() {
+            [x, y] => Some(Vec2::new(number(x)?, number(y)?)),
+            _ => None,
+        },
+        (VerbShape::Value2 | VerbShape::Delta2, _) => None,
+    }
+}
+
+fn expected_of(shape: VerbShape) -> Expected {
+    match shape {
+        VerbShape::Button => Expected::Boolean,
+        VerbShape::Value | VerbShape::Delta => Expected::Number,
+        VerbShape::Value2 | VerbShape::Delta2 => Expected::Array,
+    }
+}
+
+fn checked(asked: &Asked) -> Result<(), Error> {
+    let refused = |invalid: InvalidSetting| invalid.error(ErrorCode::InvalidInput, "$");
+    for (at, key) in asked.keys.iter().enumerate() {
+        if !engine_core::is_id(key) {
+            return Err(Error::new(ErrorCode::InvalidInput, format!("$.keys[{at}]"))
+                .expected(Expected::Id)
+                .got(key.as_str()));
+        }
+    }
+    let pointer = &asked.pointer;
+    pointer
+        .position_pixels
+        .check("position_pixels", bounds::COORDINATE)
+        .and_then(|()| pointer.motion_pixels.check("motion_pixels", bounds::TURN))
+        .and_then(|()| pointer.wheel_notches.check("wheel_notches", bounds::TURN))
+        .map_err(|invalid| refused(invalid.within("pointer")))?;
+    for (at, touch) in asked.touches.iter().enumerate() {
+        touch
+            .position_pixels
+            .check("position_pixels", bounds::COORDINATE)
+            .map_err(|invalid| refused(invalid.within("touches").indexed("touches", at)))?;
+    }
+    Ok(())
 }
 
 pub(super) fn step(
@@ -80,8 +167,7 @@ pub(super) fn step(
 ) -> Result<Value, Error> {
     engine_core::check_dev_ticks(ticks)?;
     let input = host.take_input();
-    app.set_gathered(&input);
-    app.accept(&input);
+    app.accept(input);
     app.dev_step(ticks, width, height)
         .map_err(|error| Error::new(ErrorCode::RenderFailed, "$").got(error))?;
     Ok(result::step(StepResult {
@@ -92,61 +178,17 @@ pub(super) fn step(
 
 impl InputBatch {
     pub(crate) fn drop_edges(&mut self) {
-        self.look_right_pixels = 0.0;
-        self.look_down_pixels = 0.0;
-        self.pointer_delta_pixels = [0.0; 2];
-        self.wheel_up_notches = 0.0;
-        self.wheel_right_notches = 0.0;
-        self.menu.clear();
+        self.once.clear();
     }
 }
 
 impl DevHost {
-    pub(crate) fn take_input(&mut self) -> FrameInput {
-        let gathered = self
-            .gatherer
-            .as_mut()
-            .map(|gatherer| gatherer.take(0.0))
-            .unwrap_or_default();
-        let batch = &mut self.input;
-        let mut axes = *gathered.axes.values();
-        for (axis, &value) in axes.iter_mut().zip(&batch.axes) {
-            *axis += value;
+    pub(crate) fn take_input(&mut self) -> Gathered {
+        let mut driven = self.input.held.clone();
+        driven.append(&mut self.input.once);
+        Gathered {
+            devices: self.agent.take(),
+            driven,
         }
-        let menu = |press: MenuPress| batch.menu.contains(&press);
-        let input = FrameInput {
-            state: MoveInput {
-                move_forward: batch.forward + gathered.state.move_forward,
-                move_right: batch.right + gathered.state.move_right,
-                move_up: batch.up + gathered.state.move_up,
-                look_right_pixels: batch.look_right_pixels,
-                look_down_pixels: batch.look_down_pixels,
-            },
-            held: gathered.held,
-            pressed: gathered.pressed,
-            released: gathered.released,
-            pointer: PointerInput {
-                position_pixels: batch.pointer_pixels.map(Vec2::from),
-                delta_pixels: Vec2::from(batch.pointer_delta_pixels),
-                wheel_up_notches: batch.wheel_up_notches,
-                wheel_right_notches: batch.wheel_right_notches,
-                inside: batch.pointer_pixels.is_some(),
-                held: gathered.pointer.held,
-                pressed: gathered.pointer.pressed,
-                released: gathered.pointer.released,
-            },
-            axes: AxisInput::of(axes),
-            menu: MenuInput {
-                up: gathered.menu.up || menu(MenuPress::Up),
-                down: gathered.menu.down || menu(MenuPress::Down),
-                left: gathered.menu.left || menu(MenuPress::Left),
-                right: gathered.menu.right || menu(MenuPress::Right),
-                accept: gathered.menu.accept || menu(MenuPress::Accept),
-                back: gathered.menu.back || menu(MenuPress::Back),
-                wanted: false,
-            },
-        };
-        batch.drop_edges();
-        input
     }
 }

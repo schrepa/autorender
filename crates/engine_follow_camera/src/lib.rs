@@ -10,7 +10,7 @@ mod smoke;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source, settings,
+    Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source, Verbs, settings,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -28,6 +28,8 @@ settings! {
         pub pitch_max: f32 = 0.8 => range(-1.5, 1.5),
         pub smoothing: f32 = 0.1 => range(0.0, 10.0),
         pub collision_radius: f32 = 0.25 => range(0.01, 10.0),
+        pub look_sensitivity: f32 = 0.003 => range(0.0, 1.0),
+        pub turn_speed: f32 = 1.8 => range(0.0, 100.0),
     }
 }
 
@@ -54,6 +56,8 @@ impl Brick for FollowCameraBrick {
             .settings::<FollowCamera>()
             .resource::<camera::Orbit>()
             .resource::<camera::Shake>()
+            .join::<Verbs>(camera::LOOK, None)
+            .join::<Verbs>(camera::TURN, None)
             .join::<SceneComponents>(
                 ComponentKind::of::<CameraTarget>("camera_target")
                     .schema(target_schema),
