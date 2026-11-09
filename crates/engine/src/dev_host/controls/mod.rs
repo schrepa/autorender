@@ -78,7 +78,6 @@ fn host_control(
         | BrowserControl::Pause { .. }
         | BrowserControl::Resume { .. }
         | BrowserControl::Probe { .. }
-        | BrowserControl::Jobs { .. }
         | BrowserControl::Game { .. }
         | BrowserControl::Reload { .. }
         | BrowserControl::Environment(_)

@@ -1,20 +1,17 @@
 use engine::prelude::*;
 use engine::scene::SceneFiles;
 use engine::{Error, ErrorCode};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::land;
-use crate::options::{CONTROLS, WATCH_BODIES};
+use crate::options::CONTROLS;
 use crate::scene::{self, set};
 use crate::{Options, RockMaps};
-
-const APPLIED: [&str; 4] = ["lod", "effects", "stand", WATCH_BODIES];
 
 pub struct Highlands {
     options: Options,
     scene: Option<SceneInstance>,
     start: Option<(Transform, Camera)>,
-    reflections: Option<Value>,
     land: bool,
 }
 
@@ -39,7 +36,6 @@ impl Highlands {
             options,
             scene: None,
             start: None,
-            reflections: None,
             land: false,
         }
     }
@@ -50,20 +46,14 @@ impl Highlands {
         document: &SceneDocument,
         flying: bool,
     ) -> engine::Result<()> {
-        let options = self.options.clone();
-        let (instance, reflections) =
-            document.instantiate_then(world, &SceneFiles::default(), |world, _| {
-                scene::furnish(world, document, &options, flying)
-            })?;
+        let (instance, ()) = document.instantiate_then(world, &SceneFiles::default(), |world, _| {
+            scene::furnish(world, document, flying)
+        })?;
         if let Some(previous) = self.scene.replace(instance) {
             previous.despawn(world);
         }
         self.start = scene::start(world);
-        self.reflections = reflections;
-        for name in APPLIED {
-            self.apply(world, &options, name)?;
-        }
-        Ok(())
+        watch_bodies(world, &self.options)
     }
 
     pub fn control(&mut self, engine: &mut Engine, name: &str, value: &str) -> engine::Result<()> {
@@ -74,27 +64,9 @@ impl Highlands {
         }
         let mut options = self.options.clone();
         options.set(name, value)?;
-        self.apply(engine.app.world_mut(), &options, name)?;
+        watch_bodies(engine.app.world_mut(), &options)?;
         self.options = options;
         Ok(())
-    }
-
-    fn apply(&self, world: &mut World, options: &Options, name: &str) -> engine::Result<()> {
-        match name {
-            "lod" | "impostors" => {
-                set(world, "detail.enabled", json!(options.lod))?;
-                set(world, "impostors.enabled", json!(options.impostors))
-            }
-            "effects" => scene::set_effects(world, &options.effects, self.reflections.as_ref()),
-            "stand" => options
-                .stand
-                .as_deref()
-                .map_or(Ok(()), |place| scene::stand(world, place)),
-            WATCH_BODIES => {
-                land::control(world, json!({"watch_bodies": {"on": options.watch_bodies}}))
-            }
-            _ => Ok(()),
-        }
     }
 
     fn load(&mut self, world: &mut World, source: &str) -> engine::Result<()> {
@@ -131,6 +103,10 @@ engine::__if_dev! {
     }
 }
 
+fn watch_bodies(world: &mut World, options: &Options) -> engine::Result<()> {
+    land::control(world, json!({"watch_bodies": {"on": options.watch_bodies}}))
+}
+
 fn report_failure(event: &str, error: &Error) {
     let record = json!({
         "event": event,
@@ -157,13 +133,7 @@ impl Game for Highlands {
     }
 
     fn content(&self, _engine: &Engine) -> Option<Vec<u8>> {
-        let options = &self.options;
-        let mut content = crate::SOURCE.hash().to_vec();
-        content.extend(options.bodies.to_le_bytes());
-        content.extend(options.effects.as_bytes());
-        content.push(0);
-        content.extend([u8::from(options.lod), u8::from(options.impostors)]);
-        Some(content)
+        Some(crate::SOURCE.hash().to_vec())
     }
 
     fn reload_scene(

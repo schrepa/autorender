@@ -1,12 +1,10 @@
-use engine_core::{Distribution, PresentationState};
+use engine_core::PresentationState;
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::{InspectorDescriptor, InspectorKind};
 
 pub const UNTYPED_RESULTS: &[&str] = &["benchmark", "reload"];
-
-pub const HOST_VERBS: &[&str] = &["check"];
 
 macro_rules! results {
     ($($op:ident: $result:ty),* $(,)?) => {
@@ -33,7 +31,6 @@ results! {
     status: crate::results::StatusResult,
     assets: crate::results::AssetsResult,
     digest: crate::results::DigestResult,
-    distribution: crate::results::DistributionResult,
     present: crate::results::PresentResult,
     camera: crate::results::CameraResult,
     render: crate::results::RenderResult,
@@ -46,11 +43,8 @@ results! {
     game: crate::results::GameResult,
     pause: crate::results::StatusResult,
     resume: crate::results::StatusResult,
-    jobs: crate::results::StatusResult,
     capture: crate::results::CaptureResult,
     profile: crate::results::ProfileResult,
-    explain: crate::results::ExplainResult,
-    watch: crate::results::WatchResult,
 }
 
 #[derive(Serialize)]
@@ -270,7 +264,6 @@ pub struct DescribedBrick {
     pub settings: Vec<DescribedEntry>,
     pub stats: Vec<DescribedEntry>,
     pub operations: Vec<DescribedEntry>,
-    pub explains: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -422,42 +415,6 @@ pub struct ProfiledBrick {
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct ExplainResult {
-    pub about: &'static str,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        schemars(with = "Vec<serde_json::Map<String, Value>>")
-    )]
-    pub records: Vec<crate::explain::ExplainRecord>,
-    pub total: usize,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct WatchResult {
-    pub frames: u32,
-    pub interval_ms: f64,
-    pub records: u32,
-    pub temporary: bool,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct WatchRecord {
-    pub frame: Option<String>,
-    pub tick: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stat: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub entity: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub component: Option<String>,
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(with = "Option<Value>"))]
-    pub value: Value,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct ProbeResult {
     #[serde(flatten)]
     pub probe: serde_json::Map<String, Value>,
@@ -499,10 +456,4 @@ pub struct KeptArtifact {
 pub struct GameResult {
     pub game: String,
     pub result: Value,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct DistributionResult {
-    pub distribution: Option<Distribution>,
 }

@@ -649,8 +649,6 @@
           "status",
           "assets",
           "digest",
-          "distribution",
-          "time_state",
           "moves",
           "views",
           "audio_voices",
@@ -660,7 +658,6 @@
           "collision_events",
           "terrain_sweep",
           "collider",
-          "probed_pixel",
           "mesh_drawn",
           "meshes_listing",
           "nav_path",
@@ -698,10 +695,7 @@
           "query",
           "control",
           "capture",
-          "profile",
-          "explain",
-          "watch",
-          "check"
+          "profile"
         ]
       },
       "code": "unknown_variant",
@@ -1312,7 +1306,7 @@
       "steepest": 0.016481399536132812,
       "tunnels": 1
     },
-    "bakes": "f5cde58d37929bd2",
+    "bakes": "84bc7e212a2034a4",
     "bounce": {
       "blocks": 1024,
       "detailed blocks": 474,
@@ -1336,7 +1330,7 @@
       ],
       "texels": 65536
     },
-    "pack": "e20a2ed9922c1ead",
+    "pack": "256e93a88a50c929",
     "pack records": 46,
     "portals 0/0/0": "fb26e1b9f5bd9fd8",
     "portals 0/0/1": "29e88506dde27d87",

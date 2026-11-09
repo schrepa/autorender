@@ -5,7 +5,6 @@
 
 include!(concat!(env!("OUT_DIR"), "/bricks/game.rs"));
 
-mod bodies;
 mod cave;
 mod content;
 mod control;
@@ -37,7 +36,6 @@ impl Brick for HighlandsBrick {
             .stats::<HighlandsStats>()
             .resource::<content::Content>()
             .resource::<cave::Cave>()
-            .resource::<bodies::Bodies>()
             .resource::<views::Views>()
             .resource::<views::BodiesView>()
             .operation::<control::HighlandsControl>()
@@ -47,11 +45,9 @@ impl Brick for HighlandsBrick {
                     content::arrive,
                     views::watch,
                     cave::open,
-                    bodies::place,
                     content::publish,
                 ),
             )
-            .systems(Schedule::FixedPreSimulation, bodies::wait_for_ground)
             .systems(Schedule::WorldSync, views::look);
     }
 }

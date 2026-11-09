@@ -10,7 +10,6 @@ autoexamples = false
 default = []
 dev = ["dep:engine_dev", "dep:wgpu", "engine_core/dev", "engine_render/dev", "schema"]
 profiling = ["engine_profile/enabled", "engine_core/profiling", "engine_render/profiling"]
-attribution = ["engine_core/attribution"]
 schema = ["engine_core/schema", "engine_settings/schema", "engine_panic/schema", "engine_scene/schema", "dep:schemars"]
 
 [dependencies]

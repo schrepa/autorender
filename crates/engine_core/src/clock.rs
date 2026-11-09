@@ -1,12 +1,10 @@
 use std::collections::BTreeSet;
 
-use bevy_ecs::prelude::{ResMut, Resource};
-use bevy_ecs::system::SystemParamItem;
+use bevy_ecs::prelude::Resource;
 use bevy_ecs::world::World;
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde::Serialize;
 
-use crate::{AssetBudget, Clock, Error, ErrorCode, List, Operation, settings};
+use crate::{AssetBudget, Clock, List, settings};
 
 #[derive(Debug, Clone, Copy)]
 pub struct EngineConfig {
@@ -64,7 +62,6 @@ impl FrameTime {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PauseReason {
-    Agent,
     Game,
     Focus,
     Hidden,
@@ -78,7 +75,7 @@ impl PauseReason {
     pub fn stops_frames(self) -> bool {
         match self {
             Self::Hidden | Self::Suspended => true,
-            Self::Agent | Self::Game | Self::Focus | Self::Preparing | Self::Brick(_) => false,
+            Self::Game | Self::Focus | Self::Preparing | Self::Brick(_) => false,
         }
     }
 }
@@ -135,88 +132,11 @@ impl Default for TimeScale {
     }
 }
 
-impl TimeScale {
-    pub fn check(self) -> Result<Self, Error> {
-        if self.0.is_finite() && self.0 >= 0.0 {
-            Ok(self)
-        } else {
-            Err(Error::new(ErrorCode::InvalidValue, "$.scale")
-                .range(0.0, f64::from(f32::MAX))
-                .got(self.0))
-        }
-    }
-}
-
 pub(crate) fn game_rate(pause: &Pause, scale: TimeScale) -> f64 {
     if pause.paused() || !(scale.0.is_finite() && scale.0 >= 0.0) {
         0.0
     } else {
         f64::from(scale.0)
-    }
-}
-
-fn time_view(pause: &Pause, scale: TimeScale) -> Value {
-    let reasons: Vec<PauseReason> = pause.reasons().collect();
-    json!({"time_paused": pause.paused(), "pause_reasons": reasons, "time_scale": scale.0})
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct TimeRequest {
-    #[serde(default)]
-    paused: Option<bool>,
-    #[serde(default)]
-    scale: Option<f32>,
-}
-
-pub(crate) struct TimeOperation;
-
-impl Operation for TimeOperation {
-    const NAME: &'static str = "time";
-    type Params = (ResMut<'static, Pause>, ResMut<'static, TimeScale>);
-    type Request = TimeRequest;
-
-    fn run(
-        (mut pause, mut scale): SystemParamItem<'_, '_, Self::Params>,
-        request: TimeRequest,
-    ) -> Result<Value, Error> {
-        let wanted = request.scale.map(TimeScale).map(TimeScale::check).transpose()?;
-        if let Some(wanted) = wanted {
-            *scale = wanted;
-        }
-        match request.paused {
-            Some(true) if !pause.holds(PauseReason::Agent) => {
-                pause.add(PauseReason::Agent);
-            }
-            Some(false) if pause.holds(PauseReason::Agent) => {
-                pause.remove(PauseReason::Agent);
-            }
-            Some(_) | None => {}
-        }
-        Ok(time_view(&pause, *scale))
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct TimeStateRequest {}
-
-pub(crate) struct TimeState;
-
-impl Operation for TimeState {
-    const NAME: &'static str = "time_state";
-    const CONTROL: bool = false;
-    type Params = (
-        bevy_ecs::prelude::Res<'static, Pause>,
-        bevy_ecs::prelude::Res<'static, TimeScale>,
-    );
-    type Request = TimeStateRequest;
-
-    fn run(
-        (pause, scale): SystemParamItem<'_, '_, Self::Params>,
-        _: TimeStateRequest,
-    ) -> Result<Value, Error> {
-        Ok(time_view(&pause, *scale))
     }
 }
 

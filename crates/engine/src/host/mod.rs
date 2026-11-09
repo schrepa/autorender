@@ -11,7 +11,7 @@ mod resolution;
 mod scene_load;
 mod settings;
 
-pub use crate::app_host::{TerrainClock, now_ms};
+pub use crate::app_host::{JobClock, now_ms};
 pub use adapter::{AdapterStatus, vendor};
 pub use engine_core::{
     Distribution, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobMessage, JobRef, JobRequest, JobShare,

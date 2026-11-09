@@ -67,7 +67,14 @@ impl Options {
                 continue;
             }
             match argument.name.as_str() {
-                "--source" => options.source = Some(arguments.value(&argument)?.into()),
+                "--source" => {
+                    let path: PathBuf = arguments.value(&argument)?.into();
+                    #[cfg(feature = "dev")]
+                    {
+                        options.host.settings.source = Some(path.clone());
+                    }
+                    options.source = Some(path);
+                }
                 "--without" => options.without = arguments.value(&argument)?,
                 _ => return Err(argument.unknown()),
             }
@@ -110,14 +117,11 @@ impl Options {
         let bricks = listed(&self.without, "--without")?;
         #[cfg(feature = "dev")]
         if self.host.dev {
-            let mut session = self
+            return self
                 .host
                 .dev_session(bricks, |engine: &mut Engine| self.build(engine))?
-                .parameters(parameters());
-            if let Some(path) = &self.source {
-                session = session.source(path);
-            }
-            return session.run();
+                .parameters(parameters())
+                .run();
         }
         self.host.run("Engine Player", bricks, |engine: &mut Engine| self.build(engine))
     }

@@ -48,7 +48,6 @@ pub fn reply(world: &World) -> Result<Value, String> {
         serialized(schemars::schema_for!(crate::Step)),
         serialized(schemars::schema_for!(crate::Outcome)),
         serialized(schemars::schema_for!(crate::HostContext)),
-        serialized(schemars::schema_for!(crate::results::WatchRecord)),
     ] {
         let mut theirs = Map::new();
         let (name, schema) = definition_of(schema, &mut theirs);
@@ -264,10 +263,7 @@ fn typed_results(
     problems: &mut Vec<String>,
 ) {
     let mut ops: Vec<&str> = Verb::names()
-        .filter(|verb| {
-            ![Verb::Query.name(), Verb::Control.name()].contains(verb)
-                && !crate::results::HOST_VERBS.contains(verb)
-        })
+        .filter(|verb| ![Verb::Query.name(), Verb::Control.name()].contains(verb))
         .collect();
     ops.extend(
         queries
@@ -309,9 +305,6 @@ fn verb_schema(registry: &Registry, verb: Verb) -> Value {
         Verb::Control => control_schema(registry),
         Verb::Capture => enveloped(verb, schemars::schema_for!(protocol::CaptureRequest)),
         Verb::Profile => enveloped(verb, schemars::schema_for!(protocol::ProfileRequest)),
-        Verb::Explain => enveloped(verb, schemars::schema_for!(protocol::ExplainQuestion)),
-        Verb::Watch => enveloped(verb, schemars::schema_for!(protocol::WatchRequest)),
-        Verb::Check => enveloped(verb, schemars::schema_for!(protocol::CheckRequest)),
     }
 }
 

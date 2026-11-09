@@ -1,77 +1,108 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use engine_checks::stages::Stage;
+use engine_checks::stages::{Changes, Stage};
 use engine_checks::tools::clippy_free;
 
 use crate::{
-    pipeline::{QUICK, build_wasm, install_web_dependencies},
+    pipeline::{build_wasm, install_web_dependencies},
     process::{NPM, WASM_TARGET, clients, run},
     rules::{RULES, repository, warnings_allowed},
 };
 
-pub(crate) const LINT: &[Stage<Path>] = &[
+const TOOLS: &str = "xtask_engine";
+
+const KINDS: &str = "kinds";
+
+struct Lint {
+    root: PathBuf,
+    changes: Changes,
+}
+
+const LINT: &[Stage<Lint>] = &[
     Stage {
         name: "kinds",
         needs: &[],
-        run: kinds,
+        covers: |lint| {
+            lint.changes.affects(KINDS) || lint.changes.any(|path| path.ends_with("Cargo.toml"))
+        },
+        run: |lint| run(&lint.root, "cargo", &["run", "-q", "--locked", "-p", KINDS]),
     },
     Stage {
         name: "policy",
         needs: &[],
-        run: |root| engine_checks::policy::check(repository(root)?, &RULES),
+        covers: |lint| lint.changes.any(|_| true),
+        run: |lint| engine_checks::policy::check(repository(&lint.root)?, &RULES),
     },
     Stage {
         name: "comments",
         needs: &[],
-        run: |root| engine_checks::comments::check(repository(root)?),
+        covers: |lint| lint.changes.any(engine_checks::comments::covers),
+        run: |lint| engine_checks::comments::check(repository(&lint.root)?),
     },
     Stage {
         name: "structure",
         needs: &[],
-        run: |root| engine_checks::structure::check(repository(root)?, &RULES.exceptions),
+        covers: |lint| lint.changes.any(engine_checks::files::source),
+        run: |lint| engine_checks::structure::check(repository(&lint.root)?, &RULES.exceptions),
     },
     Stage {
         name: "shader link",
         needs: &[],
+        covers: |lint| lint.changes.affects(TOOLS),
         run: shader_link,
     },
     Stage {
         name: "clippy",
         needs: &[],
-        run: clippy_workspace,
+        covers: |lint| !lint.changes.affected.is_empty(),
+        run: clippy_changed,
     },
     Stage {
         name: "clippy wasm",
         needs: &[],
+        covers: clients_changed,
         run: clippy_wasm,
     },
     Stage {
         name: "wasm",
         needs: &[],
-        run: |root| build_wasm(root, false, QUICK),
+        covers: clients_changed,
+        run: |lint| build_wasm(&lint.root, false),
     },
     Stage {
         name: "web dependencies",
         needs: &[],
-        run: install_web_dependencies,
+        covers: clients_changed,
+        run: |lint| install_web_dependencies(&lint.root),
     },
     Stage {
         name: "tsc",
         needs: &["wasm", "web dependencies"],
-        run: |root| run(root, NPM, &["run", "typecheck", "--prefix", "web"]),
+        covers: clients_changed,
+        run: |lint| run(&lint.root, NPM, &["run", "typecheck", "--prefix", "web"]),
     },
 ];
 
-fn kinds(root: &Path) -> Result<(), String> {
-    run(root, "cargo", &["run", "-q", "--locked", "-p", "kinds"])
+pub fn lint(root: &Path, arguments: &[String]) -> Result<(), String> {
+    let lint = Lint {
+        root: root.to_path_buf(),
+        changes: Changes::read(repository(root)?, arguments)?,
+    };
+    engine_checks::stages::run(&lint, LINT)
 }
 
-fn shader_link(root: &Path) -> Result<(), String> {
-    let folder = root.join("target").join("lint").join("shaders");
+fn clients_changed(lint: &Lint) -> bool {
+    clients()
+        .iter()
+        .any(|client| lint.changes.affects(&client.package))
+}
+
+fn shader_link(lint: &Lint) -> Result<(), String> {
+    let folder = lint.root.join("target").join("lint").join("shaders");
     crate::shader_report::run(
-        root,
+        &lint.root,
         &[
-            "--report".to_owned(),
+            "--out".to_owned(),
             folder.display().to_string(),
             "--no-rga".to_owned(),
         ],
@@ -85,28 +116,46 @@ fn clippy(root: &Path, selection: &[&str]) -> Result<(), String> {
     run(root, "cargo", &arguments)
 }
 
-fn clippy_workspace(root: &Path) -> Result<(), String> {
-    let free = warnings_allowed(root)?;
-    let mut selection = vec!["--workspace", "--all-targets"];
-    for package in &free {
-        selection.extend(["--exclude", *package]);
+fn clippy_changed(lint: &Lint) -> Result<(), String> {
+    let changes = &lint.changes;
+    let free: Vec<&str> = warnings_allowed(&lint.root)?
+        .into_iter()
+        .filter(|package| changes.affects(package))
+        .collect();
+    let mut selection = vec!["--all-targets"];
+    if changes.every {
+        selection.push("--workspace");
+        for package in &free {
+            selection.extend(["--exclude", *package]);
+        }
+    } else {
+        for package in &changes.affected {
+            if !free.contains(&package.as_str()) {
+                selection.extend(["-p", package.as_str()]);
+            }
+        }
     }
-    clippy(root, &selection)?;
-    clippy_free(root, &free, &["--all-targets"])
+    if changes.affected.len() > free.len() {
+        clippy(&lint.root, &selection)?;
+    }
+    clippy_free(&lint.root, &free, &["--all-targets"])
 }
 
-fn clippy_wasm(root: &Path) -> Result<(), String> {
-    let free = warnings_allowed(root)?;
+fn clippy_wasm(lint: &Lint) -> Result<(), String> {
+    let free = warnings_allowed(&lint.root)?;
     let (free_clients, strict): (Vec<&str>, Vec<&str>) = clients()
         .iter()
         .map(|client| client.package.as_str())
+        .filter(|package| lint.changes.affects(package))
         .partition(|package| free.contains(package));
     let options = ["--target", WASM_TARGET];
-    let mut selection: Vec<&str> = Vec::new();
-    for package in &strict {
-        selection.extend(["-p", *package]);
+    if !strict.is_empty() {
+        let mut selection: Vec<&str> = Vec::new();
+        for package in &strict {
+            selection.extend(["-p", *package]);
+        }
+        selection.extend(options);
+        clippy(&lint.root, &selection)?;
     }
-    selection.extend(options);
-    clippy(root, &selection)?;
-    clippy_free(root, &free_clients, &options)
+    clippy_free(&lint.root, &free_clients, &options)
 }

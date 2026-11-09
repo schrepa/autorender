@@ -1,7 +1,4 @@
-use crate::protocol::{
-    BenchmarkInput, BenchmarkMode, CaptureRequest, ExplainQuestion, MAX_WATCHED, ProfileRequest,
-    WatchRequest, bounds,
-};
+use crate::protocol::{BenchmarkInput, BenchmarkMode, CaptureRequest, ProfileRequest, bounds};
 use crate::results::{EnvironmentResult, ParentResult, result};
 use crate::{BrowserControl, EnvironmentControl, bounded};
 use bevy_ecs::prelude::World;
@@ -103,8 +100,7 @@ impl BrowserControl {
             | Self::Render { .. }
             | Self::Pause { .. }
             | Self::Resume { .. }
-            | Self::Parent { .. }
-            | Self::Jobs { .. } => {}
+            | Self::Parent { .. } => {}
         }
         Ok(())
     }
@@ -160,64 +156,6 @@ impl ProfileRequest {
             "$.interval_ms",
         )?;
         page_limit(self.top, "$.top")
-    }
-}
-
-impl ExplainQuestion {
-    pub fn validate(&self) -> Result<(), Error> {
-        match self {
-            Self::Frame { top, .. } => page_limit(*top, "$.top"),
-            Self::Entity { .. } | Self::Scene {} => Ok(()),
-        }
-    }
-}
-
-impl WatchRequest {
-    pub fn validate(&self) -> Result<(), Error> {
-        bounded(
-            self.frames,
-            bounds::FRAMES,
-            ErrorCode::OutOfRange,
-            "$.frames",
-        )?;
-        bounded(
-            self.interval_ms,
-            bounds::FRAME_INTERVAL,
-            ErrorCode::OutOfRange,
-            "$.interval_ms",
-        )?;
-        if self.stats.is_empty() && self.entities.is_empty() {
-            return Err(Error::new(ErrorCode::InvalidRequest, "$")
-                .expected(Expected::NonEmpty)
-                .variants(["stats", "entities"]));
-        }
-        for (field, count) in [
-            ("$.stats", self.stats.len()),
-            ("$.entities", self.entities.len()),
-        ] {
-            if count > MAX_WATCHED {
-                return Err(Error::new(ErrorCode::OutOfRange, field)
-                    .expected(Expected::Array)
-                    .at_most(MAX_WATCHED as u64)
-                    .got(count));
-            }
-        }
-        for (index, stat) in self.stats.iter().enumerate() {
-            let valid = !stat.is_empty()
-                && stat.len() <= 128
-                && stat.bytes().all(|byte| {
-                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_.".contains(&byte)
-                });
-            if !valid {
-                return Err(
-                    Error::new(ErrorCode::InvalidName, format!("$.stats[{index}]"))
-                        .expected(Expected::Path)
-                        .at_most(128)
-                        .got(stat),
-                );
-            }
-        }
-        Ok(())
     }
 }
 

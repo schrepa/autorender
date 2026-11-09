@@ -91,9 +91,7 @@ pub use engine_place::{
     Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory, ViewJitter,
     ViewLayer,
 };
-pub use engine_registry::{
-    AuthoredId, ExplainAsk, ExplainRecord, FrameFacts, RecordParity, fault_of,
-};
+pub use engine_registry::{AuthoredId, FrameFacts, RecordParity, fault_of};
 pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
@@ -113,7 +111,7 @@ pub use scene::*;
 pub use engine_place::{
     BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,
 };
-pub use section::{Cut, Explain, Operation, RESERVED_REPLY_KEYS, Section};
+pub use section::{Cut, Operation, RESERVED_REPLY_KEYS, Section};
 pub use shared::{FeedSettings, FrameBudgetSettings};
 pub use services::{
     Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, Placed,
@@ -280,20 +278,6 @@ fn core_entries(registry: &mut RegistryBuilder) {
         true,
         authoring::run_component,
     ));
-    registry.core_operation(OperationEntry::of::<
-        <clock::TimeOperation as Operation>::Params,
-    >(
-        clock::TimeOperation::NAME,
-        clock::TimeOperation::CONTROL,
-        bricks::run_operation::<clock::TimeOperation>,
-    ));
-    registry.core_operation(
-        OperationEntry::of::<<clock::TimeState as Operation>::Params>(
-            clock::TimeState::NAME,
-            clock::TimeState::CONTROL,
-            bricks::run_operation::<clock::TimeState>,
-        ),
-    );
     registry.core_operation(OperationEntry::of::<
         <moves::MovesState as Operation>::Params,
     >(

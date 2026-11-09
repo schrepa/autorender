@@ -163,16 +163,3 @@ pub fn generated_core() -> [(&'static str, String); 13] {
         (crate::shared::WRITES_MODULE, crate::shared::pass_module(&[]).1),
     ]
 }
-
-#[doc(hidden)]
-pub fn core_modules() -> Vec<(&'static str, String)> {
-    let generated = generated_core();
-    let mut modules: Vec<(&'static str, String)> = TEXTS
-        .iter()
-        .filter(|text| !text.text().is_empty())
-        .filter(|text| !generated.iter().any(|(path, _)| *path == text.path()))
-        .map(|text| (text.path(), text.text().to_owned()))
-        .collect();
-    modules.extend(generated);
-    modules
-}

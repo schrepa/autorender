@@ -29,19 +29,10 @@ export interface GameBindings extends JobBindings {
   default(): Promise<unknown>;
 }
 
-export async function loadGame<T extends GameBindings>(wasm: string, load: () => Promise<T>, worker: JobWorkerClass): Promise<T> {
+export async function loadGame<T extends GameBindings>(load: () => Promise<T>, worker: JobWorkerClass): Promise<T> {
   requireWasmSimd();
-  const pinned = generationModule(wasm);
-  const bindings = await (pinned ? import(/* @vite-ignore */ pinned) as Promise<T> : load());
+  const bindings = await load();
   await bindings.default();
-  useJobs(bindings, worker, pinned);
+  useJobs(bindings, worker);
   return bindings;
-}
-
-export function generationModule(name: string): string | undefined {
-  if (!import.meta.env.DEV) return;
-  const generation = new URLSearchParams(location.search).get("engine_build");
-  if (!generation) return;
-  if (!/^[A-Za-z0-9_-]{1,100}$/.test(generation)) throw engineFailure({ code: "invalid_id", path: "?engine_build", expected: "id", got: generation });
-  return `/_engine/builds/${generation}/${name}.js`;
 }

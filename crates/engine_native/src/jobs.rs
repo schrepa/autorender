@@ -16,14 +16,13 @@ pub struct JobOptions {
     pub workers: usize,
     pub cache: CacheOptions,
     pub packs: Option<PathBuf>,
-    pub sample: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheOptions {
     Off,
     Keep { budget: u64 },
-    Verify,
+    Verify { sample: Option<u32> },
 }
 
 impl Default for JobOptions {
@@ -35,7 +34,6 @@ impl Default for JobOptions {
                 budget: DEFAULT_BUDGET,
             },
             packs: None,
-            sample: None,
         }
     }
 }
@@ -47,7 +45,7 @@ impl JobOptions {
             CacheOptions::Off if cook => JobStore::open(DEFAULT_BUDGET, false, packs, None),
             CacheOptions::Off => None,
             CacheOptions::Keep { budget } => JobStore::open(budget, false, packs, None),
-            CacheOptions::Verify => JobStore::open(DEFAULT_BUDGET, true, packs, self.sample),
+            CacheOptions::Verify { sample } => JobStore::open(DEFAULT_BUDGET, true, packs, sample),
         };
         let mut pool = JobPool::new(self.workers, store);
         if cook {

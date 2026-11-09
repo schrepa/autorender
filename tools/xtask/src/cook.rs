@@ -5,8 +5,8 @@ use std::process::{Command, Stdio};
 use serde_json::{Value, json};
 
 use crate::Failure;
-use crate::pipeline::QUICK;
-use crate::process::{Project, engine_commit, project_option, run};
+use crate::pipeline::build_native;
+use crate::process::{Project, project_option, run};
 
 const COOKED: &str = "web/public/cooked";
 
@@ -80,7 +80,7 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), Failure> {
         let project = Project::read(root, folder)?;
         packs.push(Pack {
             name: project.package.clone(),
-            program: build(root, &project)?,
+            program: build_native(root, &project)?,
             scene: None,
         });
         scenes.extend(
@@ -91,7 +91,7 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), Failure> {
         );
     }
     if !scenes.is_empty() {
-        let program = build(root, &Project::read(root, PLAYER)?)?;
+        let program = build_native(root, &Project::read(root, PLAYER)?)?;
         for scene in scenes {
             packs.push(Pack {
                 name: scene_id(root, &scene)?,
@@ -148,10 +148,6 @@ pub fn project_packs(
         .collect())
 }
 
-fn build(root: &Path, project: &Project) -> Result<String, String> {
-    crate::pipeline::build_native(root, project, QUICK)
-}
-
 fn scene_id(root: &Path, scene: &str) -> Result<String, String> {
     let text = fs::read_to_string(root.join(scene))
         .map_err(|error| format!("cannot read the scene {scene}: {error}"))?;
@@ -166,7 +162,7 @@ fn cooked_by(pack: &Pack) -> String {
 
 fn check_packs(root: &Path, packs: &[Pack], sample: Option<&str>) -> Result<(), Failure> {
     if sample.is_none() {
-        crate::pipeline::build_wasm(root, true, QUICK)?;
+        crate::pipeline::build_wasm(root, true)?;
     }
     let mut problems = Vec::new();
     for pack in packs {
@@ -339,7 +335,8 @@ fn run_on_pack(
     problems: &mut Vec<Value>,
 ) -> Result<(), String> {
     let file = pack.file();
-    let mut rest = vec![
+    let cache = sample.map_or_else(|| "verify".to_owned(), |count| format!("verify:{count}"));
+    let rest = [
         "--packs",
         COOKED,
         "--offscreen",
@@ -347,11 +344,8 @@ fn run_on_pack(
         "--size",
         "640x360",
         "--jobcache",
-        "verify",
+        &cache,
     ];
-    if let Some(count) = sample {
-        rest.extend(["--verify-sample", count]);
-    }
     let arguments = pack.arguments(&rest);
     let record = json!({
         "event": "running",
@@ -361,7 +355,6 @@ fn run_on_pack(
     println!("{record}");
     let output = Command::new(&pack.program)
         .args(&arguments)
-        .envs([engine_commit()])
         .current_dir(root)
         .stderr(Stdio::inherit())
         .output()

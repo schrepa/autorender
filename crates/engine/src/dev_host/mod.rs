@@ -4,8 +4,8 @@ mod controls;
 use crate::app_host::AppHost;
 use engine_core::{Error, ErrorCode};
 use engine_dev::{
-    BrowserControl, CaptureRequest, Context, Control, DevTools, Envelope, ExplainQuestion,
-    ProfileRequest, RendererFacts, ToolCall, Verb, WatchRequest,
+    BrowserControl, CaptureRequest, Context, Control, DevTools, Envelope, ProfileRequest,
+    RendererFacts, ToolCall, Verb,
 };
 use engine_scene::SceneInstance;
 use engine_settings::Expected;
@@ -46,8 +46,6 @@ pub(crate) enum Looped {
     Control(BrowserControl),
     Capture(CaptureRequest),
     Profile(ProfileRequest),
-    Explain(ExplainQuestion),
-    Watch(WatchRequest),
 }
 
 enum Done {
@@ -93,7 +91,6 @@ impl DevHost {
                 | BrowserControl::Pause { .. }
                 | BrowserControl::Resume { .. }
                 | BrowserControl::Probe { .. }
-                | BrowserControl::Jobs { .. }
                 | BrowserControl::Game { .. }
                 | BrowserControl::Reload { .. }
                 | BrowserControl::Environment(_)
@@ -133,12 +130,7 @@ impl DevHost {
                 .tools
                 .parse_control(app.engine.app.world(), &envelope, paused)
                 .and_then(|control| controls::run(self, app, scene, control, size)),
-            Verb::Capture | Verb::Profile | Verb::Explain | Verb::Watch => {
-                looped(&envelope, paused).map(Done::Loop)
-            }
-            Verb::Check => {
-                Err(Error::new(ErrorCode::UnsupportedCommand, "$.verb").got(Verb::Check.name()))
-            }
+            Verb::Capture | Verb::Profile => looped(&envelope, paused).map(Done::Loop),
         };
         self.answered(app, scene, answered)
     }
@@ -238,11 +230,11 @@ impl DevHost {
 }
 
 fn looped(envelope: &Envelope, paused: bool) -> Result<Looped, Error> {
-    let (needs_pause, looped) = match envelope.verb {
+    let looped = match envelope.verb {
         Verb::Capture => {
             let request: CaptureRequest = envelope.body()?;
             request.validate()?;
-            (true, Looped::Capture(request))
+            Looped::Capture(request)
         }
         Verb::Profile => {
             let request: ProfileRequest = envelope.body()?;
@@ -251,23 +243,13 @@ fn looped(envelope: &Envelope, paused: bool) -> Result<Looped, Error> {
                 return Err(Error::new(ErrorCode::ProfilingUnavailable, "$.deep")
                     .expected(Expected::Absent));
             }
-            (true, Looped::Profile(request))
+            Looped::Profile(request)
         }
-        Verb::Explain => {
-            let question: ExplainQuestion = envelope.body()?;
-            question.validate()?;
-            (question.needs_pause(), Looped::Explain(question))
-        }
-        Verb::Watch => {
-            let request: WatchRequest = envelope.body()?;
-            request.validate()?;
-            (true, Looped::Watch(request))
-        }
-        verb @ (Verb::Describe | Verb::Inspect | Verb::Query | Verb::Control | Verb::Check) => {
+        verb @ (Verb::Describe | Verb::Inspect | Verb::Query | Verb::Control) => {
             return Err(Error::new(ErrorCode::UnsupportedCommand, "$.verb").got(verb.name()));
         }
     };
-    if needs_pause && !paused {
+    if !paused {
         return Err(Error::new(ErrorCode::PauseRequired, "$")
             .expected(Expected::Paused)
             .got(envelope.verb.name()));
@@ -279,14 +261,12 @@ fn build_identity() -> Value {
     let features: Vec<&str> = [
         cfg!(feature = "dev").then_some("dev"),
         cfg!(feature = "profiling").then_some("profiling"),
-        cfg!(feature = "attribution").then_some("attribution"),
     ]
     .into_iter()
     .flatten()
     .collect();
     json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "commit": option_env!("ENGINE_COMMIT"),
         "features": features,
     })
 }

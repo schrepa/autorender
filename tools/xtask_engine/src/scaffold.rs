@@ -169,7 +169,7 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
         join_workspace(root, &format!("{project}{member}"))?;
     }
     join_dependencies(root, &name, &project)?;
-    run(root, "cargo", &["run", "-p", &tool, "--", "schema"])?;
+    run(root, "cargo", &["run", "-p", &tool, "--", "generate"])?;
     run(
         root,
         "cargo",

@@ -5,18 +5,18 @@ use std::process::{Command, Stdio};
 use serde_json::{Value, json};
 
 use crate::Failure;
-use crate::pipeline::{QUICK, build_native};
-use crate::process::{Project, engine_commit, project_option, run};
+use crate::pipeline::build_native;
+use crate::process::{Project, project_option, run};
 
 pub const PLAYER: &str = "crates/engine_player";
 
-const USAGE: &str = "usage: cargo xtask smoke [NAME...] --limit-ms MS [--project DIR] [--native-profile PROFILE] | [--project DIR] --list";
+const USAGE: &str =
+    "usage: cargo xtask smoke [NAME...] --limit-ms MS [--project DIR] | [--project DIR] --list";
 
 struct Options {
     project: String,
     names: Vec<String>,
     list: bool,
-    profile: String,
     limit_ms: Option<String>,
 }
 
@@ -26,19 +26,12 @@ fn options(arguments: &[String]) -> Result<Options, String> {
         project: project.unwrap_or_else(|| PLAYER.to_owned()),
         names: Vec::new(),
         list: false,
-        profile: QUICK.to_owned(),
         limit_ms: None,
     };
     let mut given = rest.into_iter();
     while let Some(option) = given.next() {
         match option.as_str() {
             "--list" => options.list = true,
-            "--native-profile" => {
-                options.profile = given
-                    .next()
-                    .filter(|profile| !profile.starts_with("--"))
-                    .ok_or(USAGE)?;
-            }
             "--limit-ms" => {
                 options.limit_ms = Some(
                     given
@@ -60,7 +53,7 @@ fn options(arguments: &[String]) -> Result<Options, String> {
 pub fn smoke(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     let options = options(arguments)?;
     let project = Project::read(root, &options.project)?;
-    let program = build_native(root, &project, &options.profile)?;
+    let program = build_native(root, &project)?;
     if options.list {
         return Ok(run(root, &program, &["--smoke", engine::smokes::LIST])?);
     }
@@ -73,7 +66,6 @@ pub fn smoke(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     let mut command = Command::new(&program);
     command
         .args(["--smoke", &names, "--limit-ms", &limit])
-        .envs([engine_commit()])
         .current_dir(root);
     judged(&collect(command, &program)?)
 }

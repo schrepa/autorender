@@ -57,7 +57,6 @@ export type DescribeResult = { bricks: DescribedBrick[]; types: DescribedType[];
 
 export interface DescribedBrick {
   crate: string;
-  explains: string[];
   fills: string[];
   joins: string[];
   name: string;
@@ -91,19 +90,7 @@ export interface DigestResult {
   hash: string;
 }
 
-export interface Distribution {
-  max: number;
-  median: number;
-  min: number;
-  p95: number;
-  p99: number;
-}
-
-export interface DistributionResult {
-  distribution?: Distribution | null;
-}
-
-export type Effect = { kind: "pause"; paused: boolean } | { kind: "wait"; within_ms: number } | { kind: "frame"; timestamp: number } | { kind: "show" } | { args: Record<string, unknown>; kind: "game"; name: string } | { kind: "source" } | { contents: unknown; kind: "save"; name: string } | { kind: "stream"; records: unknown[] };
+export type Effect = { kind: "pause"; paused: boolean } | { kind: "wait"; within_ms: number } | { kind: "frame"; timestamp: number } | { kind: "show" } | { args: Record<string, unknown>; kind: "game"; name: string } | { kind: "source" } | { contents: unknown; kind: "save"; name: string };
 
 export type EntityComponents = Record<string, unknown> | string[];
 
@@ -132,12 +119,6 @@ export interface Error {
 }
 
 export type Expected = "number" | "integer" | "string" | "boolean" | "object" | "array" | "id" | "path" | "file" | "entity" | "unique" | "present" | "absent" | "finite" | "normalized" | "sorted" | "nonzero" | "above" | "power_of_two" | "multiple" | "json" | "utf8" | "uri" | "base64" | "image" | "paused" | "running" | "gpu" | "live" | "non_empty" | "readable" | "writable" | "matching" | "supported" | "acyclic" | "opaque" | "triangles" | "invertible";
-
-export interface ExplainResult {
-  about: string;
-  records: Record<string, unknown>[];
-  total: number;
-}
 
 export interface FramesResult {
   artifact?: KeptArtifact | null;
@@ -254,14 +235,11 @@ export interface OpResults {
   capture: CaptureResult;
   describe: DescribeResult;
   digest: DigestResult;
-  distribution: DistributionResult;
   environment: EnvironmentResult;
-  explain: ExplainResult;
   frames: FramesResult;
   game: GameResult;
   input: InputResult;
   inspect: InspectResult;
-  jobs: StatusResult;
   nav_agent: NavAgentView;
   nav_agents: NavAgentsView;
   parent: ParentResult;
@@ -274,7 +252,6 @@ export interface OpResults {
   status: StatusResult;
   step: StepResult;
   terrain_sweep: TerrainSweepResult;
-  watch: WatchResult;
 }
 
 export interface Outcome {
@@ -408,22 +385,6 @@ export interface TextureAsset {
 export type TextureState = "cpu_ready" | "missing";
 
 export type TypeKind = "component" | "resource" | "authoring" | "verb" | "operation" | "brick" | "stats" | "observation" | "catalog";
-
-export interface WatchRecord {
-  component?: string | null;
-  entity?: string | null;
-  frame?: string | null;
-  stat?: string | null;
-  tick?: string | null;
-  value?: unknown;
-}
-
-export interface WatchResult {
-  frames: number;
-  interval_ms: number;
-  records: number;
-  temporary: boolean;
-}
 
 export interface Worst {
   at?: number[] | null;

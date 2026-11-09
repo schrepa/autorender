@@ -37,13 +37,12 @@ interface JobGame {
   index: IndexBindings;
   module: WebAssembly.Module;
   worker: JobWorkerClass;
-  bindings?: string;
 }
 
 let game: JobGame | undefined;
 
-export function useJobs(bindings: JobBindings, worker: JobWorkerClass, pinned?: string) {
-  game ??= { index: bindings, module: bindings.JobWorker.module(), worker, bindings: pinned };
+export function useJobs(bindings: JobBindings, worker: JobWorkerClass) {
+  game ??= { index: bindings, module: bindings.JobWorker.module(), worker };
 }
 
 interface Task {
@@ -217,7 +216,7 @@ export class JobPool {
     const slot: Live = { state: "live", worker, tasks: new Map() };
     worker.onmessage = (event: MessageEvent<WorkerMessage>) => this.receive(index, worker, event.data);
     worker.onerror = (event) => { event.preventDefault(); this.lose(index, worker, event.message || "worker error"); };
-    this.post(slot, { type: "init", bindings: this.game.bindings, module: this.game.module });
+    this.post(slot, { type: "init", module: this.game.module });
     if (this.hash) this.post(slot, { type: "list", hash: this.hash });
     for (const [key, blob] of this.shares) this.post(slot, { type: "share", key, blob });
     return slot;

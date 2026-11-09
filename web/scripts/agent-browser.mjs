@@ -5,7 +5,6 @@ import { resolve, relative, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { AgentError, atMost, detailOf, loopbackUrl, range, refusal, variants } from "./agent-protocol.mjs";
 import { launchContext } from "./browser-launch.mjs";
-import { recordReceived, recordSent } from "./exercised.mjs";
 import { workspace } from "./workspace.mjs";
 
 const FIRST_RENDER_MS = 300_000;
@@ -73,11 +72,9 @@ function captures(command) {
 const CANVAS_ONLY = "body *{visibility:hidden!important}canvas{visibility:visible!important}";
 
 /** @param {{ browserPath?: string }} [options] */
-export async function openBrowser({ browserPath } = {}) {
-  const launched = await launchContext({ executablePath: browserPath, viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
-  /** @type {typeof launched & { watching?: (record: any) => void }} */
-  const browser = { ...launched, watching: undefined };
-  const { page } = launched;
+async function openBrowser({ browserPath } = {}) {
+  const browser = await launchContext({ executablePath: browserPath, viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
+  const { page } = browser;
   try {
     await page.addInitScript(() => {
       const device = /** @type {any} */ (globalThis).GPUDevice;
@@ -100,9 +97,6 @@ export async function openBrowser({ browserPath } = {}) {
         });
       };
     });
-    await page.exposeBinding("__engineWatch", (_source, records) => {
-      for (const record of Array.isArray(records) ? records : []) browser.watching?.(record);
-    });
     await page.route("**/*", async route => {
       const request = route.request();
       if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
@@ -110,26 +104,24 @@ export async function openBrowser({ browserPath } = {}) {
       }
       await route.continue();
     });
-  } catch (error) { await launched.close(); throw error; }
+  } catch (error) { await browser.close(); throw error; }
   return browser;
 }
 
-/** @param {{ url: string | URL, browserPath?: string, browser?: Awaited<ReturnType<typeof openBrowser>>, session?: string, expectedBuild?: string | null, signal?: AbortSignal }} options */
-export async function launchBrowserSession({ url: value, browserPath, browser: shared, session = randomUUID(), expectedBuild, signal }) {
+/** @param {{ url: string | URL, browserPath?: string }} options */
+export async function launchBrowserSession({ url: value, browserPath }) {
   const url = loopbackUrl(String(value));
-  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "session", { expected: "id", got: session });
-  const browser = shared ?? await openBrowser({ browserPath });
+  const session = randomUUID();
+  const browser = await openBrowser({ browserPath });
   let page;
   let instance;
-  let build;
+  let ready;
   let closing;
   let invalidated = false;
   let invalidationCallback;
   let initialNavigation = true;
   let captureNumber = 0;
   let refuseLoad;
-  const loadRefused = new Promise((_, reject) => { refuseLoad = reject; });
-  loadRefused.catch(() => {});
   const listeners = [];
   const diagnostics = [];
 
@@ -144,7 +136,7 @@ export async function launchBrowserSession({ url: value, browserPath, browser: s
   function close() {
     if (!closing) {
       for (const remove of listeners.splice(0)) remove();
-      closing = shared ? Promise.resolve() : browser.close();
+      closing = browser.close();
     }
     return closing;
   }
@@ -157,23 +149,35 @@ export async function launchBrowserSession({ url: value, browserPath, browser: s
     invalidationCallback = callback;
     if (invalidated) callback();
   }
-  const aborted = () => { void close().catch(() => {}); };
-  if (signal?.aborted) { await close(); throw new AgentError("session_cancelled", "$", { expected: "live" }); }
-  signal?.addEventListener("abort", aborted, { once: true });
-  listeners.push(() => signal?.removeEventListener("abort", aborted));
-  async function requestBrowser(command) {
+  async function evaluateRequest(command) {
     if (invalidated || closing) throw new AgentError("session_unavailable", "$", { expected: "live" });
-    recordSent(command);
-    const response = await page.evaluate(({ expected, expectedBuild, command }) => {
+    return page.evaluate(({ expected, command }) => {
       const api = window.__engineDev;
-      if (!api || api.instance !== expected || (expectedBuild !== null && api.build !== expectedBuild)) {
+      if (!api || api.instance !== expected) {
         return { ok: false, error: { code: "runtime_replaced", path: "$", expected: "matching", got: api?.instance ?? null } };
       }
       return api.request(command);
-    }, { expected: instance, expectedBuild: build, command });
-    if (response?.error?.code === "runtime_replaced") invalidate();
-    recordReceived(response);
-    return response;
+    }, { expected: instance, command });
+  }
+  async function attached() {
+    while (true) {
+      if (invalidated || closing) throw new AgentError("session_unavailable", "$", { expected: "live" });
+      const current = ready;
+      try { await current; return current; } catch (error) { if (ready === current) throw error; }
+    }
+  }
+  async function requestBrowser(command) {
+    while (true) {
+      const current = await attached();
+      const asked = instance;
+      try {
+        const response = await evaluateRequest(command);
+        if (response?.error?.code !== "runtime_replaced") return response;
+      } catch (error) {
+        if (await page.evaluate(() => window.__engineDev?.instance).catch(() => undefined) === asked) throw error;
+      }
+      if (ready === current) reattach();
+    }
   }
   async function readyRequest(command, limit = 5000) {
     const deadline = Date.now() + limit;
@@ -184,7 +188,7 @@ export async function launchBrowserSession({ url: value, browserPath, browser: s
       let response;
       try {
         response = await Promise.race([
-          requestBrowser(command),
+          evaluateRequest(command),
           new Promise((_, reject) => { timer = setTimeout(() => reject(new AgentError("runtime_unavailable", "$", { allowed: atMost(remaining) })), remaining); }),
         ]);
       } finally { clearTimeout(timer); }
@@ -211,8 +215,41 @@ export async function launchBrowserSession({ url: value, browserPath, browser: s
     artifact.path = relative(workspace, path).split(sep).join("/");
     return response;
   }
+  function watchLoad() {
+    const refused = new Promise((_, reject) => { refuseLoad = reject; });
+    refused.catch(() => {});
+    return refused;
+  }
+  async function attach(refused) {
+    try {
+      await Promise.race([
+        page.waitForFunction(() => typeof window.__engineDev?.request === "function" || document.querySelector("#status")?.getAttribute("data-state") === "error", null, { timeout: 60_000, polling: 500 }),
+        refused,
+      ]);
+      const identity = await page.evaluate(() => ({
+        instance: window.__engineDev?.instance,
+        ready: typeof window.__engineDev?.request === "function",
+      }));
+      if (!identity.ready) throw new AgentError("runtime_unavailable", "$", { expected: "live" });
+      if (typeof identity.instance !== "string" || !identity.instance) throw new AgentError("missing_runtime_identity", "$", { expected: "id", got: identity.instance ?? null });
+      instance = identity.instance;
+      const compiled = Date.now() + FIRST_RENDER_MS;
+      while ((await readyRequest({ verb: "control", name: "render" }, FIRST_RENDER_MS)).result.rendering?.readiness?.compiling > 0) {
+        if (Date.now() > compiled) throw new AgentError("runtime_busy", "$", { allowed: atMost(FIRST_RENDER_MS), got: { compiling: true } });
+        await delay(50);
+      }
+    } catch (error) {
+      const shown = await page.locator("#status").textContent({ timeout: 1000 }).catch(() => "unavailable");
+      throw new AgentError(error?.code ?? "runtime_unavailable", error?.path, { got: { error: refusal(error), status: shown, diagnostics: diagnostics.slice(-5) } });
+    }
+  }
+  function reattach(refused = watchLoad()) {
+    ready = attach(refused);
+    ready.catch(() => {});
+  }
 
   try {
+    const refused = watchLoad();
     listen(browser.context, "close", invalidate);
     page = browser.page;
     listen(page, "pageerror", error => diagnostic("pageerror", String(error)));
@@ -223,46 +260,24 @@ export async function launchBrowserSession({ url: value, browserPath, browser: s
       diagnostic("http", failed);
       if (["document", "script"].includes(response.request().resourceType())) refuseLoad(new AgentError("runtime_unavailable", "$", { expected: "live", got: failed }));
     });
-    listen(page, "framenavigated", frame => { if (!initialNavigation && frame === page.mainFrame()) invalidate(); });
+    listen(page, "framenavigated", frame => { if (!initialNavigation && frame === page.mainFrame()) reattach(); });
     listen(page, "close", invalidate);
     listen(page, "crash", invalidate);
     await page.goto(url.href, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    try {
-      await Promise.race([
-        page.waitForFunction(() => typeof window.__engineDev?.request === "function" || document.querySelector("#status")?.getAttribute("data-state") === "error", null, { timeout: 60_000, polling: 500 }),
-        loadRefused,
-      ]);
-      const identity = await page.evaluate(() => ({
-        instance: window.__engineDev?.instance,
-        build: window.__engineDev?.build ?? null,
-        ready: typeof window.__engineDev?.request === "function",
-      }));
-      if (!identity.ready) throw new AgentError("runtime_unavailable", "$", { expected: "live" });
-      initialNavigation = false;
-      instance = identity.instance;
-      build = identity.build;
-      if (typeof instance !== "string" || !instance) throw new AgentError("missing_runtime_identity", "$", { expected: "id", got: instance ?? null });
-      if (expectedBuild !== undefined && build !== expectedBuild) throw new AgentError("build_mismatch", "build", { allowed: variants([expectedBuild]), got: build });
-      const compiled = Date.now() + FIRST_RENDER_MS;
-      while ((await readyRequest({ verb: "control", name: "render" }, FIRST_RENDER_MS)).result.rendering?.readiness?.compiling > 0) {
-        if (Date.now() > compiled) throw new AgentError("runtime_busy", "$", { allowed: atMost(FIRST_RENDER_MS), got: { compiling: true } });
-        await delay(50);
-      }
-    } catch (error) {
-      const shown = await page.locator("#status").textContent({ timeout: 1000 }).catch(() => "unavailable");
-      throw new AgentError(error?.code ?? "runtime_unavailable", error?.path, { got: { error: refusal(error), status: shown, diagnostics: diagnostics.slice(-5) } });
-    }
+    initialNavigation = false;
+    reattach(refused);
+    await attached();
     if (invalidated || closing) throw new AgentError("session_unavailable", "$", { expected: "live" });
     const artifacts = resolve(workspace, "artifacts", "agent", session);
     await pruneSessions(resolve(workspace, "artifacts", "agent"));
     const owned = {
-      session, url: url.href, instance, build, close, setInvalidated,
+      session, url: url.href, close, setInvalidated,
       page,
       async activity() {
         const waiting = await Promise.race([page.evaluate(() => window.__engineDev?.waitingOnGpu()).catch(() => undefined), delay(1000)]);
         return typeof waiting === "boolean" ? { waiting_on_gpu: waiting } : {};
       },
-      async execute(command, onRecord) {
+      async execute(command) {
         if (command.verb === "describe" && command.name === "ProfileCapture") {
           if (Object.keys(command).some(key => !["verb", "name"].includes(key))) throw new AgentError("unknown_field", "$", { allowed: variants(["verb", "name"]) });
           const response = await requestBrowser(status);
@@ -295,10 +310,7 @@ export async function launchBrowserSession({ url: value, browserPath, browser: s
           if (response.ok) response.result = { observation: response.observation ?? response.result?.observation, entries: [...diagnostics] };
           return response;
         }
-        browser.watching = command.verb === "watch" ? onRecord : undefined;
-        let response;
-        try { response = await requestBrowser(command); }
-        finally { browser.watching = undefined; }
+        const response = await requestBrowser(command);
         if (command.verb === "describe" && command.name === undefined && response.ok && Array.isArray(response.result?.types)) {
           response.result.types.push({ name: "ProfileCapture", kind: "tooling" });
           const { controls, parameters } = await page.evaluate(() => ({ controls: window.__engineDev?.controls ?? {}, parameters: window.__engineDev?.parameters ?? {} }));

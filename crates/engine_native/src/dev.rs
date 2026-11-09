@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use engine::dev::{Artifact, Effect, HostContext, Outcome, Step};
-use engine::scene::{SceneDocument, SceneFiles, SceneInstance, SceneKinds};
+use engine::scene::{SceneFiles, SceneKinds};
 use engine::{Error, ErrorCode, Expected, Game, GameHost};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -24,24 +24,17 @@ pub struct GameControl<G: Game> {
     pub run: Box<dyn FnMut(&mut GameHost<G>, &Map<String, Value>) -> Result<Value, String>>,
 }
 
-enum Source {
-    File(PathBuf),
-    Document(String),
-}
-
 pub struct DevSession<G: Game> {
     game: Offscreen<G>,
     controls: BTreeMap<String, GameControl<G>>,
     parameters: BTreeMap<String, String>,
-    source: Option<Source>,
-    watched: Vec<(PathBuf, Option<SystemTime>)>,
+    document: Option<String>,
     artifacts: PathBuf,
     pix: Option<Pix>,
     captures: u32,
     paused: bool,
     started: Instant,
     instance: String,
-    id: Option<Value>,
 }
 
 impl<G: Game> DevSession<G> {
@@ -61,15 +54,13 @@ impl<G: Game> DevSession<G> {
             game,
             controls: BTreeMap::new(),
             parameters: BTreeMap::new(),
-            source: None,
-            watched: Vec::new(),
+            document: None,
             artifacts,
             pix: None,
             captures: 0,
             paused: true,
             started: Instant::now(),
             instance,
-            id: None,
         }
     }
 
@@ -109,13 +100,6 @@ impl<G: Game> DevSession<G> {
         self
     }
 
-    #[must_use]
-    pub fn source(mut self, path: &Path) -> Self {
-        self.source = Some(Source::File(path.to_owned()));
-        self.watch();
-        self
-    }
-
     pub fn run(mut self) -> engine::Result<()> {
         let lines = read_lines();
         let size = self.game.size();
@@ -123,7 +107,6 @@ impl<G: Game> DevSession<G> {
             "ready": true,
             "version": engine::dev::PROTOCOL_VERSION,
             "instance": self.instance,
-            "build": option_env!("ENGINE_COMMIT"),
             "size": [size.0, size.1],
             "adapter": adapter(self.game.host()),
             "profiling": cfg!(feature = "profiling"),
@@ -142,9 +125,8 @@ impl<G: Game> DevSession<G> {
             match lines.recv_timeout(wait) {
                 Ok(line) => {
                     let (id, line) = request_id(&line);
-                    self.id = id;
                     let mut reply = self.request(&line, &|| None);
-                    if let Some(id) = self.id.take() {
+                    if let Some(id) = id {
                         reply["id"] = id;
                     }
                     self.reply(&reply);
@@ -165,51 +147,15 @@ impl<G: Game> DevSession<G> {
     }
 
     fn follow_source(&mut self) {
-        if self
-            .watched
-            .iter()
-            .all(|(file, stamp)| modified(file) == *stamp)
-        {
-            return;
-        }
-        let revision = self.watch();
-        let Some(loaded) = self.game.host().game().scene().map(SceneInstance::revision) else {
+        let Some(followed) = self.game.host_mut().follow_source() else {
             return;
         };
-        let command = json!({
-            "verb": "control",
-            "name": "reload",
-            "args": {
-                "expected_revision": loaded.to_string(),
-                "revision": revision.unwrap_or(loaded).to_string(),
-            },
-        });
-        let mut reply = self.request(&command.to_string(), &|| None);
+        let mut reply = match followed {
+            Ok(()) => self.request(r#"{"verb":"query","name":"status"}"#, &|| None),
+            Err(error) => self.error(&error),
+        };
         reply["event"] = json!("source_changed");
         self.reply(&reply);
-    }
-
-    fn watch(&mut self) -> Option<u64> {
-        let Some(Source::File(path)) = &self.source else {
-            self.watched.clear();
-            return None;
-        };
-        let path = path.clone();
-        let stamp = modified(&path);
-        let document = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|source| SceneDocument::from_json(&source).ok());
-        let folder = path.parent().unwrap_or(Path::new(".")).to_owned();
-        let mut watched = vec![(path, stamp)];
-        if let Some(document) = &document {
-            for file in document.files(&self.kinds()) {
-                let file = folder.join(file.uri);
-                let stamp = modified(&file);
-                watched.push((file, stamp));
-            }
-        }
-        self.watched = watched;
-        document.map(|document| document.revision)
     }
 
     fn now(&self) -> f64 {
@@ -317,12 +263,6 @@ impl<G: Game> DevSession<G> {
                 },
                 Err(error) => failed(error),
             },
-            Effect::Stream { records } => {
-                for record in records {
-                    self.reply(&json!({ "verb": "watch", "record": record, "id": self.id }));
-                }
-                Outcome::default()
-            }
         };
         let context = self.context();
         self.game.host_mut().dev_resume(outcome, &context)
@@ -336,10 +276,11 @@ impl<G: Game> DevSession<G> {
             paused: self.paused,
             device_pixel_ratio: 1.0,
             user_agent: "engine_native".to_owned(),
-            source: match &self.source {
-                Some(Source::File(path)) => Some(path.display().to_string()),
-                Some(Source::Document(_)) | None => None,
-            },
+            source: self
+                .game
+                .host()
+                .source()
+                .map(|path| path.display().to_string()),
             timing: TIMING.to_owned(),
         }
     }
@@ -349,18 +290,17 @@ impl<G: Game> DevSession<G> {
     }
 
     fn read_source(&mut self) -> Result<Option<(String, SceneFiles)>, Error> {
-        self.watch();
-        let path = match &self.source {
-            None => return Ok(None),
-            Some(Source::Document(document)) => {
-                let files = engine::smokes::scene_files(document, &self.kinds())?;
-                return Ok(Some((document.clone(), files)));
-            }
-            Some(Source::File(path)) => path,
+        if let Some(document) = &self.document {
+            let files = engine::smokes::scene_files(document, &self.kinds())?;
+            return Ok(Some((document.clone(), files)));
+        }
+        let Some(path) = self.game.host().source().map(Path::to_owned) else {
+            return Ok(None);
         };
-        let source =
-            std::fs::read_to_string(path).map_err(|error| file_error("$.source", path, &error))?;
-        let files = files::scene_files(path, &source, &self.kinds())?;
+        self.game.host_mut().watch_source(&path);
+        let source = std::fs::read_to_string(&path)
+            .map_err(|error| file_error("$.source", &path, &error))?;
+        let files = files::scene_files(&path, &source, &self.kinds())?;
         Ok(Some((source, files)))
     }
 
@@ -556,7 +496,7 @@ impl<G: Game> engine::smokes::GpuSession for DevSession<G> {
     }
 
     fn play(&mut self, document: &str) -> engine::Result<()> {
-        self.source = Some(Source::Document(document.to_owned()));
+        self.document = Some(document.to_owned());
         let files = engine::smokes::scene_files(document, &self.kinds())?;
         self.game.host_mut().reload_scene(document, &files)
     }
@@ -564,12 +504,6 @@ impl<G: Game> engine::smokes::GpuSession for DevSession<G> {
 
 fn adapter<G: Game>(host: &GameHost<G>) -> Value {
     json!(engine::host::AdapterStatus::of(host.adapter()))
-}
-
-fn modified(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .ok()
 }
 
 fn request_id(line: &str) -> (Option<Value>, String) {

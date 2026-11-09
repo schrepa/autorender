@@ -36,8 +36,7 @@ impl ChangeWindow {
         changed
     }
 
-    #[cfg_attr(not(feature = "attribution"), inline)]
-    #[cfg_attr(feature = "attribution", inline(never))]
+    #[inline]
     pub(crate) fn any_in_block(self, ticks: &[Tick]) -> bool {
         ticks
             .iter()

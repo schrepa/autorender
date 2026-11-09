@@ -3,15 +3,12 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-export const launchFlags = ["--enable-unsafe-webgpu", ...(process.env.SOFTWARE_GPU === "1" ? ["--use-angle=swiftshader"] : [])];
-
-export const browserChannel = process.env.BROWSER_PATH ? "explicit-executable" : process.env.BROWSER_CHANNEL ?? "chrome";
+const launchFlags = ["--enable-unsafe-webgpu", ...(process.env.SOFTWARE_GPU === "1" ? ["--use-angle=swiftshader"] : [])];
 
 /** @param {{ executablePath?: string, args?: string[], [option: string]: any }} [options] */
-export function launchOptions({ executablePath, args = [], ...extra } = {}) {
-  const path = executablePath ?? process.env.BROWSER_PATH;
+function launchOptions({ executablePath, args = [], ...extra } = {}) {
   return {
-    ...(path ? { executablePath: resolve(path) } : { channel: process.env.BROWSER_CHANNEL ?? "chrome" }),
+    ...(executablePath ? { executablePath: resolve(executablePath) } : { channel: process.env.BROWSER_CHANNEL ?? "chrome" }),
     headless: true,
     args: [...launchFlags, ...args],
     ...extra,
@@ -25,7 +22,7 @@ const FOLDERS = 16;
 const held = new Set();
 process.once("exit", () => { for (const lock of held) rmSync(lock, { force: true }); });
 
-export function running(pid) {
+function running(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; }
 }
@@ -48,8 +45,8 @@ function take(lock) {
 }
 
 function claimFolder() {
-  if (process.env.SMOKE_SHADER_CACHE === "off") return null;
-  const root = process.env.SMOKE_SHADER_CACHE_DIR ?? join(tmpdir(), "engine-chrome-shader-cache");
+  if (process.env.BROWSER_SHADER_CACHE === "off") return null;
+  const root = process.env.BROWSER_SHADER_CACHE_DIR ?? join(tmpdir(), "engine-chrome-shader-cache");
   try { mkdirSync(root, { recursive: true }); } catch { return null; }
   for (let index = 0; index < FOLDERS; index++) {
     const folder = join(root, String(index));

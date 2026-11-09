@@ -62,11 +62,9 @@ fn modules() -> Result<Vec<Checked>, String> {
 
 pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
     let (folder, rga) = match options {
-        [flag, folder] if flag == "--report" => (PathBuf::from(folder), true),
-        [flag, folder, no] if flag == "--report" && no == "--no-rga" => {
-            (PathBuf::from(folder), false)
-        }
-        _ => return Err("usage: cargo xtask gpu --report DIR [--no-rga]".into()),
+        [flag, folder] if flag == "--out" => (PathBuf::from(folder), true),
+        [flag, folder, no] if flag == "--out" && no == "--no-rga" => (PathBuf::from(folder), false),
+        _ => return Err("usage: cargo xtask shaders --out DIR [--no-rga]".into()),
     };
     let modules = modules()?;
     let rga = if rga { rga_program(root)? } else { None };

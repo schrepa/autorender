@@ -2,9 +2,6 @@
 
 use super::*;
 
-#[derive(Clone, Debug)]
-pub struct GpuMark(wgpu::SubmissionIndex);
-
 impl Renderer {
     pub fn start_debugger_capture(&mut self) -> bool {
         if self.core.debugger_capture {
@@ -61,21 +58,6 @@ impl Renderer {
         self.core
             .device
             .poll(wgpu::PollType::wait_indefinitely())
-            .map(drop)
-            .map_err(|error| failed_with("$.gpu", error))
-    }
-
-    pub fn gpu_mark(&self) -> GpuMark {
-        GpuMark(self.core.queue.submit([]))
-    }
-
-    pub fn wait_for_mark(&self, mark: GpuMark) -> Result<(), Error> {
-        self.core
-            .device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(mark.0),
-                timeout: None,
-            })
             .map(drop)
             .map_err(|error| failed_with("$.gpu", error))
     }

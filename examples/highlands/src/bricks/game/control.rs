@@ -5,13 +5,11 @@ use engine_core::{
     AssetLibrary, Error, ErrorCode, Expected, Jobs, Operation, ProvidedAssets, RecordExchange,
     Transform,
 };
-use engine_places_simulation::ground::Ground;
 use engine_places_simulation::physics::RigidBody;
 use glam::Vec2;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::bricks::game::bodies::Bodies;
 use crate::bricks::game::cave::{Cave, CaveMouth};
 use crate::bricks::game::content::{self, Content};
 use crate::bricks::game::views::{Views, bodies_view, show};
@@ -25,12 +23,6 @@ pub(crate) enum HighlandsControl {
         radius: f32,
         rock: String,
         wall: String,
-    },
-    Bodies {
-        count: u32,
-    },
-    Stand {
-        place: [f32; 4],
     },
     WatchBodies {
         on: bool,
@@ -50,11 +42,9 @@ impl Operation for HighlandsControl {
         (
             ResMut<'static, Content>,
             ResMut<'static, Cave>,
-            ResMut<'static, Bodies>,
             ResMut<'static, Views>,
         ),
         (
-            Option<Res<'static, Ground>>,
             Query<'static, 'static, &'static Transform, With<RigidBody>>,
             Commands<'static, 'static>,
         ),
@@ -64,8 +54,8 @@ impl Operation for HighlandsControl {
     fn run(
         (
             (mut assets, mut records, provided, mut jobs),
-            (mut content, mut cave, mut bodies, mut views),
-            (ground, rigid, mut commands),
+            (mut content, mut cave, mut views),
+            (rigid, mut commands),
         ): SystemParamItem<'_, '_, Self::Params>,
         control: Self,
     ) -> Result<Value, Error> {
@@ -102,13 +92,6 @@ impl Operation for HighlandsControl {
                     wall: material(&wall, "$.cave.wall")?,
                 });
             }
-            Self::Bodies { count } => {
-                if count > 0 {
-                    let boulder = content::bank_boulder(&mut content, (&mut jobs, &mut *assets))?;
-                    bodies.bank = Some((boulder, count));
-                }
-            }
-            Self::Stand { place } => show(&mut commands, views.stand(ground.as_deref(), place)),
             Self::WatchBodies { on } => {
                 if let Some(view) = views.watch_bodies(on, bodies_view(&rigid)) {
                     show(&mut commands, view);

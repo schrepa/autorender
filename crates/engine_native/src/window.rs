@@ -360,6 +360,11 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
 
 impl<G: Game> Running<G> {
     fn redraw(&mut self) -> engine::Result<FramePhase> {
+        #[cfg(feature = "dev")]
+        if let Some(Err(error)) = self.host.follow_source() {
+            let record = serde_json::json!({"event": "source_changed", "error": error});
+            eprintln!("{record}");
+        }
         let timestamp = engine::host::now_ms();
         let (width, height) = self.size;
         let phase = self.host.animation_frame(timestamp, width, height)?;

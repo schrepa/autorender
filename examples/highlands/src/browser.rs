@@ -40,6 +40,7 @@ impl HighlandsGame {
         canvas: web_sys::HtmlCanvasElement,
         rocks: HighlandsRocks,
         query: &str,
+        source: Option<String>,
     ) -> Result<HighlandsGame, JsValue> {
         let options = page_options(query)?;
         let rocks = if options.rocks {
@@ -48,7 +49,8 @@ impl HighlandsGame {
             RockMaps::default()
         };
         Self::launch(canvas, crate::bricks, move |engine| {
-            Highlands::build(engine, options, &rocks, crate::scene::SCENE)
+            let scene = source.as_deref().unwrap_or(crate::scene::SCENE);
+            Highlands::build(engine, options, &rocks, scene)
         })
         .await
     }

@@ -12,7 +12,6 @@ mod job_cache;
 mod jobs;
 #[cfg(feature = "profiling")]
 mod live;
-mod measure;
 mod offscreen;
 mod options;
 #[cfg(feature = "dev")]
@@ -26,7 +25,6 @@ pub use engine_profiler as profiler;
 pub use engine_profiler::{Pix, RenderDoc};
 pub use job_cache::JobStore;
 pub use jobs::{CacheOptions, JobOptions, JobPool, Written};
-pub use measure::{Method, Settle};
 pub use offscreen::{Frames, Offscreen, PixRecord, ProfileRecord, Record, Recorded};
 pub use options::{Argument, Arguments, HostOptions, Vendor, options, parameters};
 pub use window::{Flight, Measure, Window, WindowReport, run};

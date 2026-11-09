@@ -32,9 +32,6 @@ pub enum Effect {
         name: String,
         contents: Value,
     },
-    Stream {
-        records: Vec<Value>,
-    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

@@ -90,8 +90,7 @@ impl Transform {
         }
     }
 
-    #[cfg_attr(not(feature = "attribution"), inline)]
-    #[cfg_attr(feature = "attribution", inline(never))]
+    #[inline]
     pub fn matrix(&self) -> Mat4 {
         const X: BVec4A = BVec4A::new(true, false, false, false);
         const Y: BVec4A = BVec4A::new(false, true, false, false);

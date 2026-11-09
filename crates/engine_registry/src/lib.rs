@@ -6,7 +6,6 @@
 mod access;
 mod attribution;
 mod entries;
-mod explain;
 mod hooks;
 mod jobs;
 #[cfg(feature = "profiling")]
@@ -28,7 +27,6 @@ pub use entries::{
     Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry, access_of,
     parse_section, set_section,
 };
-pub use explain::{ExplainAsk, ExplainEntry, ExplainRecord, explain};
 pub use hooks::{BrickHooks, NamedField, Removal};
 pub use jobs::{
     JobBatch, JobKindRef, JobList, JobListed, JobMember, JobOrder, JobOrders, JobQueue,

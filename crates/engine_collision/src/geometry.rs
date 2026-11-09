@@ -171,7 +171,6 @@ fn ball_radii(shape: ColliderShape, basis: Mat3) -> (f64, f64) {
 
 const PRETEST_MARGIN: f64 = 1.0 / 4096.0;
 
-#[cfg_attr(feature = "attribution", inline(never))]
 pub(crate) fn intersects(a: &AffineShape, b: &AffineShape) -> Result<bool, Fault> {
     let offset = b.center.as_dvec3() - a.center.as_dvec3();
     let squared = offset.length_squared();
@@ -217,7 +216,6 @@ impl AffineShape {
     }
 }
 
-#[cfg_attr(feature = "attribution", inline(never))]
 fn boxes_overlap(a: &AffineShape, b: &AffineShape) -> bool {
     let a_axes = [
         a.basis.x_axis.as_dvec3(),
@@ -271,7 +269,6 @@ fn boxes_overlap(a: &AffineShape, b: &AffineShape) -> bool {
     true
 }
 
-#[cfg_attr(feature = "attribution", inline(never))]
 fn intersects_support_maps(a: &AffineShape, b: &AffineShape) -> Result<bool, Fault> {
     let calls = Cell::new(0);
     let hit = details::intersection_test_support_map_support_map(

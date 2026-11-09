@@ -4,10 +4,8 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-#[cfg(feature = "std")]
 extern crate std;
 
-#[cfg(feature = "std")]
 pub mod collections;
 
 pub const REDUCTION_LIMIT: f32 = 12_866.0;

@@ -22,7 +22,7 @@ export interface WorkerBindings {
 }
 
 type Request =
-  | { type: "init"; bindings?: string; module: WebAssembly.Module }
+  | { type: "init"; module: WebAssembly.Module }
   | { type: "list"; hash: Uint8Array }
   | { type: "clear" }
   | { type: "share"; key: string; blob: Blob }
@@ -94,8 +94,8 @@ async function work() {
   }
 }
 
-async function start(pinned: string | undefined, compiled: WebAssembly.Module) {
-  const module = (pinned ? await import(/* @vite-ignore */ pinned) : await game()) as WorkerBindings;
+async function start(compiled: WebAssembly.Module) {
+  const module = await game();
   await module.default({ module_or_path: compiled });
   module.JobWorker.start();
   bindings = module;
@@ -109,7 +109,7 @@ function loaded(): WorkerBindings {
 async function handle(request: Request) {
   switch (request.type) {
     case "init":
-      await start(request.bindings, request.module);
+      await start(request.module);
       return;
     case "list":
       worker?.free();

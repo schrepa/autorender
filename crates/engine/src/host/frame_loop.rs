@@ -73,7 +73,6 @@ pub struct FrameLoop {
     stage: Stage,
     view: View,
     started: f64,
-    between: bool,
 }
 
 impl Default for FrameLoop {
@@ -82,7 +81,6 @@ impl Default for FrameLoop {
             stage: Stage::Unprepared,
             view: View::Sized,
             started: 0.0,
-            between: true,
         }
     }
 }
@@ -101,10 +99,6 @@ impl FrameLoop {
             Stage::Unprepared | Stage::Preparing { .. } => true,
             Stage::Playing => false,
         }
-    }
-
-    pub fn set_between_frames(&mut self, enabled: bool) {
-        self.between = enabled;
     }
 
     pub fn frame<G: Game>(
@@ -166,11 +160,7 @@ impl FrameLoop {
     }
 
     fn spare<G: Game>(&self, host: &mut GameHost<G>) {
-        let spare = if self.between {
-            self.started + host.refresh_interval() - now_ms() - BETWEEN_MARGIN_MS
-        } else {
-            0.0
-        };
+        let spare = self.started + host.refresh_interval() - now_ms() - BETWEEN_MARGIN_MS;
         host.set_spare_time(spare);
     }
 }

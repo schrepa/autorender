@@ -1,5 +1,4 @@
 // @ts-check
-import "./exit-codes.mjs";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { initSync, PackDirectory } from "../pkg-dev/engine_player.js";

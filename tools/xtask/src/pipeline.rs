@@ -5,49 +5,115 @@ use crate::process::{
     verify_wasm_bindgen,
 };
 
-pub const QUICK: &str = "quick";
+const PROFILING: &str = "profiling";
 
-pub fn build(root: &Path) -> Result<(), String> {
-    build_wasm(root, false, "release")?;
+const PROFILING_FEATURES: &str = "dev,profiling";
+
+pub fn build(root: &Path, profiling: bool) -> Result<(), String> {
+    build_clients(root, &clients().iter().collect::<Vec<_>>(), false, true)?;
+    let mut arguments = vec!["run", "build", "--prefix", "web"];
+    if profiling {
+        build_profiling_wasm(root)?;
+        arguments.extend(["--", "--mode", PROFILING]);
+    }
     install_web_dependencies(root)?;
-    run(root, NPM, &["run", "build", "--prefix", "web"])
+    run(root, NPM, &arguments)?;
+    if profiling {
+        let record = serde_json::json!({
+            "event": "built",
+            "folder": "web/dist-profile",
+            "serve": "npm run preview --prefix web -- --outDir dist-profile --port 5175 --strictPort",
+        });
+        println!("{record}");
+    }
+    Ok(())
+}
+
+fn build_profiling_wasm(root: &Path) -> Result<(), String> {
+    let games: Vec<_> = clients()
+        .iter()
+        .filter(|client| client.game.is_some())
+        .collect();
+    let mut arguments = vec!["build"];
+    for game in &games {
+        arguments.extend(["-p", game.package.as_str()]);
+    }
+    arguments.extend(["--target", WASM_TARGET]);
+    arguments.extend(["--profile", PROFILING, "--features", PROFILING_FEATURES]);
+    arguments.push("--locked");
+    run(root, "cargo", &arguments)?;
+    for game in &games {
+        run(
+            root,
+            "wasm-bindgen",
+            &[
+                &format!("target/{WASM_TARGET}/{PROFILING}/{}.wasm", game.wasm),
+                "--target",
+                "web",
+                "--out-dir",
+                "web/pkg-profile",
+                "--out-name",
+                &game.wasm,
+                "--keep-debug",
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 pub fn prepare_dev(root: &Path) -> Result<(), String> {
-    prepare_clients(root, &clients().iter().collect::<Vec<_>>())
-}
-
-fn prepare_clients(root: &Path, selected: &[&Client]) -> Result<(), String> {
-    build_clients(root, selected, true, QUICK)?;
+    build_wasm(root, true)?;
     install_web_dependencies(root)
 }
 
-pub fn build_native(root: &Path, project: &Project, profile: &str) -> Result<String, String> {
-    run(
-        root,
-        "cargo",
-        &[
-            "build",
-            "-p",
-            &project.package,
-            "--bin",
-            &project.native,
-            "--profile",
-            profile,
-            "--features",
-            "dev",
-            "--locked",
-        ],
-    )?;
-    let folder = match profile {
-        "dev" => "debug",
-        other => other,
+pub fn build_dev(root: &Path, game: Option<&str>) -> Result<(), String> {
+    match game {
+        Some(game) => build_clients(root, &of_game(game)?, true, false),
+        None => build_wasm(root, true),
+    }
+}
+
+pub fn build_native(root: &Path, project: &Project) -> Result<String, String> {
+    native(root, project, &["--features", "dev"], "debug", &[])
+}
+
+pub fn build_profiling(root: &Path, project: &Project) -> Result<String, String> {
+    let flags = format!(
+        "{} -Cforce-frame-pointers=yes",
+        std::env::var("RUSTFLAGS").unwrap_or_default()
+    );
+    let frame_pointers = [("RUSTFLAGS", flags.trim())];
+    let environment: &[(&str, &str)] = if cfg!(target_os = "linux") {
+        &frame_pointers
+    } else {
+        &[]
     };
+    native(
+        root,
+        project,
+        &["--profile", PROFILING, "--features", PROFILING_FEATURES],
+        PROFILING,
+        environment,
+    )
+}
+
+fn native(
+    root: &Path,
+    project: &Project,
+    build: &[&str],
+    folder: &str,
+    environment: &[(&str, &str)],
+) -> Result<String, String> {
+    let mut arguments = vec!["build", "-p", project.package.as_str()];
+    arguments.extend(["--bin", project.native.as_str()]);
+    arguments.extend(build);
+    arguments.push("--locked");
+    run_with(root, "cargo", &arguments, environment)?;
     let program = root.join("target").join(folder).join(project.program());
     Ok(program.to_string_lossy().into_owned())
 }
 
-pub(crate) fn of_game(game: &str) -> Result<Vec<&'static Client>, String> {
+fn of_game(game: &str) -> Result<Vec<&'static Client>, String> {
     if !clients()
         .iter()
         .any(|client| client.game.as_deref() == Some(game))
@@ -66,46 +132,12 @@ pub(crate) fn of_game(game: &str) -> Result<Vec<&'static Client>, String> {
         .collect())
 }
 
-pub fn dev(root: &Path, port: u16, game: Option<&str>) -> Result<(), String> {
-    match game {
-        Some(game) => prepare_clients(root, &of_game(game)?)?,
-        None => prepare_dev(root)?,
-    }
-    let record = serde_json::json!({
-        "event": "serving",
-        "url": format!("http://127.0.0.1:{port}"),
-        "iterate": "cargo xtask agent iterate",
-    });
-    println!("{record}");
-    run_with(
-        root,
-        NPM,
-        &[
-            "run",
-            "dev",
-            "--prefix",
-            "web",
-            "--",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            &port.to_string(),
-            "--strictPort",
-        ],
-        game.map(|game| ("ENGINE_GAME", game)).as_slice(),
-    )
-}
-
-pub fn build_wasm(
-    root: &Path,
-    development: bool,
-    profile: &'static str,
-) -> Result<(), String> {
+pub fn build_wasm(root: &Path, development: bool) -> Result<(), String> {
     build_clients(
         root,
         &clients().iter().collect::<Vec<_>>(),
         development,
-        profile,
+        false,
     )
 }
 
@@ -113,14 +145,22 @@ fn build_clients(
     root: &Path,
     selected: &[&Client],
     development: bool,
-    profile: &'static str,
+    release: bool,
 ) -> Result<(), String> {
     verify_wasm_bindgen(root)?;
+    let (profile, folder) = if release {
+        ("release", "release")
+    } else {
+        ("dev", "debug")
+    };
     let mut arguments: Vec<&str> = vec!["build"];
     for client in selected {
         arguments.extend(["-p", client.package.as_str()]);
     }
-    arguments.extend(["--target", WASM_TARGET, "--profile", profile, "--locked"]);
+    arguments.extend(["--target", WASM_TARGET, "--locked"]);
+    if release {
+        arguments.push("--release");
+    }
     if development {
         arguments.extend(["--features", DEV_FEATURES]);
     }
@@ -132,7 +172,7 @@ fn build_clients(
     };
     for client in selected {
         let name = client.wasm.as_str();
-        let artifact = format!("target/{WASM_TARGET}/{profile}/{name}.wasm");
+        let artifact = format!("target/{WASM_TARGET}/{folder}/{name}.wasm");
         let mut arguments = vec![
             artifact.as_str(),
             "--target",

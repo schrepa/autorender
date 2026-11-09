@@ -1,6 +1,5 @@
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{SystemParam, SystemParamItem};
-use engine_registry::{ExplainAsk, ExplainRecord};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
@@ -49,6 +48,7 @@ pub const RESERVED_REPLY_KEYS: [&str; 4] = ["observation", "paused", "source", "
 pub trait Operation: Send + Sync + 'static {
     const NAME: &'static str;
     const CONTROL: bool = true;
+    const LISTED: bool = true;
     type Params: SystemParam + 'static;
     type Request: DeserializeOwned + 'static;
     fn run(
@@ -63,12 +63,4 @@ pub trait Operation: Send + Sync + 'static {
     fn result_schema() -> Option<Value> {
         None
     }
-}
-
-pub trait Explain: Send + Sync + 'static {
-    type Params: SystemParam + 'static;
-    fn explain(
-        params: SystemParamItem<'_, '_, Self::Params>,
-        ask: &ExplainAsk<'_>,
-    ) -> Option<ExplainRecord>;
 }

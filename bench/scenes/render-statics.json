@@ -1,6 +1,0 @@
-{
-  "project": "crates/engine_player",
-  "options": {
-    "source": "web/scripts/fixtures/render-statics.scene.json"
-  }
-}

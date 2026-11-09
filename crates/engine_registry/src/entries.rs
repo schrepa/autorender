@@ -282,6 +282,7 @@ pub struct OperationEntry {
     pub name: &'static str,
     pub brick: &'static str,
     pub control: bool,
+    pub listed: bool,
     pub at: &'static Location<'static>,
     run: fn(&mut World, Value) -> Result<Value, Error>,
     access: fn(&mut World) -> FilteredAccessSet,
@@ -300,6 +301,7 @@ impl OperationEntry {
             name,
             brick: "",
             control,
+            listed: true,
             at: Location::caller(),
             run,
             access: access_of::<P>,
@@ -312,6 +314,12 @@ impl OperationEntry {
     pub fn schemas(mut self, schema: fn() -> Value, result_schema: fn() -> Option<Value>) -> Self {
         self.schema = schema;
         self.result_schema = result_schema;
+        self
+    }
+
+    #[must_use]
+    pub fn listed(mut self, listed: bool) -> Self {
+        self.listed = listed;
         self
     }
 

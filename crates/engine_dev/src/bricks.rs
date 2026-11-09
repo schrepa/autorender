@@ -133,7 +133,7 @@ pub(crate) fn run(world: &mut World, name: &str, args: Value) -> Result<Value, E
         .map_err(|error| error.within("$.args"))
 }
 
-pub fn mesh_drawn(world: &mut World, id: &str) -> Value {
+pub(crate) fn mesh_drawn(world: &mut World, id: &str) -> Value {
     run(world, "mesh_drawn", json!({ "entity": id })).unwrap_or(Value::Null)
 }
 

@@ -1,14 +1,13 @@
 use bevy_ecs::prelude::Entity;
 use engine_core::{Error, ErrorCode};
 use engine_dev::results::{
-    AuthoredEntity, CaptureResult, FramesResult, GameResult, KeptArtifact, ProbeResult,
-    WatchResult, result,
+    AuthoredEntity, CaptureResult, FramesResult, GameResult, KeptArtifact, ProbeResult, result,
 };
 use engine_dev::{
-    BenchmarkInput, BenchmarkMode, BrowserControl, CaptureRequest, DrawState, Effect, EntityFacts,
-    ExplainQuestion, HostContext, Outcome, ProfileRequest, Step, ToolCall, WatchRequest, Watcher,
+    BenchmarkInput, BenchmarkMode, BrowserControl, CaptureRequest, Effect, HostContext, Outcome,
+    ProfileRequest, Step, ToolCall,
 };
-use engine_registry::{BrickCosts, ExplainAsk};
+use engine_registry::BrickCosts;
 use engine_scene::SceneFiles;
 use engine_settings::Expected;
 use serde_json::{Map, Value, json};
@@ -41,25 +40,10 @@ pub(crate) enum Pending {
     },
     Benchmark(Box<BenchmarkRun>),
     ReadBack {
-        awaited: Awaited,
+        alpha: Option<f64>,
         since: f64,
     },
     Profile(Box<ProfileRun>),
-    ExplainScene,
-    Watch(Box<WatchRun>),
-}
-
-#[derive(Debug)]
-pub(crate) enum Awaited {
-    Probe {
-        alpha: Option<f64>,
-    },
-    Explain {
-        id: String,
-        entity: Entity,
-        slot: u32,
-        asked: u64,
-    },
 }
 
 impl Pending {
@@ -77,9 +61,7 @@ impl Pending {
             | Self::Game { .. }
             | Self::Reload { .. }
             | Self::ReadBack { .. }
-            | Self::Profile(_)
-            | Self::ExplainScene
-            | Self::Watch(_) => InputSource::Player,
+            | Self::Profile(_) => InputSource::Player,
         }
     }
 }
@@ -98,13 +80,6 @@ impl std::fmt::Debug for ProfileRun {
             .field("ran", &self.ran)
             .finish_non_exhaustive()
     }
-}
-
-#[derive(Debug)]
-pub(crate) struct WatchRun {
-    watcher: Watcher,
-    ran: u32,
-    streaming: bool,
 }
 
 #[derive(Debug)]
@@ -312,15 +287,9 @@ impl<G: Game> GameHost<G> {
                     Effect::Frame { timestamp: 0.0 },
                 )
             }
-            Handled::Loop(Looped::Explain(question)) => self.dev_explain_start(question, context),
-            Handled::Loop(Looped::Watch(request)) => self.dev_watch_start(request, context),
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub fn dev_resume(&mut self, outcome: Outcome, context: &HostContext) -> Step {
         let Some(pending) = self.dev_pending.take() else {
             return self.dev_refused(
@@ -424,39 +393,20 @@ impl<G: Game> GameHost<G> {
                 })
             }
             Pending::Benchmark(run) => self.dev_benchmark(run, &outcome, context),
-            Pending::ReadBack { awaited, since } => {
+            Pending::ReadBack { alpha, since } => {
                 if let Some(failed) = outcome.failed {
                     return self.dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(failed));
                 }
-                self.dev_read_back(awaited, since, context)
+                self.dev_read_back(alpha, since, context)
             }
             Pending::Profile(run) => self.dev_profile(run, &outcome, context),
-            Pending::ExplainScene => {
-                if outcome.missing.is_some() {
-                    return self.dev_refused(
-                        Error::new(ErrorCode::UnsupportedCommand, "$.about").got("scene"),
-                    );
-                }
-                let refused = Error::new(ErrorCode::SourceIo, "$");
-                self.dev_refused(match outcome.failed {
-                    Some(failed) => refused.got(failed),
-                    None => refused.expected(Expected::Present),
-                })
-            }
-            Pending::Watch(run) => self.dev_watch(run, &outcome, context),
         }
     }
 
-    fn dev_read_back(&mut self, awaited: Awaited, since: f64, context: &HostContext) -> Step {
-        let drawn = match &awaited {
-            Awaited::Probe { alpha } => Some(shown(*alpha)),
-            Awaited::Explain { .. } => None,
-        };
-        if let Some(call) = drawn {
-            let reply = self.dev_invoke(call, context);
-            if reply["ok"] != true {
-                return self.dev_done(reply, context);
-            }
+    fn dev_read_back(&mut self, alpha: Option<f64>, since: f64, context: &HostContext) -> Step {
+        let reply = self.dev_invoke(shown(alpha), context);
+        if reply["ok"] != true {
+            return self.dev_done(reply, context);
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -465,65 +415,22 @@ impl<G: Game> GameHost<G> {
             }
             self.deliver_readbacks();
         }
-        let awaited = match self.dev_arrived(awaited, context) {
-            Ok(step) => return step,
-            Err(awaited) => awaited,
-        };
+        let probed = self.dev_invoke(query("probed_pixel"), context);
+        if probed["ok"] != true || probed["result"]["probing"] != true {
+            return self.dev_probed(probed, context);
+        }
         let waited = now_ms() - since;
         if waited >= READ_BACK_LIMIT_MS as f64 {
-            return match awaited {
-                Awaited::Explain {
-                    id, entity, slot, ..
-                } => self.dev_explained((id, entity), Some(slot), DrawState::Unread, context),
-                Awaited::Probe { .. } => self.dev_refused(
-                    Error::new(ErrorCode::RenderFailed, "$")
-                        .at_most(READ_BACK_LIMIT_MS)
-                        .got(waited),
-                ),
-            };
+            return self.dev_refused(
+                Error::new(ErrorCode::RenderFailed, "$")
+                    .at_most(READ_BACK_LIMIT_MS)
+                    .got(waited),
+            );
         }
-        let effect = match awaited {
-            Awaited::Explain { .. } => Effect::Frame { timestamp: 0.0 },
-            Awaited::Probe { .. } => Effect::Wait { within_ms: 1000.0 },
-        };
-        self.dev_effect(Pending::ReadBack { awaited, since }, effect)
-    }
-
-    fn dev_arrived(&mut self, awaited: Awaited, context: &HostContext) -> Result<Step, Awaited> {
-        match awaited {
-            Awaited::Probe { alpha } => {
-                let probed = self.dev_invoke(query("probed_pixel"), context);
-                if probed["ok"] == true && probed["result"]["probing"] == true {
-                    return Err(Awaited::Probe { alpha });
-                }
-                Ok(self.dev_probed(probed, context))
-            }
-            Awaited::Explain {
-                id,
-                entity,
-                slot,
-                asked,
-            } => match self.mesh_read_back(&id).1 {
-                Some((level, age)) if self.frame_now().saturating_sub(age) > asked => {
-                    let drawn = level.map_or(DrawState::Culled, DrawState::Level);
-                    Ok(self.dev_explained((id, entity), Some(slot), drawn, context))
-                }
-                Some(_) | None => Err(Awaited::Explain {
-                    id,
-                    entity,
-                    slot,
-                    asked,
-                }),
-            },
-        }
-    }
-
-    fn frame_now(&self) -> u64 {
-        self.engine()
-            .app
-            .world()
-            .get_resource::<engine_core::FrameTime>()
-            .map_or(0, |time| time.frame)
+        self.dev_effect(
+            Pending::ReadBack { alpha, since },
+            Effect::Wait { within_ms: 1000.0 },
+        )
     }
 
     fn dev_probe_start(
@@ -543,7 +450,7 @@ impl<G: Game> GameHost<G> {
         if reply["ok"] != true {
             return self.dev_done(reply, context);
         }
-        self.dev_read_back(Awaited::Probe { alpha }, now_ms(), context)
+        self.dev_read_back(alpha, now_ms(), context)
     }
 
     fn dev_probed(&mut self, mut probed: Value, context: &HostContext) -> Step {
@@ -589,16 +496,6 @@ impl<G: Game> GameHost<G> {
                 }
                 self.dev_done(reply, context)
             }
-            Some(Pending::ExplainScene) => {
-                let explained =
-                    self.dev_tools()
-                        .explain_scene(self.engine().app.world(), source, files);
-                let mut reply = self.dev_invoke(status(), context);
-                if reply["ok"] == true {
-                    reply["result"] = result::explain(explained);
-                }
-                self.dev_done(reply, context)
-            }
             Some(_) | None => self.dev_refused(
                 Error::new(ErrorCode::InvalidRequest, "$").expected(Expected::Running),
             ),
@@ -640,23 +537,6 @@ impl<G: Game> GameHost<G> {
                 self.dev_effect(pending, Effect::Frame { timestamp: 0.0 })
             }
             BrowserControl::Probe { x, y, alpha } => self.dev_probe_start((x, y), alpha, context),
-            BrowserControl::Jobs { workers } => {
-                let working = self.job_workers();
-                if workers > working {
-                    return self.dev_refused(
-                        Error::new(ErrorCode::OutOfRange, "$.args.workers")
-                            .range(0.0, f64::from(working))
-                            .got(workers),
-                    );
-                }
-                if !self.set_job_workers(workers) {
-                    return self.dev_refused(
-                        Error::new(ErrorCode::RuntimeBusy, "$.args.workers").got(workers),
-                    );
-                }
-                let status = self.dev_invoke(status(), context);
-                self.dev_done(status, context)
-            }
             BrowserControl::Game { name, args } => {
                 let pending = Pending::Game { name: name.clone() };
                 self.dev_effect(pending, Effect::Game { name, args })
@@ -762,202 +642,6 @@ impl<G: Game> GameHost<G> {
                 contents,
             },
         )
-    }
-
-    fn dev_explain_start(&mut self, question: ExplainQuestion, context: &HostContext) -> Step {
-        match question {
-            ExplainQuestion::Frame { top, detail } => {
-                let stats = self.stats_value();
-                let bricks = engine_registry::explain(
-                    self.engine_mut().app.world_mut(),
-                    &ExplainAsk::Frame { stats: &stats },
-                );
-                let explained = self.dev_tools().explain_frame(
-                    self.engine().app.world(),
-                    (&stats, bricks),
-                    top,
-                    detail,
-                );
-                match explained {
-                    Ok(explained) => {
-                        let mut reply = self.dev_invoke(status(), context);
-                        if reply["ok"] == true {
-                            reply["result"] = result::explain(explained);
-                        }
-                        self.dev_done(reply, context)
-                    }
-                    Err(error) => self.dev_refused(error),
-                }
-            }
-            ExplainQuestion::Scene {} => self.dev_effect(Pending::ExplainScene, Effect::Source),
-            ExplainQuestion::Entity { entity: id, .. } => {
-                let entity = match self.dev_tools().explained_entity(
-                    self.engine().app.world(),
-                    self.dev_scene(),
-                    &id,
-                ) {
-                    Ok(entity) => entity,
-                    Err(error) => return self.dev_refused(error),
-                };
-                let readable = self
-                    .engine()
-                    .app
-                    .world()
-                    .get_resource::<engine_core::Detail>()
-                    .is_some_and(|detail| detail.enabled && detail.fade_seconds > 0.0);
-                let (slot, _) = self.mesh_read_back(&id);
-                let Some(slot) = slot.filter(|_| readable) else {
-                    return self.dev_explained((id, entity), slot, DrawState::Unread, context);
-                };
-                self.suspend();
-                let asked = self.frame_now();
-                self.dev_effect(
-                    Pending::ReadBack {
-                        awaited: Awaited::Explain {
-                            id,
-                            entity,
-                            slot,
-                            asked,
-                        },
-                        since: now_ms(),
-                    },
-                    Effect::Frame { timestamp: 0.0 },
-                )
-            }
-        }
-    }
-
-    fn mesh_read_back(&mut self, id: &str) -> (Option<u32>, Option<(Option<u32>, u64)>) {
-        let drawn = engine_dev::mesh_drawn(self.engine_mut().app.world_mut(), id);
-        let slot = drawn["slot"]
-            .as_u64()
-            .and_then(|slot| u32::try_from(slot).ok());
-        let read_back = drawn["read_back"].as_object().and_then(|read_back| {
-            let age = read_back.get("age")?.as_u64()?;
-            let level = read_back
-                .get("level")
-                .and_then(Value::as_u64)
-                .and_then(|level| u32::try_from(level).ok());
-            Some((level, age))
-        });
-        (slot, read_back)
-    }
-
-    fn dev_explained(
-        &mut self,
-        (id, entity): (String, Entity),
-        slot: Option<u32>,
-        drawn: DrawState,
-        context: &HostContext,
-    ) -> Step {
-        let stats = self.stats_value();
-        let facts = EntityFacts {
-            slot,
-            drawn,
-            frustum_culling: engine_dev::frustum_culling(self.engine().app.world()),
-        };
-        let bricks = engine_registry::explain(
-            self.engine_mut().app.world_mut(),
-            &ExplainAsk::Entity { id: &id, entity },
-        );
-        let explained = self.dev_tools().explain_entity(
-            self.engine().app.world(),
-            (&id, entity),
-            facts,
-            (&stats, bricks),
-        );
-        let mut reply = self.dev_invoke(status(), context);
-        if reply["ok"] == true {
-            reply["result"] = result::explain(explained);
-        }
-        self.dev_done(reply, context)
-    }
-
-    fn dev_watch_start(&mut self, request: WatchRequest, context: &HostContext) -> Step {
-        let mut run = Box::new(WatchRun {
-            watcher: Watcher::new(request),
-            ran: 0,
-            streaming: true,
-        });
-        let records = match self.dev_watch_read(&mut run.watcher, context) {
-            Ok(records) => records,
-            Err(refused) => return self.dev_done(refused, context),
-        };
-        self.suspend();
-        self.dev_effect(Pending::Watch(run), Effect::Stream { records })
-    }
-
-    fn dev_watch(
-        &mut self,
-        mut run: Box<WatchRun>,
-        outcome: &Outcome,
-        context: &HostContext,
-    ) -> Step {
-        if let Some(failed) = &outcome.failed {
-            return self.dev_refused(failed_frame(
-                ErrorCode::RenderFailed,
-                run.ran + 1,
-                run.watcher.frames(),
-                failed,
-            ));
-        }
-        if !run.streaming {
-            run.ran += 1;
-            let records = match self.dev_watch_read(&mut run.watcher, context) {
-                Ok(records) => records,
-                Err(refused) => return self.dev_done(refused, context),
-            };
-            if !records.is_empty() {
-                run.streaming = true;
-                return self.dev_effect(Pending::Watch(run), Effect::Stream { records });
-            }
-        }
-        if run.ran < run.watcher.frames() {
-            run.streaming = false;
-            let timestamp = f64::from(run.ran) * run.watcher.interval_ms();
-            return self.dev_effect(Pending::Watch(run), Effect::Frame { timestamp });
-        }
-        let mut reply = self.dev_invoke(status(), context);
-        if reply["ok"] == true {
-            reply["result"] = result::watch(WatchResult {
-                frames: run.ran,
-                interval_ms: run.watcher.interval_ms(),
-                records: run.watcher.sent(),
-                temporary: true,
-            });
-        }
-        self.dev_done(reply, context)
-    }
-
-    fn dev_watch_read(
-        &mut self,
-        watcher: &mut Watcher,
-        context: &HostContext,
-    ) -> Result<Vec<Value>, Value> {
-        let mut components = Vec::new();
-        for (index, watched) in watcher.watched().to_vec().into_iter().enumerate() {
-            let mut reply = self.dev_invoke(
-                Call::Tool(ToolCall::inspect(&watched.entity, &watched.component)),
-                context,
-            );
-            if reply["ok"] != true {
-                if let Some(path) = reply["error"]["path"].as_str() {
-                    let field = path.strip_prefix("$.").unwrap_or_default().to_owned();
-                    reply["error"]["path"] = json!(format!("$.entities[{index}].{field}"));
-                }
-                return Err(reply);
-            }
-            components.push(reply["result"]["entity"]["components"][&watched.component].clone());
-        }
-        let world = self.engine().app.world();
-        let frame = world
-            .get_resource::<engine_core::FrameTime>()
-            .map(|time| time.frame.to_string());
-        let tick = world
-            .get_resource::<engine_core::FixedTime>()
-            .map(|time| time.tick.to_string());
-        let stats = self.stats_value();
-        Ok(watcher.changes((frame, tick), &stats, components))
     }
 
     fn stats_value(&self) -> Value {

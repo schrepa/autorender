@@ -9,13 +9,17 @@ use engine::{BrickList, Engine, Error, ErrorCode, Expected, Game, GpuPreference}
 use serde_json::json;
 
 use crate::{
-    CacheOptions, Frames, JobOptions, Measure, Method, Offscreen, Pix, PixRecord, ProfileRecord,
-    Record, Window, WindowReport, file_error,
+    CacheOptions, Frames, JobOptions, Measure, Offscreen, Pix, PixRecord, ProfileRecord, Record,
+    Window, WindowReport,
 };
 
 const MIB: u64 = 1024 * 1024;
 
 const DEV_PARAMETERS: [&str; 6] = ["size", "gpu", "workers", "jobcache", "counters", "vendor"];
+
+const NSIGHT_SETTLE_MS: u64 = 20_000;
+
+const NSIGHT_FRAMES: u32 = 120;
 
 pub fn options() -> Vec<CommandOption> {
     let defaults = HostOptions::default();
@@ -25,7 +29,10 @@ pub fn options() -> Vec<CommandOption> {
     };
     let jobcache = match defaults.jobs.cache {
         CacheOptions::Off => "off".to_owned(),
-        CacheOptions::Verify => "verify".to_owned(),
+        CacheOptions::Verify { sample: None } => "verify".to_owned(),
+        CacheOptions::Verify {
+            sample: Some(count),
+        } => format!("verify:{count}"),
         CacheOptions::Keep { budget } => (budget / MIB).to_string(),
     };
     let mut options = vec![
@@ -35,12 +42,12 @@ pub fn options() -> Vec<CommandOption> {
             .defaults_to(defaults.jobs.workers),
         CommandOption::taking(
             "--jobcache",
-            format!("off|verify|0-{}", policy::MAX_JOB_CACHE_MIB),
+            format!("off|verify|verify:N|0-{}", policy::MAX_JOB_CACHE_MIB),
         )
         .defaults_to(jobcache)
         .in_unit("MiB"),
         CommandOption::taking("--vsync", "on|off").defaults_to(switch(defaults.vsync)),
-        CommandOption::taking("--look", "NAME"),
+        CommandOption::taking("--environment", "NAME"),
     ];
     options.extend(SETTINGS.iter().map(|setting| {
         CommandOption::taking(&format!("--{}", setting.name), setting.accepted())
@@ -48,26 +55,17 @@ pub fn options() -> Vec<CommandOption> {
     }));
     options.extend([
         CommandOption::taking(&format!("--{OVERLAY}"), "KEY=JSON"),
-        CommandOption::taking("--frames", "N"),
-        CommandOption::taking("--settle-ms", "MS")
-            .defaults_to(defaults.settle_ms)
-            .in_unit("ms"),
         CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
         CommandOption::taking("--offscreen", "N"),
-        CommandOption::taking("--capture", "PATH"),
         CommandOption::taking("--gpu-capture", "PATH"),
-        CommandOption::taking("--profile", "DIR"),
+        CommandOption::taking("--sample-to", "DIR"),
         CommandOption::taking("--counters", "on|LIST"),
         CommandOption::taking("--vendor", "pix|nsight"),
         CommandOption::taking("--vendor-dir", "DIR"),
         CommandOption::taking("--vendor-counters", "LIST"),
         CommandOption::taking("--packs", "DIR"),
-        CommandOption::taking("--verify-sample", "N"),
         CommandOption::taking("--cook", "FILE"),
-        CommandOption::taking("--measure", "FILE"),
         CommandOption::taking("--flight", "SECONDS:LOOK:TURN"),
-        CommandOption::flag("--shader-hash"),
-        CommandOption::taking("--settings", "FILE"),
         CommandOption::flag("--dev"),
         CommandOption::taking("--smoke", "NAME,...|all|list"),
         CommandOption::taking("--dev-artifacts", "DIR").defaults_to(default_artifacts().display()),
@@ -114,73 +112,13 @@ impl Argument {
 
 pub struct Arguments {
     rest: VecDeque<String>,
-    included: usize,
 }
-
-const MAX_OPTION_FILES: usize = 16;
 
 impl Arguments {
     pub fn new(arguments: impl IntoIterator<Item = String>) -> Self {
         Self {
             rest: arguments.into_iter().collect(),
-            included: 0,
         }
-    }
-
-    pub fn include(&mut self, argument: &Argument) -> Result<(), Error> {
-        let path = self.value(argument)?;
-        self.included += 1;
-        if self.included > MAX_OPTION_FILES {
-            return Err(Error::new(ErrorCode::InvalidArguments, &argument.name)
-                .at_most(MAX_OPTION_FILES as u64)
-                .got(self.included));
-        }
-        let name = argument.name.as_str();
-        let text = std::fs::read_to_string(&path)
-            .map_err(|error| file_error(name, Path::new(&path), &error))?;
-        let file: serde_json::Value =
-            engine::bricks::parse_json(&text).map_err(|error| error.within(name))?;
-        let fields = file
-            .as_object()
-            .ok_or_else(|| Error::new(ErrorCode::InvalidType, name).expected(Expected::Object))?;
-        if let Some(field) = fields.keys().find(|field| *field != "options") {
-            return Err(
-                Error::new(ErrorCode::UnknownField, format!("{name}.{field}"))
-                    .got(field)
-                    .variants(["options"]),
-            );
-        }
-        let options = fields
-            .get("options")
-            .and_then(serde_json::Value::as_object)
-            .ok_or_else(|| {
-                Error::new(ErrorCode::InvalidType, format!("{name}.options"))
-                    .expected(Expected::Object)
-            })?;
-        let mut expanded = Vec::with_capacity(options.len() * 2);
-        for (name, value) in options {
-            let value = match value {
-                serde_json::Value::String(text) => text.clone(),
-                serde_json::Value::Bool(true) => "on".into(),
-                serde_json::Value::Bool(false) => "off".into(),
-                serde_json::Value::Number(number) => number.to_string(),
-                serde_json::Value::Null => {
-                    return Err(Error::new(
-                        ErrorCode::MissingField,
-                        format!("{}.options.{name}", argument.name),
-                    )
-                    .expected(Expected::Present));
-                }
-                json @ (serde_json::Value::Array(_) | serde_json::Value::Object(_)) => {
-                    json.to_string()
-                }
-            };
-            expanded.extend([format!("--{name}"), value]);
-        }
-        for argument in expanded.into_iter().rev() {
-            self.rest.push_front(argument);
-        }
-        Ok(())
     }
 
     pub fn value(&mut self, argument: &Argument) -> Result<String, Error> {
@@ -254,14 +192,11 @@ pub struct HostOptions {
     pub jobs: JobOptions,
     pub vsync: bool,
     pub settings: HostSettings,
-    pub look: Option<String>,
-    pub frames: Option<u32>,
-    pub settle_ms: u64,
+    pub environment: Option<String>,
     pub limit_ms: Option<u64>,
     pub offscreen: Option<u32>,
-    pub capture: Option<PathBuf>,
     pub gpu_capture: Option<PathBuf>,
-    pub profile: Option<PathBuf>,
+    pub sample_to: Option<PathBuf>,
     pub counters: Option<String>,
     pub vendor: Option<Vendor>,
     pub vendor_dir: Option<PathBuf>,
@@ -269,9 +204,7 @@ pub struct HostOptions {
     pub dev: bool,
     pub dev_artifacts: Option<PathBuf>,
     pub smoke: Option<String>,
-    pub measure: Option<Method>,
     pub flight: Option<crate::window::Flight>,
-    pub shader_hash: bool,
     pub cook: Option<PathBuf>,
     pub workers_given: bool,
 }
@@ -284,14 +217,11 @@ impl Default for HostOptions {
             jobs: JobOptions::default(),
             vsync: true,
             settings: HostSettings::default(),
-            look: None,
-            frames: None,
-            settle_ms: 20_000,
+            environment: None,
             limit_ms: None,
             offscreen: None,
-            capture: None,
             gpu_capture: None,
-            profile: None,
+            sample_to: None,
             counters: None,
             vendor: None,
             vendor_dir: None,
@@ -299,9 +229,7 @@ impl Default for HostOptions {
             dev: false,
             dev_artifacts: None,
             smoke: None,
-            measure: None,
             flight: None,
-            shader_hash: false,
             cook: None,
             workers_given: false,
         }
@@ -310,9 +238,24 @@ impl Default for HostOptions {
 
 fn job_cache(argument: &Argument, arguments: &mut Arguments) -> Result<CacheOptions, Error> {
     let cache = arguments.value(argument)?;
+    if let Some(count) = cache.strip_prefix("verify:") {
+        let sample = count
+            .parse()
+            .ok()
+            .filter(|&count: &u32| count > 0)
+            .ok_or_else(|| {
+                argument
+                    .invalid(&cache)
+                    .expected(Expected::Integer)
+                    .range(1.0, f64::from(u32::MAX))
+            })?;
+        return Ok(CacheOptions::Verify {
+            sample: Some(sample),
+        });
+    }
     Ok(match cache.as_str() {
         "off" => CacheOptions::Off,
-        "verify" => CacheOptions::Verify,
+        "verify" => CacheOptions::Verify { sample: None },
         mebibytes => CacheOptions::Keep {
             budget: mebibytes
                 .parse::<u64>()
@@ -380,7 +323,7 @@ impl HostOptions {
             }
             "--jobcache" => self.jobs.cache = job_cache(argument, arguments)?,
             "--vsync" => self.vsync = arguments.switch(argument)?,
-            "--look" => self.look = Some(arguments.value(argument)?),
+            "--environment" => self.environment = Some(arguments.value(argument)?),
             switch if switch.strip_prefix("--").is_some_and(HostSettings::takes) => {
                 let value = arguments.value(argument)?;
                 self.settings
@@ -388,15 +331,7 @@ impl HostOptions {
                     .map_err(|error| error.within(switch))?;
             }
             "--packs" => self.jobs.packs = Some(arguments.value(argument)?.into()),
-            "--verify-sample" => self.jobs.sample = Some(arguments.count(argument)?),
             "--cook" => self.cook = Some(arguments.value(argument)?.into()),
-            "--frames" => self.frames = Some(arguments.count(argument)?),
-            "--settle-ms" => {
-                let settle = arguments.value(argument)?;
-                self.settle_ms = settle
-                    .parse()
-                    .map_err(|_| argument.invalid(&settle).expected(Expected::Integer))?;
-            }
             "--limit-ms" => {
                 let limit = arguments.value(argument)?;
                 self.limit_ms = Some(
@@ -408,9 +343,8 @@ impl HostOptions {
                 );
             }
             "--offscreen" => self.offscreen = Some(arguments.count(argument)?),
-            "--capture" => self.capture = Some(arguments.value(argument)?.into()),
             "--gpu-capture" => self.gpu_capture = Some(arguments.value(argument)?.into()),
-            "--profile" => self.profile = Some(arguments.value(argument)?.into()),
+            "--sample-to" => self.sample_to = Some(arguments.value(argument)?.into()),
             "--counters" => self.counters = Some(arguments.value(argument)?),
             "--vendor" => {
                 self.vendor = Some(match arguments.value(argument)?.as_str() {
@@ -433,12 +367,6 @@ impl HostOptions {
             }
             "--dev-artifacts" => self.dev_artifacts = Some(arguments.value(argument)?.into()),
             "--smoke" => self.smoke = Some(arguments.value(argument)?),
-            "--measure" => {
-                let path = arguments.value(argument)?;
-                let text = std::fs::read_to_string(&path)
-                    .map_err(|error| file_error(name, Path::new(&path), &error))?;
-                self.measure = Some(Method::parse(&text).map_err(|error| error.within(name))?);
-            }
             "--flight" => {
                 let text = arguments.value(argument)?;
                 let mut parts = text.split(':');
@@ -452,11 +380,6 @@ impl HostOptions {
                 })();
                 self.flight = Some(flight.ok_or_else(|| argument.invalid(&text))?);
             }
-            "--settings" => arguments.include(argument)?,
-            "--shader-hash" => {
-                arguments.flag(argument)?;
-                self.shader_hash = true;
-            }
             _ => return Ok(false),
         }
         Ok(true)
@@ -469,25 +392,17 @@ impl HostOptions {
         let excludes = |option: &str| {
             Error::new(ErrorCode::InvalidArguments, option).expected(Expected::Absent)
         };
-        if self.dev {
-            let unused = [
-                ("--capture", self.capture.is_some()),
-                ("--offscreen", self.offscreen.is_some()),
-            ];
-            if let Some((option, _)) = unused.iter().find(|(_, given)| *given) {
-                return Err(excludes(option));
-            }
+        if self.dev && self.offscreen.is_some() {
+            return Err(excludes("--offscreen"));
         }
-        if (self.capture.is_some() || self.gpu_capture.is_some()) && self.offscreen.is_none() {
+        if self.gpu_capture.is_some() && self.offscreen.is_none() {
             return Err(needs("--offscreen"));
         }
-        if self.profile.is_some() && self.offscreen.is_none() {
+        if self.sample_to.is_some() && self.offscreen.is_none() {
             let others = [
-                ("--frames", self.frames.is_some()),
                 ("--dev", self.dev),
                 ("--vendor", self.vendor.is_some()),
                 ("--cook", self.cook.is_some()),
-                ("--measure", self.measure.is_some()),
                 ("--flight", self.flight.is_some()),
                 ("--smoke", self.smoke.is_some()),
             ];
@@ -496,7 +411,7 @@ impl HostOptions {
             }
         }
         let profiling = [
-            ("--profile", self.profile.is_some()),
+            ("--sample-to", self.sample_to.is_some()),
             ("--counters", self.counters.is_some()),
             ("--vendor", self.vendor.is_some()),
         ];
@@ -518,7 +433,6 @@ impl HostOptions {
             );
         }
         let others = [
-            ("--frames", self.frames.is_some()),
             ("--offscreen", self.offscreen.is_some()),
             ("--dev", self.dev),
             ("--vendor", self.vendor.is_some()),
@@ -529,31 +443,24 @@ impl HostOptions {
             .find(|(_, given)| *given)
             .map(|(option, _)| *option);
         if self.smoke.is_some()
-            && let Some(other) = other
-                .or(self.cook.is_some().then_some("--cook"))
-                .or(self.measure.is_some().then_some("--measure"))
+            && let Some(other) = other.or(self.cook.is_some().then_some("--cook"))
         {
             return Err(excludes(other));
         }
         if self.cook.is_some()
-            && let Some(other) = other.or(self.measure.is_some().then_some("--measure"))
-        {
-            return Err(excludes(other));
-        }
-        if self.measure.is_some()
             && let Some(other) = other
         {
             return Err(excludes(other));
         }
-        if self.counters.is_some() && self.profile.is_none() && !self.dev {
-            return Err(needs("--profile"));
+        if self.counters.is_some() && self.sample_to.is_none() && !self.dev {
+            return Err(needs("--sample-to"));
         }
         match self.vendor {
             Some(Vendor::Pix) if self.dev => Ok(()),
             Some(Vendor::Pix) if self.offscreen.is_none() => Err(needs("--offscreen")),
+            Some(Vendor::Pix) if self.vendor_dir.is_none() => Err(needs("--vendor-dir")),
             Some(Vendor::Nsight) if self.offscreen.is_some() => Err(excludes("--offscreen")),
             Some(Vendor::Nsight) if self.dev => Err(excludes("--dev")),
-            Some(_) if self.vendor_dir.is_none() => Err(needs("--vendor-dir")),
             _ => Ok(()),
         }
     }
@@ -564,10 +471,6 @@ impl HostOptions {
         bricks: impl FnOnce(BrickList) -> BrickList,
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> engine::Result<()> {
-        if self.shader_hash {
-            println!("{}", json!({ "shader_hash": shader_hash(bricks)? }));
-            return Ok(());
-        }
         let build = move |engine: &mut Engine| self.shown(engine, build);
         self.start_tools()?;
         #[cfg(feature = "profiling")]
@@ -581,18 +484,6 @@ impl HostOptions {
         if let Some(pack) = &self.cook {
             return self.run_cook(pack, bricks, build);
         }
-        if let Some(method) = &self.measure {
-            let size = self.size.unwrap_or((1280, 720));
-            return crate::measure::run(
-                method,
-                size,
-                self.gpu,
-                self.jobs.clone(),
-                self.settings.clone(),
-                bricks,
-                build,
-            );
-        }
         match self.offscreen {
             Some(frames) => self.run_offscreen(frames, bricks, build),
             None => {
@@ -603,12 +494,12 @@ impl HostOptions {
                         jobs: self.jobs.clone(),
                         vsync: self.vsync,
                         settings: self.settings.clone(),
-                        measure: self.frames.map(|frames| Measure {
-                            settle: Duration::from_millis(self.settle_ms),
-                            frames,
+                        measure: (self.vendor == Some(Vendor::Nsight)).then_some(Measure {
+                            settle: Duration::from_millis(NSIGHT_SETTLE_MS),
+                            frames: NSIGHT_FRAMES,
                         }),
                         flight: self.flight,
-                        profile: self.profile.clone(),
+                        profile: self.sample_to.clone(),
                         ..Window::new(title)
                     },
                     bricks,
@@ -639,8 +530,8 @@ impl HostOptions {
     ) -> engine::Result<G> {
         let game = build(engine).map_err(Into::<engine::Error>::into)?;
         let world = engine.app.world_mut();
-        if let Some(look) = &self.look {
-            engine::host::show_look(world, look, "--look")?;
+        if let Some(environment) = &self.environment {
+            engine::host::show_look(world, environment, "--environment")?;
         }
         Ok(game)
     }
@@ -764,7 +655,7 @@ impl HostOptions {
         let pix = self.loads_pix().then(Pix::load).flatten();
         let started = Instant::now();
         #[cfg(feature = "profiling")]
-        if self.profile.is_some() {
+        if self.sample_to.is_some() {
             engine_profiler::sample_heap_from_launch();
         }
         let mut game = Offscreen::launch(size, self.gpu, &self.jobs, bricks, build)?;
@@ -773,7 +664,7 @@ impl HostOptions {
         let prepared_ms = started.elapsed().as_secs_f64() * 1000.0;
         let record = Record {
             gpu_capture: self.gpu_capture.clone(),
-            profile: self.profile.as_ref().map(|folder| ProfileRecord {
+            profile: self.sample_to.as_ref().map(|folder| ProfileRecord {
                 folder: folder.clone(),
                 stem: "profile".into(),
                 max_events: None,
@@ -798,9 +689,6 @@ impl HostOptions {
         if let Some(error) = recorded.failed {
             return Err(error);
         }
-        if let Some(path) = &self.capture {
-            game.save_png(path)?;
-        }
         let stats: serde_json::Value =
             serde_json::from_str(&game.host().stats()).expect("stats_json");
         let jobs = game.jobs_mut();
@@ -812,7 +700,6 @@ impl HostOptions {
             "prepare_ms": prepared_ms,
             "frame_ms": recorded.elapsed_ms / f64::from(recorded.frames.max(1)),
             "cpu_ms": distribution(&recorded.cpu_ms),
-            "capture": self.capture.as_ref().map(|path| path.display().to_string()),
             "profile": recorded.profile,
             "vendor": recorded.pix_counters.map(|summary| json!({
                 "summary": record.pix_counters.as_ref().map(|dive| dive.folder.join("pix.summary.json").display().to_string()),
@@ -843,7 +730,7 @@ impl HostOptions {
         let mut given = std::env::args().skip(1);
         while let Some(argument) = given.next() {
             let name = argument.split('=').next().unwrap_or_default();
-            if ["--vendor", "--vendor-dir", "--vendor-counters"].contains(&name) {
+            if ["--vendor-dir", "--vendor-counters"].contains(&name) {
                 if !argument.contains('=') {
                     given.next();
                 }
@@ -851,30 +738,11 @@ impl HostOptions {
             }
             arguments.push(argument);
         }
-        if self.frames.is_none() {
-            arguments.extend(["--frames".to_owned(), "120".to_owned()]);
-        }
-        let trace = engine_profiler::vendor::nsight_trace(&arguments, self.settle_ms, 5, folder)
+        let trace = engine_profiler::vendor::nsight_trace(&arguments, NSIGHT_SETTLE_MS, 5, folder)
             .map_err(|error| error.within("--vendor"))?;
         println!("{trace:#}");
         Ok(())
     }
-}
-
-fn shader_hash(bricks: impl FnOnce(BrickList) -> BrickList) -> engine::Result<String> {
-    use sha2::Digest;
-    let mut hash = sha2::Sha256::new();
-    for module in engine::shader_modules(bricks)? {
-        for part in [module.path, module.source] {
-            hash.update(part.as_bytes());
-            hash.update([0]);
-        }
-    }
-    Ok(hash
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
 }
 
 pub(crate) fn program() -> String {

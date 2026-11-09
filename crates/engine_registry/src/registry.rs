@@ -14,7 +14,6 @@ use serde_json::Value;
 use crate::access::{AccessRule, MoverRule};
 use crate::attribution::CORE_ROW;
 use crate::entries::{Kept, OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
-use crate::explain::ExplainEntry;
 use crate::hooks::{Named, add_removal};
 use crate::jobs::JobQueue;
 use crate::order::{self, PlaceRules};
@@ -424,17 +423,17 @@ impl Registry {
     }
 
     pub fn operations(&self) -> impl Iterator<Item = &OperationEntry> + '_ {
-        self.core_operations
-            .iter()
-            .chain(self.bricks.iter().flat_map(|record| record.operations()))
+        self.all_operations().filter(|entry| entry.listed)
     }
 
     pub fn operation(&self, name: &str) -> Option<&OperationEntry> {
-        self.operations().find(|entry| entry.name == name)
+        self.all_operations().find(|entry| entry.name == name)
     }
 
-    pub fn explainers(&self) -> impl Iterator<Item = &ExplainEntry> + '_ {
-        self.bricks.iter().flat_map(|record| record.explainers())
+    fn all_operations(&self) -> impl Iterator<Item = &OperationEntry> + '_ {
+        self.core_operations
+            .iter()
+            .chain(self.bricks.iter().flat_map(|record| record.operations()))
     }
 
     pub fn check_named(&self, key: &str, value: &Value, path: &str) -> Result<(), Error> {
@@ -994,16 +993,6 @@ impl Registry {
             let access = entry.access(world);
             self.rule
                 .check_into(brick, entry.name, &access, world, &mut self.problems);
-            note(uses, brick, &access);
-        }
-        let explainers: Vec<(BrickId, ExplainEntry)> = self
-            .iter()
-            .flat_map(|(id, record)| record.explainers().iter().map(move |entry| (id, *entry)))
-            .collect();
-        for (brick, entry) in explainers {
-            let access = entry.access(world);
-            self.rule
-                .check_into(brick, "explain", &access, world, &mut self.problems);
             note(uses, brick, &access);
         }
     }

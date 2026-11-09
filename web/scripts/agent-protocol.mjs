@@ -4,11 +4,13 @@ import { createServer } from "node:http";
 export const VERSION = 1;
 export const MAX_BYTES = 1024 * 1024;
 const MAX_REQUEST_IDS = 65_536;
+const DEADLINE_MS = 15_000;
+const QUEUE_LIMIT = 16;
 const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,96}$/;
 
 const DETAIL = ["expected", "allowed", "nearest", "got"];
 const MAX_GOT = 4096;
-const REQUEST_FIELDS = ["version", "id", "session", "command", "timeout_ms", "rendering"];
+const REQUEST_FIELDS = ["version", "id", "session", "command", "timeout_ms", "brief"];
 const CLOSE_FIELDS = ["verb", "name", "version", "args"];
 const FETCH_HEADERS_LIMIT_MS = 300_000;
 export const MAX_TIMEOUT_MS = FETCH_HEADERS_LIMIT_MS - 5_000;
@@ -30,6 +32,25 @@ export class AgentError extends Error {
 export const atMost = max => ({ kind: "at_most", max });
 export const range = (min, max) => ({ kind: "range", min, max });
 export const variants = values => ({ kind: "variants", values: [...values].map(String) });
+
+/** @param {string[]} args @param {string[]} [flags] */
+export function options(args, flags = []) {
+  const result = {};
+  for (let i = 0; i < args.length; i++) {
+    const key = args[i];
+    const name = key.slice(2);
+    if (!key.startsWith("--") || name in result) throw new AgentError("invalid_arguments", key, { got: key });
+    if (flags.includes(name)) { result[name] = true; continue; }
+    const value = args[++i];
+    if (!value || value.startsWith("--")) throw new AgentError("invalid_arguments", key, { got: key });
+    result[name] = value;
+  }
+  return result;
+}
+
+export function checkOptions(values, names) {
+  for (const key of Object.keys(values)) if (!names.includes(key)) throw new AgentError("invalid_arguments", `--${key}`, { allowed: variants(names.map(name => `--${name}`)), got: `--${key}` });
+}
 
 export function detailOf(error) {
   if (error instanceof AgentError) return error.detail;
@@ -99,7 +120,7 @@ function validate(request, session) {
     if (!REQUEST_FIELDS.includes(key)) throw new AgentError("invalid_request", key, { allowed: variants(REQUEST_FIELDS), got: key });
   }
   checkTimeout(request.timeout_ms);
-  if (request.rendering !== undefined && request.rendering !== false) throw new AgentError("invalid_request", "rendering", { allowed: variants([false]), got: request.rendering });
+  if (request.brief !== undefined && request.brief !== true) throw new AgentError("invalid_request", "brief", { allowed: variants([true]), got: request.brief });
 }
 
 async function readRequest(request) {
@@ -115,47 +136,29 @@ async function readRequest(request) {
   catch { throw new AgentError("invalid_json", "$", { expected: "json" }); }
 }
 
-/** @param {{ session: string, url: string, build?: string, execute: (command: any, onRecord?: (record: any) => void) => any, activity?: () => any, onClose: () => any, development?: () => any, initiallyUnavailable?: boolean, deadlineMs?: number, queueLimit?: number }} options */
-export function createBridge({ session, url, build, execute, activity, onClose, development, initiallyUnavailable = false, deadlineMs = 15_000, queueLimit = 16 }) {
-  let startedAt = new Date().toISOString();
+/** @param {{ session: string, url: string, execute: (command: any) => any, activity?: () => any, onClose: () => any }} options */
+export function createBridge({ session, url, execute, activity, onClose }) {
+  const startedAt = new Date().toISOString();
   const requestIds = new Set();
   const queue = [];
   let running = false;
-  /** @type {{ kind: "ready" } | { kind: "unavailable" } | { kind: "replacing", from: "ready" | "unavailable" } | { kind: "closed" }} */
-  let state = { kind: initiallyUnavailable ? "unavailable" : "ready" };
+  /** @type {"ready" | "unavailable" | "closed"} */
+  let state = "ready";
   let carrying;
 
-  /** @param {"lost" | "replace" | "replaced" | "kept" | "close"} event */
+  /** @param {"lost" | "close"} event */
   function move(event) {
-    switch (state.kind) {
-      case "ready":
-      case "unavailable":
-        if (event === "lost") state = { kind: "unavailable" };
-        else if (event === "replace") state = { kind: "replacing", from: state.kind };
-        else if (event === "close") state = { kind: "closed" };
-        else throw new AgentError("session_unavailable", "$", { expected: "replacing", got: state.kind });
-        return;
-      case "replacing":
-        if (event === "lost") state = { kind: "replacing", from: "unavailable" };
-        else if (event === "replaced") state = { kind: "ready" };
-        else if (event === "kept") state = { kind: state.from };
-        else throw new AgentError("session_replacing", "$", { expected: "live" });
-        return;
-      case "closed":
-        if (event === "lost" || event === "close") return;
-        throw new AgentError("session_closed", "$", { expected: "live" });
-    }
+    if (state !== "closed") state = event === "lost" ? "unavailable" : "closed";
   }
 
-  const live = () => state.kind === "ready" || (state.kind === "replacing" && state.from === "ready");
+  const live = () => state === "ready";
 
-  const answer = (request, response, acceptedSession = session, acceptedBuild = build) =>
-    envelope(request, acceptedSession, { ...response, ...(acceptedBuild === undefined ? {} : { build: acceptedBuild }) });
+  const answer = (request, response) => envelope(request, session, response);
 
   const carried = () => carrying && { verb: carrying.command.verb, name: carrying.command.name, running_ms: Date.now() - carrying.started };
 
-  function carry(command, onRecord) {
-    const reply = Promise.resolve().then(() => execute(command, onRecord));
+  function carry(command) {
+    const reply = Promise.resolve().then(() => execute(command));
     /** @type {{ command: any, started: number, finished: Promise<void> | undefined }} */
     const entry = { command, started: Date.now(), finished: undefined };
     const finish = () => { if (carrying === entry) carrying = undefined; };
@@ -178,24 +181,6 @@ export function createBridge({ session, url, build, execute, activity, onClose, 
     while (queue.length) {
       const item = queue.shift();
       clearTimeout(item.expiry);
-      if (item.replacement) {
-        try {
-          if (item.replacement.validate && !await item.replacement.validate()) throw new AgentError("build_superseded", "$", { expected: "matching" });
-          item.replacement.commit?.();
-          ({ session, url, build, execute, activity } = item.replacement);
-          carrying = undefined;
-          startedAt = new Date().toISOString();
-          requestIds.clear();
-          move("replaced");
-          item.resolve();
-        } catch (error) {
-          move("kept");
-          item.reject(error);
-        }
-        continue;
-      }
-      const acceptedSession = session;
-      const acceptedBuild = build;
       let timer;
       let response;
       try {
@@ -211,20 +196,19 @@ export function createBridge({ session, url, build, execute, activity, onClose, 
         if (carrying) await Promise.race([carrying.finished, limit]);
         if (expired) await limit;
         if (!live()) throw new AgentError("session_unavailable", "$", { expected: "live" });
-        response = await Promise.race([carry(command, record => { if (!expired) item.onRecord?.(record); }), limit]);
+        response = await Promise.race([carry(command), limit]);
         if (!response || typeof response.ok !== "boolean") throw new AgentError("invalid_browser_response", "$", { expected: "object" });
-        if (item.request.rendering === false && response.result) delete response.result.rendering;
+        if (item.request.brief === true && response.result) delete response.result.rendering;
         if (Buffer.byteLength(JSON.stringify(response)) > MAX_BYTES - 1024) throw new AgentError("response_too_large", "$", { allowed: atMost(MAX_BYTES - 1024) });
       } catch (error) { response = failure(error); }
       finally { clearTimeout(timer); }
-      item.resolve(answer(item.request, response, acceptedSession, acceptedBuild));
+      item.resolve(answer(item.request, response));
     }
     running = false;
   }
 
-  function submit(request, onRecord) {
+  function submit(request) {
     validate(request, session);
-    if (state.kind === "replacing") throw new AgentError("session_replacing", "$", { expected: "live" });
     const closes = closing(request.command) && onClose;
     if (!live() && !closes) throw new AgentError("session_unavailable", "$", { expected: "live" });
     if (requestIds.has(request.id)) throw new AgentError("duplicate_request", "id", { expected: "unique", got: request.id });
@@ -234,12 +218,12 @@ export function createBridge({ session, url, build, execute, activity, onClose, 
       return Promise.resolve(answer(request, { ok: true, result: { state: "closing" } }));
     }
     if (requestIds.size >= MAX_REQUEST_IDS) throw new AgentError("session_request_limit", "$", { allowed: atMost(MAX_REQUEST_IDS) });
-    if (queue.length + Number(running) >= queueLimit) throw new AgentError("queue_full", "$", { allowed: atMost(queueLimit) });
+    if (queue.length + Number(running) >= QUEUE_LIMIT) throw new AgentError("queue_full", "$", { allowed: atMost(QUEUE_LIMIT) });
     requestIds.add(request.id);
-    const limit = request.timeout_ms ?? deadlineMs;
+    const limit = request.timeout_ms ?? DEADLINE_MS;
     return new Promise(resolve => {
-      /** @type {{ request: any, onRecord: any, limit: number, deadline: number, resolve: (value: any) => void, expiry: NodeJS.Timeout | undefined }} */
-      const item = { request, onRecord, limit, deadline: Date.now() + limit, resolve, expiry: undefined };
+      /** @type {{ request: any, limit: number, deadline: number, resolve: (value: any) => void, expiry: NodeJS.Timeout | undefined }} */
+      const item = { request, limit, deadline: Date.now() + limit, resolve, expiry: undefined };
       item.expiry = setTimeout(() => {
         queue.splice(queue.indexOf(item), 1);
         const { verb, name } = request.command;
@@ -265,34 +249,15 @@ export function createBridge({ session, url, build, execute, activity, onClose, 
         throw new AgentError("origin_rejected", "$", { allowed: variants([`127.0.0.1:${address.port}`]), got: request.headers.host });
       }
       if (request.method === "GET" && request.url === "/sessions") {
-        send(response, 200, { version: VERSION, sessions: [{ session, url, ...(build === undefined ? {} : { build }), started_at: startedAt, state: live() ? "ready" : "unavailable" }] });
-        return;
-      }
-      if (request.method === "GET" && request.url === "/development" && development) {
-        const result = { version: VERSION, ok: true, result: development() };
-        if (Buffer.byteLength(JSON.stringify(result)) > MAX_BYTES) throw new AgentError("response_too_large", "$", { allowed: atMost(MAX_BYTES) });
-        send(response, 200, result);
+        send(response, 200, { version: VERSION, sessions: [{ session, url, started_at: startedAt, state: live() ? "ready" : "unavailable" }] });
         return;
       }
       if (request.method !== "POST" || request.url !== "/request") {
-        const routes = ["GET /sessions", ...(development ? ["GET /development"] : []), "POST /request"];
-        send(response, 404, envelope(null, session, failure(new AgentError("route_not_found", "$", { allowed: variants(routes), got: `${request.method} ${request.url}` }))));
+        send(response, 404, envelope(null, session, failure(new AgentError("route_not_found", "$", { allowed: variants(["GET /sessions", "POST /request"]), got: `${request.method} ${request.url}` }))));
         return;
       }
       if (request.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") throw new AgentError("content_type", "$", { allowed: variants(["application/json"]), got: request.headers["content-type"] });
       parsed = await readRequest(request);
-      if (parsed?.command?.verb === "watch") {
-        const held = [];
-        let open = false;
-        const write = line => { if (open) response.write(line); else held.push(line); };
-        const pending = submit(parsed, record => write(`${JSON.stringify({ record })}\n`));
-        response.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
-        open = true;
-        for (const line of held.splice(0)) response.write(line);
-        const result = await pending;
-        response.end(`${JSON.stringify(result)}\n`);
-        return;
-      }
       const result = await submit(parsed);
       if (closing(parsed.command) && result.ok && onClose) {
         response.once("close", () => { Promise.resolve().then(onClose).catch(() => {}); });
@@ -303,15 +268,5 @@ export function createBridge({ session, url, build, execute, activity, onClose, 
     }
   });
   server.maxHeadersCount = 32;
-  return {
-    server, submit,
-    markUnavailable: () => move("lost"),
-    replaceSession(next) {
-      try { move("replace"); } catch (error) { return Promise.reject(error); }
-      return new Promise((resolve, reject) => {
-        queue.push({ replacement: next, resolve, reject });
-        void pump();
-      });
-    },
-  };
+  return { server, markUnavailable: () => move("lost") };
 }

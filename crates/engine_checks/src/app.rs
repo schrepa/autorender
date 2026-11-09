@@ -3,13 +3,13 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use engine::Engine;
-use engine_command_line::{self as command_line, Command, CommandOption};
+use engine_command_line::{self as command_line, Command};
 
 use crate::install::List;
-use crate::stages::{self, Stage};
+use crate::stages::{self, Changes, Stage};
 use crate::{Exceptions, Repository, Rules};
 
-const USAGE: &str = "usage: cargo xtask verify [--level quick|pr|merge] | schema";
+const USAGE: &str = "usage: cargo xtask lint [--base REV] [--all] | generate";
 
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
@@ -37,15 +37,34 @@ impl App {
     }
 }
 
-const QUICK: usize = 6;
+struct Lint {
+    app: App,
+    changes: Changes,
+}
 
-const STAGES: &[Stage<App>] = &[
+impl Lint {
+    fn packages(&self) -> Vec<&str> {
+        self.changes.affected.iter().map(String::as_str).collect()
+    }
+
+    fn projects(&self) -> Vec<&str> {
+        self.app
+            .repository
+            .projects()
+            .map(|project| project.name.as_str())
+            .filter(|name| self.changes.affects(name))
+            .collect()
+    }
+}
+
+const STAGES: &[Stage<Lint>] = &[
     Stage {
         name: "kinds",
         needs: &[],
-        run: |app| {
+        covers: |lint| lint.changes.any(|path| path.ends_with("Cargo.toml")),
+        run: |lint| {
             crate::tools::run(
-                &app.repository.root,
+                &lint.app.repository.root,
                 "cargo",
                 &["run", "-q", "--locked", "-p", "kinds"],
             )
@@ -54,50 +73,51 @@ const STAGES: &[Stage<App>] = &[
     Stage {
         name: "policy",
         needs: &[],
-        run: |app| crate::policy::check(&app.repository, &Rules::NONE),
+        covers: |lint| lint.changes.any(|_| true),
+        run: |lint| crate::policy::check(&lint.app.repository, &Rules::NONE),
     },
     Stage {
         name: "comments",
         needs: &[],
-        run: |app| crate::comments::check(&app.repository),
+        covers: |lint| lint.changes.any(crate::comments::covers),
+        run: |lint| crate::comments::check(&lint.app.repository),
     },
     Stage {
         name: "fmt",
         needs: &[],
-        run: |app| crate::tools::fmt(&app.repository),
+        covers: |lint| lint.changes.any(|path| path.ends_with(".rs")),
+        run: |lint| crate::tools::fmt(&lint.app.repository),
     },
     Stage {
         name: "structure",
         needs: &[],
-        run: |app| crate::structure::check(&app.repository, &Exceptions::NONE),
+        covers: |lint| lint.changes.any(crate::files::source),
+        run: |lint| crate::structure::check(&lint.app.repository, &Exceptions::NONE),
     },
     Stage {
         name: "install",
         needs: &[],
-        run: |app| crate::install::check(&mut app.engine()?),
+        covers: |lint| !lint.packages().is_empty(),
+        run: |lint| crate::install::check(&mut lint.app.engine()?),
     },
     Stage {
         name: "clippy",
         needs: &[],
-        run: |app| {
-            let packages: Vec<&str> = app
-                .repository
-                .own()
-                .map(|package| package.name.as_str())
-                .collect();
-            crate::tools::clippy(&app.repository, &packages, &["--all-targets"])
+        covers: |lint| !lint.packages().is_empty(),
+        run: |lint| {
+            crate::tools::clippy(&lint.app.repository, &lint.packages(), &["--all-targets"])
         },
     },
     Stage {
         name: "clippy wasm",
         needs: &[],
-        run: |app| {
-            let projects: Vec<&str> = app
-                .repository
-                .projects()
-                .map(|project| project.name.as_str())
-                .collect();
-            crate::tools::clippy(&app.repository, &projects, &["--target", WASM_TARGET])
+        covers: |lint| !lint.projects().is_empty(),
+        run: |lint| {
+            crate::tools::clippy(
+                &lint.app.repository,
+                &lint.projects(),
+                &["--target", WASM_TARGET],
+            )
         },
     },
 ];
@@ -126,13 +146,7 @@ fn run<G: 'static, E: Display + 'static>(
         .ok_or_else(|| format!("{folder} has no parent folder"))?;
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if let Some(json) = command_line::asks_help(&arguments) {
-        let commands = [
-            Command::new(
-                "verify",
-                [CommandOption::taking("--level", "quick|pr|merge").defaults_to("pr")],
-            ),
-            Command::new("schema", []),
-        ];
+        let commands = [stages::command(), Command::new("generate", [])];
         if json {
             println!("{}", command_line::commands_json(&commands));
         } else {
@@ -145,10 +159,14 @@ fn run<G: 'static, E: Display + 'static>(
         list,
         build: Box::new(move |engine| build(engine).map(drop).map_err(|error| error.to_string())),
     };
-    match arguments.iter().map(String::as_str).collect::<Vec<_>>()[..] {
-        ["verify"] | ["verify", "--level", "pr" | "merge"] => stages::run(&app, STAGES),
-        ["verify", "--level", "quick"] => stages::run(&app, &STAGES[..QUICK]),
-        ["schema"] => crate::generated::write(&app.repository.root, &app.generated()?),
+    match arguments.split_first() {
+        Some((task, options)) if task == "lint" => {
+            let changes = Changes::read(&app.repository, options)?;
+            stages::run(&Lint { app, changes }, STAGES)
+        }
+        Some((task, [])) if task == "generate" => {
+            crate::generated::write(&app.repository.root, &app.generated()?)
+        }
         _ => Err(USAGE.to_owned()),
     }
 }

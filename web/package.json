@@ -5,10 +5,8 @@
   "type": "module",
   "engines": { "node": ">=24" },
   "scripts": {
-    "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts",
-    "check": "npm run typecheck && node scripts/check-layers.mjs && node scripts/check-errors.mjs && node scripts/check-parameters.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },
   "devDependencies": {

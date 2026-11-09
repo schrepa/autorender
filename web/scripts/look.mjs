@@ -2,7 +2,9 @@
 import { readFileSync } from "node:fs";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { AgentError, atMost } from "./agent-protocol.mjs";
+import { AgentError, VERSION, atMost, checkOptions, failure, options } from "./agent-protocol.mjs";
+import { launchBrowserSession } from "./agent-browser.mjs";
+import { launchNativeSession } from "./agent-native.mjs";
 import { workspace } from "./workspace.mjs";
 
 const OFF = "off";
@@ -45,7 +47,7 @@ async function listedViews(ask) {
 }
 
 /** @param {{ execute: (command: object) => Promise<any> }} owned @param {Record<string, string>} values */
-export async function runLook(owned, values) {
+async function look(owned, values) {
   const limitMs = Number(values["limit-ms"]);
   if (!Number.isInteger(limitMs) || limitMs <= 0) throw new AgentError("invalid_arguments", "--limit-ms", { expected: "integer", got: values["limit-ms"] ?? null });
   if (!values.out) throw new AgentError("invalid_arguments", "--out", { expected: "present" });
@@ -134,3 +136,20 @@ export async function runLook(owned, values) {
   }
   return failures === 0 ? 0 : 3;
 }
+
+async function main() {
+  const values = options(process.argv.slice(2));
+  checkOptions(values, ["native", "source", "url", "plan", "out", "limit-ms"]);
+  if (values.native && values.url) throw new AgentError("invalid_arguments", "--url", { expected: "absent" });
+  if (!values.native && !values.url) throw new AgentError("invalid_arguments", "--url", { expected: "present" });
+  if (values.source && !values.native) throw new AgentError("invalid_arguments", "--native", { expected: "present" });
+  const owned = values.native
+    ? await launchNativeSession({ program: resolve(values.native), args: values.source ? ["--source", values.source] : [] })
+    : await launchBrowserSession({ url: values.url });
+  try { process.exitCode = await look(owned, values); } finally { await owned.close(); }
+}
+
+await main().catch(error => {
+  console.log(JSON.stringify({ version: VERSION, ...failure(error) }));
+  process.exitCode = 1;
+});

@@ -38,13 +38,13 @@ pub fn now_ms() -> f64 {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum TerrainClock {
+pub enum JobClock {
     #[default]
     Wall,
     Frames,
 }
 
-impl TerrainClock {
+impl JobClock {
     fn reading(self) -> Option<fn() -> f64> {
         match self {
             Self::Wall => Some(now_ms),
@@ -57,7 +57,7 @@ fn wire(
     engine: &mut Engine,
     renderer: &Renderer,
     (workers, verifying): (u32, bool),
-    clock: TerrainClock,
+    clock: JobClock,
 ) {
     let world = engine.app.world_mut();
     world.insert_resource(WorkClock {
@@ -108,7 +108,7 @@ pub(crate) struct AppHost {
     focus: Focus,
     stats: FrameStats,
     size: (u32, u32),
-    terrain_clock: TerrainClock,
+    job_clock: JobClock,
     overlay: crate::host::SettingsLog,
     pipeline_list: crate::host::PipelineList,
     pixel_ratio: f64,
@@ -145,14 +145,14 @@ impl AppHost {
     }
 
     fn with(mut engine: Engine, renderer: Box<Renderer>) -> Self {
-        wire(&mut engine, &renderer, (0, false), TerrainClock::Wall);
+        wire(&mut engine, &renderer, (0, false), JobClock::Wall);
         Self {
             engine,
             renderer,
             focus: Focus::Held,
             stats: FrameStats::default(),
             size: (0, 0),
-            terrain_clock: TerrainClock::Wall,
+            job_clock: JobClock::Wall,
             overlay: crate::host::SettingsLog::default(),
             pipeline_list: crate::host::PipelineList::default(),
             pixel_ratio: 1.0,
@@ -196,7 +196,7 @@ impl AppHost {
             .world()
             .get_resource::<JobExchange>()
             .map_or((0, false), |jobs| (jobs.workers(), jobs.verifying()));
-        wire(&mut engine, &self.renderer, jobs, self.terrain_clock);
+        wire(&mut engine, &self.renderer, jobs, self.job_clock);
         let replaced = std::mem::replace(&mut self.engine, engine);
         self.reloaded();
         if let Err(error) = self.claim_passes() {
@@ -246,8 +246,8 @@ impl AppHost {
         Ok(())
     }
 
-    pub fn set_terrain_clock(&mut self, clock: TerrainClock) {
-        self.terrain_clock = clock;
+    pub fn set_job_clock(&mut self, clock: JobClock) {
+        self.job_clock = clock;
         self.engine.app.world_mut().insert_resource(WorkClock {
             reading: clock.reading(),
         });

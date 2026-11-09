@@ -73,7 +73,7 @@ fn command(arguments: &[String]) -> Result<Value, Error> {
         let source = candidate.to_json()?;
         write_files(target, &result.files)?;
         let report =
-            authoring::save_scene(target, &source, revision, &kinds, crate::checkouts::alive)?;
+            authoring::save_scene(target, &source, revision, &kinds, crate::development::alive)?;
         (
             json!({"path":report.path,"revision":report.revision,"persisted":report.persisted,"source_bytes":report.source_bytes,"mode":if options.replace {"replace_namespace"} else {"append"}}),
             candidate,

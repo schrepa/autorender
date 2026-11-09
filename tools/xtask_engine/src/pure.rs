@@ -322,7 +322,7 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
 }
 
 fn replay_in_wasm(root: &Path, jobs: &str) -> Result<Value, Failure> {
-    crate::pipeline::build_wasm(root, true, crate::pipeline::QUICK)?;
+    crate::pipeline::build_wasm(root, true)?;
     let jobs = root.join(jobs).display().to_string();
     let record = serde_json::json!({
         "event": "running",

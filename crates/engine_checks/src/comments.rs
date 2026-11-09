@@ -10,30 +10,31 @@ const SHELLS: [&str; 2] = [".ps1", ".sh"];
 
 const MARKS: [&str; 2] = ["optics:", "filter:"];
 
+pub fn covers(path: &str) -> bool {
+    [".rs", ".wgsl"]
+        .iter()
+        .chain(&SCRIPTS)
+        .chain(&SHELLS)
+        .any(|extension| path.ends_with(extension))
+}
+
 pub fn check(repository: &Repository) -> Result<(), String> {
     let root = repository.root.as_path();
     let mut problems = Vec::new();
     let mut checked = 0;
     for path in crate::files::listed(root, &[])? {
-        let rust = path.ends_with(".rs");
-        let shader = path.ends_with(".wgsl");
-        let script = SCRIPTS.iter().any(|extension| path.ends_with(extension));
-        let shell = SHELLS.iter().any(|extension| path.ends_with(extension));
-        if !(rust || shader || script || shell)
-            || !crate::files::ours(&path)
-            || !repository.ruled(&path)
-        {
+        if !covers(&path) || !crate::files::ours(&path) || !repository.ruled(&path) {
             continue;
         }
         let Ok(source) = std::fs::read_to_string(root.join(&path)) else {
             continue;
         };
         checked += 1;
-        let lines = if rust {
+        let lines = if path.ends_with(".rs") {
             rust_comments(&source)
-        } else if shader {
+        } else if path.ends_with(".wgsl") {
             shader_comments(&source)
-        } else if script {
+        } else if SCRIPTS.iter().any(|extension| path.ends_with(extension)) {
             script_comments(&source, path.ends_with(".mjs"))
         } else {
             shell_comments(&source, path.ends_with(".ps1"))

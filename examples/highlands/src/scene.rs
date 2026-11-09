@@ -1,23 +1,11 @@
 use engine::prelude::*;
-use engine::{Error, ErrorCode, Expected};
 use serde_json::{Value, json};
 
 use crate::land;
-use crate::options::Options;
 
 pub(crate) const SCENE: &str = include_str!("../highlands.scene.json");
 
 const SPEED: f32 = 160.0;
-
-const EFFECTS: [&str; 7] = [
-    "shadows",
-    "occlusion",
-    "bloom",
-    "lights",
-    "reflections",
-    "particles",
-    "probes",
-];
 
 pub(crate) fn set(world: &mut World, key: &str, value: Value) -> engine::Result<()> {
     engine::host::apply_setting(world, key, &value)
@@ -26,133 +14,20 @@ pub(crate) fn set(world: &mut World, key: &str, value: Value) -> engine::Result<
 pub(crate) fn furnish(
     world: &mut World,
     document: &SceneDocument,
-    options: &Options,
     flying: bool,
-) -> engine::Result<Option<Value>> {
-    land::populate(world, document, options.bodies)?;
-    let reflections = document
-        .environment
-        .as_ref()
-        .and_then(|environment| environment.sections.get("reflections"))
-        .cloned();
-    if options.bodies > 0 {
-        set(world, "collision", collision_budgets())?;
-    } else {
-        set(world, "collision.enabled", json!(false))?;
-        set(world, "physics.enabled", json!(false))?;
-    }
+) -> engine::Result<()> {
+    land::populate(world, document)?;
+    set(world, "collision.enabled", json!(false))?;
+    set(world, "physics.enabled", json!(false))?;
     if flying {
-        set(world, "fly_camera.speed", json!(SPEED))?;
+        set(world, "fly_camera.speed", json!(SPEED))
     } else {
-        set(world, "fly_camera.enabled", json!(false))?;
+        set(world, "fly_camera.enabled", json!(false))
     }
-    Ok(reflections)
 }
 
 pub(crate) fn start(world: &World) -> Option<(Transform, Camera)> {
     main_camera(world).and_then(|camera| {
         Some((*world.get::<Transform>(camera)?, *world.get::<Camera>(camera)?))
     })
-}
-
-fn collision_budgets() -> Value {
-    json!({
-        "max_colliders": 10_000,
-        "max_candidate_pairs": 100_000,
-        "max_sensor_pairs": 16_384,
-        "max_query_candidates": 10_000,
-        "max_query_hits": 1024,
-    })
-}
-
-fn exclusions() -> impl Iterator<Item = String> {
-    EFFECTS.iter().map(|effect| format!("no-{effect}"))
-}
-
-pub(crate) fn effects() -> String {
-    format!("all|none|{}", exclusions().collect::<Vec<_>>().join(","))
-}
-
-pub(crate) fn set_effects(
-    world: &mut World,
-    name: &str,
-    scene_reflections: Option<&Value>,
-) -> engine::Result<()> {
-    let mut on = [true; EFFECTS.len()];
-    match name {
-        "all" => {}
-        "none" => on = [false; EFFECTS.len()],
-        _ => {
-            for token in name.split(',') {
-                let excluded = token
-                    .strip_prefix("no-")
-                    .and_then(|effect| EFFECTS.iter().position(|name| *name == effect));
-                match excluded {
-                    Some(index) => on[index] = false,
-                    None => {
-                        let tokens = ["all", "none"].map(String::from).into_iter();
-                        return Err(Error::new(ErrorCode::InvalidValue, "$.effects")
-                            .got(token)
-                            .variants(tokens.chain(exclusions())));
-                    }
-                }
-            }
-        }
-    }
-    let [
-        shadows,
-        occlusion,
-        bloom,
-        lights,
-        reflections,
-        particles,
-        probes,
-    ] = on;
-    set(world, "shadows.enabled", json!(shadows))?;
-    if occlusion {
-        engine::host::reset_setting(world, "ambient_occlusion.intensity")?;
-    } else {
-        set(world, "ambient_occlusion.intensity", json!(0.0))?;
-    }
-    if bloom {
-        engine::host::reset_setting(world, "bloom.intensity")?;
-    } else {
-        set(world, "bloom.intensity", json!(0.0))?;
-    }
-    match scene_reflections.filter(|_| reflections) {
-        Some(section) => set(world, "reflections", section.clone())?,
-        None => set(world, "reflections.enabled", json!(false))?,
-    }
-    set(world, "local_lights.enabled", json!(lights))?;
-    set(world, "particles.enabled", json!(particles))?;
-    if probes {
-        set(world, "reflection_probes", json!({}))
-    } else {
-        set(world, "reflection_probes.enabled", json!(false))
-    }
-}
-
-pub(crate) fn stand(world: &mut World, place: &str) -> engine::Result<()> {
-    let malformed = |expected| {
-        Error::new(ErrorCode::InvalidValue, "$.stand")
-            .expected(expected)
-            .got(place)
-    };
-    let numbers: Vec<f32> = place
-        .split(',')
-        .map(|number| number.trim().parse::<f32>())
-        .collect::<Result<_, _>>()
-        .map_err(|_| malformed(Expected::Number))?;
-    let [x, z, yaw, pitch] = numbers[..] else {
-        return Err(malformed(Expected::Array));
-    };
-    if numbers.iter().any(|number| !number.is_finite()) {
-        return Err(malformed(Expected::Finite));
-    }
-    if pitch.abs() >= 90.0 {
-        return Err(Error::new(ErrorCode::OutOfRange, "$.stand")
-            .range(-90.0, 90.0)
-            .got(pitch));
-    }
-    land::control(world, json!({"stand": {"place": [x, z, yaw, pitch]}}))
 }

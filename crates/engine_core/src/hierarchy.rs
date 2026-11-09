@@ -616,8 +616,7 @@ impl Nodes<'_> {
             .then(|| rows_matrix(&self.globals[index]))
     }
 
-    #[cfg_attr(not(feature = "attribution"), inline(always))]
-    #[cfg_attr(feature = "attribution", inline(never))]
+    #[inline(always)]
     fn derived_global(&self, index: usize, local: &Transform) -> Option<Mat4> {
         let link = &self.links[index];
         if !link.topology_valid {
@@ -642,8 +641,7 @@ impl Nodes<'_> {
         self.commit(index, next, work)
     }
 
-    #[cfg_attr(not(feature = "attribution"), inline(always))]
-    #[cfg_attr(feature = "attribution", inline(never))]
+    #[inline(always)]
     fn commit(&mut self, index: usize, next: Option<Mat4>, work: &mut PropagationWork) -> bool {
         let link = &mut self.links[index];
         let global = &mut self.globals[index];

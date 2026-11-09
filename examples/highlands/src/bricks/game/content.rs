@@ -8,8 +8,6 @@ use glam::Vec3;
 use crate::bricks::game::HighlandsStats;
 use crate::jobs::{BOULDER, CAVE_POINTS, CONIFER, CONIFER_SHADOW, trees};
 
-pub(crate) const SEED: u32 = 1337;
-
 const BOULDERS: u32 = 5;
 
 const SPRUCES: u32 = 3;
@@ -96,13 +94,6 @@ pub(crate) fn provide_land(
         provided.provide_mesh(format!("spruce{seed}_shadow"), shadow);
     }
     Ok(())
-}
-
-pub(crate) fn bank_boulder(
-    content: &mut Content,
-    (jobs, assets): (&mut Jobs<'_, '_>, &mut AssetLibrary),
-) -> Result<MeshHandle, Error> {
-    content.ask((jobs, assets), &BOULDER, &(SEED ^ 0x5eed).to_le_bytes())
 }
 
 pub(crate) fn cave_input(points: &[Vec3; CAVE_POINTS]) -> Vec<u8> {

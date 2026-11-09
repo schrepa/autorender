@@ -1,15 +1,17 @@
 import { defineConfig } from "vite";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { createReadStream, existsSync, readdirSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import clients from "./src/generated/clients.json";
 import { wasmImport } from "./scripts/wasm-alias.mjs";
 
-const instrumented = new Map([["profiling", "profile"], ["attribution", "attribution"]]);
+const instrumented = new Map([["profiling", "profile"]]);
 const selected = process.env.ENGINE_GAME;
 const games = clients.flatMap(({ wasm, game, page }) => game && page && (!selected || game === selected) ? [{ wasm, game, page }] : []);
 const publicFolder = resolve(import.meta.dirname, "public");
 const packIndex = resolve(publicFolder, "cooked/index.json");
+const workspace = resolve(import.meta.dirname, "..");
+const gameFolders = clients.map(client => resolve(workspace, client.folder) + sep);
 const ktx2 = existsSync(publicFolder)
   ? readdirSync(publicFolder, { recursive: true, encoding: "utf8" })
     .map(path => path.replaceAll("\\", "/")).filter(path => path.endsWith(".ktx2")).sort()
@@ -68,6 +70,29 @@ export default defineConfig(({ command, mode }) => ({
     configureServer(server) {
       server.watcher.on("all", (event, path) => {
         if ((event === "add" || event === "unlink") && resolve(path) === packIndex) void server.restart();
+      });
+    },
+  }, {
+    name: "dev-loop",
+    hotUpdate({ file }) {
+      return file.includes("/pkg-dev/") ? [] : undefined;
+    },
+    configureServer(server) {
+      server.middlewares.use("/_engine/reload", (request, response) => {
+        if (request.method !== "POST") { response.statusCode = 405; response.end(); return; }
+        for (const environment of Object.values(server.environments)) environment.moduleGraph.invalidateAll();
+        server.ws.send({ type: "full-reload", path: "*" });
+        response.end();
+      });
+      server.middlewares.use("/_engine/source", async (request, response) => {
+        try {
+          const file = resolve(workspace, `.${decodeURIComponent(request.url?.split("?")[0] ?? "")}`);
+          if (request.method !== "GET" || !file.endsWith(".scene.json") || !gameFolders.some(folder => file.startsWith(folder))) throw new Error("not a game's scene file");
+          const text = await readFile(file);
+          response.setHeader("Content-Type", "application/json; charset=utf-8");
+          response.setHeader("Cache-Control", "no-store");
+          response.end(text);
+        } catch { response.statusCode = 404; response.end("Scene source not found"); }
       });
     },
   }],

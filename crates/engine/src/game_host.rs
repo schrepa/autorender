@@ -22,6 +22,10 @@ pub struct GameHost<G: Game> {
     development: crate::dev_host::DevHost,
     #[cfg(feature = "dev")]
     pub(crate) dev_pending: Option<crate::dev_host::bridge::Pending>,
+    #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+    source: Option<std::path::PathBuf>,
+    #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+    watched: Vec<(std::path::PathBuf, Option<std::time::SystemTime>)>,
 }
 
 impl<G: Game> GameHost<G> {
@@ -55,6 +59,10 @@ impl<G: Game> GameHost<G> {
             development,
             #[cfg(feature = "dev")]
             dev_pending: None,
+            #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+            source: None,
+            #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+            watched: Vec::new(),
         })
     }
 
@@ -266,10 +274,6 @@ impl<G: Game> GameHost<G> {
         self.frames.preparing()
     }
 
-    pub fn set_between_frames(&mut self, enabled: bool) {
-        self.frames.set_between_frames(enabled);
-    }
-
     pub fn key(&mut self, code: &str, down: bool) -> bool {
         self.input.key(code, down);
         self.app.engine().app.world().resource::<Input>().uses_key(code)
@@ -465,8 +469,8 @@ impl<G: Game> GameHost<G> {
         self.app.set_refresh_interval(milliseconds);
     }
 
-    pub fn set_terrain_clock(&mut self, clock: crate::host::TerrainClock) {
-        self.app.set_terrain_clock(clock);
+    pub fn set_job_clock(&mut self, clock: crate::host::JobClock) {
+        self.app.set_job_clock(clock);
     }
 
     pub fn adapter(&self) -> &crate::AdapterInfo {
@@ -494,16 +498,6 @@ impl<G: Game> GameHost<G> {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn gpu_mark(&self) -> crate::GpuMark {
-        self.app.renderer.gpu_mark()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn wait_for_mark(&self, mark: crate::GpuMark) -> crate::Result<()> {
-        self.app.renderer.wait_for_mark(mark)
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn read_offscreen(&self) -> crate::Result<Option<(u32, u32, Vec<u8>)>> {
         self.app.renderer.read_offscreen()
     }
@@ -527,12 +521,76 @@ impl<G: Game> GameHost<G> {
     }
 }
 
-#[cfg(feature = "dev")]
+#[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
 impl<G: Game> GameHost<G> {
-    pub(crate) fn job_workers(&self) -> u32 {
-        self.jobs.working()
+    pub fn watch_source(&mut self, path: &std::path::Path) {
+        self.source = Some(path.to_owned());
+        self.watch();
     }
 
+    pub fn source(&self) -> Option<&std::path::Path> {
+        self.source.as_deref()
+    }
+
+    pub fn follow_source(&mut self) -> Option<crate::Result<()>> {
+        if self
+            .watched
+            .iter()
+            .all(|(file, stamp)| modified(file) == *stamp)
+        {
+            return None;
+        }
+        self.watch();
+        let path = self.source.clone()?;
+        let kinds = engine_scene::SceneKinds::of(self.app.engine().app.world());
+        let mut load = match LevelLoad::open(&path.to_string_lossy(), &kinds) {
+            Ok(load) => load,
+            Err(error) => return Some(Err(error)),
+        };
+        loop {
+            match load.step() {
+                Ok(LevelStep::Progress(_)) => {}
+                Ok(LevelStep::Ready { source, files }) => {
+                    return Some(self.reload_scene(&source, &files));
+                }
+                Err(error) => return Some(Err(error)),
+            }
+        }
+    }
+
+    fn watch(&mut self) {
+        let Some(path) = self.source.clone() else {
+            self.watched.clear();
+            return;
+        };
+        let kinds = engine_scene::SceneKinds::of(self.app.engine().app.world());
+        let document = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|source| engine_scene::SceneDocument::from_json(&source).ok());
+        let folder = path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_owned();
+        let stamp = modified(&path);
+        let mut watched = vec![(path, stamp)];
+        for file in document.iter().flat_map(|document| document.files(&kinds)) {
+            let file = folder.join(file.uri);
+            let stamp = modified(&file);
+            watched.push((file, stamp));
+        }
+        self.watched = watched;
+    }
+}
+
+#[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+fn modified(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+}
+
+#[cfg(feature = "dev")]
+impl<G: Game> GameHost<G> {
     pub(crate) fn collect_pipelines(&mut self) {
         self.app.collect_pipelines();
     }
@@ -540,14 +598,6 @@ impl<G: Game> GameHost<G> {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn deliver_readbacks(&mut self) {
         self.app.deliver();
-    }
-
-    pub(crate) fn dev_tools(&self) -> &engine_dev::DevTools {
-        &self.development.tools
-    }
-
-    pub(crate) fn dev_scene(&self) -> Option<&engine_scene::SceneInstance> {
-        self.game.scene()
     }
 
     pub(crate) fn dev_handle(

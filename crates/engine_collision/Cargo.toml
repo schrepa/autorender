@@ -5,9 +5,6 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-[features]
-attribution = ["engine_core/attribution"]
-
 [dependencies]
 engine_ecs.workspace = true
 engine_core.workspace = true

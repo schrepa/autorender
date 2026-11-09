@@ -76,17 +76,12 @@ pub use platform::{
     GpuPreference, NativeWindow, keep_pipeline_cache_in, start_native_instances_with,
 };
 pub use pyramid::{PYRAMID_GROUP, PyramidExtent};
-#[cfg(not(target_arch = "wasm32"))]
-#[doc(hidden)]
-pub use renderer::GpuMark;
 #[doc(hidden)]
 pub use renderer::{
     DeviceHealth, GpuPassTimes, Installation, InstalledPart, InstalledPiece, Renderer,
     StartingRenderer, device_limits, install_noop,
 };
 pub use shaders::FULLSCREEN;
-#[doc(hidden)]
-pub use shaders::core_modules;
 
 pub const DEV: bool = cfg!(feature = "dev");
 

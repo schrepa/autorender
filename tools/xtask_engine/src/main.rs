@@ -1,29 +1,19 @@
 mod authoring;
-mod bench;
 mod bricks;
-mod checkouts;
-mod checks;
 mod development;
-mod equivalence;
-mod gate;
 mod importing;
-mod ladder;
 mod lint;
-mod measure;
-mod profiling;
 mod pure;
 mod rules;
 mod scaffold;
-mod selfcheck;
 mod shader_report;
 mod ship;
 mod smoke;
-mod verify;
 
 use std::{env, process::ExitCode};
 
 use engine_command_line::{self as command_line, Command, CommandOption};
-use xtask::{Failure, cook, look, pipeline, process, serve};
+use xtask::{Failure, cook, pipeline, process};
 
 fn main() -> ExitCode {
     match execute() {
@@ -45,26 +35,20 @@ fn execute() -> Result<(), Failure> {
         return Ok(help(&options)?);
     }
     let root = process::repository_root()?;
-    if task == "dev" {
-        let (port, game) = dev_options(&options)?;
-        authoring::validate_sources(&root)?;
-        return Ok(pipeline::dev(&root, port, game)?);
-    }
-    if task == "agent" {
-        return development::agent(&root, &options);
-    }
     if task == "scene" {
         return Ok(development::scene(&options)?);
     }
     if task == "asset" {
         return Ok(importing::asset(&options)?);
     }
-    if task == "profile" {
-        return Ok(match options.as_slice() {
-            [] => profiling::build(&root, false),
-            [option] if option == "--attribution" => profiling::build(&root, true),
-            _ => Err("usage: profile [--attribution]".into()),
-        }?);
+    if task == "build" {
+        let profiling = match options.as_slice() {
+            [] => false,
+            [option] if option == "--profiling" => true,
+            _ => return Err("usage: build [--profiling]".into()),
+        };
+        authoring::validate_sources(&root)?;
+        return Ok(pipeline::build(&root, profiling)?);
     }
     if task == "smoke" {
         return smoke::smoke(&root, &options);
@@ -72,42 +56,16 @@ fn execute() -> Result<(), Failure> {
     if task == "pure" {
         return pure::pure(&root, &options);
     }
-    if task == "core-smoke" {
-        let mut corpus = vec!["caches".to_owned()];
-        corpus.extend(options);
-        return pure::pure(&root, &corpus);
-    }
-    if task == "gate" {
-        return Ok(gate::gate(&root, &options)?);
-    }
-    if task == "bench" {
-        return Ok(bench::bench(&root, &options)?);
-    }
-    if task == "measure" {
-        return Ok(measure::measure(&root, &options)?);
-    }
-    if task == "ladder" {
-        return Ok(ladder::ladder(&root, &options)?);
-    }
     if task == "ship" {
         return ship::ship(&root, &options);
     }
-    if task == "equivalence" {
-        return equivalence::equivalence(&root, &options);
-    }
-    if task == "selfcheck" {
-        return selfcheck::selfcheck(&root, &options);
-    }
-    if task == "verify" {
-        return verify::verify(&root, &options);
-    }
-    if task == "checks" {
-        return Ok(checks::check_task(&root, &options)?);
+    if task == "lint" {
+        return Ok(lint::lint(&root, &options)?);
     }
     if task == "new" {
         return Ok(scaffold::new(&root, &options)?);
     }
-    if task == "gpu" {
+    if task == "shaders" {
         return Ok(shader_report::run(&root, &options)?);
     }
     if let Some(argument) = options.first() {
@@ -116,34 +74,11 @@ fn execute() -> Result<(), Failure> {
         );
     }
     Ok(match task.as_str() {
-        "build" => authoring::validate_sources(&root).and_then(|()| pipeline::build(&root)),
-        "lint" => engine_checks::stages::run(root.as_path(), lint::LINT),
-        "assets" => authoring::validate_sources(&root),
-        "schema" => authoring::write_generated(&root),
+        "generate" => authoring::write_generated(&root),
         _ => Err(format!(
             "unknown command {task:?}; run `cargo xtask help` for usage"
         )),
     }?)
-}
-
-const DEV_PORT: u16 = 5173;
-
-fn dev_options(arguments: &[String]) -> Result<(u16, Option<&str>), String> {
-    let (mut port, mut game) = (DEV_PORT, None);
-    for pair in arguments.chunks(2) {
-        match pair {
-            [option, value] if option == "--port" => {
-                port = value
-                    .parse::<u16>()
-                    .ok()
-                    .filter(|port| *port != 0)
-                    .ok_or("dev --port requires an integer from 1 to 65535")?;
-            }
-            [option, value] if option == "--game" => game = Some(value.as_str()),
-            _ => return Err("usage: cargo xtask dev [--port N] [--game NAME]".to_owned()),
-        }
-    }
-    Ok((port, game))
 }
 
 fn commands() -> Vec<Command> {
@@ -160,28 +95,12 @@ fn authoring_commands() -> Vec<Command> {
         .collect::<Vec<_>>()
         .join("|");
     vec![
-        Command::new("build", []),
-        Command::new("profile", [CommandOption::flag("--attribution")]),
+        Command::new("build", [CommandOption::flag("--profiling")]),
         Command::new(
             "dev",
             [
-                CommandOption::taking("--port", "N").defaults_to(DEV_PORT),
                 CommandOption::taking("--game", process::game_names()),
-            ],
-        ),
-        Command::new(
-            "agent iterate",
-            [
-                CommandOption::taking("--game", process::game_names()).required(),
-                CommandOption::taking("--web-port", "N"),
-                CommandOption::taking("--port", "N"),
-            ],
-        ),
-        Command::new(
-            "agent help",
-            [
-                CommandOption::taking("VERB", verbs.clone()),
-                CommandOption::flag("--schema"),
+                CommandOption::taking("--port", "N").defaults_to(xtask::dev::PORT),
             ],
         ),
         Command::new(
@@ -192,7 +111,7 @@ fn authoring_commands() -> Vec<Command> {
                 CommandOption::taking("--json", "JSON"),
                 CommandOption::taking("--file", "PATH"),
                 CommandOption::taking("--timeout-ms", "MS").in_unit("ms"),
-                CommandOption::taking("--rendering", "off"),
+                CommandOption::flag("--brief"),
             ],
         ),
         Command::new(
@@ -211,7 +130,6 @@ fn authoring_commands() -> Vec<Command> {
                 CommandOption::taking("--expected-revision", "N").required(),
             ],
         ),
-        Command::new("scene schema", []),
         Command::new(
             "asset import",
             [
@@ -224,8 +142,7 @@ fn authoring_commands() -> Vec<Command> {
                 CommandOption::flag("--as-prefab"),
             ],
         ),
-        Command::new("assets", []),
-        Command::new("schema", []),
+        Command::new("generate", []),
         Command::new(
             "new app",
             [CommandOption::taking("--project", "DIR").required()],
@@ -254,17 +171,13 @@ fn authoring_commands() -> Vec<Command> {
                 CommandOption::taking("CORPUS", format!("{corpora}...")),
             ],
         ),
-        Command::new("core-smoke", [CommandOption::flag("--bless")]),
         Command::new(
-            "gpu",
+            "shaders",
             [
-                CommandOption::taking("--report", "DIR").required(),
+                CommandOption::taking("--out", "DIR").required(),
                 CommandOption::flag("--no-rga"),
             ],
         ),
-        Command::new("bench check", []),
-        Command::new("gate flight", []),
-        Command::new("gate still", [CommandOption::flag("--write")]),
     ]
 }
 
@@ -284,67 +197,6 @@ fn checking_commands() -> Vec<Command> {
             [CommandOption::taking("--project", "DIR").required()],
         ),
         Command::new(
-            "measure",
-            [
-                CommandOption::taking("--task", "FILE").required(),
-                CommandOption::taking("--profile", "FILE").required(),
-                CommandOption::taking("--out", "FILE").required(),
-                CommandOption::taking("--extend", "FILE"),
-                CommandOption::taking("--formats", "FILE"),
-            ],
-        ),
-        Command::new(
-            "ladder",
-            [
-                CommandOption::taking("LADDER", "FILE").required(),
-                CommandOption::taking("--out", "DIR").required(),
-                CommandOption::taking("--program", "PATH"),
-                CommandOption::taking("--", "ARGUMENTS..."),
-            ],
-        ),
-        Command::new(
-            "equivalence",
-            [
-                CommandOption::taking("--base", "REV").defaults_to("origin/main"),
-                CommandOption::taking("--candidate", "REV"),
-                CommandOption::taking("--tier", "smoke|full").defaults_to("smoke"),
-                CommandOption::taking("--cells", "NAME,..."),
-                CommandOption::flag("--aa"),
-                CommandOption::taking("--repeat", "N"),
-                CommandOption::taking("--keep", "N").defaults_to(equivalence::KEEP),
-                CommandOption::taking("--gpu", "discrete|integrated").defaults_to("discrete"),
-                CommandOption::flag("--browser"),
-                CommandOption::flag("--both"),
-                CommandOption::flag("--hosts"),
-            ],
-        ),
-        Command::new(
-            "checks",
-            [
-                CommandOption::taking("--task", "FILE").required(),
-                CommandOption::taking("--profile", "FILE").required(),
-                CommandOption::taking("--out", "FILE").required(),
-                CommandOption::taking("--formats", "FILE"),
-            ],
-        ),
-        Command::new(
-            "selfcheck",
-            [CommandOption::taking(
-                "KIND",
-                format!("{}...", selfcheck::KINDS.join("|")),
-            )],
-        ),
-        Command::new(
-            "verify",
-            [
-                CommandOption::taking("--level", "quick|pr|merge").defaults_to("pr"),
-                CommandOption::taking("--base", "REV").defaults_to("origin/main"),
-                CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
-                CommandOption::flag("--plan"),
-                CommandOption::flag("--json"),
-            ],
-        ),
-        Command::new(
             "look",
             [
                 CommandOption::taking("PROJECT", "DIR").required(),
@@ -353,7 +205,7 @@ fn checking_commands() -> Vec<Command> {
                 CommandOption::taking("--out", "DIR"),
             ],
         ),
-        Command::new("lint", []),
+        engine_checks::stages::command(),
         Command::new("help", [CommandOption::flag("--json")]),
     ]
 }

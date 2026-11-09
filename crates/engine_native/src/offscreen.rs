@@ -123,6 +123,11 @@ impl<G: Game> Offscreen<G> {
         let started = Instant::now();
         let (mut drawn, mut cpu_ms, mut captured, mut failed) = (0, Vec::new(), None, None);
         loop {
+            #[cfg(feature = "dev")]
+            if let Some(Err(error)) = self.host.follow_source() {
+                let record = serde_json::json!({"event": "source_changed", "error": error});
+                eprintln!("{record}");
+            }
             engine::profiling::mark_speed();
             if let Frames::Count(count) = frames
                 && drawn == count / 2
@@ -265,15 +270,10 @@ impl<G: Game> Offscreen<G> {
     }
 
     pub fn frame(&mut self, timestamp: f64) -> engine::Result<()> {
-        self.frame_in_flight(timestamp)?;
-        self.host.wait_for_gpu()
-    }
-
-    pub fn frame_in_flight(&mut self, timestamp: f64) -> engine::Result<()> {
         let (width, height) = self.size;
         self.host.frame(timestamp, width, height)?;
         self.exchange_jobs();
-        Ok(())
+        self.host.wait_for_gpu()
     }
 
     pub fn capture_frame(

@@ -8,7 +8,7 @@ autoexamples = false
 
 [features]
 default = []
-dev = ["engine/dev", "engine_profiler/load", "dep:gltf", "dep:naga", "dep:tiff", "dep:toml_edit", "dep:zip"]
+dev = ["engine/dev", "dep:gltf", "dep:naga", "dep:sha2", "dep:tiff", "dep:toml_edit", "dep:zip"]
 profiling = ["engine/profiling", "engine_profiler/profiling"]
 
 [dependencies]
@@ -18,7 +18,6 @@ engine_texture_cook.workspace = true
 engine_profiler.workspace = true
 engine_worker.workspace = true
 png.workspace = true
-sha2.workspace = true
 serde_json.workspace = true
 winit.workspace = true
 gilrs.workspace = true
@@ -26,6 +25,7 @@ pollster.workspace = true
 zstd.workspace = true
 gltf = { workspace = true, optional = true }
 naga = { workspace = true, optional = true, features = ["wgsl-in", "spv-out"] }
+sha2 = { workspace = true, optional = true }
 tiff = { workspace = true, optional = true }
 toml_edit = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }

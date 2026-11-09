@@ -1,7 +1,6 @@
 // @ts-check
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
@@ -9,35 +8,10 @@ import { inflateSync } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { PANIC_PREFIX } from "../src/generated/host.ts";
 import { AgentError, atMost, detailOf, range, variants } from "./agent-protocol.mjs";
-import { recordReceived, recordSent } from "./exercised.mjs";
 import { workspace } from "./workspace.mjs";
 
 const SESSIONS_KEPT = 10;
 const READY_TIMEOUT_MS = 300_000;
-
-const clients = JSON.parse(readFileSync(new URL("../src/generated/clients.json", import.meta.url), "utf8"));
-
-export function nativeProgram(name, { profiling = false } = {}) {
-  const client = clients.find(client => client.native && (client.package === name || client.native === name));
-  if (!client) return resolve(name);
-  const [chosen, features] = profiling ? ["profiling", "dev,profiling"] : ["quick", "dev"];
-  const profile = process.env.ENGINE_NATIVE_PROFILE || chosen;
-  const target = resolve(workspace, "target");
-  /** @type {NodeJS.ProcessEnv} */
-  const env = { ...process.env, ...(profile === "dev" ? {} : { ENGINE_COMMIT: engineCommit() }) };
-  if (profiling && process.platform === "linux") env.RUSTFLAGS = `${process.env.RUSTFLAGS ?? ""} -Cforce-frame-pointers=yes`.trim();
-  execFileSync("cargo", ["build", "-q", "-p", client.package, "--bin", client.native, "--profile", profile, "--features", features],
-    { cwd: workspace, env, stdio: ["ignore", "ignore", "inherit"] });
-  const folder = profile === "dev" ? "debug" : profile;
-  return resolve(target, folder, process.platform === "win32" ? `${client.native}.exe` : client.native);
-}
-
-function engineCommit() {
-  const git = args => execFileSync("git", args, { cwd: workspace, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-  let head;
-  try { head = git(["rev-parse", "--short=12", "HEAD"]).trim(); } catch { return "unknown"; }
-  try { git(["diff", "--quiet", "HEAD"]); return head; } catch { return `${head}-dirty`; }
-}
 
 async function pruneSessions(root) {
   const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
@@ -119,9 +93,9 @@ async function compareCaptures(command, request) {
   return { ...response, result: { compare: result, a: command.a, b: command.b, tolerance } };
 }
 
-/** @param {{ program: string, args?: string[], session?: string, signal?: AbortSignal }} options */
-export async function launchNativeSession({ program, args = [], session = randomUUID(), signal }) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "session", { expected: "id", got: session });
+/** @param {{ program: string, args?: string[] }} options */
+export async function launchNativeSession({ program, args = [] }) {
+  const session = randomUUID();
   const artifacts = resolve(workspace, "artifacts", "agent", session);
   await pruneSessions(resolve(workspace, "artifacts", "agent"));
   await mkdir(artifacts, { recursive: true });
@@ -149,10 +123,6 @@ export async function launchNativeSession({ program, args = [], session = random
     if (ready) { const first = ready; ready = undefined; first.resolve(value); return; }
     const pending = waiting.get(value?.id);
     if (!pending) { diagnostic("stdout", line); return; }
-    if ("record" in value && !("ok" in value)) {
-      pending.onRecord?.(value.record);
-      return;
-    }
     waiting.delete(value.id);
     delete value.id;
     pending.resolve(value);
@@ -186,19 +156,13 @@ export async function launchNativeSession({ program, args = [], session = random
     invalidationCallback = callback;
     if (invalidated) callback();
   }
-  const aborted = () => { void close(); };
-  signal?.addEventListener("abort", aborted, { once: true });
-  function request(command, onRecord) {
-    recordSent(command);
+  function request(command) {
     if (panic && invalidated) return Promise.resolve(panicked());
     if (invalidated || closing) return Promise.reject(new AgentError("session_unavailable", "$", { expected: "live" }));
     return new Promise((resolveReply, rejectReply) => {
       const id = ++sent;
-      waiting.set(id, { resolve: resolveReply, reject: rejectReply, onRecord });
+      waiting.set(id, { resolve: resolveReply, reject: rejectReply });
       child.stdin.write(`${JSON.stringify({ ...command, id })}\n`);
-    }).then(reply => {
-      recordReceived(reply);
-      return reply;
     });
   }
   try {
@@ -218,9 +182,9 @@ export async function launchNativeSession({ program, args = [], session = random
       await delay(50);
     }
     const owned = {
-      session, url: `native:${relative(workspace, program).split(sep).join("/")}`, instance: identity.instance, build: identity.build ?? null,
+      session, url: `native:${relative(workspace, program).split(sep).join("/")}`, instance: identity.instance,
       adapter: identity.adapter, close, setInvalidated,
-      async execute(command, onRecord) {
+      async execute(command) {
         if (command.verb === "describe" && command.name === "ProfileCapture") {
           if (Object.keys(command).some(key => !["verb", "name"].includes(key))) throw new AgentError("unknown_field", "$", { allowed: variants(["verb", "name"]) });
           const response = await request(status);
@@ -243,7 +207,7 @@ export async function launchNativeSession({ program, args = [], session = random
           if (response.ok) response.result = { observation: response.observation ?? response.result?.observation, entries: [...diagnostics] };
           return response;
         }
-        const response = await request(command, onRecord);
+        const response = await request(command);
         if (command.verb === "describe" && command.name === undefined && response.ok && Array.isArray(response.result?.types)) {
           response.result.types.push({ name: "GameControls", kind: "tooling", controls: identity.controls ?? {} });
           response.result.types.push({ name: "PageParameters", kind: "tooling", parameters: identity.parameters ?? {} });

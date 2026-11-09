@@ -4,11 +4,9 @@ use std::{
     process::{Command, ExitCode},
 };
 
-use xtask::{Failure, cook, iteration_build, look, pipeline, process};
+use xtask::{Failure, cook, dev, look, pipeline, process};
 
 const ENGINE: &str = "xtask_engine";
-
-const BUILD_DEV: &str = "usage: build-dev --output web/pkg-iterations/GENERATION --game NAME";
 
 fn main() -> ExitCode {
     match execute() {
@@ -31,10 +29,8 @@ fn execute() -> Result<ExitCode, Failure> {
     match task.as_str() {
         "look" => look::look(&root, &options)?,
         "cook" => cook::cook(&root, &options)?,
-        "build-dev" => build_dev(&root, &options)?,
-        "agent" if !matches!(options.first().map(String::as_str), Some("help" | "check")) => {
-            agent(&root, &options)?;
-        }
+        "dev" => dev::dev(&root, &options)?,
+        "agent" => agent(&root, &options)?,
         _ => return engine(&root, &task, &options),
     }
     Ok(ExitCode::SUCCESS)
@@ -54,16 +50,10 @@ fn engine(root: &Path, task: &str, options: &[String]) -> Result<ExitCode, Failu
 }
 
 fn agent(root: &Path, arguments: &[String]) -> Result<(), Failure> {
-    if arguments.first().is_some_and(|verb| verb == "iterate") {
-        pipeline::install_web_dependencies(root)?;
-    }
+    let arguments = native_program(root, arguments)?;
     let status = Command::new("node")
         .arg("web/scripts/agent.mjs")
-        .args(arguments)
-        .env(
-            "ENGINE_XTASK_BIN",
-            env::current_exe().map_err(|error| error.to_string())?,
-        )
+        .args(&arguments)
         .current_dir(root)
         .status()
         .map_err(|error| format!("cannot start agent bridge: {error}"))?;
@@ -74,18 +64,45 @@ fn agent(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     }
 }
 
-fn build_dev(root: &Path, options: &[String]) -> Result<(), Failure> {
-    let [output_option, output, game_option, game] = options else {
-        return Err(BUILD_DEV.into());
+fn native_program(root: &Path, arguments: &[String]) -> Result<Vec<String>, String> {
+    let mut arguments = arguments.to_vec();
+    let value = |name: &str| {
+        arguments
+            .iter()
+            .position(|argument| argument == name)
+            .map(|at| at + 1)
     };
-    if output_option != "--output" || game_option != "--game" {
-        return Err(BUILD_DEV.into());
-    }
-    let result = iteration_build::build(root, Path::new(output), game);
-    println!("{result}");
-    if result["ok"] == true {
-        Ok(())
+    let verb = arguments.first().map(String::as_str);
+    let (Some("serve"), Some(at)) = (verb, value("--native")) else {
+        return Ok(arguments);
+    };
+    let switch = value("--profiling").and_then(|at| arguments.get(at));
+    let profiling = match switch.map(String::as_str) {
+        None | Some("off") => false,
+        Some("on") => true,
+        Some(other) => {
+            return Err(serde_json::json!({
+                "code": "invalid_arguments",
+                "path": "--profiling",
+                "got": other,
+                "expected": "on|off",
+            })
+            .to_string());
+        }
+    };
+    let Some(client) = arguments.get(at).and_then(|name| {
+        process::clients().iter().find(|client| {
+            client.native.is_some()
+                && (client.package == *name || client.native.as_ref() == Some(name))
+        })
+    }) else {
+        return Ok(arguments);
+    };
+    let project = process::Project::read(root, &client.folder)?;
+    arguments[at] = if profiling {
+        pipeline::build_profiling(root, &project)?
     } else {
-        Err("development build failed; see JSON diagnostics".into())
-    }
+        pipeline::build_native(root, &project)?
+    };
+    Ok(arguments)
 }

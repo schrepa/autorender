@@ -24,15 +24,12 @@ pub mod bounds {
     pub const FRAMES: Rule = Rule::Range(1.0, 240.0);
     pub const FRAME_INTERVAL: Rule = Rule::Range(1.0, 1000.0);
     pub const TURN: Rule = Rule::Range(-1000.0, 1000.0);
-    pub const MAX_VALUES: usize = 1024;
     pub const PIXEL: Rule = Rule::Range(0.0, 16_384.0);
 }
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_REQUEST_BYTES: usize = 16 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
-pub const MAX_WATCHED: usize = 32;
-pub const MAX_EXPLAINED: usize = 64;
 
 pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("present", "PresentationState"),
@@ -49,7 +46,6 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("reload", "status"),
     ("parent", ""),
     ("probe", ""),
-    ("jobs", "status"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
@@ -62,22 +58,16 @@ pub enum Verb {
     Control,
     Capture,
     Profile,
-    Explain,
-    Watch,
-    Check,
 }
 
 impl Verb {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 6] = [
         Self::Describe,
         Self::Inspect,
         Self::Query,
         Self::Control,
         Self::Capture,
         Self::Profile,
-        Self::Explain,
-        Self::Watch,
-        Self::Check,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -88,9 +78,6 @@ impl Verb {
             Self::Control => "control",
             Self::Capture => "capture",
             Self::Profile => "profile",
-            Self::Explain => "explain",
-            Self::Watch => "watch",
-            Self::Check => "check",
         }
     }
 
@@ -243,10 +230,6 @@ pub enum Query {
     Status {},
     Assets {},
     Digest {},
-    Distribution {
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = bounds::MAX_VALUES)))]
-        values: Vec<f64>,
-    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -350,91 +333,8 @@ pub enum Vendor {
     Pix,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(tag = "about", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ExplainQuestion {
-    Entity {
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 64)))]
-        entity: String,
-        #[serde(default)]
-        detail: Detail,
-    },
-    Frame {
-        #[serde(default = "default_top")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PAGE)))]
-        top: usize,
-        #[serde(default)]
-        detail: Detail,
-    },
-    Scene {},
-}
-
 impl Query {
-    pub const NAMES: [&'static str; 4] = ["status", "assets", "digest", "distribution"];
-}
-
-impl ExplainQuestion {
-    pub fn needs_pause(&self) -> bool {
-        matches!(self, Self::Entity { .. })
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct WatchRequest {
-    #[serde(default)]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = MAX_WATCHED)))]
-    pub stats: Vec<String>,
-    #[serde(default)]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = MAX_WATCHED)))]
-    pub entities: Vec<WatchedComponent>,
-    #[serde(default = "default_watch_frames")]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::FRAMES)))]
-    pub frames: u32,
-    #[serde(default = "default_interval_ms")]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::FRAME_INTERVAL)))]
-    pub interval_ms: f64,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct WatchedComponent {
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 64)))]
-    pub entity: String,
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 64)))]
-    pub component: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct CheckRequest {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub level: Option<CheckLevel>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum CheckLevel {
-    Quick,
-    Pr,
-    Merge,
-}
-
-impl CheckLevel {
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Quick => "quick",
-            Self::Pr => "pr",
-            Self::Merge => "merge",
-        }
-    }
+    pub const NAMES: [&'static str; 3] = ["status", "assets", "digest"];
 }
 
 pub enum Control {
@@ -596,13 +496,10 @@ pub enum BrowserControl {
         )]
         alpha: Option<f64>,
     },
-    Jobs {
-        workers: u32,
-    },
 }
 
 impl BrowserControl {
-    pub const NAMES: [&'static str; 15] = [
+    pub const NAMES: [&'static str; 14] = [
         "present",
         "environment",
         "camera",
@@ -617,7 +514,6 @@ impl BrowserControl {
         "reload",
         "parent",
         "probe",
-        "jobs",
     ];
 
     pub fn route(self) -> Control {
@@ -638,7 +534,6 @@ impl BrowserControl {
             | Self::Pause { .. }
             | Self::Resume { .. }
             | Self::Probe { .. }
-            | Self::Jobs { .. }
             | Self::Game { .. }
             | Self::Reload { .. }) => Control::Host(control),
         }
@@ -658,7 +553,7 @@ impl BrowserControl {
             | Self::Game { .. }
             | Self::Reload { .. }
             | Self::Parent { .. } => true,
-            Self::Pause { .. } | Self::Resume { .. } | Self::Jobs { .. } => false,
+            Self::Pause { .. } | Self::Resume { .. } => false,
         }
     }
 }
@@ -728,10 +623,6 @@ fn default_samples() -> u32 {
 }
 
 fn default_profile_frames() -> u32 {
-    60
-}
-
-fn default_watch_frames() -> u32 {
     60
 }
 

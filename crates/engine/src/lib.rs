@@ -86,54 +86,14 @@ mod resolution;
 pub use engine_render::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine_render::{
-    GpuMark, GpuPreference, NativeWindow, keep_pipeline_cache_in, start_native_instances_with,
+    GpuPreference, NativeWindow, keep_pipeline_cache_in, start_native_instances_with,
 };
 pub use game_host::GameHost;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ShaderModule {
-    pub path: &'static str,
-    pub source: &'static str,
-}
-
-pub fn shader_modules(bricks: impl FnOnce(BrickList) -> BrickList) -> Result<Vec<ShaderModule>> {
-    let list = bricks(BrickList::default());
-    let mut modules: Vec<ShaderModule> = Vec::new();
-    for (path, source) in engine_render::core_modules() {
-        add_module(&mut modules, path, Box::leak(source.into_boxed_str()));
-    }
-    for listed in list.listed() {
-        for module in listed.source().modules() {
-            add_module(&mut modules, module.path(), module.text());
-        }
-    }
-    let engine = game::listed(list)?;
-    let Some(registry) = engine
-        .app
-        .world()
-        .get_resource::<engine_registry::Registry>()
-    else {
-        return Ok(modules);
-    };
-    for place in registry.catalog() {
-        if let Some(source) = place.wgsl() {
-            let path = format!("place::{}", place.name());
-            add_module(&mut modules, Box::leak(path.into_boxed_str()), source);
-        }
-    }
-    Ok(modules)
-}
 
 pub fn scene_kinds(
     bricks: impl FnOnce(BrickList) -> BrickList,
 ) -> Result<engine_scene::SceneKinds> {
     engine_scene::SceneKinds::listed(&bricks(BrickList::default()))
-}
-
-fn add_module(modules: &mut Vec<ShaderModule>, path: &'static str, source: &'static str) {
-    if !modules.iter().any(|known| known.path == path) {
-        modules.push(ShaderModule { path, source });
-    }
 }
 
 #[doc(hidden)]

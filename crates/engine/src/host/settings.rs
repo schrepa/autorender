@@ -4,7 +4,7 @@ use engine_registry::SettingsEntry;
 use engine_settings::Expected;
 use serde_json::Value;
 
-use super::TerrainClock;
+use super::JobClock;
 use crate::{Game, GameHost};
 
 #[derive(Clone, Copy, Debug)]
@@ -48,6 +48,8 @@ macro_rules! settings {
         pub struct HostSettings {
             $(pub $field: Option<$ty>,)*
             pub overlay: Vec<(String, Value)>,
+            #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+            pub source: Option<std::path::PathBuf>,
         }
 
         pub const SETTINGS: &[Setting] = &[$(Setting {
@@ -80,6 +82,10 @@ macro_rules! settings {
                 $(if let Some(value) = self.$field {
                     host.$apply(value);
                 })*
+                #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+                if let Some(path) = &self.source {
+                    host.watch_source(path);
+                }
                 host.set_settings(&self.overlay)
                     .map_err(|error| error.within(OVERLAY))
             }
@@ -88,10 +94,8 @@ macro_rules! settings {
 }
 
 settings! {
-    between: bool = "between",
-        ["on" => Some(true), "off" => Some(false)] => set_between_frames;
-    terrain_clock: TerrainClock = "terrain-clock",
-        ["wall" => Some(TerrainClock::Wall), "frames" => Some(TerrainClock::Frames)] => set_terrain_clock;
+    job_clock: JobClock = "job-clock",
+        ["wall" => Some(JobClock::Wall), "frames" => Some(JobClock::Frames)] => set_job_clock;
 }
 
 impl HostSettings {

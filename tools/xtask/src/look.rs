@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::Failure;
-use crate::pipeline::{QUICK, build_native};
+use crate::pipeline::build_native;
 use crate::process::{Project, read_json};
 use crate::serve::Server;
 
@@ -72,7 +72,7 @@ pub fn look(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     };
     let mut command = Command::new("node");
     command
-        .args(["scripts/agent.mjs", "look", "--limit-ms"])
+        .args(["scripts/look.mjs", "--limit-ms"])
         .arg(options.limit_ms.to_string())
         .arg("--out")
         .arg(&out)
@@ -102,7 +102,7 @@ pub fn look(root: &Path, arguments: &[String]) -> Result<(), Failure> {
         command.args(["--url", &format!("{}/{page}{query}", server.url)]);
         Some(server)
     } else {
-        let program = build_native(root, &project, QUICK)?;
+        let program = build_native(root, &project)?;
         command.args(["--native", &program]);
         if let Some(source) = &source {
             command.args(["--source", source]);
@@ -116,7 +116,7 @@ pub fn look(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     let (mut views, mut problems) = (Vec::new(), 0);
     if let Some(output) = child.stdout.take() {
         for line in BufReader::new(output).lines() {
-            let line = line.map_err(|error| format!("scripts/agent.mjs look: {error}"))?;
+            let line = line.map_err(|error| format!("scripts/look.mjs: {error}"))?;
             println!("{line}");
             let record = serde_json::from_str::<Value>(&line).unwrap_or(Value::Null);
             match record["event"].as_str() {
@@ -130,7 +130,7 @@ pub fn look(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     }
     let status = child
         .wait()
-        .map_err(|error| format!("scripts/agent.mjs look: {error}"))?;
+        .map_err(|error| format!("scripts/look.mjs: {error}"))?;
     drop(server);
     if !status.success() && problems == 0 {
         problems += 1;

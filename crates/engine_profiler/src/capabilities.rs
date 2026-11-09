@@ -214,7 +214,7 @@ pub(crate) fn recommended(adapter: &engine::AdapterInfo, shallow_stacks: bool) -
         "shader_machine_code",
         &["rga"],
         installed("rga", &[]),
-        &["cargo xtask gpu --report DIR"],
+        &["cargo xtask shaders --out DIR"],
     ));
     layers
 }

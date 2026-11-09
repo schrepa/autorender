@@ -10,7 +10,6 @@ use engine_place::{Error, ErrorCode, GpuStruct, List, PlaceDecl, Slot, Smoke};
 use crate::entries::{
     Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry,
 };
-use crate::explain::ExplainEntry;
 use crate::hooks::{NamedField, Removal};
 use crate::jobs::JobMember;
 use crate::scene::SpawnedBy;
@@ -76,7 +75,6 @@ pub struct BrickRecord {
     section_rules: Vec<SectionRule>,
     stats: Vec<StatsEntry>,
     operations: Vec<OperationEntry>,
-    explainers: Vec<ExplainEntry>,
     piece: Option<PieceEntry>,
     pub(crate) removals: Vec<Removal>,
     pub(crate) named: Vec<NamedField>,
@@ -116,7 +114,6 @@ impl BrickRecord {
             section_rules: Vec::new(),
             stats: Vec::new(),
             operations: Vec::new(),
-            explainers: Vec::new(),
             piece: None,
             removals: Vec::new(),
             named: Vec::new(),
@@ -212,10 +209,6 @@ impl BrickRecord {
 
     pub fn operations(&self) -> &[OperationEntry] {
         &self.operations
-    }
-
-    pub fn explainers(&self) -> &[ExplainEntry] {
-        &self.explainers
     }
 
     pub fn piece_entry(&self) -> Option<&PieceEntry> {
@@ -354,11 +347,6 @@ impl BrickRecord {
             return;
         }
         self.operations.push(entry);
-    }
-
-    pub fn explain(&mut self, mut entry: ExplainEntry) {
-        entry.brick = self.package;
-        self.explainers.push(entry);
     }
 
     pub fn on_remove(&mut self, removal: Removal) {

@@ -7,8 +7,7 @@ use crate::presentation_bounds::{COEFFICIENT_LIMIT, COMMON_DETERMINANT_MARGIN, M
 const DETERMINANT_MARGIN: f32 = 1.0 / 4096.0;
 const PROVEN_NORMAL_INVERSE_NORM: f32 = 6200.0;
 
-#[cfg_attr(not(feature = "attribution"), inline(always))]
-#[cfg_attr(feature = "attribution", inline(never))]
+#[inline(always)]
 pub(super) fn valid_global_matrix(matrix: Mat4) -> bool {
     common_gate(matrix) || admission(matrix)
 }

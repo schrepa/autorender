@@ -117,47 +117,6 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         ("web/src/generated/errors.ts".to_owned(), error_codes(world)),
         (engine_checks::bricks::FILE.to_owned(), bricks),
     ]);
-    for client in crate::process::clients()
-        .iter()
-        .filter(|client| client.schema)
-    {
-        let output = std::process::Command::new("cargo")
-            .args([
-                "run",
-                "-q",
-                "--locked",
-                "-p",
-                &client.package,
-                "--bin",
-                "schema",
-            ])
-            .args(["--features", &format!("{}/schema", client.package)])
-            .arg("--target-dir")
-            .arg(crate::process::tools_target(root))
-            .current_dir(root)
-            .output()
-            .map_err(|error| format!("cannot run {}'s schema binary: {error}", client.package))?;
-        if !output.status.success() {
-            return Err(format!(
-                "{}'s schema binary failed: {}",
-                client.package,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        let printed: serde_json::Map<String, serde_json::Value> =
-            serde_json::from_slice(&output.stdout).map_err(|error| {
-                format!(
-                    "{}'s schema binary printed no JSON object: {error}",
-                    client.package
-                )
-            })?;
-        for (path, contents) in printed {
-            let contents = contents
-                .as_str()
-                .ok_or_else(|| format!("{}'s {path} is not a string", client.package))?;
-            files.push((path, contents.to_owned()));
-        }
-    }
     Ok(files)
 }
 

@@ -33,12 +33,11 @@ export interface PageControl {
 declare global {
   interface Window {
     __engineDev?: {
-      version: number; instance: string; build: string | null; controls: Record<string, string>; parameters: Record<string, string>;
+      version: number; instance: string; controls: Record<string, string>; parameters: Record<string, string>;
       request(command: Command): Promise<Reply>;
       saved(path: string): string | undefined;
       waitingOnGpu(): boolean;
     };
-    __engineWatch?: (records: unknown[]) => void;
   }
 }
 
@@ -122,15 +121,11 @@ export function connectDevelopment(host: Host): () => void {
       }
       case "save":
         return resumed(await save(effect.name, effect.contents));
-      case "stream":
-        window.__engineWatch?.(effect.records);
-        return resumed({});
     }
   }
   const api = {
     version: protocol.version,
     instance: crypto.randomUUID(),
-    build: new URLSearchParams(globalThis.location?.search ?? "").get("engine_build"),
     controls: Object.fromEntries(Object.entries(host.controls ?? {}).map(([name, control]) => [name, control.values])),
     parameters: host.parameters ?? {},
     waitingOnGpu: () => gpuWaits > 0,

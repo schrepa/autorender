@@ -29,8 +29,6 @@ pub(crate) use display::Display;
 use display::DisplayFrame;
 pub use health::DeviceHealth;
 pub use install::{Installation, InstalledPart, InstalledPiece, device_limits, install_noop};
-#[cfg(not(target_arch = "wasm32"))]
-pub use native::GpuMark;
 pub use startup::StartingRenderer;
 
 pub(crate) fn new_assets(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Assets {

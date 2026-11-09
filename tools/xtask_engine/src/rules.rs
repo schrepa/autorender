@@ -16,7 +16,6 @@ pub const RULES: Rules = Rules {
         unsafe_files: &[
             "crates/engine_profile/src/allocator.rs",
             "crates/engine_profiler/src/counters.rs",
-            "crates/engine_profiler/src/load.rs",
             "crates/engine_profiler/src/pix.rs",
             "crates/engine_profiler/src/renderdoc.rs",
             "crates/engine_profiler/src/sampler/linux.rs",

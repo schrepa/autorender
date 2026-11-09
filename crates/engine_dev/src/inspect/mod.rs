@@ -14,15 +14,14 @@ use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::explain::source_line;
 use crate::protocol::{
     DescribeRequest, Detail, Envelope, InspectRequest, Query, Verb, parse_named,
 };
 use crate::reply::{Observation, Reply, SceneObservation};
 use crate::results::{
     AssetsResult, AuthoredEntity, DescribeResult, DescribedBrick, DescribedEntry, DescribedType,
-    DistributionResult, EntityComponents, EntityRow, InspectResult, MissingAsset, StatusLimits,
-    StatusResult, TextureAsset, TextureState, TypeKind, result,
+    EntityComponents, EntityRow, InspectResult, MissingAsset, StatusLimits, StatusResult,
+    TextureAsset, TextureState, TypeKind, result,
 };
 use crate::{
     BrowserControl, MAX_INSPECTOR_BYTES, MAX_INSPECTORS, MAX_PAGE_SIZE, MAX_REQUEST_BYTES,
@@ -115,14 +114,11 @@ impl<'a> ToolCall<'a> {
             Verb::Query => Ok(Self::Query(envelope.name()?, envelope.args()?)),
             Verb::Describe => envelope.body().map(Self::Describe),
             Verb::Inspect => envelope.body().map(Self::Inspect),
-            verb @ (Verb::Control
-            | Verb::Capture
-            | Verb::Profile
-            | Verb::Explain
-            | Verb::Watch
-            | Verb::Check) => Err(Error::new(ErrorCode::UnsupportedCommand, "$.verb")
-                .got(verb.name())
-                .variants([Verb::Describe, Verb::Inspect, Verb::Query].map(Verb::name))),
+            verb @ (Verb::Control | Verb::Capture | Verb::Profile) => {
+                Err(Error::new(ErrorCode::UnsupportedCommand, "$.verb")
+                    .got(verb.name())
+                    .variants([Verb::Describe, Verb::Inspect, Verb::Query].map(Verb::name)))
+            }
         }
     }
 
@@ -469,17 +465,6 @@ impl DevTools {
                     renderer: None,
                 },
             ))),
-            Query::Distribution { values } => {
-                if values.len() > crate::bounds::MAX_VALUES {
-                    return Err(Error::new(ErrorCode::OutOfRange, "$.args.values")
-                        .expected(Expected::Array)
-                        .at_most(crate::bounds::MAX_VALUES as u64)
-                        .got(values.len()));
-                }
-                Ok(result::distribution(DistributionResult {
-                    distribution: engine_core::Distribution::of(&values),
-                }))
-            }
         }
     }
 
@@ -948,7 +933,7 @@ pub(crate) fn encode(value: &impl Serialize, limit: usize) -> Result<String, ser
     Ok(String::from_utf8(output.bytes).expect("json_utf8"))
 }
 
-pub fn frustum_culling(world: &World) -> bool {
+pub(crate) fn frustum_culling(world: &World) -> bool {
     world
         .get_resource::<Registry>()
         .and_then(|registry| registry.section("culling"))
@@ -1101,6 +1086,7 @@ fn described_brick(brick: &BrickRecord, full: bool) -> DescribedBrick {
         operations: brick
             .operations()
             .iter()
+            .filter(|operation| operation.listed)
             .map(|operation| DescribedEntry {
                 name: operation.name,
                 key: None,
@@ -1112,12 +1098,11 @@ fn described_brick(brick: &BrickRecord, full: bool) -> DescribedBrick {
                 at: at(operation.at),
             })
             .collect(),
-        explains: brick
-            .explainers()
-            .iter()
-            .map(|explainer| source_line(explainer.at))
-            .collect(),
     }
+}
+
+fn source_line(at: &std::panic::Location<'_>) -> String {
+    format!("{}:{}", at.file().replace('\\', "/"), at.line())
 }
 
 fn inspector_at(registry: &Registry, name: &str) -> Option<String> {

@@ -8,10 +8,6 @@ use sha2::{Digest, Sha256};
 
 pub const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
-pub fn tools_target(root: &Path) -> PathBuf {
-    root.join("target").join("tools")
-}
-
 #[cfg(windows)]
 pub const NPM: &str = "npm.cmd";
 #[cfg(not(windows))]
@@ -32,7 +28,6 @@ pub struct Client {
     pub game: Option<String>,
     pub page: Option<String>,
     pub native: Option<String>,
-    pub schema: bool,
 }
 
 pub fn clients() -> &'static [Client] {
@@ -74,16 +69,6 @@ pub fn read_clients() -> Result<Vec<Client>, String> {
             .ok_or_else(|| {
                 format!("{name} declares [package.metadata.engine] but builds no cdylib")
             })?;
-        let schema = package["targets"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|target| {
-                target["name"] == "schema"
-                    && target["kind"]
-                        .as_array()
-                        .is_some_and(|kinds| kinds.iter().any(|kind| kind == "bin"))
-            });
         let field = |key: &str| engine[key].as_str().map(str::to_owned);
         let (game, page, native) = (field("game"), field("page"), field("native"));
         if game.is_some() != page.is_some() || (game.is_none() && engine["worker"] != true) {
@@ -104,17 +89,9 @@ pub fn read_clients() -> Result<Vec<Client>, String> {
             game,
             page,
             native,
-            schema,
         });
     }
     Ok(clients)
-}
-
-pub fn client_crates() -> Vec<&'static str> {
-    clients()
-        .iter()
-        .map(|client| client.wasm.as_str())
-        .collect()
 }
 
 pub const DEV_FEATURES: &str = "engine/dev";
@@ -168,22 +145,6 @@ impl Project {
         let text = std::fs::read_to_string(root.join(&manifest))
             .map_err(|error| format!("--project {folder}: cannot read {manifest}: {error}"))?;
         Self::parse(&manifest, text)
-    }
-
-    pub fn at(root: &Path, sha: &str, folder: &str) -> Result<Self, String> {
-        let manifest = format!("{folder}/Cargo.toml");
-        let output = Command::new("git")
-            .args(["show", &format!("{sha}:{manifest}")])
-            .current_dir(root)
-            .output()
-            .map_err(|error| format!("cannot run git: {error}"))?;
-        if !output.status.success() {
-            return Err(format!("project {folder}: {manifest} is not at {sha}"));
-        }
-        Self::parse(
-            &manifest,
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-        )
     }
 
     fn parse(manifest: &str, text: String) -> Result<Self, String> {
@@ -281,8 +242,8 @@ fn wasm_bindgen_version(root: &Path) -> Result<String, String> {
         .ok_or_else(|| "Cargo.lock pins no wasm-bindgen".to_owned())
 }
 
-pub fn check_wasm_bindgen(root: &Path) -> Result<(), (&'static str, String)> {
-    let version = wasm_bindgen_version(root).map_err(|error| ("bindgen_version", error))?;
+pub fn verify_wasm_bindgen(root: &Path) -> Result<(), String> {
+    let version = wasm_bindgen_version(root)?;
     let install = format!(
         "install the matching CLI with `cargo install wasm-bindgen-cli --version {version} --locked` and ensure it is on PATH"
     );
@@ -290,61 +251,21 @@ pub fn check_wasm_bindgen(root: &Path) -> Result<(), (&'static str, String)> {
         .arg("--version")
         .current_dir(root)
         .output()
-        .map_err(|error| {
-            (
-                "bindgen_unavailable",
-                format!("cannot run wasm-bindgen: {error}; {install}"),
-            )
-        })?;
+        .map_err(|error| format!("cannot run wasm-bindgen: {error}; {install}"))?;
     if !output.status.success() {
-        return Err((
-            "bindgen_unavailable",
-            format!(
-                "wasm-bindgen --version failed ({}): {}; {install}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
+        return Err(format!(
+            "wasm-bindgen --version failed ({}): {}; {install}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
     let printed = String::from_utf8_lossy(&output.stdout);
+    let found = printed.trim();
     let expected = format!("wasm-bindgen {version}");
-    if printed.trim() != expected {
-        return Err((
-            "bindgen_version",
-            format!("expected {expected}, found {:?}; {install}", printed.trim()),
-        ));
+    if found != expected {
+        return Err(format!("expected {expected}, found {found:?}; {install}"));
     }
     Ok(())
-}
-
-pub fn verify_wasm_bindgen(root: &Path) -> Result<(), String> {
-    check_wasm_bindgen(root).map_err(|(_, message)| message)
-}
-
-pub fn engine_commit() -> (&'static str, String) {
-    static COMMIT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    let commit = COMMIT.get_or_init(|| {
-        let git = |arguments: &[&str]| {
-            Command::new("git")
-                .args(arguments)
-                .output()
-                .ok()
-                .filter(|output| output.status.success())
-        };
-        let Some(head) = git(&["rev-parse", "--short=12", "HEAD"]) else {
-            return "unknown".to_owned();
-        };
-        let head = String::from_utf8_lossy(&head.stdout).trim().to_owned();
-        let clean = git(&["diff", "--quiet", "HEAD"]).is_some();
-        if clean { head } else { format!("{head}-dirty") }
-    });
-    ("ENGINE_COMMIT", commit.clone())
-}
-
-fn stamped(arguments: &[&str]) -> bool {
-    arguments
-        .windows(2)
-        .any(|pair| pair[0] == "--profile" && pair[1] != "dev")
 }
 
 pub fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String> {
@@ -365,7 +286,6 @@ pub fn run_with(
     println!("{record}");
     let status = Command::new(program)
         .args(arguments)
-        .envs(stamped(arguments).then(engine_commit))
         .envs(environment.iter().copied())
         .current_dir(root)
         .status()

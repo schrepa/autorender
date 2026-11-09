@@ -61,7 +61,6 @@ impl Brick for PhysicsBrick {
                 (world::step, obstacles::obstruct),
             )
             .observation::<views::PhysicsBody>()
-            .operation::<views::BodyPushOperation>()
             .operation::<views::BodyAskOperation>();
     }
 }

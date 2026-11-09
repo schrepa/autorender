@@ -142,7 +142,7 @@ const message = element("message");
 const pause = element<HTMLButtonElement>("pause");
 const reset = element<HTMLButtonElement>("reset");
 const input = new BrowserInput(canvas);
-const instrumented = import.meta.env.MODE === "profiling" || import.meta.env.MODE === "attribution";
+const instrumented = import.meta.env.MODE === "profiling";
 const development = (import.meta.env.DEV || instrumented) && new URLSearchParams(location.search).get("engine_dev") === "1";
 const preparedDevelopment = development && new URLSearchParams(location.search).get("prepare") === "1";
 const prepares = !development || preparedDevelopment;
@@ -453,19 +453,6 @@ async function start() {
     pause.textContent = "Resume";
     pause.setAttribute("aria-pressed", "true");
     await window.__engineDev!.request({ verb: "control", name: "render" });
-    const environment = new URLSearchParams(location.search).get("environment");
-    if (environment) {
-      const playing = live()?.paused === false;
-      setPaused(true);
-      const reply = await window.__engineDev!.request({
-        verb: "control", name: "environment", version: window.__engineDev!.version, args: { merge: true, ...JSON.parse(environment) as Record<string, unknown> },
-      });
-      if (playing) setPaused(false);
-      if (!reply.ok) {
-        const refused = reply.error ?? { code: "invalid_environment", path: "$" };
-        throw engineFailure({ ...refused, path: `?environment${refused.path.replace(/^\$(\.args)?/, "")}` });
-      }
-    }
   }
   resume();
 }

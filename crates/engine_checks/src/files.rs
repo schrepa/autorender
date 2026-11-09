@@ -35,15 +35,15 @@ pub fn ours(path: &str) -> bool {
     !path.starts_with("vendor/") && !path.contains("/generated/") && !path.starts_with("generated/")
 }
 
+pub fn source(path: &str) -> bool {
+    [".rs", ".wgsl", ".ts", ".mjs"]
+        .iter()
+        .any(|extension| path.ends_with(extension))
+}
+
 pub fn sources(root: &Path) -> Result<Vec<String>, String> {
     Ok(listed(root, &[])?
         .into_iter()
-        .filter(|path| {
-            [".rs", ".wgsl", ".ts", ".mjs"]
-                .iter()
-                .any(|extension| path.ends_with(extension))
-                && ours(path)
-                && root.join(path).is_file()
-        })
+        .filter(|path| source(path) && ours(path) && root.join(path).is_file())
         .collect())
 }

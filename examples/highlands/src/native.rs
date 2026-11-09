@@ -6,14 +6,11 @@ use engine::command_line::CommandOption;
 use engine_native::{Arguments, HostOptions, files};
 
 use crate::land::ROCK_FILES;
-use crate::options::WATCH_BODIES;
 use crate::{Highlands, Options, RockMaps, parameters};
 
 struct Native {
     options: Options,
     assets: PathBuf,
-    #[cfg(feature = "dev")]
-    source: PathBuf,
     host: HostOptions,
 }
 
@@ -57,9 +54,6 @@ fn command_options() -> Vec<CommandOption> {
     let mut options: Vec<CommandOption> = options()
         .into_iter()
         .map(|(name, values)| {
-            if name == WATCH_BODIES {
-                return CommandOption::flag(&format!("--{name}"));
-            }
             let option = CommandOption::taking(&format!("--{name}"), values);
             match defaults.value(name) {
                 Some(default) => option.defaults_to(default),
@@ -79,10 +73,12 @@ impl Native {
         let mut native = Self {
             options: Options::default(),
             assets: default_assets(),
-            #[cfg(feature = "dev")]
-            source: default_source(),
             host: HostOptions::default(),
         };
+        #[cfg(feature = "dev")]
+        {
+            native.host.settings.source = Some(default_source());
+        }
         let mut arguments = Arguments::new(arguments);
         while let Some(argument) = arguments.next() {
             if native.host.take(&argument, &mut arguments)? {
@@ -91,14 +87,11 @@ impl Native {
             let name = argument.name.strip_prefix("--").unwrap_or_default();
             #[cfg(feature = "dev")]
             if name == "source" {
-                native.source = arguments.value(&argument)?.into();
+                native.host.settings.source = Some(arguments.value(&argument)?.into());
                 continue;
             }
             if name == "assets" {
                 native.assets = arguments.value(&argument)?.into();
-            } else if name == WATCH_BODIES {
-                arguments.flag(&argument)?;
-                native.options.watch_bodies = true;
             } else if parameters().iter().any(|(known, _)| *known == name) {
                 let value = arguments.value(&argument)?;
                 native.options.set(name, &value)?;
@@ -143,12 +136,15 @@ impl Native {
 
     fn run(&self) -> engine::Result<()> {
         #[cfg(feature = "dev")]
+        let source = self.source()?;
+        #[cfg(not(feature = "dev"))]
+        let source = crate::scene::SCENE.to_owned();
+        #[cfg(feature = "dev")]
         if self.host.dev {
-            return self.run_dev();
+            return self.run_dev(&source);
         }
-        self.host.run("Highlands", crate::bricks, |engine: &mut Engine| {
-            self.build(engine, crate::scene::SCENE)
-        })
+        let build = |engine: &mut Engine| self.build(engine, &source);
+        self.host.run("Highlands", crate::bricks, build)
     }
 
     fn build(&self, engine: &mut Engine, source: &str) -> engine::Result<Highlands> {
@@ -161,14 +157,20 @@ impl Native {
     }
 
     #[cfg(feature = "dev")]
-    fn run_dev(&self) -> engine::Result<()> {
-        let source = std::fs::read_to_string(&self.source)
-            .map_err(|error| engine_native::file_error("--source", &self.source, &error))?;
+    fn source(&self) -> engine::Result<String> {
+        let settings = &self.host.settings;
+        let path = settings.source.clone().unwrap_or_else(default_source);
+        std::fs::read_to_string(&path)
+            .map_err(|error| engine_native::file_error("--source", &path, &error))
+    }
+
+    #[cfg(feature = "dev")]
+    fn run_dev(&self, source: &str) -> engine::Result<()> {
+        let build = |engine: &mut Engine| self.build(engine, source);
         let session = self
             .host
-            .dev_session(crate::bricks, |engine: &mut Engine| self.build(engine, &source))?
-            .parameters(options())
-            .source(&self.source);
+            .dev_session(crate::bricks, build)?
+            .parameters(options());
         controlled(session).run()
     }
 }

@@ -6,7 +6,6 @@ use zip::CompressionMethod;
 use zip::write::SimpleFileOptions;
 
 use crate::Failure;
-use crate::checkouts::copy_folder;
 use crate::cook;
 use crate::process::{Project, project_option, run, slashed};
 
@@ -58,7 +57,12 @@ pub fn ship(root: &Path, options: &[String]) -> Result<(), Failure> {
     }
     let own = root.join(&folder).join(ASSETS);
     if own.is_dir() {
-        copy_folder(&own, &assets)?;
+        let mut files = Vec::new();
+        files_under(&own, &mut files)?;
+        for file in files {
+            let relative = file.strip_prefix(&own).map_err(|error| error.to_string())?;
+            copied(&file, &assets.join(relative))?;
+        }
     }
     scenes(root, &folder, &project, &assets)?;
     let local = format!("{LOCAL_ONLY}/{}", project.package);

@@ -13,16 +13,16 @@ use bevy_ecs::system::{
 };
 use bevy_ecs::world::World;
 use engine_registry::{
-    BrickRecord, BrickStates, ExplainAsk, ExplainEntry, ExplainRecord, GateFn, JobList,
-    MembersOf, NamedField, OperationEntry, OperationScene, PlainSystems, Registry,
-    RegistryBuilder, Removal, SceneEntity, SectionRule, SettingsEntry, SpawnedBy, StatsEntry,
+    BrickRecord, BrickStates, GateFn, JobList, MembersOf, NamedField, OperationEntry,
+    OperationScene, PlainSystems, Registry, RegistryBuilder, Removal, SceneEntity, SectionRule,
+    SettingsEntry, SpawnedBy, StatsEntry,
 };
 use serde_json::Value;
 
 use crate::moves::NodeKind;
 use crate::{
-    Error, ErrorCode, Explain, GpuStruct, JobKind, KindDecl, List, Module, Mover, MoverId,
-    Operation, Pace, PlaceDecl, SceneContext, SceneIds, Section, Slot, Smoke, Source, SubScene,
+    Error, ErrorCode, GpuStruct, JobKind, KindDecl, List, Module, Mover, MoverId, Operation, Pace,
+    PlaceDecl, SceneContext, SceneIds, Section, Slot, Smoke, Source, SubScene,
 };
 
 pub trait Brick: 'static {
@@ -145,7 +145,8 @@ impl Bricks<'_> {
     pub fn operation<O: Operation>(&mut self) -> &mut Self {
         self.record.operation(
             OperationEntry::of::<O::Params>(O::NAME, O::CONTROL, run_operation::<O>)
-                .schemas(O::schema, O::result_schema),
+                .schemas(O::schema, O::result_schema)
+                .listed(O::LISTED),
         );
         self
     }
@@ -157,18 +158,9 @@ impl Bricks<'_> {
     {
         self.record.operation(
             OperationEntry::of::<O::Params>(O::NAME, false, run_operation::<O>)
-                .schemas(O::schema, O::result_schema),
+                .schemas(O::schema, O::result_schema)
+                .listed(O::LISTED),
         );
-        self
-    }
-
-    #[track_caller]
-    pub fn explain<E: Explain>(&mut self) -> &mut Self
-    where
-        E::Params: Read,
-    {
-        self.record
-            .explain(ExplainEntry::of::<E::Params>(run_explain::<E>));
         self
     }
 
@@ -273,12 +265,6 @@ pub(crate) fn run_operation<O: Operation>(
 ) -> Result<Value, Error> {
     let request: O::Request = engine_settings::parse_value(request)?;
     answer::<O>(world, request)
-}
-
-fn run_explain<E: Explain>(world: &mut World, ask: &ExplainAsk<'_>) -> Option<ExplainRecord> {
-    let mut state = SystemState::<E::Params>::new(world);
-    let params = state.get_mut(world).ok()?;
-    E::explain(params, ask)
 }
 
 fn answer<O: Operation>(world: &mut World, request: O::Request) -> Result<Value, Error> {

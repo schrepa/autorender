@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 const PEOPLES_PORTS: std::ops::RangeInclusive<u16> = 5173..=5175;
 
-pub fn free_port() -> Result<u16, String> {
+fn free_port() -> Result<u16, String> {
     for _ in 0..16 {
         let port = TcpListener::bind("127.0.0.1:0")
             .and_then(|listener| listener.local_addr())
@@ -27,14 +27,9 @@ pub struct Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        let pid = self.child.id().to_string();
         if cfg!(windows) {
             let _ = Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &pid])
-                .output();
-        } else {
-            let _ = Command::new("kill")
-                .args(["-TERM", "--", &format!("-{pid}")])
+                .args(["/T", "/F", "/PID", &self.child.id().to_string()])
                 .output();
         }
         let _ = self.child.kill();
@@ -43,25 +38,28 @@ impl Drop for Server {
 }
 
 impl Server {
-    pub fn start(
-        mut command: Command,
-        port: u16,
-        log: &Path,
-        what: &str,
-        limit: Duration,
-    ) -> Result<Self, String> {
+    pub fn vite(root: &Path, port: u16, log: &Path, limit: Duration) -> Result<Self, String> {
         if let Some(folder) = log.parent() {
             fs::create_dir_all(folder).map_err(|error| error.to_string())?;
         }
         let file = fs::File::create(log).map_err(|error| error.to_string())?;
         let errors = file.try_clone().map_err(|error| error.to_string())?;
-        command.stdin(Stdio::null()).stdout(file).stderr(errors);
-        #[cfg(unix)]
-        std::os::unix::process::CommandExt::process_group(&mut command, 0);
         let started = Instant::now();
-        let child = command
+        let child = Command::new("node")
+            .args([
+                "node_modules/vite/bin/vite.js",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                &port.to_string(),
+                "--strictPort",
+            ])
+            .current_dir(root.join("web"))
+            .stdin(Stdio::null())
+            .stdout(file)
+            .stderr(errors)
             .spawn()
-            .map_err(|error| format!("cannot start the development server of {what}: {error}"))?;
+            .map_err(|error| format!("cannot start Vite: {error}"))?;
         let mut server = Self {
             child,
             url: format!("http://127.0.0.1:{port}"),
@@ -71,14 +69,11 @@ impl Server {
                 return Ok(server);
             }
             if let Some(status) = server.child.try_wait().map_err(|error| error.to_string())? {
-                return Err(format!(
-                    "the development server of {what} stopped ({status}); see {}",
-                    log.display()
-                ));
+                return Err(format!("Vite stopped ({status}); see {}", log.display()));
             }
             if started.elapsed() > limit {
                 return Err(format!(
-                    "the development server of {what} did not start within {} s; see {}",
+                    "Vite did not start within {} s; see {}",
                     limit.as_secs(),
                     log.display()
                 ));
@@ -89,19 +84,7 @@ impl Server {
 
     pub fn page(root: &Path, log: &Path, limit: Duration) -> Result<Self, String> {
         crate::pipeline::prepare_dev(root)?;
-        let port = free_port()?;
-        let mut command = Command::new("node");
-        command
-            .args([
-                "node_modules/vite/bin/vite.js",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                &port.to_string(),
-                "--strictPort",
-            ])
-            .current_dir(root.join("web"));
-        let server = Self::start(command, port, log, "this checkout", limit)?;
+        let server = Self::vite(root, free_port()?, log, limit)?;
         eprintln!(
             "{}",
             serde_json::json!({"event": "serving", "url": server.url})

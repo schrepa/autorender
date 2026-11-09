@@ -255,6 +255,7 @@ pub(crate) struct ProbePixel;
 
 impl Operation for ProbePixel {
     const NAME: &'static str = "probe_pixel";
+    const LISTED: bool = false;
     type Params = (
         Res<'static, Views>,
         ResMut<'static, Probe>,
@@ -296,6 +297,7 @@ pub(crate) struct ProbedPixel;
 
 impl Operation for ProbedPixel {
     const NAME: &'static str = "probed_pixel";
+    const LISTED: bool = false;
     type Params = (
         Res<'static, Probe>,
         Joined<'static, DebugModes>,

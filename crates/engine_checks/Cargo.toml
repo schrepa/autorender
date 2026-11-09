@@ -10,7 +10,6 @@ bevy_ecs.workspace = true
 engine_command_line.workspace = true
 engine = { workspace = true, features = ["schema"] }
 engine_core.workspace = true
-engine_dev.workspace = true
 engine_place.workspace = true
 engine_registry.workspace = true
 engine_render.workspace = true

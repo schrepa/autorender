@@ -6,7 +6,7 @@ import JobWorker from "./worker.ts?worker";
 
 const params = new URLSearchParams(location.search);
 const sourceUrl = params.get("source") ?? "";
-const playerBindings = () => loadGame("engine_player", () => import("../../pkg/engine_player"), JobWorker);
+const playerBindings = () => loadGame(() => import("../../pkg/engine_player"), JobWorker);
 
 function checkedScene(path: string, base: string): string {
   const url = new URL(path, base);

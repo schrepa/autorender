@@ -34,8 +34,6 @@ pub mod counters {
 }
 #[cfg(feature = "profiling")]
 mod deep;
-#[cfg(feature = "load")]
-pub mod load;
 mod pix;
 mod renderdoc;
 #[cfg(feature = "profiling")]

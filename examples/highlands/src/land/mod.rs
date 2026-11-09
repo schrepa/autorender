@@ -153,11 +153,7 @@ pub(crate) fn provide(world: &mut World, files: &RockMaps) -> engine::Result<()>
     Ok(())
 }
 
-pub(crate) fn populate(
-    world: &mut World,
-    document: &SceneDocument,
-    bodies: u32,
-) -> engine::Result<()> {
+pub(crate) fn populate(world: &mut World, document: &SceneDocument) -> engine::Result<()> {
     let (path, terrain) = scene_terrain(document)?;
     let terrain = &terrain;
     let origin = parse_value_at::<[f32; 3]>(terrain["origin"].clone(), &format!("{path}.origin"))?;
@@ -174,8 +170,7 @@ pub(crate) fn populate(
             "rock": WALL_ROCK,
             "wall": CAVE_WALL,
         }}),
-    )?;
-    control(world, json!({"bodies": {"count": bodies}}))
+    )
 }
 
 pub(crate) fn control(world: &mut World, request: Value) -> engine::Result<()> {

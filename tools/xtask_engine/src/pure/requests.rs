@@ -17,7 +17,6 @@ const SCENES: &str = "tools/xtask_engine/pure/scenes.json";
 const AUTHORING: &str = "target/pure/requests";
 
 const BRIDGE: &str = "the agent bridge and its sessions answer it (web/scripts/agent*.mjs)";
-const WATCH: &str = "the watch tools answer it (web/scripts/iteration*.mjs and the build worker)";
 const PAGE: &str = "the page answers it (web/src/engine/dev.ts and the benchmark it runs)";
 const NATIVE_PROFILE: &str = "native profile captures answer it (crates/engine_native)";
 const CHECKS: &str = "the checks report it (crates/engine_checks)";
@@ -34,10 +33,6 @@ const COLLISION: &str = "engine_collision's own check, after the development too
                          or its budgets, which overflow only with more colliders than the corpora load";
 
 const UNREACHED: &[(&str, &str)] = &[
-    ("activation_committed", WATCH),
-    ("activation_expired", WATCH),
-    ("activation_failed", WATCH),
-    ("activation_not_committed", WATCH),
     ("ambiguous_passes", APP_BUILD),
     ("attachment_limit", APP_BUILD),
     (
@@ -57,10 +52,6 @@ const UNREACHED: &[(&str, &str)] = &[
     ("bridge_unreachable", BRIDGE),
     ("browser_command_failed", PAGE),
     ("build_mismatch", BRIDGE),
-    ("build_result_too_large", WATCH),
-    ("build_superseded", WATCH),
-    ("build_worker_failed", WATCH),
-    ("build_worker_unavailable", WATCH),
     ("capture_failed", BRIDGE),
     ("capture_requires_pause", BRIDGE),
     (
@@ -94,10 +85,7 @@ const UNREACHED: &[(&str, &str)] = &[
         "hosts' and tools' command lines answer it (crates/engine_native/src/options.rs)",
     ),
     ("invalid_browser_response", BRIDGE),
-    ("invalid_build_result", WATCH),
-    ("invalid_candidate", WATCH),
     ("invalid_command", BRIDGE),
-    ("invalid_fingerprint", WATCH),
     ("invalid_font", FONTS),
     ("invalid_gltf", IMPORT),
     (
@@ -112,14 +100,11 @@ const UNREACHED: &[(&str, &str)] = &[
         "the drawn table refuses a drawn thing whose geometry is missing or lacks its kind's attributes as frames settle (crates/engine_core/src/drawn.rs); the corpora instantiate scenes but run no frames",
     ),
     ("invalid_request_id", BRIDGE),
-    ("invalid_session", BRIDGE),
     (
         "invalid_step",
         "the host checks it while it runs the control (crates/engine/src/dev_host/controls/input.rs): host-parity's invalid step case reaches it",
     ),
     ("invalid_url", BRIDGE),
-    ("iteration_error", WATCH),
-    ("iteration_stopped", WATCH),
     (
         "job_unsupported",
         "a job of a kind the list lacks answers it, and so does the impostors brick's bake kind, which only the GPU makes (crates/engine_core/src/jobs.rs, crates/engine_impostors/src/books.rs)",
@@ -160,21 +145,16 @@ const UNREACHED: &[(&str, &str)] = &[
     ("runtime_unavailable", BRIDGE),
     ("safety_missing", CHECKS),
     ("schedule_ambiguity", APP_BUILD),
-    ("session_cancelled", BRIDGE),
     ("session_closed", BRIDGE),
     ("session_mismatch", BRIDGE),
-    ("session_replacing", BRIDGE),
     ("session_request_limit", BRIDGE),
     ("session_unavailable", BRIDGE),
     ("shader_link", LINKER),
     ("slot_filled_twice", APP_BUILD),
-    ("source_budget", WATCH),
     (
         "source_changed",
         "needs another writer between a save's validation and its rename",
     ),
-    ("source_symlink", WATCH),
-    ("source_type", WATCH),
     ("struct_too_wide", CHECKS),
     ("unknown_module", LINKER),
     (
@@ -183,7 +163,6 @@ const UNREACHED: &[(&str, &str)] = &[
     ),
     ("unknown_variable", APP_BUILD),
     ("unowned_system", APP_BUILD),
-    ("unsafe_output_path", WATCH),
     ("unsafe_unlisted", CHECKS),
     (
         "unsupported_command",
@@ -193,7 +172,6 @@ const UNREACHED: &[(&str, &str)] = &[
     ("usage_conflict", APP_BUILD),
     ("version_unpinned", CHECKS),
     ("view_writer_unplaced", APP_BUILD),
-    ("watch_locked", WATCH),
     ("wgsl_unused", LINKER),
     ("written_twice", APP_BUILD),
 ];
@@ -455,7 +433,7 @@ fn authoring(root: &Path, refusal: &Value) -> Result<Option<Error>, String> {
                 &candidate.to_string(),
                 expected,
                 &kinds,
-                crate::checkouts::alive,
+                crate::development::alive,
             )
             .err()
         }
